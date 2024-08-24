@@ -6,6 +6,10 @@ use engine::Engine;
 fn main() {
     let mut engine = Engine::new();
     engine.register_computation("do_nothing".to_string(), Box::new(DoNothingComputation));
+
+    loop {
+
+    }
 }
 
 struct DoNothingComputation;

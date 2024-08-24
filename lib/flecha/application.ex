@@ -10,7 +10,7 @@ defmodule Flecha.Application do
     children = [
       Flecha.EngineManager,
       # Flecha.ChannelSupervisor,
-      # Flecha.Controller,
+      Flecha.Controller,
       process_hub()
     ]
 
