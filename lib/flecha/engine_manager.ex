@@ -3,7 +3,7 @@ defmodule Flecha.EngineManager do
 
   use GenServer
 
-  @code_query_processor 39
+  @code_query_engine 100
 
   def start_link(arg) do
     GenServer.start_link(__MODULE__, arg, name: __MODULE__)
@@ -13,7 +13,7 @@ defmodule Flecha.EngineManager do
   def init(_) do
     ports = initialize_ports()
 
-    command(ports, @code_query_processor, %{})
+    command(ports, @code_query_engine, %{})
 
     {:ok, %{ports: ports, response_refs: %{}}}
   end

@@ -1,19 +1,17 @@
-use std::io::{self, BufRead};
+mod computation;
+mod engine;
+
+use engine::Engine;
 
 fn main() {
-    // Create a buffered reader for stdin
-    let stdin = io::stdin();
-    let reader = stdin.lock();
+    let mut engine = Engine::new();
+    engine.register_computation("do_nothing".to_string(), Box::new(DoNothingComputation));
+}
 
-    // Read lines from stdin in a blocking way
-    for line in reader.lines() {
-        match line {
-            Ok(command_data) => {
-                
-            }
-            Err(e) => {
-                eprintln!("Failed to read line: {}", e);
-            }
-        }
+struct DoNothingComputation;
+
+impl computation::Computation for DoNothingComputation {
+    fn compute(&self, input: String) {
+        println!("Do nothing with input: {}", input);
     }
 }
