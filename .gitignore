@@ -22,6 +22,9 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 flecha_core-*.tar
 
+# Rust build artifacts.
+/target/
+
 # Temporary files, for example, from tests.
 /tmp/
 
