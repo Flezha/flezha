@@ -14,11 +14,11 @@ defmodule Flecha.Controller do
   def handle_call({:add_computation, computation}, _from, state) do
     child_spec = %{
       id: computation.computation_id,
-      start: {Flecha.Engine, :start_link, [computation]}
+      start: {Flecha.Computation, :start_link, [computation]}
     }
 
-    ProcessHub.start_child(:flecha_hub, child_spec, async_wait: true) |> ProcessHub.await()
+    res = ProcessHub.start_child(:flecha_hub, child_spec, async_wait: true) |> ProcessHub.await()
 
-    {:reply, :ok, state}
+    {:reply, res, state}
   end
 end

@@ -8,6 +8,8 @@ defmodule FlechaTest do
       computation_name: "do_nothing"
     }
 
-    assert :ok === Flecha.add_computation(computation)
+    {:ok, pid} = Flecha.add_computation(computation)
+
+    assert is_pid(pid)
   end
 end

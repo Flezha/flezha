@@ -13,8 +13,8 @@ defmodule Flecha.Computation do
   def init(settings) do
     {:ok,
      %__MODULE__{
-       computation_id: settings[:computation_id],
-       channel: attach_channel(settings[:computation_id], settings[:computation_name]),
+       computation_id: settings.computation_id,
+       channel: attach_channel(settings.computation_id, settings.computation_name),
        io: %{
          input: [],
          output: []
