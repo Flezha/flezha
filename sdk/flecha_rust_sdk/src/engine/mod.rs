@@ -1,5 +1,7 @@
 use crate::computation::Computation;
+use crate::service::std_out;
 
+use serde_json;
 use std::collections::HashMap;
 use std::thread;
 use std::io::{self, BufRead};
@@ -35,6 +37,14 @@ impl Engine {
     }
 
     pub fn register_computation(&mut self, name: String, computation: Box<dyn Computation>) {
+        let schema_json = serde_json::to_string(&computation.get_schema()).unwrap();
+        let mut core_data = HashMap::new();
+        core_data.insert("template_name".to_string(), name.clone());
+        core_data.insert("schema".to_string(), schema_json); 
+
+        let json = serde_json::to_string(&core_data).unwrap();
+        std_out::write_stdout(20, &json);
+
         self.computations.insert(name, computation);
     }
 }

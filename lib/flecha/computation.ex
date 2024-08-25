@@ -49,50 +49,50 @@ defmodule Flecha.Computation do
   #   end
   # end
 
-  @impl true
-  def handle_call({:io_internal_payload, io_id, direction, payload}, _from, state)
-      when is_struct(payload) do
-    mfa = Map.get(state.io, direction)
-    sup = Map.get(state.supervisors, direction)
+  # @impl true
+  # def handle_call({:io_internal_payload, io_id, direction, payload}, _from, state)
+  #     when is_struct(payload) do
+  #   mfa = Map.get(state.io, direction)
+  #   sup = Map.get(state.supervisors, direction)
 
-    {:ok, io_pid} = IOSupervisor.find_pid(sup, io_id)
+  #   {:ok, io_pid} = IOSupervisor.find_pid(sup, io_id)
 
-    case mfa do
-      nil ->
-        {:reply, {:error, "IO handler not found"}, state}
+  #   case mfa do
+  #     nil ->
+  #       {:reply, {:error, "IO handler not found"}, state}
 
-      {m, _f, _a} ->
-        res = apply(m, :send_internal_payload, [io_pid, payload])
+  #     {m, _f, _a} ->
+  #       res = apply(m, :send_internal_payload, [io_pid, payload])
 
-        {:reply, res, state}
-    end
-  end
+  #       {:reply, res, state}
+  #   end
+  # end
 
-  @impl true
-  def handle_call({:io_internal_payload, _payload}, _from, state) do
-    {:reply, {:error, "Invalid payload"}, state}
-  end
+  # @impl true
+  # def handle_call({:io_internal_payload, _payload}, _from, state) do
+  #   {:reply, {:error, "Invalid payload"}, state}
+  # end
 
-  @impl true
-  def handle_cast({:io_in, _type, message}, state) do
-    index = 0
-    message = "#{state.computation_id}\0#{index}\0#{message}"
-    message_length = byte_size(message)
-    message = <<message_length::size(32), message::binary>>
+  # @impl true
+  # def handle_cast({:io_in, _type, message}, state) do
+  #   index = 0
+  #   message = "#{state.computation_id}\0#{index}\0#{message}"
+  #   message_length = byte_size(message)
+  #   message = <<message_length::size(32), message::binary>>
 
-    GenServer.cast(state.channel, {:io_in, :binary, message})
+  #   GenServer.cast(state.channel, {:io_in, :binary, message})
 
-    {:noreply, state}
-  end
+  #   {:noreply, state}
+  # end
 
-  @impl true
-  def handle_cast({:io_out, type, message}, %{io: %{output: out_pids}} = state) do
-    Enum.each(out_pids, fn out_pid ->
-      GenServer.cast(out_pid, {:io_out, type, message})
-    end)
+  # @impl true
+  # def handle_cast({:io_out, type, message}, %{io: %{output: out_pids}} = state) do
+  #   Enum.each(out_pids, fn out_pid ->
+  #     GenServer.cast(out_pid, {:io_out, type, message})
+  #   end)
 
-    {:noreply, state}
-  end
+  #   {:noreply, state}
+  # end
 
   defp start_sup() do
     case IOSupervisor.start_link() do
@@ -113,19 +113,17 @@ defmodule Flecha.Computation do
   end
 
   defp available_processor_id(computation_name) do
-    processors = Application.get_env(:flecha_core, :computation_engines)
+    computation_engines = Application.get_env(:flecha_core, :computation_engines)
 
     item =
-      Enum.find(processors, fn {_processor_id, processor_data} ->
-        computations = processor_data["computations"]
-
-        Enum.any?(computations, fn %{"name" => cn} ->
-          computation_name == cn
+      Enum.find(computation_engines, fn {_name, computation_engine} ->
+        Enum.any?(computation_engine[:computation_templates], fn {template_name, _} ->
+          computation_name == template_name
         end)
       end)
 
     case item do
-      nil -> raise "Computation handler not found"
+      nil -> raise "computation handler not found"
       {processor_id, _} -> processor_id
     end
   end

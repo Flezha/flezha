@@ -3,7 +3,7 @@ defmodule Flecha.EngineManager do
 
   use GenServer
 
-  @code_query_engine 100
+  @template_register "20"
 
   def start_link(arg) do
     GenServer.start_link(__MODULE__, arg, name: __MODULE__)
@@ -13,9 +13,23 @@ defmodule Flecha.EngineManager do
   def init(_) do
     ports = initialize_ports()
 
-    command(ports, @code_query_engine, %{})
-
     {:ok, %{ports: ports, response_refs: %{}}}
+  end
+
+  @impl true
+  def handle_info({port, {:data, "CODE:" <> @template_register <> json_data}}, state) do
+    {:ok, data} = Jason.decode(json_data)
+    {:ok, schema} = Jason.decode(data["schema"])
+
+    engine_name = Enum.find(state.ports, fn {_name, p} -> p === port end) |> elem(0)
+
+    computation_engines =
+      Application.get_env(:flecha_core, :computation_engines, %{})
+      |> put_in([engine_name, :computation_templates, data["template_name"]], schema)
+
+    Application.put_env(:flecha_core, :computation_engines, computation_engines)
+
+    {:noreply, state}
   end
 
   @impl true
@@ -28,21 +42,21 @@ defmodule Flecha.EngineManager do
   defp initialize_ports() do
     computation_engines = Application.fetch_env!(:flecha_core, :computation_engines)
 
-    Enum.map(computation_engines, fn {_, command} ->
+    Enum.map(computation_engines, fn {name, engine} ->
       port =
         Port.open(
-          {:spawn, command},
+          {:spawn, engine[:command]},
           [:binary]
         )
 
       Port.monitor(port)
 
-      port
+      {name, port}
     end)
   end
 
   defp command(ports, code, data) do
-    Enum.map(ports, fn port ->
+    Enum.map(ports, fn {_name, port} ->
       ref = gen_ref()
 
       command =
