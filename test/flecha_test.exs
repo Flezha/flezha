@@ -23,27 +23,35 @@ defmodule FlechaTest do
     assert Flecha.add_computation(computation) === {:ok, "computation added"}
   end
 
-  # test "add new io generator" do
-  #   {:ok, "pipeline created"} = Flecha.pipeline_new("new_pipeline_io_generator")
+  test "add new io generator" do
+    computation = %Flecha.Computation{
+      computation_id: "add_io_generator_test",
+      computation_name: @test_computation_template
+    }
 
-  #   assert Flecha.pipeline_io_new(
-  #            "new_pipeline_io_generator",
-  #            "generator",
-  #            %Flecha.IO.Generator{interval: 100},
-  #            :input
-  #          ) == {:ok, "IO created"}
-  # end
+    {:ok, "computation added"} = Flecha.add_computation(computation)
 
-  # test "add new io internal process" do
-  #   pipeline_id = "new_pipeline_internal_process"
+    assert Flecha.add_io(
+             computation.computation_id,
+             "generator",
+             %Flecha.IO.Generator{interval: 100},
+             :input
+           ) == {:ok, "IO created"}
+  end
 
-  #   {:ok, "pipeline created"} = Flecha.pipeline_new(pipeline_id)
+  test "add new io internal process" do
+    computation = %Flecha.Computation{
+      computation_id: "add_io_internal_process_test",
+      computation_name: @test_computation_template
+    }
 
-  #   assert Flecha.pipeline_io_new(
-  #            pipeline_id,
-  #            "internal_process",
-  #            %Flecha.IO.InternalProcess{output_pid: self()},
-  #            :input
-  #          ) == {:ok, "IO created"}
-  # end
+    {:ok, "computation added"} = Flecha.add_computation(computation)
+
+    assert Flecha.add_io(
+             computation.computation_id,
+             "internal_process",
+             %Flecha.IO.InternalProcess{output_pid: self()},
+             :input
+           ) == {:ok, "IO created"}
+  end
 end
