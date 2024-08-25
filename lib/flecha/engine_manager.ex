@@ -4,6 +4,7 @@ defmodule Flecha.EngineManager do
   use GenServer
 
   @template_register "20"
+  @templates_query "21"
 
   def start_link(arg) do
     GenServer.start_link(__MODULE__, arg, name: __MODULE__)
@@ -30,6 +31,19 @@ defmodule Flecha.EngineManager do
     Application.put_env(:flecha_core, :computation_engines, computation_engines)
 
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({_port, {:data, "COMMAND_REF:" <> ref_id}}, state) do
+    case Map.get(state[:response_refs], ref_id) do
+      nil ->
+        state[:response_refs]
+
+      from ->
+        GenServer.reply(from, :ok)
+    end
+
+    {:noreply, Map.put(state, :response_refs, Map.delete(state[:response_refs], ref_id))}
   end
 
   @impl true

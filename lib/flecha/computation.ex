@@ -26,28 +26,28 @@ defmodule Flecha.Computation do
      }}
   end
 
-  # @impl true
-  # def handle_call({:add_io, io_id, direction, settings}, _from, state) do
-  #   {module, func, args} = Flecha.IO.Base.mfa(settings)
-  #   new_args = [self() | args]
+  @impl true
+  def handle_call({:add_io, io_id, direction, settings}, _from, state) do
+    {module, func, args} = Flecha.IO.Base.mfa(settings)
+    new_args = [self() | args]
 
-  #   response =
-  #     IOSupervisor.start_child(Map.get(state.supervisors, direction), %{
-  #       id: io_id,
-  #       start: {module, func, new_args}
-  #     })
+    response =
+      IOSupervisor.start_child(Map.get(state.supervisors, direction), %{
+        id: io_id,
+        start: {module, func, new_args}
+      })
 
-  #   case response do
-  #     {:ok, pid} ->
-  #       pids = Map.get(state.io, direction, [])
-  #       io_handlers = Map.put(state.io, direction, [pid | pids])
+    case response do
+      {:ok, pid} ->
+        pids = Map.get(state.io, direction, [])
+        io_handlers = Map.put(state.io, direction, [pid | pids])
 
-  #       {:reply, {:ok, "IO created"}, %__MODULE__{state | io: io_handlers}}
+        {:reply, {:ok, "IO created"}, %__MODULE__{state | io: io_handlers}}
 
-  #     {:error, reason} ->
-  #       {:reply, {:error, reason}, state}
-  #   end
-  # end
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
 
   # @impl true
   # def handle_call({:io_internal_payload, io_id, direction, payload}, _from, state)

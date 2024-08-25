@@ -17,8 +17,15 @@ defmodule Flecha.Controller do
       start: {Flecha.Computation, :start_link, [computation]}
     }
 
-    res = ProcessHub.start_child(:flecha_hub, child_spec, async_wait: true) |> ProcessHub.await()
+    result =
+      ProcessHub.start_child(:flecha_hub, child_spec, async_wait: true) |> ProcessHub.await()
 
-    {:reply, res, state}
+    response =
+      case result do
+        {:ok, _} -> {:ok, "computation added"}
+        {:error, reason} -> {:error, reason}
+      end
+
+    {:reply, response, state}
   end
 end
