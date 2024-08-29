@@ -53,7 +53,7 @@ fn start_socket_listener(id: String, computations: Arc<RwLock<HashMap<String, Ar
 
     let listener = UnixListener::bind(socket_path).expect("Failed to bind socket");
     
-    std_out::write_stdout(40, &format!("COMMAND_REF:{}", reference_id));
+    std_out::reply_ref(&reference_id);
 
     for stream in listener.incoming() {
         match stream {

@@ -28,6 +28,6 @@ impl CommandAction for CreateComputationCommand {
     
         engine_worker.register_computation(computation);
         
-        std_out::write_stdout(21, &format!("COMMAND_REF:{}", reference_id));
+        std_out::reply_ref(&reference_id);
     }
 }
