@@ -118,8 +118,8 @@ defmodule Flecha.Computation do
 
     item =
       Enum.find(computation_engines, fn {_name, computation_engine} ->
-        Enum.any?(computation_engine[:computation_templates], fn {template_name, _} ->
-          template == template_name
+        Enum.any?(computation_engine[:computation_templates], fn {template_id, _} ->
+          template == template_id
         end)
       end)
 

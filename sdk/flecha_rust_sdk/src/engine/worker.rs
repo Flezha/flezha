@@ -59,7 +59,7 @@ impl EngineWorker {
         let temp_template = factory();
         let schema_json = serde_json::to_string(&temp_template.get_schema()).unwrap();
         let mut core_data = HashMap::new();
-        core_data.insert("template_name".to_string(), template_id.clone());
+        core_data.insert("template_id".to_string(), template_id.clone());
         core_data.insert("schema".to_string(), schema_json); 
 
         let json = serde_json::to_string(&core_data).unwrap();

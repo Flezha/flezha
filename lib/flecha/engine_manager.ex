@@ -59,7 +59,7 @@ defmodule Flecha.EngineManager do
 
     computation_engines =
       Application.get_env(:flecha_core, :computation_engines, %{})
-      |> put_in([engine_name, :computation_templates, data["template_name"]], schema)
+      |> put_in([engine_name, :computation_templates, data["template_id"]], schema)
 
     Application.put_env(:flecha_core, :computation_engines, computation_engines)
 

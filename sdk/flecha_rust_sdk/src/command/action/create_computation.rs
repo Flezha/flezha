@@ -9,7 +9,7 @@ use crate::engine::worker::EngineWorker;
 #[derive(Deserialize)]
 pub struct CreateComputationCommand {
     computation_id: String,
-    template_name: String,
+    template_id: String,
 }
 
 impl CommandAction for CreateComputationCommand {
@@ -19,7 +19,7 @@ impl CommandAction for CreateComputationCommand {
         _message: &String,
         reference_id: String,
     ) {
-        let template_factory = engine_worker.get_template_factory(self.template_name.clone()).unwrap();
+        let template_factory = engine_worker.get_template_factory(self.template_id.clone()).unwrap();
 
         let computation = Computation{
             id: self.computation_id.clone(),
