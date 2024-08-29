@@ -3,8 +3,9 @@ defmodule Flecha.EngineManager do
 
   use GenServer
 
-  @template_register "20"
-  @templates_query "21"
+  @code_socket_open "19"
+  @code_template_register "20"
+  @code_computation_new "21"
 
   def start_link(arg) do
     GenServer.start_link(__MODULE__, arg, name: __MODULE__)
@@ -18,7 +19,39 @@ defmodule Flecha.EngineManager do
   end
 
   @impl true
-  def handle_info({port, {:data, "CODE:" <> @template_register <> json_data}}, state) do
+  def handle_call({:open_socket, socket_id}, from, state) do
+    refs =
+      command(
+        state[:ports],
+        @code_socket_open,
+        %{"socket_id" => socket_id}
+      )
+      |> Enum.map(&{&1, from})
+      |> Map.new()
+
+    {:noreply, Map.put(state, :response_refs, Map.merge(state.response_refs, refs))}
+  end
+
+  @impl true
+  def handle_call({:add_computation, computation}, from, state) do
+    refs =
+      command(
+        state[:ports],
+        @code_computation_new,
+        %{
+          "computation_id" => computation.id,
+          "computation_template" => computation.template,
+          "variables" => computation.variables
+        }
+      )
+      |> Enum.map(&{&1, from})
+      |> Map.new()
+
+    {:noreply, Map.put(state, :response_refs, Map.merge(state.response_refs, refs))}
+  end
+
+  @impl true
+  def handle_info({port, {:data, "CODE:" <> @code_template_register <> json_data}}, state) do
     {:ok, data} = Jason.decode(json_data)
     {:ok, schema} = Jason.decode(data["schema"])
 

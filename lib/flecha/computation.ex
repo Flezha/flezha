@@ -3,7 +3,7 @@ defmodule Flecha.Computation do
 
   use GenServer
 
-  defstruct [:computation_id, :computation_name, :channel, :supervisors, :io]
+  defstruct [:id, :template, :channel, :supervisors, :io, variables: []]
 
   def start_link(settings) do
     GenServer.start_link(__MODULE__, settings)
@@ -13,8 +13,9 @@ defmodule Flecha.Computation do
   def init(settings) do
     {:ok,
      %__MODULE__{
-       computation_id: settings.computation_id,
-       channel: attach_channel(settings.computation_id, settings.computation_name),
+       id: settings.id,
+       variables: settings.variables,
+       channel: attach_channel(settings.id, settings.template),
        io: %{
          input: [],
          output: []
@@ -49,6 +50,7 @@ defmodule Flecha.Computation do
     end
   end
 
+  # TODO: later add for websocket.
   # @impl true
   # def handle_call({:io_internal_payload, io_id, direction, payload}, _from, state)
   #     when is_struct(payload) do
@@ -67,32 +69,31 @@ defmodule Flecha.Computation do
   #       {:reply, res, state}
   #   end
   # end
-
   # @impl true
   # def handle_call({:io_internal_payload, _payload}, _from, state) do
   #   {:reply, {:error, "Invalid payload"}, state}
   # end
 
-  # @impl true
-  # def handle_cast({:io_in, _type, message}, state) do
-  #   index = 0
-  #   message = "#{state.computation_id}\0#{index}\0#{message}"
-  #   message_length = byte_size(message)
-  #   message = <<message_length::size(32), message::binary>>
+  @impl true
+  def handle_cast({:io_in, _type, message}, state) do
+    index = 0
+    message = "#{state.computation_id}\0#{index}\0#{message}"
+    message_length = byte_size(message)
+    message = <<message_length::size(32), message::binary>>
 
-  #   GenServer.cast(state.channel, {:io_in, :binary, message})
+    GenServer.cast(state.channel, {:io_in, :binary, message})
 
-  #   {:noreply, state}
-  # end
+    {:noreply, state}
+  end
 
-  # @impl true
-  # def handle_cast({:io_out, type, message}, %{io: %{output: out_pids}} = state) do
-  #   Enum.each(out_pids, fn out_pid ->
-  #     GenServer.cast(out_pid, {:io_out, type, message})
-  #   end)
+  @impl true
+  def handle_cast({:io_out, type, message}, %{io: %{output: out_pids}} = state) do
+    Enum.each(out_pids, fn out_pid ->
+      GenServer.cast(out_pid, {:io_out, type, message})
+    end)
 
-  #   {:noreply, state}
-  # end
+    {:noreply, state}
+  end
 
   defp start_sup() do
     case IOSupervisor.start_link() do
@@ -101,10 +102,10 @@ defmodule Flecha.Computation do
     end
   end
 
-  def attach_channel(computation_id, computation_name) do
+  def attach_channel(computation_id, template) do
     # Get numeric representation of the channel_id string.
     channel_name_int = String.to_charlist(computation_id) |> Enum.sum()
-    processor_id = available_processor_id(computation_name)
+    processor_id = available_processor_id(template)
 
     core_count = System.schedulers_online() * 2
     channel_index = rem(channel_name_int, core_count) + 1
@@ -112,13 +113,13 @@ defmodule Flecha.Computation do
     (Integer.to_string(channel_index) <> "_" <> processor_id) |> String.to_atom()
   end
 
-  defp available_processor_id(computation_name) do
+  defp available_processor_id(template) do
     computation_engines = Application.get_env(:flecha_core, :computation_engines)
 
     item =
       Enum.find(computation_engines, fn {_name, computation_engine} ->
         Enum.any?(computation_engine[:computation_templates], fn {template_name, _} ->
-          computation_name == template_name
+          template == template_name
         end)
       end)
 

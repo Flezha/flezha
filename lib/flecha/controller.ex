@@ -1,4 +1,6 @@
 defmodule Flecha.Controller do
+  alias Flecha.EngineManager
+
   use GenServer
 
   def start_link(arg) do
@@ -13,12 +15,15 @@ defmodule Flecha.Controller do
   @impl true
   def handle_call({:add_computation, computation}, _from, state) do
     child_spec = %{
-      id: computation.computation_id,
+      id: computation.id,
       start: {Flecha.Computation, :start_link, [computation]}
     }
 
     result =
-      ProcessHub.start_child(:flecha_hub, child_spec, async_wait: true) |> ProcessHub.await()
+      ProcessHub.start_child(:flecha_hub, child_spec, async_wait: true)
+      |> ProcessHub.await()
+
+    GenServer.call(EngineManager, {:add_computation, computation})
 
     response =
       case result do
