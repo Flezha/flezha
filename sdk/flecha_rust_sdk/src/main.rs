@@ -12,7 +12,6 @@ fn main() {
     engine.register_template("do_nothing".to_string(), || Box::new(DoNothingComputation{}));
     engine.register_template("compare_filter".to_string(), || Box::new(CompareFilterComputation{}));
 
-
     // TODO: remove later.
     std::thread::sleep(std::time::Duration::from_secs(5));
 }
@@ -26,7 +25,10 @@ impl ComputationTemplate for CompareFilterComputation {
     }
 
     fn get_schema(&self) -> std::collections::HashMap<String, String> {
-        std::collections::HashMap::new()
+        let mut schema = std::collections::HashMap::new();
+        // TODO: Sending empty schema will throw an error on elixir side.
+        schema.insert("input".to_string(), "string".to_string());
+        schema
     }
 }
 

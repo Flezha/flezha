@@ -1,15 +1,16 @@
 use serde::Deserialize;
 use std::path::Path;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::sync::{RwLock, Arc, Mutex};
 use std::collections::HashMap;
 use std::thread;
 use std::str;
-use byteorder::{BigEndian, ReadBytesExt};
+use std::io::Cursor;
+use byteorder::{LittleEndian, BigEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::engine::worker::EngineWorker;
-use crate::computation::Computation;
+use crate::computation::{Computation, ComputationResult};
 use crate::service::std_out;
 
 use super::CommandAction;
@@ -78,7 +79,14 @@ fn handle_client(mut stream: UnixStream, computations: Arc<RwLock<HashMap<String
                         // TODO: I think computation does not need to be under mutex.
                         let computation = c.lock().unwrap();
                         
-                        computation.template.compute(text.to_string());
+                        let result = computation.template.compute(text.to_string());
+
+                        match result {
+                            ComputationResult::NoReply => {}
+                            ComputationResult::Reply(reply) => {
+                                send_result(&mut stream, computation_id, &reply);
+                            }
+                        }
                     } else {
                         eprintln!("Computation with given ID not found");
                     }
@@ -117,4 +125,25 @@ fn parse_message(buffer: &[u8]) -> Option<(&str, &str)> {
     }
 }
 
+fn send_result(stream: &mut UnixStream, computation_id: &str, result: &str) {
+    // Prepare message in the format: 
+    // [computation_id_length][computation_id][result_length][result]
+    let mut buffer = Cursor::new(Vec::new());
 
+    // Convert computation_id to bytes and write length and bytes
+    let computation_id_str = computation_id.to_string();
+    let computation_id_bytes = computation_id_str.as_bytes().to_vec();
+    buffer.write_u32::<LittleEndian>(computation_id_bytes.len() as u32).unwrap();
+    buffer.write_all(&computation_id_bytes).unwrap();
+
+    // Convert result to bytes and write length and bytes
+    let result_bytes = result.as_bytes();
+    buffer.write_u32::<LittleEndian>(result_bytes.len() as u32).unwrap();
+    buffer.write_all(result_bytes).unwrap();
+
+    let message = buffer.into_inner();
+
+    if let Err(err) = stream.write_all(&message) {
+        eprintln!("Error writing to stream: {}", err);
+    }
+}

@@ -63,6 +63,10 @@ impl EngineWorker {
         core_data.insert("schema".to_string(), schema_json); 
 
         let json = serde_json::to_string(&core_data).unwrap();
+
+        // TODO: removing this will cause an error on elixir side.
+        println!("DEBUGSTART: {} DEBUGEND", json);
+
         std_out::write_w_code(39, &json);
 
         self.templates_factory.insert(template_id.clone(), factory);

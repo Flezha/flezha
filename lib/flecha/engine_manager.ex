@@ -52,6 +52,8 @@ defmodule Flecha.EngineManager do
 
   @impl true
   def handle_info({port, {:data, "CODE:" <> @code_template_register <> json_data}}, state) do
+    IO.inspect(json_data, label: "Engine manager received")
+
     {:ok, data} = Jason.decode(json_data)
     {:ok, schema} = Jason.decode(data["schema"])
 
