@@ -1,50 +1,38 @@
-use crate::computation::Computation;
-use crate::service::std_out;
+pub mod worker;
+mod commander;
 
-use serde_json;
-use std::collections::HashMap;
-use std::thread;
-use std::io::{self, BufRead};
+use crate::computation::ComputationTemplate;
 
-pub struct Engine {
-    computations: HashMap<String, Box<dyn Computation>>,
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread::{self};
+
+pub struct ComputationEngine {
+    _worker_thread: Option<thread::JoinHandle<()>>,
+    _command_thread: Option<thread::JoinHandle<()>>,
+    _rx: Arc<Mutex<mpsc::Receiver<ThreadItem>>>,
+    tx: Arc<Mutex<mpsc::Sender<ThreadItem>>>,
 }
 
-impl Engine {
-    pub fn new() -> Engine {
-        // Create new thread to listen for commands.
-        let _engine_thread = thread::spawn(|| {
-            // Create a buffered reader for stdin.
-            let stdin = io::stdin();
-            let reader = stdin.lock();
-    
-            // Read lines from stdin in a blocking way.
-            for line in reader.lines() {
-                match line {
-                    Ok(_command_data) => {
-                        
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to read line: {}", e);
-                    }
-                }
-            } 
-        });
+pub enum ThreadItem {
+    Command(String),
+    ComputationTemplate((String, fn() -> Box<dyn ComputationTemplate>)),
+}
 
-        Engine {
-            computations: HashMap::new(),
+impl ComputationEngine {
+    pub fn new() -> ComputationEngine {
+        let (tx, rx): (mpsc::Sender<ThreadItem>, mpsc::Receiver<ThreadItem>) = mpsc::channel();
+        let tx = Arc::new(Mutex::new(tx));
+        let rx = Arc::new(Mutex::new(rx));
+
+        ComputationEngine {
+            _worker_thread: Some(worker::start_worker_thread(Arc::clone(&rx))),
+            _command_thread: Some(commander::start_command_thread(Arc::clone(&tx))),
+            _rx: rx,
+            tx,
         }
     }
 
-    pub fn register_computation(&mut self, name: String, computation: Box<dyn Computation>) {
-        let schema_json = serde_json::to_string(&computation.get_schema()).unwrap();
-        let mut core_data = HashMap::new();
-        core_data.insert("template_name".to_string(), name.clone());
-        core_data.insert("schema".to_string(), schema_json); 
-
-        let json = serde_json::to_string(&core_data).unwrap();
-        std_out::write_stdout(20, &json);
-
-        self.computations.insert(name, computation);
+    pub fn register_template(&mut self, template_id: String, factory: fn() -> Box<dyn ComputationTemplate>) {
+        self.tx.lock().unwrap().send(ThreadItem::ComputationTemplate((template_id, factory))).unwrap();
     }
 }
