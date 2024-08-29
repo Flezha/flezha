@@ -3,9 +3,9 @@ defmodule Flecha.EngineManager do
 
   use GenServer
 
-  @code_socket_open "19"
-  @code_template_register "20"
-  @code_computation_new "21"
+  @code_template_register "39"
+  @code_socket_open "40"
+  @code_computation_new "41"
 
   def start_link(arg) do
     GenServer.start_link(__MODULE__, arg, name: __MODULE__)
@@ -108,7 +108,7 @@ defmodule Flecha.EngineManager do
 
       command =
         Jason.encode!(%{
-          "code" => code,
+          "code" => String.to_integer(code),
           "data" => data,
           "reference_id" => ref
         })

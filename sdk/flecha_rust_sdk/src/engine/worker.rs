@@ -63,7 +63,7 @@ impl EngineWorker {
         core_data.insert("schema".to_string(), schema_json); 
 
         let json = serde_json::to_string(&core_data).unwrap();
-        std_out::write_stdout(20, &json);
+        std_out::write_stdout(39, &json);
 
         self.templates_factory.insert(template_id.clone(), factory);
     }

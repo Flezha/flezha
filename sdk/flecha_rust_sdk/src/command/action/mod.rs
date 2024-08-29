@@ -34,7 +34,12 @@ pub fn handle_action(
     let reference_id = command.reference_id;
 
     let command_action: Box<dyn CommandAction> = match code {
-        21 => {
+        40 => {
+            let open_socket_command: open_socket::OpenSocketCommand = serde_json::from_value(command.data)
+                .expect("Failed to deserialize OpenSocketCommand");
+            Box::new(open_socket_command)
+        }
+        41 => {
             let create_pipeline_command: CreateComputationCommand = serde_json::from_value(command.data)
                 .expect("Failed to deserialize CreateComputationCommand");
             Box::new(create_pipeline_command)

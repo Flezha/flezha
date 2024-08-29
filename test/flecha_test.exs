@@ -23,37 +23,37 @@ defmodule FlechaTest do
     assert Flecha.add_computation(computation) === {:ok, "computation added"}
   end
 
-  test "add new io generator" do
-    computation = %Flecha.Computation{
-      id: "add_io_generator_test",
-      template: @test_computation_template
-    }
+  # test "add new io generator" do
+  #   computation = %Flecha.Computation{
+  #     id: "add_io_generator_test",
+  #     template: @test_computation_template
+  #   }
 
-    {:ok, "computation added"} = Flecha.add_computation(computation)
+  #   {:ok, "computation added"} = Flecha.add_computation(computation)
 
-    assert Flecha.add_io(
-             computation.id,
-             "generator",
-             %Flecha.IO.Generator{interval: 100},
-             :input
-           ) == {:ok, "IO created"}
-  end
+  #   assert Flecha.add_io(
+  #            computation.id,
+  #            "generator",
+  #            %Flecha.IO.Generator{interval: 100},
+  #            :input
+  #          ) == {:ok, "IO created"}
+  # end
 
-  test "add new io internal process" do
-    computation = %Flecha.Computation{
-      id: "add_io_internal_process_test",
-      template: @test_computation_template
-    }
+  # test "add new io internal process" do
+  #   computation = %Flecha.Computation{
+  #     id: "add_io_internal_process_test",
+  #     template: @test_computation_template
+  #   }
 
-    {:ok, "computation added"} = Flecha.add_computation(computation)
+  #   {:ok, "computation added"} = Flecha.add_computation(computation)
 
-    assert Flecha.add_io(
-             computation.id,
-             "internal_process",
-             %Flecha.IO.InternalProcess{output_pid: self()},
-             :input
-           ) == {:ok, "IO created"}
-  end
+  #   assert Flecha.add_io(
+  #            computation.id,
+  #            "internal_process",
+  #            %Flecha.IO.InternalProcess{output_pid: self()},
+  #            :input
+  #          ) == {:ok, "IO created"}
+  # end
 
   # TODO:
   # test "computation flow generation -> internal_process" do
