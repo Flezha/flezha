@@ -3,7 +3,7 @@ defmodule Flecha.Computation do
 
   use GenServer
 
-  defstruct [:id, :template, :channel, :supervisors, :io, variables: []]
+  defstruct [:id, :template_id, :channel, :supervisors, :io, variables: []]
 
   def start_link(settings) do
     GenServer.start_link(__MODULE__, settings)
@@ -15,7 +15,7 @@ defmodule Flecha.Computation do
      %__MODULE__{
        id: settings.id,
        variables: settings.variables,
-       channel: attach_channel(settings.id, settings.template),
+       channel: attach_channel(settings.id, settings.template_id),
        io: %{
          input: [],
          output: []
@@ -102,10 +102,10 @@ defmodule Flecha.Computation do
     end
   end
 
-  def attach_channel(computation_id, template) do
+  def attach_channel(computation_id, template_id) do
     # Get numeric representation of the channel_id string.
     channel_name_int = String.to_charlist(computation_id) |> Enum.sum()
-    processor_id = available_processor_id(template)
+    processor_id = available_processor_id(template_id)
 
     core_count = System.schedulers_online() * 2
     channel_index = rem(channel_name_int, core_count) + 1

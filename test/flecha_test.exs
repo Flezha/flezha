@@ -17,7 +17,7 @@ defmodule FlechaTest do
   test "add computation" do
     computation = %Flecha.Computation{
       id: "add_compuation_test",
-      template: @test_computation_template
+      template_id: @test_computation_template
     }
 
     assert Flecha.add_computation(computation) === {:ok, "computation added"}
