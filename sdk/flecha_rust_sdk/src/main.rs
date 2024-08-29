@@ -1,20 +1,23 @@
 mod computation;
 mod engine;
 mod service;
+mod command;
 
-use engine::Engine;
+use engine::ComputationEngine;
+use computation::ComputationTemplate;
 
 fn main() {
-    let mut engine = Engine::new();
-    engine.register_computation("do_nothing".to_string(), Box::new(DoNothingComputation));
+    let mut engine = ComputationEngine::new();
+
+    engine.register_template("do_nothing".to_string(), || Box::new(DoNothingComputation{}));
 
     // TODO: remove later.
     std::thread::sleep(std::time::Duration::from_secs(5));
 }
 
-struct DoNothingComputation;
+struct DoNothingComputation {}
 
-impl computation::Computation for DoNothingComputation {
+impl ComputationTemplate for DoNothingComputation {
     fn compute(&self, input: String) {
         println!("Do nothing with input: {}", input);
     }
