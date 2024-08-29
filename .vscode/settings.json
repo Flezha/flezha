@@ -1,0 +1,5 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "./sdk/flecha_rust_sdk/Cargo.toml"
+    ]
+}
