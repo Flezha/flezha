@@ -117,34 +117,4 @@ fn parse_message(buffer: &[u8]) -> Option<(&str, &str)> {
     }
 }
 
-// TODO: to send message back add a function to the computation.
-// use std::sync::mpsc::Sender;
-// use std::os::unix::net::{UnixListener, UnixStream};
-// use std::io::{Read, Write};
-// use std::sync::{RwLock, Arc, Mutex};
-// use std::collections::HashMap;
-// use std::thread;
-// use std::str;
-// use std::io::Cursor;
-// use byteorder::{LittleEndian, BigEndian, ReadBytesExt, WriteBytesExt};
 
-// // Prepare message in the format: 
-// let mut buffer = Cursor::new(Vec::new());
-
-// // Convert pipeline_id to bytes and write length and bytes
-// let computation_str = computation_id.to_string();
-// let computation_id_bytes = computation_str.as_bytes().to_vec();
-// buffer.write_u32::<LittleEndian>(computation_id_bytes.len() as u32).unwrap();
-// buffer.write_all(&computation_id_bytes).unwrap();
-
-// // Convert result to bytes and write length and bytes
-// let result_bytes = result.as_bytes();
-// buffer.write_u32::<LittleEndian>(result_bytes.len() as u32).unwrap();
-// buffer.write_all(result_bytes).unwrap();
-
-// let message = buffer.into_inner();
-
-// if let Err(err) = stream.write_all(&message) {
-//     eprintln!("Error writing to stream: {}", err);
-//     break;
-// }
