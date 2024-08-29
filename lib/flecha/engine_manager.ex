@@ -40,7 +40,7 @@ defmodule Flecha.EngineManager do
         @code_computation_new,
         %{
           "computation_id" => computation.id,
-          "computation_template" => computation.template,
+          "template_id" => computation.template_id,
           "variables" => computation.variables
         }
       )
