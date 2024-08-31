@@ -76,8 +76,7 @@ defmodule Flecha.Computation do
 
   @impl true
   def handle_cast({:io_in, _type, message}, state) do
-    index = 0
-    message = "#{state.computation_id}\0#{index}\0#{message}"
+    message = "#{state.id}\0#{message}"
     message_length = byte_size(message)
     message = <<message_length::size(32), message::binary>>
 
