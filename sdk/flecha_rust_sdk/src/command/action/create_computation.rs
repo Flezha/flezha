@@ -2,6 +2,7 @@ use super::CommandAction;
 
 use serde::Deserialize;
 
+use crate::service::payloader;
 use crate::service::std_out;
 use crate::computation::Computation;
 use crate::engine::worker::EngineWorker;
@@ -20,6 +21,7 @@ impl CommandAction for CreateComputationCommand {
         reference_id: String,
     ) {
         let template_factory = engine_worker.get_template_factory(self.template_id.clone()).unwrap();
+        let payload = payloader::build_payload(&"30".to_string(), &reference_id);
 
         let computation = Computation{
             id: self.computation_id.clone(),
@@ -27,7 +29,8 @@ impl CommandAction for CreateComputationCommand {
         };
     
         engine_worker.register_computation(computation);
+
         
-        std_out::reply_ref(&reference_id);
+        std_out::write_bytes(payload);
     }
 }

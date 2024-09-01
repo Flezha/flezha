@@ -3,6 +3,7 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 use crate::computation::{Computation, ComputationTemplate};
 use crate::service::std_out;
+use crate::service::payloader;
 use crate::command::action;
 
 use super::ThreadItem;
@@ -26,8 +27,8 @@ pub fn start_worker_thread(rx: Arc<Mutex<mpsc::Receiver<ThreadItem>>>) -> thread
             match rx.recv() {
                 Ok(received) => {
                     match received {
-                        ThreadItem::Command(_command) => {
-                            action::handle_action(&mut engine_worker, &_command);
+                        ThreadItem::Command(payload_id, command) => {
+                            action::handle_action(&mut engine_worker, &payload_id,&command);
                         }
                         ThreadItem::ComputationTemplate((template_id, factory)) => {
                             engine_worker.register_template(template_id, factory)
@@ -64,10 +65,8 @@ impl EngineWorker {
 
         let json = serde_json::to_string(&core_data).unwrap();
 
-        // TODO: removing this will cause an error on elixir side.
-        println!("DEBUGSTART: {} DEBUGEND", json);
-
-        std_out::write_w_code(39, &json);
+        let payload = payloader::build_payload(&"39".to_string(), &json);
+        std_out::write_bytes(payload);
 
         self.templates_factory.insert(template_id.clone(), factory);
     }

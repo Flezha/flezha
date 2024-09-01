@@ -52,8 +52,9 @@ fn start_socket_listener(id: String, computations: Arc<RwLock<HashMap<String, Ar
     }
 
     let listener = UnixListener::bind(socket_path).expect("Failed to bind socket");
-    
-    std_out::reply_ref(&reference_id);
+    let payload = payloader::build_payload(&"30".to_string(), &reference_id);
+
+    std_out::write_bytes(payload);
 
     for stream in listener.incoming() {
         match stream {
@@ -68,7 +69,7 @@ fn start_socket_listener(id: String, computations: Arc<RwLock<HashMap<String, Ar
 
 fn handle_client(mut stream: UnixStream, computations: Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>) {
     loop {
-        match payloader::read_message(&mut stream) {
+        match payloader::extract_payload(&mut stream) {
             Ok((computation_id, message)) => {
                 let computations_read = computations.read().unwrap();
                 

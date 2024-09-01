@@ -19,33 +19,32 @@ pub trait CommandAction {
 
 #[derive(Deserialize)]
 struct Command {
-    code: u8,
     reference_id: String,
     data: Value,
 }
 
 pub fn handle_action(
     engine_worker: &mut EngineWorker,
+    payload_id: &String,
     message: &String
 ) {
     // Deserialize the command from the JSON message
     let command: Command = serde_json::from_str(message).expect("Failed to parse command");
-    let code = command.code;
     let reference_id = command.reference_id;
 
-    let command_action: Box<dyn CommandAction> = match code {
-        40 => {
+    let command_action: Box<dyn CommandAction> = match payload_id.as_str() {
+        "40" => {
             let open_socket_command: open_socket::OpenSocketCommand = serde_json::from_value(command.data)
                 .expect("Failed to deserialize OpenSocketCommand");
             Box::new(open_socket_command)
         }
-        41 => {
+        "41" => {
             let create_pipeline_command: CreateComputationCommand = serde_json::from_value(command.data)
                 .expect("Failed to deserialize CreateComputationCommand");
             Box::new(create_pipeline_command)
         }
         _ => {
-            panic!("Unknown command code");
+            panic!("Unknown command payload_id: {}", payload_id);
         }
     };
 

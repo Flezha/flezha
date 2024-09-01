@@ -14,7 +14,7 @@ pub struct ComputationEngine {
 }
 
 pub enum ThreadItem {
-    Command(String),
+    Command(String, String),
     ComputationTemplate((String, fn() -> Box<dyn ComputationTemplate>)),
 }
 
