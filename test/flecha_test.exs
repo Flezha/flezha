@@ -25,6 +25,21 @@ defmodule FlechaTest do
     assert Flecha.add_computation(computation) === {:ok, "computation added"}
   end
 
+  test "validate computation length" do
+    invalid_computation = %Flecha.Computation{
+      id: "some_very_long_computation_id_that_should_fail",
+      template_id: @test_computation_template
+    }
+
+    valid_computation = %Flecha.Computation{
+      id: "computation_string_32_bytes_long",
+      template_id: @test_computation_template
+    }
+
+    assert Flecha.add_computation(invalid_computation) === {:error, "computation id exceeds 32 bytes"}
+    assert Flecha.add_computation(valid_computation) === {:ok, "computation added"}
+  end
+
   test "add new io generator" do
     computation = %Flecha.Computation{
       id: "add_io_generator_test",
