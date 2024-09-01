@@ -18,18 +18,40 @@ defmodule Flecha.Service.Payloader do
   end
 
   def parse_payload(payload) when is_binary(payload) do
+    parse_messages(payload, [])
+  end
+
+  defp parse_messages(<<>>, messages), do: Enum.reverse(messages)
+
+  defp parse_messages(payload, messages) do
+    case parse_single_message(payload) do
+      {:ok, {computation_id, message}, rest} ->
+        parse_messages(rest, [{computation_id, message} | messages])
+
+      :error ->
+        # Handle the case where parsing fails or there's not enough data for another message
+        Enum.reverse(messages)
+    end
+  end
+
+  defp parse_single_message(payload) do
     # Extract the first 8 bytes for the message size
-    <<message_size::64, rest::binary>> = payload
+    case <<message_size::64, _rest::binary>> = payload do
+      <<_::size(64), rest::binary>> ->
+        # Extract the next 32 bytes for the computation_id
+        case <<computation_id::binary-size(32), _message::binary>> = rest do
+          <<_::binary-size(32), message::binary>> ->
+            # Extract the message based on the message size
+            case <<message_content::binary-size(message_size), _rest_of_payload::binary>> = message do
+              <<_::binary-size(message_size), rest_of_payload::binary>> ->
+                computation_id_trimmed = String.trim_trailing(computation_id)
+                {:ok, {computation_id_trimmed, message_content}, rest_of_payload}
+            end
 
-    # Extract the next 32 bytes for the computation_id
-    <<computation_id::binary-size(32), message::binary>> = rest
+          _ -> :error
+        end
 
-    # Trim any trailing padding from the computation_id
-    computation_id_trimmed = String.trim_trailing(computation_id)
-
-    # Extract the message based on the message size
-    <<message::binary-size(message_size)>> = message
-
-    {computation_id_trimmed, message}
+      _ -> :error
+    end
   end
 end

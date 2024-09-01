@@ -40,10 +40,13 @@ defmodule Flecha.Channel do
 
   @impl true
   def handle_info({:tcp, _port, payload}, state) do
-    {computation_id, message} = Payloader.parse_payload(payload)
+    compute_mappings = state[:computation_mapping]
 
-    Map.get(state[:computation_mapping], computation_id)
-    |> Enum.each(fn pid -> GenServer.cast(pid, {:io_out, :text, message}) end)
+    Payloader.parse_payload(payload)
+    |> Enum.each(fn {computation_id, message} ->
+      Map.get(compute_mappings, computation_id)
+      |> Enum.each(fn pid -> GenServer.cast(pid, {:io_out, :text, message}) end)
+    end)
 
     {:noreply, state}
   end
