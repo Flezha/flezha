@@ -2,6 +2,7 @@ defmodule Flecha.Channel do
   require Logger
 
   alias Flecha.EngineManager
+  alias Flecha.Service.Payloader
 
   use GenServer
 
@@ -24,8 +25,8 @@ defmodule Flecha.Channel do
   end
 
   @impl true
-  def handle_cast({:io_in, _type, payload}, %{socket: socket} = state) do
-    :gen_tcp.send(socket, payload)
+  def handle_cast({:io_in, _type, computation_id, message}, %{socket: socket} = state) do
+    :gen_tcp.send(socket, Payloader.build_payload(computation_id, message))
 
     {:noreply, state}
   end
@@ -39,14 +40,10 @@ defmodule Flecha.Channel do
 
   @impl true
   def handle_info({:tcp, _port, payload}, state) do
-    case parse_payload(payload) do
-      {:ok, computation_id, result} ->
-        Map.get(state[:computation_mapping], computation_id)
-        |> Enum.each(fn pid -> GenServer.cast(pid, {:io_out, :text, result}) end)
+    {computation_id, message} = Payloader.parse_payload(payload)
 
-      :error ->
-        Logger.error("Error parsing payload #{inspect(payload)}")
-    end
+    Map.get(state[:computation_mapping], computation_id)
+    |> Enum.each(fn pid -> GenServer.cast(pid, {:io_out, :text, message}) end)
 
     {:noreply, state}
   end
@@ -57,18 +54,5 @@ defmodule Flecha.Channel do
     IO.puts("Channel closed")
 
     {:noreply, state}
-  end
-
-  defp parse_payload(payload) do
-    <<computation_id_len::little-unsigned-integer-size(32),
-      computation_id::binary-size(computation_id_len),
-      result_len::little-unsigned-integer-size(32), result::binary-size(result_len)>> = payload
-
-    computation_id_str = computation_id |> :binary.bin_to_list() |> List.to_string()
-    result_str = result |> :binary.bin_to_list() |> List.to_string()
-
-    {:ok, computation_id_str, result_str}
-  rescue
-    _ -> :error
   end
 end

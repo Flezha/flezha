@@ -76,11 +76,7 @@ defmodule Flecha.Computation do
 
   @impl true
   def handle_cast({:io_in, _type, message}, state) do
-    message = "#{state.id}\0#{message}"
-    message_length = byte_size(message)
-    message = <<message_length::size(32), message::binary>>
-
-    GenServer.cast(state.channel, {:io_in, :binary, message})
+    GenServer.cast(state.channel, {:io_in, :binary, state.id, message})
 
     {:noreply, state}
   end

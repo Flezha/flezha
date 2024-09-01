@@ -59,7 +59,7 @@ defmodule FlechaTest do
 
   test "computation flow generation -> internal_process" do
     computation = %Flecha.Computation{
-      id: "computation_flow_test_generate_internal",
+      id: "c_flow_test_generate_internal",
       template_id: @test_compare_filter_template
     }
 
