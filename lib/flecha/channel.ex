@@ -44,8 +44,9 @@ defmodule Flecha.Channel do
 
     Payloader.parse_payload(payload)
     |> Enum.each(fn {computation_id, message} ->
-      Map.get(compute_mappings, computation_id)
-      |> Enum.each(fn pid -> GenServer.cast(pid, {:io_out, :text, message}) end)
+      computations = Map.get(compute_mappings, computation_id)
+
+      Enum.each(computations, fn pid -> GenServer.cast(pid, {:io_out, :text, message}) end)
     end)
 
     {:noreply, state}
