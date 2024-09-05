@@ -75,7 +75,7 @@ fn handle_client(mut stream: UnixStream, computations: Arc<RwLock<HashMap<String
                 
                 if let Some(c) = computations_read.get(&computation_id) {
                     let computation = c.lock().unwrap();
-                    let result = computation.template.compute(message);
+                    let result = computation.template.run(message);
 
                     match result {
                         ComputationResult::NoReply => {}

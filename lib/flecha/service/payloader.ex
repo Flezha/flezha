@@ -41,12 +41,17 @@ defmodule Flecha.Service.Payloader do
         # Extract the next 32 bytes for the id
         case <<id::binary-size(32), _message::binary>> = rest do
           <<_::binary-size(32), message::binary>> ->
-            # Extract the message based on the message size
-            case <<message_content::binary-size(message_size), _rest_of_payload::binary>> =
-                   message do
-              <<_::binary-size(message_size), rest_of_payload::binary>> ->
-                payload_id_trimmed = String.trim_trailing(id)
-                {:ok, {payload_id_trimmed, message_content}, rest_of_payload}
+            case message do
+              <<message_content::binary-size(message_size), rest_of_payload::binary>> ->
+                case <<message_content::binary-size(message_size), rest_of_payload::binary>> do
+                  <<_::binary-size(message_size), rest_of_payload::binary>> ->
+                    payload_id_trimmed = String.trim_trailing(id)
+                    {:ok, {payload_id_trimmed, message_content}, rest_of_payload}
+                  _ ->
+                    :error
+                end
+              _ ->
+                :error
             end
 
           _ ->

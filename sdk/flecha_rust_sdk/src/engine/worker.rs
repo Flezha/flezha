@@ -1,7 +1,7 @@
 use std::{collections::HashMap, thread};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
-use crate::computation::{Computation, ComputationTemplate};
+use crate::computation::{Computation, TemplateTrait};
 use crate::service::std_out;
 use crate::service::payloader;
 use crate::command::action;
@@ -9,7 +9,7 @@ use crate::command::action;
 use super::ThreadItem;
 
 pub struct EngineWorker {
-    templates_factory: HashMap<String, fn() -> Box<dyn ComputationTemplate>>,
+    templates_factory: HashMap<String, fn() -> Box<dyn TemplateTrait>>,
     computations: Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>,
     thread_map: Arc<Mutex<HashMap<String, thread::JoinHandle<()>>>>
 }
@@ -48,7 +48,7 @@ impl EngineWorker {
         Arc::clone(&self.computations)
     }
 
-    pub fn get_template_factory(&self, template_id: String) -> Option<&fn() -> Box<dyn ComputationTemplate>> {
+    pub fn get_template_factory(&self, template_id: String) -> Option<&fn() -> Box<dyn TemplateTrait>> {
         self.templates_factory.get(&template_id)
     }
 
@@ -56,7 +56,7 @@ impl EngineWorker {
         Arc::clone(&self.thread_map)
     }
 
-    pub fn register_template(&mut self, template_id: String, factory: fn() -> Box<dyn ComputationTemplate>) {
+    pub fn register_template(&mut self, template_id: String, factory: fn() -> Box<dyn TemplateTrait>) {
         let temp_template = factory();
         let schema_json = serde_json::to_string(&temp_template.get_schema()).unwrap();
         let mut core_data = HashMap::new();

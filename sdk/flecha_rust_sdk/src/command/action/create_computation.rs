@@ -1,5 +1,7 @@
 use super::CommandAction;
 
+use std::collections::HashMap;
+use serde_json::Value;
 use serde::Deserialize;
 
 use crate::service::payloader;
@@ -11,6 +13,7 @@ use crate::engine::worker::EngineWorker;
 pub struct CreateComputationCommand {
     computation_id: String,
     template_id: String,
+    variables: Value,
 }
 
 impl CommandAction for CreateComputationCommand {
@@ -22,15 +25,26 @@ impl CommandAction for CreateComputationCommand {
     ) {
         let template_factory = engine_worker.get_template_factory(self.template_id.clone()).unwrap();
         let payload = payloader::build_payload(&"30".to_string(), &reference_id);
+        let variables = value_to_hashmap(&self.variables).unwrap();
+        
+        let mut template = template_factory();
+        template.update_template(&variables);
 
-        let computation = Computation{
+        let computation = Computation {
             id: self.computation_id.clone(),
-            template: template_factory(),
+            template,
         };
     
         engine_worker.register_computation(computation);
-
         
         std_out::write_bytes(payload);
     }
+}
+
+fn value_to_hashmap(value: &Value) -> Option<HashMap<String, Value>> {
+    value.as_object().map(|map| {
+        map.iter()
+           .map(|(k, v)| (k.clone(), v.clone()))
+           .collect()
+    })
 }
