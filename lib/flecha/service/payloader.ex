@@ -47,9 +47,11 @@ defmodule Flecha.Service.Payloader do
                   <<_::binary-size(message_size), rest_of_payload::binary>> ->
                     payload_id_trimmed = String.trim_trailing(id)
                     {:ok, {payload_id_trimmed, message_content}, rest_of_payload}
+
                   _ ->
                     :error
                 end
+
               _ ->
                 :error
             end

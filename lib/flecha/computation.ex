@@ -3,7 +3,7 @@ defmodule Flecha.Computation do
 
   use GenServer
 
-  defstruct [:id, :template_id, :channel, :supervisors, :io, variables: %{string: "Hello world"}]
+  defstruct [:id, :template_id, :channel, :supervisors, :io, variables: %{}]
 
   def start_link(settings) do
     GenServer.start_link(__MODULE__, settings)

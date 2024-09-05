@@ -17,10 +17,11 @@ defmodule Flecha.Controller do
 
   @impl true
   def handle_call({:add_computation, computation}, _from, state) do
-    response = case validate_computation(computation) do
-      {:error, reason} -> {:error, reason}
-      :ok -> add_computation(computation)
-    end
+    response =
+      case validate_computation(computation) do
+        {:error, reason} -> {:error, reason}
+        :ok -> add_computation(computation)
+      end
 
     {:reply, response, state}
   end

@@ -36,7 +36,9 @@ defmodule FlechaTest do
       template_id: @test_computation_template
     }
 
-    assert Flecha.add_computation(invalid_computation) === {:error, "computation id exceeds 32 bytes"}
+    assert Flecha.add_computation(invalid_computation) ===
+             {:error, "computation id exceeds 32 bytes"}
+
     assert Flecha.add_computation(valid_computation) === {:ok, "computation added"}
   end
 
@@ -75,7 +77,8 @@ defmodule FlechaTest do
   test "computation flow generation -> internal_process" do
     computation = %Flecha.Computation{
       id: "c_flow_test_generate_internal",
-      template_id: @test_compare_filter_template
+      template_id: @test_compare_filter_template,
+      variables: %{"comparable" => "hello world", "inverted" => false}
     }
 
     {:ok, "computation added"} = Flecha.add_computation(computation)
@@ -90,12 +93,14 @@ defmodule FlechaTest do
     assert Flecha.add_io(
              computation.id,
              "generator",
-             %Flecha.IO.Generator{interval: 10000, startup_payload: true},
+             %Flecha.IO.Generator{interval: 10000, startup_payload: true, message: "hello world"},
              :input
            ) == {:ok, "IO created"}
 
     receive do
-      _msg -> assert true
+      _msg ->
+        IO.inspect(_msg, label: "MESSAGE")
+        assert true
     after
       1000 -> assert false
     end

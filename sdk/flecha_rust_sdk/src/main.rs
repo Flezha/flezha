@@ -20,7 +20,7 @@ fn main() {
     engine.register_template(
         "compare_filter".to_string(),
          || Box::new(TemplateManager{
-            template: CompareFilterComputation{ string: "hellos".to_string() }
+            template: CompareFilterComputation{ comparable: "".to_string(), inverted: false }
          })
     );
 
@@ -30,13 +30,27 @@ fn main() {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct CompareFilterComputation {
-    string: String,
+    comparable: String,
+    inverted: bool,
 }
 
 impl Template for CompareFilterComputation {
     fn run(&self, input: String) -> ComputationResult {
         // TODO: only for testing: println!("Compare data: {}", &self.string);
-        ComputationResult::Reply(input)
+
+        if self.inverted {
+            if self.comparable == input {
+                ComputationResult::NoReply
+            } else {
+                ComputationResult::Reply(input)
+            }
+        } else {
+            if self.comparable == input {
+                ComputationResult::Reply(input)
+            } else {
+                ComputationResult::NoReply
+            }
+        }
     }
 
     fn get_schema(&self) -> std::collections::HashMap<String, String> {
