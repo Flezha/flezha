@@ -99,7 +99,6 @@ defmodule FlechaTest do
 
     receive do
       _msg ->
-        IO.inspect(_msg, label: "MESSAGE")
         assert true
     after
       1000 -> assert false
