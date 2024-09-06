@@ -38,7 +38,7 @@ defmodule Flecha.Service.Payloader do
     # First 32 bytes are the id.
     # Next 8 bytes are the message size.
     # Message itself is {nessage_size} bytes long.
-    # The rest of the payload is the payload.
+    # The rest of the payload.
     with <<id::binary-size(32), message_size::64, rest::binary>> <- payload,
          <<message::binary-size(message_size), payload_rest::binary>> <- rest
     do

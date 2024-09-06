@@ -13,8 +13,6 @@ pub fn extract_payload<R: Read>(mut reader: R) -> io::Result<(String, String)> {
     reader.read_exact(&mut length_buf)?;
     let message_length = (&length_buf[..]).read_u64::<BigEndian>()? as usize;
 
-
-
     // Read the actual message.
     let mut message_buf = vec![0; message_length];
     reader.read_exact(&mut message_buf)?;
