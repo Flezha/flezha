@@ -14,7 +14,7 @@ defmodule Flecha.Service.Payloader do
       <<0::size(8 * (8 - byte_size(message_size_binary)))>> <> message_size_binary
 
     # Construct the payload.
-    message_size_padded <> payload_id_padded <> message
+    payload_id_padded <> message_size_padded <> message
   end
 
   def parse_payload(payload) when is_binary(payload) do
@@ -35,33 +35,17 @@ defmodule Flecha.Service.Payloader do
   end
 
   defp parse_single_message(payload) do
-    # Extract the first 8 bytes for the message size
-    case <<message_size::64, _rest::binary>> = payload do
-      <<_::size(64), rest::binary>> ->
-        # Extract the next 32 bytes for the id
-        case <<id::binary-size(32), _message::binary>> = rest do
-          <<_::binary-size(32), message::binary>> ->
-            case message do
-              <<message_content::binary-size(message_size), rest_of_payload::binary>> ->
-                case <<message_content::binary-size(message_size), rest_of_payload::binary>> do
-                  <<_::binary-size(message_size), rest_of_payload::binary>> ->
-                    payload_id_trimmed = String.trim_trailing(id)
-                    {:ok, {payload_id_trimmed, message_content}, rest_of_payload}
-
-                  _ ->
-                    :error
-                end
-
-              _ ->
-                :error
-            end
-
-          _ ->
-            :error
-        end
-
-      _ ->
-        :error
+    # First 32 bytes are the id.
+    # Next 8 bytes are the message size.
+    # Message itself is {nessage_size} bytes long.
+    # The rest of the payload is the payload.
+    with <<id::binary-size(32), message_size::64, rest::binary>> <- payload,
+         <<message::binary-size(message_size), payload_rest::binary>> <- rest
+    do
+      payload_id_trimmed = String.trim_trailing(id)
+      {:ok, {payload_id_trimmed, message}, payload_rest}
+    else
+      _ -> :error
     end
   end
 end
