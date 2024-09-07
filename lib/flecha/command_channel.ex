@@ -11,6 +11,9 @@ defmodule Flecha.CommandChannel do
 
   @impl true
   def init(_) do
+    # TODO: implement with message passing, most likely have to use stdio/stdout.
+    Process.sleep(1000)
+
     socket_path = "app_data/sockets/command.sock"
     opts = [:binary, active: true, reuseaddr: true]
 
@@ -21,7 +24,7 @@ defmodule Flecha.CommandChannel do
 
   @impl true
   def handle_info({:tcp, _port, _payload}, state) do
-    # TODO: implement
+
 
     {:noreply, state}
   end

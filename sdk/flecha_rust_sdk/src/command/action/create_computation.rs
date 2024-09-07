@@ -1,11 +1,11 @@
 use super::CommandAction;
 
 use std::collections::HashMap;
+use std::io::Write;
 use serde_json::Value;
 use serde::Deserialize;
 
 use crate::service::payloader;
-use crate::service::std_out;
 use crate::computation::Computation;
 use crate::engine::worker::EngineWorker;
 
@@ -37,7 +37,7 @@ impl CommandAction for CreateComputationCommand {
     
         engine_worker.register_computation(computation);
         
-        std_out::write_bytes(payload);
+        engine_worker.get_command_stream().lock().unwrap().write_all(&payload).unwrap();
     }
 }
 

@@ -9,7 +9,6 @@ use std::str;
 
 use crate::engine::worker::EngineWorker;
 use crate::computation::{Computation, ComputationResult};
-use crate::service::std_out;
 use crate::service::payloader;
 
 use super::CommandAction;
@@ -30,12 +29,14 @@ impl CommandAction for OpenSocketCommand {
         let socket_id = data_value.clone();
         let computations = engine_worker.get_computations();
         let reference_id = reference_id.clone();
+        let command_stream = engine_worker.get_command_stream();
 
         let handle = thread::spawn(move || {
             start_socket_listener(
                 socket_id, 
                 computations, 
-                reference_id
+                reference_id,
+                command_stream
             );
         });
 
@@ -43,7 +44,12 @@ impl CommandAction for OpenSocketCommand {
     }
 }
 
-fn start_socket_listener(id: String, computations: Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>, reference_id: String) {
+fn start_socket_listener(
+    id: String,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>, 
+    reference_id: String,
+    command_stream: Arc<Mutex<UnixStream>>
+) {
     let socket_path = format!("app_data/sockets/{}.sock", id);
 
     let path = Path::new(&socket_path);
@@ -54,16 +60,12 @@ fn start_socket_listener(id: String, computations: Arc<RwLock<HashMap<String, Ar
     let listener = UnixListener::bind(socket_path).expect("Failed to bind socket");
     let payload = payloader::build_payload(&"30".to_string(), &reference_id);
 
-    std_out::write_bytes(payload);
+    command_stream.lock().unwrap().write_all(&payload).unwrap();
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                let computations_clone = Arc::clone(&computations);
-                thread::spawn(move || handle_client(stream, computations_clone));
-            }
-            Err(e) => eprintln!("Failed to accept connection: {}", e),
-        }
+    if let Ok((stream, _)) = listener.accept() {
+        handle_client(stream, computations)
+    } else {
+        eprintln!("Failed to accept the first connection");
     }
 }
 

@@ -1,8 +1,9 @@
+use std::io::Write;
+use std::os::unix::net::UnixStream;
 use std::{collections::HashMap, thread};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 use crate::computation::{Computation, TemplateTrait};
-use crate::service::std_out;
 use crate::service::payloader;
 use crate::command::action;
 
@@ -11,15 +12,20 @@ use super::ThreadItem;
 pub struct EngineWorker {
     templates_factory: HashMap<String, fn() -> Box<dyn TemplateTrait>>,
     computations: Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>,
-    thread_map: Arc<Mutex<HashMap<String, thread::JoinHandle<()>>>>
+    thread_map: Arc<Mutex<HashMap<String, thread::JoinHandle<()>>>>,
+    command_stream: Arc<Mutex<UnixStream>>,
 }
 
-pub fn start_worker_thread(rx: Arc<Mutex<mpsc::Receiver<ThreadItem>>>) -> thread::JoinHandle<()> {
+pub fn start_worker_thread(
+    rx: Arc<Mutex<mpsc::Receiver<ThreadItem>>>,
+    command_stream: Arc<Mutex<UnixStream>>
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut engine_worker = EngineWorker {
             templates_factory: HashMap::new(),
             computations: Arc::new(RwLock::new(HashMap::new())),
-            thread_map: Arc::new(Mutex::new(HashMap::new()))
+            thread_map: Arc::new(Mutex::new(HashMap::new())),
+            command_stream: command_stream,
         };
 
         loop {
@@ -31,7 +37,7 @@ pub fn start_worker_thread(rx: Arc<Mutex<mpsc::Receiver<ThreadItem>>>) -> thread
                             action::handle_action(&mut engine_worker, &payload_id,&command);
                         }
                         ThreadItem::ComputationTemplate((template_id, factory)) => {
-                            engine_worker.register_template(template_id, factory)
+                            engine_worker.register_template(template_id, factory, engine_worker.command_stream.clone());
                         }
                     }
                 }
@@ -56,7 +62,16 @@ impl EngineWorker {
         Arc::clone(&self.thread_map)
     }
 
-    pub fn register_template(&mut self, template_id: String, factory: fn() -> Box<dyn TemplateTrait>) {
+    pub fn get_command_stream(&self) -> Arc<Mutex<UnixStream>> {
+        Arc::clone(&self.command_stream)
+    }
+
+    pub fn register_template(
+        &mut self,
+        template_id: String,
+        factory: fn() -> Box<dyn TemplateTrait>,
+        command_stream: Arc<Mutex<UnixStream>>
+    ) {
         let temp_template = factory();
         let schema_json = serde_json::to_string(&temp_template.get_schema()).unwrap();
         let mut core_data = HashMap::new();
@@ -66,7 +81,7 @@ impl EngineWorker {
         let json = serde_json::to_string(&core_data).unwrap();
 
         let payload = payloader::build_payload(&"39".to_string(), &json);
-        std_out::write_bytes(payload);
+        command_stream.lock().unwrap().write_all(&payload).unwrap();
 
         self.templates_factory.insert(template_id.clone(), factory);
     }
