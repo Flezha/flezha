@@ -14,7 +14,7 @@ use super::ThreadItem;
 pub fn start_command_thread(
     rx: Arc<Mutex<mpsc::Sender<ThreadItem>>>
 ) -> (thread::JoinHandle<()>, Arc<Mutex<UnixStream>>) {
-    let socket_path = "app_data/sockets/command.sock";
+    let socket_path = "app_data/sockets/command_default.sock"; // TODO: the name should be dynamic
 
     let path = Path::new(&socket_path);
     if path.exists() {

@@ -40,8 +40,7 @@ defmodule Flecha.Service.Payloader do
     # Message itself is {nessage_size} bytes long.
     # The rest of the payload.
     with <<id::binary-size(32), message_size::64, rest::binary>> <- payload,
-         <<message::binary-size(message_size), payload_rest::binary>> <- rest
-    do
+         <<message::binary-size(message_size), payload_rest::binary>> <- rest do
       payload_id_trimmed = String.trim_trailing(id)
       {:ok, {payload_id_trimmed, message}, payload_rest}
     else

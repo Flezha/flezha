@@ -17,11 +17,24 @@ defmodule Flecha.Channel do
     GenServer.call(EngineManager, {:open_socket, id})
 
     socket_path = "app_data/sockets/#{id}.sock"
-    opts = [:binary, active: true, reuseaddr: true]
 
-    {:ok, port} = :gen_tcp.connect({:local, socket_path}, 0, opts)
+    # Clean up socket file if it already exists
+    if File.exists?(socket_path) do
+      File.rm(socket_path)
+    end
 
-    {:ok, %{socket: port, computation_mapping: %{}}}
+    # TODO: move to a separate service
+    opts = [
+      :binary,
+      {:packet, 0},
+      {:active, false},
+      {:reuseaddr, true},
+      {:ip, {:local, socket_path}}
+    ]
+
+    {:ok, socket} = :gen_tcp.listen(0, opts)
+
+    {:ok, %{socket: socket, computation_mapping: %{}}}
   end
 
   @impl true
