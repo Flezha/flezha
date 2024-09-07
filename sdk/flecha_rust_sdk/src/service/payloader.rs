@@ -5,6 +5,7 @@ use byteorder::{BigEndian, WriteBytesExt, ReadBytesExt};
 pub fn extract_payload<R: Read>(mut reader: R) -> io::Result<(String, String)> {
     // Read the payload ID (32 bytes).
     let mut id_buf = [0; 32];
+    
     reader.read_exact(&mut id_buf)?;
     let payload_id = String::from_utf8_lossy(&id_buf).trim_end().to_string();
 

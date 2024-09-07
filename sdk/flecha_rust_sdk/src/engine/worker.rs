@@ -13,12 +13,12 @@ pub struct EngineWorker {
     templates_factory: HashMap<String, fn() -> Box<dyn TemplateTrait>>,
     computations: Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>,
     thread_map: Arc<Mutex<HashMap<String, thread::JoinHandle<()>>>>,
-    command_stream: Arc<Mutex<UnixStream>>,
+    command_stream: Arc<UnixStream>,
 }
 
 pub fn start_worker_thread(
     rx: Arc<Mutex<mpsc::Receiver<ThreadItem>>>,
-    command_stream: Arc<Mutex<UnixStream>>
+    command_stream: Arc<UnixStream>
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut engine_worker = EngineWorker {
@@ -42,6 +42,9 @@ pub fn start_worker_thread(
                     }
                 }
                 Err(_) => {
+                    // TODO: remove later
+                    print!("FAIL");
+
                     eprint!("Failed to receive message on worker channel");
                 }
             }
@@ -62,7 +65,7 @@ impl EngineWorker {
         Arc::clone(&self.thread_map)
     }
 
-    pub fn get_command_stream(&self) -> Arc<Mutex<UnixStream>> {
+    pub fn get_command_stream(&self) -> Arc<UnixStream> {
         Arc::clone(&self.command_stream)
     }
 
@@ -70,18 +73,19 @@ impl EngineWorker {
         &mut self,
         template_id: String,
         factory: fn() -> Box<dyn TemplateTrait>,
-        command_stream: Arc<Mutex<UnixStream>>
+        command_stream: Arc<UnixStream>
     ) {
         let temp_template = factory();
         let schema_json = serde_json::to_string(&temp_template.get_schema()).unwrap();
         let mut core_data = HashMap::new();
+        
         core_data.insert("template_id".to_string(), template_id.clone());
         core_data.insert("schema".to_string(), schema_json); 
 
         let json = serde_json::to_string(&core_data).unwrap();
-
         let payload = payloader::build_payload(&"39".to_string(), &json);
-        command_stream.lock().unwrap().write_all(&payload).unwrap();
+
+        command_stream.try_clone().unwrap().write_all(&payload).unwrap();
 
         self.templates_factory.insert(template_id.clone(), factory);
     }

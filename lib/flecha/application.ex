@@ -8,8 +8,8 @@ defmodule Flecha.Application do
     prepare_socket_dir()
 
     children = [
-      Flecha.EngineManager,
       Flecha.CommandChannel,
+      Flecha.EngineManager,
       Flecha.ChannelSupervisor,
       Flecha.Controller,
       process_hub()

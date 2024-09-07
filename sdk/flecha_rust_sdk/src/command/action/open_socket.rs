@@ -1,6 +1,5 @@
 use serde::Deserialize;
-use std::path::Path;
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::UnixStream;
 use std::io::Write;
 use std::sync::{RwLock, Arc, Mutex};
 use std::collections::HashMap;
@@ -48,25 +47,15 @@ fn start_socket_listener(
     id: String,
     computations: Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>, 
     reference_id: String,
-    command_stream: Arc<Mutex<UnixStream>>
+    command_stream: Arc<UnixStream>
 ) {
     let socket_path = format!("app_data/sockets/{}.sock", id);
-
-    let path = Path::new(&socket_path);
-    if path.exists() {
-        std::fs::remove_file(path).expect("Failed to remove existing socket file");
-    }
-
-    let listener = UnixListener::bind(socket_path).expect("Failed to bind socket");
+    let stream = UnixStream::connect(socket_path).expect("Failed to connect to the socket");
     let payload = payloader::build_payload(&"30".to_string(), &reference_id);
 
-    command_stream.lock().unwrap().write_all(&payload).unwrap();
+    command_stream.try_clone().unwrap().write_all(&payload).unwrap();
 
-    if let Ok((stream, _)) = listener.accept() {
-        handle_client(stream, computations)
-    } else {
-        eprintln!("Failed to accept the first connection");
-    }
+    handle_client(stream, computations)
 }
 
 fn handle_client(mut stream: UnixStream, computations: Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>) {

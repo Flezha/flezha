@@ -36,8 +36,6 @@ struct CompareFilterComputation {
 
 impl Template for CompareFilterComputation {
     fn run(&self, input: String) -> ComputationResult {
-        // TODO: only for testing: println!("Compare data: {}", &self.string);
-
         if self.inverted {
             if self.comparable == input {
                 ComputationResult::NoReply

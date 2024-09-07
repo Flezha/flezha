@@ -36,8 +36,7 @@ impl CommandAction for CreateComputationCommand {
         };
     
         engine_worker.register_computation(computation);
-        
-        engine_worker.get_command_stream().lock().unwrap().write_all(&payload).unwrap();
+        engine_worker.get_command_stream().try_clone().unwrap().write_all(&payload).unwrap();
     }
 }
 

@@ -15,30 +15,36 @@ defmodule Flecha.CommandChannel do
     # TODO: this should be coming from the configuration.
     socket_path = "app_data/sockets/command_default.sock"
 
+    # TODO: move to a separate service to handle sockets
+
     # Clean up socket file if it already exists
     if File.exists?(socket_path) do
       File.rm(socket_path)
     end
 
-    # TODO: move to a separate service
     opts = [
       :binary,
-      {:packet, 0},
-      {:active, false},
-      {:reuseaddr, true},
-      {:ip, {:local, socket_path}}
+      :local,
+      {:active, true},
+      {:ifaddr, {:local, socket_path}}
     ]
 
-    {:ok, socket} = :gen_tcp.listen(0, opts)
+    {:ok, port} = :gen_tcp.listen(0, opts)
 
-    {:ok, %{socket: socket, computation_mapping: %{}}}
+    {:ok, %{port: port, socket_connection: nil}, {:continue, :accept_connection}}
+  end
+
+  @impl true
+  def handle_continue(:accept_connection, state) do
+    {:ok, socket_connection} = :gen_tcp.accept(state[:port])
+
+    {:noreply, %{state | socket_connection: socket_connection}}
   end
 
   @impl true
   def handle_call({:send_command, payload}, _from, state) do
-    Logger.info("Sending command: #{inspect(payload)}")
-
-    :gen_tcp.send(state.socket, payload)
+    # Logger.info("Sending command: #{inspect(payload)}")
+    :ok = :gen_tcp.send(state[:socket_connection], payload)
 
     {:reply, :ok, state}
   end
@@ -54,6 +60,13 @@ defmodule Flecha.CommandChannel do
   @impl true
   def handle_info({:tcp_closed, _port}, state) do
     IO.puts("Channel closed")
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(msg, state) do
+    Logger.warning("Unexpected message at command channel: #{inspect(msg)}")
 
     {:noreply, state}
   end
