@@ -74,11 +74,9 @@ defmodule Flecha.Channel do
     {:noreply, state}
   end
 
-  # TODO: handle this correctly.
+  # TODO: handle this.
   @impl true
   def handle_info({:tcp_closed, _port}, state) do
-    IO.puts("Channel closed")
-
     {:noreply, state}
   end
 end

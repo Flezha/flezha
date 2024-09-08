@@ -5,18 +5,32 @@ use byteorder::{BigEndian, WriteBytesExt, ReadBytesExt};
 pub fn extract_payload<R: Read>(mut reader: R) -> io::Result<(String, String)> {
     // Read the payload ID (32 bytes).
     let mut id_buf = [0; 32];
-    
-    reader.read_exact(&mut id_buf)?;
+    match reader.read_exact(&mut id_buf) {
+        Ok(_) => (),
+        Err(e) => {
+            return Err(e);
+        }
+    }
     let payload_id = String::from_utf8_lossy(&id_buf).trim_end().to_string();
 
     // Read the length prefix (8 bytes).
     let mut length_buf = [0; 8];
-    reader.read_exact(&mut length_buf)?;
+    match reader.read_exact(&mut length_buf) {
+        Ok(_) => (),
+        Err(e) => {
+            return Err(e);
+        }
+    }
     let message_length = (&length_buf[..]).read_u64::<BigEndian>()? as usize;
 
     // Read the actual message.
     let mut message_buf = vec![0; message_length];
-    reader.read_exact(&mut message_buf)?;
+    match reader.read_exact(&mut message_buf) {
+        Ok(_) => (),
+        Err(e) => {
+            return Err(e);
+        }
+    }
     let payload_message = String::from_utf8_lossy(&message_buf).to_string();
 
     Ok((payload_id, payload_message))

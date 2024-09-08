@@ -21,8 +21,9 @@ pub fn start_command_thread(
                 Ok((payload_id, message)) => {
                     tx.lock().unwrap().send(ThreadItem::Command(payload_id, message)).unwrap();
                 }
-                Err(e) => {
-                    eprintln!("Failed to extract payload: {}", e);
+                Err(_e) => {
+                    // TODO: log error
+                    break;
                 }
             }
 

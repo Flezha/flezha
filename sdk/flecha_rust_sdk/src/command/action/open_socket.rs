@@ -78,8 +78,8 @@ fn handle_client(mut stream: UnixStream, computations: Arc<RwLock<HashMap<String
                     eprintln!("Computation with given ID not found {}", computation_id);
                 }
             }
-            Err(e) => {
-                eprintln!("Failed to read message: {}", e);
+            Err(_e) => {
+                // TODO: log error
                 break;
             }
         }
