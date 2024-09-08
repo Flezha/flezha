@@ -55,7 +55,21 @@ defmodule Flecha.EngineManager do
 
   @impl true
   def handle_info({_port, {:data, port_msg}}, state) do
-    Logger.warning("Received data from port: #{inspect(port_msg)}")
+    Logger.info("Received data from port: #{inspect(port_msg)}")
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :port, _port, :normal}, state) do
+    # TODO: Try restarting the port process but do not try indefinetly.
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(msg, state) do
+    Logger.info("Received unexpected message: #{inspect(msg)}")
 
     {:noreply, state}
   end
