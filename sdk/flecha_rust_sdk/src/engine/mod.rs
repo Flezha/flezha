@@ -5,12 +5,15 @@ use crate::computation::TemplateTrait;
 
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self};
+use std::io::{self, Read};
+use std::time::Duration;
 
 pub struct ComputationEngine {
     _worker_thread: Option<thread::JoinHandle<()>>,
     _command_thread: Option<thread::JoinHandle<()>>,
     _rx: Arc<Mutex<mpsc::Receiver<ThreadItem>>>,
     tx: Arc<Mutex<mpsc::Sender<ThreadItem>>>,
+    _stdio_thread: thread::JoinHandle<()>,
 }
 
 pub enum ThreadItem {
@@ -25,12 +28,14 @@ impl ComputationEngine {
         let rx = Arc::new(Mutex::new(rx));
         let (command_thread, command_stream) = commander::start_command_thread(Arc::clone(&tx));
         let worker_thread = worker::start_worker_thread(Arc::clone(&rx), command_stream);
+        let stdio_thread = start_stdio_thread();
 
         ComputationEngine {
             _worker_thread: Some(worker_thread),
             _command_thread: Some(command_thread),
             _rx: rx,
             tx,
+            _stdio_thread: stdio_thread,
         }
     }
 
@@ -39,4 +44,31 @@ impl ComputationEngine {
             ThreadItem::ComputationTemplate((template_id, factory))
         ).unwrap();
     }
+}
+
+// Start a thread to monitor stdout and exit when stdin is closed.
+fn start_stdio_thread() -> thread::JoinHandle<()> {
+       // Start a thread to monitor stdout
+       thread::spawn(|| {
+        let mut buf = [0u8; 1]; // Buffer to read from stdout
+
+        loop {
+            let result = io::stdin().read(&mut buf); // Attempt to read from stdin
+            match result {
+                Ok(0) => {
+                    // TODO: Log that stdin has been closed and exit.
+                    std::process::exit(0);
+                }
+                Ok(_) => {
+                    // Data available; continue monitoring
+                    println!("Data available: {:?}", buf);
+                }
+                Err(_e) => {
+                    // TODO: Log the error.
+                }
+            }
+
+            thread::sleep(Duration::from_secs(1));
+        }
+    })
 }
