@@ -20,6 +20,7 @@ pub struct ComputationEngine {
 pub enum ThreadItem {
     Command(String, String),
     ComputationTemplate((String, fn() -> Box<dyn TemplateTrait>)),
+    EngineIdConfirmation
 }
 
 impl ComputationEngine {
@@ -37,6 +38,12 @@ impl ComputationEngine {
              control_stream
         );
         let stdio_thread = start_stdio_thread();
+
+        // Make sure the engine id is passed to the Flecha core.
+        match rx.lock().unwrap().recv().expect("Failed to engine id sent confirmation") {
+            ThreadItem::EngineIdConfirmation => {},
+            _ => panic!("Wrong order of messages"),
+        }
 
         ComputationEngine {
             _engine_id: engine_id,

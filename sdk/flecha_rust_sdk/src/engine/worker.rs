@@ -41,7 +41,8 @@ pub fn start_worker_thread(
                         }
                         ThreadItem::ComputationTemplate((template_id, factory)) => {
                             engine_worker.register_template(template_id, factory, engine_worker.control_stream.clone());
-                        }
+                        },
+                        _ => panic!("Unexpected message received on worker channel"),
                     }
                 }
                 Err(_) => {

@@ -8,7 +8,6 @@ use crate::service::payloader;
 
 use super::ThreadItem;
 
-
 pub fn connect_stream_socket(
     engine_id: String,
     tx: Arc<Mutex<mpsc::Sender<ThreadItem>>>
@@ -20,6 +19,7 @@ pub fn connect_stream_socket(
     let thread = thread::spawn(move || {
         let payload = payloader::build_payload("0", &engine_id);
         stream_boxed_clone.try_clone().unwrap().write_all(&payload).unwrap();
+        tx.lock().unwrap().send(ThreadItem::EngineIdConfirmation).unwrap();
 
         loop {
             match payloader::extract_payload(&*stream_boxed_clone) {
