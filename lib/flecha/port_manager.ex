@@ -50,20 +50,4 @@ defmodule Flecha.PortManager do
       port
     end)
   end
-
-  # TODO: move to somewhere else this logic.
-  # @impl true
-  # def handle_call({:add_computation, computation}, from, state) do
-  #   ref =
-  #     send_command(
-  #       @payload_id_computation_new,
-  #       %{
-  #         "computation_id" => computation.id,
-  #         "template_id" => computation.template_id,
-  #         "variables" => computation.variables
-  #       }
-  #     )
-
-  #   {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
-  # end
 end

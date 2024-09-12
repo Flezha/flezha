@@ -11,12 +11,9 @@ defmodule Flecha.Engine.StreamSupervisor do
 
   @impl true
   def init(engine_id) do
-    stream_listener = Identifier.stream_listener(engine_id)
-    lsock = GenServer.call(stream_listener, :get_socket)
-
     children =
-      for _x <- 1..ConcurrencyMapper.concurrent_entity_count() do
-        {StreamChannel, lsock}
+      for x <- 1..ConcurrencyMapper.concurrent_entity_count() do
+        Supervisor.child_spec({StreamChannel, engine_id}, id: x)
       end
 
     Supervisor.init(children, strategy: :one_for_one)

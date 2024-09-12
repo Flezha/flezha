@@ -1,5 +1,4 @@
 defmodule Flecha.Engine.Toolbox do
-  alias Flecha.Engine.ControlUnit
   alias Flecha.Engine.EngineSupervisor
   alias Flecha.Service.Payloader
   alias Flecha.Utility.Identifier
@@ -16,7 +15,7 @@ defmodule Flecha.Engine.Toolbox do
 
         EngineSupervisor.start_link({engine_id, sock})
         GenServer.call(control_unit, {:handle_initial_payloads, rest})
-        ControlUnit.command_sockets_connect(engine_id)
+        GenServer.call(control_unit, :command_sockets_connect)
 
       {:error, reason} ->
         :gen_tcp.close(sock)

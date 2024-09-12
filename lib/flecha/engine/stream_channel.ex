@@ -1,17 +1,18 @@
 defmodule Flecha.Engine.StreamChannel do
   alias Flecha.Service.Payloader
+  alias Flecha.Utility.Identifier
 
   require Logger
 
   use GenServer
 
-  def start_link(name) do
-    GenServer.start_link(__MODULE__, nil, name: name)
+  def start_link(engine_id) do
+    GenServer.start_link(__MODULE__, engine_id)
   end
 
   @impl true
-  def init(_arg) do
-    lsock = GenServer.call(:io_feed_listener, :get_socket)
+  def init(engine_id) do
+    lsock = GenServer.call(Identifier.stream_listener(engine_id), :get_socket)
 
     {:ok, %{lsock: lsock, sock: nil}, {:continue, :accept_connection}}
   end

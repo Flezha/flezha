@@ -28,7 +28,7 @@ defmodule Flecha.Engine.EngineSupervisor do
       %{
         id: Listener,
         start:
-          {Listener, :start_link, [Identifier.stream_listener(engine_id), stream_socket_path]}
+          {Listener, :start_link, [{Identifier.stream_listener(engine_id), stream_socket_path}]}
       },
       %{
         id: StreamSupervisor,

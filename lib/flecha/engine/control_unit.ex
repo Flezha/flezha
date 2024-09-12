@@ -3,6 +3,7 @@ defmodule Flecha.Engine.ControlUnit do
   alias Flecha.Service.Payloader
   alias Flecha.Engine.ControlChannel
   alias Flecha.Service.ConcurrencyMapper
+  alias Flecha.Warden
 
   use GenServer
 
@@ -17,19 +18,13 @@ defmodule Flecha.Engine.ControlUnit do
     GenServer.start_link(__MODULE__, engine_id, name: Identifier.control_unit(engine_id))
   end
 
-  def command_sockets_connect(engine_id) do
-    sockets_count = ConcurrencyMapper.concurrent_entity_count()
-
-    ControlChannel.send_control(
-      Identifier.control_channel(engine_id),
-      @payload_id_connect_sockets,
-      %{"sockets_count" => sockets_count}
-    )
-  end
-
   @impl true
   def init(engine_id) do
-    {:ok, %{engine_id: engine_id}}
+    Warden.update(:engines, fn engines ->
+      Map.put(engines, engine_id, [])
+    end)
+
+    {:ok, %{engine_id: engine_id, response_refs: %{}}}
   end
 
   @impl true
@@ -37,6 +32,36 @@ defmodule Flecha.Engine.ControlUnit do
     handle_payload(state, payloads)
 
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call(:command_sockets_connect, from, state) do
+    sockets_count = ConcurrencyMapper.concurrent_entity_count()
+
+    ref =
+      ControlChannel.send_control(
+        Identifier.control_channel(state.engine_id),
+        @payload_id_connect_sockets,
+        %{"sockets_count" => sockets_count}
+      )
+
+    {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+  end
+
+  @impl true
+  def handle_call({:add_computation, computation}, from, state) do
+    ref =
+      ControlChannel.send_control(
+        Identifier.control_channel(state.engine_id),
+        @payload_id_computation_new,
+        %{
+          "computation_id" => computation.id,
+          "template_id" => computation.template_id,
+          "variables" => computation.variables
+        }
+      )
+
+    {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
   end
 
   @impl true
@@ -67,16 +92,13 @@ defmodule Flecha.Engine.ControlUnit do
 
   defp handle_template_registration(state, message) do
     {:ok, data} = Jason.decode(message)
-    {:ok, schema} = Jason.decode(data["schema"])
+    # TODO: maybe add schema opton? {:ok, schema} = Jason.decode(data["schema"])
 
-    # TODO: should be coming from the configuration.
-    engine_name = "default"
-
-    computation_engines =
-      Application.get_env(:flecha_core, :computation_engines, %{})
-      |> put_in([engine_name, :computation_templates, data["template_id"]], schema)
-
-    Application.put_env(:flecha_core, :computation_engines, computation_engines)
+    Warden.update(:engines, fn engines ->
+      Map.update(engines, state[:engine_id], [], fn templates ->
+        [data["template_id"] | templates]
+      end)
+    end)
 
     state
   end
