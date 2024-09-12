@@ -2,15 +2,45 @@ defmodule Flecha.Engine.ControlChannel do
   alias Flecha.EnginesManager
   alias Flecha.Socket.Support
   alias Flecha.Utility.Identifier
+  alias Flecha.Service.Payloader
+  alias Flecha.Service.ConcurrencyMapper
 
   require Logger
 
   use GenServer
 
+  @payload_id_connect_sockets "40"
+
   def start_link({engine_id, sock}) do
     GenServer.start_link(__MODULE__, {engine_id, sock},
       name: Identifier.control_channel(engine_id)
     )
+  end
+
+  def command_sockets_connect(engine_id) do
+    sockets_count = ConcurrencyMapper.concurrent_entity_count()
+
+    send_control(
+      Identifier.control_channel(engine_id),
+      @payload_id_connect_sockets,
+      %{"sockets_count" => sockets_count}
+    )
+  end
+
+  def send_control(control_channel, payload_id, data) do
+    ref = gen_ref()
+
+    command =
+      Jason.encode!(%{
+        "data" => data,
+        "reference_id" => ref
+      })
+
+    payload = Payloader.build_payload(payload_id, command)
+
+    GenServer.call(control_channel, {:send_control, payload})
+
+    ref
   end
 
   @impl true
@@ -55,5 +85,11 @@ defmodule Flecha.Engine.ControlChannel do
     Logger.warning("Unexpected message at control channel: #{inspect(msg)}")
 
     {:noreply, state}
+  end
+
+  defp gen_ref() do
+    make_ref()
+    |> :erlang.ref_to_list()
+    |> List.to_string()
   end
 end

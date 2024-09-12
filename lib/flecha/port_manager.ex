@@ -54,7 +54,6 @@ defmodule Flecha.PortManager do
   # TODO: move to somewhere else this logic.
   # @payload_id_reference "30"
   # @payload_id_template_register "39"
-  # @payload_id_socket_open "40"
   # @payload_id_computation_new "41"
 
   # @impl true
@@ -124,27 +123,5 @@ defmodule Flecha.PortManager do
   #   end
 
   #   Map.put(state, :response_refs, Map.delete(state[:response_refs], message))
-  # end
-
-  # defp send_command(payload_id, data) do
-  #   ref = gen_ref()
-
-  #   command =
-  #     Jason.encode!(%{
-  #       "data" => data,
-  #       "reference_id" => ref
-  #     })
-
-  #   payload = Payloader.build_payload(payload_id, command)
-
-  #   GenServer.call(CommandChannel, {:send_control, payload})
-
-  #   ref
-  # end
-
-  # defp gen_ref() do
-  #   make_ref()
-  #   |> :erlang.ref_to_list()
-  #   |> List.to_string()
   # end
 end
