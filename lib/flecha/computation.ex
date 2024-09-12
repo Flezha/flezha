@@ -1,5 +1,6 @@
 defmodule Flecha.Computation do
   alias Flecha.IOSupervisor
+  alias Flecha.Service.ConcurrencyMapper
 
   use GenServer
 
@@ -98,16 +99,21 @@ defmodule Flecha.Computation do
   end
 
   def attach_channel(computation_id, template_id) do
-    # Get numeric representation of the channel_id string.
-    channel_name_int = String.to_charlist(computation_id) |> Enum.sum()
+    # Get numeric representation of the computation_id string.
+    computation_id_string = String.to_charlist(computation_id) |> Enum.sum()
+
+    # Pick the processor engine that can handle the template_id.
     processor_id = available_processor_id(template_id)
 
-    core_count = System.schedulers_online() * 2
-    channel_index = rem(channel_name_int, core_count) + 1
+    # Pick the channel index based on the channel_name_int.
+    count = ConcurrencyMapper.concurrent_entity_count()
+    channel_index = rem(computation_id_string, count) + 1
 
-    (Integer.to_string(channel_index) <> "_" <> processor_id) |> String.to_atom()
+    ("io_" <> processor_id <> "_" <> Integer.to_string(channel_index)) |> String.to_atom()
   end
 
+  # TODO: We're only attaching one processor but we may accidently have more than one
+  # processor engines with the same template_id
   defp available_processor_id(template) do
     computation_engines = Application.get_env(:flecha_core, :computation_engines)
 

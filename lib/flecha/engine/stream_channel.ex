@@ -1,8 +1,7 @@
-defmodule Flecha.Channel do
-  require Logger
-
-  alias Flecha.EngineManager
+defmodule Flecha.Engine.StreamChannel do
   alias Flecha.Service.Payloader
+
+  require Logger
 
   use GenServer
 
@@ -11,39 +10,17 @@ defmodule Flecha.Channel do
   end
 
   @impl true
-  def init(_) do
-    id = to_string(:erlang.pid_to_list(self()))
+  def init(_arg) do
+    lsock = GenServer.call(:io_feed_listener, :get_socket)
 
-    socket_path = "app_data/sockets/#{id}.sock"
-
-    # TODO: move to a separate service to handle sockets
-
-    # Clean up socket file if it already exists
-    if File.exists?(socket_path) do
-      File.rm(socket_path)
-    end
-
-    opts = [
-      :binary,
-      :local,
-      {:active, true},
-      {:ifaddr, {:local, socket_path}}
-    ]
-
-    {:ok, port} = :gen_tcp.listen(0, opts)
-
-    # TODO: we are no longer opening socket from sdk but connecting to it, rename accordingly.
-    GenServer.call(EngineManager, {:open_socket, id})
-
-    {:ok, %{port: port, computation_mapping: %{}, socket_connection: nil},
-     {:continue, :accept_connection}}
+    {:ok, %{lsock: lsock, sock: nil}, {:continue, :accept_connection}}
   end
 
   @impl true
   def handle_continue(:accept_connection, state) do
-    {:ok, socket_connection} = :gen_tcp.accept(state[:port])
+    socket = accept_connection(state.lsock)
 
-    {:noreply, %{state | socket_connection: socket_connection}}
+    {:noreply, %{state | sock: socket}}
   end
 
   @impl true
@@ -61,8 +38,17 @@ defmodule Flecha.Channel do
   end
 
   @impl true
+  def handle_info({:tcp_closed, _socket}, state) do
+    Logger.warning("TCP connection closed for IO socket.")
+
+    socket = accept_connection(state.lsock)
+
+    {:noreply, %{state | sock: socket}}
+  end
+
+  @impl true
   def handle_info({:tcp, _port, payload}, state) do
-    compute_mappings = state[:computation_mapping]
+    compute_mappings = state.computation_mapping
 
     Payloader.parse_payload(payload)
     |> Enum.each(fn {computation_id, message} ->
@@ -74,9 +60,17 @@ defmodule Flecha.Channel do
     {:noreply, state}
   end
 
-  # TODO: handle this.
   @impl true
-  def handle_info({:tcp_closed, _port}, state) do
+  def handle_info(msg, state) do
+    Logger.warning("Unexpected message at io channel: #{inspect(msg)}")
+
     {:noreply, state}
+  end
+
+  defp accept_connection(lsock) do
+    {:ok, socket} = :gen_tcp.accept(lsock)
+
+    :inet.setopts(socket, [{:active, true}])
+    :gen_tcp.controlling_process(socket, self())
   end
 end

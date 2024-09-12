@@ -1,5 +1,5 @@
 defmodule Flecha.Controller do
-  alias Flecha.EngineManager
+  alias Flecha.EnginesManager
   alias Flecha.Service.Validator
 
   use GenServer
@@ -36,7 +36,7 @@ defmodule Flecha.Controller do
       ProcessHub.start_child(:flecha_hub, child_spec, async_wait: true)
       |> ProcessHub.await()
 
-    GenServer.call(EngineManager, {:add_computation, computation})
+    GenServer.call(EnginesManager, {:add_computation, computation})
 
     case result do
       {:ok, _} -> {:ok, "computation added"}

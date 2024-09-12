@@ -1,16 +1,20 @@
 defmodule Flecha.Application do
   @moduledoc false
 
+  require Logger
+
   use Application
 
   @impl true
   def start(_type, _args) do
-    prepare_socket_dir()
+    Flecha.Socket.Support.prepare_socket_dir()
 
     children = [
-      Flecha.CommandChannel,
-      Flecha.EngineManager,
-      Flecha.ChannelSupervisor,
+      Flecha.Engine.GroupSupervisor,
+      # TODO: socket paths should be configurable.
+      {Flecha.Socket.Listener, {:control_listener, "app_data/sockets/control_default.sock"}},
+      {Flecha.Socket.Dispatcher, &Flecha.Engine.Toolbox.engine_dispatch_fn/1},
+      Flecha.PortManager,
       Flecha.Controller,
       process_hub()
     ]
@@ -40,10 +44,5 @@ defmodule Flecha.Application do
         ]
       }
     })
-  end
-
-  def prepare_socket_dir() do
-    File.rm_rf("app_data/sockets")
-    File.mkdir_p("app_data/sockets")
   end
 end
