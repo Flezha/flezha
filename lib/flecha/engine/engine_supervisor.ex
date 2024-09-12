@@ -1,4 +1,5 @@
 defmodule Flecha.Engine.EngineSupervisor do
+  alias Flecha.Engine.ControlUnit
   alias Flecha.Engine.ControlChannel
   alias Flecha.Utility.Identifier
   alias Flecha.Socket.Listener
@@ -16,6 +17,10 @@ defmodule Flecha.Engine.EngineSupervisor do
     stream_socket_path = "app_data/sockets/stream_#{engine_id_string}.sock"
 
     children = [
+      %{
+        id: ControlUnit,
+        start: {ControlUnit, :start_link, [engine_id]}
+      },
       %{
         id: ControlChannel,
         start: {ControlChannel, :start_link, [{engine_id, sock}]}

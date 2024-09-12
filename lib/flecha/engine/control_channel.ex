@@ -1,29 +1,15 @@
 defmodule Flecha.Engine.ControlChannel do
-  alias Flecha.EnginesManager
-  alias Flecha.Socket.Support
+  alias Flecha.Socket.Support, as: SocketSupport
   alias Flecha.Utility.Identifier
   alias Flecha.Service.Payloader
-  alias Flecha.Service.ConcurrencyMapper
 
   require Logger
 
   use GenServer
 
-  @payload_id_connect_sockets "40"
-
   def start_link({engine_id, sock}) do
     GenServer.start_link(__MODULE__, {engine_id, sock},
       name: Identifier.control_channel(engine_id)
-    )
-  end
-
-  def command_sockets_connect(engine_id) do
-    sockets_count = ConcurrencyMapper.concurrent_entity_count()
-
-    send_control(
-      Identifier.control_channel(engine_id),
-      @payload_id_connect_sockets,
-      %{"sockets_count" => sockets_count}
     )
   end
 
@@ -45,9 +31,9 @@ defmodule Flecha.Engine.ControlChannel do
 
   @impl true
   def init({engine_id, sock}) do
-    Support.take_ownership(sock)
+    SocketSupport.take_ownership(sock)
 
-    {:ok, %{engine_id: engine_id, sock: sock}}
+    {:ok, %{engine_id: engine_id, sock: sock, control_unit: Identifier.control_unit(engine_id)}}
   end
 
   @impl true
@@ -75,7 +61,7 @@ defmodule Flecha.Engine.ControlChannel do
 
   @impl true
   def handle_info({:tcp, _port, payload}, state) do
-    GenServer.cast(EnginesManager, {:handle_payload, payload})
+    GenServer.cast(state.control_unit, {:handle_payload, payload})
 
     {:noreply, state}
   end

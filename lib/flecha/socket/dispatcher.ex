@@ -26,8 +26,6 @@ defmodule Flecha.Socket.Dispatcher do
   end
 
   defp loop_accept(lsock, dispatch_fn) do
-    :gen_tcp.accept(lsock)
-
     case :gen_tcp.accept(lsock) do
       {:ok, socket} -> dispatch_fn.(socket)
       {:error, reason} -> Logger.error("Failed to accept connection: #{inspect(reason)}")

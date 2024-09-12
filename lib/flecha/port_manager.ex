@@ -52,10 +52,6 @@ defmodule Flecha.PortManager do
   end
 
   # TODO: move to somewhere else this logic.
-  # @payload_id_reference "30"
-  # @payload_id_template_register "39"
-  # @payload_id_computation_new "41"
-
   # @impl true
   # def handle_call({:add_computation, computation}, from, state) do
   #   ref =
@@ -69,59 +65,5 @@ defmodule Flecha.PortManager do
   #     )
 
   #   {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
-  # end
-
-  # @impl true
-  # def handle_cast({:handle_payload, payload}, state) do
-  #   payloads = Payloader.parse_payload(payload)
-
-  #   {:noreply, handle_payload(state, payloads)}
-  # end
-
-  # defp handle_payload(state, []), do: state
-
-  # defp handle_payload(state, [{payload_id, message} | payloads]) do
-  #   state =
-  #     case payload_id do
-  #       @payload_id_reference ->
-  #         handle_reference_response(state, message)
-
-  #       @payload_id_template_register ->
-  #         handle_template_registration(state, message)
-
-  #       _ ->
-  #         Logger.error("Unknown message id: #{payload_id}")
-  #         state
-  #     end
-
-  #   handle_payload(state, payloads)
-  # end
-
-  # defp handle_template_registration(state, message) do
-  #   {:ok, data} = Jason.decode(message)
-  #   {:ok, schema} = Jason.decode(data["schema"])
-
-  #   # TODO: should be coming from the configuration.
-  #   engine_name = "default"
-
-  #   computation_engines =
-  #     Application.get_env(:flecha_core, :computation_engines, %{})
-  #     |> put_in([engine_name, :computation_templates, data["template_id"]], schema)
-
-  #   Application.put_env(:flecha_core, :computation_engines, computation_engines)
-
-  #   state
-  # end
-
-  # defp handle_reference_response(state, message) do
-  #   case Map.get(state[:response_refs], message) do
-  #     nil ->
-  #       state[:response_refs]
-
-  #     from ->
-  #       GenServer.reply(from, :ok)
-  #   end
-
-  #   Map.put(state, :response_refs, Map.delete(state[:response_refs], message))
   # end
 end

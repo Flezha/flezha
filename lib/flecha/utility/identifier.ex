@@ -16,4 +16,8 @@ defmodule Flecha.Utility.Identifier do
   def stream_sup(engine_id) do
     (Atom.to_string(engine_id) <> "_stream_sup") |> String.to_atom()
   end
+
+  def control_unit(engine_id) do
+    (Atom.to_string(engine_id) <> "_control_unit") |> String.to_atom()
+  end
 end
