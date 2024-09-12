@@ -1,6 +1,7 @@
 defmodule Flecha.Computation do
   alias Flecha.IOSupervisor
   alias Flecha.Service.ConcurrencyMapper
+  alias Flecha.Warden
 
   use GenServer
 
@@ -115,11 +116,11 @@ defmodule Flecha.Computation do
   # TODO: We're only attaching one processor but we may accidently have more than one
   # processor engines with the same template_id
   defp available_processor_id(template) do
-    computation_engines = Application.get_env(:flecha_core, :computation_engines)
+    engines = Warden.get(:engines)
 
     item =
-      Enum.find(computation_engines, fn {_name, computation_engine} ->
-        Enum.any?(computation_engine[:computation_templates], fn {template_id, _} ->
+      Enum.find(engines, fn {_engine_id, templates} ->
+        Enum.any?(templates, fn template_id ->
           template == template_id
         end)
       end)
