@@ -13,52 +13,50 @@ use crate::service::payloader;
 use super::CommandAction;
 
 #[derive(Deserialize)]
-pub struct OpenSocketCommand {
-    socket_id: String,
+pub struct ConnectSocketCommand {
+    sockets_count: u8
 }
 
-impl CommandAction for OpenSocketCommand {
+impl CommandAction for ConnectSocketCommand {
     fn handle(
         &self,
         engine_worker: &mut EngineWorker,
         _message: &String,
         reference_id: String,
     ) {
-        let data_value = self.socket_id.clone();
-        let socket_id = data_value.clone();
         let computations = engine_worker.get_computations();
         let reference_id = reference_id.clone();
-        let command_stream = engine_worker.get_command_stream();
+        let control_stream = engine_worker.get_control_stream();
 
-        let handle = thread::spawn(move || {
-            start_socket_listener(
-                socket_id, 
-                computations, 
-                reference_id,
-                command_stream
-            );
-        });
+        for i in 0..self.sockets_count {
+            let computations = Arc::clone(&computations);
+            let reference_id = reference_id.clone();
+            let control_stream = Arc::clone(&control_stream);
+            let engine_id = engine_worker.get_engine_id();
+        
+            let handle = thread::spawn(move || {
+                start_socket_listener(&engine_id, &computations);
+            });
+        
+            engine_worker.get_thread_map().lock().unwrap().insert(i, handle);
 
-        engine_worker.get_thread_map().lock().unwrap().insert(data_value, handle);
+            let payload = payloader::build_payload(&"30".to_string(), &reference_id);
+            control_stream.try_clone().unwrap().write_all(&payload).unwrap();
+        }
     }
 }
 
 fn start_socket_listener(
-    id: String,
-    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>, 
-    reference_id: String,
-    command_stream: Arc<UnixStream>
+    engine_id: &String,
+    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>,
 ) {
-    let socket_path = format!("app_data/sockets/{}.sock", id);
+    let socket_path = format!("app_data/sockets/stream_{}.sock", engine_id); // TODO: should be configurable
     let stream = UnixStream::connect(socket_path).expect("Failed to connect to the socket");
-    let payload = payloader::build_payload(&"30".to_string(), &reference_id);
-
-    command_stream.try_clone().unwrap().write_all(&payload).unwrap();
 
     handle_client(stream, computations)
 }
 
-fn handle_client(mut stream: UnixStream, computations: Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>) {
+fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>) {
     loop {
         match payloader::extract_payload(&mut stream) {
             Ok((computation_id, message)) => {

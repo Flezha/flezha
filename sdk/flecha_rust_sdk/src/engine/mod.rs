@@ -1,5 +1,5 @@
 pub mod worker;
-mod commander;
+mod control_unit;
 
 use crate::computation::TemplateTrait;
 
@@ -9,8 +9,9 @@ use std::io::{self, Read};
 use std::time::Duration;
 
 pub struct ComputationEngine {
+    _engine_id: String,
     _worker_thread: Option<thread::JoinHandle<()>>,
-    _command_thread: Option<thread::JoinHandle<()>>,
+    _control_thread: Option<thread::JoinHandle<()>>,
     _rx: Arc<Mutex<mpsc::Receiver<ThreadItem>>>,
     tx: Arc<Mutex<mpsc::Sender<ThreadItem>>>,
     _stdio_thread: thread::JoinHandle<()>,
@@ -22,17 +23,25 @@ pub enum ThreadItem {
 }
 
 impl ComputationEngine {
-    pub fn new() -> ComputationEngine {
+    pub fn new(engine_id: String) -> ComputationEngine {
         let (tx, rx): (mpsc::Sender<ThreadItem>, mpsc::Receiver<ThreadItem>) = mpsc::channel();
         let tx = Arc::new(Mutex::new(tx));
         let rx = Arc::new(Mutex::new(rx));
-        let (command_thread, command_stream) = commander::start_command_thread(Arc::clone(&tx));
-        let worker_thread = worker::start_worker_thread(Arc::clone(&rx), command_stream);
+        let (control_thread, control_stream) = control_unit::connect_stream_socket(
+            engine_id.clone(),
+            Arc::clone(&tx)
+        );
+        let worker_thread = worker::start_worker_thread(
+            engine_id.clone(),
+            Arc::clone(&rx),
+             control_stream
+        );
         let stdio_thread = start_stdio_thread();
 
         ComputationEngine {
+            _engine_id: engine_id,
             _worker_thread: Some(worker_thread),
-            _command_thread: Some(command_thread),
+            _control_thread: Some(control_thread),
             _rx: rx,
             tx,
             _stdio_thread: stdio_thread,

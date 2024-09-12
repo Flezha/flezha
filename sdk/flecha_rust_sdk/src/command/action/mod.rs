@@ -1,5 +1,7 @@
 mod create_computation;
-mod open_socket;
+mod connect_streams;
+
+use connect_streams::ConnectSocketCommand;
 
 use crate::engine::worker::EngineWorker;
 
@@ -34,9 +36,10 @@ pub fn handle_action(
 
     let command_action: Box<dyn CommandAction> = match payload_id.as_str() {
         "40" => {
-            let open_socket_command: open_socket::OpenSocketCommand = serde_json::from_value(command.data)
-                .expect("Failed to deserialize OpenSocketCommand");
-            Box::new(open_socket_command)
+            let connect_streams_command: ConnectSocketCommand = serde_json::from_value(command.data)
+            .expect("Failed to deserialize OpenSocketCommand");
+
+            Box::new(connect_streams_command)
         }
         "41" => {
             let create_pipeline_command: CreateComputationCommand = serde_json::from_value(command.data)

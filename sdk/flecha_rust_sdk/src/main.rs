@@ -8,7 +8,7 @@ use computation::{Template, TemplateManager, ComputationResult};
 use serde::{Serialize, Deserialize};
 
 fn main() {
-    let mut engine = ComputationEngine::new();
+    let mut engine = ComputationEngine::new("default".to_string());
 
     engine.register_template(
         "do_nothing".to_string(),
