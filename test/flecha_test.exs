@@ -14,21 +14,19 @@ defmodule FlechaTest do
 
     # Application.put_env(:flecha_core, :computation_engines, computation_engines)
 
+    Process.sleep(1000)
+
     %{}
   end
 
-  test "temp" do
-    Process.sleep(1000)
+  test "add computation" do
+    computation = %Flecha.Computation{
+      id: "add_compuation_test",
+      template_id: @test_computation_template
+    }
+
+    assert Flecha.add_computation(computation) === {:ok, "computation added"}
   end
-
-  # test "add computation" do
-  #   computation = %Flecha.Computation{
-  #     id: "add_compuation_test",
-  #     template_id: @test_computation_template
-  #   }
-
-  #   assert Flecha.add_computation(computation) === {:ok, "computation added"}
-  # end
 
   # test "validate computation length" do
   #   invalid_computation = %Flecha.Computation{
