@@ -10,6 +10,7 @@ defmodule Flecha.Application do
     Flecha.Socket.Support.prepare_socket_dir()
 
     children = [
+      Flecha.Warden,
       # TODO: socket paths should be configurable.
       {Flecha.Socket.Listener, {:control_listener, "app_data/sockets/control_default.sock"}},
       {Flecha.Socket.Dispatcher, &Flecha.Engine.Toolbox.engine_dispatch_fn/1},
