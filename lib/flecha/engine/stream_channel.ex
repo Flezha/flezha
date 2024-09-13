@@ -14,7 +14,15 @@ defmodule Flecha.Engine.StreamChannel do
   def init(engine_id) do
     lsock = GenServer.call(Identifier.stream_listener(engine_id), :get_socket)
 
-    {:ok, %{lsock: lsock, sock: nil}, {:continue, :accept_connection}}
+    {
+      :ok,
+      %{
+        lsock: lsock,
+        sock: nil,
+        computation_mapping: %{}
+      },
+      {:continue, :accept_connection}
+    }
   end
 
   @impl true
@@ -25,8 +33,8 @@ defmodule Flecha.Engine.StreamChannel do
   end
 
   @impl true
-  def handle_cast({:io_in, _type, computation_id, message}, %{socket_connection: sc} = state) do
-    :gen_tcp.send(sc, Payloader.build_payload(computation_id, message))
+  def handle_cast({:io_in, _type, computation_id, message}, %{sock: sock} = state) do
+    :gen_tcp.send(sock, Payloader.build_payload(computation_id, message))
 
     {:noreply, state}
   end

@@ -2,10 +2,11 @@ defmodule Flecha.Computation do
   alias Flecha.IOSupervisor
   alias Flecha.Service.ConcurrencyMapper
   alias Flecha.Warden
+  alias Flecha.Utility.Identifier
 
   use GenServer
 
-  defstruct [:id, :template_id, :channel, :supervisors, :io, variables: %{}]
+  defstruct [:id, :template_id, :channels, :supervisors, :io, variables: %{}]
 
   def start_link(settings) do
     GenServer.start_link(__MODULE__, settings)
@@ -17,7 +18,7 @@ defmodule Flecha.Computation do
      %__MODULE__{
        id: settings.id,
        variables: settings.variables,
-       channel: attach_channel(settings.id, settings.template_id),
+       channels: attach_channels(settings.id, settings.template_id),
        io: %{
          input: [],
          output: []
@@ -78,7 +79,7 @@ defmodule Flecha.Computation do
 
   @impl true
   def handle_cast({:io_in, _type, message}, state) do
-    GenServer.cast(state.channel, {:io_in, :binary, state.id, message})
+    Enum.each(state.channels, &GenServer.cast(&1, {:io_in, :binary, state.id, message}))
 
     {:noreply, state}
   end
@@ -99,35 +100,37 @@ defmodule Flecha.Computation do
     end
   end
 
-  def attach_channel(computation_id, template_id) do
+  def attach_channels(computation_id, template_id) do
     # Get numeric representation of the computation_id string.
     computation_id_string = String.to_charlist(computation_id) |> Enum.sum()
-
-    # Pick the processor engine that can handle the template_id.
-    processor_id = available_processor_id(template_id)
 
     # Pick the channel index based on the channel_name_int.
     count = ConcurrencyMapper.concurrent_entity_count()
     channel_index = rem(computation_id_string, count) + 1
 
-    ("io_" <> processor_id <> "_" <> Integer.to_string(channel_index)) |> String.to_atom()
+    # Pick the processor engine that can handle the template_id.
+    filter_engines(template_id) |> pick_channel(channel_index)
   end
 
-  # TODO: We're only attaching one processor but we may accidently have more than one
-  # processor engines with the same template_id
-  defp available_processor_id(template) do
-    engines = Warden.get(:engines)
-
-    item =
-      Enum.find(engines, fn {_engine_id, templates} ->
-        Enum.any?(templates, fn template_id ->
-          template == template_id
-        end)
+  defp filter_engines(template_id) do
+    engines =
+      Warden.get(:engines)
+      |> Enum.filter(fn {_engine_id, templates} ->
+        Enum.any?(templates, &(&1 === template_id))
       end)
 
-    case item do
-      nil -> raise "computation handler not found"
-      {processor_id, _} -> processor_id
+    case engines do
+      [] -> raise "computation engines not found for template #{inspect(template_id)}"
+      engines -> engines
     end
+  end
+
+  defp pick_channel(engines, channel_index) do
+    Enum.map(engines, fn {engine_id, _} ->
+      # Select one of the stream channels from that engine.
+      Supervisor.which_children(Identifier.stream_sup(engine_id))
+      |> Enum.at(channel_index)
+      |> elem(1)
+    end)
   end
 end
