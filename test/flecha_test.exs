@@ -14,7 +14,7 @@ defmodule FlechaTest do
 
     # Application.put_env(:flecha_core, :computation_engines, computation_engines)
 
-    Process.sleep(1000)
+    Process.sleep(2000)
 
     %{}
   end
@@ -77,34 +77,34 @@ defmodule FlechaTest do
            ) == {:ok, "IO created"}
   end
 
-  # test "computation flow generation -> internal_process" do
-  #   computation = %Flecha.Computation{
-  #     id: "c_flow_test_generate_internal",
-  #     template_id: @test_compare_filter_template,
-  #     variables: %{"comparable" => "hello world", "inverted" => false}
-  #   }
+  test "computation flow generation -> internal_process" do
+    computation = %Flecha.Computation{
+      id: "c_flow_test_generate_internal",
+      template_id: @test_compare_filter_template,
+      variables: %{"comparable" => "hello world", "inverted" => false}
+    }
 
-  #   {:ok, "computation added"} = Flecha.add_computation(computation)
+    {:ok, "computation added"} = Flecha.add_computation(computation)
 
-  #   assert Flecha.add_io(
-  #            computation.id,
-  #            "internal_process",
-  #            %Flecha.IO.InternalProcess{output_pid: self()},
-  #            :output
-  #          ) == {:ok, "IO created"}
+    # assert Flecha.add_io(
+    #          computation.id,
+    #          "internal_process",
+    #          %Flecha.IO.InternalProcess{output_pid: self()},
+    #          :output
+    #        ) == {:ok, "IO created"}
 
-  #   assert Flecha.add_io(
-  #            computation.id,
-  #            "generator",
-  #            %Flecha.IO.Generator{interval: 10000, startup_payload: true, message: "hello world"},
-  #            :input
-  #          ) == {:ok, "IO created"}
+    # assert Flecha.add_io(
+    #          computation.id,
+    #          "generator",
+    #          %Flecha.IO.Generator{interval: 10000, startup_payload: true, message: "hello world"},
+    #          :input
+    #        ) == {:ok, "IO created"}
 
-  #   receive do
-  #     _msg ->
-  #       assert true
-  #   after
-  #     1000 -> assert false
-  #   end
-  # end
+    # receive do
+    #   _msg ->
+    #     assert true
+    # after
+    #   1000 -> assert false
+    # end
+  end
 end

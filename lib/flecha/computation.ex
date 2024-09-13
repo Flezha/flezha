@@ -102,11 +102,11 @@ defmodule Flecha.Computation do
 
   def attach_channels(computation_id, template_id) do
     # Get numeric representation of the computation_id string.
-    computation_id_string = String.to_charlist(computation_id) |> Enum.sum()
+    computation_int = String.to_charlist(computation_id) |> Enum.sum()
 
     # Pick the channel index based on the channel_name_int.
     count = ConcurrencyMapper.concurrent_entity_count()
-    channel_index = rem(computation_id_string, count) + 1
+    channel_index = rem(computation_int, count)
 
     # Pick the processor engine that can handle the template_id.
     filter_engines(template_id) |> pick_channel(channel_index)
