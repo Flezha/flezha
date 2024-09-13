@@ -3,6 +3,7 @@ defmodule Flecha.Engine.ControlUnit do
   alias Flecha.Service.Payloader
   alias Flecha.Engine.ControlChannel
   alias Flecha.Service.ConcurrencyMapper
+  alias Flecha.Service.EventManager
   alias Flecha.Warden
 
   use GenServer
@@ -99,6 +100,8 @@ defmodule Flecha.Engine.ControlUnit do
         [data["template_id"] | templates]
       end)
     end)
+
+    EventManager.dispath(:template_registered, data["template_id"])
 
     state
   end

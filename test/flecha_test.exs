@@ -6,16 +6,6 @@ defmodule FlechaTest do
   @test_compare_filter_template "compare_filter"
 
   setup_all do
-    # TODO: need to think of another way to make sure engine is running.
-    # computation_engines =
-    #   Application.get_env(:flecha_core, :computation_engines, %{})
-    #   |> put_in(["default", :computation_templates, @test_computation_template], %{})
-    #   |> put_in(["default", :computation_templates, @test_compare_filter_template], %{})
-
-    # Application.put_env(:flecha_core, :computation_engines, computation_engines)
-
-    Process.sleep(1000)
-
     %{}
   end
 

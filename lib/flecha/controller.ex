@@ -7,12 +7,15 @@ defmodule Flecha.Controller do
 
   @computation_id_max_bytes 32
 
-  def start_link(arg) do
-    GenServer.start_link(__MODULE__, arg, name: __MODULE__)
+  def start_link(_) do
+    GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   end
 
   @impl true
   def init(_) do
+    init_hook = Application.fetch_env!(:flecha_core, :controller_init_hook)
+    init_hook.()
+
     {:ok, %{}}
   end
 
