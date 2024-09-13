@@ -61,8 +61,6 @@ defmodule Flecha.Engine.ControlChannel do
 
   @impl true
   def handle_info({:tcp, _port, payload}, state) do
-    IO.puts("HANDLING REFERENCE #{inspect(payload)}")
-
     GenServer.cast(state.control_unit, {:handle_payload, payload})
 
     {:noreply, state}
