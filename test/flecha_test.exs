@@ -86,19 +86,19 @@ defmodule FlechaTest do
 
     {:ok, "computation added"} = Flecha.add_computation(computation)
 
-    # assert Flecha.add_io(
-    #          computation.id,
-    #          "internal_process",
-    #          %Flecha.IO.InternalProcess{output_pid: self()},
-    #          :output
-    #        ) == {:ok, "IO created"}
+    assert Flecha.add_io(
+             computation.id,
+             "internal_process",
+             %Flecha.IO.InternalProcess{output_pid: self()},
+             :output
+           ) == {:ok, "IO created"}
 
-    # assert Flecha.add_io(
-    #          computation.id,
-    #          "generator",
-    #          %Flecha.IO.Generator{interval: 10000, startup_payload: true, message: "hello world"},
-    #          :input
-    #        ) == {:ok, "IO created"}
+    assert Flecha.add_io(
+             computation.id,
+             "generator",
+             %Flecha.IO.Generator{interval: 10000, startup_payload: true, message: "hello world"},
+             :input
+           ) == {:ok, "IO created"}
 
     # receive do
     #   _msg ->
