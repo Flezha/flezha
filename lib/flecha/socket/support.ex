@@ -5,10 +5,10 @@ defmodule Flecha.Socket.Support do
   end
 
   def set_active(socket) do
-    :inet.setopts(socket, [{:active, true}]) |> IO.inspect(label: "DEBUG3")
+    :inet.setopts(socket, [{:active, true}])
   end
 
   def pass_ownership(socket, pid) do
-    :gen_tcp.controlling_process(socket, self()) |> IO.inspect(label: "DEBUG2")
+    :gen_tcp.controlling_process(socket, pid)
   end
 end
