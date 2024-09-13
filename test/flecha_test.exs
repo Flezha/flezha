@@ -14,7 +14,7 @@ defmodule FlechaTest do
 
     # Application.put_env(:flecha_core, :computation_engines, computation_engines)
 
-    Process.sleep(2000)
+    Process.sleep(1000)
 
     %{}
   end
@@ -100,11 +100,11 @@ defmodule FlechaTest do
              :input
            ) == {:ok, "IO created"}
 
-    # receive do
-    #   _msg ->
-    #     assert true
-    # after
-    #   1000 -> assert false
-    # end
+    receive do
+      _msg ->
+        assert true
+    after
+      1000 -> assert false
+    end
   end
 end

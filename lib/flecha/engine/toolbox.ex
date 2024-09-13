@@ -1,6 +1,5 @@
 defmodule Flecha.Engine.Toolbox do
   alias Flecha.Engine.EngineSupervisor
-  alias Flecha.Engine.ControlChannel
   alias Flecha.Service.Payloader
   alias Flecha.Socket.Support, as: SocketSupport
   alias Flecha.Utility.Identifier

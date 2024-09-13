@@ -81,5 +81,7 @@ defmodule Flecha.Engine.StreamChannel do
 
     :inet.setopts(socket, [{:active, true}])
     :gen_tcp.controlling_process(socket, self())
+
+    socket
   end
 end
