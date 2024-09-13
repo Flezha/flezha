@@ -13,8 +13,8 @@ defmodule Flecha.Service.EventManager do
     }
   end
 
-  def start_link(_) do
-    Blockade.start_link(nil)
+  def start_link(opts) do
+    Blockade.start_link(%{name: opts[:name]})
   end
 
   def add_handler(event_name) do

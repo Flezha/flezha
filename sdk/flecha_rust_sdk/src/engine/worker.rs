@@ -46,9 +46,6 @@ pub fn start_worker_thread(
                     }
                 }
                 Err(_) => {
-                    // TODO: remove later
-                    print!("FAIL");
-
                     eprint!("Failed to receive message on worker channel");
                 }
             }
