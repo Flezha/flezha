@@ -1,6 +1,8 @@
 defmodule Flecha.Engine.Toolbox do
   alias Flecha.Engine.EngineSupervisor
+  alias Flecha.Engine.ControlChannel
   alias Flecha.Service.Payloader
+  alias Flecha.Socket.Support, as: SocketSupport
   alias Flecha.Utility.Identifier
 
   require Logger
@@ -14,6 +16,7 @@ defmodule Flecha.Engine.Toolbox do
         control_unit = Identifier.control_unit(engine_id)
 
         EngineSupervisor.start_link({engine_id, sock})
+        SocketSupport.pass_ownership(sock, EngineSupervisor.find_control_channel(engine_id))
         GenServer.call(control_unit, {:handle_initial_payloads, rest})
         GenServer.call(control_unit, :command_sockets_connect)
 

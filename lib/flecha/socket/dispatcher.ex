@@ -25,6 +25,13 @@ defmodule Flecha.Socket.Dispatcher do
     {:noreply, state, {:continue, :dispatch}}
   end
 
+  @impl true
+  def handle_info(msg, state) do
+    Logger.warning("Dispatcher received unexpected message #{inspect(msg)}")
+
+    {:noreply, state}
+  end
+
   defp loop_accept(lsock, dispatch_fn) do
     case :gen_tcp.accept(lsock) do
       {:ok, socket} -> dispatch_fn.(socket)

@@ -38,4 +38,10 @@ defmodule Flecha.Engine.EngineSupervisor do
 
     Supervisor.init(children, strategy: :one_for_one)
   end
+
+  def find_control_channel(engine_id) do
+    Supervisor.which_children(Identifier.engine_sup(engine_id))
+    |> Enum.find(fn {id, _, _, _} -> id === ControlChannel end)
+    |> elem(1)
+  end
 end

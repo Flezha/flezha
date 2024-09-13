@@ -31,7 +31,7 @@ defmodule Flecha.Engine.ControlChannel do
 
   @impl true
   def init({engine_id, sock}) do
-    SocketSupport.take_ownership(sock)
+    SocketSupport.set_active(sock)
 
     {:ok, %{engine_id: engine_id, sock: sock, control_unit: Identifier.control_unit(engine_id)}}
   end
@@ -61,6 +61,8 @@ defmodule Flecha.Engine.ControlChannel do
 
   @impl true
   def handle_info({:tcp, _port, payload}, state) do
+    IO.puts("HANDLING REFERENCE #{inspect(payload)}")
+
     GenServer.cast(state.control_unit, {:handle_payload, payload})
 
     {:noreply, state}

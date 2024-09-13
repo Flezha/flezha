@@ -30,8 +30,6 @@ impl CommandAction for ConnectSocketCommand {
 
         for i in 0..self.sockets_count {
             let computations = Arc::clone(&computations);
-            let reference_id = reference_id.clone();
-            let control_stream = Arc::clone(&control_stream);
             let engine_id = engine_worker.get_engine_id();
         
             let handle = thread::spawn(move || {
@@ -39,10 +37,10 @@ impl CommandAction for ConnectSocketCommand {
             });
         
             engine_worker.get_thread_map().lock().unwrap().insert(i, handle);
-
-            let payload = payloader::build_payload(&"30".to_string(), &reference_id);
-            control_stream.try_clone().unwrap().write_all(&payload).unwrap();
         }
+
+        let payload = payloader::build_payload(&"30".to_string(), &reference_id);
+        control_stream.try_clone().unwrap().write_all(&payload).unwrap();
     }
 }
 

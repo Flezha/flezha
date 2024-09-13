@@ -4,8 +4,11 @@ defmodule Flecha.Socket.Support do
     File.mkdir_p("app_data/sockets")
   end
 
-  def take_ownership(socket) do
-    :gen_tcp.controlling_process(socket, self())
-    :inet.setopts(socket, [{:active, true}])
+  def set_active(socket) do
+    :inet.setopts(socket, [{:active, true}]) |> IO.inspect(label: "DEBUG3")
+  end
+
+  def pass_ownership(socket, pid) do
+    :gen_tcp.controlling_process(socket, self()) |> IO.inspect(label: "DEBUG2")
   end
 end
