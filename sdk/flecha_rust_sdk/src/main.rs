@@ -2,6 +2,7 @@ mod computation;
 mod engine;
 mod service;
 mod command;
+mod utility;
 
 use engine::ComputationEngine;
 use computation::{Template, TemplateManager, ComputationResult};

@@ -33,3 +33,6 @@ flecha_core-*.tar
 
 # Application data.
 /app_data/sockets/*
+
+# Ignore environment variables file
+.env

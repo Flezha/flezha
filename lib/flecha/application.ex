@@ -1,5 +1,6 @@
 defmodule Flecha.Application do
   @moduledoc false
+  alias Flecha.Socket.Support
 
   require Logger
 
@@ -12,8 +13,7 @@ defmodule Flecha.Application do
     children = [
       Flecha.Warden,
       Flecha.Service.EventManager,
-      # TODO: socket paths should be configurable.
-      {Flecha.Socket.Listener, {:control_listener, "app_data/sockets/control_default.sock"}},
+      {Flecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
       {Flecha.Socket.Dispatcher, &Flecha.Engine.Toolbox.engine_dispatch_fn/1},
       Flecha.PortManager,
       Flecha.Controller,

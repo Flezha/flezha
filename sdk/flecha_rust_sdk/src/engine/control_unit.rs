@@ -5,6 +5,7 @@ use std::time::Duration;
 use std::os::unix::net::UnixStream;
 
 use crate::service::payloader;
+use crate::utility::path_helper;
 
 use super::ThreadItem;
 
@@ -12,7 +13,7 @@ pub fn connect_stream_socket(
     engine_id: String,
     tx: Arc<Mutex<mpsc::Sender<ThreadItem>>>
 ) -> (thread::JoinHandle<()>, Arc<UnixStream>) {
-    let socket_path = "app_data/sockets/control_default.sock"; // TODO: should be configurable
+    let socket_path = path_helper::control_socket_path();
     let stream_boxed = Arc::new(UnixStream::connect(socket_path).expect("Failed to connect to the socket"));
     let stream_boxed_clone = Arc::clone(&stream_boxed);
 

@@ -1,7 +1,7 @@
 import Config
 
 config :flecha_core,
-  controller_init_hook: fn() ->
+  controller_init_hook: fn ->
     Flecha.Service.EventManager.add_handler(:template_registered)
 
     # nr of templates * nr of engines.

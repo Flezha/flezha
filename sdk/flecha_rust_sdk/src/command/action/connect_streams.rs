@@ -12,6 +12,8 @@ use crate::service::payloader;
 
 use super::CommandAction;
 
+use crate::utility::path_helper;
+
 #[derive(Deserialize)]
 pub struct ConnectSocketCommand {
     sockets_count: u8
@@ -48,7 +50,7 @@ fn start_socket_listener(
     engine_id: &String,
     computations: &Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>,
 ) {
-    let socket_path = format!("app_data/sockets/stream_{}.sock", engine_id); // TODO: should be configurable
+    let socket_path = path_helper::stream_socket_path(engine_id);
     let stream = UnixStream::connect(socket_path).expect("Failed to connect to the socket");
 
     handle_client(stream, computations)

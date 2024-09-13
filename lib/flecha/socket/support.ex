@@ -1,14 +1,33 @@
 defmodule Flecha.Socket.Support do
   def prepare_socket_dir() do
-    File.rm_rf("app_data/sockets")
-    File.mkdir_p("app_data/sockets")
+    base_path = sockets_base_path()
+
+    # File.rm_rf(base_path)
+    File.mkdir_p(base_path)
   end
 
   def set_active(socket) do
     :inet.setopts(socket, [{:active, true}])
   end
 
+  @spec pass_ownership(port() | {:"$inet", atom(), any()}, pid()) :: :ok | {:error, atom()}
   def pass_ownership(socket, pid) do
     :gen_tcp.controlling_process(socket, pid)
+  end
+
+  def control_socket_path() do
+    sockets_base_path() <> "control_engine.sock"
+  end
+
+  def stream_socket_path(engine_id) when is_atom(engine_id) do
+    stream_socket_path(Atom.to_string(engine_id))
+  end
+
+  def stream_socket_path(engine_id) when is_binary(engine_id) do
+    sockets_base_path() <> "stream_#{engine_id}.sock"
+  end
+
+  defp sockets_base_path() do
+    Application.fetch_env!(:flecha_core, :socket_files_path)
   end
 end

@@ -3,6 +3,7 @@ defmodule Flecha.Engine.EngineSupervisor do
   alias Flecha.Engine.ControlChannel
   alias Flecha.Utility.Identifier
   alias Flecha.Socket.Listener
+  alias Flecha.Socket.Support, as: SocketSupport
 
   use Supervisor
 
@@ -12,9 +13,7 @@ defmodule Flecha.Engine.EngineSupervisor do
 
   @impl true
   def init({engine_id, sock}) do
-    engine_id_string = Atom.to_string(engine_id)
-    # TODO: socket paths should be configurable.
-    stream_socket_path = "app_data/sockets/stream_#{engine_id_string}.sock"
+    stream_socket_path = SocketSupport.stream_socket_path(engine_id)
 
     children = [
       %{
