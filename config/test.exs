@@ -5,7 +5,7 @@ config :flecha_core,
     Flecha.Service.EventManager.add_handler(:template_registered)
 
     # nr of templates * nr of engines.
-    for _x <- 1..2 do
+    for _x <- 1..3 do
       receive do
         {:template_registered, _template_id} ->
           :ok

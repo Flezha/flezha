@@ -30,7 +30,7 @@ defmodule Flecha.PortManager do
 
   @impl true
   def handle_info(msg, state) do
-    Logger.info("Received unexpected message: #{inspect(msg)}")
+    Logger.info("Port manager received unexpected message: #{inspect(msg)}")
 
     {:noreply, state}
   end

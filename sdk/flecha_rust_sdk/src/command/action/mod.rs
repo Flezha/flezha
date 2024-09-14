@@ -1,5 +1,6 @@
 mod create_computation;
 mod connect_streams;
+mod serialize_computation;
 
 use connect_streams::ConnectSocketCommand;
 
@@ -36,15 +37,20 @@ pub fn handle_action(
 
     let command_action: Box<dyn CommandAction> = match payload_id.as_str() {
         "40" => {
-            let connect_streams_command: ConnectSocketCommand = serde_json::from_value(command.data)
+            let command: ConnectSocketCommand = serde_json::from_value(command.data)
             .expect("Failed to deserialize OpenSocketCommand");
 
-            Box::new(connect_streams_command)
+            Box::new(command)
         }
         "41" => {
-            let create_pipeline_command: CreateComputationCommand = serde_json::from_value(command.data)
+            let command: CreateComputationCommand = serde_json::from_value(command.data)
                 .expect("Failed to deserialize CreateComputationCommand");
-            Box::new(create_pipeline_command)
+            Box::new(command)
+        }
+        "5000" => {
+            let command: CreateComputationCommand = serde_json::from_value(command.data)
+                .expect("Failed to deserialize CreateComputationCommand");
+            Box::new(command)
         }
         _ => {
             panic!("Unknown command payload_id: {}", payload_id);

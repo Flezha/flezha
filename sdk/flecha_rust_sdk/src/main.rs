@@ -25,6 +25,13 @@ fn main() {
          })
     );
 
+    engine.register_template(
+        "increment_state".to_string(), 
+        || Box::new(TemplateManager {
+            template: IncrementStateComputation { value: 5000}
+        })
+    );
+
     // TODO: remove later.
     std::thread::sleep(std::time::Duration::from_secs(15));
 }
@@ -64,6 +71,24 @@ impl Template for CompareFilterComputation {
 struct DoNothingComputation {}
 
 impl Template for DoNothingComputation {
+    fn run(&self, _input: String) -> ComputationResult {
+        ComputationResult::NoReply
+    }
+
+    fn get_schema(&self) -> std::collections::HashMap<String, String> {
+        let mut schema = std::collections::HashMap::new();
+        // TODO: Sending empty schema will throw an error on elixir side.
+        schema.insert("input".to_string(), "string".to_string());
+        schema
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct IncrementStateComputation {
+    value: u32
+}
+
+impl Template for IncrementStateComputation {
     fn run(&self, _input: String) -> ComputationResult {
         ComputationResult::NoReply
     }

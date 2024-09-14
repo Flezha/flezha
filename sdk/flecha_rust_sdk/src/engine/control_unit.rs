@@ -9,7 +9,7 @@ use crate::utility::path_helper;
 
 use super::ThreadItem;
 
-pub fn connect_stream_socket(
+pub fn connect_control_socket(
     engine_id: String,
     tx: Arc<Mutex<mpsc::Sender<ThreadItem>>>
 ) -> (thread::JoinHandle<()>, Arc<UnixStream>) {

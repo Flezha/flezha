@@ -28,7 +28,7 @@ impl ComputationEngine {
         let (tx, rx): (mpsc::Sender<ThreadItem>, mpsc::Receiver<ThreadItem>) = mpsc::channel();
         let tx = Arc::new(Mutex::new(tx));
         let rx = Arc::new(Mutex::new(rx));
-        let (control_thread, control_stream) = control_unit::connect_stream_socket(
+        let (control_thread, control_stream) = control_unit::connect_control_socket(
             engine_id.clone(),
             Arc::clone(&tx)
         );

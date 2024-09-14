@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde_json::Value;
 use std::os::unix::net::UnixStream;
 use std::io::Write;
 use std::sync::{RwLock, Arc, Mutex};
@@ -41,7 +42,11 @@ impl CommandAction for ConnectSocketCommand {
             engine_worker.get_thread_map().lock().unwrap().insert(i, handle);
         }
 
-        let payload = payloader::build_payload(&"30".to_string(), &reference_id);
+        let mut hashmap: HashMap<String, Value> = HashMap::new();
+        hashmap.insert("reference_id".to_string(), Value::String(reference_id));
+
+        let json_string = serde_json::to_string(&hashmap).unwrap();
+        let payload = payloader::build_payload(&"40".to_string(), &json_string);
         control_stream.try_clone().unwrap().write_all(&payload).unwrap();
     }
 }
@@ -63,8 +68,7 @@ fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Strin
                 let computations_read = computations.read().unwrap();
                 
                 if let Some(c) = computations_read.get(&computation_id) {
-                    let computation = c.lock().unwrap();
-                    let result = computation.template.run(message);
+                    let result = c.lock().unwrap().template.run(message);
 
                     match result {
                         ComputationResult::NoReply => {}

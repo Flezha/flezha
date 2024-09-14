@@ -22,12 +22,25 @@ pub trait Template: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync 
 
         *self = from_value(value).expect("Failed to convert from serde_json::Value");
     }
+
+    fn serialize(&self) -> Vec<u8> {
+        bincode::serialize(self).expect("Failed to serialize")
+    }
+
+    fn deserialize(data: &[u8]) -> Self
+    where
+        Self: Sized,
+    {
+        bincode::deserialize(data).expect("Failed to deserialize")
+    }
 }
 
 pub trait TemplateTrait: Send + Sync  {
     fn run(&self, input: String) -> ComputationResult;
     fn update_template(&mut self, map: &HashMap<String, Value>);
     fn get_schema(&self) -> HashMap<String, String>;
+    fn serialize_template(&self) -> Vec<u8>;
+    fn deserialize_template(&self, data: &[u8]) -> Box<dyn TemplateTrait>;
 }
 
 pub struct Computation {
@@ -50,5 +63,14 @@ impl<T: Template> TemplateTrait for TemplateManager<T> {
 
     fn get_schema(&self) -> HashMap<String, String> {
         self.template.get_schema()
+    }
+
+    fn serialize_template(&self) -> Vec<u8> {
+        Template::serialize(&self.template)
+    }
+
+    fn deserialize_template(&self, data: &[u8]) -> Box<dyn TemplateTrait> {
+        let deserialized_template = <T as Template>::deserialize(data);
+        Box::new(TemplateManager { template: deserialized_template })
     }
 }

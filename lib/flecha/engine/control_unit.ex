@@ -10,11 +10,13 @@ defmodule Flecha.Engine.ControlUnit do
 
   require Logger
 
-  @payload_id_reference "30"
+  @payload_id_connect_control_channel "0"
   @payload_id_template_register "39"
   @payload_id_connect_sockets "40"
   @payload_id_computation_new "41"
+  @payload_id_serialize_comp "42"
 
+  @spec start_link(atom()) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link(engine_id) do
     GenServer.start_link(__MODULE__, engine_id, name: Identifier.control_unit(engine_id))
   end
@@ -33,6 +35,18 @@ defmodule Flecha.Engine.ControlUnit do
     handle_payload(state, payloads)
 
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:send_control, command_id, data}, from, state) do
+    ref =
+      ControlChannel.send_control(
+        Identifier.control_channel(state.engine_id),
+        command_id,
+        data
+      )
+
+    {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
   end
 
   @impl true
@@ -75,20 +89,52 @@ defmodule Flecha.Engine.ControlUnit do
   defp handle_payload(state, []), do: state
 
   defp handle_payload(state, [{payload_id, message} | payloads]) do
-    state =
+    {:ok, json_message} = Jason.decode(message) |> IO.inspect(label: "JSON MESSAGE")
+    ref = Map.get(json_message, "reference_id", nil)
+
+    reply =
       case payload_id do
-        @payload_id_reference ->
-          handle_reference_response(state, message)
+        @payload_id_connect_control_channel ->
+          :ok
+
+        @payload_id_computation_new ->
+          :ok
+
+        @payload_id_serialize_comp ->
+          json_message["data"]
+
+        @payload_id_connect_sockets ->
+          :ok
 
         @payload_id_template_register ->
           handle_template_registration(state, message)
 
         _ ->
-          Logger.error("Unknown message id: #{payload_id}")
-          state
+          {:error, "Unknown message id: #{payload_id}"}
       end
 
-    handle_payload(state, payloads)
+    case reply do
+      {:error, reason} ->
+        Logger.error(reason)
+        handle_payload(state, payloads)
+
+      _ ->
+        IO.puts "HANDLING PAYLOAD #{inspect(payload_id)} \n REF: #{ref} \n AND DATA: #{inspect(message)}"
+
+        new_refs = handle_refs(state[:response_refs], ref, reply)
+        handle_payload(Map.put(state, :response_refs, new_refs), payloads)
+    end
+  end
+
+  defp handle_refs(refs, ref, reply) do
+    case Map.get(refs, ref, nil) do
+      nil ->
+        refs
+
+      from ->
+        GenServer.reply(from, reply)
+        Map.delete(refs, ref)
+    end
   end
 
   defp handle_template_registration(state, message) do
@@ -103,18 +149,6 @@ defmodule Flecha.Engine.ControlUnit do
 
     EventManager.dispath(:template_registered, data["template_id"])
 
-    state
-  end
-
-  defp handle_reference_response(state, message) do
-    case Map.get(state[:response_refs], message) do
-      nil ->
-        state[:response_refs]
-
-      from ->
-        GenServer.reply(from, :ok)
-    end
-
-    Map.put(state, :response_refs, Map.delete(state[:response_refs], message))
+    :ok
   end
 end
