@@ -1,9 +1,11 @@
 mod create_computation;
 mod connect_streams;
 mod serialize_computation;
+mod deserialize_computation;
 
 use connect_streams::ConnectSocketCommand;
 use serialize_computation::SerializeComputationCommand;
+use deserialize_computation::DeSerializeComputationCommand;
 
 use crate::engine::worker::EngineWorker;
 
@@ -48,9 +50,14 @@ pub fn handle_action(
                 .expect("Failed to deserialize CreateComputationCommand");
             Box::new(command)
         }
-        "5000" => {
+        "42" => {
             let command: SerializeComputationCommand = serde_json::from_value(command.data)
                 .expect("Failed to deserialize SerializeComputationCommand");
+            Box::new(command)
+        }
+        "43" => {
+            let command: DeSerializeComputationCommand = serde_json::from_value(command.data)
+                .expect("Failed to deserialize DeSerializeComputationCommand");
             Box::new(command)
         }
         _ => {

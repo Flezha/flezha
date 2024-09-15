@@ -18,4 +18,22 @@ defmodule MigratorTest do
     assert is_list(Enum.at(res, 0) |> elem(1))
     assert length(Enum.at(res, 0) |> elem(1)) > 0
   end
+
+  test "deserialize computation" do
+    computation = %Flecha.Computation{
+      id: "serialize_computation_test",
+      template_id: "increment_state"
+    }
+
+    Flecha.add_computation(computation)
+
+    [{"default", serialized_data}] =
+      Flecha.Computation.Migrator.serialize_computation("serialize_computation_test")
+
+    assert [{"default", :ok}] ===
+             Flecha.Computation.Migrator.deserialize_computation(
+               "serialize_computation_test",
+               serialized_data
+             )
+  end
 end

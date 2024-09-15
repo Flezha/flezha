@@ -15,6 +15,7 @@ defmodule Flecha.Engine.ControlUnit do
   @payload_id_connect_sockets "40"
   @payload_id_computation_new "41"
   @payload_id_serialize_comp "42"
+  @payload_id_deserialize_comp "43"
 
   @spec start_link(binary()) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link(engine_id) do
@@ -101,9 +102,10 @@ defmodule Flecha.Engine.ControlUnit do
           :ok
 
         @payload_id_serialize_comp ->
-          IO.puts "HANDLING PAYLOAD #{inspect(payload_id)} \n REF: #{ref} \n AND DATA: #{inspect(message)}"
-
           json_message["data"]
+
+        @payload_id_deserialize_comp ->
+          :ok
 
         @payload_id_connect_sockets ->
           :ok

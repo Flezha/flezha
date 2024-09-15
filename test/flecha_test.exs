@@ -4,7 +4,6 @@ defmodule FlechaTest do
 
   @test_computation_template "do_nothing"
   @test_compare_filter_template "compare_filter"
-  @test_increment_state_template "increment_state"
 
   setup_all do
     %{}
