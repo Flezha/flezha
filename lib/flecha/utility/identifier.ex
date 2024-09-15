@@ -19,7 +19,12 @@ defmodule Flecha.Utility.Identifier do
     gen_id(engine_id, "control_unit")
   end
 
+  defp gen_id(engine_id, type_str) when is_atom(engine_id) do
+    gen_id(Atom.to_string(engine_id), type_str)
+  end
+
+  # TODO: switch string to atom with via tuples.
   defp gen_id(engine_id, type_str) do
-    (Atom.to_string(engine_id) <> "_" <> type_str) |> String.to_atom()
+    engine_id <> "_" <> type_str |> String.to_atom()
   end
 end

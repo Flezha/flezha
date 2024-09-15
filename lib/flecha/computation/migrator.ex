@@ -9,8 +9,9 @@ defmodule Flecha.Computation.Migrator do
 
     Warden.get(:engines)
     |> Enum.map(fn {engine_id, _} ->
-      GenServer.call(Identifier.control_unit(engine_id), {:send_control, command_id, data})
+      res = GenServer.call(Identifier.control_unit(engine_id), {:send_control, command_id, data})
+
+      {engine_id, res}
     end)
-    |> IO.inspect(label: "HERE IS DATA")
   end
 end

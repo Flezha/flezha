@@ -9,9 +9,7 @@ defmodule Flecha.Engine.Toolbox do
   def engine_dispatch_fn(sock) do
     case :gen_tcp.recv(sock, 0, 5000) do
       {:ok, payload} ->
-        [{"0", engine_id_string} | rest] = Payloader.parse_payload(payload)
-
-        engine_id = String.to_atom(engine_id_string)
+        [{"0", engine_id} | rest] = Payloader.parse_payload(payload)
         control_unit = Identifier.control_unit(engine_id)
 
         EngineSupervisor.start_link({engine_id, sock})

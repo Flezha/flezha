@@ -16,7 +16,7 @@ defmodule Flecha.Engine.ControlUnit do
   @payload_id_computation_new "41"
   @payload_id_serialize_comp "42"
 
-  @spec start_link(atom()) :: :ignore | {:error, any()} | {:ok, pid()}
+  @spec start_link(binary()) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link(engine_id) do
     GenServer.start_link(__MODULE__, engine_id, name: Identifier.control_unit(engine_id))
   end
@@ -89,7 +89,7 @@ defmodule Flecha.Engine.ControlUnit do
   defp handle_payload(state, []), do: state
 
   defp handle_payload(state, [{payload_id, message} | payloads]) do
-    {:ok, json_message} = Jason.decode(message) |> IO.inspect(label: "JSON MESSAGE")
+    {:ok, json_message} = Jason.decode(message)
     ref = Map.get(json_message, "reference_id", nil)
 
     reply =
@@ -101,6 +101,8 @@ defmodule Flecha.Engine.ControlUnit do
           :ok
 
         @payload_id_serialize_comp ->
+          IO.puts "HANDLING PAYLOAD #{inspect(payload_id)} \n REF: #{ref} \n AND DATA: #{inspect(message)}"
+
           json_message["data"]
 
         @payload_id_connect_sockets ->
@@ -119,8 +121,6 @@ defmodule Flecha.Engine.ControlUnit do
         handle_payload(state, payloads)
 
       _ ->
-        IO.puts "HANDLING PAYLOAD #{inspect(payload_id)} \n REF: #{ref} \n AND DATA: #{inspect(message)}"
-
         new_refs = handle_refs(state[:response_refs], ref, reply)
         handle_payload(Map.put(state, :response_refs, new_refs), payloads)
     end

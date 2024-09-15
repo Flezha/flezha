@@ -21,6 +21,8 @@ impl CommandAction for SerializeComputationCommand {
         _message: &String,
         reference_id: String,
     ) {
+        println!("Serializing computation with id: {}", self.computation_id);
+
         let control_stream = engine_worker.get_control_stream();
         let computations_lock = engine_worker.get_computations();
         let computations = computations_lock.read().unwrap();  // Acquire read lock
