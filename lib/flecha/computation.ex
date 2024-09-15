@@ -3,6 +3,7 @@ defmodule Flecha.Computation do
   alias Flecha.Service.ConcurrencyMapper
   alias Flecha.Warden
   alias Flecha.Utility.Identifier
+  alias Flecha.Computation.Migrator
 
   use GenServer
 
@@ -91,6 +92,32 @@ defmodule Flecha.Computation do
     end)
 
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:process_hub, :handover_start, startup_resp, child_id, from}, state) do
+    case startup_resp do
+      {:ok, pid} ->
+        serialized_data = Migrator.serialize_computation(state.id)
+
+        # Send the state to the remote process.
+        Process.send(pid, {:process_hub, :handover, {state, serialized_data}}, [])
+
+        # Signal the handler process that the state handover has been handled.
+        Process.send(from, {:process_hub, :retention_handled, child_id}, [])
+
+      _ ->
+        nil
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:process_hub, :handover, {handover_state, serialized_data}}, state) do
+    Migrator.deserialize_computation(state.id, serialized_data)
+
+    {:noreply, handover_state}
   end
 
   defp start_sup() do

@@ -16,13 +16,31 @@ defmodule Flecha.Computation.Migrator do
 
   def deserialize_computation(computation_id, serialized_data) do
     command_id = "43"
-    data = %{"computation_id" => computation_id, "serialized_data" => serialized_data}
 
     Warden.get(:engines)
     |> Enum.map(fn {engine_id, _} ->
-      res = GenServer.call(Identifier.control_unit(engine_id), {:send_control, command_id, data})
+      engine_data =
+        Enum.find(serialized_data, fn {engine_id_s, _} -> engine_id_s == engine_id end)
 
-      {engine_id, res}
+      case engine_data do
+        nil ->
+          nil
+
+        serialized_engine_data ->
+          engine_data = %{
+            "computation_id" => computation_id,
+            "serialized_data" => serialized_engine_data |> elem(1)
+          }
+
+          res =
+            GenServer.call(
+              Identifier.control_unit(engine_id),
+              {:send_control, command_id, engine_data}
+            )
+
+          {engine_id, res}
+      end
     end)
+    |> Enum.filter(& &1)
   end
 end

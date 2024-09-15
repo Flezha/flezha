@@ -27,7 +27,7 @@ defmodule MigratorTest do
 
     Flecha.add_computation(computation)
 
-    [{"default", serialized_data}] =
+    serialized_data =
       Flecha.Computation.Migrator.serialize_computation("serialize_computation_test")
 
     assert [{"default", :ok}] ===

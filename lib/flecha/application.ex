@@ -33,7 +33,10 @@ defmodule Flecha.Application do
         quorum_size: 60
       },
       distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
-      migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{},
+      migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
+        retention: 4000,
+        handover: true
+      },
       hooks: %{
         ProcessHub.Constant.Hook.registry_pid_inserted() => [
           %ProcessHub.Service.HookManager{
