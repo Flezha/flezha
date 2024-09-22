@@ -3,7 +3,7 @@ defmodule Flecha do
   Documentation for `FlechaCore`.
   """
 
-  # TODO: update.
+  # TODO: Make configurable
   @call_timeout 1000
 
   def add_computation(computation) do
