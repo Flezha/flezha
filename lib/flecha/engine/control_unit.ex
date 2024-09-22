@@ -141,7 +141,6 @@ defmodule Flecha.Engine.ControlUnit do
 
   defp handle_template_registration(state, message) do
     {:ok, data} = Jason.decode(message)
-    # TODO: maybe add schema opton? {:ok, schema} = Jason.decode(data["schema"])
 
     Warden.update(:engines, fn engines ->
       Map.update(engines, state[:engine_id], [], fn templates ->

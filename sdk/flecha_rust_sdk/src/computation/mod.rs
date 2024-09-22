@@ -9,7 +9,6 @@ pub enum ComputationResult {
 
 pub trait Template: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync  {
     fn run(&self, input: String) -> ComputationResult;
-    fn get_schema(&self) -> HashMap<String, String>;
 
     fn update_from_map(&mut self, map: &HashMap<String, Value>) {
         let mut value = to_value(self.clone()).expect("Failed to convert to serde_json::Value");
@@ -38,7 +37,6 @@ pub trait Template: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync 
 pub trait TemplateTrait: Send + Sync  {
     fn run(&self, input: String) -> ComputationResult;
     fn update_template(&mut self, map: &HashMap<String, Value>);
-    fn get_schema(&self) -> HashMap<String, String>;
     fn serialize_template(&self) -> Vec<u8>;
     fn deserialize_template(&self, data: &[u8]) -> Box<dyn TemplateTrait>;
 }
@@ -59,10 +57,6 @@ impl<T: Template> TemplateTrait for TemplateManager<T> {
 
     fn update_template(&mut self, map: &HashMap<String, Value>) {
         self.template.update_from_map(map)
-    }
-
-    fn get_schema(&self) -> HashMap<String, String> {
-        self.template.get_schema()
     }
 
     fn serialize_template(&self) -> Vec<u8> {

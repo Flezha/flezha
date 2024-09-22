@@ -58,13 +58,6 @@ impl Template for CompareFilterComputation {
             }
         }
     }
-
-    fn get_schema(&self) -> std::collections::HashMap<String, String> {
-        let mut schema = std::collections::HashMap::new();
-        // TODO: Sending empty schema will throw an error on elixir side.
-        schema.insert("input".to_string(), "string".to_string());
-        schema
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -73,13 +66,6 @@ struct DoNothingComputation {}
 impl Template for DoNothingComputation {
     fn run(&self, _input: String) -> ComputationResult {
         ComputationResult::NoReply
-    }
-
-    fn get_schema(&self) -> std::collections::HashMap<String, String> {
-        let mut schema = std::collections::HashMap::new();
-        // TODO: Sending empty schema will throw an error on elixir side.
-        schema.insert("input".to_string(), "string".to_string());
-        schema
     }
 }
 
@@ -91,12 +77,5 @@ struct IncrementStateComputation {
 impl Template for IncrementStateComputation {
     fn run(&self, _input: String) -> ComputationResult {
         ComputationResult::NoReply
-    }
-
-    fn get_schema(&self) -> std::collections::HashMap<String, String> {
-        let mut schema = std::collections::HashMap::new();
-        // TODO: Sending empty schema will throw an error on elixir side.
-        schema.insert("input".to_string(), "string".to_string());
-        schema
     }
 }

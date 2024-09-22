@@ -80,12 +80,9 @@ impl EngineWorker {
         factory: fn() -> Box<dyn TemplateTrait>,
         control_stream: Arc<UnixStream>
     ) {
-        let temp_template = factory();
-        let schema_json = serde_json::to_string(&temp_template.get_schema()).unwrap();
         let mut core_data = HashMap::new();
         
         core_data.insert("template_id".to_string(), template_id.clone());
-        core_data.insert("schema".to_string(), schema_json); 
 
         let json = serde_json::to_string(&core_data).unwrap();
         let payload = payloader::build_payload(&"39".to_string(), &json);
