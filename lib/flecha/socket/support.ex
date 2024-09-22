@@ -16,7 +16,7 @@ defmodule Flecha.Socket.Support do
   end
 
   def control_socket_path() do
-    sockets_base_path() <> "control_engine.sock"
+    sockets_base_path() <> "/control_engine.sock"
   end
 
   def stream_socket_path(engine_id) when is_atom(engine_id) do
@@ -24,10 +24,11 @@ defmodule Flecha.Socket.Support do
   end
 
   def stream_socket_path(engine_id) when is_binary(engine_id) do
-    sockets_base_path() <> "stream_#{engine_id}.sock"
+    sockets_base_path() <> "/stream_#{engine_id}.sock"
   end
 
   defp sockets_base_path() do
     Application.fetch_env!(:flecha_core, :socket_files_path)
+    |> String.replace_trailing("/", "")
   end
 end

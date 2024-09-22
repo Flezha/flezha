@@ -15,7 +15,7 @@ pub fn control_socket_path() -> String {
 fn sockets_base_path() -> String {
     let key = "FLECHA_SOCKET_FILES_PATH";
     match env::var(key) {
-        Ok(val) => val,
+        Ok(val) => val.trim_end_matches('/').to_string(),
         Err(_) => "app_data/sockets/".to_string()
     }
 }
