@@ -5,30 +5,30 @@ mod command;
 mod utility;
 
 use engine::ComputationEngine;
-use computation::{Template, TemplateManager, ComputationResult};
+use computation::{Blueprint, BlueprintManager, ComputationResult};
 use serde::{Serialize, Deserialize};
 
 fn main() {
     let mut engine = ComputationEngine::new("default".to_string());
 
-    engine.register_template(
+    engine.register_blueprint(
         "do_nothing".to_string(),
-        || Box::new(TemplateManager{
-            template: DoNothingComputation{}
+        || Box::new(BlueprintManager{
+            blueprint: DoNothingComputation{}
         })
     );
 
-    engine.register_template(
+    engine.register_blueprint(
         "compare_filter".to_string(),
-         || Box::new(TemplateManager{
-            template: CompareFilterComputation{ comparable: "".to_string(), inverted: false }
+         || Box::new(BlueprintManager{
+            blueprint: CompareFilterComputation{ comparable: "".to_string(), inverted: false }
          })
     );
 
-    engine.register_template(
+    engine.register_blueprint(
         "increment_state".to_string(), 
-        || Box::new(TemplateManager {
-            template: IncrementStateComputation { value: 5000}
+        || Box::new(BlueprintManager {
+            blueprint: IncrementStateComputation { value: 5000}
         })
     );
 
@@ -42,7 +42,7 @@ struct CompareFilterComputation {
     inverted: bool,
 }
 
-impl Template for CompareFilterComputation {
+impl Blueprint for CompareFilterComputation {
     fn run(&self, input: String) -> ComputationResult {
         if self.inverted {
             if self.comparable == input {
@@ -63,7 +63,7 @@ impl Template for CompareFilterComputation {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct DoNothingComputation {}
 
-impl Template for DoNothingComputation {
+impl Blueprint for DoNothingComputation {
     fn run(&self, _input: String) -> ComputationResult {
         ComputationResult::NoReply
     }
@@ -74,7 +74,7 @@ struct IncrementStateComputation {
     value: u32
 }
 
-impl Template for IncrementStateComputation {
+impl Blueprint for IncrementStateComputation {
     fn run(&self, _input: String) -> ComputationResult {
         ComputationResult::NoReply
     }

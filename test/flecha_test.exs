@@ -2,8 +2,8 @@ defmodule FlechaTest do
   use ExUnit.Case
   doctest Flecha
 
-  @test_computation_template "do_nothing"
-  @test_compare_filter_template "compare_filter"
+  @test_computation_blueprint "do_nothing"
+  @test_compare_filter_blueprint "compare_filter"
 
   setup_all do
     %{}
@@ -12,7 +12,7 @@ defmodule FlechaTest do
   test "add computation" do
     computation = %Flecha.Computation{
       id: "add_compuation_test",
-      template_id: @test_computation_template
+      blueprint_id: @test_computation_blueprint
     }
 
     assert Flecha.add_computation(computation) === {:ok, "computation added"}
@@ -21,12 +21,12 @@ defmodule FlechaTest do
   test "validate computation length" do
     invalid_computation = %Flecha.Computation{
       id: "some_very_long_computation_id_that_should_fail",
-      template_id: @test_computation_template
+      blueprint_id: @test_computation_blueprint
     }
 
     valid_computation = %Flecha.Computation{
       id: "computation_string_32_bytes_long",
-      template_id: @test_computation_template
+      blueprint_id: @test_computation_blueprint
     }
 
     assert Flecha.add_computation(invalid_computation) ===
@@ -38,7 +38,7 @@ defmodule FlechaTest do
   test "add new io generator" do
     computation = %Flecha.Computation{
       id: "add_io_generator_test",
-      template_id: @test_computation_template
+      blueprint_id: @test_computation_blueprint
     }
 
     {:ok, "computation added"} = Flecha.add_computation(computation)
@@ -54,7 +54,7 @@ defmodule FlechaTest do
   test "add new io internal process" do
     computation = %Flecha.Computation{
       id: "add_io_internal_process_test",
-      template_id: @test_computation_template
+      blueprint_id: @test_computation_blueprint
     }
 
     {:ok, "computation added"} = Flecha.add_computation(computation)
@@ -70,7 +70,7 @@ defmodule FlechaTest do
   test "computation flow generation -> internal_process" do
     computation = %Flecha.Computation{
       id: "c_flow_test_generate_internal",
-      template_id: @test_compare_filter_template,
+      blueprint_id: @test_compare_filter_blueprint,
       variables: %{"comparable" => "hello world", "inverted" => false}
     }
 

@@ -1,7 +1,7 @@
 pub mod worker;
 mod control_unit;
 
-use crate::computation::TemplateTrait;
+use crate::computation::BlueprintTrait;
 
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self};
@@ -19,7 +19,7 @@ pub struct ComputationEngine {
 
 pub enum ThreadItem {
     Command(String, String),
-    ComputationTemplate((String, fn() -> Box<dyn TemplateTrait>)),
+    ComputationBlueprint((String, fn() -> Box<dyn BlueprintTrait>)),
     EngineIdConfirmation
 }
 
@@ -55,9 +55,9 @@ impl ComputationEngine {
         }
     }
 
-    pub fn register_template(&mut self, template_id: String, factory: fn() -> Box<dyn TemplateTrait>) {
+    pub fn register_blueprint(&mut self, blueprint_id: String, factory: fn() -> Box<dyn BlueprintTrait>) {
         self.tx.lock().unwrap().send(
-            ThreadItem::ComputationTemplate((template_id, factory))
+            ThreadItem::ComputationBlueprint((blueprint_id, factory))
         ).unwrap();
     }
 }

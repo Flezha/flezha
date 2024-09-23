@@ -12,7 +12,7 @@ use crate::engine::worker::EngineWorker;
 #[derive(Deserialize)]
 pub struct CreateComputationCommand {
     computation_id: String,
-    template_id: String,
+    blueprint_id: String,
     variables: Value,
 }
 
@@ -23,15 +23,15 @@ impl CommandAction for CreateComputationCommand {
         _message: &String,
         reference_id: String,
     ) {
-        let template_factory = engine_worker.get_template_factory(self.template_id.clone()).unwrap();
+        let blueprint_factory = engine_worker.get_blueprint_factory(self.blueprint_id.clone()).unwrap();
         let variables = value_to_hashmap(&self.variables).unwrap();
         
-        let mut template = template_factory();
-        template.update_template(&variables);
+        let mut blueprint = blueprint_factory();
+        blueprint.update_blueprint(&variables);
 
         let computation = Computation {
             id: self.computation_id.clone(),
-            template,
+            blueprint,
         };
     
         engine_worker.register_computation(computation);

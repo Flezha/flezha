@@ -11,7 +11,7 @@ pub enum ComputationInput {
     String
 }
 
-pub trait Template: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync  {
+pub trait Blueprint: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync  {
     fn run(&self, input: String) -> ComputationResult;
 
     fn update_from_map(&mut self, map: &HashMap<String, Value>) {
@@ -38,37 +38,37 @@ pub trait Template: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync 
     }
 }
 
-pub trait TemplateTrait: Send + Sync  {
+pub trait BlueprintTrait: Send + Sync  {
     fn run(&self, input: String) -> ComputationResult;
-    fn update_template(&mut self, map: &HashMap<String, Value>);
-    fn serialize_template(&self) -> Vec<u8>;
-    fn deserialize_template(&self, data: &[u8]) -> Box<dyn TemplateTrait>;
+    fn update_blueprint(&mut self, map: &HashMap<String, Value>);
+    fn serialize_blueprint(&self) -> Vec<u8>;
+    fn deserialize_blueprint(&self, data: &[u8]) -> Box<dyn BlueprintTrait>;
 }
 
 pub struct Computation {
     pub id: String,
-    pub template: Box<dyn TemplateTrait>,
+    pub blueprint: Box<dyn BlueprintTrait>,
 }
 
-pub struct TemplateManager<T: Template + 'static> {
-    pub template: T,
+pub struct BlueprintManager<T: Blueprint + 'static> {
+    pub blueprint: T,
 }
 
-impl<T: Template> TemplateTrait for TemplateManager<T> {
+impl<T: Blueprint> BlueprintTrait for BlueprintManager<T> {
     fn run(&self, input: String) -> ComputationResult {
-        self.template.run(input)
+        self.blueprint.run(input)
     }
 
-    fn update_template(&mut self, map: &HashMap<String, Value>) {
-        self.template.update_from_map(map)
+    fn update_blueprint(&mut self, map: &HashMap<String, Value>) {
+        self.blueprint.update_from_map(map)
     }
 
-    fn serialize_template(&self) -> Vec<u8> {
-        Template::serialize(&self.template)
+    fn serialize_blueprint(&self) -> Vec<u8> {
+        Blueprint::serialize(&self.blueprint)
     }
 
-    fn deserialize_template(&self, data: &[u8]) -> Box<dyn TemplateTrait> {
-        let deserialized_template = <T as Template>::deserialize(data);
-        Box::new(TemplateManager { template: deserialized_template })
+    fn deserialize_blueprint(&self, data: &[u8]) -> Box<dyn BlueprintTrait> {
+        let deserialized_blueprint = <T as Blueprint>::deserialize(data);
+        Box::new(BlueprintManager { blueprint: deserialized_blueprint })
     }
 }

@@ -68,7 +68,7 @@ fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Strin
                 let computations_read = computations.read().unwrap();
                 
                 if let Some(c) = computations_read.get(&computation_id) {
-                    let result = c.lock().unwrap().template.run(message);
+                    let result = c.lock().unwrap().blueprint.run(message);
 
                     match result {
                         ComputationResult::NoReply => {}

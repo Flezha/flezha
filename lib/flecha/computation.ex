@@ -7,7 +7,7 @@ defmodule Flecha.Computation do
 
   use GenServer
 
-  defstruct [:id, :template_id, :channels, :supervisors, :io, variables: %{}]
+  defstruct [:id, :blueprint_id, :channels, :supervisors, :io, variables: %{}]
 
   def start_link(settings) do
     GenServer.start_link(__MODULE__, settings)
@@ -19,7 +19,7 @@ defmodule Flecha.Computation do
      %__MODULE__{
        id: settings.id,
        variables: settings.variables,
-       channels: attach_channels(settings.id, settings.template_id),
+       channels: attach_channels(settings.id, settings.blueprint_id),
        io: %{
          input: [],
          output: []
@@ -127,7 +127,7 @@ defmodule Flecha.Computation do
     end
   end
 
-  def attach_channels(computation_id, template_id) do
+  def attach_channels(computation_id, blueprint_id) do
     # Get numeric representation of the computation_id string.
     computation_int = String.to_charlist(computation_id) |> Enum.sum()
 
@@ -135,19 +135,19 @@ defmodule Flecha.Computation do
     count = ConcurrencyMapper.concurrent_entity_count()
     channel_index = rem(computation_int, count)
 
-    # Pick the processor engine that can handle the template_id.
-    filter_engines(template_id) |> pick_channel(channel_index)
+    # Pick the processor engine that can handle the blueprint_id.
+    filter_engines(blueprint_id) |> pick_channel(channel_index)
   end
 
-  defp filter_engines(template_id) do
+  defp filter_engines(blueprint_id) do
     engines =
       Warden.get(:engines)
-      |> Enum.filter(fn {_engine_id, templates} ->
-        Enum.any?(templates, &(&1 === template_id))
+      |> Enum.filter(fn {_engine_id, blueprints} ->
+        Enum.any?(blueprints, &(&1 === blueprint_id))
       end)
 
     case engines do
-      [] -> raise "computation engines not found for template #{inspect(template_id)}"
+      [] -> raise "computation engines not found for blueprint #{inspect(blueprint_id)}"
       engines -> engines
     end
   end

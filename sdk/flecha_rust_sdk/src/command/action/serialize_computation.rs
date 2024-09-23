@@ -26,7 +26,7 @@ impl CommandAction for SerializeComputationCommand {
         let computations = computations_lock.read().unwrap();  // Acquire read lock
         let serialized_json = match computations.get(&self.computation_id) {
             Some(computation) => {
-                let serialized_data = computation.lock().unwrap().template.serialize_template();
+                let serialized_data = computation.lock().unwrap().blueprint.serialize_blueprint();
                 let data_as_values = serialized_data.iter()
                     .map(|&byte| Value::Number(serde_json::Number::from(byte)))
                     .collect();
