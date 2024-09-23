@@ -11,7 +11,16 @@ defmodule Flecha.PortManager do
   def init(_) do
     ports = initialize_ports()
 
-    {:ok, %{ports: ports, response_refs: %{}}}
+    schedule_counter_reset()
+
+    {:ok, %{ports: ports, response_refs: %{}, port_down_counter: 0}}
+  end
+
+  @impl true
+  def handle_info(:reset_counter, state) do
+    schedule_counter_reset()
+
+    {:noreply, Map.put(state, :port_down_counter, 0)}
   end
 
   @impl true
@@ -22,10 +31,31 @@ defmodule Flecha.PortManager do
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :port, _port, :normal}, state) do
+  def handle_info({:DOWN, _ref, :port, port, :normal}, state) do
+    if state.port_down_counter > 5 do
+      raise "Port application malfunction"
+    end
+
+    ports = Map.delete(state.ports, port)
+
+    ports =
+      case Map.get(state.ports, port) do
+        nil ->
+          ports
+
+        command ->
+          {port, _} = open_port(command)
+          Map.put(ports, port, command)
+      end
+
     # TODO: Try restarting the port process but do not try indefinetly.
 
-    {:noreply, state}
+    new_state =
+      state
+      |> Map.put(:ports, ports)
+      |> Map.put(:port_down_counter, Map.get(state, :port_down_counter, 0) + 1)
+
+    {:noreply, new_state}
   end
 
   @impl true
@@ -39,15 +69,24 @@ defmodule Flecha.PortManager do
     external_processes = Application.fetch_env!(:flecha_core, :external_processes)
 
     Enum.map(external_processes, fn command ->
-      port =
-        Port.open(
-          {:spawn, command},
-          [:binary]
-        )
-
-      Port.monitor(port)
-
-      port
+      open_port(command)
     end)
+    |> Map.new()
+  end
+
+  defp open_port(command) do
+    port =
+      Port.open(
+        {:spawn, command},
+        [:binary]
+      )
+
+    Port.monitor(port)
+
+    {port, command}
+  end
+
+  defp schedule_counter_reset() do
+    Process.send_after(self(), :reset_counter, 30_000)
   end
 end
