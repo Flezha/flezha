@@ -7,7 +7,7 @@ pub enum ComputationResult {
     Reply(String),
 }
 
-pub enum ComputationDataType {
+pub enum ComputationInput {
     String
 }
 
