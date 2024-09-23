@@ -1,5 +1,5 @@
 defmodule Flecha.Engine.ControlUnit do
-  alias Flecha.Utility.Identifier
+  alias Flecha.Service.Identificator
   alias Flecha.Service.Payloader
   alias Flecha.Engine.ControlChannel
   alias Flecha.Service.ConcurrencyMapper
@@ -19,7 +19,7 @@ defmodule Flecha.Engine.ControlUnit do
 
   @spec start_link(binary()) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link(engine_id) do
-    GenServer.start_link(__MODULE__, engine_id, name: Identifier.control_unit(engine_id))
+    GenServer.start_link(__MODULE__, engine_id, name: Identificator.control_unit(engine_id))
   end
 
   @impl true
@@ -42,7 +42,7 @@ defmodule Flecha.Engine.ControlUnit do
   def handle_call({:send_control, command_id, data}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identifier.control_channel(state.engine_id),
+        Identificator.control_channel(state.engine_id),
         command_id,
         data
       )
@@ -56,7 +56,7 @@ defmodule Flecha.Engine.ControlUnit do
 
     ref =
       ControlChannel.send_control(
-        Identifier.control_channel(state.engine_id),
+        Identificator.control_channel(state.engine_id),
         @payload_id_connect_sockets,
         %{"sockets_count" => sockets_count}
       )
@@ -68,7 +68,7 @@ defmodule Flecha.Engine.ControlUnit do
   def handle_call({:add_computation, computation}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identifier.control_channel(state.engine_id),
+        Identificator.control_channel(state.engine_id),
         @payload_id_computation_new,
         %{
           "computation_id" => computation.id,

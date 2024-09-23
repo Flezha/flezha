@@ -1,7 +1,7 @@
 defmodule Flecha.Controller do
   alias Flecha.Service.Validator
   alias Flecha.Warden
-  alias Flecha.Utility.Identifier
+  alias Flecha.Service.Identificator
 
   use GenServer
 
@@ -42,7 +42,7 @@ defmodule Flecha.Controller do
 
     Warden.get(:engines)
     |> Enum.each(fn {engine_id, _} ->
-      GenServer.call(Identifier.control_unit(engine_id), {:add_computation, computation})
+      GenServer.call(Identificator.control_unit(engine_id), {:add_computation, computation})
     end)
 
     case result do

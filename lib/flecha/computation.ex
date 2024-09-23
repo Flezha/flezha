@@ -2,7 +2,7 @@ defmodule Flecha.Computation do
   alias Flecha.IOSupervisor
   alias Flecha.Service.ConcurrencyMapper
   alias Flecha.Warden
-  alias Flecha.Utility.Identifier
+  alias Flecha.Service.Identificator
   alias Flecha.Computation.Migrator
 
   use GenServer
@@ -155,7 +155,7 @@ defmodule Flecha.Computation do
   defp pick_channel(engines, channel_index) do
     Enum.map(engines, fn {engine_id, _} ->
       # Select one of the stream channels from that engine.
-      Supervisor.which_children(Identifier.stream_sup(engine_id))
+      Supervisor.which_children(Identificator.stream_sup(engine_id))
       |> Enum.at(channel_index)
       |> elem(1)
     end)

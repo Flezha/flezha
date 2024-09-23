@@ -12,6 +12,7 @@ defmodule Flecha.Application do
 
     children = [
       Flecha.Warden,
+      Flecha.Service.Identificator,
       Flecha.Service.EventManager,
       {Flecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
       {Flecha.Socket.Dispatcher, &Flecha.Engine.Toolbox.engine_dispatch_fn/1},

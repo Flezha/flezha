@@ -1,4 +1,22 @@
-defmodule Flecha.Utility.Identifier do
+defmodule Flecha.Service.Identificator do
+  def child_spec(opts) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker,
+      restart: :permanent,
+      shutdown: 500
+    }
+  end
+
+  def start_link(_) do
+    Registry.start_link(
+      keys: :unique,
+      partitions: 1,
+      name: __MODULE__
+    )
+  end
+
   def engine_sup(engine_id) do
     gen_id(engine_id, "engine_sup")
   end
@@ -23,8 +41,9 @@ defmodule Flecha.Utility.Identifier do
     gen_id(Atom.to_string(engine_id), type_str)
   end
 
-  # TODO: switch string to atom with via tuples.
   defp gen_id(engine_id, type_str) do
-    (engine_id <> "_" <> type_str) |> String.to_atom()
+    id = (engine_id <> "_" <> type_str) |> String.to_atom()
+
+    {:via, Registry, {__MODULE__, id}}
   end
 end

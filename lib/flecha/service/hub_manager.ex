@@ -1,6 +1,6 @@
 defmodule Flecha.Service.HubManager do
   alias Flecha.Warden
-  alias Flecha.Utility.Identifier
+  alias Flecha.Service.Identificator
 
   def hook_insert_pid({computation_id, node_pids}) do
     curr_node = node()
@@ -13,7 +13,7 @@ defmodule Flecha.Service.HubManager do
 
     Warden.get(:engines)
     |> Enum.each(fn {engine_id, _blueprints} ->
-      Supervisor.which_children(Identifier.stream_sup(engine_id))
+      Supervisor.which_children(Identificator.stream_sup(engine_id))
       |> Enum.each(fn {_, pid, _, _} ->
         GenServer.cast(pid, {:computation_pid_update, computation_id, updated_pids})
       end)

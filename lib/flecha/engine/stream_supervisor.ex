@@ -1,12 +1,12 @@
 defmodule Flecha.Engine.StreamSupervisor do
   alias Flecha.Service.ConcurrencyMapper
   alias Flecha.Engine.StreamChannel
-  alias Flecha.Utility.Identifier
+  alias Flecha.Service.Identificator
 
   use Supervisor
 
   def start_link(engine_id) do
-    Supervisor.start_link(__MODULE__, engine_id, name: Identifier.stream_sup(engine_id))
+    Supervisor.start_link(__MODULE__, engine_id, name: Identificator.stream_sup(engine_id))
   end
 
   @impl true

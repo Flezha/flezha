@@ -1,6 +1,6 @@
 defmodule Flecha.Computation.Migrator do
   alias Flecha.Warden
-  alias Flecha.Utility.Identifier
+  alias Flecha.Service.Identificator
 
   def serialize_computation(computation_id) do
     command_id = "serialize_computation"
@@ -8,7 +8,8 @@ defmodule Flecha.Computation.Migrator do
 
     Warden.get(:engines)
     |> Enum.map(fn {engine_id, _} ->
-      res = GenServer.call(Identifier.control_unit(engine_id), {:send_control, command_id, data})
+      res =
+        GenServer.call(Identificator.control_unit(engine_id), {:send_control, command_id, data})
 
       {engine_id, res}
     end)
@@ -34,7 +35,7 @@ defmodule Flecha.Computation.Migrator do
 
           res =
             GenServer.call(
-              Identifier.control_unit(engine_id),
+              Identificator.control_unit(engine_id),
               {:send_control, command_id, engine_data}
             )
 

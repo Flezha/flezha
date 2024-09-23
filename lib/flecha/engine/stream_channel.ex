@@ -1,6 +1,6 @@
 defmodule Flecha.Engine.StreamChannel do
   alias Flecha.Service.Payloader
-  alias Flecha.Utility.Identifier
+  alias Flecha.Service.Identificator
 
   require Logger
 
@@ -12,7 +12,7 @@ defmodule Flecha.Engine.StreamChannel do
 
   @impl true
   def init(engine_id) do
-    lsock = GenServer.call(Identifier.stream_listener(engine_id), :get_socket)
+    lsock = GenServer.call(Identificator.stream_listener(engine_id), :get_socket)
 
     {
       :ok,

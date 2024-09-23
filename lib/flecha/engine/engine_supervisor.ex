@@ -1,14 +1,16 @@
 defmodule Flecha.Engine.EngineSupervisor do
   alias Flecha.Engine.ControlUnit
   alias Flecha.Engine.ControlChannel
-  alias Flecha.Utility.Identifier
+  alias Flecha.Service.Identificator
   alias Flecha.Socket.Listener
   alias Flecha.Socket.Support, as: SocketSupport
 
   use Supervisor
 
   def start_link({engine_id, sock}) do
-    Supervisor.start_link(__MODULE__, {engine_id, sock}, name: Identifier.engine_sup(engine_id))
+    Supervisor.start_link(__MODULE__, {engine_id, sock},
+      name: Identificator.engine_sup(engine_id)
+    )
   end
 
   @impl true
@@ -27,7 +29,8 @@ defmodule Flecha.Engine.EngineSupervisor do
       %{
         id: Listener,
         start:
-          {Listener, :start_link, [{Identifier.stream_listener(engine_id), stream_socket_path}]}
+          {Listener, :start_link,
+           [{Identificator.stream_listener(engine_id), stream_socket_path}]}
       },
       %{
         id: StreamSupervisor,
@@ -39,7 +42,7 @@ defmodule Flecha.Engine.EngineSupervisor do
   end
 
   def find_control_channel(engine_id) do
-    Supervisor.which_children(Identifier.engine_sup(engine_id))
+    Supervisor.which_children(Identificator.engine_sup(engine_id))
     |> Enum.find(fn {id, _, _, _} -> id === ControlChannel end)
     |> elem(1)
   end

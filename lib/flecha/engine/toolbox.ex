@@ -2,7 +2,7 @@ defmodule Flecha.Engine.Toolbox do
   alias Flecha.Engine.EngineSupervisor
   alias Flecha.Service.Payloader
   alias Flecha.Socket.Support, as: SocketSupport
-  alias Flecha.Utility.Identifier
+  alias Flecha.Service.Identificator
 
   require Logger
 
@@ -10,7 +10,7 @@ defmodule Flecha.Engine.Toolbox do
     case :gen_tcp.recv(sock, 0, 5000) do
       {:ok, payload} ->
         [{"connect_control_channel", engine_id} | rest] = Payloader.parse_payload(payload)
-        control_unit = Identifier.control_unit(engine_id)
+        control_unit = Identificator.control_unit(engine_id)
 
         EngineSupervisor.start_link({engine_id, sock})
         SocketSupport.pass_ownership(sock, EngineSupervisor.find_control_channel(engine_id))

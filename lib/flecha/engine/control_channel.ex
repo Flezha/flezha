@@ -1,6 +1,6 @@
 defmodule Flecha.Engine.ControlChannel do
   alias Flecha.Socket.Support, as: SocketSupport
-  alias Flecha.Utility.Identifier
+  alias Flecha.Service.Identificator
   alias Flecha.Service.Payloader
 
   require Logger
@@ -9,7 +9,7 @@ defmodule Flecha.Engine.ControlChannel do
 
   def start_link({engine_id, sock}) do
     GenServer.start_link(__MODULE__, {engine_id, sock},
-      name: Identifier.control_channel(engine_id)
+      name: Identificator.control_channel(engine_id)
     )
   end
 
@@ -33,7 +33,8 @@ defmodule Flecha.Engine.ControlChannel do
   def init({engine_id, sock}) do
     SocketSupport.set_active(sock)
 
-    {:ok, %{engine_id: engine_id, sock: sock, control_unit: Identifier.control_unit(engine_id)}}
+    {:ok,
+     %{engine_id: engine_id, sock: sock, control_unit: Identificator.control_unit(engine_id)}}
   end
 
   @impl true
@@ -53,8 +54,6 @@ defmodule Flecha.Engine.ControlChannel do
   @impl true
   def handle_info({:tcp_closed, _socket}, state) do
     Logger.warning("TCP connection closed for control socket.")
-
-    # TODO: shutdown engine
 
     {:noreply, state}
   end
