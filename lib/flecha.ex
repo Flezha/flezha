@@ -3,21 +3,22 @@ defmodule Flecha do
   Documentation for `FlechaCore`.
   """
 
-  # TODO: Make configurable
-  @call_timeout 1000
-
   def add_computation(computation) do
     GenServer.call(Flecha.Controller, {:add_computation, computation})
   end
 
   def add_io(computation_id, io_id, settings, direction) do
+    timeout = Application.fetch_env!(:flecha_core, :io_add_timeout)
+
     computation_pid_lookup(computation_id)
-    |> GenServer.call({:add_io, io_id, direction, settings}, @call_timeout)
+    |> GenServer.call({:add_io, io_id, direction, settings}, timeout)
   end
 
   def pipeline_io_internal_payload(computation_id, io_id, direction, payload) do
+    timeout = Application.fetch_env!(:flecha_core, :io_payload_add_timeout)
+
     computation_pid_lookup(computation_id)
-    |> GenServer.call({:io_internal_payload, io_id, direction, payload}, @call_timeout)
+    |> GenServer.call({:io_internal_payload, io_id, direction, payload}, timeout)
   end
 
   defp computation_pid_lookup(computation_id) do
