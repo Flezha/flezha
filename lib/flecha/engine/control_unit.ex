@@ -10,12 +10,12 @@ defmodule Flecha.Engine.ControlUnit do
 
   require Logger
 
-  @payload_id_connect_control_channel "0"
-  @payload_id_blueprint_register "39"
-  @payload_id_connect_sockets "40"
-  @payload_id_computation_new "41"
-  @payload_id_serialize_comp "42"
-  @payload_id_deserialize_comp "43"
+  @payload_id_connect_control_channel "connect_control_channel"
+  @payload_id_blueprint_register "register_blueprint"
+  @payload_id_connect_sockets "connect_sockets"
+  @payload_id_computation_new "add_computation"
+  @payload_id_serialize_comp "serialize_computation"
+  @payload_id_deserialize_comp "deserialize_computation"
 
   @spec start_link(binary()) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link(engine_id) do

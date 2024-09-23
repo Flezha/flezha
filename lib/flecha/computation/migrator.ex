@@ -3,7 +3,7 @@ defmodule Flecha.Computation.Migrator do
   alias Flecha.Utility.Identifier
 
   def serialize_computation(computation_id) do
-    command_id = "42"
+    command_id = "serialize_computation"
     data = %{"computation_id" => computation_id}
 
     Warden.get(:engines)
@@ -15,7 +15,7 @@ defmodule Flecha.Computation.Migrator do
   end
 
   def deserialize_computation(computation_id, serialized_data) do
-    command_id = "43"
+    command_id = "deserialize_computation"
 
     Warden.get(:engines)
     |> Enum.map(fn {engine_id, _} ->

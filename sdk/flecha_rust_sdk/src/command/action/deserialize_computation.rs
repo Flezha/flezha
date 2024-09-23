@@ -38,7 +38,7 @@ impl CommandAction for DeSerializeComputationCommand {
         hashmap.insert("reference_id".to_string(), Value::String(reference_id));
 
         let json_string = serde_json::to_string(&hashmap).unwrap();
-        let payload = payloader::build_payload(&"43".to_string(), &json_string);
+        let payload = payloader::build_payload(&"deserialize_computation".to_string(), &json_string);
         control_stream.try_clone().unwrap().write_all(&payload).unwrap();
     }
 }

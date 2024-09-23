@@ -85,7 +85,7 @@ impl EngineWorker {
         core_data.insert("blueprint_id".to_string(), blueprint_id.clone());
 
         let json = serde_json::to_string(&core_data).unwrap();
-        let payload = payloader::build_payload(&"39".to_string(), &json);
+        let payload = payloader::build_payload(&"register_blueprint".to_string(), &json);
 
         control_stream.try_clone().unwrap().write_all(&payload).unwrap();
 

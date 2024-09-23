@@ -39,23 +39,23 @@ pub fn handle_action(
     let reference_id = command.reference_id;
 
     let command_action: Box<dyn CommandAction> = match payload_id.as_str() {
-        "40" => {
+        "connect_sockets" => {
             let command: ConnectSocketCommand = serde_json::from_value(command.data)
             .expect("Failed to deserialize OpenSocketCommand");
 
             Box::new(command)
         }
-        "41" => {
+        "add_computation" => {
             let command: CreateComputationCommand = serde_json::from_value(command.data)
                 .expect("Failed to deserialize CreateComputationCommand");
             Box::new(command)
         }
-        "42" => {
+        "serialize_computation" => {
             let command: SerializeComputationCommand = serde_json::from_value(command.data)
                 .expect("Failed to deserialize SerializeComputationCommand");
             Box::new(command)
         }
-        "43" => {
+        "deserialize_computation" => {
             let command: DeSerializeComputationCommand = serde_json::from_value(command.data)
                 .expect("Failed to deserialize DeSerializeComputationCommand");
             Box::new(command)

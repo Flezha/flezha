@@ -18,7 +18,7 @@ pub fn connect_control_socket(
     let stream_boxed_clone = Arc::clone(&stream_boxed);
 
     let thread = thread::spawn(move || {
-        let payload = payloader::build_payload("0", &engine_id);
+        let payload = payloader::build_payload("connect_control_channel", &engine_id);
         stream_boxed_clone.try_clone().unwrap().write_all(&payload).unwrap();
         tx.lock().unwrap().send(ThreadItem::EngineIdConfirmation).unwrap();
 
