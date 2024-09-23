@@ -48,8 +48,6 @@ defmodule Flecha.PortManager do
           Map.put(ports, port, command)
       end
 
-    # TODO: Try restarting the port process but do not try indefinetly.
-
     new_state =
       state
       |> Map.put(:ports, ports)
