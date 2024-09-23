@@ -42,7 +42,7 @@
 #   end
 
 #   @impl IOBehaviour
-#   def send_internal_payload(server, %__MODULE__{type: type, msg: msg}) do
+#   def handle_internal_payload(server, %__MODULE__{type: type, msg: msg}) do
 #     Fresh.send(server, {type, msg})
 #   end
 # end

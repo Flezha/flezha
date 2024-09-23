@@ -45,7 +45,7 @@ defmodule Flecha.Computation do
     case response do
       {:ok, pid} ->
         pids = Map.get(state.io, direction, [])
-        io_handlers = Map.put(state.io, direction, [pid | pids])
+        io_handlers = Map.put(state.io, direction, [{module, pid} | pids])
 
         {:reply, {:ok, "IO created"}, %__MODULE__{state | io: io_handlers}}
 
@@ -54,29 +54,28 @@ defmodule Flecha.Computation do
     end
   end
 
-  # TODO: later add for websocket.
-  # @impl true
-  # def handle_call({:io_internal_payload, io_id, direction, payload}, _from, state)
-  #     when is_struct(payload) do
-  #   mfa = Map.get(state.io, direction)
-  #   sup = Map.get(state.supervisors, direction)
+  @impl true
+  def handle_call({:io_internal_payload, io_id, direction, payload}, _from, state)
+      when is_struct(payload) do
+    io_data = Map.get(state.io, direction)
 
-  #   {:ok, io_pid} = IOSupervisor.find_pid(sup, io_id)
+    case io_data do
+      nil ->
+        {:reply, {:error, "IO handler not found"}, state}
 
-  #   case mfa do
-  #     nil ->
-  #       {:reply, {:error, "IO handler not found"}, state}
+      {io_module, _initial_io_pid} ->
+        sup = Map.get(state.supervisors, direction)
+        {:ok, io_pid} = IOSupervisor.find_pid(sup, io_id)
+        res = apply(io_module, :handle_internal_payload, [io_pid, payload])
 
-  #     {m, _f, _a} ->
-  #       res = apply(m, :send_internal_payload, [io_pid, payload])
+        {:reply, res, state}
+    end
+  end
 
-  #       {:reply, res, state}
-  #   end
-  # end
-  # @impl true
-  # def handle_call({:io_internal_payload, _payload}, _from, state) do
-  #   {:reply, {:error, "Invalid payload"}, state}
-  # end
+  @impl true
+  def handle_call({:io_internal_payload, _payload}, _from, state) do
+    {:reply, {:error, "Invalid payload"}, state}
+  end
 
   @impl true
   def handle_cast({:io_in, _type, message}, state) do
@@ -87,7 +86,7 @@ defmodule Flecha.Computation do
 
   @impl true
   def handle_cast({:io_out, type, message}, %{io: %{output: out_pids}} = state) do
-    Enum.each(out_pids, fn out_pid ->
+    Enum.each(out_pids, fn {_module, out_pid} ->
       GenServer.cast(out_pid, {:io_out, type, message})
     end)
 
