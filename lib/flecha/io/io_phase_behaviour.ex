@@ -1,3 +1,0 @@
-defmodule Flecha.IO.IOBehaviour do
-  @callback handle_internal_payload(server :: pid, payload :: struct()) :: :ok | {:error, binary()}
-end

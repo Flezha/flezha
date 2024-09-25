@@ -1,5 +1,9 @@
 defmodule Flecha.IO.InternalProcess do
+  alias Flecha.IO.BaseBehaviour, as: IOBaseBehaviour
+
   use GenServer
+
+  @behaviour IOBaseBehaviour
 
   @enforce_keys [:output_pid]
 
@@ -34,4 +38,7 @@ defmodule Flecha.IO.InternalProcess do
 
     {:noreply, state}
   end
+
+  @impl IOBaseBehaviour
+  def handle_internal_payload(_server, _payload), do: nil
 end
