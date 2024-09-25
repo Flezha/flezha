@@ -8,7 +8,8 @@ pub enum ComputationResult {
 }
 
 pub enum ComputationInput {
-    String
+    StringInput(String),
+    U32Input(u32)
 }
 
 pub trait Blueprint: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync  {
