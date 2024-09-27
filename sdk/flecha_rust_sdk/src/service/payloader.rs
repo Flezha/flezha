@@ -31,7 +31,7 @@ pub fn extract_payload<R: Read>(mut reader: R) -> io::Result<(String, String)> {
             return Err(e);
         }
     }
-    let payload_message = String::from_utf8_lossy(&message_buf).to_string();
+    let payload_message: String = String::from_utf8_lossy(&message_buf).to_string();
 
     Ok((payload_id, payload_message))
 }

@@ -9,7 +9,7 @@ pub enum ComputationResult {
 
 pub enum ComputationInput {
     StringInput(String),
-    U32Input(u32)
+    U32Input(u32),
 }
 
 pub trait Blueprint: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync  {
@@ -46,30 +46,28 @@ pub trait BlueprintTrait: Send + Sync  {
     fn deserialize_blueprint(&self, data: &[u8]) -> Box<dyn BlueprintTrait>;
 }
 
-pub struct Computation {
-    pub id: String,
-    pub blueprint: Box<dyn BlueprintTrait>,
-}
-
-pub struct BlueprintManager<T: Blueprint + 'static> {
-    pub blueprint: T,
-}
-
-impl<T: Blueprint> BlueprintTrait for BlueprintManager<T> {
+// Implement BlueprintTrait for all types that implement Blueprint.
+impl<T: Blueprint + 'static> BlueprintTrait for T {
     fn run(&self, input: String) -> ComputationResult {
-        self.blueprint.run(input)
+        self.run(input)
     }
 
     fn update_blueprint(&mut self, map: &HashMap<String, Value>) {
-        self.blueprint.update_from_map(map)
+        self.update_from_map(map)
     }
 
     fn serialize_blueprint(&self) -> Vec<u8> {
-        Blueprint::serialize(&self.blueprint)
+        // Use the fully qualified syntax to avoid ambiguity
+        Blueprint::serialize(self)
     }
 
     fn deserialize_blueprint(&self, data: &[u8]) -> Box<dyn BlueprintTrait> {
         let deserialized_blueprint = <T as Blueprint>::deserialize(data);
-        Box::new(BlueprintManager { blueprint: deserialized_blueprint })
+        Box::new(deserialized_blueprint)
     }
+}
+
+pub struct Computation {
+    pub id: String,
+    pub blueprint: Box<dyn BlueprintTrait>,
 }

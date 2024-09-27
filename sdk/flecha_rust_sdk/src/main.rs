@@ -5,7 +5,7 @@ mod command;
 mod utility;
 
 use engine::ComputationEngine;
-use computation::{Blueprint, BlueprintManager, ComputationResult};
+use computation::{Blueprint, ComputationResult};
 use serde::{Serialize, Deserialize};
 
 fn main() {
@@ -13,23 +13,17 @@ fn main() {
 
     engine.register_blueprint(
         "do_nothing".to_string(),
-        || Box::new(BlueprintManager{
-            blueprint: DoNothingComputation{}
-        })
+        || Box::new(DoNothingComputation{})
     );
 
     engine.register_blueprint(
         "compare_filter".to_string(),
-         || Box::new(BlueprintManager{
-            blueprint: CompareFilterComputation{ comparable: "".to_string(), inverted: false }
-         })
+         || Box::new(CompareFilterComputation{ comparable: "".to_string(), inverted: false })
     );
 
     engine.register_blueprint(
         "increment_state".to_string(), 
-        || Box::new(BlueprintManager {
-            blueprint: IncrementStateComputation { value: 5000}
-        })
+        || Box::new(IncrementStateComputation { value: 5000})
     );
 
     // TODO: remove later.
