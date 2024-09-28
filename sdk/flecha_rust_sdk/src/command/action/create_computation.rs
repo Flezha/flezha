@@ -6,7 +6,6 @@ use serde_json::Value;
 use serde::Deserialize;
 
 use crate::service::payloader;
-use crate::computation::Computation;
 use crate::engine::worker::EngineWorker;
 
 #[derive(Deserialize)]
@@ -28,13 +27,8 @@ impl CommandAction for CreateComputationCommand {
         
         let mut blueprint = blueprint_factory();
         blueprint.update_blueprint(&variables);
-
-        let computation = Computation {
-            id: self.computation_id.clone(),
-            blueprint,
-        };
     
-        engine_worker.register_computation(computation);
+        engine_worker.register_computation(self.computation_id.clone(), blueprint);
 
         let mut hashmap: HashMap<String, Value> = HashMap::new();
         hashmap.insert("reference_id".to_string(), Value::String(reference_id));

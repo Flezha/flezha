@@ -66,8 +66,3 @@ impl<T: Blueprint + 'static> BlueprintTrait for T {
         Box::new(deserialized_blueprint)
     }
 }
-
-pub struct Computation {
-    pub id: String,
-    pub blueprint: Box<dyn BlueprintTrait>,
-}

@@ -3,7 +3,7 @@ use std::os::unix::net::UnixStream;
 use std::{collections::HashMap, thread};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
-use crate::computation::{Computation, BlueprintTrait};
+use crate::computation::BlueprintTrait;
 use crate::service::payloader;
 use crate::command::action;
 
@@ -12,7 +12,7 @@ use super::ThreadItem;
 pub struct EngineWorker {
     engine_id: String,
     blueprints_factory: HashMap<String, fn() -> Box<dyn BlueprintTrait>>,
-    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>>,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn BlueprintTrait>>>>>>,
     thread_map: Arc<Mutex<HashMap<u8, thread::JoinHandle<()>>>>,
     control_stream: Arc<UnixStream>,
 }
@@ -58,7 +58,7 @@ impl EngineWorker {
         self.engine_id.clone()
     }
 
-    pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<Computation>>>>> {
+    pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn BlueprintTrait>>>>>> {
         Arc::clone(&self.computations)
     }
 
@@ -92,8 +92,7 @@ impl EngineWorker {
         self.blueprints_factory.insert(blueprint_id.clone(), factory);
     }
 
-    pub fn register_computation(&self, computation: Computation) {
-        let id = computation.id.clone();
+    pub fn register_computation(&self, id: String, computation: Box<dyn BlueprintTrait>) {
         let computation = Arc::new(Mutex::new(computation));
         self.computations.write().unwrap().insert(id, computation);
     }
