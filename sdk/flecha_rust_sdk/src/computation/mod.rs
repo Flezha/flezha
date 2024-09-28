@@ -7,11 +7,6 @@ pub enum ComputationResult {
     Reply(String),
 }
 
-pub enum ComputationInput {
-    StringInput(String),
-    U32Input(u32),
-}
-
 pub trait Computation: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync  {
     fn run(&self, input: String) -> ComputationResult;
 
