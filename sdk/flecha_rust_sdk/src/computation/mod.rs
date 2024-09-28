@@ -12,7 +12,7 @@ pub enum ComputationInput {
     U32Input(u32),
 }
 
-pub trait Blueprint: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync  {
+pub trait Computation: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync  {
     fn run(&self, input: String) -> ComputationResult;
 
     fn update_from_map(&mut self, map: &HashMap<String, Value>) {
@@ -39,30 +39,30 @@ pub trait Blueprint: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync
     }
 }
 
-pub trait BlueprintTrait: Send + Sync  {
+pub trait ComputationTrait: Send + Sync  {
     fn run(&self, input: String) -> ComputationResult;
-    fn update_blueprint(&mut self, map: &HashMap<String, Value>);
-    fn serialize_blueprint(&self) -> Vec<u8>;
-    fn deserialize_blueprint(&self, data: &[u8]) -> Box<dyn BlueprintTrait>;
+    fn update_computation(&mut self, map: &HashMap<String, Value>);
+    fn serialize_computation(&self) -> Vec<u8>;
+    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn ComputationTrait>;
 }
 
-// Implement BlueprintTrait for all types that implement Blueprint.
-impl<T: Blueprint + 'static> BlueprintTrait for T {
+// Implement ComputationTrait for all types that implement Computation.
+impl<T: Computation + 'static> ComputationTrait for T {
     fn run(&self, input: String) -> ComputationResult {
         self.run(input)
     }
 
-    fn update_blueprint(&mut self, map: &HashMap<String, Value>) {
+    fn update_computation(&mut self, map: &HashMap<String, Value>) {
         self.update_from_map(map)
     }
 
-    fn serialize_blueprint(&self) -> Vec<u8> {
+    fn serialize_computation(&self) -> Vec<u8> {
         // Use the fully qualified syntax to avoid ambiguity
-        Blueprint::serialize(self)
+        Computation::serialize(self)
     }
 
-    fn deserialize_blueprint(&self, data: &[u8]) -> Box<dyn BlueprintTrait> {
-        let deserialized_blueprint = <T as Blueprint>::deserialize(data);
-        Box::new(deserialized_blueprint)
+    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn ComputationTrait> {
+        let deserialized_computation = <T as Computation>::deserialize(data);
+        Box::new(deserialized_computation)
     }
 }

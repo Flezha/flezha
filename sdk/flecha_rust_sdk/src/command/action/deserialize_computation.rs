@@ -28,7 +28,7 @@ impl CommandAction for DeSerializeComputationCommand {
         
         match computations.get(&self.computation_id) {
             Some(computation) => {
-                computation.lock().unwrap().deserialize_blueprint(&self.serialized_data);
+                computation.lock().unwrap().deserialize_computation(&self.serialized_data);
             }
             None => (),
         };

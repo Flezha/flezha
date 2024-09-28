@@ -11,7 +11,7 @@ use crate::engine::worker::EngineWorker;
 #[derive(Deserialize)]
 pub struct CreateComputationCommand {
     computation_id: String,
-    blueprint_id: String,
+    factory_id: String,
     variables: Value,
 }
 
@@ -22,13 +22,13 @@ impl CommandAction for CreateComputationCommand {
         _message: &String,
         reference_id: String,
     ) {
-        let blueprint_factory = engine_worker.get_blueprint_factory(self.blueprint_id.clone()).unwrap();
+        let factory = engine_worker.get_factory(self.factory_id.clone()).unwrap();
         let variables = value_to_hashmap(&self.variables).unwrap();
         
-        let mut blueprint = blueprint_factory();
-        blueprint.update_blueprint(&variables);
+        let mut computation = factory();
+        computation.update_computation(&variables);
     
-        engine_worker.register_computation(self.computation_id.clone(), blueprint);
+        engine_worker.register_computation(self.computation_id.clone(), computation);
 
         let mut hashmap: HashMap<String, Value> = HashMap::new();
         hashmap.insert("reference_id".to_string(), Value::String(reference_id));

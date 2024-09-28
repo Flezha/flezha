@@ -5,23 +5,23 @@ mod command;
 mod utility;
 
 use engine::ComputationEngine;
-use computation::{Blueprint, ComputationResult};
+use computation::{Computation, ComputationResult};
 use serde::{Serialize, Deserialize};
 
 fn main() {
     let mut engine = ComputationEngine::new("default".to_string());
 
-    engine.register_blueprint(
+    engine.register_factory(
         "do_nothing".to_string(),
         || Box::new(DoNothingComputation{})
     );
 
-    engine.register_blueprint(
+    engine.register_factory(
         "compare_filter".to_string(),
          || Box::new(CompareFilterComputation{ comparable: "".to_string(), inverted: false })
     );
 
-    engine.register_blueprint(
+    engine.register_factory(
         "increment_state".to_string(), 
         || Box::new(IncrementStateComputation { value: 5000})
     );
@@ -36,7 +36,7 @@ struct CompareFilterComputation {
     inverted: bool,
 }
 
-impl Blueprint for CompareFilterComputation {
+impl Computation for CompareFilterComputation {
     fn run(&self, input: String) -> ComputationResult {
         if self.inverted {
             if self.comparable == input {
@@ -57,7 +57,7 @@ impl Blueprint for CompareFilterComputation {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct DoNothingComputation {}
 
-impl Blueprint for DoNothingComputation {
+impl Computation for DoNothingComputation {
     fn run(&self, _input: String) -> ComputationResult {
         ComputationResult::NoReply
     }
@@ -68,7 +68,7 @@ struct IncrementStateComputation {
     value: u32
 }
 
-impl Blueprint for IncrementStateComputation {
+impl Computation for IncrementStateComputation {
     fn run(&self, _input: String) -> ComputationResult {
         ComputationResult::NoReply
     }

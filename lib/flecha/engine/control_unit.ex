@@ -11,7 +11,7 @@ defmodule Flecha.Engine.ControlUnit do
   require Logger
 
   @payload_id_connect_control_channel "connect_control_channel"
-  @payload_id_blueprint_register "register_blueprint"
+  @payload_id_factory_register "register_factory"
   @payload_id_connect_sockets "connect_sockets"
   @payload_id_computation_new "add_computation"
   @payload_id_serialize_comp "serialize_computation"
@@ -72,7 +72,7 @@ defmodule Flecha.Engine.ControlUnit do
         @payload_id_computation_new,
         %{
           "computation_id" => computation.id,
-          "blueprint_id" => computation.blueprint_id,
+          "factory_id" => computation.factory_id,
           "variables" => computation.variables
         }
       )
@@ -110,8 +110,8 @@ defmodule Flecha.Engine.ControlUnit do
         @payload_id_connect_sockets ->
           :ok
 
-        @payload_id_blueprint_register ->
-          handle_blueprint_registration(state, message)
+        @payload_id_factory_register ->
+          handle_factory_registration(state, message)
 
         _ ->
           {:error, "Unknown message id: #{payload_id}"}
@@ -139,16 +139,16 @@ defmodule Flecha.Engine.ControlUnit do
     end
   end
 
-  defp handle_blueprint_registration(state, message) do
+  defp handle_factory_registration(state, message) do
     {:ok, data} = Jason.decode(message)
 
     Warden.update(:engines, fn engines ->
-      Map.update(engines, state[:engine_id], [], fn blueprints ->
-        [data["blueprint_id"] | blueprints]
+      Map.update(engines, state[:engine_id], [], fn factories ->
+        [data["factory_id"] | factories]
       end)
     end)
 
-    EventManager.dispath(:blueprint_registered, data["blueprint_id"])
+    EventManager.dispath(:factory_registered, data["factory_id"])
 
     :ok
   end

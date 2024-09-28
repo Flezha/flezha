@@ -3,7 +3,7 @@ use std::os::unix::net::UnixStream;
 use std::{collections::HashMap, thread};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
-use crate::computation::BlueprintTrait;
+use crate::computation::ComputationTrait;
 use crate::service::payloader;
 use crate::command::action;
 
@@ -11,8 +11,8 @@ use super::ThreadItem;
 
 pub struct EngineWorker {
     engine_id: String,
-    blueprints_factory: HashMap<String, fn() -> Box<dyn BlueprintTrait>>,
-    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn BlueprintTrait>>>>>>,
+    computation_factory: HashMap<String, fn() -> Box<dyn ComputationTrait>>,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>>,
     thread_map: Arc<Mutex<HashMap<u8, thread::JoinHandle<()>>>>,
     control_stream: Arc<UnixStream>,
 }
@@ -25,7 +25,7 @@ pub fn start_worker_thread(
     thread::spawn(move || {
         let mut engine_worker = EngineWorker {
             engine_id: engine_id,
-            blueprints_factory: HashMap::new(),
+            computation_factory: HashMap::new(),
             computations: Arc::new(RwLock::new(HashMap::new())),
             thread_map: Arc::new(Mutex::new(HashMap::new())),
             control_stream: control_stream,
@@ -39,8 +39,8 @@ pub fn start_worker_thread(
                         ThreadItem::Command(payload_id, command) => {
                             action::handle_action(&mut engine_worker, &payload_id,&command);
                         }
-                        ThreadItem::ComputationBlueprint((blueprint_id, factory)) => {
-                            engine_worker.register_blueprint(blueprint_id, factory, engine_worker.control_stream.clone());
+                        ThreadItem::Computation((computation_id, factory)) => {
+                            engine_worker.register_factory(computation_id, factory, engine_worker.control_stream.clone());
                         },
                         _ => panic!("Unexpected message received on worker channel"),
                     }
@@ -58,12 +58,12 @@ impl EngineWorker {
         self.engine_id.clone()
     }
 
-    pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn BlueprintTrait>>>>>> {
+    pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>> {
         Arc::clone(&self.computations)
     }
 
-    pub fn get_blueprint_factory(&self, blueprint_id: String) -> Option<&fn() -> Box<dyn BlueprintTrait>> {
-        self.blueprints_factory.get(&blueprint_id)
+    pub fn get_factory(&self, factory_id: String) -> Option<&fn() -> Box<dyn ComputationTrait>> {
+        self.computation_factory.get(&factory_id)
     }
 
     pub fn get_thread_map(&self) -> Arc<Mutex<HashMap<u8, thread::JoinHandle<()>>>> {
@@ -74,25 +74,25 @@ impl EngineWorker {
         Arc::clone(&self.control_stream)
     }
 
-    pub fn register_blueprint(
+    pub fn register_factory(
         &mut self,
-        blueprint_id: String,
-        factory: fn() -> Box<dyn BlueprintTrait>,
+        factory_id: String,
+        factory: fn() -> Box<dyn ComputationTrait>,
         control_stream: Arc<UnixStream>
     ) {
         let mut core_data = HashMap::new();
         
-        core_data.insert("blueprint_id".to_string(), blueprint_id.clone());
+        core_data.insert("factory_id".to_string(), factory_id.clone());
 
         let json = serde_json::to_string(&core_data).unwrap();
-        let payload = payloader::build_payload(&"register_blueprint".to_string(), &json);
+        let payload = payloader::build_payload(&"register_factory".to_string(), &json);
 
         control_stream.try_clone().unwrap().write_all(&payload).unwrap();
 
-        self.blueprints_factory.insert(blueprint_id.clone(), factory);
+        self.computation_factory.insert(factory_id.clone(), factory);
     }
 
-    pub fn register_computation(&self, id: String, computation: Box<dyn BlueprintTrait>) {
+    pub fn register_computation(&self, id: String, computation: Box<dyn ComputationTrait>) {
         let computation = Arc::new(Mutex::new(computation));
         self.computations.write().unwrap().insert(id, computation);
     }

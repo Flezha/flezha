@@ -5,7 +5,7 @@ defmodule MigratorTest do
   test "serialize computation" do
     computation = %Flecha.Computation{
       id: "serialize_computation_test",
-      blueprint_id: "increment_state"
+      factory_id: "increment_state"
     }
 
     Flecha.add_computation(computation)
@@ -22,7 +22,7 @@ defmodule MigratorTest do
   test "deserialize computation" do
     computation = %Flecha.Computation{
       id: "serialize_computation_test",
-      blueprint_id: "increment_state"
+      factory_id: "increment_state"
     }
 
     Flecha.add_computation(computation)
