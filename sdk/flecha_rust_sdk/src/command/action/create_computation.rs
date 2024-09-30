@@ -5,6 +5,7 @@ use std::io::Write;
 use serde_json::Value;
 use serde::Deserialize;
 
+use crate::computation::ComputationType;
 use crate::service::payloader;
 use crate::engine::worker::EngineWorker;
 
@@ -25,11 +26,16 @@ impl CommandAction for CreateComputationCommand {
         let factory = engine_worker.get_factory(self.factory_id.clone()).unwrap();
         let variables = value_to_hashmap(&self.variables).unwrap();
         
-        let mut computation = factory();
-        computation.update_computation(&variables);
-    
-        engine_worker.register_computation(self.computation_id.clone(), computation);
-
+        let mut computation_enum = factory(); // Mutable to allow mutable borrowing
+        let computation_ref = match &mut computation_enum {  // Mutably borrow the computation_enum
+            ComputationType::TextComputation(computation) 
+            | ComputationType::BinaryComputation(computation) => computation,
+        };
+        
+        computation_ref.update_computation(&variables);
+        
+        engine_worker.register_computation(self.computation_id.clone(), computation_enum);        
+        
         let mut hashmap: HashMap<String, Value> = HashMap::new();
         hashmap.insert("reference_id".to_string(), Value::String(reference_id));
 

@@ -3,7 +3,7 @@ use std::os::unix::net::UnixStream;
 use std::{collections::HashMap, thread};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
-use crate::computation::ComputationTrait;
+use crate::computation::ComputationType;
 use crate::service::payloader;
 use crate::command::action;
 
@@ -11,8 +11,8 @@ use super::ThreadItem;
 
 pub struct EngineWorker {
     engine_id: String,
-    computation_factory: HashMap<String, fn() -> Box<dyn ComputationTrait>>,
-    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>>,
+    computation_factory: HashMap<String, fn() -> ComputationType>,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
     thread_map: Arc<Mutex<HashMap<u8, thread::JoinHandle<()>>>>,
     control_stream: Arc<UnixStream>,
 }
@@ -58,11 +58,11 @@ impl EngineWorker {
         self.engine_id.clone()
     }
 
-    pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>> {
+    pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>> {
         Arc::clone(&self.computations)
     }
 
-    pub fn get_factory(&self, factory_id: String) -> Option<&fn() -> Box<dyn ComputationTrait>> {
+    pub fn get_factory(&self, factory_id: String) -> Option<&fn() -> ComputationType> {
         self.computation_factory.get(&factory_id)
     }
 
@@ -77,7 +77,7 @@ impl EngineWorker {
     pub fn register_factory(
         &mut self,
         factory_id: String,
-        factory: fn() -> Box<dyn ComputationTrait>,
+        factory: fn() -> ComputationType,
         control_stream: Arc<UnixStream>
     ) {
         let mut core_data = HashMap::new();
@@ -92,7 +92,7 @@ impl EngineWorker {
         self.computation_factory.insert(factory_id.clone(), factory);
     }
 
-    pub fn register_computation(&self, id: String, computation: Box<dyn ComputationTrait>) {
+    pub fn register_computation(&self, id: String, computation: ComputationType) {
         let computation = Arc::new(Mutex::new(computation));
         self.computations.write().unwrap().insert(id, computation);
     }

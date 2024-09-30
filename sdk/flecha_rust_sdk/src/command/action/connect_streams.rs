@@ -8,7 +8,7 @@ use std::thread;
 use std::str;
 
 use crate::engine::worker::EngineWorker;
-use crate::computation::{ComputationTrait, ComputationResult};
+use crate::computation::{ComputationType, ComputationResult};
 use crate::service::payloader;
 
 use super::CommandAction;
@@ -53,7 +53,7 @@ impl CommandAction for ConnectSocketCommand {
 
 fn start_socket_listener(
     engine_id: &String,
-    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<Box< dyn ComputationTrait>>>>>>,
+    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
 ) {
     let socket_path = path_helper::stream_socket_path(engine_id);
     let stream = UnixStream::connect(socket_path).expect("Failed to connect to the socket");
@@ -61,21 +61,28 @@ fn start_socket_listener(
     handle_client(stream, computations)
 }
 
-fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<String, Arc<Mutex<Box< dyn ComputationTrait>>>>>>) {
+fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>) {
     loop {
         match payloader::extract_payload(&mut stream) {
             Ok((computation_id, message)) => {
                 let computations_read = computations.read().unwrap();
                 
                 if let Some(c) = computations_read.get(&computation_id) {
-                    let result = c.lock().unwrap().run(message);
+                    let comp = c.lock().unwrap();
 
-                    match result {
-                        ComputationResult::NoReply => {}
-                        ComputationResult::Reply(reply) => {
-                            send_result(&mut stream, &computation_id, &reply);
+                    match &*comp {
+                        ComputationType::TextComputation(comp)
+                        | ComputationType::BinaryComputation(comp) => {
+                            let result = comp.run(message);
+
+                            match result {
+                                ComputationResult::NoReply => {}
+                                ComputationResult::Reply(reply) => {
+                                    send_result(&mut stream, &computation_id, &reply);
+                                }
+                            }
                         }
-                    }
+                    };                    
                 } else {
                     eprintln!("Computation with given ID not found {}", computation_id);
                 }

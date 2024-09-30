@@ -7,7 +7,12 @@ pub enum ComputationResult {
     Reply(String),
 }
 
-pub trait Computation: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync  {
+pub enum ComputationType {
+    TextComputation(Box<dyn TextComputationTrait>),
+    BinaryComputation(Box<dyn TextComputationTrait>),
+}
+
+pub trait TextComputation: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync  {
     fn run(&self, input: String) -> ComputationResult;
 
     fn update_from_map(&mut self, map: &HashMap<String, Value>) {
@@ -34,15 +39,15 @@ pub trait Computation: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sy
     }
 }
 
-pub trait ComputationTrait: Send + Sync  {
+pub trait TextComputationTrait: Send + Sync  {
     fn run(&self, input: String) -> ComputationResult;
     fn update_computation(&mut self, map: &HashMap<String, Value>);
     fn serialize_computation(&self) -> Vec<u8>;
-    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn ComputationTrait>;
+    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn TextComputationTrait>;
 }
 
 // Implement ComputationTrait for all types that implement Computation.
-impl<T: Computation + 'static> ComputationTrait for T {
+impl<T: TextComputation + 'static> TextComputationTrait for T {
     fn run(&self, input: String) -> ComputationResult {
         self.run(input)
     }
@@ -53,11 +58,11 @@ impl<T: Computation + 'static> ComputationTrait for T {
 
     fn serialize_computation(&self) -> Vec<u8> {
         // Use the fully qualified syntax to avoid ambiguity
-        Computation::serialize(self)
+        TextComputation::serialize(self)
     }
 
-    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn ComputationTrait> {
-        let deserialized_computation = <T as Computation>::deserialize(data);
+    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn TextComputationTrait> {
+        let deserialized_computation = <T as TextComputation>::deserialize(data);
         Box::new(deserialized_computation)
     }
 }

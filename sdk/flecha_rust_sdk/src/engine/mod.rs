@@ -1,7 +1,7 @@
 pub mod worker;
 mod control_unit;
 
-use crate::computation::ComputationTrait;
+use crate::computation::ComputationType;
 
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self};
@@ -19,7 +19,7 @@ pub struct ComputationEngine {
 
 pub enum ThreadItem {
     Command(String, String),
-    Computation((String, fn() -> Box<dyn ComputationTrait>)),
+    Computation((String, fn() -> ComputationType)),
     EngineIdConfirmation
 }
 
@@ -55,7 +55,7 @@ impl ComputationEngine {
         }
     }
 
-    pub fn register_factory(&mut self, computation_id: String, factory: fn() -> Box<dyn ComputationTrait>) {
+    pub fn register_factory(&mut self, computation_id: String, factory: fn() -> ComputationType) {
         self.tx.lock().unwrap().send(
             ThreadItem::Computation((computation_id, factory))
         ).unwrap();

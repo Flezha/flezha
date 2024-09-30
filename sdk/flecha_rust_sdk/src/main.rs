@@ -5,7 +5,7 @@ mod command;
 mod utility;
 
 use engine::ComputationEngine;
-use computation::{Computation, ComputationResult};
+use computation::{ComputationType, TextComputation, ComputationResult};
 use serde::{Serialize, Deserialize};
 
 fn main() {
@@ -13,17 +13,17 @@ fn main() {
 
     engine.register_factory(
         "do_nothing".to_string(),
-        || Box::new(DoNothingComputation{})
+        || ComputationType::TextComputation(Box::new(DoNothingComputation{}))
     );
 
     engine.register_factory(
         "compare_filter".to_string(),
-         || Box::new(CompareFilterComputation{ comparable: "".to_string(), inverted: false })
+         || ComputationType::TextComputation(Box::new(CompareFilterComputation{ comparable: "".to_string(), inverted: false }))
     );
 
     engine.register_factory(
         "increment_state".to_string(), 
-        || Box::new(IncrementStateComputation { value: 5000})
+        || ComputationType::TextComputation(Box::new(IncrementStateComputation { value: 5000}))
     );
 
     // TODO: remove later.
@@ -36,7 +36,7 @@ struct CompareFilterComputation {
     inverted: bool,
 }
 
-impl Computation for CompareFilterComputation {
+impl TextComputation for CompareFilterComputation {
     fn run(&self, input: String) -> ComputationResult {
         if self.inverted {
             if self.comparable == input {
@@ -57,7 +57,7 @@ impl Computation for CompareFilterComputation {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct DoNothingComputation {}
 
-impl Computation for DoNothingComputation {
+impl TextComputation for DoNothingComputation {
     fn run(&self, _input: String) -> ComputationResult {
         ComputationResult::NoReply
     }
@@ -68,7 +68,7 @@ struct IncrementStateComputation {
     value: u32
 }
 
-impl Computation for IncrementStateComputation {
+impl TextComputation for IncrementStateComputation {
     fn run(&self, _input: String) -> ComputationResult {
         ComputationResult::NoReply
     }
