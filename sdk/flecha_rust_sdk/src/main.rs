@@ -18,19 +18,23 @@ fn main() {
 
     engine.register_factory(
         "compare_filter".to_string(),
-         || ComputationType::TextComputation(Box::new(CompareFilterComputation{ comparable: "".to_string(), inverted: false }))
+         || ComputationType::TextComputation(Box::new(CompareFilterComputation{ 
+            comparable: "".to_string(), inverted: false 
+        }))
     );
 
     engine.register_factory(
         "increment_state".to_string(), 
-        || ComputationType::BinaryComputation(Box::new(IncrementStateComputation { value: 5000}))
+        || ComputationType::BinaryComputation(Box::new(IncrementStateComputation {
+            value: 5000
+        }))
     );
 
     // TODO: remove later.
     std::thread::sleep(std::time::Duration::from_secs(15));
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 struct CompareFilterComputation {
     comparable: String,
     inverted: bool,
@@ -54,7 +58,7 @@ impl TextComputation for CompareFilterComputation {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 struct DoNothingComputation {}
 
 impl TextComputation for DoNothingComputation {
@@ -63,7 +67,7 @@ impl TextComputation for DoNothingComputation {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 struct IncrementStateComputation {
     value: u32
 }
