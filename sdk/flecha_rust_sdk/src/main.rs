@@ -5,7 +5,7 @@ mod command;
 mod utility;
 
 use engine::ComputationEngine;
-use computation::{ComputationType, TextComputation, ComputationResult};
+use computation::{ComputationType, TextComputation, BinaryComputation, ComputationResult};
 use serde::{Serialize, Deserialize};
 
 fn main() {
@@ -23,7 +23,7 @@ fn main() {
 
     engine.register_factory(
         "increment_state".to_string(), 
-        || ComputationType::TextComputation(Box::new(IncrementStateComputation { value: 5000}))
+        || ComputationType::BinaryComputation(Box::new(IncrementStateComputation { value: 5000}))
     );
 
     // TODO: remove later.
@@ -68,8 +68,8 @@ struct IncrementStateComputation {
     value: u32
 }
 
-impl TextComputation for IncrementStateComputation {
-    fn run(&self, _input: String) -> ComputationResult {
+impl BinaryComputation for IncrementStateComputation {
+    fn run(&self, _input: Vec<u8>) -> ComputationResult {
         ComputationResult::NoReply
     }
 }

@@ -64,16 +64,18 @@ fn start_socket_listener(
 fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>) {
     loop {
         match payloader::extract_payload(&mut stream) {
-            Ok((computation_id, message)) => {
+            Ok((computation_id, payload)) => {
                 let computations_read = computations.read().unwrap();
                 
                 if let Some(c) = computations_read.get(&computation_id) {
                     let comp = c.lock().unwrap();
 
+                    // TODO: reduce duplication.
                     match &*comp {
-                        ComputationType::TextComputation(comp)
-                        | ComputationType::BinaryComputation(comp) => {
-                            let result = comp.run(message);
+                        ComputationType::TextComputation(comp) => {
+                            let payload_message: String = String::from_utf8_lossy(&payload).to_string();
+
+                            let result = comp.run(payload_message);
 
                             match result {
                                 ComputationResult::NoReply => {}
@@ -82,7 +84,17 @@ fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Strin
                                 }
                             }
                         }
-                    };                    
+                        ComputationType::BinaryComputation(comp) => {
+                            let result = comp.run(payload);
+
+                            match result {
+                                ComputationResult::NoReply => {}
+                                ComputationResult::Reply(reply) => {
+                                    send_result(&mut stream, &computation_id, &reply);
+                                }
+                            }
+                        }
+                    };              
                 } else {
                     eprintln!("Computation with given ID not found {}", computation_id);
                 }

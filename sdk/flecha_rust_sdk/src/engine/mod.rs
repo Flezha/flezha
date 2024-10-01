@@ -18,7 +18,7 @@ pub struct ComputationEngine {
 }
 
 pub enum ThreadItem {
-    Command(String, String),
+    Command(String, Vec<u8>),
     Computation((String, fn() -> ComputationType)),
     EngineIdConfirmation
 }

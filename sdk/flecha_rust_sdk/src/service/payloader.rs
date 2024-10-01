@@ -2,7 +2,7 @@ use std::str;
 use std::io::{self, Read, Write};
 use byteorder::{BigEndian, WriteBytesExt, ReadBytesExt};
 
-pub fn extract_payload<R: Read>(mut reader: R) -> io::Result<(String, String)> {
+pub fn extract_payload<R: Read>(mut reader: R) -> io::Result<(String, Vec<u8>)> {
     // Read the payload ID (32 bytes).
     let mut id_buf = [0; 32];
     match reader.read_exact(&mut id_buf) {
@@ -31,9 +31,8 @@ pub fn extract_payload<R: Read>(mut reader: R) -> io::Result<(String, String)> {
             return Err(e);
         }
     }
-    let payload_message: String = String::from_utf8_lossy(&message_buf).to_string();
 
-    Ok((payload_id, payload_message))
+    Ok((payload_id, message_buf))
 }
 
 pub fn build_payload(payload_id: &str, message: &str) -> Vec<u8> {

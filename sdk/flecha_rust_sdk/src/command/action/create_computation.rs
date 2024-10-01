@@ -27,13 +27,12 @@ impl CommandAction for CreateComputationCommand {
         let variables = value_to_hashmap(&self.variables).unwrap();
         
         let mut computation_enum = factory(); // Mutable to allow mutable borrowing
-        let computation_ref = match &mut computation_enum {  // Mutably borrow the computation_enum
-            ComputationType::TextComputation(computation) 
-            | ComputationType::BinaryComputation(computation) => computation,
+        
+        match &mut computation_enum {  // Mutably borrow the computation_enum
+            ComputationType::TextComputation(c) => c.update_computation(&variables),
+            ComputationType::BinaryComputation(c) => c.update_computation(&variables),
         };
-        
-        computation_ref.update_computation(&variables);
-        
+                
         engine_worker.register_computation(self.computation_id.clone(), computation_enum);        
         
         let mut hashmap: HashMap<String, Value> = HashMap::new();

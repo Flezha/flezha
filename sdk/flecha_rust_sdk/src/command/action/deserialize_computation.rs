@@ -32,8 +32,10 @@ impl CommandAction for DeSerializeComputationCommand {
                 let c_enum = comp_arc.lock().unwrap();
 
                 match &*c_enum {
-                    ComputationType::TextComputation(computation)
-                    | ComputationType::BinaryComputation(computation) => {
+                    ComputationType::TextComputation(computation)  => {
+                        computation.deserialize_computation(&self.serialized_data);
+                    }
+                    ComputationType::BinaryComputation(computation) => {
                         computation.deserialize_computation(&self.serialized_data);
                     }
                 }
