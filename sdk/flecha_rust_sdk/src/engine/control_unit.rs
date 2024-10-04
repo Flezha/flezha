@@ -25,7 +25,7 @@ pub fn connect_control_socket(
         loop {
             match payloader::extract_payload(&*stream_boxed_clone) {
                 Ok((payload_id, message)) => {
-                    tx.lock().unwrap().send(ThreadItem::Command(payload_id, message)).unwrap();
+                    tx.lock().unwrap().send(ThreadItem::ControlCommand(payload_id, message)).unwrap();
                 }
                 Err(_e) => {
                     // TODO: log error

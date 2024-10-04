@@ -18,8 +18,8 @@ pub struct ComputationEngine {
 }
 
 pub enum ThreadItem {
-    Command(String, Vec<u8>),
-    Computation((String, fn() -> ComputationType)),
+    ControlCommand(String, Vec<u8>),
+    RegisterFactory((String, fn() -> ComputationType)),
     EngineIdConfirmation
 }
 
@@ -55,9 +55,9 @@ impl ComputationEngine {
         }
     }
 
-    pub fn register_factory(&mut self, computation_id: String, factory: fn() -> ComputationType) {
+    pub fn register_factory(&mut self, factory_id: String, factory: fn() -> ComputationType) {
         self.tx.lock().unwrap().send(
-            ThreadItem::Computation((computation_id, factory))
+            ThreadItem::RegisterFactory((factory_id, factory))
         ).unwrap();
     }
 }

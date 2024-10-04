@@ -36,12 +36,12 @@ pub fn start_worker_thread(
             match rx.recv() {
                 Ok(received) => {
                     match received {
-                        ThreadItem::Command(payload_id, payload) => {
+                        ThreadItem::ControlCommand(payload_id, payload) => {
                             let payload_message: String = String::from_utf8_lossy(&payload).to_string();
                             action::handle_action(&mut engine_worker, &payload_id,&payload_message);
                         }
-                        ThreadItem::Computation((computation_id, factory)) => {
-                            engine_worker.register_factory(computation_id, factory, engine_worker.control_stream.clone());
+                        ThreadItem::RegisterFactory((factory_id, factory)) => {
+                            engine_worker.register_factory(factory_id, factory, engine_worker.control_stream.clone());
                         },
                         _ => panic!("Unexpected message received on worker channel"),
                     }
