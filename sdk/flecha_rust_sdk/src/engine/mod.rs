@@ -1,9 +1,10 @@
 pub mod worker;
 mod control_unit;
 
-use crate::computation::ComputationType;
+use crate::computation::{self, ComputationInput, ComputationResult, ComputationType};
 
-use std::sync::{Arc, Mutex, mpsc};
+use std::collections::HashMap;
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::{self};
 use std::io::{self, Read};
 use std::time::Duration;
@@ -15,6 +16,7 @@ pub struct ComputationEngine {
     _rx: Arc<Mutex<mpsc::Receiver<ThreadItem>>>,
     tx: Arc<Mutex<mpsc::Sender<ThreadItem>>>,
     _stdio_thread: thread::JoinHandle<()>,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
 }
 
 pub enum ThreadItem {
@@ -32,9 +34,11 @@ impl ComputationEngine {
             engine_id.clone(),
             Arc::clone(&tx)
         );
+        let computations = Arc::new(RwLock::new(HashMap::new()));
         let worker_thread = worker::start_worker_thread(
             engine_id.clone(),
             Arc::clone(&rx),
+            computations.clone(),   
              control_stream
         );
         let stdio_thread = start_stdio_thread();
@@ -51,6 +55,7 @@ impl ComputationEngine {
             _control_thread: Some(control_thread),
             _rx: rx,
             tx,
+            computations,
             _stdio_thread: stdio_thread,
         }
     }
@@ -59,6 +64,51 @@ impl ComputationEngine {
         self.tx.lock().unwrap().send(
             ThreadItem::RegisterFactory((factory_id, factory))
         ).unwrap();
+    }
+
+    // TODO: Continue from here. We need to trigger the compute somehow differently becuase the engine needs to know about the stream channels(secondary)
+    pub fn compute(&mut self, computation_id: String, input: ComputationInput) {
+        let computations_read = self.computations.read().unwrap();
+                
+        if let Some(c) = computations_read.get(&computation_id) {
+            let mut comp = c.lock().unwrap();
+
+        // TODO: reduce duplication. with the connect streams module code.
+        match &mut *comp {
+            ComputationType::TextComputation(comp) => {
+                match input {
+                    ComputationInput::TextInput(input_text) => {
+                        let result = comp.run(input_text);
+
+                        match result {
+                            ComputationResult::NoReply => {}
+                            ComputationResult::Reply(reply) => {
+                                computation::send_result(&mut stream, &computation_id, &reply);
+                            }
+                        }
+                    }
+                    _ => panic!("Wrong input type for text computation"),
+                }
+            }
+            ComputationType::BinaryComputation(comp) => {
+                match input {
+                    ComputationInput::BinaryInput(input_binary) => {
+                        let result = comp.run(input_binary);
+
+                        match result {
+                            ComputationResult::NoReply => {}
+                            ComputationResult::Reply(reply) => {
+                                computation::send_result(&mut stream, &computation_id, &reply);
+                            }
+                        }
+                    }
+                    _ => panic!("Wrong input type for binary computation"),
+                }
+            }
+        };              
+        } else {
+            eprintln!("Computation with given ID not found {}", computation_id);
+        }
     }
 }
 

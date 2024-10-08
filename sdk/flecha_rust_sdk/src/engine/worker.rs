@@ -20,13 +20,14 @@ pub struct EngineWorker {
 pub fn start_worker_thread(
     engine_id: String,
     rx: Arc<Mutex<mpsc::Receiver<ThreadItem>>>,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
     control_stream: Arc<UnixStream>
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut engine_worker = EngineWorker {
             engine_id: engine_id,
             computation_factory: HashMap::new(),
-            computations: Arc::new(RwLock::new(HashMap::new())),
+            computations: computations,
             thread_map: Arc::new(Mutex::new(HashMap::new())),
             control_stream: control_stream,
         };

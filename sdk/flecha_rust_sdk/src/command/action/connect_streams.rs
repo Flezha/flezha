@@ -8,7 +8,7 @@ use std::thread;
 use std::str;
 
 use crate::engine::worker::EngineWorker;
-use crate::computation::{ComputationType, ComputationResult};
+use crate::computation::{self, ComputationResult, ComputationType};
 use crate::service::payloader;
 
 use super::CommandAction;
@@ -79,7 +79,7 @@ fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Strin
                             match result {
                                 ComputationResult::NoReply => {}
                                 ComputationResult::Reply(reply) => {
-                                    send_result(&mut stream, &computation_id, &reply);
+                                    computation::send_result(&mut stream, &computation_id, &reply);
                                 }
                             }
                         }
@@ -89,7 +89,7 @@ fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Strin
                             match result {
                                 ComputationResult::NoReply => {}
                                 ComputationResult::Reply(reply) => {
-                                    send_result(&mut stream, &computation_id, &reply);
+                                    computation::send_result(&mut stream, &computation_id, &reply);
                                 }
                             }
                         }
@@ -103,13 +103,5 @@ fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Strin
                 break;
             }
         }
-    }
-}
-
-fn send_result(stream: &mut UnixStream, computation_id: &String, result: &str) {
-    let payload = payloader::build_payload(&computation_id, result);
-
-    if let Err(err) = stream.write_all(&payload) {
-        eprintln!("Error writing to stream: {}", err);
     }
 }

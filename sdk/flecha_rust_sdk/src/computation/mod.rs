@@ -1,6 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, os::unix::net::UnixStream};
+use std::io::Write;
 use serde::{Serialize, Deserialize};
 use serde_json::{from_value, to_value, Value};
+
+use crate::service::payloader;
 
 pub enum ComputationResult {
     NoReply,
@@ -10,6 +13,11 @@ pub enum ComputationResult {
 pub enum ComputationType {
     TextComputation(Box<dyn TextComputationTrait>),
     BinaryComputation(Box<dyn BinaryComputationTrait>),
+}
+
+pub enum ComputationInput {
+    TextInput(String),
+    BinaryInput(Vec<u8>),
 }
 
 pub trait TextComputation: ComputationSerializer {
@@ -88,5 +96,13 @@ pub trait ComputationSerializer: Serialize + for<'de> Deserialize<'de> + Clone +
         Self: Sized,
     {
         bincode::deserialize(data).expect("Failed to deserialize")
+    }
+}
+
+pub fn send_result(stream: &mut UnixStream, computation_id: &String, result: &str) {
+    let payload = payloader::build_payload(&computation_id, result);
+
+    if let Err(err) = stream.write_all(&payload) {
+        eprintln!("Error writing to stream: {}", err);
     }
 }
