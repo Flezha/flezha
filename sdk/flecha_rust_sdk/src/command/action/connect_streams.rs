@@ -74,7 +74,6 @@ fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Strin
                     match &mut *comp {
                         ComputationType::TextComputation(comp) => {
                             let payload_message: String = String::from_utf8_lossy(&payload).to_string();
-
                             let result = comp.run(payload_message);
 
                             match result {
