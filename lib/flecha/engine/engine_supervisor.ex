@@ -33,8 +33,12 @@ defmodule Flecha.Engine.EngineSupervisor do
            [{Identificator.stream_listener(engine_id), stream_socket_path}]}
       },
       %{
-        id: StreamSupervisor,
-        start: {Flecha.Engine.StreamSupervisor, :start_link, [engine_id]}
+        id: :primary_stream_sup,
+        start: {Flecha.Engine.StreamSupervisor, :start_link, [{engine_id, :primary}]}
+      },
+      %{
+        id: :secondary_stream_sup,
+        start: {Flecha.Engine.StreamSupervisor, :start_link, [{engine_id, :secondary}]}
       }
     ]
 

@@ -6,8 +6,8 @@ defmodule Flecha.Engine.StreamChannel do
 
   use GenServer
 
-  def start_link(engine_id) do
-    GenServer.start_link(__MODULE__, engine_id)
+  def start_link({engine_id, name}) do
+    GenServer.start_link(__MODULE__, engine_id, name: name)
   end
 
   @impl true

@@ -13,8 +13,11 @@ defmodule Flecha.Service.HubManager do
 
     Warden.get(:engines)
     |> Enum.each(fn {engine_id, _factories} ->
-      Supervisor.which_children(Identificator.stream_sup(engine_id))
-      |> Enum.each(fn {_, pid, _, _} ->
+      stream_channels =
+        Supervisor.which_children(Identificator.stream_sup_primary(engine_id)) ++
+          Supervisor.which_children(Identificator.stream_sup_secondary(engine_id))
+
+      Enum.each(stream_channels, fn {_, pid, _, _} ->
         GenServer.cast(pid, {:computation_pid_update, computation_id, updated_pids})
       end)
     end)
