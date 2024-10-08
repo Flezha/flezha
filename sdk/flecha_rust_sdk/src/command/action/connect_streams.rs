@@ -68,10 +68,10 @@ fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Strin
                 let computations_read = computations.read().unwrap();
                 
                 if let Some(c) = computations_read.get(&computation_id) {
-                    let comp = c.lock().unwrap();
+                    let mut comp = c.lock().unwrap();
 
                     // TODO: reduce duplication.
-                    match &*comp {
+                    match &mut *comp {
                         ComputationType::TextComputation(comp) => {
                             let payload_message: String = String::from_utf8_lossy(&payload).to_string();
 

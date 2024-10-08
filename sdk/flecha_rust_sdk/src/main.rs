@@ -41,7 +41,7 @@ struct CompareFilterComputation {
 }
 
 impl TextComputation for CompareFilterComputation {
-    fn run(&self, input: String) -> ComputationResult {
+    fn run(&mut self, input: String) -> ComputationResult {
         if self.inverted {
             if self.comparable == input {
                 ComputationResult::NoReply
@@ -62,7 +62,7 @@ impl TextComputation for CompareFilterComputation {
 struct DoNothingComputation {}
 
 impl TextComputation for DoNothingComputation {
-    fn run(&self, _input: String) -> ComputationResult {
+    fn run(&mut self, _input: String) -> ComputationResult {
         ComputationResult::NoReply
     }
 }
@@ -73,7 +73,8 @@ struct IncrementStateComputation {
 }
 
 impl BinaryComputation for IncrementStateComputation {
-    fn run(&self, _input: Vec<u8>) -> ComputationResult {
+    fn run(&mut self, _input: Vec<u8>) -> ComputationResult {
+        self.value += 1;
         ComputationResult::NoReply
     }
 }

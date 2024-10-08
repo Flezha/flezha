@@ -13,29 +13,29 @@ pub enum ComputationType {
 }
 
 pub trait TextComputation: ComputationSerializer {
-    fn run(&self, input: String) -> ComputationResult;
+    fn run(&mut self, input: String) -> ComputationResult;
 }
 
 pub trait TextComputationTrait: ComputationTrait  {
-    fn run(&self, input: String) -> ComputationResult;
+    fn run(&mut self, input: String) -> ComputationResult;
 }
 
 impl<T: TextComputation + 'static> TextComputationTrait for T {
-    fn run(&self, input: String) -> ComputationResult {
+    fn run(&mut self, input: String) -> ComputationResult {
         self.run(input)
     }
 }
 
 pub trait BinaryComputation: ComputationSerializer  {
-    fn run(&self, input: Vec<u8>) -> ComputationResult;
+    fn run(&mut self, input: Vec<u8>) -> ComputationResult;
 }
 
 pub trait BinaryComputationTrait: ComputationTrait  {
-    fn run(&self, input: Vec<u8>) -> ComputationResult;
+    fn run(&mut self, input: Vec<u8>) -> ComputationResult;
 }
 
 impl<T: BinaryComputation + 'static> BinaryComputationTrait for T {
-    fn run(&self, input: Vec<u8>) -> ComputationResult {
+    fn run(&mut self, input: Vec<u8>) -> ComputationResult {
         self.run(input)
     }
 }
