@@ -1,73 +1,115 @@
-pub mod worker;
+pub mod action_receiver;
 mod control_unit;
 
 use crate::computation::{self, ComputationInput, ComputationResult, ComputationType};
+use crate::service::payloader;
+use crate::command::action;
 
+use std::io::Write;
 use std::collections::HashMap;
+use std::os::unix::net::UnixStream;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::{self};
 use std::io::{self, Read};
 use std::time::Duration;
 
+#[derive(Clone)]
 pub struct ComputationEngine {
-    _engine_id: String,
-    _worker_thread: Option<thread::JoinHandle<()>>,
-    _control_thread: Option<thread::JoinHandle<()>>,
-    _rx: Arc<Mutex<mpsc::Receiver<ThreadItem>>>,
-    tx: Arc<Mutex<mpsc::Sender<ThreadItem>>>,
-    _stdio_thread: thread::JoinHandle<()>,
+    engine_id: String,
+    computation_factory: HashMap<String, fn() -> ComputationType>,
     computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
+    control_stream: Arc<UnixStream>,
+    stream_threads: Arc<Mutex<HashMap<u8, thread::JoinHandle<()>>>>,
 }
 
-pub enum ThreadItem {
+pub enum EngineAction {
     ControlCommand(String, Vec<u8>),
-    RegisterFactory((String, fn() -> ComputationType)),
     EngineIdConfirmation
 }
 
 impl ComputationEngine {
     pub fn new(engine_id: String) -> ComputationEngine {
-        let (tx, rx): (mpsc::Sender<ThreadItem>, mpsc::Receiver<ThreadItem>) = mpsc::channel();
+        let (tx, rx): (mpsc::Sender<EngineAction>, mpsc::Receiver<EngineAction>) = mpsc::channel();
         let tx = Arc::new(Mutex::new(tx));
         let rx = Arc::new(Mutex::new(rx));
-        let (control_thread, control_stream) = control_unit::connect_control_socket(
+
+        let (_control_thread, control_stream) = control_unit::connect_control_socket(
             engine_id.clone(),
             Arc::clone(&tx)
         );
-        let computations = Arc::new(RwLock::new(HashMap::new()));
-        let worker_thread = worker::start_worker_thread(
-            engine_id.clone(),
-            Arc::clone(&rx),
-            computations.clone(),   
-             control_stream
+
+        let engine = ComputationEngine {
+            engine_id,
+            control_stream,
+            computation_factory: HashMap::new(),
+            computations: Arc::new(RwLock::new(HashMap::new())),
+            stream_threads: Arc::new(Mutex::new(HashMap::new())),
+        };
+
+        let _worker_thread = action_receiver::start_action_receiver(
+            engine.clone(),
+            Arc::clone(&rx)
         );
-        let stdio_thread = start_stdio_thread();
+
+        let _stdio_thread = start_stdio_thread();
 
         // Make sure the engine id is passed to the Flecha core.
         match rx.lock().unwrap().recv().expect("Failed to engine id sent confirmation") {
-            ThreadItem::EngineIdConfirmation => {},
+            EngineAction::EngineIdConfirmation => {},
             _ => panic!("Wrong order of messages"),
         }
 
-        ComputationEngine {
-            _engine_id: engine_id,
-            _worker_thread: Some(worker_thread),
-            _control_thread: Some(control_thread),
-            _rx: rx,
-            tx,
-            computations,
-            _stdio_thread: stdio_thread,
-        }
+        engine
     }
 
-    pub fn register_factory(&mut self, factory_id: String, factory: fn() -> ComputationType) {
-        self.tx.lock().unwrap().send(
-            ThreadItem::RegisterFactory((factory_id, factory))
-        ).unwrap();
+    pub fn handle_command(&mut self, payload_id: &String, payload: &Vec<u8>) {
+        let payload_message: String = String::from_utf8_lossy(&payload).to_string();
+        action::handle_action(self, &payload_id, &payload_message);
+    }
+
+    pub fn register_factory(
+        &mut self,
+        factory_id: String,
+        factory: fn() -> ComputationType) {
+        let mut core_data = HashMap::new();
+        
+        core_data.insert("factory_id".to_string(), factory_id.clone());
+
+        let json = serde_json::to_string(&core_data).unwrap();
+        let payload = payloader::build_payload(&"register_factory".to_string(), &json);
+
+        self.control_stream.try_clone().unwrap().write_all(&payload).unwrap();
+
+        self.computation_factory.insert(factory_id.clone(), factory);
+    }
+
+    pub fn get_factory(&self, factory_id: String) -> Option<&fn() -> ComputationType> {
+        self.computation_factory.get(&factory_id)
+    }
+
+    pub fn register_computation(&self, id: String, computation: ComputationType) {
+        let computation = Arc::new(Mutex::new(computation));
+        self.computations.write().unwrap().insert(id, computation);
+    }
+
+    pub fn get_control_stream(&self) -> Arc<UnixStream> {
+        Arc::clone(&self.control_stream)
+    }
+
+    pub fn get_engine_id(&self) -> String {
+        self.engine_id.clone()
+    }
+
+    pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>> {
+        Arc::clone(&self.computations)
+    }
+
+    pub fn get_stream_threads(&self) -> Arc<Mutex<HashMap<u8, thread::JoinHandle<()>>>> {
+        Arc::clone(&self.stream_threads)
     }
 
     // TODO: Continue from here. We need to trigger the compute somehow differently becuase the engine needs to know about the stream channels(secondary)
-    pub fn compute(&mut self, computation_id: String, input: ComputationInput) {
+    pub fn run(&mut self, computation_id: String, input: ComputationInput) {
         // let computations_read = self.computations.read().unwrap();
                 
         // if let Some(c) = computations_read.get(&computation_id) {
@@ -112,7 +154,7 @@ impl ComputationEngine {
     }
 }
 
-// Start a thread to monitor stdout and exit when stdin is closed.
+// Start a thread to monitor stdout and exit when stdin is closed. TODO: Maybe remove this?
 fn start_stdio_thread() -> thread::JoinHandle<()> {
        // Start a thread to monitor stdout
        thread::spawn(|| {

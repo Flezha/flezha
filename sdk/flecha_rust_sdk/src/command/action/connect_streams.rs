@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::thread;
 use std::str;
 
-use crate::engine::worker::EngineWorker;
 use crate::computation::{self, ComputationResult, ComputationType};
+use crate::engine::ComputationEngine;
 use crate::service::payloader;
 
 use super::CommandAction;
@@ -23,23 +23,23 @@ pub struct ConnectSocketCommand {
 impl CommandAction for ConnectSocketCommand {
     fn handle(
         &self,
-        engine_worker: &mut EngineWorker,
+        engine: &mut ComputationEngine,
         _message: &String,
         reference_id: String,
     ) {
-        let computations = engine_worker.get_computations();
+        let computations = engine.get_computations();
         let reference_id = reference_id.clone();
-        let control_stream = engine_worker.get_control_stream();
+        let control_stream = engine.get_control_stream();
 
         for i in 0..self.sockets_count {
             let computations = Arc::clone(&computations);
-            let engine_id = engine_worker.get_engine_id();
+            let engine_id = engine.get_engine_id();
         
             let handle = thread::spawn(move || {
                 start_socket_listener(&engine_id, &computations);
             });
         
-            engine_worker.get_thread_map().lock().unwrap().insert(i, handle);
+            engine.get_stream_threads().lock().unwrap().insert(i, handle);
         }
 
         let mut hashmap: HashMap<String, Value> = HashMap::new();

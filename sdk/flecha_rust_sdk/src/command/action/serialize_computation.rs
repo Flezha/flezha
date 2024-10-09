@@ -7,8 +7,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::computation::ComputationType;
+use crate::engine::ComputationEngine;
 use crate::service::payloader;
-use crate::engine::worker::EngineWorker;
 
 #[derive(Deserialize)]
 pub struct SerializeComputationCommand {
@@ -18,12 +18,12 @@ pub struct SerializeComputationCommand {
 impl CommandAction for SerializeComputationCommand {
     fn handle(
         &self,
-        engine_worker: &mut EngineWorker,
+        engine: &mut ComputationEngine,
         _message: &String,
         reference_id: String,
     ) {
-        let control_stream = engine_worker.get_control_stream();
-        let computations_lock = engine_worker.get_computations();
+        let control_stream = engine.get_control_stream();
+        let computations_lock = engine.get_computations();
         let computations = computations_lock.read().unwrap();  // Acquire read lock
         let serialized_json = match computations.get(&self.computation_id) {
             Some(computation) => {

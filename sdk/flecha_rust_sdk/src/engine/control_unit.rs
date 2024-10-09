@@ -7,11 +7,11 @@ use std::os::unix::net::UnixStream;
 use crate::service::payloader;
 use crate::utility::path_helper;
 
-use super::ThreadItem;
+use super::EngineAction;
 
 pub fn connect_control_socket(
     engine_id: String,
-    tx: Arc<Mutex<mpsc::Sender<ThreadItem>>>
+    tx: Arc<Mutex<mpsc::Sender<EngineAction>>>
 ) -> (thread::JoinHandle<()>, Arc<UnixStream>) {
     let socket_path = path_helper::control_socket_path();
     let stream_boxed = Arc::new(UnixStream::connect(socket_path).expect("Failed to connect to the socket"));
@@ -20,12 +20,12 @@ pub fn connect_control_socket(
     let thread = thread::spawn(move || {
         let payload = payloader::build_payload("connect_control_channel", &engine_id);
         stream_boxed_clone.try_clone().unwrap().write_all(&payload).unwrap();
-        tx.lock().unwrap().send(ThreadItem::EngineIdConfirmation).unwrap();
+        tx.lock().unwrap().send(EngineAction::EngineIdConfirmation).unwrap();
 
         loop {
             match payloader::extract_payload(&*stream_boxed_clone) {
                 Ok((payload_id, message)) => {
-                    tx.lock().unwrap().send(ThreadItem::ControlCommand(payload_id, message)).unwrap();
+                    tx.lock().unwrap().send(EngineAction::ControlCommand(payload_id, message)).unwrap();
                 }
                 Err(_e) => {
                     // TODO: log error

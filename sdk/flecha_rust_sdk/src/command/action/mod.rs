@@ -7,7 +7,8 @@ use connect_streams::ConnectSocketCommand;
 use serialize_computation::SerializeComputationCommand;
 use deserialize_computation::DeSerializeComputationCommand;
 
-use crate::engine::worker::EngineWorker;
+
+use crate::engine::ComputationEngine;
 
 use self::create_computation::CreateComputationCommand;
 
@@ -17,7 +18,7 @@ use serde_json::Value;
 pub trait CommandAction {
     fn handle(
         &self,
-        engine_worker: &mut EngineWorker,
+        engine: &mut ComputationEngine,
         command_struct: &String,
         reference_id: String,
     );
@@ -30,7 +31,7 @@ struct Command {
 }
 
 pub fn handle_action(
-    engine_worker: &mut EngineWorker,
+    engine: &mut ComputationEngine,
     payload_id: &String,
     message: &String
 ) {
@@ -65,5 +66,5 @@ pub fn handle_action(
         }
     };
 
-    command_action.handle(engine_worker, message, reference_id);
+    command_action.handle(engine, message, reference_id);
 }
