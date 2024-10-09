@@ -1,7 +1,7 @@
 pub mod action_receiver;
 mod control_unit;
 
-use crate::computation::{self, ComputationInput, ComputationResult, ComputationType};
+use crate::computation::ComputationType;
 use crate::service::payloader;
 use crate::command::action;
 
@@ -13,7 +13,6 @@ use std::thread::{self};
 use std::io::{self, Read};
 use std::time::Duration;
 
-#[derive(Clone)]
 pub struct ComputationEngine {
     engine_id: String,
     computation_factory: HashMap<String, fn() -> ComputationType>,
@@ -28,16 +27,16 @@ pub enum EngineAction {
 }
 
 impl ComputationEngine {
-    pub fn new(engine_id: String) -> ComputationEngine {
+    pub fn new(engine_id: String) -> Arc<Mutex<ComputationEngine>> {
         let (tx, rx): (mpsc::Sender<EngineAction>, mpsc::Receiver<EngineAction>) = mpsc::channel();
         let tx = Arc::new(Mutex::new(tx));
         let rx = Arc::new(Mutex::new(rx));
-
+    
         let (_control_thread, control_stream) = control_unit::connect_control_socket(
             engine_id.clone(),
             Arc::clone(&tx)
         );
-
+    
         let engine = ComputationEngine {
             engine_id,
             control_stream,
@@ -45,20 +44,22 @@ impl ComputationEngine {
             computations: Arc::new(RwLock::new(HashMap::new())),
             stream_threads: Arc::new(Mutex::new(HashMap::new())),
         };
-
-        let _worker_thread = action_receiver::start_action_receiver(
-            engine.clone(),
+    
+        let engine = Arc::new(Mutex::new(engine));
+            
+        let _action_receiver = action_receiver::start_action_receiver(
+            Arc::clone(&engine),
             Arc::clone(&rx)
         );
-
+    
         let _stdio_thread = start_stdio_thread();
-
+    
         // Make sure the engine id is passed to the Flecha core.
         match rx.lock().unwrap().recv().expect("Failed to engine id sent confirmation") {
             EngineAction::EngineIdConfirmation => {},
             _ => panic!("Wrong order of messages"),
         }
-
+    
         engine
     }
 
@@ -79,7 +80,6 @@ impl ComputationEngine {
         let payload = payloader::build_payload(&"register_factory".to_string(), &json);
 
         self.control_stream.try_clone().unwrap().write_all(&payload).unwrap();
-
         self.computation_factory.insert(factory_id.clone(), factory);
     }
 
@@ -109,7 +109,7 @@ impl ComputationEngine {
     }
 
     // TODO: Continue from here. We need to trigger the compute somehow differently becuase the engine needs to know about the stream channels(secondary)
-    pub fn run(&mut self, computation_id: String, input: ComputationInput) {
+    // pub fn run(&mut self, computation_id: String, input: ComputationInput) {
         // let computations_read = self.computations.read().unwrap();
                 
         // if let Some(c) = computations_read.get(&computation_id) {
@@ -151,7 +151,7 @@ impl ComputationEngine {
         // } else {
         //     eprintln!("Computation with given ID not found {}", computation_id);
         // }
-    }
+    // }
 }
 
 // Start a thread to monitor stdout and exit when stdin is closed. TODO: Maybe remove this?

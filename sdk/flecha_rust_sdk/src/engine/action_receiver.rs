@@ -5,7 +5,7 @@ use super::{ComputationEngine, EngineAction};
 
 
 pub fn start_action_receiver(
-    mut engine: ComputationEngine,
+    engine: Arc<Mutex<ComputationEngine>>,
     rx: Arc<Mutex<mpsc::Receiver<EngineAction>>>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -15,7 +15,7 @@ pub fn start_action_receiver(
                 Ok(received) => {
                     match received {
                         EngineAction::ControlCommand(payload_id, payload) => {
-                            engine.handle_command(&payload_id, &payload);
+                            engine.lock().unwrap().handle_command(&payload_id, &payload);
                         }
                         _ => panic!("Unexpected message received on worker channel"),
                     }

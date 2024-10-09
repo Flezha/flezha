@@ -42,8 +42,7 @@ pub fn handle_action(
     let command_action: Box<dyn CommandAction> = match payload_id.as_str() {
         "connect_sockets" => {
             let command: ConnectSocketCommand = serde_json::from_value(command.data)
-            .expect("Failed to deserialize OpenSocketCommand");
-
+                .expect("Failed to deserialize OpenSocketCommand");
             Box::new(command)
         }
         "add_computation" => {

@@ -9,7 +9,7 @@ use crate::computation::ComputationType;
 use crate::engine::ComputationEngine;
 use crate::service::payloader;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct CreateComputationCommand {
     computation_id: String,
     factory_id: String,

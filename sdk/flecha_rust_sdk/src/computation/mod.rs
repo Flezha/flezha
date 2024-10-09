@@ -15,10 +15,11 @@ pub enum ComputationType {
     BinaryComputation(Box<dyn BinaryComputationTrait>),
 }
 
-pub enum ComputationInput {
-    TextInput(String),
-    BinaryInput(Vec<u8>),
-}
+// TODO: Implement ComputationInput
+// pub enum ComputationInput {
+//     TextInput(String),
+//     BinaryInput(Vec<u8>),
+// }
 
 pub trait TextComputation: ComputationSerializer {
     fn run(&mut self, input: String) -> ComputationResult;
