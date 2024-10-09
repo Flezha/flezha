@@ -18,7 +18,7 @@ pub struct ComputationEngine {
     computation_factory: HashMap<String, fn() -> ComputationType>,
     computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
     control_stream: Arc<UnixStream>,
-    stream_threads: Arc<Mutex<HashMap<u8, thread::JoinHandle<()>>>>,
+    io_streams: Arc<Mutex<HashMap<u8, UnixStream>>>,
 }
 
 pub enum EngineAction {
@@ -42,13 +42,13 @@ impl ComputationEngine {
             control_stream,
             computation_factory: HashMap::new(),
             computations: Arc::new(RwLock::new(HashMap::new())),
-            stream_threads: Arc::new(Mutex::new(HashMap::new())),
+            io_streams: Arc::new(Mutex::new(HashMap::new())),
         };
     
-        let engine = Arc::new(Mutex::new(engine));
+        let engine_arc = Arc::new(Mutex::new(engine));
             
         let _action_receiver = action_receiver::start_action_receiver(
-            Arc::clone(&engine),
+            Arc::clone(&engine_arc),
             Arc::clone(&rx)
         );
     
@@ -60,12 +60,13 @@ impl ComputationEngine {
             _ => panic!("Wrong order of messages"),
         }
     
-        engine
+        engine_arc
     }
 
     pub fn handle_command(&mut self, payload_id: &String, payload: &Vec<u8>) {
         let payload_message: String = String::from_utf8_lossy(&payload).to_string();
-        action::handle_action(self, &payload_id, &payload_message);
+        let engine_arc = Arc::new(Mutex::new(self));
+        action::handle_action(engine_arc, &payload_id, &payload_message);
     }
 
     pub fn register_factory(
@@ -104,8 +105,8 @@ impl ComputationEngine {
         Arc::clone(&self.computations)
     }
 
-    pub fn get_stream_threads(&self) -> Arc<Mutex<HashMap<u8, thread::JoinHandle<()>>>> {
-        Arc::clone(&self.stream_threads)
+    pub fn get_io_streams(&self) -> Arc<Mutex<HashMap<u8, UnixStream>>> {
+        Arc::clone(&self.io_streams)
     }
 
     // TODO: Continue from here. We need to trigger the compute somehow differently becuase the engine needs to know about the stream channels(secondary)

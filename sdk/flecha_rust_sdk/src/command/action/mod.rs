@@ -3,6 +3,8 @@ mod connect_streams;
 mod serialize_computation;
 mod deserialize_computation;
 
+use std::sync::{Arc, Mutex};
+
 use connect_streams::ConnectSocketCommand;
 use serialize_computation::SerializeComputationCommand;
 use deserialize_computation::DeSerializeComputationCommand;
@@ -18,7 +20,7 @@ use serde_json::Value;
 pub trait CommandAction {
     fn handle(
         &self,
-        engine: &mut ComputationEngine,
+        engine: Arc<Mutex<&mut ComputationEngine>>,
         command_struct: &String,
         reference_id: String,
     );
@@ -31,7 +33,7 @@ struct Command {
 }
 
 pub fn handle_action(
-    engine: &mut ComputationEngine,
+    engine: Arc<Mutex<&mut ComputationEngine>>,
     payload_id: &String,
     message: &String
 ) {
