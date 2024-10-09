@@ -1,5 +1,5 @@
 [package]
-name = "flecha_rust_sdk"
+name = "flecha_sdk"
 version = "0.1.0"
 edition = "2021"
 

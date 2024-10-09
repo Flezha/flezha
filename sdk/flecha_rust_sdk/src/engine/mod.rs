@@ -68,47 +68,47 @@ impl ComputationEngine {
 
     // TODO: Continue from here. We need to trigger the compute somehow differently becuase the engine needs to know about the stream channels(secondary)
     pub fn compute(&mut self, computation_id: String, input: ComputationInput) {
-        let computations_read = self.computations.read().unwrap();
+        // let computations_read = self.computations.read().unwrap();
                 
-        if let Some(c) = computations_read.get(&computation_id) {
-            let mut comp = c.lock().unwrap();
+        // if let Some(c) = computations_read.get(&computation_id) {
+        //     let mut comp = c.lock().unwrap();
 
-        // TODO: reduce duplication. with the connect streams module code.
-        match &mut *comp {
-            ComputationType::TextComputation(comp) => {
-                match input {
-                    ComputationInput::TextInput(input_text) => {
-                        let result = comp.run(input_text);
+        // // TODO: reduce duplication. with the connect streams module code.
+        // match &mut *comp {
+        //     ComputationType::TextComputation(comp) => {
+        //         match input {
+        //             ComputationInput::TextInput(input_text) => {
+        //                 let result = comp.run(input_text);
 
-                        match result {
-                            ComputationResult::NoReply => {}
-                            ComputationResult::Reply(reply) => {
-                                computation::send_result(&mut stream, &computation_id, &reply);
-                            }
-                        }
-                    }
-                    _ => panic!("Wrong input type for text computation"),
-                }
-            }
-            ComputationType::BinaryComputation(comp) => {
-                match input {
-                    ComputationInput::BinaryInput(input_binary) => {
-                        let result = comp.run(input_binary);
+        //                 match result {
+        //                     ComputationResult::NoReply => {}
+        //                     ComputationResult::Reply(reply) => {
+        //                         computation::send_result(&mut stream, &computation_id, &reply);
+        //                     }
+        //                 }
+        //             }
+        //             _ => panic!("Wrong input type for text computation"),
+        //         }
+        //     }
+        //     ComputationType::BinaryComputation(comp) => {
+        //         match input {
+        //             ComputationInput::BinaryInput(input_binary) => {
+        //                 let result = comp.run(input_binary);
 
-                        match result {
-                            ComputationResult::NoReply => {}
-                            ComputationResult::Reply(reply) => {
-                                computation::send_result(&mut stream, &computation_id, &reply);
-                            }
-                        }
-                    }
-                    _ => panic!("Wrong input type for binary computation"),
-                }
-            }
-        };              
-        } else {
-            eprintln!("Computation with given ID not found {}", computation_id);
-        }
+        //                 match result {
+        //                     ComputationResult::NoReply => {}
+        //                     ComputationResult::Reply(reply) => {
+        //                         computation::send_result(&mut stream, &computation_id, &reply);
+        //                     }
+        //                 }
+        //             }
+        //             _ => panic!("Wrong input type for binary computation"),
+        //         }
+        //     }
+        // };              
+        // } else {
+        //     eprintln!("Computation with given ID not found {}", computation_id);
+        // }
     }
 }
 

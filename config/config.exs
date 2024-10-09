@@ -6,7 +6,7 @@ import Config
 
 config :flecha_core,
   external_processes: [
-    "cargo run --manifest-path=sdk/flecha_rust_sdk/Cargo.toml --target-dir=./target"
+    "cargo run --manifest-path=test/apps/rust_app/Cargo.toml --target-dir=./target"
   ],
   controller_init_hook: fn -> :ok end,
   socket_files_path: System.get_env("FLECHA_SOCKET_FILES_PATH", "app_data/sockets/"),
