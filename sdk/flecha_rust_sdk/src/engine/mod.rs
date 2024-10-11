@@ -3,7 +3,6 @@ mod control_unit;
 
 use crate::computation::ComputationType;
 use crate::service::payloader;
-use crate::command::action;
 
 use std::io::Write;
 use std::collections::HashMap;
@@ -61,12 +60,6 @@ impl ComputationEngine {
         }
     
         engine_arc
-    }
-
-    pub fn handle_command(&mut self, payload_id: &String, payload: &Vec<u8>) {
-        let payload_message: String = String::from_utf8_lossy(&payload).to_string();
-        let engine_arc = Arc::new(Mutex::new(self));
-        action::handle_action(engine_arc, &payload_id, &payload_message);
     }
 
     pub fn register_factory(

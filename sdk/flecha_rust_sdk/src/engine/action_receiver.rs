@@ -1,6 +1,8 @@
 use std::thread;
 use std::sync::{mpsc, Arc, Mutex};
 
+use crate::command::action;
+
 use super::{ComputationEngine, EngineAction};
 
 
@@ -15,7 +17,8 @@ pub fn start_action_receiver(
                 Ok(received) => {
                     match received {
                         EngineAction::ControlCommand(payload_id, payload) => {
-                            engine.lock().unwrap().handle_command(&payload_id, &payload);
+                            let payload_message: String = String::from_utf8_lossy(&payload).to_string();
+                            action::handle_action(&engine, &payload_id, &payload_message);
                         }
                         _ => panic!("Unexpected message received on worker channel"),
                     }

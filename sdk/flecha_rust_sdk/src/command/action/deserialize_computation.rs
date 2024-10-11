@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 
 use super::CommandAction;
 
@@ -19,14 +20,17 @@ pub struct DeSerializeComputationCommand {
 impl CommandAction for DeSerializeComputationCommand {
     fn handle(
         &self,
-        engine: &mut ComputationEngine,
+        engine: &Arc<Mutex<ComputationEngine>>,
         _message: &String,
         reference_id: String,
     ) {
-        let control_stream = engine.get_control_stream();
-        let computations_lock = engine.get_computations();
+        let engine_guard = engine.lock().unwrap();
+        let control_stream = engine_guard.get_control_stream();
+        let computations_lock = engine_guard.get_computations();
         let computations = computations_lock.read().unwrap();
         
+        drop(engine_guard);
+
         match computations.get(&self.computation_id) {
             Some(comp_arc) => {
                 let c_enum = comp_arc.lock().unwrap();

@@ -20,7 +20,7 @@ use serde_json::Value;
 pub trait CommandAction {
     fn handle(
         &self,
-        engine: Arc<Mutex<&mut ComputationEngine>>,
+        engine: &Arc<Mutex<ComputationEngine>>,
         command_struct: &String,
         reference_id: String,
     );
@@ -33,7 +33,7 @@ struct Command {
 }
 
 pub fn handle_action(
-    engine: Arc<Mutex<&mut ComputationEngine>>,
+    engine: &Arc<Mutex<ComputationEngine>>,
     payload_id: &String,
     message: &String
 ) {

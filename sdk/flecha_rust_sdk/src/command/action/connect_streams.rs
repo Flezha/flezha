@@ -8,7 +8,7 @@ use std::thread;
 use std::str;
 
 use crate::computation::{self, ComputationResult, ComputationType};
-use crate::engine::ComputationEngine;
+use crate::engine::{self, ComputationEngine};
 use crate::service::payloader;
 
 use super::CommandAction;
@@ -23,23 +23,27 @@ pub struct ConnectSocketCommand {
 impl CommandAction for ConnectSocketCommand {
     fn handle(
         &self,
-        engine: &mut ComputationEngine,
+        engine: &Arc<Mutex<ComputationEngine>>,
         _message: &String,
         reference_id: String,
     ) {
-        let computations = engine.get_computations();
+        let engine_guard = engine.lock().unwrap();
+        let computations = engine_guard.get_computations();
+        let control_stream = engine_guard.get_control_stream();
+        let engine_id = engine_guard.get_engine_id();
+        let io_streams = engine_guard.get_io_streams();
         let reference_id = reference_id.clone();
-        let control_stream = engine.get_control_stream();
+
+        drop(engine_guard);
 
         for i in 0..self.sockets_count {
+            let engine_id = engine_id.clone();
+            let io_streams = Arc::clone(&io_streams);
             let computations = Arc::clone(&computations);
-            let engine_id = engine.get_engine_id();
         
-            let handle = thread::spawn(move || {
-                start_socket_listener(&engine_id, &computations);
-            });
-        
-            engine.get_stream_threads().lock().unwrap().insert(i, handle);
+            let _handle = thread::spawn(move || {
+                start_socket_listener(&engine_id, i, &io_streams, &computations);
+            });        
         }
 
         let mut hashmap: HashMap<String, Value> = HashMap::new();
@@ -53,10 +57,13 @@ impl CommandAction for ConnectSocketCommand {
 
 fn start_socket_listener(
     engine_id: &String,
+    key: u8,
+    io_streams: &Arc<Mutex<HashMap<u8, UnixStream>>>,
     computations: &Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
 ) {
     let socket_path = path_helper::stream_socket_path(engine_id);
     let stream = UnixStream::connect(socket_path).expect("Failed to connect to the socket");
+    io_streams.lock().unwrap().insert(key, stream.try_clone().unwrap());
 
     handle_client(stream, computations)
 }

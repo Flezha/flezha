@@ -2,6 +2,7 @@ use super::CommandAction;
 
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use serde::Deserialize;
 
@@ -19,11 +20,12 @@ pub struct CreateComputationCommand {
 impl CommandAction for CreateComputationCommand {
     fn handle(
         &self,
-        engine: &mut ComputationEngine,
+        engine: &Arc<Mutex<ComputationEngine>>,
         _message: &String,
         reference_id: String,
     ) {
-        let factory = engine.get_factory(self.factory_id.clone()).unwrap();
+        let engine_guard = engine.lock().unwrap();
+        let factory = engine_guard.get_factory(self.factory_id.clone()).unwrap();
         let variables = value_to_hashmap(&self.variables).unwrap();
         
         let mut computation_enum = factory(); // Mutable to allow mutable borrowing
@@ -33,7 +35,7 @@ impl CommandAction for CreateComputationCommand {
             ComputationType::BinaryComputation(c) => c.update_computation(&variables),
         };
                 
-        engine.register_computation(self.computation_id.clone(), computation_enum);        
+        engine_guard.register_computation(self.computation_id.clone(), computation_enum);        
         
         let mut hashmap: HashMap<String, Value> = HashMap::new();
         hashmap.insert("reference_id".to_string(), Value::String(reference_id));
@@ -41,7 +43,7 @@ impl CommandAction for CreateComputationCommand {
         let json_string = serde_json::to_string(&hashmap).unwrap();
         let payload = payloader::build_payload(&"add_computation".to_string(), &json_string);
 
-        engine.get_control_stream().try_clone().unwrap().write_all(&payload).unwrap();
+        engine_guard.get_control_stream().try_clone().unwrap().write_all(&payload).unwrap();
     }
 }
 
