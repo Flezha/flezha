@@ -75,7 +75,7 @@ impl ComputationEngine {
         core_data.insert("factory_id".to_string(), factory_id.clone());
 
         let json = serde_json::to_string(&core_data).unwrap();
-        let payload = payloader::build_payload(&"register_factory".to_string(), &json);
+        let payload = payloader::build_payload_str(&"register_factory".to_string(), &json);
 
         self.control_stream.try_clone().unwrap().write_all(&payload).unwrap();
         self.computation_factory.insert(factory_id.clone(), factory);
@@ -105,51 +105,6 @@ impl ComputationEngine {
     pub fn get_io_streams(&self) -> Arc<RwLock<HashMap<u8, UnixStream>>> {
         Arc::clone(&self.shared_io_streams)
     }
-
-    // TODO: Continue from here. We need to trigger the compute somehow differently becuase the engine needs to know about the stream channels(secondary)
-    // pub fn run(&mut self, computation_id: String, input: ComputationInput) {
-        // let computations_read = self.computations.read().unwrap();
-                
-        // if let Some(c) = computations_read.get(&computation_id) {
-        //     let mut comp = c.lock().unwrap();
-
-        // // TODO: reduce duplication. with the connect streams module code.
-        // match &mut *comp {
-        //     ComputationType::TextComputation(comp) => {
-        //         match input {
-        //             ComputationInput::TextInput(input_text) => {
-        //                 let result = comp.run(input_text);
-
-        //                 match result {
-        //                     ComputationResult::NoReply => {}
-        //                     ComputationResult::Reply(reply) => {
-        //                         computation::send_result(&mut stream, &computation_id, &reply);
-        //                     }
-        //                 }
-        //             }
-        //             _ => panic!("Wrong input type for text computation"),
-        //         }
-        //     }
-        //     ComputationType::BinaryComputation(comp) => {
-        //         match input {
-        //             ComputationInput::BinaryInput(input_binary) => {
-        //                 let result = comp.run(input_binary);
-
-        //                 match result {
-        //                     ComputationResult::NoReply => {}
-        //                     ComputationResult::Reply(reply) => {
-        //                         computation::send_result(&mut stream, &computation_id, &reply);
-        //                     }
-        //                 }
-        //             }
-        //             _ => panic!("Wrong input type for binary computation"),
-        //         }
-        //     }
-        // };              
-        // } else {
-        //     eprintln!("Computation with given ID not found {}", computation_id);
-        // }
-    // }
 }
 
 // Start a thread to monitor stdout and exit when stdin is closed. TODO: Maybe remove this?

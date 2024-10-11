@@ -61,7 +61,7 @@ impl CommandAction for SerializeComputationCommand {
         hashmap.insert("data".to_string(), serialized_json);
 
         let json_string = serde_json::to_string(&hashmap).unwrap();
-        let payload = payloader::build_payload(&"serialize_computation".to_string(), &json_string);
+        let payload = payloader::build_payload_str(&"serialize_computation".to_string(), &json_string);
         control_stream.try_clone().unwrap().write_all(&payload).unwrap();
     }
 }

@@ -35,7 +35,35 @@ pub fn extract_payload<R: Read>(mut reader: R) -> io::Result<(String, Vec<u8>)> 
     Ok((payload_id, message_buf))
 }
 
-pub fn build_payload(payload_id: &str, message: &str) -> Vec<u8> {
+// TODO: refactor duplicates.
+pub fn build_payload_bin(payload_id: &str, message: &[u8]) -> Vec<u8> {
+    // Ensure the payload ID is 32 bytes.
+    let mut payload_id_padded = payload_id.to_string();
+    if payload_id_padded.len() > 32 {
+        payload_id_padded.truncate(32);
+    } else {
+        payload_id_padded.push_str(&" ".repeat(32 - payload_id_padded.len()));
+    }
+
+    // Calculate the message size (8 bytes integer).
+    let message_size = message.len() as u64;
+
+    // Create a buffer to hold the payload.
+    let mut payload = Vec::with_capacity(32 + 8 + message.len());
+
+    // Write the payload ID (32 bytes) to the payload.
+    payload.write_all(payload_id_padded.as_bytes()).unwrap();
+
+    // Write the message size (8 bytes) to the payload.
+    let _ = payload.write_u64::<BigEndian>(message_size);
+
+    // Write the message to the payload.
+    payload.write_all(message).unwrap();
+
+    payload
+}
+
+pub fn build_payload_str(payload_id: &str, message: &str) -> Vec<u8> {
     // Ensure the payload ID is 32 bytes.
     let mut payload_id_padded = payload_id.to_string();
     if payload_id_padded.len() > 32 {

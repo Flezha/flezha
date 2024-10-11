@@ -3,6 +3,7 @@ use flecha_sdk::{
     TextComputation, 
     BinaryComputation, 
     ComputationResult,
+    ComputationOutput,
 };
 
 use serde::{Serialize, Deserialize};
@@ -43,15 +44,15 @@ impl TextComputation for CompareFilterComputation {
     fn run(&mut self, input: String) -> ComputationResult {
         if self.inverted {
             if self.comparable == input {
-                ComputationResult::NoReply
+                ComputationResult::None
             } else {
-                ComputationResult::Reply(input)
+                ComputationResult::Forward(ComputationOutput::Text(input))
             }
         } else {
             if self.comparable == input {
-                ComputationResult::Reply(input)
+                ComputationResult::Forward(ComputationOutput::Text(input))
             } else {
-                ComputationResult::NoReply
+                ComputationResult::None
             }
         }
     }
@@ -62,7 +63,7 @@ struct DoNothingComputation {}
 
 impl TextComputation for DoNothingComputation {
     fn run(&mut self, _input: String) -> ComputationResult {
-        ComputationResult::NoReply
+        ComputationResult::None
     }
 }
 
@@ -74,6 +75,6 @@ struct IncrementStateComputation {
 impl BinaryComputation for IncrementStateComputation {
     fn run(&mut self, _input: Vec<u8>) -> ComputationResult {
         self.value += 1;
-        ComputationResult::NoReply
+        ComputationResult::None
     }
 }

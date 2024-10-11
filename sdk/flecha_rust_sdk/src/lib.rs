@@ -13,7 +13,8 @@ pub use computation::{
     TextComputation, 
     BinaryComputation, 
     ComputationResult,
-    // ComputationInput
+    ComputationInput,
+    ComputationOutput
 };
 
 pub struct Flecha {
@@ -44,9 +45,12 @@ impl Flecha {
         self.engine.lock().unwrap().register_factory(name, factory);
     }
 
-    // pub fn run(&mut self, computation_id: String, input: ComputationInput) {
-    //     self.engine.run(computation_id, input);
-    // }
+    pub fn run(&mut self, computation_id: String, input: ComputationInput) -> Result<ComputationOutput, String> {
+        // Take random io_stream.
+        let mut io_stream = self.shared_io_streams.write().unwrap().values().next().unwrap().try_clone().unwrap();
+
+        computation::sync_exec(&computation_id, &self.computations, &mut io_stream, &input)
+    }
 }
 
 pub fn new(id: String) -> Flecha {

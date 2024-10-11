@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::thread;
 use std::str;
 
-use crate::computation::{self, ComputationResult, ComputationType};
+use crate::computation::{self, ComputationType};
 use crate::engine::ComputationEngine;
 use crate::service::payloader;
 
@@ -52,7 +52,7 @@ impl CommandAction for ConnectSocketCommand {
         hashmap.insert("reference_id".to_string(), Value::String(reference_id));
 
         let json_string = serde_json::to_string(&hashmap).unwrap();
-        let payload = payloader::build_payload(&"connect_sockets".to_string(), &json_string);
+        let payload = payloader::build_payload_str(&"connect_sockets".to_string(), &json_string);
         control_stream.try_clone().unwrap().write_all(&payload).unwrap();
     }
 }
@@ -66,38 +66,7 @@ fn listen_incoming(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Str
     loop {
         match payloader::extract_payload(&mut stream) {
             Ok((computation_id, payload)) => {
-                let computations_read = computations.read().unwrap();
-                
-                if let Some(c) = computations_read.get(&computation_id) {
-                    let mut comp = c.lock().unwrap();
-
-                    // TODO: reduce duplication.
-                    match &mut *comp {
-                        ComputationType::TextComputation(comp) => {
-                            let payload_message: String = String::from_utf8_lossy(&payload).to_string();
-                            let result = comp.run(payload_message);
-
-                            match result {
-                                ComputationResult::NoReply => {}
-                                ComputationResult::Reply(reply) => {
-                                    computation::send_result(&mut stream, &computation_id, &reply);
-                                }
-                            }
-                        }
-                        ComputationType::BinaryComputation(comp) => {
-                            let result = comp.run(payload);
-
-                            match result {
-                                ComputationResult::NoReply => {}
-                                ComputationResult::Reply(reply) => {
-                                    computation::send_result(&mut stream, &computation_id, &reply);
-                                }
-                            }
-                        }
-                    };              
-                } else {
-                    eprintln!("Computation with given ID not found {}", computation_id);
-                }
+                computation::async_exec(computation_id, computations, &mut stream, payload);
             }
             Err(_e) => {
                 // TODO: log error
