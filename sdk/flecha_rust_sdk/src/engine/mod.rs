@@ -17,7 +17,7 @@ pub struct ComputationEngine {
     computation_factory: HashMap<String, fn() -> ComputationType>,
     computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
     control_stream: Arc<UnixStream>,
-    io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
+    shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
 }
 
 pub enum EngineAction {
@@ -26,7 +26,11 @@ pub enum EngineAction {
 }
 
 impl ComputationEngine {
-    pub fn new(engine_id: String) -> Arc<Mutex<ComputationEngine>> {
+    pub fn new(
+        engine_id: String,
+        computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
+        shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
+    ) -> Arc<Mutex<ComputationEngine>> {
         let (tx, rx): (mpsc::Sender<EngineAction>, mpsc::Receiver<EngineAction>) = mpsc::channel();
         let tx = Arc::new(Mutex::new(tx));
         let rx = Arc::new(Mutex::new(rx));
@@ -35,13 +39,13 @@ impl ComputationEngine {
             engine_id.clone(),
             Arc::clone(&tx)
         );
-    
+
         let engine = ComputationEngine {
             engine_id,
             control_stream,
+            computations,
+            shared_io_streams,
             computation_factory: HashMap::new(),
-            computations: Arc::new(RwLock::new(HashMap::new())),
-            io_streams: Arc::new(RwLock::new(HashMap::new())),
         };
     
         let engine_arc = Arc::new(Mutex::new(engine));
@@ -99,7 +103,7 @@ impl ComputationEngine {
     }
 
     pub fn get_io_streams(&self) -> Arc<RwLock<HashMap<u8, UnixStream>>> {
-        Arc::clone(&self.io_streams)
+        Arc::clone(&self.shared_io_streams)
     }
 
     // TODO: Continue from here. We need to trigger the compute somehow differently becuase the engine needs to know about the stream channels(secondary)

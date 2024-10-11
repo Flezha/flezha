@@ -4,7 +4,7 @@ mod service;
 mod command;
 mod utility;
 
-use std::sync::{Arc, Mutex};
+use std::{collections::HashMap, os::unix::net::UnixStream, sync::{Arc, Mutex, RwLock}};
 
 use engine::ComputationEngine;
 
@@ -18,14 +18,25 @@ pub use computation::{
 
 pub struct Flecha {
     _id: String,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
+    shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
     engine: Arc<Mutex<ComputationEngine>>,
 }
 
 impl Flecha {
     fn new(id: String) -> Flecha {
+        let computations =  Arc::new(RwLock::new(HashMap::new()));
+        let shared_io_streams = Arc::new(RwLock::new(HashMap::new()));
+
         Flecha {
             _id: id.clone(),
-            engine: ComputationEngine::new(id.clone()),
+            computations: Arc::clone(&computations),
+            shared_io_streams: Arc::clone(&shared_io_streams),
+            engine: ComputationEngine::new(
+                id.clone(),
+                computations,
+                shared_io_streams,
+            ),
         }
     }
     
@@ -33,7 +44,6 @@ impl Flecha {
         self.engine.lock().unwrap().register_factory(name, factory);
     }
 
-    // TODO: Implement run method
     // pub fn run(&mut self, computation_id: String, input: ComputationInput) {
     //     self.engine.run(computation_id, input);
     // }
