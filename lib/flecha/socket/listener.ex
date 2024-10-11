@@ -4,6 +4,8 @@ defmodule Flecha.Socket.Listener do
   use GenServer
 
   def start_link({name, sock_path}) do
+    IO.inspect sock_path, label: "SOPCK PATH"
+
     GenServer.start_link(__MODULE__, sock_path, name: name)
   end
 

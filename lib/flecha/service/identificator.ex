@@ -25,8 +25,11 @@ defmodule Flecha.Service.Identificator do
     gen_via(engine_id, "cc_")
   end
 
-  def stream_listener(engine_id) do
-    gen_via(engine_id, "sl_")
+  def stream_listener(engine_id, type) do
+    case type do
+      :primary -> gen_via(engine_id, "psl_")
+      :secondary -> gen_via(engine_id, "ssl_")
+    end
   end
 
   def stream_sup_primary(engine_id) do

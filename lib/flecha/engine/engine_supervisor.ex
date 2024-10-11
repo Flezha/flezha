@@ -15,7 +15,8 @@ defmodule Flecha.Engine.EngineSupervisor do
 
   @impl true
   def init({engine_id, sock}) do
-    stream_socket_path = SocketSupport.stream_socket_path(engine_id)
+    primary_stream_sock = SocketSupport.stream_socket_path(engine_id, :primary)
+    secondary_stream_sock = SocketSupport.stream_socket_path(engine_id, :secondary)
 
     children = [
       %{
@@ -27,10 +28,16 @@ defmodule Flecha.Engine.EngineSupervisor do
         start: {ControlChannel, :start_link, [{engine_id, sock}]}
       },
       %{
-        id: Listener,
+        id: :primary_stream_listener,
         start:
           {Listener, :start_link,
-           [{Identificator.stream_listener(engine_id), stream_socket_path}]}
+           [{Identificator.stream_listener(engine_id, :primary), primary_stream_sock}]}
+      },
+      %{
+        id: :secondary_stream_listener,
+        start:
+          {Listener, :start_link,
+           [{Identificator.stream_listener(engine_id, :secondary), secondary_stream_sock}]}
       },
       %{
         id: :primary_stream_sup,

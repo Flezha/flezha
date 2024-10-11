@@ -8,7 +8,7 @@ use std::thread;
 use std::str;
 
 use crate::computation::{self, ComputationResult, ComputationType};
-use crate::engine::{self, ComputationEngine};
+use crate::engine::ComputationEngine;
 use crate::service::payloader;
 
 use super::CommandAction;
@@ -36,14 +36,16 @@ impl CommandAction for ConnectSocketCommand {
 
         drop(engine_guard);
 
-        for i in 0..self.sockets_count {
-            let engine_id = engine_id.clone();
-            let io_streams = Arc::clone(&io_streams);
-            let computations = Arc::clone(&computations);
-        
+        for key in 0..self.sockets_count {
+            let computations_clone = Arc::clone(&computations);
+            let stream = connect_unix(&engine_id, "primary".to_string());
+            let shared_stream = connect_unix(&engine_id, "secondary".to_string());
+
+            io_streams.write().unwrap().insert(key, shared_stream.try_clone().unwrap());
+
             let _handle = thread::spawn(move || {
-                start_socket_listener(&engine_id, i, &io_streams, &computations);
-            });        
+                listen_incoming(stream, &computations_clone)
+            });
         }
 
         let mut hashmap: HashMap<String, Value> = HashMap::new();
@@ -55,20 +57,12 @@ impl CommandAction for ConnectSocketCommand {
     }
 }
 
-fn start_socket_listener(
-    engine_id: &String,
-    key: u8,
-    io_streams: &Arc<Mutex<HashMap<u8, UnixStream>>>,
-    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
-) {
-    let socket_path = path_helper::stream_socket_path(engine_id);
-    let stream = UnixStream::connect(socket_path).expect("Failed to connect to the socket");
-    io_streams.lock().unwrap().insert(key, stream.try_clone().unwrap());
-
-    handle_client(stream, computations)
+fn connect_unix(engine_id: &String, stream_type: String) -> UnixStream {
+    let socket_path = path_helper::stream_socket_path(engine_id, stream_type);
+    UnixStream::connect(socket_path).expect("Failed to connect to the socket")
 }
 
-fn handle_client(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>) {
+fn listen_incoming(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>) {
     loop {
         match payloader::extract_payload(&mut stream) {
             Ok((computation_id, payload)) => {

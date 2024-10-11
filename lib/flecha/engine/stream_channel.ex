@@ -6,13 +6,13 @@ defmodule Flecha.Engine.StreamChannel do
 
   use GenServer
 
-  def start_link({engine_id, name}) do
-    GenServer.start_link(__MODULE__, engine_id, name: name)
+  def start_link({engine_id, name, type}) do
+    GenServer.start_link(__MODULE__, {engine_id, type}, name: name)
   end
 
   @impl true
-  def init(engine_id) do
-    lsock = GenServer.call(Identificator.stream_listener(engine_id), :get_socket)
+  def init({engine_id, type}) do
+    lsock = GenServer.call(Identificator.stream_listener(engine_id, type), :get_socket)
 
     {
       :ok,

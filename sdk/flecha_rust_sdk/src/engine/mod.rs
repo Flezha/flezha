@@ -17,7 +17,7 @@ pub struct ComputationEngine {
     computation_factory: HashMap<String, fn() -> ComputationType>,
     computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
     control_stream: Arc<UnixStream>,
-    io_streams: Arc<Mutex<HashMap<u8, UnixStream>>>,
+    io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
 }
 
 pub enum EngineAction {
@@ -41,7 +41,7 @@ impl ComputationEngine {
             control_stream,
             computation_factory: HashMap::new(),
             computations: Arc::new(RwLock::new(HashMap::new())),
-            io_streams: Arc::new(Mutex::new(HashMap::new())),
+            io_streams: Arc::new(RwLock::new(HashMap::new())),
         };
     
         let engine_arc = Arc::new(Mutex::new(engine));
@@ -98,7 +98,7 @@ impl ComputationEngine {
         Arc::clone(&self.computations)
     }
 
-    pub fn get_io_streams(&self) -> Arc<Mutex<HashMap<u8, UnixStream>>> {
+    pub fn get_io_streams(&self) -> Arc<RwLock<HashMap<u8, UnixStream>>> {
         Arc::clone(&self.io_streams)
     }
 

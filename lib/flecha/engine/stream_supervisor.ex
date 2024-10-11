@@ -13,7 +13,7 @@ defmodule Flecha.Engine.StreamSupervisor do
           :secondary -> Identificator.stream_channel_secondary(engine_id, x)
         end
 
-      Supervisor.child_spec({StreamChannel, {engine_id, id}}, id: id)
+      Supervisor.child_spec({StreamChannel, {engine_id, id, type}}, id: id)
     end
   end
 
