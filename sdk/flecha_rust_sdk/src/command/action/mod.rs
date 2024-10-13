@@ -1,4 +1,4 @@
-mod create_computation;
+mod add_computation;
 mod rem_computation;
 mod connect_streams;
 mod serialize_computation;
@@ -13,7 +13,7 @@ use deserialize_computation::DeSerializeComputationCommand;
 
 use crate::engine::ComputationEngine;
 
-use self::create_computation::CreateComputationCommand;
+use self::add_computation::AddComputationCommand;
 use self::rem_computation::RemComputationCommand;
 
 use serde::Deserialize;
@@ -50,13 +50,13 @@ pub fn handle_action(
             Box::new(command)
         }
         "add_computation" => {
-            let command: CreateComputationCommand = serde_json::from_value(command.data)
-                .expect("Failed to deserialize CreateComputationCommand");
+            let command: AddComputationCommand = serde_json::from_value(command.data)
+                .expect("Failed to deserialize AddComputationCommand");
             Box::new(command)
         }
         "rem_computation" => {
             let command: RemComputationCommand = serde_json::from_value(command.data)
-                .expect("Failed to deserialize CreateComputationCommand");
+                .expect("Failed to deserialize AddComputationCommand");
             Box::new(command)
         }
         "serialize_computation" => {

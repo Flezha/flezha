@@ -11,13 +11,13 @@ use crate::engine::ComputationEngine;
 use crate::service::payloader;
 
 #[derive(Deserialize, Debug)]
-pub struct CreateComputationCommand {
+pub struct AddComputationCommand {
     computation_id: String,
     factory_id: String,
     variables: Value,
 }
 
-impl CommandAction for CreateComputationCommand {
+impl CommandAction for AddComputationCommand {
     fn handle(
         &self,
         engine: &Arc<Mutex<ComputationEngine>>,
