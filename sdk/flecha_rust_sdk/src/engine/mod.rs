@@ -85,9 +85,13 @@ impl ComputationEngine {
         self.computation_factory.get(&factory_id)
     }
 
-    pub fn register_computation(&self, id: String, computation: ComputationType) {
+    pub fn add_computation(&self, id: String, computation: ComputationType) {
         let computation = Arc::new(Mutex::new(computation));
         self.computations.write().unwrap().insert(id, computation);
+    }
+
+    pub fn rem_computation(&self, id: String) {
+        self.computations.write().unwrap().remove(&id);
     }
 
     pub fn get_control_stream(&self) -> Arc<UnixStream> {

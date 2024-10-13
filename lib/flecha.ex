@@ -7,6 +7,10 @@ defmodule Flecha do
     GenServer.call(Flecha.Controller, {:add_computation, computation})
   end
 
+  def rem_computation(computation_id) do
+    GenServer.call(Flecha.Controller, {:rem_computation, computation_id})
+  end
+
   def add_io(computation_id, io_id, settings, direction) do
     timeout = Application.fetch_env!(:flecha_core, :io_add_timeout)
 

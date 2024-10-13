@@ -18,6 +18,16 @@ defmodule FlechaTest do
     assert Flecha.add_computation(computation) === {:ok, "computation added"}
   end
 
+  test "remove computation" do
+    computation = %Flecha.Computation{
+      id: "rem_compuation_test",
+      factory_id: @test_computation_factory
+    }
+
+    assert Flecha.add_computation(computation) === {:ok, "computation added"}
+    assert Flecha.rem_computation(computation.id) === {:ok, "computation removed"}
+  end
+
   test "validate computation length" do
     invalid_computation = %Flecha.Computation{
       id: "some_very_long_computation_id_that_should_fail",

@@ -35,7 +35,7 @@ impl CommandAction for CreateComputationCommand {
             ComputationType::BinaryComputation(c) => c.update_computation(&variables),
         };
                 
-        engine_guard.register_computation(self.computation_id.clone(), computation_enum);        
+        engine_guard.add_computation(self.computation_id.clone(), computation_enum);        
         
         let mut hashmap: HashMap<String, Value> = HashMap::new();
         hashmap.insert("reference_id".to_string(), Value::String(reference_id));

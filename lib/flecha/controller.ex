@@ -30,6 +30,13 @@ defmodule Flecha.Controller do
     {:reply, response, state}
   end
 
+  @impl true
+  def handle_call({:rem_computation, computation_id}, _from, state) do
+    response = rem_computation(computation_id)
+
+    {:reply, response, state}
+  end
+
   defp add_computation(computation) do
     child_spec = %{
       id: computation.id,
@@ -47,6 +54,25 @@ defmodule Flecha.Controller do
 
     case result do
       {:ok, _} -> {:ok, "computation added"}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp rem_computation(computation_id) do
+    Warden.get(:engines)
+    |> Enum.each(fn {engine_id, _} ->
+      GenServer.call(
+        Identificator.control_unit(engine_id),
+        {:rem_computation, computation_id}
+      )
+    end)
+
+    result =
+      ProcessHub.stop_child(:flecha_hub, computation_id, async_wait: true)
+      |> ProcessHub.await()
+
+    case result do
+      {:ok, _} -> {:ok, "computation removed"}
       {:error, reason} -> {:error, reason}
     end
   end

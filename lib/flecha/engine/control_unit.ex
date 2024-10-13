@@ -13,7 +13,8 @@ defmodule Flecha.Engine.ControlUnit do
   @payload_id_connect_control_channel "connect_control_channel"
   @payload_id_factory_register "register_factory"
   @payload_id_connect_sockets "connect_sockets"
-  @payload_id_computation_new "add_computation"
+  @payload_id_computation_add "add_computation"
+  @payload_id_computation_rem "rem_computation"
   @payload_id_serialize_comp "serialize_computation"
   @payload_id_deserialize_comp "deserialize_computation"
 
@@ -69,12 +70,24 @@ defmodule Flecha.Engine.ControlUnit do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.engine_id),
-        @payload_id_computation_new,
+        @payload_id_computation_add,
         %{
           "computation_id" => computation.id,
           "factory_id" => computation.factory_id,
           "variables" => computation.variables
         }
+      )
+
+    {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+  end
+
+  @impl true
+  def handle_call({:rem_computation, computation_id}, from, state) do
+    ref =
+      ControlChannel.send_control(
+        Identificator.control_channel(state.engine_id),
+        @payload_id_computation_rem,
+        %{"computation_id" => computation_id}
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
@@ -98,7 +111,10 @@ defmodule Flecha.Engine.ControlUnit do
         @payload_id_connect_control_channel ->
           :ok
 
-        @payload_id_computation_new ->
+        @payload_id_computation_add ->
+          :ok
+
+        @payload_id_computation_rem ->
           :ok
 
         @payload_id_serialize_comp ->
