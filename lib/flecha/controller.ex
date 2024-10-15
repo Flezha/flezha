@@ -13,8 +13,7 @@ defmodule Flecha.Controller do
 
   @impl true
   def init(_) do
-    init_hook = Application.fetch_env!(:flecha_core, :controller_init_hook)
-    init_hook.()
+    expect_factories()
 
     {:ok, %{}}
   end
@@ -81,6 +80,21 @@ defmodule Flecha.Controller do
     case Validator.byte_limit_exceed(computation.id, @computation_id_max_bytes) do
       true -> {:error, "computation id exceeds #{@computation_id_max_bytes} bytes"}
       false -> :ok
+    end
+  end
+
+  defp expect_factories do
+    count = Flecha.Service.EventManager.add_handler(:factories_expected_count)
+
+    if is_integer(count) && count > 0 do
+      for _x <- count do
+        receive do
+          {:factory_registered, _factory_id} ->
+            :ok
+        after
+          3000 -> raise "Registered factories not equal to expected count"
+        end
+      end
     end
   end
 end

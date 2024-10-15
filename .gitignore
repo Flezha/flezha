@@ -36,3 +36,6 @@ flecha_core-*.tar
 
 # Ignore environment variables file
 .env
+
+# ElixirLS
+.elixir_ls/

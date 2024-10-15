@@ -58,7 +58,7 @@ impl ComputationEngine {
         let _stdio_thread = start_stdio_thread();
     
         // Make sure the engine id is passed to the Flecha core.
-        match rx.lock().unwrap().recv().expect("Failed to engine id sent confirmation") {
+        match rx.lock().unwrap().recv().expect("Failed to receive engine id confirmation") {
             EngineAction::EngineIdConfirmation => {},
             _ => panic!("Wrong order of messages"),
         }

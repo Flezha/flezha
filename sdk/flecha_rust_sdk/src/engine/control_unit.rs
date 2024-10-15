@@ -19,7 +19,10 @@ pub fn connect_control_socket(
 
     let thread = thread::spawn(move || {
         let payload = payloader::build_payload_str("connect_control_channel", &engine_id);
+
+        // Pass engine id to the Flecha core.
         stream_boxed_clone.try_clone().unwrap().write_all(&payload).unwrap();
+        
         tx.lock().unwrap().send(EngineAction::EngineIdConfirmation).unwrap();
 
         loop {

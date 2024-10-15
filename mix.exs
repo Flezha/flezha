@@ -7,6 +7,7 @@ defmodule FlechaCore.MixProject do
       version: "0.1.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
+      releases: releases(),
       deps: deps()
     ]
   end
@@ -16,6 +17,16 @@ defmodule FlechaCore.MixProject do
     [
       extra_applications: [:logger, :runtime_tools, :wx, :observer],
       mod: {Flecha.Application, []}
+    ]
+  end
+
+  defp releases() do
+    [
+      flecha_core: [
+        include_executables_for: [:unix, :windows],
+        include_erts: true,
+        application: [:flecha_core]
+      ]
     ]
   end
 

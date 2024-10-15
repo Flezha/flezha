@@ -40,5 +40,5 @@ defmodule Flecha.IO.InternalProcess do
   end
 
   @impl IOBaseBehaviour
-  def handle_internal_payload(_server, _payload), do: nil
+  def handle_internal_payload(_server, _payload), do: :ok
 end

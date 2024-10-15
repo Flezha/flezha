@@ -1,6 +1,7 @@
-# FlechaCore
+# Flecha
 
-**TODO: Add description**
+## Description
+Distributed stateful computations. Provdes a static and dynamic creation of computations.
 
 ## Installation
 
