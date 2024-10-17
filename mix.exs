@@ -23,7 +23,7 @@ defmodule FlechaCore.MixProject do
   defp releases() do
     [
       flecha_core: [
-        include_executables_for: [:unix, :windows],
+        include_executables_for: [:unix],
         include_erts: true,
         application: [:flecha_core]
       ]
