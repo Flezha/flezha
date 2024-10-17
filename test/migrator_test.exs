@@ -3,7 +3,7 @@ defmodule MigratorTest do
   doctest Flecha.Computation.Migrator
 
   test "serialize computation" do
-    computation = %Flecha.Computation{
+    computation = %Flecha.Computation.Builder{
       id: "serialize_computation_test",
       factory_id: "increment_state"
     }
@@ -20,7 +20,7 @@ defmodule MigratorTest do
   end
 
   test "deserialize computation" do
-    computation = %Flecha.Computation{
+    computation = %Flecha.Computation.Builder{
       id: "serialize_computation_test",
       factory_id: "increment_state"
     }

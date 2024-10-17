@@ -1,5 +1,5 @@
 defmodule Flecha.IO.Websocket do
-  alias Flecha.IO.BaseBehaviour, as: IOBaseBehaviour
+  alias Flecha.IO.IOBaseBehaviour, as: IOBaseBehaviour
 
   @behaviour IOBaseBehaviour
 

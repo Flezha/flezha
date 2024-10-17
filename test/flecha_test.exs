@@ -10,7 +10,7 @@ defmodule FlechaTest do
   end
 
   test "add computation" do
-    computation = %Flecha.Computation{
+    computation = %Flecha.Computation.Builder{
       id: "add_compuation_test",
       factory_id: @test_computation_factory
     }
@@ -19,7 +19,7 @@ defmodule FlechaTest do
   end
 
   test "remove computation" do
-    computation = %Flecha.Computation{
+    computation = %Flecha.Computation.Builder{
       id: "rem_compuation_test",
       factory_id: @test_computation_factory
     }
@@ -29,12 +29,12 @@ defmodule FlechaTest do
   end
 
   test "validate computation length" do
-    invalid_computation = %Flecha.Computation{
+    invalid_computation = %Flecha.Computation.Builder{
       id: "some_very_long_computation_id_that_should_fail",
       factory_id: @test_computation_factory
     }
 
-    valid_computation = %Flecha.Computation{
+    valid_computation = %Flecha.Computation.Builder{
       id: "computation_string_32_bytes_long",
       factory_id: @test_computation_factory
     }
@@ -46,7 +46,7 @@ defmodule FlechaTest do
   end
 
   test "add new io generator" do
-    computation = %Flecha.Computation{
+    computation = %Flecha.Computation.Builder{
       id: "add_io_generator_test",
       factory_id: @test_computation_factory
     }
@@ -62,7 +62,7 @@ defmodule FlechaTest do
   end
 
   test "add new io internal process" do
-    computation = %Flecha.Computation{
+    computation = %Flecha.Computation.Builder{
       id: "add_io_internal_process_test",
       factory_id: @test_computation_factory
     }
@@ -78,7 +78,7 @@ defmodule FlechaTest do
   end
 
   test "computation flow generation -> internal_process" do
-    computation = %Flecha.Computation{
+    computation = %Flecha.Computation.Builder{
       id: "c_flow_test_generate_internal",
       factory_id: @test_compare_filter_factory,
       variables: %{"comparable" => "hello world", "inverted" => false}

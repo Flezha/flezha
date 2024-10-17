@@ -206,10 +206,10 @@ pub fn sync_exec<'a>(
 fn send_result(stream: &mut UnixStream, computation_id: &String, result: &ComputationOutput) {
     let payload = match result {
         ComputationOutput::Text(text) => {
-            payloader::build_payload_str(&computation_id, text)
+            payloader::build_from_str(&computation_id, text)
         }
         ComputationOutput::Binary(binary) => {
-            payloader::build_payload_bin(&computation_id, binary)
+            payloader::build_from_binary(&computation_id, binary)
         }
     };
 
