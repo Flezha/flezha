@@ -41,7 +41,7 @@ impl CommandAction for AddComputationCommand {
         hashmap.insert("reference_id".to_string(), Value::String(reference_id));
 
         let json_string = serde_json::to_string(&hashmap).unwrap();
-        let payload = payloader::build_payload_str(&"add_computation".to_string(), &json_string);
+        let payload = payloader::build_from_str(&"add_computation".to_string(), &json_string);
 
         engine_guard.get_control_stream().try_clone().unwrap().write_all(&payload).unwrap();
     }

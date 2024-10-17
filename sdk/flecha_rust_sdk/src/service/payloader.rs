@@ -36,7 +36,7 @@ pub fn extract_payload<R: Read>(mut reader: R) -> io::Result<(String, Vec<u8>)> 
 }
 
 // TODO: refactor duplicates.
-pub fn build_payload_bin(payload_id: &str, message: &[u8]) -> Vec<u8> {
+pub fn build_from_binary(payload_id: &str, message: &[u8]) -> Vec<u8> {
     // Ensure the payload ID is 32 bytes.
     let mut payload_id_padded = payload_id.to_string();
     if payload_id_padded.len() > 32 {
@@ -63,7 +63,7 @@ pub fn build_payload_bin(payload_id: &str, message: &[u8]) -> Vec<u8> {
     payload
 }
 
-pub fn build_payload_str(payload_id: &str, message: &str) -> Vec<u8> {
+pub fn build_from_str(payload_id: &str, message: &str) -> Vec<u8> {
     // Ensure the payload ID is 32 bytes.
     let mut payload_id_padded = payload_id.to_string();
     if payload_id_padded.len() > 32 {

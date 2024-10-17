@@ -52,7 +52,7 @@ impl CommandAction for ConnectSocketCommand {
         hashmap.insert("reference_id".to_string(), Value::String(reference_id));
 
         let json_string = serde_json::to_string(&hashmap).unwrap();
-        let payload = payloader::build_payload_str(&"connect_sockets".to_string(), &json_string);
+        let payload = payloader::build_from_str(&"connect_sockets".to_string(), &json_string);
         control_stream.try_clone().unwrap().write_all(&payload).unwrap();
     }
 }

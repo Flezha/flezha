@@ -18,7 +18,7 @@ pub fn connect_control_socket(
     let stream_boxed_clone = Arc::clone(&stream_boxed);
 
     let thread = thread::spawn(move || {
-        let payload = payloader::build_payload_str("connect_control_channel", &engine_id);
+        let payload = payloader::build_from_str("connect_control_channel", &engine_id);
 
         // Pass engine id to the Flecha core.
         stream_boxed_clone.try_clone().unwrap().write_all(&payload).unwrap();
