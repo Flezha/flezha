@@ -1,5 +1,5 @@
 defmodule Flecha.Service.HubManager do
-  alias Flecha.Warden
+  alias Flecha.Service.Warden
   alias Flecha.Service.Identificator
 
   def hook_insert_pid({computation_id, node_pids}) do

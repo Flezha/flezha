@@ -34,7 +34,7 @@ defmodule Flecha.Engine.StreamChannel do
 
   @impl true
   def handle_cast({:io_in, _type, computation_id, message}, %{sock: sock} = state) do
-    :gen_tcp.send(sock, Payloader.build_payload_str(computation_id, message))
+    :gen_tcp.send(sock, Payloader.build_from_str(computation_id, message))
 
     {:noreply, state}
   end

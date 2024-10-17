@@ -4,7 +4,7 @@ defmodule Flecha.Engine.ControlUnit do
   alias Flecha.Engine.ControlChannel
   alias Flecha.Service.ConcurrencyMapper
   alias Flecha.Service.EventManager
-  alias Flecha.Warden
+  alias Flecha.Service.Warden
 
   use GenServer
 

@@ -1,5 +1,5 @@
 defmodule Flecha.Computation.Migrator do
-  alias Flecha.Warden
+  alias Flecha.Service.Warden
   alias Flecha.Service.Identificator
 
   def serialize_computation(computation_id) do

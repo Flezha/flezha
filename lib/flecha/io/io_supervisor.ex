@@ -1,4 +1,4 @@
-defmodule Flecha.IOSupervisor do
+defmodule Flecha.IO.IOSupervisor do
   @moduledoc """
   Supervises computation IO processes.
   """

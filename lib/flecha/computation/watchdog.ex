@@ -1,13 +1,12 @@
-defmodule Flecha.Computation do
-  alias Flecha.IOSupervisor
+defmodule Flecha.Computation.WatchDog do
+  alias Flecha.IO.IOSupervisor
   alias Flecha.Service.ConcurrencyMapper
-  alias Flecha.Warden
   alias Flecha.Computation.Migrator
   alias Flecha.Engine.StreamSupervisor
 
   use GenServer
 
-  defstruct [:id, :factory_id, :channels, :supervisors, :io, variables: %{}]
+  defstruct [:id, :channels, :supervisors, :io, engines: [], variables: %{}]
 
   def start_link(settings) do
     GenServer.start_link(__MODULE__, settings)
@@ -19,7 +18,7 @@ defmodule Flecha.Computation do
      %__MODULE__{
        id: settings.id,
        variables: settings.variables,
-       channels: attach_channels(settings.id, settings.factory_id),
+       channels: attach_channels(settings.id, settings.engines),
        io: %{
          input: [],
          output: []
@@ -126,29 +125,16 @@ defmodule Flecha.Computation do
     end
   end
 
-  def attach_channels(computation_id, factory_id) do
-    # Get numeric representation of the factory_id string.
+  def attach_channels(computation_id, engines) do
+    # Get numeric representation of the computation_id string.
     computation_int = String.to_charlist(computation_id) |> Enum.sum()
 
     # Pick the channel index based on the channel_name_int.
     count = ConcurrencyMapper.concurrent_entity_count()
     channel_index = rem(computation_int, count)
 
-    # Pick the processor engine that can handle the factory_id.
-    filter_engines(factory_id) |> pick_channels(channel_index)
-  end
-
-  defp filter_engines(factory_id) do
-    engines =
-      Warden.get(:engines)
-      |> Enum.filter(fn {_engine_id, factory} ->
-        Enum.any?(factory, &(&1 === factory_id))
-      end)
-
-    case engines do
-      [] -> raise "computation engines not found for factory: #{inspect(factory_id)}"
-      engines -> engines
-    end
+    # Pick the processor engine that can handle the selected engines.
+    pick_channels(engines, channel_index)
   end
 
   defp pick_channels(engines, channel_index) do

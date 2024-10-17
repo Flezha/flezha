@@ -1,5 +1,5 @@
 defmodule Flecha.IO.InternalProcess do
-  alias Flecha.IO.BaseBehaviour, as: IOBaseBehaviour
+  alias Flecha.IO.IOBaseBehaviour, as: IOBaseBehaviour
 
   use GenServer
 

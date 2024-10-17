@@ -1,4 +1,4 @@
-defmodule Flecha.PortManager do
+defmodule Flecha.Service.PortPilot do
   require Logger
 
   use GenServer
