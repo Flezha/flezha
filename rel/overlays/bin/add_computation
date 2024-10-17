@@ -1,2 +1,49 @@
 #!/bin/sh
 set -e
+
+# Check if the number of arguments is at least 2
+if [ "$#" -lt 2 ]; then
+    echo "ERROR: adding computation requires at least 2 arguments: computation_id and factory_id"
+    exit 1
+fi
+
+# Mandatory parameters
+COMPUTATION_ID=$1
+FACTORY_ID=$2
+
+# Initialize optional variables
+VARIABLES=""
+NODE_NAME=""
+
+# Check for the optional arguments
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -v|--variables)
+            VARIABLES=$2
+            shift 2
+            ;;
+        -n|--node)
+            NODE_NAME=$2
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# Get the directory of the current script
+SCRIPT_DIR=$(dirname "$0")
+
+# Conditionally set RELEASE_NODE and call flecha_core in a single block
+ENV_CMD=""
+if [ -n "$NODE_NAME" ]; then
+    ENV_CMD="RELEASE_NODE=$NODE_NAME"
+fi
+
+# Execute the flecha_core command
+$ENV_CMD "$SCRIPT_DIR/flecha_core" rpc \
+"Flecha.construct_computation!(%{\"id\" => \"$COMPUTATION_ID\", \
+\"factory_id\" => \"$FACTORY_ID\", \
+\"variables\" => \"$VARIABLES\"}, :map) \
+|> Flecha.add_computation()"

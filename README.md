@@ -3,20 +3,14 @@
 ## Description
 Distributed stateful computations. Provdes a static and dynamic creation of computations.
 
-## Installation
-
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `flecha_core` to your list of dependencies in `mix.exs`:
-
-```elixir
-def deps do
-  [
-    {:flecha_core, "~> 0.1.0"}
-  ]
-end
+## Example usage
+Starting the node and specifying the external processes to be used by the node.
+```bash
+FLECHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/flecha_core/test/apps/rust_app/Cargo.toml --target-dir=./target" flecha_core/bin/flecha_core start_iex
 ```
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/flecha_core>.
+Adding a computation to the node.
+```bash
+flecha_core/bin/add_computation comp_id increment_state -v '{\"value\": 500}'
+```
 

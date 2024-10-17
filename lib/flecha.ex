@@ -13,8 +13,14 @@ defmodule Flecha do
     GenServer.call(Flecha.Controller, {:rem_computation, computation_id})
   end
 
-  def construct_computation!(json_str, :json) do
-    case ComputationBuilder.from_json(json_str) do
+  def construct_computation!(input, type) do
+    result =
+      case type do
+        :json -> ComputationBuilder.from_json(input)
+        :map -> ComputationBuilder.from_map(input)
+      end
+
+    case result do
       {:ok, computation} -> computation
       {:error, reason} -> raise reason
     end

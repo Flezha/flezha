@@ -24,7 +24,10 @@ pub fn start_action_receiver(
                     }
                 }
                 Err(_) => {
-                    eprint!("Failed to receive message on worker channel");
+                    eprint!("Action receiver channel closed");
+                    
+                    // TODO: we should probably break here and try to reconnect.
+                    return;
                 }
             }
         }

@@ -18,30 +18,30 @@ defmodule Flecha.Service.Identificator do
   end
 
   def engine_sup(engine_id) do
-    gen_via(engine_id, "es_")
+    gen_via(engine_id, "es")
   end
 
   def control_channel(engine_id) do
-    gen_via(engine_id, "cc_")
+    gen_via(engine_id, "cc")
   end
 
   def stream_listener(engine_id, type) do
     case type do
-      :primary -> gen_via(engine_id, "psl_")
-      :secondary -> gen_via(engine_id, "ssl_")
+      :primary -> gen_via(engine_id, "psl")
+      :secondary -> gen_via(engine_id, "ssl")
     end
   end
 
   def stream_sup_primary(engine_id) do
-    gen_via(engine_id, "scsp_")
+    gen_via(engine_id, "scsp")
   end
 
   def stream_sup_secondary(engine_id) do
-    gen_via(engine_id, "scss_")
+    gen_via(engine_id, "scss")
   end
 
   def control_unit(engine_id) do
-    gen_via(engine_id, "cu_")
+    gen_via(engine_id, "cu")
   end
 
   def stream_channel_primary(engine_id, count_nr) do

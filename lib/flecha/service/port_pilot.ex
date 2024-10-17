@@ -1,6 +1,9 @@
 defmodule Flecha.Service.PortPilot do
   require Logger
 
+  # TODO: change back to 5 or make it configurable
+  @port_down_counter 1
+
   use GenServer
 
   def start_link(arg) do
@@ -32,10 +35,11 @@ defmodule Flecha.Service.PortPilot do
 
   @impl true
   def handle_info({:DOWN, _ref, :port, port, :normal}, state) do
-    if state.port_down_counter > 5 do
+    if state.port_down_counter > @port_down_counter do
       raise "Port application malfunction"
     end
 
+    socket_files_path = Application.fetch_env!(:flecha_core, :socket_files_path)
     ports = Map.delete(state.ports, port)
 
     ports =
@@ -44,7 +48,7 @@ defmodule Flecha.Service.PortPilot do
           ports
 
         command ->
-          {port, _} = open_port(command)
+          {port, _} = open_port("FLECHA_SOCKET_FILES_PATH=#{socket_files_path} #{command}")
           Map.put(ports, port, command)
       end
 

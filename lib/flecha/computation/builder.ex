@@ -7,14 +7,21 @@ defmodule Flecha.Computation.Builder do
   defstruct [:id, :factory_id, variables: %{}]
 
   def from_json(json_str) do
-    with {:ok, json_map} <- Jason.decode!(json_str),
-         {:ok, id} <- get_from_map(json_map, "id"),
-         {:ok, factory_id} <- get_from_map(json_map, "factory_id"),
-         variables <- Map.get(json_map, "variables", %{}) do
+    case Jason.decode!(json_str) do
+      {:ok, json_map} -> from_map(json_map)
+      {:error, _} -> {:error, "invalid json"}
+    end
+  end
+
+  def from_map(values_map) do
+    with {:ok, id} <- get_from_map(values_map, "id"),
+         {:ok, factory_id} <- get_from_map(values_map, "factory_id"),
+         variables <- Map.get(values_map, "variables", %{}),
+         {:ok, variables_json} <- Jason.decode(variables) do
       computation = %__MODULE__{
         id: id,
         factory_id: factory_id,
-        variables: variables
+        variables: variables_json
       }
 
       {:ok, computation}

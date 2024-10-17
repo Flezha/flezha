@@ -1,12 +1,14 @@
 import Config
 
 external_processes =
-  cond do
-    Mix.env() == :test || Mix.env() == :dev ->
-      ["cargo run --manifest-path=test/apps/rust_app/Cargo.toml --target-dir=./target"]
+  if config_env() in [:test, :dev] do
+    {:ok, current_path} = :file.get_cwd()
 
-    true ->
-      System.get_env("FLECHA_EXTERNAL_PROCESSES", "") |> String.split(",", trim: true)
+    [
+      "cargo run --manifest-path=#{current_path}/test/apps/rust_app/Cargo.toml --target-dir=./target"
+    ]
+  else
+    System.get_env("FLECHA_EXTERNAL_PROCESSES", "") |> String.split(",", trim: true)
   end
 
 config :flecha_core,
