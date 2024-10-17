@@ -2,7 +2,7 @@ import Config
 
 external_processes =
   cond do
-    Application.get_env(:my_app, :env) == :test || Application.get_env(:my_app, :env) == :dev ->
+    Mix.env() == :test || Mix.env() == :dev ->
       ["cargo run --manifest-path=test/apps/rust_app/Cargo.toml --target-dir=./target"]
 
     true ->
@@ -14,4 +14,7 @@ config :flecha_core,
   io_add_timeout: System.get_env("FLECHA_IO_ADD_TIMEOUT", "1000") |> String.to_integer(),
   io_payload_add_timeout:
     System.get_env("FLECHA_IO_PAYLOAD_ADD_TIMEOUT", "1000") |> String.to_integer(),
-  external_processes: external_processes
+  external_processes: external_processes,
+  static_nodes: System.get_env("FLECHA_STATIC_NODES", "") |> String.split(",", trim: true),
+  reconnect_interval: System.get_env("FLECHA_RECONNECT_INTERVAL", "0") |> String.to_integer(),
+  max_reconnects: System.get_env("FLECHA_MAX_RECONNECTS", "0") |> String.to_integer()
