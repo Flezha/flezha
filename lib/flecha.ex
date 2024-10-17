@@ -1,4 +1,6 @@
 defmodule Flecha do
+  alias Flecha.Computation.Builder, as: ComputationBuilder
+
   @moduledoc """
   Documentation for `FlechaCore`.
   """
@@ -9,6 +11,13 @@ defmodule Flecha do
 
   def rem_computation(computation_id) do
     GenServer.call(Flecha.Controller, {:rem_computation, computation_id})
+  end
+
+  def construct_computation!(json_str, :json) do
+    case ComputationBuilder.from_json(json_str) do
+      {:ok, computation} -> computation
+      {:error, reason} -> raise reason
+    end
   end
 
   def add_io(computation_id, io_id, settings, direction) do

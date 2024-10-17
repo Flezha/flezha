@@ -11,13 +11,14 @@ defmodule Flecha.Application do
     Flecha.Socket.Support.prepare_socket_dir()
 
     children = [
-      Flecha.Warden,
+      Flecha.Service.Warden,
       Flecha.Service.Identificator,
       Flecha.Service.EventManager,
       {Flecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
       {Flecha.Socket.Dispatcher, &Flecha.Engine.Toolbox.engine_dispatch_fn/1},
-      Flecha.PortManager,
+      Flecha.Service.PortPilot,
       Flecha.Controller,
+      Flecha.Cluster.KeeperSupervisor,
       process_hub()
     ]
 

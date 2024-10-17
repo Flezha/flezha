@@ -40,6 +40,12 @@ impl ComputationEngine {
             Arc::clone(&tx)
         );
 
+        // Make sure the engine id is passed to the Flecha core.
+        match rx.lock().unwrap().recv().expect("Failed to receive engine id confirmation") {
+            EngineAction::EngineIdConfirmation => {},
+            _ => panic!("Wrong order of messages"),
+        }
+
         let engine = ComputationEngine {
             engine_id,
             control_stream,
@@ -57,12 +63,6 @@ impl ComputationEngine {
     
         let _stdio_thread = start_stdio_thread();
     
-        // Make sure the engine id is passed to the Flecha core.
-        match rx.lock().unwrap().recv().expect("Failed to receive engine id confirmation") {
-            EngineAction::EngineIdConfirmation => {},
-            _ => panic!("Wrong order of messages"),
-        }
-    
         engine_arc
     }
 
@@ -75,7 +75,7 @@ impl ComputationEngine {
         core_data.insert("factory_id".to_string(), factory_id.clone());
 
         let json = serde_json::to_string(&core_data).unwrap();
-        let payload = payloader::build_payload_str(&"register_factory".to_string(), &json);
+        let payload = payloader::build_from_str(&"register_factory".to_string(), &json);
 
         self.control_stream.try_clone().unwrap().write_all(&payload).unwrap();
         self.computation_factory.insert(factory_id.clone(), factory);

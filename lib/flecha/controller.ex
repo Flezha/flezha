@@ -1,11 +1,9 @@
 defmodule Flecha.Controller do
-  alias Flecha.Service.Validator
-  alias Flecha.Warden
+  alias Flecha.Computation.Builder, as: ComputationBuilder
+  alias Flecha.Service.Warden
   alias Flecha.Service.Identificator
 
   use GenServer
-
-  @computation_id_max_bytes 32
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -21,9 +19,15 @@ defmodule Flecha.Controller do
   @impl true
   def handle_call({:add_computation, computation}, _from, state) do
     response =
-      case validate_computation(computation) do
-        {:error, reason} -> {:error, reason}
-        :ok -> add_computation(computation)
+      case ComputationBuilder.validate_computation(computation) do
+        {:error, reason} ->
+          {:error, reason}
+
+        :ok ->
+          case ComputationBuilder.factory_match_engines(computation.factory_id) do
+            {:error, reason} -> {:error, reason}
+            {:ok, engines} -> Map.put(computation, :engines, engines) |> add_computation()
+          end
       end
 
     {:reply, response, state}
@@ -39,7 +43,7 @@ defmodule Flecha.Controller do
   defp add_computation(computation) do
     child_spec = %{
       id: computation.id,
-      start: {Flecha.Computation, :start_link, [computation]}
+      start: {Flecha.Computation.WatchDog, :start_link, [computation]}
     }
 
     result =
@@ -73,13 +77,6 @@ defmodule Flecha.Controller do
     case result do
       {:ok, _} -> {:ok, "computation removed"}
       {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp validate_computation(computation) do
-    case Validator.byte_limit_exceed(computation.id, @computation_id_max_bytes) do
-      true -> {:error, "computation id exceeds #{@computation_id_max_bytes} bytes"}
-      false -> :ok
     end
   end
 
