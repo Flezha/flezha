@@ -35,15 +35,17 @@ done
 # Get the directory of the current script
 SCRIPT_DIR=$(dirname "$0")
 
-# Conditionally set RELEASE_NODE and call flecha_core in a single block
-ENV_CMD=""
+# Conditionally set RELEASE_NODE and execute the flecha_core command
 if [ -n "$NODE_NAME" ]; then
-    ENV_CMD="RELEASE_NODE=$NODE_NAME"
+    RELEASE_NODE=$NODE_NAME "$SCRIPT_DIR/flecha_core" rpc \
+    "Flecha.construct_computation!(%{\"id\" => \"$COMPUTATION_ID\", \
+    \"factory_id\" => \"$FACTORY_ID\", \
+    \"variables\" => \"$VARIABLES\"}, :map) \
+    |> Flecha.add_computation()"
+else
+    "$SCRIPT_DIR/flecha_core" rpc \
+    "Flecha.construct_computation!(%{\"id\" => \"$COMPUTATION_ID\", \
+    \"factory_id\" => \"$FACTORY_ID\", \
+    \"variables\" => \"$VARIABLES\"}, :map) \
+    |> Flecha.add_computation()"
 fi
-
-# Execute the flecha_core command
-$ENV_CMD "$SCRIPT_DIR/flecha_core" rpc \
-"Flecha.construct_computation!(%{\"id\" => \"$COMPUTATION_ID\", \
-\"factory_id\" => \"$FACTORY_ID\", \
-\"variables\" => \"$VARIABLES\"}, :map) \
-|> Flecha.add_computation()"
