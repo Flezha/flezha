@@ -13,3 +13,8 @@ Adding a computation to the node.
 ```bash
 flecha_core/bin/add_computation comp_id increment_state -v '{\"value\": 500}' -n "mynode"
 ```
+
+Removing a computation from the node.
+```bash
+flecha_core/bin/rem_computation comp_id -n "mynode"
+```

@@ -35,6 +35,7 @@ done
 # Get the directory of the current script
 SCRIPT_DIR=$(dirname "$0")
 
+# TODO: Reduce duplication
 # Conditionally set RELEASE_NODE and execute the flecha_core command
 if [ -n "$NODE_NAME" ]; then
     RELEASE_NODE=$NODE_NAME "$SCRIPT_DIR/flecha_core" rpc \
