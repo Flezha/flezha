@@ -18,3 +18,16 @@ Removing a computation from the node.
 ```bash
 flecha_core/bin/rem_computation comp_id -n "mynode"
 ```
+
+## Build docker image
+```bash
+docker build -t flecha_core .
+```
+
+## Run docker image
+```bash
+docker run -d \
+  --name flecha_core_container \
+  -e FLECHA_MAX_RECONNECTS=3 \
+  flecha_core
+```
