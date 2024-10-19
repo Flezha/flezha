@@ -31,3 +31,7 @@ docker run -d \
   -e FLECHA_MAX_RECONNECTS=3 \
   flecha_core
 ```
+## Export docker image
+```bash
+docker save -o flecha_core.tar flecha_core
+```
