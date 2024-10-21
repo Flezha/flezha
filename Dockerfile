@@ -36,7 +36,7 @@ RUN addgroup --system flecha && adduser --system flecha --ingroup flecha
 # Copy only the necessary files from the _build/prod/rel/flecha_core directory
 COPY --from=build /app/_build/prod/rel/flecha_core /flecha/
 
-# Add all files under flecha permissions
+# Change the owner of the /flecha directory
 RUN chown -R flecha:flecha /flecha
 
 # Switch to the flecha user
