@@ -19,10 +19,12 @@ Removing a computation from the node.
 flecha_core/bin/rem_computation comp_id -n "mynode"
 ```
 
-## Build docker image
+## Build docker image for multiple platforms
 ```bash
-docker build -t alfetahe/flecha:0.1.1 .
+docker buildx build --platform linux/amd64,linux/arm64 -t alfetahe/flecha:0.1.2 .
 ```
+
+
 
 ## Run docker image
 ```bash
@@ -31,6 +33,7 @@ docker run -d \
   -e FLECHA_MAX_RECONNECTS=3 \
   alfetahe/flecha:0.1.1
 ```
+
 ## Export docker image
 ```bash
 docker save -o flecha.tar alfetahe/flecha:0.1.1

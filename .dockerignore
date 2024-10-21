@@ -1,0 +1,9 @@
+erl_crash.dump
+deps
+_build
+cover
+/target/
+flecha_core-*.tar
+.elixir_ls/
+.vscode
+

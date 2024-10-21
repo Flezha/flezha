@@ -1,5 +1,5 @@
 # Stage 1: Build the app
-FROM elixir:1.17 AS build
+FROM elixir:1.17-otp-25 AS build
 
 # Set current working directory.
 WORKDIR /app
@@ -8,23 +8,22 @@ WORKDIR /app
 RUN mix local.hex --force
 RUN mix local.rebar --force
 
-# Copy the mix.exs and mix.lock files
-COPY mix.exs mix.lock ./
+# Copy all the necessary files to the container
+COPY . .
 
 # Fetch dependencies
-RUN mix deps.get
+RUN MIX_ENV=prod mix deps.get
 
 # Compile the project
 RUN MIX_ENV=prod mix compile
-
-# Copy the remaining files
-COPY . .
 
 # Create release
 RUN MIX_ENV=prod mix release --overwrite
 
 # Stage 2: Final image
-FROM elixir:1.17
+FROM elixir:1.17-otp-25
+
+# Set the working directory
 WORKDIR /flecha
 
 # Set environment variables
