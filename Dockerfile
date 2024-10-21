@@ -1,5 +1,5 @@
 # Stage 1: Build the app
-FROM elixir:1.17-otp-25 AS build
+FROM elixir:1.17-otp-27 AS build
 
 # Set current working directory.
 WORKDIR /app
@@ -21,7 +21,7 @@ RUN MIX_ENV=prod mix compile
 RUN MIX_ENV=prod mix release --overwrite
 
 # Stage 2: Final image
-FROM elixir:1.17-otp-25
+FROM elixir:1.17-otp-27
 
 # Set the working directory
 WORKDIR /flecha
