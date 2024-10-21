@@ -21,7 +21,7 @@ flecha_core/bin/rem_computation comp_id -n "mynode"
 
 ## Build docker image
 ```bash
-docker build -t flecha_core .
+docker build -t alfetahe/flecha:0.1.1 .
 ```
 
 ## Run docker image
@@ -29,9 +29,9 @@ docker build -t flecha_core .
 docker run -d \
   --name flecha_core_container \
   -e FLECHA_MAX_RECONNECTS=3 \
-  flecha_core
+  alfetahe/flecha:0.1.1
 ```
 ## Export docker image
 ```bash
-docker save -o flecha_core.tar flecha_core
+docker save -o flecha.tar alfetahe/flecha:0.1.1
 ```
