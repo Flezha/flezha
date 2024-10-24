@@ -12,6 +12,8 @@ external_processes =
   end
 
 config :flecha_core,
+  k8s_node_discovery: System.get_env("FLECHA_K8S_NODE_DISCOVERY", ""),
+  k3s_service_account_path: System.get_env("FLECHA_K8S_SERVICE_ACCOUNT_PATH", "/var/run/secrets/kubernetes.io/serviceaccount"),
   socket_files_path: System.get_env("FLECHA_SOCKET_FILES_PATH", "app_data/sockets/"),
   io_add_timeout: System.get_env("FLECHA_IO_ADD_TIMEOUT", "1000") |> String.to_integer(),
   io_payload_add_timeout:

@@ -12,6 +12,8 @@ defmodule Flecha.Cluster.StaticNodes do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   end
 
+  # TODO: move these Application fetches to the dicovery supervisor, initize the state there and
+  # pass it to the discovery processes.
   @impl true
   def init(_) do
     state = %__MODULE__{

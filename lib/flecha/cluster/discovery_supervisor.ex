@@ -1,5 +1,6 @@
-defmodule Flecha.Cluster.KeeperSupervisor do
+defmodule Flecha.Cluster.DiscoverySupervisor do
   alias Flecha.Cluster.StaticNodes
+  alias Flecha.Cluster.K8SPod
 
   use Supervisor
 
@@ -10,7 +11,8 @@ defmodule Flecha.Cluster.KeeperSupervisor do
   @impl true
   def init(_) do
     children = [
-      StaticNodes
+      StaticNodes,
+      K8SPod
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
