@@ -21,20 +21,18 @@ flecha_core/bin/rem_computation comp_id -n "mynode"
 
 ## Build docker image for multiple platforms
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t alfetahe/flecha:0.1.2 .
+docker buildx build --platform linux/amd64,linux/arm64 -t alfetahe/flecha:0.1.3 . --load
 ```
-
-
 
 ## Run docker image
 ```bash
 docker run -d \
   --name flecha_core_container \
   -e FLECHA_MAX_RECONNECTS=3 \
-  alfetahe/flecha:0.1.1
+  alfetahe/flecha:0.1.3
 ```
 
 ## Export docker image
 ```bash
-docker save -o flecha.tar alfetahe/flecha:0.1.1
+docker save -o flecha.tar alfetahe/flecha:0.1.3
 ```

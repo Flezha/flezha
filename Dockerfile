@@ -15,7 +15,7 @@ COPY . .
 RUN MIX_ENV=prod mix deps.get
 
 # Compile the project
-RUN MIX_ENV=prod mix compile
+RUN ERL_FLAGS="+JMsingle true" MIX_ENV=prod mix compile
 
 # Create release
 RUN MIX_ENV=prod mix release --overwrite
