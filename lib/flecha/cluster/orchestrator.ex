@@ -1,8 +1,10 @@
 defmodule Flecha.Cluster.Orchestrator do
   use GenServer
 
+  @type handler_module() :: Flecha.Cluster.StaticNodes | Flecha.Cluster.K8sPodIpDiscovery
+
   @type t() :: %__MODULE__{
-          handler: module(),
+          handler: handler_module(),
           reconnect_interval: non_neg_integer(),
           max_reconnects: non_neg_integer(),
           connected: [node()],
@@ -16,7 +18,7 @@ defmodule Flecha.Cluster.Orchestrator do
     unconnected: []
   ]
 
-  @callback connect_nodes(__MODULE__.t()) :: {:ok, {:connected, [node()], :unconnected, [node()]}}
+  @callback connect_nodes(__MODULE__.t()) :: {conn_nodes :: [node()], unconn_nodes :: [node()]}
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -36,7 +38,7 @@ defmodule Flecha.Cluster.Orchestrator do
 
   @impl true
   def handle_continue(:connect_nodes, state) do
-    {:ok, {:connected, c_nodes}, {:unconnected, uc_nodes}} = state.handler.connect_nodes(state)
+    {c_nodes, uc_nodes} = state.handler.connect_nodes(state)
 
     state =
       state

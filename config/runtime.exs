@@ -24,7 +24,9 @@ config :flecha_core,
   cluster_handler: System.get_env("FLECHA_CLUSTER_HANDLER", "static_nodes"),
 
   # Static nodes configurations.
-  static_nodes: System.get_env("FLECHA_STATIC_NODES", "") |> String.split(",", trim: true),
+  static_nodes: System.get_env("FLECHA_STATIC_NODES", "")
+  |> String.split(",", trim: true)
+  |> Enum.map(&String.to_atom/1),
 
   # Kubernetes specific configurations.
   k8s_node_discovery: System.get_env("FLECHA_K8S_NODE_DISCOVERY", ""),
