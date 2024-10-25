@@ -18,7 +18,7 @@ defmodule Flecha.Application do
       {Flecha.Socket.Dispatcher, &Flecha.Engine.Toolbox.engine_dispatch_fn/1},
       Flecha.Service.PortPilot,
       Flecha.Controller,
-      Flecha.Cluster.DiscoverySupervisor,
+      Flecha.Cluster.Orchestrator,
       process_hub()
     ]
 
