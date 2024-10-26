@@ -58,7 +58,7 @@ defmodule Flecha.Cluster.K8sPodIpDiscovery do
           headers = [{~c"authorization", ~c"Bearer #{token}"}]
           http_options = [ssl: ssl_opts, timeout: 15000]
 
-          case :httpc.request(:get, {~c"https://#{master}/#{path}", headers}, http_options, []) do
+          nodes = case :httpc.request(:get, {~c"https://#{master}/#{path}", headers}, http_options, []) do
             {:ok, {{_version, 200, _status}, _headers, body}} ->
               parse_response(ip_lookup_mode, Jason.decode!(body))
               |> Enum.map(fn node_info ->
@@ -83,6 +83,8 @@ defmodule Flecha.Cluster.K8sPodIpDiscovery do
               Logger.error("request to kubernetes failed!: #{inspect(reason)}")
               []
           end
+
+          {:ok, struct, nodes}
       end
     end
 
