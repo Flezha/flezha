@@ -113,7 +113,19 @@ defmodule Flecha.Cluster.Orchestrator do
            }}
 
         "k8s_pod_ip_discovery" ->
-          {:ok, %K8sPodIpDiscovery{}}
+          {:ok,
+           %K8sPodIpDiscovery{
+             service_account_path:
+               Application.fetch_env!(:flecha_core, :k8s_service_account_path),
+             cluster_domain: Application.fetch_env!(:flecha_core, :k8s_cluster_domain),
+             namespace: Application.fetch_env!(:flecha_core, :k8s_namespace),
+             node_base_name: Application.fetch_env!(:flecha_core, :node_base_name),
+             ip_lookup_mode: Application.fetch_env!(:flecha_core, :k8s_ip_lookup_mode),
+             cluster_name: Application.fetch_env!(:flecha_core, :k8s_cluster_name),
+             service_name: Application.fetch_env!(:flecha_core, :k8s_service_name),
+             selector: Application.fetch_env!(:flecha_core, :k8s_selector),
+             master_name: Application.fetch_env!(:flecha_core, :k8s_master_name)
+           }}
 
         handler ->
           {:error, "Unknown cluster discovery handler: #{inspect(handler)}"}

@@ -24,6 +24,7 @@ config :flecha_core,
   # - "manual_discovery" (default)
   # - "k8s_pod_ip_discovery"
   cluster_discovery: System.get_env("FLECHA_CLUSTER_DISCOVERY", "manual_discovery"),
+  node_base_name: System.get_env("FLECHA_NODE_NAME", "flecha"),
 
   # Manual cluster discovery.
   initial_nodes:
@@ -38,7 +39,19 @@ config :flecha_core,
       "FLECHA_K8S_SERVICE_ACCOUNT_PATH",
       "/var/run/secrets/kubernetes.io/serviceaccount"
     ),
-  k8s_master_node_host: System.get_env("FLECHA_K8S_MASTER_NODE_HOST", ""),
+  k8s_cluster_name: System.get_env("FLECHA_K8S_CLUSTER_NAME", "cluster"),
+  k8s_cluster_domain:
+    System.get_env(
+      "FLECHA_K8S_CLUSTER_DOMAIN",
+      System.get_env("FLECHA_K8S_CLUSTER_NAME", "cluster") <> ".local"
+    ),
+  k8s_namespace: System.get_env("FLECHA_K8S_NAMESPACE", ""),
+  # The PodIP lookup mode can be either `"endpoints"` or `"pods"`.
+  k8s_ip_lookup_mode:
+    System.get_env("FLECHA_K8S_IP_LOOKUP_MODE", "endpoints") |> String.to_atom(),
+  k8s_service_name: System.get_env("FLECHA_K8S_SERVICE_NAME", "flecha"),
+  k8s_selector: System.get_env("FLECHA_K8S_SELECTOR", ""),
+  k8s_master_name: System.get_env("FLECHA_K8S_MASTER_NAME", "kubernetes.default.svc"),
 
   # Socket configurations.
   socket_files_path: System.get_env("FLECHA_SOCKET_FILES_PATH", "app_data/sockets/"),
