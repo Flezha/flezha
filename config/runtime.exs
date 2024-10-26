@@ -13,8 +13,8 @@ external_processes =
 
 config :flecha_core,
   # General cluster specific configurations.
-  reconnect_interval: System.get_env("FLECHA_RECONNECT_INTERVAL", "0") |> String.to_integer(),
-  max_reconnects: System.get_env("FLECHA_MAX_RECONNECTS", "0") |> String.to_integer(),
+  reconnect_interval: System.get_env("FLECHA_RECONNECT_INTERVAL", "1000") |> String.to_integer(),
+  max_reconnects: System.get_env("FLECHA_MAX_RECONNECTS", "1") |> String.to_integer(),
   cluster_update_interval:
     System.get_env("FLECHA_CLUSTER_UPDATE_INTERVAL", "5000") |> String.to_integer(),
 
@@ -27,7 +27,7 @@ config :flecha_core,
 
   # Manual cluster discovery.
   initial_nodes:
-    System.get_env("FLECHA_INITIAL_NODES", "first@127.0.0.1")
+    System.get_env("FLECHA_INITIAL_NODES", "")
     |> String.split(",", trim: true)
     |> Enum.map(&String.to_atom/1),
 

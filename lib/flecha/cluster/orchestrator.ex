@@ -93,7 +93,7 @@ defmodule Flecha.Cluster.Orchestrator do
         nil
 
       interval ->
-        Process.send_after(self(), {:scheduled_reconnect, {node, retries_count}}, interval)
+        Process.send_after(self(), {:scheduled_reconnect, node, retries_count}, interval)
     end
   end
 
