@@ -2,6 +2,8 @@ defmodule Flecha.Cluster.Orchestrator do
   use GenServer
 
   @type handler_module() :: Flecha.Cluster.StaticNodes | Flecha.Cluster.K8sPodIpDiscovery
+  @type connected_nodes() :: [node()]
+  @type unconnected_nodes() :: [node()]
 
   @type t() :: %__MODULE__{
           handler: handler_module(),
@@ -18,7 +20,8 @@ defmodule Flecha.Cluster.Orchestrator do
     unconnected: []
   ]
 
-  @callback connect_nodes(__MODULE__.t()) :: {conn_nodes :: [node()], unconn_nodes :: [node()]}
+  @callback connect_nodes(__MODULE__.t()) :: {connected_nodes(), unconnected_nodes()}
+  @callback update_cluster(__MODULE__.t()) :: {connected_nodes(), unconnected_nodes()}
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -39,13 +42,10 @@ defmodule Flecha.Cluster.Orchestrator do
   @impl true
   def handle_continue(:connect_nodes, state) do
     {c_nodes, uc_nodes} = state.handler.connect_nodes(state)
-
-    state =
-      state
-      |> Map.put(:connected, c_nodes)
-      |> Map.put(:unconnected, uc_nodes)
+    state = update_cluster_nodes(state, c_nodes, uc_nodes)
 
     monitor_nodes(c_nodes)
+    schedule_cluster_update()
 
     {:noreply, state}
   end
@@ -56,6 +56,16 @@ defmodule Flecha.Cluster.Orchestrator do
       0 -> nil
       interval -> Process.send_after(self(), {:scheduled_reconnect, {node, 0}}, interval)
     end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:update_cluster, state) do
+    {c_nodes, uc_nodes} = state.handler.update_cluster(state)
+    state = update_cluster_nodes(state, c_nodes, uc_nodes)
+
+    schedule_cluster_update()
 
     {:noreply, state}
   end
@@ -85,6 +95,18 @@ defmodule Flecha.Cluster.Orchestrator do
       end
 
     {:noreply, state}
+  end
+
+  defp update_cluster_nodes(state, connected, unconnected) do
+    state
+    |> Map.put(:connected, connected)
+    |> Map.put(:unconnected, unconnected)
+  end
+
+  defp schedule_cluster_update() do
+    interval = Application.fetch_env!(:flecha_core, :cluster_update_interval)
+
+    Process.send_after(self(), :update_cluster, interval)
   end
 
   defp get_handler() do

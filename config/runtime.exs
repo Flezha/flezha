@@ -15,6 +15,8 @@ config :flecha_core,
   # Cluster specific configurations.
   reconnect_interval: System.get_env("FLECHA_RECONNECT_INTERVAL", "0") |> String.to_integer(),
   max_reconnects: System.get_env("FLECHA_MAX_RECONNECTS", "0") |> String.to_integer(),
+  cluster_update_interval:
+    System.get_env("FLECHA_CLUSTER_UPDATE_INTERVAL", "5000") |> String.to_integer(),
 
   # Define the cluster handler module.
   #
@@ -24,9 +26,10 @@ config :flecha_core,
   cluster_handler: System.get_env("FLECHA_CLUSTER_HANDLER", "static_nodes"),
 
   # Static nodes configurations.
-  static_nodes: System.get_env("FLECHA_STATIC_NODES", "")
-  |> String.split(",", trim: true)
-  |> Enum.map(&String.to_atom/1),
+  static_nodes:
+    System.get_env("FLECHA_STATIC_NODES", "")
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.to_atom/1),
 
   # Kubernetes specific configurations.
   k8s_node_discovery: System.get_env("FLECHA_K8S_NODE_DISCOVERY", ""),

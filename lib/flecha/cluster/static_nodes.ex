@@ -20,4 +20,9 @@ defmodule Flecha.Cluster.StaticNodes do
 
     {c_nodes, uc_nodes}
   end
+
+  @impl true
+  def update_cluster(orch) do
+    {orch.connected, orch.unconnected}
+  end
 end
