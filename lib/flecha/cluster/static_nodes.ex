@@ -25,4 +25,17 @@ defmodule Flecha.Cluster.StaticNodes do
   def update_cluster(orch) do
     {orch.connected, orch.unconnected}
   end
+
+  @impl true
+  def validate_settings(:static_nodes) do
+    static_nodes = Application.fetch_env!(:flecha_core, :k8s_service_account_path)
+
+    cond do
+      is_list(static_nodes) ->
+        {:ok, __MODULE__}
+
+      true ->
+        {:error, "Invalid static nodes configuration. Expected a empty list or a list of nodes."}
+    end
+  end
 end

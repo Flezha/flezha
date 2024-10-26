@@ -22,6 +22,7 @@ defmodule Flecha.Cluster.Orchestrator do
 
   @callback connect_nodes(__MODULE__.t()) :: {connected_nodes(), unconnected_nodes()}
   @callback update_cluster(__MODULE__.t()) :: {connected_nodes(), unconnected_nodes()}
+  @callback validate_settings() :: {:ok, handler_module()} | {:error, String.t()}
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -110,34 +111,21 @@ defmodule Flecha.Cluster.Orchestrator do
   end
 
   defp get_handler() do
-    case Application.fetch_env!(:flecha_core, :cluster_handler) do
+    result = case Application.fetch_env!(:flecha_core, :cluster_handler) do
       "static_nodes" ->
-        validate_handler(:static_nodes)
-        Flecha.Cluster.StaticNodes
+        Flecha.Cluster.StaticNodes.validate_settings()
 
       "k8s_pod_ip_discovery" ->
-        validate_handler(:k8s_pod_ip_discovery)
-        Flecha.Cluster.K8sPodIpDiscovery
+        Flecha.Cluster.K8sPodIpDiscovery.validate_settings()
 
       handler ->
-        raise "Unknown cluster handler: #{handler}"
+        {:error, "Unknown cluster handler: #{inspect(handler)}"}
     end
-  end
 
-  defp validate_handler(:static_nodes) do
-    static_nodes = Application.fetch_env!(:flecha_core, :static_nodes)
-
-    cond do
-      is_list(static_nodes) ->
-        nil
-
-      true ->
-        raise "Invalid static nodes configuration. Expected a empty list or a list of nodes."
+    case result do
+      {:ok, handler} -> handler
+      {:error, reason} -> raise reason
     end
-  end
-
-  defp validate_handler(:k8s_pod_ip_discovery) do
-    # TODO: Implement the validation.
   end
 
   defp monitor_nodes(nodes) do
