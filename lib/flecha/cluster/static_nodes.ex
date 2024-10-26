@@ -28,7 +28,7 @@ defmodule Flecha.Cluster.StaticNodes do
 
   @impl true
   def validate_settings(:static_nodes) do
-    static_nodes = Application.fetch_env!(:flecha_core, :k8s_service_account_path)
+    static_nodes = Application.fetch_env!(:flecha_core, :static_nodes)
 
     cond do
       is_list(static_nodes) ->
