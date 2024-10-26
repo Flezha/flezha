@@ -12,7 +12,7 @@ external_processes =
   end
 
 config :flecha_core,
-  # Cluster specific configurations.
+  # General cluster specific configurations.
   reconnect_interval: System.get_env("FLECHA_RECONNECT_INTERVAL", "0") |> String.to_integer(),
   max_reconnects: System.get_env("FLECHA_MAX_RECONNECTS", "0") |> String.to_integer(),
   cluster_update_interval:
@@ -21,23 +21,24 @@ config :flecha_core,
   # Define the cluster handler module.
   #
   # Available options:
-  # - "static_nodes" (default)
+  # - "manual_discovery" (default)
   # - "k8s_pod_ip_discovery"
-  cluster_handler: System.get_env("FLECHA_CLUSTER_HANDLER", "static_nodes"),
+  cluster_discovery: System.get_env("FLECHA_CLUSTER_DISCOVERY", "manual_discovery"),
 
-  # Static nodes configurations.
-  static_nodes:
-    System.get_env("FLECHA_STATIC_NODES", "")
+  # Manual cluster discovery.
+  initial_nodes:
+    System.get_env("FLECHA_INITIAL_NODES", "first@127.0.0.1")
     |> String.split(",", trim: true)
     |> Enum.map(&String.to_atom/1),
 
-  # Kubernetes specific configurations.
+  # Kubernetes cluster Pod IP discovery.
   k8s_node_discovery: System.get_env("FLECHA_K8S_NODE_DISCOVERY", ""),
-  k3s_service_account_path:
+  k8s_service_account_path:
     System.get_env(
       "FLECHA_K8S_SERVICE_ACCOUNT_PATH",
       "/var/run/secrets/kubernetes.io/serviceaccount"
     ),
+  k8s_master_node_host: System.get_env("FLECHA_K8S_MASTER_NODE_HOST", ""),
 
   # Socket configurations.
   socket_files_path: System.get_env("FLECHA_SOCKET_FILES_PATH", "app_data/sockets/"),
