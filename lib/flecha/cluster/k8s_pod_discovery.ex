@@ -1,4 +1,4 @@
-defmodule Flecha.Cluster.K8sPodIpDiscovery do
+defmodule Flecha.Cluster.K8sPodDiscovery do
   alias Flecha.Cluster.DiscoveryProtocol
 
   require Logger
@@ -13,44 +13,37 @@ defmodule Flecha.Cluster.K8sPodIpDiscovery do
     :cluster_name,
     :service_name,
     :selector,
-    :master_name
+    :master_name,
+    :host_identifier
   ]
 
   defimpl DiscoveryProtocol, for: Flecha.Cluster.K8sPodIpDiscovery do
     @impl true
-    def get_nodes(struct) do
-      service_account_path = struct.service_account_path
-      app_name = struct.node_base_name
-      ip_lookup_mode = struct.ip_lookup_mode
-      cluster_name = struct.cluster_name
-      service_name = struct.service_name
-      selector = struct.selector
-      cluster_domain = struct.cluster_domain
-      master_name = struct.master_name
-
+    def get_nodes(settings) do
+      service_account_path = settings.service_account_path
       token = get_token(service_account_path)
       ssl_opts = get_ssl_opts(service_account_path)
-      namespace = get_namespace(service_account_path, struct.namespace)
+      namespace = get_namespace(service_account_path, settings.namespace)
 
       master =
         cond do
-          String.ends_with?(master_name, cluster_domain) ->
-            master_name
+          String.ends_with?(settings.master_name, settings.cluster_domain) ->
+            settings.master_name
 
-          String.ends_with?(master_name, ".") ->
+          String.ends_with?(settings.master_name, ".") ->
             # The dot at the end is used to determine that the name is "final"
-            master_name
+            settings.master_name
 
           :else ->
-            master_name <> "." <> cluster_domain
+            settings.master_name <> "." <> settings.cluster_domain
         end
 
       cond do
-        app_name != nil and selector != nil ->
-          selector = URI.encode(selector)
+        settings.node_base_name != nil and settings.selector != nil ->
+          selector = URI.encode(settings.selector)
 
           path =
-            case ip_lookup_mode do
+            case settings.ip_lookup_mode do
               :endpoints -> "api/v1/namespaces/#{namespace}/endpoints?labelSelector=#{selector}"
               :pods -> "api/v1/namespaces/#{namespace}/pods?labelSelector=#{selector}"
             end
@@ -58,39 +51,41 @@ defmodule Flecha.Cluster.K8sPodIpDiscovery do
           headers = [{~c"authorization", ~c"Bearer #{token}"}]
           http_options = [ssl: ssl_opts, timeout: 15000]
 
-          nodes = case :httpc.request(:get, {~c"https://#{master}/#{path}", headers}, http_options, []) do
-            {:ok, {{_version, 200, _status}, _headers, body}} ->
-              parse_response(ip_lookup_mode, Jason.decode!(body))
-              |> Enum.map(fn node_info ->
-                format_node(
-                  node_info,
-                  app_name,
-                  cluster_name,
-                  service_name
-                )
-              end)
+          nodes =
+            case :httpc.request(:get, {~c"https://#{master}/#{path}", headers}, http_options, []) do
+              {:ok, {{_version, 200, _status}, _headers, body}} ->
+                parse_response(settings.ip_lookup_mode, Jason.decode!(body))
+                |> Enum.map(fn node_info ->
+                  format_node(
+                    settings.host_identifier,
+                    node_info,
+                    settings.node_base_name,
+                    settings.cluster_name,
+                    settings.service_name
+                  )
+                end)
 
-            {:ok, {{_version, 403, _status}, _headers, body}} ->
-              %{"message" => msg} = Jason.decode!(body)
-              Logger.warning("cannot query kubernetes (unauthorized): #{msg}")
-              []
+              {:ok, {{_version, 403, _status}, _headers, body}} ->
+                %{"message" => msg} = Jason.decode!(body)
+                Logger.warning("cannot query kubernetes (unauthorized): #{msg}")
+                []
 
-            {:ok, {{_version, code, status}, _headers, body}} ->
-              Logger.warning("cannot query kubernetes (#{code} #{status}): #{inspect(body)}")
-              []
+              {:ok, {{_version, code, status}, _headers, body}} ->
+                Logger.warning("cannot query kubernetes (#{code} #{status}): #{inspect(body)}")
+                []
 
-            {:error, reason} ->
-              Logger.error("request to kubernetes failed!: #{inspect(reason)}")
-              []
-          end
+              {:error, reason} ->
+                Logger.error("request to kubernetes failed!: #{inspect(reason)}")
+                []
+            end
 
-          {:ok, struct, nodes}
+          {:ok, settings, nodes}
       end
     end
 
     # TODO: have we implemented all checks?
     @impl true
-    def validate_settings(_struct) do
+    def validate_settings(_settings) do
       with :ok <- validate_service_account_path(),
            :ok <- validate_cluster_domain(),
            :ok <- validate_pod_ip_lookup() do
@@ -172,7 +167,23 @@ defmodule Flecha.Cluster.K8sPodIpDiscovery do
       end
     end
 
-    defp format_node(%{ip: ip}, app_name, _cluster_name, _service_name), do: :"#{app_name}@#{ip}"
+    defp format_node(:ip, %{ip: ip}, app_name, _cluster_name, _service_name),
+      do: :"#{app_name}@#{ip}"
+
+    defp format_node(
+           :hostname,
+           %{hostname: hostname, namespace: namespace},
+           app_name,
+           cluster_name,
+           service_name
+         ) do
+      :"#{app_name}@#{hostname}.#{service_name}.#{namespace}.svc.#{cluster_name}.local"
+    end
+
+    defp format_node(:dns, %{ip: ip, namespace: namespace}, app_name, cluster_name, _service_name) do
+      ip = String.replace(ip, ".", "-")
+      :"#{app_name}@#{ip}.#{namespace}.pod.#{cluster_name}.local"
+    end
 
     defp parse_response(:endpoints, resp) do
       case resp do

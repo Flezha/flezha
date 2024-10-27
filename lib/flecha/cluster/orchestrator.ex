@@ -1,7 +1,7 @@
 defmodule Flecha.Cluster.Orchestrator do
   alias Flecha.Cluster.DiscoveryProtocol
   alias Flecha.Cluster.ManualDiscovery
-  alias Flecha.Cluster.K8sPodIpDiscovery
+  alias Flecha.Cluster.K8sPodDiscovery
 
   use GenServer
 
@@ -112,9 +112,9 @@ defmodule Flecha.Cluster.Orchestrator do
              initial_nodes: Application.fetch_env!(:flecha_core, :initial_nodes)
            }}
 
-        "k8s_pod_ip_discovery" ->
+        "k8s_pod_discovery" ->
           {:ok,
-           %K8sPodIpDiscovery{
+           %K8sPodDiscovery{
              service_account_path:
                Application.fetch_env!(:flecha_core, :k8s_service_account_path),
              cluster_domain: Application.fetch_env!(:flecha_core, :k8s_cluster_domain),
@@ -124,7 +124,8 @@ defmodule Flecha.Cluster.Orchestrator do
              cluster_name: Application.fetch_env!(:flecha_core, :k8s_cluster_name),
              service_name: Application.fetch_env!(:flecha_core, :k8s_service_name),
              selector: Application.fetch_env!(:flecha_core, :k8s_selector),
-             master_name: Application.fetch_env!(:flecha_core, :k8s_master_name)
+             master_name: Application.fetch_env!(:flecha_core, :k8s_master_name),
+             host_identifier: Application.fetch_env!(:flecha_core, :k8s_host_identifier)
            }}
 
         handler ->
