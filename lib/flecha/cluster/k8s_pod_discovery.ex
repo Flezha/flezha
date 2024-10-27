@@ -14,10 +14,11 @@ defmodule Flecha.Cluster.K8sPodDiscovery do
     :service_name,
     :selector,
     :master_name,
+    :master_port,
     :host_identifier
   ]
 
-  defimpl DiscoveryProtocol, for: Flecha.Cluster.K8sPodIpDiscovery do
+  defimpl DiscoveryProtocol, for: Flecha.Cluster.K8sPodDiscovery do
     @impl true
     def get_nodes(settings) do
       service_account_path = settings.service_account_path
@@ -51,8 +52,16 @@ defmodule Flecha.Cluster.K8sPodDiscovery do
           headers = [{~c"authorization", ~c"Bearer #{token}"}]
           http_options = [ssl: ssl_opts, timeout: 15000]
 
+          request = :httpc.request(
+            :get,
+            {~c"https://#{master}:#{settings.master_port}/#{path}", headers},
+            http_options,
+            []
+          )
+
+          # TODO: port should be configurable.
           nodes =
-            case :httpc.request(:get, {~c"https://#{master}/#{path}", headers}, http_options, []) do
+            case request do
               {:ok, {{_version, 200, _status}, _headers, body}} ->
                 parse_response(settings.ip_lookup_mode, Jason.decode!(body))
                 |> Enum.map(fn node_info ->
@@ -83,7 +92,7 @@ defmodule Flecha.Cluster.K8sPodDiscovery do
       end
     end
 
-    # TODO: have we implemented all checks?
+    # TODO: add other field validations here.
     @impl true
     def validate_settings(_settings) do
       with :ok <- validate_service_account_path(),
@@ -166,6 +175,8 @@ defmodule Flecha.Cluster.K8sPodDiscovery do
         ""
       end
     end
+
+    defp get_namespace(_, namespace), do: namespace
 
     defp format_node(:ip, %{ip: ip}, app_name, _cluster_name, _service_name),
       do: :"#{app_name}@#{ip}"

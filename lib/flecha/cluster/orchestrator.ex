@@ -125,6 +125,7 @@ defmodule Flecha.Cluster.Orchestrator do
              service_name: Application.fetch_env!(:flecha_core, :k8s_service_name),
              selector: Application.fetch_env!(:flecha_core, :k8s_selector),
              master_name: Application.fetch_env!(:flecha_core, :k8s_master_name),
+             master_port: Application.fetch_env!(:flecha_core, :k8s_master_port),
              host_identifier: Application.fetch_env!(:flecha_core, :k8s_host_identifier)
            }}
 

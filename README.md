@@ -19,9 +19,9 @@ Removing a computation from the node.
 flecha_core/bin/rem_computation comp_id -n "mynode"
 ```
 
-## Build docker image for multiple platforms
+## Build docker image for multiple platforms and push to docker hub
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t alfetahe/flecha:0.1.3 . --load
+docker buildx build --platform linux/amd64,linux/arm64 -t alfetahe/flecha:0.1.4 . --push
 ```
 
 ## Run docker image

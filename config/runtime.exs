@@ -35,7 +35,13 @@ config :flecha_core,
   # The node base name that is to generate the full name including the host address.
   node_base_name: System.get_env("FLECHA_NODE_NAME", "flecha_core"),
 
+  # The node host name. For Kubernetes, it is the Pod IP.
+  node_host_name: System.get_env("FLECHA_NODE_HOST", "127.0.0.1"),
+
+  # ------------------------------------------------------------------------------------------------
   # Manual cluster discovery.
+
+  # The initial nodes to connect to.
   initial_nodes:
     System.get_env("FLECHA_INITIAL_NODES", "")
     |> String.split(",", trim: true)
@@ -58,8 +64,18 @@ config :flecha_core,
   k8s_cluster_domain:
     System.get_env(
       "FLECHA_K8S_CLUSTER_DOMAIN",
-      System.get_env("FLECHA_K8S_CLUSTER_NAME", "cluster") <> ".local"
+      System.get_env("FLECHA_K8S_CLUSTER_NAME", "")
     ),
+
+  # The host identifier can be either `"ip"` or `"hostname"` or `"dns"`.
+  k8s_host_identifier: System.get_env("FLECHA_K8S_HOST_IDENTIFIER", "ip") |> String.to_atom(),
+
+  # The port Kubernetes API server is listening on.
+  k8s_master_port: System.get_env("FLECHA_K8S_MASTER_PORT", "6443") |> String.to_integer(),
+
+  # The Kubernetes control plane host IP or DNS name.
+  # For other than IP identifier, it is usually the DNS name such as: `kubernetes.default.svc`.
+  k8s_master_name: System.get_env("FLECHA_K8S_MASTER_NAME", ""),
 
   # The Kubernetes namespace.
   k8s_namespace: System.get_env("FLECHA_K8S_NAMESPACE", "flecha"),
@@ -72,12 +88,6 @@ config :flecha_core,
 
   # The Kubernetes selector.
   k8s_selector: System.get_env("FLECHA_K8S_SELECTOR", "app=flecha-core"),
-
-  # The host identifier can be either `"ip"` or `"hostname"` or `"dns"`.
-  k8s_host_identifier: System.get_env("FLECHA_K8S_HOST_IDENTIFIER", "ip") |> String.to_atom(),
-
-  # The Kubernetes control plane host IP or DNS name.
-  k8s_control_plane_host: System.get_env("FLECHA_K8S_MASTER_NAME", "kubernetes.default.svc"),
 
   # ------------------------------------------------------------------------------------------------
   # Socket configurations.
