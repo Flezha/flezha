@@ -29,10 +29,10 @@ docker buildx build --platform linux/amd64,linux/arm64 -t alfetahe/aflecha:0.1.4
 docker run -d \
   --name aflecha_container \
   -e AFLECHA_MAX_RECONNECTS=3 \
-  alfetahe/aflecha:0.1.3
+  alfetahe/aflecha:0.1.4
 ```
 
 ## Export docker image
 ```bash
-docker save -o aflecha.tar alfetahe/aflecha:0.1.3
+docker save -o aflecha.tar alfetahe/aflecha:0.1.4
 ```
