@@ -30,9 +30,9 @@ done
 SCRIPT_DIR=$(dirname "$0")
 
 # TODO: Reduce duplication
-# Conditionally set RELEASE_NODE and execute the flecha_core command
+# Conditionally set RELEASE_NODE and execute the aflecha command
 if [ -n "$NODE_NAME" ]; then
-    RELEASE_NODE=$NODE_NAME "$SCRIPT_DIR/flecha_core" rpc "Flecha.rem_computation(\"$COMPUTATION_ID\")"
+    RELEASE_NODE=$NODE_NAME "$SCRIPT_DIR/aflecha" rpc "Aflecha.rem_computation(\"$COMPUTATION_ID\")"
 else
-    "$SCRIPT_DIR/flecha_core" rpc "Flecha.rem_computation(\"$COMPUTATION_ID\")"
+    "$SCRIPT_DIR/aflecha" rpc "Aflecha.rem_computation(\"$COMPUTATION_ID\")"
 fi

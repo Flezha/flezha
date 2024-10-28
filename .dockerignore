@@ -3,7 +3,7 @@ deps
 _build
 cover
 /target/
-flecha_core-*.tar
+aflecha-*.tar
 .elixir_ls/
 .vscode
 

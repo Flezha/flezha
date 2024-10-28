@@ -1,9 +1,9 @@
-defmodule FlechaCore.MixProject do
+defmodule Aflecha.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :flecha_core,
+      app: :aflecha,
       version: "0.1.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
@@ -16,16 +16,16 @@ defmodule FlechaCore.MixProject do
   def application do
     [
       extra_applications: [:logger, :runtime_tools, :wx, :observer, :inets, :crypto, :ssl],
-      mod: {Flecha.Application, []}
+      mod: {Aflecha.Application, []}
     ]
   end
 
   defp releases() do
     [
-      flecha_core: [
+      aflecha: [
         include_executables_for: [:unix],
         include_erts: true,
-        application: [:flecha_core]
+        application: [:aflecha]
       ]
     ]
   end

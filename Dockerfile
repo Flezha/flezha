@@ -24,25 +24,25 @@ RUN MIX_ENV=prod mix release --overwrite
 FROM elixir:1.17-otp-27
 
 # Set the working directory
-WORKDIR /flecha
+WORKDIR /aflecha
 
 # Set environment variables
 ENV MIX_ENV=prod
 
 # Create a non-root user and switch to it
-RUN addgroup --system flecha && adduser --system flecha --ingroup flecha
+RUN addgroup --system aflecha && adduser --system aflecha --ingroup aflecha
 
-# Copy only the necessary files from the _build/prod/rel/flecha_core directory
-COPY --from=build /app/_build/prod/rel/flecha_core /flecha/
+# Copy only the necessary files from the _build/prod/rel/aflecha directory
+COPY --from=build /app/_build/prod/rel/aflecha /aflecha/
 
-# Change the owner of the /flecha directory
-RUN chown -R flecha:flecha /flecha
+# Change the owner of the /aflecha directory
+RUN chown -R aflecha:aflecha /aflecha
 
-# Switch to the flecha user
-USER flecha
+# Switch to the aflecha user
+USER aflecha
 
 # Set the working directory
-WORKDIR /flecha
+WORKDIR /aflecha
 
 # Start the application
-CMD ["bin/flecha_core", "start"]
+CMD ["bin/aflecha", "start"]

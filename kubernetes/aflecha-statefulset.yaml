@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: aflecha-statefulset
+  namespace: aflecha
+spec:
+  serviceName: "aflecha"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: aflecha
+  template:
+    metadata:
+      labels:
+        app: aflecha
+    spec:
+      containers:
+        - name: aflecha
+          image: alfetahe/aflecha:0.1.4
+          ports:
+            - name: epmd
+              containerPort: 4369
+              protocol: TCP
+          env:
+            - name: AFLECHA_NODE_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: AFLECHA_CLUSTER_DISCOVERY            
+              value: "k8s_pod_discovery"
+            - name: AFLECHA_RECONNECT_INTERVAL
+              value: "2"
+            - name: AFLECHA_MAX_RECONNECTS
+              value: "10"
+            - name: AFLECHA_NODE_NAME
+              value: "aflecha"
+            - name: AFLECHA_K8S_IP_LOOKUP_MODE
+              value: "pods"
+            - name: AFLECHA_K8S_NAMESPACE
+              value: "aflecha"
+            - name: AFLECHA_K8S_SERVICE_NAME
+              value: "aflecha"
+            - name: AFLECHA_K8S_SELECTOR
+              value: "app=aflecha"
+            - name: AFLECHA_K8S_MASTER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP          
+  volumeClaimTemplates:
+    - metadata:
+        name: aflecha-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
