@@ -14,6 +14,7 @@ spec:
       labels:
         app: aflecha
     spec:
+      serviceAccountName: aflecha-reader
       containers:
         - name: aflecha
           image: alfetahe/aflecha:0.1.4
