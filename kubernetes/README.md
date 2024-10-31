@@ -1,6 +1,7 @@
 # Kubernetes resource files
 
-This directory contains the Kubernetes resource files for deploying the application.
+These files can be used as a reference for deploying the application to a Kubernetes cluster.
+It creates a namespace, role, service account, role binding and a statefulset.
 
 ## Setup
 - Apply the namespace: `kubectl apply -f aflecha-namespace.yaml`
