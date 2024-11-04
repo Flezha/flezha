@@ -47,7 +47,7 @@ defmodule Aflecha.Controller do
     }
 
     result =
-      ProcessHub.start_child(:flecha_hub, child_spec, async_wait: true)
+      ProcessHub.start_child(:aflecha_hub, child_spec, async_wait: true)
       |> ProcessHub.await()
 
     Warden.get(:engines)
@@ -71,7 +71,7 @@ defmodule Aflecha.Controller do
     end)
 
     result =
-      ProcessHub.stop_child(:flecha_hub, computation_id, async_wait: true)
+      ProcessHub.stop_child(:aflecha_hub, computation_id, async_wait: true)
       |> ProcessHub.await()
 
     case result do

@@ -28,7 +28,7 @@ defmodule Aflecha.Application do
 
   defp process_hub() do
     ProcessHub.child_spec(%ProcessHub{
-      hub_id: :flecha_hub,
+      hub_id: :aflecha_hub,
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
       redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
       partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.DynamicQuorum{
@@ -42,7 +42,7 @@ defmodule Aflecha.Application do
       hooks: %{
         ProcessHub.Constant.Hook.registry_pid_inserted() => [
           %ProcessHub.Service.HookManager{
-            id: :flecha_hub_pid_insertion,
+            id: :aflecha_hub_pid_insertion,
             m: Aflecha.Service.HubManager,
             f: :hook_insert_pid,
             a: [:_]

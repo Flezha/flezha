@@ -41,7 +41,7 @@ defmodule Aflecha do
   end
 
   defp computation_pid_lookup(computation_id) do
-    case ProcessHub.child_lookup(:flecha_hub, computation_id) do
+    case ProcessHub.child_lookup(:aflecha_hub, computation_id) do
       {_, [{_, pid}]} ->
         pid
 
