@@ -20,6 +20,7 @@ defmodule Aflecha.Subscriber.SubscriberSupervisor do
     secondary_stream_sock = SocketSupport.stream_socket_path(subscriber_id, :secondary)
 
     children = [
+      process_hub(subscriber_id),
       %{
         id: Controller,
         start: {Controller, :start_link, [subscriber_id]}
@@ -61,5 +62,31 @@ defmodule Aflecha.Subscriber.SubscriberSupervisor do
     Supervisor.which_children(Identificator.engine_sup(subscriber_id))
     |> Enum.find(fn {id, _, _, _} -> id === ControlChannel end)
     |> elem(1)
+  end
+
+  defp process_hub(subscriber_id) do
+    ProcessHub.child_spec(%ProcessHub{
+      hub_id: subscriber_id,
+      synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
+      redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
+      partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.DynamicQuorum{
+        quorum_size: 60
+      },
+      distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
+      migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
+        retention: 4000,
+        handover: true
+      },
+      hooks: %{
+        ProcessHub.Constant.Hook.registry_pid_inserted() => [
+          %ProcessHub.Service.HookManager{
+            id: :aflecha_hub_pid_insertion,
+            m: Aflecha.Service.HubManager,
+            f: :hook_insert_pid,
+            a: [:_]
+          }
+        ]
+      }
+    })
   end
 end
