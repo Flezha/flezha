@@ -9,12 +9,11 @@ use crate::utility::path_helper;
 
 use super::EngineAction;
 
-pub fn connect_control_socket(
+fn handle_control_socket(
     subscriber_id: String,
-    tx: Arc<Mutex<mpsc::Sender<EngineAction>>>
+    tx: Arc<Mutex<mpsc::Sender<EngineAction>>>,
+    stream_boxed: Arc<UnixStream>,  // Update the type here
 ) -> (thread::JoinHandle<()>, Arc<UnixStream>) {
-    let socket_path = path_helper::control_socket_path();
-    let stream_boxed = Arc::new(UnixStream::connect(socket_path).expect("Failed to connect to the socket"));
     let stream_boxed_clone = Arc::clone(&stream_boxed);
 
     let thread = thread::spawn(move || {
@@ -31,15 +30,25 @@ pub fn connect_control_socket(
                     tx.lock().unwrap().send(EngineAction::ControlCommand(payload_id, message)).unwrap();
                 }
                 Err(_e) => {
-                    // TODO: log error
-                    break;
+                    // Wait 100ms to avoid busy waiting
+                    thread::sleep(Duration::from_millis(100));
+                    continue;
                 }
-            }
-
-            // Sleep for a while to avoid busy waiting
-            thread::sleep(Duration::from_millis(10));
+            } 
         }
     });
 
     (thread, stream_boxed)
+}
+
+pub fn connect_control_socket(
+    subscriber_id: String,
+    tx: Arc<Mutex<mpsc::Sender<EngineAction>>>,
+) -> (thread::JoinHandle<()>, Arc<UnixStream>) {
+    let socket_path = path_helper::control_socket_path();
+    // Attempt to connect and unwrap immediately if successful
+    let stream = UnixStream::connect(socket_path).expect("Failed to connect to control socket");
+    let stream_boxed = Arc::new(stream);
+
+    handle_control_socket(subscriber_id, tx, stream_boxed)
 }

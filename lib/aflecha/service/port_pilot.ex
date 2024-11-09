@@ -68,7 +68,8 @@ defmodule Aflecha.Service.PortPilot do
   end
 
   defp initialize_ports() do
-    external_processes = Application.fetch_env!(:aflecha, :external_processes)
+    external_processes =
+      Application.fetch_env!(:aflecha, :external_processes)
 
     Enum.map(external_processes, fn command ->
       open_port(command)
