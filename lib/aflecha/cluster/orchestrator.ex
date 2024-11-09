@@ -115,8 +115,7 @@ defmodule Aflecha.Cluster.Orchestrator do
         "k8s_pod_discovery" ->
           {:ok,
            %K8sPodDiscovery{
-             service_account_path:
-               Application.fetch_env!(:aflecha, :k8s_service_account_path),
+             service_account_path: Application.fetch_env!(:aflecha, :k8s_service_account_path),
              cluster_domain: Application.fetch_env!(:aflecha, :k8s_cluster_domain),
              namespace: Application.fetch_env!(:aflecha, :k8s_namespace),
              node_base_name: Application.fetch_env!(:aflecha, :node_base_name),

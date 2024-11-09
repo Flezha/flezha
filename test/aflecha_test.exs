@@ -96,7 +96,11 @@ defmodule AflechaTest do
     assert Aflecha.add_io(
              computation.id,
              "generator",
-             %Aflecha.IO.Generator{interval: 10000, startup_payload: true, message: "hello world"},
+             %Aflecha.IO.Generator{
+               interval: 10000,
+               startup_payload: true,
+               message: "hello world"
+             },
              :input
            ) == {:ok, "IO created"}
 

@@ -52,12 +52,13 @@ defmodule Aflecha.Cluster.K8sPodDiscovery do
           headers = [{~c"authorization", ~c"Bearer #{token}"}]
           http_options = [ssl: ssl_opts, timeout: 15000]
 
-          request = :httpc.request(
-            :get,
-            {~c"https://#{master}:#{settings.master_port}/#{path}", headers},
-            http_options,
-            []
-          )
+          request =
+            :httpc.request(
+              :get,
+              {~c"https://#{master}:#{settings.master_port}/#{path}", headers},
+              http_options,
+              []
+            )
 
           # TODO: port should be configurable.
           nodes =
