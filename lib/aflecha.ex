@@ -6,11 +6,11 @@ defmodule Aflecha do
   """
 
   def add_computation(computation) do
-    GenServer.call(Aflecha.Controller, {:add_computation, computation})
+    GenServer.call(Aflecha.Subscriber.Controller, {:add_computation, computation})
   end
 
   def rem_computation(computation_id) do
-    GenServer.call(Aflecha.Controller, {:rem_computation, computation_id})
+    GenServer.call(Aflecha.Subscriber.Controller, {:rem_computation, computation_id})
   end
 
   def construct_computation!(input, type) do

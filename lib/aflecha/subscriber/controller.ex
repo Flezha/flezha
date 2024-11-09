@@ -1,19 +1,19 @@
-defmodule Aflecha.Controller do
+defmodule Aflecha.Subscriber.Controller do
   alias Aflecha.Computation.Builder, as: ComputationBuilder
   alias Aflecha.Service.Warden
   alias Aflecha.Service.Identificator
 
   use GenServer
 
-  def start_link(_) do
-    GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def start_link(id) do
+    GenServer.start_link(__MODULE__, id, name: id)
   end
 
   @impl true
-  def init(_) do
+  def init(sub_id) do
     expect_factories()
 
-    {:ok, %{}}
+    {:ok, %{subscriber_id: sub_id}}
   end
 
   @impl true
@@ -51,8 +51,8 @@ defmodule Aflecha.Controller do
       |> ProcessHub.await()
 
     Warden.get(:engines)
-    |> Enum.each(fn {engine_id, _} ->
-      GenServer.call(Identificator.control_unit(engine_id), {:add_computation, computation})
+    |> Enum.each(fn {subscriber_id, _} ->
+      GenServer.call(Identificator.control_unit(subscriber_id), {:add_computation, computation})
     end)
 
     case result do
@@ -63,9 +63,9 @@ defmodule Aflecha.Controller do
 
   defp rem_computation(computation_id) do
     Warden.get(:engines)
-    |> Enum.each(fn {engine_id, _} ->
+    |> Enum.each(fn {subscriber_id, _} ->
       GenServer.call(
-        Identificator.control_unit(engine_id),
+        Identificator.control_unit(subscriber_id),
         {:rem_computation, computation_id}
       )
     end)

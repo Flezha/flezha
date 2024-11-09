@@ -2,7 +2,7 @@ defmodule Aflecha.Computation.WatchDog do
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Computation.Migrator
-  alias Aflecha.Engine.StreamSupervisor
+  alias Aflecha.Subscriber.StreamSupervisor
 
   use GenServer
 
@@ -138,9 +138,9 @@ defmodule Aflecha.Computation.WatchDog do
   end
 
   defp pick_channels(engines, channel_index) do
-    Enum.map(engines, fn {engine_id, _} ->
+    Enum.map(engines, fn {subscriber_id, _} ->
       # Select one of the stream channels from that engine.
-      StreamSupervisor.stream_ids(engine_id, :primary)
+      StreamSupervisor.stream_ids(subscriber_id, :primary)
       |> Enum.at(channel_index)
     end)
   end

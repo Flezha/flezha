@@ -1,7 +1,7 @@
-defmodule Aflecha.Engine.ControlUnit do
+defmodule Aflecha.Subscriber.ControlUnit do
   alias Aflecha.Service.Identificator
   alias Aflecha.Service.Payloader
-  alias Aflecha.Engine.ControlChannel
+  alias Aflecha.Subscriber.ControlChannel
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Service.EventManager
   alias Aflecha.Service.Warden
@@ -19,17 +19,19 @@ defmodule Aflecha.Engine.ControlUnit do
   @payload_id_deserialize_comp "deserialize_computation"
 
   @spec start_link(binary()) :: :ignore | {:error, any()} | {:ok, pid()}
-  def start_link(engine_id) do
-    GenServer.start_link(__MODULE__, engine_id, name: Identificator.control_unit(engine_id))
+  def start_link(subscriber_id) do
+    GenServer.start_link(__MODULE__, subscriber_id,
+      name: Identificator.control_unit(subscriber_id)
+    )
   end
 
   @impl true
-  def init(engine_id) do
+  def init(subscriber_id) do
     Warden.update(:engines, fn engines ->
-      Map.put(engines, engine_id, [])
+      Map.put(engines, subscriber_id, [])
     end)
 
-    {:ok, %{engine_id: engine_id, response_refs: %{}}}
+    {:ok, %{subscriber_id: subscriber_id, response_refs: %{}}}
   end
 
   @impl true
@@ -43,7 +45,7 @@ defmodule Aflecha.Engine.ControlUnit do
   def handle_call({:send_control, command_id, data}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.engine_id),
+        Identificator.control_channel(state.subscriber_id),
         command_id,
         data
       )
@@ -57,7 +59,7 @@ defmodule Aflecha.Engine.ControlUnit do
 
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.engine_id),
+        Identificator.control_channel(state.subscriber_id),
         @payload_id_connect_sockets,
         %{"sockets_count" => sockets_count}
       )
@@ -69,7 +71,7 @@ defmodule Aflecha.Engine.ControlUnit do
   def handle_call({:add_computation, computation}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.engine_id),
+        Identificator.control_channel(state.subscriber_id),
         @payload_id_computation_add,
         %{
           "computation_id" => computation.id,
@@ -85,7 +87,7 @@ defmodule Aflecha.Engine.ControlUnit do
   def handle_call({:rem_computation, computation_id}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.engine_id),
+        Identificator.control_channel(state.subscriber_id),
         @payload_id_computation_rem,
         %{"computation_id" => computation_id}
       )
@@ -159,7 +161,7 @@ defmodule Aflecha.Engine.ControlUnit do
     {:ok, data} = Jason.decode(message)
 
     Warden.update(:engines, fn engines ->
-      Map.update(engines, state[:engine_id], [], fn factories ->
+      Map.update(engines, state[:subscriber_id], [], fn factories ->
         [data["factory_id"] | factories]
       end)
     end)

@@ -7,11 +7,14 @@ defmodule Aflecha.Computation.Migrator do
     data = %{"computation_id" => computation_id}
 
     Warden.get(:engines)
-    |> Enum.map(fn {engine_id, _} ->
+    |> Enum.map(fn {subscriber_id, _} ->
       res =
-        GenServer.call(Identificator.control_unit(engine_id), {:send_control, command_id, data})
+        GenServer.call(
+          Identificator.control_unit(subscriber_id),
+          {:send_control, command_id, data}
+        )
 
-      {engine_id, res}
+      {subscriber_id, res}
     end)
   end
 
@@ -19,9 +22,9 @@ defmodule Aflecha.Computation.Migrator do
     command_id = "deserialize_computation"
 
     Warden.get(:engines)
-    |> Enum.map(fn {engine_id, _} ->
+    |> Enum.map(fn {subscriber_id, _} ->
       engine_data =
-        Enum.find(serialized_data, fn {engine_id_s, _} -> engine_id_s == engine_id end)
+        Enum.find(serialized_data, fn {engine_id_s, _} -> engine_id_s == subscriber_id end)
 
       case engine_data do
         nil ->
@@ -35,11 +38,11 @@ defmodule Aflecha.Computation.Migrator do
 
           res =
             GenServer.call(
-              Identificator.control_unit(engine_id),
+              Identificator.control_unit(subscriber_id),
               {:send_control, command_id, engine_data}
             )
 
-          {engine_id, res}
+          {subscriber_id, res}
       end
     end)
     |> Enum.filter(& &1)

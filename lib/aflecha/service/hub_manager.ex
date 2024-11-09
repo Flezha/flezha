@@ -12,10 +12,10 @@ defmodule Aflecha.Service.HubManager do
       |> Enum.map(fn {_, pid} -> pid end)
 
     Warden.get(:engines)
-    |> Enum.each(fn {engine_id, _factories} ->
+    |> Enum.each(fn {subscriber_id, _factories} ->
       stream_channels =
-        Supervisor.which_children(Identificator.stream_sup_primary(engine_id)) ++
-          Supervisor.which_children(Identificator.stream_sup_secondary(engine_id))
+        Supervisor.which_children(Identificator.stream_sup_primary(subscriber_id)) ++
+          Supervisor.which_children(Identificator.stream_sup_secondary(subscriber_id))
 
       Enum.each(stream_channels, fn {_, pid, _, _} ->
         GenServer.cast(pid, {:computation_pid_update, computation_id, updated_pids})

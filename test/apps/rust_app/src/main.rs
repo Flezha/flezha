@@ -1,4 +1,4 @@
-use flecha_sdk::{
+use aflecha_sdk::{
     ComputationType, 
     TextComputation, 
     BinaryComputation, 
@@ -9,7 +9,7 @@ use flecha_sdk::{
 use serde::{Serialize, Deserialize};
 
 fn main() {
-    let mut processor = flecha_sdk::new("default".to_string());
+    let mut processor = aflecha_sdk::new("default".to_string());
 
     processor.register_factory(
         "do_nothing".to_string(),

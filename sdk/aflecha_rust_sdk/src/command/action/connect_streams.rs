@@ -30,7 +30,7 @@ impl CommandAction for ConnectSocketCommand {
         let engine_guard = engine.lock().unwrap();
         let computations = engine_guard.get_computations();
         let control_stream = engine_guard.get_control_stream();
-        let engine_id = engine_guard.get_engine_id();
+        let subscriber_id = engine_guard.get_engine_id();
         let io_streams = engine_guard.get_io_streams();
         let reference_id = reference_id.clone();
 
@@ -38,8 +38,8 @@ impl CommandAction for ConnectSocketCommand {
 
         for key in 0..self.sockets_count {
             let computations_clone = Arc::clone(&computations);
-            let stream = connect_unix(&engine_id, "primary".to_string());
-            let shared_stream = connect_unix(&engine_id, "secondary".to_string());
+            let stream = connect_unix(&subscriber_id, "primary".to_string());
+            let shared_stream = connect_unix(&subscriber_id, "secondary".to_string());
 
             io_streams.write().unwrap().insert(key, shared_stream.try_clone().unwrap());
 
@@ -57,8 +57,8 @@ impl CommandAction for ConnectSocketCommand {
     }
 }
 
-fn connect_unix(engine_id: &String, stream_type: String) -> UnixStream {
-    let socket_path = path_helper::stream_socket_path(engine_id, stream_type);
+fn connect_unix(subscriber_id: &String, stream_type: String) -> UnixStream {
+    let socket_path = path_helper::stream_socket_path(subscriber_id, stream_type);
     UnixStream::connect(socket_path).expect("Failed to connect to the socket")
 }
 

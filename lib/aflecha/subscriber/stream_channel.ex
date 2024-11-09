@@ -1,4 +1,4 @@
-defmodule Aflecha.Engine.StreamChannel do
+defmodule Aflecha.Subscriber.StreamChannel do
   alias Aflecha.Service.Payloader
   alias Aflecha.Service.Identificator
 
@@ -6,13 +6,13 @@ defmodule Aflecha.Engine.StreamChannel do
 
   use GenServer
 
-  def start_link({engine_id, name, type}) do
-    GenServer.start_link(__MODULE__, {engine_id, type}, name: name)
+  def start_link({subscriber_id, name, type}) do
+    GenServer.start_link(__MODULE__, {subscriber_id, type}, name: name)
   end
 
   @impl true
-  def init({engine_id, type}) do
-    lsock = GenServer.call(Identificator.stream_listener(engine_id, type), :get_socket)
+  def init({subscriber_id, type}) do
+    lsock = GenServer.call(Identificator.stream_listener(subscriber_id, type), :get_socket)
 
     {
       :ok,

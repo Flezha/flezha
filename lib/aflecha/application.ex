@@ -15,9 +15,8 @@ defmodule Aflecha.Application do
       Aflecha.Service.Identificator,
       Aflecha.Service.EventManager,
       {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      {Aflecha.Socket.Dispatcher, &Aflecha.Engine.Toolbox.engine_dispatch_fn/1},
+      {Aflecha.Socket.Dispatcher, &Aflecha.Subscriber.Toolbox.sub_conn_fn/1},
       Aflecha.Service.PortPilot,
-      Aflecha.Controller,
       Aflecha.Cluster.Orchestrator,
       process_hub()
     ]

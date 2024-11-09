@@ -17,50 +17,50 @@ defmodule Aflecha.Service.Identificator do
     )
   end
 
-  def engine_sup(engine_id) do
-    gen_via(engine_id, "es")
+  def engine_sup(subscriber_id) do
+    gen_via(subscriber_id, "es")
   end
 
-  def control_channel(engine_id) do
-    gen_via(engine_id, "cc")
+  def control_channel(subscriber_id) do
+    gen_via(subscriber_id, "cc")
   end
 
-  def stream_listener(engine_id, type) do
+  def stream_listener(subscriber_id, type) do
     case type do
-      :primary -> gen_via(engine_id, "psl")
-      :secondary -> gen_via(engine_id, "ssl")
+      :primary -> gen_via(subscriber_id, "psl")
+      :secondary -> gen_via(subscriber_id, "ssl")
     end
   end
 
-  def stream_sup_primary(engine_id) do
-    gen_via(engine_id, "scsp")
+  def stream_sup_primary(subscriber_id) do
+    gen_via(subscriber_id, "scsp")
   end
 
-  def stream_sup_secondary(engine_id) do
-    gen_via(engine_id, "scss")
+  def stream_sup_secondary(subscriber_id) do
+    gen_via(subscriber_id, "scss")
   end
 
-  def control_unit(engine_id) do
-    gen_via(engine_id, "cu")
+  def control_unit(subscriber_id) do
+    gen_via(subscriber_id, "cu")
   end
 
-  def stream_channel_primary(engine_id, count_nr) do
-    gen_via(engine_id, "scp_" <> Integer.to_string(count_nr))
+  def stream_channel_primary(subscriber_id, count_nr) do
+    gen_via(subscriber_id, "scp_" <> Integer.to_string(count_nr))
   end
 
-  def stream_channel_secondary(engine_id, count_nr) do
-    gen_via(engine_id, "scs_" <> Integer.to_string(count_nr))
+  def stream_channel_secondary(subscriber_id, count_nr) do
+    gen_via(subscriber_id, "scs_" <> Integer.to_string(count_nr))
   end
 
-  defp gen_via(engine_id, type_str) do
-    {:via, Registry, {__MODULE__, gen_id(engine_id, type_str)}}
+  defp gen_via(subscriber_id, type_str) do
+    {:via, Registry, {__MODULE__, gen_id(subscriber_id, type_str)}}
   end
 
-  defp gen_id(engine_id, type_str) when is_atom(engine_id) do
-    gen_id(Atom.to_string(engine_id), type_str)
+  defp gen_id(subscriber_id, type_str) when is_atom(subscriber_id) do
+    gen_id(Atom.to_string(subscriber_id), type_str)
   end
 
-  defp gen_id(engine_id, type_str) do
-    engine_id <> "_" <> type_str
+  defp gen_id(subscriber_id, type_str) do
+    subscriber_id <> "_" <> type_str
   end
 end
