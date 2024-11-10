@@ -5,12 +5,12 @@ defmodule Aflecha do
   Documentation for `Aflecha`.
   """
 
-  def add_computation(computation) do
-    GenServer.call(Aflecha.Subscriber.Controller, {:add_computation, computation})
+  def add_computation(group_id, computation) do
+    GenServer.call(Aflecha.Subscriber.Controller, {:add_computation, group_id, computation})
   end
 
-  def rem_computation(computation_id) do
-    GenServer.call(Aflecha.Subscriber.Controller, {:rem_computation, computation_id})
+  def rem_computation(group_id, computation_id) do
+    GenServer.call(Aflecha.Subscriber.Controller, {:rem_computation, group_id, computation_id})
   end
 
   def construct_computation!(input, type) do

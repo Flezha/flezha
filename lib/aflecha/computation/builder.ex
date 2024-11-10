@@ -1,6 +1,5 @@
 defmodule Aflecha.Computation.Builder do
   alias Aflecha.Service.Validator
-  alias Aflecha.Service.Warden
 
   @computation_id_max_bytes 32
 
@@ -34,19 +33,6 @@ defmodule Aflecha.Computation.Builder do
     case validate_id(computation.id) do
       {:error, reason} -> {:error, reason}
       :ok -> :ok
-    end
-  end
-
-  def factory_match_engines(factory_id) do
-    engines =
-      Warden.get(:engines)
-      |> Enum.filter(fn {_engine_id, factory} ->
-        Enum.any?(factory, &(&1 === factory_id))
-      end)
-
-    case engines do
-      [] -> {:error, "no engine found for factory: #{inspect(factory_id)}"}
-      engines -> {:ok, engines}
     end
   end
 

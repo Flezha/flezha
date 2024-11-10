@@ -8,10 +8,11 @@ defmodule Aflecha.Subscriber.SubscribersSupervisor do
   end
 
   def start_subscriber(subscriber_id, sock) do
-    DynamicSupervisor.start_child(__MODULE__, {
-      SubscriberSupervisor,
-      {subscriber_id, sock}
+    DynamicSupervisor.start_child(__MODULE__, %{
+      id: subscriber_id,
+      start: {SubscriberSupervisor, :start_link, [{subscriber_id, sock}]}
     })
+    |> IO.inspect(label: "SubscriberSupervisor start_child")
   end
 
   @impl true

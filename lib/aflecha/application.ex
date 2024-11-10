@@ -18,7 +18,8 @@ defmodule Aflecha.Application do
       {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
       {Aflecha.Socket.Dispatcher, &Aflecha.Subscriber.Toolbox.sub_conn_fn/1},
       Aflecha.Service.PortPilot,
-      Aflecha.Cluster.Orchestrator
+      Aflecha.Cluster.Orchestrator,
+      Aflecha.Subscriber.Controller
     ]
 
     opts = [strategy: :one_for_one, name: Aflecha.Supervisor]

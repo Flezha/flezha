@@ -6,19 +6,19 @@ defmodule Aflecha.Computation.WatchDog do
 
   use GenServer
 
-  defstruct [:id, :channels, :supervisors, :io, engines: [], variables: %{}]
+  defstruct [:id, :channel, :supervisors, :io, variables: %{}]
 
-  def start_link(settings) do
-    GenServer.start_link(__MODULE__, settings)
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
   end
 
   @impl true
-  def init(settings) do
+  def init({group_id, computation}) do
     {:ok,
      %__MODULE__{
-       id: settings.id,
-       variables: settings.variables,
-       channels: attach_channels(settings.id, settings.engines),
+       id: computation.id,
+       variables: computation.variables,
+       channel: attach_channel(computation.id, group_id),
        io: %{
          input: [],
          output: []
@@ -78,7 +78,7 @@ defmodule Aflecha.Computation.WatchDog do
 
   @impl true
   def handle_cast({:io_in, _type, message}, state) do
-    Enum.each(state.channels, &GenServer.cast(&1, {:io_in, :binary, state.id, message}))
+    GenServer.cast(state.channel, {:io_in, :binary, state.id, message})
 
     {:noreply, state}
   end
@@ -125,7 +125,7 @@ defmodule Aflecha.Computation.WatchDog do
     end
   end
 
-  def attach_channels(computation_id, engines) do
+  def attach_channel(computation_id, group_id) do
     # Get numeric representation of the computation_id string.
     computation_int = String.to_charlist(computation_id) |> Enum.sum()
 
@@ -133,15 +133,6 @@ defmodule Aflecha.Computation.WatchDog do
     count = ConcurrencyMapper.concurrent_entity_count()
     channel_index = rem(computation_int, count)
 
-    # Pick the processor engine that can handle the selected engines.
-    pick_channels(engines, channel_index)
-  end
-
-  defp pick_channels(engines, channel_index) do
-    Enum.map(engines, fn {subscriber_id, _} ->
-      # Select one of the stream channels from that engine.
-      StreamSupervisor.stream_ids(subscriber_id, :primary)
-      |> Enum.at(channel_index)
-    end)
+    StreamSupervisor.stream_ids(group_id, :primary) |> Enum.at(channel_index)
   end
 end

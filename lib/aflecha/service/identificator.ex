@@ -25,8 +25,8 @@ defmodule Aflecha.Service.Identificator do
     gen_via(subscriber_id, "cc")
   end
 
-  def controller(subscriber_id) do
-    gen_via(subscriber_id, "c")
+  def hub(subscriber_id) do
+    gen_id(subscriber_id, "hub") |> String.to_atom()
   end
 
   def stream_listener(subscriber_id, type) do

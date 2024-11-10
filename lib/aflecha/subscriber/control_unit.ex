@@ -19,19 +19,17 @@ defmodule Aflecha.Subscriber.ControlUnit do
   @payload_id_deserialize_comp "deserialize_computation"
 
   @spec start_link(binary()) :: :ignore | {:error, any()} | {:ok, pid()}
-  def start_link(subscriber_id) do
-    GenServer.start_link(__MODULE__, subscriber_id,
-      name: Identificator.control_unit(subscriber_id)
-    )
+  def start_link(group_id) do
+    GenServer.start_link(__MODULE__, group_id, name: Identificator.control_unit(group_id))
   end
 
   @impl true
-  def init(subscriber_id) do
+  def init(group_id) do
     Warden.update(:engines, fn engines ->
-      Map.put(engines, subscriber_id, [])
+      Map.put(engines, group_id, [])
     end)
 
-    {:ok, %{subscriber_id: subscriber_id, response_refs: %{}}}
+    {:ok, %{group_id: group_id, response_refs: %{}}}
   end
 
   @impl true
@@ -45,7 +43,7 @@ defmodule Aflecha.Subscriber.ControlUnit do
   def handle_call({:send_control, command_id, data}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.subscriber_id),
+        Identificator.control_channel(state.group_id),
         command_id,
         data
       )
@@ -59,7 +57,7 @@ defmodule Aflecha.Subscriber.ControlUnit do
 
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.subscriber_id),
+        Identificator.control_channel(state.group_id),
         @payload_id_connect_sockets,
         %{"sockets_count" => sockets_count}
       )
@@ -71,7 +69,7 @@ defmodule Aflecha.Subscriber.ControlUnit do
   def handle_call({:add_computation, computation}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.subscriber_id),
+        Identificator.control_channel(state.group_id),
         @payload_id_computation_add,
         %{
           "computation_id" => computation.id,
@@ -87,7 +85,7 @@ defmodule Aflecha.Subscriber.ControlUnit do
   def handle_call({:rem_computation, computation_id}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.subscriber_id),
+        Identificator.control_channel(state.group_id),
         @payload_id_computation_rem,
         %{"computation_id" => computation_id}
       )
@@ -129,7 +127,7 @@ defmodule Aflecha.Subscriber.ControlUnit do
           :ok
 
         @payload_id_factory_register ->
-          handle_factory_registration(state, message)
+          handle_factory_registration(message)
 
         _ ->
           {:error, "Unknown message id: #{payload_id}"}
@@ -157,14 +155,8 @@ defmodule Aflecha.Subscriber.ControlUnit do
     end
   end
 
-  defp handle_factory_registration(state, message) do
+  defp handle_factory_registration(message) do
     {:ok, data} = Jason.decode(message)
-
-    Warden.update(:engines, fn engines ->
-      Map.update(engines, state[:subscriber_id], [], fn factories ->
-        [data["factory_id"] | factories]
-      end)
-    end)
 
     EventManager.dispath(:factory_registered, data["factory_id"])
 
