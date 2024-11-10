@@ -1,4 +1,5 @@
 defmodule Aflecha do
+  alias Aflecha.Subscriber.SubscribersSupervisor
   alias Aflecha.Service.Identificator
   alias Aflecha.Computation.Builder, as: ComputationBuilder
 
@@ -6,8 +7,18 @@ defmodule Aflecha do
   Documentation for `Aflecha`.
   """
 
+  def add_computation(computation) do
+    SubscribersSupervisor.default_group()
+    |> add_computation(computation)
+  end
+
   def add_computation(group_id, computation) do
     GenServer.call(Aflecha.Subscriber.Controller, {:add_computation, group_id, computation})
+  end
+
+  def rem_computation(computation_id) do
+    SubscribersSupervisor.default_group()
+    |> rem_computation(computation_id)
   end
 
   def rem_computation(group_id, computation_id) do
@@ -27,11 +38,21 @@ defmodule Aflecha do
     end
   end
 
+  def add_io(computation_id, io_id, settings, direction) do
+    SubscribersSupervisor.default_group()
+    |> add_io(computation_id, io_id, settings, direction)
+  end
+
   def add_io(group_id, computation_id, io_id, settings, direction) do
     timeout = Application.fetch_env!(:aflecha, :io_add_timeout)
 
     computation_pid_lookup(group_id, computation_id)
     |> GenServer.call({:add_io, io_id, direction, settings}, timeout)
+  end
+
+  def pipeline_io_internal_payload(computation_id, io_id, direction, payload) do
+    SubscribersSupervisor.default_group()
+    |> pipeline_io_internal_payload(computation_id, io_id, direction, payload)
   end
 
   def pipeline_io_internal_payload(group_id, computation_id, io_id, direction, payload) do

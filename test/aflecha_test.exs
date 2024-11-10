@@ -20,6 +20,16 @@ defmodule AflechaTest do
     assert Aflecha.add_computation(@default_group, computation) === {:ok, "computation added"}
   end
 
+  test "no group specified" do
+    computation = %Aflecha.Computation.Builder{
+      id: "no_group_test",
+      factory_id: @test_computation_factory
+    }
+
+    assert Aflecha.add_computation(computation) === {:ok, "computation added"}
+    assert Aflecha.rem_computation(computation.id) === {:ok, "computation removed"}
+  end
+
   test "remove computation" do
     computation = %Aflecha.Computation.Builder{
       id: "rem_compuation_test",
