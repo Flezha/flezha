@@ -20,7 +20,7 @@ defmodule Aflecha.Subscriber.SubscriberSupervisor do
     secondary_stream_sock = SocketSupport.stream_socket_path(subscriber_id, :secondary)
 
     children = [
-      process_hub(subscriber_id),
+      process_hub(subscriber_id |> String.to_atom()),
       %{
         id: Controller,
         start: {Controller, :start_link, [subscriber_id]}

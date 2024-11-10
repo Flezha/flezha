@@ -6,7 +6,7 @@ defmodule Aflecha.Subscriber.Controller do
   use GenServer
 
   def start_link(id) do
-    GenServer.start_link(__MODULE__, id, name: id)
+    GenServer.start_link(__MODULE__, id, name: Identificator.controller(id))
   end
 
   @impl true

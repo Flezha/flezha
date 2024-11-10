@@ -11,6 +11,7 @@ defmodule Aflecha.Application do
     Aflecha.Socket.Support.prepare_socket_dir()
 
     children = [
+      Aflecha.Subscriber.SubscribersSupervisor,
       Aflecha.Service.Warden,
       Aflecha.Service.Identificator,
       Aflecha.Service.EventManager,

@@ -25,6 +25,10 @@ defmodule Aflecha.Service.Identificator do
     gen_via(subscriber_id, "cc")
   end
 
+  def controller(subscriber_id) do
+    gen_via(subscriber_id, "c")
+  end
+
   def stream_listener(subscriber_id, type) do
     case type do
       :primary -> gen_via(subscriber_id, "psl")

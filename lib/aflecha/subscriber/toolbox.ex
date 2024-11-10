@@ -1,5 +1,6 @@
 defmodule Aflecha.Subscriber.Toolbox do
   alias Aflecha.Subscriber.SubscriberSupervisor
+  alias Aflecha.Subscriber.SubscribersSupervisor
   alias Aflecha.Service.Payloader
   alias Aflecha.Socket.Support, as: SocketSupport
   alias Aflecha.Service.Identificator
@@ -12,7 +13,7 @@ defmodule Aflecha.Subscriber.Toolbox do
         [{"connect_control_channel", subscriber_id} | rest] = Payloader.parse_payload(payload)
         control_unit = Identificator.control_unit(subscriber_id)
 
-        SubscriberSupervisor.start_link({subscriber_id, sock})
+        SubscribersSupervisor.start_subscriber(subscriber_id, sock)
 
         SocketSupport.pass_ownership(
           sock,
