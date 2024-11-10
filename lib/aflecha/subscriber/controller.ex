@@ -24,7 +24,7 @@ defmodule Aflecha.Subscriber.Controller do
 
         :ok ->
           # TODO: we should validate the group_id also.
-          add_computation(computation, group_id)
+          add_computation(group_id, computation)
       end
 
     {:reply, response, state}
@@ -32,12 +32,12 @@ defmodule Aflecha.Subscriber.Controller do
 
   @impl true
   def handle_call({:rem_computation, group_id, computation_id}, _from, state) do
-    response = rem_computation(computation_id, group_id)
+    response = rem_computation(group_id, computation_id)
 
     {:reply, response, state}
   end
 
-  defp add_computation(computation, group_id) do
+  defp add_computation(group_id, computation) do
     child_spec = %{
       id: computation.id,
       start: {Aflecha.Computation.WatchDog, :start_link, [{group_id, computation}]}
@@ -55,7 +55,7 @@ defmodule Aflecha.Subscriber.Controller do
     end
   end
 
-  defp rem_computation(computation_id, group_id) do
+  defp rem_computation(group_id, computation_id) do
     GenServer.call(
       Identificator.control_unit(group_id),
       {:rem_computation, computation_id}

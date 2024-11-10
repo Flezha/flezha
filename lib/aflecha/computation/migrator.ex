@@ -1,50 +1,21 @@
 defmodule Aflecha.Computation.Migrator do
-  alias Aflecha.Service.Warden
   alias Aflecha.Service.Identificator
 
-  def serialize_computation(computation_id) do
+  def serialize_computation(group_id, computation_id) do
     command_id = "serialize_computation"
     data = %{"computation_id" => computation_id}
 
-    Warden.get(:engines)
-    |> Enum.map(fn {subscriber_id, _} ->
-      res =
-        GenServer.call(
-          Identificator.control_unit(subscriber_id),
-          {:send_control, command_id, data}
-        )
-
-      {subscriber_id, res}
-    end)
+    GenServer.call(Identificator.control_unit(group_id), {:send_control, command_id, data})
   end
 
-  def deserialize_computation(computation_id, serialized_data) do
+  def deserialize_computation(group_id, computation_id, serialized_data) do
     command_id = "deserialize_computation"
 
-    Warden.get(:engines)
-    |> Enum.map(fn {subscriber_id, _} ->
-      engine_data =
-        Enum.find(serialized_data, fn {engine_id_s, _} -> engine_id_s == subscriber_id end)
+    engine_data = %{
+      "computation_id" => computation_id,
+      "serialized_data" => serialized_data
+    }
 
-      case engine_data do
-        nil ->
-          nil
-
-        serialized_engine_data ->
-          engine_data = %{
-            "computation_id" => computation_id,
-            "serialized_data" => serialized_engine_data |> elem(1)
-          }
-
-          res =
-            GenServer.call(
-              Identificator.control_unit(subscriber_id),
-              {:send_control, command_id, engine_data}
-            )
-
-          {subscriber_id, res}
-      end
-    end)
-    |> Enum.filter(& &1)
+    GenServer.call(Identificator.control_unit(group_id), {:send_control, command_id, engine_data})
   end
 end

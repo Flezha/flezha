@@ -1,39 +1,46 @@
-# defmodule MigratorTest do
-#   use ExUnit.Case
-#   doctest Aflecha.Computation.Migrator
+defmodule MigratorTest do
+  use ExUnit.Case
+  doctest Aflecha.Computation.Migrator
 
-#   test "serialize computation" do
-#     computation = %Aflecha.Computation.Builder{
-#       id: "serialize_computation_test",
-#       factory_id: "increment_state"
-#     }
+  @default_group "default"
 
-#     Aflecha.add_computation(computation, "default")
+  test "serialize computation" do
+    computation = %Aflecha.Computation.Builder{
+      id: "serialize_computation_test",
+      factory_id: "increment_state"
+    }
 
-#     res = Aflecha.Computation.Migrator.serialize_computation("serialize_computation_test")
+    Aflecha.add_computation(@default_group, computation)
 
-#     assert is_list(res)
-#     assert is_tuple(Enum.at(res, 0))
-#     assert Enum.at(res, 0) |> elem(0) === "default"
-#     assert is_list(Enum.at(res, 0) |> elem(1))
-#     assert length(Enum.at(res, 0) |> elem(1)) > 0
-#   end
+    serialized_data =
+      Aflecha.Computation.Migrator.serialize_computation(
+        @default_group,
+        "serialize_computation_test"
+      )
 
-#   test "deserialize computation" do
-#     computation = %Aflecha.Computation.Builder{
-#       id: "serialize_computation_test",
-#       factory_id: "increment_state"
-#     }
+    assert is_list(serialized_data)
+    assert length(serialized_data) > 0
+  end
 
-#     Aflecha.add_computation(computation, "default")
+  test "deserialize computation" do
+    computation = %Aflecha.Computation.Builder{
+      id: "serialize_computation_test",
+      factory_id: "increment_state"
+    }
 
-#     serialized_data =
-#       Aflecha.Computation.Migrator.serialize_computation("serialize_computation_test")
+    Aflecha.add_computation(@default_group, computation)
 
-#     assert [{"default", :ok}] ===
-#              Aflecha.Computation.Migrator.deserialize_computation(
-#                "serialize_computation_test",
-#                serialized_data
-#              )
-#   end
-# end
+    serialized_data =
+      Aflecha.Computation.Migrator.serialize_computation(
+        @default_group,
+        "serialize_computation_test"
+      )
+
+    assert :ok ===
+             Aflecha.Computation.Migrator.deserialize_computation(
+               @default_group,
+               "serialize_computation_test",
+               serialized_data
+             )
+  end
+end

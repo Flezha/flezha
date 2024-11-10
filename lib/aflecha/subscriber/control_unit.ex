@@ -4,7 +4,6 @@ defmodule Aflecha.Subscriber.ControlUnit do
   alias Aflecha.Subscriber.ControlChannel
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Service.EventManager
-  alias Aflecha.Service.Warden
 
   use GenServer
 
@@ -25,10 +24,6 @@ defmodule Aflecha.Subscriber.ControlUnit do
 
   @impl true
   def init(group_id) do
-    Warden.update(:engines, fn engines ->
-      Map.put(engines, group_id, [])
-    end)
-
     {:ok, %{group_id: group_id, response_refs: %{}}}
   end
 

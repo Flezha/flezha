@@ -17,7 +17,7 @@ defmodule Aflecha.Subscriber.SubscriberSupervisor do
     secondary_stream_sock = SocketSupport.stream_socket_path(group_id, :secondary)
 
     children = [
-      process_hub(Identificator.hub(group_id)),
+      process_hub(group_id),
       %{
         id: ControlUnit,
         start: {ControlUnit, :start_link, [group_id]}
@@ -59,7 +59,7 @@ defmodule Aflecha.Subscriber.SubscriberSupervisor do
 
   defp process_hub(group_id) do
     ProcessHub.child_spec(%ProcessHub{
-      hub_id: group_id,
+      hub_id: Identificator.hub(group_id),
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
       redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
       partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.DynamicQuorum{
@@ -76,7 +76,7 @@ defmodule Aflecha.Subscriber.SubscriberSupervisor do
             id: :aflecha_hub_pid_insertion,
             m: Aflecha.Service.HubManager,
             f: :hook_insert_pid,
-            a: [:_]
+            a: [group_id, :_]
           }
         ]
       }

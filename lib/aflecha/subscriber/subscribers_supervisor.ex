@@ -12,7 +12,6 @@ defmodule Aflecha.Subscriber.SubscribersSupervisor do
       id: subscriber_id,
       start: {SubscriberSupervisor, :start_link, [{subscriber_id, sock}]}
     })
-    |> IO.inspect(label: "SubscriberSupervisor start_child")
   end
 
   @impl true
