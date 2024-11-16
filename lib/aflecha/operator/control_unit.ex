@@ -4,6 +4,7 @@ defmodule Aflecha.Operator.ControlUnit do
   alias Aflecha.Operator.ControlChannel
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Service.EventManager
+  alias Aflecha.Computation.Builder, as: ComputationBuilder
 
   use GenServer
 
@@ -61,6 +62,8 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
+  @spec handle_call({:add_computation, ComputationBuilder.t()}, {pid(), term()}, map()) ::
+          {:noreply, any()}
   def handle_call({:add_computation, computation}, from, state) do
     ref =
       ControlChannel.send_control(
@@ -69,6 +72,7 @@ defmodule Aflecha.Operator.ControlUnit do
         %{
           "computation_id" => computation.id,
           "factory_id" => computation.factory_id,
+          "type" => computation.type,
           "variables" => computation.variables
         }
       )

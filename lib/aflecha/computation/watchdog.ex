@@ -6,20 +6,21 @@ defmodule Aflecha.Computation.WatchDog do
 
   use GenServer
 
-  defstruct [:id, :group_id, :channel, :supervisors, :io, variables: %{}]
+  defstruct [:id, :operator_id, :type, :channel, :supervisors, :io, variables: %{}]
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args)
   end
 
   @impl true
-  def init({group_id, computation}) do
+  def init({operator_id, computation}) do
     {:ok,
      %__MODULE__{
        id: computation.id,
-       group_id: group_id,
+       operator_id: operator_id,
+       type: computation.type,
        variables: computation.variables,
-       channel: attach_channel(computation.id, group_id),
+       channel: attach_channel(computation.id, operator_id),
        io: %{
          input: [],
          output: []
@@ -97,7 +98,7 @@ defmodule Aflecha.Computation.WatchDog do
   def handle_info({:process_hub, :handover_start, startup_resp, child_id, from}, state) do
     case startup_resp do
       {:ok, pid} ->
-        serialized_data = Migrator.serialize_computation(state.group_id, state.id)
+        serialized_data = Migrator.serialize_computation(state.operator_id, state.id, state.type)
 
         # Send the state to the remote process.
         Process.send(pid, {:process_hub, :handover, {state, serialized_data}}, [])
@@ -114,7 +115,7 @@ defmodule Aflecha.Computation.WatchDog do
 
   @impl true
   def handle_info({:process_hub, :handover, {handover_state, serialized_data}}, state) do
-    Migrator.deserialize_computation(state.group_id, state.id, serialized_data)
+    Migrator.deserialize_computation(state.operator_id, state.id, serialized_data)
 
     {:noreply, handover_state}
   end
@@ -126,7 +127,7 @@ defmodule Aflecha.Computation.WatchDog do
     end
   end
 
-  def attach_channel(computation_id, group_id) do
+  def attach_channel(computation_id, operator_id) do
     # Get numeric representation of the computation_id string.
     computation_int = String.to_charlist(computation_id) |> Enum.sum()
 
@@ -134,6 +135,6 @@ defmodule Aflecha.Computation.WatchDog do
     count = ConcurrencyMapper.concurrent_entity_count()
     channel_index = rem(computation_int, count)
 
-    StreamSup.stream_ids(group_id, :primary) |> Enum.at(channel_index)
+    StreamSup.stream_ids(operator_id, :primary) |> Enum.at(channel_index)
   end
 end

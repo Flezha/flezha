@@ -12,8 +12,8 @@ defmodule Aflecha do
     |> add_computation(computation)
   end
 
-  def add_computation(group_id, computation) do
-    GenServer.call(Aflecha.Operator.Controller, {:add_computation, group_id, computation})
+  def add_computation(operator_id, computation) do
+    GenServer.call(Aflecha.Operator.Controller, {:add_computation, operator_id, computation})
   end
 
   def rem_computation(computation_id) do
@@ -21,8 +21,8 @@ defmodule Aflecha do
     |> rem_computation(computation_id)
   end
 
-  def rem_computation(group_id, computation_id) do
-    GenServer.call(Aflecha.Operator.Controller, {:rem_computation, group_id, computation_id})
+  def rem_computation(operator_id, computation_id) do
+    GenServer.call(Aflecha.Operator.Controller, {:rem_computation, operator_id, computation_id})
   end
 
   def construct_computation!(input, type) do
@@ -43,10 +43,10 @@ defmodule Aflecha do
     |> add_io(computation_id, io_id, settings, direction)
   end
 
-  def add_io(group_id, computation_id, io_id, settings, direction) do
+  def add_io(operator_id, computation_id, io_id, settings, direction) do
     timeout = Application.fetch_env!(:aflecha, :io_add_timeout)
 
-    computation_pid_lookup(group_id, computation_id)
+    computation_pid_lookup(operator_id, computation_id)
     |> GenServer.call({:add_io, io_id, direction, settings}, timeout)
   end
 
@@ -55,15 +55,15 @@ defmodule Aflecha do
     |> pipeline_io_internal_payload(computation_id, io_id, direction, payload)
   end
 
-  def pipeline_io_internal_payload(group_id, computation_id, io_id, direction, payload) do
+  def pipeline_io_internal_payload(operator_id, computation_id, io_id, direction, payload) do
     timeout = Application.fetch_env!(:aflecha, :io_payload_add_timeout)
 
-    computation_pid_lookup(group_id, computation_id)
+    computation_pid_lookup(operator_id, computation_id)
     |> GenServer.call({:io_internal_payload, io_id, direction, payload}, timeout)
   end
 
-  defp computation_pid_lookup(group_id, computation_id) do
-    case ProcessHub.child_lookup(Identificator.hub(group_id), computation_id) do
+  defp computation_pid_lookup(operator_id, computation_id) do
+    case ProcessHub.child_lookup(Identificator.hub(operator_id), computation_id) do
       {_, [{_, pid}]} ->
         pid
 
