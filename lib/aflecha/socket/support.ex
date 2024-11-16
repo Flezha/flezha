@@ -19,12 +19,12 @@ defmodule Aflecha.Socket.Support do
     sockets_base_path() <> "/control_engine.sock"
   end
 
-  def stream_socket_path(subscriber_id, type) when is_atom(subscriber_id) do
-    stream_socket_path(Atom.to_string(subscriber_id), type)
+  def stream_socket_path(operator_id, type) when is_atom(operator_id) do
+    stream_socket_path(Atom.to_string(operator_id), type)
   end
 
-  def stream_socket_path(subscriber_id, type) when is_binary(subscriber_id) do
-    sockets_base_path() <> "/#{Atom.to_string(type)}_stream_#{subscriber_id}.sock"
+  def stream_socket_path(operator_id, type) when is_binary(operator_id) do
+    sockets_base_path() <> "/#{Atom.to_string(type)}_stream_#{operator_id}.sock"
   end
 
   defp sockets_base_path() do

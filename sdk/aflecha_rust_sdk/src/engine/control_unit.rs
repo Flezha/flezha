@@ -10,14 +10,14 @@ use crate::utility::path_helper;
 use super::EngineAction;
 
 fn handle_control_socket(
-    subscriber_id: String,
+    operator_id: String,
     tx: Arc<Mutex<mpsc::Sender<EngineAction>>>,
     stream_boxed: Arc<UnixStream>,  // Update the type here
 ) -> (thread::JoinHandle<()>, Arc<UnixStream>) {
     let stream_boxed_clone = Arc::clone(&stream_boxed);
 
     let thread = thread::spawn(move || {
-        let payload = payloader::build_from_str("connect_control_channel", &subscriber_id);
+        let payload = payloader::build_from_str("connect_control_channel", &operator_id);
 
         // Pass engine id to the Aflecha.
         stream_boxed_clone.try_clone().unwrap().write_all(&payload).unwrap();
@@ -42,7 +42,7 @@ fn handle_control_socket(
 }
 
 pub fn connect_control_socket(
-    subscriber_id: String,
+    operator_id: String,
     tx: Arc<Mutex<mpsc::Sender<EngineAction>>>,
 ) -> (thread::JoinHandle<()>, Arc<UnixStream>) {
     let socket_path = path_helper::control_socket_path();
@@ -50,5 +50,5 @@ pub fn connect_control_socket(
     let stream = UnixStream::connect(socket_path).expect("Failed to connect to control socket");
     let stream_boxed = Arc::new(stream);
 
-    handle_control_socket(subscriber_id, tx, stream_boxed)
+    handle_control_socket(operator_id, tx, stream_boxed)
 }

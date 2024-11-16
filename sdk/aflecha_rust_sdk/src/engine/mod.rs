@@ -13,7 +13,7 @@ use std::io::{self, Read};
 use std::time::Duration;
 
 pub struct ComputationEngine {
-    subscriber_id: String,
+    operator_id: String,
     computation_factory: HashMap<String, fn() -> ComputationType>,
     computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
     control_stream: Arc<UnixStream>,
@@ -27,7 +27,7 @@ pub enum EngineAction {
 
 impl ComputationEngine {
     pub fn new(
-        subscriber_id: String,
+        operator_id: String,
         computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
         shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
     ) -> Arc<Mutex<ComputationEngine>> {
@@ -36,7 +36,7 @@ impl ComputationEngine {
         let rx = Arc::new(Mutex::new(rx));
     
         let (_control_thread, control_stream) = control_unit::connect_control_socket(
-            subscriber_id.clone(),
+            operator_id.clone(),
             Arc::clone(&tx)
         );
 
@@ -47,7 +47,7 @@ impl ComputationEngine {
         }
 
         let engine = ComputationEngine {
-            subscriber_id,
+            operator_id,
             control_stream,
             computations,
             shared_io_streams,
@@ -99,7 +99,7 @@ impl ComputationEngine {
     }
 
     pub fn get_engine_id(&self) -> String {
-        self.subscriber_id.clone()
+        self.operator_id.clone()
     }
 
     pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>> {
