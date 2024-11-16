@@ -12,7 +12,7 @@ use std::thread::{self};
 use std::io::{self, Read};
 use std::time::Duration;
 
-pub struct ComputationEngine {
+pub struct ComputationOperator {
     operator_id: String,
     computation_factory: HashMap<String, fn() -> ComputationType>,
     computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
@@ -20,18 +20,18 @@ pub struct ComputationEngine {
     shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
 }
 
-pub enum EngineAction {
+pub enum OperatorAction {
     ControlCommand(String, Vec<u8>),
     EngineIdConfirmation
 }
 
-impl ComputationEngine {
+impl ComputationOperator {
     pub fn new(
         operator_id: String,
         computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
         shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
-    ) -> Arc<Mutex<ComputationEngine>> {
-        let (tx, rx): (mpsc::Sender<EngineAction>, mpsc::Receiver<EngineAction>) = mpsc::channel();
+    ) -> Arc<Mutex<ComputationOperator>> {
+        let (tx, rx): (mpsc::Sender<OperatorAction>, mpsc::Receiver<OperatorAction>) = mpsc::channel();
         let tx = Arc::new(Mutex::new(tx));
         let rx = Arc::new(Mutex::new(rx));
     
@@ -40,13 +40,13 @@ impl ComputationEngine {
             Arc::clone(&tx)
         );
 
-        // Make sure the engine id is passed to the Aflecha.
-        match rx.lock().unwrap().recv().expect("Failed to receive engine id confirmation") {
-            EngineAction::EngineIdConfirmation => {},
+        // Make sure the operator id is passed to the Aflecha.
+        match rx.lock().unwrap().recv().expect("Failed to receive operator id confirmation") {
+            OperatorAction::EngineIdConfirmation => {},
             _ => panic!("Wrong order of messages"),
         }
 
-        let engine = ComputationEngine {
+        let operator = ComputationOperator {
             operator_id,
             control_stream,
             computations,
@@ -54,16 +54,16 @@ impl ComputationEngine {
             computation_factory: HashMap::new(),
         };
     
-        let engine_arc = Arc::new(Mutex::new(engine));
+        let operator_arc = Arc::new(Mutex::new(operator));
             
         let _action_receiver = action_receiver::start_action_receiver(
-            Arc::clone(&engine_arc),
+            Arc::clone(&operator_arc),
             Arc::clone(&rx)
         );
     
         let _stdio_thread = start_stdio_thread();
     
-        engine_arc
+        operator_arc
     }
 
     pub fn register_factory(
@@ -98,7 +98,7 @@ impl ComputationEngine {
         Arc::clone(&self.control_stream)
     }
 
-    pub fn get_engine_id(&self) -> String {
+    pub fn get_operator_id(&self) -> String {
         self.operator_id.clone()
     }
 

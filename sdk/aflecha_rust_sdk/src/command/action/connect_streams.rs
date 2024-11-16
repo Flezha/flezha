@@ -8,7 +8,7 @@ use std::thread;
 use std::str;
 
 use crate::computation::{self, ComputationType};
-use crate::engine::ComputationEngine;
+use crate::operator::ComputationOperator;
 use crate::service::payloader;
 
 use super::CommandAction;
@@ -23,18 +23,18 @@ pub struct ConnectSocketCommand {
 impl CommandAction for ConnectSocketCommand {
     fn handle(
         &self,
-        engine: &Arc<Mutex<ComputationEngine>>,
+        operator: &Arc<Mutex<ComputationOperator>>,
         _message: &String,
         reference_id: String,
     ) {
-        let engine_guard = engine.lock().unwrap();
-        let computations = engine_guard.get_computations();
-        let control_stream = engine_guard.get_control_stream();
-        let operator_id = engine_guard.get_engine_id();
-        let io_streams = engine_guard.get_io_streams();
+        let operator_guard = operator.lock().unwrap();
+        let computations = operator_guard.get_computations();
+        let control_stream = operator_guard.get_control_stream();
+        let operator_id = operator_guard.get_operator_id();
+        let io_streams = operator_guard.get_io_streams();
         let reference_id = reference_id.clone();
 
-        drop(engine_guard);
+        drop(operator_guard);
 
         for key in 0..self.sockets_count {
             let computations_clone = Arc::clone(&computations);

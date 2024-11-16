@@ -25,7 +25,7 @@ defmodule Aflecha.Service.Warden do
   @impl true
   def init([]) do
     table = :ets.new(@table_name, [:set, :protected, :named_table])
-    :ets.insert(table, {:engines, %{}})
+    :ets.insert(table, {:operators, %{}})
 
     {:ok, %{table: table}}
   end

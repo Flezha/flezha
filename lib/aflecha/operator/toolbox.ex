@@ -25,7 +25,7 @@ defmodule Aflecha.Operator.Toolbox do
 
       {:error, reason} ->
         :gen_tcp.close(sock)
-        Logger.error("Failed to receive engine id: #{inspect(reason)}")
+        Logger.error("Failed to receive operator id: #{inspect(reason)}")
     end
   end
 end

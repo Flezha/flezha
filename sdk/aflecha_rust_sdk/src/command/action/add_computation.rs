@@ -7,7 +7,7 @@ use serde_json::Value;
 use serde::Deserialize;
 
 use crate::computation::ComputationType;
-use crate::engine::ComputationEngine;
+use crate::operator::ComputationOperator;
 use crate::service::payloader;
 
 #[derive(Deserialize, Debug)]
@@ -20,22 +20,22 @@ pub struct AddComputationCommand {
 impl CommandAction for AddComputationCommand {
     fn handle(
         &self,
-        engine: &Arc<Mutex<ComputationEngine>>,
+        operator: &Arc<Mutex<ComputationOperator>>,
         _message: &String,
         reference_id: String,
     ) {
-        let engine_guard = engine.lock().unwrap();
-        let factory = engine_guard.get_factory(self.factory_id.clone()).unwrap();
+        let operator_guard = operator.lock().unwrap();
+        let factory = operator_guard.get_factory(self.factory_id.clone()).unwrap();
         let variables = value_to_hashmap(&self.variables).unwrap();
         
-        let mut computation_enum = factory(); // Mutable to allow mutable borrowing
+        let mut computation_enum = factory();
         
-        match &mut computation_enum {  // Mutably borrow the computation_enum
+        match &mut computation_enum { 
             ComputationType::TextComputation(c) => c.update_computation(&variables),
             ComputationType::BinaryComputation(c) => c.update_computation(&variables),
         };
                 
-        engine_guard.add_computation(self.computation_id.clone(), computation_enum);        
+        operator_guard.add_computation(self.computation_id.clone(), computation_enum);        
         
         let mut hashmap: HashMap<String, Value> = HashMap::new();
         hashmap.insert("reference_id".to_string(), Value::String(reference_id));
@@ -43,7 +43,7 @@ impl CommandAction for AddComputationCommand {
         let json_string = serde_json::to_string(&hashmap).unwrap();
         let payload = payloader::build_from_str(&"add_computation".to_string(), &json_string);
 
-        engine_guard.get_control_stream().try_clone().unwrap().write_all(&payload).unwrap();
+        operator_guard.get_control_stream().try_clone().unwrap().write_all(&payload).unwrap();
     }
 }
 

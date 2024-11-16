@@ -3,12 +3,12 @@ use std::sync::{mpsc, Arc, Mutex};
 
 use crate::command::action;
 
-use super::{ComputationEngine, EngineAction};
+use super::{ComputationOperator, OperatorAction};
 
 
 pub fn start_action_receiver(
-    engine: Arc<Mutex<ComputationEngine>>,
-    rx: Arc<Mutex<mpsc::Receiver<EngineAction>>>,
+    operator: Arc<Mutex<ComputationOperator>>,
+    rx: Arc<Mutex<mpsc::Receiver<OperatorAction>>>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         loop {
@@ -16,9 +16,9 @@ pub fn start_action_receiver(
             match rx.recv() {
                 Ok(received) => {
                     match received {
-                        EngineAction::ControlCommand(payload_id, payload) => {
+                        OperatorAction::ControlCommand(payload_id, payload) => {
                             let payload_message: String = String::from_utf8_lossy(&payload).to_string();
-                            action::handle_action(&engine, &payload_id, &payload_message);
+                            action::handle_action(&operator, &payload_id, &payload_message);
                         }
                         _ => panic!("Unexpected message received on worker channel"),
                     }

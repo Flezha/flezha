@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::computation::ComputationType;
-use crate::engine::ComputationEngine;
+use crate::operator::ComputationOperator;
 use crate::service::payloader;
 
 #[derive(Deserialize)]
@@ -20,16 +20,16 @@ pub struct DeSerializeComputationCommand {
 impl CommandAction for DeSerializeComputationCommand {
     fn handle(
         &self,
-        engine: &Arc<Mutex<ComputationEngine>>,
+        operator: &Arc<Mutex<ComputationOperator>>,
         _message: &String,
         reference_id: String,
     ) {
-        let engine_guard = engine.lock().unwrap();
-        let control_stream = engine_guard.get_control_stream();
-        let computations_lock = engine_guard.get_computations();
+        let operator_guard = operator.lock().unwrap();
+        let control_stream = operator_guard.get_control_stream();
+        let computations_lock = operator_guard.get_computations();
         let computations = computations_lock.read().unwrap();
         
-        drop(engine_guard);
+        drop(operator_guard);
 
         match computations.get(&self.computation_id) {
             Some(comp_arc) => {

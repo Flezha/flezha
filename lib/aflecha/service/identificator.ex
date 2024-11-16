@@ -17,7 +17,7 @@ defmodule Aflecha.Service.Identificator do
     )
   end
 
-  def engine_sup(operator_id) do
+  def operator_sup(operator_id) do
     gen_via(operator_id, "es")
   end
 

@@ -11,7 +11,7 @@ use serialize_computation::SerializeComputationCommand;
 use deserialize_computation::DeSerializeComputationCommand;
 
 
-use crate::engine::ComputationEngine;
+use crate::operator::ComputationOperator;
 
 use self::add_computation::AddComputationCommand;
 use self::rem_computation::RemComputationCommand;
@@ -22,7 +22,7 @@ use serde_json::Value;
 pub trait CommandAction {
     fn handle(
         &self,
-        engine: &Arc<Mutex<ComputationEngine>>,
+        operator: &Arc<Mutex<ComputationOperator>>,
         command_struct: &String,
         reference_id: String,
     );
@@ -35,7 +35,7 @@ struct Command {
 }
 
 pub fn handle_action(
-    engine: &Arc<Mutex<ComputationEngine>>,
+    operator: &Arc<Mutex<ComputationOperator>>,
     payload_id: &String,
     message: &String
 ) {
@@ -74,5 +74,5 @@ pub fn handle_action(
         }
     };
 
-    command_action.handle(engine, message, reference_id);
+    command_action.handle(operator, message, reference_id);
 }

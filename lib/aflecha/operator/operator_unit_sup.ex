@@ -9,7 +9,7 @@ defmodule Aflecha.Operator.OperatorUnitSup do
 
   def start_link({operator_id, sock}) do
     Supervisor.start_link(__MODULE__, {operator_id, sock},
-      name: Identificator.engine_sup(operator_id)
+      name: Identificator.operator_sup(operator_id)
     )
   end
 
@@ -54,7 +54,7 @@ defmodule Aflecha.Operator.OperatorUnitSup do
   end
 
   def find_control_channel(operator_id) do
-    Supervisor.which_children(Identificator.engine_sup(operator_id))
+    Supervisor.which_children(Identificator.operator_sup(operator_id))
     |> Enum.find(fn {id, _, _, _} -> id === ControlChannel end)
     |> elem(1)
   end
