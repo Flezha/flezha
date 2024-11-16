@@ -72,7 +72,7 @@ defmodule Aflecha.Operator.ControlUnit do
         %{
           "computation_id" => computation.id,
           "factory_id" => computation.factory_id,
-          "type" => computation.type,
+          "computation_type" => computation.type,
           "variables" => computation.variables
         }
       )

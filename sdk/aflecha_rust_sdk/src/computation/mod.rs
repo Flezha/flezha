@@ -8,6 +8,7 @@ use crate::service::payloader;
 
 pub enum ComputationResult {
     None,
+    ThreadHandle(ComputationOutput),
     Forward(ComputationOutput),
     Return(ComputationOutput),
 }
@@ -15,6 +16,7 @@ pub enum ComputationResult {
 pub enum ComputationOutput {
     Text(String),
     Binary(Vec<u8>),
+    ThreadHandle(std::thread::JoinHandle<()>),
 }
 
 pub enum ComputationType {
@@ -109,7 +111,7 @@ pub trait ComputationSerializer: Serialize + for<'de> Deserialize<'de> + Clone +
 // TODO: remove duplication
 pub fn async_exec(
     computation_id: String, 
-    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
+    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationType, HashMap<String, String>)>>>>>,
     stream: &mut UnixStream,
     payload: Vec<u8>,
 ) {
@@ -120,22 +122,22 @@ pub fn async_exec(
 
         // TODO: reduce duplication.
         match &mut *comp {
-            ComputationType::TextComputation(comp) => {
+            (ComputationType::TextComputation(comp), _) => {
                 let payload_message: String = String::from_utf8_lossy(&payload).to_string();
                 let result = comp.run(payload_message);
 
                 match result {
-                    ComputationResult::None | ComputationResult::Return(_) => {}
+                    ComputationResult::None | ComputationResult::Return(_) | ComputationResult::ThreadHandle(_) => {}
                     ComputationResult::Forward(res) => {
                         send_result(stream, &computation_id, &res);
                     }
                 }
             }
-            ComputationType::BinaryComputation(comp) => {
+            (ComputationType::BinaryComputation(comp), _) => {
                 let result = comp.run(payload);
 
                 match result {
-                    ComputationResult::None | ComputationResult::Return(_) => {}
+                    ComputationResult::None | ComputationResult::Return(_) | ComputationResult::ThreadHandle(_) => {}
                     ComputationResult::Forward(res) => {
                         send_result(stream, &computation_id, &res);
                     }
@@ -149,7 +151,7 @@ pub fn async_exec(
 
 pub fn sync_exec<'a>(
     computation_id: &String, 
-    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
+    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationType, HashMap<String, String>)>>>>>,
     stream: &mut UnixStream,
     input: &ComputationInput,
 ) -> Result<ComputationOutput, String> {
@@ -161,11 +163,12 @@ pub fn sync_exec<'a>(
         match input {
             ComputationInput::Text(text) => {
                 match &mut *comp {
-                    ComputationType::TextComputation(comp) => {
+                    (ComputationType::TextComputation(comp), _) => {
                         let result = comp.run(text.to_string());
 
                         match result {
                             ComputationResult::None => Err("No result returned from the computation".to_string()),
+                            ComputationResult::ThreadHandle(join_handle) => Ok(join_handle),
                             ComputationResult::Return(res) => Ok(res),
                             ComputationResult::Forward(res) => {
                                 send_result(stream, &computation_id, &res);
@@ -173,18 +176,19 @@ pub fn sync_exec<'a>(
                             }
                         }
                     }
-                    ComputationType::BinaryComputation(_) => {
+                    (ComputationType::BinaryComputation(_), _) => {
                         Err(format!("Computation with given ID is not a text computation {}", computation_id))
                     }
                 }
             }
             ComputationInput::Binary(binary) => {
                 match &mut *comp {
-                    ComputationType::BinaryComputation(comp) => {
+                    (ComputationType::BinaryComputation(comp), _) => {
                         let result = comp.run(binary.to_vec());
 
                         match result {
                             ComputationResult::None => Err("No result returned from the computation".to_string()),
+                            ComputationResult::ThreadHandle(join_handle) => Ok(join_handle),
                             ComputationResult::Return(res) => Ok(res),
                             ComputationResult::Forward(res) => {
                                 send_result(stream, &computation_id, &res);
@@ -192,7 +196,7 @@ pub fn sync_exec<'a>(
                             }
                         }
                     }
-                    ComputationType::TextComputation(_) => {
+                    (ComputationType::TextComputation(_), _) => {
                         Err(format!("Computation with given ID is not a binary computation {}", computation_id))
                     }
                 }
@@ -210,6 +214,10 @@ fn send_result(stream: &mut UnixStream, computation_id: &String, result: &Comput
         }
         ComputationOutput::Binary(binary) => {
             payloader::build_from_binary(&computation_id, binary)
+        },
+        ComputationOutput::ThreadHandle(_) => {
+            eprintln!("Thread handle is not supported for sync execution");
+            return;
         }
     };
 

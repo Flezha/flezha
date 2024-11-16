@@ -15,7 +15,7 @@ use std::time::Duration;
 pub struct ComputationOperator {
     operator_id: String,
     computation_factory: HashMap<String, fn() -> ComputationType>,
-    computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationType, HashMap<String, String>)>>>>>,
     control_stream: Arc<UnixStream>,
     shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
 }
@@ -28,7 +28,7 @@ pub enum OperatorAction {
 impl ComputationOperator {
     pub fn new(
         operator_id: String,
-        computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
+        computations: Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationType, HashMap<String, String>)>>>>>,
         shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
     ) -> Arc<Mutex<ComputationOperator>> {
         let (tx, rx): (mpsc::Sender<OperatorAction>, mpsc::Receiver<OperatorAction>) = mpsc::channel();
@@ -85,8 +85,8 @@ impl ComputationOperator {
         self.computation_factory.get(&factory_id)
     }
 
-    pub fn add_computation(&self, id: String, computation: ComputationType) {
-        let computation = Arc::new(Mutex::new(computation));
+    pub fn add_computation(&self, id: String, computation: ComputationType, metadata: HashMap<String, String>) {
+        let computation = Arc::new(Mutex::new((computation, metadata)));
         self.computations.write().unwrap().insert(id, computation);
     }
 
@@ -102,7 +102,7 @@ impl ComputationOperator {
         self.operator_id.clone()
     }
 
-    pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>> {
+    pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationType, HashMap<String, String>)>>>>> {
         Arc::clone(&self.computations)
     }
 

@@ -19,7 +19,7 @@ pub use computation::{
 
 pub struct Aflecha {
     _id: String,
-    computations: Arc<RwLock<HashMap<String, Arc<Mutex<ComputationType>>>>>,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationType, HashMap<String, String>)>>>>>,
     shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
     operator: Arc<Mutex<ComputationOperator>>,
 }

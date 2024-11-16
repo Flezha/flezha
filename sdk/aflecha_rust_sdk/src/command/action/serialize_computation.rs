@@ -35,7 +35,7 @@ impl CommandAction for SerializeComputationCommand {
 
                 // Reduce duplication.
                 match &*computation.lock().unwrap() {
-                    ComputationType::TextComputation(c) => {
+                    (ComputationType::TextComputation(c), _) => {
                         let serialized_data = c.serialize_computation();
                         let data_as_values = serialized_data.iter()
                             .map(|&byte| Value::Number(serde_json::Number::from(byte)))
@@ -43,7 +43,7 @@ impl CommandAction for SerializeComputationCommand {
 
                         Value::Array(data_as_values)
                     }  
-                    ComputationType::BinaryComputation(c) => {
+                    (ComputationType::BinaryComputation(c), _) => {
                         let serialized_data = c.serialize_computation();
                         let data_as_values = serialized_data.iter()
                             .map(|&byte| Value::Number(serde_json::Number::from(byte)))
