@@ -2,7 +2,7 @@ defmodule Aflecha.Computation.WatchDog do
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Computation.Migrator
-  alias Aflecha.Subscriber.StreamSupervisor
+  alias Aflecha.Operator.StreamSup
 
   use GenServer
 
@@ -134,6 +134,6 @@ defmodule Aflecha.Computation.WatchDog do
     count = ConcurrencyMapper.concurrent_entity_count()
     channel_index = rem(computation_int, count)
 
-    StreamSupervisor.stream_ids(group_id, :primary) |> Enum.at(channel_index)
+    StreamSup.stream_ids(group_id, :primary) |> Enum.at(channel_index)
   end
 end

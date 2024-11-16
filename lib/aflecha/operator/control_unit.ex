@@ -1,7 +1,7 @@
-defmodule Aflecha.Subscriber.ControlUnit do
+defmodule Aflecha.Operator.ControlUnit do
   alias Aflecha.Service.Identificator
   alias Aflecha.Service.Payloader
-  alias Aflecha.Subscriber.ControlChannel
+  alias Aflecha.Operator.ControlChannel
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Service.EventManager
 

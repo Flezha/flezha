@@ -1,5 +1,5 @@
-defmodule Aflecha.Subscriber.SubscribersSupervisor do
-  alias Aflecha.Subscriber.SubscriberSupervisor
+defmodule Aflecha.Operator.OperatorsSup do
+  alias Aflecha.Operator.OperatorUnitSup
 
   use Supervisor
 
@@ -12,21 +12,21 @@ defmodule Aflecha.Subscriber.SubscribersSupervisor do
     Supervisor.init([], strategy: :one_for_one)
   end
 
-  def start_subscriber(group_id, sock) do
+  def start_operator(operator_id, sock) do
     Supervisor.start_child(__MODULE__, %{
-      id: group_id,
-      start: {SubscriberSupervisor, :start_link, [{group_id, sock}]}
+      id: operator_id,
+      start: {OperatorUnitSup, :start_link, [{operator_id, sock}]}
     })
   end
 
-  def default_group() do
+  def default_operator() do
     child =
       DynamicSupervisor.which_children(__MODULE__)
       |> Enum.at(0)
 
     case child do
-      {group_id, _, _, _} -> group_id
-      _ -> raise "No subscribers available"
+      {operator_id, _, _, _} -> operator_id
+      _ -> raise "No operators available"
     end
   end
 end

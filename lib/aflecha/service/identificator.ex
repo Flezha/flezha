@@ -17,54 +17,54 @@ defmodule Aflecha.Service.Identificator do
     )
   end
 
-  def engine_sup(subscriber_id) do
-    gen_via(subscriber_id, "es")
+  def engine_sup(operator_id) do
+    gen_via(operator_id, "es")
   end
 
-  def control_channel(subscriber_id) do
-    gen_via(subscriber_id, "cc")
+  def control_channel(operator_id) do
+    gen_via(operator_id, "cc")
   end
 
-  def hub(subscriber_id) do
-    gen_id(subscriber_id, "hub") |> String.to_atom()
+  def hub(operator_id) do
+    gen_id(operator_id, "hub") |> String.to_atom()
   end
 
-  def stream_listener(subscriber_id, type) do
+  def stream_listener(operator_id, type) do
     case type do
-      :primary -> gen_via(subscriber_id, "psl")
-      :secondary -> gen_via(subscriber_id, "ssl")
+      :primary -> gen_via(operator_id, "psl")
+      :secondary -> gen_via(operator_id, "ssl")
     end
   end
 
-  def stream_sup_primary(subscriber_id) do
-    gen_via(subscriber_id, "scsp")
+  def stream_sup_primary(operator_id) do
+    gen_via(operator_id, "scsp")
   end
 
-  def stream_sup_secondary(subscriber_id) do
-    gen_via(subscriber_id, "scss")
+  def stream_sup_secondary(operator_id) do
+    gen_via(operator_id, "scss")
   end
 
-  def control_unit(subscriber_id) do
-    gen_via(subscriber_id, "cu")
+  def control_unit(operator_id) do
+    gen_via(operator_id, "cu")
   end
 
-  def stream_channel_primary(subscriber_id, count_nr) do
-    gen_via(subscriber_id, "scp_" <> Integer.to_string(count_nr))
+  def stream_channel_primary(operator_id, count_nr) do
+    gen_via(operator_id, "scp_" <> Integer.to_string(count_nr))
   end
 
-  def stream_channel_secondary(subscriber_id, count_nr) do
-    gen_via(subscriber_id, "scs_" <> Integer.to_string(count_nr))
+  def stream_channel_secondary(operator_id, count_nr) do
+    gen_via(operator_id, "scs_" <> Integer.to_string(count_nr))
   end
 
-  defp gen_via(subscriber_id, type_str) do
-    {:via, Registry, {__MODULE__, gen_id(subscriber_id, type_str)}}
+  defp gen_via(operator_id, type_str) do
+    {:via, Registry, {__MODULE__, gen_id(operator_id, type_str)}}
   end
 
-  defp gen_id(subscriber_id, type_str) when is_atom(subscriber_id) do
-    gen_id(Atom.to_string(subscriber_id), type_str)
+  defp gen_id(operator_id, type_str) when is_atom(operator_id) do
+    gen_id(Atom.to_string(operator_id), type_str)
   end
 
-  defp gen_id(subscriber_id, type_str) do
-    subscriber_id <> "_" <> type_str
+  defp gen_id(operator_id, type_str) do
+    operator_id <> "_" <> type_str
   end
 end

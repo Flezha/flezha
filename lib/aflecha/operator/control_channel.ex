@@ -1,4 +1,4 @@
-defmodule Aflecha.Subscriber.ControlChannel do
+defmodule Aflecha.Operator.ControlChannel do
   alias Aflecha.Socket.Support, as: SocketSupport
   alias Aflecha.Service.Identificator
   alias Aflecha.Service.Payloader
@@ -7,9 +7,9 @@ defmodule Aflecha.Subscriber.ControlChannel do
 
   use GenServer
 
-  def start_link({subscriber_id, sock}) do
-    GenServer.start_link(__MODULE__, {subscriber_id, sock},
-      name: Identificator.control_channel(subscriber_id)
+  def start_link({operator_id, sock}) do
+    GenServer.start_link(__MODULE__, {operator_id, sock},
+      name: Identificator.control_channel(operator_id)
     )
   end
 
@@ -30,14 +30,14 @@ defmodule Aflecha.Subscriber.ControlChannel do
   end
 
   @impl true
-  def init({subscriber_id, sock}) do
+  def init({operator_id, sock}) do
     SocketSupport.set_active(sock)
 
     {:ok,
      %{
-       subscriber_id: subscriber_id,
+       operator_id: operator_id,
        sock: sock,
-       control_unit: Identificator.control_unit(subscriber_id)
+       control_unit: Identificator.control_unit(operator_id)
      }}
   end
 

@@ -1,4 +1,4 @@
-defmodule Aflecha.Subscriber.Controller do
+defmodule Aflecha.Operator.Controller do
   alias Aflecha.Computation.Builder, as: ComputationBuilder
   alias Aflecha.Service.Identificator
 

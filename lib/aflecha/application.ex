@@ -11,15 +11,15 @@ defmodule Aflecha.Application do
     Aflecha.Socket.Support.prepare_socket_dir()
 
     children = [
-      Aflecha.Subscriber.SubscribersSupervisor,
+      Aflecha.Operator.OperatorsSup,
       Aflecha.Service.Warden,
       Aflecha.Service.Identificator,
       Aflecha.Service.EventManager,
       {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      {Aflecha.Socket.Dispatcher, &Aflecha.Subscriber.Toolbox.sub_conn_fn/1},
+      {Aflecha.Socket.Dispatcher, &Aflecha.Operator.Toolbox.op_conn_fn/1},
       Aflecha.Service.PortPilot,
       Aflecha.Cluster.Orchestrator,
-      Aflecha.Subscriber.Controller
+      Aflecha.Operator.Controller
     ]
 
     opts = [strategy: :one_for_one, name: Aflecha.Supervisor]

@@ -1,5 +1,5 @@
 defmodule Aflecha do
-  alias Aflecha.Subscriber.SubscribersSupervisor
+  alias Aflecha.Operator.OperatorsSup
   alias Aflecha.Service.Identificator
   alias Aflecha.Computation.Builder, as: ComputationBuilder
 
@@ -8,21 +8,21 @@ defmodule Aflecha do
   """
 
   def add_computation(computation) do
-    SubscribersSupervisor.default_group()
+    OperatorsSup.default_operator()
     |> add_computation(computation)
   end
 
   def add_computation(group_id, computation) do
-    GenServer.call(Aflecha.Subscriber.Controller, {:add_computation, group_id, computation})
+    GenServer.call(Aflecha.Operator.Controller, {:add_computation, group_id, computation})
   end
 
   def rem_computation(computation_id) do
-    SubscribersSupervisor.default_group()
+    OperatorsSup.default_operator()
     |> rem_computation(computation_id)
   end
 
   def rem_computation(group_id, computation_id) do
-    GenServer.call(Aflecha.Subscriber.Controller, {:rem_computation, group_id, computation_id})
+    GenServer.call(Aflecha.Operator.Controller, {:rem_computation, group_id, computation_id})
   end
 
   def construct_computation!(input, type) do
@@ -39,7 +39,7 @@ defmodule Aflecha do
   end
 
   def add_io(computation_id, io_id, settings, direction) do
-    SubscribersSupervisor.default_group()
+    OperatorsSup.default_operator()
     |> add_io(computation_id, io_id, settings, direction)
   end
 
@@ -51,7 +51,7 @@ defmodule Aflecha do
   end
 
   def pipeline_io_internal_payload(computation_id, io_id, direction, payload) do
-    SubscribersSupervisor.default_group()
+    OperatorsSup.default_operator()
     |> pipeline_io_internal_payload(computation_id, io_id, direction, payload)
   end
 
