@@ -66,7 +66,12 @@ fn listen_incoming(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Str
     loop {
         match payloader::extract_payload(&mut stream) {
             Ok((computation_id, payload)) => {
-                computation::async_exec(computation_id, computations, &mut stream, payload);
+                computation::exec(
+                    &computation_id,
+                    computations,
+                    &mut stream, 
+                    &payload
+                );
             }
             Err(_e) => {
                 // TODO: log error

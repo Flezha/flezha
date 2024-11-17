@@ -24,11 +24,6 @@ pub enum ComputationType {
     BinaryComputation(Box<dyn BinaryComputationTrait>),
 }
 
-pub enum ComputationInput<'a> {
-    Text(&'a str),
-    Binary(&'a [u8]),
-}
-
 pub trait TextComputation: ComputationSerializer {
     fn run(&mut self, input: String) -> ComputationResult;
 }
@@ -44,15 +39,15 @@ impl<T: TextComputation + 'static> TextComputationTrait for T {
 }
 
 pub trait BinaryComputation: ComputationSerializer  {
-    fn run(&mut self, input: Vec<u8>) -> ComputationResult;
+    fn run(&mut self, input: &Vec<u8>) -> ComputationResult;
 }
 
 pub trait BinaryComputationTrait: ComputationTrait  {
-    fn run(&mut self, input: Vec<u8>) -> ComputationResult;
+    fn run(&mut self, input: &Vec<u8>) -> ComputationResult;
 }
 
 impl<T: BinaryComputation + 'static> BinaryComputationTrait for T {
-    fn run(&mut self, input: Vec<u8>) -> ComputationResult {
+    fn run(&mut self, input: &Vec<u8>) -> ComputationResult {
         self.run(input)
     }
 }
@@ -108,88 +103,38 @@ pub trait ComputationSerializer: Serialize + for<'de> Deserialize<'de> + Clone +
     }
 }
 
-// TODO: remove duplication
-pub fn async_exec(
-    computation_id: String, 
-    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationType, HashMap<String, String>)>>>>>,
-    stream: &mut UnixStream,
-    payload: Vec<u8>,
-) {
-    let computations_read = computations.read().unwrap();
-                
-    if let Some(c) = computations_read.get(&computation_id) {
-        let mut comp = c.lock().unwrap();
-
-        // TODO: reduce duplication.
-        // TODO from here we should spawn new thread if computationMetaData is having task type.
-        match &mut *comp {
-            (ComputationType::TextComputation(comp), _) => {
-                let payload_message: String = String::from_utf8_lossy(&payload).to_string();
-                let result = comp.run(payload_message);
-
-                match result {
-                    ComputationResult::None | ComputationResult::Return(_) | ComputationResult::ThreadHandle(_) => {}
-                    ComputationResult::Forward(res) => {
-                        send_result(stream, &computation_id, &res);
-                    }
-                }
-            }
-            (ComputationType::BinaryComputation(comp), _) => {
-                let result = comp.run(payload);
-
-                match result {
-                    ComputationResult::None | ComputationResult::Return(_) | ComputationResult::ThreadHandle(_) => {}
-                    ComputationResult::Forward(res) => {
-                        send_result(stream, &computation_id, &res);
-                    }
-                }
-            }
-        };              
-    } else {
-        eprintln!("Computation with given ID not found {}", computation_id);
-    }
-}
-
-pub fn sync_exec<'a>(
+pub fn exec<'a>(
     computation_id: &String, 
     computations: &Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationType, HashMap<String, String>)>>>>>,
     stream: &mut UnixStream,
-    input: &ComputationInput,
-) -> Result<ComputationOutput, String> {
+    input: &Vec<u8>,
+) -> Option<ComputationOutput> {
     let computations_read = computations.read().unwrap();
                 
     if let Some(c) = computations_read.get(computation_id) {
         let mut comp = c.lock().unwrap();
 
-
         let computation_result = match &mut *comp {
             (ComputationType::TextComputation(comp), _) => {
-                match input {
-                    ComputationInput::Text(text) => comp.run(text.to_string()),
-                    _ => panic!("Invalid input type"),
-                    
-                }
+                comp.run(String::from_utf8_lossy(&input).to_string())
             }
 
             (ComputationType::BinaryComputation(comp), _) => {
-                match input {
-                    ComputationInput::Binary(binary) => comp.run(binary.to_vec()),
-                    _ => panic!("Invalid input type")
-                }
+                comp.run(input)
             }
         };
 
         match computation_result {
-            ComputationResult::None => Err("No result returned from the computation".to_string()),
-            ComputationResult::ThreadHandle(join_handle) => Ok(join_handle),
-            ComputationResult::Return(res) => Ok(res),
+            ComputationResult::None => None,
+            ComputationResult::ThreadHandle(join_handle) => Some(join_handle),
+            ComputationResult::Return(res) => Some(res),
             ComputationResult::Forward(res) => {
                 send_result(stream, &computation_id, &res);
-                Ok(res)
+                Some(res)
             }
         }
     } else {
-        Err(format!("Computation with given ID not found {}", computation_id))
+        panic!("Computation with given ID not found {}", computation_id);
     }
 }
 

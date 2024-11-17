@@ -13,7 +13,6 @@ pub use computation::{
     TextComputation, 
     BinaryComputation, 
     ComputationResult,
-    ComputationInput,
     ComputationOutput
 };
 
@@ -45,11 +44,16 @@ impl Aflecha {
         self.operator.lock().unwrap().register_factory(name, factory);
     }
 
-    pub fn run(&mut self, computation_id: String, input: ComputationInput) -> Result<ComputationOutput, String> {
+    pub fn run(&mut self, computation_id: String, input: Vec<u8>) -> Option<ComputationOutput> {
         // Take random io_stream.
         let mut io_stream = self.shared_io_streams.write().unwrap().values().next().unwrap().try_clone().unwrap();
 
-        computation::sync_exec(&computation_id, &self.computations, &mut io_stream, &input)
+        computation::exec(
+            &computation_id, 
+            &self.computations, 
+            &mut io_stream, 
+            &input
+        )
     }
 }
 

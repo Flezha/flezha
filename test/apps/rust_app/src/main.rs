@@ -73,7 +73,7 @@ struct IncrementStateComputation {
 }
 
 impl BinaryComputation for IncrementStateComputation {
-    fn run(&mut self, _input: Vec<u8>) -> ComputationResult {
+    fn run(&mut self, _input: &Vec<u8>) -> ComputationResult {
         self.value += 1;
         ComputationResult::None
     }
