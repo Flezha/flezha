@@ -124,17 +124,21 @@ pub fn exec(
             }
         };
 
-        match computation_result {
-            ComputationResult::None => None,
-            ComputationResult::ThreadHandle(join_handle) => Some(join_handle),
-            ComputationResult::Return(res) => Some(res),
-            ComputationResult::Forward(res) => {
-                send_result(stream, &computation_id, &res);
-                Some(res)
-            }
-        }
+        handle_computation_result(computation_result, stream, computation_id)
     } else {
         panic!("Computation with given ID not found {}", computation_id);
+    }
+}
+
+fn handle_computation_result(computation_result: ComputationResult, stream: &mut UnixStream, computation_id: &String) -> Option<ComputationOutput> {
+    match computation_result {
+        ComputationResult::None => None,
+        ComputationResult::ThreadHandle(join_handle) => Some(join_handle),
+        ComputationResult::Return(res) => Some(res),
+        ComputationResult::Forward(res) => {
+            send_result(stream, &computation_id, &res);
+            Some(res)
+        }
     }
 }
 
