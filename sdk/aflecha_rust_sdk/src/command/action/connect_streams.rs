@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::thread;
 use std::str;
 
-use crate::computation::{self, ComputationType};
+use crate::computation::{self, ComputationDataType};
 use crate::operator::ComputationOperator;
 use crate::service::payloader;
 
@@ -62,7 +62,7 @@ fn connect_unix(operator_id: &String, stream_type: String) -> UnixStream {
     UnixStream::connect(socket_path).expect("Failed to connect to the socket")
 }
 
-fn listen_incoming(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationType, HashMap<String, String>)>>>>>) {
+fn listen_incoming(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationDataType, HashMap<String, String>)>>>>>) {
     loop {
         match payloader::extract_payload(&mut stream) {
             Ok((computation_id, payload)) => {

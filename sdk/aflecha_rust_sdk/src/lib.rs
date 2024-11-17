@@ -9,7 +9,7 @@ use std::{collections::HashMap, os::unix::net::UnixStream, sync::{Arc, Mutex, Rw
 use operator::ComputationOperator;
 
 pub use computation::{
-    ComputationType, 
+    ComputationDataType, 
     TextComputation, 
     BinaryComputation, 
     ComputationResult,
@@ -18,7 +18,7 @@ pub use computation::{
 
 pub struct Aflecha {
     _id: String,
-    computations: Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationType, HashMap<String, String>)>>>>>,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationDataType, HashMap<String, String>)>>>>>,
     shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
     operator: Arc<Mutex<ComputationOperator>>,
 }
@@ -40,7 +40,7 @@ impl Aflecha {
         }
     }
     
-    pub fn register_factory(&mut self, name: String, factory: fn() -> ComputationType) {
+    pub fn register_factory(&mut self, name: String, factory: fn() -> ComputationDataType) {
         self.operator.lock().unwrap().register_factory(name, factory);
     }
 

@@ -19,9 +19,9 @@ pub enum ComputationOutput {
     ThreadHandle(std::thread::JoinHandle<()>),
 }
 
-pub enum ComputationType {
-    TextComputation(Box<dyn TextComputationTrait>),
-    BinaryComputation(Box<dyn BinaryComputationTrait>),
+pub enum ComputationDataType {
+    Text(Box<dyn TextComputationTrait>),
+    Binary(Box<dyn BinaryComputationTrait>),
 }
 
 pub trait TextComputation: ComputationSerializer {
@@ -103,9 +103,9 @@ pub trait ComputationSerializer: Serialize + for<'de> Deserialize<'de> + Clone +
     }
 }
 
-pub fn exec<'a>(
+pub fn exec(
     computation_id: &String, 
-    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationType, HashMap<String, String>)>>>>>,
+    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationDataType, HashMap<String, String>)>>>>>,
     stream: &mut UnixStream,
     input: &Vec<u8>,
 ) -> Option<ComputationOutput> {
@@ -115,11 +115,11 @@ pub fn exec<'a>(
         let mut comp = c.lock().unwrap();
 
         let computation_result = match &mut *comp {
-            (ComputationType::TextComputation(comp), _) => {
+            (ComputationDataType::Text(comp), _) => {
                 comp.run(String::from_utf8_lossy(&input).to_string())
             }
 
-            (ComputationType::BinaryComputation(comp), _) => {
+            (ComputationDataType::Binary(comp), _) => {
                 comp.run(input)
             }
         };

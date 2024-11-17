@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use serde::Deserialize;
 
-use crate::computation::ComputationType;
+use crate::computation::ComputationDataType;
 use crate::operator::ComputationOperator;
 use crate::service::payloader;
 
@@ -34,8 +34,8 @@ impl CommandAction for AddComputationCommand {
         metadata.insert("computation_type".to_string(), self.computation_type.clone());
         
         match &mut computation_enum { 
-            ComputationType::TextComputation(c) => c.update_computation(&variables),
-            ComputationType::BinaryComputation(c) => c.update_computation(&variables),
+            ComputationDataType::Text(c) => c.update_computation(&variables),
+            ComputationDataType::Binary(c) => c.update_computation(&variables),
         };
                 
         operator_guard.add_computation(self.computation_id.clone(), computation_enum, metadata);        

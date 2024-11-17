@@ -1,5 +1,5 @@
 use aflecha_sdk::{
-    ComputationType, 
+    ComputationDataType, 
     TextComputation, 
     BinaryComputation, 
     ComputationResult,
@@ -13,19 +13,19 @@ fn main() {
 
     processor.register_factory(
         "do_nothing".to_string(),
-        || ComputationType::TextComputation(Box::new(DoNothingComputation{}))
+        || ComputationDataType::Text(Box::new(DoNothingComputation{}))
     );
 
     processor.register_factory(
         "compare_filter".to_string(),
-         || ComputationType::TextComputation(Box::new(CompareFilterComputation{ 
+         || ComputationDataType::Text(Box::new(CompareFilterComputation{ 
             comparable: "".to_string(), inverted: false 
         }))
     );
 
     processor.register_factory(
         "increment_state".to_string(), 
-        || ComputationType::BinaryComputation(Box::new(IncrementStateComputation {
+        || ComputationDataType::Binary(Box::new(IncrementStateComputation {
             value: 5000
         }))
     );
