@@ -35,35 +35,23 @@ pub fn extract_payload<R: Read>(mut reader: R) -> io::Result<(String, Vec<u8>)> 
     Ok((payload_id, message_buf))
 }
 
-// TODO: refactor duplicates.
 pub fn build_from_binary(payload_id: &str, message: &[u8]) -> Vec<u8> {
-    // Ensure the payload ID is 32 bytes.
-    let mut payload_id_padded = payload_id.to_string();
-    if payload_id_padded.len() > 32 {
-        payload_id_padded.truncate(32);
-    } else {
-        payload_id_padded.push_str(&" ".repeat(32 - payload_id_padded.len()));
-    }
+    build_payload(payload_id, message)
+}
 
-    // Calculate the message size (8 bytes integer).
-    let message_size = message.len() as u64;
+pub fn build_from_str(payload_id: &str, message: &str) -> Vec<u8> {
+    build_payload(payload_id, message.as_bytes())
+}
 
-    // Create a buffer to hold the payload.
-    let mut payload = Vec::with_capacity(32 + 8 + message.len());
-
-    // Write the payload ID (32 bytes) to the payload.
-    payload.write_all(payload_id_padded.as_bytes()).unwrap();
-
-    // Write the message size (8 bytes) to the payload.
-    let _ = payload.write_u64::<BigEndian>(message_size);
-
-    // Write the message to the payload.
+fn build_payload(payload_id: &str, message: &[u8]) -> Vec<u8> {
+    let message_len = message.len() as u64;
+    let mut payload = handle_payload_build(payload_id, message_len);
     payload.write_all(message).unwrap();
 
     payload
 }
 
-pub fn build_from_str(payload_id: &str, message: &str) -> Vec<u8> {
+fn handle_payload_build(payload_id: &str, message_len: u64) -> Vec<u8> {
     // Ensure the payload ID is 32 bytes.
     let mut payload_id_padded = payload_id.to_string();
     if payload_id_padded.len() > 32 {
@@ -72,20 +60,14 @@ pub fn build_from_str(payload_id: &str, message: &str) -> Vec<u8> {
         payload_id_padded.push_str(&" ".repeat(32 - payload_id_padded.len()));
     }
 
-    // Calculate the message size (8 bytes integer).
-    let message_size = message.len() as u64;
-
     // Create a buffer to hold the payload.
-    let mut payload = Vec::with_capacity(32 + 8 + message.len());
+    let mut payload = Vec::with_capacity(32 + 8 + message_len as usize);
 
     // Write the payload ID (32 bytes) to the payload.
     payload.write_all(payload_id_padded.as_bytes()).unwrap();
 
     // Write the message size (8 bytes) to the payload.
-    let _ = payload.write_u64::<BigEndian>(message_size);
-
-    // Write the message to the payload.
-    payload.write_all(message.as_bytes()).unwrap();
+    let _ = payload.write_u64::<BigEndian>(message_len);
 
     payload
 }
