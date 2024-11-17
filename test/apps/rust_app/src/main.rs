@@ -2,8 +2,8 @@ use aflecha_sdk::{
     ComputationDataType, 
     TextComputation, 
     BinaryComputation, 
-    ComputationResult,
     ComputationOutput,
+    ComputationResult,
 };
 
 use serde::{Serialize, Deserialize};
@@ -41,18 +41,18 @@ struct CompareFilterComputation {
 }
 
 impl TextComputation for CompareFilterComputation {
-    fn run(&mut self, input: String) -> ComputationResult {
+    fn run(&mut self, input: String) -> ComputationOutput {
         if self.inverted {
             if self.comparable == input {
-                ComputationResult::None
+                ComputationOutput::None
             } else {
-                ComputationResult::Forward(ComputationOutput::Text(input))
+                ComputationOutput::Forward(ComputationResult::Text(input))
             }
         } else {
             if self.comparable == input {
-                ComputationResult::Forward(ComputationOutput::Text(input))
+                ComputationOutput::Forward(ComputationResult::Text(input))
             } else {
-                ComputationResult::None
+                ComputationOutput::None
             }
         }
     }
@@ -62,8 +62,8 @@ impl TextComputation for CompareFilterComputation {
 struct DoNothingComputation {}
 
 impl TextComputation for DoNothingComputation {
-    fn run(&mut self, _input: String) -> ComputationResult {
-        ComputationResult::None
+    fn run(&mut self, _input: String) -> ComputationOutput {
+        ComputationOutput::None
     }
 }
 
@@ -73,8 +73,8 @@ struct IncrementStateComputation {
 }
 
 impl BinaryComputation for IncrementStateComputation {
-    fn run(&mut self, _input: &Vec<u8>) -> ComputationResult {
+    fn run(&mut self, _input: &Vec<u8>) -> ComputationOutput {
         self.value += 1;
-        ComputationResult::None
+        ComputationOutput::None
     }
 }

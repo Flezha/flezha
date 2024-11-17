@@ -6,14 +6,14 @@ use serde_json::{from_value, to_value, Value};
 
 use crate::service::payloader;
 
-pub enum ComputationResult {
+pub enum ComputationOutput {
     None,
-    ThreadHandle(ComputationOutput),
-    Forward(ComputationOutput),
-    Return(ComputationOutput),
+    ThreadHandle(ComputationResult),
+    Forward(ComputationResult),
+    Return(ComputationResult),
 }
 
-pub enum ComputationOutput {
+pub enum ComputationResult {
     Text(String),
     Binary(Vec<u8>),
     ThreadHandle(std::thread::JoinHandle<()>),
@@ -25,29 +25,29 @@ pub enum ComputationDataType {
 }
 
 pub trait TextComputation: ComputationSerializer {
-    fn run(&mut self, input: String) -> ComputationResult;
+    fn run(&mut self, input: String) -> ComputationOutput;
 }
 
 pub trait TextComputationTrait: ComputationTrait  {
-    fn run(&mut self, input: String) -> ComputationResult;
+    fn run(&mut self, input: String) -> ComputationOutput;
 }
 
 impl<T: TextComputation + 'static> TextComputationTrait for T {
-    fn run(&mut self, input: String) -> ComputationResult {
+    fn run(&mut self, input: String) -> ComputationOutput {
         self.run(input)
     }
 }
 
 pub trait BinaryComputation: ComputationSerializer  {
-    fn run(&mut self, input: &Vec<u8>) -> ComputationResult;
+    fn run(&mut self, input: &Vec<u8>) -> ComputationOutput;
 }
 
 pub trait BinaryComputationTrait: ComputationTrait  {
-    fn run(&mut self, input: &Vec<u8>) -> ComputationResult;
+    fn run(&mut self, input: &Vec<u8>) -> ComputationOutput;
 }
 
 impl<T: BinaryComputation + 'static> BinaryComputationTrait for T {
-    fn run(&mut self, input: &Vec<u8>) -> ComputationResult {
+    fn run(&mut self, input: &Vec<u8>) -> ComputationOutput {
         self.run(input)
     }
 }
@@ -108,7 +108,7 @@ pub fn exec(
     computations: &Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationDataType, HashMap<String, String>)>>>>>,
     stream: &mut UnixStream,
     input: &Vec<u8>,
-) -> Option<ComputationOutput> {
+) -> Option<ComputationResult> {
     let computations_read = computations.read().unwrap();
                 
     if let Some(c) = computations_read.get(computation_id) {
@@ -130,27 +130,27 @@ pub fn exec(
     }
 }
 
-fn handle_computation_result(computation_result: ComputationResult, stream: &mut UnixStream, computation_id: &String) -> Option<ComputationOutput> {
+fn handle_computation_result(computation_result: ComputationOutput, stream: &mut UnixStream, computation_id: &String) -> Option<ComputationResult> {
     match computation_result {
-        ComputationResult::None => None,
-        ComputationResult::ThreadHandle(join_handle) => Some(join_handle),
-        ComputationResult::Return(res) => Some(res),
-        ComputationResult::Forward(res) => {
+        ComputationOutput::None => None,
+        ComputationOutput::ThreadHandle(join_handle) => Some(join_handle),
+        ComputationOutput::Return(res) => Some(res),
+        ComputationOutput::Forward(res) => {
             send_result(stream, &computation_id, &res);
             Some(res)
         }
     }
 }
 
-fn send_result(stream: &mut UnixStream, computation_id: &String, result: &ComputationOutput) {
+fn send_result(stream: &mut UnixStream, computation_id: &String, result: &ComputationResult) {
     let payload = match result {
-        ComputationOutput::Text(text) => {
+        ComputationResult::Text(text) => {
             payloader::build_from_str(&computation_id, text)
         }
-        ComputationOutput::Binary(binary) => {
+        ComputationResult::Binary(binary) => {
             payloader::build_from_binary(&computation_id, binary)
         },
-        ComputationOutput::ThreadHandle(_) => {
+        ComputationResult::ThreadHandle(_) => {
             eprintln!("Thread handle is not supported for sync execution");
             return;
         }

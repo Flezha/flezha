@@ -12,8 +12,8 @@ pub use computation::{
     ComputationDataType, 
     TextComputation, 
     BinaryComputation, 
-    ComputationResult,
-    ComputationOutput
+    ComputationOutput,
+    ComputationResult
 };
 
 pub struct Aflecha {
@@ -44,7 +44,7 @@ impl Aflecha {
         self.operator.lock().unwrap().register_factory(name, factory);
     }
 
-    pub fn run(&mut self, computation_id: String, input: Vec<u8>) -> Option<ComputationOutput> {
+    pub fn run(&mut self, computation_id: String, input: Vec<u8>) -> Option<ComputationResult> {
         // Take random io_stream.
         let mut io_stream = self.shared_io_streams.write().unwrap().values().next().unwrap().try_clone().unwrap();
 
