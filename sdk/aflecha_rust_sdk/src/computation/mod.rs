@@ -121,6 +121,7 @@ pub fn async_exec(
         let mut comp = c.lock().unwrap();
 
         // TODO: reduce duplication.
+        // TODO from here we should spawn new thread if computationMetaData is having task type.
         match &mut *comp {
             (ComputationType::TextComputation(comp), _) => {
                 let payload_message: String = String::from_utf8_lossy(&payload).to_string();
@@ -160,46 +161,31 @@ pub fn sync_exec<'a>(
     if let Some(c) = computations_read.get(computation_id) {
         let mut comp = c.lock().unwrap();
 
-        match input {
-            ComputationInput::Text(text) => {
-                match &mut *comp {
-                    (ComputationType::TextComputation(comp), _) => {
-                        let result = comp.run(text.to_string());
 
-                        match result {
-                            ComputationResult::None => Err("No result returned from the computation".to_string()),
-                            ComputationResult::ThreadHandle(join_handle) => Ok(join_handle),
-                            ComputationResult::Return(res) => Ok(res),
-                            ComputationResult::Forward(res) => {
-                                send_result(stream, &computation_id, &res);
-                                Ok(res)
-                            }
-                        }
-                    }
-                    (ComputationType::BinaryComputation(_), _) => {
-                        Err(format!("Computation with given ID is not a text computation {}", computation_id))
-                    }
+        let computation_result = match &mut *comp {
+            (ComputationType::TextComputation(comp), _) => {
+                match input {
+                    ComputationInput::Text(text) => comp.run(text.to_string()),
+                    _ => panic!("Invalid input type"),
+                    
                 }
             }
-            ComputationInput::Binary(binary) => {
-                match &mut *comp {
-                    (ComputationType::BinaryComputation(comp), _) => {
-                        let result = comp.run(binary.to_vec());
 
-                        match result {
-                            ComputationResult::None => Err("No result returned from the computation".to_string()),
-                            ComputationResult::ThreadHandle(join_handle) => Ok(join_handle),
-                            ComputationResult::Return(res) => Ok(res),
-                            ComputationResult::Forward(res) => {
-                                send_result(stream, &computation_id, &res);
-                                Ok(res)
-                            }
-                        }
-                    }
-                    (ComputationType::TextComputation(_), _) => {
-                        Err(format!("Computation with given ID is not a binary computation {}", computation_id))
-                    }
+            (ComputationType::BinaryComputation(comp), _) => {
+                match input {
+                    ComputationInput::Binary(binary) => comp.run(binary.to_vec()),
+                    _ => panic!("Invalid input type")
                 }
+            }
+        };
+
+        match computation_result {
+            ComputationResult::None => Err("No result returned from the computation".to_string()),
+            ComputationResult::ThreadHandle(join_handle) => Ok(join_handle),
+            ComputationResult::Return(res) => Ok(res),
+            ComputationResult::Forward(res) => {
+                send_result(stream, &computation_id, &res);
+                Ok(res)
             }
         }
     } else {
