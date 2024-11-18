@@ -26,6 +26,12 @@ pub trait Computation: SerializableComputation  {
     fn run(&mut self, input: ComputationInput) -> ComputationOutput;
 }
 
+pub trait SerializableComputation: Send + Sync  {
+    fn update_computation(&mut self, map: &HashMap<String, Value>);
+    fn serialize_computation(&self) -> Vec<u8>;
+    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation>;
+}
+
 impl<T> SerializableComputation for T 
 where
     T: Computation 
@@ -55,12 +61,6 @@ where
     fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation> {
         Box::new(bincode::deserialize::<T>(data).expect("Failed to deserialize"))
     }
-}
-
-pub trait SerializableComputation: Send + Sync  {
-    fn update_computation(&mut self, map: &HashMap<String, Value>);
-    fn serialize_computation(&self) -> Vec<u8>;
-    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation>;
 }
 
 pub fn exec(
