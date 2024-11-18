@@ -26,34 +26,17 @@ pub trait Computation: SerializableComputation  {
     fn run(&mut self, input: ComputationInput) -> ComputationOutput;
 }
 
-impl<T> ComputationSerializer for T 
+impl<T> SerializableComputation for T 
 where
-    T: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync,
-{}
-
-pub trait SerializableComputation: Send + Sync  {
-    fn update_computation(&mut self, map: &HashMap<String, Value>);
-    fn serialize_computation(&self) -> Vec<u8>;
-    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation>;
-}
-
-impl<T: ComputationSerializer + 'static> SerializableComputation for T {
+    T: Computation 
+        + Serialize 
+        + for<'de> Deserialize<'de> 
+        + Clone 
+        + Send 
+        + Sync 
+        + 'static,
+{
     fn update_computation(&mut self, map: &HashMap<String, Value>) {
-        self.update_from_map(map)
-    }
-
-    fn serialize_computation(&self) -> Vec<u8> {
-        ComputationSerializer::serialize(self)
-    }
-
-    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation> {
-        let deserialized_computation = <T as ComputationSerializer>::deserialize(data);
-        Box::new(deserialized_computation)
-    }
-}
-
-pub trait ComputationSerializer: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync {
-    fn update_from_map(&mut self, map: &HashMap<String, Value>) {
         let mut value = to_value(self.clone()).expect("Failed to convert to serde_json::Value");
 
         if let Value::Object(ref mut obj) = value {
@@ -65,16 +48,19 @@ pub trait ComputationSerializer: Serialize + for<'de> Deserialize<'de> + Clone +
         *self = from_value(value).expect("Failed to convert from serde_json::Value");
     }
 
-    fn serialize(&self) -> Vec<u8> {
+    fn serialize_computation(&self) -> Vec<u8> {
         bincode::serialize(self).expect("Failed to serialize")
     }
 
-    fn deserialize(data: &[u8]) -> Self
-    where
-        Self: Sized,
-    {
-        bincode::deserialize(data).expect("Failed to deserialize")
+    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation> {
+        Box::new(bincode::deserialize::<T>(data).expect("Failed to deserialize"))
     }
+}
+
+pub trait SerializableComputation: Send + Sync  {
+    fn update_computation(&mut self, map: &HashMap<String, Value>);
+    fn serialize_computation(&self) -> Vec<u8>;
+    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation>;
 }
 
 pub fn exec(
