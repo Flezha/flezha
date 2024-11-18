@@ -7,7 +7,6 @@ use super::CommandAction;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::computation::ComputationDataType;
 use crate::operator::ComputationOperator;
 use crate::service::payloader;
 
@@ -31,15 +30,9 @@ impl CommandAction for SerializeComputationCommand {
         drop(operator_guard);
 
         let serialized_json = match computations.get(&self.computation_id) {
-            Some(computation) => {
-                let serialized_data = match &*computation.lock().unwrap() {
-                    (ComputationDataType::Text(c), _) => {
-                        c.serialize_computation()
-                    }  
-                    (ComputationDataType::Binary(c), _) => {
-                        c.serialize_computation()
-                    }  
-                };
+            Some(comp_arc) => {
+                let computation = &*comp_arc.lock().unwrap();
+                let serialized_data = computation.serialize_computation();
 
                 let data_as_values = serialized_data.iter()
                     .map(|&byte| Value::Number(serde_json::Number::from(byte)))

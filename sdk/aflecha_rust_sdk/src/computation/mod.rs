@@ -6,9 +6,13 @@ use serde_json::{from_value, to_value, Value};
 
 use crate::service::payloader;
 
+pub enum ComputationInput {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
 pub enum ComputationOutput {
     None,
-    ThreadHandle(ComputationResult),
     Forward(ComputationResult),
     Return(ComputationResult),
 }
@@ -16,52 +20,19 @@ pub enum ComputationOutput {
 pub enum ComputationResult {
     Text(String),
     Binary(Vec<u8>),
-    ThreadHandle(std::thread::JoinHandle<()>),
 }
 
-pub enum ComputationDataType {
-    Text(Box<dyn TextComputationTrait>),
-    Binary(Box<dyn BinaryComputationTrait>),
-}
-
-pub trait TextComputation: ComputationSerializer {
-    fn run(&mut self, input: String) -> ComputationOutput;
-}
-
-pub trait TextComputationTrait: ComputationTrait  {
-    fn run(&mut self, input: String) -> ComputationOutput;
-}
-
-impl<T: TextComputation + 'static> TextComputationTrait for T {
-    fn run(&mut self, input: String) -> ComputationOutput {
-        self.run(input)
-    }
-}
-
-pub trait BinaryComputation: ComputationSerializer  {
-    fn run(&mut self, input: &Vec<u8>) -> ComputationOutput;
-}
-
-pub trait BinaryComputationTrait: ComputationTrait  {
-    fn run(&mut self, input: &Vec<u8>) -> ComputationOutput;
-}
-
-impl<T: BinaryComputation + 'static> BinaryComputationTrait for T {
-    fn run(&mut self, input: &Vec<u8>) -> ComputationOutput {
-        self.run(input)
-    }
+pub trait ComputationTrait: Send + Sync {
+    fn run(&mut self, input: &ComputationInput) -> ComputationOutput;
+    fn update_computation(&mut self, map: &HashMap<String, Value>);
+    fn serialize_computation(&self) -> Vec<u8>;
+    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn ComputationTrait>;
 }
 
 impl<T> ComputationSerializer for T 
 where
     T: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync,
 {}
-
-pub trait ComputationTrait: Send + Sync  {
-    fn update_computation(&mut self, map: &HashMap<String, Value>);
-    fn serialize_computation(&self) -> Vec<u8>;
-    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn ComputationTrait>;
-}
 
 impl<T: ComputationSerializer + 'static> ComputationTrait for T {
     fn update_computation(&mut self, map: &HashMap<String, Value>) {
@@ -105,24 +76,15 @@ pub trait ComputationSerializer: Serialize + for<'de> Deserialize<'de> + Clone +
 
 pub fn exec(
     computation_id: &String, 
-    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationDataType, HashMap<String, String>)>>>>>,
+    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>>,
     stream: &mut UnixStream,
-    input: &Vec<u8>,
+    input: &ComputationInput,
 ) -> Option<ComputationResult> {
     let computations_read = computations.read().unwrap();
                 
     if let Some(c) = computations_read.get(computation_id) {
-        let mut comp = c.lock().unwrap();
-
-        let computation_result = match &mut *comp {
-            (ComputationDataType::Text(comp), _) => {
-                comp.run(String::from_utf8_lossy(&input).to_string())
-            }
-
-            (ComputationDataType::Binary(comp), _) => {
-                comp.run(input)
-            }
-        };
+        let mut computation = c.lock().unwrap();
+        let computation_result= computation.run(input);
 
         handle_computation_result(computation_result, stream, computation_id)
     } else {
@@ -133,7 +95,6 @@ pub fn exec(
 fn handle_computation_result(computation_result: ComputationOutput, stream: &mut UnixStream, computation_id: &String) -> Option<ComputationResult> {
     match computation_result {
         ComputationOutput::None => None,
-        ComputationOutput::ThreadHandle(join_handle) => Some(join_handle),
         ComputationOutput::Return(res) => Some(res),
         ComputationOutput::Forward(res) => {
             send_result(stream, &computation_id, &res);
@@ -149,10 +110,6 @@ fn send_result(stream: &mut UnixStream, computation_id: &String, result: &Comput
         }
         ComputationResult::Binary(binary) => {
             payloader::build_from_binary(&computation_id, binary)
-        },
-        ComputationResult::ThreadHandle(_) => {
-            eprintln!("Thread handle is not supported for sync execution");
-            return;
         }
     };
 

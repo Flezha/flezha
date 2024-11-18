@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::thread;
 use std::str;
 
-use crate::computation::{self, ComputationDataType};
+use crate::computation::{self, ComputationInput, ComputationTrait};
 use crate::operator::ComputationOperator;
 use crate::service::payloader;
 
@@ -62,15 +62,26 @@ fn connect_unix(operator_id: &String, stream_type: String) -> UnixStream {
     UnixStream::connect(socket_path).expect("Failed to connect to the socket")
 }
 
-fn listen_incoming(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationDataType, HashMap<String, String>)>>>>>) {
+fn listen_incoming(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>>) {
     loop {
         match payloader::extract_payload(&mut stream) {
-            Ok((computation_id, payload)) => {
+            Ok((computation_id, mut payload)) => {
+                // input_type is the first byte of the payload
+                let input_type = payload[0];
+
+                payload.remove(0);
+
+                let input = match input_type {
+                    1 => ComputationInput::Binary(payload),
+                    2 => ComputationInput::Text(str::from_utf8(&payload).unwrap().to_string()),
+                    _ => panic!("Invalid input type"),
+                };
+
                 computation::exec(
                     &computation_id,
                     computations,
                     &mut stream, 
-                    &payload
+                    &input
                 );
             }
             Err(_e) => {

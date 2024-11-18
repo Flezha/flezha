@@ -6,19 +6,17 @@ mod utility;
 
 use std::{collections::HashMap, os::unix::net::UnixStream, sync::{Arc, Mutex, RwLock}};
 
+use computation::{ComputationInput, ComputationTrait};
 use operator::ComputationOperator;
 
 pub use computation::{
-    ComputationDataType, 
-    TextComputation, 
-    BinaryComputation, 
     ComputationOutput,
     ComputationResult
 };
 
 pub struct Aflecha {
     _id: String,
-    computations: Arc<RwLock<HashMap<String, Arc<Mutex<(ComputationDataType, HashMap<String, String>)>>>>>,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>>,
     shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
     operator: Arc<Mutex<ComputationOperator>>,
 }
@@ -40,11 +38,11 @@ impl Aflecha {
         }
     }
     
-    pub fn register_factory(&mut self, name: String, factory: fn() -> ComputationDataType) {
+    pub fn register_factory(&mut self, name: String, factory: fn() -> Box<dyn ComputationTrait>) {
         self.operator.lock().unwrap().register_factory(name, factory);
     }
 
-    pub fn run(&mut self, computation_id: String, input: Vec<u8>) -> Option<ComputationResult> {
+    pub fn run(&mut self, computation_id: String, input: ComputationInput) -> Option<ComputationResult> {
         // Take random io_stream.
         let mut io_stream = self.shared_io_streams.write().unwrap().values().next().unwrap().try_clone().unwrap();
 

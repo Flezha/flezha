@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use serde::Deserialize;
 
-use crate::computation::ComputationDataType;
 use crate::operator::ComputationOperator;
 use crate::service::payloader;
 
@@ -14,7 +13,6 @@ use crate::service::payloader;
 pub struct AddComputationCommand {
     computation_id: String,
     factory_id: String,
-    computation_type: String,
     variables: Value,
 }
 
@@ -28,17 +26,11 @@ impl CommandAction for AddComputationCommand {
         let operator_guard = operator.lock().unwrap();
         let factory = operator_guard.get_factory(self.factory_id.clone()).unwrap();
         let variables = value_to_hashmap(&self.variables).unwrap();
-        let mut metadata: HashMap<String, String> = HashMap::new();
-        let mut computation_enum = factory();
-
-        metadata.insert("computation_type".to_string(), self.computation_type.clone());
+        let mut computation = factory();
         
-        match &mut computation_enum { 
-            ComputationDataType::Text(c) => c.update_computation(&variables),
-            ComputationDataType::Binary(c) => c.update_computation(&variables),
-        };
+        computation.update_computation(&variables);
                 
-        operator_guard.add_computation(self.computation_id.clone(), computation_enum, metadata);        
+        operator_guard.add_computation(self.computation_id.clone(), computation);        
         
         let mut hashmap: HashMap<String, Value> = HashMap::new();
         hashmap.insert("reference_id".to_string(), Value::String(reference_id));
