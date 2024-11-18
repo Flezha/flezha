@@ -6,17 +6,19 @@ mod utility;
 
 use std::{collections::HashMap, os::unix::net::UnixStream, sync::{Arc, Mutex, RwLock}};
 
-use computation::{ComputationInput, ComputationTrait};
 use operator::ComputationOperator;
 
 pub use computation::{
+    ComputationInput,
     ComputationOutput,
-    ComputationResult
+    ComputationResult,
+    Computation,
+    SerializableComputation
 };
 
 pub struct Aflecha {
     _id: String,
-    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>>,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn Computation>>>>>>,
     shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
     operator: Arc<Mutex<ComputationOperator>>,
 }
@@ -38,7 +40,7 @@ impl Aflecha {
         }
     }
     
-    pub fn register_factory(&mut self, name: String, factory: fn() -> Box<dyn ComputationTrait>) {
+    pub fn register_factory(&mut self, name: String, factory: fn() -> Box<dyn Computation>) {
         self.operator.lock().unwrap().register_factory(name, factory);
     }
 
@@ -50,7 +52,7 @@ impl Aflecha {
             &computation_id, 
             &self.computations, 
             &mut io_stream, 
-            &input
+            input
         )
     }
 }

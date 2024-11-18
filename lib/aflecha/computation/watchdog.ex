@@ -79,8 +79,8 @@ defmodule Aflecha.Computation.WatchDog do
   end
 
   @impl true
-  def handle_cast({:io_in, _type, message}, state) do
-    GenServer.cast(state.channel, {:io_in, :binary, state.id, message})
+  def handle_cast({:io_in, type, message}, state) do
+    GenServer.cast(state.channel, {:io_in, type, state.id, message})
 
     {:noreply, state}
   end

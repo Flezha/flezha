@@ -1,7 +1,7 @@
 pub mod action_receiver;
 mod control_unit;
 
-use crate::computation::ComputationTrait;
+use crate::computation::Computation;
 use crate::service::payloader;
 
 use std::io::Write;
@@ -14,8 +14,8 @@ use std::time::Duration;
 
 pub struct ComputationOperator {
     operator_id: String,
-    computation_factory: HashMap<String, fn() -> Box<dyn ComputationTrait>>,
-    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>>,
+    computation_factory: HashMap<String, fn() -> Box<dyn Computation>>,
+    computations: Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn Computation>>>>>>,
     control_stream: Arc<UnixStream>,
     shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
 }
@@ -28,7 +28,7 @@ pub enum OperatorAction {
 impl ComputationOperator {
     pub fn new(
         operator_id: String,
-        computations: Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>>,
+        computations: Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn Computation>>>>>>,
         shared_io_streams: Arc<RwLock<HashMap<u8, UnixStream>>>,
     ) -> Arc<Mutex<ComputationOperator>> {
         let (tx, rx): (mpsc::Sender<OperatorAction>, mpsc::Receiver<OperatorAction>) = mpsc::channel();
@@ -69,7 +69,7 @@ impl ComputationOperator {
     pub fn register_factory(
         &mut self,
         factory_id: String,
-        factory: fn() -> Box<dyn ComputationTrait>) {
+        factory: fn() -> Box<dyn Computation>) {
         let mut core_data = HashMap::new();
         
         core_data.insert("factory_id".to_string(), factory_id.clone());
@@ -81,11 +81,11 @@ impl ComputationOperator {
         self.computation_factory.insert(factory_id.clone(), factory);
     }
 
-    pub fn get_factory(&self, factory_id: String) -> Option<&fn() -> Box<dyn ComputationTrait>> {
+    pub fn get_factory(&self, factory_id: String) -> Option<&fn() -> Box<dyn Computation>> {
         self.computation_factory.get(&factory_id)
     }
 
-    pub fn add_computation(&self, id: String, computation: Box<dyn ComputationTrait>) {
+    pub fn add_computation(&self, id: String, computation: Box<dyn Computation>) {
         let computation = Arc::new(Mutex::new(computation));
         self.computations.write().unwrap().insert(id, computation);
     }
@@ -102,7 +102,7 @@ impl ComputationOperator {
         self.operator_id.clone()
     }
 
-    pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>> {
+    pub fn get_computations(&self) -> Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn Computation>>>>>> {
         Arc::clone(&self.computations)
     }
 

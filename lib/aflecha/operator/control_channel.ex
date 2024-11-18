@@ -22,7 +22,7 @@ defmodule Aflecha.Operator.ControlChannel do
         "reference_id" => ref
       })
 
-    payload = Payloader.build_from_str(payload_id, command)
+    payload = Payloader.build_from_bin(payload_id, command)
 
     GenServer.call(control_channel, {:send_control, payload})
 

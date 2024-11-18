@@ -1,9 +1,5 @@
 use aflecha_sdk::{
-    ComputationDataType, 
-    TextComputation, 
-    BinaryComputation, 
-    ComputationOutput,
-    ComputationResult,
+    Computation, ComputationInput, ComputationOutput, ComputationResult
 };
 
 use serde::{Serialize, Deserialize};
@@ -13,21 +9,21 @@ fn main() {
 
     processor.register_factory(
         "do_nothing".to_string(),
-        || ComputationDataType::Text(Box::new(DoNothingComputation{}))
+        || Box::new(DoNothingComputation{})
     );
 
     processor.register_factory(
         "compare_filter".to_string(),
-         || ComputationDataType::Text(Box::new(CompareFilterComputation{ 
+         || Box::new(CompareFilterComputation{ 
             comparable: "".to_string(), inverted: false 
-        }))
+        })
     );
 
     processor.register_factory(
         "increment_state".to_string(), 
-        || ComputationDataType::Binary(Box::new(IncrementStateComputation {
+        || Box::new(IncrementStateComputation {
             value: 5000
-        }))
+        })
     );
 
     // TODO: remove later.
@@ -40,20 +36,25 @@ struct CompareFilterComputation {
     inverted: bool,
 }
 
-impl TextComputation for CompareFilterComputation {
-    fn run(&mut self, input: String) -> ComputationOutput {
-        if self.inverted {
-            if self.comparable == input {
-                ComputationOutput::None
-            } else {
-                ComputationOutput::Forward(ComputationResult::Text(input))
+impl Computation for CompareFilterComputation {
+    fn run(&mut self, input: ComputationInput) -> ComputationOutput {
+        match input {
+            ComputationInput::Text(text) => {
+                if self.inverted {
+                    if self.comparable == text {
+                        ComputationOutput::None
+                    } else {
+                        ComputationOutput::Forward(ComputationResult::Text(text))
+                    }
+                } else {
+                    if self.comparable == text {
+                        ComputationOutput::Forward(ComputationResult::Text(text))
+                    } else {
+                        ComputationOutput::None
+                    }
+                }
             }
-        } else {
-            if self.comparable == input {
-                ComputationOutput::Forward(ComputationResult::Text(input))
-            } else {
-                ComputationOutput::None
-            }
+            ComputationInput::Binary(_) => ComputationOutput::None
         }
     }
 }
@@ -61,8 +62,8 @@ impl TextComputation for CompareFilterComputation {
 #[derive(Serialize, Deserialize, Clone)]
 struct DoNothingComputation {}
 
-impl TextComputation for DoNothingComputation {
-    fn run(&mut self, _input: String) -> ComputationOutput {
+impl Computation for DoNothingComputation {
+    fn run(&mut self, _input: ComputationInput) -> ComputationOutput {
         ComputationOutput::None
     }
 }
@@ -72,8 +73,8 @@ struct IncrementStateComputation {
     value: u32
 }
 
-impl BinaryComputation for IncrementStateComputation {
-    fn run(&mut self, _input: &Vec<u8>) -> ComputationOutput {
+impl Computation for IncrementStateComputation {
+    fn run(&mut self, _input: ComputationInput) -> ComputationOutput {
         self.value += 1;
         ComputationOutput::None
     }

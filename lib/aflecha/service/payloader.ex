@@ -1,5 +1,5 @@
 defmodule Aflecha.Service.Payloader do
-  def build_from_str(id, message)
+  def build_from_bin(id, message)
       when is_binary(id) and is_binary(message) do
     # Ensure id is exactly 32 bytes.
     payload_id_padded = String.pad_trailing(id, 32)

@@ -22,11 +22,8 @@ pub enum ComputationResult {
     Binary(Vec<u8>),
 }
 
-pub trait ComputationTrait: Send + Sync {
-    fn run(&mut self, input: &ComputationInput) -> ComputationOutput;
-    fn update_computation(&mut self, map: &HashMap<String, Value>);
-    fn serialize_computation(&self) -> Vec<u8>;
-    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn ComputationTrait>;
+pub trait Computation: SerializableComputation  {
+    fn run(&mut self, input: ComputationInput) -> ComputationOutput;
 }
 
 impl<T> ComputationSerializer for T 
@@ -34,7 +31,13 @@ where
     T: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync,
 {}
 
-impl<T: ComputationSerializer + 'static> ComputationTrait for T {
+pub trait SerializableComputation: Send + Sync  {
+    fn update_computation(&mut self, map: &HashMap<String, Value>);
+    fn serialize_computation(&self) -> Vec<u8>;
+    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation>;
+}
+
+impl<T: ComputationSerializer + 'static> SerializableComputation for T {
     fn update_computation(&mut self, map: &HashMap<String, Value>) {
         self.update_from_map(map)
     }
@@ -43,7 +46,7 @@ impl<T: ComputationSerializer + 'static> ComputationTrait for T {
         ComputationSerializer::serialize(self)
     }
 
-    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn ComputationTrait> {
+    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation> {
         let deserialized_computation = <T as ComputationSerializer>::deserialize(data);
         Box::new(deserialized_computation)
     }
@@ -76,9 +79,9 @@ pub trait ComputationSerializer: Serialize + for<'de> Deserialize<'de> + Clone +
 
 pub fn exec(
     computation_id: &String, 
-    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn ComputationTrait>>>>>>,
+    computations: &Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn Computation>>>>>>,
     stream: &mut UnixStream,
-    input: &ComputationInput,
+    input: ComputationInput,
 ) -> Option<ComputationResult> {
     let computations_read = computations.read().unwrap();
                 

@@ -31,6 +31,6 @@ defmodule Aflecha.IO.Generator do
   end
 
   defp send_payload(pipeline_pid, msg) do
-    GenServer.cast(pipeline_pid, {:io_in, :binary, msg})
+    GenServer.cast(pipeline_pid, {:io_in, :text, msg})
   end
 end
