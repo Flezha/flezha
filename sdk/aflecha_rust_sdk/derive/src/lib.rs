@@ -2,15 +2,14 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput};
 
-// Import the SerializableComputation trait from the library crate
-use aflecha_sdk::SerializableComputation;
+use aflecha_operator::SerializableComputation;
 
 #[proc_macro_derive(SerializableComputation)]
 pub fn serializable_computation_macro(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let struct_name = input.ident;
 
-    // Generate implementation for SerializableComputation for the struct
+    // Generate implementation for SerializableComputation for the struct.
     let expanded = quote! {
         impl SerializableComputation for #struct_name {
             fn update_computation(&mut self, map: &std::collections::HashMap<String, serde_json::Value>) {

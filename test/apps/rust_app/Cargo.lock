@@ -3,23 +3,23 @@
 version = 3
 
 [[package]]
-name = "aflecha_sdk"
+name = "aflecha_derive"
+version = "0.1.0"
+dependencies = [
+ "aflecha_operator",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "aflecha_operator"
 version = "0.1.0"
 dependencies = [
  "bincode",
  "byteorder",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "aflecha_serializer"
-version = "0.1.0"
-dependencies = [
- "aflecha_sdk",
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -71,8 +71,8 @@ dependencies = [
 name = "rust_app"
 version = "0.1.0"
 dependencies = [
- "aflecha_sdk",
- "aflecha_serializer",
+ "aflecha_derive",
+ "aflecha_operator",
  "bincode",
  "byteorder",
  "serde",

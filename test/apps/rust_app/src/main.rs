@@ -1,14 +1,13 @@
-use aflecha_serializer::SerializableComputation;
-use aflecha_sdk::SerializableComputation;
+use aflecha_derive::SerializableComputation;
 
-use aflecha_sdk::{
-    Computation, ComputationInput, ComputationOutput, ComputationResult
+use aflecha_operator::{
+    Computation, ComputationInput, ComputationOutput, ComputationResult, SerializableComputation
 };
 
 use serde::{Serialize, Deserialize};
 
 fn main() {
-    let mut processor = aflecha_sdk::new("default".to_string());
+    let mut processor = aflecha_operator::new("default".to_string());
 
     processor.register_factory(
         "do_nothing".to_string(),
@@ -73,8 +72,7 @@ impl Computation for DoNothingComputation {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[derive(SerializableComputation)]
+#[derive(SerializableComputation, Serialize, Deserialize, Clone)]
 struct IncrementStateComputation {
     value: u32
 }

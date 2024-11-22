@@ -1,10 +1,10 @@
 [package]
-name = "aflecha_serializer"
+name = "aflecha_derive"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-aflecha_sdk = { path = "../aflecha_rust_sdk" }
+aflecha_operator = { path = "../operator" }
 syn = "2.0"
 quote = "1.0"
 proc-macro2 = "1.0"
