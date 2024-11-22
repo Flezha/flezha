@@ -38,16 +38,16 @@ defmodule Aflecha do
     end
   end
 
-  def add_io(computation_id, io_id, settings, direction) do
+  def add_io(computation_id, io_id, settings, direction, opts) do
     OperatorsSup.default_operator()
-    |> add_io(computation_id, io_id, settings, direction)
+    |> add_io(computation_id, io_id, settings, direction, opts)
   end
 
-  def add_io(operator_id, computation_id, io_id, settings, direction) do
+  def add_io(operator_id, computation_id, io_id, io_struct, direction, opts) do
     timeout = Application.fetch_env!(:aflecha, :io_add_timeout)
 
     computation_pid_lookup(operator_id, computation_id)
-    |> GenServer.call({:add_io, io_id, direction, settings}, timeout)
+    |> GenServer.call({:add_io, io_id, direction, io_struct, io_opts(opts)}, timeout)
   end
 
   def pipeline_io_internal_payload(computation_id, io_id, direction, payload) do
@@ -70,5 +70,10 @@ defmodule Aflecha do
       _ ->
         raise "computation not found"
     end
+  end
+
+  defp io_opts(opts) do
+    opts
+    |> Keyword.put_new(:handling_type, :stream)
   end
 end

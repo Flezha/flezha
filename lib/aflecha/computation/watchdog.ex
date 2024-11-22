@@ -32,9 +32,9 @@ defmodule Aflecha.Computation.WatchDog do
   end
 
   @impl true
-  def handle_call({:add_io, io_id, direction, settings}, _from, state) do
-    {module, func, args} = Aflecha.IO.Base.mfa(settings)
-    new_args = [self() | args]
+  def handle_call({:add_io, io_id, direction, io_struct, opts}, _from, state) do
+    {module, func, args} = Aflecha.IO.Base.mfa(io_struct)
+    new_args = [self() | args] ++ [opts]
 
     response =
       IOSupervisor.start_child(Map.get(state.supervisors, direction), %{
@@ -78,8 +78,8 @@ defmodule Aflecha.Computation.WatchDog do
   end
 
   @impl true
-  def handle_cast({:io_in, payload, data_type, handle_as}, state) do
-    GenServer.cast(state.channel, {:io_in, state.id, payload, data_type, handle_as})
+  def handle_cast({:io_in, payload, data_type, handling_type}, state) do
+    GenServer.cast(state.channel, {:io_in, state.id, payload, data_type, handling_type})
 
     {:noreply, state}
   end

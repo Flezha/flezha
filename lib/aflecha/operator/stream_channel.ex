@@ -33,12 +33,15 @@ defmodule Aflecha.Operator.StreamChannel do
   end
 
   @impl true
-  def handle_cast({:io_in, computation_id, payload, data_type, handle_as}, %{sock: sock} = state) do
+  def handle_cast(
+        {:io_in, computation_id, payload, data_type, handling_type},
+        %{sock: sock} = state
+      ) do
     :gen_tcp.send(
       sock,
       Payloader.build_from_bin(
         computation_id,
-        input_type(data_type) <> handling_type(handle_as) <> payload
+        input_type(data_type) <> handling_type(handling_type) <> payload
       )
     )
 

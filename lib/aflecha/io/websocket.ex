@@ -10,11 +10,11 @@ defmodule Aflecha.IO.Websocket do
 
   # TODO: may need to implement this
   # defimpl Aflecha.IO.Base, for: Aflecha.IO.InternalProcess do
-  #   def mfa(struct),
+  #   def mfa(io_struct),
   #     do:
   #       {Aflecha.IO.InternalProcess, :start_link,
   #        [
-  #          [output_pid: struct.output_pid, handle_as: struct.handle_as]
+  #          [io_struct]
   #        ]}
   # end
 

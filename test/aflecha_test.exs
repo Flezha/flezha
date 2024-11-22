@@ -73,7 +73,8 @@ defmodule AflechaTest do
              computation.id,
              "generator",
              %Aflecha.IO.Generator{interval: 100},
-             :input
+             :input,
+             []
            ) == {:ok, "IO created"}
   end
 
@@ -89,8 +90,9 @@ defmodule AflechaTest do
              @default_operator,
              computation.id,
              "internal_process",
-             %Aflecha.IO.InternalProcess{output_pid: self(), handle_as: :stream},
-             :input
+             %Aflecha.IO.InternalProcess{output_pid: self()},
+             :input,
+             []
            ) == {:ok, "IO created"}
   end
 
@@ -107,8 +109,9 @@ defmodule AflechaTest do
              @default_operator,
              computation.id,
              "internal_process",
-             %Aflecha.IO.InternalProcess{output_pid: self(), handle_as: :stream},
-             :output
+             %Aflecha.IO.InternalProcess{output_pid: self()},
+             :output,
+             []
            ) == {:ok, "IO created"}
 
     assert Aflecha.add_io(
@@ -118,10 +121,10 @@ defmodule AflechaTest do
              %Aflecha.IO.Generator{
                interval: 10000,
                startup_payload: true,
-               message: "hello world",
-               handle_as: :stream
+               message: "hello world"
              },
-             :input
+             :input,
+             handling_type: :task
            ) == {:ok, "IO created"}
 
     assert Aflecha.add_io(
@@ -131,10 +134,10 @@ defmodule AflechaTest do
              %Aflecha.IO.Generator{
                interval: 10000,
                startup_payload: true,
-               message: "hello world",
-               handle_as: :stream
+               message: "hello world"
              },
-             :input
+             :input,
+             handling_type: :task
            ) == {:ok, "IO created"}
 
     for _ <- 1..2 do

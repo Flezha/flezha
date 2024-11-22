@@ -5,39 +5,34 @@ defmodule Aflecha.IO.InternalProcess do
 
   @behaviour IOBaseBehaviour
 
-  @enforce_keys [:output_pid, :handle_as]
+  @enforce_keys [:output_pid]
 
   defstruct [
-    :output_pid,
-    :handle_as
+    :output_pid
   ]
 
   defimpl Aflecha.IO.Base, for: Aflecha.IO.InternalProcess do
-    def mfa(struct),
-      do:
-        {Aflecha.IO.InternalProcess, :start_link,
-         [
-           [output_pid: struct.output_pid, handle_as: struct.handle_as]
-         ]}
+    def mfa(io_struct),
+      do: {Aflecha.IO.InternalProcess, :start_link, [io_struct]}
   end
 
-  def start_link(pipeline_id, opts \\ []) do
-    GenServer.start_link(__MODULE__, {pipeline_id, opts}, [])
+  def start_link(pipeline_id, io_struct, opts) do
+    GenServer.start_link(__MODULE__, {pipeline_id, io_struct, opts}, [])
   end
 
   @impl true
-  def init({pipeline_id, opts}) do
+  def init({pipeline_id, io_struct, opts}) do
     {:ok,
      %{
        pipeline_id: pipeline_id,
-       output_pid: opts[:output_pid],
-       handle_as: opts[:handle_as]
+       output_pid: io_struct.output_pid,
+       handling_type: Keyword.get(opts, :handling_type)
      }}
   end
 
   @impl true
-  def handle_cast({:io_in, payload, data_type}, %{handle_as: ha, output_pid: op} = state) do
-    Process.send(op, {:io_in, payload, data_type, ha}, [])
+  def handle_cast({:io_in, payload, data_type}, %{handling_type: ht, output_pid: op} = state) do
+    Process.send(op, {:io_in, payload, data_type, ht}, [])
 
     {:noreply, state}
   end
