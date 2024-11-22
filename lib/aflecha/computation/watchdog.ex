@@ -78,16 +78,16 @@ defmodule Aflecha.Computation.WatchDog do
   end
 
   @impl true
-  def handle_cast({:io_in, type, message}, state) do
-    GenServer.cast(state.channel, {:io_in, type, state.id, message})
+  def handle_cast({:io_in, payload, data_type, handle_as}, state) do
+    GenServer.cast(state.channel, {:io_in, state.id, payload, data_type, handle_as})
 
     {:noreply, state}
   end
 
   @impl true
-  def handle_cast({:io_out, type, message}, %{io: %{output: out_pids}} = state) do
+  def handle_cast({:io_out, payload, data_type}, %{io: %{output: out_pids}} = state) do
     Enum.each(out_pids, fn {_module, out_pid} ->
-      GenServer.cast(out_pid, {:io_out, type, message})
+      GenServer.cast(out_pid, {:io_out, payload, data_type})
     end)
 
     {:noreply, state}

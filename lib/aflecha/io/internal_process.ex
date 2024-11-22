@@ -5,15 +5,20 @@ defmodule Aflecha.IO.InternalProcess do
 
   @behaviour IOBaseBehaviour
 
-  @enforce_keys [:output_pid]
+  @enforce_keys [:output_pid, :handle_as]
 
   defstruct [
-    :output_pid
+    :output_pid,
+    :handle_as
   ]
 
   defimpl Aflecha.IO.Base, for: Aflecha.IO.InternalProcess do
     def mfa(struct),
-      do: {Aflecha.IO.InternalProcess, :start_link, [[output_pid: struct.output_pid]]}
+      do:
+        {Aflecha.IO.InternalProcess, :start_link,
+         [
+           [output_pid: struct.output_pid, handle_as: struct.handle_as]
+         ]}
   end
 
   def start_link(pipeline_id, opts \\ []) do
@@ -22,19 +27,24 @@ defmodule Aflecha.IO.InternalProcess do
 
   @impl true
   def init({pipeline_id, opts}) do
-    {:ok, %{pipeline_id: pipeline_id, output_pid: opts[:output_pid]}}
+    {:ok,
+     %{
+       pipeline_id: pipeline_id,
+       output_pid: opts[:output_pid],
+       handle_as: opts[:handle_as]
+     }}
   end
 
   @impl true
-  def handle_cast({:io_in, type, payload}, state) do
-    Process.send(state.output_pid, {:io_out, type, payload}, [])
+  def handle_cast({:io_in, payload, data_type}, %{handle_as: ha, output_pid: op} = state) do
+    Process.send(op, {:io_in, payload, data_type, ha}, [])
 
     {:noreply, state}
   end
 
   @impl true
-  def handle_cast({:io_out, type, payload}, state) do
-    Process.send(state.output_pid, {:io_out, type, payload}, [])
+  def handle_cast({:io_out, _payload, _data_type} = msg, state) do
+    Process.send(state.output_pid, msg, [])
 
     {:noreply, state}
   end

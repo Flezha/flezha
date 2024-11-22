@@ -69,6 +69,10 @@ fn listen_incoming(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Str
                 // input_type is the first byte of the payload
                 let input_type = payload[0];
 
+                // processing_type is the second byte of the payload
+                let processing_type = payload[1];
+
+                payload.remove(0);
                 payload.remove(0);
 
                 let input = match input_type {
@@ -77,12 +81,32 @@ fn listen_incoming(mut stream: UnixStream, computations: &Arc<RwLock<HashMap<Str
                     types => panic!("Invalid input type {}", types),
                 };
 
-                computation::exec(
-                    &computation_id,
-                    computations,
-                    &mut stream, 
-                    input
-                );
+                match processing_type {
+                    1 => {
+                        computation::exec(
+                            &computation_id,
+                            computations,
+                            &mut stream, 
+                            input
+                        )
+                    },
+                    2 => {
+                        let computations = Arc::clone(computations);
+                        let mut stream = stream.try_clone().unwrap();
+
+                        thread::spawn(move || {
+                            computation::exec(
+                                &computation_id,
+                                &computations,
+                                &mut stream, 
+                                input
+                            )
+                        });
+
+                        None
+                    }
+                    _ => panic!("Invalid processing type"),
+                };
             }
             Err(_e) => {
                 // TODO: log error

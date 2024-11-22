@@ -8,6 +8,16 @@ defmodule Aflecha.IO.Websocket do
   @enforce_keys [:type, :msg]
   defstruct @enforce_keys
 
+  # TODO: may need to implement this
+  # defimpl Aflecha.IO.Base, for: Aflecha.IO.InternalProcess do
+  #   def mfa(struct),
+  #     do:
+  #       {Aflecha.IO.InternalProcess, :start_link,
+  #        [
+  #          [output_pid: struct.output_pid, handle_as: struct.handle_as]
+  #        ]}
+  # end
+
   def start_link(uri, state, opts) do
     Fresh.start_link(uri, __MODULE__, state, opts)
   end
@@ -25,10 +35,10 @@ defmodule Aflecha.IO.Websocket do
   end
 
   @impl Fresh
-  def handle_in({type, payload}, state) do
+  def handle_in({data_type, payload}, state) do
     GenServer.cast(
       {:via, PartitionSupervisor, {Aflecha.ChannelSupervisor, self()}},
-      {:io_in, type, payload}
+      {:io_in, data_type, payload}
     )
 
     {:ok, state}
