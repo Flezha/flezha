@@ -1,8 +1,7 @@
 use std::sync::{Arc, Mutex, RwLock};
 use std::{collections::HashMap, os::unix::net::UnixStream};
 use std::io::Write;
-use serde::{Serialize, Deserialize};
-use serde_json::{from_value, to_value, Value};
+use serde_json::Value;
 
 use crate::service::payloader;
 
@@ -30,37 +29,6 @@ pub trait SerializableComputation: Send + Sync  {
     fn update_computation(&mut self, map: &HashMap<String, Value>);
     fn serialize_computation(&self) -> Vec<u8>;
     fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation>;
-}
-
-impl<T> SerializableComputation for T 
-where
-    T: Computation 
-        + Serialize 
-        + for<'de> Deserialize<'de> 
-        + Clone 
-        + Send 
-        + Sync 
-        + 'static,
-{
-    fn update_computation(&mut self, map: &HashMap<String, Value>) {
-        let mut value = to_value(self.clone()).expect("Failed to convert to serde_json::Value");
-
-        if let Value::Object(ref mut obj) = value {
-            for (key, val) in map {
-                obj.insert(key.clone(), val.clone());
-            }
-        }
-
-        *self = from_value(value).expect("Failed to convert from serde_json::Value");
-    }
-
-    fn serialize_computation(&self) -> Vec<u8> {
-        bincode::serialize(self).expect("Failed to serialize")
-    }
-
-    fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation> {
-        Box::new(bincode::deserialize::<T>(data).expect("Failed to deserialize"))
-    }
 }
 
 pub fn exec(

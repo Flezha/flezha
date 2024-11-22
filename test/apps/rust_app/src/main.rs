@@ -1,3 +1,6 @@
+use aflecha_serializer::SerializableComputation;
+use aflecha_sdk::SerializableComputation;
+
 use aflecha_sdk::{
     Computation, ComputationInput, ComputationOutput, ComputationResult
 };
@@ -31,6 +34,7 @@ fn main() {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+#[derive(SerializableComputation)]
 struct CompareFilterComputation {
     comparable: String,
     inverted: bool,
@@ -60,6 +64,7 @@ impl Computation for CompareFilterComputation {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+#[derive(SerializableComputation)]
 struct DoNothingComputation {}
 
 impl Computation for DoNothingComputation {
@@ -69,6 +74,7 @@ impl Computation for DoNothingComputation {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+#[derive(SerializableComputation)]
 struct IncrementStateComputation {
     value: u32
 }
