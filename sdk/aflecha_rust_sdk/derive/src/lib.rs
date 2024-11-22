@@ -2,7 +2,6 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput};
 
-use aflecha_operator::SerializableComputation;
 
 #[proc_macro_derive(SerializableComputation)]
 pub fn serializable_computation_macro(input: TokenStream) -> TokenStream {
