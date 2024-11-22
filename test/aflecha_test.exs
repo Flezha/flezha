@@ -14,8 +14,7 @@ defmodule AflechaTest do
   test "add computation" do
     computation = %Aflecha.Computation.Builder{
       id: "add_compuation_test",
-      factory_id: @test_computation_factory,
-      type: :stream
+      factory_id: @test_computation_factory
     }
 
     assert Aflecha.add_computation(@default_operator, computation) === {:ok, "computation added"}
@@ -24,8 +23,7 @@ defmodule AflechaTest do
   test "no operator specified" do
     computation = %Aflecha.Computation.Builder{
       id: "no_operator_test",
-      factory_id: @test_computation_factory,
-      type: :stream
+      factory_id: @test_computation_factory
     }
 
     assert Aflecha.add_computation(computation) === {:ok, "computation added"}
@@ -35,8 +33,7 @@ defmodule AflechaTest do
   test "remove computation" do
     computation = %Aflecha.Computation.Builder{
       id: "rem_compuation_test",
-      factory_id: @test_computation_factory,
-      type: :stream
+      factory_id: @test_computation_factory
     }
 
     assert Aflecha.add_computation(@default_operator, computation) === {:ok, "computation added"}
@@ -48,14 +45,12 @@ defmodule AflechaTest do
   test "validate computation length" do
     invalid_computation = %Aflecha.Computation.Builder{
       id: "some_very_long_computation_id_that_should_fail",
-      factory_id: @test_computation_factory,
-      type: :stream
+      factory_id: @test_computation_factory
     }
 
     valid_computation = %Aflecha.Computation.Builder{
       id: "computation_string_32_bytes_long",
-      factory_id: @test_computation_factory,
-      type: :stream
+      factory_id: @test_computation_factory
     }
 
     assert Aflecha.add_computation(@default_operator, invalid_computation) ===
@@ -68,8 +63,7 @@ defmodule AflechaTest do
   test "add new io generator" do
     computation = %Aflecha.Computation.Builder{
       id: "add_io_generator_test",
-      factory_id: @test_computation_factory,
-      type: :stream
+      factory_id: @test_computation_factory
     }
 
     {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
@@ -86,8 +80,7 @@ defmodule AflechaTest do
   test "add new io internal process" do
     computation = %Aflecha.Computation.Builder{
       id: "add_io_internal_process_test",
-      factory_id: @test_computation_factory,
-      type: :stream
+      factory_id: @test_computation_factory
     }
 
     {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
@@ -105,8 +98,7 @@ defmodule AflechaTest do
     computation = %Aflecha.Computation.Builder{
       id: "c_flow_test_generate_internal",
       factory_id: @test_compare_filter_factory,
-      variables: %{"comparable" => "hello world", "inverted" => false},
-      type: :stream
+      variables: %{"comparable" => "hello world", "inverted" => false}
     }
 
     {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)

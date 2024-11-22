@@ -6,11 +6,10 @@ defmodule Aflecha.Computation.Builder do
   @type t() :: %__MODULE__{
           id: String.t(),
           factory_id: String.t(),
-          type: :stream | :task,
           variables: map()
         }
-  @enforce_keys [:id, :factory_id, :type]
-  defstruct [:id, :factory_id, :type, variables: %{}]
+  @enforce_keys [:id, :factory_id]
+  defstruct [:id, :factory_id, variables: %{}]
 
   def from_json(json_str) do
     case Jason.decode!(json_str) do
@@ -22,14 +21,12 @@ defmodule Aflecha.Computation.Builder do
   def from_map(values_map) do
     with {:ok, id} <- get_from_map(values_map, "id"),
          {:ok, factory_id} <- get_from_map(values_map, "factory_id"),
-         {:ok, type} <- get_from_map(values_map, "type"),
          variables <- Map.get(values_map, "variables", %{}),
          {:ok, variables_json} <- Jason.decode(variables) do
       computation = %__MODULE__{
         id: id,
         factory_id: factory_id,
-        variables: variables_json,
-        type: type
+        variables: variables_json
       }
 
       {:ok, computation}

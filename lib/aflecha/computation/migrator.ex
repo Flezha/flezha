@@ -1,9 +1,9 @@
 defmodule Aflecha.Computation.Migrator do
   alias Aflecha.Service.Identificator
 
-  def serialize_computation(operator_id, computation_id, type) do
+  def serialize_computation(operator_id, computation_id) do
     command_id = "serialize_computation"
-    data = %{"computation_id" => computation_id, type => type}
+    data = %{"computation_id" => computation_id}
 
     GenServer.call(Identificator.control_unit(operator_id), {:send_control, command_id, data})
   end

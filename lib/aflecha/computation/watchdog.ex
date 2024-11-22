@@ -6,7 +6,7 @@ defmodule Aflecha.Computation.WatchDog do
 
   use GenServer
 
-  defstruct [:id, :operator_id, :type, :channel, :supervisors, :io, variables: %{}]
+  defstruct [:id, :operator_id, :channel, :supervisors, :io, variables: %{}]
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args)
@@ -18,7 +18,6 @@ defmodule Aflecha.Computation.WatchDog do
      %__MODULE__{
        id: computation.id,
        operator_id: operator_id,
-       type: computation.type,
        variables: computation.variables,
        channel: attach_channel(computation.id, operator_id),
        io: %{
@@ -98,7 +97,7 @@ defmodule Aflecha.Computation.WatchDog do
   def handle_info({:process_hub, :handover_start, startup_resp, child_id, from}, state) do
     case startup_resp do
       {:ok, pid} ->
-        serialized_data = Migrator.serialize_computation(state.operator_id, state.id, state.type)
+        serialized_data = Migrator.serialize_computation(state.operator_id, state.id)
 
         # Send the state to the remote process.
         Process.send(pid, {:process_hub, :handover, {state, serialized_data}}, [])

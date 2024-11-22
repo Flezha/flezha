@@ -7,8 +7,7 @@ defmodule MigratorTest do
   test "serialize computation" do
     computation = %Aflecha.Computation.Builder{
       id: "serialize_computation_test",
-      factory_id: "increment_state",
-      type: :stream
+      factory_id: "increment_state"
     }
 
     Aflecha.add_computation(@default_group, computation)
@@ -16,8 +15,7 @@ defmodule MigratorTest do
     serialized_data =
       Aflecha.Computation.Migrator.serialize_computation(
         @default_group,
-        "serialize_computation_test",
-        :stream
+        "serialize_computation_test"
       )
 
     assert is_list(serialized_data)
@@ -27,8 +25,7 @@ defmodule MigratorTest do
   test "deserialize computation" do
     computation = %Aflecha.Computation.Builder{
       id: "serialize_computation_test",
-      factory_id: "increment_state",
-      type: :stream
+      factory_id: "increment_state"
     }
 
     Aflecha.add_computation(@default_group, computation)
@@ -36,8 +33,7 @@ defmodule MigratorTest do
     serialized_data =
       Aflecha.Computation.Migrator.serialize_computation(
         @default_group,
-        "serialize_computation_test",
-        :stream
+        "serialize_computation_test"
       )
 
     assert :ok ===
