@@ -36,10 +36,10 @@ fn main() {
         }
     };
 
+    let command = format!("aflecha{}", extension);
+
     match args[1].as_str() {
         "start" => {
-            let command = format!("../_build/prod/rel/aflecha/bin/aflecha{}", extension);
-
             println!("Starting aflecha agent...");
 
             // Attempt to execute the external command.
@@ -55,8 +55,6 @@ fn main() {
         }
         "stop" => {
             println!("Stopping aflecha agent...");
-
-            let command = format!("../_build/prod/rel/aflecha/bin/aflecha{}", extension);
 
             // Attempt to execute the external command.
             let status = Command::new(command).status();

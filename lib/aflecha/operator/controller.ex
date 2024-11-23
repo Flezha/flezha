@@ -37,6 +37,11 @@ defmodule Aflecha.Operator.Controller do
     {:reply, response, state}
   end
 
+  @impl true
+  def handle_info({:factory_registered, _factory_id}, state) do
+    {:noreply, state}
+  end
+
   defp add_computation(group_id, computation) do
     child_spec = %{
       id: computation.id,

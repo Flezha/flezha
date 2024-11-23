@@ -29,7 +29,7 @@ fn main() {
     );
 
     // TODO: remove later.
-    std::thread::sleep(std::time::Duration::from_secs(120));
+    std::thread::sleep(std::time::Duration::from_secs(360));
 }
 
 #[derive(Serialize, Deserialize, Clone)]
