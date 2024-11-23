@@ -34,7 +34,7 @@ fn handle_add(args: Vec<String>) {
 
     let rpc_command = match operator_id.as_str() {
         "" => format!("Aflecha.add_computation({})", computation_struct),
-        _ => format!("Aflecha.add_computation({}, {})", operator_id, computation_struct)
+        _ => format!("Aflecha.add_computation(\"{}\", {})", operator_id, computation_struct)
     };
 
     println!("Adding computation...");
@@ -62,8 +62,8 @@ fn handle_rem(args: Vec<String>) {
     let operator_id = get_operator_id(&args[3..]);
 
     let rpc_command = match operator_id.as_str() {
-        "" => format!("Aflecha.rem_computation({})", computation_id),
-        _ => format!("Aflecha.rem_computation({}, {})", operator_id, computation_id)
+        "" => format!("Aflecha.rem_computation(\"{}\")", computation_id),
+        _ => format!("Aflecha.rem_computation(\"{}\", \"{}\")", operator_id, computation_id)
     };
 
     let command = get_aflecha_command();
