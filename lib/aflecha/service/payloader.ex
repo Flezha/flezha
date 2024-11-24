@@ -1,4 +1,11 @@
 defmodule Aflecha.Service.Payloader do
+  def json_to_map(json) do
+    case Jason.decode(json) do
+      {:ok, map} -> map
+      {:error, reason} -> raise reason
+    end
+  end
+
   def build_from_bin(id, message)
       when is_binary(id) and is_binary(message) do
     # Ensure id is exactly 32 bytes.

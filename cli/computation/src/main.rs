@@ -28,9 +28,24 @@ fn handle_add(args: Vec<String>) {
 
     let computation_id = &args[2];
     let factory_id = &args[3];
-    let operator_id = get_operator_id(&args[4..]);
-    let computation_struct = format!("%Aflecha.Computation.Builder{{id: \"{}\", factory_id: \"{}\"}}", computation_id, factory_id);
+    let variables = get_variables(&args[4..]);
+
+    let computation_struct = match variables.as_str() {
+        "" => format!(
+            "%Aflecha.Computation.Builder{{id: \"{}\", factory_id: \"{}\"}}",
+            computation_id,
+            factory_id
+        ),
+        _ => format!(
+            "%Aflecha.Computation.Builder{{id: \"{}\", factory_id: \"{}\", variables: Aflecha.Service.Payloader.json_to_map(\"{}\") }}",
+            computation_id,
+            factory_id, 
+            variables
+        )
+    };
+
     let command = get_aflecha_command();
+    let operator_id = get_operator_id(&args[4..]);
 
     let rpc_command = match operator_id.as_str() {
         "" => format!("Aflecha.add_computation({})", computation_struct),
@@ -115,5 +130,20 @@ fn get_operator_id(slice: &[String]) -> String {
         }
     }
 
-    return operator_id;
+    operator_id
+}
+
+fn get_variables(slice: &[String]) -> String {
+    let mut variables = String::from("");
+
+    // Process the arguments to find the variables
+    for arg in slice {
+        if arg.starts_with("--variables=") {
+            variables = arg[12..].to_string();
+        } else if arg.starts_with("-v=") {
+            variables = arg[3..].to_string();
+        }
+    }
+
+    variables.replace("\"", "\\\"")
 }
