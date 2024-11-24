@@ -25,7 +25,8 @@ defmodule Aflecha.MixProject do
       aflecha: [
         include_executables_for: [:unix],
         include_erts: true,
-        application: [:aflecha]
+        application: [:aflecha],
+        steps: [:assemble, &copy_cli_commands/1]
       ]
     ]
   end
@@ -39,5 +40,13 @@ defmodule Aflecha.MixProject do
       {:fresh, "~> 0.4.4"}
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
+  end
+
+  # TODO: switch "debug" to "release" when ready.
+  defp copy_cli_commands(release) do
+    File.cp!("cli/target/debug/agent", Path.join(release.path, "bin/agent"))
+    File.cp!("cli/target/debug/agent", Path.join(release.path, "bin/computation"))
+    File.cp!("cli/target/debug/agent", Path.join(release.path, "bin/io"))
+    release
   end
 end
