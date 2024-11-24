@@ -7,7 +7,26 @@ fn main() {
 
     // Check if at least one argument is provided
     if args.len() < 2 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} <start|stop> [--mode={{attached|daemon|attached_iex|daemon_iex}} | -m=]", args[0]);
+        eprintln!("Error: Invalid number of arguments. See `help` for more information.");
+        exit(1);
+    }
+
+    match args[1].as_str() {
+        "start" => handle_start(args),
+        "stop" => handle_stop(args),
+        _ => {
+            eprintln!("Error: Invalid argument '{}'. Use 'start' or 'stop' only.", args[1]);
+            exit(1);
+        }
+    }
+}
+
+fn handle_start(_args: Vec<String>) {
+    let args: Vec<String> = env::args().collect();
+
+    // Check if at least one argument is provided
+    if args.len() < 2 {
+        eprintln!("Error: Invalid number of arguments. Usage: {} <start> [--mode={{attached|daemon|attached_iex|daemon_iex}} | -m=]", args[0]);
         exit(1);
     }
 
@@ -38,36 +57,33 @@ fn main() {
 
     let command = get_aflecha_command();
 
-    match args[1].as_str() {
-        "start" => {
-            println!("Starting aflecha agent...");
+    println!("Starting aflecha agent...");
 
-            // Attempt to execute the external command.
-            let status = Command::new(command)
-                .arg(command_mode)
-                .status();
+    // Attempt to execute the external command.
+    let status = Command::new(command)
+        .arg(command_mode)
+        .status();
 
-            match status {
-                Ok(status) if status.success() => println!("Program started successfully."),
-                Ok(status) => eprintln!("Program exited with code: {}", status),
-                Err(e) => eprintln!("Failed to start program: {}", e),
-            }
-        }
-        "stop" => {
-            println!("Stopping aflecha agent...");
+    match status {
+        Ok(status) if status.success() => println!("Agent started successfully."),
+        Ok(status) => eprintln!("Unknown code returned: {}", status),
+        Err(e) => eprintln!("Failed to start program: {}", e),
+    }
+}
 
-            // Attempt to execute the external command.
-            let status = Command::new(command).status();
+fn handle_stop(_args: Vec<String>) {
+    let command = get_aflecha_command();
 
-            match status {
-                Ok(status) if status.success() => println!("Program stopped successfully."),
-                Ok(status) => eprintln!("Program exited with code: {}", status),
-                Err(e) => eprintln!("Failed to stop program: {}", e),
-            }
-        }
-        _ => {
-            eprintln!("Error: Invalid argument '{}'. Use 'start' or 'stop' only.", args[1]);
-            exit(1);
-        }
+    println!("Stopping aflecha agent...");
+
+    // Attempt to execute the external command.
+    let status = Command::new(command)
+        .arg("stop")
+        .status();
+
+    match status {
+        Ok(status) if status.success() => println!("Program stopped successfully."),
+        Ok(status) => eprintln!("Unknown code returned: {}", status),
+        Err(e) => eprintln!("Failed to stop program: {}", e),
     }
 }
