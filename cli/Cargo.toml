@@ -2,7 +2,8 @@
 resolver = "2"
 
 members = [
+    "shared_lib",
     "agent",
     "computation", 
-    "io",
+    "io", 
 ]

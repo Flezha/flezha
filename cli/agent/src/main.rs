@@ -1,5 +1,6 @@
 use std::env;
 use std::process::{Command, exit};
+use shared_lib::get_aflecha_command;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -11,7 +12,6 @@ fn main() {
     }
 
     // Determine the extension based on the operating system
-    let extension = if cfg!(target_os = "windows") { ".bat" } else { "" };
     let mut mode_arg = String::from("");
 
     // Process the arguments to find the mode parameter
@@ -36,7 +36,7 @@ fn main() {
         }
     };
 
-    let command = format!("aflecha{}", extension);
+    let command = get_aflecha_command();
 
     match args[1].as_str() {
         "start" => {
