@@ -45,8 +45,8 @@ defmodule Aflecha.MixProject do
   # TODO: switch "debug" to "release" when ready.
   defp copy_cli_commands(release) do
     File.cp!("cli/target/debug/agent", Path.join(release.path, "bin/agent"))
-    File.cp!("cli/target/debug/agent", Path.join(release.path, "bin/computation"))
-    File.cp!("cli/target/debug/agent", Path.join(release.path, "bin/io"))
+    File.cp!("cli/target/debug/computation", Path.join(release.path, "bin/computation"))
+    File.cp!("cli/target/debug/io", Path.join(release.path, "bin/io"))
     release
   end
 end
