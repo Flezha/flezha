@@ -2,7 +2,7 @@
 resolver = "2"
 
 members = [
-    "system",
+    "agent",
     "computation", 
     "io",
 ]
