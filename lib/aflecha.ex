@@ -38,9 +38,30 @@ defmodule Aflecha do
     end
   end
 
-  def add_io(computation_id, settings, direction, opts) do
-    OperatorsSup.default_operator()
-    |> add_io(computation_id, settings, direction, opts)
+  def add_output(computation_id, settings, opts) do
+    add_output(
+      OperatorsSup.default_operator(),
+      computation_id,
+      settings,
+      opts
+    )
+  end
+
+  def add_output(operator_id, computation_id, settings, opts) do
+    add_io(operator_id, computation_id, settings, :output, opts)
+  end
+
+  def add_input(computation_id, settings, opts) do
+    add_input(
+      OperatorsSup.default_operator(),
+      computation_id,
+      settings,
+      opts
+    )
+  end
+
+  def add_input(operator_id, computation_id, settings, opts) do
+    add_io(operator_id, computation_id, settings, :input, opts)
   end
 
   def add_io(operator_id, computation_id, io_struct, direction, opts) do

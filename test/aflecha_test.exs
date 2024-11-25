@@ -69,11 +69,10 @@ defmodule AflechaTest do
     {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
 
     res =
-      Aflecha.add_io(
+      Aflecha.add_input(
         @default_operator,
         computation.id,
         %Aflecha.IO.Generator{interval: 100},
-        :input,
         []
       )
 
@@ -90,11 +89,10 @@ defmodule AflechaTest do
     {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
 
     res =
-      Aflecha.add_io(
+      Aflecha.add_input(
         @default_operator,
         computation.id,
         %Aflecha.IO.InternalProcess{output_pid: self()},
-        :input,
         []
       )
 
@@ -111,15 +109,14 @@ defmodule AflechaTest do
 
     {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
 
-    Aflecha.add_io(
+    Aflecha.add_output(
       @default_operator,
       computation.id,
       %Aflecha.IO.InternalProcess{output_pid: self()},
-      :output,
       []
     )
 
-    Aflecha.add_io(
+    Aflecha.add_input(
       @default_operator,
       computation.id,
       %Aflecha.IO.Generator{
@@ -127,11 +124,10 @@ defmodule AflechaTest do
         startup_payload: true,
         message: "hello world"
       },
-      :input,
       handling_type: :task
     )
 
-    Aflecha.add_io(
+    Aflecha.add_input(
       @default_operator,
       computation.id,
       %Aflecha.IO.Generator{
@@ -139,7 +135,6 @@ defmodule AflechaTest do
         startup_payload: true,
         message: "hello world"
       },
-      :input,
       handling_type: :task
     )
 
