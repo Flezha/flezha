@@ -68,14 +68,17 @@ defmodule AflechaTest do
 
     {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
 
-    assert Aflecha.add_io(
-             @default_operator,
-             computation.id,
-             "generator",
-             %Aflecha.IO.Generator{interval: 100},
-             :input,
-             []
-           ) == {:ok, "IO created"}
+    res =
+      Aflecha.add_io(
+        @default_operator,
+        computation.id,
+        %Aflecha.IO.Generator{interval: 100},
+        :input,
+        []
+      )
+
+    assert elem(res, 0) == :ok
+    assert is_binary(elem(res, 1))
   end
 
   test "add new io internal process" do
@@ -86,14 +89,17 @@ defmodule AflechaTest do
 
     {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
 
-    assert Aflecha.add_io(
-             @default_operator,
-             computation.id,
-             "internal_process",
-             %Aflecha.IO.InternalProcess{output_pid: self()},
-             :input,
-             []
-           ) == {:ok, "IO created"}
+    res =
+      Aflecha.add_io(
+        @default_operator,
+        computation.id,
+        %Aflecha.IO.InternalProcess{output_pid: self()},
+        :input,
+        []
+      )
+
+    assert elem(res, 0) == :ok
+    assert is_binary(elem(res, 1))
   end
 
   test "computation flow generation -> internal_process" do
@@ -105,40 +111,37 @@ defmodule AflechaTest do
 
     {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
 
-    assert Aflecha.add_io(
-             @default_operator,
-             computation.id,
-             "internal_process",
-             %Aflecha.IO.InternalProcess{output_pid: self()},
-             :output,
-             []
-           ) == {:ok, "IO created"}
+    Aflecha.add_io(
+      @default_operator,
+      computation.id,
+      %Aflecha.IO.InternalProcess{output_pid: self()},
+      :output,
+      []
+    )
 
-    assert Aflecha.add_io(
-             @default_operator,
-             computation.id,
-             "stream_generator",
-             %Aflecha.IO.Generator{
-               interval: 10000,
-               startup_payload: true,
-               message: "hello world"
-             },
-             :input,
-             handling_type: :task
-           ) == {:ok, "IO created"}
+    Aflecha.add_io(
+      @default_operator,
+      computation.id,
+      %Aflecha.IO.Generator{
+        interval: 10000,
+        startup_payload: true,
+        message: "hello world"
+      },
+      :input,
+      handling_type: :task
+    )
 
-    assert Aflecha.add_io(
-             @default_operator,
-             computation.id,
-             "task_generator",
-             %Aflecha.IO.Generator{
-               interval: 10000,
-               startup_payload: true,
-               message: "hello world"
-             },
-             :input,
-             handling_type: :task
-           ) == {:ok, "IO created"}
+    Aflecha.add_io(
+      @default_operator,
+      computation.id,
+      %Aflecha.IO.Generator{
+        interval: 10000,
+        startup_payload: true,
+        message: "hello world"
+      },
+      :input,
+      handling_type: :task
+    )
 
     for _ <- 1..2 do
       receive do
