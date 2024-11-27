@@ -1,6 +1,6 @@
 use std::env;
 use std::process::{Command, exit};
-use shared_lib::{get_operator_id, get_variables, get_aflecha_command};
+use shared_lib::{get_operator_id, get_json, get_aflecha_command};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -29,7 +29,7 @@ fn handle_add(args: Vec<String>) {
 
     let computation_id = &args[2];
     let factory_id = &args[3];
-    let variables = get_variables(&args[4..]);
+    let variables = get_json(&args[4..], "--variables=", "-v=");
 
     let computation_struct = match variables.as_str() {
         "" => format!(

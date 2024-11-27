@@ -1,4 +1,36 @@
 defmodule Aflecha.Service.Payloader do
+  def extract_io_settings(json_str) do
+    settings_map = json_to_map(json_str)
+
+    computation_id =
+      case Map.fetch(settings_map, "computation_id") do
+        {:ok, computation_id} -> computation_id
+        :error -> raise "No computation_id found in the input"
+      end
+
+    io_type =
+      case Map.fetch(settings_map, "io_type") do
+        {:ok, io_type} -> io_type
+        :error -> raise "No io_type found in the input"
+      end
+
+    settings_map =
+      settings_map
+      |> Map.delete("computation_id")
+      |> Map.delete("io_type")
+
+    io_struct = case io_type do
+      "generator" -> %Aflecha.IO.Generator{
+        interval: Map.get(settings_map, "interval", 1000),
+        startup_payload: Map.get(settings_map, "startup_payload", false),
+        message: Map.get(settings_map, "message", "Example message")
+      }
+      _ -> raise "Unknown io_type: #{io_type}"
+    end
+
+    {computation_id, io_struct}
+  end
+
   def json_to_map(json) do
     case Jason.decode(json) do
       {:ok, map} -> map

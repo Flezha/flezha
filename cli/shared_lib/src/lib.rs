@@ -35,14 +35,14 @@ pub fn get_operator_id(slice: &[String]) -> String {
     operator_id
 }
 
-pub fn get_variables(slice: &[String]) -> String {
+pub fn get_json(slice: &[String], long_key: &str, short_key: &str) -> String {
     let mut variables = String::from("");
 
     // Process the arguments to find the variables
     for arg in slice {
-        if arg.starts_with("--variables=") {
+        if arg.starts_with(long_key) {
             variables = arg[12..].to_string();
-        } else if arg.starts_with("-v=") {
+        } else if arg.starts_with(short_key) {
             variables = arg[3..].to_string();
         }
     }
