@@ -2,12 +2,6 @@ defmodule Aflecha.Service.Payloader do
   def extract_io_settings(json_str) do
     settings_map = json_to_map(json_str)
 
-    computation_id =
-      case Map.fetch(settings_map, "computation_id") do
-        {:ok, computation_id} -> computation_id
-        :error -> raise "No computation_id found in the input"
-      end
-
     io_type =
       case Map.fetch(settings_map, "io_type") do
         {:ok, io_type} -> io_type
@@ -28,7 +22,7 @@ defmodule Aflecha.Service.Payloader do
       _ -> raise "Unknown io_type: #{io_type}"
     end
 
-    {computation_id, io_struct}
+    io_struct
   end
 
   def json_to_map(json) do
