@@ -17,7 +17,17 @@ defmodule Aflecha.IO.Websocket do
               ]
 
   def start_link(%__MODULE__{uri: uri, opts: opts}) do
-    Fresh.start_link(uri, __MODULE__, %{connected: false}, opts)
+    case Fresh.start_link(uri, __MODULE__, %{subscriber: self()}, opts) do
+      {:ok, pid} ->
+        receive do
+          :connected -> {:ok, pid}
+        after
+          5000 -> {:error, "Timeout while connecting to websocket"}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   @impl Fresh
@@ -26,11 +36,15 @@ defmodule Aflecha.IO.Websocket do
 
     Logger.info("Connected to websocket!")
 
-    {:ok, Map.put(state, :connected, true)}
+    send(state[:subscriber], :connected)
+
+    {:ok, state}
   end
 
   @impl Fresh
   def handle_control({_, message}, state) do
+    dbg()
+
     IO.puts("Received ping with content: #{message}!")
 
     {:ok, state}
@@ -50,6 +64,8 @@ defmodule Aflecha.IO.Websocket do
 
   @impl Fresh
   def handle_info(any, state) do
+    dbg()
+
     IO.puts("Received info: #{inspect(any)}")
 
     {:ok, state}
