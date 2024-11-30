@@ -1,30 +1,32 @@
 defmodule Aflecha.IO.Websocket do
-  alias Aflecha.IO.IOBaseBehaviour, as: IOBaseBehaviour
-
-  @behaviour IOBaseBehaviour
+  require Logger
 
   use Fresh
+  use Aflecha.IO.Contract
 
-  @enforce_keys [:type, :msg]
-  defstruct @enforce_keys
+  @type t() :: %__MODULE__{
+          uri: String.t(),
+          opts: keyword()
+        }
+  @enforce_keys [
+    :uri
+  ]
+  defstruct @enforce_keys ++
+              [
+                opts: []
+              ]
 
-  # TODO: may need to implement this
-  # defimpl Aflecha.IO.Base, for: Aflecha.IO.InternalProcess do
-  #   def mfa(io_struct),
-  #     do:
-  #       {Aflecha.IO.InternalProcess, :start_link,
-  #        [
-  #          [io_struct]
-  #        ]}
-  # end
-
-  def start_link(uri, state, opts) do
-    Fresh.start_link(uri, __MODULE__, state, opts)
+  def start_link(%__MODULE__{uri: uri, opts: opts}) do
+    Fresh.start_link(uri, __MODULE__, %{connected: false}, opts)
   end
 
   @impl Fresh
   def handle_connect(_status, _headers, state) do
-    {:ok, state}
+    dbg("Connected to websocket!")
+
+    Logger.info("Connected to websocket!")
+
+    {:ok, Map.put(state, :connected, true)}
   end
 
   @impl Fresh
@@ -36,6 +38,8 @@ defmodule Aflecha.IO.Websocket do
 
   @impl Fresh
   def handle_in({data_type, payload}, state) do
+    dbg()
+
     GenServer.cast(
       {:via, PartitionSupervisor, {Aflecha.ChannelSupervisor, self()}},
       {:io_in, data_type, payload}
@@ -51,8 +55,8 @@ defmodule Aflecha.IO.Websocket do
     {:ok, state}
   end
 
-  @impl IOBaseBehaviour
-  def handle_internal_payload(server, %__MODULE__{type: type, msg: msg}) do
+  @impl Aflecha.IO.Contract
+  def send_payload(server, {type, msg}) do
     Fresh.send(server, {type, msg})
   end
 end

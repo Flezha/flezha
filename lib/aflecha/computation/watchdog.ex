@@ -33,7 +33,7 @@ defmodule Aflecha.Computation.WatchDog do
 
   @impl true
   def handle_call({:add_io, direction, io_struct, opts}, _from, state) do
-    {module, func, args} = Aflecha.IO.Base.mfa(io_struct)
+    {module, func, args} = Aflecha.IO.Provider.mfa(io_struct)
     new_args = [self() | args] ++ [opts]
     io_id = Enum.random(1..10000) |> Integer.to_string()
 
@@ -56,27 +56,26 @@ defmodule Aflecha.Computation.WatchDog do
     end
   end
 
-  # TODO: Implement this function
-  # @impl true
-  # def handle_call({:io_internal_payload, io_id, direction, payload}, _from, state)
-  #     when is_struct(payload) do
-  #   io_data = Map.get(state.io, direction)
+  @impl true
+  def handle_call({:send_io_payload, io_id, direction, payload}, _from, state)
+      when is_struct(payload) do
+    io_data = Map.get(state.io, direction)
 
-  #   case io_data do
-  #     nil ->
-  #       {:reply, {:error, "IO handler not found"}, state}
+    case io_data do
+      nil ->
+        {:reply, {:error, "IO handler not found"}, state}
 
-  #     {io_module, _initial_io_pid} ->
-  #       sup = Map.get(state.supervisors, direction)
-  #       {:ok, io_pid} = IOSupervisor.find_pid(sup, io_id)
-  #       res = apply(io_module, :handle_internal_payload, [io_pid, payload])
+      {io_module, _initial_io_pid} ->
+        sup = Map.get(state.supervisors, direction)
+        {:ok, io_pid} = IOSupervisor.find_pid(sup, io_id)
+        res = apply(io_module, :send_payload, [io_pid, payload])
 
-  #       {:reply, res, state}
-  #   end
-  # end
+        {:reply, res, state}
+    end
+  end
 
   @impl true
-  def handle_call({:io_internal_payload, _payload}, _from, state) do
+  def handle_call({:send_io_payload, _payload}, _from, state) do
     {:reply, {:error, "Invalid payload"}, state}
   end
 

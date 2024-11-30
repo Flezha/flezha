@@ -71,16 +71,16 @@ defmodule Aflecha do
     |> GenServer.call({:add_io, direction, io_struct, io_opts(opts)}, timeout)
   end
 
-  def pipeline_io_internal_payload(computation_id, io_id, direction, payload) do
+  def send_io_payload(computation_id, io_id, direction, payload) do
     OperatorsSup.default_operator()
-    |> pipeline_io_internal_payload(computation_id, io_id, direction, payload)
+    |> send_io_payload(computation_id, io_id, direction, payload)
   end
 
-  def pipeline_io_internal_payload(operator_id, computation_id, io_id, direction, payload) do
+  def send_io_payload(operator_id, computation_id, io_id, direction, payload) do
     timeout = Application.fetch_env!(:aflecha, :io_payload_add_timeout)
 
     computation_pid_lookup(operator_id, computation_id)
-    |> GenServer.call({:io_internal_payload, io_id, direction, payload}, timeout)
+    |> GenServer.call({:send_io_payload, io_id, direction, payload}, timeout)
   end
 
   defp computation_pid_lookup(operator_id, computation_id) do

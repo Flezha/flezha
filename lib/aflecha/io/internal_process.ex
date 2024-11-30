@@ -1,20 +1,11 @@
 defmodule Aflecha.IO.InternalProcess do
-  alias Aflecha.IO.IOBaseBehaviour, as: IOBaseBehaviour
-
   use GenServer
-
-  @behaviour IOBaseBehaviour
+  use Aflecha.IO.Contract
 
   @enforce_keys [:output_pid]
-
   defstruct [
     :output_pid
   ]
-
-  defimpl Aflecha.IO.Base, for: Aflecha.IO.InternalProcess do
-    def mfa(io_struct),
-      do: {Aflecha.IO.InternalProcess, :start_link, [io_struct]}
-  end
 
   def start_link(pipeline_id, io_struct, opts) do
     GenServer.start_link(__MODULE__, {pipeline_id, io_struct, opts}, [])
@@ -44,6 +35,6 @@ defmodule Aflecha.IO.InternalProcess do
     {:noreply, state}
   end
 
-  @impl IOBaseBehaviour
-  def handle_internal_payload(_server, _payload), do: :ok
+  @impl Aflecha.IO.Contract
+  def send_payload(_server, _msg), do: :ok
 end
