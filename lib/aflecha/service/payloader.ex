@@ -13,14 +13,18 @@ defmodule Aflecha.Service.Payloader do
       |> Map.delete("computation_id")
       |> Map.delete("io_type")
 
-    io_struct = case io_type do
-      "generator" -> %Aflecha.IO.Generator{
-        interval: Map.get(settings_map, "interval", 1000),
-        startup_payload: Map.get(settings_map, "startup_payload", false),
-        message: Map.get(settings_map, "message", "Example message")
-      }
-      _ -> raise "Unknown io_type: #{io_type}"
-    end
+    io_struct =
+      case io_type do
+        "generator" ->
+          %Aflecha.IO.Generator{
+            interval: Map.get(settings_map, "interval", 1000),
+            startup_payload: Map.get(settings_map, "startup_payload", false),
+            message: Map.get(settings_map, "message", "Example message")
+          }
+
+        _ ->
+          raise "Unknown io_type: #{io_type}"
+      end
 
     io_struct
   end
