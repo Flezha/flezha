@@ -72,6 +72,7 @@ defmodule Aflecha.Operator.StreamChannel do
     |> Enum.each(fn {computation_id, message} ->
       computations = Map.get(compute_mappings, computation_id)
 
+      # TODO: Are we handling binary or text data?
       Enum.each(computations, fn pid -> GenServer.cast(pid, {:io_out, :text, message}) end)
     end)
 

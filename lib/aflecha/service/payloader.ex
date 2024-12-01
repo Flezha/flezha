@@ -24,7 +24,12 @@ defmodule Aflecha.Service.Payloader do
 
           payload =
             if Map.has_key?(post_connect, "payload") do
-              {Map.get(post_connect, "payload_type", :text), Map.get(post_connect, "payload")}
+              payload = Map.get(post_connect, "payload")
+
+              {
+                Enum.at(payload, 0) |> String.to_existing_atom(),
+                Enum.at(payload, 1) |> Jason.encode!()
+              }
             else
               {}
             end
