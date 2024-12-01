@@ -10,6 +10,11 @@ fn main() {
     let mut processor = aflecha_operator::new("default".to_string());
 
     processor.register_factory(
+        "forward_orig".to_string(),
+        || Box::new(ForwardOrigComputation{})
+    );
+
+    processor.register_factory(
         "do_nothing".to_string(),
         || Box::new(DoNothingComputation{})
     );
@@ -69,6 +74,24 @@ struct DoNothingComputation {}
 impl Computation for DoNothingComputation {
     fn run(&mut self, _input: ComputationInput) -> ComputationOutput {
         ComputationOutput::None
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[derive(SerializableComputation)]
+struct ForwardOrigComputation {}
+
+impl Computation for ForwardOrigComputation {
+    fn run(&mut self, input: ComputationInput) -> ComputationOutput {
+        match input {
+            ComputationInput::Text(text) => {
+                ComputationOutput::Forward(ComputationResult::Text(text))
+            }
+            ComputationInput::Binary(binary) => {
+                ComputationOutput::Forward(ComputationResult::Binary(binary))
+            }
+            
+        }
     }
 }
 

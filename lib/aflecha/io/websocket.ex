@@ -20,8 +20,17 @@ defmodule Aflecha.IO.Websocket do
                 opts: []
               ]
 
-  def start_link(%__MODULE__{uri: uri, post_connect: post_connect, opts: opts}) do
-    Fresh.start_link(uri, __MODULE__, %{post_connect: post_connect}, opts)
+  def start_link(pipeline_pid, %__MODULE__{uri: uri, post_connect: pc, opts: ws_opts}, opts) do
+    Fresh.start_link(
+      uri,
+      __MODULE__,
+      %{
+        post_connect: pc,
+        pipeline_pid: pipeline_pid,
+        handling_type: Keyword.get(opts, :handling_type)
+      },
+      ws_opts
+    )
   end
 
   @impl Fresh
@@ -44,12 +53,10 @@ defmodule Aflecha.IO.Websocket do
     {:ok, state}
   end
 
+  # TODO: rename pipeline_pid to computation_manager or antyhing else
   @impl Fresh
-  def handle_in({data_type, payload}, state) do
-    GenServer.cast(
-      {:via, PartitionSupervisor, {Aflecha.ChannelSupervisor, self()}},
-      {:io_in, data_type, payload}
-    )
+  def handle_in({data_type, payload}, %{pipeline_pid: cp, handling_type: handling_type} = state) do
+    GenServer.cast(cp, {:io_in, payload, data_type, handling_type})
 
     {:ok, state}
   end
