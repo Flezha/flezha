@@ -8,7 +8,7 @@ Distributed stateful computations. Provdes a static and dynamic creation of comp
 ### Start agent
 Starting the node and specifying the external processes to be used by the node mynode.
 ```bash
-RELEASE_NODE=mynode AFLECHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/aflecha/test/apps/rust_app/Cargo.toml --target-dir=./target" _build/dev/rel/aflecha/bin/agent start
+RELEASE_NODE=mynode AFLECHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/aflecha/test/apps/rust_app/Cargo.toml --target-dir=./target" _build/dev/rel/aflecha/bin/agent start --mode=attached_iex
 ```
 
 ### Stop agent
