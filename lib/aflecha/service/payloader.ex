@@ -8,10 +8,7 @@ defmodule Aflecha.Service.Payloader do
         :error -> raise "No io_type found in the input"
       end
 
-    settings_map =
-      settings_map
-      |> Map.delete("computation_id")
-      |> Map.delete("io_type")
+    settings_map = Map.delete(settings_map, "io_type")
 
     io_struct =
       case io_type do
@@ -23,13 +20,19 @@ defmodule Aflecha.Service.Payloader do
           }
 
         "websocket" ->
+          post_connect = Map.get(settings_map, "post_connect", %{})
+
+          payload =
+            if Map.has_key?(post_connect, "payload") do
+              {Map.get(post_connect, "payload_type", :text), Map.get(post_connect, "payload")}
+            else
+              {}
+            end
+
           %Aflecha.IO.Websocket{
             uri: Map.fetch!(settings_map, "uri"),
             post_connect: %{
-              payload: {
-                Map.fetch!(settings_map, "payload_type") |> String.to_existing_atom(),
-                Map.fetch!(settings_map, "payload")
-              }
+              payload: payload
             }
           }
 

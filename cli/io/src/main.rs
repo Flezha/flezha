@@ -42,13 +42,11 @@ fn handle_add(args: Vec<String>) {
     }
 
     let rpc_command = format!(
-        "io_struct = Aflecha.Service.Payloader.extract_io_settings(\"{}\"); Aflecha.add_{}(\"{}\", io_struct))",
+        "io_struct = Aflecha.Service.Payloader.extract_io_settings(\"{}\"); Aflecha.add_{}({}, io_struct, [])",
         params, 
         io_mode, 
         rpc_command_params
     );
-
-    println!("{}", rpc_command);
 
     println!("Adding io...");
 

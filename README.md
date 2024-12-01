@@ -17,14 +17,19 @@ Stopping the node.
 _build/dev/rel/aflecha/bin/agent stop
 ```
 
-Adding a computation to the node.
+### Adding a computation to the node.
 ```bash
 _build/dev/rel/aflecha/bin/computation add my_computation compare_filter --variables='{"comparable": "hello world", "inverted": false}'
 ```
 
-Removing a computation from the node.
+### Removing a computation from the node.
 ```bash
 _build/dev/rel/aflecha/bin/computation rem my_computation
+```
+
+### Adding IO to the computation.
+```bash
+_build/dev/rel/aflecha/bin/io add input my_computation --parameters='{"io_type": "websocket", "uri": "wss://ws.kraken.com", "post_connect": {"payload": {"payload_type": "text", "payload": {"event": "subscribe", "subscription":{"name": "trade"}, "pair":["BTC/EUR", "ETH/EUR"]}}}}'
 ```
 
 ## Build docker image for multiple platforms and push to docker hub

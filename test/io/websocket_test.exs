@@ -17,7 +17,7 @@ defmodule AflechaTest.IO.WebsocketTest do
       }
     }
 
-    {:ok, pid} = Aflecha.IO.Websocket.start_link(io_settings) |> dbg()
+    {:ok, pid} = Aflecha.IO.Websocket.start_link(io_settings)
 
     # Aflecha.IO.Websocket.send_payload(
     #   pid,

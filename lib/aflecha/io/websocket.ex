@@ -26,8 +26,6 @@ defmodule Aflecha.IO.Websocket do
 
   @impl Fresh
   def handle_connect(_status, _headers, state) do
-    dbg("Connected to websocket!")
-
     Logger.info("Connected to websocket!")
 
     post_conn_payload = state.post_connect[:payload]
@@ -41,8 +39,6 @@ defmodule Aflecha.IO.Websocket do
 
   @impl Fresh
   def handle_control({_, message}, state) do
-    dbg()
-
     IO.puts("Received ping with content: #{message}!")
 
     {:ok, state}
@@ -50,8 +46,6 @@ defmodule Aflecha.IO.Websocket do
 
   @impl Fresh
   def handle_in({data_type, payload}, state) do
-    dbg()
-
     GenServer.cast(
       {:via, PartitionSupervisor, {Aflecha.ChannelSupervisor, self()}},
       {:io_in, data_type, payload}
@@ -62,9 +56,7 @@ defmodule Aflecha.IO.Websocket do
 
   @impl Fresh
   def handle_info(any, state) do
-    dbg()
-
-    IO.puts("Received info: #{inspect(any)}")
+    Logger.warning("Received info: #{inspect(any)}")
 
     {:ok, state}
   end
