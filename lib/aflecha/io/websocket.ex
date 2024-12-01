@@ -30,8 +30,10 @@ defmodule Aflecha.IO.Websocket do
 
     Logger.info("Connected to websocket!")
 
-    if is_tuple(state.post_connect[:payload]) do
-      send_payload(self(), state.post_connect[:payload])
+    post_conn_payload = state.post_connect[:payload]
+
+    if is_tuple(post_conn_payload) && tuple_size(post_conn_payload) === 2 do
+      send_payload(self(), post_conn_payload)
     end
 
     {:ok, state}

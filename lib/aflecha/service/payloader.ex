@@ -22,6 +22,17 @@ defmodule Aflecha.Service.Payloader do
             message: Map.get(settings_map, "message", "Example message")
           }
 
+        "websocket" ->
+          %Aflecha.IO.Websocket{
+            uri: Map.fetch!(settings_map, "uri"),
+            post_connect: %{
+              payload: {
+                Map.fetch!(settings_map, "payload_type") |> String.to_existing_atom(),
+                Map.fetch!(settings_map, "payload")
+              }
+            }
+          }
+
         _ ->
           raise "Unknown io_type: #{io_type}"
       end
