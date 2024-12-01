@@ -6,6 +6,9 @@ defmodule Aflecha.IO.Websocket do
 
   @type t() :: %__MODULE__{
           uri: String.t(),
+          post_connect: %{
+            payload: {:text | :binary, binary()}
+          },
           opts: keyword()
         }
   @enforce_keys [
@@ -13,21 +16,12 @@ defmodule Aflecha.IO.Websocket do
   ]
   defstruct @enforce_keys ++
               [
+                post_connect: %{},
                 opts: []
               ]
 
-  def start_link(%__MODULE__{uri: uri, opts: opts}) do
-    case Fresh.start_link(uri, __MODULE__, %{subscriber: self()}, opts) do
-      {:ok, pid} ->
-        receive do
-          :connected -> {:ok, pid}
-        after
-          5000 -> {:error, "Timeout while connecting to websocket"}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+  def start_link(%__MODULE__{uri: uri, post_connect: post_connect, opts: opts}) do
+    Fresh.start_link(uri, __MODULE__, %{post_connect: post_connect}, opts)
   end
 
   @impl Fresh
@@ -36,7 +30,9 @@ defmodule Aflecha.IO.Websocket do
 
     Logger.info("Connected to websocket!")
 
-    send(state[:subscriber], :connected)
+    if is_tuple(state.post_connect[:payload]) do
+      send_payload(self(), state.post_connect[:payload])
+    end
 
     {:ok, state}
   end
