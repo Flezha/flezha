@@ -1,3 +1,5 @@
+use std::vec;
+
 use aflecha_derive::SerializableComputation;
 
 use aflecha_operator::{
@@ -8,6 +10,14 @@ use serde::{Serialize, Deserialize};
 
 fn main() {
     let mut processor = aflecha_operator::new("default".to_string());
+
+    processor.register_factory(
+        "store_input".to_string(),
+        || Box::new(StoreInputComputation{
+            text_inputs: vec![],
+            binary_inputs: vec![]
+        })
+    );
 
     processor.register_factory(
         "forward_orig".to_string(),
@@ -90,8 +100,29 @@ impl Computation for ForwardOrigComputation {
             ComputationInput::Binary(binary) => {
                 ComputationOutput::Forward(ComputationResult::Binary(binary))
             }
-            
         }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[derive(SerializableComputation)]
+struct StoreInputComputation {
+    binary_inputs: Vec<Vec<u8>>,
+    text_inputs: Vec<String>
+}
+
+impl Computation for StoreInputComputation {
+    fn run(&mut self, input: ComputationInput) -> ComputationOutput {
+        match input {
+            ComputationInput::Text(text) => {
+                self.text_inputs.push(text);
+            }
+            ComputationInput::Binary(binary) => {
+                self.binary_inputs.push(binary);
+            }
+        }
+
+        ComputationOutput::None
     }
 }
 

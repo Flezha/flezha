@@ -5,6 +5,5 @@
         "./cli/system/Cargo.toml",
         "./cli/computation/Cargo.toml",
         "./cli/io/Cargo.toml",
-    ],
-    "rust-analyzer.procMacro.enable": true
+    ]
 }

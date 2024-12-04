@@ -17,6 +17,7 @@ defmodule Aflecha.Operator.ControlUnit do
   @payload_id_computation_rem "rem_computation"
   @payload_id_serialize_comp "serialize_computation"
   @payload_id_deserialize_comp "deserialize_computation"
+  @payload_id_comp_state "computation_state"
 
   @spec start_link(binary()) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link(group_id) do
@@ -33,6 +34,18 @@ defmodule Aflecha.Operator.ControlUnit do
     handle_payload(state, payloads)
 
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:get_computation_state, computation_id}, from, state) do
+    ref =
+      ControlChannel.send_control(
+        Identificator.control_channel(state.group_id),
+        @payload_id_comp_state,
+        %{"computation_id" => computation_id}
+      )
+
+    {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
   end
 
   @impl true
@@ -114,6 +127,9 @@ defmodule Aflecha.Operator.ControlUnit do
 
         @payload_id_computation_rem ->
           :ok
+
+        @payload_id_comp_state ->
+          json_message["data"]
 
         @payload_id_serialize_comp ->
           json_message["data"]

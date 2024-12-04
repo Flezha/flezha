@@ -1,4 +1,5 @@
 defmodule Aflecha do
+  alias Aflecha.Operator.Controller
   alias Aflecha.Operator.OperatorsSup
   alias Aflecha.Service.Identificator
   alias Aflecha.Computation.Builder, as: ComputationBuilder
@@ -7,13 +8,24 @@ defmodule Aflecha do
   Documentation for `Aflecha`.
   """
 
+  # TODO: the default no operator parameter is bringing lots of duplication and mess.
+
+  def computation_state(computation_id) do
+    OperatorsSup.default_operator()
+    |> computation_state(computation_id)
+  end
+
+  def computation_state(operator_id, computation_id) do
+    GenServer.call(Controller, {:get_computation_state, operator_id, computation_id})
+  end
+
   def add_computation(computation) do
     OperatorsSup.default_operator()
     |> add_computation(computation)
   end
 
   def add_computation(operator_id, computation) do
-    GenServer.call(Aflecha.Operator.Controller, {:add_computation, operator_id, computation})
+    GenServer.call(Controller, {:add_computation, operator_id, computation})
   end
 
   def rem_computation(computation_id) do
@@ -22,7 +34,7 @@ defmodule Aflecha do
   end
 
   def rem_computation(operator_id, computation_id) do
-    GenServer.call(Aflecha.Operator.Controller, {:rem_computation, operator_id, computation_id})
+    GenServer.call(Controller, {:rem_computation, operator_id, computation_id})
   end
 
   def construct_computation!(input, type) do

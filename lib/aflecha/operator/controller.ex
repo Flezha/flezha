@@ -16,23 +16,34 @@ defmodule Aflecha.Operator.Controller do
   end
 
   @impl true
-  def handle_call({:add_computation, group_id, computation}, _from, state) do
+  def handle_call({:get_computation_state, operator_id, computation_id}, _from, state) do
+    computation_state =
+      GenServer.call(
+        Identificator.control_unit(operator_id),
+        {:get_computation_state, computation_id}
+      )
+
+    {:reply, computation_state, state}
+  end
+
+  @impl true
+  def handle_call({:add_computation, operator_id, computation}, _from, state) do
     response =
       case ComputationBuilder.validate_computation(computation) do
         {:error, reason} ->
           {:error, reason}
 
         :ok ->
-          # TODO: we should validate the group_id also.
-          add_computation(group_id, computation)
+          # TODO: we should validate the operator_id also.
+          add_computation(operator_id, computation)
       end
 
     {:reply, response, state}
   end
 
   @impl true
-  def handle_call({:rem_computation, group_id, computation_id}, _from, state) do
-    response = rem_computation(group_id, computation_id)
+  def handle_call({:rem_computation, operator_id, computation_id}, _from, state) do
+    response = rem_computation(operator_id, computation_id)
 
     {:reply, response, state}
   end
@@ -42,17 +53,17 @@ defmodule Aflecha.Operator.Controller do
     {:noreply, state}
   end
 
-  defp add_computation(group_id, computation) do
+  defp add_computation(operator_id, computation) do
     child_spec = %{
       id: computation.id,
-      start: {Aflecha.Computation.WatchDog, :start_link, [{group_id, computation}]}
+      start: {Aflecha.Computation.WatchDog, :start_link, [{operator_id, computation}]}
     }
 
     result =
-      ProcessHub.start_child(Identificator.hub(group_id), child_spec, async_wait: true)
+      ProcessHub.start_child(Identificator.hub(operator_id), child_spec, async_wait: true)
       |> ProcessHub.await()
 
-    GenServer.call(Identificator.control_unit(group_id), {:add_computation, computation})
+    GenServer.call(Identificator.control_unit(operator_id), {:add_computation, computation})
 
     case result do
       {:ok, _} -> {:ok, "computation added"}
@@ -60,14 +71,14 @@ defmodule Aflecha.Operator.Controller do
     end
   end
 
-  defp rem_computation(group_id, computation_id) do
+  defp rem_computation(operator_id, computation_id) do
     GenServer.call(
-      Identificator.control_unit(group_id),
+      Identificator.control_unit(operator_id),
       {:rem_computation, computation_id}
     )
 
     result =
-      ProcessHub.stop_child(Identificator.hub(group_id), computation_id, async_wait: true)
+      ProcessHub.stop_child(Identificator.hub(operator_id), computation_id, async_wait: true)
       |> ProcessHub.await()
 
     case result do

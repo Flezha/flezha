@@ -14,6 +14,7 @@ fn main() {
     match args[1].as_str() {
         "add" => handle_add(args),
         "rem" => handle_rem(args),
+        "state" => handle_state(args),
         _ => {
             eprintln!("Error: Invalid argument '{}'. Use 'add' or 'rem' only.", args[1]);
             exit(1);
@@ -97,4 +98,8 @@ fn handle_rem(args: Vec<String>) {
         Ok(_) => eprintln!("Unknown status returned."),
         Err(e) => eprintln!("Failed to remove computation: {}", e),
     }
+}
+
+fn handle_state(args: Vec<String>) {
+
 }

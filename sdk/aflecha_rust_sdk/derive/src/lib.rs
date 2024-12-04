@@ -23,6 +23,10 @@ pub fn serializable_computation_macro(input: TokenStream) -> TokenStream {
                 *self = serde_json::from_value(value).expect("Failed to convert from serde_json::Value");
             }
 
+            fn to_json_string(&self) -> String {
+                serde_json::to_string(self).expect("Failed to convert to JSON string")
+            }
+
             fn serialize_computation(&self) -> Vec<u8> {
                 bincode::serialize(self).expect("Failed to serialize")
             }
