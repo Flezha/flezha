@@ -3,13 +3,14 @@ mod rem_computation;
 mod connect_streams;
 mod serialize_computation;
 mod deserialize_computation;
+mod computation_state;
 
 use std::sync::{Arc, Mutex};
 
 use connect_streams::ConnectSocketCommand;
 use serialize_computation::SerializeComputationCommand;
 use deserialize_computation::DeSerializeComputationCommand;
-
+use computation_state::ComputationStateCommand;
 
 use crate::operator::ComputationOperator;
 
@@ -68,6 +69,11 @@ pub fn handle_action(
             let command: DeSerializeComputationCommand = serde_json::from_value(command.data)
                 .expect("Failed to deserialize DeSerializeComputationCommand");
             Box::new(command)
+        }
+        "computation_state" => {
+            let command: ComputationStateCommand = serde_json::from_value(command.data)
+            .expect("Failed to deserialize ComputationStateCommand");
+        Box::new(command)
         }
         _ => {
             panic!("Unknown command payload_id: {}", payload_id);

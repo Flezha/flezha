@@ -106,6 +106,11 @@ impl ComputationOperator {
         Arc::clone(&self.computations)
     }
 
+    pub fn get_computation(&self, id: String) -> Option<Arc<Mutex<Box<dyn Computation>>>>
+    {
+        self.computations.read().unwrap().get(&id).map(|computation| Arc::clone(computation))
+    }
+
     pub fn get_io_streams(&self) -> Arc<RwLock<HashMap<u8, UnixStream>>> {
         Arc::clone(&self.shared_io_streams)
     }
