@@ -29,6 +29,7 @@ pub trait SerializableComputation: Send + Sync  {
     fn update_computation(&mut self, map: &HashMap<String, Value>);
     fn serialize_computation(&self) -> Vec<u8>;
     fn deserialize_computation(&self, data: &[u8]) -> Box<dyn SerializableComputation>;
+    fn to_json_string(&self) -> String;
 }
 
 pub fn exec(
