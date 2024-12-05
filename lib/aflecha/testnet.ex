@@ -11,10 +11,11 @@ defmodule Aflecha.Testnet do
   def init(_) do
     command = "npm start --prefix testnet"
 
-    port = Port.open(
-      {:spawn, command},
-      [:binary]
-    )
+    port =
+      Port.open(
+        {:spawn, command},
+        [:binary]
+      )
 
     Port.monitor(port)
 
