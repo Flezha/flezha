@@ -9,6 +9,8 @@ defmodule AflechaTest do
   @test_forward_orig_factory "forward_orig"
   @test_store_input_factory "store_input"
 
+  @testnet_ws_uri "ws://localhost:4500"
+
   setup_all do
     %{}
   end
@@ -102,58 +104,11 @@ defmodule AflechaTest do
   #   assert is_binary(elem(res, 1))
   # end
 
-  # test "computation flow generation -> internal_process" do
-  #   computation = %Aflecha.Computation.Builder{
-  #     id: "c_flow_test_generate_internal",
-  #     factory_id: @test_compare_filter_factory,
-  #     variables: %{"comparable" => "hello world", "inverted" => false}
-  #   }
-
-  #   {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
-
-  #   Aflecha.add_output(
-  #     @default_operator,
-  #     computation.id,
-  #     %Aflecha.IO.InternalProcess{output_pid: self()},
-  #     []
-  #   )
-
-  #   Aflecha.add_input(
-  #     @default_operator,
-  #     computation.id,
-  #     %Aflecha.IO.Generator{
-  #       interval: 10000,
-  #       startup_payload: true,
-  #       message: "hello world"
-  #     },
-  #     handling_type: :task
-  #   )
-
-  #   Aflecha.add_input(
-  #     @default_operator,
-  #     computation.id,
-  #     %Aflecha.IO.Generator{
-  #       interval: 10000,
-  #       startup_payload: true,
-  #       message: "hello world"
-  #     },
-  #     handling_type: :task
-  #   )
-
-  #   for _ <- 1..2 do
-  #     receive do
-  #       _msg ->
-  #         assert true
-  #     after
-  #       1000 -> assert false
-  #     end
-  #   end
-  # end
-
   test "computation flow generation -> internal_process" do
     computation = %Aflecha.Computation.Builder{
       id: "c_flow_test_generate_internal",
-      factory_id: @test_forward_orig_factory
+      factory_id: @test_compare_filter_factory,
+      variables: %{"comparable" => "hello world", "inverted" => false}
     }
 
     {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
@@ -170,26 +125,67 @@ defmodule AflechaTest do
         @default_operator,
         computation.id,
         %Aflecha.IO.Websocket{
-          uri: "wss://ws.kraken.com",
+          uri: @testnet_ws_uri,
           post_connect: %{
             payload: {
               :text,
-              "{\"event\":\"subscribe\", \"subscription\":{\"name\": \"trade\"}, \"pair\":[\"BTC/EUR\", \"ETH/EUR\"]}"
+              "{\"event\":\"subscribe\", \"default_message\": \"hello world\"}"
             }
           }
         },
         handling_type: :task
       )
 
-    for _ <- 1..10 do
+    for _ <- 1..1 do
       receive do
-        msg ->
-          IO.inspect(msg)
+        _msg ->
+          assert true
       after
-        10000 -> assert false
+        1000 -> assert false
       end
     end
-
-    assert true
   end
+
+  # test "computation flow generation -> internal_process" do
+  #   computation = %Aflecha.Computation.Builder{
+  #     id: "c_flow_test_generate_internal",
+  #     factory_id: @test_forward_orig_factory
+  #   }
+
+  #   {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
+
+  #   Aflecha.add_output(
+  #     @default_operator,
+  #     computation.id,
+  #     %Aflecha.IO.InternalProcess{output_pid: self()},
+  #     []
+  #   )
+
+  #   {:ok, __id} =
+  #     Aflecha.add_input(
+  #       @default_operator,
+  #       computation.id,
+  #       %Aflecha.IO.Websocket{
+  #         uri: "wss://ws.kraken.com",
+  #         post_connect: %{
+  #           payload: {
+  #             :text,
+  #             "{\"event\":\"subscribe\", \"subscription\":{\"name\": \"trade\"}, \"pair\":[\"BTC/EUR\", \"ETH/EUR\"]}"
+  #           }
+  #         }
+  #       },
+  #       handling_type: :task
+  #     )
+
+  #   for _ <- 1..10 do
+  #     receive do
+  #       msg ->
+  #         IO.inspect(msg)
+  #     after
+  #       10000 -> assert false
+  #     end
+  #   end
+
+  #   assert true
+  # end
 end

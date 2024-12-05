@@ -22,6 +22,13 @@ defmodule Aflecha.Application do
       Aflecha.Operator.Controller
     ]
 
+    # If Testnet is enabled, we start the TestnetSupervisor
+    children = if Application.get_env(:aflecha, :testnet_enabled) do
+      [{Aflecha.Testnet, []} | children]
+    else
+      children
+    end
+
     opts = [strategy: :one_for_one, name: Aflecha.Supervisor]
     Supervisor.start_link(children, opts)
   end

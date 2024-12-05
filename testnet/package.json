@@ -1,0 +1,17 @@
+{
+  "name": "testnet",
+  "version": "1.0.0",
+  "description": "Testnet server for Aflecha.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "author": "Anuar Alfetahe",
+  "license": "ISC",
+  "dependencies": {
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.2",
+    "ws": "^8.18.0"
+  }
+}
