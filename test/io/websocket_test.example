@@ -1,13 +1,13 @@
 defmodule AflechaTest.IO.WebsocketTest do
   use ExUnit.Case
-  doctest Aflecha.IO.Websocket
+  doctest Aflecha.IO.Handler.Websocket
 
   setup_all do
     %{}
   end
 
   test "start_link" do
-    io_settings = %Aflecha.IO.Websocket{
+    io_settings = %Aflecha.IO.Handler.Websocket{
       uri: "wss://ws.kraken.com",
       post_connect: %{
         payload: {
@@ -17,9 +17,9 @@ defmodule AflechaTest.IO.WebsocketTest do
       }
     }
 
-    {:ok, pid} = Aflecha.IO.Websocket.start_link(io_settings)
+    {:ok, pid} = Aflecha.IO.Handler.Websocket.start_link(io_settings)
 
-    # Aflecha.IO.Websocket.send_payload(
+    # Aflecha.IO.Handler.Websocket.send_payload(
     #   pid,
     #   {:text,
     #    "{\"event\":\"subscribe\", \"subscription\":{\"name\": \"trade\"}, \"pair\":[\"BTC/EUR\", \"ETH/EUR\"]}"}

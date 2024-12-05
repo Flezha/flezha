@@ -1,4 +1,4 @@
-defmodule Aflecha.IO.InternalProcess do
+defmodule Aflecha.IO.Handler.BeamProcess do
   use GenServer
   use Aflecha.IO.Contract
 

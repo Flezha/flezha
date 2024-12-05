@@ -1,4 +1,4 @@
-defmodule Aflecha.IO.Websocket do
+defmodule Aflecha.IO.Handler.Websocket do
   require Logger
 
   use Fresh

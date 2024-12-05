@@ -76,7 +76,7 @@ defmodule AflechaTest do
       Aflecha.add_input(
         @default_operator,
         computation.id,
-        %Aflecha.IO.Websocket{uri: @testnet_ws_uri},
+        %Aflecha.IO.Handler.Websocket{uri: @testnet_ws_uri},
         []
       )
 
@@ -96,7 +96,7 @@ defmodule AflechaTest do
       Aflecha.add_input(
         @default_operator,
         computation.id,
-        %Aflecha.IO.InternalProcess{output_pid: self()},
+        %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
         []
       )
 
@@ -116,7 +116,7 @@ defmodule AflechaTest do
     Aflecha.add_output(
       @default_operator,
       computation.id,
-      %Aflecha.IO.InternalProcess{output_pid: self()},
+      %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
       []
     )
 
@@ -124,7 +124,7 @@ defmodule AflechaTest do
       Aflecha.add_input(
         @default_operator,
         computation.id,
-        %Aflecha.IO.Websocket{
+        %Aflecha.IO.Handler.Websocket{
           uri: @testnet_ws_uri,
           post_connect: %{
             payload: {

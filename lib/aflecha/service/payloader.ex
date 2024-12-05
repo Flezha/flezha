@@ -27,7 +27,7 @@ defmodule Aflecha.Service.Payloader do
               {}
             end
 
-          %Aflecha.IO.Websocket{
+          %Aflecha.IO.Handler.Websocket{
             uri: Map.fetch!(settings_map, "uri"),
             post_connect: %{
               payload: payload
