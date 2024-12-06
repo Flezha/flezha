@@ -1,4 +1,5 @@
 [workspace]
+name = "aflecha_rust_sdk"
 
 members = [
     "operator",
