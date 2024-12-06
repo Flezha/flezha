@@ -129,7 +129,15 @@ defmodule AflechaTest do
           post_connect: %{
             payload: {
               :text,
-              "{\"event\":\"subscribe\", \"default_message\": \"hello world\"}"
+              ~s(
+                  {
+                    "event_type": "subscribe",
+                    "event_data": {
+                      "default_message": "hello world",
+                      "interval": 1000
+                    }
+                  }
+                )
             }
           }
         },
