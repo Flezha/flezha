@@ -9,7 +9,7 @@ defmodule Aflecha.Testnet do
 
   @impl true
   def init(_) do
-    command = "npm start --prefix testnet"
+    command = "npm start --prefix test/apps/testnet"
 
     port =
       Port.open(
