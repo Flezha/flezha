@@ -68,7 +68,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust_app"
+name = "rust_operator"
 version = "0.1.0"
 dependencies = [
  "aflecha_derive",

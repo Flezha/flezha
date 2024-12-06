@@ -5,7 +5,7 @@ external_processes =
     {:ok, current_path} = :file.get_cwd()
 
     [
-      "cargo run --manifest-path=#{current_path}/test/apps/rust_app/Cargo.toml --target-dir=./target"
+      "cargo run --manifest-path=#{current_path}/test/apps/rust_operator/Cargo.toml --target-dir=./target"
     ]
   else
     System.get_env("AFLECHA_EXTERNAL_PROCESSES", "") |> String.split(",", trim: true)
