@@ -5,7 +5,7 @@
 npm run build
 ```
 
-## Start the testnet
+## Start the testnet server
 ```bash
 npm run start
 ```

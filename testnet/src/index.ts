@@ -1,8 +1,11 @@
-import './ws_server';
+import std_listener from './util/std_listener';
+import WebsocketServer from './server/websocket';
+import ServerContract from './server/server_contract';
 
-// Listen to stdin. If it closes, shut down the server.
-process.stdin.resume();
-process.stdin.on('end', () => {
-  console.log('Stdin closed, shutting down server.');
-  process.exit(0);
-});
+std_listener();
+
+const servers: [ServerContract] = [
+  new WebsocketServer(parseInt(process.env.AFLECHA_TESTNET_WS_PORT || '4500'))
+];
+
+servers.forEach((server) => server.start());
