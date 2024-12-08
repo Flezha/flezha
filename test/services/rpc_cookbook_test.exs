@@ -11,9 +11,13 @@ defmodule AflechaTest.Service.RpcCookbookTest do
     factory_id = "increment_state"
     {:ok, variables} = Jason.encode(%{"value" => 100})
 
-    result = Aflecha.Service.RpcCookbook.computation_start(
-      @default_operator, computation_id, factory_id, variables
-    )
+    result =
+      Aflecha.Service.RpcCookbook.computation_start(
+        @default_operator,
+        computation_id,
+        factory_id,
+        variables
+      )
 
     assert elem(result, 0) === :ok
   end
@@ -31,5 +35,17 @@ defmodule AflechaTest.Service.RpcCookbookTest do
     assert result2 |> elem(0) === :error
     assert result2 |> elem(1) |> elem(0) === "non_existent"
     assert is_list(result2 |> elem(1) |> elem(1))
+  end
+
+  test "rpc no operator specified" do
+    computation_id = "test_rpc_no_operator"
+
+    result1 =
+      Aflecha.Service.RpcCookbook.computation_start("", computation_id, @factory_do_nothing, "{}")
+
+    result2 = Aflecha.Service.RpcCookbook.computation_stop("", computation_id)
+
+    assert elem(result1, 0) === :ok
+    assert result2 === :ok
   end
 end

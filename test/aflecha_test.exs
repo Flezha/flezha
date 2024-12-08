@@ -1,4 +1,5 @@
 defmodule AflechaTest do
+  alias Aflecha.Computation.Service.Activator
   use ExUnit.Case
   use Aflecha.Constant
 
@@ -13,23 +14,13 @@ defmodule AflechaTest do
     %{}
   end
 
-  test "no operator specified" do
-    computation = %Aflecha.Computation.Builder{
-      id: "no_operator_test",
-      factory_id: @test_computation_factory
-    }
-
-    assert Aflecha.add_computation(computation) === {:ok, "computation added"}
-    assert Aflecha.rem_computation(computation.id) === {:ok, "computation removed"}
-  end
-
   test "websocket io" do
     computation = %Aflecha.Computation.Builder{
       id: "add_websocket_io_test",
       factory_id: @test_computation_factory
     }
 
-    {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
+    {:ok, _} = Activator.start_computation(@default_operator, computation)
 
     res =
       Aflecha.add_input(
@@ -49,7 +40,7 @@ defmodule AflechaTest do
       factory_id: @test_computation_factory
     }
 
-    {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
+    {:ok, _} = Activator.start_computation(@default_operator, computation)
 
     res =
       Aflecha.add_input(
@@ -70,7 +61,7 @@ defmodule AflechaTest do
       variables: %{"comparable" => "hello world", "inverted" => false}
     }
 
-    {:ok, "computation added"} = Aflecha.add_computation(@default_operator, computation)
+    {:ok, _} = Activator.start_computation(@default_operator, computation)
 
     Aflecha.add_output(
       @default_operator,
