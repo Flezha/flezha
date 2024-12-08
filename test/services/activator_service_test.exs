@@ -1,10 +1,10 @@
-defmodule AflechaTest.Service.ActivatorTest do
+defmodule AflechaTest.ActivatorServiceTest do
   use ExUnit.Case
   use Aflecha.Constant
 
-  import Aflecha.Computation.Service.Activator
+  import Aflecha.Computation.ActivatorService
 
-  doctest Aflecha.Computation.Service.Activator
+  doctest Aflecha.Computation.ActivatorService
 
   test "start computation" do
     computation_id = "test_computation_start"

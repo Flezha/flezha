@@ -2,7 +2,7 @@ defmodule Aflecha.Computation.WatchDog do
   # TODO: rename this module.
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
-  alias Aflecha.Computation.Service.Migrator
+  alias Aflecha.Computation.MigratorService
   alias Aflecha.Operator.StreamSup
 
   use GenServer
@@ -100,7 +100,7 @@ defmodule Aflecha.Computation.WatchDog do
   def handle_info({:process_hub, :handover_start, startup_resp, child_id, from}, state) do
     case startup_resp do
       {:ok, pid} ->
-        serialized_data = Migrator.serialize_computation(state.operator_id, state.id)
+        serialized_data = MigratorService.serialize_computation(state.operator_id, state.id)
 
         # Send the state to the remote process.
         Process.send(pid, {:process_hub, :handover, {state, serialized_data}}, [])
@@ -117,7 +117,7 @@ defmodule Aflecha.Computation.WatchDog do
 
   @impl true
   def handle_info({:process_hub, :handover, {handover_state, serialized_data}}, state) do
-    Migrator.deserialize_computation(state.operator_id, state.id, serialized_data)
+    MigratorService.deserialize_computation(state.operator_id, state.id, serialized_data)
 
     {:noreply, handover_state}
   end

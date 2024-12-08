@@ -3,7 +3,7 @@ defmodule Aflecha.Service.RpcCookbook do
   Provides recipes for the RPC calls.
   """
 
-  alias Aflecha.Computation.Service.Activator
+  alias Aflecha.Computation.ActivatorService
 
   @doc "Starts a computation."
   @spec computation_start(String.t(), String.t(), String.t(), String.t()) ::
@@ -15,13 +15,13 @@ defmodule Aflecha.Service.RpcCookbook do
       variables: Aflecha.Service.Payloader.json_to_map(variables)
     }
 
-    Activator.start_computation(operator_id(operator_id), computation)
+    ActivatorService.start_computation(operator_id(operator_id), computation)
   end
 
   @doc "Stops a computation."
   @spec computation_stop(String.t(), String.t()) :: :ok | {:error, String.t()}
   def computation_stop(operator_id, computation_id) do
-    Activator.stop_computation(operator_id(operator_id), computation_id)
+    ActivatorService.stop_computation(operator_id(operator_id), computation_id)
   end
 
   defp operator_id(operator_id) do

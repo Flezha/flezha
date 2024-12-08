@@ -1,5 +1,5 @@
 defmodule Aflecha do
-  alias Aflecha.Computation.Service.Activator
+  alias Aflecha.Computation.ActivatorService
   alias Aflecha.Operator.Controller
   alias Aflecha.Operator.OperatorsSup
   alias Aflecha.Service.Identificator
@@ -21,11 +21,11 @@ defmodule Aflecha do
   end
 
   def start_computation(operator_id, computation) do
-    Activator.start_computation(operator_id, computation)
+    ActivatorService.start_computation(operator_id, computation)
   end
 
   def stop_computation(operator_id, computation_id) do
-    Activator.stop_computation(operator_id, computation_id)
+    ActivatorService.stop_computation(operator_id, computation_id)
   end
 
   def construct_computation!(input, type) do

@@ -1,4 +1,4 @@
-defmodule AflechaTest.Service.RpcCookbookTest do
+defmodule AflechaTest.RpcCookbookServiceTest do
   use ExUnit.Case
   use Aflecha.Constant
 
