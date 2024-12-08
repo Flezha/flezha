@@ -1,15 +1,13 @@
 defmodule AflechaTest do
   use ExUnit.Case
-  doctest Aflecha
+  use Aflecha.Constant
 
-  @default_operator "default"
+  doctest Aflecha
 
   # @test_forward_orig_factory "forward_orig"
   # @test_store_input_factory "store_input"
   @test_computation_factory "do_nothing"
   @test_compare_filter_factory "compare_filter"
-
-  @testnet_ws_uri "ws://localhost:4500"
 
   setup_all do
     %{}
@@ -120,12 +118,12 @@ defmodule AflechaTest do
       []
     )
 
-    Aflecha.add_output(
-      @default_operator,
-      computation.id,
-      %Aflecha.IO.Handler.StdIO{},
-      []
-    )
+    # Aflecha.add_output(
+    #   @default_operator,
+    #   computation.id,
+    #   %Aflecha.IO.Handler.StdIO{},
+    #   []
+    # )
 
     {:ok, __id} =
       Aflecha.add_input(
@@ -141,7 +139,7 @@ defmodule AflechaTest do
                     "event_type": "subscribe",
                     "event_data": {
                       "default_message": "hello world",
-                      "interval": 1000
+                      "interval": 1
                     }
                   }
                 )
@@ -151,10 +149,10 @@ defmodule AflechaTest do
         handling_type: :task
       )
 
-    for _ <- 1..2 do
+    for _ <- 1..10 do
       receive do
         _msg ->
-        assert true
+          assert true
       after
         10000 -> assert false
       end
