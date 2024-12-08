@@ -8,6 +8,7 @@ defmodule Aflecha.MixProject do
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       releases: releases(),
+      elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps()
     ]
   end
@@ -49,4 +50,7 @@ defmodule Aflecha.MixProject do
     File.cp!("cli/target/debug/io", Path.join(release.path, "bin/io"))
     release
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test"]
+  defp elixirc_paths(_), do: ["lib"]
 end
