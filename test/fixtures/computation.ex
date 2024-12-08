@@ -1,11 +1,15 @@
 defmodule AflechaTest.Fixtures.Computation do
   use Aflecha.Constant
 
-  def computation(id, factory_id) do
-    %Aflecha.Computation.Builder{
+  def get(id, factory_id) do
+    computation = %Aflecha.Computation.Builder{
       id: id || "my_computation",
       factory_id: factory_id || "forward_orig"
     }
+
+    Aflecha.add_computation(@default_operator, computation)
+
+    computation
   end
 
   def attach_input(computation, handler, opts \\ []) do
