@@ -36,7 +36,7 @@ fn handle_add(args: Vec<String>) {
     let operator_id = get_operator_id(&args[4..]);
 
     let rpc_command = format!(
-        "Aflecha.Service.Cli.computation_add({}, {}, {}, {})", 
+        "Aflecha.Service.RpcCookbook.computation_add({}, {}, {}, {})", 
         operator_id,
         computation_id,
         factory_id,

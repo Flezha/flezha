@@ -1,4 +1,8 @@
-defmodule Aflecha.Service.Cli do
+defmodule Aflecha.Service.RpcCookbook do
+  @moduledoc """
+  Provides
+  """
+
   alias Aflecha.Computation.Service.Activator
 
   def computation_start(operator_id, computation_id, factory_id, variables) do
@@ -9,6 +13,10 @@ defmodule Aflecha.Service.Cli do
     }
 
     Activator.start_computation(operator_id(operator_id), computation)
+  end
+
+  def computation_stop(operator_id, computation_id) do
+    Activator.stop_computation(operator_id(operator_id), computation_id)
   end
 
   defp operator_id(operator_id) do
