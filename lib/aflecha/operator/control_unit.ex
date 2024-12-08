@@ -93,7 +93,7 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:rem_computation, computation_id}, from, state) do
+  def handle_call({:stop_computation, computation_id}, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.group_id),

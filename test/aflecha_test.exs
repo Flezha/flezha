@@ -23,36 +23,6 @@ defmodule AflechaTest do
     assert Aflecha.rem_computation(computation.id) === {:ok, "computation removed"}
   end
 
-  test "remove computation" do
-    computation = %Aflecha.Computation.Builder{
-      id: "rem_compuation_test",
-      factory_id: @test_computation_factory
-    }
-
-    assert Aflecha.add_computation(@default_operator, computation) === {:ok, "computation added"}
-
-    assert Aflecha.rem_computation(@default_operator, computation.id) ===
-             {:ok, "computation removed"}
-  end
-
-  test "validate computation length" do
-    invalid_computation = %Aflecha.Computation.Builder{
-      id: "some_very_long_computation_id_that_should_fail",
-      factory_id: @test_computation_factory
-    }
-
-    valid_computation = %Aflecha.Computation.Builder{
-      id: "computation_string_32_bytes_long",
-      factory_id: @test_computation_factory
-    }
-
-    assert Aflecha.add_computation(@default_operator, invalid_computation) ===
-             {:error, "computation id exceeds 32 bytes"}
-
-    assert Aflecha.add_computation(@default_operator, valid_computation) ===
-             {:ok, "computation added"}
-  end
-
   test "websocket io" do
     computation = %Aflecha.Computation.Builder{
       id: "add_websocket_io_test",

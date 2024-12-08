@@ -42,7 +42,7 @@ defmodule Aflecha.Operator.Controller do
   end
 
   @impl true
-  def handle_call({:rem_computation, operator_id, computation_id}, _from, state) do
+  def handle_call({:stop_computation, operator_id, computation_id}, _from, state) do
     response = rem_computation(operator_id, computation_id)
 
     {:reply, response, state}
@@ -74,7 +74,7 @@ defmodule Aflecha.Operator.Controller do
   defp rem_computation(operator_id, computation_id) do
     GenServer.call(
       Identificator.control_unit(operator_id),
-      {:rem_computation, computation_id}
+      {:stop_computation, computation_id}
     )
 
     result =
@@ -82,7 +82,7 @@ defmodule Aflecha.Operator.Controller do
       |> ProcessHub.await()
 
     case result do
-      {:ok, _} -> {:ok, "computation removed"}
+      {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
