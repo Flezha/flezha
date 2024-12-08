@@ -120,6 +120,13 @@ defmodule AflechaTest do
       []
     )
 
+    Aflecha.add_output(
+      @default_operator,
+      computation.id,
+      %Aflecha.IO.Handler.StdIO{},
+      []
+    )
+
     {:ok, __id} =
       Aflecha.add_input(
         @default_operator,
@@ -144,11 +151,13 @@ defmodule AflechaTest do
         handling_type: :task
       )
 
-    receive do
-      _msg ->
+    for _ <- 1..2 do
+      receive do
+        _msg ->
         assert true
-    after
-      1000 -> assert false
+      after
+        10000 -> assert false
+      end
     end
   end
 end
