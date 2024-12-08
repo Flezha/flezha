@@ -29,7 +29,7 @@ defmodule Aflecha.Operator.Controller do
   @impl true
   def handle_call({:add_computation, operator_id, computation}, _from, state) do
     response =
-      case ComputationBuilder.validate_computation(computation) do
+      case ComputationBuilder.validate_computation(operator_id, computation) do
         {:error, reason} ->
           {:error, reason}
 

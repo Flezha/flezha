@@ -1,8 +1,6 @@
 defmodule Aflecha.Computation.Builder do
   alias Aflecha.Service.Validator
 
-  @computation_id_max_bytes 32
-
   @type t() :: %__MODULE__{
           id: String.t(),
           factory_id: String.t(),
@@ -35,17 +33,12 @@ defmodule Aflecha.Computation.Builder do
     end
   end
 
-  def validate_computation(computation) do
-    case validate_id(computation.id) do
+  def validate_computation(operator, computation) do
+    with :ok <- Validator.byte_limit_exceed(computation.id),
+         :ok <- Validator.computation_unique(operator, computation.id) do
+      :ok
+    else
       {:error, reason} -> {:error, reason}
-      :ok -> :ok
-    end
-  end
-
-  defp validate_id(computation_id) do
-    case Validator.byte_limit_exceed(computation_id, @computation_id_max_bytes) do
-      true -> {:error, "computation id exceeds #{@computation_id_max_bytes} bytes"}
-      false -> :ok
     end
   end
 

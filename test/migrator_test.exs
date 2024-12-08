@@ -13,9 +13,10 @@ defmodule MigratorTest do
         @computation_id,
         @factory_id
       )
+      |> AflechaTest.Fixtures.Computation.start()
 
     on_exit(fn ->
-      Aflecha.rem_computation(@default_operator, computation.id)
+      AflechaTest.Fixtures.Computation.stop(computation.id)
     end)
 
     %{computation: computation}

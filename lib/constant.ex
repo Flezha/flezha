@@ -3,6 +3,7 @@ defmodule Aflecha.Constant do
     quote do
       @default_operator "default"
       @testnet_ws_uri "ws://localhost:4500"
+      @computation_id_max_bytes 32
     end
   end
 end
