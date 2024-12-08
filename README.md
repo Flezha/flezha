@@ -17,22 +17,22 @@ Stopping the node.
 _build/dev/rel/aflecha/bin/agent stop
 ```
 
-### Adding a computation to the node.
+### Starting a computation.
 ```bash
-_build/dev/rel/aflecha/bin/computation add my_computation compare_filter --variables='{
+_build/dev/rel/aflecha/bin/computation start my_computation compare_filter --variables='{
   "comparable": "hello world", 
   "inverted": false
 }'
 ```
 
 ```bash
-_build/dev/rel/aflecha/bin/computation add my_computation forward_orig
+_build/dev/rel/aflecha/bin/computation start my_computation forward_orig
 ```
 
 
 ### Removing a computation from the node.
 ```bash
-_build/dev/rel/aflecha/bin/computation rem my_computation
+_build/dev/rel/aflecha/bin/computation stop my_computation
 ```
 
 ### Adding IO to the computation.

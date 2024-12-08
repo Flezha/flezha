@@ -12,19 +12,19 @@ fn main() {
     }
 
     match args[1].as_str() {
-        "add" => handle_add(args),
-        "rem" => handle_rem(args),
+        "start" => handle_start(args),
+        "stop" => handle_stop(args),
         "state" => handle_state(args),
         _ => {
-            eprintln!("Error: Invalid argument '{}'. Use 'add' or 'rem' only.", args[1]);
+            eprintln!("Error: Invalid argument '{}'. Use 'start' or 'stop' only.", args[1]);
             exit(1);
         }
     }
 }
 
-fn handle_add(args: Vec<String>) {
+fn handle_start(args: Vec<String>) {
     if args.len() < 3 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} add <computation_id> <factory_id> [--operator=<operator_id> |-o=<operator_id>]", args[0]);
+        eprintln!("Error: Invalid number of arguments. Usage: {} start <computation_id> <factory_id> [--operator=<operator_id> |-o=<operator_id>]", args[0]);
         exit(1);
     }
 
@@ -36,14 +36,14 @@ fn handle_add(args: Vec<String>) {
     let operator_id = get_operator_id(&args[4..]);
 
     let rpc_command = format!(
-        "Aflecha.Service.RpcCookbook.computation_add({}, {}, {}, {})", 
+        "Aflecha.Service.RpcCookbook.computation_start(\"{}\", \"{}\", \"{}\", \"{}\")", 
         operator_id,
         computation_id,
         factory_id,
         variables
     );
 
-    println!("Adding computation...");
+    println!("Starting computation...");
 
     // Attempt to execute the external command.
     let status = Command::new(command)
@@ -58,23 +58,24 @@ fn handle_add(args: Vec<String>) {
     }
 }
 
-fn handle_rem(args: Vec<String>) {
+fn handle_stop(args: Vec<String>) {
     if args.len() < 1 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} rem <computation_id>", args[0]);
+        eprintln!("Error: Invalid number of arguments. Usage: {} stop <computation_id>", args[0]);
         exit(1);
     }
 
     let computation_id = &args[2];
     let operator_id = get_operator_id(&args[3..]);
 
-    let rpc_command = match operator_id.as_str() {
-        "" => format!("Aflecha.rem_computation(\"{}\")", computation_id),
-        _ => format!("Aflecha.rem_computation(\"{}\", \"{}\")", operator_id, computation_id)
-    };
+    let rpc_command = format!(
+        "Aflecha.Service.RpcCookbook.computation_stop(\"{}\", \"{}\")", 
+        operator_id,
+        computation_id,
+    );
 
     let command = get_aflecha_command();
 
-    println!("Removing computation...");
+    println!("Stopping computation...");
 
     // Attempt to execute the external command.
     let status = Command::new(command)
@@ -83,9 +84,9 @@ fn handle_rem(args: Vec<String>) {
         .status();
 
     match status {
-        Ok(status) if status.success() => println!("Computation removed successfully."),
+        Ok(status) if status.success() => println!("Computation stopped successfully."),
         Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to remove computation: {}", e),
+        Err(e) => eprintln!("Failed to stop computation: {}", e),
     }
 }
 

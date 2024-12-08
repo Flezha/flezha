@@ -36,15 +36,15 @@ pub fn get_operator_id(slice: &[String]) -> String {
 }
 
 pub fn get_json(slice: &[String], long_key: &str, short_key: &str) -> String {
-    let mut variables = String::from("");
+    let mut json = String::from("");
 
     for arg in slice {
         if arg.starts_with(long_key) {
-            variables = arg[long_key.len()..].to_string();
+            json = arg[long_key.len()..].to_string();
         } else if arg.starts_with(short_key) {
-            variables = arg[short_key.len()..].to_string();
+            json = arg[short_key.len()..].to_string();
         }
     }
 
-    variables.replace("\"", "\\\"")
+    json.replace("\"", "\\\"")
 }
