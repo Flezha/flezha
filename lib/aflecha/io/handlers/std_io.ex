@@ -26,13 +26,13 @@ defmodule Aflecha.IO.Handler.StdIO do
 
   @impl true
   def handle_cast({:io_out, payload, data_type}, %{handling_type: ht} = state) do
-    IO.puts "Payload: #{payload}, Data Type: #{data_type}, Handling Type: #{ht}"
+    IO.puts("Payload: #{payload}, Data Type: #{data_type}, Handling Type: #{ht}")
 
     {:noreply, state}
   end
 
   @impl Aflecha.IO.Contract
   def send_payload(_server, msg) do
-     IO.puts "Sending payload to the standard output: #{inspect(msg)}"
+    IO.puts("Sending payload to the standard output: #{inspect(msg)}")
   end
 end
