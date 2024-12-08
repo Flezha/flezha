@@ -1,8 +1,8 @@
-defmodule MigratorTest do
+defmodule AflechaTest.Service.MigratorTest do
   use ExUnit.Case
   use Aflecha.Constant
 
-  doctest Aflecha.Computation.Migrator
+  doctest Aflecha.Computation.Service.Migrator
 
   @computation_id "test_migrator"
   @factory_id "increment_state"
@@ -24,7 +24,7 @@ defmodule MigratorTest do
 
   test "serialize computation" do
     serialized_data =
-      Aflecha.Computation.Migrator.serialize_computation(
+      Aflecha.Computation.Service.Migrator.serialize_computation(
         @default_operator,
         @computation_id
       )
@@ -35,13 +35,13 @@ defmodule MigratorTest do
 
   test "deserialize computation" do
     serialized_data =
-      Aflecha.Computation.Migrator.serialize_computation(
+      Aflecha.Computation.Service.Migrator.serialize_computation(
         @default_operator,
         @computation_id
       )
 
     assert :ok ===
-             Aflecha.Computation.Migrator.deserialize_computation(
+             Aflecha.Computation.Service.Migrator.deserialize_computation(
                @default_operator,
                @computation_id,
                serialized_data

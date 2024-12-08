@@ -75,9 +75,9 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  @spec handle_call({:add_computation, ComputationBuilder.t()}, {pid(), term()}, map()) ::
+  @spec handle_call({:start_computation, ComputationBuilder.t()}, {pid(), term()}, map()) ::
           {:noreply, any()}
-  def handle_call({:add_computation, computation}, from, state) do
+  def handle_call({:start_computation, computation}, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.group_id),

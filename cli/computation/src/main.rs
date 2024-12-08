@@ -32,27 +32,16 @@ fn handle_add(args: Vec<String>) {
     let factory_id = &args[3];
     let variables = get_json(&args[4..], "--variables=", "-v=");
 
-    let computation_struct = match variables.as_str() {
-        "" => format!(
-            "%Aflecha.Computation.Builder{{id: \"{}\", factory_id: \"{}\"}}",
-            computation_id,
-            factory_id
-        ),
-        _ => format!(
-            "%Aflecha.Computation.Builder{{id: \"{}\", factory_id: \"{}\", variables: Aflecha.Service.Payloader.json_to_map(\"{}\") }}",
-            computation_id,
-            factory_id, 
-            variables
-        )
-    };
-
     let command = get_aflecha_command();
     let operator_id = get_operator_id(&args[4..]);
 
-    let rpc_command = match operator_id.as_str() {
-        "" => format!("Aflecha.add_computation({})", computation_struct),
-        _ => format!("Aflecha.add_computation(\"{}\", {})", operator_id, computation_struct)
-    };
+    let rpc_command = format!(
+        "Aflecha.Service.Cli.computation_add({}, {}, {}, {})", 
+        operator_id,
+        computation_id,
+        factory_id,
+        variables
+    );
 
     println!("Adding computation...");
 
@@ -100,6 +89,6 @@ fn handle_rem(args: Vec<String>) {
     }
 }
 
-fn handle_state(args: Vec<String>) {
+fn handle_state(_args: Vec<String>) {
 
 }

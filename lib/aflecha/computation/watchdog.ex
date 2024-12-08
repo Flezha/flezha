@@ -2,7 +2,7 @@ defmodule Aflecha.Computation.WatchDog do
   # TODO: rename this module.
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
-  alias Aflecha.Computation.Migrator
+  alias Aflecha.Computation.Service.Migrator
   alias Aflecha.Operator.StreamSup
 
   use GenServer

@@ -1,4 +1,4 @@
-defmodule Aflecha.Computation.Migrator do
+defmodule Aflecha.Computation.Service.Migrator do
   alias Aflecha.Service.Identificator
 
   def serialize_computation(operator_id, computation_id) do

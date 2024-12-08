@@ -1,4 +1,5 @@
 defmodule Aflecha do
+  alias Aflecha.Computation.Service.Activator
   alias Aflecha.Operator.Controller
   alias Aflecha.Operator.OperatorsSup
   alias Aflecha.Service.Identificator
@@ -19,22 +20,12 @@ defmodule Aflecha do
     GenServer.call(Controller, {:get_computation_state, operator_id, computation_id})
   end
 
-  def add_computation(computation) do
-    OperatorsSup.default_operator()
-    |> add_computation(computation)
+  def start_computation(operator_id, computation) do
+    Activator.start_computation(operator_id, computation)
   end
 
-  def add_computation(operator_id, computation) do
-    GenServer.call(Controller, {:add_computation, operator_id, computation})
-  end
-
-  def rem_computation(computation_id) do
-    OperatorsSup.default_operator()
-    |> rem_computation(computation_id)
-  end
-
-  def rem_computation(operator_id, computation_id) do
-    GenServer.call(Controller, {:rem_computation, operator_id, computation_id})
+  def stop_computation(operator_id, computation_id) do
+    Activator.stop_computation(operator_id, computation_id)
   end
 
   def construct_computation!(input, type) do

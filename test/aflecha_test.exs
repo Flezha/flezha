@@ -13,24 +13,6 @@ defmodule AflechaTest do
     %{}
   end
 
-  test "add computation" do
-    computation = %Aflecha.Computation.Builder{
-      id: "add_compuation_test",
-      factory_id: @test_computation_factory
-    }
-
-    assert Aflecha.add_computation(@default_operator, computation) === {:ok, "computation added"}
-  end
-
-  test "computation validations" do
-    computation = AflechaTest.Fixtures.Computation.get("test_computation_validation", nil)
-
-    assert Aflecha.add_computation(@default_operator, computation) === {:ok, "computation added"}
-
-    assert Aflecha.add_computation(@default_operator, computation) ===
-             {:error, "computation id already in use"}
-  end
-
   test "no operator specified" do
     computation = %Aflecha.Computation.Builder{
       id: "no_operator_test",

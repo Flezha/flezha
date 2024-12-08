@@ -27,7 +27,7 @@ defmodule Aflecha.Operator.Controller do
   end
 
   @impl true
-  def handle_call({:add_computation, operator_id, computation}, _from, state) do
+  def handle_call({:start_computation, operator_id, computation}, _from, state) do
     response =
       case ComputationBuilder.validate_computation(operator_id, computation) do
         {:error, reason} ->
@@ -63,10 +63,10 @@ defmodule Aflecha.Operator.Controller do
       ProcessHub.start_child(Identificator.hub(operator_id), child_spec, async_wait: true)
       |> ProcessHub.await()
 
-    GenServer.call(Identificator.control_unit(operator_id), {:add_computation, computation})
+    GenServer.call(Identificator.control_unit(operator_id), {:start_computation, computation})
 
     case result do
-      {:ok, _} -> {:ok, "computation added"}
+      {:ok, pid} -> {:ok, pid}
       {:error, reason} -> {:error, reason}
     end
   end
