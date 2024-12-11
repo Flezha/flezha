@@ -1,5 +1,5 @@
 defmodule AflechaTest do
-  alias Aflecha.Computation.ActivatorService
+  alias Aflecha.Computation.ComputeManager
   use ExUnit.Case
   use Aflecha.Constant
 
@@ -20,7 +20,7 @@ defmodule AflechaTest do
       factory_id: @test_computation_factory
     }
 
-    {:ok, _} = ActivatorService.start_computation(@default_operator, computation)
+    {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
 
     res =
       Aflecha.add_input(
@@ -40,7 +40,7 @@ defmodule AflechaTest do
       factory_id: @test_computation_factory
     }
 
-    {:ok, _} = ActivatorService.start_computation(@default_operator, computation)
+    {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
 
     res =
       Aflecha.add_input(
@@ -61,7 +61,7 @@ defmodule AflechaTest do
       variables: %{"comparable" => "hello world", "inverted" => false}
     }
 
-    {:ok, _} = ActivatorService.start_computation(@default_operator, computation)
+    {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
 
     Aflecha.add_output(
       @default_operator,

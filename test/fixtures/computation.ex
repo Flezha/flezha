@@ -9,13 +9,13 @@ defmodule AflechaTest.Fixtures.Computation do
   end
 
   def start(computation) do
-    Aflecha.Computation.ActivatorService.start_computation(@default_operator, computation)
+    Aflecha.Computation.ComputeManager.start_computation(@default_operator, computation)
 
     computation
   end
 
   def stop(computation_id) do
-    Aflecha.Computation.ActivatorService.stop_computation(@default_operator, computation_id)
+    Aflecha.Computation.ComputeManager.stop_computation(@default_operator, computation_id)
   end
 
   def attach_input(computation, handler, opts \\ []) do

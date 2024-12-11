@@ -29,8 +29,7 @@ _build/dev/rel/aflecha/bin/computation start my_computation compare_filter --var
 _build/dev/rel/aflecha/bin/computation start my_computation forward_orig
 ```
 
-
-### Removing a computation from the node.
+### Stop a computation.
 ```bash
 _build/dev/rel/aflecha/bin/computation stop my_computation
 ```

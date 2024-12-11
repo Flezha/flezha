@@ -1,4 +1,6 @@
 defmodule Aflecha.Service.Payloader do
+  alias Aflecha.Computation.Builder, as: ComputationBuilder
+
   def extract_io_settings(json_str) do
     settings_map = json_to_map(json_str)
 
@@ -68,6 +70,19 @@ defmodule Aflecha.Service.Payloader do
 
   def parse_payload(payload) when is_binary(payload) do
     parse_messages(payload, [])
+  end
+
+  def construct_computation!(input, type) do
+    result =
+      case type do
+        :json -> ComputationBuilder.from_json(input)
+        :map -> ComputationBuilder.from_map(input)
+      end
+
+    case result do
+      {:ok, computation} -> computation
+      {:error, reason} -> raise reason
+    end
   end
 
   defp parse_messages(<<>>, messages), do: Enum.reverse(messages)

@@ -1,44 +1,23 @@
 defmodule Aflecha do
-  alias Aflecha.Computation.ActivatorService
+  alias Aflecha.Computation.ComputeManager
   alias Aflecha.Operator.Controller
   alias Aflecha.Operator.OperatorsSup
   alias Aflecha.Service.Identificator
-  alias Aflecha.Computation.Builder, as: ComputationBuilder
 
   @moduledoc """
   Documentation for `Aflecha`.
   """
-
-  # TODO: the default no operator parameter is bringing lots of duplication and mess.
-
-  def computation_state(computation_id) do
-    OperatorsSup.default_operator()
-    |> computation_state(computation_id)
-  end
 
   def computation_state(operator_id, computation_id) do
     GenServer.call(Controller, {:get_computation_state, operator_id, computation_id})
   end
 
   def start_computation(operator_id, computation) do
-    ActivatorService.start_computation(operator_id, computation)
+    ComputeManager.start_computation(operator_id, computation)
   end
 
   def stop_computation(operator_id, computation_id) do
-    ActivatorService.stop_computation(operator_id, computation_id)
-  end
-
-  def construct_computation!(input, type) do
-    result =
-      case type do
-        :json -> ComputationBuilder.from_json(input)
-        :map -> ComputationBuilder.from_map(input)
-      end
-
-    case result do
-      {:ok, computation} -> computation
-      {:error, reason} -> raise reason
-    end
+    ComputeManager.stop_computation(operator_id, computation_id)
   end
 
   def add_output(computation_id, settings, opts) do

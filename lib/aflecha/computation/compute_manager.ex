@@ -1,4 +1,4 @@
-defmodule Aflecha.Computation.ActivatorService do
+defmodule Aflecha.Computation.ComputeManager do
   @moduledoc """
   Manages the computation startings and stoppings.
   """
