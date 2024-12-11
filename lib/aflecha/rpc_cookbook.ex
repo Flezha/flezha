@@ -4,6 +4,7 @@ defmodule Aflecha.Service.RpcCookbook do
   """
 
   alias Aflecha.Computation.ComputeManager
+  alias Aflecha.IO.IOManager
 
   @doc "Starts a computation."
   @spec computation_start(String.t(), String.t(), String.t(), String.t()) ::
@@ -24,12 +25,15 @@ defmodule Aflecha.Service.RpcCookbook do
     ComputeManager.stop_computation(operator_id(operator_id), computation_id)
   end
 
+  @doc "Adds an IO."
+  def add_io(operator_id, computation_id, io_struct, io_mode, opts) do
+    IOManager.add_io(operator_id(operator_id), computation_id, io_struct, io_mode, opts)
+  end
+
   defp operator_id(operator_id) do
     case operator_id do
       "" -> Aflecha.Operator.OperatorsSup.default_operator()
       _ -> operator_id
     end
   end
-
-  # TODO: Add IO cli command recipes.
 end

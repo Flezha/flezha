@@ -1,82 +1,19 @@
 defmodule Aflecha do
   alias Aflecha.Computation.ComputeManager
-  alias Aflecha.Operator.Controller
-  alias Aflecha.Operator.OperatorsSup
-  alias Aflecha.Service.Identificator
+  alias Aflecha.IO.IOManager
 
   @moduledoc """
   Documentation for `Aflecha`.
   """
 
-  def computation_state(operator_id, computation_id) do
-    GenServer.call(Controller, {:get_computation_state, operator_id, computation_id})
-  end
+  # TODO:
+  # def computation_state(operator_id, computation_id) do
+  #   GenServer.call(Controller, {:get_computation_state, operator_id, computation_id})
+  # end
 
-  def start_computation(operator_id, computation) do
-    ComputeManager.start_computation(operator_id, computation)
-  end
+  defdelegate start_computation(operator_id, computation), to: ComputeManager
 
-  def stop_computation(operator_id, computation_id) do
-    ComputeManager.stop_computation(operator_id, computation_id)
-  end
+  defdelegate stop_computation(operator_id, computation), to: ComputeManager
 
-  def add_output(computation_id, settings, opts) do
-    add_output(
-      OperatorsSup.default_operator(),
-      computation_id,
-      settings,
-      opts
-    )
-  end
-
-  def add_output(operator_id, computation_id, settings, opts) do
-    add_io(operator_id, computation_id, settings, :output, opts)
-  end
-
-  def add_input(computation_id, settings, opts) do
-    add_input(
-      OperatorsSup.default_operator(),
-      computation_id,
-      settings,
-      opts
-    )
-  end
-
-  def add_input(operator_id, computation_id, settings, opts) do
-    add_io(operator_id, computation_id, settings, :input, opts)
-  end
-
-  def add_io(operator_id, computation_id, io_struct, direction, opts) do
-    timeout = Application.fetch_env!(:aflecha, :io_add_timeout)
-
-    computation_pid_lookup(operator_id, computation_id)
-    |> GenServer.call({:add_io, direction, io_struct, io_opts(opts)}, timeout)
-  end
-
-  def send_io_payload(computation_id, io_id, direction, payload) do
-    OperatorsSup.default_operator()
-    |> send_io_payload(computation_id, io_id, direction, payload)
-  end
-
-  def send_io_payload(operator_id, computation_id, io_id, direction, payload) do
-    timeout = Application.fetch_env!(:aflecha, :io_payload_add_timeout)
-
-    computation_pid_lookup(operator_id, computation_id)
-    |> GenServer.call({:send_io_payload, io_id, direction, payload}, timeout)
-  end
-
-  defp computation_pid_lookup(operator_id, computation_id) do
-    case ProcessHub.child_lookup(Identificator.hub(operator_id), computation_id) do
-      {_, [{_, pid}]} ->
-        pid
-
-      _ ->
-        raise "computation not found"
-    end
-  end
-
-  defp io_opts(opts) do
-    opts
-    |> Keyword.put_new(:handling_type, :stream)
-  end
+  defdelegate add_io(operator_id, computation_id, io_struct, io_mode, opts), to: IOManager
 end

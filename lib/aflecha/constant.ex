@@ -6,6 +6,7 @@ defmodule Aflecha.Constant do
       @computation_id_max_bytes 32
 
       @factory_do_nothing "do_nothing"
+      @factory_increment_state "increment_state"
     end
   end
 end

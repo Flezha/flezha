@@ -5,19 +5,9 @@ defmodule AflechaTest.MigratorServiceTest do
   doctest Aflecha.Computation.MigratorService
 
   @computation_id "test_migrator"
-  @factory_id "increment_state"
 
   setup do
-    computation =
-      AflechaTest.Fixtures.Computation.get(
-        @computation_id,
-        @factory_id
-      )
-      |> AflechaTest.Fixtures.Computation.start()
-
-    on_exit(fn ->
-      AflechaTest.Fixtures.Computation.stop(computation.id)
-    end)
+    computation = TestHelper.test_computation(@computation_id)
 
     %{computation: computation}
   end

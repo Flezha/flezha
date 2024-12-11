@@ -20,10 +20,11 @@ defmodule AflechaTest.Fixtures.Computation do
 
   def attach_input(computation, handler, opts \\ []) do
     {:ok, __id} =
-      Aflecha.add_input(
+      Aflecha.add_io(
         @default_operator,
         computation.id,
         get_io_handler(handler, :input),
+        :input,
         handling_type: Keyword.get(opts, :handling_type, :task)
       )
 
@@ -32,10 +33,11 @@ defmodule AflechaTest.Fixtures.Computation do
 
   def attach_output(computation, handler) do
     {:ok, _id} =
-      Aflecha.add_output(
+      Aflecha.add_io(
         @default_operator,
         computation.id,
         get_io_handler(handler, :output),
+        :output,
         []
       )
 

@@ -23,10 +23,11 @@ defmodule AflechaTest do
     {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
 
     res =
-      Aflecha.add_input(
+      Aflecha.add_io(
         @default_operator,
         computation.id,
         %Aflecha.IO.Handler.Websocket{uri: @testnet_ws_uri},
+        :input,
         []
       )
 
@@ -43,10 +44,11 @@ defmodule AflechaTest do
     {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
 
     res =
-      Aflecha.add_input(
+      Aflecha.add_io(
         @default_operator,
         computation.id,
         %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
+        :input,
         []
       )
 
@@ -63,22 +65,24 @@ defmodule AflechaTest do
 
     {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
 
-    Aflecha.add_output(
+    Aflecha.add_io(
       @default_operator,
       computation.id,
       %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
+      :output,
       []
     )
 
-    # Aflecha.add_output(
+    # Aflecha.add_io(
     #   @default_operator,
     #   computation.id,
     #   %Aflecha.IO.Handler.StdIO{},
+    #   :output,
     #   []
     # )
 
     {:ok, __id} =
-      Aflecha.add_input(
+      Aflecha.add_io(
         @default_operator,
         computation.id,
         %Aflecha.IO.Handler.Websocket{
@@ -98,6 +102,7 @@ defmodule AflechaTest do
             }
           }
         },
+        :input,
         handling_type: :task
       )
 
