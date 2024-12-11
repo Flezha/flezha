@@ -48,4 +48,57 @@ defmodule AflechaTest.RpcCookbookServiceTest do
     assert elem(result1, 0) === :ok
     assert result2 === :ok
   end
+
+  test "rpc add io" do
+    computation_id = "test_rpc_add_io"
+    io_mode = :input
+    io_params_json = ~s(
+      {
+        "io_type": "websocket",
+        "uri": "#{@testnet_ws_uri}",
+        "post_connect": {
+          "payload": [
+            "text",
+            {
+              "event_type": "subscribe",
+              "event_data": {
+                "default_message": "hello world",
+                "interval": 1
+              }
+            }
+          ]
+        }
+      }
+    )
+
+    TestHelper.test_computation(computation_id)
+
+    opts = [handling_type: :task]
+
+    result1 =
+      Aflecha.Service.RpcCookbook.add_io(
+        @default_operator,
+        computation_id,
+        io_params_json,
+        io_mode,
+        opts
+      )
+
+    result2 =
+      Aflecha.Service.RpcCookbook.add_io(
+        @default_operator,
+        "non_existent",
+        io_params_json,
+        io_mode,
+        opts
+      )
+
+    assert is_tuple(result1)
+    assert elem(result1, 0) === :ok
+    assert elem(result1, 1) |> is_binary()
+
+    assert is_tuple(result2)
+    assert elem(result2, 0) === :error
+    assert elem(result2, 1) === "computation not found"
+  end
 end

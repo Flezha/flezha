@@ -3,8 +3,6 @@ defmodule AflechaTest.IOManagerTest do
   use ExUnit.Case
   use Aflecha.Constant
 
-  import Aflecha.IO.IOManager
-
   doctest Aflecha.IO.IOManager
 
   @computation_id "test_io_manager"

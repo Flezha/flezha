@@ -35,17 +35,13 @@ fn handle_add(args: Vec<String>) {
 
     let command = get_aflecha_command();
     let operator_id = get_operator_id(&args[5..]);
-    let mut rpc_command_params = format!("\"{}\"", computation_id);
-
-    if operator_id.as_str() != "" {
-        rpc_command_params = format!(", \"{}\"", operator_id);
-    }
-
+    
     let rpc_command = format!(
-        "io_struct = Aflecha.Service.Payloader.extract_io_settings(\"{}\"); Aflecha.add_{}({}, io_struct, [])",
+        "Aflecha.Service.RpcCookbook.add_io(\"{}\", \"{}\",\"{}\", \"{}\")",
+        operator_id,
+        computation_id,
         params, 
-        io_mode, 
-        rpc_command_params
+        io_mode
     );
 
     println!("Adding io...");

@@ -26,7 +26,9 @@ defmodule Aflecha.Service.RpcCookbook do
   end
 
   @doc "Adds an IO."
-  def add_io(operator_id, computation_id, io_struct, io_mode, opts) do
+  def add_io(operator_id, computation_id, io_params, io_mode, opts) do
+    io_struct = Aflecha.Service.Payloader.extract_io_settings(io_params)
+
     IOManager.add_io(operator_id(operator_id), computation_id, io_struct, io_mode, opts)
   end
 
