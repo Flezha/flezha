@@ -16,7 +16,7 @@ defmodule AflechaTest.IOManagerTest do
   end
 
   test "add IO input" do
-    res =
+    res1 =
       IOManager.add_io(
         @default_operator,
         @computation_id,
@@ -25,7 +25,19 @@ defmodule AflechaTest.IOManagerTest do
         []
       )
 
-    assert elem(res, 0) == :ok
-    assert elem(res, 1) |> is_binary()
+    res2 =
+      IOManager.add_io(
+        @default_operator,
+        "none",
+        %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
+        :input,
+        []
+      )
+
+    assert elem(res1, 0) == :ok
+    assert elem(res1, 1) |> is_binary()
+
+    assert elem(res2, 0) == :error
+    assert elem(res2, 1) === "computation not found"
   end
 end
