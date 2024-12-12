@@ -21,13 +21,17 @@ pub fn get_extension() -> String {
 }
 
 pub fn get_operator_id(slice: &[String]) -> String {
+    get_parameter(slice, "--operator=", "-o=")
+}
+
+pub fn get_parameter(slice: &[String], long_key: &str, short_key: &str) -> String {
     let mut operator_id = String::from("");
 
     // Process the arguments to find the operator_id
     for arg in slice {
-        if arg.starts_with("--operator=") {
+        if arg.starts_with(long_key) {
             operator_id = arg[10..].to_string();
-        } else if arg.starts_with("-o=") {
+        } else if arg.starts_with(short_key) {
             operator_id = arg[3..].to_string();
         }
     }
@@ -44,6 +48,10 @@ pub fn get_json(slice: &[String], long_key: &str, short_key: &str) -> String {
         } else if arg.starts_with(short_key) {
             json = arg[short_key.len()..].to_string();
         }
+    }
+
+    if json.is_empty() {
+        return "{}".to_string();
     }
 
     json.replace("\"", "\\\"")

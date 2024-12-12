@@ -1,6 +1,6 @@
 use std::env;
 use std::process::{Command, exit};
-use shared_lib::{get_operator_id, get_json, get_aflecha_command};
+use shared_lib::{get_operator_id, get_json, get_aflecha_command, get_parameter};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -35,13 +35,15 @@ fn handle_add(args: Vec<String>) {
 
     let command = get_aflecha_command();
     let operator_id = get_operator_id(&args[5..]);
+    let opts: String = get_opts(&args[4..]);
     
     let rpc_command = format!(
-        "Aflecha.Service.RpcCookbook.add_io(\"{}\", \"{}\",\"{}\", \"{}\")",
+        "Aflecha.Service.RpcCookbook.add_io(\"{}\", \"{}\",\"{}\", :{}, {})",
         operator_id,
         computation_id,
         params, 
-        io_mode
+        io_mode,
+        opts
     );
 
     println!("Adding io...");
@@ -61,4 +63,19 @@ fn handle_add(args: Vec<String>) {
 
 fn handle_rem(_args: Vec<String>) {
     // TODO: implement
+}
+
+
+fn get_opts(slice: &[String]) -> String {
+    let io_type = get_parameter(slice, "--io_type=", "-i=");
+
+    let mut opts = String::from("[");
+
+    if !io_type.is_empty() {
+        opts = format!("handling_type: :{}", io_type);
+    }
+
+    opts.push_str("]");
+
+    return opts
 }
