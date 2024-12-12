@@ -48,7 +48,7 @@ defmodule Aflecha.IO.Handler.Websocket do
 
   @impl Fresh
   def handle_control({_, message}, state) do
-    IO.puts("Received ping with content: #{message}!")
+    IO.puts("Received ping with content: #{message}")
 
     {:ok, state}
   end
