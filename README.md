@@ -51,21 +51,3 @@ _build/dev/rel/aflecha/bin/io add input my_computation --parameters='{
   }
 }'
 ```
-
-## Build docker image for multiple platforms and push to docker hub
-```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t alfetahe/aflecha:0.1.4 . --push
-```
-
-## Run docker image
-```bash
-docker run -d \
-  --name aflecha_container \
-  -e AFLECHA_MAX_RECONNECTS=3 \
-  alfetahe/aflecha:0.1.4
-```
-
-## Export docker image
-```bash
-docker save -o aflecha.tar alfetahe/aflecha:0.1.4
-```

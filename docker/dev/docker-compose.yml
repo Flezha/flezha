@@ -1,0 +1,25 @@
+services:
+  agent:
+    container_name: aflecha_agent_dev
+    image: aflecha:latest
+    volumes:
+      - socket_data:/socket_data
+      - ../../:/aflecha
+
+  # kafka:
+  #   image: bitnami/kafka:3.9.0
+  #   environment:
+  #     KAFKA_BROKER_ID: 1
+  #     KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+  #     KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092
+
+  # rust:
+  #   build:
+  #     context: ../test/apps/rust_operator
+  #     dockerfile: ./Dockerfile.rust
+  #   volumes:
+  #     - socket_data:/socket_data
+
+volumes:
+  socket_data:
+    driver: local

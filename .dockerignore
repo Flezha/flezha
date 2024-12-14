@@ -2,7 +2,9 @@ erl_crash.dump
 deps
 _build
 cover
-/target/
+test/apps/rust_operator/target
+cli/target
+target/
 aflecha-*.tar
 .elixir_ls/
 .vscode

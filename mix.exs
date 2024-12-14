@@ -38,16 +38,22 @@ defmodule Aflecha.MixProject do
       {:jason, "~> 1.4"},
       {:process_hub, "~> 0.2.10-alpha"},
       {:blockade, "~> 0.2.1"},
-      {:fresh, "~> 0.4.4"}
+      {:fresh, "~> 0.4.4"},
+      {:kafka_ex, "~> 0.13.0"}
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
   end
 
-  # TODO: switch "debug" to "release" when ready.
+  # TODO: Also copy windows binaries
   defp copy_cli_commands(release) do
-    File.cp!("cli/target/debug/agent", Path.join(release.path, "bin/agent"))
-    File.cp!("cli/target/debug/computation", Path.join(release.path, "bin/computation"))
-    File.cp!("cli/target/debug/io", Path.join(release.path, "bin/io"))
+    env = case Mix.env() do
+      :prod -> "release"
+      _ -> "debug"
+    end
+
+    File.cp!("cli/target/#{env}/agent", Path.join(release.path, "bin/agent"))
+    File.cp!("cli/target/#{env}/computation", Path.join(release.path, "bin/computation"))
+    File.cp!("cli/target/#{env}/io", Path.join(release.path, "bin/io"))
     release
   end
 

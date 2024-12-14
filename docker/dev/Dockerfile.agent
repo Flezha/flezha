@@ -1,0 +1,42 @@
+# Build from the Elixir image
+FROM elixir:1.17-otp-27
+
+# Install Rust and necessary tools
+RUN apt-get update && \
+    apt-get install -y curl build-essential && \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    . "$HOME/.cargo/env" && \
+    rustup update && \
+    rustup default stable
+
+# Install Node.js and npm
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs
+
+# Install TypeScript globally
+RUN npm install -g typescript
+
+# Create a non-root user and its home directory
+RUN addgroup --gid 1000 aflecha && adduser --uid 1000 --gid 1000 --home /home/aflecha aflecha
+
+# Set the home directory for the aflecha user
+ENV HOME=/home/aflecha
+
+# Set the working directory
+WORKDIR /aflecha
+
+# Install system dependencies as root
+RUN mix local.hex --force && \
+    mix local.rebar --force
+
+# Change the owner of the /aflecha directory
+RUN chown -R aflecha:aflecha /aflecha
+
+# Switch to the aflecha user
+USER aflecha
+
+# Set environment variables
+ENV MIX_ENV=dev
+
+# Start the application
+CMD ["tail", "-f", "/dev/null"]

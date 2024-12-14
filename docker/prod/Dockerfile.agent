@@ -1,0 +1,70 @@
+# Stage 1: Build the Rust CLI
+FROM rust:1.83.0 AS rust-build
+
+# Set working directory for Rust build
+WORKDIR /cli
+
+# Copy the Rust CLI project
+COPY ../cli ./
+
+# Build the Rust project
+RUN cargo build
+
+# Stage 2: Build the Elixir app
+FROM elixir:1.17-otp-27 AS build
+
+# Set current working directory.
+WORKDIR /app
+
+# Install system dependencies
+RUN mix local.hex --force
+RUN mix local.rebar --force
+
+# Copy all the necessary files to the container
+COPY ../mix.exs ./mix.exs
+COPY ../lib ./lib
+COPY ../config ./config
+COPY ../test ./test
+COPY ../rel ./rel
+
+# Copy the Rust build artifacts from the previous stage
+COPY --from=rust-build /cli /app/cli
+
+# Fetch dependencies
+RUN MIX_ENV=dev mix deps.get
+
+# Compile the project
+RUN ERL_FLAGS="+JMsingle true" MIX_ENV=dev mix compile
+
+# Create release
+RUN MIX_ENV=dev mix release --overwrite
+
+# Stage 3: Final image
+FROM elixir:1.17-otp-27
+
+# Set the working directory
+WORKDIR /aflecha
+
+# Set environment variables
+ENV MIX_ENV=dev
+
+# Create a non-root user and switch to it
+RUN addgroup --system aflecha && adduser --system aflecha --ingroup aflecha
+
+# Copy only the necessary files from the _build/dev/rel/aflecha directory
+COPY --from=build /app/_build/dev/rel/aflecha /aflecha/
+
+# Copy the Rust build artifacts to the final image
+COPY --from=build /app/cli /aflecha/cli
+
+# Change the owner of the /aflecha directory
+RUN chown -R aflecha:aflecha /aflecha
+
+# Switch to the aflecha user
+USER aflecha
+
+# Set the working directory
+WORKDIR /aflecha
+
+# Start the application
+CMD ["tail", "-f", "/dev/null"]
