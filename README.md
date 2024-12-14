@@ -51,3 +51,7 @@ _build/dev/rel/aflecha/bin/io add input my_computation --parameters='{
   }
 }'
 ```
+
+### Development
+Run the application inside the docker containers.
+See `docker/dev/README.md` for more information.
