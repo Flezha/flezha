@@ -46,10 +46,11 @@ defmodule Aflecha.MixProject do
 
   # TODO: Also copy windows binaries
   defp copy_cli_commands(release) do
-    env = case Mix.env() do
-      :prod -> "release"
-      _ -> "debug"
-    end
+    env =
+      case Mix.env() do
+        :prod -> "release"
+        _ -> "debug"
+      end
 
     File.cp!("cli/target/#{env}/agent", Path.join(release.path, "bin/agent"))
     File.cp!("cli/target/#{env}/computation", Path.join(release.path, "bin/computation"))

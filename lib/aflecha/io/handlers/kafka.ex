@@ -12,7 +12,6 @@ defmodule Aflecha.IO.Handlers.Kafka do
     :ok
   end
 
-
   # TODO: REMOVE LATER
   use KafkaEx.GenConsumer
 
@@ -25,6 +24,7 @@ defmodule Aflecha.IO.Handlers.Kafka do
     for %Message{value: message} <- message_set do
       Logger.debug(fn -> "message: " <> inspect(message) end)
     end
+
     {:async_commit, state}
   end
 end

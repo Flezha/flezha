@@ -7,3 +7,9 @@ config :aflecha,
 
 config :logger,
   level: :warning
+
+config :kafka_ex,
+  brokers: [
+    {"kafka", 9092}
+  ],
+  disable_default_worker: true
