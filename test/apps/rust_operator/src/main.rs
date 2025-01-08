@@ -56,23 +56,20 @@ struct CompareFilterComputation {
 
 impl Computation for CompareFilterComputation {
     fn run(&mut self, input: ComputationInput) -> ComputationOutput {
-        match input {
-            ComputationInput::Text(text) => {
-                if self.inverted {
-                    if self.comparable == text {
-                        ComputationOutput::None
-                    } else {
-                        ComputationOutput::Forward(ComputationResult::Text(text))
-                    }
-                } else {
-                    if self.comparable == text {
-                        ComputationOutput::Forward(ComputationResult::Text(text))
-                    } else {
-                        ComputationOutput::None
-                    }
-                }
+        let text = input.as_string();
+
+        if self.inverted {
+            if self.comparable == text {
+                ComputationOutput::None
+            } else {
+                ComputationOutput::Forward(ComputationResult::Text(text))
             }
-            ComputationInput::Binary(_) => ComputationOutput::None
+        } else {
+            if self.comparable == text {
+                ComputationOutput::Forward(ComputationResult::Text(text))
+            } else {
+                ComputationOutput::None
+            }
         }
     }
 }
