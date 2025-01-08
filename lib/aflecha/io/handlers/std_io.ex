@@ -4,15 +4,15 @@ defmodule Aflecha.IO.Handler.StdIO do
 
   defstruct []
 
-  def start_link(pipeline_id, io_struct, opts) do
-    GenServer.start_link(__MODULE__, {pipeline_id, io_struct, opts}, [])
+  def start_link(computation_id, io_struct, opts) do
+    GenServer.start_link(__MODULE__, {computation_id, io_struct, opts}, [])
   end
 
   @impl true
-  def init({pipeline_id, _io_struct, opts}) do
+  def init({computation_id, _io_struct, opts}) do
     {:ok,
      %{
-       pipeline_id: pipeline_id,
+       computation_id: computation_id,
        handling_type: Keyword.get(opts, :handling_type)
      }}
   end
