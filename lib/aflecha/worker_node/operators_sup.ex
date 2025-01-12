@@ -1,5 +1,5 @@
-defmodule Aflecha.Operator.OperatorsSup do
-  alias Aflecha.Operator.OperatorUnitSup
+defmodule Aflecha.WorkerNode.OperatorsSup do
+  alias Aflecha.WorkerNode.OperatorUnitSup
 
   use Supervisor
 

@@ -2,7 +2,7 @@ defmodule Aflecha.Computation.Overseer do
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Computation.MigratorService
-  alias Aflecha.Operator.StreamSup
+  alias Aflecha.WorkerNode.StreamSup
 
   use GenServer
 

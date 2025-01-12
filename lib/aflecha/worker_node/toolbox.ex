@@ -1,6 +1,6 @@
-defmodule Aflecha.Operator.Toolbox do
-  alias Aflecha.Operator.OperatorUnitSup
-  alias Aflecha.Operator.OperatorsSup
+defmodule Aflecha.WorkerNode.Toolbox do
+  alias Aflecha.WorkerNode.OperatorUnitSup
+  alias Aflecha.WorkerNode.OperatorsSup
   alias Aflecha.Service.Payloader
   alias Aflecha.Socket.Support, as: SocketSupport
   alias Aflecha.Service.Identificator

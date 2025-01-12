@@ -1,7 +1,7 @@
-defmodule Aflecha.Operator.ControlUnit do
+defmodule Aflecha.WorkerNode.ControlUnit do
   alias Aflecha.Service.Identificator
   alias Aflecha.Service.Payloader
-  alias Aflecha.Operator.ControlChannel
+  alias Aflecha.WorkerNode.ControlChannel
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Service.EventManager
   alias Aflecha.Computation.Builder, as: ComputationBuilder

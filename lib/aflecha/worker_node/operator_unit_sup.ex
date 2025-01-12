@@ -1,6 +1,6 @@
-defmodule Aflecha.Operator.OperatorUnitSup do
-  alias Aflecha.Operator.ControlUnit
-  alias Aflecha.Operator.ControlChannel
+defmodule Aflecha.WorkerNode.OperatorUnitSup do
+  alias Aflecha.WorkerNode.ControlUnit
+  alias Aflecha.WorkerNode.ControlChannel
   alias Aflecha.Service.Identificator
   alias Aflecha.Socket.Listener
   alias Aflecha.Socket.Support, as: SocketSupport
@@ -42,11 +42,11 @@ defmodule Aflecha.Operator.OperatorUnitSup do
       },
       %{
         id: :primary_stream_sup,
-        start: {Aflecha.Operator.StreamSup, :start_link, [{operator_id, :primary}]}
+        start: {Aflecha.WorkerNode.StreamSup, :start_link, [{operator_id, :primary}]}
       },
       %{
         id: :secondary_stream_sup,
-        start: {Aflecha.Operator.StreamSup, :start_link, [{operator_id, :secondary}]}
+        start: {Aflecha.WorkerNode.StreamSup, :start_link, [{operator_id, :secondary}]}
       }
     ]
 

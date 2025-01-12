@@ -1,6 +1,6 @@
-defmodule Aflecha.Operator.StreamSup do
+defmodule Aflecha.WorkerNode.StreamSup do
   alias Aflecha.Service.ConcurrencyMapper
-  alias Aflecha.Operator.StreamChannel
+  alias Aflecha.WorkerNode.StreamChannel
   alias Aflecha.Service.Identificator
 
   use Supervisor

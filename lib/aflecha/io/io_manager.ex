@@ -1,5 +1,5 @@
 defmodule Aflecha.IO.IOManager do
-  alias Aflecha.Operator.OperatorsSup
+  alias Aflecha.WorkerNode.OperatorsSup
   alias Aflecha.Service.Identificator
 
   def add_io(operator_id, computation_id, io_struct, io_mode, opts) do

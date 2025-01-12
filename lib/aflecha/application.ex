@@ -11,15 +11,15 @@ defmodule Aflecha.Application do
     Aflecha.Socket.Support.prepare_socket_dir()
 
     children = [
-      Aflecha.Operator.OperatorsSup,
+      Aflecha.WorkerNode.OperatorsSup,
       Aflecha.Service.Warden,
       Aflecha.Service.Identificator,
       Aflecha.Service.EventManager,
       {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      {Aflecha.Socket.Dispatcher, &Aflecha.Operator.Toolbox.op_conn_fn/1},
+      {Aflecha.Socket.Dispatcher, &Aflecha.WorkerNode.Toolbox.op_conn_fn/1},
       Aflecha.Service.PortPilot,
       Aflecha.Cluster.Orchestrator,
-      Aflecha.Operator.Controller
+      Aflecha.WorkerNode.Controller
     ]
 
     # If Testnet is enabled, we start the TestnetSupervisor

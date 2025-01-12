@@ -3,7 +3,7 @@ defmodule Aflecha.Computation.ComputeManager do
   Manages the computation startings and stoppings.
   """
 
-  alias Aflecha.Operator.Controller
+  alias Aflecha.WorkerNode.Controller
 
   @doc """
   Starts a new computation to the operator.

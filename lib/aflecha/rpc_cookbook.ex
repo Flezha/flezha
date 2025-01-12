@@ -34,7 +34,7 @@ defmodule Aflecha.Service.RpcCookbook do
 
   defp operator_id(operator_id) do
     case operator_id do
-      "" -> Aflecha.Operator.OperatorsSup.default_operator()
+      "" -> Aflecha.WorkerNode.OperatorsSup.default_operator()
       _ -> operator_id
     end
   end

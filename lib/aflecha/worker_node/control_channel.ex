@@ -1,4 +1,4 @@
-defmodule Aflecha.Operator.ControlChannel do
+defmodule Aflecha.WorkerNode.ControlChannel do
   alias Aflecha.Socket.Support, as: SocketSupport
   alias Aflecha.Service.Identificator
   alias Aflecha.Service.Payloader
