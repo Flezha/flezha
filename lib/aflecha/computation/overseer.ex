@@ -1,5 +1,4 @@
-defmodule Aflecha.Computation.WatchDog do
-  # TODO: rename this module.
+defmodule Aflecha.Computation.Overseer do
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Computation.MigratorService

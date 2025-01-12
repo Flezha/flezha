@@ -56,7 +56,7 @@ defmodule Aflecha.Operator.Controller do
   defp add_computation(operator_id, computation) do
     child_spec = %{
       id: computation.id,
-      start: {Aflecha.Computation.WatchDog, :start_link, [{operator_id, computation}]}
+      start: {Aflecha.Computation.Overseer, :start_link, [{operator_id, computation}]}
     }
 
     result =
