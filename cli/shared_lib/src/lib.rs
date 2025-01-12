@@ -20,7 +20,7 @@ pub fn get_extension() -> String {
     }
 }
 
-pub fn get_operator_id(slice: &[String]) -> String {
+pub fn get_namespace(slice: &[String]) -> String {
     get_parameter(slice, "--operator=", "-o=")
 }
 

@@ -1,6 +1,6 @@
 use std::env;
 use std::process::{Command, exit};
-use shared_lib::{get_operator_id, get_json, get_aflecha_command};
+use shared_lib::{get_namespace, get_json, get_aflecha_command};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -33,7 +33,7 @@ fn handle_start(args: Vec<String>) {
     let variables = get_json(&args[4..], "--variables=", "-v=");
 
     let command = get_aflecha_command();
-    let operator_id = get_operator_id(&args[4..]);
+    let operator_id = get_namespace(&args[4..]);
 
     let rpc_command = format!(
         "Aflecha.Service.RpcCookbook.computation_start(\"{}\", \"{}\", \"{}\", \"{}\")", 
@@ -65,7 +65,7 @@ fn handle_stop(args: Vec<String>) {
     }
 
     let computation_id = &args[2];
-    let operator_id = get_operator_id(&args[3..]);
+    let operator_id = get_namespace(&args[3..]);
 
     let rpc_command = format!(
         "Aflecha.Service.RpcCookbook.computation_stop(\"{}\", \"{}\")", 

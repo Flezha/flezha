@@ -1,6 +1,6 @@
 use std::env;
 use std::process::{Command, exit};
-use shared_lib::{get_operator_id, get_json, get_aflecha_command, get_parameter};
+use shared_lib::{get_namespace, get_json, get_aflecha_command, get_parameter};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -34,7 +34,7 @@ fn handle_add(args: Vec<String>) {
     };
 
     let command = get_aflecha_command();
-    let operator_id = get_operator_id(&args[5..]);
+    let operator_id = get_namespace(&args[5..]);
     let opts: String = get_opts(&args[4..]);
     
     let rpc_command = format!(
