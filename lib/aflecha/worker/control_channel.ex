@@ -9,7 +9,7 @@ defmodule Aflecha.Worker.ControlChannel do
 
   def start_link({group_id, worker_id, sock}) do
     GenServer.start_link(__MODULE__, {group_id, worker_id, sock},
-      name: Identificator.control_channel(group_id)
+      name: Identificator.control_channel(group_id, worker_id)
     )
   end
 

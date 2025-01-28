@@ -1,4 +1,4 @@
-defmodule Aflecha.Computation.GroupManager do
+defmodule Aflecha.Computation.NodeManager do
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Computation.MigratorService

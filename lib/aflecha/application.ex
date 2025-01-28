@@ -11,21 +11,29 @@ defmodule Aflecha.Application do
     Aflecha.Socket.Support.prepare_socket_dir()
 
     children = [
-      Aflecha.HubManager,
-      Aflecha.Worker.NodeManager,
-      Aflecha.Service.Warden,
       Aflecha.Service.Identificator,
+      Aflecha.HubManager,
       Aflecha.Service.EventManager,
-      Aflecha.Worker.FleetSupervisor,
-      Aflecha.Worker.GroupManager,
+      Aflecha.Worker.NodeManager,
       {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      {Aflecha.Socket.Dispatcher, &Aflecha.Worker.GroupManager.connect_handler/1}
+      {Aflecha.Socket.Dispatcher, &Aflecha.Worker.NodeManager.connect_handler/1},
+      Aflecha.Worker.FleetSupervisor,
+      Aflecha.Service.PortPilot
+
+      # Aflecha.Worker.NodeManager,
+      # Aflecha.Service.Warden,
+      # Aflecha.Service.Identificator,
+      # Aflecha.Service.EventManager,
+      # Aflecha.Worker.FleetSupervisor,
+      # Aflecha.Worker.NodeManager,
+      # {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
+      # {Aflecha.Socket.Dispatcher, &Aflecha.Worker.NodeManager.connect_handler/1}
 
       # Aflecha.Service.Warden,
       # Aflecha.Service.Identificator,
       # Aflecha.Service.EventManager,
       # {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      # {Aflecha.Socket.Dispatcher, &Aflecha.Worker.GroupManager.connect_handler/1},
+      # {Aflecha.Socket.Dispatcher, &Aflecha.Worker.NodeManager.connect_handler/1},
       # Aflecha.Service.PortPilot,
       # Aflecha.Cluster.Orchestrator,
       # Aflecha.Worker.Controller

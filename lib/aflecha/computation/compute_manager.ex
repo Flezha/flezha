@@ -34,7 +34,7 @@ defmodule Aflecha.Computation.ComputeManager do
   defp add_computation(group_id, computation) do
     child_spec = %{
       id: computation.id,
-      start: {Aflecha.Computation.GroupManager, :start_link, [{group_id, computation}]}
+      start: {Aflecha.Computation.NodeManager, :start_link, [{group_id, computation}]}
     }
 
     result =

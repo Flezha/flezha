@@ -18,7 +18,14 @@ defmodule Aflecha.Service.Identificator do
   end
 
   def unique_id(group_id) do
-    rand_nums = for _ <- 1..4, into: "", do: <<Enum.random(1..1000)>>
+    rand_nums =
+      Enum.reduce(1..4, "", fn _x, acc ->
+        rand_num =
+          Enum.random(1..1000)
+          |> Integer.to_string()
+
+        rand_num <> acc
+      end)
 
     id = group_id <> "_" <> rand_nums
 
@@ -32,8 +39,8 @@ defmodule Aflecha.Service.Identificator do
     gen_via(group_id, "wus")
   end
 
-  def control_channel(group_id) do
-    gen_via(group_id, "cc")
+  def control_channel(group_id, worker_id) do
+    gen_via(group_id, worker_id, "cc")
   end
 
   def hub(group_id) do

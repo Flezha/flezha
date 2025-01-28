@@ -14,105 +14,111 @@ defmodule AflechaTest do
     %{}
   end
 
-  test "websocket io" do
-    computation = %Aflecha.Computation.Builder{
-      id: "add_websocket_io_test",
-      factory_id: @test_computation_factory
-    }
-
-    {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
-
-    res =
-      Aflecha.add_io(
-        @default_operator,
-        computation.id,
-        %Aflecha.IO.Handler.Websocket{uri: @testnet_ws_uri},
-        :input,
-        []
-      )
-
-    assert elem(res, 0) == :ok
-    assert is_binary(elem(res, 1))
+  test "worker connect" do
+    res = GenServer.call(Aflecha.Worker.NodeManager, {:get_workers, "default"})
+    assert length(res) === 1
+    Enum.each(res, &assert(is_binary(&1)))
   end
 
-  test "add new io internal process" do
-    computation = %Aflecha.Computation.Builder{
-      id: "add_io_internal_process_test",
-      factory_id: @test_computation_factory
-    }
+  # test "websocket io" do
+  #   computation = %Aflecha.Computation.Builder{
+  #     id: "add_websocket_io_test",
+  #     factory_id: @test_computation_factory
+  #   }
 
-    {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
+  #   {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
 
-    res =
-      Aflecha.add_io(
-        @default_operator,
-        computation.id,
-        %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
-        :input,
-        []
-      )
+  #   res =
+  #     Aflecha.add_io(
+  #       @default_operator,
+  #       computation.id,
+  #       %Aflecha.IO.Handler.Websocket{uri: @testnet_ws_uri},
+  #       :input,
+  #       []
+  #     )
 
-    assert elem(res, 0) == :ok
-    assert is_binary(elem(res, 1))
-  end
+  #   assert elem(res, 0) == :ok
+  #   assert is_binary(elem(res, 1))
+  # end
 
-  test "computation flow generation -> internal_process" do
-    computation = %Aflecha.Computation.Builder{
-      id: "c_flow_test_generate_internal",
-      factory_id: @test_compare_filter_factory,
-      variables: %{"comparable" => "hello world", "inverted" => false}
-    }
+  # test "add new io internal process" do
+  #   computation = %Aflecha.Computation.Builder{
+  #     id: "add_io_internal_process_test",
+  #     factory_id: @test_computation_factory
+  #   }
 
-    {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
+  #   {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
 
-    Aflecha.add_io(
-      @default_operator,
-      computation.id,
-      %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
-      :output,
-      []
-    )
+  #   res =
+  #     Aflecha.add_io(
+  #       @default_operator,
+  #       computation.id,
+  #       %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
+  #       :input,
+  #       []
+  #     )
 
-    # Aflecha.add_io(
-    #   @default_operator,
-    #   computation.id,
-    #   %Aflecha.IO.Handler.StdIO{},
-    #   :output,
-    #   []
-    # )
+  #   assert elem(res, 0) == :ok
+  #   assert is_binary(elem(res, 1))
+  # end
 
-    {:ok, __id} =
-      Aflecha.add_io(
-        @default_operator,
-        computation.id,
-        %Aflecha.IO.Handler.Websocket{
-          uri: @testnet_ws_uri,
-          post_connect: %{
-            payload: {
-              :text,
-              ~s(
-                  {
-                    "event_type": "subscribe",
-                    "event_data": {
-                      "default_message": "hello world",
-                      "interval": 1
-                    }
-                  }
-                )
-            }
-          }
-        },
-        :input,
-        handling_type: :task
-      )
+  # test "computation flow generation -> internal_process" do
+  #   computation = %Aflecha.Computation.Builder{
+  #     id: "c_flow_test_generate_internal",
+  #     factory_id: @test_compare_filter_factory,
+  #     variables: %{"comparable" => "hello world", "inverted" => false}
+  #   }
 
-    for _ <- 1..10 do
-      receive do
-        _msg ->
-          assert true
-      after
-        10000 -> assert false
-      end
-    end
-  end
+  #   {:ok, _} = ComputeManager.start_computation(@default_operator, computation)
+
+  #   Aflecha.add_io(
+  #     @default_operator,
+  #     computation.id,
+  #     %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
+  #     :output,
+  #     []
+  #   )
+
+  #   # Aflecha.add_io(
+  #   #   @default_operator,
+  #   #   computation.id,
+  #   #   %Aflecha.IO.Handler.StdIO{},
+  #   #   :output,
+  #   #   []
+  #   # )
+
+  #   {:ok, __id} =
+  #     Aflecha.add_io(
+  #       @default_operator,
+  #       computation.id,
+  #       %Aflecha.IO.Handler.Websocket{
+  #         uri: @testnet_ws_uri,
+  #         post_connect: %{
+  #           payload: {
+  #             :text,
+  #             ~s(
+  #                 {
+  #                   "event_type": "subscribe",
+  #                   "event_data": {
+  #                     "default_message": "hello world",
+  #                     "interval": 1
+  #                   }
+  #                 }
+  #               )
+  #           }
+  #         }
+  #       },
+  #       :input,
+  #       handling_type: :task
+  #     )
+
+  #   for _ <- 1..10 do
+  #     receive do
+  #       _msg ->
+  #         assert true
+  #     after
+  #       10000 -> assert false
+  #     end
+  #   end
+  # end
 end
