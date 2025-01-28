@@ -1,4 +1,4 @@
-defmodule Aflecha.WorkerNode.ControlChannel do
+defmodule Aflecha.Worker.ControlChannel do
   alias Aflecha.Socket.Support, as: SocketSupport
   alias Aflecha.Service.Identificator
   alias Aflecha.Service.Payloader
@@ -7,9 +7,9 @@ defmodule Aflecha.WorkerNode.ControlChannel do
 
   use GenServer
 
-  def start_link({operator_id, sock}) do
-    GenServer.start_link(__MODULE__, {operator_id, sock},
-      name: Identificator.control_channel(operator_id)
+  def start_link({group_id, worker_id, sock}) do
+    GenServer.start_link(__MODULE__, {group_id, worker_id, sock},
+      name: Identificator.control_channel(group_id)
     )
   end
 
@@ -30,14 +30,15 @@ defmodule Aflecha.WorkerNode.ControlChannel do
   end
 
   @impl true
-  def init({operator_id, sock}) do
+  def init({group_id, worker_id, sock}) do
     SocketSupport.set_active(sock)
 
     {:ok,
      %{
-       operator_id: operator_id,
+       group_id: group_id,
+       worker_id: worker_id,
        sock: sock,
-       control_unit: Identificator.control_unit(operator_id)
+       control_unit: Identificator.control_unit(group_id, worker_id)
      }}
   end
 

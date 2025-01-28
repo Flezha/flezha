@@ -17,54 +17,73 @@ defmodule Aflecha.Service.Identificator do
     )
   end
 
-  def operator_sup(operator_id) do
-    gen_via(operator_id, "es")
-  end
+  def unique_id(group_id) do
+    rand_nums = for _ <- 1..4, into: "", do: <<Enum.random(1..1000)>>
 
-  def control_channel(operator_id) do
-    gen_via(operator_id, "cc")
-  end
+    id = group_id <> "_" <> rand_nums
 
-  def hub(operator_id) do
-    gen_id(operator_id, "hub") |> String.to_atom()
-  end
-
-  def stream_listener(operator_id, type) do
-    case type do
-      :primary -> gen_via(operator_id, "psl")
-      :secondary -> gen_via(operator_id, "ssl")
+    case Registry.lookup(__MODULE__, id) do
+      [] -> id
+      _ -> unique_id(group_id)
     end
   end
 
-  def stream_sup_primary(operator_id) do
-    gen_via(operator_id, "scsp")
+  def unit_sup(group_id) do
+    gen_via(group_id, "wus")
   end
 
-  def stream_sup_secondary(operator_id) do
-    gen_via(operator_id, "scss")
+  def control_channel(group_id) do
+    gen_via(group_id, "cc")
   end
 
-  def control_unit(operator_id) do
-    gen_via(operator_id, "cu")
+  def hub(group_id) do
+    gen_id(group_id, "hub") |> String.to_atom()
   end
 
-  def stream_channel_primary(operator_id, count_nr) do
-    gen_via(operator_id, "scp_" <> Integer.to_string(count_nr))
+  def stream_listener(group_id, type) do
+    case type do
+      :primary -> gen_via(group_id, "psl")
+      :secondary -> gen_via(group_id, "ssl")
+    end
   end
 
-  def stream_channel_secondary(operator_id, count_nr) do
-    gen_via(operator_id, "scs_" <> Integer.to_string(count_nr))
+  def stream_sup_primary(group_id) do
+    gen_via(group_id, "scsp")
   end
 
-  defp gen_via(operator_id, type_str) do
-    {:via, Registry, {__MODULE__, gen_id(operator_id, type_str)}}
+  def stream_sup_secondary(group_id) do
+    gen_via(group_id, "scss")
   end
 
-  defp gen_id(operator_id, type_str) when is_atom(operator_id) do
-    gen_id(Atom.to_string(operator_id), type_str)
+  def control_unit(group_id, worker_id) do
+    gen_via(group_id, worker_id, "cu")
   end
 
-  defp gen_id(operator_id, type_str) do
-    operator_id <> "_" <> type_str
+  def stream_channel_primary(group_id, count_nr) do
+    gen_via(group_id, "scp_" <> Integer.to_string(count_nr))
+  end
+
+  def stream_channel_secondary(group_id, count_nr) do
+    gen_via(group_id, "scs_" <> Integer.to_string(count_nr))
+  end
+
+  defp gen_via(group_id, type_str) do
+    {:via, Registry, {__MODULE__, gen_id(group_id, type_str)}}
+  end
+
+  defp gen_via(group_id, worker_id, type_str) do
+    {:via, Registry, {__MODULE__, gen_id(group_id, worker_id, type_str)}}
+  end
+
+  defp gen_id(group_id, type_str) when is_atom(group_id) do
+    gen_id(Atom.to_string(group_id), type_str)
+  end
+
+  defp gen_id(group_id, type_str) do
+    group_id <> "_" <> type_str
+  end
+
+  defp gen_id(group_id, worker_id, type_str) do
+    group_id <> "_" <> worker_id <> "_" <> type_str
   end
 end

@@ -1,7 +1,7 @@
-defmodule Aflecha.WorkerNode.ControlUnit do
+defmodule Aflecha.Worker.ControlUnit do
   alias Aflecha.Service.Identificator
   alias Aflecha.Service.Payloader
-  alias Aflecha.WorkerNode.ControlChannel
+  alias Aflecha.Worker.ControlChannel
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Service.EventManager
   alias Aflecha.Computation.Builder, as: ComputationBuilder
@@ -20,13 +20,24 @@ defmodule Aflecha.WorkerNode.ControlUnit do
   @payload_id_comp_state "computation_state"
 
   @spec start_link(binary()) :: :ignore | {:error, any()} | {:ok, pid()}
-  def start_link(group_id) do
-    GenServer.start_link(__MODULE__, group_id, name: Identificator.control_unit(group_id))
+  def start_link({group_id, worker_id}) do
+    GenServer.start_link(
+      __MODULE__,
+      {group_id, worker_id},
+      name: Identificator.control_unit(group_id, worker_id)
+    )
   end
 
   @impl true
-  def init(group_id) do
-    {:ok, %{group_id: group_id, response_refs: %{}}}
+  def init({group_id, worker_id}) do
+    {
+      :ok,
+      %{
+        group_id: group_id,
+        worker_id: worker_id,
+        response_refs: %{}
+      }
+    }
   end
 
   @impl true

@@ -1,5 +1,5 @@
 defmodule Aflecha.IO.IOManager do
-  alias Aflecha.WorkerNode.OperatorsSup
+  alias Aflecha.Worker.FleetSupervisor
   alias Aflecha.Service.Identificator
 
   def add_io(operator_id, computation_id, io_struct, io_mode, opts) do
@@ -15,7 +15,7 @@ defmodule Aflecha.IO.IOManager do
   end
 
   def send_io_payload(computation_id, io_id, io_mode, payload) do
-    OperatorsSup.default_operator()
+    FleetSupervisor.default_operator()
     |> send_io_payload(computation_id, io_id, io_mode, payload)
   end
 

@@ -12,7 +12,7 @@ defmodule Aflecha.IO.Handlers.Kafka do
 
   defstruct [
     :worker_id,
-    :brokers,
+    :brokers
   ]
 
   def start_link(_pipeline_pid, %__MODULE__{worker_id: _worker_id, brokers: _brokers}, _opts) do
@@ -43,6 +43,7 @@ defmodule Aflecha.IO.Handlers.Kafka do
     for %Message{value: message} <- message_set do
       Logger.debug(fn -> "message: " <> inspect(message) end)
     end
+
     {:async_commit, state}
   end
 end
