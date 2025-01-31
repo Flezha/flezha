@@ -1,4 +1,4 @@
-defmodule Aflecha.Computation.NodeManager do
+defmodule Aflecha.Computation.Overwatch do
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Computation.MigratorService
@@ -14,9 +14,9 @@ defmodule Aflecha.Computation.NodeManager do
   end
 
   @impl true
-  def init({group_id, computation}) do
+  def init({group_id, group_worker_id, computation}) do
     GenServer.call(
-      Identificator.control_unit(group_id),
+      Identificator.control_unit(group_worker_id),
       {:start_computation, computation}
     )
 
@@ -29,10 +29,6 @@ defmodule Aflecha.Computation.NodeManager do
        io: %{
          input: [],
          output: []
-       },
-       supervisors: %{
-         input: start_sup(),
-         output: start_sup()
        }
      }}
   end
@@ -125,13 +121,6 @@ defmodule Aflecha.Computation.NodeManager do
     MigratorService.deserialize_computation(state.group_id, state.id, serialized_data)
 
     {:noreply, handover_state}
-  end
-
-  defp start_sup() do
-    case IOSupervisor.start_link() do
-      {:ok, pid} -> pid
-      {:error, _} -> raise "Failed to start IO Supervisor"
-    end
   end
 
   def attach_channel(computation_id, group_id) do

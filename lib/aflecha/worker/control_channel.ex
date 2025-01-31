@@ -7,9 +7,9 @@ defmodule Aflecha.Worker.ControlChannel do
 
   use GenServer
 
-  def start_link({group_id, worker_id, sock}) do
-    GenServer.start_link(__MODULE__, {group_id, worker_id, sock},
-      name: Identificator.control_channel(group_id, worker_id)
+  def start_link({group_id, group_worker_id, sock}) do
+    GenServer.start_link(__MODULE__, {group_id, group_worker_id, sock},
+      name: Identificator.control_channel(group_worker_id)
     )
   end
 
@@ -30,15 +30,15 @@ defmodule Aflecha.Worker.ControlChannel do
   end
 
   @impl true
-  def init({group_id, worker_id, sock}) do
+  def init({group_id, group_worker_id, sock}) do
     SocketSupport.set_active(sock)
 
     {:ok,
      %{
        group_id: group_id,
-       worker_id: worker_id,
+       group_worker_id: group_worker_id,
        sock: sock,
-       control_unit: Identificator.control_unit(group_id, worker_id)
+       control_unit: Identificator.control_unit(group_worker_id)
      }}
   end
 

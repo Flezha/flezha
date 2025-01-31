@@ -12,10 +12,10 @@ defmodule Aflecha.Worker.FleetSupervisor do
     Supervisor.init([], strategy: :one_for_one)
   end
 
-  def start_operator(group_id, worker_id, sock) do
+  def start_operator(group_id, worker_group_id, sock) do
     Supervisor.start_child(__MODULE__, %{
       id: group_id,
-      start: {WorkerSupervisor, :start_link, [{group_id, worker_id, sock}]}
+      start: {WorkerSupervisor, :start_link, [{group_id, worker_group_id, sock}]}
     })
   end
 

@@ -10,10 +10,10 @@ defmodule Aflecha.Service.Validator do
     end
   end
 
-  def computation_unique(operator, computation_id) do
+  def computation_unique(group_id, computation_id) do
     result =
       ProcessHub.child_lookup(
-        Identificator.hub(operator),
+        Identificator.hub(group_id),
         computation_id
       )
 

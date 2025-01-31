@@ -18,6 +18,10 @@ defmodule Aflecha.Worker.NodeManager do
     GenServer.call(__MODULE__, {:worker_connect, sock})
   end
 
+  def get_group_workers(group_id) do
+    GenServer.call(__MODULE__, {:get_workers, group_id})
+  end
+
   @impl true
   def init(_) do
     # TODO: expect_factories()
@@ -35,15 +39,15 @@ defmodule Aflecha.Worker.NodeManager do
   @impl true
   def handle_call({:worker_connect, sock}, _from, state) do
     case worker_connect(sock) do
-      {:ok, group_id, worker_id} ->
-        group_workers = Map.get(state, group_id, []) ++ [worker_id]
+      {:ok, group_id, group_worker_id} ->
+        group_workers = Map.get(state, group_id, []) ++ [group_worker_id]
         state = Map.put(state, group_id, group_workers)
 
         if !HubManager.hub_alive?(group_id) do
           HubManager.start_hub(group_id)
         end
 
-        {:reply, {:ok, {group_id, worker_id}}, state}
+        {:reply, {:ok, {group_id, group_worker_id}}, state}
 
       {:error, :no_group} ->
         {:reply, {:error, :no_group}, state}
@@ -54,11 +58,11 @@ defmodule Aflecha.Worker.NodeManager do
     case :gen_tcp.recv(sock, 0, 5000) do
       {:ok, payload} ->
         [{"connect_control_channel", group_id} | rest] = Payloader.parse_payload(payload)
-        worker_id = Identificator.unique_id(group_id)
+        group_worker_id = Identificator.unique_id(group_id)
 
-        control_unit = Identificator.control_unit(group_id, worker_id)
+        control_unit = Identificator.control_unit(group_worker_id)
 
-        FleetSupervisor.start_operator(group_id, worker_id, sock)
+        FleetSupervisor.start_operator(group_id, group_worker_id, sock)
 
         SocketSupport.pass_ownership(
           sock,
@@ -68,7 +72,7 @@ defmodule Aflecha.Worker.NodeManager do
         GenServer.call(control_unit, {:handle_initial_payloads, rest})
         GenServer.call(control_unit, :command_sockets_connect)
 
-        {:ok, group_id, worker_id}
+        {:ok, group_id, group_worker_id}
 
       {:error, reason} ->
         :gen_tcp.close(sock)

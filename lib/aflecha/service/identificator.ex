@@ -39,8 +39,8 @@ defmodule Aflecha.Service.Identificator do
     gen_via(group_id, "wus")
   end
 
-  def control_channel(group_id, worker_id) do
-    gen_via(group_id, worker_id, "cc")
+  def control_channel(group_worker_id) do
+    gen_via(group_worker_id, "cc")
   end
 
   def hub(group_id) do
@@ -62,8 +62,8 @@ defmodule Aflecha.Service.Identificator do
     gen_via(group_id, "scss")
   end
 
-  def control_unit(group_id, worker_id) do
-    gen_via(group_id, worker_id, "cu")
+  def control_unit(group_worker_id) do
+    gen_via(group_worker_id, "cu")
   end
 
   def stream_channel_primary(group_id, count_nr) do
@@ -74,12 +74,12 @@ defmodule Aflecha.Service.Identificator do
     gen_via(group_id, "scs_" <> Integer.to_string(count_nr))
   end
 
-  defp gen_via(group_id, type_str) do
-    {:via, Registry, {__MODULE__, gen_id(group_id, type_str)}}
+  defp gen_via(prefix, suffix) do
+    {:via, Registry, {__MODULE__, gen_id(prefix, suffix)}}
   end
 
-  defp gen_via(group_id, worker_id, type_str) do
-    {:via, Registry, {__MODULE__, gen_id(group_id, worker_id, type_str)}}
+  defp gen_via(group_id, group_worker_id, type_str) do
+    {:via, Registry, {__MODULE__, gen_id(group_id, group_worker_id, type_str)}}
   end
 
   defp gen_id(group_id, type_str) when is_atom(group_id) do
@@ -90,7 +90,7 @@ defmodule Aflecha.Service.Identificator do
     group_id <> "_" <> type_str
   end
 
-  defp gen_id(group_id, worker_id, type_str) do
-    group_id <> "_" <> worker_id <> "_" <> type_str
+  defp gen_id(group_id, group_worker_id, type_str) do
+    group_id <> "_" <> group_worker_id <> "_" <> type_str
   end
 end

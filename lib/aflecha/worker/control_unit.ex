@@ -19,22 +19,27 @@ defmodule Aflecha.Worker.ControlUnit do
   @payload_id_deserialize_comp "deserialize_computation"
   @payload_id_comp_state "computation_state"
 
-  @spec start_link(binary()) :: :ignore | {:error, any()} | {:ok, pid()}
-  def start_link({group_id, worker_id}) do
-    GenServer.start_link(
-      __MODULE__,
-      {group_id, worker_id},
-      name: Identificator.control_unit(group_id, worker_id)
-    )
+  @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
+  def start_link({group_id, group_worker_id}) do
+    res =
+      GenServer.start_link(
+        __MODULE__,
+        {group_id, group_worker_id},
+        name: Identificator.control_unit(group_worker_id)
+      )
+
+    dbg(Registry.keys(Identificator, self()))
+
+    res
   end
 
   @impl true
-  def init({group_id, worker_id}) do
+  def init({group_id, group_worker_id}) do
     {
       :ok,
       %{
         group_id: group_id,
-        worker_id: worker_id,
+        group_worker_id: group_worker_id,
         response_refs: %{}
       }
     }
@@ -51,7 +56,7 @@ defmodule Aflecha.Worker.ControlUnit do
   def handle_call({:get_computation_state, computation_id}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.group_id, state.worker_id),
+        Identificator.control_channel(state.group_worker_id),
         @payload_id_comp_state,
         %{"computation_id" => computation_id}
       )
@@ -63,7 +68,7 @@ defmodule Aflecha.Worker.ControlUnit do
   def handle_call({:send_control, command_id, data}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.group_id),
+        Identificator.control_channel(state.group_worker_id),
         command_id,
         data
       )
@@ -77,7 +82,7 @@ defmodule Aflecha.Worker.ControlUnit do
 
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.group_id, state.worker_id),
+        Identificator.control_channel(state.group_worker_id),
         @payload_id_connect_sockets,
         %{"sockets_count" => sockets_count}
       )
@@ -91,7 +96,7 @@ defmodule Aflecha.Worker.ControlUnit do
   def handle_call({:start_computation, computation}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.group_id, state.worker_id),
+        Identificator.control_channel(state.group_worker_id),
         @payload_id_computation_add,
         %{
           "computation_id" => computation.id,
@@ -107,7 +112,7 @@ defmodule Aflecha.Worker.ControlUnit do
   def handle_call({:stop_computation, computation_id}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.group_id, state.worker_id),
+        Identificator.control_channel(state.group_worker_id),
         @payload_id_computation_rem,
         %{"computation_id" => computation_id}
       )

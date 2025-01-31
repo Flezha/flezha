@@ -7,25 +7,25 @@ defmodule Aflecha.Worker.WorkerSupervisor do
 
   use Supervisor
 
-  def start_link({group_id, worker_id, sock}) do
-    Supervisor.start_link(__MODULE__, {group_id, worker_id, sock},
+  def start_link({group_id, worker_group_id, sock}) do
+    Supervisor.start_link(__MODULE__, {group_id, worker_group_id, sock},
       name: Identificator.unit_sup(group_id)
     )
   end
 
   @impl true
-  def init({group_id, worker_id, sock}) do
+  def init({group_id, worker_group_id, sock}) do
     primary_stream_sock = SocketSupport.stream_socket_path(group_id, :primary)
     secondary_stream_sock = SocketSupport.stream_socket_path(group_id, :secondary)
 
     children = [
       %{
         id: ControlUnit,
-        start: {ControlUnit, :start_link, [{group_id, worker_id}]}
+        start: {ControlUnit, :start_link, [{group_id, worker_group_id}]}
       },
       %{
         id: ControlChannel,
-        start: {ControlChannel, :start_link, [{group_id, worker_id, sock}]}
+        start: {ControlChannel, :start_link, [{group_id, worker_group_id, sock}]}
       },
       %{
         id: :primary_stream_listener,

@@ -32,9 +32,16 @@ defmodule Aflecha.Computation.ComputeManager do
   end
 
   defp add_computation(group_id, computation) do
+    group_workers = Aflecha.Worker.NodeManager.get_group_workers(group_id)
+    group_worker_id = rand_group_worker(group_workers)
+
     child_spec = %{
       id: computation.id,
-      start: {Aflecha.Computation.NodeManager, :start_link, [{group_id, computation}]}
+      start:
+        {Aflecha.Computation.Overwatch, :start_link,
+         [
+           {group_id, group_worker_id, computation}
+         ]}
     }
 
     result =
@@ -46,5 +53,9 @@ defmodule Aflecha.Computation.ComputeManager do
       {:ok, pid} -> {:ok, pid}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp rand_group_worker(group_workers) do
+    Enum.random(group_workers)
   end
 end
