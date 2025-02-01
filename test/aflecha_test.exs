@@ -28,9 +28,10 @@ defmodule AflechaTest do
       factory_id: @test_computation_factory
     }
 
-    {:ok, _} = ComputeManager.start_computation(@default_group, computation) |> dbg()
+    {:ok, {comp_id, ["test_agent_node@127.0.0.1": _pid]}} =
+      ComputeManager.start_computation(@default_group, computation)
 
-    assert false
+    assert comp_id === "add_websocket_io_test"
   end
 
   # test "websocket io" do

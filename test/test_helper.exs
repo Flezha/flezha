@@ -19,3 +19,7 @@ defmodule TestHelper do
     computation
   end
 end
+
+# Start the local node
+{_, 0} = System.cmd("epmd", ["-daemon"])
+Node.start(:"test_agent_node@127.0.0.1", :longnames)

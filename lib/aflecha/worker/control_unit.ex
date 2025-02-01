@@ -89,8 +89,6 @@ defmodule Aflecha.Worker.ControlUnit do
   @spec handle_call({:start_computation, ComputationBuilder.t()}, {pid(), term()}, map()) ::
           {:noreply, any()}
   def handle_call({:start_computation, computation}, from, state) do
-    IO.puts("MINAAAAA")
-
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.group_worker_id),
