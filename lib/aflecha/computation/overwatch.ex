@@ -15,10 +15,14 @@ defmodule Aflecha.Computation.Overwatch do
 
   @impl true
   def init({group_id, group_worker_id, computation}) do
+    IO.puts("BEFORE FAIL")
+
     GenServer.call(
       Identificator.control_unit(group_worker_id),
       {:start_computation, computation}
     )
+
+    IO.puts("AFTER FAIL")
 
     {:ok,
      %__MODULE__{

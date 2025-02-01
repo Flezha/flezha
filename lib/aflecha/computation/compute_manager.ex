@@ -32,7 +32,7 @@ defmodule Aflecha.Computation.ComputeManager do
   end
 
   defp add_computation(group_id, computation) do
-    group_workers = Aflecha.Worker.NodeManager.get_group_workers(group_id)
+    group_workers = Aflecha.Worker.FleetManager.get_group_workers(group_id)
     group_worker_id = rand_group_worker(group_workers)
 
     child_spec = %{

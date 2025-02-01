@@ -21,16 +21,11 @@ defmodule Aflecha.Worker.ControlUnit do
 
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link({group_id, group_worker_id}) do
-    res =
-      GenServer.start_link(
-        __MODULE__,
-        {group_id, group_worker_id},
-        name: Identificator.control_unit(group_worker_id)
-      )
-
-    dbg(Registry.keys(Identificator, self()))
-
-    res
+    GenServer.start_link(
+      __MODULE__,
+      {group_id, group_worker_id},
+      name: Identificator.control_unit(group_worker_id)
+    )
   end
 
   @impl true
@@ -94,6 +89,8 @@ defmodule Aflecha.Worker.ControlUnit do
   @spec handle_call({:start_computation, ComputationBuilder.t()}, {pid(), term()}, map()) ::
           {:noreply, any()}
   def handle_call({:start_computation, computation}, from, state) do
+    IO.puts("MINAAAAA")
+
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.group_worker_id),

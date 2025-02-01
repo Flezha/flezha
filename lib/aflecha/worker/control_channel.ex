@@ -31,7 +31,8 @@ defmodule Aflecha.Worker.ControlChannel do
 
   @impl true
   def init({group_id, group_worker_id, sock}) do
-    SocketSupport.set_active(sock)
+    dbg(self())
+    SocketSupport.set_active(sock) |> dbg()
 
     {:ok,
      %{
@@ -65,6 +66,7 @@ defmodule Aflecha.Worker.ControlChannel do
 
   @impl true
   def handle_info({:tcp, _port, payload}, state) do
+    IO.puts("HERE SHOULD BE THE PAYLOAD")
     GenServer.cast(state.control_unit, {:handle_payload, payload})
 
     {:noreply, state}

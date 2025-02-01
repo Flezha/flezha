@@ -1,4 +1,4 @@
-defmodule Aflecha.Worker.NodeManager do
+defmodule Aflecha.Worker.FleetManager do
   alias Aflecha.Worker.WorkerSupervisor
   alias Aflecha.Worker.FleetSupervisor
   alias Aflecha.Service.Payloader
@@ -15,6 +15,7 @@ defmodule Aflecha.Worker.NodeManager do
   end
 
   def connect_handler(sock) do
+    :ok = SocketSupport.pass_ownership(sock, Process.whereis(__MODULE__))
     GenServer.call(__MODULE__, {:worker_connect, sock})
   end
 
@@ -43,10 +44,6 @@ defmodule Aflecha.Worker.NodeManager do
         group_workers = Map.get(state, group_id, []) ++ [group_worker_id]
         state = Map.put(state, group_id, group_workers)
 
-        if !HubManager.hub_alive?(group_id) do
-          HubManager.start_hub(group_id)
-        end
-
         {:reply, {:ok, {group_id, group_worker_id}}, state}
 
       {:error, :no_group} ->
@@ -54,20 +51,31 @@ defmodule Aflecha.Worker.NodeManager do
     end
   end
 
+  @impl true
+  def handle_info(any, state) do
+    Logger.info("Received unexpected message at node manager: #{inspect(any)}")
+
+    {:noreply, state}
+  end
+
   defp worker_connect(sock) do
     case :gen_tcp.recv(sock, 0, 5000) do
       {:ok, payload} ->
         [{"connect_control_channel", group_id} | rest] = Payloader.parse_payload(payload)
         group_worker_id = Identificator.unique_id(group_id)
-
         control_unit = Identificator.control_unit(group_worker_id)
+
+        if !HubManager.hub_alive?(group_id) do
+          HubManager.start_hub(group_id)
+        end
 
         FleetSupervisor.start_operator(group_id, group_worker_id, sock)
 
-        SocketSupport.pass_ownership(
-          sock,
-          WorkerSupervisor.find_control_channel(group_id)
-        )
+        :ok =
+          SocketSupport.pass_ownership(
+            sock,
+            WorkerSupervisor.find_control_channel(group_worker_id)
+          )
 
         GenServer.call(control_unit, {:handle_initial_payloads, rest})
         GenServer.call(control_unit, :command_sockets_connect)

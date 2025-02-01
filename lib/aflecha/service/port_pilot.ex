@@ -28,7 +28,7 @@ defmodule Aflecha.Service.PortPilot do
 
   @impl true
   def handle_info({_port, {:data, port_msg}}, state) do
-    Logger.info("Received data from port: #{inspect(port_msg)}")
+    Logger.warning("Received unexpected message from port: #{inspect(port_msg)}")
 
     {:noreply, state}
   end

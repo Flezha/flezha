@@ -9,7 +9,7 @@ defmodule Aflecha.Worker.WorkerSupervisor do
 
   def start_link({group_id, worker_group_id, sock}) do
     Supervisor.start_link(__MODULE__, {group_id, worker_group_id, sock},
-      name: Identificator.unit_sup(group_id)
+      name: Identificator.unit_sup(worker_group_id)
     )
   end
 
@@ -52,8 +52,8 @@ defmodule Aflecha.Worker.WorkerSupervisor do
     Supervisor.init(children, strategy: :one_for_one)
   end
 
-  def find_control_channel(group_id) do
-    Identificator.unit_sup(group_id)
+  def find_control_channel(worker_group_id) do
+    Identificator.unit_sup(worker_group_id)
     |> Supervisor.which_children()
     |> Enum.find(fn {id, _, _, _} -> id === ControlChannel end)
     |> elem(1)

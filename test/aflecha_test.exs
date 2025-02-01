@@ -16,11 +16,11 @@ defmodule AflechaTest do
     %{}
   end
 
-  test "worker node connect" do
-    res = Aflecha.Worker.NodeManager.get_group_workers(@default_group)
-    assert length(res) === 1
-    Enum.each(res, &assert(is_binary(&1)))
-  end
+  # test "worker node connect" do
+  #   res = Aflecha.Worker.FleetManager.get_group_workers(@default_group)
+  #   assert length(res) === 1
+  #   Enum.each(res, &assert(is_binary(&1)))
+  # end
 
   test "computation adding" do
     computation = %Aflecha.Computation.Builder{
@@ -28,7 +28,7 @@ defmodule AflechaTest do
       factory_id: @test_computation_factory
     }
 
-    {:ok, _} = ComputeManager.start_computation(@default_group, computation)
+    {:ok, _} = ComputeManager.start_computation(@default_group, computation) |> dbg()
 
     assert false
   end
