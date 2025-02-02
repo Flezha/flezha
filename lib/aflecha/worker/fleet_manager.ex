@@ -67,7 +67,7 @@ defmodule Aflecha.Worker.FleetManager do
         control_unit = Identificator.control_unit(group_worker_id)
 
         if !HubManager.hub_alive?(group_id) do
-          HubManager.start_hub(group_id)
+          HubManager.start_hub(group_id, group_worker_id)
         end
 
         FleetSupervisor.start_operator(group_id, group_worker_id, sock)
