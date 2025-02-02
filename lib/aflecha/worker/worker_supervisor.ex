@@ -31,21 +31,21 @@ defmodule Aflecha.Worker.WorkerSupervisor do
         id: :primary_stream_listener,
         start:
           {Listener, :start_link,
-           [{Identificator.stream_listener(group_id, :primary), primary_stream_sock}]}
+           [{Identificator.stream_listener(worker_group_id, :primary), primary_stream_sock}]}
       },
       %{
         id: :secondary_stream_listener,
         start:
           {Listener, :start_link,
-           [{Identificator.stream_listener(group_id, :secondary), secondary_stream_sock}]}
+           [{Identificator.stream_listener(worker_group_id, :secondary), secondary_stream_sock}]}
       },
       %{
         id: :primary_stream_sup,
-        start: {Aflecha.Worker.StreamSup, :start_link, [{group_id, :primary}]}
+        start: {Aflecha.Worker.StreamSup, :start_link, [{worker_group_id, :primary}]}
       },
       %{
         id: :secondary_stream_sup,
-        start: {Aflecha.Worker.StreamSup, :start_link, [{group_id, :secondary}]}
+        start: {Aflecha.Worker.StreamSup, :start_link, [{worker_group_id, :secondary}]}
       }
     ]
 

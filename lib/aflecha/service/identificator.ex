@@ -47,10 +47,10 @@ defmodule Aflecha.Service.Identificator do
     gen_id(group_id, "hub") |> String.to_atom()
   end
 
-  def stream_listener(group_id, type) do
+  def stream_listener(worker_group_id, type) do
     case type do
-      :primary -> gen_via(group_id, "psl")
-      :secondary -> gen_via(group_id, "ssl")
+      :primary -> gen_via(worker_group_id, "psl")
+      :secondary -> gen_via(worker_group_id, "ssl")
     end
   end
 
@@ -78,9 +78,9 @@ defmodule Aflecha.Service.Identificator do
     {:via, Registry, {__MODULE__, gen_id(prefix, suffix)}}
   end
 
-  defp gen_via(group_id, group_worker_id, type_str) do
-    {:via, Registry, {__MODULE__, gen_id(group_id, group_worker_id, type_str)}}
-  end
+  # defp gen_via(group_id, group_worker_id, type_str) do
+  #   {:via, Registry, {__MODULE__, gen_id(group_id, group_worker_id, type_str)}}
+  # end
 
   defp gen_id(group_id, type_str) when is_atom(group_id) do
     gen_id(Atom.to_string(group_id), type_str)
@@ -90,7 +90,7 @@ defmodule Aflecha.Service.Identificator do
     group_id <> "_" <> type_str
   end
 
-  defp gen_id(group_id, group_worker_id, type_str) do
-    group_id <> "_" <> group_worker_id <> "_" <> type_str
-  end
+  # defp gen_id(group_id, group_worker_id, type_str) do
+  #   group_id <> "_" <> group_worker_id <> "_" <> type_str
+  # end
 end

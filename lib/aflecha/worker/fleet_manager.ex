@@ -5,6 +5,7 @@ defmodule Aflecha.Worker.FleetManager do
   alias Aflecha.Socket.Support, as: SocketSupport
   alias Aflecha.Service.Identificator
   alias Aflecha.HubManager
+  alias Aflecha.Service.EventManager
 
   require Logger
 
@@ -91,7 +92,7 @@ defmodule Aflecha.Worker.FleetManager do
   end
 
   defp expect_factories do
-    Aflecha.Service.EventManager.add_handler(:factory_registered)
+    EventManager.add_handler(:factory_registered)
 
     count = Application.get_env(:aflecha, :factories_expected_count)
 
