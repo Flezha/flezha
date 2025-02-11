@@ -14,29 +14,29 @@ defmodule Aflecha.Application do
       Aflecha.Service.Identificator,
       Aflecha.HubManager,
       Aflecha.Service.EventManager,
-      Aflecha.Worker.FleetManager,
+      Aflecha.Operator.FleetManager,
       {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      {Aflecha.Socket.Dispatcher, &Aflecha.Worker.FleetManager.connect_handler/1},
-      Aflecha.Worker.FleetSupervisor,
+      {Aflecha.Socket.Dispatcher, &Aflecha.Operator.FleetManager.connect_handler/1},
+      Aflecha.Operator.FleetSupervisor,
       Aflecha.Service.PortPilot
 
-      # Aflecha.Worker.FleetManager,
+      # Aflecha.Operator.FleetManager,
       # Aflecha.Service.Warden,
       # Aflecha.Service.Identificator,
       # Aflecha.Service.EventManager,
-      # Aflecha.Worker.FleetSupervisor,
-      # Aflecha.Worker.FleetManager,
+      # Aflecha.Operator.FleetSupervisor,
+      # Aflecha.Operator.FleetManager,
       # {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      # {Aflecha.Socket.Dispatcher, &Aflecha.Worker.FleetManager.connect_handler/1}
+      # {Aflecha.Socket.Dispatcher, &Aflecha.Operator.FleetManager.connect_handler/1}
 
       # Aflecha.Service.Warden,
       # Aflecha.Service.Identificator,
       # Aflecha.Service.EventManager,
       # {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      # {Aflecha.Socket.Dispatcher, &Aflecha.Worker.FleetManager.connect_handler/1},
+      # {Aflecha.Socket.Dispatcher, &Aflecha.Operator.FleetManager.connect_handler/1},
       # Aflecha.Service.PortPilot,
       # Aflecha.Cluster.Orchestrator,
-      # Aflecha.Worker.Controller
+      # Aflecha.Operator.Controller
     ]
 
     # If Testnet is enabled, we start the TestnetSupervisor

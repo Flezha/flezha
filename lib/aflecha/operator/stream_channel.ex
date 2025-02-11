@@ -1,4 +1,4 @@
-defmodule Aflecha.Worker.StreamChannel do
+defmodule Aflecha.Operator.StreamChannel do
   alias Aflecha.Service.Payloader
   alias Aflecha.Service.Identificator
 

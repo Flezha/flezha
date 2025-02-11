@@ -1,5 +1,5 @@
-defmodule Aflecha.Worker.FleetSupervisor do
-  alias Aflecha.Worker.WorkerSupervisor
+defmodule Aflecha.Operator.FleetSupervisor do
+  alias Aflecha.Operator.OperatorSupervisor
 
   use Supervisor
 
@@ -12,10 +12,10 @@ defmodule Aflecha.Worker.FleetSupervisor do
     Supervisor.init([], strategy: :one_for_one)
   end
 
-  def start_operator(group_id, worker_group_id, sock) do
+  def start_operator(group_id, operator_id, sock) do
     Supervisor.start_child(__MODULE__, %{
-      id: worker_group_id,
-      start: {WorkerSupervisor, :start_link, [{group_id, worker_group_id, sock}]}
+      id: operator_id,
+      start: {OperatorSupervisor, :start_link, [{group_id, operator_id, sock}]}
     })
   end
 
@@ -25,8 +25,8 @@ defmodule Aflecha.Worker.FleetSupervisor do
       |> Enum.at(0)
 
     case child do
-      {worker_group_id, _, _, _} -> worker_group_id
-      _ -> raise "No group worker available"
+      {operator_id, _, _, _} -> operator_id
+      _ -> raise "No operator available"
     end
   end
 end

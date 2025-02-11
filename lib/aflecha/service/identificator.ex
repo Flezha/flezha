@@ -35,62 +35,62 @@ defmodule Aflecha.Service.Identificator do
     end
   end
 
-  def unit_sup(group_id) do
-    gen_via(group_id, "wus")
+  def unit_sup(operator_id) do
+    gen_via(operator_id, "wus")
   end
 
-  def control_channel(group_worker_id) do
-    gen_via(group_worker_id, "cc")
+  def control_channel(operator_id) do
+    gen_via(operator_id, "cc")
   end
 
   def hub(group_id) do
     gen_id(group_id, "hub") |> String.to_atom()
   end
 
-  def stream_listener(worker_group_id, type) do
+  def stream_listener(operator_id, type) do
     case type do
-      :primary -> gen_via(worker_group_id, "psl")
-      :secondary -> gen_via(worker_group_id, "ssl")
+      :primary -> gen_via(operator_id, "psl")
+      :secondary -> gen_via(operator_id, "ssl")
     end
   end
 
-  def stream_sup_primary(group_id) do
-    gen_via(group_id, "scsp")
+  def stream_sup_primary(operator_id) do
+    gen_via(operator_id, "scsp")
   end
 
-  def stream_sup_secondary(group_id) do
-    gen_via(group_id, "scss")
+  def stream_sup_secondary(operator_id) do
+    gen_via(operator_id, "scss")
   end
 
-  def control_unit(group_worker_id) do
-    gen_via(group_worker_id, "cu")
+  def control_unit(operator_id) do
+    gen_via(operator_id, "cu")
   end
 
-  def stream_channel_primary(group_id, count_nr) do
-    gen_via(group_id, "scp_" <> Integer.to_string(count_nr))
+  def stream_channel_primary(operator_id, count_nr) do
+    gen_via(operator_id, "scp_" <> Integer.to_string(count_nr))
   end
 
-  def stream_channel_secondary(group_id, count_nr) do
-    gen_via(group_id, "scs_" <> Integer.to_string(count_nr))
+  def stream_channel_secondary(operator_id, count_nr) do
+    gen_via(operator_id, "scs_" <> Integer.to_string(count_nr))
   end
 
   defp gen_via(prefix, suffix) do
     {:via, Registry, {__MODULE__, gen_id(prefix, suffix)}}
   end
 
-  # defp gen_via(group_id, group_worker_id, type_str) do
-  #   {:via, Registry, {__MODULE__, gen_id(group_id, group_worker_id, type_str)}}
+  # defp gen_via(operator_id, operator_id, type_str) do
+  #   {:via, Registry, {__MODULE__, gen_id(operator_id, operator_id, type_str)}}
   # end
 
-  defp gen_id(group_id, type_str) when is_atom(group_id) do
-    gen_id(Atom.to_string(group_id), type_str)
+  defp gen_id(operator_id, type_str) when is_atom(operator_id) do
+    gen_id(Atom.to_string(operator_id), type_str)
   end
 
-  defp gen_id(group_id, type_str) do
-    group_id <> "_" <> type_str
+  defp gen_id(operator_id, type_str) do
+    operator_id <> "_" <> type_str
   end
 
-  # defp gen_id(group_id, group_worker_id, type_str) do
-  #   group_id <> "_" <> group_worker_id <> "_" <> type_str
+  # defp gen_id(operator_id, operator_id, type_str) do
+  #   operator_id <> "_" <> operator_id <> "_" <> type_str
   # end
 end

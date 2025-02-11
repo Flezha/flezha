@@ -1,4 +1,4 @@
-defmodule Aflecha.Worker.Controller do
+defmodule Aflecha.Operator.Controller do
   alias Aflecha.Service.Identificator
 
   @impl true

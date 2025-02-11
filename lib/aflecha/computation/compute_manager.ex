@@ -3,7 +3,7 @@ defmodule Aflecha.Computation.ComputeManager do
   Manages the computation startings and stoppings.
   """
 
-  alias Aflecha.Worker.Controller
+  alias Aflecha.Operator.Controller
   alias Aflecha.Service.Identificator
   alias Aflecha.Computation.Builder, as: ComputationBuilder
 
@@ -32,15 +32,15 @@ defmodule Aflecha.Computation.ComputeManager do
   end
 
   defp add_computation(group_id, computation) do
-    group_workers = Aflecha.Worker.FleetManager.get_group_workers(group_id)
-    group_worker_id = rand_group_worker(group_workers)
+    operator_ids = Aflecha.Operator.FleetManager.get_operators(group_id)
+    operator_id = select_operator(operator_ids)
 
     child_spec = %{
       id: computation.id,
       start:
         {Aflecha.Computation.Overwatch, :start_link,
          [
-           {group_id, group_worker_id, computation}
+           {group_id, operator_id, computation}
          ]}
     }
 
@@ -55,7 +55,8 @@ defmodule Aflecha.Computation.ComputeManager do
     end
   end
 
-  defp rand_group_worker(group_workers) do
-    Enum.random(group_workers)
+  defp select_operator(operator_ids) do
+    # TODO: add load balancing here.
+    Enum.random(operator_ids)
   end
 end

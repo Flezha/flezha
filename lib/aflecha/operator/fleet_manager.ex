@@ -1,6 +1,6 @@
-defmodule Aflecha.Worker.FleetManager do
-  alias Aflecha.Worker.WorkerSupervisor
-  alias Aflecha.Worker.FleetSupervisor
+defmodule Aflecha.Operator.FleetManager do
+  alias Aflecha.Operator.OperatorSupervisor
+  alias Aflecha.Operator.FleetSupervisor
   alias Aflecha.Service.Payloader
   alias Aflecha.Socket.Support, as: SocketSupport
   alias Aflecha.Service.Identificator
@@ -20,7 +20,7 @@ defmodule Aflecha.Worker.FleetManager do
     GenServer.call(__MODULE__, {:worker_connect, sock})
   end
 
-  def get_group_workers(group_id) do
+  def get_operators(group_id) do
     GenServer.call(__MODULE__, {:get_workers, group_id})
   end
 
@@ -33,19 +33,19 @@ defmodule Aflecha.Worker.FleetManager do
 
   @impl true
   def handle_call({:get_workers, group_id}, _from, state) do
-    group_workers = Map.get(state, group_id, [])
+    operator_ids = Map.get(state, group_id, [])
 
-    {:reply, group_workers, state}
+    {:reply, operator_ids, state}
   end
 
   @impl true
   def handle_call({:worker_connect, sock}, _from, state) do
     case worker_connect(sock) do
-      {:ok, group_id, group_worker_id} ->
-        group_workers = Map.get(state, group_id, []) ++ [group_worker_id]
-        state = Map.put(state, group_id, group_workers)
+      {:ok, group_id, operator_id} ->
+        operator_ids = Map.get(state, group_id, []) ++ [operator_id]
+        state = Map.put(state, group_id, operator_ids)
 
-        {:reply, {:ok, {group_id, group_worker_id}}, state}
+        {:reply, {:ok, {group_id, operator_id}}, state}
 
       {:error, :no_group} ->
         {:reply, {:error, :no_group}, state}
@@ -63,25 +63,25 @@ defmodule Aflecha.Worker.FleetManager do
     case :gen_tcp.recv(sock, 0, 5000) do
       {:ok, payload} ->
         [{"connect_control_channel", group_id} | rest] = Payloader.parse_payload(payload)
-        group_worker_id = Identificator.unique_id(group_id)
-        control_unit = Identificator.control_unit(group_worker_id)
+        operator_id = Identificator.unique_id(group_id)
+        control_unit = Identificator.control_unit(operator_id)
 
         if !HubManager.hub_alive?(group_id) do
-          HubManager.start_hub(group_id, group_worker_id)
+          HubManager.start_hub(group_id, operator_id)
         end
 
-        FleetSupervisor.start_operator(group_id, group_worker_id, sock)
+        FleetSupervisor.start_operator(group_id, operator_id, sock)
 
         :ok =
           SocketSupport.pass_ownership(
             sock,
-            WorkerSupervisor.find_control_channel(group_worker_id)
+            OperatorSupervisor.find_control_channel(operator_id)
           )
 
         GenServer.call(control_unit, {:handle_initial_payloads, rest})
         GenServer.call(control_unit, :command_sockets_connect)
 
-        {:ok, group_id, group_worker_id}
+        {:ok, group_id, operator_id}
 
       {:error, reason} ->
         :gen_tcp.close(sock)

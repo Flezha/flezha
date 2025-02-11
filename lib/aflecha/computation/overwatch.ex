@@ -2,7 +2,7 @@ defmodule Aflecha.Computation.Overwatch do
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Computation.MigratorService
-  alias Aflecha.Worker.StreamSup
+  alias Aflecha.Operator.StreamSup
   alias Aflecha.Service.Identificator
 
   use GenServer
@@ -14,9 +14,9 @@ defmodule Aflecha.Computation.Overwatch do
   end
 
   @impl true
-  def init({group_id, group_worker_id, computation}) do
+  def init({group_id, operator_id, computation}) do
     GenServer.call(
-      Identificator.control_unit(group_worker_id),
+      Identificator.control_unit(operator_id),
       {:start_computation, computation}
     )
 
