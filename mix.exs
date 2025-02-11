@@ -40,7 +40,6 @@ defmodule Aflecha.MixProject do
       {:blockade, "~> 0.2.1"},
       {:fresh, "~> 0.4.4"},
       {:kafka_ex, "~> 0.13.0"}
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
   end
 
