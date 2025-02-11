@@ -1,5 +1,7 @@
 # Aflecha
 
+# TODO: document to build the test server for local dev.
+
 ## Description
 Distributed stateful computations. Provdes a static and dynamic creation of computations.
 

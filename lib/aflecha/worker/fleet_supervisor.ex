@@ -14,7 +14,7 @@ defmodule Aflecha.Worker.FleetSupervisor do
 
   def start_operator(group_id, worker_group_id, sock) do
     Supervisor.start_child(__MODULE__, %{
-      id: group_id,
+      id: worker_group_id,
       start: {WorkerSupervisor, :start_link, [{group_id, worker_group_id, sock}]}
     })
   end
@@ -25,8 +25,8 @@ defmodule Aflecha.Worker.FleetSupervisor do
       |> Enum.at(0)
 
     case child do
-      {group_id, _, _, _} -> group_id
-      _ -> raise "No group available"
+      {worker_group_id, _, _, _} -> worker_group_id
+      _ -> raise "No group worker available"
     end
   end
 end
