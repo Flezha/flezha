@@ -1,5 +1,10 @@
 # Aflecha Testnet
 
+# Install dependencies
+```bash
+npm install
+```
+
 ## Build the testnet
 ```bash
 npm run build
