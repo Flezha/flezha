@@ -16,23 +16,23 @@ defmodule AflechaTest do
     %{}
   end
 
-  # test "worker node connect" do
-  #   res = Aflecha.Operator.FleetManager.get_operators(@default_group)
-  #   assert length(res) === 1
-  #   Enum.each(res, &assert(is_binary(&1)))
-  # end
-
-  test "computation adding" do
-    computation = %Aflecha.Computation.Builder{
-      id: "add_websocket_io_test",
-      factory_id: @test_computation_factory
-    }
-
-    {:ok, {comp_id, ["test_agent_node@127.0.0.1": _pid]}} =
-      ComputeManager.start_computation(@default_group, computation)
-
-    assert comp_id === "add_websocket_io_test"
+  test "operator node connect" do
+    res = Aflecha.Operator.FleetManager.get_operators(@default_group)
+    assert length(res) === 2
+    Enum.each(res, &assert(is_binary(&1)))
   end
+
+  # test "computation adding" do
+  #   computation = %Aflecha.Computation.Builder{
+  #     id: "add_websocket_io_test",
+  #     factory_id: @test_computation_factory
+  #   }
+
+  #   {:ok, {comp_id, ["test_agent_node@127.0.0.1": _pid]}} =
+  #     ComputeManager.start_computation(@default_group, computation)
+
+  #   assert comp_id === "add_websocket_io_test"
+  # end
 
   # test "websocket io" do
   #   computation = %Aflecha.Computation.Builder{

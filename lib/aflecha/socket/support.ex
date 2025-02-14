@@ -16,7 +16,7 @@ defmodule Aflecha.Socket.Support do
   end
 
   def control_socket_path() do
-    sockets_base_path() <> "/worker_control_channel.sock"
+    sockets_base_path() <> "/operator_control_channel.sock"
   end
 
   def stream_socket_path(operator_id, type) when is_atom(operator_id) do

@@ -17,7 +17,7 @@ defmodule Aflecha.Operator.FleetManager do
 
   def connect_handler(sock) do
     :ok = SocketSupport.pass_ownership(sock, Process.whereis(__MODULE__))
-    GenServer.call(__MODULE__, {:worker_connect, sock})
+    GenServer.call(__MODULE__, {:operator_connect, sock})
   end
 
   def get_operators(group_id) do
@@ -39,8 +39,8 @@ defmodule Aflecha.Operator.FleetManager do
   end
 
   @impl true
-  def handle_call({:worker_connect, sock}, _from, state) do
-    case worker_connect(sock) do
+  def handle_call({:operator_connect, sock}, _from, state) do
+    case operator_connect(sock) do
       {:ok, group_id, operator_id} ->
         operator_ids = Map.get(state, group_id, []) ++ [operator_id]
         state = Map.put(state, group_id, operator_ids)
@@ -59,7 +59,7 @@ defmodule Aflecha.Operator.FleetManager do
     {:noreply, state}
   end
 
-  defp worker_connect(sock) do
+  defp operator_connect(sock) do
     case :gen_tcp.recv(sock, 0, 5000) do
       {:ok, payload} ->
         [{"connect_control_channel", group_id} | rest] = Payloader.parse_payload(payload)
@@ -79,6 +79,7 @@ defmodule Aflecha.Operator.FleetManager do
           )
 
         GenServer.call(control_unit, {:handle_initial_payloads, rest})
+        GenServer.call(control_unit, :command_assign_operator_id)
         GenServer.call(control_unit, :command_sockets_connect)
 
         {:ok, group_id, operator_id}

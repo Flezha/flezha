@@ -11,6 +11,7 @@ defmodule Aflecha.Operator.ControlUnit do
   require Logger
 
   @payload_id_connect_control_channel "connect_control_channel"
+  @payload_id_assign_operator_id "assign_operator_id"
   @payload_id_factory_register "register_factory"
   @payload_id_connect_sockets "connect_sockets"
   @payload_id_computation_add "add_computation"
@@ -69,6 +70,18 @@ defmodule Aflecha.Operator.ControlUnit do
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+  end
+
+  @impl true
+  def handle_call(:command_assign_operator_id, from, state) do
+    ref =
+      ControlChannel.send_control(
+        Identificator.control_channel(state.operator_id),
+        @payload_id_assign_operator_id,
+        %{"operator_id" => state.operator_id}
+      )
+
+    {:reply, :ok, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
   end
 
   @impl true
@@ -131,6 +144,9 @@ defmodule Aflecha.Operator.ControlUnit do
     reply =
       case payload_id do
         @payload_id_connect_control_channel ->
+          :ok
+
+        @payload_id_assign_operator_id ->
           :ok
 
         @payload_id_computation_add ->

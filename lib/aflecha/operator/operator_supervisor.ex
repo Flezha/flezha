@@ -15,8 +15,8 @@ defmodule Aflecha.Operator.OperatorSupervisor do
 
   @impl true
   def init({group_id, operator_id, sock}) do
-    primary_stream_sock = SocketSupport.stream_socket_path(group_id, :primary)
-    secondary_stream_sock = SocketSupport.stream_socket_path(group_id, :secondary)
+    primary_stream_sock = SocketSupport.stream_socket_path(operator_id, :primary)
+    secondary_stream_sock = SocketSupport.stream_socket_path(operator_id, :secondary)
 
     children = [
       %{
