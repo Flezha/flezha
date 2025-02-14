@@ -1,9 +1,13 @@
 # Aflecha
 
-# TODO: document to build the test server for local dev.
-
 ## Description
 Distributed stateful computations. Provdes a static and dynamic creation of computations.
+
+## Building
+- Copy `.env.example` and rename to `.env`
+- Navigate to the testnet app(`test/apps/testnet`) and follow the instruction from the `README.md` file.
+- Build the `rust_operator` application.
+- Build the agent `mix compile`
 
 ## Examples
 
