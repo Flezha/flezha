@@ -9,9 +9,9 @@ use aflecha_operator::{
 use serde::{Serialize, Deserialize};
 
 fn main() {
-    let mut processor = aflecha_operator::new("default".to_string());
+    let mut operator = aflecha_operator::new("default".to_string());
 
-    processor.register_factory(
+    operator.register_factory(
         "store_input".to_string(),
         || Box::new(StoreInputComputation{
             text_inputs: vec![],
@@ -19,24 +19,24 @@ fn main() {
         })
     );
 
-    processor.register_factory(
+    operator.register_factory(
         "forward_orig".to_string(),
         || Box::new(ForwardOrigComputation{})
     );
 
-    processor.register_factory(
+    operator.register_factory(
         "do_nothing".to_string(),
         || Box::new(DoNothingComputation{})
     );
 
-    processor.register_factory(
+    operator.register_factory(
         "compare_filter".to_string(),
          || Box::new(CompareFilterComputation{ 
             comparable: "".to_string(), inverted: false 
         })
     );
 
-    processor.register_factory(
+    operator.register_factory(
         "increment_state".to_string(), 
         || Box::new(IncrementStateComputation {
             value: 5000
