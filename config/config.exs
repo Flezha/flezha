@@ -1,12 +1,15 @@
 import Config
 
+config :aflecha,
+  # ------------------------------------------------------------------------------------------------
+  # Validator hooks to run before and after boot.
+  pre_hooks: [],
+  post_hooks: []
+
 config :logger,
   handle_sasl_reports: true,
   handle_otp_reports: true,
   level: :warning
-
-config :aflecha,
-  factories_expected_count: nil
 
 config :kafka_ex,
   # A list of brokers to connect to. This can be in either of the following formats

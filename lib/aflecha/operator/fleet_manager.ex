@@ -21,18 +21,16 @@ defmodule Aflecha.Operator.FleetManager do
   end
 
   def get_operators(group_id) do
-    GenServer.call(__MODULE__, {:get_workers, group_id})
+    GenServer.call(__MODULE__, {:get_operators, group_id})
   end
 
   @impl true
   def init(_) do
-    # TODO: expect_factories()
-
     {:ok, %{}}
   end
 
   @impl true
-  def handle_call({:get_workers, group_id}, _from, state) do
+  def handle_call({:get_operators, group_id}, _from, state) do
     operator_ids = Map.get(state, group_id, [])
 
     {:reply, operator_ids, state}
@@ -44,6 +42,8 @@ defmodule Aflecha.Operator.FleetManager do
       {:ok, group_id, operator_id} ->
         operator_ids = Map.get(state, group_id, []) ++ [operator_id]
         state = Map.put(state, group_id, operator_ids)
+
+        EventManager.dispatch(:operator_connected_event, {group_id, operator_id})
 
         {:reply, {:ok, {group_id, operator_id}}, state}
 
@@ -89,23 +89,6 @@ defmodule Aflecha.Operator.FleetManager do
         Logger.error("Failed to receive group id: #{inspect(reason)}")
 
         {:error, :no_group}
-    end
-  end
-
-  defp expect_factories do
-    EventManager.add_handler(:factory_registered)
-
-    count = Application.get_env(:aflecha, :factories_expected_count)
-
-    if is_integer(count) && count > 0 do
-      for _x <- 1..count do
-        receive do
-          {:factory_registered, _factory_id} ->
-            :ok
-        after
-          3000 -> raise "Registered factories not equal to expected count"
-        end
-      end
     end
   end
 end

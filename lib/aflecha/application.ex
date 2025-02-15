@@ -11,9 +11,10 @@ defmodule Aflecha.Application do
     Aflecha.Socket.Support.prepare_socket_dir()
 
     children = [
+      Aflecha.Service.EventManager,
+      Aflecha.BootLoader,
       Aflecha.Service.Identificator,
       Aflecha.HubManager,
-      Aflecha.Service.EventManager,
       Aflecha.Operator.FleetManager,
       {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
       {Aflecha.Socket.Dispatcher, &Aflecha.Operator.FleetManager.connect_handler/1},
@@ -48,6 +49,17 @@ defmodule Aflecha.Application do
       end
 
     opts = [strategy: :one_for_one, name: Aflecha.Supervisor]
-    Supervisor.start_link(children, opts)
+    result = Supervisor.start_link(children, opts)
+
+    validate_boot_ready()
+
+    result
+  end
+
+  defp validate_boot_ready() do
+    case GenServer.call(Aflecha.BootLoader, :boot_ready?) do
+      true -> :ok
+      false -> raise "Boot not ready"
+    end
   end
 end

@@ -168,7 +168,7 @@ defmodule Aflecha.Operator.ControlUnit do
           :ok
 
         @payload_id_factory_register ->
-          handle_factory_registration(message)
+          handle_factory_registration(state, message)
 
         _ ->
           {:error, "Unknown message id: #{payload_id}"}
@@ -196,10 +196,14 @@ defmodule Aflecha.Operator.ControlUnit do
     end
   end
 
-  defp handle_factory_registration(message) do
+  defp handle_factory_registration(state, message) do
     {:ok, data} = Jason.decode(message)
 
-    EventManager.dispath(:factory_registered, data["factory_id"])
+    EventManager.dispatch(:factory_registered_event, {
+      state.group_id,
+      state.operator_id,
+      data["factory_id"]
+    })
 
     :ok
   end

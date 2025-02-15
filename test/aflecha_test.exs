@@ -1,5 +1,7 @@
 defmodule AflechaTest do
   alias Aflecha.Computation.ComputeManager
+  alias Aflecha.Service.EventManager
+
   use ExUnit.Case
   use Aflecha.Constant
 

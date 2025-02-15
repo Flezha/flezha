@@ -21,7 +21,7 @@ defmodule Aflecha.Service.EventManager do
     Blockade.add_handler(@event_manager, event_name)
   end
 
-  def dispath(event_name, event_data) do
+  def dispatch(event_name, event_data) do
     Blockade.dispatch(@event_manager, event_name, event_data)
   end
 end

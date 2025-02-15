@@ -1,9 +1,35 @@
 import Config
 
 config :aflecha,
-  # Total number of factories registered in the system by all computation enginges.
-  factories_expected_count: 3,
-  testnet_enabled: true
+  testnet_enabled: true,
+  pre_hooks: [
+    fn ->
+      Aflecha.Service.EventManager.add_handler(:factory_registered_event)
+      Aflecha.Service.EventManager.add_handler(:operator_connected_event)
+    end
+  ],
+  post_hooks: [
+    fn ->
+      for _x <- 1..10 do
+        receive do
+          {:factory_registered_event, {_group_id, _operator_id, _factory_id}} ->
+            :ok
+        after
+          3000 -> raise "Factory not registered"
+        end
+      end
+    end,
+    fn ->
+      for _x <- 1..2 do
+        receive do
+          {:operator_connected_event, {"default", _}} ->
+            :ok
+        after
+          3000 -> raise "Operator not connected"
+        end
+      end
+    end
+  ]
 
 config :logger,
   level: :warning
