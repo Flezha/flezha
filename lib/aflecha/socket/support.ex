@@ -2,7 +2,7 @@ defmodule Aflecha.Socket.Support do
   def prepare_socket_dir() do
     base_path = sockets_base_path()
 
-    # File.rm_rf(base_path)
+    File.rm_rf(base_path)
     File.mkdir_p(base_path)
   end
 
