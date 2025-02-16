@@ -4,7 +4,7 @@ defmodule Aflecha.Operator.ControlUnit do
   alias Aflecha.Operator.ControlChannel
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Service.EventManager
-  alias Aflecha.Computation.Builder, as: ComputationBuilder
+  alias Aflecha.Worker.Builder, as: WorkerBuilder
 
   use GenServer
 
@@ -14,11 +14,11 @@ defmodule Aflecha.Operator.ControlUnit do
   @payload_id_assign_operator_id "assign_operator_id"
   @payload_id_factory_register "register_factory"
   @payload_id_connect_sockets "connect_sockets"
-  @payload_id_computation_add "add_computation"
-  @payload_id_computation_rem "rem_computation"
-  @payload_id_serialize_comp "serialize_computation"
-  @payload_id_deserialize_comp "deserialize_computation"
-  @payload_id_comp_state "computation_state"
+  @payload_id_worker_add "add_worker"
+  @payload_id_worker_rem "rem_worker"
+  @payload_id_serialize_comp "serialize_worker"
+  @payload_id_deserialize_comp "deserialize_worker"
+  @payload_id_comp_state "worker_state"
 
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link({group_id, operator_id}) do
@@ -49,12 +49,12 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:get_computation_state, computation_id}, from, state) do
+  def handle_call({:get_worker_state, worker_id}, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
         @payload_id_comp_state,
-        %{"computation_id" => computation_id}
+        %{"worker_id" => worker_id}
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
@@ -99,17 +99,17 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  @spec handle_call({:start_computation, ComputationBuilder.t()}, {pid(), term()}, map()) ::
+  @spec handle_call({:start_worker, WorkerBuilder.t()}, {pid(), term()}, map()) ::
           {:noreply, any()}
-  def handle_call({:start_computation, computation}, from, state) do
+  def handle_call({:start_worker, worker}, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
-        @payload_id_computation_add,
+        @payload_id_worker_add,
         %{
-          "computation_id" => computation.id,
-          "factory_id" => computation.factory_id,
-          "variables" => computation.variables
+          "worker_id" => worker.id,
+          "factory_id" => worker.factory_id,
+          "variables" => worker.variables
         }
       )
 
@@ -117,12 +117,12 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:stop_computation, computation_id}, from, state) do
+  def handle_call({:stop_worker, worker_id}, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
-        @payload_id_computation_rem,
-        %{"computation_id" => computation_id}
+        @payload_id_worker_rem,
+        %{"worker_id" => worker_id}
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
@@ -149,10 +149,10 @@ defmodule Aflecha.Operator.ControlUnit do
         @payload_id_assign_operator_id ->
           :ok
 
-        @payload_id_computation_add ->
+        @payload_id_worker_add ->
           :ok
 
-        @payload_id_computation_rem ->
+        @payload_id_worker_rem ->
           :ok
 
         @payload_id_comp_state ->

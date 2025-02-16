@@ -7,15 +7,15 @@ defmodule Aflecha.IO.Handler.BeamProcess do
     :output_pid
   ]
 
-  def start_link(computation_id, io_struct, opts) do
-    GenServer.start_link(__MODULE__, {computation_id, io_struct, opts}, [])
+  def start_link(worker_id, io_struct, opts) do
+    GenServer.start_link(__MODULE__, {worker_id, io_struct, opts}, [])
   end
 
   @impl true
-  def init({computation_id, io_struct, opts}) do
+  def init({worker_id, io_struct, opts}) do
     {:ok,
      %{
-       computation_id: computation_id,
+       worker_id: worker_id,
        output_pid: io_struct.output_pid,
        handling_type: Keyword.get(opts, :handling_type)
      }}

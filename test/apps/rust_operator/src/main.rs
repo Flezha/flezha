@@ -1,9 +1,9 @@
 use std::vec;
 
-use aflecha_derive::SerializableComputation;
+use aflecha_derive::SerializableWorker;
 
 use aflecha_operator::{
-    Computation, ComputationInput, ComputationOutput, ComputationResult, SerializableComputation
+    Worker, WorkerInput, WorkerOutput, WorkerResult, SerializableWorker
 };
 
 use serde::{Serialize, Deserialize};
@@ -13,7 +13,7 @@ fn main() {
 
     operator.register_factory(
         "store_input".to_string(),
-        || Box::new(StoreInputComputation{
+        || Box::new(StoreInputWorker{
             text_inputs: vec![],
             binary_inputs: vec![]
         })
@@ -21,24 +21,24 @@ fn main() {
 
     operator.register_factory(
         "forward_orig".to_string(),
-        || Box::new(ForwardOrigComputation{})
+        || Box::new(ForwardOrigWorker{})
     );
 
     operator.register_factory(
         "do_nothing".to_string(),
-        || Box::new(DoNothingComputation{})
+        || Box::new(DoNothingWorker{})
     );
 
     operator.register_factory(
         "compare_filter".to_string(),
-         || Box::new(CompareFilterComputation{ 
+         || Box::new(CompareFilterWorker{ 
             comparable: "".to_string(), inverted: false 
         })
     );
 
     operator.register_factory(
         "increment_state".to_string(), 
-        || Box::new(IncrementStateComputation {
+        || Box::new(IncrementStateWorker {
             value: 5000
         })
     );
@@ -48,89 +48,89 @@ fn main() {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-#[derive(SerializableComputation)]
-struct CompareFilterComputation {
+#[derive(SerializableWorker)]
+struct CompareFilterWorker {
     comparable: String,
     inverted: bool,
 }
 
-impl Computation for CompareFilterComputation {
-    fn run(&mut self, input: ComputationInput) -> ComputationOutput {
+impl Worker for CompareFilterWorker {
+    fn run(&mut self, input: WorkerInput) -> WorkerOutput {
         let text = input.as_string();
 
         if self.inverted {
             if self.comparable == text {
-                ComputationOutput::None
+                WorkerOutput::None
             } else {
-                ComputationOutput::Forward(ComputationResult::Text(text))
+                WorkerOutput::Forward(WorkerResult::Text(text))
             }
         } else {
             if self.comparable == text {
-                ComputationOutput::Forward(ComputationResult::Text(text))
+                WorkerOutput::Forward(WorkerResult::Text(text))
             } else {
-                ComputationOutput::None
+                WorkerOutput::None
             }
         }
     }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-#[derive(SerializableComputation)]
-struct DoNothingComputation {}
+#[derive(SerializableWorker)]
+struct DoNothingWorker {}
 
-impl Computation for DoNothingComputation {
-    fn run(&mut self, _input: ComputationInput) -> ComputationOutput {
-        ComputationOutput::None
+impl Worker for DoNothingWorker {
+    fn run(&mut self, _input: WorkerInput) -> WorkerOutput {
+        WorkerOutput::None
     }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-#[derive(SerializableComputation)]
-struct ForwardOrigComputation {}
+#[derive(SerializableWorker)]
+struct ForwardOrigWorker {}
 
-impl Computation for ForwardOrigComputation {
-    fn run(&mut self, input: ComputationInput) -> ComputationOutput {
+impl Worker for ForwardOrigWorker {
+    fn run(&mut self, input: WorkerInput) -> WorkerOutput {
         match input {
-            ComputationInput::Text(text) => {
-                ComputationOutput::Forward(ComputationResult::Text(text))
+            WorkerInput::Text(text) => {
+                WorkerOutput::Forward(WorkerResult::Text(text))
             }
-            ComputationInput::Binary(binary) => {
-                ComputationOutput::Forward(ComputationResult::Binary(binary))
+            WorkerInput::Binary(binary) => {
+                WorkerOutput::Forward(WorkerResult::Binary(binary))
             }
         }
     }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-#[derive(SerializableComputation)]
-struct StoreInputComputation {
+#[derive(SerializableWorker)]
+struct StoreInputWorker {
     binary_inputs: Vec<Vec<u8>>,
     text_inputs: Vec<String>
 }
 
-impl Computation for StoreInputComputation {
-    fn run(&mut self, input: ComputationInput) -> ComputationOutput {
+impl Worker for StoreInputWorker {
+    fn run(&mut self, input: WorkerInput) -> WorkerOutput {
         match input {
-            ComputationInput::Text(text) => {
+            WorkerInput::Text(text) => {
                 self.text_inputs.push(text);
             }
-            ComputationInput::Binary(binary) => {
+            WorkerInput::Binary(binary) => {
                 self.binary_inputs.push(binary);
             }
         }
 
-        ComputationOutput::None
+        WorkerOutput::None
     }
 }
 
-#[derive(SerializableComputation, Serialize, Deserialize, Clone)]
-struct IncrementStateComputation {
+#[derive(SerializableWorker, Serialize, Deserialize, Clone)]
+struct IncrementStateWorker {
     value: u32
 }
 
-impl Computation for IncrementStateComputation {
-    fn run(&mut self, _input: ComputationInput) -> ComputationOutput {
+impl Worker for IncrementStateWorker {
+    fn run(&mut self, _input: WorkerInput) -> WorkerOutput {
         self.value += 1;
-        ComputationOutput::None
+        WorkerOutput::None
     }
 }

@@ -19,7 +19,7 @@ defmodule Aflecha.Operator.StreamChannel do
       %{
         lsock: lsock,
         sock: nil,
-        computation_mapping: %{}
+        worker_mapping: %{}
       },
       {:continue, :accept_connection}
     }
@@ -34,13 +34,13 @@ defmodule Aflecha.Operator.StreamChannel do
 
   @impl true
   def handle_cast(
-        {:io_in, computation_id, payload, data_type, handling_type},
+        {:io_in, worker_id, payload, data_type, handling_type},
         %{sock: sock} = state
       ) do
     :gen_tcp.send(
       sock,
       Payloader.build_from_bin(
-        computation_id,
+        worker_id,
         input_type(data_type) <> handling_type(handling_type) <> payload
       )
     )
@@ -49,10 +49,10 @@ defmodule Aflecha.Operator.StreamChannel do
   end
 
   @impl true
-  def handle_cast({:computation_pid_update, computation_id, updated_pids}, state) do
-    computation_mapping = Map.put(state[:computation_mapping], computation_id, updated_pids)
+  def handle_cast({:worker_pid_update, worker_id, updated_pids}, state) do
+    worker_mapping = Map.put(state[:worker_mapping], worker_id, updated_pids)
 
-    {:noreply, Map.put(state, :computation_mapping, computation_mapping)}
+    {:noreply, Map.put(state, :worker_mapping, worker_mapping)}
   end
 
   @impl true
@@ -66,14 +66,14 @@ defmodule Aflecha.Operator.StreamChannel do
 
   @impl true
   def handle_info({:tcp, _port, payload}, state) do
-    compute_mappings = state.computation_mapping
+    compute_mappings = state.worker_mapping
 
     Payloader.parse_payload(payload)
-    |> Enum.each(fn {computation_id, message} ->
-      computations = Map.get(compute_mappings, computation_id)
+    |> Enum.each(fn {worker_id, message} ->
+      workers = Map.get(compute_mappings, worker_id)
 
       # TODO: Are we handling binary or text data?
-      Enum.each(computations, fn pid -> GenServer.cast(pid, {:io_out, :text, message}) end)
+      Enum.each(workers, fn pid -> GenServer.cast(pid, {:io_out, :text, message}) end)
     end)
 
     {:noreply, state}

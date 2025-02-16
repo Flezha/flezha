@@ -1,5 +1,5 @@
 defmodule AflechaTest do
-  alias Aflecha.Computation.ComputeManager
+  alias Aflecha.Worker.WorkerManager
 
   use ExUnit.Case
   use Aflecha.Constant
@@ -10,7 +10,7 @@ defmodule AflechaTest do
 
   # @test_forward_orig_factory "forward_orig"
   # @test_store_input_factory "store_input"
-  @test_computation_factory "do_nothing"
+  @test_worker_factory "do_nothing"
   # @test_compare_filter_factory "compare_filter"
 
   setup_all do
@@ -23,30 +23,30 @@ defmodule AflechaTest do
     Enum.each(res, &assert(is_binary(&1)))
   end
 
-  # test "computation adding" do
-  #   computation = %Aflecha.Computation.Builder{
+  # test "worker adding" do
+  #   worker = %Aflecha.Worker.Builder{
   #     id: "add_websocket_io_test",
-  #     factory_id: @test_computation_factory
+  #     factory_id: @test_worker_factory
   #   }
 
   #   {:ok, {comp_id, ["test_agent_node@127.0.0.1": _pid]}} =
-  #     ComputeManager.start_computation(@default_group, computation)
+  #     WorkerManager.start_worker(@default_group, worker)
 
   #   assert comp_id === "add_websocket_io_test"
   # end
 
   # test "websocket io" do
-  #   computation = %Aflecha.Computation.Builder{
+  #   worker = %Aflecha.Worker.Builder{
   #     id: "add_websocket_io_test",
-  #     factory_id: @test_computation_factory
+  #     factory_id: @test_worker_factory
   #   }
 
-  #   {:ok, _} = ComputeManager.start_computation(@default_group, computation)
+  #   {:ok, _} = WorkerManager.start_worker(@default_group, worker)
 
   #   res =
   #     Aflecha.add_io(
   #       @default_group,
-  #       computation.id,
+  #       worker.id,
   #       %Aflecha.IO.Handler.Websocket{uri: @testnet_ws_uri},
   #       :input,
   #       []
@@ -57,17 +57,17 @@ defmodule AflechaTest do
   # end
 
   # test "add new io internal process" do
-  #   computation = %Aflecha.Computation.Builder{
+  #   worker = %Aflecha.Worker.Builder{
   #     id: "add_io_internal_process_test",
-  #     factory_id: @test_computation_factory
+  #     factory_id: @test_worker_factory
   #   }
 
-  #   {:ok, _} = ComputeManager.start_computation(@default_group, computation)
+  #   {:ok, _} = WorkerManager.start_worker(@default_group, worker)
 
   #   res =
   #     Aflecha.add_io(
   #       @default_group,
-  #       computation.id,
+  #       worker.id,
   #       %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
   #       :input,
   #       []
@@ -77,18 +77,18 @@ defmodule AflechaTest do
   #   assert is_binary(elem(res, 1))
   # end
 
-  # test "computation flow generation -> internal_process" do
-  #   computation = %Aflecha.Computation.Builder{
+  # test "worker flow generation -> internal_process" do
+  #   worker = %Aflecha.Worker.Builder{
   #     id: "c_flow_test_generate_internal",
   #     factory_id: @test_compare_filter_factory,
   #     variables: %{"comparable" => "hello world", "inverted" => false}
   #   }
 
-  #   {:ok, _} = ComputeManager.start_computation(@default_group, computation)
+  #   {:ok, _} = WorkerManager.start_worker(@default_group, worker)
 
   #   Aflecha.add_io(
   #     @default_group,
-  #     computation.id,
+  #     worker.id,
   #     %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
   #     :output,
   #     []
@@ -96,7 +96,7 @@ defmodule AflechaTest do
 
   #   # Aflecha.add_io(
   #   #   @default_group,
-  #   #   computation.id,
+  #   #   worker.id,
   #   #   %Aflecha.IO.Handler.StdIO{},
   #   #   :output,
   #   #   []
@@ -105,7 +105,7 @@ defmodule AflechaTest do
   #   {:ok, __id} =
   #     Aflecha.add_io(
   #       @default_group,
-  #       computation.id,
+  #       worker.id,
   #       %Aflecha.IO.Handler.Websocket{
   #         uri: @testnet_ws_uri,
   #         post_connect: %{

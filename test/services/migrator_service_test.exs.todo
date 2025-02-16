@@ -2,38 +2,38 @@ defmodule AflechaTest.MigratorServiceTest do
   use ExUnit.Case
   use Aflecha.Constant
 
-  doctest Aflecha.Computation.MigratorService
+  doctest Aflecha.Worker.MigratorService
 
-  @computation_id "test_migrator"
+  @worker_id "test_migrator"
 
   setup do
-    computation = TestHelper.test_computation(@computation_id)
+    worker = TestHelper.test_worker(@worker_id)
 
-    %{computation: computation}
+    %{worker: worker}
   end
 
-  test "serialize computation" do
+  test "serialize worker" do
     serialized_data =
-      Aflecha.Computation.MigratorService.serialize_computation(
+      Aflecha.Worker.MigratorService.serialize_worker(
         @default_operator,
-        @computation_id
+        @worker_id
       )
 
     assert is_list(serialized_data)
     assert length(serialized_data) > 0
   end
 
-  test "deserialize computation" do
+  test "deserialize worker" do
     serialized_data =
-      Aflecha.Computation.MigratorService.serialize_computation(
+      Aflecha.Worker.MigratorService.serialize_worker(
         @default_operator,
-        @computation_id
+        @worker_id
       )
 
     assert :ok ===
-             Aflecha.Computation.MigratorService.deserialize_computation(
+             Aflecha.Worker.MigratorService.deserialize_worker(
                @default_operator,
-               @computation_id,
+               @worker_id,
                serialized_data
              )
   end

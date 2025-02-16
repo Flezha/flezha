@@ -24,11 +24,11 @@ fn main() {
 
 fn handle_start(args: Vec<String>) {
     if args.len() < 3 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} start <computation_id> <factory_id> [--operator=<operator_id> |-o=<operator_id>]", args[0]);
+        eprintln!("Error: Invalid number of arguments. Usage: {} start <worker_id> <factory_id> [--operator=<operator_id> |-o=<operator_id>]", args[0]);
         exit(1);
     }
 
-    let computation_id = &args[2];
+    let worker_id = &args[2];
     let factory_id = &args[3];
     let variables = get_json(&args[4..], "--variables=", "-v=");
 
@@ -36,14 +36,14 @@ fn handle_start(args: Vec<String>) {
     let operator_id = get_namespace(&args[4..]);
 
     let rpc_command = format!(
-        "Aflecha.Service.RpcCookbook.computation_start(\"{}\", \"{}\", \"{}\", \"{}\")", 
+        "Aflecha.Service.RpcCookbook.worker_start(\"{}\", \"{}\", \"{}\", \"{}\")", 
         operator_id,
-        computation_id,
+        worker_id,
         factory_id,
         variables
     );
 
-    println!("Starting computation...");
+    println!("Starting worker...");
 
     // Attempt to execute the external command.
     let status = Command::new(command)
@@ -60,22 +60,22 @@ fn handle_start(args: Vec<String>) {
 
 fn handle_stop(args: Vec<String>) {
     if args.len() < 1 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} stop <computation_id>", args[0]);
+        eprintln!("Error: Invalid number of arguments. Usage: {} stop <worker_id>", args[0]);
         exit(1);
     }
 
-    let computation_id = &args[2];
+    let worker_id = &args[2];
     let operator_id = get_namespace(&args[3..]);
 
     let rpc_command = format!(
-        "Aflecha.Service.RpcCookbook.computation_stop(\"{}\", \"{}\")", 
+        "Aflecha.Service.RpcCookbook.worker_stop(\"{}\", \"{}\")", 
         operator_id,
-        computation_id,
+        worker_id,
     );
 
     let command = get_aflecha_command();
 
-    println!("Stopping computation...");
+    println!("Stopping worker...");
 
     // Attempt to execute the external command.
     let status = Command::new(command)
@@ -84,9 +84,9 @@ fn handle_stop(args: Vec<String>) {
         .status();
 
     match status {
-        Ok(status) if status.success() => println!("Computation stopped successfully."),
+        Ok(status) if status.success() => println!("Worker stopped successfully."),
         Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to stop computation: {}", e),
+        Err(e) => eprintln!("Failed to stop worker: {}", e),
     }
 }
 

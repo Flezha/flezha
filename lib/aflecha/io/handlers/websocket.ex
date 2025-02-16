@@ -53,7 +53,7 @@ defmodule Aflecha.IO.Handler.Websocket do
     {:ok, state}
   end
 
-  # TODO: rename pipeline_pid to computation_manager or antyhing else
+  # TODO: rename pipeline_pid to worker_manager or antyhing else
   @impl Fresh
   def handle_in({data_type, payload}, %{pipeline_pid: cp, handling_type: handling_type} = state) do
     GenServer.cast(cp, {:io_in, payload, data_type, handling_type})

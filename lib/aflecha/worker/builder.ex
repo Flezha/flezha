@@ -1,4 +1,4 @@
-defmodule Aflecha.Computation.Builder do
+defmodule Aflecha.Worker.Builder do
   alias Aflecha.Service.Validator
 
   @type t() :: %__MODULE__{
@@ -21,21 +21,21 @@ defmodule Aflecha.Computation.Builder do
          {:ok, factory_id} <- get_from_map(values_map, "factory_id"),
          variables <- Map.get(values_map, "variables", %{}),
          {:ok, variables_json} <- Jason.decode(variables) do
-      computation = %__MODULE__{
+      worker = %__MODULE__{
         id: id,
         factory_id: factory_id,
         variables: variables_json
       }
 
-      {:ok, computation}
+      {:ok, worker}
     else
       err -> err
     end
   end
 
-  def validate_computation(operator, computation) do
-    with :ok <- Validator.byte_limit_exceed(computation.id),
-         :ok <- Validator.computation_unique(operator, computation.id) do
+  def validate_worker(operator, worker) do
+    with :ok <- Validator.byte_limit_exceed(worker.id),
+         :ok <- Validator.worker_unique(operator, worker.id) do
       :ok
     else
       {:error, reason} -> {:error, reason}

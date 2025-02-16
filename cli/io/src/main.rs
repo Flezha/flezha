@@ -17,12 +17,12 @@ fn main() {
 
 fn handle_add(args: Vec<String>) {
     if args.len() < 4 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} add <input|output> <computation_id> [--parameters=<json> |-p=<json>] [--operator=<operator_id> |-o=<operator_id>]", args[0]);
+        eprintln!("Error: Invalid number of arguments. Usage: {} add <input|output> <worker_id> [--parameters=<json> |-p=<json>] [--operator=<operator_id> |-o=<operator_id>]", args[0]);
         exit(1);
     }
 
     let io_mode = &args[2];
-    let computation_id = &args[3];
+    let worker_id = &args[3];
     let params = get_json(&args[4..], "--parameters=", "-p=");
 
     match params.as_str() {
@@ -40,7 +40,7 @@ fn handle_add(args: Vec<String>) {
     let rpc_command = format!(
         "Aflecha.Service.RpcCookbook.add_io(\"{}\", \"{}\",\"{}\", :{}, {})",
         operator_id,
-        computation_id,
+        worker_id,
         params, 
         io_mode,
         opts

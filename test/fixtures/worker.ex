@@ -1,47 +1,47 @@
-defmodule AflechaTest.Fixtures.Computation do
+defmodule AflechaTest.Fixtures.Worker do
   use Aflecha.Constant
 
   def get(id, factory_id) do
-    %Aflecha.Computation.Builder{
-      id: id || "my_computation",
+    %Aflecha.Worker.Builder{
+      id: id || "my_worker",
       factory_id: factory_id || "forward_orig"
     }
   end
 
-  def start(computation) do
-    Aflecha.Computation.ComputeManager.start_computation(@default_operator, computation)
+  def start(worker) do
+    Aflecha.Worker.WorkerManager.start_worker(@default_operator, worker)
 
-    computation
+    worker
   end
 
-  def stop(computation_id) do
-    Aflecha.Computation.ComputeManager.stop_computation(@default_operator, computation_id)
+  def stop(worker_id) do
+    Aflecha.Worker.WorkerManager.stop_worker(@default_operator, worker_id)
   end
 
-  def attach_input(computation, handler, opts \\ []) do
+  def attach_input(worker, handler, opts \\ []) do
     {:ok, __id} =
       Aflecha.add_io(
         @default_operator,
-        computation.id,
+        worker.id,
         get_io_handler(handler, :input),
         :input,
         handling_type: Keyword.get(opts, :handling_type, :task)
       )
 
-    computation
+    worker
   end
 
-  def attach_output(computation, handler) do
+  def attach_output(worker, handler) do
     {:ok, _id} =
       Aflecha.add_io(
         @default_operator,
-        computation.id,
+        worker.id,
         get_io_handler(handler, :output),
         :output,
         []
       )
 
-    computation
+    worker
   end
 
   defp get_io_handler(handler, type) do

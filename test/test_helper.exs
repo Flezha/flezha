@@ -4,19 +4,19 @@ defmodule TestHelper do
   use Aflecha.Constant
   use ExUnit.Case
 
-  def test_computation(computation_id) do
-    computation =
-      AflechaTest.Fixtures.Computation.get(
-        computation_id,
+  def test_worker(worker_id) do
+    worker =
+      AflechaTest.Fixtures.Worker.get(
+        worker_id,
         @factory_increment_state
       )
-      |> AflechaTest.Fixtures.Computation.start()
+      |> AflechaTest.Fixtures.Worker.start()
 
     on_exit(fn ->
-      AflechaTest.Fixtures.Computation.stop(computation.id)
+      AflechaTest.Fixtures.Worker.stop(worker.id)
     end)
 
-    computation
+    worker
   end
 end
 

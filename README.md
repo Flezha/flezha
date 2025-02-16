@@ -1,7 +1,7 @@
 # Aflecha
 
 ## Description
-Distributed stateful computations. Provdes a static and dynamic creation of computations.
+Distributed stateful workers. Provdes a static and dynamic creation of workers.
 
 ## Building
 - Copy `.env.example` and rename to `.env`
@@ -23,26 +23,26 @@ Stopping the node.
 _build/dev/rel/aflecha/bin/agent stop
 ```
 
-### Starting a computation.
+### Starting a worker.
 ```bash
-_build/dev/rel/aflecha/bin/computation start my_computation compare_filter --variables='{
+_build/dev/rel/aflecha/bin/worker start my_worker compare_filter --variables='{
   "comparable": "hello world", 
   "inverted": false
 }'
 ```
 
 ```bash
-_build/dev/rel/aflecha/bin/computation start my_computation forward_orig
+_build/dev/rel/aflecha/bin/worker start my_worker forward_orig
 ```
 
-### Stop a computation.
+### Stop a worker.
 ```bash
-_build/dev/rel/aflecha/bin/computation stop my_computation
+_build/dev/rel/aflecha/bin/worker stop my_worker
 ```
 
-### Adding IO to the computation.
+### Adding IO to the worker.
 ```bash
-_build/dev/rel/aflecha/bin/io add input my_computation --parameters='{
+_build/dev/rel/aflecha/bin/io add input my_worker --parameters='{
   "io_type": "websocket",
   "uri": "wss://ws.kraken.com",
   "post_connect": {

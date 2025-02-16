@@ -1,5 +1,5 @@
 defmodule Aflecha do
-  alias Aflecha.Computation.ComputeManager
+  alias Aflecha.Worker.WorkerManager
   alias Aflecha.IO.IOManager
 
   @moduledoc """
@@ -7,13 +7,13 @@ defmodule Aflecha do
   """
 
   # TODO:
-  # def computation_state(group_id, computation_id) do
-  #   GenServer.call(Controller, {:get_computation_state, group_id, computation_id})
+  # def worker_state(group_id, worker_id) do
+  #   GenServer.call(Controller, {:get_worker_state, group_id, worker_id})
   # end
 
-  defdelegate start_computation(group_id, computation), to: ComputeManager
+  defdelegate start_worker(group_id, worker), to: WorkerManager
 
-  defdelegate stop_computation(group_id, computation), to: ComputeManager
+  defdelegate stop_worker(group_id, worker), to: WorkerManager
 
-  defdelegate add_io(group_id, computation_id, io_struct, io_mode, opts), to: IOManager
+  defdelegate add_io(group_id, worker_id, io_struct, io_mode, opts), to: IOManager
 end

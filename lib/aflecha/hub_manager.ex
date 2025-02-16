@@ -19,7 +19,7 @@ defmodule Aflecha.HubManager do
     ProcessHub.is_alive?(Identificator.hub(group_id))
   end
 
-  def hook_insert_pid(operator_id, {computation_id, node_pids}) do
+  def hook_insert_pid(operator_id, {worker_id, node_pids}) do
     curr_node = node()
 
     updated_pids =
@@ -33,7 +33,7 @@ defmodule Aflecha.HubManager do
         Supervisor.which_children(Identificator.stream_sup_secondary(operator_id))
 
     Enum.each(stream_channels, fn {_, pid, _, _} ->
-      GenServer.cast(pid, {:computation_pid_update, computation_id, updated_pids})
+      GenServer.cast(pid, {:worker_pid_update, worker_id, updated_pids})
     end)
   end
 

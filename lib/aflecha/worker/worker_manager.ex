@@ -1,46 +1,46 @@
-defmodule Aflecha.Computation.ComputeManager do
+defmodule Aflecha.Worker.WorkerManager do
   @moduledoc """
-  Manages the computation startings and stoppings.
+  Manages the worker startings and stoppings.
   """
 
   alias Aflecha.Operator.Controller
   alias Aflecha.Service.Identificator
-  alias Aflecha.Computation.Builder, as: ComputationBuilder
+  alias Aflecha.Worker.Builder, as: WorkerBuilder
 
   @doc """
-  Starts a new computation to the operator.
+  Starts a new worker to the operator.
   """
-  @spec start_computation(String.t(), Aflecha.Computation.Builder.t()) ::
+  @spec start_worker(String.t(), Aflecha.Worker.Builder.t()) ::
           {:ok, pid()} | {:error, String.t()}
-  def start_computation(group_id, computation) do
-    case ComputationBuilder.validate_computation(group_id, computation) do
+  def start_worker(group_id, worker) do
+    case WorkerBuilder.validate_worker(group_id, worker) do
       {:error, reason} ->
         {:error, reason}
 
       :ok ->
         # TODO: we should validate the group_id also.
-        add_computation(group_id, computation)
+        add_worker(group_id, worker)
     end
   end
 
   @doc """
-  Stops a computation.
+  Stops a worker.
   """
-  @spec stop_computation(String.t(), String.t()) :: :ok | {:error, String.t()}
-  def stop_computation(group_id, computation_id) do
-    GenServer.call(Controller, {:stop_computation, group_id, computation_id})
+  @spec stop_worker(String.t(), String.t()) :: :ok | {:error, String.t()}
+  def stop_worker(group_id, worker_id) do
+    GenServer.call(Controller, {:stop_worker, group_id, worker_id})
   end
 
-  defp add_computation(group_id, computation) do
+  defp add_worker(group_id, worker) do
     operator_ids = Aflecha.Operator.FleetManager.get_operators(group_id)
     operator_id = select_operator(operator_ids)
 
     child_spec = %{
-      id: computation.id,
+      id: worker.id,
       start:
-        {Aflecha.Computation.Overwatch, :start_link,
+        {Aflecha.Worker.Overwatch, :start_link,
          [
-           {group_id, operator_id, computation}
+           {group_id, operator_id, worker}
          ]}
     }
 

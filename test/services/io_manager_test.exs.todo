@@ -5,19 +5,19 @@ defmodule AflechaTest.IOManagerTest do
 
   doctest Aflecha.IO.IOManager
 
-  @computation_id "test_io_manager"
+  @worker_id "test_io_manager"
 
   setup do
-    computation = TestHelper.test_computation(@computation_id)
+    worker = TestHelper.test_worker(@worker_id)
 
-    %{computation: computation}
+    %{worker: worker}
   end
 
   test "add IO input" do
     res1 =
       IOManager.add_io(
         @default_operator,
-        @computation_id,
+        @worker_id,
         %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
         :input,
         []
@@ -36,6 +36,6 @@ defmodule AflechaTest.IOManagerTest do
     assert elem(res1, 1) |> is_binary()
 
     assert elem(res2, 0) == :error
-    assert elem(res2, 1) === "computation not found"
+    assert elem(res2, 1) === "worker not found"
   end
 end

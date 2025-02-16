@@ -1,6 +1,6 @@
 defmodule Aflecha.IO.IOSupervisor do
   @moduledoc """
-  Supervises computation IO processes.
+  Supervises worker IO processes.
   """
 
   use Supervisor

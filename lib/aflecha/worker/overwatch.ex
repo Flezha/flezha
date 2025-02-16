@@ -1,7 +1,7 @@
-defmodule Aflecha.Computation.Overwatch do
+defmodule Aflecha.Worker.Overwatch do
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
-  alias Aflecha.Computation.MigratorService
+  alias Aflecha.Worker.MigratorService
   alias Aflecha.Operator.StreamSup
   alias Aflecha.Service.Identificator
 
@@ -14,18 +14,18 @@ defmodule Aflecha.Computation.Overwatch do
   end
 
   @impl true
-  def init({group_id, operator_id, computation}) do
+  def init({group_id, operator_id, worker}) do
     GenServer.call(
       Identificator.control_unit(operator_id),
-      {:start_computation, computation}
+      {:start_worker, worker}
     )
 
     {:ok,
      %__MODULE__{
-       id: computation.id,
+       id: worker.id,
        group_id: group_id,
-       variables: computation.variables,
-       channel: attach_channel(computation.id, group_id),
+       variables: worker.variables,
+       channel: attach_channel(worker.id, group_id),
        io: %{
          input: [],
          output: []
@@ -101,7 +101,7 @@ defmodule Aflecha.Computation.Overwatch do
   def handle_info({:process_hub, :handover_start, startup_resp, child_id, from}, state) do
     case startup_resp do
       {:ok, pid} ->
-        serialized_data = MigratorService.serialize_computation(state.group_id, state.id)
+        serialized_data = MigratorService.serialize_worker(state.group_id, state.id)
 
         # Send the state to the remote process.
         Process.send(pid, {:process_hub, :handover, {state, serialized_data}}, [])
@@ -118,18 +118,18 @@ defmodule Aflecha.Computation.Overwatch do
 
   @impl true
   def handle_info({:process_hub, :handover, {handover_state, serialized_data}}, state) do
-    MigratorService.deserialize_computation(state.group_id, state.id, serialized_data)
+    MigratorService.deserialize_worker(state.group_id, state.id, serialized_data)
 
     {:noreply, handover_state}
   end
 
-  def attach_channel(computation_id, group_id) do
-    # Get numeric representation of the computation_id string.
-    computation_int = String.to_charlist(computation_id) |> Enum.sum()
+  def attach_channel(worker_id, group_id) do
+    # Get numeric representation of the worker_id string.
+    worker_int = String.to_charlist(worker_id) |> Enum.sum()
 
     # Pick the channel index based on the channel_name_int.
     count = ConcurrencyMapper.concurrent_entity_count()
-    channel_index = rem(computation_int, count)
+    channel_index = rem(worker_int, count)
 
     StreamSup.stream_ids(group_id, :primary) |> Enum.at(channel_index)
   end
