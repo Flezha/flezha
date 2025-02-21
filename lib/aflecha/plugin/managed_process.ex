@@ -6,5 +6,5 @@ defmodule Aflecha.Plugin.ManagedProcess do
     end
   end
 
-  @callback start_manager() :: {:ok, pid()} | {:error, term()}
+  @callback start_link(arg :: term()) :: {:ok, pid()} | {:error, term()}
 end

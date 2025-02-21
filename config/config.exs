@@ -4,7 +4,13 @@ config :aflecha,
   # ------------------------------------------------------------------------------------------------
   # Validator hooks to run before and after boot.
   pre_hooks: [],
-  post_hooks: []
+  post_hooks: [],
+
+  # ------------------------------------------------------------------------------------------------
+  # Enabled plugins.
+  enabled_plugins: [
+    Aflecha.Plugin.KafkaPlugin
+  ]
 
 config :logger,
   handle_sasl_reports: true,

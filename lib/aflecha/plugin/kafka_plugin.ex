@@ -16,7 +16,7 @@ defmodule Aflecha.Plugin.KafkaPlugin do
   end
 
   @impl ManagedProcess
-  def start_manager() do
+  def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   end
 
