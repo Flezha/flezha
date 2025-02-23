@@ -23,16 +23,20 @@ defmodule AflechaTest do
     Enum.each(res, &assert(is_binary(&1)))
   end
 
-  # test "worker adding" do
-  #   worker = %Aflecha.Worker.Builder{
-  #     id: "add_websocket_io_test",
-  #     factory_id: @test_worker_factory
-  #   }
+  test "worker adding" do
+    worker = %Aflecha.Worker.Builder{
+      id: "default_worker_test",
+      factory_id: @test_worker_factory
+    }
 
-  #   {:ok, {comp_id, ["test_agent_node@127.0.0.1": _pid]}} =
-  #     WorkerManager.start_worker(@default_group, worker)
+    {:ok, {worker_id, ["test_agent_node@127.0.0.1": _pid]}} =
+      WorkerManager.start_worker(@default_group, worker)
 
-  #   assert comp_id === "add_websocket_io_test"
+    assert worker_id === "default_worker_test"
+  end
+
+  # test "kafka plugin connection start" do
+
   # end
 
   # test "websocket io" do

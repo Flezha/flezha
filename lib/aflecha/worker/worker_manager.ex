@@ -3,6 +3,7 @@ defmodule Aflecha.Worker.WorkerManager do
   Manages the worker startings and stoppings.
   """
 
+  alias Aflecha.HubManager
   alias Aflecha.Operator.Controller
   alias Aflecha.Service.Identificator
   alias Aflecha.Worker.Builder, as: WorkerBuilder
@@ -38,16 +39,18 @@ defmodule Aflecha.Worker.WorkerManager do
     child_spec = %{
       id: worker.id,
       start:
-        {Aflecha.Worker.Overwatch, :start_link,
-         [
-           {group_id, operator_id, worker}
-         ]}
+        {
+          Aflecha.Worker.Overwatch,
+          :start_link,
+          [{group_id, operator_id, worker}]
+        }
     }
 
     result =
       Identificator.hub(group_id)
       |> ProcessHub.start_child(child_spec, async_wait: true)
       |> ProcessHub.await()
+
 
     case result do
       {:ok, pid} -> {:ok, pid}

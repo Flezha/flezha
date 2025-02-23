@@ -20,7 +20,9 @@ defmodule Aflecha.HubManager do
   end
 
   def get_pid(group_id, worker_id) do
-    case ProcessHub.get_pid(group_id, worker_id) do
+    hub_id = Identificator.hub(group_id)
+
+    case ProcessHub.get_pid(hub_id, worker_id) do
       nil -> {:error, "no pid found"}
       pid -> {:ok, pid}
     end

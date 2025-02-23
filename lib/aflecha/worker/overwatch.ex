@@ -11,6 +11,8 @@ defmodule Aflecha.Worker.Overwatch do
   defstruct [:id, :group_id, :channel, :supervisors, :plugins, variables: %{}]
 
   def start_link(args) do
+    dbg()
+
     GenServer.start_link(__MODULE__, args)
   end
 
