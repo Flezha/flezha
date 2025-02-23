@@ -34,11 +34,19 @@ defmodule Aflecha.Plugin.KafkaPlugin do
   def handle_call({:start_connection, settings}, _from, state) do
     id = settings.kafka_worker_id
 
-    {:ok, pid} =
-      KafkaEx.start_link_worker(
-        settings.kafka_worker_id,
-        settings.uris
-      )
+    # TODO: switch to real code later.
+    # {:ok, pid} =
+    #   KafkaEx.start_link_worker(
+    #     settings.kafka_worker_id,
+    #     settings.uris
+    #   )
+    pid =
+      spawn(fn ->
+        receive do
+          _msg ->
+            nil
+        end
+      end)
 
     state = Map.put(state, id, pid)
 
