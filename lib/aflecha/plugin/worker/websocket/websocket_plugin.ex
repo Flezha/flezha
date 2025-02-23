@@ -39,7 +39,7 @@ defmodule Aflecha.Plugin.Worker.Websocket.WebsocketPlugin do
       __MODULE__,
       %{
         post_connect: pc,
-        overwatcher_pid: op,
+        overwatcher_pid: op
       },
       ws_opts
     )

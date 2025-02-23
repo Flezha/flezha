@@ -19,6 +19,13 @@ defmodule Aflecha.HubManager do
     ProcessHub.is_alive?(Identificator.hub(group_id))
   end
 
+  def get_pid(group_id, worker_id) do
+    case ProcessHub.get_pid(group_id, worker_id) do
+      nil -> {:error, "no pid found"}
+      pid -> {:ok, pid}
+    end
+  end
+
   def hook_insert_pid(operator_id, {worker_id, node_pids}) do
     curr_node = node()
 

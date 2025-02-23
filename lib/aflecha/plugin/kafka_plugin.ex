@@ -1,18 +1,22 @@
 defmodule Aflecha.Plugin.KafkaPlugin do
+  alias Aflecha.IO.Handlers.Kafka
   alias Aflecha.Plugin.ManagedProcess
   alias Aflecha.Plugin.PluginContract
 
   use ManagedProcess
   use GenServer
 
-  @impl PluginContract
-  def plugin_type() do
-    :managed_process
+  defmodule KafkaStart do
+    @enforce_keys [:kafka_worker_id]
+    defstruct [
+      :kafka_worker_id,
+      :uris
+    ]
   end
 
   @impl PluginContract
-  def load() do
-    :ok
+  def plugin_type() do
+    :managed_process
   end
 
   @impl ManagedProcess
@@ -22,6 +26,26 @@ defmodule Aflecha.Plugin.KafkaPlugin do
 
   @impl GenServer
   def init(_args) do
-    {:ok, nil}
+    {:ok, %{}}
+  end
+
+  # TODO: Validate the settings, check if worker alrady exists and error handling.
+  @impl GenServer
+  def handle_call({:start_connection, settings}, _from, state) do
+    id = settings.kafka_worker_id
+
+    {:ok, pid} =
+      KafkaEx.start_link_worker(
+        settings.kafka_worker_id,
+        settings.uris
+      )
+
+    state = Map.put(state, id, pid)
+
+    {:reply, {:ok, pid}, state}
+  end
+
+  def start_connection(%KafkaStart{} = settings) do
+    GenServer.call(__MODULE__, {:start_connection, settings})
   end
 end

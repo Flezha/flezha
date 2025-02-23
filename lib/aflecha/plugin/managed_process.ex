@@ -7,4 +7,12 @@ defmodule Aflecha.Plugin.ManagedProcess do
   end
 
   @callback start_link(arg :: term()) :: {:ok, pid()} | {:error, term()}
+
+  defstruct [
+    :group_id,
+    :worker_id,
+    :plugin_mod,
+    :plugin_func,
+    :plugin_args
+  ]
 end

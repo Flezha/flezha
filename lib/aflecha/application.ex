@@ -20,7 +20,7 @@ defmodule Aflecha.Application do
       {Aflecha.Socket.Dispatcher, &Aflecha.Operator.FleetManager.connect_handler/1},
       Aflecha.Operator.FleetSupervisor,
       Aflecha.Service.PortPilot,
-      Aflecha.Plugin.PluginManagerSupervisor,
+      Aflecha.Plugin.PluginManagerSupervisor
 
       # Aflecha.Operator.FleetManager,
       # Aflecha.Service.Warden,

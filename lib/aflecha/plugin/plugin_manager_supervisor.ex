@@ -13,10 +13,10 @@ defmodule Aflecha.Plugin.PluginManagerSupervisor do
     managed_plugins = [:managed_process]
 
     Application.get_env(:aflecha, :plugins)
-    |> Enum.map(fn mod -> apply(mod, :plugin_type, []) end )
+    |> Enum.map(fn mod -> apply(mod, :plugin_type, []) end)
     |> Enum.filter(fn {_mod, plugin_type} ->
-      Enum.any?(managed_plugins, plugin_type) end
-    )
+      Enum.any?(managed_plugins, plugin_type)
+    end)
     |> Enum.map(fn {mod, _plugin_type} -> mod end)
   end
 end

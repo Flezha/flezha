@@ -4,5 +4,4 @@ defmodule Aflecha.Plugin.PluginContract do
   """
 
   @callback plugin_type() :: :worker_linked_process | :managed_process
-  @callback load() :: :ok, {:error, term()}
 end
