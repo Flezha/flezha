@@ -44,9 +44,27 @@ defmodule AflechaTest do
     assert worker_id === "default_worker_test"
   end
 
-  # test "kafka plugin connection start" do
+  test "kafka plugin connection start" do
+    worker_id = "kafka_plugin_test"
 
-  # end
+    worker = %Aflecha.Worker.Builder{
+      id: worker_id,
+      factory_id: @test_worker_factory
+    }
+
+    {:ok, _} = WorkerManager.start_worker(@default_group, worker)
+
+    Aflecha.Plugin.PluginManager.plugin_exec(%Aflecha.Plugin.ManagedProcess{
+      worker_id: worker_id,
+      group_id: @default_group,
+      plugin_mod: Aflecha.Plugin.KafkaPlugin,
+      plugin_func: :start_connection,
+      plugin_args: [%Aflecha.Plugin.KafkaPlugin.KafkaStart{
+        kafka_worker_id: worker_id,
+        uris: [{"localhost", 9092}]
+      }]
+    }) |> dbg()
+  end
 
   # test "websocket io" do
   #   worker = %Aflecha.Worker.Builder{
