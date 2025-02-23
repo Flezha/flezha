@@ -43,12 +43,14 @@ defmodule Aflecha.Worker.Overwatch do
         settings.plugin_args
       )
 
-    managed_processes = get_in(state, [:plugins, :managed_prcesses])
+    managed_processes = state
+      |> Map.get(:plugins)
+      |> Map.get(:managed_processes)
 
     state =
       put_in(
         state,
-        [:plugins, :managed_prcesses],
+        [Access.key(:plugins), :managed_prcesses],
         [result | managed_processes]
       )
 
