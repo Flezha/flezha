@@ -4,6 +4,11 @@ config :aflecha,
   testnet_enabled: true,
   pre_hooks: [
     fn ->
+      # Start the local node
+      {_, 0} = System.cmd("epmd", ["-daemon"])
+      Node.start(:"test_agent_node1@127.0.0.1", :longnames)
+    end,
+    fn ->
       Aflecha.Service.EventManager.add_handler(:factory_registered_event)
       Aflecha.Service.EventManager.add_handler(:operator_connected_event)
     end

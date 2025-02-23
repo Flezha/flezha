@@ -18,8 +18,8 @@ defmodule TestHelper do
 
     worker
   end
-end
 
-# Start the local node
-{_, 0} = System.cmd("epmd", ["-daemon"])
-Node.start(:"test_agent_node@127.0.0.1", :longnames)
+  def node_name() do
+    :"test_agent_node1@127.0.0.1"
+  end
+end

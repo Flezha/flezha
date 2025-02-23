@@ -7,6 +7,7 @@ defmodule AflechaTest do
   doctest Aflecha
 
   @default_group "default"
+  @node_name TestHelper.node_name()
 
   # @test_forward_orig_factory "forward_orig"
   # @test_store_input_factory "store_input"
@@ -15,6 +16,14 @@ defmodule AflechaTest do
 
   setup_all do
     %{}
+  end
+
+  setup do
+    on_exit(fn ->
+      nil
+    end)
+
+    :ok
   end
 
   test "operator node connect" do
@@ -29,7 +38,7 @@ defmodule AflechaTest do
       factory_id: @test_worker_factory
     }
 
-    {:ok, {worker_id, ["test_agent_node@127.0.0.1": _pid]}} =
+    {:ok, {worker_id, [{@node_name, _pid}]}} =
       WorkerManager.start_worker(@default_group, worker)
 
     assert worker_id === "default_worker_test"
