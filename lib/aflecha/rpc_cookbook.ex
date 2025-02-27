@@ -3,7 +3,7 @@ defmodule Aflecha.Service.RpcCookbook do
   Provides recipes for the RPC calls.
   """
 
-  alias Aflecha.Worker.WorkerManager
+  alias Aflecha.Service.WorkerManager
   alias Aflecha.IO.IOManager
 
   @doc "Starts a worker."

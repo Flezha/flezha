@@ -38,7 +38,7 @@ defmodule Aflecha.Plugin.KafkaPlugin do
     {:ok, pid} =
       KafkaEx.start_link_worker(
         :no_name,
-        [uris: settings.uris]
+        uris: settings.uris
       )
 
     state = Map.put(state, id, pid)

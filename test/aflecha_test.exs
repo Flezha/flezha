@@ -1,5 +1,5 @@
 defmodule AflechaTest do
-  alias Aflecha.Worker.WorkerManager
+  alias Aflecha.Service.WorkerManager
 
   use ExUnit.Case
   use Aflecha.Constant
@@ -54,16 +54,26 @@ defmodule AflechaTest do
 
     {:ok, _} = WorkerManager.start_worker(@default_group, worker)
 
-    Aflecha.Plugin.PluginManager.plugin_exec(%Aflecha.Plugin.ManagedProcess{
-      worker_id: worker_id,
-      group_id: @default_group,
-      plugin_mod: Aflecha.Plugin.KafkaPlugin,
-      plugin_func: :start_connection,
-      plugin_args: [%Aflecha.Plugin.KafkaPlugin.KafkaStart{
-        kafka_worker_id: worker_id,
-        uris: [{"kafka", 9092}]
-      }]
-    }) |> dbg()
+    # TODO: add asserttion.
+    {:ok, conn} =
+      Aflecha.Plugin.PluginManager.plugin_attach(
+        %Aflecha.Plugin.ManagedProcess{
+          worker_id: worker_id,
+          group_id: @default_group,
+          plugin_mod: Aflecha.Plugin.KafkaPlugin,
+          plugin_func: :start_connection,
+          plugin_args: [
+            %Aflecha.Plugin.KafkaPlugin.KafkaStart{
+              kafka_worker_id: worker_id,
+              uris: [{"kafka", 9092}]
+            }
+          ]
+        },
+        :on_output
+      )
+      |> dbg()
+
+    Process.sleep(2000)
   end
 
   # test "websocket io" do

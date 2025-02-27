@@ -9,13 +9,13 @@ defmodule AflechaTest.Fixtures.Worker do
   end
 
   def start(worker) do
-    Aflecha.Worker.WorkerManager.start_worker(@default_operator, worker)
+    Aflecha.Service.WorkerManager.start_worker(@default_operator, worker)
 
     worker
   end
 
   def stop(worker_id) do
-    Aflecha.Worker.WorkerManager.stop_worker(@default_operator, worker_id)
+    Aflecha.Service.WorkerManager.stop_worker(@default_operator, worker_id)
   end
 
   def attach_input(worker, handler, opts \\ []) do

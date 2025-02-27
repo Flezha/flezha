@@ -1,5 +1,5 @@
 defmodule Aflecha do
-  alias Aflecha.Worker.WorkerManager
+  alias Aflecha.Service.WorkerManager
   alias Aflecha.IO.IOManager
 
   @moduledoc """

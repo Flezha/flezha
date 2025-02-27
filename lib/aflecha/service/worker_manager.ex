@@ -1,4 +1,4 @@
-defmodule Aflecha.Worker.WorkerManager do
+defmodule Aflecha.Service.WorkerManager do
   @moduledoc """
   Manages the worker startings and stoppings.
   """

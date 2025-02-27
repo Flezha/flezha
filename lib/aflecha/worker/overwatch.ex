@@ -8,7 +8,7 @@ defmodule Aflecha.Worker.Overwatch do
 
   use GenServer
 
-  defstruct [:id, :group_id, :channel, :supervisors, :plugins, variables: %{}]
+  defstruct [:id, :group_id, :channel, :supervisors, :plugin_subscribers, variables: %{}]
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args)
@@ -27,34 +27,40 @@ defmodule Aflecha.Worker.Overwatch do
        group_id: group_id,
        variables: worker.variables,
        channel: attach_channel(worker.id, group_id),
-       plugins: %{
-         managed_processes: [],
-         linked_processes: []
+       plugin_subscribers: %{
+         on_input: [],
+         on_output: [],
+         interval: []
        }
      }}
   end
 
   @impl true
-  def handle_call({:exec_plugin, %ManagerProcessPlugin{} = settings}, _from, state) do
-    result =
+  def handle_call(
+        {:add_plugin_subscriber, event, %ManagerProcessPlugin{} = settings},
+        _from,
+        state
+      ) do
+    {:ok, conn} =
       apply(
         settings.plugin_mod,
         settings.plugin_func,
         settings.plugin_args
       )
 
-    managed_processes = state
-      |> Map.get(:plugins)
-      |> Map.get(:managed_processes)
+    subscribers =
+      state
+      |> Map.get(:plugin_subscribers)
+      |> Map.get(event)
 
     state =
       put_in(
         state,
-        [Access.key(:plugins), :managed_prcesses],
-        [result | managed_processes]
+        [Access.key(:plugin_subscribers), event],
+        [conn | subscribers]
       )
 
-    {:reply, {:ok, result}, state}
+    {:reply, {:ok, conn}, state}
   end
 
   # @impl true

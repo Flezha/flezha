@@ -2,9 +2,9 @@ defmodule AflechaTest.WorkerManagerTest do
   use ExUnit.Case
   use Aflecha.Constant
 
-  import Aflecha.Worker.WorkerManager
+  import Aflecha.Service.WorkerManager
 
-  doctest Aflecha.Worker.WorkerManager
+  doctest Aflecha.Service.WorkerManager
 
   test "start worker" do
     worker_id = "test_worker_start"
