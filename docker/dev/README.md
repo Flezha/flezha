@@ -30,3 +30,6 @@ docker save -o aflecha.tar alfetahe/aflecha:0.1.4
 ```bash
 docker compose -f docker/dev/docker-compose.yml up
 ```
+
+# Kafka UI:
+Kafka UI can be seen on: `http://localhost:8080/`
