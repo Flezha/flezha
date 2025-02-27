@@ -30,23 +30,16 @@ defmodule Aflecha.Plugin.KafkaPlugin do
   end
 
   # TODO: Validate the settings, check if worker alrady exists and error handling.
+  # Add logic to reuse workers etc.
   @impl GenServer
   def handle_call({:start_connection, settings}, _from, state) do
     id = settings.kafka_worker_id
 
-    # TODO: switch to real code later.
-    # {:ok, pid} =
-    #   KafkaEx.start_link_worker(
-    #     settings.kafka_worker_id,
-    #     settings.uris
-    #   )
-    pid =
-      spawn(fn ->
-        receive do
-          _msg ->
-            nil
-        end
-      end)
+    {:ok, pid} =
+      KafkaEx.start_link_worker(
+        :no_name,
+        [uris: settings.uris]
+      )
 
     state = Map.put(state, id, pid)
 

@@ -1,7 +1,11 @@
 services:
   agent:
+    # TODO: remove the build section later.
+    build:
+      context: ../../
+      dockerfile: docker/dev/Dockerfile.agent
     container_name: aflecha_agent_dev
-    image: aflecha:latest
+    # TODO:   image: aflecha:latest
     depends_on:
       - kafka
     volumes:
@@ -29,6 +33,21 @@ services:
       - "9092:9092"
     depends_on:
       - zookeeper
+
+  kafka_ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka_ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      KAFKA_CLUSTERS_0_SCHEMA_REGISTRY: http://schema-registry:8081
+      KAFKA_CLUSTERS_0_CONNECT: http://connect:8083
+      KAFKA_CLUSTERS_0_JMX_PORT: 9999
+      KAFKA_CLUSTERS_0_JMX_USERNAME: admin
+      KAFKA_CLUSTERS_0_JMX_PASSWORD: admin
 
   # rust:
   #   build:

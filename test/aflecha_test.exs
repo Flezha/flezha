@@ -61,7 +61,7 @@ defmodule AflechaTest do
       plugin_func: :start_connection,
       plugin_args: [%Aflecha.Plugin.KafkaPlugin.KafkaStart{
         kafka_worker_id: worker_id,
-        uris: [{"localhost", 9092}]
+        uris: [{"kafka", 9092}]
       }]
     }) |> dbg()
   end
