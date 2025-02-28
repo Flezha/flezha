@@ -1,14 +1,15 @@
 defmodule Aflecha.Worker.Overwatch do
   alias Aflecha.IO.IOSupervisor
-  alias Aflecha.Plugin.ManagedProcess, as: ManagerProcessPlugin
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Worker.MigratorService
   alias Aflecha.Operator.StreamSup
   alias Aflecha.Service.Identificator
+  alias Aflecha.HubManager
+  alias Aflecha.Plugin.WorkerSubscriber
 
   use GenServer
 
-  defstruct [:id, :group_id, :channel, :supervisors, :plugin_subscribers, variables: %{}]
+  defstruct [:id, :group_id, :channel, :supervisors, :subscribers, variables: %{}]
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args)
@@ -27,7 +28,7 @@ defmodule Aflecha.Worker.Overwatch do
        group_id: group_id,
        variables: worker.variables,
        channel: attach_channel(worker.id, group_id),
-       plugin_subscribers: %{
+       subscribers: %{
          on_input: [],
          on_output: [],
          interval: []
@@ -35,32 +36,28 @@ defmodule Aflecha.Worker.Overwatch do
      }}
   end
 
+  def attach_subscriber(group_id, worker_id, event, settings) do
+    # TODO: Move worker ID extraction to separate service.
+    {:ok, worker_pid} = HubManager.get_pid(group_id, worker_id)
+
+    GenServer.call(worker_pid, {:add_subscriber, event, settings})
+  end
+
   @impl true
-  def handle_call(
-        {:add_plugin_subscriber, event, %ManagerProcessPlugin{} = settings},
-        _from,
-        state
-      ) do
-    {:ok, conn} =
-      apply(
-        settings.plugin_mod,
-        settings.plugin_func,
-        settings.plugin_args
-      )
+  def handle_call({:add_subscriber, event, settings}, _from, state) do
+    subscriber = WorkerSubscriber.subscribe(settings)
+    subscribers = Map.get(state.subscribers, event, [])
 
-    subscribers =
-      state
-      |> Map.get(:plugin_subscribers)
-      |> Map.get(event)
-
-    state =
-      put_in(
-        state,
-        [Access.key(:plugin_subscribers), event],
-        [conn | subscribers]
-      )
-
-    {:reply, {:ok, conn}, state}
+    {:reply, :ok,
+     %__MODULE__{
+       state
+       | subscribers:
+           Map.put(
+             state.subscribers,
+             event,
+             [subscriber | subscribers]
+           )
+     }}
   end
 
   # @impl true
@@ -118,14 +115,19 @@ defmodule Aflecha.Worker.Overwatch do
   #   {:noreply, state}
   # end
 
-  # @impl true
-  # def handle_cast({:io_out, payload, data_type}, %{io: %{output: out_pids}} = state) do
-  #   Enum.each(out_pids, fn {_module, out_pid} ->
-  #     GenServer.cast(out_pid, {:io_out, payload, data_type})
-  #   end)
+  @impl true
+  def handle_cast(
+        {:io_out, payload, data_type},
+        %__MODULE__{subscribers: %{on_output: subs}} = state
+      ) do
+    dbg()
 
-  #   {:noreply, state}
-  # end
+    Enum.each(subs, fn handler ->
+      handler.(payload, data_type)
+    end)
+
+    {:noreply, state}
+  end
 
   @impl true
   def handle_info({:process_hub, :handover_start, startup_resp, child_id, from}, state) do

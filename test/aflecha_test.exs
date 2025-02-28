@@ -54,26 +54,23 @@ defmodule AflechaTest do
 
     {:ok, _} = WorkerManager.start_worker(@default_group, worker)
 
-    # TODO: add asserttion.
-    {:ok, conn} =
-      Aflecha.Plugin.PluginManager.plugin_attach(
-        %Aflecha.Plugin.ManagedProcess{
-          worker_id: worker_id,
-          group_id: @default_group,
-          plugin_mod: Aflecha.Plugin.KafkaPlugin,
-          plugin_func: :start_connection,
-          plugin_args: [
-            %Aflecha.Plugin.KafkaPlugin.KafkaStart{
-              kafka_worker_id: worker_id,
-              uris: [{"kafka", 9092}]
-            }
-          ]
-        },
-        :on_output
-      )
-      |> dbg()
+    # TODO: add assertion.
+    Aflecha.Worker.Overwatch.attach_subscriber(
+      @default_group,
+      worker_id,
+      :on_output,
+      %Aflecha.Plugin.Kafka{
+        hosts: [{"kafka", 9092}],
+        topic: "aflecha_test_topic",
+        partition: 0,
+        type: :producer
+      }
+    )
 
-    Process.sleep(2000)
+    {:ok, pid} = Aflecha.HubManager.get_pid(@default_group, worker_id)
+    GenServer.cast(pid, {:io_out, "my text here", :text})
+
+    Process.sleep(1000)
   end
 
   # test "websocket io" do

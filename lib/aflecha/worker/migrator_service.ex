@@ -1,6 +1,7 @@
 defmodule Aflecha.Worker.MigratorService do
   alias Aflecha.Service.Identificator
 
+  # TODO: these should reside inside the worker_manager module instead.
   def serialize_worker(operator_id, worker_id) do
     command_id = "serialize_worker"
     data = %{"worker_id" => worker_id}

@@ -13,6 +13,7 @@ defmodule Aflecha.Plugin.ManagedProcess do
     :worker_id,
     :plugin_mod,
     :plugin_func,
-    :plugin_args
+    :plugin_args,
+    :event_args
   ]
 end
