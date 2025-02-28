@@ -56,6 +56,13 @@ defmodule Aflecha.Service.WorkerManager do
     end
   end
 
+  def add_binding(group_id, worker_id, mode, settings) do
+    # TODO: Move worker ID extraction to separate service.
+    {:ok, worker_pid} = HubManager.get_pid(group_id, worker_id)
+
+    GenServer.call(worker_pid, {:add_binding, mode, settings})
+  end
+
   defp select_operator(operator_ids) do
     # TODO: add load balancing here.
     Enum.random(operator_ids)

@@ -5,11 +5,11 @@ defmodule Aflecha.Worker.Overwatch do
   alias Aflecha.Operator.StreamSup
   alias Aflecha.Service.Identificator
   alias Aflecha.HubManager
-  alias Aflecha.Plugin.WorkerSubscriber
+  alias Aflecha.Plugin.WorkerBinding
 
   use GenServer
 
-  defstruct [:id, :group_id, :channel, :supervisors, :subscribers, variables: %{}]
+  defstruct [:id, :group_id, :channel, :supervisors, :bindings, variables: %{}]
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args)
@@ -28,36 +28,28 @@ defmodule Aflecha.Worker.Overwatch do
        group_id: group_id,
        variables: worker.variables,
        channel: attach_channel(worker.id, group_id),
-       subscribers: %{
-         on_input: [],
-         on_output: [],
-         interval: []
+       bindings: %{
+         reactive: [],
+         proactive: []
        }
      }}
   end
 
-  def attach_subscriber(group_id, worker_id, event, settings) do
-    # TODO: Move worker ID extraction to separate service.
-    {:ok, worker_pid} = HubManager.get_pid(group_id, worker_id)
-
-    GenServer.call(worker_pid, {:add_subscriber, event, settings})
-  end
-
   @impl true
-  def handle_call({:add_subscriber, event, settings}, _from, state) do
-    subscriber = WorkerSubscriber.subscribe(settings)
-    subscribers = Map.get(state.subscribers, event, [])
+  def handle_call({:add_binding, mode, settings}, _from, state) do
+    case WorkerBinding.bind(settings) do
+      {:ok, binding} ->
+        bindings = [binding | Map.get(state.bindings, mode, [])]
 
-    {:reply, :ok,
-     %__MODULE__{
-       state
-       | subscribers:
-           Map.put(
-             state.subscribers,
-             event,
-             [subscriber | subscribers]
-           )
-     }}
+        {
+          :reply,
+          :ok,
+          %__MODULE__{state | bindings: Map.put(state.bindings, mode, bindings)}
+        }
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   # @impl true
@@ -118,12 +110,10 @@ defmodule Aflecha.Worker.Overwatch do
   @impl true
   def handle_cast(
         {:io_out, payload, data_type},
-        %__MODULE__{subscribers: %{on_output: subs}} = state
+        %__MODULE__{bindings: %{reactive: bindings}} = state
       ) do
-    dbg()
-
-    Enum.each(subs, fn handler ->
-      handler.(payload, data_type)
+    Enum.each(bindings, fn binding ->
+      WorkerBinding.exec(binding, payload)
     end)
 
     {:noreply, state}

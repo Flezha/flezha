@@ -55,20 +55,19 @@ defmodule AflechaTest do
     {:ok, _} = WorkerManager.start_worker(@default_group, worker)
 
     # TODO: add assertion.
-    Aflecha.Worker.Overwatch.attach_subscriber(
+    Aflecha.Service.WorkerManager.add_binding(
       @default_group,
       worker_id,
-      :on_output,
-      %Aflecha.Plugin.Kafka{
+      :reactive,
+      %Aflecha.Plugin.KafkaProducer{
         hosts: [{"kafka", 9092}],
         topic: "aflecha_test_topic",
-        partition: 0,
-        type: :producer
+        partition: 0
       }
     )
 
     {:ok, pid} = Aflecha.HubManager.get_pid(@default_group, worker_id)
-    GenServer.cast(pid, {:io_out, "my text here", :text})
+    GenServer.cast(pid, {:io_out, "my test text", :text})
 
     Process.sleep(1000)
   end
