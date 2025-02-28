@@ -142,6 +142,8 @@ defmodule Aflecha.Worker.Overwatch do
   def handle_info({:process_hub, :handover, {handover_state, serialized_data}}, state) do
     MigratorService.deserialize_worker(state.group_id, state.id, serialized_data)
 
+    # TODO: we should rerun all bindings here to create new connections.
+
     {:noreply, handover_state}
   end
 
