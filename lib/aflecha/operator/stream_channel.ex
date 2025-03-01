@@ -7,11 +7,11 @@ defmodule Aflecha.Operator.StreamChannel do
   use GenServer
 
   def start_link({operator_id, name, type}) do
-    GenServer.start_link(__MODULE__, {operator_id, type}, name: name)
+    GenServer.start_link(__MODULE__, {operator_id, type, name}, name: name)
   end
 
   @impl true
-  def init({operator_id, type}) do
+  def init({operator_id, type, name}) do
     lsock = GenServer.call(Identificator.stream_listener(operator_id, type), :get_socket)
 
     {
@@ -19,7 +19,8 @@ defmodule Aflecha.Operator.StreamChannel do
       %{
         lsock: lsock,
         sock: nil,
-        worker_mapping: %{}
+        worker_mapping: %{},
+        name: name
       },
       {:continue, :accept_connection}
     }
@@ -49,10 +50,10 @@ defmodule Aflecha.Operator.StreamChannel do
   end
 
   @impl true
-  def handle_cast({:worker_pid_update, worker_id, updated_pids}, state) do
+  def handle_call({:worker_pid_update, worker_id, updated_pids}, _from, state) do
     worker_mapping = Map.put(state[:worker_mapping], worker_id, updated_pids)
 
-    {:noreply, Map.put(state, :worker_mapping, worker_mapping)}
+    {:reply, :ok, Map.put(state, :worker_mapping, worker_mapping)}
   end
 
   @impl true
@@ -70,10 +71,12 @@ defmodule Aflecha.Operator.StreamChannel do
 
     Payloader.parse_payload(payload)
     |> Enum.each(fn {worker_id, message} ->
-      workers = Map.get(worker_mappings, worker_id)
+      workers = Map.get(worker_mappings, worker_id, [])
 
       # TODO: Are we handling binary or text data?
-      Enum.each(workers, fn pid -> GenServer.cast(pid, {:io_out, message, :text}) end)
+      Enum.each(workers, fn pid ->
+        GenServer.cast(pid, {:io_out, message, :text})
+      end)
     end)
 
     {:noreply, state}

@@ -66,9 +66,13 @@ defmodule Aflecha.Operator.FleetManager do
         operator_id = Identificator.unique_id(group_id)
         control_unit = Identificator.control_unit(operator_id)
 
+        # Only one hub per group.
         if !HubManager.hub_alive?(group_id) do
-          HubManager.start_hub(group_id, operator_id)
+          HubManager.start_hub(group_id)
         end
+
+        # Need to register handler for each operator.
+        HubManager.register_handler(group_id, operator_id)
 
         FleetSupervisor.start_operator(group_id, operator_id, sock)
 

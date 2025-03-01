@@ -26,13 +26,13 @@ defmodule AflechaTest do
     :ok
   end
 
-  # TODO: uncomment these tests and refactor, use fixtures.
-  # test "operator node connect" do
-  #   res = Aflecha.Operator.FleetManager.get_operators(@default_group)
-  #   assert length(res) === 2
-  #   Enum.each(res, &assert(is_binary(&1)))
-  # end
+  test "operator node connect" do
+    res = Aflecha.Operator.FleetManager.get_operators(@default_group)
+    assert length(res) === 2
+    Enum.each(res, &assert(is_binary(&1)))
+  end
 
+  # TODO: uncomment these tests and refactor, use fixtures.
   # test "worker adding" do
   #   worker = %Aflecha.Worker.Builder{
   #     id: "default_worker_test",

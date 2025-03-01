@@ -7,8 +7,8 @@ defmodule Aflecha.HubManager do
     Supervisor.start_link(__MODULE__, [], name: __MODULE__)
   end
 
-  def start_hub(group_id, operator_id) do
-    Supervisor.start_child(__MODULE__, process_hub(group_id, operator_id))
+  def start_hub(group_id) do
+    Supervisor.start_child(__MODULE__, process_hub(group_id))
   end
 
   def stop_hub(group_id) do
@@ -28,6 +28,19 @@ defmodule Aflecha.HubManager do
     end
   end
 
+  def register_handler(group_id, operator_id) do
+    ProcessHub.Service.HookManager.register_handler(
+      Identificator.hub(group_id),
+      ProcessHub.Constant.Hook.registry_pid_inserted(),
+      %ProcessHub.Service.HookManager{
+        id: operator_id <> "_hub_pid_insertion",
+        m: Aflecha.HubManager,
+        f: :hook_insert_pid,
+        a: [operator_id, :_]
+      }
+    )
+  end
+
   def hook_insert_pid(operator_id, {worker_id, node_pids}) do
     curr_node = node()
 
@@ -42,7 +55,7 @@ defmodule Aflecha.HubManager do
         Supervisor.which_children(Identificator.stream_sup_secondary(operator_id))
 
     Enum.each(stream_channels, fn {_, pid, _, _} ->
-      GenServer.cast(pid, {:worker_pid_update, worker_id, updated_pids})
+      GenServer.call(pid, {:worker_pid_update, worker_id, updated_pids})
     end)
   end
 
@@ -51,7 +64,7 @@ defmodule Aflecha.HubManager do
     Supervisor.init([], strategy: :one_for_one)
   end
 
-  defp process_hub(group_id, operator_id) do
+  defp process_hub(group_id) do
     ProcessHub.child_spec(%ProcessHub{
       hub_id: Identificator.hub(group_id),
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
@@ -63,16 +76,6 @@ defmodule Aflecha.HubManager do
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
         retention: 4000,
         handover: true
-      },
-      hooks: %{
-        ProcessHub.Constant.Hook.registry_pid_inserted() => [
-          %ProcessHub.Service.HookManager{
-            id: :aflecha_hub_pid_insertion,
-            m: Aflecha.HubManager,
-            f: :hook_insert_pid,
-            a: [operator_id, :_]
-          }
-        ]
       }
     })
   end
