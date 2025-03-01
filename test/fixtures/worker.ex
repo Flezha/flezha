@@ -1,6 +1,8 @@
 defmodule AflechaTest.Fixtures.Worker do
   use Aflecha.Constant
 
+  # TODO: refactor based on new plugin system.
+
   def get(id, factory_id) do
     %Aflecha.Worker.Builder{
       id: id || "my_worker",

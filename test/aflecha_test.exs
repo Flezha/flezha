@@ -105,7 +105,27 @@ defmodule AflechaTest do
         }
       }
     )
-    |> dbg()
+  end
+
+  test "beam msg forward plugin connection start" do
+    worker_id = "beam_msg_forw_plugin_test"
+
+    worker = %Aflecha.Worker.Builder{
+      id: worker_id,
+      factory_id: @test_worker_factory
+    }
+
+    {:ok, _} = WorkerManager.start_worker(@default_group, worker)
+
+    # TODO: add assertions and test websocket connection.
+    Aflecha.Service.WorkerManager.add_binding(
+      @default_group,
+      worker_id,
+      :proactive,
+      %Aflecha.Plugin.Handler.BeamMsgForward{
+        recv_pid: self()
+      }
+    )
   end
 
   # test "add new io internal process" do

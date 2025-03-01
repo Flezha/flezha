@@ -1,4 +1,6 @@
 defmodule Aflecha.Plugin.Handler.BeamMsgForward do
+  alias Aflecha.Plugin.WorkerBinding
+
   use GenServer
 
   @enforce_keys [:recv_pid]

@@ -100,12 +100,15 @@ defmodule Aflecha.Worker.Overwatch do
   #   {:reply, {:error, "Invalid payload"}, state}
   # end
 
-  # @impl true
-  # def handle_cast({:io_in, payload, data_type, handling_type}, state) do
-  #   GenServer.cast(state.channel, {:io_in, state.id, payload, data_type, handling_type})
+  @impl true
+  def handle_cast({:io_in, payload, data_type}, state) do
+    # TODO: were currently hardcoding the handling_type to :stream (:task is also a option)
+    # The worker itself should be able to define the handling type.
+    # Meaning we should store the handling type in the overwatch state.
+    GenServer.cast(state.channel, {:io_in, state.id, payload, data_type, :stream})
 
-  #   {:noreply, state}
-  # end
+    {:noreply, state}
+  end
 
   @impl true
   def handle_cast(
