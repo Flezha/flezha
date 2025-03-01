@@ -1,4 +1,4 @@
-defmodule Aflecha.Plugin.Websocket do
+defmodule Aflecha.Plugin.Handler.Websocket do
   alias Aflecha.Plugin.WorkerBinding
 
   require Logger
@@ -13,8 +13,8 @@ defmodule Aflecha.Plugin.Websocket do
                 ws_opts: []
               ]
 
-  defimpl WorkerBinding, for: Aflecha.Plugin.Websocket do
-    alias Aflecha.Plugin.Websocket
+  defimpl WorkerBinding, for: Aflecha.Plugin.Handler.Websocket do
+    alias Aflecha.Plugin.Handler.Websocket
 
     @impl true
     def bind(settings) do
@@ -26,7 +26,7 @@ defmodule Aflecha.Plugin.Websocket do
         )
 
       case res do
-        {:ok, pid} -> {:ok, %Aflecha.Plugin.Websocket{settings | conn: pid}}
+        {:ok, pid} -> {:ok, %Websocket{settings | conn: pid}}
         {:error, reason} -> {:error, reason}
       end
     end

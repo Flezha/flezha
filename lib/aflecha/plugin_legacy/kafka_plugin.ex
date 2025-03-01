@@ -1,4 +1,4 @@
-defmodule Aflecha.Plugin.KafkaPlugin do
+defmodule Aflecha.Plugin.Handler.KafkaPlugin do
   alias Aflecha.IO.Handlers.Kafka
   alias Aflecha.Plugin.ManagedProcess
   alias Aflecha.Plugin.PluginContract

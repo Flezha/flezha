@@ -59,7 +59,7 @@ defmodule AflechaTest do
       @default_group,
       worker_id,
       :reactive,
-      %Aflecha.Plugin.Kafka.Producer{
+      %Aflecha.Plugin.Handler.Kafka.Producer{
         hosts: [{"kafka", 9092}],
         topic: "aflecha_test_topic",
         partition: 0
@@ -87,7 +87,7 @@ defmodule AflechaTest do
       @default_group,
       worker_id,
       :proactive,
-      %Aflecha.Plugin.Websocket{
+      %Aflecha.Plugin.Handler.Websocket{
         uri: @testnet_ws_uri,
         post_connect: %{
           payload: {

@@ -1,4 +1,4 @@
-defmodule Aflecha.Plugin.Kafka do
+defmodule Aflecha.Plugin.Handler.Kafka do
   alias Aflecha.Plugin.WorkerBinding
 
   defmodule Producer do
