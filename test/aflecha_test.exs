@@ -32,102 +32,101 @@ defmodule AflechaTest do
     Enum.each(res, &assert(is_binary(&1)))
   end
 
-  # TODO: uncomment these tests and refactor, use fixtures.
-  # test "worker adding" do
-  #   worker = %Aflecha.Worker.Builder{
-  #     id: "default_worker_test",
-  #     factory_id: @test_worker_factory
-  #   }
+  test "worker adding" do
+    worker = %Aflecha.Worker.Builder{
+      id: "default_worker_test",
+      factory_id: @test_worker_factory
+    }
 
-  #   {:ok, {worker_id, [{@node_name, _pid}]}} =
-  #     WorkerManager.start_worker(@default_group, worker)
+    {:ok, {worker_id, [{@node_name, _pid}]}} =
+      WorkerManager.start_worker(@default_group, worker)
 
-  #   assert worker_id === "default_worker_test"
-  # end
+    assert worker_id === "default_worker_test"
+  end
 
-  # test "kafka plugin connection start" do
-  #   worker_id = "kafka_plugin_test"
+  test "kafka plugin connection start" do
+    worker_id = "kafka_plugin_test"
 
-  #   worker = %Aflecha.Worker.Builder{
-  #     id: worker_id,
-  #     factory_id: @test_worker_factory
-  #   }
+    worker = %Aflecha.Worker.Builder{
+      id: worker_id,
+      factory_id: @test_worker_factory
+    }
 
-  #   {:ok, _} = WorkerManager.start_worker(@default_group, worker)
+    {:ok, _} = WorkerManager.start_worker(@default_group, worker)
 
-  #   # TODO: add assertion.
-  #   Aflecha.Service.WorkerManager.add_binding(
-  #     @default_group,
-  #     worker_id,
-  #     :reactive,
-  #     %Aflecha.Plugin.Handler.Kafka.Producer{
-  #       hosts: [{"kafka", 9092}],
-  #       topic: "aflecha_test_topic",
-  #       partition: 0
-  #     }
-  #   )
+    # TODO: add assertion.
+    Aflecha.Service.WorkerManager.add_binding(
+      @default_group,
+      worker_id,
+      :reactive,
+      %Aflecha.Plugin.Handler.Kafka.Producer{
+        hosts: [{"kafka", 9092}],
+        topic: "aflecha_test_topic",
+        partition: 0
+      }
+    )
 
-  #   {:ok, pid} = Aflecha.HubManager.get_pid(@default_group, worker_id)
-  #   GenServer.cast(pid, {:io_out, "my test text", :text})
+    {:ok, pid} = Aflecha.HubManager.get_pid(@default_group, worker_id)
+    GenServer.cast(pid, {:io_out, "my test text", :text})
 
-  #   Process.sleep(1000)
-  # end
+    Process.sleep(1000)
+  end
 
-  # test "websocket plugin connection start" do
-  #   worker_id = "websocket_plugin_test"
+  test "websocket plugin connection start" do
+    worker_id = "websocket_plugin_test"
 
-  #   worker = %Aflecha.Worker.Builder{
-  #     id: worker_id,
-  #     factory_id: @test_worker_factory
-  #   }
+    worker = %Aflecha.Worker.Builder{
+      id: worker_id,
+      factory_id: @test_worker_factory
+    }
 
-  #   {:ok, _} = WorkerManager.start_worker(@default_group, worker)
+    {:ok, _} = WorkerManager.start_worker(@default_group, worker)
 
-  #   # TODO: add assertions and test websocket connection.
-  #   Aflecha.Service.WorkerManager.add_binding(
-  #     @default_group,
-  #     worker_id,
-  #     :proactive,
-  #     %Aflecha.Plugin.Handler.Websocket{
-  #       uri: @testnet_ws_uri,
-  #       post_connect: %{
-  #         payload: {
-  #           :text,
-  #           ~s(
-  #               {
-  #                 "event_type": "subscribe",
-  #                 "event_data": {
-  #                   "default_message": "hello world",
-  #                   "interval": 1000
-  #                 }
-  #               }
-  #             )
-  #         }
-  #       }
-  #     }
-  #   )
-  # end
+    # TODO: add assertions and test websocket connection.
+    Aflecha.Service.WorkerManager.add_binding(
+      @default_group,
+      worker_id,
+      :proactive,
+      %Aflecha.Plugin.Handler.Websocket{
+        uri: @testnet_ws_uri,
+        post_connect: %{
+          payload: {
+            :text,
+            ~s(
+                {
+                  "event_type": "subscribe",
+                  "event_data": {
+                    "default_message": "hello world",
+                    "interval": 1000
+                  }
+                }
+              )
+          }
+        }
+      }
+    )
+  end
 
-  # test "beam msg forward plugin connection start" do
-  #   worker_id = "beam_msg_forw_plugin_test"
+  test "beam msg forward plugin connection start" do
+    worker_id = "beam_msg_forw_plugin_test"
 
-  #   worker = %Aflecha.Worker.Builder{
-  #     id: worker_id,
-  #     factory_id: @test_worker_factory
-  #   }
+    worker = %Aflecha.Worker.Builder{
+      id: worker_id,
+      factory_id: @test_worker_factory
+    }
 
-  #   {:ok, _} = WorkerManager.start_worker(@default_group, worker)
+    {:ok, _} = WorkerManager.start_worker(@default_group, worker)
 
-  #   # TODO: add assertions.
-  #   Aflecha.Service.WorkerManager.add_binding(
-  #     @default_group,
-  #     worker_id,
-  #     :reactive,
-  #     %Aflecha.Plugin.Handler.BeamMsgForward{
-  #       recv_pid: self()
-  #     }
-  #   )
-  # end
+    # TODO: add assertions.
+    Aflecha.Service.WorkerManager.add_binding(
+      @default_group,
+      worker_id,
+      :reactive,
+      %Aflecha.Plugin.Handler.BeamMsgForward{
+        recv_pid: self()
+      }
+    )
+  end
 
   test "worker flow generation -> beam msg forward" do
     worker_id = "data_flow_test"
