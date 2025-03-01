@@ -20,12 +20,13 @@ defmodule Aflecha.Plugin.Kafka do
 
       @impl true
       def exec(settings, data) do
-        KafkaEx.produce(
-          settings.topic,
-          settings.partition,
-          data,
-          worker_name: settings.conn
-        )
+        {:ok,
+         KafkaEx.produce(
+           settings.topic,
+           settings.partition,
+           data,
+           worker_name: settings.conn
+         )}
       end
     end
   end

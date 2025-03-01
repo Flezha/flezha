@@ -72,26 +72,41 @@ defmodule AflechaTest do
     Process.sleep(1000)
   end
 
-  # test "websocket io" do
-  #   worker = %Aflecha.Worker.Builder{
-  #     id: "add_websocket_io_test",
-  #     factory_id: @test_worker_factory
-  #   }
+  test "websocket plugin connection start" do
+    worker_id = "websocket_plugin_test"
 
-  #   {:ok, _} = WorkerManager.start_worker(@default_group, worker)
+    worker = %Aflecha.Worker.Builder{
+      id: worker_id,
+      factory_id: @test_worker_factory
+    }
 
-  #   res =
-  #     Aflecha.add_io(
-  #       @default_group,
-  #       worker.id,
-  #       %Aflecha.IO.Handler.Websocket{uri: @testnet_ws_uri},
-  #       :input,
-  #       []
-  #     )
+    {:ok, _} = WorkerManager.start_worker(@default_group, worker)
 
-  #   assert elem(res, 0) == :ok
-  #   assert is_binary(elem(res, 1))
-  # end
+    # TODO: add assertions and test websocket connection.
+    Aflecha.Service.WorkerManager.add_binding(
+      @default_group,
+      worker_id,
+      :proactive,
+      %Aflecha.Plugin.Websocket{
+        uri: @testnet_ws_uri,
+        post_connect: %{
+          payload: {
+            :text,
+            ~s(
+                {
+                  "event_type": "subscribe",
+                  "event_data": {
+                    "default_message": "hello world",
+                    "interval": 1000
+                  }
+                }
+              )
+          }
+        }
+      }
+    )
+    |> dbg()
+  end
 
   # test "add new io internal process" do
   #   worker = %Aflecha.Worker.Builder{

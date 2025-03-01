@@ -1,10 +1,17 @@
 defmodule Aflecha.Plugin.Websocket do
   alias Aflecha.Plugin.WorkerBinding
 
+  require Logger
+
   use Fresh
 
   @enforce_keys [:uri]
-  defstruct @enforce_keys ++ [:conn, :post_connect, :ws_opts]
+  defstruct @enforce_keys ++
+              [
+                :conn,
+                post_connect: %{},
+                ws_opts: []
+              ]
 
   defimpl WorkerBinding, for: Aflecha.Plugin.Websocket do
     alias Aflecha.Plugin.Websocket
@@ -26,7 +33,9 @@ defmodule Aflecha.Plugin.Websocket do
 
     @impl true
     def exec(settings, data) do
-      :ok
+      Websocket.send_payload(settings.conn, data)
+
+      {:ok, :frame_sent}
     end
   end
 
