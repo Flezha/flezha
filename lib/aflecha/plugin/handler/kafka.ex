@@ -19,7 +19,7 @@ defmodule Aflecha.Plugin.Handler.Kafka do
       end
 
       @impl true
-      def exec(settings, data) do
+      def exec(settings, {data, _data_type}) do
         {:ok,
          KafkaEx.produce(
            settings.topic,

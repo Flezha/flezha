@@ -27,7 +27,7 @@ defmodule Aflecha.Worker.Overwatch do
        id: worker.id,
        group_id: group_id,
        variables: worker.variables,
-       channel: attach_channel(worker.id, group_id),
+       channel: attach_channel(worker.id, operator_id),
        bindings: %{
          reactive: [],
          proactive: []
@@ -52,54 +52,6 @@ defmodule Aflecha.Worker.Overwatch do
     end
   end
 
-  # @impl true
-  # def handle_call({:add_io, direction, io_struct, opts}, _from, state) do
-  #   {module, func, args} = Aflecha.IO.Provider.mfa(io_struct)
-  #   new_args = [self() | args] ++ [opts]
-  #   io_id = Enum.random(1..10000) |> Integer.to_string()
-
-  #   response =
-  #     Map.get(state.supervisors, direction)
-  #     |> IOSupervisor.start_child(%{
-  #       id: io_id,
-  #       start: {module, func, new_args}
-  #     })
-
-  #   case response do
-  #     {:ok, pid} ->
-  #       pids = Map.get(state.io, direction, [])
-  #       io_handlers = Map.put(state.io, direction, [{module, pid} | pids])
-
-  #       {:reply, {:ok, io_id}, %__MODULE__{state | io: io_handlers}}
-
-  #     {:error, reason} ->
-  #       {:reply, {:error, reason}, state}
-  #   end
-  # end
-
-  # @impl true
-  # def handle_call({:send_io_payload, io_id, direction, payload}, _from, state)
-  #     when is_struct(payload) do
-  #   io_data = Map.get(state.io, direction)
-
-  #   case io_data do
-  #     nil ->
-  #       {:reply, {:error, "IO handler not found"}, state}
-
-  #     {io_module, _initial_io_pid} ->
-  #       sup = Map.get(state.supervisors, direction)
-  #       {:ok, io_pid} = IOSupervisor.find_pid(sup, io_id)
-  #       res = apply(io_module, :send_payload, [io_pid, payload])
-
-  #       {:reply, res, state}
-  #   end
-  # end
-
-  # @impl true
-  # def handle_call({:send_io_payload, _payload}, _from, state) do
-  #   {:reply, {:error, "Invalid payload"}, state}
-  # end
-
   @impl true
   def handle_cast({:io_in, payload, data_type}, state) do
     # TODO: were currently hardcoding the handling_type to :stream (:task is also a option)
@@ -111,15 +63,9 @@ defmodule Aflecha.Worker.Overwatch do
   end
 
   @impl true
-  def handle_cast(
-        {:io_out, payload, data_type},
-        %__MODULE__{bindings: %{reactive: bindings}} = state
-      ) do
-
-        dbg(payload)
-
-    Enum.each(bindings, fn binding ->
-      WorkerBinding.exec(binding, payload)
+  def handle_cast({:io_out, payload, data_type}, state) do
+    Enum.each(state.bindings.reactive, fn binding ->
+      WorkerBinding.exec(binding, {payload, data_type})
     end)
 
     {:noreply, state}
@@ -153,7 +99,7 @@ defmodule Aflecha.Worker.Overwatch do
     {:noreply, handover_state}
   end
 
-  def attach_channel(worker_id, group_id) do
+  def attach_channel(worker_id, operator_id) do
     # Get numeric representation of the worker_id string.
     worker_int = String.to_charlist(worker_id) |> Enum.sum()
 
@@ -161,6 +107,6 @@ defmodule Aflecha.Worker.Overwatch do
     count = ConcurrencyMapper.concurrent_entity_count()
     channel_index = rem(worker_int, count)
 
-    StreamSup.stream_ids(group_id, :primary) |> Enum.at(channel_index)
+    StreamSup.stream_ids(operator_id, :primary) |> Enum.at(channel_index)
   end
 end

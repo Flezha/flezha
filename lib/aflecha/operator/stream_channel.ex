@@ -66,14 +66,14 @@ defmodule Aflecha.Operator.StreamChannel do
 
   @impl true
   def handle_info({:tcp, _port, payload}, state) do
-    compute_mappings = state.worker_mapping
+    worker_mappings = state.worker_mapping
 
     Payloader.parse_payload(payload)
     |> Enum.each(fn {worker_id, message} ->
-      workers = Map.get(compute_mappings, worker_id)
+      workers = Map.get(worker_mappings, worker_id)
 
       # TODO: Are we handling binary or text data?
-      Enum.each(workers, fn pid -> GenServer.cast(pid, {:io_out, :text, message}) end)
+      Enum.each(workers, fn pid -> GenServer.cast(pid, {:io_out, message, :text}) end)
     end)
 
     {:noreply, state}

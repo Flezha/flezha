@@ -122,7 +122,7 @@ defmodule AflechaTest do
   #   Aflecha.Service.WorkerManager.add_binding(
   #     @default_group,
   #     worker_id,
-  #     :proactive,
+  #     :reactive,
   #     %Aflecha.Plugin.Handler.BeamMsgForward{
   #       recv_pid: self()
   #     }
@@ -143,7 +143,7 @@ defmodule AflechaTest do
     Aflecha.Service.WorkerManager.add_binding(
       @default_group,
       worker_id,
-      :proactive,
+      :reactive,
       %Aflecha.Plugin.Handler.BeamMsgForward{
         recv_pid: self()
       }
@@ -186,7 +186,7 @@ defmodule AflechaTest do
         _msg ->
           assert true
       after
-        5000 -> assert false
+        2000 -> assert false
       end
     end
   end

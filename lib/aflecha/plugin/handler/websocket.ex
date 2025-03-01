@@ -32,8 +32,8 @@ defmodule Aflecha.Plugin.Handler.Websocket do
     end
 
     @impl true
-    def exec(settings, data) do
-      Websocket.send_payload(settings.conn, data)
+    def exec(settings, payload) do
+      Websocket.send_payload(settings.conn, payload)
 
       {:ok, :frame_sent}
     end
