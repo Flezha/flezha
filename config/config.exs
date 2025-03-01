@@ -9,7 +9,8 @@ config :aflecha,
   # ------------------------------------------------------------------------------------------------
   # Enabled plugins.
   enabled_plugins: [
-    Aflecha.Plugin.KafkaPlugin
+    Aflecha.Plugin.KafkaP,
+    Aflecha.Plugin.Websocket
   ]
 
 config :logger,
