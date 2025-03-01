@@ -59,7 +59,7 @@ defmodule AflechaTest do
       @default_group,
       worker_id,
       :reactive,
-      %Aflecha.Plugin.KafkaProducer{
+      %Aflecha.Plugin.Kafka.Producer{
         hosts: [{"kafka", 9092}],
         topic: "aflecha_test_topic",
         partition: 0
