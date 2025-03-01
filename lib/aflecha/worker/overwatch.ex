@@ -115,6 +115,9 @@ defmodule Aflecha.Worker.Overwatch do
         {:io_out, payload, data_type},
         %__MODULE__{bindings: %{reactive: bindings}} = state
       ) do
+
+        dbg(payload)
+
     Enum.each(bindings, fn binding ->
       WorkerBinding.exec(binding, payload)
     end)
