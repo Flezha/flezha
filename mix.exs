@@ -39,7 +39,8 @@ defmodule Aflecha.MixProject do
       {:process_hub, "~> 0.3.1-alpha"},
       {:blockade, "~> 0.2.1"},
       {:fresh, "~> 0.4.4"},
-      {:kafka_ex, "~> 0.14.0"}
+      {:kafka_ex, "~> 0.14.0"},
+      {:mimic, "~> 1.11"}
     ]
   end
 
