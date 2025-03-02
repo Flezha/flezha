@@ -44,34 +44,6 @@ defmodule AflechaTest do
     assert worker_id === "default_worker_test"
   end
 
-  test "kafka plugin connection start" do
-    worker_id = "kafka_plugin_test"
-
-    worker = %Aflecha.Worker.Builder{
-      id: worker_id,
-      factory_id: @test_worker_factory
-    }
-
-    {:ok, _} = WorkerManager.start_worker(@default_group, worker)
-
-    # TODO: add assertion.
-    Aflecha.Service.WorkerManager.add_binding(
-      @default_group,
-      worker_id,
-      :reactive,
-      %Aflecha.Plugin.Handler.Kafka.Producer{
-        hosts: [{"kafka", 9092}],
-        topic: "aflecha_test_topic",
-        partition: 0
-      }
-    )
-
-    {:ok, pid} = Aflecha.HubManager.get_pid(@default_group, worker_id)
-    GenServer.cast(pid, {:io_out, "my test text", :text})
-
-    Process.sleep(1000)
-  end
-
   test "websocket plugin connection start" do
     worker_id = "websocket_plugin_test"
 

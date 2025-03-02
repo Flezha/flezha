@@ -1,5 +1,7 @@
 ExUnit.start()
 
+Mimic.copy(KafkaEx)
+
 defmodule TestHelper do
   use Aflecha.Constant
   use ExUnit.Case
