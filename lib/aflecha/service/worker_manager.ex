@@ -56,11 +56,11 @@ defmodule Aflecha.Service.WorkerManager do
     end
   end
 
-  def add_binding(group_id, worker_id, mode, settings) do
+  def add_binding(group_id, worker_id, binding, mode, opts \\ []) do
     # TODO: Move worker ID extraction to separate service.
     {:ok, worker_pid} = HubManager.get_pid(group_id, worker_id)
 
-    GenServer.call(worker_pid, {:add_binding, mode, settings})
+    GenServer.call(worker_pid, {:add_binding, binding, mode, opts})
   end
 
   defp select_operator(operator_ids) do

@@ -19,18 +19,18 @@ defmodule Aflecha.Plugin.Handler.Kafka do
       end
 
       @impl true
-      def exec(settings, {data, _data_type}) do
+      def exec(settings, payload) do
         res =
           KafkaEx.produce(
             settings.topic,
             settings.partition,
-            data,
+            payload,
             worker_name: settings.conn
           )
 
         case res do
-          :ok -> {:ok, :success}
-          {:ok, any} -> {:ok, any}
+          :ok -> {:ok, payload}
+          {:ok, any} -> {:ok, payload}
           {:error, reason} -> {:error, reason}
           any -> {:error, any}
         end

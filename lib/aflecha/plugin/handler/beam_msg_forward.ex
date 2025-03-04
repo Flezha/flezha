@@ -15,8 +15,11 @@ defmodule Aflecha.Plugin.Handler.BeamMsgForward do
     end
 
     @impl true
-    def exec(settings, {data, data_type}) do
-      {:ok, Process.send(settings.recv_pid, data, [])}
+    def exec(settings, payload) do
+      case Process.send(settings.recv_pid, payload, []) do
+        :ok -> {:ok, payload}
+        _ -> {:error, :send_failed}
+      end
     end
   end
 end

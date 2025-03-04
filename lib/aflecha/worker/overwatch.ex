@@ -15,6 +15,8 @@ defmodule Aflecha.Worker.Overwatch do
     GenServer.start_link(__MODULE__, args)
   end
 
+  # TODO: binding on migration we should rerun all of them.
+  # TODO: add ability to remove bindings.
   @impl true
   def init({group_id, operator_id, worker}) do
     GenServer.call(
@@ -29,17 +31,24 @@ defmodule Aflecha.Worker.Overwatch do
        variables: worker.variables,
        channel: attach_channel(worker.id, operator_id),
        bindings: %{
-         reactive: [],
+         on_input: [],
+         on_output: [],
+         interval: [],
          proactive: []
        }
      }}
   end
 
   @impl true
-  def handle_call({:add_binding, mode, settings}, _from, state) do
-    case WorkerBinding.bind(settings) do
+  def handle_call({:add_binding, binding, mode, opts}, _from, state) do
+    case WorkerBinding.bind(binding) do
       {:ok, binding} ->
         bindings = [binding | Map.get(state.bindings, mode, [])]
+
+        case mode do
+          :interval -> add_interval_binding(binding, opts)
+          _ -> nil
+        end
 
         {
           :reply,
@@ -53,20 +62,32 @@ defmodule Aflecha.Worker.Overwatch do
   end
 
   @impl true
-  def handle_cast({:io_in, payload, data_type}, state) do
+  def handle_cast({:io_in, payload}, state) do
     # TODO: were currently hardcoding the handling_type to :stream (:task is also a option)
     # The worker itself should be able to define the handling type.
     # Meaning we should store the handling type in the overwatch state.
+
+    # TODO: we are hardcoding it right now, should be dynamic or removed after all.
+    data_type = :text
+
+    payload = exec_binding(state.bindings.on_output, payload)
+
     GenServer.cast(state.channel, {:io_in, state.id, payload, data_type, :stream})
 
     {:noreply, state}
   end
 
   @impl true
-  def handle_cast({:io_out, payload, data_type}, state) do
-    Enum.each(state.bindings.reactive, fn binding ->
-      WorkerBinding.exec(binding, {payload, data_type})
-    end)
+  def handle_cast({:io_out, payload}, state) do
+    exec_binding(state.bindings.on_output, payload)
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:binding_interval_exec, binding, opts}, state) do
+    exec_binding(binding, opts)
+    add_interval_binding(binding, opts)
 
     {:noreply, state}
   end
@@ -108,5 +129,22 @@ defmodule Aflecha.Worker.Overwatch do
     channel_index = rem(worker_int, count)
 
     StreamSup.stream_ids(operator_id, :primary) |> Enum.at(channel_index)
+  end
+
+  defp exec_binding(bindings, payload) do
+    Enum.reduce(bindings, payload, fn binding, p ->
+      case WorkerBinding.exec(binding, p) do
+        {:ok, p} -> p
+        {:error, _} -> p
+      end
+    end)
+  end
+
+  defp add_interval_binding(binding, opts) do
+    interval = Keyword.get(opts, :interval, nil)
+
+    if is_integer(interval) do
+      Process.send_after(self(), {:binding_interval_exec, binding, opts}, interval)
+    end
   end
 end

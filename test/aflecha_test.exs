@@ -58,7 +58,6 @@ defmodule AflechaTest do
     Aflecha.Service.WorkerManager.add_binding(
       @default_group,
       worker_id,
-      :proactive,
       %Aflecha.Plugin.Handler.Websocket{
         uri: @testnet_ws_uri,
         post_connect: %{
@@ -75,7 +74,8 @@ defmodule AflechaTest do
               )
           }
         }
-      }
+      },
+      :proactive
     )
   end
 
@@ -93,10 +93,10 @@ defmodule AflechaTest do
     Aflecha.Service.WorkerManager.add_binding(
       @default_group,
       worker_id,
-      :reactive,
       %Aflecha.Plugin.Handler.BeamMsgForward{
         recv_pid: self()
-      }
+      },
+      :on_output
     )
   end
 
@@ -114,10 +114,10 @@ defmodule AflechaTest do
     Aflecha.Service.WorkerManager.add_binding(
       @default_group,
       worker_id,
-      :reactive,
       %Aflecha.Plugin.Handler.BeamMsgForward{
         recv_pid: self()
-      }
+      },
+      :on_output
     )
 
     # TODO: add STDIO test
@@ -132,7 +132,6 @@ defmodule AflechaTest do
     Aflecha.Service.WorkerManager.add_binding(
       @default_group,
       worker_id,
-      :proactive,
       %Aflecha.Plugin.Handler.Websocket{
         uri: @testnet_ws_uri,
         post_connect: %{
@@ -149,7 +148,8 @@ defmodule AflechaTest do
               )
           }
         }
-      }
+      },
+      :proactive
     )
 
     for _ <- 1..1 do

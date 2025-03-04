@@ -3,5 +3,5 @@ defprotocol Aflecha.Plugin.WorkerBinding do
   def bind(settings)
 
   @spec exec(t(), term()) :: {:ok, term()} | {:error, String.t()}
-  def exec(settings, input)
+  def exec(settings, payload)
 end

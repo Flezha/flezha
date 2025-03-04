@@ -29,12 +29,13 @@ defmodule Aflecha.Service.Payloader do
               {}
             end
 
-          %Aflecha.IO.Handler.Websocket{
-            uri: Map.fetch!(settings_map, "uri"),
-            post_connect: %{
-              payload: payload
-            }
-          }
+        # TODO: replace this legacy code.
+        # %Aflecha.IO.Handler.Websocket{
+        #   uri: Map.fetch!(settings_map, "uri"),
+        #   post_connect: %{
+        #     payload: payload
+        #   }
+        # }
 
         _ ->
           raise "Unknown io_type: #{io_type}"

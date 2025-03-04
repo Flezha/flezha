@@ -39,6 +39,6 @@ defmodule AflechaTest.Plugin.KafkaTest do
     result = WorkerBinding.exec(settings, {"test_data", :text})
 
     assert elem(result, 0) == :ok
-    assert elem(result, 1) == :success
+    assert elem(result, 1) == {"test_data", :text}
   end
 end

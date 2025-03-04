@@ -33,9 +33,9 @@ defmodule Aflecha.Plugin.Handler.Websocket do
 
     @impl true
     def exec(settings, payload) do
-      Websocket.send_payload(settings.conn, payload)
+      Websocket.send_payload(settings.conn, payload) |> dbg()
 
-      {:ok, :frame_sent}
+      {:ok, payload}
     end
   end
 
@@ -73,8 +73,8 @@ defmodule Aflecha.Plugin.Handler.Websocket do
   end
 
   @impl Fresh
-  def handle_in({data_type, payload}, %{overwatcher_pid: owerwatcher} = state) do
-    GenServer.cast(owerwatcher, {:io_in, payload, data_type})
+  def handle_in({_data_type, payload}, %{overwatcher_pid: overwatcher} = state) do
+    GenServer.cast(overwatcher, {:io_in, payload})
 
     {:ok, state}
   end
