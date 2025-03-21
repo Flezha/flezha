@@ -6,15 +6,15 @@ defmodule Aflecha.Service.WorkerManager do
   alias Aflecha.HubManager
   alias Aflecha.Operator.Controller
   alias Aflecha.Service.Identificator
-  alias Aflecha.Worker.Builder, as: WorkerBuilder
+  alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
   @doc """
   Starts a new worker to the operator.
   """
-  @spec start_worker(String.t(), Aflecha.Worker.Builder.t()) ::
+  @spec start_worker(String.t(), Aflecha.Pipeline.Builder.t()) ::
           {:ok, pid()} | {:error, String.t()}
   def start_worker(group_id, worker) do
-    case WorkerBuilder.validate_worker(group_id, worker) do
+    case PipelineBuilder.validate_pipeline(group_id, worker) do
       {:error, reason} ->
         {:error, reason}
 
@@ -28,8 +28,8 @@ defmodule Aflecha.Service.WorkerManager do
   Stops a worker.
   """
   @spec stop_worker(String.t(), String.t()) :: :ok | {:error, String.t()}
-  def stop_worker(group_id, worker_id) do
-    GenServer.call(Controller, {:stop_worker, group_id, worker_id})
+  def stop_worker(group_id, pipeline_id) do
+    GenServer.call(Controller, {:stop_worker, group_id, pipeline_id})
   end
 
   defp add_worker(group_id, worker) do
@@ -56,9 +56,9 @@ defmodule Aflecha.Service.WorkerManager do
     end
   end
 
-  def add_binding(group_id, worker_id, binding, mode, opts \\ []) do
+  def add_binding(group_id, pipeline_id, binding, mode, opts \\ []) do
     # TODO: Move worker ID extraction to separate service.
-    {:ok, worker_pid} = HubManager.get_pid(group_id, worker_id)
+    {:ok, worker_pid} = HubManager.get_pid(group_id, pipeline_id)
 
     GenServer.call(worker_pid, {:add_binding, binding, mode, opts})
   end

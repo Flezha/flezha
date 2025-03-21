@@ -4,7 +4,7 @@ defmodule Aflecha.Operator.ControlUnit do
   alias Aflecha.Operator.ControlChannel
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Service.EventManager
-  alias Aflecha.Worker.Builder, as: WorkerBuilder
+  alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
   use GenServer
 
@@ -99,9 +99,9 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  @spec handle_call({:start_worker, WorkerBuilder.t()}, {pid(), term()}, map()) ::
+  @spec handle_call({:start_pipeline, PipelineBuilder.t()}, {pid(), term()}, map()) ::
           {:noreply, any()}
-  def handle_call({:start_worker, worker}, from, state) do
+  def handle_call({:start_pipeline, worker}, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),

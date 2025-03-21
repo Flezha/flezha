@@ -7,14 +7,14 @@ defmodule AflechaTest.RpcCookbookServiceTest do
   end
 
   test "rpc start worker" do
-    worker_id = "test_rpc_start_comp"
+    pipeline_id = "test_rpc_start_comp"
     factory_id = "increment_state"
     {:ok, variables} = Jason.encode(%{"value" => 100})
 
     result =
       Aflecha.Service.RpcCookbook.worker_start(
         @default_operator,
-        worker_id,
+        pipeline_id,
         factory_id,
         variables
       )
@@ -23,12 +23,12 @@ defmodule AflechaTest.RpcCookbookServiceTest do
   end
 
   test "rpc stop worker" do
-    worker_id = "test_rpc_stop_comp"
+    pipeline_id = "test_rpc_stop_comp"
 
-    AflechaTest.Fixtures.Worker.get(worker_id, nil)
+    AflechaTest.Fixtures.Worker.get(pipeline_id, nil)
     |> AflechaTest.Fixtures.Worker.start()
 
-    result1 = Aflecha.Service.RpcCookbook.worker_stop(@default_operator, worker_id)
+    result1 = Aflecha.Service.RpcCookbook.worker_stop(@default_operator, pipeline_id)
     result2 = Aflecha.Service.RpcCookbook.worker_stop(@default_operator, "non_existent")
 
     assert result1 === :ok
@@ -38,19 +38,19 @@ defmodule AflechaTest.RpcCookbookServiceTest do
   end
 
   test "rpc no operator specified" do
-    worker_id = "test_rpc_no_operator"
+    pipeline_id = "test_rpc_no_operator"
 
     result1 =
-      Aflecha.Service.RpcCookbook.worker_start("", worker_id, @factory_do_nothing, "{}")
+      Aflecha.Service.RpcCookbook.worker_start("", pipeline_id, @factory_do_nothing, "{}")
 
-    result2 = Aflecha.Service.RpcCookbook.worker_stop("", worker_id)
+    result2 = Aflecha.Service.RpcCookbook.worker_stop("", pipeline_id)
 
     assert elem(result1, 0) === :ok
     assert result2 === :ok
   end
 
   test "rpc add io" do
-    worker_id = "test_rpc_add_io"
+    pipeline_id = "test_rpc_add_io"
     io_mode = :input
     io_params_json = ~s(
       {
@@ -71,14 +71,14 @@ defmodule AflechaTest.RpcCookbookServiceTest do
       }
     )
 
-    TestHelper.test_worker(worker_id)
+    TestHelper.test_worker(pipeline_id)
 
     opts = [handling_type: :task]
 
     result1 =
       Aflecha.Service.RpcCookbook.add_io(
         @default_operator,
-        worker_id,
+        pipeline_id,
         io_params_json,
         io_mode,
         opts

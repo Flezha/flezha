@@ -4,7 +4,7 @@ defmodule AflechaTest.Fixtures.Worker do
   # TODO: refactor based on new plugin system.
 
   def get(id, factory_id) do
-    %Aflecha.Worker.Builder{
+    %Aflecha.Pipeline.Builder{
       id: id || "my_worker",
       factory_id: factory_id || "forward_orig"
     }
@@ -16,8 +16,8 @@ defmodule AflechaTest.Fixtures.Worker do
     worker
   end
 
-  def stop(worker_id) do
-    Aflecha.Service.WorkerManager.stop_worker(@default_operator, worker_id)
+  def stop(pipeline_id) do
+    Aflecha.Service.WorkerManager.stop_worker(@default_operator, pipeline_id)
   end
 
   # TODO: refactor.

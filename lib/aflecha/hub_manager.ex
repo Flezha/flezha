@@ -19,10 +19,10 @@ defmodule Aflecha.HubManager do
     ProcessHub.is_alive?(Identificator.hub(group_id))
   end
 
-  def get_pid(group_id, worker_id) do
+  def get_pid(group_id, pipeline_id) do
     hub_id = Identificator.hub(group_id)
 
-    case ProcessHub.get_pid(hub_id, worker_id) do
+    case ProcessHub.get_pid(hub_id, pipeline_id) do
       nil -> {:error, "no pid found"}
       pid -> {:ok, pid}
     end
@@ -41,7 +41,7 @@ defmodule Aflecha.HubManager do
     )
   end
 
-  def hook_insert_pid(operator_id, {worker_id, node_pids}) do
+  def hook_insert_pid(operator_id, {pipeline_id, node_pids}) do
     curr_node = node()
 
     updated_pids =
@@ -55,7 +55,7 @@ defmodule Aflecha.HubManager do
         Supervisor.which_children(Identificator.stream_sup_secondary(operator_id))
 
     Enum.each(stream_channels, fn {_, pid, _, _} ->
-      GenServer.call(pid, {:worker_pid_update, worker_id, updated_pids})
+      GenServer.call(pid, {:worker_pid_update, pipeline_id, updated_pids})
     end)
   end
 

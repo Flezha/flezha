@@ -33,22 +33,22 @@ defmodule AflechaTest do
   end
 
   test "worker adding" do
-    worker = %Aflecha.Worker.Builder{
+    worker = %Aflecha.Pipeline.Builder{
       id: "default_worker_test",
       factory_id: @test_worker_factory
     }
 
-    {:ok, {worker_id, [{@node_name, _pid}]}} =
+    {:ok, {pipeline_id, [{@node_name, _pid}]}} =
       WorkerManager.start_worker(@default_group, worker)
 
-    assert worker_id === "default_worker_test"
+    assert pipeline_id === "default_worker_test"
   end
 
   # test "websocket plugin connection start" do
-  #   worker_id = "websocket_plugin_test"
+  #   pipeline_id = "websocket_plugin_test"
 
-  #   worker = %Aflecha.Worker.Builder{
-  #     id: worker_id,
+  #   worker = %Aflecha.Pipeline.Builder{
+  #     id: pipeline_id,
   #     factory_id: @test_worker_factory
   #   }
 
@@ -57,7 +57,7 @@ defmodule AflechaTest do
   #   # TODO: add assertions and test websocket connection.
   #   Aflecha.Service.WorkerManager.add_binding(
   #     @default_group,
-  #     worker_id,
+  #     pipeline_id,
   #     %Aflecha.Plugin.Handler.Websocket{
   #       uri: @testnet_ws_uri,
   #       post_connect: %{
@@ -80,10 +80,10 @@ defmodule AflechaTest do
   # end
 
   # test "beam msg forward plugin connection start" do
-  #   worker_id = "beam_msg_forw_plugin_test"
+  #   pipeline_id = "beam_msg_forw_plugin_test"
 
-  #   worker = %Aflecha.Worker.Builder{
-  #     id: worker_id,
+  #   worker = %Aflecha.Pipeline.Builder{
+  #     id: pipeline_id,
   #     factory_id: @test_worker_factory
   #   }
 
@@ -92,7 +92,7 @@ defmodule AflechaTest do
   #   # TODO: add assertions.
   #   Aflecha.Service.WorkerManager.add_binding(
   #     @default_group,
-  #     worker_id,
+  #     pipeline_id,
   #     %Aflecha.Plugin.Handler.BeamMsgForward{
   #       recv_pid: self()
   #     },
@@ -101,10 +101,10 @@ defmodule AflechaTest do
   # end
 
   # test "worker flow generation -> beam msg forward" do
-  #   worker_id = "data_flow_test"
+  #   pipeline_id = "data_flow_test"
 
-  #   worker = %Aflecha.Worker.Builder{
-  #     id: worker_id,
+  #   worker = %Aflecha.Pipeline.Builder{
+  #     id: pipeline_id,
   #     factory_id: @test_compare_filter_factory,
   #     variables: %{"comparable" => "hello world", "inverted" => false}
   #   }
@@ -113,7 +113,7 @@ defmodule AflechaTest do
 
   #   Aflecha.Service.WorkerManager.add_binding(
   #     @default_group,
-  #     worker_id,
+  #     pipeline_id,
   #     %Aflecha.Plugin.Handler.BeamMsgForward{
   #       recv_pid: self()
   #     },
@@ -131,7 +131,7 @@ defmodule AflechaTest do
 
   #   Aflecha.Service.WorkerManager.add_binding(
   #     @default_group,
-  #     worker_id,
+  #     pipeline_id,
   #     %Aflecha.Plugin.Handler.Websocket{
   #       uri: @testnet_ws_uri,
   #       post_connect: %{

@@ -1,5 +1,5 @@
 defmodule Aflecha.Service.Payloader do
-  alias Aflecha.Worker.Builder, as: WorkerBuilder
+  alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
   def extract_io_settings(json_str) do
     settings_map = json_to_map(json_str)
@@ -76,8 +76,8 @@ defmodule Aflecha.Service.Payloader do
   def construct_worker!(input, type) do
     result =
       case type do
-        :json -> WorkerBuilder.from_json(input)
-        :map -> WorkerBuilder.from_map(input)
+        :json -> PipelineBuilder.from_json(input)
+        :map -> PipelineBuilder.from_map(input)
       end
 
     case result do

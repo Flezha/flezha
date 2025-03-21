@@ -6,10 +6,10 @@ defmodule TestHelper do
   use Aflecha.Constant
   use ExUnit.Case
 
-  def test_worker(worker_id) do
+  def test_worker(pipeline_id) do
     worker =
       AflechaTest.Fixtures.Worker.get(
-        worker_id,
+        pipeline_id,
         @factory_increment_state
       )
       |> AflechaTest.Fixtures.Worker.start()

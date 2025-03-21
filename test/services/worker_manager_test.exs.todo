@@ -7,10 +7,10 @@ defmodule AflechaTest.WorkerManagerTest do
   doctest Aflecha.Service.WorkerManager
 
   test "start worker" do
-    worker_id = "test_worker_start"
+    pipeline_id = "test_worker_start"
 
-    worker = %Aflecha.Worker.Builder{
-      id: worker_id,
+    worker = %Aflecha.Pipeline.Builder{
+      id: pipeline_id,
       factory_id: @factory_do_nothing
     }
 
@@ -18,12 +18,12 @@ defmodule AflechaTest.WorkerManagerTest do
 
     assert elem(result, 0) === :ok
     assert is_tuple(elem(result, 1))
-    assert result |> elem(1) |> elem(0) === worker_id
+    assert result |> elem(1) |> elem(0) === pipeline_id
     assert is_list(result |> elem(1) |> elem(1))
   end
 
   test "stop worker" do
-    worker = %Aflecha.Worker.Builder{
+    worker = %Aflecha.Pipeline.Builder{
       id: "rem_compuation_test",
       factory_id: @factory_do_nothing
     }
@@ -45,13 +45,13 @@ defmodule AflechaTest.WorkerManagerTest do
   end
 
   test "validate worker length" do
-    valid_worker = %Aflecha.Worker.Builder{
+    valid_worker = %Aflecha.Pipeline.Builder{
       id: "worker_string_32_bytes_long",
       factory_id: @factory_do_nothing
     }
 
-    invalid_worker = %Aflecha.Worker.Builder{
-      id: "some_very_long_worker_id_that_should_fail",
+    invalid_worker = %Aflecha.Pipeline.Builder{
+      id: "some_very_long_pipeline_id_that_should_fail",
       factory_id: @factory_do_nothing
     }
 

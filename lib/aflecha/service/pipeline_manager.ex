@@ -14,7 +14,7 @@ defmodule Aflecha.Service.PipelineManager do
   @spec create_pipeline(String.t(), Aflecha.Pipeline.PipelineBuilder.t()) ::
           {:ok, pid()} | {:error, String.t()}
   def create_pipeline(group_id, pipeline) do
-    case WorkerBuilder.validate_pipeline(group_id, pipeline) do
+    case PipelineBuilder.validate_pipeline(group_id, pipeline) do
       {:error, reason} ->
         {:error, reason}
 

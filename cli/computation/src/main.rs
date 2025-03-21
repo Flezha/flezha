@@ -24,11 +24,11 @@ fn main() {
 
 fn handle_start(args: Vec<String>) {
     if args.len() < 3 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} start <worker_id> <factory_id> [--operator=<operator_id> |-o=<operator_id>]", args[0]);
+        eprintln!("Error: Invalid number of arguments. Usage: {} start <pipeline_id> <factory_id> [--operator=<operator_id> |-o=<operator_id>]", args[0]);
         exit(1);
     }
 
-    let worker_id = &args[2];
+    let pipeline_id = &args[2];
     let factory_id = &args[3];
     let variables = get_json(&args[4..], "--variables=", "-v=");
 
@@ -38,7 +38,7 @@ fn handle_start(args: Vec<String>) {
     let rpc_command = format!(
         "Aflecha.Service.RpcCookbook.worker_start(\"{}\", \"{}\", \"{}\", \"{}\")", 
         operator_id,
-        worker_id,
+        pipeline_id,
         factory_id,
         variables
     );
@@ -60,17 +60,17 @@ fn handle_start(args: Vec<String>) {
 
 fn handle_stop(args: Vec<String>) {
     if args.len() < 1 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} stop <worker_id>", args[0]);
+        eprintln!("Error: Invalid number of arguments. Usage: {} stop <pipeline_id>", args[0]);
         exit(1);
     }
 
-    let worker_id = &args[2];
+    let pipeline_id = &args[2];
     let operator_id = get_namespace(&args[3..]);
 
     let rpc_command = format!(
         "Aflecha.Service.RpcCookbook.worker_stop(\"{}\", \"{}\")", 
         operator_id,
-        worker_id,
+        pipeline_id,
     );
 
     let command = get_aflecha_command();

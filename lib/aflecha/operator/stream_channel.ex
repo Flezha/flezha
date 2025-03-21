@@ -35,13 +35,13 @@ defmodule Aflecha.Operator.StreamChannel do
 
   @impl true
   def handle_cast(
-        {:io_in, worker_id, payload, data_type, handling_type},
+        {:io_in, pipeline_id, payload, data_type, handling_type},
         %{sock: sock} = state
       ) do
     :gen_tcp.send(
       sock,
       Payloader.build_from_bin(
-        worker_id,
+        pipeline_id,
         input_type(data_type) <> handling_type(handling_type) <> payload
       )
     )
@@ -50,8 +50,8 @@ defmodule Aflecha.Operator.StreamChannel do
   end
 
   @impl true
-  def handle_call({:worker_pid_update, worker_id, updated_pids}, _from, state) do
-    worker_mapping = Map.put(state[:worker_mapping], worker_id, updated_pids)
+  def handle_call({:worker_pid_update, pipeline_id, updated_pids}, _from, state) do
+    worker_mapping = Map.put(state[:worker_mapping], pipeline_id, updated_pids)
 
     {:reply, :ok, Map.put(state, :worker_mapping, worker_mapping)}
   end
@@ -70,8 +70,8 @@ defmodule Aflecha.Operator.StreamChannel do
     worker_mappings = state.worker_mapping
 
     Payloader.parse_payload(payload)
-    |> Enum.each(fn {worker_id, message} ->
-      workers = Map.get(worker_mappings, worker_id, [])
+    |> Enum.each(fn {pipeline_id, message} ->
+      workers = Map.get(worker_mappings, pipeline_id, [])
 
       # TODO: Are we handling binary or text data?
       Enum.each(workers, fn pid ->

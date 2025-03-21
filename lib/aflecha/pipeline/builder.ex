@@ -1,4 +1,4 @@
-defmodule Aflecha.Pipeline.PipelineBuilder do
+defmodule Aflecha.Pipeline.Builder do
   alias Aflecha.Service.Validator
 
   @type t() :: %__MODULE__{

@@ -5,10 +5,10 @@ defmodule AflechaTest.IOManagerTest do
 
   doctest Aflecha.IO.IOManager
 
-  @worker_id "test_io_manager"
+  @pipeline_id "test_io_manager"
 
   setup do
-    worker = TestHelper.test_worker(@worker_id)
+    worker = TestHelper.test_worker(@pipeline_id)
 
     %{worker: worker}
   end
@@ -17,7 +17,7 @@ defmodule AflechaTest.IOManagerTest do
     res1 =
       IOManager.add_io(
         @default_operator,
-        @worker_id,
+        @pipeline_id,
         %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
         :input,
         []

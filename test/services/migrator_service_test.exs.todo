@@ -4,10 +4,10 @@ defmodule AflechaTest.MigratorServiceTest do
 
   doctest Aflecha.Worker.MigratorService
 
-  @worker_id "test_migrator"
+  @pipeline_id "test_migrator"
 
   setup do
-    worker = TestHelper.test_worker(@worker_id)
+    worker = TestHelper.test_worker(@pipeline_id)
 
     %{worker: worker}
   end
@@ -16,7 +16,7 @@ defmodule AflechaTest.MigratorServiceTest do
     serialized_data =
       Aflecha.Worker.MigratorService.serialize_pipeline(
         @default_operator,
-        @worker_id
+        @pipeline_id
       )
 
     assert is_list(serialized_data)
@@ -27,13 +27,13 @@ defmodule AflechaTest.MigratorServiceTest do
     serialized_data =
       Aflecha.Worker.MigratorService.serialize_pipeline(
         @default_operator,
-        @worker_id
+        @pipeline_id
       )
 
     assert :ok ===
              Aflecha.Worker.MigratorService.deserialize_pipeline(
                @default_operator,
-               @worker_id,
+               @pipeline_id,
                serialized_data
              )
   end
