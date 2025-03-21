@@ -54,6 +54,15 @@ struct StoreInputState {
     text_inputs: Vec<String>
 }
 
+#[derive(Default, Serialize, Deserialize)]
+struct CompareFilterState {
+    comparable: String,
+    inverted: bool,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct DoNothingState {}
+
 fn define_factories() {
     define_pipeline_factory! {
         factory_id: "store_input".to_string(),
@@ -76,75 +85,44 @@ fn define_factories() {
             }
         ]
     }
+
+    define_pipeline_factory! {
+        factory_id: "compare_filter".to_string(),
+        result_type: PipelineResultType::Forward,
+        state: CompareFilterState,
+        steps: [
+            |input: PipelineInput, state: &mut CompareFilterState| -> io::Result<PipelineOutput> {
+                
+                let text = match input {
+                    PipelineInput::Text(text) => text,
+                    PipelineInput::Binary(binary) => String::from_utf8(binary).unwrap()
+                };
+
+                if state.inverted {
+                    if state.comparable == text {
+                        Ok(PipelineOutput::Text("Matched".to_string()))
+                    } else {
+                        Ok(PipelineOutput::Text(text))
+                    }
+                } else {
+                    if state.comparable == text {
+                        Ok(PipelineOutput::Text(text))
+                    } else {
+                        Ok(PipelineOutput::Text("Not matched".to_string()))
+                    }
+                }
+            }
+        ]
+    }
+
+    define_pipeline_factory! {
+        factory_id: "do_nothing".to_string(),
+        result_type: PipelineResultType::Forward,
+        state: DoNothingState,
+        steps: [
+            |input: PipelineInput, _state: &mut DoNothingState| -> io::Result<PipelineOutput> {
+                Ok(input.into())
+            }
+        ]
+    }
 }
-
-
-
-// TODO:
-// #[derive(Serialize, Deserialize, Clone)]
-// #[derive(SerializableWorker)]
-// struct CompareFilterWorker {
-//     comparable: String,
-//     inverted: bool,
-// }
-
-// impl Worker for CompareFilterWorker {
-//     fn run(&mut self, input: PipelineInput) -> PipelineOutput {
-//         let text = input.as_string();
-
-//         if self.inverted {
-//             if self.comparable == text {
-//                 PipelineOutput::None
-//             } else {
-//                 PipelineOutput::Forward(PipelineResult::Text(text))
-//             }
-//         } else {
-//             if self.comparable == text {
-//                 PipelineOutput::Forward(PipelineResult::Text(text))
-//             } else {
-//                 PipelineOutput::None
-//             }
-//         }
-//     }
-// }
-
-// #[derive(Serialize, Deserialize, Clone)]
-// #[derive(SerializableWorker)]
-// struct DoNothingWorker {}
-
-// impl Worker for DoNothingWorker {
-//     fn run(&mut self, _input: PipelineInput) -> PipelineOutput {
-//         PipelineOutput::None
-//     }
-// }
-
-// #[derive(Serialize, Deserialize, Clone)]
-// #[derive(SerializableWorker)]
-// struct ForwardOrigWorker {}
-
-// impl Worker for ForwardOrigWorker {
-//     fn run(&mut self, input: PipelineInput) -> PipelineOutput {
-//         match input {
-//             PipelineInput::Text(text) => {
-//                 PipelineOutput::Forward(PipelineResult::Text(text))
-//             }
-//             PipelineInput::Binary(binary) => {
-//                 PipelineOutput::Forward(PipelineResult::Binary(binary))
-//             }
-//         }
-//     }
-// }
-
-
-
-// #[derive(SerializableWorker, Serialize, Deserialize, Clone)]
-// struct IncrementStateWorker {
-//     value: u32
-// }
-
-// impl Worker for IncrementStateWorker {
-//     fn run(&mut self, _input: PipelineInput) -> PipelineOutput {
-//         self.value += 1;
-//         PipelineOutput::None
-//     }
-// }

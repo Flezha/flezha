@@ -44,121 +44,121 @@ defmodule AflechaTest do
     assert pipeline_id === "default_pipeline_test"
   end
 
-  # test "websocket plugin connection start" do
-  #   pipeline_id = "websocket_plugin_test"
+  test "websocket plugin connection start" do
+    pipeline_id = "websocket_plugin_test"
 
-  #   pipeline = %Aflecha.Pipeline.Builder{
-  #     id: pipeline_id,
-  #     factory_id: @test_pipeline_factory
-  #   }
+    pipeline = %Aflecha.Pipeline.Builder{
+      id: pipeline_id,
+      factory_id: @test_pipeline_factory
+    }
 
-  #   {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
+    {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
 
-  #   # TODO: add assertions and test websocket connection.
-  #   Aflecha.Service.WorkerManager.add_binding(
-  #     @default_group,
-  #     pipeline_id,
-  #     %Aflecha.Plugin.Handler.Websocket{
-  #       uri: @testnet_ws_uri,
-  #       post_connect: %{
-  #         payload: {
-  #           :text,
-  #           ~s(
-  #               {
-  #                 "event_type": "subscribe",
-  #                 "event_data": {
-  #                   "default_message": "hello world",
-  #                   "interval": 1000
-  #                 }
-  #               }
-  #             )
-  #         }
-  #       }
-  #     },
-  #     :proactive
-  #   )
-  # end
+    # TODO: add assertions and test websocket connection.
+    Aflecha.Service.WorkerManager.add_binding(
+      @default_group,
+      pipeline_id,
+      %Aflecha.Plugin.Handler.Websocket{
+        uri: @testnet_ws_uri,
+        post_connect: %{
+          payload: {
+            :text,
+            ~s(
+                {
+                  "event_type": "subscribe",
+                  "event_data": {
+                    "default_message": "hello world",
+                    "interval": 1000
+                  }
+                }
+              )
+          }
+        }
+      },
+      :proactive
+    )
+  end
 
-  # test "beam msg forward plugin connection start" do
-  #   pipeline_id = "beam_msg_forw_plugin_test"
+  test "beam msg forward plugin connection start" do
+    pipeline_id = "beam_msg_forw_plugin_test"
 
-  #   pipeline = %Aflecha.Pipeline.Builder{
-  #     id: pipeline_id,
-  #     factory_id: @test_pipeline_factory
-  #   }
+    pipeline = %Aflecha.Pipeline.Builder{
+      id: pipeline_id,
+      factory_id: @test_pipeline_factory
+    }
 
-  #   {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
+    {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
 
-  #   # TODO: add assertions.
-  #   Aflecha.Service.WorkerManager.add_binding(
-  #     @default_group,
-  #     pipeline_id,
-  #     %Aflecha.Plugin.Handler.BeamMsgForward{
-  #       recv_pid: self()
-  #     },
-  #     :on_output
-  #   )
-  # end
+    # TODO: add assertions.
+    Aflecha.Service.WorkerManager.add_binding(
+      @default_group,
+      pipeline_id,
+      %Aflecha.Plugin.Handler.BeamMsgForward{
+        recv_pid: self()
+      },
+      :on_output
+    )
+  end
 
-  # test "pipeline flow generation -> beam msg forward" do
-  #   pipeline_id = "data_flow_test"
+  test "pipeline flow generation -> beam msg forward" do
+    pipeline_id = "data_flow_test"
 
-  #   pipeline = %Aflecha.Pipeline.Builder{
-  #     id: pipeline_id,
-  #     factory_id: @test_compare_filter_factory,
-  #     variables: %{"comparable" => "hello world", "inverted" => false}
-  #   }
+    pipeline = %Aflecha.Pipeline.Builder{
+      id: pipeline_id,
+      factory_id: @test_compare_filter_factory,
+      variables: %{"comparable" => "hello world", "inverted" => false}
+    }
 
-  #   {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
+    {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
 
-  #   Aflecha.Service.WorkerManager.add_binding(
-  #     @default_group,
-  #     pipeline_id,
-  #     %Aflecha.Plugin.Handler.BeamMsgForward{
-  #       recv_pid: self()
-  #     },
-  #     :on_output
-  #   )
+    Aflecha.Service.WorkerManager.add_binding(
+      @default_group,
+      pipeline_id,
+      %Aflecha.Plugin.Handler.BeamMsgForward{
+        recv_pid: self()
+      },
+      :on_output
+    )
 
-  #   # TODO: add STDIO test
-  #   # Aflecha.add_io(
-  #   #   @default_group,
-  #   #   pipeline.id,
-  #   #   %Aflecha.IO.Handler.StdIO{},
-  #   #   :output,
-  #   #   []
-  #   # )
+    # TODO: add STDIO test
+    # Aflecha.add_io(
+    #   @default_group,
+    #   pipeline.id,
+    #   %Aflecha.IO.Handler.StdIO{},
+    #   :output,
+    #   []
+    # )
 
-  #   Aflecha.Service.WorkerManager.add_binding(
-  #     @default_group,
-  #     pipeline_id,
-  #     %Aflecha.Plugin.Handler.Websocket{
-  #       uri: @testnet_ws_uri,
-  #       post_connect: %{
-  #         payload: {
-  #           :text,
-  #           ~s(
-  #               {
-  #                 "event_type": "subscribe",
-  #                 "event_data": {
-  #                   "default_message": "hello world",
-  #                   "interval": 1000
-  #                 }
-  #               }
-  #             )
-  #         }
-  #       }
-  #     },
-  #     :proactive
-  #   )
+    Aflecha.Service.WorkerManager.add_binding(
+      @default_group,
+      pipeline_id,
+      %Aflecha.Plugin.Handler.Websocket{
+        uri: @testnet_ws_uri,
+        post_connect: %{
+          payload: {
+            :text,
+            ~s(
+                {
+                  "event_type": "subscribe",
+                  "event_data": {
+                    "default_message": "hello world",
+                    "interval": 1000
+                  }
+                }
+              )
+          }
+        }
+      },
+      :proactive
+    )
 
-  #   for _ <- 1..1 do
-  #     receive do
-  #       _msg ->
-  #         assert true
-  #     after
-  #       2000 -> assert false
-  #     end
-  #   end
-  # end
+    for _ <- 1..1 do
+      receive do
+        _msg ->
+          assert true
+      after
+        2000 -> assert false
+      end
+    end
+  end
 end
