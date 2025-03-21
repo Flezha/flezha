@@ -1,13 +1,9 @@
 use aflecha_operator::{
-    PipelineInput,
-    PipelineOutput,
-    PipelineResult,
     PipelineResultType,
     define_pipeline_factory
 };
 
 use serde::{Serialize, Deserialize};
-use std::io;
 
 fn main() {
     define_factories();
@@ -60,21 +56,23 @@ struct StoreInputState {
 
 fn define_factories() {
     define_pipeline_factory! {
-        factory_id: "store_input",
+        factory_id: "store_input".to_string(),
         result_type: PipelineResultType::Forward,
         state: StoreInputState,
         steps: [
             |input: PipelineInput, state: &mut StoreInputState| -> io::Result<PipelineOutput> {
                 match input {
                     PipelineInput::Text(text) => {
-                        state.text_inputs.push(text.clone())
+                        state.text_inputs.push(text.clone());
+                        Ok(PipelineOutput::Text(text))
                     }
                     PipelineInput::Binary(binary) => {
-                        state.binary_inputs.push(binary.clone())
+                        state.binary_inputs.push(binary.clone());
+                        Ok(PipelineOutput::Binary(binary))
                     }
-                };
-    
-                Ok(input.into())
+                }
+
+                // Ok(input.into())
             }
         ]
     }
