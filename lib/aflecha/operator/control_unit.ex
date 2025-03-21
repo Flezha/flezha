@@ -49,12 +49,12 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:get_worker_state, worker_id}, from, state) do
+  def handle_call({:get_worker_state, pipeline_id}, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
         @payload_id_comp_state,
-        %{"worker_id" => worker_id}
+        %{"pipeline_id" => pipeline_id}
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
@@ -107,7 +107,7 @@ defmodule Aflecha.Operator.ControlUnit do
         Identificator.control_channel(state.operator_id),
         @payload_id_worker_add,
         %{
-          "worker_id" => worker.id,
+          "pipeline_id" => worker.id,
           "factory_id" => worker.factory_id,
           "variables" => worker.variables
         }
@@ -117,12 +117,12 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:stop_worker, worker_id}, from, state) do
+  def handle_call({:stop_worker, pipeline_id}, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
         @payload_id_worker_rem,
-        %{"worker_id" => worker_id}
+        %{"pipeline_id" => pipeline_id}
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
@@ -167,9 +167,6 @@ defmodule Aflecha.Operator.ControlUnit do
         @payload_id_connect_sockets ->
           :ok
 
-        @payload_id_factory_register ->
-          handle_factory_registration(state, message)
-
         _ ->
           {:error, "Unknown message id: #{payload_id}"}
       end
@@ -194,17 +191,5 @@ defmodule Aflecha.Operator.ControlUnit do
         GenServer.reply(from, reply)
         Map.delete(refs, ref)
     end
-  end
-
-  defp handle_factory_registration(state, message) do
-    {:ok, data} = Jason.decode(message)
-
-    EventManager.dispatch(:factory_registered_event, {
-      state.group_id,
-      state.operator_id,
-      data["factory_id"]
-    })
-
-    :ok
   end
 end

@@ -1,4 +1,4 @@
-defmodule Aflecha.Worker.Overwatch do
+defmodule Aflecha.Pipeline.Overwatch do
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Worker.MigratorService

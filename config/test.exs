@@ -9,21 +9,10 @@ config :aflecha,
       Node.start(:"test_agent_node1@127.0.0.1", :longnames)
     end,
     fn ->
-      Aflecha.Service.EventManager.add_handler(:factory_registered_event)
       Aflecha.Service.EventManager.add_handler(:operator_connected_event)
     end
   ],
   post_hooks: [
-    fn ->
-      for _x <- 1..10 do
-        receive do
-          {:factory_registered_event, {_group_id, _operator_id, _factory_id}} ->
-            :ok
-        after
-          3000 -> raise "Factory not registered"
-        end
-      end
-    end,
     fn ->
       for _x <- 1..2 do
         receive do

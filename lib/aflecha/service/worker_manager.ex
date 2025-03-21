@@ -39,7 +39,7 @@ defmodule Aflecha.Service.WorkerManager do
     child_spec = %{
       id: worker.id,
       start: {
-        Aflecha.Worker.Overwatch,
+        Aflecha.Pipeline.Overwatch,
         :start_link,
         [{group_id, operator_id, worker}]
       }
