@@ -6,12 +6,12 @@ defmodule Aflecha.Service.PipelineManager do
   alias Aflecha.HubManager
   alias Aflecha.Operator.Controller
   alias Aflecha.Service.Identificator
-  alias Aflecha.Pipeline.PipelineBuilder
+  alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
   @doc """
   Starts a new pipeline to the operator.
   """
-  @spec create_pipeline(String.t(), Aflecha.Pipeline.PipelineBuilder.t()) ::
+  @spec create_pipeline(String.t(), PipelineBuilder.t()) ::
           {:ok, pid()} | {:error, String.t()}
   def create_pipeline(group_id, pipeline) do
     case PipelineBuilder.validate_pipeline(group_id, pipeline) do

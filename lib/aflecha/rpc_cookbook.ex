@@ -3,7 +3,7 @@ defmodule Aflecha.Service.RpcCookbook do
   Provides recipes for the RPC calls.
   """
 
-  alias Aflecha.Service.WorkerManager
+  alias Aflecha.Service.PipelineManager
   alias Aflecha.IO.IOManager
 
   @doc "Starts a pipeline."
@@ -16,13 +16,13 @@ defmodule Aflecha.Service.RpcCookbook do
       variables: Aflecha.Service.Payloader.json_to_map(variables)
     }
 
-    WorkerManager.start_pipeline(operator_id(operator_id), pipeline)
+    PipelineManager.create_pipeline(operator_id(operator_id), pipeline)
   end
 
   @doc "Stops a pipelinene."
   @spec pipeline_stop(String.t(), String.t()) :: :ok | {:error, String.t()}
   def pipeline_stop(operator_id, pipeline_id) do
-    WorkerManager.stop_pipeline(operator_id(operator_id), pipeline_id)
+    PipelineManager.stop_pipeline(operator_id(operator_id), pipeline_id)
   end
 
   @doc "Adds an IO."

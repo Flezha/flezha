@@ -1,5 +1,5 @@
 defmodule AflechaTest do
-  alias Aflecha.Service.WorkerManager
+  alias Aflecha.Service.PipelineManager
 
   use ExUnit.Case
   use Aflecha.Constant
@@ -39,7 +39,7 @@ defmodule AflechaTest do
     }
 
     {:ok, {pipeline_id, [{@node_name, _pid}]}} =
-      WorkerManager.start_pipeline(@default_group, pipeline)
+      PipelineManager.create_pipeline(@default_group, pipeline)
 
     assert pipeline_id === "default_pipeline_test"
   end
@@ -52,10 +52,10 @@ defmodule AflechaTest do
       factory_id: @test_pipeline_factory
     }
 
-    {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
+    {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
 
     # TODO: add assertions and test websocket connection.
-    Aflecha.Service.WorkerManager.add_binding(
+    Aflecha.Service.PipelineManager.add_binding(
       @default_group,
       pipeline_id,
       %Aflecha.Plugin.Handler.Websocket{
@@ -87,10 +87,10 @@ defmodule AflechaTest do
       factory_id: @test_pipeline_factory
     }
 
-    {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
+    {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
 
     # TODO: add assertions.
-    Aflecha.Service.WorkerManager.add_binding(
+    Aflecha.Service.PipelineManager.add_binding(
       @default_group,
       pipeline_id,
       %Aflecha.Plugin.Handler.BeamMsgForward{
@@ -109,9 +109,9 @@ defmodule AflechaTest do
       variables: %{"comparable" => "hello world", "inverted" => false}
     }
 
-    {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
+    {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
 
-    Aflecha.Service.WorkerManager.add_binding(
+    Aflecha.Service.PipelineManager.add_binding(
       @default_group,
       pipeline_id,
       %Aflecha.Plugin.Handler.BeamMsgForward{
@@ -129,7 +129,7 @@ defmodule AflechaTest do
     #   []
     # )
 
-    Aflecha.Service.WorkerManager.add_binding(
+    Aflecha.Service.PipelineManager.add_binding(
       @default_group,
       pipeline_id,
       %Aflecha.Plugin.Handler.Websocket{

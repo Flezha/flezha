@@ -1,10 +1,10 @@
-defmodule AflechaTest.WorkerManagerTest do
+defmodule AflechaTest.PipelineManagerTest do
   use ExUnit.Case
   use Aflecha.Constant
 
-  import Aflecha.Service.WorkerManager
+  import Aflecha.Service.PipelineManager
 
-  doctest Aflecha.Service.WorkerManager
+  doctest Aflecha.Service.PipelineManager
 
   test "start worker" do
     pipeline_id = "test_worker_start"
