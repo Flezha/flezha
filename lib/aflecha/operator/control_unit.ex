@@ -14,11 +14,11 @@ defmodule Aflecha.Operator.ControlUnit do
   @payload_id_assign_operator_id "assign_operator_id"
   @payload_id_factory_register "register_factory"
   @payload_id_connect_sockets "connect_sockets"
-  @payload_id_worker_add "add_worker"
-  @payload_id_worker_rem "rem_worker"
-  @payload_id_serialize_comp "serialize_worker"
-  @payload_id_deserialize_comp "deserialize_worker"
-  @payload_id_comp_state "worker_state"
+  @payload_id_worker_add "add_pipeline"
+  @payload_id_worker_rem "rem_pipeline"
+  @payload_id_serialize_pipe "serialize_pipeline"
+  @payload_id_deserialize_pipe "deserialize_pipeline"
+  @payload_id_comp_state "pipeline_state"
 
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link({group_id, operator_id}) do
@@ -158,10 +158,10 @@ defmodule Aflecha.Operator.ControlUnit do
         @payload_id_comp_state ->
           json_message["data"]
 
-        @payload_id_serialize_comp ->
+        @payload_id_serialize_pipe ->
           json_message["data"]
 
-        @payload_id_deserialize_comp ->
+        @payload_id_deserialize_pipe ->
           :ok
 
         @payload_id_connect_sockets ->
