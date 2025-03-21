@@ -11,7 +11,7 @@ defmodule AflechaTest do
 
   # @test_forward_orig_factory "forward_orig"
   # @test_store_input_factory "store_input"
-  @test_worker_factory "do_nothing"
+  @test_pipeline_factory "do_nothing"
   @test_compare_filter_factory "compare_filter"
 
   setup_all do
@@ -32,27 +32,27 @@ defmodule AflechaTest do
     Enum.each(res, &assert(is_binary(&1)))
   end
 
-  test "worker adding" do
-    worker = %Aflecha.Pipeline.Builder{
-      id: "default_worker_test",
-      factory_id: @test_worker_factory
+  test "pipeline adding" do
+    pipeline = %Aflecha.Pipeline.Builder{
+      id: "default_pipeline_test",
+      factory_id: @test_pipeline_factory
     }
 
     {:ok, {pipeline_id, [{@node_name, _pid}]}} =
-      WorkerManager.start_worker(@default_group, worker)
+      WorkerManager.start_pipeline(@default_group, pipeline)
 
-    assert pipeline_id === "default_worker_test"
+    assert pipeline_id === "default_pipeline_test"
   end
 
   # test "websocket plugin connection start" do
   #   pipeline_id = "websocket_plugin_test"
 
-  #   worker = %Aflecha.Pipeline.Builder{
+  #   pipeline = %Aflecha.Pipeline.Builder{
   #     id: pipeline_id,
-  #     factory_id: @test_worker_factory
+  #     factory_id: @test_pipeline_factory
   #   }
 
-  #   {:ok, _} = WorkerManager.start_worker(@default_group, worker)
+  #   {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
 
   #   # TODO: add assertions and test websocket connection.
   #   Aflecha.Service.WorkerManager.add_binding(
@@ -82,12 +82,12 @@ defmodule AflechaTest do
   # test "beam msg forward plugin connection start" do
   #   pipeline_id = "beam_msg_forw_plugin_test"
 
-  #   worker = %Aflecha.Pipeline.Builder{
+  #   pipeline = %Aflecha.Pipeline.Builder{
   #     id: pipeline_id,
-  #     factory_id: @test_worker_factory
+  #     factory_id: @test_pipeline_factory
   #   }
 
-  #   {:ok, _} = WorkerManager.start_worker(@default_group, worker)
+  #   {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
 
   #   # TODO: add assertions.
   #   Aflecha.Service.WorkerManager.add_binding(
@@ -100,16 +100,16 @@ defmodule AflechaTest do
   #   )
   # end
 
-  # test "worker flow generation -> beam msg forward" do
+  # test "pipeline flow generation -> beam msg forward" do
   #   pipeline_id = "data_flow_test"
 
-  #   worker = %Aflecha.Pipeline.Builder{
+  #   pipeline = %Aflecha.Pipeline.Builder{
   #     id: pipeline_id,
   #     factory_id: @test_compare_filter_factory,
   #     variables: %{"comparable" => "hello world", "inverted" => false}
   #   }
 
-  #   {:ok, _} = WorkerManager.start_worker(@default_group, worker)
+  #   {:ok, _} = WorkerManager.start_pipeline(@default_group, pipeline)
 
   #   Aflecha.Service.WorkerManager.add_binding(
   #     @default_group,
@@ -123,7 +123,7 @@ defmodule AflechaTest do
   #   # TODO: add STDIO test
   #   # Aflecha.add_io(
   #   #   @default_group,
-  #   #   worker.id,
+  #   #   pipeline.id,
   #   #   %Aflecha.IO.Handler.StdIO{},
   #   #   :output,
   #   #   []

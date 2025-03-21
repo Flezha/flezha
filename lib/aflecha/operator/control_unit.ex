@@ -14,8 +14,8 @@ defmodule Aflecha.Operator.ControlUnit do
   @payload_id_assign_operator_id "assign_operator_id"
   @payload_id_factory_register "register_factory"
   @payload_id_connect_sockets "connect_sockets"
-  @payload_id_worker_add "add_pipeline"
-  @payload_id_worker_rem "rem_pipeline"
+  @payload_id_pipeline_add "add_pipeline"
+  @payload_id_pipeline_rem "rem_pipeline"
   @payload_id_serialize_pipe "serialize_pipeline"
   @payload_id_deserialize_pipe "deserialize_pipeline"
   @payload_id_comp_state "pipeline_state"
@@ -49,7 +49,7 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:get_worker_state, pipeline_id}, from, state) do
+  def handle_call({:get_pipeline_state, pipeline_id}, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
@@ -101,15 +101,15 @@ defmodule Aflecha.Operator.ControlUnit do
   @impl true
   @spec handle_call({:start_pipeline, PipelineBuilder.t()}, {pid(), term()}, map()) ::
           {:noreply, any()}
-  def handle_call({:start_pipeline, worker}, from, state) do
+  def handle_call({:start_pipeline, pipeline}, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
-        @payload_id_worker_add,
+        @payload_id_pipeline_add,
         %{
-          "pipeline_id" => worker.id,
-          "factory_id" => worker.factory_id,
-          "variables" => worker.variables
+          "pipeline_id" => pipeline.id,
+          "factory_id" => pipeline.factory_id,
+          "variables" => pipeline.variables
         }
       )
 
@@ -117,11 +117,11 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:stop_worker, pipeline_id}, from, state) do
+  def handle_call({:stop_pipeline, pipeline_id}, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
-        @payload_id_worker_rem,
+        @payload_id_pipeline_rem,
         %{"pipeline_id" => pipeline_id}
       )
 
@@ -149,10 +149,10 @@ defmodule Aflecha.Operator.ControlUnit do
         @payload_id_assign_operator_id ->
           :ok
 
-        @payload_id_worker_add ->
+        @payload_id_pipeline_add ->
           :ok
 
-        @payload_id_worker_rem ->
+        @payload_id_pipeline_rem ->
           :ok
 
         @payload_id_comp_state ->

@@ -19,7 +19,7 @@ defmodule Aflecha.Operator.StreamChannel do
       %{
         lsock: lsock,
         sock: nil,
-        worker_mapping: %{},
+        pipeline_mapping: %{},
         name: name
       },
       {:continue, :accept_connection}
@@ -50,10 +50,10 @@ defmodule Aflecha.Operator.StreamChannel do
   end
 
   @impl true
-  def handle_call({:worker_pid_update, pipeline_id, updated_pids}, _from, state) do
-    worker_mapping = Map.put(state[:worker_mapping], pipeline_id, updated_pids)
+  def handle_call({:pipeline_pid_update, pipeline_id, updated_pids}, _from, state) do
+    pipeline_mapping = Map.put(state[:pipeline_mapping], pipeline_id, updated_pids)
 
-    {:reply, :ok, Map.put(state, :worker_mapping, worker_mapping)}
+    {:reply, :ok, Map.put(state, :pipeline_mapping, pipeline_mapping)}
   end
 
   @impl true
@@ -67,14 +67,14 @@ defmodule Aflecha.Operator.StreamChannel do
 
   @impl true
   def handle_info({:tcp, _port, payload}, state) do
-    worker_mappings = state.worker_mapping
+    pipeline_mappings = state.pipeline_mapping
 
     Payloader.parse_payload(payload)
     |> Enum.each(fn {pipeline_id, message} ->
-      workers = Map.get(worker_mappings, pipeline_id, [])
+      pipelines = Map.get(pipeline_mappings, pipeline_id, [])
 
       # TODO: Are we handling binary or text data?
-      Enum.each(workers, fn pid ->
+      Enum.each(pipelines, fn pid ->
         GenServer.cast(pid, {:io_out, message, :text})
       end)
     end)

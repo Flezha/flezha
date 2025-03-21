@@ -36,14 +36,14 @@ fn handle_start(args: Vec<String>) {
     let operator_id = get_namespace(&args[4..]);
 
     let rpc_command = format!(
-        "Aflecha.Service.RpcCookbook.worker_start(\"{}\", \"{}\", \"{}\", \"{}\")", 
+        "Aflecha.Service.RpcCookbook.pipeline_start(\"{}\", \"{}\", \"{}\", \"{}\")", 
         operator_id,
         pipeline_id,
         factory_id,
         variables
     );
 
-    println!("Starting worker...");
+    println!("Starting pipeline...");
 
     // Attempt to execute the external command.
     let status = Command::new(command)
@@ -68,14 +68,14 @@ fn handle_stop(args: Vec<String>) {
     let operator_id = get_namespace(&args[3..]);
 
     let rpc_command = format!(
-        "Aflecha.Service.RpcCookbook.worker_stop(\"{}\", \"{}\")", 
+        "Aflecha.Service.RpcCookbook.pipeline_stop(\"{}\", \"{}\")", 
         operator_id,
         pipeline_id,
     );
 
     let command = get_aflecha_command();
 
-    println!("Stopping worker...");
+    println!("Stopping pipeline...");
 
     // Attempt to execute the external command.
     let status = Command::new(command)
@@ -86,7 +86,7 @@ fn handle_stop(args: Vec<String>) {
     match status {
         Ok(status) if status.success() => println!("Worker stopped successfully."),
         Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to stop worker: {}", e),
+        Err(e) => eprintln!("Failed to stop pipeline: {}", e),
     }
 }
 

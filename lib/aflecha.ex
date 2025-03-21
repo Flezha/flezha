@@ -7,13 +7,13 @@ defmodule Aflecha do
   """
 
   # TODO:
-  # def worker_state(group_id, pipeline_id) do
-  #   GenServer.call(Controller, {:get_worker_state, group_id, pipeline_id})
+  # def pipeline_state(group_id, pipeline_id) do
+  #   GenServer.call(Controller, {:get_pipeline_state, group_id, pipeline_id})
   # end
 
-  defdelegate start_worker(group_id, worker), to: WorkerManager
+  defdelegate start_pipeline(group_id, pipeline), to: WorkerManager
 
-  defdelegate stop_worker(group_id, worker), to: WorkerManager
+  defdelegate stop_pipeline(group_id, pipeline), to: WorkerManager
 
   defdelegate add_io(group_id, pipeline_id, io_struct, io_mode, opts), to: IOManager
 end

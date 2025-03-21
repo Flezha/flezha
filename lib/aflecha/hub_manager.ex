@@ -55,7 +55,7 @@ defmodule Aflecha.HubManager do
         Supervisor.which_children(Identificator.stream_sup_secondary(operator_id))
 
     Enum.each(stream_channels, fn {_, pid, _, _} ->
-      GenServer.call(pid, {:worker_pid_update, pipeline_id, updated_pids})
+      GenServer.call(pid, {:pipeline_pid_update, pipeline_id, updated_pids})
     end)
   end
 

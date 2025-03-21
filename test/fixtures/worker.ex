@@ -5,46 +5,46 @@ defmodule AflechaTest.Fixtures.Worker do
 
   def get(id, factory_id) do
     %Aflecha.Pipeline.Builder{
-      id: id || "my_worker",
+      id: id || "my_pipeline",
       factory_id: factory_id || "forward_orig"
     }
   end
 
-  def start(worker) do
-    Aflecha.Service.WorkerManager.start_worker(@default_operator, worker)
+  def start(pipeline) do
+    Aflecha.Service.WorkerManager.start_pipeline(@default_operator, pipeline)
 
-    worker
+    pipeline
   end
 
   def stop(pipeline_id) do
-    Aflecha.Service.WorkerManager.stop_worker(@default_operator, pipeline_id)
+    Aflecha.Service.WorkerManager.stop_pipeline(@default_operator, pipeline_id)
   end
 
   # TODO: refactor.
-  # def attach_input(worker, handler, opts \\ []) do
+  # def attach_input(pipeline, handler, opts \\ []) do
   #   {:ok, __id} =
   #     Aflecha.add_io(
   #       @default_operator,
-  #       worker.id,
+  #       pipeline.id,
   #       get_io_handler(handler, :input),
   #       :input,
   #       handling_type: Keyword.get(opts, :handling_type, :task)
   #     )
 
-  #   worker
+  #   pipeline
   # end
 
-  # def attach_output(worker, handler) do
+  # def attach_output(pipeline, handler) do
   #   {:ok, _id} =
   #     Aflecha.add_io(
   #       @default_operator,
-  #       worker.id,
+  #       pipeline.id,
   #       get_io_handler(handler, :output),
   #       :output,
   #       []
   #     )
 
-  #   worker
+  #   pipeline
   # end
 
   # defp get_io_handler(handler, type) do

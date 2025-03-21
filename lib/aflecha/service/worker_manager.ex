@@ -1,6 +1,6 @@
 defmodule Aflecha.Service.WorkerManager do
   @moduledoc """
-  Manages the worker startings and stoppings.
+  Manages the pipeline startings and stoppings.
   """
 
   alias Aflecha.HubManager
@@ -9,39 +9,39 @@ defmodule Aflecha.Service.WorkerManager do
   alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
   @doc """
-  Starts a new worker to the operator.
+  Starts a new pipeline to the operator.
   """
-  @spec start_worker(String.t(), Aflecha.Pipeline.Builder.t()) ::
+  @spec start_pipeline(String.t(), Aflecha.Pipeline.Builder.t()) ::
           {:ok, pid()} | {:error, String.t()}
-  def start_worker(group_id, worker) do
-    case PipelineBuilder.validate_pipeline(group_id, worker) do
+  def start_pipeline(group_id, pipeline) do
+    case PipelineBuilder.validate_pipeline(group_id, pipeline) do
       {:error, reason} ->
         {:error, reason}
 
       :ok ->
         # TODO: we should validate the group_id also.
-        add_worker(group_id, worker)
+        add_pipeline(group_id, pipeline)
     end
   end
 
   @doc """
-  Stops a worker.
+  Stops a pipeline.
   """
-  @spec stop_worker(String.t(), String.t()) :: :ok | {:error, String.t()}
-  def stop_worker(group_id, pipeline_id) do
-    GenServer.call(Controller, {:stop_worker, group_id, pipeline_id})
+  @spec stop_pipeline(String.t(), String.t()) :: :ok | {:error, String.t()}
+  def stop_pipeline(group_id, pipeline_id) do
+    GenServer.call(Controller, {:stop_pipeline, group_id, pipeline_id})
   end
 
-  defp add_worker(group_id, worker) do
+  defp add_pipeline(group_id, pipeline) do
     operator_ids = Aflecha.Operator.FleetManager.get_operators(group_id)
     operator_id = select_operator(operator_ids)
 
     child_spec = %{
-      id: worker.id,
+      id: pipeline.id,
       start: {
         Aflecha.Pipeline.Overwatch,
         :start_link,
-        [{group_id, operator_id, worker}]
+        [{group_id, operator_id, pipeline}]
       }
     }
 
@@ -57,10 +57,10 @@ defmodule Aflecha.Service.WorkerManager do
   end
 
   def add_binding(group_id, pipeline_id, binding, mode, opts \\ []) do
-    # TODO: Move worker ID extraction to separate service.
-    {:ok, worker_pid} = HubManager.get_pid(group_id, pipeline_id)
+    # TODO: Move pipeline ID extraction to separate service.
+    {:ok, pipeline_pid} = HubManager.get_pid(group_id, pipeline_id)
 
-    GenServer.call(worker_pid, {:add_binding, binding, mode, opts})
+    GenServer.call(pipeline_pid, {:add_binding, binding, mode, opts})
   end
 
   defp select_operator(operator_ids) do

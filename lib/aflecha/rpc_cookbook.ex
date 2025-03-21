@@ -6,23 +6,23 @@ defmodule Aflecha.Service.RpcCookbook do
   alias Aflecha.Service.WorkerManager
   alias Aflecha.IO.IOManager
 
-  @doc "Starts a worker."
-  @spec worker_start(String.t(), String.t(), String.t(), String.t()) ::
+  @doc "Starts a pipeline."
+  @spec pipeline_start(String.t(), String.t(), String.t(), String.t()) ::
           {:ok, pid()} | {:error, String.t()}
-  def worker_start(operator_id, pipeline_id, factory_id, variables) do
-    worker = %Aflecha.Pipeline.Builder{
+  def pipeline_start(operator_id, pipeline_id, factory_id, variables) do
+    pipeline = %Aflecha.Pipeline.Builder{
       id: pipeline_id,
       factory_id: factory_id,
       variables: Aflecha.Service.Payloader.json_to_map(variables)
     }
 
-    WorkerManager.start_worker(operator_id(operator_id), worker)
+    WorkerManager.start_pipeline(operator_id(operator_id), pipeline)
   end
 
-  @doc "Stops a worker."
-  @spec worker_stop(String.t(), String.t()) :: :ok | {:error, String.t()}
-  def worker_stop(operator_id, pipeline_id) do
-    WorkerManager.stop_worker(operator_id(operator_id), pipeline_id)
+  @doc "Stops a pipelinene."
+  @spec pipeline_stop(String.t(), String.t()) :: :ok | {:error, String.t()}
+  def pipeline_stop(operator_id, pipeline_id) do
+    WorkerManager.stop_pipeline(operator_id(operator_id), pipeline_id)
   end
 
   @doc "Adds an IO."

@@ -6,8 +6,8 @@ defmodule TestHelper do
   use Aflecha.Constant
   use ExUnit.Case
 
-  def test_worker(pipeline_id) do
-    worker =
+  def test_pipeline(pipeline_id) do
+    pipeline =
       AflechaTest.Fixtures.Worker.get(
         pipeline_id,
         @factory_increment_state
@@ -15,10 +15,10 @@ defmodule TestHelper do
       |> AflechaTest.Fixtures.Worker.start()
 
     on_exit(fn ->
-      AflechaTest.Fixtures.Worker.stop(worker.id)
+      AflechaTest.Fixtures.Worker.stop(pipeline.id)
     end)
 
-    worker
+    pipeline
   end
 
   def node_name() do
