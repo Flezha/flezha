@@ -1,5 +1,5 @@
 defmodule Aflecha.Plugin.Handler.Websocket do
-  alias Aflecha.Plugin.WorkerBinding
+  alias Aflecha.Plugin.PipelineBinding
 
   require Logger
 
@@ -13,7 +13,7 @@ defmodule Aflecha.Plugin.Handler.Websocket do
                 ws_opts: []
               ]
 
-  defimpl WorkerBinding, for: Aflecha.Plugin.Handler.Websocket do
+  defimpl PipelineBinding, for: Aflecha.Plugin.Handler.Websocket do
     alias Aflecha.Plugin.Handler.Websocket
 
     @impl true

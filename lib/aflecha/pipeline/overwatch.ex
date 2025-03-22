@@ -5,7 +5,7 @@ defmodule Aflecha.Pipeline.Overwatch do
   alias Aflecha.Operator.StreamSup
   alias Aflecha.Service.Identificator
   alias Aflecha.HubManager
-  alias Aflecha.Plugin.WorkerBinding
+  alias Aflecha.Plugin.PipelineBinding
 
   use GenServer
 
@@ -41,7 +41,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   @impl true
   def handle_call({:add_binding, binding, mode, opts}, _from, state) do
-    case WorkerBinding.bind(binding) do
+    case PipelineBinding.bind(binding) do
       {:ok, binding} ->
         bindings = [binding | Map.get(state.bindings, mode, [])]
 
@@ -138,7 +138,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   defp exec_binding(bindings, payload) do
     Enum.reduce(bindings, payload, fn binding, p ->
-      case WorkerBinding.exec(binding, p) do
+      case PipelineBinding.exec(binding, p) do
         {:ok, p} -> p
         {:error, _} -> p
       end

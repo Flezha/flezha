@@ -1,5 +1,5 @@
 defmodule AflechaTest.Plugin.KafkaTest do
-  alias Aflecha.Plugin.WorkerBinding
+  alias Aflecha.Plugin.PipelineBinding
 
   use ExUnit.Case
   use Mimic
@@ -18,7 +18,7 @@ defmodule AflechaTest.Plugin.KafkaTest do
       partition: @test_partition
     }
 
-    result = WorkerBinding.bind(settings)
+    result = PipelineBinding.bind(settings)
 
     assert elem(result, 0) == :ok
     assert is_struct(elem(result, 1), Aflecha.Plugin.Handler.Kafka.Producer)
@@ -36,7 +36,7 @@ defmodule AflechaTest.Plugin.KafkaTest do
       conn: self()
     }
 
-    result = WorkerBinding.exec(settings, {"test_data", :text})
+    result = PipelineBinding.exec(settings, {"test_data", :text})
 
     assert elem(result, 0) == :ok
     assert elem(result, 1) == {"test_data", :text}

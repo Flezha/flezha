@@ -1,4 +1,4 @@
-defprotocol Aflecha.Plugin.WorkerBinding do
+defprotocol Aflecha.Plugin.PipelineBinding do
   @spec bind(t()) :: {:ok, t()} | {:error, String.t()}
   def bind(settings)
 

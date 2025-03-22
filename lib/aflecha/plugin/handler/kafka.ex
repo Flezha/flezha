@@ -1,11 +1,11 @@
 defmodule Aflecha.Plugin.Handler.Kafka do
-  alias Aflecha.Plugin.WorkerBinding
+  alias Aflecha.Plugin.PipelineBinding
 
   defmodule Producer do
     @enforce_keys [:hosts, :topic, :partition]
     defstruct @enforce_keys ++ [:conn]
 
-    defimpl WorkerBinding, for: Producer do
+    defimpl PipelineBinding, for: Producer do
       # TODO: The system needs to be intelligent enough to know when to reuse a connection
       # and when to create a new one. We may need a separate GenServer handling the connections.
       @impl true

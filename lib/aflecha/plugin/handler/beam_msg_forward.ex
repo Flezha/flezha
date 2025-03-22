@@ -1,12 +1,12 @@
 defmodule Aflecha.Plugin.Handler.BeamMsgForward do
-  alias Aflecha.Plugin.WorkerBinding
+  alias Aflecha.Plugin.PipelineBinding
 
   use GenServer
 
   @enforce_keys [:recv_pid]
   defstruct @enforce_keys
 
-  defimpl WorkerBinding, for: Aflecha.Plugin.Handler.BeamMsgForward do
+  defimpl PipelineBinding, for: Aflecha.Plugin.Handler.BeamMsgForward do
     alias Aflecha.Plugin.Handler.BeamMsgForward
 
     @impl true
