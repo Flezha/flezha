@@ -33,7 +33,7 @@ defmodule Aflecha.Plugin.Handler.Websocket do
 
     @impl true
     def exec(settings, payload) do
-      Websocket.send_payload(settings.conn, payload) |> dbg()
+      Websocket.send_payload(settings.conn, payload)
 
       {:ok, payload}
     end

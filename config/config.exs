@@ -6,6 +6,7 @@ config :aflecha,
   pre_hooks: [],
   post_hooks: [],
 
+  # TODO: this has no effect yet.s
   # ------------------------------------------------------------------------------------------------
   # Enabled plugins.
   enabled_plugins: [

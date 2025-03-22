@@ -104,7 +104,7 @@ defmodule Aflecha.Operator.ControlUnit do
   def handle_call({:start_pipeline, pipeline}, from, state) do
     ref =
       ControlChannel.send_control(
-        Identificator.control_channel(state.operator_id) |> dbg(),
+        Identificator.control_channel(state.operator_id),
         @payload_id_pipeline_add,
         %{
           "pipeline_id" => pipeline.id,
