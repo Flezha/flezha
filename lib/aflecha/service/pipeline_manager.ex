@@ -55,7 +55,7 @@ defmodule Aflecha.Service.PipelineManager do
       |> ProcessHub.await()
 
     case result do
-      {:ok, pid} ->
+      {:ok, {_pipeline_id, [{_node, pid}]}} ->
         {:ok,
          %{
            pipeline_id: pipeline.id,
