@@ -45,15 +45,19 @@ defmodule AflechaTest do
   # end
 
   test "pipeline adding non existing factory" do
+    pipeline_id = "non_existing_factory_err"
+
     pipeline = %Aflecha.Pipeline.Builder{
-      id: "non_existing_factory_err",
+      id: pipeline_id,
       factory_id: "non_existing_factory"
     }
 
-    {:ok, {pipeline_id, [{@node_name, _pid}]}} =
-      PipelineManager.create_pipeline(@default_group, pipeline)
+    {status, info} = PipelineManager.create_pipeline(@default_group, pipeline)
 
-    assert pipeline_id === "non_existing_factory_err"
+    assert status === :error
+    assert info[:pipeline_id] === pipeline_id
+    assert info[:node] === @node_name
+    assert info[:reason] === "Factory with id non_existing_factory does not exist"
   end
 
   # test "websocket plugin connection start" do

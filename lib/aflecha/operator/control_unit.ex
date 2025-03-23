@@ -141,45 +141,38 @@ defmodule Aflecha.Operator.ControlUnit do
     {:ok, json_message} = Jason.decode(message)
     ref = Map.get(json_message, "reference_id", nil)
 
-    reply =
-      case payload_id do
-        @payload_id_connect_control_channel ->
-          :ok
+    payload_id_list = [
+      @payload_id_connect_control_channel,
+      @payload_id_assign_operator_id,
+      @payload_id_pipeline_add,
+      @payload_id_pipeline_rem,
+      @payload_id_comp_state,
+      @payload_id_serialize_pipe,
+      @payload_id_deserialize_pipe,
+      @payload_id_connect_sockets
+    ]
 
-        @payload_id_assign_operator_id ->
-          :ok
+    cond do
+      Enum.member?(payload_id_list, payload_id) ->
+        reply =
+          case json_message["status"] do
+            "success" ->
+              {:ok, json_message["info"]}
 
-        @payload_id_pipeline_add ->
-          dbg()
-          :ok
+            "error" ->
+              reason = Enum.join(json_message["errors"], " | ")
+              Logger.warning(reason)
 
-        @payload_id_pipeline_rem ->
-          :ok
+              {:error, reason}
+          end
 
-        @payload_id_comp_state ->
-          json_message["data"]
-
-        @payload_id_serialize_pipe ->
-          json_message["data"]
-
-        @payload_id_deserialize_pipe ->
-          :ok
-
-        @payload_id_connect_sockets ->
-          :ok
-
-        _ ->
-          {:error, "Unknown message id: #{payload_id}"}
-      end
-
-    case reply do
-      {:error, reason} ->
-        Logger.error(reason)
-        handle_payload(state, payloads)
-
-      _ ->
         new_refs = handle_refs(state[:response_refs], ref, reply)
         handle_payload(Map.put(state, :response_refs, new_refs), payloads)
+
+      true ->
+        Logger.error("Unknown message id: #{payload_id}")
+
+        handle_payload(state, payloads)
     end
   end
 

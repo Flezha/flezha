@@ -19,24 +19,32 @@ defmodule Aflecha.Pipeline.Overwatch do
   # TODO: add ability to remove bindings.
   @impl true
   def init({group_id, operator_id, pipeline}) do
+    case start_pipeline_sdk(operator_id, pipeline) do
+      {:ok, _} ->
+        {:ok,
+         %__MODULE__{
+           id: pipeline.id,
+           group_id: group_id,
+           variables: pipeline.variables,
+           channel: attach_channel(pipeline.id, operator_id),
+           bindings: %{
+             on_input: [],
+             on_output: [],
+             interval: [],
+             proactive: []
+           }
+         }}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  def start_pipeline_sdk(operator_id, pipeline) do
     GenServer.call(
       Identificator.control_unit(operator_id),
       {:start_pipeline, pipeline}
     )
-
-    {:ok,
-     %__MODULE__{
-       id: pipeline.id,
-       group_id: group_id,
-       variables: pipeline.variables,
-       channel: attach_channel(pipeline.id, operator_id),
-       bindings: %{
-         on_input: [],
-         on_output: [],
-         interval: [],
-         proactive: []
-       }
-     }}
   end
 
   @impl true

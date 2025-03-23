@@ -47,12 +47,33 @@ defmodule Aflecha.Service.PipelineManager do
 
     result =
       Identificator.hub(group_id)
-      |> ProcessHub.start_child(child_spec, async_wait: true)
+      |> ProcessHub.start_child(child_spec,
+        async_wait: true,
+        # We will get the errors from the start result.
+        disable_logging: true
+      )
       |> ProcessHub.await()
 
     case result do
-      {:ok, pid} -> {:ok, pid}
-      {:error, reason} -> {:error, reason}
+      {:ok, pid} ->
+        {:ok,
+         %{
+           pipeline_id: pipeline.id,
+           operator_id: operator_id,
+           node: node(),
+           pid: pid
+         }}
+
+      {:error, reason} ->
+        {[{pipeline_id, node, {error_msg, _}}], _partial_success} = reason
+
+        {:error,
+         %{
+           pipeline_id: pipeline_id,
+           operator_id: operator_id,
+           node: node,
+           reason: error_msg
+         }}
     end
   end
 
