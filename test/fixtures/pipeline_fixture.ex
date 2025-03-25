@@ -1,4 +1,4 @@
-defmodule AflechaTest.Fixtures.Worker do
+defmodule AflechaTest.Fixtures.PipelineFixture do
   use Aflecha.Constant
 
   # TODO: refactor based on new plugin system.
@@ -6,7 +6,7 @@ defmodule AflechaTest.Fixtures.Worker do
   def get(id, factory_id) do
     %Aflecha.Pipeline.Builder{
       id: id || "my_pipeline",
-      factory_id: factory_id || "forward_orig"
+      factory_id: factory_id || "do_nothing"
     }
   end
 

@@ -1,7 +1,7 @@
 defmodule Aflecha.Pipeline.Overwatch do
   alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
-  alias Aflecha.Worker.MigratorService
+  alias Aflecha.Service.PipelineManager
   alias Aflecha.Operator.StreamSup
   alias Aflecha.Service.Identificator
   alias Aflecha.HubManager
@@ -78,7 +78,7 @@ defmodule Aflecha.Pipeline.Overwatch do
     # TODO: we are hardcoding it right now, should be dynamic or removed after all.
     data_type = :text
 
-    payload = exec_binding(state.bindings.on_output, payload)
+    payload = exec_binding(state.bindings.on_input, payload)
 
     GenServer.cast(state.channel, {:io_in, state.id, payload, data_type, :stream})
 
@@ -104,7 +104,7 @@ defmodule Aflecha.Pipeline.Overwatch do
   def handle_info({:process_hub, :handover_start, startup_resp, child_id, from}, state) do
     case startup_resp do
       {:ok, pid} ->
-        serialize_data = MigratorService.serialize_pipeline(state.group_id, state.id)
+        serialize_data = PipelineManager.serialize_pipeline(state.group_id, state.id)
 
         # Send the state to the remote process.
         Process.send(pid, {:process_hub, :handover, {state, serialize_data}}, [])
@@ -121,7 +121,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   @impl true
   def handle_info({:process_hub, :handover, {handover_state, pipe_serialized}}, state) do
-    MigratorService.deserialize_pipeline(
+    PipelineManager.deserialize_pipeline(
       state.group_id,
       state.id,
       pipe_serialized["factory_id"],
