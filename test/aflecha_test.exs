@@ -173,8 +173,8 @@ defmodule AflechaTest do
 
     for _ <- 1..1 do
       receive do
-        _msg ->
-          assert true
+        msg ->
+          assert msg === "hello world"
       after
         2000 -> assert false
       end
