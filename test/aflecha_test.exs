@@ -73,8 +73,8 @@ defmodule AflechaTest do
 
     {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
 
-    # TODO: add assertions and test websocket connection.
-    Aflecha.Service.PipelineManager.add_binding(
+    # TODO: add failures also.
+    res = Aflecha.Service.PipelineManager.add_binding(
       @default_group,
       pipeline_id,
       %Aflecha.Plugin.Handler.Websocket{
@@ -96,6 +96,8 @@ defmodule AflechaTest do
       },
       :proactive
     )
+
+    assert res === :ok
   end
 
   test "beam msg forward plugin connection start" do
