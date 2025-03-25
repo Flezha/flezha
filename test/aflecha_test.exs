@@ -108,8 +108,7 @@ defmodule AflechaTest do
 
     {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
 
-    # TODO: add assertions.
-    Aflecha.Service.PipelineManager.add_binding(
+    res = Aflecha.Service.PipelineManager.add_binding(
       @default_group,
       pipeline_id,
       %Aflecha.Plugin.Handler.BeamMsgForward{
@@ -117,6 +116,8 @@ defmodule AflechaTest do
       },
       :on_output
     )
+
+    assert res === :ok
   end
 
   test "pipeline flow generation -> beam msg forward" do
@@ -138,15 +139,6 @@ defmodule AflechaTest do
       },
       :on_output
     )
-
-    # TODO: add STDIO test
-    # Aflecha.add_io(
-    #   @default_group,
-    #   pipeline.id,
-    #   %Aflecha.IO.Handler.StdIO{},
-    #   :output,
-    #   []
-    # )
 
     Aflecha.Service.PipelineManager.add_binding(
       @default_group,
