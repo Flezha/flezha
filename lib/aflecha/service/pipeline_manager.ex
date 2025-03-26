@@ -84,11 +84,24 @@ defmodule Aflecha.Service.PipelineManager do
     GenServer.call(pipeline_pid, {:add_binding, binding, mode, opts})
   end
 
+  def get_pipeline_state(operator_id, pipeline_id) do
+    command_id = "pipeline_state"
+    data = %{"pipeline_id" => pipeline_id}
+
+    GenServer.call(
+      Identificator.control_unit(operator_id),
+      {:send_control, command_id, data}
+    )
+  end
+
   def serialize_pipeline(operator_id, pipeline_id) do
     command_id = "serialize_pipeline"
     data = %{"pipeline_id" => pipeline_id}
 
-    GenServer.call(Identificator.control_unit(operator_id), {:send_control, command_id, data})
+    GenServer.call(
+      Identificator.control_unit(operator_id),
+      {:send_control, command_id, data}
+    )
   end
 
   def deserialize_pipeline(operator_id, pipeline_id, factory_id, serialized_state) do

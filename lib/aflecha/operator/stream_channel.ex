@@ -75,7 +75,7 @@ defmodule Aflecha.Operator.StreamChannel do
 
       # TODO: Are we handling binary or text data?
       Enum.each(pipelines, fn pid ->
-        GenServer.cast(pid, {:io_out, message, :text})
+        GenServer.cast(pid, {:io_out, {message, :text}})
       end)
     end)
 

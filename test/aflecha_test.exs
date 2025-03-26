@@ -177,17 +177,38 @@ defmodule AflechaTest do
   #   end
   # end
 
-  test "Pipeline migration" do
-    pipeline =
-      PipelineFixture.get("Migration pipeline", "store_input") |> PipelineFixture.start() |> dbg()
+  test "get pipeline state" do
+    pipeline_id = "get_state_test"
 
-    {:ok, pipeline_pid} = HubManager.get_pid(@default_group, pipeline.id)
+    {:ok, %{pid: pipeline_pid, operator_id: operator}} =
+      pipeline_id
+      |> PipelineFixture.get("store_input")
+      |> PipelineFixture.start()
 
-    GenServer.cast(pipeline_pid, {:io_in, "state1"})
+    GenServer.cast(pipeline_pid, {:io_in, "state_1"})
+    GenServer.cast(pipeline_pid, {:io_in, "state_2"})
+    GenServer.call(pipeline_pid, :ping)
 
-    # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
-    # then get the state of the new migrated process to see if it matches the state1 string.
+    {:ok, json_state} = PipelineManager.get_pipeline_state(operator, pipeline_id)
+    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
-    assert false
+    assert pipeline_state === %{
+             "binary_inputs" => [],
+             "text_inputs" => ["state_1", "state_2"]
+           }
   end
+
+  # test "Pipeline migration" do
+  #   pipeline =
+  #     PipelineFixture.get("Migration pipeline", "store_input") |> PipelineFixture.start() |> dbg()
+
+  #   {:ok, pipeline_pid} = HubManager.get_pid(@default_group, pipeline.id)
+
+  #   GenServer.cast(pipeline_pid, {:io_in, "state1"})
+
+  #   # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
+  #   # then get the state of the new migrated process to see if it matches the state1 string.
+
+  #   assert false
+  # end
 end

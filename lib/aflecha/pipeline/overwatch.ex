@@ -70,6 +70,11 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   @impl true
+  def handle_call(:ping, _from, state) do
+    {:reply, :pong, state}
+  end
+
+  @impl true
   def handle_cast({:io_in, payload}, state) do
     # TODO: were currently hardcoding the handling_type to :stream (:task is also a option)
     # The pipeline itself should be able to define the handling type.

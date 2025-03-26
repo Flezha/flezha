@@ -12,8 +12,6 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
 
   def start(pipeline) do
     Aflecha.Service.PipelineManager.create_pipeline(@default_operator, pipeline)
-
-    pipeline
   end
 
   def stop(pipeline_id) do

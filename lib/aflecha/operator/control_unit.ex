@@ -18,7 +18,7 @@ defmodule Aflecha.Operator.ControlUnit do
   @payload_id_pipeline_rem "rem_pipeline"
   @payload_id_serialize_pipe "serialize_pipeline"
   @payload_id_deserialize_pipe "deserialize_pipeline"
-  @payload_id_comp_state "pipeline_state"
+  @payload_id_pipeline_state "pipeline_state"
 
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link({group_id, operator_id}) do
@@ -53,7 +53,7 @@ defmodule Aflecha.Operator.ControlUnit do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
-        @payload_id_comp_state,
+        @payload_id_pipeline_state,
         %{"pipeline_id" => pipeline_id}
       )
 
@@ -146,7 +146,7 @@ defmodule Aflecha.Operator.ControlUnit do
       @payload_id_assign_operator_id,
       @payload_id_pipeline_add,
       @payload_id_pipeline_rem,
-      @payload_id_comp_state,
+      @payload_id_pipeline_state,
       @payload_id_serialize_pipe,
       @payload_id_deserialize_pipe,
       @payload_id_connect_sockets
