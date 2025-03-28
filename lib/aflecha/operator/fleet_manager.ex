@@ -43,7 +43,11 @@ defmodule Aflecha.Operator.FleetManager do
         operator_ids = Map.get(state, group_id, []) ++ [operator_id]
         state = Map.put(state, group_id, operator_ids)
 
-        EventManager.dispatch(:operator_connected_event, {group_id, operator_id})
+        EventManager.dispatch(
+          :operator_connected_event,
+          {group_id, operator_id},
+          %{members: :local}
+        )
 
         {:reply, {:ok, {group_id, operator_id}}, state}
 

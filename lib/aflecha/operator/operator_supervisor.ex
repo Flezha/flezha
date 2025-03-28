@@ -15,9 +15,6 @@ defmodule Aflecha.Operator.OperatorSupervisor do
 
   @impl true
   def init({group_id, operator_id, sock}) do
-    primary_stream_sock = SocketSupport.stream_socket_path(operator_id, :primary)
-    secondary_stream_sock = SocketSupport.stream_socket_path(operator_id, :secondary)
-
     children = [
       %{
         id: ControlUnit,
@@ -31,13 +28,23 @@ defmodule Aflecha.Operator.OperatorSupervisor do
         id: :primary_stream_listener,
         start:
           {Listener, :start_link,
-           [{Identificator.stream_listener(operator_id, :primary), primary_stream_sock}]}
+           [
+             {
+               Identificator.stream_listener(operator_id, :primary),
+               fn -> SocketSupport.stream_socket_path(operator_id, :primary) end
+             }
+           ]}
       },
       %{
         id: :secondary_stream_listener,
         start:
           {Listener, :start_link,
-           [{Identificator.stream_listener(operator_id, :secondary), secondary_stream_sock}]}
+           [
+             {
+               Identificator.stream_listener(operator_id, :secondary),
+               fn -> SocketSupport.stream_socket_path(operator_id, :secondary) end
+             }
+           ]}
       },
       %{
         id: :primary_stream_sup,

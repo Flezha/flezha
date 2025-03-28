@@ -3,12 +3,14 @@ defmodule Aflecha.Socket.Listener do
 
   use GenServer
 
-  def start_link({name, sock_path}) do
-    GenServer.start_link(__MODULE__, sock_path, name: name)
+  def start_link({name, sock_path_resolver}) do
+    GenServer.start_link(__MODULE__, sock_path_resolver, name: name)
   end
 
   @impl true
-  def init(sock_path) do
+  def init(sock_path_resolver) do
+    sock_path = sock_path_resolver.()
+
     opts = socket_opts(sock_path)
     _res = socket_cleanup(sock_path)
 

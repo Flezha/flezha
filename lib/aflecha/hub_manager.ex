@@ -19,6 +19,10 @@ defmodule Aflecha.HubManager do
     ProcessHub.is_alive?(Identificator.hub(group_id))
   end
 
+  def get_hub_nodes(group_id) do
+    ProcessHub.nodes(Identificator.hub(group_id), [:include_local])
+  end
+
   def get_pid(group_id, pipeline_id) do
     hub_id = Identificator.hub(group_id)
 

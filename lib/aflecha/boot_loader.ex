@@ -11,6 +11,8 @@ defmodule Aflecha.BootLoader do
   def init(_) do
     run_pre_hooks()
 
+    Aflecha.Socket.Support.prepare_socket_dir()
+
     {:ok, %{boot_ready: false}, {:continue, :boot}}
   end
 
@@ -28,7 +30,7 @@ defmodule Aflecha.BootLoader do
 
   @impl true
   def handle_info(msg, state) do
-    Logger.error("Unexpected message at boot validator: #{inspect(msg)}")
+    Logger.error("Unexpected message at boot validator: #{inspect(msg)} on node #{node()}")
 
     {:noreply, state}
   end

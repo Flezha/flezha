@@ -30,7 +30,7 @@ defmodule Aflecha.Plugin.Handler.Kafka do
 
         case res do
           :ok -> {:ok, payload}
-          {:ok, any} -> {:ok, payload}
+          {:ok, _any} -> {:ok, payload}
           {:error, reason} -> {:error, reason}
           any -> {:error, any}
         end

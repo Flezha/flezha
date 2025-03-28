@@ -1,6 +1,7 @@
 defmodule Aflecha.Service.Payloader do
   alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
+  # TODO: Remove or update when dealing with new CLI commands.
   def extract_io_settings(json_str) do
     settings_map = json_to_map(json_str)
 
@@ -17,7 +18,7 @@ defmodule Aflecha.Service.Payloader do
         "websocket" ->
           post_connect = Map.get(settings_map, "post_connect", %{})
 
-          payload =
+          _payload =
             if Map.has_key?(post_connect, "payload") do
               payload = Map.get(post_connect, "payload")
 

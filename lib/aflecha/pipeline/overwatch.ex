@@ -1,10 +1,8 @@
 defmodule Aflecha.Pipeline.Overwatch do
-  alias Aflecha.IO.IOSupervisor
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Service.PipelineManager
   alias Aflecha.Operator.StreamSup
   alias Aflecha.Service.Identificator
-  alias Aflecha.HubManager
   alias Aflecha.Plugin.PipelineBinding
 
   use GenServer

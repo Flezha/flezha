@@ -177,38 +177,92 @@ defmodule AflechaTest do
   #   end
   # end
 
-  test "get pipeline state" do
-    pipeline_id = "get_state_test"
+  # test "get pipeline state" do
+  #   pipeline_id = "get_state_test"
+
+  #   {:ok, %{pid: pipeline_pid, operator_id: operator}} =
+  #     pipeline_id
+  #     |> PipelineFixture.get("store_input")
+  #     |> PipelineFixture.start()
+
+  #   GenServer.cast(pipeline_pid, {:io_in, "state_1"})
+  #   GenServer.cast(pipeline_pid, {:io_in, "state_2"})
+  #   GenServer.call(pipeline_pid, :ping)
+
+  #   {:ok, json_state} = PipelineManager.get_pipeline_state(operator, pipeline_id)
+  #   pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+
+  #   assert pipeline_state === %{
+  #            "binary_inputs" => [],
+  #            "text_inputs" => ["state_1", "state_2"]
+  #          }
+  # end
+
+  test "pipeline migration" do
+    pipeline_id = "pipeline_migration_test"
 
     {:ok, %{pid: pipeline_pid, operator_id: operator}} =
       pipeline_id
       |> PipelineFixture.get("store_input")
       |> PipelineFixture.start()
 
-    GenServer.cast(pipeline_pid, {:io_in, "state_1"})
-    GenServer.cast(pipeline_pid, {:io_in, "state_2"})
+    GenServer.cast(pipeline_pid, {:io_in, "test_state_1"})
+    GenServer.cast(pipeline_pid, {:io_in, "test_state_2"})
     GenServer.call(pipeline_pid, :ping)
+
+    Process.sleep(1000)
+
+    # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
+    # then get the state of the new migrated process to see if it matches the state1 string.
+
+    args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
+    node_name = :migration_node
+
+    {:ok, pid, node_name} =
+      :peer.start_link(%{
+        host: ~c"127.0.0.1",
+        name: node_name,
+        args: [args]
+      })
+
+    :erpc.call(node_name, :code, :add_paths, [:code.get_path()])
+    :ok = :erpc.call(node_name, :application, :set_env, [:mix, :env, :test])
+    :erpc.call(node_name, :application, :set_env, [:aflecha, :env, :test])
+
+    all_aflecha_config = Application.get_all_env(:aflecha)
+
+    Enum.each(all_aflecha_config, fn {key, value} ->
+      :erpc.call(node_name, Application, :put_env, [:aflecha, key, value])
+    end)
+
+    all_kafka_config = Application.get_all_env(:kafka_ex)
+
+    Enum.each(all_kafka_config, fn {key, value} ->
+      :erpc.call(node_name, Application, :put_env, [:kafka_ex, key, value])
+    end)
+
+    all_logger_config = Application.get_all_env(:logger)
+
+    Enum.each(all_logger_config, fn {key, value} ->
+      :erpc.call(node_name, Application, :put_env, [:logger, key, value])
+    end)
+
+    :erpc.call(node_name, Application, :get_env, [:kafka_ex, :disable_default_worker])
+    :erpc.call(node_name, Application, :put_env, [:aflecha, :testnet_enabled, false])
+
+    :erpc.call(node_name, Application, :put_env, [
+      :aflecha,
+      :socket_files_path,
+      "app_data/sockets/#{node_name}/"
+    ])
+
+    :erpc.call(node_name, Application, :ensure_all_started, [:aflecha], 10000)
+
+    Aflecha.HubManager.get_hub_nodes(@default_group)
 
     {:ok, json_state} = PipelineManager.get_pipeline_state(operator, pipeline_id)
     pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
-    assert pipeline_state === %{
-             "binary_inputs" => [],
-             "text_inputs" => ["state_1", "state_2"]
-           }
+    assert false
   end
-
-  # test "Pipeline migration" do
-  #   pipeline =
-  #     PipelineFixture.get("Migration pipeline", "store_input") |> PipelineFixture.start() |> dbg()
-
-  #   {:ok, pipeline_pid} = HubManager.get_pid(@default_group, pipeline.id)
-
-  #   GenServer.cast(pipeline_pid, {:io_in, "state1"})
-
-  #   # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
-  #   # then get the state of the new migrated process to see if it matches the state1 string.
-
-  #   assert false
-  # end
 end

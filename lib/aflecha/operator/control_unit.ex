@@ -3,7 +3,6 @@ defmodule Aflecha.Operator.ControlUnit do
   alias Aflecha.Service.Payloader
   alias Aflecha.Operator.ControlChannel
   alias Aflecha.Service.ConcurrencyMapper
-  alias Aflecha.Service.EventManager
   alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
   use GenServer

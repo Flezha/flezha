@@ -1,6 +1,8 @@
 defmodule Aflecha.Application do
   @moduledoc false
-  alias Aflecha.Socket.Support
+
+  alias Aflecha.Socket.Support, as: SocketSupport
+  alias Aflecha.Operator.FleetManager
 
   require Logger
 
@@ -8,16 +10,14 @@ defmodule Aflecha.Application do
 
   @impl true
   def start(_type, _args) do
-    Aflecha.Socket.Support.prepare_socket_dir()
-
     children = [
       Aflecha.Service.EventManager,
       Aflecha.BootLoader,
       Aflecha.Service.Identificator,
       Aflecha.HubManager,
-      Aflecha.Operator.FleetManager,
-      {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      {Aflecha.Socket.Dispatcher, &Aflecha.Operator.FleetManager.connect_handler/1},
+      FleetManager,
+      {Aflecha.Socket.Listener, {:control_listener, &SocketSupport.control_socket_path/0}},
+      {Aflecha.Socket.Dispatcher, &FleetManager.connect_handler/1},
       Aflecha.Operator.FleetSupervisor,
       Aflecha.Service.PortPilot
 
@@ -57,7 +57,7 @@ defmodule Aflecha.Application do
   end
 
   defp validate_boot_ready() do
-    case GenServer.call(Aflecha.BootLoader, :boot_ready?) do
+    case GenServer.call(Aflecha.BootLoader, :boot_ready?, 7000) do
       true -> :ok
       false -> raise "Boot not ready"
     end

@@ -8,14 +8,14 @@ defmodule TestHelper do
 
   def test_pipeline(pipeline_id) do
     pipeline =
-      AflechaTest.Fixtures.Worker.get(
+      AflechaTest.Fixtures.PipelineFixture.get(
         pipeline_id,
         @factory_increment_state
       )
-      |> AflechaTest.Fixtures.Worker.start()
+      |> AflechaTest.Fixtures.PipelineFixture.start()
 
     on_exit(fn ->
-      AflechaTest.Fixtures.Worker.stop(pipeline.id)
+      AflechaTest.Fixtures.PipelineFixture.stop(pipeline.id)
     end)
 
     pipeline

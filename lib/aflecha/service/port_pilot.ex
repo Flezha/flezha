@@ -39,7 +39,6 @@ defmodule Aflecha.Service.PortPilot do
       raise "Port application malfunction"
     end
 
-    socket_files_path = Application.fetch_env!(:aflecha, :socket_files_path)
     ports = Map.delete(state.ports, port)
 
     ports =
@@ -48,7 +47,7 @@ defmodule Aflecha.Service.PortPilot do
           ports
 
         command ->
-          {port, _} = open_port("AFLECHA_SOCKET_FILES_PATH=#{socket_files_path} #{command}")
+          {port, _} = open_port(command)
           Map.put(ports, port, command)
       end
 
@@ -68,8 +67,7 @@ defmodule Aflecha.Service.PortPilot do
   end
 
   defp initialize_ports() do
-    external_processes =
-      Application.fetch_env!(:aflecha, :external_processes)
+    external_processes = Application.fetch_env!(:aflecha, :external_processes)
 
     Enum.map(external_processes, fn command ->
       open_port(command)
@@ -78,10 +76,15 @@ defmodule Aflecha.Service.PortPilot do
   end
 
   defp open_port(command) do
+    socket_files_path = Application.fetch_env!(:aflecha, :socket_files_path)
+
     port =
       Port.open(
         {:spawn, command},
-        [:binary]
+        [
+          :binary,
+          {:env, [{~c"AFLECHA_SOCKET_FILES_PATH", String.to_charlist(socket_files_path)}]}
+        ]
       )
 
     Port.monitor(port)

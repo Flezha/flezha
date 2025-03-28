@@ -6,6 +6,7 @@ defmodule Aflecha.Socket.Support do
     File.mkdir_p(base_path)
   end
 
+  @spec set_active(port() | {:"$inet", atom(), any()}) :: :ok | {:error, atom()}
   def set_active(socket) do
     :inet.setopts(socket, [{:active, true}])
   end
