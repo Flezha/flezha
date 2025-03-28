@@ -1,4 +1,5 @@
 defmodule AflechaTest do
+  alias Aflecha.Service.Identificator
   alias Aflecha.Service.PipelineManager
   alias Aflecha.HubManager
   alias AflechaTest.Fixtures.PipelineFixture
@@ -180,7 +181,7 @@ defmodule AflechaTest do
   # test "get pipeline state" do
   #   pipeline_id = "get_state_test"
 
-  #   {:ok, %{pid: pipeline_pid, operator_id: operator}} =
+  #   {:ok, %{pid: pipeline_pid}} =
   #     pipeline_id
   #     |> PipelineFixture.get("store_input")
   #     |> PipelineFixture.start()
@@ -189,7 +190,7 @@ defmodule AflechaTest do
   #   GenServer.cast(pipeline_pid, {:io_in, "state_2"})
   #   GenServer.call(pipeline_pid, :ping)
 
-  #   {:ok, json_state} = PipelineManager.get_pipeline_state(operator, pipeline_id)
+  #   {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
   #   pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
   #   assert pipeline_state === %{
@@ -199,9 +200,14 @@ defmodule AflechaTest do
   # end
 
   test "pipeline migration" do
+    # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
+    # then get the state of the new migrated process to see if it matches the state1 string.
+
+    {peer_pid, peer_node} = TestHelper.start_peer_node(:anode1)
+
     pipeline_id = "pipeline_migration_test"
 
-    {:ok, %{pid: pipeline_pid, operator_id: operator}} =
+    {:ok, %{pid: pipeline_pid, node: pnode}} =
       pipeline_id
       |> PipelineFixture.get("store_input")
       |> PipelineFixture.start()
@@ -210,16 +216,27 @@ defmodule AflechaTest do
     GenServer.cast(pipeline_pid, {:io_in, "test_state_2"})
     GenServer.call(pipeline_pid, :ping)
 
-    # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
-    # then get the state of the new migrated process to see if it matches the state1 string.
+    test_state = %{
+      "binary_inputs" => [],
+      "text_inputs" => ["test_state_1", "test_state_2"]
+    }
 
-    # TestHelper.start_peer_node(:migration_node)
+    # TODO: add here hook instead
+    Process.sleep(100)
 
-    Aflecha.HubManager.get_hub_nodes(@default_group)
-
-    {:ok, json_state} = PipelineManager.get_pipeline_state(operator, pipeline_id)
+    {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
     pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
-    assert false
+    assert pipeline_state === test_state
+
+    TestHelper.stop_peer_node(peer_pid, peer_node)
+
+    # TODO: add hook here instead
+    Process.sleep(1000)
+
+    {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+
+    assert pipeline_state === test_state
   end
 end

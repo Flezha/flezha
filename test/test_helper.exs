@@ -29,7 +29,7 @@ defmodule TestHelper do
     args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
 
     # Start the peer node.
-    {:ok, pid, node_name} =
+    {:ok, peer_pid, node_name} =
       :peer.start_link(%{
         host: ~c"127.0.0.1",
         name: name,
@@ -74,8 +74,11 @@ defmodule TestHelper do
     {peer_pid, node_name}
   end
 
-  def stop_peer_node(peer_pid) do
+  def stop_peer_node(peer_pid, peer_node) do
     if Process.alive?(peer_pid) do
+      # Gracefully stop the peer node to allow migration.
+      :erpc.call(peer_node, :application, :stop, [:aflecha])
+
       :peer.stop(peer_pid)
     end
   end

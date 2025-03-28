@@ -7,6 +7,10 @@ defmodule Aflecha.HubManager do
     Supervisor.start_link(__MODULE__, [], name: __MODULE__)
   end
 
+  def stop_hub_manager() do
+    Supervisor.stop(__MODULE__)
+  end
+
   def start_hub(group_id) do
     Supervisor.start_child(__MODULE__, process_hub(group_id))
   end
@@ -73,9 +77,8 @@ defmodule Aflecha.HubManager do
       hub_id: Identificator.hub(group_id),
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
       redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
-      partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.DynamicQuorum{
-        quorum_size: 60
-      },
+      # TODO: we may want to provide options for the partition tolerance strategy.
+      partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
       distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
         retention: 4000,

@@ -12,6 +12,10 @@ defmodule Aflecha.Operator.FleetSupervisor do
     Supervisor.init([], strategy: :one_for_one)
   end
 
+  def stop_fleet() do
+    Supervisor.stop(__MODULE__)
+  end
+
   def start_operator(group_id, operator_id, sock) do
     Supervisor.start_child(__MODULE__, %{
       id: operator_id,

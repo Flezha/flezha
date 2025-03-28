@@ -8,6 +8,14 @@ defmodule Aflecha.Service.PipelineManager do
   alias Aflecha.Service.Identificator
   alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
+  def get_pipeline_pid(group_id, pipeline_id) do
+    case HubManager.get_pid(group_id, pipeline_id) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, "no pid found"} -> {:error, "no pipeline found"}
+      err -> err
+    end
+  end
+
   @doc """
   Starts a new pipeline to the operator.
   """
@@ -33,15 +41,12 @@ defmodule Aflecha.Service.PipelineManager do
   end
 
   defp add_pipeline(group_id, pipeline) do
-    operator_ids = Aflecha.Operator.FleetManager.get_operators(group_id)
-    operator_id = select_operator(operator_ids)
-
     child_spec = %{
       id: pipeline.id,
       start: {
         Aflecha.Pipeline.Overwatch,
         :start_link,
-        [{group_id, operator_id, pipeline}]
+        [{group_id, pipeline}]
       }
     }
 
@@ -55,12 +60,14 @@ defmodule Aflecha.Service.PipelineManager do
       |> ProcessHub.await()
 
     case result do
-      {:ok, {_pipeline_id, [{_node, pid}]}} ->
+      {:ok, {_pipeline_id, [{node, pid}]}} ->
+        operator_id = GenServer.call(pid, :get_operator)
+
         {:ok,
          %{
            pipeline_id: pipeline.id,
            operator_id: operator_id,
-           node: node(),
+           node: node,
            pid: pid
          }}
 
@@ -70,7 +77,6 @@ defmodule Aflecha.Service.PipelineManager do
         {:error,
          %{
            pipeline_id: pipeline_id,
-           operator_id: operator_id,
            node: node,
            reason: error_msg
          }}
@@ -78,49 +84,16 @@ defmodule Aflecha.Service.PipelineManager do
   end
 
   def add_binding(group_id, pipeline_id, binding, mode, opts \\ []) do
-    # TODO: Move pipeline ID extraction to separate service.
-    {:ok, pipeline_pid} = HubManager.get_pid(group_id, pipeline_id)
-
-    GenServer.call(pipeline_pid, {:add_binding, binding, mode, opts})
+    case get_pipeline_pid(group_id, pipeline_id) do
+      {:ok, pipeline_pid} -> GenServer.call(pipeline_pid, {:add_binding, binding, mode, opts})
+      err -> err
+    end
   end
 
-  def get_pipeline_state(operator_id, pipeline_id) do
-    command_id = "pipeline_state"
-    data = %{"pipeline_id" => pipeline_id}
-
-    GenServer.call(
-      Identificator.control_unit(operator_id),
-      {:send_control, command_id, data}
-    )
-  end
-
-  def serialize_pipeline(operator_id, pipeline_id) do
-    command_id = "serialize_pipeline"
-    data = %{"pipeline_id" => pipeline_id}
-
-    GenServer.call(
-      Identificator.control_unit(operator_id),
-      {:send_control, command_id, data}
-    )
-  end
-
-  def deserialize_pipeline(operator_id, pipeline_id, factory_id, serialized_state) do
-    command_id = "deserialize_pipeline"
-
-    operator_data = %{
-      "pipeline_id" => pipeline_id,
-      "factory_id" => factory_id,
-      "serialized_state" => serialized_state
-    }
-
-    GenServer.call(
-      Identificator.control_unit(operator_id),
-      {:send_control, command_id, operator_data}
-    )
-  end
-
-  defp select_operator(operator_ids) do
-    # TODO: add load balancing here.
-    Enum.random(operator_ids)
+  def get_pipeline_state(group_id, pipeline_id) do
+    case get_pipeline_pid(group_id, pipeline_id) do
+      {:ok, pipeline_pid} -> GenServer.call(pipeline_pid, :get_pipeline_state)
+      err -> err
+    end
   end
 end
