@@ -22,24 +22,10 @@ config :aflecha,
   post_hooks: [
     fn ->
       for _x <- 1..2 do
-        IO.puts(
-          "-------------------- DEBUG 1 on NODE #{node()} ------------------------------------"
-        )
-
         receive do
-          {:operator_connected_event, {"default", _}} ->
-            IO.puts(
-              "-------------------- DEBUG 2 on NODE #{node()} ------------------------------------"
-            )
-
-            :ok
+          {:operator_connected_event, {"default", _}} -> :ok
         after
-          3000 ->
-            IO.puts(
-              "-------------------- DEBUG 3 on NODE #{node()} ------------------------------------"
-            )
-
-            raise "Operator not connected"
+          3000 -> raise "Operator not connected"
         end
       end
     end

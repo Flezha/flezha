@@ -210,53 +210,10 @@ defmodule AflechaTest do
     GenServer.cast(pipeline_pid, {:io_in, "test_state_2"})
     GenServer.call(pipeline_pid, :ping)
 
-    Process.sleep(1000)
-
     # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
     # then get the state of the new migrated process to see if it matches the state1 string.
 
-    args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
-    node_name = :migration_node
-
-    {:ok, pid, node_name} =
-      :peer.start_link(%{
-        host: ~c"127.0.0.1",
-        name: node_name,
-        args: [args]
-      })
-
-    :erpc.call(node_name, :code, :add_paths, [:code.get_path()])
-    :ok = :erpc.call(node_name, :application, :set_env, [:mix, :env, :test])
-    :erpc.call(node_name, :application, :set_env, [:aflecha, :env, :test])
-
-    all_aflecha_config = Application.get_all_env(:aflecha)
-
-    Enum.each(all_aflecha_config, fn {key, value} ->
-      :erpc.call(node_name, Application, :put_env, [:aflecha, key, value])
-    end)
-
-    all_kafka_config = Application.get_all_env(:kafka_ex)
-
-    Enum.each(all_kafka_config, fn {key, value} ->
-      :erpc.call(node_name, Application, :put_env, [:kafka_ex, key, value])
-    end)
-
-    all_logger_config = Application.get_all_env(:logger)
-
-    Enum.each(all_logger_config, fn {key, value} ->
-      :erpc.call(node_name, Application, :put_env, [:logger, key, value])
-    end)
-
-    :erpc.call(node_name, Application, :get_env, [:kafka_ex, :disable_default_worker])
-    :erpc.call(node_name, Application, :put_env, [:aflecha, :testnet_enabled, false])
-
-    :erpc.call(node_name, Application, :put_env, [
-      :aflecha,
-      :socket_files_path,
-      "app_data/sockets/#{node_name}/"
-    ])
-
-    :erpc.call(node_name, Application, :ensure_all_started, [:aflecha], 10000)
+    # TestHelper.start_peer_node(:migration_node)
 
     Aflecha.HubManager.get_hub_nodes(@default_group)
 
