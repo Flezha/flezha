@@ -11,7 +11,7 @@ defmodule Aflecha.Operator.ControlUnit do
 
   @payload_id_connect_control_channel "connect_control_channel"
   @payload_id_assign_operator_id "assign_operator_id"
-  @payload_id_factory_register "register_factory"
+  # TODO: perhaps add: @payload_id_factory_register "register_factory"
   @payload_id_connect_sockets "connect_sockets"
   @payload_id_pipeline_add "add_pipeline"
   @payload_id_pipeline_rem "rem_pipeline"

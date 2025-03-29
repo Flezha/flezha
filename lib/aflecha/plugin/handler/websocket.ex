@@ -39,7 +39,6 @@ defmodule Aflecha.Plugin.Handler.Websocket do
     end
   end
 
-  @impl true
   def start_link(uri, opts) do
     Fresh.start_link(
       uri,
@@ -73,8 +72,8 @@ defmodule Aflecha.Plugin.Handler.Websocket do
   end
 
   @impl Fresh
-  def handle_in({_data_type, payload}, %{overwatcher_pid: overwatcher} = state) do
-    GenServer.cast(overwatcher, {:io_in, payload})
+  def handle_in({type, message}, %{overwatcher_pid: overwatcher} = state) do
+    GenServer.cast(overwatcher, {:io_in, {type, message}})
 
     {:ok, state}
   end

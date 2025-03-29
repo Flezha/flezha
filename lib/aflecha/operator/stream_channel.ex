@@ -35,14 +35,14 @@ defmodule Aflecha.Operator.StreamChannel do
 
   @impl true
   def handle_cast(
-        {:io_in, pipeline_id, payload, data_type, handling_type},
+        {:io_in, pipeline_id, {type, message}, handling_type},
         %{sock: sock} = state
       ) do
     :gen_tcp.send(
       sock,
       Payloader.build_from_bin(
         pipeline_id,
-        input_type(data_type) <> handling_type(handling_type) <> payload
+        input_type(type) <> handling_type(handling_type) <> message
       )
     )
 
@@ -98,9 +98,9 @@ defmodule Aflecha.Operator.StreamChannel do
     socket
   end
 
-  defp input_type(data_type) do
+  defp input_type(type) do
     # Binary is 1, Text is 2, wrapped in a 8-bit integer
-    case data_type do
+    case type do
       :binary -> <<1::size(8)>>
       :text -> <<2::size(8)>>
     end

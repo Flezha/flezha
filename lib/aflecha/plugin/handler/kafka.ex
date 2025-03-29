@@ -19,12 +19,12 @@ defmodule Aflecha.Plugin.Handler.Kafka do
       end
 
       @impl true
-      def exec(settings, payload) do
+      def exec(settings, {_type, message} = payload) do
         res =
           KafkaEx.produce(
             settings.topic,
             settings.partition,
-            payload,
+            message,
             worker_name: settings.conn
           )
 

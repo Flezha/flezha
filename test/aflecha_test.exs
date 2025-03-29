@@ -186,8 +186,8 @@ defmodule AflechaTest do
   #     |> PipelineFixture.get("store_input")
   #     |> PipelineFixture.start()
 
-  #   GenServer.cast(pipeline_pid, {:io_in, "state_1"})
-  #   GenServer.cast(pipeline_pid, {:io_in, "state_2"})
+  #   GenServer.cast(pipeline_pid, {:io_in, {:text, "state_1"}})
+  #   GenServer.cast(pipeline_pid, {:io_in, {:text, "state_2"}})
   #   GenServer.call(pipeline_pid, :ping)
 
   #   {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
@@ -212,8 +212,8 @@ defmodule AflechaTest do
       |> PipelineFixture.get("store_input")
       |> PipelineFixture.start()
 
-    GenServer.cast(pipeline_pid, {:io_in, "test_state_1"})
-    GenServer.cast(pipeline_pid, {:io_in, "test_state_2"})
+    GenServer.cast(pipeline_pid, {:io_in, {:text, "test_state_1"}})
+    GenServer.cast(pipeline_pid, {:io_in, {:text, "test_state_2"}})
     GenServer.call(pipeline_pid, :ping)
 
     test_state = %{

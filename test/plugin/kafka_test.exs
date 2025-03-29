@@ -36,9 +36,9 @@ defmodule AflechaTest.Plugin.KafkaTest do
       conn: self()
     }
 
-    result = PipelineBinding.exec(settings, {"test_data", :text})
+    result = PipelineBinding.exec(settings, {:text, "test_data"})
 
     assert elem(result, 0) == :ok
-    assert elem(result, 1) == {"test_data", :text}
+    assert elem(result, 1) == {:text, "test_data"}
   end
 end

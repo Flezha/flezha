@@ -6,6 +6,8 @@ defmodule Aflecha.Pipeline.Overwatch do
   alias Aflecha.Plugin.PipelineBinding
   alias Aflecha.Operator.FleetManager
 
+  require Logger
+
   use GenServer
 
   defstruct [:id, :group_id, :operator_id, :channel, :bindings, variables: %{}]
@@ -99,13 +101,9 @@ defmodule Aflecha.Pipeline.Overwatch do
     # TODO: were currently hardcoding the handling_type to :stream (:task is also a option)
     # The pipeline itself should be able to define the handling type.
     # Meaning we should store the handling type in the overwatch state.
-
-    # TODO: we are hardcoding it right now, should be dynamic or removed after all.
-    data_type = :text
-
     payload = exec_binding(state.bindings.on_input, payload)
 
-    GenServer.cast(state.channel, {:io_in, state.id, payload, data_type, :stream})
+    GenServer.cast(state.channel, {:io_in, state.id, payload, :stream})
 
     {:noreply, state}
   end
