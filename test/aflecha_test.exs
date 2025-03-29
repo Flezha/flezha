@@ -178,65 +178,65 @@ defmodule AflechaTest do
     end
   end
 
-  # test "get pipeline state" do
-  #   pipeline_id = "get_state_test"
+  test "get pipeline state" do
+    pipeline_id = "get_state_test"
 
-  #   {:ok, %{pid: pipeline_pid}} =
-  #     pipeline_id
-  #     |> PipelineFixture.get("store_input")
-  #     |> PipelineFixture.start()
+    {:ok, %{pid: pipeline_pid}} =
+      pipeline_id
+      |> PipelineFixture.get("store_input")
+      |> PipelineFixture.start()
 
-  #   GenServer.cast(pipeline_pid, {:io_in, {:text, "state_1"}})
-  #   GenServer.cast(pipeline_pid, {:io_in, {:text, "state_2"}})
-  #   GenServer.call(pipeline_pid, :ping)
+    GenServer.cast(pipeline_pid, {:io_in, {:text, "state_1"}})
+    GenServer.cast(pipeline_pid, {:io_in, {:text, "state_2"}})
+    GenServer.call(pipeline_pid, :ping)
 
-  #   {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
-  #   pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
-  #   assert pipeline_state === %{
-  #            "binary_inputs" => [],
-  #            "text_inputs" => ["state_1", "state_2"]
-  #          }
-  # end
+    assert pipeline_state === %{
+             "binary_inputs" => [],
+             "text_inputs" => ["state_1", "state_2"]
+           }
+  end
 
-  # test "pipeline migration" do
-  #   # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
-  #   # then get the state of the new migrated process to see if it matches the state1 string.
+  test "pipeline migration" do
+    # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
+    # then get the state of the new migrated process to see if it matches the state1 string.
 
-  #   {peer_pid, peer_node} = TestHelper.start_peer_node(:anode1)
+    {peer_pid, peer_node} = TestHelper.start_peer_node(:anode1)
 
-  #   pipeline_id = "pipeline_migration_test"
+    pipeline_id = "pipeline_migration_test"
 
-  #   {:ok, %{pid: pipeline_pid, node: pnode}} =
-  #     pipeline_id
-  #     |> PipelineFixture.get("store_input")
-  #     |> PipelineFixture.start()
+    {:ok, %{pid: pipeline_pid, node: pnode}} =
+      pipeline_id
+      |> PipelineFixture.get("store_input")
+      |> PipelineFixture.start()
 
-  #   GenServer.cast(pipeline_pid, {:io_in, {:text, "test_state_1"}})
-  #   GenServer.cast(pipeline_pid, {:io_in, {:text, "test_state_2"}})
-  #   GenServer.call(pipeline_pid, :ping)
+    GenServer.cast(pipeline_pid, {:io_in, {:text, "test_state_1"}})
+    GenServer.cast(pipeline_pid, {:io_in, {:text, "test_state_2"}})
+    GenServer.call(pipeline_pid, :ping)
 
-  #   test_state = %{
-  #     "binary_inputs" => [],
-  #     "text_inputs" => ["test_state_1", "test_state_2"]
-  #   }
+    test_state = %{
+      "binary_inputs" => [],
+      "text_inputs" => ["test_state_1", "test_state_2"]
+    }
 
-  #   # TODO: add here hook instead
-  #   Process.sleep(100)
+    # TODO: add here hook instead
+    Process.sleep(100)
 
-  #   {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
-  #   pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
-  #   assert pipeline_state === test_state
+    assert pipeline_state === test_state
 
-  #   TestHelper.stop_peer_node(peer_pid, peer_node)
+    TestHelper.stop_peer_node(peer_pid, peer_node)
 
-  #   # TODO: add hook here instead
-  #   Process.sleep(1000)
+    # TODO: add hook here instead
+    Process.sleep(1000)
 
-  #   {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
-  #   pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
-  #   assert pipeline_state === test_state
-  # end
+    assert pipeline_state === test_state
+  end
 end
