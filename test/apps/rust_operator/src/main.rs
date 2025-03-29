@@ -10,39 +10,6 @@ fn main() {
 
     let _operator = aflecha_operator::new("default".to_string());
 
-    // TODO: 
-    // operator.register_factory(
-    //     "store_input".to_string(),
-    //     || Box::new(StoreInputWorker{
-    //         text_inputs: vec![],
-    //         binary_inputs: vec![]
-    //     })
-    // );
-
-    // operator.register_factory(
-    //     "forward_orig".to_string(),
-    //     || Box::new(ForwardOrigWorker{})
-    // );
-
-    // operator.register_factory(
-    //     "do_nothing".to_string(),
-    //     || Box::new(DoNothingWorker{})
-    // );
-
-    // operator.register_factory(
-    //     "compare_filter".to_string(),
-    //      || Box::new(CompareFilterWorker{ 
-    //         comparable: "".to_string(), inverted: false 
-    //     })
-    // );
-
-    // operator.register_factory(
-    //     "increment_state".to_string(), 
-    //     || Box::new(IncrementStateWorker {
-    //         value: 5000
-    //     })
-    // );
-
     // TODO: remove later.
     std::thread::sleep(std::time::Duration::from_secs(36));
 }
