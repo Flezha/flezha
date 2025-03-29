@@ -72,7 +72,7 @@ defmodule Aflecha.Service.PipelineManager do
          }}
 
       {:error, reason} ->
-        {[{pipeline_id, node, {error_msg, _}}], _partial_success} = reason
+        {{pipeline_id, node, {error_msg, _}}, _partial_success} = reason
 
         {:error,
          %{
