@@ -158,7 +158,7 @@ defmodule Aflecha.Pipeline.Overwatch do
     _result =
       GenServer.call(
         Identificator.control_unit(state.operator_id),
-        {:send_control, "deserialize_pipeline", operator_data}
+        {:send_control, "migration_deserialization", operator_data}
       )
 
     # TODO: add error handling for _result
@@ -185,7 +185,7 @@ defmodule Aflecha.Pipeline.Overwatch do
     result =
       GenServer.call(
         Identificator.control_unit(operator_id),
-        {:send_control, "serialize_pipeline", data}
+        {:send_control, "migration_serialization", data}
       )
 
     case result do

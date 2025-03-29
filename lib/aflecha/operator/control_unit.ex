@@ -15,8 +15,8 @@ defmodule Aflecha.Operator.ControlUnit do
   @payload_id_connect_sockets "connect_sockets"
   @payload_id_pipeline_add "add_pipeline"
   @payload_id_pipeline_rem "rem_pipeline"
-  @payload_id_serialize_pipe "serialize_pipeline"
-  @payload_id_deserialize_pipe "deserialize_pipeline"
+  @payload_id_serialize_pipe "migration_serialization"
+  @payload_id_deserialize_pipe "migration_deserialization"
   @payload_id_pipeline_state "pipeline_state"
 
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
