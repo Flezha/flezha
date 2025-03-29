@@ -74,7 +74,7 @@ defmodule Aflecha.Service.Payloader do
     parse_messages(payload, [])
   end
 
-  def construct_worker!(input, type) do
+  def construct_pipeline!(input, type) do
     result =
       case type do
         :json -> PipelineBuilder.from_json(input)
@@ -82,7 +82,7 @@ defmodule Aflecha.Service.Payloader do
       end
 
     case result do
-      {:ok, worker} -> worker
+      {:ok, pipeline} -> pipeline
       {:error, reason} -> raise reason
     end
   end

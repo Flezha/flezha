@@ -3,7 +3,7 @@
         "./test/apps/rust_operator/Cargo.toml",
         "./sdk/rust/Cargo.toml",
         "./cli/agent/Cargo.toml",
-        "./cli/worker/Cargo.toml",
+        "./cli/pipeline/Cargo.toml",
         "./cli/io/Cargo.toml",
     ],
     "rust-analyzer.cargo.loadOutDirsFromCheck": true,

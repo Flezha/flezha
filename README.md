@@ -1,7 +1,7 @@
 # Aflecha
 
 ## Description
-Distributed stateful workers. Provdes a static and dynamic creation of workers.
+Distributed stateful pipelines. Provdes a static and dynamic creation of pipelines.
 
 ## Building
 - Copy `.env.example` and rename to `.env`
@@ -23,26 +23,26 @@ Stopping the node.
 _build/dev/rel/aflecha/bin/agent stop
 ```
 
-### Starting a worker.
+### Starting a pipeline.
 ```bash
-_build/dev/rel/aflecha/bin/worker start my_worker compare_filter --variables='{
+_build/dev/rel/aflecha/bin/pipeline start my_pipeline compare_filter --variables='{
   "comparable": "hello world", 
   "inverted": false
 }'
 ```
 
 ```bash
-_build/dev/rel/aflecha/bin/worker start my_worker forward_orig
+_build/dev/rel/aflecha/bin/pipeline start my_pipeline forward_orig
 ```
 
-### Stop a worker.
+### Stop a pipeline.
 ```bash
-_build/dev/rel/aflecha/bin/worker stop my_worker
+_build/dev/rel/aflecha/bin/pipeline stop my_pipeline
 ```
 
-### Adding IO to the worker.
+### Adding IO to the pipeline.
 ```bash
-_build/dev/rel/aflecha/bin/io add input my_worker --parameters='{
+_build/dev/rel/aflecha/bin/io add input my_pipeline --parameters='{
   "io_type": "websocket",
   "uri": "wss://ws.kraken.com",
   "post_connect": {
