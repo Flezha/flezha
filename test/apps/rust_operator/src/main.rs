@@ -15,26 +15,29 @@ fn main() {
 }
 
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct StoreInputState {
     binary_inputs: Vec<Vec<u8>>,
     text_inputs: Vec<String>
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct CompareFilterState {
     comparable: String,
     inverted: bool,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct DoNothingState {}
 
 fn define_factories() {
     define_pipeline_factory! {
         factory_id: "store_input".to_string(),
         result_type: PipelineResultType::Forward,
-        state: StoreInputState,
+        state: StoreInputState{
+            binary_inputs: vec![],
+            text_inputs: vec![]
+        },
         steps: [
             |input: PipelineInput, state: &mut StoreInputState| -> io::Result<PipelineOutput> {
                 match input {
@@ -56,7 +59,10 @@ fn define_factories() {
     define_pipeline_factory! {
         factory_id: "compare_filter".to_string(),
         result_type: PipelineResultType::Forward,
-        state: CompareFilterState,
+        state: CompareFilterState{
+            comparable: "default".to_string(),
+            inverted: false
+        },
         steps: [
             |input: PipelineInput, state: &mut CompareFilterState| -> io::Result<PipelineOutput> {
                 
@@ -64,6 +70,8 @@ fn define_factories() {
                     PipelineInput::Text(text) => text,
                     PipelineInput::Binary(binary) => String::from_utf8(binary).unwrap()
                 };
+
+                println!("Comparing: {} with {}", text, state.comparable);
 
                 if state.inverted {
                     if state.comparable == text {
@@ -85,7 +93,7 @@ fn define_factories() {
     define_pipeline_factory! {
         factory_id: "do_nothing".to_string(),
         result_type: PipelineResultType::Forward,
-        state: DoNothingState,
+        state: DoNothingState{},
         steps: [
             |input: PipelineInput, _state: &mut DoNothingState| -> io::Result<PipelineOutput> {
                 Ok(input.into())
