@@ -65,13 +65,10 @@ fn define_factories() {
         },
         steps: [
             |input: PipelineInput, state: &mut CompareFilterState| -> io::Result<PipelineOutput> {
-                
                 let text = match input {
                     PipelineInput::Text(text) => text,
                     PipelineInput::Binary(binary) => String::from_utf8(binary).unwrap()
                 };
-
-                println!("Comparing: {} with {}", text, state.comparable);
 
                 if state.inverted {
                     if state.comparable == text {

@@ -72,7 +72,7 @@ defmodule Aflecha.Plugin.Handler.Websocket do
   end
 
   @impl Fresh
-  def handle_in({type, message}, %{overwatcher_pid: overwatcher} = state) do
+  def handle_in({type, message} = p, %{overwatcher_pid: overwatcher} = state) do
     GenServer.cast(overwatcher, {:io_in, {type, message}})
 
     {:ok, state}

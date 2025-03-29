@@ -32,7 +32,7 @@ config :aflecha,
   ]
 
 config :logger,
-  level: :error
+  level: :warning
 
 config :kafka_ex,
   brokers: [
