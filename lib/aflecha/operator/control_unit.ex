@@ -160,7 +160,10 @@ defmodule Aflecha.Operator.ControlUnit do
 
             "error" ->
               reason = Enum.join(json_message["errors"], " | ")
-              Logger.warning(reason)
+
+              if Mix.env() !== :test do
+                Logger.error(reason)
+              end
 
               {:error, reason}
           end

@@ -97,6 +97,15 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   @impl true
+  def handle_call({:io_in, payload}, _from, state) do
+    payload = exec_binding(state.bindings.on_input, payload)
+
+    GenServer.call(state.channel, {:io_in, state.id, payload, :stream})
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
   def handle_cast({:io_in, payload}, state) do
     # TODO: were currently hardcoding the handling_type to :stream (:task is also a option)
     # The pipeline itself should be able to define the handling type.

@@ -38,15 +38,20 @@ defmodule Aflecha.Operator.StreamChannel do
         {:io_in, pipeline_id, {type, message}, handling_type},
         %{sock: sock} = state
       ) do
-    :gen_tcp.send(
-      sock,
-      Payloader.build_from_bin(
-        pipeline_id,
-        input_type(type) <> handling_type(handling_type) <> message
-      )
-    )
+    send_channel_payload(sock, pipeline_id, type, handling_type, message)
 
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_call(
+        {:io_in, pipeline_id, {type, message}, handling_type},
+        _from,
+        %{sock: sock} = state
+      ) do
+    send_channel_payload(sock, pipeline_id, type, handling_type, message)
+
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -87,6 +92,16 @@ defmodule Aflecha.Operator.StreamChannel do
     Logger.warning("Unexpected message at io channel: #{inspect(msg)}")
 
     {:noreply, state}
+  end
+
+  defp send_channel_payload(sock, pipeline_id, type, handling_type, message) do
+    :gen_tcp.send(
+      sock,
+      Payloader.build_from_bin(
+        pipeline_id,
+        input_type(type) <> handling_type(handling_type) <> message
+      )
+    )
   end
 
   defp accept_connection(lsock) do

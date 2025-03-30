@@ -188,9 +188,8 @@ defmodule AflechaTest do
       |> PipelineFixture.get("store_input")
       |> PipelineFixture.start()
 
-    GenServer.cast(pipeline_pid, {:io_in, {:text, "state_1"}})
-    GenServer.cast(pipeline_pid, {:io_in, {:text, "state_2"}})
-    GenServer.call(pipeline_pid, :ping)
+    GenServer.call(pipeline_pid, {:io_in, {:text, "state_1"}})
+    GenServer.call(pipeline_pid, {:io_in, {:text, "state_2"}})
 
     {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
     pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
