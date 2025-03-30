@@ -13,8 +13,14 @@ Distributed stateful pipelines. Provdes a static and dynamic creation of pipelin
 
 ### Start agent
 Starting the node and specifying the external processes to be used by the node mynode.
+PROD:
 ```bash
-RELEASE_NODE=mynode AFLECHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/aflecha/test/apps/rust_operator/Cargo.toml --target-dir=./target" _build/dev/rel/aflecha/bin/agent start --mode=attached_iex
+RELEASE_NODE=mynode AFLECHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/aflecha/test/apps/rust_operator/Cargo.toml --target-dir=./target" _build/prod/rel/aflecha/bin/agent start --mode=attached_iex
+```
+
+DEV:
+```bash
+RELEASE_NODE=mynode _build/dev/rel/aflecha/bin/agent start --mode=attached_iex
 ```
 
 ### Stop agent
