@@ -12,8 +12,7 @@ defmodule AflechaTest do
   @default_group "default"
   @node_name TestHelper.node_name()
 
-  # @test_forward_orig_factory "forward_orig"
-  # @test_store_input_factory "store_input"
+  @test_store_input_factory "store_input"
   @test_pipeline_factory "do_nothing"
   @test_compare_filter_factory "compare_filter"
 
@@ -185,7 +184,7 @@ defmodule AflechaTest do
 
     {:ok, %{pid: pipeline_pid}} =
       pipeline_id
-      |> PipelineFixture.get("store_input")
+      |> PipelineFixture.get(@test_store_input_factory)
       |> PipelineFixture.start()
 
     GenServer.call(pipeline_pid, {:io_in, {:text, "state_1"}})
@@ -210,7 +209,7 @@ defmodule AflechaTest do
 
     {:ok, %{pid: pipeline_pid, node: pnode}} =
       pipeline_id
-      |> PipelineFixture.get("store_input")
+      |> PipelineFixture.get(@test_store_input_factory)
       |> PipelineFixture.start()
 
     GenServer.cast(pipeline_pid, {:io_in, {:text, "test_state_1"}})

@@ -32,7 +32,7 @@ _build/dev/rel/aflecha/bin/pipeline start my_pipeline compare_filter --variables
 ```
 
 ```bash
-_build/dev/rel/aflecha/bin/pipeline start my_pipeline forward_orig
+_build/dev/rel/aflecha/bin/pipeline start my_pipeline do_nothing
 ```
 
 ### Stop a pipeline.

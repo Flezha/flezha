@@ -21,22 +21,22 @@ pub fn get_extension() -> String {
 }
 
 pub fn get_namespace(slice: &[String]) -> String {
-    get_parameter(slice, "--operator=", "-o=")
+    get_parameter(slice, "--group=", "-g=")
 }
 
 pub fn get_parameter(slice: &[String], long_key: &str, short_key: &str) -> String {
-    let mut operator_id = String::from("");
+    let mut group_id = String::from("");
 
-    // Process the arguments to find the operator_id
+    // Process the arguments to find the group_id
     for arg in slice {
         if arg.starts_with(long_key) {
-            operator_id = arg[10..].to_string();
+            group_id = arg[10..].to_string();
         } else if arg.starts_with(short_key) {
-            operator_id = arg[3..].to_string();
+            group_id = arg[3..].to_string();
         }
     }
 
-    operator_id
+    group_id
 }
 
 pub fn get_json(slice: &[String], long_key: &str, short_key: &str) -> String {

@@ -11,7 +11,7 @@ fn main() {
     let _operator = aflecha_operator::new("default".to_string());
 
     // TODO: remove later.
-    std::thread::sleep(std::time::Duration::from_secs(36));
+    std::thread::sleep(std::time::Duration::from_secs(360));
 }
 
 
