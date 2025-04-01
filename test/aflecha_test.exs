@@ -49,6 +49,22 @@ defmodule AflechaTest do
     assert is_binary(info[:operator_id])
   end
 
+  test "pipeline removing" do
+    pipeline_id = "default_pipeline_rem_test"
+
+    {:ok, %{pid: pipeline_pid}} =
+      pipeline_id
+      |> PipelineFixture.get(@test_store_input_factory)
+      |> PipelineFixture.start()
+
+    assert {:ok, :pipeline_removed} === PipelineManager.rem_pipeline(@default_group, pipeline_id)
+
+    # TODO: add hook instead to listen to process removal.
+    Process.sleep(100)
+
+    assert PipelineManager.exist?(@default_group, pipeline_id) === false
+  end
+
   test "pipeline adding non existing factory" do
     pipeline_id = "non_existing_factory_err"
 
@@ -207,7 +223,7 @@ defmodule AflechaTest do
 
     pipeline_id = "pipeline_migration_test"
 
-    {:ok, %{pid: pipeline_pid, node: pnode}} =
+    {:ok, %{pid: pipeline_pid, node: _pnode}} =
       pipeline_id
       |> PipelineFixture.get(@test_store_input_factory)
       |> PipelineFixture.start()

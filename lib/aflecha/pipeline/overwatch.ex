@@ -52,6 +52,18 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   @impl true
+  def handle_call(:rem_pipeline, from, state) do
+    GenServer.call(
+      Identificator.control_unit(state.operator_id),
+      {:stop_pipeline, state.id}
+    )
+
+    GenServer.reply(from, :ok)
+
+    {:stop, :normal, state}
+  end
+
+  @impl true
   def handle_call({:add_binding, binding, mode, opts}, _from, state) do
     case PipelineBinding.bind(binding) do
       {:ok, binding} ->

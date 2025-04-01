@@ -4,7 +4,6 @@ defmodule Aflecha.Service.PipelineManager do
   """
 
   alias Aflecha.HubManager
-  alias Aflecha.Operator.Controller
   alias Aflecha.Service.Identificator
   alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
@@ -33,11 +32,20 @@ defmodule Aflecha.Service.PipelineManager do
   end
 
   @doc """
-  Stops a pipeline.
+  Removes a pipeline.
   """
-  @spec stop_pipeline(String.t(), String.t()) :: :ok | {:error, String.t()}
-  def stop_pipeline(group_id, pipeline_id) do
-    GenServer.call(Controller, {:stop_pipeline, group_id, pipeline_id})
+  @spec rem_pipeline(String.t(), String.t()) :: :ok | {:error, String.t()}
+  def rem_pipeline(group_id, pipeline_id) do
+    case get_pipeline_pid(group_id, pipeline_id) do
+      {:ok, pipeline_pid} ->
+        case GenServer.call(pipeline_pid, :rem_pipeline) do
+          :ok -> {:ok, :pipeline_removed}
+          {:error, reason} -> {:error, reason}
+        end
+
+      err ->
+        err
+    end
   end
 
   defp add_pipeline(group_id, pipeline) do
@@ -47,7 +55,8 @@ defmodule Aflecha.Service.PipelineManager do
         Aflecha.Pipeline.Overwatch,
         :start_link,
         [{group_id, pipeline}]
-      }
+      },
+      restart: :transient
     }
 
     result =
@@ -80,6 +89,13 @@ defmodule Aflecha.Service.PipelineManager do
            node: node,
            reason: error_msg
          }}
+    end
+  end
+
+  def exist?(group_id, pipeline_id) do
+    case get_pipeline_pid(group_id, pipeline_id) do
+      {:ok, _pid} -> true
+      {:error, _reason} -> false
     end
   end
 
