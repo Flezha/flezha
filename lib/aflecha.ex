@@ -13,7 +13,7 @@ defmodule Aflecha do
 
   defdelegate create_pipeline(group_id, pipeline), to: PipelineManager
 
-  defdelegate stop_pipeline(group_id, pipeline), to: PipelineManager
+  defdelegate rem_pipeline(group_id, pipeline), to: PipelineManager
 
   defdelegate add_io(group_id, pipeline_id, io_struct, io_mode, opts), to: IOManager
 end

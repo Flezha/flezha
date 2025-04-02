@@ -23,14 +23,16 @@ fn main() {
 }
 
 fn handle_start(args: Vec<String>) {
+    let example_usage = format!("Usage: {} add <pipeline_id> <factory_id> [--group=<group_id> |-g=<group_id>] [--init_values=<json> |-iv=<json>]", args[0]);
+
     if args.len() < 3 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} start <pipeline_id> <factory_id> [--group=<group_id> |-g=<group_id>]", args[0]);
+        eprintln!("{}", format!("Error: Invalid number of arguments.\n {}",  example_usage));
         exit(1);
     }
 
     let pipeline_id = &args[2];
     let factory_id = &args[3];
-    let variables = get_json(&args[4..], "--variables=", "-v=");
+    let variables = get_json(&args[4..], "--init_values=", "-iv=");
 
     let command = get_aflecha_command();
     let group_id = get_namespace(&args[4..]);

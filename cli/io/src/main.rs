@@ -16,18 +16,20 @@ fn main() {
 }
 
 fn handle_add(args: Vec<String>) {
+    let example_usage = "Usage: {} add <pipeline_id> <pipeline_factory_id> [--group=<group_id> |-g=<group_id>] [--init_values=<json> |-iv=<json>]";
+
     if args.len() < 4 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} add <input|output> <pipeline_id> [--parameters=<json> |-p=<json>] [--operator=<operator_id> |-o=<operator_id>]", args[0]);
+        eprintln!(example_usage, args[0]);
         exit(1);
     }
 
     let io_mode = &args[2];
     let pipeline_id = &args[3];
-    let params = get_json(&args[4..], "--parameters=", "-p=");
+    let params = get_json(&args[4..], "--init_values=", "-iv=");
 
     match params.as_str() {
         "" => {
-            eprintln!("Error: Missing parameters. Usage: {} add <input|output> [--parameters=<json> |-p=<json>] [--operator=<operator_id> |-o=<operator_id>]", args[0]);
+            eprintln!(example_usage, args[0]);
             exit(1);
         },
         _ => {}
@@ -38,7 +40,7 @@ fn handle_add(args: Vec<String>) {
     let opts: String = get_opts(&args[4..]);
     
     let rpc_command = format!(
-        "Aflecha.Service.RpcCookbook.add_io(\"{}\", \"{}\",\"{}\", :{}, {})",
+        "Aflecha.Service.RpcCookbook.enable_plugin(\"{}\", \"{}\",\"{}\", :{}, {})",
         operator_id,
         pipeline_id,
         params, 

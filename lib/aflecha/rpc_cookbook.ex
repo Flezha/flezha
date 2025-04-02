@@ -22,7 +22,7 @@ defmodule Aflecha.Service.RpcCookbook do
   @doc "Stops a pipelinene."
   @spec pipeline_stop(String.t(), String.t()) :: :ok | {:error, String.t()}
   def pipeline_stop(group_id, pipeline_id) do
-    PipelineManager.stop_pipeline(group_id(group_id), pipeline_id)
+    PipelineManager.rem_pipeline(group_id(group_id), pipeline_id)
   end
 
   @doc "Adds an IO."
