@@ -1,3 +1,7 @@
+use std::thread::{self};
+use std::io::{self, Read};
+use std::time::Duration;
+
 use aflecha_operator::{
     PipelineResultType,
     define_pipeline_factory
@@ -10,10 +14,29 @@ fn main() {
 
     let _operator = aflecha_operator::new("default".to_string());
 
-    // TODO: remove later.
-    std::thread::sleep(std::time::Duration::from_secs(360));
+    // To keep the process alive while the agent is running.
+    std_keeper();
 }
 
+fn std_keeper() -> thread::JoinHandle<()> {
+    let mut buf = [0u8; 1];
+
+    loop {
+        let result = io::stdin().read(&mut buf);
+        match result {
+            Ok(0) => {
+                std::process::exit(0);
+            }
+            Ok(_) => {
+                // Data available; continue monitoring
+                println!("Data available: {:?}", buf);
+            }
+            Err(_e) => {}
+        }
+
+        thread::sleep(Duration::from_secs(1));
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct StoreInputState {
