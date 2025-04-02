@@ -1,7 +1,5 @@
 defmodule AflechaTest do
-  alias Aflecha.Service.Identificator
   alias Aflecha.Service.PipelineManager
-  alias Aflecha.HubManager
   alias AflechaTest.Fixtures.PipelineFixture
 
   use ExUnit.Case
