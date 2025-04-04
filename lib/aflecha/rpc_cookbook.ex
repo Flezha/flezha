@@ -4,7 +4,7 @@ defmodule Aflecha.Service.RpcCookbook do
   """
 
   alias Aflecha.Service.PipelineManager
-  alias Aflecha.IO.IOManager
+  alias Aflecha.Service.Payloader
 
   @doc "Starts a pipeline."
   @spec pipeline_start(String.t(), String.t(), String.t(), String.t()) ::
@@ -13,7 +13,7 @@ defmodule Aflecha.Service.RpcCookbook do
     pipeline = %Aflecha.Pipeline.Builder{
       id: pipeline_id,
       factory_id: factory_id,
-      variables: Aflecha.Service.Payloader.json_to_map(variables)
+      variables: Payloader.json_to_map(variables)
     }
 
     PipelineManager.create_pipeline(group_id(group_id), pipeline)
@@ -25,11 +25,30 @@ defmodule Aflecha.Service.RpcCookbook do
     PipelineManager.rem_pipeline(group_id(group_id), pipeline_id)
   end
 
-  @doc "Adds an IO."
-  def add_io(group_id, pipeline_id, io_params, io_mode, opts) do
-    io_struct = Aflecha.Service.Payloader.extract_io_settings(io_params)
+  @doc "Enalbes plugin."
+  def enable_plugin(group_id, plugin_id, plugin_settings) do
+    result = try do
+      module_name = String.to_existing_atom(plugin_id)
 
-    IOManager.add_io(group_id(group_id), pipeline_id, io_struct, io_mode, opts)
+      # TODO: check if the module is under the enabled plugins and implements the PluginBase behaviour.
+
+      {:ok, module_name}
+    rescue
+      ArgumentError -> {:error, "Module does not exist"}
+    end
+
+    case result do
+      {:ok, module_name} ->
+        plugin_settings = case Jason.decode(plugin_settings, [keys: :atoms!]) do
+          {:ok, map} -> map
+          {:error, reason} -> raise reason
+        end
+
+        # TODO: test with wrong module and wrong settings.
+        plugin_struct = struct!(module_name, plugin_settings)
+
+      {:error, reason} -> raise reason
+    end
   end
 
   defp group_id(group_id) do

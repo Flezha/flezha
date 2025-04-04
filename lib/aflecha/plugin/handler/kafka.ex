@@ -1,9 +1,16 @@
 defmodule Aflecha.Plugin.Handler.Kafka do
   alias Aflecha.Plugin.PipelineBinding
+  alias Aflecha.Plugin.PipelinePlugin
+  alias Aflecha.Plugin.PluginBase
 
   defmodule Producer do
-    @enforce_keys [:hosts, :topic, :partition]
+    @behaviour PluginBase
+
+    @enforce_keys PipelinePlugin.default_keys() ++ [:hosts, :topic, :partition]
     defstruct @enforce_keys ++ [:conn]
+
+    @impl true
+    def plugin_id(), do: "pipeline_kafka_producer"
 
     defimpl PipelineBinding, for: Producer do
       # TODO: The system needs to be intelligent enough to know when to reuse a connection

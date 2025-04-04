@@ -1,7 +1,15 @@
 defmodule Aflecha.Plugin.Handler.StdOut do
   alias Aflecha.Plugin.PipelineBinding
+  alias Aflecha.Plugin.PipelinePlugin
+  alias Aflecha.Plugin.PluginBase
 
-  defstruct []
+  @behaviour PluginBase
+
+  @enforce_keys PipelinePlugin.default_keys()
+  defstruct @enforce_keys
+
+  @impl true
+  def plugin_id(), do: "pipeline_stdout"
 
   defimpl PipelineBinding, for: Aflecha.Plugin.Handler.StdOut do
     @impl true

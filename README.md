@@ -31,7 +31,7 @@ _build/dev/rel/aflecha/bin/agent stop
 
 ### Starting a pipeline.
 ```bash
-_build/dev/rel/aflecha/bin/pipeline start my_pipeline compare_filter --variables='{
+_build/dev/rel/aflecha/bin/pipeline start my_pipeline compare_filter --init_values='{
   "comparable": "hello world", 
   "inverted": false
 }'

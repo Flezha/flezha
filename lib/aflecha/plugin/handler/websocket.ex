@@ -1,17 +1,24 @@
 defmodule Aflecha.Plugin.Handler.Websocket do
   alias Aflecha.Plugin.PipelineBinding
+  alias Aflecha.Plugin.PipelinePlugin
+  alias Aflecha.Plugin.PluginBase
 
   require Logger
 
   use Fresh
 
-  @enforce_keys [:uri]
+  @behaviour PluginBase
+
+  @enforce_keys PipelinePlugin.default_keys() ++ [:uri]
   defstruct @enforce_keys ++
               [
                 :conn,
                 post_connect: %{},
                 ws_opts: []
               ]
+
+  @impl true
+  def plugin_id(), do: "pipeline_websocket"
 
   defimpl PipelineBinding, for: Aflecha.Plugin.Handler.Websocket do
     alias Aflecha.Plugin.Handler.Websocket
@@ -72,7 +79,7 @@ defmodule Aflecha.Plugin.Handler.Websocket do
   end
 
   @impl Fresh
-  def handle_in({type, message} = p, %{overwatcher_pid: overwatcher} = state) do
+  def handle_in({type, message} = _p, %{overwatcher_pid: overwatcher} = state) do
     GenServer.cast(overwatcher, {:io_in, {type, message}})
 
     {:ok, state}

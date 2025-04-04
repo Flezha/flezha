@@ -92,6 +92,7 @@ fn handle_stop(args: Vec<String>) {
     }
 }
 
+// TODO: implement this function.
 fn handle_state(_args: Vec<String>) {
 
 }

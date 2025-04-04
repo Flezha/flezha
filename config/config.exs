@@ -6,11 +6,11 @@ config :aflecha,
   pre_hooks: [],
   post_hooks: [],
 
-  # TODO: this has no effect yet.s
+  # TODO: we need to dynamically load the plugins from .env.
   # ------------------------------------------------------------------------------------------------
   # Enabled plugins.
   enabled_plugins: [
-    Aflecha.Plugin.Handler.KafkaP,
+    Aflecha.Plugin.Handler.Kafka.Producer,
     Aflecha.Plugin.Handler.Websocket,
     Aflecha.Plugin.Handler.BeamMsgForward
   ]

@@ -128,7 +128,7 @@ defmodule AflechaTest do
     {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
 
     res =
-      Aflecha.Service.PipelineManager.add_binding(
+      PipelineManager.add_binding(
         @default_group,
         pipeline_id,
         %Aflecha.Plugin.Handler.BeamMsgForward{

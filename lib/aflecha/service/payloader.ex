@@ -1,50 +1,6 @@
 defmodule Aflecha.Service.Payloader do
   alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
-  # TODO: Remove or update when dealing with new CLI commands.
-  def extract_io_settings(json_str) do
-    settings_map = json_to_map(json_str)
-
-    io_type =
-      case Map.fetch(settings_map, "io_type") do
-        {:ok, io_type} -> io_type
-        :error -> raise "No io_type found in the input"
-      end
-
-    settings_map = Map.delete(settings_map, "io_type")
-
-    io_struct =
-      case io_type do
-        "websocket" ->
-          post_connect = Map.get(settings_map, "post_connect", %{})
-
-          _payload =
-            if Map.has_key?(post_connect, "payload") do
-              payload = Map.get(post_connect, "payload")
-
-              {
-                Enum.at(payload, 0) |> String.to_existing_atom(),
-                Enum.at(payload, 1) |> Jason.encode!()
-              }
-            else
-              {}
-            end
-
-        # TODO: replace this legacy code.
-        # %Aflecha.IO.Handler.Websocket{
-        #   uri: Map.fetch!(settings_map, "uri"),
-        #   post_connect: %{
-        #     payload: payload
-        #   }
-        # }
-
-        _ ->
-          raise "Unknown io_type: #{io_type}"
-      end
-
-    io_struct
-  end
-
   def json_to_map(json) do
     case Jason.decode(json) do
       {:ok, map} -> map
