@@ -8,6 +8,9 @@ defmodule Aflecha.Plugin.PipelinePlugin do
           {:ok, pipeline_pid} ->
             GenServer.call(pipeline_pid, {:add_binding, settings})
 
+            # TODO: handle errors too.
+            {:ok, "binding added"}
+
           err ->
             err
         end
@@ -17,6 +20,9 @@ defmodule Aflecha.Plugin.PipelinePlugin do
         case PipelineManager.get_pipeline_pid(settings.group, settings.pipeline_id) do
           {:ok, pipeline_pid} ->
             GenServer.call(pipeline_pid, {:remove_binding, settings})
+
+            # TODO: handle errors too.
+            {:ok, "binding removed"}
 
           err ->
             err

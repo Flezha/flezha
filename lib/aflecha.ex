@@ -1,6 +1,6 @@
 defmodule Aflecha do
   alias Aflecha.Service.PipelineManager
-  alias Aflecha.IO.IOManager
+  alias Aflecha.Service.PluginManager
 
   @moduledoc """
   Documentation for `Aflecha`.
@@ -10,8 +10,7 @@ defmodule Aflecha do
 
   defdelegate rem_pipeline(group_id, pipeline), to: PipelineManager
 
-  # TODO: fix this.
-  defdelegate enable_plugin(group_id, pipeline_id, io_struct, io_mode, opts), to: IOManager
+  defdelegate enable_plugin(plugin_settings), to: PluginManager
 
   # TODO: Disable plugin
 

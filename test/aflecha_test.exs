@@ -113,7 +113,7 @@ defmodule AflechaTest do
         }
       })
 
-    assert res === :ok
+    assert res === {:ok, "binding added"}
   end
 
   test "beam msg forward plugin connection start" do
@@ -134,7 +134,7 @@ defmodule AflechaTest do
         recv_pid: self()
       })
 
-    assert res === :ok
+    assert res === {:ok, "binding added"}
   end
 
   test "pipeline flow generation -> beam msg forward" do

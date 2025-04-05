@@ -55,6 +55,8 @@ defmodule Aflecha.MixProject do
 
     File.cp!("cli/target/#{env}/agent", Path.join(release.path, "bin/agent"))
     File.cp!("cli/target/#{env}/pipeline", Path.join(release.path, "bin/pipeline"))
+    File.cp!("cli/target/#{env}/plugin", Path.join(release.path, "bin/plugin"))
+
     release
   end
 

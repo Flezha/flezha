@@ -6,6 +6,7 @@ defmodule Aflecha.Service.RpcCookbook do
   alias Aflecha.Service.PipelineManager
   alias Aflecha.Service.Payloader
   alias Aflecha.Service.PluginManager
+  alias Aflecha.Service.ConfigManager
 
   @doc "Starts a pipeline."
   @spec pipeline_start(String.t(), String.t(), String.t(), String.t()) ::
@@ -28,38 +29,46 @@ defmodule Aflecha.Service.RpcCookbook do
 
   @doc "Enalbes plugin."
   def enable_plugin(plugin_id, plugin_settings) do
-    result =
-      try do
-        module_name = String.to_existing_atom(plugin_id)
+    enabled_plugins = ConfigManager.get_enabled_plugins()
 
-        # TODO: check if the module is under the enabled plugins and implements the PluginBase behaviour.
+    plugin_mappings =
+      Enum.map(enabled_plugins, fn plugin_module ->
+        {
+          apply(plugin_module, :plugin_id, []),
+          {:mod, plugin_module}
+        }
+      end)
+      |> Map.new()
 
-        {:ok, module_name}
-      rescue
-        ArgumentError -> {:error, "Module does not exist"}
+    with {:mod, module} <- Map.get(plugin_mappings, plugin_id, {:error, "plugin not found"}),
+         {:ok, msg} <- handle_plugin_action(module, plugin_settings) do
+      # TODO: implement success
+      nil
+    else
+      {:error, reason} ->
+        nil
+        # TODO: implement error
+    end
+
+    # TODO: handle errors and successes.
+  end
+
+  defp handle_plugin_action(module, plugin_settings) do
+    plugin_settings =
+      case Jason.decode(plugin_settings, keys: :atoms!) do
+        {:ok, map} -> map
+        {:error, reason} -> raise reason
       end
 
-    case result do
-      {:ok, module_name} ->
-        plugin_settings =
-          case Jason.decode(plugin_settings, keys: :atoms!) do
-            {:ok, map} -> map
-            {:error, reason} -> raise reason
-          end
+    plugin_settings = Map.put_new(plugin_settings, :group, "default")
 
-        plugin_settings = Map.put_new(plugin_settings, :group, "default")
+    # Convert any custom keys to atoms
+    plugin_settings = atom_converter(plugin_settings)
 
-        # Convert any custom keys to atoms
-        plugin_settings = atom_converter(plugin_settings)
+    # TODO: test with wrong module and wrong settings.
+    plugin_struct = struct!(module, plugin_settings)
 
-        # TODO: test with wrong module and wrong settings.
-        plugin_struct = struct!(module_name, plugin_settings)
-
-        PluginManager.enable_plugin(plugin_struct)
-
-      {:error, reason} ->
-        raise reason
-    end
+    PluginManager.enable_plugin(plugin_struct)
   end
 
   defp atom_converter(orig_map) do
