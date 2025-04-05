@@ -47,7 +47,6 @@ fn handle_start(args: Vec<String>) {
 
     println!("Starting pipeline...");
 
-    // Attempt to execute the external command.
     let status = Command::new(command)
         .arg("rpc")
         .arg(rpc_command)
@@ -92,7 +91,31 @@ fn handle_stop(args: Vec<String>) {
     }
 }
 
-// TODO: implement this function.
-fn handle_state(_args: Vec<String>) {
+fn handle_state(args: Vec<String>) {
+    if args.len() < 1 {
+        eprintln!("Error: Invalid number of arguments. Usage: {} state <pipeline_id>", args[0]);
+        exit(1);
+    }
 
+    let pipeline_id = &args[2];
+    let group_id = get_namespace(&args[3..]);
+
+    let rpc_command = format!(
+        "Aflecha.Service.RpcCookbook.pipeline_state(\"{}\", \"{}\")", 
+        group_id,
+        pipeline_id,
+    );
+
+    let command = get_aflecha_command();
+
+    let status = Command::new(command)
+        .arg("rpc")
+        .arg(rpc_command)
+        .status();
+
+    match status {
+        Ok(status) if status.success() => {},
+        Ok(_) => eprintln!("Unknown status returned."),
+        Err(e) => eprintln!("Failed to get pipeline state: {}", e),
+    }
 }

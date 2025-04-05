@@ -39,6 +39,8 @@ _build/dev/rel/aflecha/bin/pipeline start my_pipeline compare_filter --init_valu
 
 ```bash
 _build/dev/rel/aflecha/bin/pipeline start my_pipeline do_nothing
+
+(or _build/dev/rel/aflecha/bin/pipeline start my_pipeline store_input)
 ```
 
 ### Stop a pipeline.
@@ -60,6 +62,12 @@ _build/dev/rel/aflecha/bin/plugin enable pipeline_websocket  --settings='{
   }
 }'
 ```
+
+### Get pipeline state.
+```bash
+_build/dev/rel/aflecha/bin/pipeline state my_pipeline
+```
+
 
 ### Development
 Run the application inside the docker containers.
