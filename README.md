@@ -48,7 +48,9 @@ _build/dev/rel/aflecha/bin/pipeline stop my_pipeline
 
 ### Adding IO to the pipeline.
 ```bash
-_build/dev/rel/aflecha/bin/io add input my_pipeline --parameters='{
+_build/dev/rel/aflecha/bin/plugin enable input  --settings='{
+  "pipeline_id": "my_pipeline",
+  "trigger": "proactive",
   "io_type": "websocket",
   "uri": "wss://ws.kraken.com",
   "post_connect": {

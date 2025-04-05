@@ -5,6 +5,7 @@ defmodule Aflecha.Service.RpcCookbook do
 
   alias Aflecha.Service.PipelineManager
   alias Aflecha.Service.Payloader
+  alias Aflecha.Service.PluginManager
 
   @doc "Starts a pipeline."
   @spec pipeline_start(String.t(), String.t(), String.t(), String.t()) ::
@@ -26,7 +27,7 @@ defmodule Aflecha.Service.RpcCookbook do
   end
 
   @doc "Enalbes plugin."
-  def enable_plugin(group_id, plugin_id, plugin_settings) do
+  def enable_plugin(plugin_id, plugin_settings) do
     result =
       try do
         module_name = String.to_existing_atom(plugin_id)
@@ -46,13 +47,46 @@ defmodule Aflecha.Service.RpcCookbook do
             {:error, reason} -> raise reason
           end
 
+        plugin_settings = Map.put_new(plugin_settings, :group, "default")
+
+        # Convert any custom keys to atoms
+        plugin_settings = atom_converter(plugin_settings)
+
         # TODO: test with wrong module and wrong settings.
         plugin_struct = struct!(module_name, plugin_settings)
+
+        PluginManager.enable_plugin(plugin_struct)
 
       {:error, reason} ->
         raise reason
     end
   end
+
+  defp atom_converter(orig_map) do
+    mappings = %{
+      "on_input" => :on_input,
+      "on_output" => :on_output,
+      "interval" => :interval,
+      "proactive" => :proactive
+    }
+
+    Enum.map(orig_map, fn {key, value} ->
+      case key do
+        :trigger ->
+          if Map.has_key?(mappings, key) do
+            {mappings[key], value}
+          else
+            {key, value}
+          end
+
+        any ->
+          any
+      end
+    end)
+    |> Map.new()
+  end
+
+  # TODO: disable_plugin
 
   defp group_id(group_id) do
     case group_id do

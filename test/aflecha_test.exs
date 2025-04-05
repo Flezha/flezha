@@ -93,7 +93,7 @@ defmodule AflechaTest do
     # TODO: add failures also.
     res =
       PluginManager.enable_plugin(%Aflecha.Plugin.Provider.Websocket{
-        group_id: @default_group,
+        group: @default_group,
         pipeline_id: pipeline_id,
         uri: @testnet_ws_uri,
         trigger: :proactive,
@@ -128,7 +128,7 @@ defmodule AflechaTest do
 
     res =
       PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
-        group_id: @default_group,
+        group: @default_group,
         pipeline_id: pipeline_id,
         trigger: :on_output,
         recv_pid: self()
@@ -149,14 +149,14 @@ defmodule AflechaTest do
     {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
 
     PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
-      group_id: @default_group,
+      group: @default_group,
       pipeline_id: pipeline_id,
       trigger: :on_output,
       recv_pid: self()
     })
 
     PluginManager.enable_plugin(%Aflecha.Plugin.Provider.Websocket{
-      group_id: @default_group,
+      group: @default_group,
       pipeline_id: pipeline_id,
       trigger: :proactive,
       uri: @testnet_ws_uri,

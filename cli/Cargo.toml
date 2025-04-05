@@ -4,5 +4,6 @@ resolver = "2"
 members = [
     "shared_lib",
     "agent",
-    "pipeline"
+    "pipeline",
+    "plugin"
 ]

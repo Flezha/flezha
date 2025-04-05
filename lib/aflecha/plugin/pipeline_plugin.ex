@@ -4,7 +4,7 @@ defmodule Aflecha.Plugin.PipelinePlugin do
   defmacro __using__(_opts) do
     quote do
       def enable(settings) do
-        case PipelineManager.get_pipeline_pid(settings.group_id, settings.pipeline_id) do
+        case PipelineManager.get_pipeline_pid(settings.group, settings.pipeline_id) do
           {:ok, pipeline_pid} ->
             GenServer.call(pipeline_pid, {:add_binding, settings})
 
@@ -14,7 +14,7 @@ defmodule Aflecha.Plugin.PipelinePlugin do
       end
 
       def disable(settings) do
-        case PipelineManager.get_pipeline_pid(settings.group_id, settings.pipeline_id) do
+        case PipelineManager.get_pipeline_pid(settings.group, settings.pipeline_id) do
           {:ok, pipeline_pid} ->
             GenServer.call(pipeline_pid, {:remove_binding, settings})
 
@@ -28,6 +28,6 @@ defmodule Aflecha.Plugin.PipelinePlugin do
   end
 
   def default_keys() do
-    [:group_id, :pipeline_id, :trigger]
+    [:group, :pipeline_id, :trigger]
   end
 end
