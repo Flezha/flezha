@@ -13,6 +13,9 @@ defmodule AflechaTest.Plugin.KafkaTest do
     |> expect(:start_link_worker, fn _x, _y -> {:ok, self()} end)
 
     settings = %Aflecha.Plugin.Handler.Kafka.Producer{
+      group_id: "test_group",
+      pipeline_id: "test_pipeline",
+      trigger: nil,
       hosts: [@test_broker],
       topic: @test_topic,
       partition: @test_partition
@@ -30,6 +33,9 @@ defmodule AflechaTest.Plugin.KafkaTest do
     |> expect(:produce, fn _, _, _, _ -> {:ok, :success} end)
 
     settings = %Aflecha.Plugin.Handler.Kafka.Producer{
+      group_id: "test_group",
+      pipeline_id: "test_pipeline",
+      trigger: nil,
       hosts: [@test_broker],
       topic: @test_topic,
       partition: @test_partition,

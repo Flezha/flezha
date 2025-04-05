@@ -27,27 +27,30 @@ defmodule Aflecha.Service.RpcCookbook do
 
   @doc "Enalbes plugin."
   def enable_plugin(group_id, plugin_id, plugin_settings) do
-    result = try do
-      module_name = String.to_existing_atom(plugin_id)
+    result =
+      try do
+        module_name = String.to_existing_atom(plugin_id)
 
-      # TODO: check if the module is under the enabled plugins and implements the PluginBase behaviour.
+        # TODO: check if the module is under the enabled plugins and implements the PluginBase behaviour.
 
-      {:ok, module_name}
-    rescue
-      ArgumentError -> {:error, "Module does not exist"}
-    end
+        {:ok, module_name}
+      rescue
+        ArgumentError -> {:error, "Module does not exist"}
+      end
 
     case result do
       {:ok, module_name} ->
-        plugin_settings = case Jason.decode(plugin_settings, [keys: :atoms!]) do
-          {:ok, map} -> map
-          {:error, reason} -> raise reason
-        end
+        plugin_settings =
+          case Jason.decode(plugin_settings, keys: :atoms!) do
+            {:ok, map} -> map
+            {:error, reason} -> raise reason
+          end
 
         # TODO: test with wrong module and wrong settings.
         plugin_struct = struct!(module_name, plugin_settings)
 
-      {:error, reason} -> raise reason
+      {:error, reason} ->
+        raise reason
     end
   end
 

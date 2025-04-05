@@ -1,6 +1,7 @@
 defmodule AflechaTest do
   alias Aflecha.Service.PipelineManager
   alias AflechaTest.Fixtures.PipelineFixture
+  alias Aflecha.Service.PluginManager
 
   use ExUnit.Case
   use Aflecha.Constant
@@ -50,7 +51,7 @@ defmodule AflechaTest do
   test "pipeline removing" do
     pipeline_id = "default_pipeline_rem_test"
 
-    {:ok, %{pid: pipeline_pid}} =
+    {:ok, %{pid: _pipeline_pid}} =
       pipeline_id
       |> PipelineFixture.get(@test_store_input_factory)
       |> PipelineFixture.start()
@@ -91,15 +92,15 @@ defmodule AflechaTest do
 
     # TODO: add failures also.
     res =
-      Aflecha.Service.PipelineManager.add_binding(
-        @default_group,
-        pipeline_id,
-        %Aflecha.Plugin.Handler.Websocket{
-          uri: @testnet_ws_uri,
-          post_connect: %{
-            payload: {
-              :text,
-              ~s(
+      PluginManager.enable_plugin(%Aflecha.Plugin.Handler.Websocket{
+        group_id: @default_group,
+        pipeline_id: pipeline_id,
+        uri: @testnet_ws_uri,
+        trigger: :proactive,
+        post_connect: %{
+          payload: {
+            :text,
+            ~s(
                 {
                   "event_type": "subscribe",
                   "event_data": {
@@ -108,11 +109,9 @@ defmodule AflechaTest do
                   }
                 }
               )
-            }
           }
-        },
-        :proactive
-      )
+        }
+      })
 
     assert res === :ok
   end
@@ -128,14 +127,12 @@ defmodule AflechaTest do
     {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
 
     res =
-      PipelineManager.add_binding(
-        @default_group,
-        pipeline_id,
-        %Aflecha.Plugin.Handler.BeamMsgForward{
-          recv_pid: self()
-        },
-        :on_output
-      )
+      PluginManager.enable_plugin(%Aflecha.Plugin.Handler.BeamMsgForward{
+        group_id: @default_group,
+        pipeline_id: pipeline_id,
+        trigger: :on_output,
+        recv_pid: self()
+      })
 
     assert res === :ok
   end
@@ -151,24 +148,22 @@ defmodule AflechaTest do
 
     {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
 
-    Aflecha.Service.PipelineManager.add_binding(
-      @default_group,
-      pipeline_id,
-      %Aflecha.Plugin.Handler.BeamMsgForward{
-        recv_pid: self()
-      },
-      :on_output
-    )
+    PluginManager.enable_plugin(%Aflecha.Plugin.Handler.BeamMsgForward{
+      group_id: @default_group,
+      pipeline_id: pipeline_id,
+      trigger: :on_output,
+      recv_pid: self()
+    })
 
-    Aflecha.Service.PipelineManager.add_binding(
-      @default_group,
-      pipeline_id,
-      %Aflecha.Plugin.Handler.Websocket{
-        uri: @testnet_ws_uri,
-        post_connect: %{
-          payload: {
-            :text,
-            ~s(
+    PluginManager.enable_plugin(%Aflecha.Plugin.Handler.Websocket{
+      group_id: @default_group,
+      pipeline_id: pipeline_id,
+      trigger: :proactive,
+      uri: @testnet_ws_uri,
+      post_connect: %{
+        payload: {
+          :text,
+          ~s(
                 {
                   "event_type": "subscribe",
                   "event_data": {
@@ -177,11 +172,9 @@ defmodule AflechaTest do
                   }
                 }
               )
-          }
         }
-      },
-      :proactive
-    )
+      }
+    })
 
     for _ <- 1..1 do
       receive do

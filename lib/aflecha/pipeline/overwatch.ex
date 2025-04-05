@@ -64,20 +64,20 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   @impl true
-  def handle_call({:add_binding, binding, mode, opts}, _from, state) do
+  def handle_call({:add_binding, binding}, _from, state) do
     case PipelineBinding.bind(binding) do
       {:ok, binding} ->
-        bindings = [binding | Map.get(state.bindings, mode, [])]
+        bindings = [binding | Map.get(state.bindings, binding.trigger, [])]
 
-        case mode do
-          :interval -> add_interval_binding(binding, opts)
+        case binding.trigger do
+          :interval -> add_interval_binding(binding)
           _ -> nil
         end
 
         {
           :reply,
           :ok,
-          %__MODULE__{state | bindings: Map.put(state.bindings, mode, bindings)}
+          %__MODULE__{state | bindings: Map.put(state.bindings, binding.trigger, bindings)}
         }
 
       {:error, reason} ->
@@ -137,9 +137,9 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   @impl true
-  def handle_info({:binding_interval_exec, binding, opts}, state) do
-    exec_binding(binding, opts)
-    add_interval_binding(binding, opts)
+  def handle_info({:binding_interval_exec, binding}, state) do
+    exec_binding(binding, nil)
+    add_interval_binding(binding)
 
     {:noreply, state}
   end
@@ -226,11 +226,11 @@ defmodule Aflecha.Pipeline.Overwatch do
     end)
   end
 
-  defp add_interval_binding(binding, opts) do
-    interval = Keyword.get(opts, :interval, nil)
+  defp add_interval_binding(binding) do
+    interval = Map.get(binding.interval, :interval, nil)
 
     if is_integer(interval) do
-      Process.send_after(self(), {:binding_interval_exec, binding, opts}, interval)
+      Process.send_after(self(), {:binding_interval_exec, binding}, interval)
     end
   end
 

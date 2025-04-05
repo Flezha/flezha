@@ -1,6 +1,7 @@
 defmodule Aflecha.Plugin.Handler.Websocket do
   alias Aflecha.Plugin.PipelineBinding
   alias Aflecha.Plugin.PipelinePlugin
+  alias Aflecha.Plugin.PluginProtocol
   alias Aflecha.Plugin.PluginBase
 
   require Logger
@@ -19,6 +20,10 @@ defmodule Aflecha.Plugin.Handler.Websocket do
 
   @impl true
   def plugin_id(), do: "pipeline_websocket"
+
+  defimpl PluginProtocol, for: Aflecha.Plugin.Handler.Websocket do
+    use PipelinePlugin
+  end
 
   defimpl PipelineBinding, for: Aflecha.Plugin.Handler.Websocket do
     alias Aflecha.Plugin.Handler.Websocket

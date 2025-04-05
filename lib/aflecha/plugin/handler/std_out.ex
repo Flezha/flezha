@@ -2,6 +2,7 @@ defmodule Aflecha.Plugin.Handler.StdOut do
   alias Aflecha.Plugin.PipelineBinding
   alias Aflecha.Plugin.PipelinePlugin
   alias Aflecha.Plugin.PluginBase
+  alias Aflecha.Plugin.PluginProtocol
 
   @behaviour PluginBase
 
@@ -10,6 +11,10 @@ defmodule Aflecha.Plugin.Handler.StdOut do
 
   @impl true
   def plugin_id(), do: "pipeline_stdout"
+
+  defimpl PluginProtocol, for: Aflecha.Plugin.Handler.StdOut do
+    use PipelinePlugin
+  end
 
   defimpl PipelineBinding, for: Aflecha.Plugin.Handler.StdOut do
     @impl true

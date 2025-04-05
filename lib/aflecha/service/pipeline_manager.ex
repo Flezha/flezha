@@ -99,13 +99,6 @@ defmodule Aflecha.Service.PipelineManager do
     end
   end
 
-  def add_binding(group_id, pipeline_id, binding, mode, opts \\ []) do
-    case get_pipeline_pid(group_id, pipeline_id) do
-      {:ok, pipeline_pid} -> GenServer.call(pipeline_pid, {:add_binding, binding, mode, opts})
-      err -> err
-    end
-  end
-
   def get_pipeline_state(group_id, pipeline_id) do
     case get_pipeline_pid(group_id, pipeline_id) do
       {:ok, pipeline_pid} -> GenServer.call(pipeline_pid, :get_pipeline_state)
