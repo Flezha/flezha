@@ -55,11 +55,7 @@ _build/dev/rel/aflecha/bin/plugin enable pipeline_websocket  --settings='{
   "post_connect": {
     "payload": [
       "text",
-      {
-        "event": "subscribe",
-        "subscription": { "name": "trade" },
-        "pair": ["BTC/EUR", "ETH/EUR"]
-      }
+      "{\\"event\\": \\"subscribe\\", \\"subscription\\": { \\"name\\": \\"trade\\" }, \\"pair\\": [\\"BTC/EUR\\", \\"ETH/EUR\\"]}"
     ]
   }
 }'

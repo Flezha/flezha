@@ -41,11 +41,11 @@ defmodule Aflecha.Service.RpcCookbook do
       |> Map.new()
 
     with {:mod, module} <- Map.get(plugin_mappings, plugin_id, {:error, "plugin not found"}),
-         {:ok, msg} <- handle_plugin_action(module, plugin_settings) do
+         {:ok, _msg} <- handle_plugin_action(module, plugin_settings) do
       # TODO: implement success
       nil
     else
-      {:error, reason} ->
+      {:error, _reason} ->
         nil
         # TODO: implement error
     end
@@ -57,12 +57,12 @@ defmodule Aflecha.Service.RpcCookbook do
     plugin_settings =
       case Jason.decode(plugin_settings, keys: :atoms!) do
         {:ok, map} -> map
-        {:error, reason} -> raise reason
+        {:error, reason} -> raise reason # TODO: we should return error.
       end
 
     plugin_settings = Map.put_new(plugin_settings, :group, "default")
 
-    # Convert any custom keys to atoms
+    # Convert any custom keys to atoms.
     plugin_settings = atom_converter(plugin_settings)
 
     # TODO: test with wrong module and wrong settings.
@@ -83,13 +83,13 @@ defmodule Aflecha.Service.RpcCookbook do
       case key do
         :trigger ->
           if Map.has_key?(mappings, key) do
-            {mappings[key], value}
+            {key, mappings[key]}
           else
             {key, value}
           end
 
-        any ->
-          any
+        _any ->
+          {key, value}
       end
     end)
     |> Map.new()
