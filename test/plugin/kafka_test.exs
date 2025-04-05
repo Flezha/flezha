@@ -12,7 +12,7 @@ defmodule AflechaTest.Plugin.KafkaTest do
     KafkaEx
     |> expect(:start_link_worker, fn _x, _y -> {:ok, self()} end)
 
-    settings = %Aflecha.Plugin.Handler.Kafka.Producer{
+    settings = %Aflecha.Plugin.Provider.Kafka.Producer{
       group_id: "test_group",
       pipeline_id: "test_pipeline",
       trigger: nil,
@@ -24,7 +24,7 @@ defmodule AflechaTest.Plugin.KafkaTest do
     result = PipelineBinding.bind(settings)
 
     assert elem(result, 0) == :ok
-    assert is_struct(elem(result, 1), Aflecha.Plugin.Handler.Kafka.Producer)
+    assert is_struct(elem(result, 1), Aflecha.Plugin.Provider.Kafka.Producer)
     assert is_pid(elem(result, 1).conn)
   end
 
@@ -32,7 +32,7 @@ defmodule AflechaTest.Plugin.KafkaTest do
     KafkaEx
     |> expect(:produce, fn _, _, _, _ -> {:ok, :success} end)
 
-    settings = %Aflecha.Plugin.Handler.Kafka.Producer{
+    settings = %Aflecha.Plugin.Provider.Kafka.Producer{
       group_id: "test_group",
       pipeline_id: "test_pipeline",
       trigger: nil,

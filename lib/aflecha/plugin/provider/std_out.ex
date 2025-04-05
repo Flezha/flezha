@@ -1,4 +1,4 @@
-defmodule Aflecha.Plugin.Handler.StdOut do
+defmodule Aflecha.Plugin.Provider.StdOut do
   alias Aflecha.Plugin.PipelineBinding
   alias Aflecha.Plugin.PipelinePlugin
   alias Aflecha.Plugin.PluginBase
@@ -12,11 +12,11 @@ defmodule Aflecha.Plugin.Handler.StdOut do
   @impl true
   def plugin_id(), do: "pipeline_stdout"
 
-  defimpl PluginProtocol, for: Aflecha.Plugin.Handler.StdOut do
+  defimpl PluginProtocol, for: Aflecha.Plugin.Provider.StdOut do
     use PipelinePlugin
   end
 
-  defimpl PipelineBinding, for: Aflecha.Plugin.Handler.StdOut do
+  defimpl PipelineBinding, for: Aflecha.Plugin.Provider.StdOut do
     @impl true
     def bind(settings) do
       {:ok, settings}

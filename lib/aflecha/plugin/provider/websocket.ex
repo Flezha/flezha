@@ -1,4 +1,4 @@
-defmodule Aflecha.Plugin.Handler.Websocket do
+defmodule Aflecha.Plugin.Provider.Websocket do
   alias Aflecha.Plugin.PipelineBinding
   alias Aflecha.Plugin.PipelinePlugin
   alias Aflecha.Plugin.PluginProtocol
@@ -21,12 +21,12 @@ defmodule Aflecha.Plugin.Handler.Websocket do
   @impl true
   def plugin_id(), do: "pipeline_websocket"
 
-  defimpl PluginProtocol, for: Aflecha.Plugin.Handler.Websocket do
+  defimpl PluginProtocol, for: Aflecha.Plugin.Provider.Websocket do
     use PipelinePlugin
   end
 
-  defimpl PipelineBinding, for: Aflecha.Plugin.Handler.Websocket do
-    alias Aflecha.Plugin.Handler.Websocket
+  defimpl PipelineBinding, for: Aflecha.Plugin.Provider.Websocket do
+    alias Aflecha.Plugin.Provider.Websocket
 
     @impl true
     def bind(settings) do

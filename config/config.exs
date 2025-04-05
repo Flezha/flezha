@@ -10,9 +10,9 @@ config :aflecha,
   # ------------------------------------------------------------------------------------------------
   # Enabled plugins.
   enabled_plugins: [
-    Aflecha.Plugin.Handler.Kafka.Producer,
-    Aflecha.Plugin.Handler.Websocket,
-    Aflecha.Plugin.Handler.BeamMsgForward
+    Aflecha.Plugin.Provider.Kafka.Producer,
+    Aflecha.Plugin.Provider.Websocket,
+    Aflecha.Plugin.Provider.BeamMsgForward
   ]
 
 config :logger,
