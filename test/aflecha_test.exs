@@ -161,17 +161,17 @@ defmodule AflechaTest do
       trigger: :proactive,
       uri: @testnet_ws_uri,
       post_connect: %{
-        payload: {
-          :text,
-          ~s(
-                {
-                  "event_type": "subscribe",
-                  "event_data": {
-                    "default_message": "hello world",
-                    "interval": 1000
-                  }
+        payload: %{
+          type: :text,
+          message: ~s(
+              {
+                "event_type": "subscribe",
+                "event_data": {
+                  "default_message": "hello world",
+                  "interval": 1000
                 }
-              )
+              }
+          )
         }
       }
     })

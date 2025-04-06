@@ -67,10 +67,19 @@ defmodule Aflecha.Plugin.Provider.Websocket do
   def handle_connect(_status, _headers, state) do
     Logger.info("Connected to websocket!")
 
-    post_conn_payload = state.post_connect[:payload]
+    pcp = state.post_connect[:payload]
 
-    if is_tuple(post_conn_payload) && tuple_size(post_conn_payload) === 2 do
-      send_payload(self(), post_conn_payload)
+    if is_map(pcp) && Map.has_key?(pcp, :type) && Map.has_key?(pcp, :message) do
+      type =
+        case pcp.type do
+          "text" -> :text
+          "binary" -> :binary
+          _ -> :text
+        end
+
+      message = pcp.message
+
+      send_payload(self(), {type, message})
     end
 
     {:ok, state}

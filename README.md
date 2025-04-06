@@ -55,10 +55,10 @@ _build/dev/rel/aflecha/bin/plugin enable pipeline_websocket  --settings='{
   "trigger": "proactive",
   "uri": "wss://ws.kraken.com",
   "post_connect": {
-    "payload": [
-      "text",
-      "{\\"event\\": \\"subscribe\\", \\"subscription\\": { \\"name\\": \\"trade\\" }, \\"pair\\": [\\"BTC/EUR\\", \\"ETH/EUR\\"]}"
-    ]
+    "payload": {
+      "type": "text",
+      "message": "{\\"event\\": \\"subscribe\\", \\"subscription\\": {\\"name\\": \\"trade\\" }, \\"pair\\": [\\"BTC/EUR\\", \\"ETH/EUR\\"]}"
+    }
   }
 }'
 ```
