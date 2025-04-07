@@ -94,6 +94,8 @@ defmodule Aflecha.Pipeline.Overwatch do
   def handle_call(:get_pipeline_state, _from, state) do
     data = %{"pipeline_id" => state.id}
 
+    # TODO: any rpc command may timeout causing the pipeline overwatch to crash.
+    # We should handle this in the control unit.
     result =
       GenServer.call(
         Identificator.control_unit(state.operator_id),

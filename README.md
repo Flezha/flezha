@@ -39,8 +39,6 @@ _build/dev/rel/aflecha/bin/pipeline start my_pipeline compare_filter --init_valu
 
 ```bash
 _build/dev/rel/aflecha/bin/pipeline start my_pipeline do_nothing
-
-(or _build/dev/rel/aflecha/bin/pipeline start my_pipeline store_input)
 ```
 
 ### Stop a pipeline.
