@@ -10,7 +10,7 @@ defmodule Aflecha.Service.PipelineManager do
   def get_pipeline_pid(group_id, pipeline_id) do
     case HubManager.get_pid(group_id, pipeline_id) do
       {:ok, pid} -> {:ok, pid}
-      {:error, "no pid found"} -> {:error, "no pipeline found"}
+      {:error, "no pid found"} -> {:error, "pipeline not found"}
       err -> err
     end
   end

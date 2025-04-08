@@ -35,6 +35,8 @@ defmodule Aflecha.Service.PortPilot do
 
   @impl true
   def handle_info({:DOWN, _ref, :port, port, :normal}, state) do
+    Logger.error("Port application down")
+
     if state.port_down_counter > @port_down_counter do
       raise "Port application malfunction"
     end
@@ -61,7 +63,7 @@ defmodule Aflecha.Service.PortPilot do
 
   @impl true
   def handle_info(msg, state) do
-    Logger.info("Port manager received unexpected message: #{inspect(msg)}")
+    Logger.warning("Port manager received unexpected message: #{inspect(msg)}")
 
     {:noreply, state}
   end

@@ -1,7 +1,8 @@
 import Config
 
 config :aflecha,
-  testnet_enabled: true
+  # TODO: may have to reenable
+  testnet_enabled: false
 
 config :kafka_ex,
   brokers: [
