@@ -137,54 +137,54 @@ defmodule AflechaTest do
     assert res === {:ok, "binding added"}
   end
 
-  # test "pipeline flow generation -> beam msg forward" do
-  #   pipeline_id = "data_flow_test"
+  test "pipeline flow generation -> beam msg forward" do
+    pipeline_id = "data_flow_test"
 
-  #   pipeline = %Aflecha.Pipeline.Builder{
-  #     id: pipeline_id,
-  #     factory_id: @test_compare_filter_factory,
-  #     variables: %{"comparable" => "hello world", "inverted" => false}
-  #   }
+    pipeline = %Aflecha.Pipeline.Builder{
+      id: pipeline_id,
+      factory_id: @test_compare_filter_factory,
+      variables: %{"comparable" => "hello world", "inverted" => false}
+    }
 
-  #   {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
+    {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
 
-  #   PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
-  #     group: @default_group,
-  #     pipeline_id: pipeline_id,
-  #     trigger: :on_output,
-  #     recv_pid: self()
-  #   })
+    PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
+      group: @default_group,
+      pipeline_id: pipeline_id,
+      trigger: :on_output,
+      recv_pid: self()
+    })
 
-  #   PluginManager.enable_plugin(%Aflecha.Plugin.Provider.Websocket{
-  #     group: @default_group,
-  #     pipeline_id: pipeline_id,
-  #     trigger: :proactive,
-  #     uri: @testnet_ws_uri,
-  #     post_connect: %{
-  #       payload: %{
-  #         type: :text,
-  #         message: ~s(
-  #             {
-  #               "event_type": "subscribe",
-  #               "event_data": {
-  #                 "default_message": "hello world",
-  #                 "interval": 1000
-  #               }
-  #             }
-  #         )
-  #       }
-  #     }
-  #   })
+    PluginManager.enable_plugin(%Aflecha.Plugin.Provider.Websocket{
+      group: @default_group,
+      pipeline_id: pipeline_id,
+      trigger: :proactive,
+      uri: @testnet_ws_uri,
+      post_connect: %{
+        payload: %{
+          type: :text,
+          message: ~s(
+              {
+                "event_type": "subscribe",
+                "event_data": {
+                  "default_message": "hello world",
+                  "interval": 1000
+                }
+              }
+          )
+        }
+      }
+    })
 
-  #   for _ <- 1..1 do
-  #     receive do
-  #       msg ->
-  #         assert msg === {:text, "hello world"}
-  #     after
-  #       2000 -> assert false
-  #     end
-  #   end
-  # end
+    for _ <- 1..1 do
+      receive do
+        msg ->
+          assert msg === {:text, "hello world"}
+      after
+        2000 -> assert false
+      end
+    end
+  end
 
   test "get pipeline state" do
     pipeline_id = "get_state_test"
@@ -206,44 +206,46 @@ defmodule AflechaTest do
            }
   end
 
-  # test "pipeline migration" do
-  #   # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
-  #   # then get the state of the new migrated process to see if it matches the state1 string.
+  # TODO: add test to handle large control requests and stream requests.
 
-  #   {peer_pid, peer_node} = TestHelper.start_peer_node(:anode1)
+  test "pipeline migration" do
+    # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
+    # then get the state of the new migrated process to see if it matches the state1 string.
 
-  #   pipeline_id = "pipeline_migration_test"
+    {peer_pid, peer_node} = TestHelper.start_peer_node(:anode1)
 
-  #   {:ok, %{pid: pipeline_pid, node: _pnode}} =
-  #     pipeline_id
-  #     |> PipelineFixture.get(@test_store_input_factory)
-  #     |> PipelineFixture.start()
+    pipeline_id = "pipeline_migration_test"
 
-  #   GenServer.cast(pipeline_pid, {:io_in, {:text, "test_state_1"}})
-  #   GenServer.cast(pipeline_pid, {:io_in, {:text, "test_state_2"}})
-  #   GenServer.call(pipeline_pid, :ping)
+    {:ok, %{pid: pipeline_pid, node: _pnode}} =
+      pipeline_id
+      |> PipelineFixture.get(@test_store_input_factory)
+      |> PipelineFixture.start()
 
-  #   test_state = %{
-  #     "binary_inputs" => [],
-  #     "text_inputs" => ["test_state_1", "test_state_2"]
-  #   }
+    GenServer.cast(pipeline_pid, {:io_in, {:text, "test_state_1"}})
+    GenServer.cast(pipeline_pid, {:io_in, {:text, "test_state_2"}})
+    GenServer.call(pipeline_pid, :ping)
 
-  #   # TODO: add here hook instead
-  #   Process.sleep(100)
+    test_state = %{
+      "binary_inputs" => [],
+      "text_inputs" => ["test_state_1", "test_state_2"]
+    }
 
-  #   {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
-  #   pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    # TODO: add here hook instead
+    Process.sleep(100)
 
-  #   assert pipeline_state === test_state
+    {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
-  #   TestHelper.stop_peer_node(peer_pid, peer_node)
+    assert pipeline_state === test_state
 
-  #   # TODO: add hook here instead
-  #   Process.sleep(1000)
+    TestHelper.stop_peer_node(peer_pid, peer_node)
 
-  #   {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
-  #   pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    # TODO: add hook here instead
+    Process.sleep(1000)
 
-  #   assert pipeline_state === test_state
-  # end
+    {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+
+    assert pipeline_state === test_state
+  end
 end
