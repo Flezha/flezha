@@ -20,7 +20,8 @@ defmodule Aflecha.Operator.StreamChannel do
         lsock: lsock,
         sock: nil,
         pipeline_mapping: %{},
-        name: name
+        name: name,
+        buffer: {:empty, <<>>}
       },
       {:continue, :accept_connection}
     }
@@ -71,11 +72,12 @@ defmodule Aflecha.Operator.StreamChannel do
   end
 
   @impl true
-  def handle_info({:tcp, _port, payload}, state) do
+  def handle_info({:tcp, _port, frame}, %{buffer: buffer} = state) do
     pipeline_mappings = state.pipeline_mapping
 
-    Payloader.parse_payload(payload)
-    |> Enum.each(fn {pipeline_id, message} ->
+    {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
+
+    Enum.each(payloads, fn {pipeline_id, message} ->
       pipelines = Map.get(pipeline_mappings, pipeline_id, [])
 
       # TODO: Are we handling binary or text data?
@@ -83,6 +85,8 @@ defmodule Aflecha.Operator.StreamChannel do
         GenServer.cast(pid, {:io_out, {:text, message}})
       end)
     end)
+
+    state = Map.put(state, :buffer, buffer)
 
     {:noreply, state}
   end

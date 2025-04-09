@@ -26,8 +26,25 @@ defmodule Aflecha.Service.Payloader do
     payload_id_padded <> message_size_padded <> message
   end
 
-  def parse_payload(payload) when is_binary(payload) do
-    parse_messages(payload, [])
+  # TODO: update the doc
+  # First bytes are the message prefix: FLZP
+  # Second 32 bytes are the id.
+  # Next 8 bytes are the message size.
+  # Message itself is {message_size} bytes long.
+  # The rest of the payload.
+  def parse_frame(buffer, frame, payloads) do
+    {buffer, bytes_left} = fill_buffer(buffer, frame)
+
+    case buffer do
+      {:complete, payload} ->
+        # Append to the payload list to preserve the order of the payloads.
+        payloads = payloads ++ [payload]
+
+        parse_frame({:empty, <<>>}, bytes_left, payloads)
+
+      _ ->
+        {payloads, buffer}
+    end
   end
 
   def construct_pipeline!(input, type) do
@@ -43,31 +60,59 @@ defmodule Aflecha.Service.Payloader do
     end
   end
 
-  defp parse_messages(<<>>, messages), do: Enum.reverse(messages)
+  defp handle_incomplete_buf(buf, payload_id, frame, bytes_to_take) do
+    frame_size = byte_size(frame)
 
-  defp parse_messages(payload, messages) do
-    case parse_single_message(payload) do
-      {:ok, {id, message}, rest} ->
-        parse_messages(rest, [{id, message} | messages])
+    if frame_size >= bytes_to_take do
+      <<message::binary-size(bytes_to_take), bytes_left::binary>> = frame
 
-      :error ->
-        # Handle the case where parsing fails or there's not enough data for another message
-        Enum.reverse(messages)
+      {{:complete, {payload_id, buf <> message}}, bytes_left}
+    else
+      <<message::binary-size(frame_size), _bytes_left::binary>> = frame
+      bytes_to_take = bytes_to_take - frame_size
+
+      {{:incomplete, {payload_id, buf <> message, bytes_to_take}}, <<>>}
     end
   end
 
-  defp parse_single_message(payload) do
-    # First bytes are the message prefix: FLZP
-    # Second 32 bytes are the id.
-    # Next 8 bytes are the message size.
-    # Message itself is {message_size} bytes long.
-    # The rest of the payload.
-    with <<70, 76, 90, 80, id::binary-size(32), message_size::64, rest::binary>> <- payload,
-         <<message::binary-size(message_size), payload_rest::binary>> <- rest do
-      payload_id_trimmed = String.trim_trailing(id)
-      {:ok, {payload_id_trimmed, message}, payload_rest}
-    else
-      _ -> :error
+  defp fill_buffer(buffer, <<>>), do: buffer
+
+  defp fill_buffer(buffer, frame) do
+    case frame do
+      # TODO: update the prefix
+      # FLZP payload prefix means its new payload.
+      <<70, 76, 90, 80, bytes_rest::binary>> ->
+        parse_payload_new(bytes_rest)
+
+      # The frame is not a new payload.
+      # It is a continuation of the previous payload.
+      _ ->
+        case buffer do
+          # The existing buffer was empty, drop the frame
+          {:empty, _buf} ->
+            {{:empty, <<>>}, <<>>}
+
+          {:incomplete, {payload_id, message_buf, bytes_to_take}} ->
+            handle_incomplete_buf(message_buf, payload_id, frame, bytes_to_take)
+        end
+    end
+  end
+
+  defp parse_payload_new(frame) do
+    case frame do
+      <<id::binary-size(32), payload_size::64, frame_bytes::binary>> ->
+        payload_id_trimmed = String.trim_trailing(id)
+
+        handle_incomplete_buf(
+          <<>>,
+          payload_id_trimmed,
+          frame_bytes,
+          payload_size
+        )
+
+      _ ->
+        # The frame is malformed, drop it.
+        {{:empty, <<>>}, <<>>}
     end
   end
 end

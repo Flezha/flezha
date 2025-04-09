@@ -65,9 +65,10 @@ defmodule Aflecha.Operator.FleetManager do
 
   defp operator_connect(sock) do
     case :gen_tcp.recv(sock, 0, 5000) do
-      {:ok, payload} ->
-        [{"connect_control_channel", init_message} | bytes_rest] =
-          Payloader.parse_payload(payload)
+      {:ok, frame} ->
+        {payloads, _buffer} = Payloader.parse_frame({:empty, <<>>}, frame, [])
+
+        [{"connect_control_channel", init_message} | bytes_rest] = payloads
 
         init_payload = Payloader.json_to_map(init_message)
         group_id = Map.get(init_payload, "group_id")
