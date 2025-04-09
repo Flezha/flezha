@@ -66,7 +66,7 @@ defmodule Aflecha.Operator.FleetManager do
   defp operator_connect(sock) do
     case :gen_tcp.recv(sock, 0, 5000) do
       {:ok, frame} ->
-        {payloads, _buffer} = Payloader.parse_frame({:empty, <<>>}, frame, [])
+        {payloads, _buffer} = Payloader.parse_frame(frame)
 
         [{"connect_control_channel", init_message} | bytes_rest] = payloads
 

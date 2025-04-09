@@ -26,12 +26,14 @@ defmodule Aflecha.Service.Payloader do
     payload_id_padded <> message_size_padded <> message
   end
 
-  # TODO: update the doc
+  # TODO: update the doc, describe what is going on.
   # First bytes are the message prefix: FLZP
   # Second 32 bytes are the id.
   # Next 8 bytes are the message size.
   # Message itself is {message_size} bytes long.
   # The rest of the payload.
+  def parse_frame(frame), do: parse_frame({:empty, <<>>}, frame, [])
+
   def parse_frame(buffer, frame, payloads) do
     {buffer, bytes_left} = fill_buffer(buffer, frame)
 
