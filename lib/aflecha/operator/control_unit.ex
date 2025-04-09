@@ -1,6 +1,5 @@
 defmodule Aflecha.Operator.ControlUnit do
   alias Aflecha.Service.Identificator
-  alias Aflecha.Service.Payloader
   alias Aflecha.Operator.ControlChannel
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Pipeline.Builder, as: PipelineBuilder
@@ -38,13 +37,6 @@ defmodule Aflecha.Operator.ControlUnit do
         response_refs: %{}
       }
     }
-  end
-
-  @impl true
-  def handle_call({:handle_initial_payloads, payloads}, _from, state) do
-    handle_payload(state, payloads)
-
-    {:reply, :ok, state}
   end
 
   @impl true
@@ -128,31 +120,16 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_cast({:handle_payload, payload}, state) do
-    payloads = Payloader.parse_payload(payload)
-
-    {:noreply, handle_payload(state, payloads)}
+  def handle_cast({:handle_payload, payload_id, message}, state) do
+    {:noreply, handle_payload(state, {payload_id, message})}
   end
 
-  defp handle_payload(state, []), do: state
-
-  defp handle_payload(state, [{payload_id, message} | payloads]) do
+  defp handle_payload(state, {payload_id, message}) do
     {:ok, json_message} = Jason.decode(message)
     ref = Map.get(json_message, "reference_id", nil)
 
-    payload_id_list = [
-      @payload_id_connect_control_channel,
-      @payload_id_assign_operator_id,
-      @payload_id_pipeline_add,
-      @payload_id_pipeline_rem,
-      @payload_id_pipeline_state,
-      @payload_id_serialize_pipe,
-      @payload_id_deserialize_pipe,
-      @payload_id_connect_sockets
-    ]
-
     cond do
-      Enum.member?(payload_id_list, payload_id) ->
+      Enum.member?(payload_id_list(), payload_id) ->
         reply =
           case json_message["status"] do
             "success" ->
@@ -169,13 +146,25 @@ defmodule Aflecha.Operator.ControlUnit do
           end
 
         new_refs = handle_refs(state[:response_refs], ref, reply)
-        handle_payload(Map.put(state, :response_refs, new_refs), payloads)
+        Map.put(state, :response_refs, new_refs)
 
       true ->
         Logger.error("Unknown message id: #{payload_id}")
-
-        handle_payload(state, payloads)
+        state
     end
+  end
+
+  defp payload_id_list() do
+    [
+      @payload_id_connect_control_channel,
+      @payload_id_assign_operator_id,
+      @payload_id_pipeline_add,
+      @payload_id_pipeline_rem,
+      @payload_id_pipeline_state,
+      @payload_id_serialize_pipe,
+      @payload_id_deserialize_pipe,
+      @payload_id_connect_sockets
+    ]
   end
 
   defp handle_refs(refs, ref, reply) do

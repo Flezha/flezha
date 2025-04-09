@@ -66,7 +66,8 @@ defmodule Aflecha.Operator.FleetManager do
   defp operator_connect(sock) do
     case :gen_tcp.recv(sock, 0, 5000) do
       {:ok, payload} ->
-        [{"connect_control_channel", init_message} | rest] = Payloader.parse_payload(payload)
+        [{"connect_control_channel", init_message} | bytes_rest] =
+          Payloader.parse_payload(payload)
 
         init_payload = Payloader.json_to_map(init_message)
         group_id = Map.get(init_payload, "group_id")
@@ -76,6 +77,7 @@ defmodule Aflecha.Operator.FleetManager do
 
         operator_id = Identificator.unique_id(group_id)
         control_unit = Identificator.control_unit(operator_id)
+        control_channel = Identificator.control_channel(operator_id)
 
         # Only one hub per group.
         if !HubManager.hub_alive?(group_id) do
@@ -93,7 +95,7 @@ defmodule Aflecha.Operator.FleetManager do
             OperatorSupervisor.find_control_channel(operator_id)
           )
 
-        GenServer.call(control_unit, {:handle_initial_payloads, rest})
+        GenServer.call(control_channel, {:handle_frame, bytes_rest})
         GenServer.call(control_unit, :command_assign_operator_id)
         GenServer.call(control_unit, :command_sockets_connect)
 

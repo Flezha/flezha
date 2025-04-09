@@ -57,11 +57,12 @@ defmodule Aflecha.Service.Payloader do
   end
 
   defp parse_single_message(payload) do
-    # First 32 bytes are the id.
+    # First bytes are the message prefix: FLZP
+    # Second 32 bytes are the id.
     # Next 8 bytes are the message size.
-    # Message itself is {nessage_size} bytes long.
+    # Message itself is {message_size} bytes long.
     # The rest of the payload.
-    with <<id::binary-size(32), message_size::64, rest::binary>> <- payload,
+    with <<70, 76, 90, 80, id::binary-size(32), message_size::64, rest::binary>> <- payload,
          <<message::binary-size(message_size), payload_rest::binary>> <- rest do
       payload_id_trimmed = String.trim_trailing(id)
       {:ok, {payload_id_trimmed, message}, payload_rest}
