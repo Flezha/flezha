@@ -12,7 +12,8 @@ config :aflecha,
   enabled_plugins: [
     Aflecha.Plugin.Provider.Kafka.Producer,
     Aflecha.Plugin.Provider.Websocket,
-    Aflecha.Plugin.Provider.BeamMsgForward
+    Aflecha.Plugin.Provider.BeamMsgForward,
+    Aflecha.Plugin.Provider.StdOut
   ]
 
 config :logger,

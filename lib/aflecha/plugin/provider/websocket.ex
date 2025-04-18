@@ -86,8 +86,13 @@ defmodule Aflecha.Plugin.Provider.Websocket do
   end
 
   @impl Fresh
-  def handle_control({_, message}, state) do
-    IO.puts("Received ping with content: #{message}")
+  def handle_control({:pong, _}, state) do
+    {:ok, state}
+  end
+
+  @impl Fresh
+  def handle_control(control_frame, state) do
+    Logger.warning("Received unexpected control frame: #{inspect(control_frame)}")
 
     {:ok, state}
   end

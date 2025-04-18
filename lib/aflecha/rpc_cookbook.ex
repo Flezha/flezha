@@ -47,6 +47,16 @@ defmodule Aflecha.Service.RpcCookbook do
 
   @doc "Enalbes plugin."
   def enable_plugin(plugin_id, plugin_settings) do
+    with {:ok, module} <- get_plugin_mod(plugin_id),
+         {:ok, _msg} <- handle_plugin_action(module, plugin_settings) do
+      IO.puts("Plugin #{plugin_id} enabled successfully.")
+    else
+      {:error, reason} ->
+        IO.puts("Error enabling plugin #{inspect(reason)}.")
+    end
+  end
+
+  defp get_plugin_mod(plugin_id) do
     enabled_plugins = ConfigManager.get_enabled_plugins()
 
     plugin_mappings =
@@ -58,17 +68,10 @@ defmodule Aflecha.Service.RpcCookbook do
       end)
       |> Map.new()
 
-    with {:mod, module} <- Map.get(plugin_mappings, plugin_id, {:error, "plugin not found"}),
-         {:ok, _msg} <- handle_plugin_action(module, plugin_settings) do
-      # TODO: implement success
-      nil
-    else
-      {:error, _reason} ->
-        nil
-        # TODO: implement error
+    case Map.get(plugin_mappings, plugin_id, nil) do
+      {:mod, module} -> {:ok, module}
+      nil -> {:error, "plugin not found, make sure the plugin is enabled."}
     end
-
-    # TODO: handle errors and successes.
   end
 
   defp handle_plugin_action(module, plugin_settings) do
@@ -101,8 +104,8 @@ defmodule Aflecha.Service.RpcCookbook do
     Enum.map(orig_map, fn {key, value} ->
       case key do
         :trigger ->
-          if Map.has_key?(mappings, key) do
-            {key, mappings[key]}
+          if Map.has_key?(mappings, value) do
+            {key, mappings[value]}
           else
             {key, value}
           end
