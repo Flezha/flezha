@@ -65,20 +65,9 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   @impl true
   def handle_call({:add_binding, binding}, _from, state) do
-    case PipelineBinding.bind(binding) do
-      {:ok, binding} ->
-        bindings = [binding | Map.get(state.bindings, binding.trigger, [])]
-
-        case binding.trigger do
-          :interval -> add_interval_binding(binding)
-          _ -> nil
-        end
-
-        {
-          :reply,
-          :ok,
-          %__MODULE__{state | bindings: Map.put(state.bindings, binding.trigger, bindings)}
-        }
+    case add_binding(state.bindings, binding) do
+      {:ok, bindings} ->
+        {:reply, :ok, %__MODULE__{state | bindings: bindings}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -133,6 +122,8 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   @impl true
   def handle_cast({:io_out, payload}, state) do
+    dbg()
+
     exec_binding(state.bindings.on_output, payload)
 
     {:noreply, state}
@@ -165,7 +156,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   @impl true
   def handle_info(
-        {:process_hub, :handover, _pipeline_id, {_handover_state, pipe_serialized}},
+        {:process_hub, :handover, _pipeline_id, {handover_state, pipe_serialized}},
         state
       ) do
     pipe_serialized = Payloader.json_to_map(pipe_serialized)
@@ -176,20 +167,25 @@ defmodule Aflecha.Pipeline.Overwatch do
       "serialized_state" => Map.get(pipe_serialized, "serialized_state")
     }
 
+    # TODO: handle failures.
     _result =
       GenServer.call(
         Identificator.control_unit(state.operator_id),
         {:send_control, "migration_deserialization", operator_data}
       )
 
-    # TODO: add error handling for _result
+    new_bindings = sync_bindings(state, handover_state.bindings)
 
-    # TODO: we should rerun all bindings here to create new connections.
+    new_state = %__MODULE__{
+      state
+      | bindings: new_bindings,
+        variables: handover_state.variables
+    }
 
-    {:noreply, state}
+    {:noreply, new_state}
   end
 
-  def attach_channel(pipeline_id, operator_id) do
+  defp attach_channel(pipeline_id, operator_id) do
     # Get numeric representation of the pipeline_id string.
     pipeline_int = String.to_charlist(pipeline_id) |> Enum.sum()
 
@@ -198,6 +194,41 @@ defmodule Aflecha.Pipeline.Overwatch do
     channel_index = rem(pipeline_int, count)
 
     StreamSup.stream_ids(operator_id, :primary) |> Enum.at(channel_index)
+  end
+
+  defp sync_bindings(state, handover_state) do
+    Enum.reduce(
+      handover_state.bindings,
+      state.bindings,
+      fn {_trigger, bindings}, acc ->
+        case add_binding(acc, binding) do
+          {:ok, new_bindings} ->
+            new_bindings
+
+          {:error, reason} ->
+            Logge.error("Failed to synchronize binding: #{inspect(reason)}")
+
+            bindings
+        end
+      end
+    )
+  end
+
+  defp add_binding(bindings, binding) do
+    case PipelineBinding.bind(binding) do
+      {:ok, binding} ->
+        bindings = [binding | Map.get(state.bindings, binding.trigger, [])]
+
+        case binding.trigger do
+          :interval -> add_interval_binding(binding)
+          _ -> nil
+        end
+
+        {:ok, Map.put(state.bindings, binding.trigger, bindings)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp serialize_pipeline_sdk(operator_id, pipeline_id) do

@@ -17,16 +17,16 @@ defmodule Aflecha.Service.RpcCookbook do
     }
 
     case PipelineManager.create_pipeline(group_id(group_id), pipeline) do
-      {:ok, _pipeline_pid} -> IO.puts "Pipeline has been started"
-      {:error, reason} -> IO.puts "Error starting pipeline: #{inspect(reason)}"
+      {:ok, _pipeline_pid} -> IO.puts("Pipeline has been started")
+      {:error, reason} -> IO.puts("Error starting pipeline: #{inspect(reason)}")
     end
   end
 
   @doc "Stops a pipelinene."
   def pipeline_stop(group_id, pipeline_id) do
     case PipelineManager.rem_pipeline(group_id(group_id), pipeline_id) do
-      {:ok, _pipeline_pid} -> IO.puts "Pipeline has been stopped"
-      {:error, reason} -> IO.puts "Error stopping pipeline: #{inspect(reason)}"
+      {:ok, _pipeline_pid} -> IO.puts("Pipeline has been stopped")
+      {:error, reason} -> IO.puts("Error stopping pipeline: #{inspect(reason)}")
     end
   end
 

@@ -12,7 +12,7 @@ defmodule Aflecha do
 
   defdelegate enable_plugin(plugin_settings), to: PluginManager
 
-  defdelegate pipeline_state(group_id, pipeline), to: PipelineManager.get_pipeline_state
+  defdelegate pipeline_state(group_id, pipeline), to: PipelineManager, as: :get_pipeline_state
 
   # TODO: Disable plugin
 end
