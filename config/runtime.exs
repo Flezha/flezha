@@ -94,13 +94,6 @@ config :aflecha,
   # Socket configurations.
   socket_files_path: System.get_env("AFLECHA_SOCKET_FILES_PATH", "app_data/sockets/"),
 
-  # TODO: are these still used?
-  # ------------------------------------------------------------------------------------------------
-  # IO configurations.
-  io_add_timeout: System.get_env("AFLECHA_IO_ADD_TIMEOUT", "1000") |> String.to_integer(),
-  io_payload_add_timeout:
-    System.get_env("AFLECHA_IO_PAYLOAD_ADD_TIMEOUT", "1000") |> String.to_integer(),
-
   # ------------------------------------------------------------------------------------------------
   # Configuration for external processes.
   external_processes: external_processes

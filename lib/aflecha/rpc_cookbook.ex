@@ -9,8 +9,6 @@ defmodule Aflecha.Service.RpcCookbook do
   alias Aflecha.Service.ConfigManager
 
   @doc "Starts a pipeline."
-  @spec pipeline_start(String.t(), String.t(), String.t(), String.t()) ::
-          {:ok, pid()} | {:error, String.t()}
   def pipeline_start(group_id, pipeline_id, factory_id, variables) do
     pipeline = %Aflecha.Pipeline.Builder{
       id: pipeline_id,
@@ -18,21 +16,21 @@ defmodule Aflecha.Service.RpcCookbook do
       variables: Payloader.json_to_map(variables)
     }
 
-    PipelineManager.create_pipeline(group_id(group_id), pipeline)
-
-    # TODO: Handle errors and successes.
+    case PipelineManager.create_pipeline(group_id(group_id), pipeline) do
+      {:ok, _pipeline_pid} -> IO.puts "Pipeline has been started"
+      {:error, reason} -> IO.puts "Error starting pipeline: #{inspect(reason)}"
+    end
   end
 
   @doc "Stops a pipelinene."
-  @spec pipeline_stop(String.t(), String.t()) :: :ok | {:error, String.t()}
   def pipeline_stop(group_id, pipeline_id) do
-    PipelineManager.rem_pipeline(group_id(group_id), pipeline_id)
-
-    # TODO: Handle errors and successes.
+    case PipelineManager.rem_pipeline(group_id(group_id), pipeline_id) do
+      {:ok, _pipeline_pid} -> IO.puts "Pipeline has been stopped"
+      {:error, reason} -> IO.puts "Error stopping pipeline: #{inspect(reason)}"
+    end
   end
 
   @doc "Get pipeline state."
-  @spec pipeline_state(String.t(), String.t()) :: :ok | {:error, String.t()}
   def pipeline_state(group_id, pipeline_id) do
     result = PipelineManager.get_pipeline_state(group_id(group_id), pipeline_id)
 
