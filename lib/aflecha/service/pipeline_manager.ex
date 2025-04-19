@@ -15,6 +15,16 @@ defmodule Aflecha.Service.PipelineManager do
     end
   end
 
+  def get_overwatch_state(group_id, pipeline_id) do
+    case get_pipeline_pid(group_id, pipeline_id) do
+      {:ok, pipeline_pid} ->
+        {:ok, GenServer.call(pipeline_pid, :get_overwatch_state)}
+
+      err ->
+        err
+    end
+  end
+
   @doc """
   Starts a new pipeline to the operator.
   """

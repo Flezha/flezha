@@ -80,6 +80,11 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   @impl true
+  def handle_call(:get_overwatch_state, _from, state) do
+    {:reply, state, state}
+  end
+
+  @impl true
   def handle_call(:get_pipeline_state, _from, state) do
     data = %{"pipeline_id" => state.id}
 
@@ -122,8 +127,6 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   @impl true
   def handle_cast({:io_out, payload}, state) do
-    dbg()
-
     exec_binding(state.bindings.on_output, payload)
 
     {:noreply, state}
@@ -174,7 +177,7 @@ defmodule Aflecha.Pipeline.Overwatch do
         {:send_control, "migration_deserialization", operator_data}
       )
 
-    new_bindings = sync_bindings(state, handover_state.bindings)
+    new_bindings = sync_bindings(state.bindings, handover_state.bindings)
 
     new_state = %__MODULE__{
       state
@@ -196,35 +199,37 @@ defmodule Aflecha.Pipeline.Overwatch do
     StreamSup.stream_ids(operator_id, :primary) |> Enum.at(channel_index)
   end
 
-  defp sync_bindings(state, handover_state) do
-    Enum.reduce(
-      handover_state.bindings,
-      state.bindings,
-      fn {_trigger, bindings}, acc ->
-        case add_binding(acc, binding) do
-          {:ok, new_bindings} ->
-            new_bindings
+  defp sync_bindings(default_bindings, handover_bindings) do
+    migr_bindings =
+      Enum.map(handover_bindings, fn {_trigger, bindings} ->
+        bindings
+      end)
+      |> List.flatten()
 
-          {:error, reason} ->
-            Logge.error("Failed to synchronize binding: #{inspect(reason)}")
+    Enum.reduce(migr_bindings, default_bindings, fn binding, acc ->
+      case add_binding(acc, binding) do
+        {:ok, new_bindings} ->
+          new_bindings
 
-            bindings
-        end
+        {:error, reason} ->
+          Logge.error("Failed to synchronize binding: #{inspect(reason)}")
+
+          acc
       end
-    )
+    end)
   end
 
   defp add_binding(bindings, binding) do
     case PipelineBinding.bind(binding) do
       {:ok, binding} ->
-        bindings = [binding | Map.get(state.bindings, binding.trigger, [])]
+        binding_group = [binding | Map.get(bindings, binding.trigger, [])]
 
         case binding.trigger do
           :interval -> add_interval_binding(binding)
           _ -> nil
         end
 
-        {:ok, Map.put(state.bindings, binding.trigger, bindings)}
+        {:ok, Map.put(bindings, binding.trigger, binding_group)}
 
       {:error, reason} ->
         {:error, reason}

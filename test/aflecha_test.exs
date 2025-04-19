@@ -233,7 +233,14 @@ defmodule AflechaTest do
     # TODO: add here hook instead
     Process.sleep(100)
 
+    PluginManager.enable_plugin(%Aflecha.Plugin.Provider.StdOut{
+      group: @default_group,
+      pipeline_id: pipeline_id,
+      trigger: :proactive
+    })
+
     {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    {:ok, old_overwatch_state} = PipelineManager.get_overwatch_state(@default_group, pipeline_id)
     pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
     assert pipeline_state === test_state
@@ -244,8 +251,12 @@ defmodule AflechaTest do
     Process.sleep(1000)
 
     {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    {:ok, new_overwatch_state} = PipelineManager.get_overwatch_state(@default_group, pipeline_id)
     pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
     assert pipeline_state === test_state
+    assert new_overwatch_state.bindings === old_overwatch_state.bindings
+    # TODO: are we even using variables anymore?
+    assert new_overwatch_state.variables === old_overwatch_state.variables
   end
 end
