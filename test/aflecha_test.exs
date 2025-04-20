@@ -28,7 +28,7 @@ defmodule AflechaTest do
   end
 
   test "operator node connect" do
-    res = Aflecha.Operator.FleetManager.get_operators(@default_group)
+    res = Aflecha.Operator.FleetManager.active_operators(@default_group)
     assert length(res) === 2
     Enum.each(res, &assert(is_binary(&1)))
   end

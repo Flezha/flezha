@@ -64,6 +64,8 @@ defmodule Aflecha.Operator.ControlChannel do
 
   @impl true
   def handle_info({:tcp_closed, _socket}, state) do
+    dbg()
+
     Logger.warning("TCP connection closed for control socket.")
 
     {:noreply, state}

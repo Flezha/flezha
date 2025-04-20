@@ -20,7 +20,7 @@ defmodule Aflecha.Pipeline.Overwatch do
   # TODO: add ability to remove bindings.
   @impl true
   def init({group_id, pipeline}) do
-    operator_id = select_operator(FleetManager.get_operators(group_id))
+    operator_id = select_operator(FleetManager.active_operators(group_id))
 
     case start_pipeline_sdk(operator_id, pipeline) do
       {:ok, _} ->

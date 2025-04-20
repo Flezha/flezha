@@ -17,31 +17,46 @@ defmodule Aflecha.Operator.FleetManager do
 
   def connect_handler(sock) do
     :ok = SocketSupport.pass_ownership(sock, Process.whereis(__MODULE__))
-    GenServer.call(__MODULE__, {:operator_connect, sock})
+
+    case GenServer.call(__MODULE__, {:operator_connect, sock}) do
+      {:error, reason} ->
+        Logger.error("Failed to connect operator: #{inspect(reason)}")
+        nil
+
+      {:ok, _result} ->
+        :ok
+    end
   end
 
-  def get_operators(group_id) do
-    GenServer.call(__MODULE__, {:get_operators, group_id})
+  def active_operators(group_id) do
+    GenServer.call(__MODULE__, {:active_operators, group_id})
   end
 
   @impl true
   def init(_) do
-    {:ok, %{}}
+    {:ok, %{operator_groups: %{}}}
   end
 
   @impl true
-  def handle_call({:get_operators, group_id}, _from, state) do
-    operator_ids = Map.get(state, group_id, [])
+  def handle_call({:active_operators, group_id}, _from, state) do
+    operator_ids =
+      state
+      |> Map.get(:operator_groups, %{})
+      |> Map.get(group_id, [])
+      |> Enum.filter(fn {_, status, _} -> status == :active end)
+      |> Enum.map(fn {operator_id, _, _} -> operator_id end)
 
     {:reply, operator_ids, state}
   end
 
   @impl true
   def handle_call({:operator_connect, sock}, _from, state) do
-    case operator_connect(sock) do
+    case operator_connect(state.operator_groups, sock) do
       {:ok, group_id, operator_id} ->
-        operator_ids = Map.get(state, group_id, []) ++ [operator_id]
-        state = Map.put(state, group_id, operator_ids)
+        timestamp = DateTime.utc_now() |> DateTime.to_unix()
+        operator = {operator_id, :active, timestamp}
+        operator_ids = Map.get(state.operator_groups, group_id, []) ++ [operator]
+        state = put_in(state, [:operator_groups, group_id], operator_ids)
 
         EventManager.dispatch(
           :operator_connected_event,
@@ -51,8 +66,8 @@ defmodule Aflecha.Operator.FleetManager do
 
         {:reply, {:ok, {group_id, operator_id}}, state}
 
-      {:error, :no_group} ->
-        {:reply, {:error, :no_group}, state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -63,7 +78,7 @@ defmodule Aflecha.Operator.FleetManager do
     {:noreply, state}
   end
 
-  defp operator_connect(sock) do
+  defp extract_control_info(sock) do
     case :gen_tcp.recv(sock, 0, 5000) do
       {:ok, frame} ->
         {payloads, _buffer} = Payloader.parse_frame(frame)
@@ -72,10 +87,21 @@ defmodule Aflecha.Operator.FleetManager do
 
         init_payload = Payloader.json_to_map(init_message)
         group_id = Map.get(init_payload, "group_id")
+        factory_ids = Map.get(init_payload, "factory_ids")
 
-        # TODO: register factory ids.
-        _factory_ids = Map.get(init_payload, "factory_ids")
+        {:ok, group_id, factory_ids, bytes_rest}
 
+      {:error, reason} ->
+        :gen_tcp.close(sock)
+
+        {:error, reason}
+    end
+  end
+
+  defp operator_connect(_operator_groups, sock) do
+    case extract_control_info(sock) do
+      # TODO: register factory ids.
+      {:ok, group_id, _factory_ids, bytes_rest} ->
         operator_id = Identificator.unique_id(group_id)
         control_unit = Identificator.control_unit(operator_id)
         control_channel = Identificator.control_channel(operator_id)
@@ -102,11 +128,8 @@ defmodule Aflecha.Operator.FleetManager do
 
         {:ok, group_id, operator_id}
 
-      {:error, reason} ->
-        :gen_tcp.close(sock)
-        Logger.error("Failed to receive group id: #{inspect(reason)}")
-
-        {:error, :no_group}
+      err ->
+        err
     end
   end
 end

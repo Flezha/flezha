@@ -21,15 +21,6 @@ defmodule Aflecha.Application do
       {Aflecha.Socket.Dispatcher, &FleetManager.connect_handler/1},
       Aflecha.Service.PortPilot
 
-      # Aflecha.Operator.FleetManager,
-      # Aflecha.Service.Warden,
-      # Aflecha.Service.Identificator,
-      # Aflecha.Service.EventManager,
-      # Aflecha.Operator.FleetSupervisor,
-      # Aflecha.Operator.FleetManager,
-      # {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      # {Aflecha.Socket.Dispatcher, &Aflecha.Operator.FleetManager.connect_handler/1}
-
       # Aflecha.Service.Warden,
       # Aflecha.Service.Identificator,
       # Aflecha.Service.EventManager,
