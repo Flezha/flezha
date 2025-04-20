@@ -52,7 +52,7 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   @impl true
-  def handle_call(:rem_pipeline, from, state) do
+  def handle_call(:stop_pipeline, from, state) do
     GenServer.call(
       Identificator.control_unit(state.operator_id),
       {:stop_pipeline, state.id}

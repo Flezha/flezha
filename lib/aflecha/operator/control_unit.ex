@@ -12,8 +12,8 @@ defmodule Aflecha.Operator.ControlUnit do
   @payload_id_assign_operator_id "assign_operator_id"
   # TODO: perhaps add: @payload_id_factory_register "register_factory"
   @payload_id_connect_sockets "connect_sockets"
-  @payload_id_pipeline_add "add_pipeline"
-  @payload_id_pipeline_rem "rem_pipeline"
+  @payload_id_pipeline_start "start_pipeline"
+  @payload_id_pipeline_stop "stop_pipeline"
   @payload_id_serialize_pipe "migration_serialization"
   @payload_id_deserialize_pipe "migration_deserialization"
   @payload_id_pipeline_state "pipeline_state"
@@ -96,7 +96,7 @@ defmodule Aflecha.Operator.ControlUnit do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
-        @payload_id_pipeline_add,
+        @payload_id_pipeline_start,
         %{
           "pipeline_id" => pipeline.id,
           "factory_id" => pipeline.factory_id,
@@ -112,7 +112,7 @@ defmodule Aflecha.Operator.ControlUnit do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
-        @payload_id_pipeline_rem,
+        @payload_id_pipeline_stop,
         %{"pipeline_id" => pipeline_id}
       )
 
@@ -158,8 +158,8 @@ defmodule Aflecha.Operator.ControlUnit do
     [
       @payload_id_connect_control_channel,
       @payload_id_assign_operator_id,
-      @payload_id_pipeline_add,
-      @payload_id_pipeline_rem,
+      @payload_id_pipeline_start,
+      @payload_id_pipeline_stop,
       @payload_id_pipeline_state,
       @payload_id_serialize_pipe,
       @payload_id_deserialize_pipe,

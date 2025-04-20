@@ -6,9 +6,9 @@ defmodule Aflecha do
   Documentation for `Aflecha`.
   """
 
-  defdelegate create_pipeline(group_id, pipeline), to: PipelineManager
+  defdelegate start_pipeline(group_id, pipeline), to: PipelineManager
 
-  defdelegate rem_pipeline(group_id, pipeline), to: PipelineManager
+  defdelegate stop_pipeline(group_id, pipeline), to: PipelineManager
 
   defdelegate enable_plugin(plugin_settings), to: PluginManager
 

@@ -39,7 +39,7 @@ defmodule AflechaTest do
       factory_id: @test_pipeline_factory
     }
 
-    {status, info} = PipelineManager.create_pipeline(@default_group, pipeline)
+    {status, info} = PipelineManager.start_pipeline(@default_group, pipeline)
 
     assert status === :ok
     assert info[:pipeline_id] === "default_pipeline_test"
@@ -49,14 +49,14 @@ defmodule AflechaTest do
   end
 
   test "pipeline removing" do
-    pipeline_id = "default_pipeline_rem_test"
+    pipeline_id = "default_pipeline_stop_test"
 
     {:ok, %{pid: _pipeline_pid}} =
       pipeline_id
       |> PipelineFixture.get(@test_store_input_factory)
       |> PipelineFixture.start()
 
-    assert {:ok, :pipeline_removed} === PipelineManager.rem_pipeline(@default_group, pipeline_id)
+    assert {:ok, :pipeline_stopped} === PipelineManager.stop_pipeline(@default_group, pipeline_id)
 
     # TODO: add hook instead to listen to process removal.
     Process.sleep(100)
@@ -72,7 +72,7 @@ defmodule AflechaTest do
       factory_id: "non_existing_factory"
     }
 
-    {status, info} = PipelineManager.create_pipeline(@default_group, pipeline)
+    {status, info} = PipelineManager.start_pipeline(@default_group, pipeline)
 
     assert status === :error
     assert info[:pipeline_id] === pipeline_id
@@ -88,7 +88,7 @@ defmodule AflechaTest do
       factory_id: @test_pipeline_factory
     }
 
-    {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
+    {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
 
     # TODO: add failures also.
     res =
@@ -124,7 +124,7 @@ defmodule AflechaTest do
       factory_id: @test_pipeline_factory
     }
 
-    {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
+    {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
 
     res =
       PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
@@ -146,7 +146,7 @@ defmodule AflechaTest do
       variables: %{"comparable" => "hello world", "inverted" => false}
     }
 
-    {:ok, _} = PipelineManager.create_pipeline(@default_group, pipeline)
+    {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
 
     PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
       group: @default_group,

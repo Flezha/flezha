@@ -23,7 +23,7 @@ fn main() {
 }
 
 fn handle_start(args: Vec<String>) {
-    let example_usage = format!("Usage: {} add <pipeline_id> <factory_id> [--group=<group_id> |-g=<group_id>] [--init_values=<json> |-iv=<json>]", args[0]);
+    let example_usage = format!("Usage: {} start <pipeline_id> <factory_id> [--group=<group_id> |-g=<group_id>] [--init_values=<json> |-iv=<json>]", args[0]);
 
     if args.len() < 3 {
         eprintln!("{}", format!("Error: Invalid number of arguments.\n {}",  example_usage));

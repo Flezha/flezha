@@ -28,28 +28,28 @@ defmodule Aflecha.Service.PipelineManager do
   @doc """
   Starts a new pipeline to the operator.
   """
-  @spec create_pipeline(String.t(), PipelineBuilder.t()) ::
+  @spec start_pipeline(String.t(), PipelineBuilder.t()) ::
           {:ok, pid()} | {:error, String.t()}
-  def create_pipeline(group_id, pipeline) do
+  def start_pipeline(group_id, pipeline) do
     case PipelineBuilder.validate_pipeline(group_id, pipeline) do
       {:error, reason} ->
         {:error, reason}
 
       :ok ->
         # TODO: we should validate the group_id also.
-        add_pipeline(group_id, pipeline)
+        init_pipeline(group_id, pipeline)
     end
   end
 
   @doc """
   Removes a pipeline.
   """
-  @spec rem_pipeline(String.t(), String.t()) :: :ok | {:error, String.t()}
-  def rem_pipeline(group_id, pipeline_id) do
+  @spec stop_pipeline(String.t(), String.t()) :: :ok | {:error, String.t()}
+  def stop_pipeline(group_id, pipeline_id) do
     case get_pipeline_pid(group_id, pipeline_id) do
       {:ok, pipeline_pid} ->
-        case GenServer.call(pipeline_pid, :rem_pipeline) do
-          :ok -> {:ok, :pipeline_removed}
+        case GenServer.call(pipeline_pid, :stop_pipeline) do
+          :ok -> {:ok, :pipeline_stopped}
           {:error, reason} -> {:error, reason}
         end
 
@@ -58,7 +58,7 @@ defmodule Aflecha.Service.PipelineManager do
     end
   end
 
-  defp add_pipeline(group_id, pipeline) do
+  defp init_pipeline(group_id, pipeline) do
     child_spec = %{
       id: pipeline.id,
       start: {

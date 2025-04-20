@@ -16,7 +16,7 @@ defmodule Aflecha.Service.RpcCookbook do
       variables: Payloader.json_to_map(variables)
     }
 
-    case PipelineManager.create_pipeline(group_id(group_id), pipeline) do
+    case PipelineManager.start_pipeline(group_id(group_id), pipeline) do
       {:ok, _pipeline_pid} -> IO.puts("Pipeline has been started")
       {:error, reason} -> IO.puts("Error starting pipeline: #{inspect(reason)}")
     end
@@ -24,7 +24,7 @@ defmodule Aflecha.Service.RpcCookbook do
 
   @doc "Stops a pipelinene."
   def pipeline_stop(group_id, pipeline_id) do
-    case PipelineManager.rem_pipeline(group_id(group_id), pipeline_id) do
+    case PipelineManager.stop_pipeline(group_id(group_id), pipeline_id) do
       {:ok, _pipeline_pid} -> IO.puts("Pipeline has been stopped")
       {:error, reason} -> IO.puts("Error stopping pipeline: #{inspect(reason)}")
     end

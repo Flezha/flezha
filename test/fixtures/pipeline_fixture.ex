@@ -11,11 +11,11 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
   end
 
   def start(pipeline) do
-    Aflecha.Service.PipelineManager.create_pipeline(@default_operator, pipeline)
+    Aflecha.Service.PipelineManager.start_pipeline(@default_operator, pipeline)
   end
 
   def stop(pipeline_id) do
-    Aflecha.Service.PipelineManager.rem_pipeline(@default_operator, pipeline_id)
+    Aflecha.Service.PipelineManager.stop_pipeline(@default_operator, pipeline_id)
   end
 
   # TODO: refactor.
