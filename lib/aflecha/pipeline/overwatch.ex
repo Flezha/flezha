@@ -10,10 +10,26 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   use GenServer
 
-  defstruct [:id, :group_id, :operator_id, :channel, :bindings, variables: %{}]
+  defstruct [
+    :id,
+    :group_id,
+    :operator_id,
+    :channel,
+    :bindings,
+    snapshot_interval: 10_000,
+    variables: %{},
+    snapshot: nil
+  ]
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args)
+  end
+
+  def start_pipeline_sdk(operator_id, pipeline) do
+    GenServer.call(
+      Identificator.control_unit(operator_id),
+      {:start_pipeline, pipeline}
+    )
   end
 
   # TODO: binding on migration we should rerun all of them.
@@ -21,6 +37,10 @@ defmodule Aflecha.Pipeline.Overwatch do
   @impl true
   def init({group_id, pipeline}) do
     operator_id = select_operator(FleetManager.active_operators(group_id))
+    snapshot_interval = Keyword.get(pipeline.opts, :snapshot_interval, 10_000)
+
+    # TODO: Perhaps move to handle continue.
+    schedule_snapshot(snapshot_interval)
 
     case start_pipeline_sdk(operator_id, pipeline) do
       {:ok, _} ->
@@ -31,6 +51,8 @@ defmodule Aflecha.Pipeline.Overwatch do
            variables: pipeline.variables,
            operator_id: operator_id,
            channel: attach_channel(pipeline.id, operator_id),
+           snapshot_interval: snapshot_interval,
+           snapshot: nil,
            bindings: %{
              on_input: [],
              on_output: [],
@@ -42,13 +64,6 @@ defmodule Aflecha.Pipeline.Overwatch do
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  def start_pipeline_sdk(operator_id, pipeline) do
-    GenServer.call(
-      Identificator.control_unit(operator_id),
-      {:start_pipeline, pipeline}
-    )
   end
 
   @impl true
@@ -188,6 +203,31 @@ defmodule Aflecha.Pipeline.Overwatch do
     {:noreply, new_state}
   end
 
+  @impl true
+  def handle_info(:schedule_snapshot, state) do
+    {:ok, snapshot} =
+      GenServer.call(
+        Identificator.control_unit(state.operator_id),
+        {
+          :send_control,
+          "pipeline_state",
+          %{"pipeline_id" => state.id}
+        }
+      )
+
+    if state.snapshot_interval > 0 do
+      schedule_snapshot(state.snapshot_interval)
+    end
+
+    {:noreply, %__MODULE__{state | snapshot: snapshot}}
+  end
+
+  defp schedule_snapshot(snapshot_interval) when is_integer(snapshot_interval) do
+    Process.send_after(self(), :schedule_snapshot, snapshot_interval)
+  end
+
+  defp schedule_snapshot(_snapshot_interval), do: nil
+
   defp attach_channel(pipeline_id, operator_id) do
     # Get numeric representation of the pipeline_id string.
     pipeline_int = String.to_charlist(pipeline_id) |> Enum.sum()
@@ -212,7 +252,7 @@ defmodule Aflecha.Pipeline.Overwatch do
           new_bindings
 
         {:error, reason} ->
-          Logge.error("Failed to synchronize binding: #{inspect(reason)}")
+          Logger.error("Failed to synchronize binding: #{inspect(reason)}")
 
           acc
       end

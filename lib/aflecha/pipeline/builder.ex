@@ -4,10 +4,11 @@ defmodule Aflecha.Pipeline.Builder do
   @type t() :: %__MODULE__{
           id: String.t(),
           factory_id: String.t(),
-          variables: map()
+          variables: map(),
+          opts: Keyword.t()
         }
   @enforce_keys [:id, :factory_id]
-  defstruct [:id, :factory_id, variables: %{}]
+  defstruct [:id, :factory_id, variables: %{}, opts: []]
 
   def from_json(json_str) do
     case Jason.decode!(json_str) do

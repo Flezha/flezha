@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::env;
 use std::process::{Command, exit};
-use shared_lib::{get_namespace, get_json, get_aflecha_command};
+use shared_lib::{extract_param, get_aflecha_command, get_json, get_namespace};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -34,15 +35,24 @@ fn handle_start(args: Vec<String>) {
     let factory_id = &args[3];
     let variables = get_json(&args[4..], "--init_values=", "-iv=");
 
+    let mut opts: HashMap<String, String> = HashMap::new();
+
+    let spt = extract_param(&args[4..], "--snapshot-interval", "-si");
+    if spt.is_some() {
+        opts.insert("snapshot_interval".to_string(), spt.unwrap());
+    }
+
+    let opts_json = serde_json::to_string(&opts).unwrap();
     let command = get_aflecha_command();
     let group_id = get_namespace(&args[4..]);
 
     let rpc_command = format!(
-        "Aflecha.Service.RpcCookbook.pipeline_start(\"{}\", \"{}\", \"{}\", \"{}\")", 
+        "Aflecha.Service.RpcCookbook.pipeline_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\")", 
         group_id,
         pipeline_id,
         factory_id,
-        variables
+        variables,
+        opts_json,
     );
 
     println!("Starting pipeline...");

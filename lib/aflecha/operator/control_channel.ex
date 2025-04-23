@@ -65,6 +65,16 @@ defmodule Aflecha.Operator.ControlChannel do
   @impl true
   def handle_info({:tcp_closed, _socket}, state) do
     dbg()
+    # TODO: continue from here:
+    # We need to send a signal to the fleet manager to stop the operator.
+    # But first we need to check if current agent does not have any other operators under
+    # the group.
+    # Case 1: No other operators under the group. We can simply stop the whole operator with the hub.
+    # But make sure the hub is stopped gracefully to allow migration to other agents.
+    # Now do this only if other agents are available. If no other agents are available we should preserve the
+    # states somewhere.
+    # Case 2: Other operators under the group. We need to get the current overwatch states
+    # and stop the operator with the hub manager and pass start the state on the existing operator.
 
     Logger.warning("TCP connection closed for control socket.")
 

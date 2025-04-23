@@ -25,18 +25,31 @@ pub fn get_namespace(slice: &[String]) -> String {
 }
 
 pub fn get_parameter(slice: &[String], long_key: &str, short_key: &str) -> String {
-    let mut group_id = String::from("");
+    let mut param = String::from("");
 
     // Process the arguments to find the group_id
     for arg in slice {
         if arg.starts_with(long_key) {
-            group_id = arg[10..].to_string();
+            param = arg[10..].to_string();
         } else if arg.starts_with(short_key) {
-            group_id = arg[3..].to_string();
+            param = arg[3..].to_string();
         }
     }
 
-    group_id
+    param
+}
+
+pub fn extract_param(args: &[String], long_key: &str, short_key: &str) -> Option<String> {
+    for arg in args {
+        if let Some(value) = arg.strip_prefix(&format!("{}=", long_key)) {
+            return Some(value.to_string());
+        }
+        if let Some(value) = arg.strip_prefix(&format!("{}=", short_key)) {
+            return Some(value.to_string());
+        }
+    }
+    
+    None
 }
 
 pub fn get_json(slice: &[String], long_key: &str, short_key: &str) -> String {

@@ -9,11 +9,17 @@ defmodule Aflecha.Service.RpcCookbook do
   alias Aflecha.Service.ConfigManager
 
   @doc "Starts a pipeline."
-  def pipeline_start(group_id, pipeline_id, factory_id, variables) do
+  def pipeline_start(group_id, pipeline_id, factory_id, variables, opts \\ []) do
+    opts =
+      Payloader.json_to_map(opts)
+      |> atom_converter()
+      |> Keyword.new()
+
     pipeline = %Aflecha.Pipeline.Builder{
       id: pipeline_id,
       factory_id: factory_id,
-      variables: Payloader.json_to_map(variables)
+      variables: Payloader.json_to_map(variables),
+      opts: opts
     }
 
     case PipelineManager.start_pipeline(group_id(group_id), pipeline) do
@@ -96,7 +102,8 @@ defmodule Aflecha.Service.RpcCookbook do
       "on_input" => :on_input,
       "on_output" => :on_output,
       "interval" => :interval,
-      "proactive" => :proactive
+      "proactive" => :proactive,
+      "snapshot_interval" => :snapshot_interval
     }
 
     Enum.map(orig_map, fn {key, value} ->
@@ -108,8 +115,14 @@ defmodule Aflecha.Service.RpcCookbook do
             {key, value}
           end
 
-        _any ->
-          {key, value}
+        any ->
+          case Map.has_key?(mappings, any) do
+            false ->
+              {key, value}
+
+            true ->
+              {mappings[any], value}
+          end
       end
     end)
     |> Map.new()
