@@ -1,5 +1,6 @@
 defmodule Aflecha.Service.Validator do
   alias Aflecha.Service.Identificator
+  alias Aflecha.HubManager
 
   use Aflecha.Constant
 
@@ -7,6 +8,13 @@ defmodule Aflecha.Service.Validator do
     case byte_size(value) > max_length do
       true -> {:error, "pipeline id exceeds #{@pipeline_id_max_bytes} bytes"}
       false -> :ok
+    end
+  end
+
+  def valid_group(group_id) do
+    case HubManager.hub_alive?(group_id) do
+      true -> :ok
+      false -> {:error, "no operators in group #{group_id}"}
     end
   end
 

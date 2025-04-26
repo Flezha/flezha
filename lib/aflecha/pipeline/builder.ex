@@ -34,9 +34,10 @@ defmodule Aflecha.Pipeline.Builder do
     end
   end
 
-  def validate_pipeline(operator, pipeline) do
+  def validate_pipeline(group_id, pipeline) do
     with :ok <- Validator.byte_limit_exceed(pipeline.id),
-         :ok <- Validator.pipeline_unique(operator, pipeline.id) do
+         :ok <- Validator.valid_group(group_id),
+         :ok <- Validator.pipeline_unique(group_id, pipeline.id) do
       :ok
     else
       {:error, reason} -> {:error, reason}
