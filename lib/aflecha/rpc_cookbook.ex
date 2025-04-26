@@ -9,7 +9,7 @@ defmodule Aflecha.Service.RpcCookbook do
   alias Aflecha.Service.ConfigManager
 
   @doc "Starts a pipeline."
-  def pipeline_start(group_id, pipeline_id, factory_id, variables, opts \\ []) do
+  def pipeline_start(group_id, pipeline_id, factory_id, init_values, opts \\ []) do
     opts =
       Payloader.json_to_map(opts)
       |> atom_converter()
@@ -18,7 +18,7 @@ defmodule Aflecha.Service.RpcCookbook do
     pipeline = %Aflecha.Pipeline.Builder{
       id: pipeline_id,
       factory_id: factory_id,
-      variables: Payloader.json_to_map(variables),
+      init_values: Payloader.json_to_map(init_values),
       opts: opts
     }
 

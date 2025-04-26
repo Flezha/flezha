@@ -4,11 +4,11 @@ defmodule Aflecha.Pipeline.Builder do
   @type t() :: %__MODULE__{
           id: String.t(),
           factory_id: String.t(),
-          variables: map(),
+          init_values: map(),
           opts: Keyword.t()
         }
   @enforce_keys [:id, :factory_id]
-  defstruct [:id, :factory_id, variables: %{}, opts: []]
+  defstruct [:id, :factory_id, init_values: %{}, opts: []]
 
   def from_json(json_str) do
     case Jason.decode!(json_str) do
@@ -20,12 +20,12 @@ defmodule Aflecha.Pipeline.Builder do
   def from_map(values_map) do
     with {:ok, id} <- get_from_map(values_map, "id"),
          {:ok, factory_id} <- get_from_map(values_map, "factory_id"),
-         variables <- Map.get(values_map, "variables", %{}),
-         {:ok, variables_json} <- Jason.decode(variables) do
+         init_values <- Map.get(values_map, "init_values", %{}),
+         {:ok, init_values_json} <- Jason.decode(init_values) do
       pipeline = %__MODULE__{
         id: id,
         factory_id: factory_id,
-        variables: variables_json
+        init_values: init_values_json
       }
 
       {:ok, pipeline}

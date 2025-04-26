@@ -100,7 +100,7 @@ defmodule Aflecha.Operator.ControlUnit do
         %{
           "pipeline_id" => pipeline.id,
           "factory_id" => pipeline.factory_id,
-          "variables" => pipeline.variables
+          "init_values" => pipeline.init_values
         }
       )
 

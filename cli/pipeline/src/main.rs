@@ -33,7 +33,7 @@ fn handle_start(args: Vec<String>) {
 
     let pipeline_id = &args[2];
     let factory_id = &args[3];
-    let variables = get_json(&args[4..], "--init_values=", "-iv=");
+    let init_values = get_json(&args[4..], "--init_values=", "-iv=");
 
     let mut opts: HashMap<String, String> = HashMap::new();
 
@@ -51,7 +51,7 @@ fn handle_start(args: Vec<String>) {
         group_id,
         pipeline_id,
         factory_id,
-        variables,
+        init_values,
         opts_json,
     );
 

@@ -9,14 +9,14 @@ defmodule AflechaTest.RpcCookbookServiceTest do
   test "rpc start worker" do
     pipeline_id = "test_rpc_start_comp"
     factory_id = "increment_state"
-    {:ok, variables} = Jason.encode(%{"value" => 100})
+    {:ok, init_values} = Jason.encode(%{"value" => 100})
 
     result =
       Aflecha.Service.RpcCookbook.worker_start(
         @default_operator,
         pipeline_id,
         factory_id,
-        variables
+        init_values
       )
 
     assert elem(result, 0) === :ok

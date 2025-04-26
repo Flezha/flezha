@@ -143,7 +143,7 @@ defmodule AflechaTest do
     pipeline = %Aflecha.Pipeline.Builder{
       id: pipeline_id,
       factory_id: @test_compare_filter_factory,
-      variables: %{"comparable" => "hello world", "inverted" => false}
+      init_values: %{"comparable" => "hello world", "inverted" => false}
     }
 
     {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
@@ -256,7 +256,6 @@ defmodule AflechaTest do
 
     assert pipeline_state === test_state
     assert new_overwatch_state.bindings === old_overwatch_state.bindings
-    # TODO: are we even using variables anymore?
-    assert new_overwatch_state.variables === old_overwatch_state.variables
+    assert new_overwatch_state.init_values === old_overwatch_state.init_values
   end
 end

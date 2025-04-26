@@ -17,7 +17,7 @@ defmodule Aflecha.Pipeline.Overwatch do
     :channel,
     :bindings,
     snapshot_interval: 10_000,
-    variables: %{},
+    init_values: %{},
     snapshot: nil
   ]
 
@@ -48,7 +48,7 @@ defmodule Aflecha.Pipeline.Overwatch do
          %__MODULE__{
            id: pipeline.id,
            group_id: group_id,
-           variables: pipeline.variables,
+           init_values: pipeline.init_values,
            operator_id: operator_id,
            channel: attach_channel(pipeline.id, operator_id),
            snapshot_interval: snapshot_interval,
@@ -197,7 +197,7 @@ defmodule Aflecha.Pipeline.Overwatch do
     new_state = %__MODULE__{
       state
       | bindings: new_bindings,
-        variables: handover_state.variables
+        init_values: handover_state.init_values
     }
 
     {:noreply, new_state}
