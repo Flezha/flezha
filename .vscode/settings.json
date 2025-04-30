@@ -4,7 +4,7 @@
         "./sdk/rust/Cargo.toml",
         "./cli/agent/Cargo.toml",
         "./cli/pipeline/Cargo.toml",
-        "./cli/io/Cargo.toml",
+        "./cli/plugin/Cargo.toml",
     ],
     "rust-analyzer.cargo.loadOutDirsFromCheck": true,
     "rust-analyzer.procMacro.enable": true

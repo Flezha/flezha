@@ -121,7 +121,7 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:stop_operator, pipeline_id}, from, state) do
+  def handle_call(:stop_operator, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
