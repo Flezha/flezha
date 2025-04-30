@@ -36,8 +36,8 @@ defmodule Aflecha.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      # {:process_hub, path: "../process-hub"},
-      {:process_hub, "~> 0.3.2-alpha"},
+      {:process_hub, path: "../process-hub"},
+      # {:process_hub, "~> 0.3.2-alpha"},
       {:blockade, "~> 0.2.1"},
       {:fresh, "~> 0.4.4"},
       {:kafka_ex, "~> 0.14.0"},

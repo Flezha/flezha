@@ -2,6 +2,7 @@ defmodule Aflecha.Operator.ControlChannel do
   alias Aflecha.Socket.Support, as: SocketSupport
   alias Aflecha.Service.Identificator
   alias Aflecha.Service.Payloader
+  alias Aflecha.Operator.FleetManager
 
   require Logger
 
@@ -64,6 +65,12 @@ defmodule Aflecha.Operator.ControlChannel do
 
   @impl true
   def handle_info({:tcp_closed, _socket}, state) do
+    GenServer.call(FleetManager, {
+      :operator_disconnected,
+      state.group_id,
+      state.operator_id
+    })
+
     dbg()
     # TODO: continue from here:
     # We need to send a signal to the fleet manager to stop the operator.

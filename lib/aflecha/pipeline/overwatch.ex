@@ -14,22 +14,16 @@ defmodule Aflecha.Pipeline.Overwatch do
     :id,
     :group_id,
     :operator_id,
+    :factory_id,
     :channel,
     :bindings,
     snapshot_interval: 10_000,
-    init_values: %{},
-    snapshot: nil
+    snapshot: nil,
+    init_values: %{}
   ]
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args)
-  end
-
-  def start_pipeline_sdk(operator_id, pipeline) do
-    GenServer.call(
-      Identificator.control_unit(operator_id),
-      {:start_pipeline, pipeline}
-    )
   end
 
   # TODO: binding on migration we should rerun all of them.
@@ -48,6 +42,7 @@ defmodule Aflecha.Pipeline.Overwatch do
          %__MODULE__{
            id: pipeline.id,
            group_id: group_id,
+           factory_id: pipeline.factory_id,
            init_values: pipeline.init_values,
            operator_id: operator_id,
            channel: attach_channel(pipeline.id, operator_id),
@@ -112,6 +107,32 @@ defmodule Aflecha.Pipeline.Overwatch do
       )
 
     {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call({:operator_migrate, new_operator_id}, _from, state) do
+    state = %__MODULE__{
+      state
+      | operator_id: new_operator_id,
+        channel: attach_channel(state.id, new_operator_id)
+    }
+
+    init_values =
+      cond do
+        state.snapshot !== nil -> Payloader.json_to_map(state.snapshot)
+        true -> state.init_values
+      end
+
+    pipeline = %Aflecha.Pipeline.Builder{
+      id: state.id,
+      factory_id: state.factory_id,
+      init_values: Payloader.json_to_map(init_values),
+      opts: []
+    }
+
+    start_pipeline_sdk(new_operator_id, pipeline)
+
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -215,11 +236,24 @@ defmodule Aflecha.Pipeline.Overwatch do
         }
       )
 
+    snapshot =
+      case snapshot do
+        nil -> state.snapshot
+        _ -> snapshot
+      end
+
     if state.snapshot_interval > 0 do
       schedule_snapshot(state.snapshot_interval)
     end
 
     {:noreply, %__MODULE__{state | snapshot: snapshot}}
+  end
+
+  defp start_pipeline_sdk(operator_id, pipeline) do
+    GenServer.call(
+      Identificator.control_unit(operator_id),
+      {:start_pipeline, pipeline}
+    )
   end
 
   defp schedule_snapshot(snapshot_interval) when is_integer(snapshot_interval) do

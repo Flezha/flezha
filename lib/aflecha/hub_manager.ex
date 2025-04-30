@@ -23,8 +23,17 @@ defmodule Aflecha.HubManager do
     ProcessHub.is_alive?(Identificator.hub(group_id))
   end
 
-  def get_hub_nodes(group_id) do
-    ProcessHub.nodes(Identificator.hub(group_id), [:include_local])
+  def get_hub_nodes(group_id, include_local \\ false) do
+    opts =
+      case include_local do
+        true ->
+          [:include_local]
+
+        false ->
+          []
+      end
+
+    ProcessHub.nodes(Identificator.hub(group_id), opts)
   end
 
   def get_pid(group_id, pipeline_id) do
@@ -49,6 +58,37 @@ defmodule Aflecha.HubManager do
     )
   end
 
+  def unregister_handler(group_id, operator_id) do
+    ProcessHub.Service.HookManager.cancel_handler(
+      Identificator.hub(group_id),
+      ProcessHub.Constant.Hook.registry_pid_inserted(),
+      operator_id <> "_hub_pid_insertion"
+    )
+  end
+
+  def operator_pipelines(group_id, operator_id) do
+    hub_id = Identificator.hub(group_id)
+
+    ProcessHub.tag_query(hub_id, operator_id)
+  end
+
+  def operator_switch(group_id, old_operator_id, new_operator_id) do
+    hub_id = Identificator.hub(group_id)
+
+    # Updaates the operator id in the registry.
+    operator_pipelines(group_id, old_operator_id)
+    |> Enum.each(fn {pipeline_id, {_node, _pipeline_pid}} ->
+      ProcessHub.Service.ProcessRegistry.update(hub_id, pipeline_id, fn {cspec, node_pids,
+                                                                         metadata} ->
+        {cspec, node_pids, Map.put(metadata, :tag, new_operator_id)}
+      end)
+    end)
+
+    # Propagate the change to all nodes in the group.
+    ProcessHub.Service.Synchronizer.trigger_sync(hub_id)
+  end
+
+  # TODO: we should also remove the pids incase the pipeline is removed.
   def hook_insert_pid(operator_id, {pipeline_id, node_pids}) do
     curr_node = node()
 

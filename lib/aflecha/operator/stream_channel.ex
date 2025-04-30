@@ -63,6 +63,16 @@ defmodule Aflecha.Operator.StreamChannel do
   end
 
   @impl true
+  def handle_call({:pipeline_bulk_insert, pipelines}, _from, state) do
+    pipeline_mapping =
+      Enum.reduce(pipelines, state.pipeline_mapping, fn {pipeline_id, updated_pids}, acc ->
+        Map.put(acc, pipeline_id, updated_pids)
+      end)
+
+    {:reply, :ok, pipeline_mapping}
+  end
+
+  @impl true
   def handle_info({:tcp_closed, _socket}, state) do
     Logger.warning("TCP connection closed for IO socket.")
 
