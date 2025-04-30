@@ -32,6 +32,10 @@ defmodule Aflecha.Operator.FleetManager do
     GenServer.call(__MODULE__, {:active_operators, group_id})
   end
 
+  def disconnect_operator(group_id, operator_id) do
+    GenServer.call(__MODULE__, {:operator_disconnect, group_id, operator_id})
+  end
+
   @impl true
   def init(_) do
     {:ok, %{operator_groups: %{}}}
@@ -111,7 +115,7 @@ defmodule Aflecha.Operator.FleetManager do
   end
 
   defp handle_operator_disconnect(state, group_id, operator_id) do
-    # TODO: kill the existing operator supervisor.
+    FleetSupervisor.stop_operator_sup(operator_id)
 
     operator_ids =
       state

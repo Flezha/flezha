@@ -17,7 +17,7 @@ defmodule Aflecha.Operator.ControlUnit do
   @payload_id_serialize_pipe "migration_serialization"
   @payload_id_deserialize_pipe "migration_deserialization"
   @payload_id_pipeline_state "pipeline_state"
-  @payload_id_operator_shutdown "operator_shutdown"
+  @payload_id_operator_disconnect "operator_disconnect"
 
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link({group_id, operator_id}) do
@@ -121,11 +121,11 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call(:stop_operator, from, state) do
+  def handle_call(:disconnect_operator, from, state) do
     ref =
       ControlChannel.send_control(
         Identificator.control_channel(state.operator_id),
-        @payload_id_operator_shutdown,
+        @payload_id_operator_disconnect,
         %{}
       )
 
@@ -178,7 +178,7 @@ defmodule Aflecha.Operator.ControlUnit do
       @payload_id_serialize_pipe,
       @payload_id_deserialize_pipe,
       @payload_id_connect_sockets,
-      @payload_id_operator_shutdown
+      @payload_id_operator_disconnect
     ]
   end
 

@@ -23,6 +23,11 @@ defmodule Aflecha.Operator.FleetSupervisor do
     })
   end
 
+  def stop_operator_sup(operator_id) do
+    Supervisor.terminate_child(__MODULE__, operator_id)
+    Supervisor.delete_child(__MODULE__, operator_id)
+  end
+
   def default_operator() do
     child =
       DynamicSupervisor.which_children(__MODULE__)
