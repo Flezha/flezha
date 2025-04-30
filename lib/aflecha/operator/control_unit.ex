@@ -17,6 +17,7 @@ defmodule Aflecha.Operator.ControlUnit do
   @payload_id_serialize_pipe "migration_serialization"
   @payload_id_deserialize_pipe "migration_deserialization"
   @payload_id_pipeline_state "pipeline_state"
+  @payload_id_operator_shutdown "operator_shutdown"
 
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link({group_id, operator_id}) do
@@ -120,6 +121,18 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
+  def handle_call({:stop_operator, pipeline_id}, from, state) do
+    ref =
+      ControlChannel.send_control(
+        Identificator.control_channel(state.operator_id),
+        @payload_id_operator_shutdown,
+        %{}
+      )
+
+    {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+  end
+
+  @impl true
   def handle_cast({:handle_payload, payload_id, message}, state) do
     {:noreply, handle_payload(state, {payload_id, message})}
   end
@@ -155,6 +168,7 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   defp payload_id_list() do
+    # TODO: refactor.
     [
       @payload_id_connect_control_channel,
       @payload_id_assign_operator_id,
@@ -163,7 +177,8 @@ defmodule Aflecha.Operator.ControlUnit do
       @payload_id_pipeline_state,
       @payload_id_serialize_pipe,
       @payload_id_deserialize_pipe,
-      @payload_id_connect_sockets
+      @payload_id_connect_sockets,
+      @payload_id_operator_shutdown
     ]
   end
 

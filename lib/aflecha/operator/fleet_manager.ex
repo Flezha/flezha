@@ -111,6 +111,8 @@ defmodule Aflecha.Operator.FleetManager do
   end
 
   defp handle_operator_disconnect(state, group_id, operator_id) do
+    # TODO: kill the existing operator supervisor.
+
     operator_ids =
       state
       |> Map.get(:operator_groups, %{})

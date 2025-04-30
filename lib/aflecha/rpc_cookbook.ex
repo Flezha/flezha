@@ -31,7 +31,7 @@ defmodule Aflecha.Service.RpcCookbook do
   @doc "Stops a pipelinene."
   def pipeline_stop(group_id, pipeline_id) do
     case PipelineManager.stop_pipeline(group_id(group_id), pipeline_id) do
-      {:ok, _pipeline_pid} -> IO.puts("Pipeline has been stopped")
+      :ok -> IO.puts("Pipeline has been stopped")
       {:error, reason} -> IO.puts("Error stopping pipeline: #{inspect(reason)}")
     end
   end

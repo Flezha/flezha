@@ -49,7 +49,7 @@ defmodule Aflecha.Service.PipelineManager do
     case get_pipeline_pid(group_id, pipeline_id) do
       {:ok, pipeline_pid} ->
         case GenServer.call(pipeline_pid, :stop_pipeline) do
-          :ok -> {:ok, :pipeline_stopped}
+          :ok -> :ok
           {:error, reason} -> {:error, reason}
         end
 

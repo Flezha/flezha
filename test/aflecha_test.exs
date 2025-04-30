@@ -56,7 +56,7 @@ defmodule AflechaTest do
       |> PipelineFixture.get(@test_store_input_factory)
       |> PipelineFixture.start()
 
-    assert {:ok, :pipeline_stopped} === PipelineManager.stop_pipeline(@default_group, pipeline_id)
+    assert :ok === PipelineManager.stop_pipeline(@default_group, pipeline_id)
 
     # TODO: add hook instead to listen to process removal.
     Process.sleep(100)
