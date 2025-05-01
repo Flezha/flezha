@@ -1,7 +1,8 @@
 defmodule AflechaTest do
-  alias Aflecha.Service.PipelineManager
   alias AflechaTest.Fixtures.PipelineFixture
+  alias AflechaTest.Helpers.OperatorHelper
   alias Aflecha.Service.PluginManager
+  alias Aflecha.Service.PipelineManager
 
   use ExUnit.Case
   use Aflecha.Constant
@@ -259,36 +260,12 @@ defmodule AflechaTest do
     assert new_overwatch_state.init_values === old_overwatch_state.init_values
   end
 
-  @tag :operator_shutdown
-  test "operator shutdown" do
-    # TODO: extract this to a test helper function to start and stop temporary operators.
+  @tag :operator_disconnect
+  test "operator disconnect" do
     group_id = "test_temp_group"
+    operator_id = OperatorHelper.start_operator(group_id)
 
-    {:ok, current_path} = :file.get_cwd()
-
-    command =
-      "cargo run --manifest-path=#{current_path}/test/apps/rust_operator/Cargo.toml --target-dir=./target -- " <>
-        group_id
-
-    Aflecha.Service.EventManager.add_handler(:operator_connected_event)
-    Aflecha.Service.EventManager.add_handler(:operator_disconnected_event)
-
-    Aflecha.Service.PortPilot.open_port(command)
-
-    operator_id =
-      receive do
-        {:operator_connected_event, {^group_id, operator_id}} -> operator_id
-      after
-        2000 -> raise "temporary test operator not connected"
-      end
-
-    Aflecha.Operator.FleetManager.disconnect_operator(group_id, operator_id)
-
-    receive do
-      {:operator_disconnected_event, {^group_id, ^operator_id}} -> :ok
-    after
-      2000 -> raise "temporary test operator not connected"
-    end
+    OperatorHelper.stop_operator(group_id, operator_id)
 
     assert Aflecha.Operator.FleetManager.active_operators(group_id) === []
   end
