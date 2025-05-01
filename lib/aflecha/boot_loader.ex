@@ -29,6 +29,11 @@ defmodule Aflecha.BootLoader do
   end
 
   @impl true
+  def handle_info({:operator_connected_event, {"test_temp_group", _}}, state) do
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(msg, state) do
     Logger.error("Unexpected message at boot validator: #{inspect(msg)} on node #{node()}")
 

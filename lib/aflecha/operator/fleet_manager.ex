@@ -33,7 +33,7 @@ defmodule Aflecha.Operator.FleetManager do
   end
 
   def disconnect_operator(group_id, operator_id) do
-    GenServer.call(__MODULE__, {:operator_disconnect, group_id, operator_id})
+    GenServer.call(__MODULE__, {:disconnect_operator, group_id, operator_id})
   end
 
   @impl true
@@ -42,7 +42,23 @@ defmodule Aflecha.Operator.FleetManager do
   end
 
   @impl true
-  def handle_call({:operator_disconnect, group_id, operator_id}, _from, state) do
+  def handle_call({:disconnect_operator, group_id, operator_id}, _from, state) do
+    # Check if the operator is in the group.
+    case get_in(state.operator_groups, [group_id, operator_id]) do
+      nil ->
+        {:reply, {:error, "operator not found"}, state}
+
+      _ ->
+        Logger.info("Disconnecting operator #{operator_id} from group #{group_id}")
+
+        GenServer.call(Identificator.control_unit(operator_id), :disconnect_operator)
+
+        {:reply, :ok, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:operator_disconnected, group_id, operator_id}, _from, state) do
     state = handle_operator_disconnect(state, group_id, operator_id)
 
     {:reply, :ok, state}
@@ -53,7 +69,7 @@ defmodule Aflecha.Operator.FleetManager do
     operator_ids =
       state
       |> Map.get(:operator_groups, %{})
-      |> Map.get(group_id, [])
+      |> Map.get(group_id, %{})
       |> Enum.filter(fn {_, {status, _}} -> status == :active end)
       |> Enum.map(fn {operator_id, {_, _}} -> operator_id end)
 
@@ -120,7 +136,7 @@ defmodule Aflecha.Operator.FleetManager do
     operator_ids =
       state
       |> Map.get(:operator_groups, %{})
-      |> Map.get(group_id, [])
+      |> Map.get(group_id, %{})
       |> Enum.filter(fn {id, {status, _}} -> status == :active && id != operator_id end)
       |> Enum.map(fn {id, {_, _}} -> id end)
 
@@ -143,7 +159,7 @@ defmodule Aflecha.Operator.FleetManager do
         # new operators connect.
         Enum.empty?(operator_ids) && Enum.empty?(other_agents) ->
           # TODO:
-          nil
+          %{}
       end
 
     EventManager.dispatch(

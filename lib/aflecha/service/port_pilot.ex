@@ -10,6 +10,23 @@ defmodule Aflecha.Service.PortPilot do
     GenServer.start_link(__MODULE__, arg, name: __MODULE__)
   end
 
+  def open_port(command) do
+    socket_files_path = Application.fetch_env!(:aflecha, :socket_files_path)
+
+    port =
+      Port.open(
+        {:spawn, command},
+        [
+          :binary,
+          {:env, [{~c"AFLECHA_SOCKET_FILES_PATH", String.to_charlist(socket_files_path)}]}
+        ]
+      )
+
+    Port.monitor(port)
+
+    {port, command}
+  end
+
   @impl true
   def init(_) do
     ports = initialize_ports()
@@ -75,23 +92,6 @@ defmodule Aflecha.Service.PortPilot do
       open_port(command)
     end)
     |> Map.new()
-  end
-
-  defp open_port(command) do
-    socket_files_path = Application.fetch_env!(:aflecha, :socket_files_path)
-
-    port =
-      Port.open(
-        {:spawn, command},
-        [
-          :binary,
-          {:env, [{~c"AFLECHA_SOCKET_FILES_PATH", String.to_charlist(socket_files_path)}]}
-        ]
-      )
-
-    Port.monitor(port)
-
-    {port, command}
   end
 
   defp schedule_counter_reset() do
