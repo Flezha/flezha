@@ -1,6 +1,7 @@
 use std::thread::{self};
 use std::io::{self, Read};
 use std::time::Duration;
+use std::env;
 
 use aflecha_operator::{
     PipelineResultType,
@@ -12,10 +13,20 @@ use serde::{Serialize, Deserialize};
 fn main() {
     define_factories();
 
-    let _operator = aflecha_operator::new("default".to_string());
+    let _operator = aflecha_operator::new(group());
 
     // To keep the process alive while the agent is running.
     std_keeper();
+}
+
+fn group() -> String {
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() > 1 {
+        return args[1].clone();
+    }
+
+    return "default".to_string()
 }
 
 fn std_keeper() -> thread::JoinHandle<()> {
