@@ -13,7 +13,7 @@ defmodule AflechaTest.RpcCookbookServiceTest do
 
     result =
       Aflecha.Service.RpcCookbook.worker_start(
-        @default_operator,
+        @default_group,
         pipeline_id,
         factory_id,
         init_values
@@ -28,8 +28,8 @@ defmodule AflechaTest.RpcCookbookServiceTest do
     AflechaTest.Fixtures.Worker.get(pipeline_id, nil)
     |> AflechaTest.Fixtures.Worker.start()
 
-    result1 = Aflecha.Service.RpcCookbook.worker_stop(@default_operator, pipeline_id)
-    result2 = Aflecha.Service.RpcCookbook.worker_stop(@default_operator, "non_existent")
+    result1 = Aflecha.Service.RpcCookbook.worker_stop(@default_group, pipeline_id)
+    result2 = Aflecha.Service.RpcCookbook.worker_stop(@default_group, "non_existent")
 
     assert result1 === :ok
     assert result2 |> elem(0) === :error
@@ -77,7 +77,7 @@ defmodule AflechaTest.RpcCookbookServiceTest do
 
     result1 =
       Aflecha.Service.RpcCookbook.add_io(
-        @default_operator,
+        @default_group,
         pipeline_id,
         io_params_json,
         io_mode,
@@ -86,7 +86,7 @@ defmodule AflechaTest.RpcCookbookServiceTest do
 
     result2 =
       Aflecha.Service.RpcCookbook.add_io(
-        @default_operator,
+        @default_group,
         "non_existent",
         io_params_json,
         io_mode,

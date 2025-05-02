@@ -1,5 +1,6 @@
 defmodule Aflecha.HubManager do
   alias Aflecha.Service.Identificator
+  alias ProcessHub.Service.ProcessRegistry
 
   use Supervisor
 
@@ -21,6 +22,18 @@ defmodule Aflecha.HubManager do
 
   def hub_alive?(group_id) do
     ProcessHub.is_alive?(Identificator.hub(group_id))
+  end
+
+  def get_registry(group_id) do
+    hub_id = Identificator.hub(group_id)
+
+    case ProcessHub.is_alive?(hub_id) do
+      true ->
+        {:ok, ProcessHub.registry_dump(hub_id)}
+
+      false ->
+        {:error, "hub not alive"}
+    end
   end
 
   def get_hub_nodes(group_id, include_local \\ false) do
@@ -75,17 +88,32 @@ defmodule Aflecha.HubManager do
   def operator_switch(group_id, old_operator_id, new_operator_id) do
     hub_id = Identificator.hub(group_id)
 
-    # Updaates the operator id in the registry.
+    # Updates the operator id in the registry.
     operator_pipelines(group_id, old_operator_id)
     |> Enum.each(fn {pipeline_id, {_node, _pipeline_pid}} ->
-      ProcessHub.Service.ProcessRegistry.update(hub_id, pipeline_id, fn {cspec, node_pids,
-                                                                         metadata} ->
-        {cspec, node_pids, Map.put(metadata, :tag, new_operator_id)}
-      end)
+      pipeline_set_operator(group_id, pipeline_id, new_operator_id)
     end)
 
     # Propagate the change to all nodes in the group.
     ProcessHub.Service.Synchronizer.trigger_sync(hub_id)
+  end
+
+  def pipeline_set_operator(group_id, pipeline_id, operator_id) do
+    # TODO: synchronize the change to all nodes in the group.
+
+    hub_id = Identificator.hub(group_id)
+
+    case ProcessHub.is_alive?(hub_id) do
+      true ->
+        ProcessRegistry.update(hub_id, pipeline_id, fn cspec, node_pids, metadata ->
+          {cspec, node_pids, Map.put(metadata, :tag, operator_id)}
+        end)
+
+        :ok
+
+      false ->
+        {:error, "hub not alive"}
+    end
   end
 
   # TODO: we should also remove the pids incase the pipeline is removed.

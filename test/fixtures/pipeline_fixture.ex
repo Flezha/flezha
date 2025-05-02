@@ -10,19 +10,19 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
     }
   end
 
-  def start(pipeline) do
-    Aflecha.Service.PipelineManager.start_pipeline(@default_operator, pipeline)
+  def start(pipeline, group \\ @default_group) do
+    Aflecha.Service.PipelineManager.start_pipeline(group, pipeline)
   end
 
-  def stop(pipeline_id) do
-    Aflecha.Service.PipelineManager.stop_pipeline(@default_operator, pipeline_id)
+  def stop(pipeline_id, group \\ @default_group) do
+    Aflecha.Service.PipelineManager.stop_pipeline(group, pipeline_id)
   end
 
   # TODO: refactor.
   # def attach_input(pipeline, handler, opts \\ []) do
   #   {:ok, __id} =
   #     Aflecha.add_io(
-  #       @default_operator,
+  #       @default_group,
   #       pipeline.id,
   #       get_io_handler(handler, :input),
   #       :input,
@@ -35,7 +35,7 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
   # def attach_output(pipeline, handler) do
   #   {:ok, _id} =
   #     Aflecha.add_io(
-  #       @default_operator,
+  #       @default_group,
   #       pipeline.id,
   #       get_io_handler(handler, :output),
   #       :output,

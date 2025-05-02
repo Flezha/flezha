@@ -15,7 +15,7 @@ defmodule AflechaTest.MigratorServiceTest do
   test "serialize worker" do
     serialized_data =
       Aflecha.Worker.MigratorService.serialize_pipeline(
-        @default_operator,
+        @default_group,
         @pipeline_id
       )
 
@@ -26,13 +26,13 @@ defmodule AflechaTest.MigratorServiceTest do
   test "deserialize worker" do
     serialized_data =
       Aflecha.Worker.MigratorService.serialize_pipeline(
-        @default_operator,
+        @default_group,
         @pipeline_id
       )
 
     assert :ok ===
              Aflecha.Worker.MigratorService.deserialize_pipeline(
-               @default_operator,
+               @default_group,
                @pipeline_id,
                serialized_data
              )

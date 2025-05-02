@@ -1,7 +1,7 @@
 defmodule Aflecha.Constant do
   defmacro __using__(_) do
     quote do
-      @default_operator "default"
+      @default_group "default"
       @testnet_ws_uri "ws://localhost:4500"
       @pipeline_id_max_bytes 32
 

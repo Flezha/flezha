@@ -7,6 +7,16 @@ defmodule Aflecha.Service.PipelineManager do
   alias Aflecha.Service.Identificator
   alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
+  def pipeline_registry(group_id) do
+    case HubManager.get_registry(group_id) do
+      {:ok, registry} ->
+        registry
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   def get_pipeline_pid(group_id, pipeline_id) do
     case HubManager.get_pid(group_id, pipeline_id) do
       {:ok, pid} -> {:ok, pid}
@@ -80,7 +90,7 @@ defmodule Aflecha.Service.PipelineManager do
 
     case result do
       {:ok, {_pipeline_id, [{node, pid}]}} ->
-        operator_id = GenServer.call(pid, :get_operator)
+        operator_id = GenServer.call(pid, :registry_operator_set)
 
         {:ok,
          %{

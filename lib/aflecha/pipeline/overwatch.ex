@@ -1,4 +1,5 @@
 defmodule Aflecha.Pipeline.Overwatch do
+  alias Aflecha.HubManager
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Operator.StreamSup
   alias Aflecha.Service.Identificator
@@ -36,29 +37,42 @@ defmodule Aflecha.Pipeline.Overwatch do
     # TODO: Perhaps move to handle continue.
     schedule_snapshot(snapshot_interval)
 
+    state = %__MODULE__{
+      id: pipeline.id,
+      group_id: group_id,
+      factory_id: pipeline.factory_id,
+      init_values: pipeline.init_values,
+      operator_id: operator_id,
+      channel: attach_channel(pipeline.id, operator_id),
+      snapshot_interval: snapshot_interval,
+      snapshot: nil,
+      bindings: %{
+        on_input: [],
+        on_output: [],
+        interval: [],
+        proactive: []
+      }
+    }
+
     case start_pipeline_sdk(operator_id, pipeline) do
       {:ok, _} ->
-        {:ok,
-         %__MODULE__{
-           id: pipeline.id,
-           group_id: group_id,
-           factory_id: pipeline.factory_id,
-           init_values: pipeline.init_values,
-           operator_id: operator_id,
-           channel: attach_channel(pipeline.id, operator_id),
-           snapshot_interval: snapshot_interval,
-           snapshot: nil,
-           bindings: %{
-             on_input: [],
-             on_output: [],
-             interval: [],
-             proactive: []
-           }
-         }}
+        {:ok, state, {:continue, :additional_init}}
 
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  @impl true
+  def handle_continue(:additional_init, state) do
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_call(:registry_operator_set, _from, state) do
+    HubManager.pipeline_set_operator(state.group_id, state.id, state.operator_id)
+
+    {:reply, {:ok, state.operator_id}, state}
   end
 
   @impl true

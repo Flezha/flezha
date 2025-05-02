@@ -16,7 +16,7 @@ defmodule AflechaTest.IOManagerTest do
   test "add IO input" do
     res1 =
       IOManager.add_io(
-        @default_operator,
+        @default_group,
         @pipeline_id,
         %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
         :input,
@@ -25,7 +25,7 @@ defmodule AflechaTest.IOManagerTest do
 
     res2 =
       IOManager.add_io(
-        @default_operator,
+        @default_group,
         "none",
         %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
         :input,

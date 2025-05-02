@@ -14,7 +14,7 @@ defmodule AflechaTest.PipelineManagerTest do
       factory_id: @factory_do_nothing
     }
 
-    result = start_worker(@default_operator, worker)
+    result = start_worker(@default_group, worker)
 
     assert elem(result, 0) === :ok
     assert is_tuple(elem(result, 1))
@@ -28,16 +28,16 @@ defmodule AflechaTest.PipelineManagerTest do
       factory_id: @factory_do_nothing
     }
 
-    {:ok, _} = start_worker(@default_operator, worker)
+    {:ok, _} = start_worker(@default_group, worker)
 
-    assert stop_worker(@default_operator, worker.id) === :ok
+    assert stop_worker(@default_group, worker.id) === :ok
   end
 
   test "worker validations" do
     worker = AflechaTest.Fixtures.Worker.get("test_worker_validation", nil)
 
-    result1 = start_worker(@default_operator, worker)
-    result2 = start_worker(@default_operator, worker)
+    result1 = start_worker(@default_group, worker)
+    result2 = start_worker(@default_group, worker)
 
     assert elem(result1, 0) === :ok
     assert elem(result2, 0) === :error
@@ -55,8 +55,8 @@ defmodule AflechaTest.PipelineManagerTest do
       factory_id: @factory_do_nothing
     }
 
-    result1 = start_worker(@default_operator, valid_worker)
-    result2 = start_worker(@default_operator, invalid_worker)
+    result1 = start_worker(@default_group, valid_worker)
+    result2 = start_worker(@default_group, invalid_worker)
 
     assert elem(result1, 0) === :ok
     assert result2 === {:error, "worker id exceeds 32 bytes"}
