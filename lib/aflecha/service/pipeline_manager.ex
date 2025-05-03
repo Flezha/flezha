@@ -68,6 +68,16 @@ defmodule Aflecha.Service.PipelineManager do
     end
   end
 
+  def create_snapshot(group_id, pipeline_id) do
+    case get_pipeline_pid(group_id, pipeline_id) do
+      {:ok, pipeline_pid} ->
+        GenServer.call(pipeline_pid, :create_snapshot)
+
+      err ->
+        err
+    end
+  end
+
   defp init_pipeline(group_id, pipeline) do
     child_spec = %{
       id: pipeline.id,
@@ -90,7 +100,7 @@ defmodule Aflecha.Service.PipelineManager do
 
     case result do
       {:ok, {_pipeline_id, [{node, pid}]}} ->
-        operator_id = GenServer.call(pid, :registry_operator_set)
+        {:ok, operator_id} = GenServer.call(pid, :registry_operator_set)
 
         {:ok,
          %{

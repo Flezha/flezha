@@ -50,7 +50,6 @@ defmodule Aflecha.Operator.FleetManager do
 
       _ ->
         Logger.info("Disconnecting operator #{operator_id} from group #{group_id}")
-
         GenServer.call(Identificator.control_unit(operator_id), :disconnect_operator)
 
         {:reply, :ok, state}
@@ -177,14 +176,14 @@ defmodule Aflecha.Operator.FleetManager do
     # TODO: select the best operator to delegate the work to.
     new_operator = Enum.random(available_operators)
 
-    # Switch pipeline overwatchers to the new operator.
-    HubManager.operator_switch(group_id, old_operator, new_operator)
-
     # Let all overwatchers migrate their state to the new operator.
     HubManager.operator_pipelines(group_id, old_operator)
-    |> Enum.each(fn {_pipeline_id, {_node, pipeline_pid}} ->
+    |> Enum.each(fn {_pipeline_id, [{_node, pipeline_pid}]} ->
       GenServer.call(pipeline_pid, {:operator_migrate, new_operator})
     end)
+
+    # Switch pipeline overwatchers to the new operator.
+    HubManager.operator_switch(group_id, old_operator, new_operator)
 
     # Reset the hub handler to pick up any process restarts and pid changes.
     HubManager.unregister_handler(group_id, old_operator)

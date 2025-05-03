@@ -297,15 +297,25 @@ defmodule AflechaTest do
     GenServer.cast(pipeline_pid_1, {:io_in, {:text, "state_1"}})
     GenServer.cast(pipeline_pid_2, {:io_in, {:text, "state_2"}})
 
-    PipelineManager.pipeline_registry(group_id) |> dbg()
+    PipelineManager.create_snapshot(group_id, pipeline_id_1)
+    PipelineManager.create_snapshot(group_id, pipeline_id_2)
 
-    # Find the operator id of the pipelines.
+    active_operator = if pipe1_op === operator_id_1, do: operator_id_2, else: operator_id_1
 
     # Trigger the operator disconnect.
-    # OperatorHelper.stop_operator(group_id, operator_id_1)
+    OperatorHelper.stop_operator(group_id, pipe1_op)
 
-    # Check if the pipelines are migrated to the other operator.
+    # Make sure all the pipelines are migrated to the other operator.
+    PipelineManager.pipeline_registry(group_id)
+    |> Enum.each(fn {pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+      assert new_operator === active_operator
+    end)
 
-    # Check if the state is the same as before.
+    # Make sure the states have been migrated.
+    {:ok, json_state_1} = PipelineManager.get_pipeline_state(group_id, pipeline_id_1)
+    {:ok, json_state_2} = PipelineManager.get_pipeline_state(group_id, pipeline_id_2)
+
+    assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
+    assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
   end
 end

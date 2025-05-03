@@ -140,10 +140,10 @@ defmodule Aflecha.Pipeline.Overwatch do
     pipeline = %Aflecha.Pipeline.Builder{
       id: state.id,
       factory_id: state.factory_id,
-      init_values: Payloader.json_to_map(init_values),
+      init_values: init_values,
       opts: []
     }
-
+s
     start_pipeline_sdk(new_operator_id, pipeline)
 
     {:reply, :ok, state}
@@ -161,6 +161,13 @@ defmodule Aflecha.Pipeline.Overwatch do
     GenServer.call(state.channel, {:io_in, state.id, payload, :stream})
 
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call(:create_snapshot, _from, state) do
+    snapshot = create_snapshot(state.id, state.operator_id)
+
+    {:reply, {:ok, snapshot}, %__MODULE__{state | snapshot: snapshot}}
   end
 
   @impl true
@@ -240,27 +247,30 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   @impl true
   def handle_info(:schedule_snapshot, state) do
-    {:ok, snapshot} =
-      GenServer.call(
-        Identificator.control_unit(state.operator_id),
-        {
-          :send_control,
-          "pipeline_state",
-          %{"pipeline_id" => state.id}
-        }
-      )
-
-    snapshot =
-      case snapshot do
-        nil -> state.snapshot
-        _ -> snapshot
-      end
+    snapshot = create_snapshot(state.id, state.operator_id)
 
     if state.snapshot_interval > 0 do
       schedule_snapshot(state.snapshot_interval)
     end
 
     {:noreply, %__MODULE__{state | snapshot: snapshot}}
+  end
+
+  defp create_snapshot(pipeline_id, operator_id) do
+    {:ok, snapshot} =
+      GenServer.call(
+        Identificator.control_unit(operator_id),
+        {
+          :send_control,
+          "pipeline_state",
+          %{"pipeline_id" => pipeline_id}
+        }
+      )
+
+    case snapshot do
+      nil -> nil
+      _ -> snapshot
+    end
   end
 
   defp start_pipeline_sdk(operator_id, pipeline) do

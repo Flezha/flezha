@@ -90,7 +90,7 @@ defmodule Aflecha.HubManager do
 
     # Updates the operator id in the registry.
     operator_pipelines(group_id, old_operator_id)
-    |> Enum.each(fn {pipeline_id, {_node, _pipeline_pid}} ->
+    |> Enum.each(fn {pipeline_id, [{_node, _pipeline_pid}]} ->
       pipeline_set_operator(group_id, pipeline_id, new_operator_id)
     end)
 
