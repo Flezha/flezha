@@ -143,7 +143,7 @@ defmodule Aflecha.Pipeline.Overwatch do
       init_values: init_values,
       opts: []
     }
-s
+
     start_pipeline_sdk(new_operator_id, pipeline)
 
     {:reply, :ok, state}
