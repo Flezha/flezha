@@ -38,6 +38,8 @@ defmodule Aflecha.Operator.FleetManager do
 
   @impl true
   def init(_) do
+    Process.send_after(self(), :schedule_operator_cleanup, 60_000)
+
     {:ok, %{operator_groups: %{}}}
   end
 
@@ -65,12 +67,7 @@ defmodule Aflecha.Operator.FleetManager do
 
   @impl true
   def handle_call({:active_operators, group_id}, _from, state) do
-    operator_ids =
-      state
-      |> Map.get(:operator_groups, %{})
-      |> Map.get(group_id, %{})
-      |> Enum.filter(fn {_, {status, _}} -> status == :active end)
-      |> Enum.map(fn {operator_id, {_, _}} -> operator_id end)
+    operator_ids = get_operator_ids(state, group_id, :active)
 
     {:reply, operator_ids, state}
   end
@@ -95,6 +92,8 @@ defmodule Aflecha.Operator.FleetManager do
           %{members: :local}
         )
 
+        state = try_migrate_operator(state, group_id, operator_id)
+
         {:reply, {:ok, {group_id, operator_id}}, state}
 
       {:error, reason} ->
@@ -103,10 +102,87 @@ defmodule Aflecha.Operator.FleetManager do
   end
 
   @impl true
+  def handle_info(:schedule_operator_cleanup, state) do
+    now = DateTime.utc_now() |> DateTime.to_unix()
+
+    # Get all groups.
+    groups = Map.keys(state.operator_groups)
+
+    removal =
+      Enum.map(groups, fn group ->
+        in_active_operators = get_operator_ids(state, group, :inactive)
+
+        removal_operators =
+          Enum.map(in_active_operators, fn operator_id ->
+            {_status, timestamp} = state.operator_groups[group][operator_id]
+
+            # TODO: the 60 seconds should be configurable.
+            # Check if the operator is still inactive after X seconds.
+            if timestamp + 60 < now do
+              # Stop the group hub.
+              HubManager.stop_hub(group)
+              operator_id
+            else
+              nil
+            end
+          end)
+
+        {group, removal_operators}
+      end)
+
+    # Remove the inactive operators from the state.
+    operator_groups =
+      Enum.reduce(removal, state.operator_groups, fn {group, removal_operators}, acc ->
+        group_operators =
+          Enum.reduce(removal_operators, acc[group], fn operator_id, acc ->
+            if operator_id == nil do
+              acc
+            else
+              # Remove the operator from the group.
+              Map.delete(acc, operator_id)
+            end
+          end)
+
+        Map.put(acc, group, group_operators)
+      end)
+
+    state = %{state | operator_groups: operator_groups}
+
+    Process.send_after(self(), :schedule_operator_cleanup, 60_000)
+
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(any, state) do
     Logger.info("Received unexpected message at node manager: #{inspect(any)}")
 
     {:noreply, state}
+  end
+
+  defp try_migrate_operator(state, group_id, operator_id) do
+    # Check if any existing inactive operators are present in the group.
+    # If so, we need to migrate the overwatchers to the new operator.
+    in_active_operators = get_operator_ids(state, group_id, :inactive)
+
+    group_operators =
+      case List.first(in_active_operators) do
+        nil ->
+          state.operator_groups[group_id]
+
+        inactive_operator_id ->
+          operator_reroute(state, group_id, inactive_operator_id, [operator_id])
+      end
+
+    put_in(state, [:operator_groups, group_id], group_operators)
+  end
+
+  defp get_operator_ids(state, group_id, status) do
+    state
+    |> Map.get(:operator_groups, %{})
+    |> Map.get(group_id, %{})
+    |> Enum.filter(fn {_, {s, _}} -> s == status end)
+    |> Enum.map(fn {operator_id, {_, _}} -> operator_id end)
   end
 
   defp extract_control_info(sock) do
@@ -134,10 +210,8 @@ defmodule Aflecha.Operator.FleetManager do
 
     operator_ids =
       state
-      |> Map.get(:operator_groups, %{})
-      |> Map.get(group_id, %{})
-      |> Enum.filter(fn {id, {status, _}} -> status == :active && id != operator_id end)
-      |> Enum.map(fn {id, {_, _}} -> id end)
+      |> get_operator_ids(group_id, :active)
+      |> Enum.filter(fn id -> id != operator_id end)
 
     other_agents = HubManager.get_hub_nodes(group_id)
 
@@ -157,8 +231,7 @@ defmodule Aflecha.Operator.FleetManager do
         # We need to preserve the state of the operator for some time until
         # new operators connect.
         Enum.empty?(operator_ids) && Enum.empty?(other_agents) ->
-          # TODO:
-          %{}
+          operator_preserve(state, group_id, operator_id)
       end
 
     EventManager.dispatch(
@@ -167,9 +240,14 @@ defmodule Aflecha.Operator.FleetManager do
       %{members: :local}
     )
 
-    state = put_in(state, [:operator_groups, group_id], group_operators)
+    put_in(state, [:operator_groups, group_id], group_operators)
+  end
 
-    state
+  defp operator_preserve(state, group_id, operator_id) do
+    operator = {:inactive, DateTime.utc_now() |> DateTime.to_unix()}
+
+    # Remove the old operator from the group.
+    put_in(state.operator_groups[group_id], [operator_id], operator)
   end
 
   defp operator_reroute(state, group_id, old_operator, available_operators) do

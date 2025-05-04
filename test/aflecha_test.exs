@@ -315,4 +315,23 @@ defmodule AflechaTest do
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
   end
+
+  @tag :operator_disconnect_preserve
+  test "operator disconnect preserve" do
+    # TODO:
+
+    # Start 2 operators under the same group.
+
+    # Start a few pipelines and store some state on them.
+
+    # Trigger the operator disconnect.
+
+    # Start a new operator under the same group.
+
+    # Make sure all the pipelines are migrated to the new operator.
+
+    # Make sure the states have been migrated.
+
+    # TODO: also test how the operators are purged after threshold time (send manual message)
+  end
 end
