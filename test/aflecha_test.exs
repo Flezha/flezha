@@ -321,16 +321,49 @@ defmodule AflechaTest do
     # TODO:
 
     # Start 2 operators under the same group.
+    group_id = "test_temp_group"
+    operator_id_1 = OperatorHelper.start_operator(group_id)
+    operator_id_2 = OperatorHelper.start_operator(group_id)
 
     # Start a few pipelines and store some state on them.
+    pipeline_id_1 = "pipeline_1"
+    pipeline_id_2 = "pipeline_2"
+
+    {:ok, %{pid: pipeline_pid_1, operator_id: pipe1_op}} =
+      pipeline_id_1
+      |> PipelineFixture.get(@test_store_input_factory)
+      |> PipelineFixture.start(group_id)
+
+    {:ok, %{pid: pipeline_pid_2, operator_id: _pipe2_op}} =
+      pipeline_id_2
+      |> PipelineFixture.get(@test_store_input_factory)
+      |> PipelineFixture.start(group_id)
+
+    GenServer.cast(pipeline_pid_1, {:io_in, {:text, "state_1"}})
+    GenServer.cast(pipeline_pid_2, {:io_in, {:text, "state_2"}})
+
+    PipelineManager.create_snapshot(group_id, pipeline_id_1)
+    PipelineManager.create_snapshot(group_id, pipeline_id_2)
 
     # Trigger the operator disconnect.
+    OperatorHelper.stop_operator(group_id, operator_id_1)
+    OperatorHelper.stop_operator(group_id, operator_id_2)
 
     # Start a new operator under the same group.
+    operator_id_3 = OperatorHelper.start_operator(group_id)
 
     # Make sure all the pipelines are migrated to the new operator.
+    PipelineManager.pipeline_registry(group_id)
+    |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+      assert new_operator === operator_id_3
+    end)
 
     # Make sure the states have been migrated.
+    {:ok, json_state_1} = PipelineManager.get_pipeline_state(group_id, pipeline_id_1)
+    {:ok, json_state_2} = PipelineManager.get_pipeline_state(group_id, pipeline_id_2)
+
+    assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
+    assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
 
     # TODO: also test how the operators are purged after threshold time (send manual message)
   end

@@ -86,13 +86,13 @@ defmodule Aflecha.Operator.FleetManager do
 
         state = put_in(state, [:operator_groups, group_id, operator_id], {:active, timestamp})
 
+        state = try_migrate_operator(state, group_id, operator_id)
+
         EventManager.dispatch(
           :operator_connected_event,
           {group_id, operator_id},
           %{members: :local}
         )
-
-        state = try_migrate_operator(state, group_id, operator_id)
 
         {:reply, {:ok, {group_id, operator_id}}, state}
 
@@ -173,6 +173,8 @@ defmodule Aflecha.Operator.FleetManager do
         inactive_operator_id ->
           operator_reroute(state, group_id, inactive_operator_id, [operator_id])
       end
+
+    Logger.info("Attempting to migrate operator #{operator_id} in group #{group_id}")
 
     put_in(state, [:operator_groups, group_id], group_operators)
   end

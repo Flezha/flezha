@@ -10,11 +10,17 @@ defmodule AflechaTest.Helpers.OperatorHelper do
 
     Aflecha.Service.PortPilot.open_port(command)
 
-    receive do
-      {:operator_connected_event, {^group_id, operator_id}} -> operator_id
-    after
-      2000 -> raise "temporary test operator not connected"
-    end
+    operator_id =
+      receive do
+        {:operator_connected_event, {^group_id, operator_id}} -> operator_id
+      after
+        2000 -> raise "temporary test operator not connected"
+      end
+
+    # Remove the handler to duplicate events.
+    Aflecha.Service.EventManager.rem_handler(:operator_connected_event)
+
+    operator_id
   end
 
   def stop_operator(group_id, operator_id) do
@@ -26,5 +32,10 @@ defmodule AflechaTest.Helpers.OperatorHelper do
     after
       2000 -> raise "temporary test operator not disconnected"
     end
+
+    # Remove the handler to duplicate events.
+    Aflecha.Service.EventManager.rem_handler(:operator_disconnected_event)
+
+    :ok
   end
 end
