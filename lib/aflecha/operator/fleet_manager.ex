@@ -38,7 +38,7 @@ defmodule Aflecha.Operator.FleetManager do
 
   @impl true
   def init(_) do
-    Process.send_after(self(), :schedule_operator_cleanup, 60_000)
+    Process.send_after(self(), :schedule_operator_cleanup, get_operator_keepalive() + 10)
 
     {:ok, %{operator_groups: %{}}}
   end
@@ -102,8 +102,36 @@ defmodule Aflecha.Operator.FleetManager do
   end
 
   @impl true
+  def handle_call(:operator_cleanup, _from, state) do
+    {:reply, :ok, operator_cleanup(state)}
+  end
+
+  @impl true
   def handle_info(:schedule_operator_cleanup, state) do
+    Process.send_after(self(), :schedule_operator_cleanup, get_operator_keepalive() + 10)
+
+    {:noreply, operator_cleanup(state)}
+  end
+
+  @impl true
+  def handle_info(any, state) do
+    Logger.info("Received unexpected message at node manager: #{inspect(any)}")
+
+    {:noreply, state}
+  end
+
+  defp get_operator_keepalive() do
+    keepalive = Application.get_env(:aflecha, :operator_keepalive, "30")
+
+    cond do
+      is_binary(keepalive) -> String.to_integer(keepalive)
+      is_integer(keepalive) -> keepalive
+    end
+  end
+
+  defp operator_cleanup(state) do
     now = DateTime.utc_now() |> DateTime.to_unix()
+    keep_alive = get_operator_keepalive()
 
     # Get all groups.
     groups = Map.keys(state.operator_groups)
@@ -116,9 +144,8 @@ defmodule Aflecha.Operator.FleetManager do
           Enum.map(in_active_operators, fn operator_id ->
             {_status, timestamp} = state.operator_groups[group][operator_id]
 
-            # TODO: the 60 seconds should be configurable.
             # Check if the operator is still inactive after X seconds.
-            if timestamp + 60 < now do
+            if timestamp + keep_alive <= now do
               # Stop the group hub.
               HubManager.stop_hub(group)
               operator_id
@@ -146,18 +173,7 @@ defmodule Aflecha.Operator.FleetManager do
         Map.put(acc, group, group_operators)
       end)
 
-    state = %{state | operator_groups: operator_groups}
-
-    Process.send_after(self(), :schedule_operator_cleanup, 60_000)
-
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info(any, state) do
-    Logger.info("Received unexpected message at node manager: #{inspect(any)}")
-
-    {:noreply, state}
+    %{state | operator_groups: operator_groups}
   end
 
   defp try_migrate_operator(state, group_id, operator_id) do

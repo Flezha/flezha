@@ -42,9 +42,9 @@ defmodule Aflecha.Operator.ControlUnit do
 
   @impl true
   def handle_call({:get_pipeline_state, pipeline_id}, from, state) do
-    ref =
+    {:ok, ref} =
       ControlChannel.send_control(
-        Identificator.control_channel(state.operator_id),
+        state.operator_id,
         @payload_id_pipeline_state,
         %{"pipeline_id" => pipeline_id}
       )
@@ -54,21 +54,27 @@ defmodule Aflecha.Operator.ControlUnit do
 
   @impl true
   def handle_call({:send_control, command_id, data}, from, state) do
-    ref =
+    res =
       ControlChannel.send_control(
-        Identificator.control_channel(state.operator_id),
+        state.operator_id,
         command_id,
         data
       )
 
-    {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+    case res do
+      {:ok, ref} ->
+        {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
   def handle_call(:command_assign_operator_id, from, state) do
-    ref =
+    {:ok, ref} =
       ControlChannel.send_control(
-        Identificator.control_channel(state.operator_id),
+        state.operator_id,
         @payload_id_assign_operator_id,
         %{"operator_id" => state.operator_id}
       )
@@ -80,9 +86,9 @@ defmodule Aflecha.Operator.ControlUnit do
   def handle_call(:command_sockets_connect, from, state) do
     sockets_count = ConcurrencyMapper.concurrent_entity_count()
 
-    ref =
+    {:ok, ref} =
       ControlChannel.send_control(
-        Identificator.control_channel(state.operator_id),
+        state.operator_id,
         @payload_id_connect_sockets,
         %{"sockets_count" => sockets_count}
       )
@@ -94,9 +100,9 @@ defmodule Aflecha.Operator.ControlUnit do
   @spec handle_call({:start_pipeline, PipelineBuilder.t()}, {pid(), term()}, map()) ::
           {:noreply, any()}
   def handle_call({:start_pipeline, pipeline}, from, state) do
-    ref =
+    {:ok, ref} =
       ControlChannel.send_control(
-        Identificator.control_channel(state.operator_id),
+        state.operator_id,
         @payload_id_pipeline_start,
         %{
           "pipeline_id" => pipeline.id,
@@ -110,9 +116,9 @@ defmodule Aflecha.Operator.ControlUnit do
 
   @impl true
   def handle_call({:stop_pipeline, pipeline_id}, from, state) do
-    ref =
+    {:ok, ref} =
       ControlChannel.send_control(
-        Identificator.control_channel(state.operator_id),
+        state.operator_id,
         @payload_id_pipeline_stop,
         %{"pipeline_id" => pipeline_id}
       )
@@ -122,9 +128,9 @@ defmodule Aflecha.Operator.ControlUnit do
 
   @impl true
   def handle_call(:disconnect_operator, from, state) do
-    ref =
+    {:ok, ref} =
       ControlChannel.send_control(
-        Identificator.control_channel(state.operator_id),
+        state.operator_id,
         @payload_id_operator_disconnect,
         %{}
       )

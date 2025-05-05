@@ -14,20 +14,28 @@ defmodule Aflecha.Operator.ControlChannel do
     )
   end
 
-  def send_control(control_channel, payload_id, data) do
-    ref = gen_ref()
+  def send_control(operator_id, payload_id, data) do
+    control_channel = Identificator.control_channel(operator_id)
 
-    command =
-      Jason.encode!(%{
-        "data" => data,
-        "reference_id" => ref
-      })
+    case GenServer.whereis(control_channel) do
+      nil ->
+        {:error, :no_control_channel}
 
-    payload = Payloader.build_from_bin(payload_id, command)
+      _ ->
+        ref = gen_ref()
 
-    GenServer.call(control_channel, {:send_control, payload})
+        command =
+          Jason.encode!(%{
+            "data" => data,
+            "reference_id" => ref
+          })
 
-    ref
+        payload = Payloader.build_from_bin(payload_id, command)
+
+        GenServer.call(control_channel, {:send_control, payload})
+
+        {:ok, ref}
+    end
   end
 
   @impl true

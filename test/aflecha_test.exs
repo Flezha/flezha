@@ -1,4 +1,6 @@
 defmodule AflechaTest do
+  alias Aflecha.HubManager
+  alias Aflecha.Operator.FleetManager
   alias AflechaTest.Fixtures.PipelineFixture
   alias AflechaTest.Helpers.OperatorHelper
   alias Aflecha.Service.PluginManager
@@ -365,6 +367,17 @@ defmodule AflechaTest do
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
 
-    # TODO: also test how the operators are purged after threshold time (send manual message)
+    # Stop the new operator.
+    OperatorHelper.stop_operator(group_id, operator_id_3)
+
+    # Adjust the operator cleanup interval and trigger the cleanup.
+    Application.put_env(:aflecha, :operator_keepalive, "0")
+    GenServer.call(FleetManager, :operator_cleanup)
+
+    # Reset the operator keepalive to its default value.
+    Application.put_env(:aflecha, :operator_keepalive, "30")
+
+    # Make sure the hub is stopped.
+    assert HubManager.hub_alive?(group_id) === false
   end
 end
