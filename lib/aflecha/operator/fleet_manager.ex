@@ -251,8 +251,7 @@ defmodule Aflecha.Operator.FleetManager do
         # Current agent has no other operators to delegate the work to, but
         # there are other agents in the group who can take over the work.
         Enum.empty?(operator_ids) && !Enum.empty?(other_agents) ->
-          # TODO:
-          nil
+          hub_migrate(state, group_id, operator_id)
 
         # No other agents in the group or operators to delegate the work to.
         # We need to preserve the state of the operator for some time until
@@ -268,6 +267,12 @@ defmodule Aflecha.Operator.FleetManager do
     )
 
     put_in(state, [:operator_groups, group_id], group_operators)
+  end
+
+  defp hub_migrate(state, group_id, _operator_id) do
+    HubManager.stop_hub(group_id)
+
+    Map.delete(state.operator_groups, group_id)
   end
 
   defp operator_preserve(state, group_id, operator_id) do

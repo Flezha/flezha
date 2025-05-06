@@ -2,9 +2,9 @@ defmodule AflechaTest do
   alias Aflecha.HubManager
   alias Aflecha.Operator.FleetManager
   alias AflechaTest.Fixtures.PipelineFixture
-  alias AflechaTest.Helpers.OperatorHelper
   alias Aflecha.Service.PluginManager
   alias Aflecha.Service.PipelineManager
+  alias AflechaTest.Helper.NodeTestHelper
 
   use ExUnit.Case
   use Aflecha.Constant
@@ -12,7 +12,7 @@ defmodule AflechaTest do
   doctest Aflecha
 
   @default_group "default"
-  @node_name TestHelper.node_name()
+  @node_name NodeTestHelper.node_name()
 
   @test_store_input_factory "store_input"
   @test_pipeline_factory "do_nothing"
@@ -215,7 +215,7 @@ defmodule AflechaTest do
     # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
     # then get the state of the new migrated process to see if it matches the state1 string.
 
-    {peer_pid, peer_node} = TestHelper.start_peer_node(:anode1)
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
     pipeline_id = "pipeline_migration_test"
 
@@ -248,7 +248,7 @@ defmodule AflechaTest do
 
     assert pipeline_state === test_state
 
-    TestHelper.stop_peer_node(peer_pid, peer_node)
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
 
     # TODO: add hook here instead
     Process.sleep(1000)
@@ -265,22 +265,22 @@ defmodule AflechaTest do
   @tag :operator_disconnect
   test "operator disconnect" do
     group_id = "test_temp_group"
-    operator_id = OperatorHelper.start_operator(group_id)
+    operator_id = NodeTestHelper.start_operator(group_id)
 
-    OperatorHelper.stop_operator(group_id, operator_id)
+    NodeTestHelper.stop_operator(group_id, operator_id)
 
     assert Aflecha.Operator.FleetManager.active_operators(group_id) === []
   end
 
-  @tag :operator_disconnect_migrate
-  test "operator disconnect migrate" do
+  @tag :operator_disconnect_migrate_op
+  test "operator disconnect migrate op" do
     group_id = "test_temp_group"
     pipeline_id_1 = "pipeline_1"
     pipeline_id_2 = "pipeline_2"
 
     # Start 2 operators under the same group.
-    operator_id_1 = OperatorHelper.start_operator(group_id)
-    operator_id_2 = OperatorHelper.start_operator(group_id)
+    operator_id_1 = NodeTestHelper.start_operator(group_id)
+    operator_id_2 = NodeTestHelper.start_operator(group_id)
 
     # Start a few pipelines and store some state on them.
     {:ok, %{pid: pipeline_pid_1, operator_id: pipe1_op}} =
@@ -302,7 +302,7 @@ defmodule AflechaTest do
     active_operator = if pipe1_op === operator_id_1, do: operator_id_2, else: operator_id_1
 
     # Trigger the operator disconnect.
-    OperatorHelper.stop_operator(group_id, pipe1_op)
+    NodeTestHelper.stop_operator(group_id, pipe1_op)
 
     # Make sure all the pipelines are migrated to the other operator.
     PipelineManager.pipeline_registry(group_id)
@@ -322,8 +322,8 @@ defmodule AflechaTest do
   test "operator disconnect preserve" do
     # Start 2 operators under the same group.
     group_id = "test_temp_group"
-    operator_id_1 = OperatorHelper.start_operator(group_id)
-    operator_id_2 = OperatorHelper.start_operator(group_id)
+    operator_id_1 = NodeTestHelper.start_operator(group_id)
+    operator_id_2 = NodeTestHelper.start_operator(group_id)
 
     # Start a few pipelines and store some state on them.
     pipeline_id_1 = "pipeline_1"
@@ -346,11 +346,11 @@ defmodule AflechaTest do
     PipelineManager.create_snapshot(group_id, pipeline_id_2)
 
     # Trigger the operator disconnect.
-    OperatorHelper.stop_operator(group_id, operator_id_1)
-    OperatorHelper.stop_operator(group_id, operator_id_2)
+    NodeTestHelper.stop_operator(group_id, operator_id_1)
+    NodeTestHelper.stop_operator(group_id, operator_id_2)
 
     # Start a new operator under the same group.
-    operator_id_3 = OperatorHelper.start_operator(group_id)
+    operator_id_3 = NodeTestHelper.start_operator(group_id)
 
     # Make sure all the pipelines are migrated to the new operator.
     PipelineManager.pipeline_registry(group_id)
@@ -366,7 +366,7 @@ defmodule AflechaTest do
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
 
     # Stop the new operator.
-    OperatorHelper.stop_operator(group_id, operator_id_3)
+    NodeTestHelper.stop_operator(group_id, operator_id_3)
 
     # Adjust the operator cleanup interval and trigger the cleanup.
     Application.put_env(:aflecha, :operator_keepalive, "0")
@@ -377,5 +377,58 @@ defmodule AflechaTest do
 
     # Make sure the hub is stopped.
     assert HubManager.hub_alive?(group_id) === false
+  end
+
+  @tag :operator_disconnect_migrate_hub
+  test "operator disconnect migrate hub" do
+    group_id = "test_temp_group"
+    pipeline_id_1 = "pipeline_1"
+    pipeline_id_2 = "pipeline_2"
+
+    # Start 2 operators under the same group.
+    operator_id_1 = NodeTestHelper.start_operator(group_id)
+    operator_id_2 = NodeTestHelper.start_operator(group_id)
+
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
+    NodeTestHelper.start_operator_remote(peer_node, group_id)
+
+    # Start a few pipelines and store some state on them.
+    {:ok, %{pid: pipeline_pid_1, operator_id: pipe1_op}} =
+      pipeline_id_1
+      |> PipelineFixture.get(@test_store_input_factory)
+      |> PipelineFixture.start(group_id)
+
+    {:ok, %{pid: pipeline_pid_2, operator_id: _pipe2_op}} =
+      pipeline_id_2
+      |> PipelineFixture.get(@test_store_input_factory)
+      |> PipelineFixture.start(group_id)
+
+    # TODO: continue from here..
+    HubManager.get_hub_nodes(group_id) |> dbg()
+    HubManager.get_registry(group_id) |> dbg()
+
+    # GenServer.cast(pipeline_pid_1, {:io_in, {:text, "state_1"}})
+    # GenServer.cast(pipeline_pid_2, {:io_in, {:text, "state_2"}})
+
+    # PipelineManager.create_snapshot(group_id, pipeline_id_1)
+    # PipelineManager.create_snapshot(group_id, pipeline_id_2)
+
+    # active_operator = if pipe1_op === operator_id_1, do: operator_id_2, else: operator_id_1
+
+    # # Trigger the operator disconnect.
+    # NodeTestHelper.stop_operator(group_id, pipe1_op)
+
+    # # Make sure all the pipelines are migrated to the other operator.
+    # PipelineManager.pipeline_registry(group_id)
+    # |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+    #   assert new_operator === active_operator
+    # end)
+
+    # # Make sure the states have been migrated.
+    # {:ok, json_state_1} = PipelineManager.get_pipeline_state(group_id, pipeline_id_1)
+    # {:ok, json_state_2} = PipelineManager.get_pipeline_state(group_id, pipeline_id_2)
+
+    # assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
+    # assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
   end
 end

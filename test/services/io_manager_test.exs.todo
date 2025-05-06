@@ -8,7 +8,7 @@ defmodule AflechaTest.IOManagerTest do
   @pipeline_id "test_io_manager"
 
   setup do
-    worker = TestHelper.test_worker(@pipeline_id)
+    worker = NodeTestHelper.test_worker(@pipeline_id)
 
     %{worker: worker}
   end

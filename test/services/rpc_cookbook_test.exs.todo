@@ -71,7 +71,7 @@ defmodule AflechaTest.RpcCookbookServiceTest do
       }
     )
 
-    TestHelper.test_worker(pipeline_id)
+    NodeTestHelper.test_worker(pipeline_id)
 
     opts = [handling_type: :task]
 
