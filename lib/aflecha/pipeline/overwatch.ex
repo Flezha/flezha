@@ -114,11 +114,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
     # TODO: any rpc command may timeout causing the pipeline overwatch to crash.
     # We should handle this in the control unit.
-    result =
-      GenServer.call(
-        Identificator.control_unit(state.operator_id),
-        {:send_control, "pipeline_state", data}
-      )
+    result = send_control(state.operator_id, "pipeline_state", data)
 
     {:reply, result, state}
   end
@@ -199,6 +195,10 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   @impl true
   def handle_info({:process_hub, :send_handover_state, receiver, child_id, opts}, state) do
+    # TODO: remove. Left only for debugging hub migration.
+    # HubManager.get_hub_nodes("test_temp_group") |> dbg()
+    # dbg({self(), Process.info(receiver, :registered_name)})
+
     serialize_data = serialize_pipeline_sdk(state.operator_id, state.id)
 
     # Send the state to the remote process.
@@ -227,12 +227,12 @@ defmodule Aflecha.Pipeline.Overwatch do
       "serialized_state" => Map.get(pipe_serialized, "serialized_state")
     }
 
-    # TODO: handle failures.
-    _result =
-      GenServer.call(
-        Identificator.control_unit(state.operator_id),
-        {:send_control, "migration_deserialization", operator_data}
-      )
+    result = send_control(state.operator_id, "migration_deserialization", operator_data)
+
+    case result do
+      {:error, reason} -> Logger.error("Failed to deserialize pipeline: #{inspect(reason)}")
+      _ -> :ok
+    end
 
     new_bindings = sync_bindings(state.bindings, handover_state.bindings)
 
@@ -257,19 +257,28 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   defp create_snapshot(pipeline_id, operator_id) do
-    {:ok, snapshot} =
-      GenServer.call(
-        Identificator.control_unit(operator_id),
-        {
-          :send_control,
-          "pipeline_state",
-          %{"pipeline_id" => pipeline_id}
-        }
-      )
+    case send_control(operator_id, "pipeline_state", %{"pipeline_id" => pipeline_id}) do
+      {:ok, snapshot} ->
+        snapshot
 
-    case snapshot do
-      nil -> nil
-      _ -> snapshot
+      {:error, _reason} ->
+        nil
+    end
+  end
+
+  defp send_control(operator_id, payload_id, data) do
+    control_unit = Identificator.control_unit(operator_id)
+
+    case GenServer.whereis(control_unit) do
+      nil ->
+        {:error,
+         "control unit not available for operator #{operator_id} with payload #{payload_id}"}
+
+      _ ->
+        GenServer.call(
+          Identificator.control_unit(operator_id),
+          {:send_control, payload_id, data}
+        )
     end
   end
 
@@ -337,11 +346,7 @@ defmodule Aflecha.Pipeline.Overwatch do
   defp serialize_pipeline_sdk(operator_id, pipeline_id) do
     data = %{"pipeline_id" => pipeline_id}
 
-    result =
-      GenServer.call(
-        Identificator.control_unit(operator_id),
-        {:send_control, "migration_serialization", data}
-      )
+    result = send_control(operator_id, "migration_serialization", data)
 
     case result do
       {:ok, serialized_data} ->

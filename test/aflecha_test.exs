@@ -320,8 +320,6 @@ defmodule AflechaTest do
 
   @tag :operator_disconnect_preserve
   test "operator disconnect preserve" do
-    # TODO:
-
     # Start 2 operators under the same group.
     group_id = "test_temp_group"
     operator_id_1 = OperatorHelper.start_operator(group_id)
@@ -331,7 +329,7 @@ defmodule AflechaTest do
     pipeline_id_1 = "pipeline_1"
     pipeline_id_2 = "pipeline_2"
 
-    {:ok, %{pid: pipeline_pid_1, operator_id: pipe1_op}} =
+    {:ok, %{pid: pipeline_pid_1, operator_id: _pipe1_op}} =
       pipeline_id_1
       |> PipelineFixture.get(@test_store_input_factory)
       |> PipelineFixture.start(group_id)
@@ -375,7 +373,7 @@ defmodule AflechaTest do
     GenServer.call(FleetManager, :operator_cleanup)
 
     # Reset the operator keepalive to its default value.
-    Application.put_env(:aflecha, :operator_keepalive, "30")
+    Application.put_env(:aflecha, :operator_keepalive, "30000")
 
     # Make sure the hub is stopped.
     assert HubManager.hub_alive?(group_id) === false

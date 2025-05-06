@@ -38,7 +38,7 @@ defmodule Aflecha.Operator.FleetManager do
 
   @impl true
   def init(_) do
-    Process.send_after(self(), :schedule_operator_cleanup, get_operator_keepalive() + 10)
+    schedule_operator_cleanup()
 
     {:ok, %{operator_groups: %{}}}
   end
@@ -108,7 +108,7 @@ defmodule Aflecha.Operator.FleetManager do
 
   @impl true
   def handle_info(:schedule_operator_cleanup, state) do
-    Process.send_after(self(), :schedule_operator_cleanup, get_operator_keepalive() + 10)
+    schedule_operator_cleanup()
 
     {:noreply, operator_cleanup(state)}
   end
@@ -120,8 +120,16 @@ defmodule Aflecha.Operator.FleetManager do
     {:noreply, state}
   end
 
+  defp schedule_operator_cleanup() do
+    Process.send_after(
+      self(),
+      :schedule_operator_cleanup,
+      get_operator_keepalive() + 10_000
+    )
+  end
+
   defp get_operator_keepalive() do
-    keepalive = Application.get_env(:aflecha, :operator_keepalive, "30")
+    keepalive = Application.get_env(:aflecha, :operator_keepalive, "30000")
 
     cond do
       is_binary(keepalive) -> String.to_integer(keepalive)
@@ -130,7 +138,7 @@ defmodule Aflecha.Operator.FleetManager do
   end
 
   defp operator_cleanup(state) do
-    now = DateTime.utc_now() |> DateTime.to_unix()
+    now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
     keep_alive = get_operator_keepalive()
 
     # Get all groups.
@@ -147,6 +155,7 @@ defmodule Aflecha.Operator.FleetManager do
             # Check if the operator is still inactive after X seconds.
             if timestamp + keep_alive <= now do
               # Stop the group hub.
+              HubManager.get_registry(group)
               HubManager.stop_hub(group)
               operator_id
             else

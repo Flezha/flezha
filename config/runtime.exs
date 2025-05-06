@@ -99,7 +99,7 @@ config :aflecha,
   external_processes: external_processes,
 
   # ------------------------------------------------------------------------------------------------
-  # The minimum number of seconds to wait before removing a disconnected operator.
+  # The minimum number of milliseconds to wait before removing a disconnected operator.
   #
   # This option can be used to prevent the operator from being removed too quickly
   # when it is disconnected from the cluster. For example, if the operator is
@@ -108,4 +108,4 @@ config :aflecha,
   # Leave 0 to disable this feature.
   #
   # The default is 30 seconds.
-  operator_keepalive: System.get_env("AFLECHA_OPERATOR_KEEPALIVE", "30") |> String.to_integer()
+  operator_keepalive: System.get_env("AFLECHA_OPERATOR_KEEPALIVE", "30000") |> String.to_integer()
