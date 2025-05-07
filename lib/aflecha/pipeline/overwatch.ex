@@ -5,7 +5,6 @@ defmodule Aflecha.Pipeline.Overwatch do
   alias Aflecha.Service.Identificator
   alias Aflecha.Service.Payloader
   alias Aflecha.Plugin.PipelineBinding
-  alias Aflecha.Operator.FleetManager
 
   require Logger
 
@@ -30,8 +29,7 @@ defmodule Aflecha.Pipeline.Overwatch do
   # TODO: binding on migration we should rerun all of them.
   # TODO: add ability to remove bindings.
   @impl true
-  def init({group_id, pipeline}) do
-    operator_id = select_operator(FleetManager.active_operators(group_id))
+  def init({group_id, operator_id, pipeline}) do
     snapshot_interval = Keyword.get(pipeline.opts, :snapshot_interval, 10_000)
 
     # TODO: Perhaps move to handle continue.
@@ -373,10 +371,5 @@ defmodule Aflecha.Pipeline.Overwatch do
     if is_integer(interval) do
       Process.send_after(self(), {:binding_interval_exec, binding}, interval)
     end
-  end
-
-  defp select_operator(operator_ids) do
-    # TODO: add load balancing here.
-    Enum.random(operator_ids)
   end
 end

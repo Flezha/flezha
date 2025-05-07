@@ -5,6 +5,7 @@ defmodule Aflecha.Service.PipelineManager do
 
   alias Aflecha.Service.HubManager
   alias Aflecha.Service.Identificator
+  alias Aflecha.Operator.FleetManager
   alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
   def pipeline_registry(group_id) do
@@ -134,5 +135,14 @@ defmodule Aflecha.Service.PipelineManager do
       {:ok, pipeline_pid} -> GenServer.call(pipeline_pid, :get_pipeline_state)
       err -> err
     end
+  end
+
+  def assign_operator(group_id) do
+    select_operator(FleetManager.active_operators(group_id))
+  end
+
+  defp select_operator(operator_ids) do
+    # TODO: add load balancing here.
+    Enum.random(operator_ids)
   end
 end

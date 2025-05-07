@@ -1,6 +1,9 @@
 defmodule Aflecha.Service.HubManager do
   alias Aflecha.Service.Identificator
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.HookManager
+  alias Aflecha.Service.PipelineManager
 
   use Supervisor
 
@@ -59,10 +62,10 @@ defmodule Aflecha.Service.HubManager do
   end
 
   def register_handler(group_id, operator_id) do
-    ProcessHub.Service.HookManager.register_handler(
+    HookManager.register_handler(
       Identificator.hub(group_id),
-      ProcessHub.Constant.Hook.registry_pid_inserted(),
-      %ProcessHub.Service.HookManager{
+      Hook.registry_pid_inserted(),
+      %HookManager{
         id: operator_id <> "_hub_pid_insertion",
         m: Aflecha.Service.HubManager,
         f: :hook_insert_pid,
@@ -72,9 +75,9 @@ defmodule Aflecha.Service.HubManager do
   end
 
   def unregister_handler(group_id, operator_id) do
-    ProcessHub.Service.HookManager.cancel_handler(
+    HookManager.cancel_handler(
       Identificator.hub(group_id),
-      ProcessHub.Constant.Hook.registry_pid_inserted(),
+      Hook.registry_pid_inserted(),
       operator_id <> "_hub_pid_insertion"
     )
   end
@@ -133,14 +136,36 @@ defmodule Aflecha.Service.HubManager do
     end)
   end
 
+  def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do
+    %{start: {m, f, [arg]}} = cs
+
+    {group_id, pipeline} =
+      case arg do
+        {group_id, pipeline} ->
+          {group_id, pipeline}
+
+        {group_id, _existing_operator, pipeline} ->
+          {group_id, pipeline}
+      end
+
+    assigned_operator = PipelineManager.assign_operator(group_id)
+    new_args = [{group_id, assigned_operator, pipeline}]
+
+    child_data
+    |> put_in([:child_spec, :start], {m, f, new_args})
+    |> put_in([:metadata, :tag], assigned_operator)
+  end
+
   @impl true
   def init(_init_arg) do
     Supervisor.init([], strategy: :one_for_one)
   end
 
   defp process_hub(group_id) do
+    hub_id = Identificator.hub(group_id)
+
     ProcessHub.child_spec(%ProcessHub{
-      hub_id: Identificator.hub(group_id),
+      hub_id: hub_id,
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
       redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
       # TODO: we may want to provide options for the partition tolerance strategy.
@@ -149,6 +174,16 @@ defmodule Aflecha.Service.HubManager do
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
         retention: 4000,
         handover: true
+      },
+      hooks: %{
+        Hook.child_data_alter() => [
+          %ProcessHub.Service.HookManager{
+            id: ProcessHub.Constant.Hook.child_data_alter(),
+            m: Aflecha.Service.HubManager,
+            f: :alter_child_data,
+            a: [hub_id, :_]
+          }
+        ]
       }
     })
   end
