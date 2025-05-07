@@ -3,7 +3,7 @@ defmodule Aflecha.Service.PipelineManager do
   Manages the pipeline startings and stoppings.
   """
 
-  alias Aflecha.HubManager
+  alias Aflecha.Service.HubManager
   alias Aflecha.Service.Identificator
   alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 

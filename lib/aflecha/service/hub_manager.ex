@@ -1,4 +1,4 @@
-defmodule Aflecha.HubManager do
+defmodule Aflecha.Service.HubManager do
   alias Aflecha.Service.Identificator
   alias ProcessHub.Service.ProcessRegistry
 
@@ -64,7 +64,7 @@ defmodule Aflecha.HubManager do
       ProcessHub.Constant.Hook.registry_pid_inserted(),
       %ProcessHub.Service.HookManager{
         id: operator_id <> "_hub_pid_insertion",
-        m: Aflecha.HubManager,
+        m: Aflecha.Service.HubManager,
         f: :hook_insert_pid,
         a: [operator_id, :_]
       }
@@ -99,8 +99,6 @@ defmodule Aflecha.HubManager do
   end
 
   def pipeline_set_operator(group_id, pipeline_id, operator_id) do
-    # TODO: synchronize the change to all nodes in the group.
-
     hub_id = Identificator.hub(group_id)
 
     case ProcessHub.is_alive?(hub_id) do

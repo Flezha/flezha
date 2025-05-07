@@ -1,6 +1,6 @@
 defmodule Aflecha.Service.Validator do
   alias Aflecha.Service.Identificator
-  alias Aflecha.HubManager
+  alias Aflecha.Service.HubManager
 
   use Aflecha.Constant
 

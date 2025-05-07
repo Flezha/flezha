@@ -4,7 +4,7 @@ defmodule Aflecha.Operator.FleetManager do
   alias Aflecha.Service.Payloader
   alias Aflecha.Socket.Support, as: SocketSupport
   alias Aflecha.Service.Identificator
-  alias Aflecha.HubManager
+  alias Aflecha.Service.HubManager
   alias Aflecha.Service.EventManager
 
   require Logger

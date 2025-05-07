@@ -1,5 +1,5 @@
 defmodule Aflecha.Pipeline.Overwatch do
-  alias Aflecha.HubManager
+  alias Aflecha.Service.HubManager
   alias Aflecha.Service.ConcurrencyMapper
   alias Aflecha.Operator.StreamSup
   alias Aflecha.Service.Identificator

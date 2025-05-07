@@ -14,7 +14,7 @@ defmodule Aflecha.Application do
       Aflecha.Service.EventManager,
       Aflecha.BootLoader,
       Aflecha.Service.Identificator,
-      Aflecha.HubManager,
+      Aflecha.Service.HubManager,
       Aflecha.Operator.FleetSupervisor,
       FleetManager,
       {Aflecha.Socket.Listener, {:control_listener, &SocketSupport.control_socket_path/0}},
@@ -51,7 +51,7 @@ defmodule Aflecha.Application do
   def prep_stop(_state) do
     # We need to stop the hub manager first to keep the operators
     # running while pipelines are stopped.
-    Aflecha.HubManager.stop_hub_manager()
+    Aflecha.Service.HubManager.stop_hub_manager()
   end
 
   defp validate_boot_ready() do

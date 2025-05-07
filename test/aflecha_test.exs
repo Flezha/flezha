@@ -1,5 +1,5 @@
 defmodule AflechaTest do
-  alias Aflecha.HubManager
+  alias Aflecha.Service.HubManager
   alias Aflecha.Operator.FleetManager
   alias AflechaTest.Fixtures.PipelineFixture
   alias Aflecha.Service.PluginManager
@@ -385,12 +385,12 @@ defmodule AflechaTest do
     pipeline_id_1 = "pipeline_1"
     pipeline_id_2 = "pipeline_2"
 
-    # Start 2 operators under the same group.
-    operator_id_1 = NodeTestHelper.start_operator(group_id)
-    operator_id_2 = NodeTestHelper.start_operator(group_id)
-
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
-    NodeTestHelper.start_operator_remote(peer_node, group_id)
+
+    # Start the operators.
+    operator_id_1 = NodeTestHelper.start_operator(group_id)
+    rem_operator_1 = NodeTestHelper.start_operator_remote(peer_node, group_id)
+    rem_operator_2 = NodeTestHelper.start_operator_remote(peer_node, group_id)
 
     # Start a few pipelines and store some state on them.
     {:ok, %{pid: pipeline_pid_1, operator_id: pipe1_op}} =
@@ -413,15 +413,14 @@ defmodule AflechaTest do
     # PipelineManager.create_snapshot(group_id, pipeline_id_1)
     # PipelineManager.create_snapshot(group_id, pipeline_id_2)
 
-    # active_operator = if pipe1_op === operator_id_1, do: operator_id_2, else: operator_id_1
-
     # # Trigger the operator disconnect.
-    # NodeTestHelper.stop_operator(group_id, pipe1_op)
+    # NodeTestHelper.stop_operator(group_id, rem_operator_1)
+    # NodeTestHelper.stop_operator(group_id, rem_operator_2)
 
     # # Make sure all the pipelines are migrated to the other operator.
     # PipelineManager.pipeline_registry(group_id)
     # |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
-    #   assert new_operator === active_operator
+    #   assert new_operator === operator_id_1
     # end)
 
     # # Make sure the states have been migrated.
@@ -430,5 +429,7 @@ defmodule AflechaTest do
 
     # assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     # assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
+
+    # assert length(HubManager.get_hub_nodes(group_id, true)) === 1
   end
 end
