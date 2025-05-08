@@ -127,13 +127,18 @@ defmodule Aflecha.Service.HubManager do
       end)
       |> Enum.map(fn {_, pid} -> pid end)
 
-    stream_channels =
-      Supervisor.which_children(Identificator.stream_sup_primary(operator_id)) ++
-        Supervisor.which_children(Identificator.stream_sup_secondary(operator_id))
+    case updated_pids do
+      [] ->
+        nil
+      _ ->
+        stream_channels =
+          Supervisor.which_children(Identificator.stream_sup_primary(operator_id)) ++
+            Supervisor.which_children(Identificator.stream_sup_secondary(operator_id))
 
-    Enum.each(stream_channels, fn {_, pid, _, _} ->
-      GenServer.call(pid, {:pipeline_pid_update, pipeline_id, updated_pids})
-    end)
+        Enum.each(stream_channels, fn {_, pid, _, _} ->
+          GenServer.call(pid, {:pipeline_pid_update, pipeline_id, updated_pids})
+        end)
+    end
   end
 
   def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do

@@ -420,8 +420,7 @@ defmodule AflechaTest do
     Process.sleep(1000)
     # TODO: fix the following issues that appear randomly.
     # 1. Assert fails checking the state in the end. The state does not get migrated.
-    # 2. Removing the process sleep sometimes causes the registry to show old operator id.
-    # 3. When test passes we still see a error on the remote node.
+    # 2. Removing the process sleep sometimes causes the registry to show old operator id. Sometimes even with process sleep above.
 
     # Make sure all the pipelines are migrated to the other operator.
     PipelineManager.pipeline_registry(group_id)
