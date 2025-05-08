@@ -1,6 +1,8 @@
 defmodule Aflecha.Service.Payloader do
   alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
+  def json_to_map(""), do: %{}
+
   def json_to_map(json) do
     case Jason.decode(json) do
       {:ok, map} -> map
