@@ -211,6 +211,7 @@ defmodule AflechaTest do
 
   # TODO: add test to handle large control requests and stream requests.
 
+  @tag :pipeline_migration
   test "pipeline migration" do
     # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
     # then get the state of the new migrated process to see if it matches the state1 string.

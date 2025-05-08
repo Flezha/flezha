@@ -349,7 +349,8 @@ defmodule Aflecha.Pipeline.Overwatch do
 
     case result do
       {:ok, serialized_data} ->
-        serialized_data
+        {:ok, data} = Jason.decode(serialized_data)
+        data["serialized_state"]
 
       {:error, reason} ->
         # TODO: we should actually check if overwatch status is :ok
