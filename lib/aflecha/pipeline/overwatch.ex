@@ -193,11 +193,16 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   @impl true
   def handle_info({:process_hub, :send_handover_state, receiver, child_id, opts}, state) do
-    # TODO: remove. Left only for debugging hub migration.
-    # HubManager.get_hub_nodes("test_temp_group") |> dbg()
-    # dbg({self(), Process.info(receiver, :registered_name)})
+    serialize_data =
+      case serialize_pipeline_sdk(state.operator_id, state.id) do
+        nil ->
+          state.snapshot
 
-    serialize_data = serialize_pipeline_sdk(state.operator_id, state.id)
+        data ->
+          data
+      end
+
+    dbg(serialize_data)
 
     # Send the state to the remote process.
     if is_pid(receiver) do
@@ -217,19 +222,17 @@ defmodule Aflecha.Pipeline.Overwatch do
         {:process_hub, :handover, _pipeline_id, {handover_state, pipe_serialized}},
         state
       ) do
-    pipe_serialized = Payloader.json_to_map(pipe_serialized)
-
     operator_data = %{
       "pipeline_id" => state.id,
-      "factory_id" => Map.get(pipe_serialized, "factory_id"),
-      "serialized_state" => Map.get(pipe_serialized, "serialized_state")
+      "factory_id" => Map.get(handover_state, :factory_id),
+      "serialized_state" => pipe_serialized
     }
 
     result = send_control(state.operator_id, "migration_deserialization", operator_data)
 
     case result do
       {:error, reason} -> Logger.error("Failed to deserialize pipeline: #{inspect(reason)}")
-      _ -> :ok
+      _else -> :ok
     end
 
     new_bindings = sync_bindings(state.bindings, handover_state.bindings)
@@ -257,7 +260,7 @@ defmodule Aflecha.Pipeline.Overwatch do
   defp create_snapshot(pipeline_id, operator_id) do
     case send_control(operator_id, "pipeline_state", %{"pipeline_id" => pipeline_id}) do
       {:ok, snapshot} ->
-        snapshot
+        :binary.bin_to_list(snapshot)
 
       {:error, _reason} ->
         nil
@@ -352,7 +355,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
       {:error, reason} ->
         Logger.error("Failed to serialize pipeline: #{inspect(reason)}")
-        ""
+        nil
     end
   end
 

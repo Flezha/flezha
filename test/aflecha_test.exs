@@ -385,7 +385,7 @@ defmodule AflechaTest do
     pipeline_id_1 = "pipeline_1"
     pipeline_id_2 = "pipeline_2"
 
-    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
+    {_peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
     # Start the operators.
     operator_id_1 = NodeTestHelper.start_operator(group_id)
@@ -398,38 +398,37 @@ defmodule AflechaTest do
       |> PipelineFixture.get(@test_store_input_factory)
       |> PipelineFixture.start(group_id)
 
-    {:ok, %{pid: pipeline_pid_2, operator_id: _pipe2_op}} =
+    {:ok, %{pid: pipeline_pid_2, operator_id: pipe2_op}} =
       pipeline_id_2
       |> PipelineFixture.get(@test_store_input_factory)
       |> PipelineFixture.start(group_id)
 
-    # TODO: continue from here..
-    HubManager.get_hub_nodes(group_id) |> dbg()
-    HubManager.get_registry(group_id) |> dbg()
+    # Make sure that atleast one of the pipelines is running on the remote operator.
+    assert pipe1_op !== operator_id_1 or pipe2_op !== operator_id_1
 
-    # GenServer.cast(pipeline_pid_1, {:io_in, {:text, "state_1"}})
-    # GenServer.cast(pipeline_pid_2, {:io_in, {:text, "state_2"}})
+    GenServer.cast(pipeline_pid_1, {:io_in, {:text, "state_1"}})
+    GenServer.cast(pipeline_pid_2, {:io_in, {:text, "state_2"}})
 
-    # PipelineManager.create_snapshot(group_id, pipeline_id_1)
-    # PipelineManager.create_snapshot(group_id, pipeline_id_2)
+    PipelineManager.create_snapshot(group_id, pipeline_id_1)
+    PipelineManager.create_snapshot(group_id, pipeline_id_2)
 
-    # # Trigger the operator disconnect.
-    # NodeTestHelper.stop_operator(group_id, rem_operator_1)
-    # NodeTestHelper.stop_operator(group_id, rem_operator_2)
+    # Trigger the operator disconnect.
+    NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_1)
+    NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_2)
 
-    # # Make sure all the pipelines are migrated to the other operator.
-    # PipelineManager.pipeline_registry(group_id)
-    # |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
-    #   assert new_operator === operator_id_1
-    # end)
+    # Make sure all the pipelines are migrated to the other operator.
+    PipelineManager.pipeline_registry(group_id)
+    |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+      assert new_operator === operator_id_1
+    end)
 
-    # # Make sure the states have been migrated.
-    # {:ok, json_state_1} = PipelineManager.get_pipeline_state(group_id, pipeline_id_1)
-    # {:ok, json_state_2} = PipelineManager.get_pipeline_state(group_id, pipeline_id_2)
+    # Make sure the states have been migrated.
+    {:ok, json_state_1} = PipelineManager.get_pipeline_state(group_id, pipeline_id_1)
+    {:ok, json_state_2} = PipelineManager.get_pipeline_state(group_id, pipeline_id_2)
 
-    # assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
-    # assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
+    assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
+    assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
 
-    # assert length(HubManager.get_hub_nodes(group_id, true)) === 1
+    assert length(HubManager.get_hub_nodes(group_id, true)) === 1
   end
 end
