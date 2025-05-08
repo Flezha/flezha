@@ -89,13 +89,32 @@ defmodule AflechaTest.Helper.NodeTestHelper do
     end
   end
 
+  def stop_operator_remote(node, group, operator_id) do
+    self = self()
+    :erpc.call(node, Kernel, :spawn, [__MODULE__, :stop_operator_recv, [group, operator_id, self]])
+
+    receive do
+      {:remote_operator_disconnected, ^group, ^operator_id} -> :ok
+    end
+  end
+
   def start_operator_recv(group, recv_pid) do
     operator_id = start_operator(group)
 
     Process.send(recv_pid, {:remote_operator_connected, group, operator_id}, [])
 
     receive do
-      :stop -> :ok
+      :any -> :ok
+    end
+  end
+
+  def stop_operator_recv(group, operator_id, recv_pid) do
+    stop_operator(group, operator_id)
+
+    Process.send(recv_pid, {:remote_operator_disconnected, group, operator_id}, [])
+
+    receive do
+      :any -> :ok
     end
   end
 
