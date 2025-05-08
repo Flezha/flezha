@@ -235,6 +235,9 @@ defmodule Aflecha.Operator.FleetManager do
   defp handle_operator_disconnect(state, group_id, operator_id) do
     FleetSupervisor.stop_operator_sup(operator_id)
 
+    # Cancel any hub handlers for the operator.
+    HubManager.unregister_handler(group_id, operator_id)
+
     operator_ids =
       state
       |> get_operator_ids(group_id, :active)

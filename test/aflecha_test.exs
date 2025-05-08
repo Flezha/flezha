@@ -416,6 +416,12 @@ defmodule AflechaTest do
     NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_1)
     NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_2)
 
+    Process.sleep(1000)
+    # TODO: fix the following issues that appear randomly.
+    # 1. Assert fails checking the state in the end. The state does not get migrated.
+    # 2. Removing the process sleep sometimes causes the registry to show old operator id.
+    # 3. When test passes we still see a error on the remote node.
+
     # Make sure all the pipelines are migrated to the other operator.
     PipelineManager.pipeline_registry(group_id)
     |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->

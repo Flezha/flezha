@@ -202,8 +202,6 @@ defmodule Aflecha.Pipeline.Overwatch do
           data
       end
 
-    dbg(serialize_data)
-
     # Send the state to the remote process.
     if is_pid(receiver) do
       Process.send(receiver, {:process_hub, :handover, child_id, {state, serialize_data}}, [])
@@ -354,7 +352,11 @@ defmodule Aflecha.Pipeline.Overwatch do
         serialized_data
 
       {:error, reason} ->
-        Logger.error("Failed to serialize pipeline: #{inspect(reason)}")
+        # TODO: we should actually check if overwatch status is :ok
+        if Application.get_env(:aflecha, :env) !== :test do
+          Logger.error("Failed to serialize pipeline: #{inspect(reason)}")
+        end
+
         nil
     end
   end

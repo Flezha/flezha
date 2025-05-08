@@ -37,7 +37,6 @@ defmodule AflechaTest.Helper.NodeTestHelper do
     :erpc.call(node_name, :code, :add_paths, [:code.get_path()])
 
     # Adjust the environment for the peer node.
-    :ok = :erpc.call(node_name, :application, :set_env, [:mix, :env, :test])
     :erpc.call(node_name, :application, :set_env, [:aflecha, :env, :test])
 
     # Set the same aflecha application configuration for the peer node.

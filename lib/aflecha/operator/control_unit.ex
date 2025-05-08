@@ -157,7 +157,7 @@ defmodule Aflecha.Operator.ControlUnit do
             "error" ->
               reason = Enum.join(json_message["errors"], " | ")
 
-              if Mix.env() !== :test do
+              if Application.get_env(:aflecha, :env) !== :test do
                 Logger.error(reason)
               end
 

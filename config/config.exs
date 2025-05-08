@@ -1,6 +1,9 @@
 import Config
 
 config :aflecha,
+  # The environment the application is running in.
+  env: Mix.env(),
+
   # ------------------------------------------------------------------------------------------------
   # Validator hooks to run before and after boot.
   pre_hooks: [],
