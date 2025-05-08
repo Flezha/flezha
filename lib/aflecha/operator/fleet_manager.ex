@@ -276,9 +276,9 @@ defmodule Aflecha.Operator.FleetManager do
   end
 
   defp operator_preserve(state, group_id, operator_id) do
-    operator = {:inactive, DateTime.utc_now() |> DateTime.to_unix()}
+    operator = {:inactive, DateTime.utc_now() |> DateTime.to_unix(:millisecond)}
 
-    # Remove the old operator from the group.
+    # Mark the operator as inactive.
     put_in(state.operator_groups[group_id], [operator_id], operator)
   end
 
