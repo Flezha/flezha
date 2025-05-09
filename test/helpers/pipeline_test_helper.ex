@@ -7,7 +7,7 @@ defmodule AflechaTest.Helper.PipelineTestHelper do
     receive do
       {:message_forward, msg} -> msg
     after
-      3000 -> raise "Timeout waiting for message"
+      2000 -> raise "Timeout waiting for message"
     end
   end
 end
