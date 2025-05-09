@@ -69,6 +69,16 @@ defmodule Aflecha.Service.PipelineManager do
     end
   end
 
+  def send_io(pipeline_id, group_id, message) do
+    case get_pipeline_pid(group_id, pipeline_id) do
+      {:ok, pipeline_pid} ->
+        GenServer.cast(pipeline_pid, {:io_in, message})
+
+      err ->
+        err
+    end
+  end
+
   def create_snapshot(group_id, pipeline_id) do
     case get_pipeline_pid(group_id, pipeline_id) do
       {:ok, pipeline_pid} ->

@@ -130,6 +130,7 @@ defmodule Aflecha.Service.HubManager do
     case updated_pids do
       [] ->
         nil
+
       _ ->
         stream_channels =
           Supervisor.which_children(Identificator.stream_sup_primary(operator_id)) ++

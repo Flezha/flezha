@@ -24,7 +24,7 @@ defmodule Aflecha.Plugin.Provider.BeamMsgForward do
 
     @impl true
     def exec(settings, payload) do
-      case Process.send(settings.recv_pid, payload, []) do
+      case Process.send(settings.recv_pid, {:message_forward, payload}, []) do
         :ok -> {:ok, payload}
         _ -> {:error, :send_failed}
       end

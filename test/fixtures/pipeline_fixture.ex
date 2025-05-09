@@ -1,5 +1,6 @@
 defmodule AflechaTest.Fixtures.PipelineFixture do
   use Aflecha.Constant
+  alias Aflecha.Service.PluginManager
 
   # TODO: refactor based on new plugin system.
 
@@ -16,6 +17,17 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
 
   def stop(pipeline_id, group \\ @default_group) do
     Aflecha.Service.PipelineManager.stop_pipeline(group, pipeline_id)
+  end
+
+  def attach_output_msg({:ok, %{pipeline_id: pipeline_id}} = start_res, group \\ @default_group) do
+    PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
+      group: group,
+      pipeline_id: pipeline_id,
+      trigger: :on_output,
+      recv_pid: self()
+    })
+
+    start_res
   end
 
   # TODO: refactor.
