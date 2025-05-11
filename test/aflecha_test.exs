@@ -216,115 +216,115 @@ defmodule AflechaTest do
 
   # # TODO: add test to handle large control requests and stream requests.
 
-  # @tag :pipeline_migration
-  # test "pipeline migration" do
-  #   # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
-  #   # then get the state of the new migrated process to see if it matches the state1 string.
+  @tag :pipeline_migration
+  test "pipeline migration" do
+    # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
+    # then get the state of the new migrated process to see if it matches the state1 string.
 
-  #   {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
-  #   pipeline_id = "pipeline_migration_test"
+    pipeline_id = "pipeline_migration_test"
 
-  #   {:ok, %{pid: pipeline_pid, node: _pnode}} =
-  #     pipeline_id
-  #     |> PipelineFixture.get(@test_store_input_factory)
-  #     |> PipelineFixture.start()
-  #     |> PipelineFixture.attach_output_msg()
+    {:ok, %{pid: pipeline_pid, node: _pnode}} =
+      pipeline_id
+      |> PipelineFixture.get(@test_store_input_factory)
+      |> PipelineFixture.start()
+      |> PipelineFixture.attach_output_msg()
 
-  #   PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "test_state_1"})
-  #   PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "test_state_2"})
+    PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "test_state_1"})
+    PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "test_state_2"})
 
-  #   test_state = %{
-  #     "binary_inputs" => [],
-  #     "text_inputs" => ["test_state_1", "test_state_2"]
-  #   }
+    test_state = %{
+      "binary_inputs" => [],
+      "text_inputs" => ["test_state_1", "test_state_2"]
+    }
 
-  #   # TODO: add here hook instead
-  #   Process.sleep(100)
+    # TODO: add here hook instead
+    Process.sleep(100)
 
-  #   PluginManager.enable_plugin(%Aflecha.Plugin.Provider.StdOut{
-  #     group: @default_group,
-  #     pipeline_id: pipeline_id,
-  #     trigger: :proactive
-  #   })
+    PluginManager.enable_plugin(%Aflecha.Plugin.Provider.StdOut{
+      group: @default_group,
+      pipeline_id: pipeline_id,
+      trigger: :proactive
+    })
 
-  #   {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
-  #   {:ok, old_overwatch_state} = PipelineManager.get_overwatch_state(@default_group, pipeline_id)
-  #   pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    {:ok, old_overwatch_state} = PipelineManager.get_overwatch_state(@default_group, pipeline_id)
+    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
-  #   assert pipeline_state === test_state
+    assert pipeline_state === test_state
 
-  #   NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
 
-  #   # TODO: add hook here instead
-  #   Process.sleep(1000)
+    # TODO: add hook here instead
+    Process.sleep(1000)
 
-  #   {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
-  #   {:ok, new_overwatch_state} = PipelineManager.get_overwatch_state(@default_group, pipeline_id)
-  #   pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    {:ok, new_overwatch_state} = PipelineManager.get_overwatch_state(@default_group, pipeline_id)
+    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
-  #   assert pipeline_state === test_state
-  #   assert new_overwatch_state.bindings === old_overwatch_state.bindings
-  #   assert new_overwatch_state.init_values === old_overwatch_state.init_values
+    assert pipeline_state === test_state
+    assert new_overwatch_state.bindings === old_overwatch_state.bindings
+    assert new_overwatch_state.init_values === old_overwatch_state.init_values
+  end
+
+  # @tag :operator_disconnect
+  # test "operator disconnect" do
+  #   group_id = "test_temp_group"
+  #   operator_id = NodeTestHelper.start_operator(group_id)
+
+  #   NodeTestHelper.stop_operator(group_id, operator_id)
+
+  #   assert Aflecha.Operator.FleetManager.active_operators(group_id) === []
   # end
 
-  @tag :operator_disconnect
-  test "operator disconnect" do
-    group_id = "test_temp_group"
-    operator_id = NodeTestHelper.start_operator(group_id)
+  # @tag :operator_disconnect_migrate_op
+  # test "operator disconnect migrate op" do
+  #   group_id = "test_temp_group"
+  #   pipeline_id_1 = "pipeline_1"
+  #   pipeline_id_2 = "pipeline_2"
 
-    NodeTestHelper.stop_operator(group_id, operator_id)
+  #   # Start 2 operators under the same group.
+  #   operator_id_1 = NodeTestHelper.start_operator(group_id)
+  #   operator_id_2 = NodeTestHelper.start_operator(group_id)
 
-    assert Aflecha.Operator.FleetManager.active_operators(group_id) === []
-  end
+  #   # Start a few pipelines and store some state on them.
+  #   {:ok, %{pid: pipeline_pid_1, operator_id: pipe1_op}} =
+  #     pipeline_id_1
+  #     |> PipelineFixture.get(@test_store_input_factory)
+  #     |> PipelineFixture.start(group_id)
+  #     |> PipelineFixture.attach_output_msg(group_id)
 
-  @tag :operator_disconnect_migrate_op
-  test "operator disconnect migrate op" do
-    group_id = "test_temp_group"
-    pipeline_id_1 = "pipeline_1"
-    pipeline_id_2 = "pipeline_2"
+  #   {:ok, %{pid: pipeline_pid_2, operator_id: _pipe2_op}} =
+  #     pipeline_id_2
+  #     |> PipelineFixture.get(@test_store_input_factory)
+  #     |> PipelineFixture.start(group_id)
+  #     |> PipelineFixture.attach_output_msg(group_id)
 
-    # Start 2 operators under the same group.
-    operator_id_1 = NodeTestHelper.start_operator(group_id)
-    operator_id_2 = NodeTestHelper.start_operator(group_id)
+  #   PipelineTestHelper.send_sync_io(pipeline_id_1, group_id, {:text, "state_1"})
+  #   PipelineTestHelper.send_sync_io(pipeline_id_2, group_id, {:text, "state_2"})
 
-    # Start a few pipelines and store some state on them.
-    {:ok, %{pid: pipeline_pid_1, operator_id: pipe1_op}} =
-      pipeline_id_1
-      |> PipelineFixture.get(@test_store_input_factory)
-      |> PipelineFixture.start(group_id)
-      |> PipelineFixture.attach_output_msg(group_id)
+  #   PipelineManager.create_snapshot(group_id, pipeline_id_1)
+  #   PipelineManager.create_snapshot(group_id, pipeline_id_2)
 
-    {:ok, %{pid: pipeline_pid_2, operator_id: _pipe2_op}} =
-      pipeline_id_2
-      |> PipelineFixture.get(@test_store_input_factory)
-      |> PipelineFixture.start(group_id)
-      |> PipelineFixture.attach_output_msg(group_id)
+  #   active_operator = if pipe1_op === operator_id_1, do: operator_id_2, else: operator_id_1
 
-    PipelineTestHelper.send_sync_io(pipeline_id_1, group_id, {:text, "state_1"})
-    PipelineTestHelper.send_sync_io(pipeline_id_2, group_id, {:text, "state_2"})
+  #   # Trigger the operator disconnect.
+  #   NodeTestHelper.stop_operator(group_id, pipe1_op)
 
-    PipelineManager.create_snapshot(group_id, pipeline_id_1)
-    PipelineManager.create_snapshot(group_id, pipeline_id_2)
+  #   # Make sure all the pipelines are migrated to the other operator.
+  #   PipelineManager.pipeline_registry(group_id)
+  #   |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+  #     assert new_operator === active_operator
+  #   end)
 
-    active_operator = if pipe1_op === operator_id_1, do: operator_id_2, else: operator_id_1
+  #   # Make sure the states have been migrated.
+  #   {:ok, json_state_1} = PipelineManager.get_pipeline_state(group_id, pipeline_id_1)
+  #   {:ok, json_state_2} = PipelineManager.get_pipeline_state(group_id, pipeline_id_2)
 
-    # Trigger the operator disconnect.
-    NodeTestHelper.stop_operator(group_id, pipe1_op)
-
-    # Make sure all the pipelines are migrated to the other operator.
-    PipelineManager.pipeline_registry(group_id)
-    |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
-      assert new_operator === active_operator
-    end)
-
-    # Make sure the states have been migrated.
-    {:ok, json_state_1} = PipelineManager.get_pipeline_state(group_id, pipeline_id_1)
-    {:ok, json_state_2} = PipelineManager.get_pipeline_state(group_id, pipeline_id_2)
-
-    assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
-    assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
-  end
+  #   assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
+  #   assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
+  # end
 
   # @tag :operator_disconnect_preserve
   # test "operator disconnect preserve" do

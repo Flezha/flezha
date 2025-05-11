@@ -1,6 +1,9 @@
 defmodule AflechaTest.Fixtures.PipelineFixture do
-  use Aflecha.Constant
   alias Aflecha.Service.PluginManager
+  alias Aflecha.Service.Identificator
+  alias ProcessHub.Constant.Hook
+
+  use Aflecha.Constant
 
   # TODO: refactor based on new plugin system.
 
@@ -12,7 +15,34 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
   end
 
   def start(pipeline, group \\ @default_group) do
-    Aflecha.Service.PipelineManager.start_pipeline(group, pipeline)
+    self = self()
+
+    ProcessHub.Service.HookManager.register_handler(
+      Identificator.hub(group),
+      Hook.registry_pid_inserted(),
+      %ProcessHub.Service.HookManager{
+        id: "registry_pid_inserted",
+        m: Process,
+        f: :send,
+        a: [self, :hook_reg_insert_recv, []]
+      }
+    )
+
+    result = Aflecha.Service.PipelineManager.start_pipeline(group, pipeline)
+
+    receive do
+      :hook_reg_insert_recv -> :ok
+    after
+      2000 -> raise "Timeout waiting for process registration"
+    end
+
+    ProcessHub.Service.HookManager.cancel_handler(
+      Identificator.hub(group),
+      :registry_pid_inserted_hook,
+      "registry_pid_inserted"
+    )
+
+    result
   end
 
   def stop(pipeline_id, group \\ @default_group) do
@@ -20,12 +50,13 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
   end
 
   def attach_output_msg({:ok, %{pipeline_id: pipeline_id}} = start_res, group \\ @default_group) do
-    PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
-      group: group,
-      pipeline_id: pipeline_id,
-      trigger: :on_output,
-      recv_pid: self()
-    })
+    {:ok, "binding added"} =
+      PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
+        group: group,
+        pipeline_id: pipeline_id,
+        trigger: :on_output,
+        recv_pid: self()
+      })
 
     start_res
   end
