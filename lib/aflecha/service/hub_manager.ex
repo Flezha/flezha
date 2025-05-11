@@ -21,6 +21,7 @@ defmodule Aflecha.Service.HubManager do
 
   def stop_hub(group_id) do
     Supervisor.terminate_child(__MODULE__, Identificator.hub(group_id))
+    Supervisor.delete_child(__MODULE__, Identificator.hub(group_id))
   end
 
   def hub_alive?(group_id) do
