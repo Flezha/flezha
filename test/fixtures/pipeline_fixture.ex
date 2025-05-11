@@ -38,7 +38,7 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
 
     ProcessHub.Service.HookManager.cancel_handler(
       Identificator.hub(group),
-      :registry_pid_inserted_hook,
+      Hook.registry_pid_inserted(),
       "registry_pid_inserted"
     )
 
