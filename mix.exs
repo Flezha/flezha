@@ -60,6 +60,6 @@ defmodule Aflecha.MixProject do
     release
   end
 
-  defp elixirc_paths(:test), do: ["lib", "test"]
-  defp elixirc_paths(_), do: ["lib"]
+  defp elixirc_paths(:prod), do: ["lib"]
+  defp elixirc_paths(_), do: ["lib", "test"]
 end

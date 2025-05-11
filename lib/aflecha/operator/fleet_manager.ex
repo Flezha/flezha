@@ -36,6 +36,10 @@ defmodule Aflecha.Operator.FleetManager do
     GenServer.call(__MODULE__, {:disconnect_operator, group_id, operator_id})
   end
 
+  def stop_group(group_id) do
+    GenServer.call(__MODULE__, {:stop_group, group_id})
+  end
+
   @impl true
   def init(_) do
     schedule_operator_cleanup()
@@ -70,6 +74,30 @@ defmodule Aflecha.Operator.FleetManager do
     operator_ids = get_operator_ids(state, group_id, :active)
 
     {:reply, operator_ids, state}
+  end
+
+  @impl true
+  def handle_call({:stop_group, group_id}, _from, state) do
+    reply =
+      case Map.get(state.operator_groups, group_id, nil) do
+        nil ->
+          :group_not_found
+
+        _ ->
+          # Stop all the operators in the group.
+          operator_ids = get_operator_ids(state, group_id, :active)
+
+          Enum.each(operator_ids, fn operator_id ->
+            FleetSupervisor.stop_operator_sup(operator_id)
+          end)
+
+          # Stop the group hub.
+          HubManager.stop_hub(group_id)
+
+          :ok
+      end
+
+    {:reply, reply, state}
   end
 
   @impl true
