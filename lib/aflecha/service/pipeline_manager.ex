@@ -69,6 +69,14 @@ defmodule Aflecha.Service.PipelineManager do
     end
   end
 
+  def stop_all_pipelines(group_id) do
+    pipelines = HubManager.get_all_pipelines(group_id)
+
+    Enum.map(pipelines, fn {_pipeline_id, pipeline_pid} ->
+      GenServer.call(pipeline_pid, :stop_pipeline)
+    end)
+  end
+
   def send_io(pipeline_id, group_id, message) do
     case get_pipeline_pid(group_id, pipeline_id) do
       {:ok, pipeline_pid} ->

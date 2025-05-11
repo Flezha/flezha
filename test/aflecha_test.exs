@@ -26,6 +26,7 @@ defmodule AflechaTest do
 
   setup do
     on_exit(fn ->
+      PipelineManager.stop_all_pipelines(@default_group)
       FleetManager.stop_group("test_temp_group")
     end)
 
@@ -192,27 +193,27 @@ defmodule AflechaTest do
   #   end
   # end
 
-  # @tag :get_pipeline_state
-  # test "get pipeline state" do
-  #   pipeline_id = "get_state_test"
+  @tag :get_pipeline_state
+  test "get pipeline state" do
+    pipeline_id = "get_state_test"
 
-  #   {:ok, %{pid: pipeline_pid}} =
-  #     pipeline_id
-  #     |> PipelineFixture.get(@test_store_input_factory)
-  #     |> PipelineFixture.start()
-  #     |> PipelineFixture.attach_output_msg()
+    {:ok, %{pid: pipeline_pid}} =
+      pipeline_id
+      |> PipelineFixture.get(@test_store_input_factory)
+      |> PipelineFixture.start()
+      |> PipelineFixture.attach_output_msg()
 
-  #   PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "state_1"})
-  #   PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "state_2"})
+    PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "state_1"})
+    PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "state_2"})
 
-  #   {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
-  #   pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
-  #   assert pipeline_state === %{
-  #            "binary_inputs" => [],
-  #            "text_inputs" => ["state_1", "state_2"]
-  #          }
-  # end
+    assert pipeline_state === %{
+             "binary_inputs" => [],
+             "text_inputs" => ["state_1", "state_2"]
+           }
+  end
 
   # # TODO: add test to handle large control requests and stream requests.
 

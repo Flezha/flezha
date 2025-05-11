@@ -62,6 +62,12 @@ defmodule Aflecha.Service.HubManager do
     end
   end
 
+  def get_all_pipelines(group_id) do
+    Identificator.hub(group_id)
+    |> ProcessHub.process_list(:global)
+    |> Enum.map(fn {pipeline_id, [{_node, pipeline_pid}]} -> {pipeline_id, pipeline_pid} end)
+  end
+
   def register_handler(group_id, operator_id) do
     HookManager.register_handler(
       Identificator.hub(group_id),
