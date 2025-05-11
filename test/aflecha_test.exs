@@ -14,6 +14,7 @@ defmodule AflechaTest do
   doctest Aflecha
 
   @default_group "default"
+  @temp_group "test_temp_group"
   @node_name NodeTestHelper.node_name()
 
   @test_store_input_factory "store_input"
@@ -27,7 +28,7 @@ defmodule AflechaTest do
   setup do
     on_exit(fn ->
       PipelineManager.stop_all_pipelines(@default_group)
-      FleetManager.stop_group("test_temp_group")
+      FleetManager.stop_group(@temp_group)
     end)
 
     :ok
@@ -271,7 +272,7 @@ defmodule AflechaTest do
 
   # @tag :operator_disconnect
   # test "operator disconnect" do
-  #   group_id = "test_temp_group"
+  #   group_id = @temp_group
   #   operator_id = NodeTestHelper.start_operator(group_id)
 
   #   NodeTestHelper.stop_operator(group_id, operator_id)
@@ -281,7 +282,7 @@ defmodule AflechaTest do
 
   # @tag :operator_disconnect_migrate_op
   # test "operator disconnect migrate op" do
-  #   group_id = "test_temp_group"
+  #   group_id = @temp_group
   #   pipeline_id_1 = "pipeline_1"
   #   pipeline_id_2 = "pipeline_2"
 
@@ -330,7 +331,7 @@ defmodule AflechaTest do
   # @tag :operator_disconnect_preserve
   # test "operator disconnect preserve" do
   #   # Start 2 operators under the same group.
-  #   group_id = "test_temp_group"
+  #   group_id = @temp_group
   #   operator_id_1 = NodeTestHelper.start_operator(group_id)
   #   operator_id_2 = NodeTestHelper.start_operator(group_id)
 
@@ -392,7 +393,7 @@ defmodule AflechaTest do
 
   # @tag :operator_disconnect_migrate_hub
   # test "operator disconnect migrate hub" do
-  #   group_id = "test_temp_group"
+  #   group_id = @temp_group
   #   pipeline_id_1 = "pipeline_1"
   #   pipeline_id_2 = "pipeline_2"
 
