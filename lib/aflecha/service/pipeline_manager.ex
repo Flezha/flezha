@@ -73,7 +73,7 @@ defmodule Aflecha.Service.PipelineManager do
     pipelines = HubManager.get_all_pipelines(group_id)
 
     Enum.map(pipelines, fn {_pipeline_id, pipeline_pid} ->
-      if (Process.alive?(pipeline_pid)) do
+      if Process.alive?(pipeline_pid) do
         GenServer.call(pipeline_pid, :stop_pipeline)
       else
         {:error, "pipeline not alive"}
