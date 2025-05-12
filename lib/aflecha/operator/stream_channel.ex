@@ -69,7 +69,7 @@ defmodule Aflecha.Operator.StreamChannel do
         Map.put(acc, pipeline_id, updated_pids)
       end)
 
-    {:reply, :ok, pipeline_mapping}
+    {:reply, :ok, Map.put(state, :pipeline_mapping, pipeline_mapping)}
   end
 
   @impl true
