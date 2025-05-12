@@ -73,13 +73,16 @@ defmodule Aflecha.Operator.ControlChannel do
 
   @impl true
   def handle_info({:tcp_closed, _socket}, state) do
+    # dbg()
+    Logger.warning(
+      "TCP connection closed for control socket for #{state.operator_id} on #{state.group_id}"
+    )
+
     GenServer.call(FleetManager, {
       :operator_disconnected,
       state.group_id,
       state.operator_id
     })
-
-    Logger.warning("TCP connection closed for control socket.")
 
     {:noreply, state}
   end

@@ -78,10 +78,10 @@ defmodule Aflecha.Operator.FleetManager do
 
   @impl true
   def handle_call({:stop_group, group_id}, _from, state) do
-    reply =
+    {reply, operator_groups} =
       case Map.get(state.operator_groups, group_id, nil) do
         nil ->
-          :group_not_found
+          {:group_not_found, state.operator_groups}
 
         _ ->
           # Stop all the operators in the group.
@@ -94,17 +94,17 @@ defmodule Aflecha.Operator.FleetManager do
           # Stop the group hub.
           HubManager.stop_hub(group_id)
 
-          :ok
+          {:ok, Map.delete(state.operator_groups, group_id)}
       end
 
-    {:reply, reply, state}
+    {:reply, reply, Map.put(state, :operator_groups, operator_groups)}
   end
 
   @impl true
   def handle_call({:operator_connect, sock}, _from, state) do
     case operator_connect(state.operator_groups, sock) do
       {:ok, group_id, operator_id} ->
-        timestamp = DateTime.utc_now() |> DateTime.to_unix()
+        timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
         state =
           case Map.get(state.operator_groups, group_id, nil) do
