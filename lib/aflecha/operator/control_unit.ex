@@ -76,7 +76,7 @@ defmodule Aflecha.Operator.ControlUnit do
       ControlChannel.send_control(
         state.operator_id,
         @payload_id_assign_operator_id,
-        %{"operator_id" => state.operator_id}
+        {:assign_operator_id, %OperatorCommands.AssignOperatorId{operator_id: state.operator_id}}
       )
 
     {:reply, :ok, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
@@ -90,7 +90,7 @@ defmodule Aflecha.Operator.ControlUnit do
       ControlChannel.send_control(
         state.operator_id,
         @payload_id_connect_sockets,
-        %{"sockets_count" => sockets_count}
+        {:connect_socket, %OperatorCommands.ConnectSocket{sockets_count: sockets_count}}
       )
 
     {:reply, :ok, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
@@ -132,7 +132,7 @@ defmodule Aflecha.Operator.ControlUnit do
       ControlChannel.send_control(
         state.operator_id,
         @payload_id_operator_disconnect,
-        %{}
+        {nil, %{}}
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}

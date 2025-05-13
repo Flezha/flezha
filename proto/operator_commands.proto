@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+
+package operator_commands;
+
+message CommandRequest {
+    string reference_id = 1;
+    
+    oneof command {
+        AssignOperatorId assign_operator_id = 2;
+        ConnectSocket connect_socket = 3;
+    }
+}
+
+message AssignOperatorId {
+    string operator_id = 1;
+}
+
+message ConnectSocket {
+    uint32 sockets_count = 1;
+}
+
+

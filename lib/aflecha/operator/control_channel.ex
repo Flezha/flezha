@@ -14,7 +14,7 @@ defmodule Aflecha.Operator.ControlChannel do
     )
   end
 
-  def send_control(operator_id, payload_id, data) do
+  def send_control(operator_id, payload_id, {command_type, command}) do
     control_channel = Identificator.control_channel(operator_id)
 
     case GenServer.whereis(control_channel) do
@@ -24,13 +24,10 @@ defmodule Aflecha.Operator.ControlChannel do
       _ ->
         ref = gen_ref()
 
-        command =
-          Jason.encode!(%{
-            "data" => data,
-            "reference_id" => ref
-          })
+        req = struct(CommandRequest, [{:reference_id, ref}, {command_type, command}])
+        {:ok, iodata, _size} = Protox.encode(req)
 
-        payload = Payloader.build_from_bin(payload_id, command)
+        payload = Payloader.build_from_bin(payload_id, iodata)
 
         GenServer.call(control_channel, {:send_control, payload})
 
@@ -73,7 +70,6 @@ defmodule Aflecha.Operator.ControlChannel do
 
   @impl true
   def handle_info({:tcp_closed, _socket}, state) do
-    # dbg()
     Logger.warning(
       "TCP connection closed for control socket for #{state.operator_id} on #{state.group_id}"
     )

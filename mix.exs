@@ -41,6 +41,7 @@ defmodule Aflecha.MixProject do
       {:blockade, "~> 0.2.1"},
       {:fresh, "~> 0.4.4"},
       {:kafka_ex, "~> 0.14.0"},
+      {:protox, "~> 2.0"},
       {:mimic, "~> 1.11"}
     ]
   end
