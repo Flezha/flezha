@@ -24,7 +24,9 @@ defmodule Aflecha.Operator.ControlChannel do
       _ ->
         ref = gen_ref()
 
-        req = struct(CommandRequest, [{:reference_id, ref}, {command_type, command}])
+        req =
+          struct(OperatorCommands.CommandRequest, [{:reference_id, ref}, {command_type, command}])
+
         {:ok, iodata, _size} = Protox.encode(req)
 
         payload = Payloader.build_from_bin(payload_id, iodata)

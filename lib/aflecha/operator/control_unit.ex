@@ -144,18 +144,18 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   defp handle_payload(state, {payload_id, message}) do
-    {:ok, json_message} = Jason.decode(message)
-    ref = Map.get(json_message, "reference_id", nil)
+    {:ok, response} = OperatorCommands.CommandResponse.decode(message)
+    ref = Map.get(response, :reference_id, nil)
 
     cond do
       Enum.member?(payload_id_list(), payload_id) ->
         reply =
-          case json_message["status"] do
+          case response[:status] do
             "success" ->
-              {:ok, json_message["info"]}
+              {:ok, response[:info]}
 
             "error" ->
-              reason = Enum.join(json_message["errors"], " | ")
+              reason = Enum.join(response[:errors], " | ")
 
               if Application.get_env(:aflecha, :env) !== :test do
                 Logger.error(reason)
