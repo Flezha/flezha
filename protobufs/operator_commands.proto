@@ -13,6 +13,8 @@ message CommandRequest {
         RemPipeline rem_pipeline = 5;
         MigrationSerialization migration_serialization = 6;
         MigrationDeserialization migration_deserialization = 7;
+        PipelineState pipeline_state = 8;
+        OperatorDisconnect operator_disconnect = 9;
     }
 }
 
@@ -50,3 +52,9 @@ message MigrationDeserialization {
     string factory_id = 2;
     bytes serialized_state = 3;
 }
+
+message PipelineState {
+    string pipeline_id = 1;
+}
+
+message OperatorDisconnect {}

@@ -123,7 +123,7 @@ defmodule Aflecha.Operator.ControlUnit do
         state.operator_id,
         {
           :operator_disconnect,
-          %{}
+          %OperatorCommands.OperatorDisconnect{}
         }
       )
 

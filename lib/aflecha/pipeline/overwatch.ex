@@ -110,7 +110,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   @impl true
   def handle_call(:get_pipeline_state, _from, state) do
-    command = %{"pipeline_id" => state.id}
+    command = %OperatorCommands.PipelineState{pipeline_id: state.id}
 
     # TODO: any rpc command may timeout causing the pipeline overwatch to crash.
     # We should handle this in the control unit.
@@ -222,10 +222,10 @@ defmodule Aflecha.Pipeline.Overwatch do
         {:process_hub, :handover, _pipeline_id, {handover_state, pipe_serialized}},
         state
       ) do
-    command = %{
-      "pipeline_id" => state.id,
-      "factory_id" => Map.get(handover_state, :factory_id),
-      "serialized_state" => pipe_serialized
+    command = %OperatorCommands.MigrationDeserialization{
+      pipeline_id: state.id,
+      factory_id: Map.get(handover_state, :factory_id),
+      serialized_state: pipe_serialized
     }
 
     result = send_control(state.operator_id, {:migration_deserialization, command})
@@ -258,7 +258,9 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   defp create_snapshot(pipeline_id, operator_id) do
-    case send_control(operator_id, {:pipeline_state, %{"pipeline_id" => pipeline_id}}) do
+    command = %OperatorCommands.PipelineState{pipeline_id: pipeline_id}
+
+    case send_control(operator_id, {:pipeline_state, command}) do
       {:ok, snapshot} ->
         :binary.bin_to_list(snapshot)
 
@@ -353,6 +355,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
     case result do
       {:ok, serialized_data} ->
+        # TODO: 1
         {:ok, data} = Jason.decode(serialized_data)
         data["serialized_state"]
 
