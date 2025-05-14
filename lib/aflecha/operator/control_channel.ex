@@ -25,11 +25,15 @@ defmodule Aflecha.Operator.ControlChannel do
         ref = gen_ref()
 
         req =
-          struct(OperatorCommands.CommandRequest, [{:reference_id, ref}, {command_type, command}])
+          struct(
+            OperatorCommands.CommandRequest,
+            reference_id: ref,
+            command: {command_type, command}
+          )
 
         {:ok, iodata, _size} = Protox.encode(req)
 
-        payload = Payloader.build_from_bin(payload_id, iodata)
+        payload = Payloader.build_from_bin(payload_id, IO.iodata_to_binary(iodata))
 
         GenServer.call(control_channel, {:send_control, payload})
 

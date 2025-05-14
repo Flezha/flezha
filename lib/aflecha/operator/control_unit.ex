@@ -35,7 +35,8 @@ defmodule Aflecha.Operator.ControlUnit do
       %{
         group_id: group_id,
         operator_id: operator_id,
-        response_refs: %{}
+        response_refs: %{},
+        env: Application.get_env(:aflecha, :env)
       }
     }
   end
@@ -150,14 +151,14 @@ defmodule Aflecha.Operator.ControlUnit do
     cond do
       Enum.member?(payload_id_list(), payload_id) ->
         reply =
-          case response[:status] do
+          case response.status do
             "success" ->
-              {:ok, response[:info]}
+              {:ok, response.info}
 
             "error" ->
-              reason = Enum.join(response[:errors], " | ")
+              reason = Enum.join(response.errors, " | ")
 
-              if Application.get_env(:aflecha, :env) !== :test do
+              if state[:env] !== :test do
                 Logger.error(reason)
               end
 

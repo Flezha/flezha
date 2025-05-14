@@ -1,6 +1,6 @@
 defmodule Aflecha.Operator.CommandsProto do
   use Protox,
     files: [
-      "./proto/operator_commands.proto"
+      "./protobufs/operator_commands.proto"
     ]
 end

@@ -3,8 +3,11 @@ defmodule Aflecha.Operator.FleetSupervisor do
 
   use Supervisor
 
+  # TODO: change back to 3 and make configurable.
+  @max_restarts 0
+
   def start_link(_) do
-    Supervisor.start_link(__MODULE__, nil, name: __MODULE__)
+    Supervisor.start_link(__MODULE__, nil, name: __MODULE__, max_restarts: @max_restarts)
   end
 
   @impl true
