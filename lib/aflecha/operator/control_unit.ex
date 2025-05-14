@@ -85,10 +85,15 @@ defmodule Aflecha.Operator.ControlUnit do
 
   @impl true
   def handle_call({:start_pipeline, pipeline}, from, state) do
+    # TODO: Not sure if we should convert to map from the beginning.
     init_values =
       case pipeline.init_values !== %{} do
-        true -> pipeline.init_values
-        false -> ""
+        true ->
+          {:ok, json_iv} = Jason.encode(pipeline.init_values)
+          json_iv
+
+        false ->
+          ""
       end
 
     command = %OperatorCommands.AddPipeline{

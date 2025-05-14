@@ -89,133 +89,133 @@ defmodule AflechaTest do
     assert info[:reason] === "Factory with id non_existing_factory does not exist"
   end
 
-  # test "websocket plugin connection start" do
-  #   pipeline_id = "websocket_plugin_test"
+  test "websocket plugin connection start" do
+    pipeline_id = "websocket_plugin_test"
 
-  #   pipeline = %Aflecha.Pipeline.Builder{
-  #     id: pipeline_id,
-  #     factory_id: @test_pipeline_factory
-  #   }
+    pipeline = %Aflecha.Pipeline.Builder{
+      id: pipeline_id,
+      factory_id: @test_pipeline_factory
+    }
 
-  #   {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
+    {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
 
-  #   # TODO: add failures also.
-  #   res =
-  #     PluginManager.enable_plugin(%Aflecha.Plugin.Provider.Websocket{
-  #       group: @default_group,
-  #       pipeline_id: pipeline_id,
-  #       uri: @testnet_ws_uri,
-  #       trigger: :proactive,
-  #       post_connect: %{
-  #         payload: {
-  #           :text,
-  #           ~s(
-  #               {
-  #                 "event_type": "subscribe",
-  #                 "event_data": {
-  #                   "default_message": "hello world",
-  #                   "interval": 1000
-  #                 }
-  #               }
-  #             )
-  #         }
-  #       }
-  #     })
+    # TODO: add failures also.
+    res =
+      PluginManager.enable_plugin(%Aflecha.Plugin.Provider.Websocket{
+        group: @default_group,
+        pipeline_id: pipeline_id,
+        uri: @testnet_ws_uri,
+        trigger: :proactive,
+        post_connect: %{
+          payload: {
+            :text,
+            ~s(
+                {
+                  "event_type": "subscribe",
+                  "event_data": {
+                    "default_message": "hello world",
+                    "interval": 1000
+                  }
+                }
+              )
+          }
+        }
+      })
 
-  #   assert res === {:ok, "binding added"}
-  # end
+    assert res === {:ok, "binding added"}
+  end
 
-  # test "beam msg forward plugin connection start" do
-  #   pipeline_id = "beam_msg_forw_plugin_test"
+  test "beam msg forward plugin connection start" do
+    pipeline_id = "beam_msg_forw_plugin_test"
 
-  #   pipeline = %Aflecha.Pipeline.Builder{
-  #     id: pipeline_id,
-  #     factory_id: @test_pipeline_factory
-  #   }
+    pipeline = %Aflecha.Pipeline.Builder{
+      id: pipeline_id,
+      factory_id: @test_pipeline_factory
+    }
 
-  #   {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
+    {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
 
-  #   res =
-  #     PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
-  #       group: @default_group,
-  #       pipeline_id: pipeline_id,
-  #       trigger: :on_output,
-  #       recv_pid: self()
-  #     })
+    res =
+      PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
+        group: @default_group,
+        pipeline_id: pipeline_id,
+        trigger: :on_output,
+        recv_pid: self()
+      })
 
-  #   assert res === {:ok, "binding added"}
-  # end
+    assert res === {:ok, "binding added"}
+  end
 
-  # test "pipeline flow generation -> beam msg forward" do
-  #   pipeline_id = "data_flow_test"
+  test "pipeline flow generation -> beam msg forward" do
+    pipeline_id = "data_flow_test"
 
-  #   pipeline = %Aflecha.Pipeline.Builder{
-  #     id: pipeline_id,
-  #     factory_id: @test_compare_filter_factory,
-  #     init_values: %{"comparable" => "hello world", "inverted" => false}
-  #   }
+    pipeline = %Aflecha.Pipeline.Builder{
+      id: pipeline_id,
+      factory_id: @test_compare_filter_factory,
+      init_values: %{"comparable" => "hello world", "inverted" => false}
+    }
 
-  #   {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
+    {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
 
-  #   PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
-  #     group: @default_group,
-  #     pipeline_id: pipeline_id,
-  #     trigger: :on_output,
-  #     recv_pid: self()
-  #   })
+    PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
+      group: @default_group,
+      pipeline_id: pipeline_id,
+      trigger: :on_output,
+      recv_pid: self()
+    })
 
-  #   PluginManager.enable_plugin(%Aflecha.Plugin.Provider.Websocket{
-  #     group: @default_group,
-  #     pipeline_id: pipeline_id,
-  #     trigger: :proactive,
-  #     uri: @testnet_ws_uri,
-  #     post_connect: %{
-  #       payload: %{
-  #         type: :text,
-  #         message: ~s(
-  #             {
-  #               "event_type": "subscribe",
-  #               "event_data": {
-  #                 "default_message": "hello world",
-  #                 "interval": 1000
-  #               }
-  #             }
-  #         )
-  #       }
-  #     }
-  #   })
+    PluginManager.enable_plugin(%Aflecha.Plugin.Provider.Websocket{
+      group: @default_group,
+      pipeline_id: pipeline_id,
+      trigger: :proactive,
+      uri: @testnet_ws_uri,
+      post_connect: %{
+        payload: %{
+          type: :text,
+          message: ~s(
+              {
+                "event_type": "subscribe",
+                "event_data": {
+                  "default_message": "hello world",
+                  "interval": 1000
+                }
+              }
+          )
+        }
+      }
+    })
 
-  #   for _ <- 1..1 do
-  #     receive do
-  #       {:message_forward, msg} ->
-  #         assert msg === {:text, "hello world"}
-  #     after
-  #       2000 -> assert false
-  #     end
-  #   end
-  # end
+    for _ <- 1..1 do
+      receive do
+        {:message_forward, msg} ->
+          assert msg === {:text, "hello world"}
+      after
+        2000 -> assert false
+      end
+    end
+  end
 
-  # @tag :get_pipeline_state
-  # test "get pipeline state" do
-  #   pipeline_id = "get_state_test"
+  @tag :get_pipeline_state
+  test "get pipeline state" do
+    pipeline_id = "get_state_test"
 
-  #   {:ok, %{pid: _pipeline_pid}} =
-  #     pipeline_id
-  #     |> PipelineFixture.get(@test_store_input_factory)
-  #     |> PipelineFixture.start()
-  #     |> PipelineFixture.attach_output_msg()
+    {:ok, %{pid: _pipeline_pid}} =
+      pipeline_id
+      |> PipelineFixture.get(@test_store_input_factory)
+      |> PipelineFixture.start()
+      |> PipelineFixture.attach_output_msg()
 
-  #   PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "state_1"})
-  #   PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "state_2"})
+    PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "state_1"})
+    PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "state_2"})
 
-  #   {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
-  #   pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
+    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
 
-  #   assert pipeline_state === %{
-  #            "binary_inputs" => [],
-  #            "text_inputs" => ["state_1", "state_2"]
-  #          }
-  # end
+    assert pipeline_state === %{
+             "binary_inputs" => [],
+             "text_inputs" => ["state_1", "state_2"]
+           }
+  end
 
   # # # # TODO: add test to handle large control requests and stream requests.
 
