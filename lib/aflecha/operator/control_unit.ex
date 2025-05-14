@@ -2,7 +2,6 @@ defmodule Aflecha.Operator.ControlUnit do
   alias Aflecha.Service.Identificator
   alias Aflecha.Operator.ControlChannel
   alias Aflecha.Service.ConcurrencyMapper
-  alias Aflecha.Pipeline.Builder, as: PipelineBuilder
 
   use GenServer
 
@@ -77,7 +76,10 @@ defmodule Aflecha.Operator.ControlUnit do
       ControlChannel.send_control(
         state.operator_id,
         @payload_id_assign_operator_id,
-        {:assign_operator_id, %OperatorCommands.AssignOperatorId{operator_id: state.operator_id}}
+        {
+          :assign_operator_id,
+          %OperatorCommands.AssignOperatorId{operator_id: state.operator_id}
+        }
       )
 
     {:reply, :ok, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
@@ -91,25 +93,34 @@ defmodule Aflecha.Operator.ControlUnit do
       ControlChannel.send_control(
         state.operator_id,
         @payload_id_connect_sockets,
-        {:connect_socket, %OperatorCommands.ConnectSocket{sockets_count: sockets_count}}
+        {
+          :connect_socket,
+          %OperatorCommands.ConnectSocket{sockets_count: sockets_count}
+        }
       )
 
     {:reply, :ok, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
   end
 
   @impl true
-  @spec handle_call({:start_pipeline, PipelineBuilder.t()}, {pid(), term()}, map()) ::
-          {:noreply, any()}
   def handle_call({:start_pipeline, pipeline}, from, state) do
+    init_values =
+      case pipeline.init_values !== %{} do
+        true -> pipeline.init_values
+        false -> ""
+      end
+
+    command = %OperatorCommands.AddPipeline{
+      pipeline_id: pipeline.id,
+      factory_id: pipeline.factory_id,
+      init_values: init_values
+    }
+
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
         @payload_id_pipeline_start,
-        %{
-          "pipeline_id" => pipeline.id,
-          "factory_id" => pipeline.factory_id,
-          "init_values" => pipeline.init_values
-        }
+        {:add_pipeline, command}
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
@@ -121,7 +132,10 @@ defmodule Aflecha.Operator.ControlUnit do
       ControlChannel.send_control(
         state.operator_id,
         @payload_id_pipeline_stop,
-        %{"pipeline_id" => pipeline_id}
+        {:rem_pipeline,
+         %OperatorCommands.RemPipeline{
+           pipeline_id: pipeline_id
+         }}
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}

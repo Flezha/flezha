@@ -41,53 +41,53 @@ defmodule AflechaTest do
     Enum.each(res, &assert(is_binary(&1)))
   end
 
-  # @tag :pipeline_start
-  # test "pipeline adding" do
-  #   pipeline = %Aflecha.Pipeline.Builder{
-  #     id: "default_pipeline_test",
-  #     factory_id: @test_pipeline_factory
-  #   }
+  @tag :pipeline_start
+  test "pipeline adding" do
+    pipeline = %Aflecha.Pipeline.Builder{
+      id: "default_pipeline_test",
+      factory_id: @test_pipeline_factory
+    }
 
-  #   {status, info} = PipelineManager.start_pipeline(@default_group, pipeline)
+    {status, info} = PipelineManager.start_pipeline(@default_group, pipeline)
 
-  #   assert status === :ok
-  #   assert info[:pipeline_id] === "default_pipeline_test"
-  #   assert info[:node] === @node_name
-  #   assert is_pid(info[:pid])
-  #   assert is_binary(info[:operator_id])
-  # end
+    assert status === :ok
+    assert info[:pipeline_id] === "default_pipeline_test"
+    assert info[:node] === @node_name
+    assert is_pid(info[:pid])
+    assert is_binary(info[:operator_id])
+  end
 
-  # test "pipeline removing" do
-  #   pipeline_id = "default_pipeline_stop_test"
+  test "pipeline removing" do
+    pipeline_id = "default_pipeline_stop_test"
 
-  #   {:ok, %{pid: _pipeline_pid}} =
-  #     pipeline_id
-  #     |> PipelineFixture.get(@test_store_input_factory)
-  #     |> PipelineFixture.start()
+    {:ok, %{pid: _pipeline_pid}} =
+      pipeline_id
+      |> PipelineFixture.get(@test_store_input_factory)
+      |> PipelineFixture.start()
 
-  #   assert :ok === PipelineManager.stop_pipeline(@default_group, pipeline_id)
+    assert :ok === PipelineManager.stop_pipeline(@default_group, pipeline_id)
 
-  #   # TODO: add hook instead to listen to process removal.
-  #   Process.sleep(100)
+    # TODO: add hook instead to listen to process removal.
+    Process.sleep(100)
 
-  #   assert PipelineManager.exist?(@default_group, pipeline_id) === false
-  # end
+    assert PipelineManager.exist?(@default_group, pipeline_id) === false
+  end
 
-  # test "pipeline adding non existing factory" do
-  #   pipeline_id = "non_existing_factory_err"
+  test "pipeline adding non existing factory" do
+    pipeline_id = "non_existing_factory_err"
 
-  #   pipeline = %Aflecha.Pipeline.Builder{
-  #     id: pipeline_id,
-  #     factory_id: "non_existing_factory"
-  #   }
+    pipeline = %Aflecha.Pipeline.Builder{
+      id: pipeline_id,
+      factory_id: "non_existing_factory"
+    }
 
-  #   {status, info} = PipelineManager.start_pipeline(@default_group, pipeline)
+    {status, info} = PipelineManager.start_pipeline(@default_group, pipeline)
 
-  #   assert status === :error
-  #   assert info[:pipeline_id] === pipeline_id
-  #   assert info[:node] === @node_name
-  #   assert info[:reason] === "Factory with id non_existing_factory does not exist"
-  # end
+    assert status === :error
+    assert info[:pipeline_id] === pipeline_id
+    assert info[:node] === @node_name
+    assert info[:reason] === "Factory with id non_existing_factory does not exist"
+  end
 
   # test "websocket plugin connection start" do
   #   pipeline_id = "websocket_plugin_test"
