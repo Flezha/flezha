@@ -11,7 +11,8 @@ message CommandRequest {
         ConnectSocket connect_socket = 3;
         AddPipeline add_pipeline = 4;
         RemPipeline rem_pipeline = 5;
-        MigrationSerialization migration_serialization = 6
+        MigrationSerialization migration_serialization = 6;
+        MigrationDeserialization migration_deserialization = 7;
     }
 }
 
@@ -42,4 +43,10 @@ message RemPipeline {
 
 message MigrationSerialization {
     string pipeline_id = 1;
+}
+
+message MigrationDeserialization {
+    string pipeline_id = 1;
+    string factory_id = 2;
+    bytes serialized_state = 3;
 }
