@@ -10,6 +10,8 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   use GenServer
 
+  @snapshop_interval 60_000
+
   defstruct [
     :id,
     :group_id,
@@ -17,7 +19,7 @@ defmodule Aflecha.Pipeline.Overwatch do
     :factory_id,
     :channel,
     :bindings,
-    snapshot_interval: 10_000,
+    snapshot_interval: @snapshop_interval,
     snapshot: nil,
     init_values: %{}
   ]
@@ -30,7 +32,7 @@ defmodule Aflecha.Pipeline.Overwatch do
   # TODO: add ability to remove bindings.
   @impl true
   def init({group_id, operator_id, pipeline}) do
-    snapshot_interval = Keyword.get(pipeline.opts, :snapshot_interval, 10_000)
+    snapshot_interval = Keyword.get(pipeline.opts, :snapshot_interval, @snapshop_interval)
 
     # TODO: Perhaps move to handle continue.
     schedule_snapshot(snapshot_interval)
@@ -108,11 +110,11 @@ defmodule Aflecha.Pipeline.Overwatch do
 
   @impl true
   def handle_call(:get_pipeline_state, _from, state) do
-    data = %{"pipeline_id" => state.id}
+    command = %{"pipeline_id" => state.id}
 
     # TODO: any rpc command may timeout causing the pipeline overwatch to crash.
     # We should handle this in the control unit.
-    result = send_control(state.operator_id, "pipeline_state", data)
+    result = send_control(state.operator_id, {:pipeline_state, command})
 
     {:reply, result, state}
   end
@@ -220,13 +222,13 @@ defmodule Aflecha.Pipeline.Overwatch do
         {:process_hub, :handover, _pipeline_id, {handover_state, pipe_serialized}},
         state
       ) do
-    operator_data = %{
+    command = %{
       "pipeline_id" => state.id,
       "factory_id" => Map.get(handover_state, :factory_id),
       "serialized_state" => pipe_serialized
     }
 
-    result = send_control(state.operator_id, "migration_deserialization", operator_data)
+    result = send_control(state.operator_id, {:migration_deserialization, command})
 
     case result do
       {:error, reason} -> Logger.error("Failed to deserialize pipeline: #{inspect(reason)}")
@@ -256,7 +258,7 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   defp create_snapshot(pipeline_id, operator_id) do
-    case send_control(operator_id, "pipeline_state", %{"pipeline_id" => pipeline_id}) do
+    case send_control(operator_id, {:pipeline_state, %{"pipeline_id" => pipeline_id}}) do
       {:ok, snapshot} ->
         :binary.bin_to_list(snapshot)
 
@@ -265,18 +267,20 @@ defmodule Aflecha.Pipeline.Overwatch do
     end
   end
 
-  defp send_control(operator_id, payload_id, data) do
+  defp send_control(operator_id, command) do
     control_unit = Identificator.control_unit(operator_id)
 
     case GenServer.whereis(control_unit) do
       nil ->
-        {:error,
-         "control unit not available for operator #{operator_id} with payload #{payload_id}"}
+        {
+          :error,
+          "control unit not available for operator #{operator_id} with payload"
+        }
 
       _ ->
         GenServer.call(
           Identificator.control_unit(operator_id),
-          {:send_control, payload_id, data}
+          {:send_control, command}
         )
     end
   end
@@ -343,9 +347,9 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   defp serialize_pipeline_sdk(operator_id, pipeline_id) do
-    data = %{"pipeline_id" => pipeline_id}
+    command = %OperatorCommands.MigrationSerialization{pipeline_id: pipeline_id}
 
-    result = send_control(operator_id, "migration_serialization", data)
+    result = send_control(operator_id, {:migration_serialization, command})
 
     case result do
       {:ok, serialized_data} ->

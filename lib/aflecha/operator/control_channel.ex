@@ -14,7 +14,7 @@ defmodule Aflecha.Operator.ControlChannel do
     )
   end
 
-  def send_control(operator_id, payload_id, {command_type, command}) do
+  def send_control(operator_id, command) do
     control_channel = Identificator.control_channel(operator_id)
 
     case GenServer.whereis(control_channel) do
@@ -28,12 +28,16 @@ defmodule Aflecha.Operator.ControlChannel do
           struct(
             OperatorCommands.CommandRequest,
             reference_id: ref,
-            command: {command_type, command}
+            command: command
           )
 
         {:ok, iodata, _size} = Protox.encode(req)
 
-        payload = Payloader.build_from_bin(payload_id, IO.iodata_to_binary(iodata))
+        payload =
+          Payloader.build_from_bin(
+            "control_command",
+            IO.iodata_to_binary(iodata)
+          )
 
         GenServer.call(control_channel, {:send_control, payload})
 
@@ -104,11 +108,11 @@ defmodule Aflecha.Operator.ControlChannel do
   defp handle_payload(%{buffer: buffer} = state, frame) do
     {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
 
-    Enum.each(payloads, fn {payload_id, message} ->
+    Enum.each(payloads, fn {_payload_id, message} ->
       # Send the payload the the control unit.
       GenServer.cast(
         state.control_unit,
-        {:handle_payload, payload_id, message}
+        {:handle_payload, message}
       )
     end)
 

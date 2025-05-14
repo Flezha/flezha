@@ -7,17 +7,6 @@ defmodule Aflecha.Operator.ControlUnit do
 
   require Logger
 
-  @payload_id_connect_control_channel "connect_control_channel"
-  @payload_id_assign_operator_id "assign_operator_id"
-  # TODO: perhaps add: @payload_id_factory_register "register_factory"
-  @payload_id_connect_sockets "connect_sockets"
-  @payload_id_pipeline_start "start_pipeline"
-  @payload_id_pipeline_stop "stop_pipeline"
-  @payload_id_serialize_pipe "migration_serialization"
-  @payload_id_deserialize_pipe "migration_deserialization"
-  @payload_id_pipeline_state "pipeline_state"
-  @payload_id_operator_disconnect "operator_disconnect"
-
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link({group_id, operator_id}) do
     GenServer.start_link(
@@ -45,7 +34,6 @@ defmodule Aflecha.Operator.ControlUnit do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
-        @payload_id_pipeline_state,
         %{"pipeline_id" => pipeline_id}
       )
 
@@ -53,13 +41,8 @@ defmodule Aflecha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:send_control, command_id, data}, from, state) do
-    res =
-      ControlChannel.send_control(
-        state.operator_id,
-        command_id,
-        data
-      )
+  def handle_call({:send_control, command}, from, state) do
+    res = ControlChannel.send_control(state.operator_id, command)
 
     case res do
       {:ok, ref} ->
@@ -75,7 +58,6 @@ defmodule Aflecha.Operator.ControlUnit do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
-        @payload_id_assign_operator_id,
         {
           :assign_operator_id,
           %OperatorCommands.AssignOperatorId{operator_id: state.operator_id}
@@ -92,7 +74,6 @@ defmodule Aflecha.Operator.ControlUnit do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
-        @payload_id_connect_sockets,
         {
           :connect_socket,
           %OperatorCommands.ConnectSocket{sockets_count: sockets_count}
@@ -116,12 +97,7 @@ defmodule Aflecha.Operator.ControlUnit do
       init_values: init_values
     }
 
-    {:ok, ref} =
-      ControlChannel.send_control(
-        state.operator_id,
-        @payload_id_pipeline_start,
-        {:add_pipeline, command}
-      )
+    {:ok, ref} = ControlChannel.send_control(state.operator_id, {:add_pipeline, command})
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
   end
@@ -131,11 +107,10 @@ defmodule Aflecha.Operator.ControlUnit do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
-        @payload_id_pipeline_stop,
-        {:rem_pipeline,
-         %OperatorCommands.RemPipeline{
-           pipeline_id: pipeline_id
-         }}
+        {
+          :rem_pipeline,
+          %OperatorCommands.RemPipeline{pipeline_id: pipeline_id}
+        }
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
@@ -146,61 +121,42 @@ defmodule Aflecha.Operator.ControlUnit do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
-        @payload_id_operator_disconnect,
-        {nil, %{}}
+        {
+          :operator_disconnect,
+          %{}
+        }
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
   end
 
   @impl true
-  def handle_cast({:handle_payload, payload_id, message}, state) do
-    {:noreply, handle_payload(state, {payload_id, message})}
+  def handle_cast({:handle_payload, payload}, state) do
+    {:noreply, handle_payload(state, payload)}
   end
 
-  defp handle_payload(state, {payload_id, message}) do
-    {:ok, response} = OperatorCommands.CommandResponse.decode(message)
+  defp handle_payload(state, payload) do
+    {:ok, response} = OperatorCommands.CommandResponse.decode(payload)
     ref = Map.get(response, :reference_id, nil)
 
-    cond do
-      Enum.member?(payload_id_list(), payload_id) ->
-        reply =
-          case response.status do
-            "success" ->
-              {:ok, response.info}
+    reply =
+      case response.status do
+        "success" ->
+          {:ok, response.info}
 
-            "error" ->
-              reason = Enum.join(response.errors, " | ")
+        "error" ->
+          reason = Enum.join(response.errors, " | ")
 
-              if state[:env] !== :test do
-                Logger.error(reason)
-              end
-
-              {:error, reason}
+          if state[:env] !== :test do
+            Logger.error(reason)
           end
 
-        new_refs = handle_refs(state[:response_refs], ref, reply)
-        Map.put(state, :response_refs, new_refs)
+          {:error, reason}
+      end
 
-      true ->
-        Logger.error("Unknown message id: #{payload_id}")
-        state
-    end
-  end
+    new_refs = handle_refs(state[:response_refs], ref, reply)
 
-  defp payload_id_list() do
-    # TODO: refactor.
-    [
-      @payload_id_connect_control_channel,
-      @payload_id_assign_operator_id,
-      @payload_id_pipeline_start,
-      @payload_id_pipeline_stop,
-      @payload_id_pipeline_state,
-      @payload_id_serialize_pipe,
-      @payload_id_deserialize_pipe,
-      @payload_id_connect_sockets,
-      @payload_id_operator_disconnect
-    ]
+    Map.put(state, :response_refs, new_refs)
   end
 
   defp handle_refs(refs, ref, reply) do
