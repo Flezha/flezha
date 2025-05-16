@@ -21,8 +21,8 @@ message CommandRequest {
 message CommandResponse {
     string reference_id = 1;
     string status = 2;
-    string info = 3;
-    repeated string errors = 4;
+    repeated string errors = 3;
+    bytes raw_data = 4;
 }
 
 message AssignOperatorId {

@@ -56,9 +56,16 @@ defmodule Aflecha.Service.HubManager do
   def get_pid(group_id, pipeline_id) do
     hub_id = Identificator.hub(group_id)
 
-    case ProcessHub.get_pid(hub_id, pipeline_id) do
-      nil -> {:error, "no pid found"}
-      pid -> {:ok, pid}
+    case ProcessHub.get_pids(hub_id, pipeline_id) do
+      [] ->
+        {:error, "no pid found"}
+
+      pids ->
+        if length(pids) > 1 do
+          dbg(pids)
+        end
+
+        {:ok, List.first(pids)}
     end
   end
 

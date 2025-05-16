@@ -52,7 +52,7 @@ defmodule Aflecha.Pipeline.Overwatch do
         interval: [],
         proactive: []
       }
-    }
+    } |> dbg()
 
     case start_pipeline_sdk(operator_id, pipeline) do
       {:ok, _} ->
@@ -114,7 +114,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
     # TODO: any rpc command may timeout causing the pipeline overwatch to crash.
     # We should handle this in the control unit.
-    result = send_control(state.operator_id, {:pipeline_state, command})
+    result = send_control(state.operator_id, {:pipeline_state, command}) |> dbg()
 
     {:reply, result, state}
   end
@@ -129,8 +129,8 @@ defmodule Aflecha.Pipeline.Overwatch do
 
     init_values =
       cond do
-        state.snapshot !== nil -> Payloader.json_to_map(state.snapshot)
-        true -> state.init_values
+        state.snapshot !== nil -> Payloader.json_to_map(state.snapshot) |> dbg()
+        true -> state.init_values |> dbg()
       end
 
     pipeline = %Aflecha.Pipeline.Builder{
@@ -226,7 +226,7 @@ defmodule Aflecha.Pipeline.Overwatch do
       pipeline_id: state.id,
       factory_id: Map.get(handover_state, :factory_id),
       serialized_state: pipe_serialized
-    }
+    } |> dbg()
 
     result = send_control(state.operator_id, {:migration_deserialization, command})
 
@@ -262,7 +262,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
     case send_control(operator_id, {:pipeline_state, command}) do
       {:ok, snapshot} ->
-        :binary.bin_to_list(snapshot)
+        snapshot
 
       {:error, _reason} ->
         nil
@@ -355,9 +355,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
     case result do
       {:ok, serialized_data} ->
-        # TODO: 1
-        {:ok, data} = Jason.decode(serialized_data)
-        data["serialized_state"]
+        serialized_data
 
       {:error, reason} ->
         # TODO: we should actually check if overwatch status is :ok

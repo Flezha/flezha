@@ -34,7 +34,10 @@ defmodule Aflecha.Operator.ControlUnit do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
-        %{"pipeline_id" => pipeline_id}
+        {
+          :get_pipeline_state,
+          %OperatorCommands.PipelineState{pipeline_id: pipeline_id}
+        }
       )
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
@@ -147,7 +150,7 @@ defmodule Aflecha.Operator.ControlUnit do
     reply =
       case response.status do
         "success" ->
-          {:ok, response.info}
+          {:ok, response.raw_data}
 
         "error" ->
           reason = Enum.join(response.errors, " | ")

@@ -131,17 +131,20 @@ defmodule Aflecha.Service.PipelineManager do
            operator_id: operator_id,
            node: node,
            pid: pid
-         }}
+         }
+        }
 
       {:error, reason} ->
-        {{pipeline_id, node, {error_msg, _}}, _partial_success} = reason
+        {[{pipeline_id, node, {error_msg, _}}], _partial_success} = reason
 
-        {:error,
-         %{
-           pipeline_id: pipeline_id,
-           node: node,
-           reason: error_msg
-         }}
+        {
+          :error,
+          %{
+            pipeline_id: pipeline_id,
+            node: node,
+            reason: error_msg
+          }
+        }
     end
   end
 

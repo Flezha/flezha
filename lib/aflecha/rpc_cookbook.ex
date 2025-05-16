@@ -23,7 +23,7 @@ defmodule Aflecha.Service.RpcCookbook do
     }
 
     case PipelineManager.start_pipeline(group_id(group_id), pipeline) do
-      {:ok, _pipeline_pid} -> IO.puts("Pipeline has been started")
+      {:ok, _} -> IO.puts("Pipeline has been started")
       {:error, reason} -> IO.puts("Error starting pipeline: #{inspect(reason)}")
     end
   end

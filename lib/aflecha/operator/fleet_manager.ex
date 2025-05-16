@@ -264,7 +264,9 @@ defmodule Aflecha.Operator.FleetManager do
     FleetSupervisor.stop_operator_sup(operator_id)
 
     # Cancel any hub handlers for the operator.
-    HubManager.unregister_handler(group_id, operator_id)
+    if (HubManager.hub_alive?(group_id)) do
+      HubManager.unregister_handler(group_id, operator_id)
+    end
 
     operator_ids =
       state
