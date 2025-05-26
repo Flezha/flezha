@@ -130,8 +130,8 @@ defmodule Aflecha.Pipeline.Overwatch do
 
     init_values =
       cond do
-        state.snapshot !== nil -> Payloader.json_to_map(state.snapshot) |> dbg()
-        true -> state.init_values |> dbg()
+        state.snapshot !== nil -> Payloader.json_to_map(state.snapshot)
+        true -> state.init_values
       end
 
     pipeline = %Aflecha.Pipeline.Builder{

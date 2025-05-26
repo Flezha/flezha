@@ -81,12 +81,13 @@ defmodule AflechaTest do
       factory_id: "non_existing_factory"
     }
 
-    {status, info} = PipelineManager.start_pipeline(@default_group, pipeline)
+    {status, %{pipeline_id: pid, node: node, reason: reason}} =
+      PipelineManager.start_pipeline(@default_group, pipeline)
 
     assert status === :error
-    assert info[:pipeline_id] === pipeline_id
-    assert info[:node] === @node_name
-    assert info[:reason] === "Factory with id non_existing_factory does not exist"
+    assert pid === pipeline_id
+    assert node === @node_name
+    assert reason === "Factory with id non_existing_factory does not exist"
   end
 
   test "websocket plugin connection start" do
@@ -466,16 +467,18 @@ defmodule AflechaTest do
 
     # Need to wait 4 times process inserted hook to be called.
     # With each operator disconnect we update the tag of the pipeline.
-    MessageTestHelper.recv_num(:hook_insert_recv, 7) # TODO: change back to 4 after removing extra operators.
+    # TODO: change back to 4 after removing extra operators.
+    MessageTestHelper.recv_num(:hook_insert_recv, 7)
 
-   # Process.sleep(500)
+    # Process.sleep(500)
     ProcessHub.Utility.Bag.all_messages() |> dbg()
 
     # Make sure all the pipelines are migrated to the other operator.
     reg = PipelineManager.pipeline_registry(group_id)
 
-    reg |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
-      if (new_operator !== operator_id_1) do
+    reg
+    |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+      if new_operator !== operator_id_1 do
         dbg()
       end
 
@@ -486,8 +489,8 @@ defmodule AflechaTest do
     {:ok, json_state_1} = PipelineManager.get_pipeline_state(group_id, pipeline_id_1)
     {:ok, json_state_2} = PipelineManager.get_pipeline_state(group_id, pipeline_id_2)
 
-    if (json_state_1 !== "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}" or
-        json_state_2 !== "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}") do
+    if json_state_1 !== "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}" or
+         json_state_2 !== "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}" do
       dbg()
     end
 
