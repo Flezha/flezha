@@ -411,10 +411,21 @@ defmodule AflechaTest do
       Identificator.hub(group_id),
       ProcessHub.Constant.Hook.registry_pid_inserted(),
       %ProcessHub.Service.HookManager{
-        id: "hub_migration_test",
+        id: "hub_insert_hook_test",
         m: Process,
         f: :send,
-        a: [self, :hook_recv, []]
+        a: [self, :hook_insert_recv, []]
+      }
+    )
+
+    ProcessHub.Service.HookManager.register_handler(
+      Identificator.hub(group_id),
+      ProcessHub.Constant.Hook.children_migrated(),
+      %ProcessHub.Service.HookManager{
+        id: "hub_migration_hook_test",
+        m: Process,
+        f: :send,
+        a: [self, :hook_mgr_recv, []]
       }
     )
 
@@ -455,7 +466,10 @@ defmodule AflechaTest do
 
     # Need to wait 4 times process inserted hook to be called.
     # With each operator disconnect we update the tag of the pipeline.
-    MessageTestHelper.recv_num(:hook_recv, 7) # TODO: change back to 4 after removing extra operators.
+    MessageTestHelper.recv_num(:hook_insert_recv, 7) # TODO: change back to 4 after removing extra operators.
+
+   # Process.sleep(500)
+    ProcessHub.Utility.Bag.all_messages() |> dbg()
 
     # Make sure all the pipelines are migrated to the other operator.
     reg = PipelineManager.pipeline_registry(group_id)

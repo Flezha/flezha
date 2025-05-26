@@ -184,6 +184,7 @@ defmodule Aflecha.Service.HubManager do
   defp process_hub(group_id) do
     hub_id = Identificator.hub(group_id)
 
+    # TODO: The hub settings should be configurable.
     ProcessHub.child_spec(%ProcessHub{
       hub_id: hub_id,
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
@@ -193,7 +194,8 @@ defmodule Aflecha.Service.HubManager do
       distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
         retention: 4000,
-        handover: true
+        handover: true,
+        confirm_handover: true
       },
       hooks: %{
         Hook.child_data_alter() => [

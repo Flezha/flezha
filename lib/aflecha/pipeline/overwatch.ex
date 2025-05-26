@@ -9,6 +9,7 @@ defmodule Aflecha.Pipeline.Overwatch do
   require Logger
 
   use GenServer
+  use ProcessHub.Strategy.Migration.HotSwap
 
   @snapshop_interval 60_000
 
@@ -52,7 +53,7 @@ defmodule Aflecha.Pipeline.Overwatch do
         interval: [],
         proactive: []
       }
-    } |> dbg()
+    }
 
     case start_pipeline_sdk(operator_id, pipeline) do
       {:ok, _} ->
@@ -114,7 +115,7 @@ defmodule Aflecha.Pipeline.Overwatch do
 
     # TODO: any rpc command may timeout causing the pipeline overwatch to crash.
     # We should handle this in the control unit.
-    result = send_control(state.operator_id, {:pipeline_state, command}) |> dbg()
+    result = send_control(state.operator_id, {:pipeline_state, command})
 
     {:reply, result, state}
   end
@@ -194,59 +195,6 @@ defmodule Aflecha.Pipeline.Overwatch do
   end
 
   @impl true
-  def handle_info({:process_hub, :send_handover_state, receiver, child_id, opts}, state) do
-    serialize_data =
-      case serialize_pipeline_sdk(state.operator_id, state.id) do
-        nil ->
-          state.snapshot
-
-        data ->
-          data
-      end
-
-    # Send the state to the remote process.
-    if is_pid(receiver) do
-      Process.send(receiver, {:process_hub, :handover, child_id, {state, serialize_data}}, [])
-    end
-
-    # Signal the handler process that the state handover has been handled.
-    if is_pid(opts[:retention_receiver]) do
-      Process.send(opts[:retention_receiver], {:process_hub, :retention_handled, child_id}, [])
-    end
-
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info(
-        {:process_hub, :handover, _pipeline_id, {handover_state, pipe_serialized}},
-        state
-      ) do
-    command = %OperatorCommands.MigrationDeserialization{
-      pipeline_id: state.id,
-      factory_id: Map.get(handover_state, :factory_id),
-      serialized_state: pipe_serialized
-    } |> dbg()
-
-    result = send_control(state.operator_id, {:migration_deserialization, command})
-
-    case result do
-      {:error, reason} -> Logger.error("Failed to deserialize pipeline: #{inspect(reason)}")
-      _else -> :ok
-    end
-
-    new_bindings = sync_bindings(state.bindings, handover_state.bindings)
-
-    new_state = %__MODULE__{
-      state
-      | bindings: new_bindings,
-        init_values: handover_state.init_values
-    }
-
-    {:noreply, new_state}
-  end
-
-  @impl true
   def handle_info(:schedule_snapshot, state) do
     snapshot = create_snapshot(state.id, state.operator_id)
 
@@ -267,6 +215,44 @@ defmodule Aflecha.Pipeline.Overwatch do
       {:error, _reason} ->
         nil
     end
+  end
+
+  @impl true
+  def prepare_handover_state(state) do
+    serialize_data =
+      case serialize_pipeline_sdk(state.operator_id, state.id) do
+        nil ->
+          state.snapshot
+
+        data ->
+          data
+      end
+
+    {state, serialize_data}
+  end
+
+  @impl true
+  def alter_handover_state(state, {handover_state, pipe_serialized}) do
+    command = %OperatorCommands.MigrationDeserialization{
+      pipeline_id: state.id,
+      factory_id: Map.get(handover_state, :factory_id),
+      serialized_state: pipe_serialized
+    }
+
+    result = send_control(state.operator_id, {:migration_deserialization, command})
+
+    case result do
+      {:error, reason} -> Logger.error("Failed to deserialize pipeline: #{inspect(reason)}")
+      _else -> :ok
+    end
+
+    new_bindings = sync_bindings(state.bindings, handover_state.bindings)
+
+    %__MODULE__{
+      state
+      | bindings: new_bindings,
+        init_values: handover_state.init_values
+    }
   end
 
   defp send_control(operator_id, command) do
