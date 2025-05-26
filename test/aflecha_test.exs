@@ -402,9 +402,6 @@ defmodule AflechaTest do
     operator_id_1 = NodeTestHelper.start_operator(group_id)
     rem_operator_1 = NodeTestHelper.start_operator_remote(peer_node, group_id)
     rem_operator_2 = NodeTestHelper.start_operator_remote(peer_node, group_id)
-    rem_operator_3 = NodeTestHelper.start_operator_remote(peer_node, group_id)
-    rem_operator_4 = NodeTestHelper.start_operator_remote(peer_node, group_id)
-    rem_operator_5 = NodeTestHelper.start_operator_remote(peer_node, group_id)
 
     self = self()
 
@@ -461,17 +458,10 @@ defmodule AflechaTest do
     # Trigger the operator disconnect.
     NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_1)
     NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_2)
-    NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_3)
-    NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_4)
-    NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_5)
 
     # Need to wait 4 times process inserted hook to be called.
     # With each operator disconnect we update the tag of the pipeline.
-    # TODO: change back to 4 after removing extra operators.
-    MessageTestHelper.recv_num(:hook_insert_recv, 7)
-
-    # Process.sleep(500)
-    ProcessHub.Utility.Bag.all_messages() |> dbg()
+    MessageTestHelper.recv_num(:hook_insert_recv, 4)
 
     # Make sure all the pipelines are migrated to the other operator.
     reg = PipelineManager.pipeline_registry(group_id)
