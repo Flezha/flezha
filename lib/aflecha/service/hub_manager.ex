@@ -61,10 +61,6 @@ defmodule Aflecha.Service.HubManager do
         {:error, "no pid found"}
 
       pids ->
-        if length(pids) > 1 do
-          dbg(pids)
-        end
-
         {:ok, List.first(pids)}
     end
   end

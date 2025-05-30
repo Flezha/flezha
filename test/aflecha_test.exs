@@ -466,23 +466,13 @@ defmodule AflechaTest do
     # Make sure all the pipelines are migrated to the other operator.
     reg = PipelineManager.pipeline_registry(group_id)
 
-    reg
-    |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
-      if new_operator !== operator_id_1 do
-        dbg()
-      end
-
+    Enum.each(reg, fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
       assert new_operator === operator_id_1
     end)
 
     # Make sure the states have been migrated.
     {:ok, json_state_1} = PipelineManager.get_pipeline_state(group_id, pipeline_id_1)
     {:ok, json_state_2} = PipelineManager.get_pipeline_state(group_id, pipeline_id_2)
-
-    if json_state_1 !== "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}" or
-         json_state_2 !== "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}" do
-      dbg()
-    end
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
