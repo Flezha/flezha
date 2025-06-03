@@ -26,7 +26,7 @@ defmodule AflechaTest do
     %{}
   end
 
-  setup do
+  setup context do
     on_exit(fn ->
       PipelineManager.stop_all_pipelines(@default_group)
       FleetManager.stop_group(@temp_group)
@@ -404,6 +404,7 @@ defmodule AflechaTest do
     rem_operator_2 = NodeTestHelper.start_operator_remote(peer_node, group_id)
 
     self = self()
+    node = node()
 
     ProcessHub.Service.HookManager.register_handler(
       Identificator.hub(group_id),
@@ -418,12 +419,12 @@ defmodule AflechaTest do
 
     ProcessHub.Service.HookManager.register_handler(
       Identificator.hub(group_id),
-      ProcessHub.Constant.Hook.children_migrated(),
+      ProcessHub.Constant.Hook.process_startups(),
       %ProcessHub.Service.HookManager{
-        id: "hub_migration_hook_test",
+        id: "hub_pstartup_hook_test",
         m: Process,
         f: :send,
-        a: [self, :hook_mgr_recv, []]
+        a: [self, :hook_pstartup_recv, []]
       }
     )
 
@@ -461,7 +462,9 @@ defmodule AflechaTest do
 
     # Need to wait 4 times process inserted hook to be called.
     # With each operator disconnect we update the tag of the pipeline.
+    # Wait for other hooks as well.
     MessageTestHelper.recv_num(:hook_insert_recv, 4)
+    MessageTestHelper.recv_num(:hook_pstartup_recv, 2)
 
     # Make sure all the pipelines are migrated to the other operator.
     reg = PipelineManager.pipeline_registry(group_id)
