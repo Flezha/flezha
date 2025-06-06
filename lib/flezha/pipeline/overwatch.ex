@@ -155,7 +155,10 @@ defmodule Flezha.Pipeline.Overwatch do
   def handle_call({:io_in, payload}, _from, state) do
     payload = exec_binding(state.bindings.on_input, payload)
 
-    GenServer.call(state.channel, {:io_in, state.id, payload, :stream})
+    case payload do
+      nil -> nil
+      _ -> GenServer.call(state.channel, {:io_in, state.id, payload, :stream})
+    end
 
     {:reply, :ok, state}
   end
@@ -354,10 +357,11 @@ defmodule Flezha.Pipeline.Overwatch do
   end
 
   defp exec_binding(bindings, payload) do
-    Enum.reduce(bindings, payload, fn binding, p ->
+    Enum.reduce_while(bindings, payload, fn binding, p ->
       case PipelineBinding.exec(binding, p) do
-        {:ok, p} -> p
-        {:error, _} -> p
+        {:ok, p} -> {:cont, p}
+        {:skip, :normal} -> {:halt, nil}
+        {:error, _} -> {:cont, p}
       end
     end)
   end
