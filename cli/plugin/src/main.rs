@@ -1,6 +1,6 @@
 use std::env;
 use std::process::{Command, exit};
-use shared_lib::{get_json, get_aflecha_command};
+use shared_lib::{get_json, get_flezha_command};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -25,7 +25,7 @@ fn handle_enable(args: Vec<String>) {
 
     let plugin_id = &args[2];
     let pluggin_settings = get_json(&args[3..], "--settings=", "-s=");
-    let command = get_aflecha_command();
+    let command = get_flezha_command();
     
     let rpc_command = format!(
         "Flezha.Service.RpcCookbook.enable_plugin(\"{}\", \"{}\")",

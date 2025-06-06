@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::process::{Command, exit};
-use shared_lib::{extract_param, get_aflecha_command, get_json, get_namespace};
+use shared_lib::{extract_param, get_flezha_command, get_json, get_namespace};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -43,7 +43,7 @@ fn handle_start(args: Vec<String>) {
     }
 
     let opts_json = serde_json::to_string(&opts).unwrap();
-    let command = get_aflecha_command();
+    let command = get_flezha_command();
     let group_id = get_namespace(&args[4..]);
 
     let rpc_command = format!(
@@ -84,7 +84,7 @@ fn handle_stop(args: Vec<String>) {
         pipeline_id,
     );
 
-    let command = get_aflecha_command();
+    let command = get_flezha_command();
 
     println!("Stopping pipeline...");
 
@@ -116,7 +116,7 @@ fn handle_state(args: Vec<String>) {
         pipeline_id,
     );
 
-    let command = get_aflecha_command();
+    let command = get_flezha_command();
 
     let status = Command::new(command)
         .arg("rpc")

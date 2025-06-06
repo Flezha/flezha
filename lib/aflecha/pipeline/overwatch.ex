@@ -345,7 +345,7 @@ defmodule Flezha.Pipeline.Overwatch do
 
       {:error, reason} ->
         # TODO: we should actually check if overwatch status is :ok
-        if Application.get_env(:aflecha, :env) !== :test do
+        if Application.get_env(:flezha, :env) !== :test do
           Logger.error("Failed to serialize pipeline: #{inspect(reason)}")
         end
 

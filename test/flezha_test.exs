@@ -380,11 +380,11 @@ defmodule FlezhaTest do
     NodeTestHelper.stop_operator(group_id, operator_id_3)
 
     # Adjust the operator cleanup interval and trigger the cleanup.
-    Application.put_env(:aflecha, :operator_keepalive, "0")
+    Application.put_env(:flezha, :operator_keepalive, "0")
     GenServer.call(FleetManager, :operator_cleanup)
 
     # Reset the operator keepalive to its default value.
-    Application.put_env(:aflecha, :operator_keepalive, "30000")
+    Application.put_env(:flezha, :operator_keepalive, "30000")
 
     # Make sure the hub is stopped.
     assert HubManager.hub_alive?(group_id) === false

@@ -157,7 +157,7 @@ defmodule Flezha.Operator.FleetManager do
   end
 
   defp get_operator_keepalive() do
-    keepalive = Application.get_env(:aflecha, :operator_keepalive, "30000")
+    keepalive = Application.get_env(:flezha, :operator_keepalive, "30000")
 
     cond do
       is_binary(keepalive) -> String.to_integer(keepalive)

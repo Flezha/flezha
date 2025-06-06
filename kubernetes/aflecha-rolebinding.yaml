@@ -2,11 +2,11 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: read-pods
-  namespace: aflecha
+  namespace: flezha
 subjects:
 - kind: ServiceAccount
-  name: aflecha-reader
-  namespace: aflecha
+  name: flezha-reader
+  namespace: flezha
 roleRef:
   kind: Role
   name: pod-reader

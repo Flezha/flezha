@@ -4,7 +4,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
   use ExUnit.Case
   use Mimic
 
-  @test_topic "aflecha_test_topic"
+  @test_topic "flezha_test_topic"
   @test_broker {"kafka", 9092}
   @test_partition 0
 

@@ -29,7 +29,7 @@ defmodule Flezha.Socket.Support do
   end
 
   defp sockets_base_path() do
-    Application.fetch_env!(:aflecha, :socket_files_path)
+    Application.fetch_env!(:flezha, :socket_files_path)
     |> String.replace_trailing("/", "")
   end
 end

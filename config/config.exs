@@ -1,6 +1,6 @@
 import Config
 
-config :aflecha,
+config :flezha,
   # The environment the application is running in.
   env: Mix.env(),
 

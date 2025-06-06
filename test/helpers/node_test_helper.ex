@@ -37,11 +37,11 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :erpc.call(node_name, :code, :add_paths, [:code.get_path()])
 
     # Adjust the environment for the peer node.
-    :erpc.call(node_name, :application, :set_env, [:aflecha, :env, :test])
+    :erpc.call(node_name, :application, :set_env, [:flezha, :env, :test])
 
-    # Set the same aflecha application configuration for the peer node.
-    Enum.each(Application.get_all_env(:aflecha), fn {key, value} ->
-      :erpc.call(node_name, Application, :put_env, [:aflecha, key, value])
+    # Set the same flezha application configuration for the peer node.
+    Enum.each(Application.get_all_env(:flezha), fn {key, value} ->
+      :erpc.call(node_name, Application, :put_env, [:flezha, key, value])
     end)
 
     # Set the same kafka_ex application configuration for the peer node.
@@ -55,17 +55,17 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end)
 
     # Disable the testnet for the peer node.
-    :erpc.call(node_name, Application, :put_env, [:aflecha, :testnet_enabled, false])
+    :erpc.call(node_name, Application, :put_env, [:flezha, :testnet_enabled, false])
 
     # Overwrite the socket files path for the peer node.
     :erpc.call(node_name, Application, :put_env, [
-      :aflecha,
+      :flezha,
       :socket_files_path,
       "app_data/sockets/#{node_name}/"
     ])
 
-    # Start the aflecha application on the peer node.
-    :erpc.call(node_name, Application, :ensure_all_started, [:aflecha], 10000)
+    # Start the flezha application on the peer node.
+    :erpc.call(node_name, Application, :ensure_all_started, [:flezha], 10000)
 
     {peer_pid, node_name}
   end
@@ -73,7 +73,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   def stop_peer_node(peer_pid, peer_node) do
     if Process.alive?(peer_pid) do
       # Gracefully stop the peer node to allow migration.
-      :erpc.call(peer_node, :application, :stop, [:aflecha])
+      :erpc.call(peer_node, :application, :stop, [:flezha])
 
       :peer.stop(peer_pid)
     end

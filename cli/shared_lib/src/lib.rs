@@ -1,12 +1,12 @@
 use std::env;
 
-pub fn get_aflecha_command() -> String {
+pub fn get_flezha_command() -> String {
     let extension = get_extension();
     let current_exe = env::current_exe().expect("Failed to get current executable path");
     let current_dir = current_exe.parent().expect("Failed to get current directory");
     
     current_dir
-        .join(format!("aflecha{}", extension))
+        .join(format!("flezha{}", extension))
         .to_str()
         .expect("Failed to convert path to string")
         .to_string()

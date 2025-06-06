@@ -106,7 +106,7 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
     end
 
     defp validate_pod_ip_lookup() do
-      ip_lookup_mode = Application.fetch_env!(:aflecha, :k8s_ip_lookup_mode)
+      ip_lookup_mode = Application.fetch_env!(:flezha, :k8s_ip_lookup_mode)
 
       cond do
         ip_lookup_mode in [:endpoints, :pods] ->
@@ -118,7 +118,7 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
     end
 
     defp validate_service_account_path() do
-      service_account_path = Application.fetch_env!(:aflecha, :k8s_service_account_path)
+      service_account_path = Application.fetch_env!(:flezha, :k8s_service_account_path)
 
       cond do
         File.dir?(service_account_path) ->
@@ -130,7 +130,7 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
     end
 
     defp validate_cluster_domain() do
-      cluster_domain = Application.fetch_env!(:aflecha, :k8s_cluster_domain)
+      cluster_domain = Application.fetch_env!(:flezha, :k8s_cluster_domain)
 
       cond do
         String.valid?(cluster_domain) && String.length(cluster_domain) > 0 ->

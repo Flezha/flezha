@@ -1,7 +1,7 @@
 defmodule Flezha.Service.EventManager do
   alias :blockade, as: Blockade
 
-  @event_manager :aflecha_event_manager
+  @event_manager :flezha_event_manager
 
   def child_spec(_opts) do
     %{

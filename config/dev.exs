@@ -1,6 +1,6 @@
 import Config
 
-config :aflecha,
+config :flezha,
   testnet_enabled: true
 
 config :kafka_ex,

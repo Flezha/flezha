@@ -12,7 +12,7 @@ external_processes =
     System.get_env("AFLECHA_EXTERNAL_PROCESSES", "") |> String.split(",", trim: true)
   end
 
-config :aflecha,
+config :flezha,
   # ------------------------------------------------------------------------------------------------
   # Base cluster configurations.
 
@@ -34,7 +34,7 @@ config :aflecha,
     System.get_env("AFLECHA_CLUSTER_UPDATE_INTERVAL", "5000") |> String.to_integer(),
 
   # The node base name that is to generate the full name including the host address.
-  node_base_name: System.get_env("AFLECHA_NODE_NAME", "aflecha"),
+  node_base_name: System.get_env("AFLECHA_NODE_NAME", "flezha"),
 
   # The node host name. For Kubernetes, it is the Pod IP.
   node_host_name: System.get_env("AFLECHA_NODE_HOST", "127.0.0.1"),
@@ -79,16 +79,16 @@ config :aflecha,
   k8s_master_name: System.get_env("AFLECHA_K8S_MASTER_NAME", ""),
 
   # The Kubernetes namespace.
-  k8s_namespace: System.get_env("AFLECHA_K8S_NAMESPACE", "aflecha"),
+  k8s_namespace: System.get_env("AFLECHA_K8S_NAMESPACE", "flezha"),
 
   # The PodIP lookup mode can be either `"endpoints"` or `"pods"`.
   k8s_ip_lookup_mode: System.get_env("AFLECHA_K8S_IP_LOOKUP_MODE", "pods") |> String.to_atom(),
 
   # The Kubernetes service name.
-  k8s_service_name: System.get_env("AFLECHA_K8S_SERVICE_NAME", "aflecha"),
+  k8s_service_name: System.get_env("AFLECHA_K8S_SERVICE_NAME", "flezha"),
 
   # The Kubernetes selector.
-  k8s_selector: System.get_env("AFLECHA_K8S_SELECTOR", "app=aflecha"),
+  k8s_selector: System.get_env("AFLECHA_K8S_SELECTOR", "app=flezha"),
 
   # ------------------------------------------------------------------------------------------------
   # Socket configurations.

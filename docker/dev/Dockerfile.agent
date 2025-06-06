@@ -2,14 +2,14 @@
 FROM elixir:1.17-otp-27
 
 # Create a non-root user and its home directory
-RUN addgroup --gid 1000 aflecha && adduser --uid 1000 --gid 1000 --home /home/aflecha aflecha
+RUN addgroup --gid 1000 flezha && adduser --uid 1000 --gid 1000 --home /home/flezha flezha
 
-# Change the owner of the /home/aflecha directory
-RUN chown -R aflecha:aflecha /home/aflecha
+# Change the owner of the /home/flezha directory
+RUN chown -R flezha:flezha /home/flezha
 
-# Switch to the aflecha user before installing Rust
-USER aflecha
-ENV HOME=/home/aflecha
+# Switch to the flezha user before installing Rust
+USER flezha
+ENV HOME=/home/flezha
 
 # Install Rust and necessary tools
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
@@ -30,17 +30,17 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 RUN npm install -g typescript
 
 # Set the working directory
-WORKDIR /aflecha
+WORKDIR /flezha
 
 # Install system dependencies as root
 RUN mix local.hex --force && \
     mix local.rebar --force
 
-# Change the owner of the /aflecha directory
-RUN chown -R aflecha:aflecha /aflecha
+# Change the owner of the /flezha directory
+RUN chown -R flezha:flezha /flezha
 
-# Switch to the aflecha user
-USER aflecha
+# Switch to the flezha user
+USER flezha
 
 # Start the application
 CMD ["tail", "-f", "/dev/null"]

@@ -1,6 +1,6 @@
 import Config
 
-config :aflecha,
+config :flezha,
   testnet_enabled: true,
   pre_hooks: [
     fn ->
@@ -16,7 +16,7 @@ config :aflecha,
     end,
     fn ->
       # Update the socket files path.
-      Application.put_env(:aflecha, :socket_files_path, "app_data/sockets/#{node()}/")
+      Application.put_env(:flezha, :socket_files_path, "app_data/sockets/#{node()}/")
     end
   ],
   post_hooks: [

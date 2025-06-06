@@ -11,7 +11,7 @@ defmodule Flezha.Service.PortPilot do
   end
 
   def open_port(command) do
-    socket_files_path = Application.fetch_env!(:aflecha, :socket_files_path)
+    socket_files_path = Application.fetch_env!(:flezha, :socket_files_path)
 
     port =
       Port.open(
@@ -86,7 +86,7 @@ defmodule Flezha.Service.PortPilot do
   end
 
   defp initialize_ports() do
-    external_processes = Application.fetch_env!(:aflecha, :external_processes)
+    external_processes = Application.fetch_env!(:flezha, :external_processes)
 
     Enum.map(external_processes, fn command ->
       open_port(command)

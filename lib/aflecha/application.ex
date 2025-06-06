@@ -33,7 +33,7 @@ defmodule Flezha.Application do
 
     # If Testnet is enabled, we start the TestnetSupervisor
     children =
-      if Application.get_env(:aflecha, :testnet_enabled) do
+      if Application.get_env(:flezha, :testnet_enabled) do
         [{Flezha.Testnet, []} | children]
       else
         children

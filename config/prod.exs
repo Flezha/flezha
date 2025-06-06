@@ -1,4 +1,4 @@
 import Config
 
-config :aflecha,
+config :flezha,
   testnet_enabled: false

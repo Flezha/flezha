@@ -1,6 +1,6 @@
 use std::env;
 use std::process::{Command, exit};
-use shared_lib::get_aflecha_command;
+use shared_lib::get_flezha_command;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -55,9 +55,9 @@ fn handle_start(_args: Vec<String>) {
         }
     };
 
-    let command = get_aflecha_command();
+    let command = get_flezha_command();
 
-    println!("Starting aflecha agent...");
+    println!("Starting flezha agent...");
 
     // Attempt to execute the external command.
     let status = Command::new(command)
@@ -72,9 +72,9 @@ fn handle_start(_args: Vec<String>) {
 }
 
 fn handle_stop(_args: Vec<String>) {
-    let command = get_aflecha_command();
+    let command = get_flezha_command();
 
-    println!("Stopping aflecha agent...");
+    println!("Stopping flezha agent...");
 
     // Attempt to execute the external command.
     let status = Command::new(command)

@@ -24,7 +24,7 @@ defmodule Flezha.Operator.ControlUnit do
         group_id: group_id,
         operator_id: operator_id,
         response_refs: %{},
-        env: Application.get_env(:aflecha, :env)
+        env: Application.get_env(:flezha, :env)
       }
     }
   end

@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use std::time::Duration;
 use std::env;
 
-use aflecha_operator::{
+use flezha_operator::{
     PipelineResultType,
     define_pipeline_factory
 };
@@ -13,7 +13,7 @@ use serde::{Serialize, Deserialize};
 fn main() {
     define_factories();
 
-    let _operator = aflecha_operator::new(group());
+    let _operator = flezha_operator::new(group());
 
     // To keep the process alive while the agent is running.
     std_keeper();

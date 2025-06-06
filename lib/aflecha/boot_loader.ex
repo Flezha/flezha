@@ -41,12 +41,12 @@ defmodule Flezha.BootLoader do
   end
 
   defp run_pre_hooks() do
-    Application.get_env(:aflecha, :pre_hooks, [])
+    Application.get_env(:flezha, :pre_hooks, [])
     |> Enum.each(& &1.())
   end
 
   defp run_post_hooks() do
-    Application.get_env(:aflecha, :post_hooks, [])
+    Application.get_env(:flezha, :post_hooks, [])
     |> Enum.each(& &1.())
   end
 end

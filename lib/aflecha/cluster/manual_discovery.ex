@@ -21,7 +21,7 @@ defmodule Flezha.Cluster.ManualDiscovery do
 
     @impl true
     def validate_settings(_struct) do
-      static_nodes = Application.fetch_env!(:aflecha, :static_nodes)
+      static_nodes = Application.fetch_env!(:flezha, :static_nodes)
 
       cond do
         is_list(static_nodes) ->

@@ -5,7 +5,7 @@ cover
 test/apps/rust_operator/target
 cli/target
 target/
-aflecha-*.tar
+flezha-*.tar
 .elixir_ls/
 .vscode
 

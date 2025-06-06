@@ -4,13 +4,13 @@ services:
     build:
       context: ../../
       dockerfile: docker/dev/Dockerfile.agent
-    container_name: aflecha_agent_dev
-    # TODO:   image: aflecha:latest
+    container_name: flezha_agent_dev
+    # TODO:   image: flezha:latest
     depends_on:
       - kafka
     volumes:
       - socket_data:/socket_data
-      - ../../:/aflecha
+      - ../../:/flezha
 
   zookeeper:
     image: zookeeper:3.9.3
