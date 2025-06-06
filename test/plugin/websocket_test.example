@@ -1,13 +1,13 @@
-defmodule AflechaTest.IO.WebsocketTest do
+defmodule FlezhaTest.IO.WebsocketTest do
   use ExUnit.Case
-  doctest Aflecha.IO.Handler.Websocket
+  doctest Flezha.IO.Handler.Websocket
 
   setup_all do
     %{}
   end
 
   test "start_link" do
-    io_settings = %Aflecha.IO.Handler.Websocket{
+    io_settings = %Flezha.IO.Handler.Websocket{
       uri: "wss://ws.kraken.com",
       post_connect: %{
         payload: {
@@ -17,9 +17,9 @@ defmodule AflechaTest.IO.WebsocketTest do
       }
     }
 
-    {:ok, pid} = Aflecha.IO.Handler.Websocket.start_link(io_settings)
+    {:ok, pid} = Flezha.IO.Handler.Websocket.start_link(io_settings)
 
-    # Aflecha.IO.Handler.Websocket.send_payload(
+    # Flezha.IO.Handler.Websocket.send_payload(
     #   pid,
     #   {:text,
     #    "{\"event\":\"subscribe\", \"subscription\":{\"name\": \"trade\"}, \"pair\":[\"BTC/EUR\", \"ETH/EUR\"]}"}
@@ -27,9 +27,9 @@ defmodule AflechaTest.IO.WebsocketTest do
 
     Process.sleep(10000)
 
-    # mfa = Aflecha.IO.Provider.mfa(io_settings)
-    # Aflecha.IO.IOSupervisor.start_child(Aflecha.IO.IOSupervisor, mfa)
-    # {:ok, pid} = Aflecha.IO.IOSupervisor.find_pid(Aflecha.IO.IOSupervisor, mfa)
+    # mfa = Flezha.IO.Provider.mfa(io_settings)
+    # Flezha.IO.IOSupervisor.start_child(Flezha.IO.IOSupervisor, mfa)
+    # {:ok, pid} = Flezha.IO.IOSupervisor.find_pid(Flezha.IO.IOSupervisor, mfa)
 
     assert true
   end

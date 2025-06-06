@@ -1,12 +1,12 @@
-defmodule Aflecha.Service.RpcCookbook do
+defmodule Flezha.Service.RpcCookbook do
   @moduledoc """
   Provides recipes for the RPC calls.
   """
 
-  alias Aflecha.Service.PipelineManager
-  alias Aflecha.Service.Payloader
-  alias Aflecha.Service.PluginManager
-  alias Aflecha.Service.ConfigManager
+  alias Flezha.Service.PipelineManager
+  alias Flezha.Service.Payloader
+  alias Flezha.Service.PluginManager
+  alias Flezha.Service.ConfigManager
 
   @doc "Starts a pipeline."
   def pipeline_start(group_id, pipeline_id, factory_id, init_values, opts \\ []) do
@@ -15,7 +15,7 @@ defmodule Aflecha.Service.RpcCookbook do
       |> atom_converter()
       |> Keyword.new()
 
-    pipeline = %Aflecha.Pipeline.Builder{
+    pipeline = %Flezha.Pipeline.Builder{
       id: pipeline_id,
       factory_id: factory_id,
       init_values: Payloader.json_to_map(init_values),

@@ -1,6 +1,6 @@
-defmodule Aflecha.Operator.StreamChannel do
-  alias Aflecha.Service.Payloader
-  alias Aflecha.Service.Identificator
+defmodule Flezha.Operator.StreamChannel do
+  alias Flezha.Service.Payloader
+  alias Flezha.Service.Identificator
 
   require Logger
 

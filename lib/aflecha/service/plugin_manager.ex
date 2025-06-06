@@ -1,5 +1,5 @@
-defmodule Aflecha.Service.PluginManager do
-  alias Aflecha.Plugin.PluginProtocol
+defmodule Flezha.Service.PluginManager do
+  alias Flezha.Plugin.PluginProtocol
 
   def enable_plugin(plugin_settings) do
     PluginProtocol.enable(plugin_settings)

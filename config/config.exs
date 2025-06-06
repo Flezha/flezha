@@ -13,10 +13,10 @@ config :aflecha,
   # ------------------------------------------------------------------------------------------------
   # Enabled plugins.
   enabled_plugins: [
-    Aflecha.Plugin.Provider.Kafka.Producer,
-    Aflecha.Plugin.Provider.Websocket,
-    Aflecha.Plugin.Provider.BeamMsgForward,
-    Aflecha.Plugin.Provider.StdOut
+    Flezha.Plugin.Provider.Kafka.Producer,
+    Flezha.Plugin.Provider.Websocket,
+    Flezha.Plugin.Provider.BeamMsgForward,
+    Flezha.Plugin.Provider.StdOut
   ]
 
 config :logger,

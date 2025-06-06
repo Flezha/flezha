@@ -1,10 +1,10 @@
-defmodule Aflecha.Pipeline.Overwatch do
-  alias Aflecha.Service.HubManager
-  alias Aflecha.Service.ConcurrencyMapper
-  alias Aflecha.Operator.StreamSup
-  alias Aflecha.Service.Identificator
-  alias Aflecha.Service.Payloader
-  alias Aflecha.Plugin.PipelineBinding
+defmodule Flezha.Pipeline.Overwatch do
+  alias Flezha.Service.HubManager
+  alias Flezha.Service.ConcurrencyMapper
+  alias Flezha.Operator.StreamSup
+  alias Flezha.Service.Identificator
+  alias Flezha.Service.Payloader
+  alias Flezha.Plugin.PipelineBinding
 
   require Logger
 
@@ -134,7 +134,7 @@ defmodule Aflecha.Pipeline.Overwatch do
         true -> state.init_values
       end
 
-    pipeline = %Aflecha.Pipeline.Builder{
+    pipeline = %Flezha.Pipeline.Builder{
       id: state.id,
       factory_id: state.factory_id,
       init_values: init_values,

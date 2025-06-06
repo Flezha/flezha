@@ -1,5 +1,5 @@
-defmodule Aflecha.Service.Payloader do
-  alias Aflecha.Pipeline.Builder, as: PipelineBuilder
+defmodule Flezha.Service.Payloader do
+  alias Flezha.Pipeline.Builder, as: PipelineBuilder
 
   def json_to_map(""), do: %{}
 

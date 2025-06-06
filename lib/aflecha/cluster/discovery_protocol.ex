@@ -1,4 +1,4 @@
-defprotocol Aflecha.Cluster.DiscoveryProtocol do
+defprotocol Flezha.Cluster.DiscoveryProtocol do
   @spec get_nodes(__MODULE__.t()) :: {:ok, __MODULE__.t(), [node()]}
   def get_nodes(_struct)
 

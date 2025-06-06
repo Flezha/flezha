@@ -1,4 +1,4 @@
-# Aflecha Testnet
+# Flezha Testnet
 
 # Install dependencies
 ```bash

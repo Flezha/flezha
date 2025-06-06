@@ -12,7 +12,7 @@ config :aflecha,
       end
     end,
     fn ->
-      Aflecha.Service.EventManager.add_handler(:operator_connected_event)
+      Flezha.Service.EventManager.add_handler(:operator_connected_event)
     end,
     fn ->
       # Update the socket files path.

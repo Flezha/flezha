@@ -1,8 +1,8 @@
-defmodule Aflecha.Operator.ControlChannel do
-  alias Aflecha.Socket.Support, as: SocketSupport
-  alias Aflecha.Service.Identificator
-  alias Aflecha.Service.Payloader
-  alias Aflecha.Operator.FleetManager
+defmodule Flezha.Operator.ControlChannel do
+  alias Flezha.Socket.Support, as: SocketSupport
+  alias Flezha.Service.Identificator
+  alias Flezha.Service.Payloader
+  alias Flezha.Operator.FleetManager
 
   require Logger
 

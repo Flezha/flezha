@@ -1,4 +1,4 @@
-defmodule Aflecha.BootLoader do
+defmodule Flezha.BootLoader do
   require Logger
 
   use GenServer
@@ -11,7 +11,7 @@ defmodule Aflecha.BootLoader do
   def init(_) do
     run_pre_hooks()
 
-    Aflecha.Socket.Support.prepare_socket_dir()
+    Flezha.Socket.Support.prepare_socket_dir()
 
     {:ok, %{boot_ready: false}, {:continue, :boot}}
   end

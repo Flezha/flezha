@@ -1,7 +1,7 @@
 {
   "name": "testnet",
   "version": "1.0.0",
-  "description": "Testnet server for Aflecha.",
+  "description": "Testnet server for Flezha.",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

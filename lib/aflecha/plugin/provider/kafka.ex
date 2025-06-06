@@ -1,8 +1,8 @@
-defmodule Aflecha.Plugin.Provider.Kafka do
-  alias Aflecha.Plugin.PipelineBinding
-  alias Aflecha.Plugin.PipelinePlugin
-  alias Aflecha.Plugin.PluginBase
-  alias Aflecha.Plugin.PluginProtocol
+defmodule Flezha.Plugin.Provider.Kafka do
+  alias Flezha.Plugin.PipelineBinding
+  alias Flezha.Plugin.PipelinePlugin
+  alias Flezha.Plugin.PluginBase
+  alias Flezha.Plugin.PluginProtocol
 
   defmodule Producer do
     @behaviour PluginBase
@@ -13,11 +13,11 @@ defmodule Aflecha.Plugin.Provider.Kafka do
     @impl true
     def plugin_id(), do: "pipeline_kafka_producer"
 
-    defimpl PluginProtocol, for: Aflecha.Plugin.Provider.Kafka.Producer do
+    defimpl PluginProtocol, for: Flezha.Plugin.Provider.Kafka.Producer do
       use PipelinePlugin
     end
 
-    defimpl PipelineBinding, for: Aflecha.Plugin.Provider.Kafka.Producer do
+    defimpl PipelineBinding, for: Flezha.Plugin.Provider.Kafka.Producer do
       # TODO: The system needs to be intelligent enough to know when to reuse a connection
       # and when to create a new one. We may need a separate GenServer handling the connections.
       @impl true

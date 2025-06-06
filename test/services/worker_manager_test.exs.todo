@@ -1,15 +1,15 @@
-defmodule AflechaTest.PipelineManagerTest do
+defmodule FlezhaTest.PipelineManagerTest do
   use ExUnit.Case
-  use Aflecha.Constant
+  use Flezha.Constant
 
-  import Aflecha.Service.PipelineManager
+  import Flezha.Service.PipelineManager
 
-  doctest Aflecha.Service.PipelineManager
+  doctest Flezha.Service.PipelineManager
 
   test "start worker" do
     pipeline_id = "test_worker_start"
 
-    worker = %Aflecha.Pipeline.Builder{
+    worker = %Flezha.Pipeline.Builder{
       id: pipeline_id,
       factory_id: @factory_do_nothing
     }
@@ -23,7 +23,7 @@ defmodule AflechaTest.PipelineManagerTest do
   end
 
   test "stop worker" do
-    worker = %Aflecha.Pipeline.Builder{
+    worker = %Flezha.Pipeline.Builder{
       id: "rem_compuation_test",
       factory_id: @factory_do_nothing
     }
@@ -34,7 +34,7 @@ defmodule AflechaTest.PipelineManagerTest do
   end
 
   test "worker validations" do
-    worker = AflechaTest.Fixtures.Worker.get("test_worker_validation", nil)
+    worker = FlezhaTest.Fixtures.Worker.get("test_worker_validation", nil)
 
     result1 = start_worker(@default_group, worker)
     result2 = start_worker(@default_group, worker)
@@ -45,12 +45,12 @@ defmodule AflechaTest.PipelineManagerTest do
   end
 
   test "validate worker length" do
-    valid_worker = %Aflecha.Pipeline.Builder{
+    valid_worker = %Flezha.Pipeline.Builder{
       id: "worker_string_32_bytes_long",
       factory_id: @factory_do_nothing
     }
 
-    invalid_worker = %Aflecha.Pipeline.Builder{
+    invalid_worker = %Flezha.Pipeline.Builder{
       id: "some_very_long_pipeline_id_that_should_fail",
       factory_id: @factory_do_nothing
     }

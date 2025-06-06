@@ -1,2 +1,2 @@
-defmodule Aflecha.Operator.Toolbox do
+defmodule Flezha.Operator.Toolbox do
 end

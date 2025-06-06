@@ -1,5 +1,5 @@
-defmodule Aflecha.Operator.FleetSupervisor do
-  alias Aflecha.Operator.OperatorSupervisor
+defmodule Flezha.Operator.FleetSupervisor do
+  alias Flezha.Operator.OperatorSupervisor
 
   use Supervisor
 

@@ -1,4 +1,4 @@
-defmodule Aflecha.Service.Warden do
+defmodule Flezha.Service.Warden do
   use GenServer
 
   @table_name :flecha_warden

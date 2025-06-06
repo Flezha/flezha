@@ -1,8 +1,8 @@
-defmodule Aflecha.Application do
+defmodule Flezha.Application do
   @moduledoc false
 
-  alias Aflecha.Socket.Support, as: SocketSupport
-  alias Aflecha.Operator.FleetManager
+  alias Flezha.Socket.Support, as: SocketSupport
+  alias Flezha.Operator.FleetManager
 
   require Logger
 
@@ -11,35 +11,35 @@ defmodule Aflecha.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      Aflecha.Service.EventManager,
-      Aflecha.BootLoader,
-      Aflecha.Service.Identificator,
-      Aflecha.Service.HubManager,
-      Aflecha.Operator.FleetSupervisor,
+      Flezha.Service.EventManager,
+      Flezha.BootLoader,
+      Flezha.Service.Identificator,
+      Flezha.Service.HubManager,
+      Flezha.Operator.FleetSupervisor,
       FleetManager,
-      {Aflecha.Socket.Listener, {:control_listener, &SocketSupport.control_socket_path/0}},
-      {Aflecha.Socket.Dispatcher, &FleetManager.connect_handler/1},
-      Aflecha.Service.PortPilot
+      {Flezha.Socket.Listener, {:control_listener, &SocketSupport.control_socket_path/0}},
+      {Flezha.Socket.Dispatcher, &FleetManager.connect_handler/1},
+      Flezha.Service.PortPilot
 
-      # Aflecha.Service.Warden,
-      # Aflecha.Service.Identificator,
-      # Aflecha.Service.EventManager,
-      # {Aflecha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      # {Aflecha.Socket.Dispatcher, &Aflecha.Operator.FleetManager.connect_handler/1},
-      # Aflecha.Service.PortPilot,
-      # Aflecha.Cluster.Orchestrator,
-      # Aflecha.Operator.Controller
+      # Flezha.Service.Warden,
+      # Flezha.Service.Identificator,
+      # Flezha.Service.EventManager,
+      # {Flezha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
+      # {Flezha.Socket.Dispatcher, &Flezha.Operator.FleetManager.connect_handler/1},
+      # Flezha.Service.PortPilot,
+      # Flezha.Cluster.Orchestrator,
+      # Flezha.Operator.Controller
     ]
 
     # If Testnet is enabled, we start the TestnetSupervisor
     children =
       if Application.get_env(:aflecha, :testnet_enabled) do
-        [{Aflecha.Testnet, []} | children]
+        [{Flezha.Testnet, []} | children]
       else
         children
       end
 
-    opts = [strategy: :one_for_one, name: Aflecha.Supervisor]
+    opts = [strategy: :one_for_one, name: Flezha.Supervisor]
     result = Supervisor.start_link(children, opts)
 
     validate_boot_ready()
@@ -51,11 +51,11 @@ defmodule Aflecha.Application do
   def prep_stop(_state) do
     # We need to stop the hub manager first to keep the operators
     # running while pipelines are stopped.
-    Aflecha.Service.HubManager.stop_hub_manager()
+    Flezha.Service.HubManager.stop_hub_manager()
   end
 
   defp validate_boot_ready() do
-    case GenServer.call(Aflecha.BootLoader, :boot_ready?, 7000) do
+    case GenServer.call(Flezha.BootLoader, :boot_ready?, 7000) do
       true -> :ok
       false -> raise "Boot not ready"
     end

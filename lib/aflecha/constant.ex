@@ -1,4 +1,4 @@
-defmodule Aflecha.Constant do
+defmodule Flezha.Constant do
   defmacro __using__(_) do
     quote do
       @default_group "default"

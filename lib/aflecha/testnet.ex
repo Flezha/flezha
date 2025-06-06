@@ -1,4 +1,4 @@
-defmodule Aflecha.Testnet do
+defmodule Flezha.Testnet do
   require Logger
 
   use GenServer

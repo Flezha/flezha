@@ -1,5 +1,5 @@
-defmodule AflechaTest.Helper.PipelineTestHelper do
-  alias Aflecha.Service.PipelineManager
+defmodule FlezhaTest.Helper.PipelineTestHelper do
+  alias Flezha.Service.PipelineManager
 
   def send_sync_io(pipeline_id, group_id, msg) do
     PipelineManager.send_io(pipeline_id, group_id, msg)

@@ -1,9 +1,9 @@
-defmodule AflechaTest.IOManagerTest do
-  alias Aflecha.IO.IOManager
+defmodule FlezhaTest.IOManagerTest do
+  alias Flezha.IO.IOManager
   use ExUnit.Case
-  use Aflecha.Constant
+  use Flezha.Constant
 
-  doctest Aflecha.IO.IOManager
+  doctest Flezha.IO.IOManager
 
   @pipeline_id "test_io_manager"
 
@@ -18,7 +18,7 @@ defmodule AflechaTest.IOManagerTest do
       IOManager.add_io(
         @default_group,
         @pipeline_id,
-        %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
+        %Flezha.IO.Handler.BeamProcess{output_pid: self()},
         :input,
         []
       )
@@ -27,7 +27,7 @@ defmodule AflechaTest.IOManagerTest do
       IOManager.add_io(
         @default_group,
         "none",
-        %Aflecha.IO.Handler.BeamProcess{output_pid: self()},
+        %Flezha.IO.Handler.BeamProcess{output_pid: self()},
         :input,
         []
       )

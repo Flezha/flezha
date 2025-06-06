@@ -1,5 +1,5 @@
-defmodule Aflecha.Pipeline.Builder do
-  alias Aflecha.Service.Validator
+defmodule Flezha.Pipeline.Builder do
+  alias Flezha.Service.Validator
 
   @type t() :: %__MODULE__{
           id: String.t(),

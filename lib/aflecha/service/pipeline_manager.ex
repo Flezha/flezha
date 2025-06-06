@@ -1,12 +1,12 @@
-defmodule Aflecha.Service.PipelineManager do
+defmodule Flezha.Service.PipelineManager do
   @moduledoc """
   Manages the pipeline startings and stoppings.
   """
 
-  alias Aflecha.Service.HubManager
-  alias Aflecha.Service.Identificator
-  alias Aflecha.Operator.FleetManager
-  alias Aflecha.Pipeline.Builder, as: PipelineBuilder
+  alias Flezha.Service.HubManager
+  alias Flezha.Service.Identificator
+  alias Flezha.Operator.FleetManager
+  alias Flezha.Pipeline.Builder, as: PipelineBuilder
 
   def pipeline_registry(group_id) do
     case HubManager.get_registry(group_id) do
@@ -105,7 +105,7 @@ defmodule Aflecha.Service.PipelineManager do
     child_spec = %{
       id: pipeline.id,
       start: {
-        Aflecha.Pipeline.Overwatch,
+        Flezha.Pipeline.Overwatch,
         :start_link,
         [{group_id, pipeline}]
       },

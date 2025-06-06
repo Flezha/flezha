@@ -1,6 +1,6 @@
-defmodule AflechaTest.RpcCookbookServiceTest do
+defmodule FlezhaTest.RpcCookbookServiceTest do
   use ExUnit.Case
-  use Aflecha.Constant
+  use Flezha.Constant
 
   setup do
     %{}
@@ -12,7 +12,7 @@ defmodule AflechaTest.RpcCookbookServiceTest do
     {:ok, init_values} = Jason.encode(%{"value" => 100})
 
     result =
-      Aflecha.Service.RpcCookbook.worker_start(
+      Flezha.Service.RpcCookbook.worker_start(
         @default_group,
         pipeline_id,
         factory_id,
@@ -25,11 +25,11 @@ defmodule AflechaTest.RpcCookbookServiceTest do
   test "rpc stop worker" do
     pipeline_id = "test_rpc_stop_comp"
 
-    AflechaTest.Fixtures.Worker.get(pipeline_id, nil)
-    |> AflechaTest.Fixtures.Worker.start()
+    FlezhaTest.Fixtures.Worker.get(pipeline_id, nil)
+    |> FlezhaTest.Fixtures.Worker.start()
 
-    result1 = Aflecha.Service.RpcCookbook.worker_stop(@default_group, pipeline_id)
-    result2 = Aflecha.Service.RpcCookbook.worker_stop(@default_group, "non_existent")
+    result1 = Flezha.Service.RpcCookbook.worker_stop(@default_group, pipeline_id)
+    result2 = Flezha.Service.RpcCookbook.worker_stop(@default_group, "non_existent")
 
     assert result1 === :ok
     assert result2 |> elem(0) === :error
@@ -41,9 +41,9 @@ defmodule AflechaTest.RpcCookbookServiceTest do
     pipeline_id = "test_rpc_no_operator"
 
     result1 =
-      Aflecha.Service.RpcCookbook.worker_start("", pipeline_id, @factory_do_nothing, "{}")
+      Flezha.Service.RpcCookbook.worker_start("", pipeline_id, @factory_do_nothing, "{}")
 
-    result2 = Aflecha.Service.RpcCookbook.worker_stop("", pipeline_id)
+    result2 = Flezha.Service.RpcCookbook.worker_stop("", pipeline_id)
 
     assert elem(result1, 0) === :ok
     assert result2 === :ok
@@ -76,7 +76,7 @@ defmodule AflechaTest.RpcCookbookServiceTest do
     opts = [handling_type: :task]
 
     result1 =
-      Aflecha.Service.RpcCookbook.add_io(
+      Flezha.Service.RpcCookbook.add_io(
         @default_group,
         pipeline_id,
         io_params_json,
@@ -85,7 +85,7 @@ defmodule AflechaTest.RpcCookbookServiceTest do
       )
 
     result2 =
-      Aflecha.Service.RpcCookbook.add_io(
+      Flezha.Service.RpcCookbook.add_io(
         @default_group,
         "non_existent",
         io_params_json,

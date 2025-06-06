@@ -1,11 +1,11 @@
-defmodule Aflecha.Operator.FleetManager do
-  alias Aflecha.Operator.OperatorSupervisor
-  alias Aflecha.Operator.FleetSupervisor
-  alias Aflecha.Service.Payloader
-  alias Aflecha.Socket.Support, as: SocketSupport
-  alias Aflecha.Service.Identificator
-  alias Aflecha.Service.HubManager
-  alias Aflecha.Service.EventManager
+defmodule Flezha.Operator.FleetManager do
+  alias Flezha.Operator.OperatorSupervisor
+  alias Flezha.Operator.FleetSupervisor
+  alias Flezha.Service.Payloader
+  alias Flezha.Socket.Support, as: SocketSupport
+  alias Flezha.Service.Identificator
+  alias Flezha.Service.HubManager
+  alias Flezha.Service.EventManager
 
   require Logger
 

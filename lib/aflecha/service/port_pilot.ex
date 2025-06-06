@@ -1,4 +1,4 @@
-defmodule Aflecha.Service.PortPilot do
+defmodule Flezha.Service.PortPilot do
   require Logger
 
   # TODO: change back to 5 or make it configurable

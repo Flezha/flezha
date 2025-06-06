@@ -1,4 +1,4 @@
-defmodule Aflecha.Socket.Listener do
+defmodule Flezha.Socket.Listener do
   require Logger
 
   use GenServer

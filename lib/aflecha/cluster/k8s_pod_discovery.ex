@@ -1,5 +1,5 @@
-defmodule Aflecha.Cluster.K8sPodDiscovery do
-  alias Aflecha.Cluster.DiscoveryProtocol
+defmodule Flezha.Cluster.K8sPodDiscovery do
+  alias Flezha.Cluster.DiscoveryProtocol
 
   require Logger
 
@@ -18,7 +18,7 @@ defmodule Aflecha.Cluster.K8sPodDiscovery do
     :host_identifier
   ]
 
-  defimpl DiscoveryProtocol, for: Aflecha.Cluster.K8sPodDiscovery do
+  defimpl DiscoveryProtocol, for: Flezha.Cluster.K8sPodDiscovery do
     @impl true
     def get_nodes(settings) do
       service_account_path = settings.service_account_path

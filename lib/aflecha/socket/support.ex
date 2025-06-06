@@ -1,4 +1,4 @@
-defmodule Aflecha.Socket.Support do
+defmodule Flezha.Socket.Support do
   def prepare_socket_dir() do
     base_path = sockets_base_path()
 

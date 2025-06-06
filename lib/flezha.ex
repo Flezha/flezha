@@ -1,9 +1,9 @@
-defmodule Aflecha do
-  alias Aflecha.Service.PipelineManager
-  alias Aflecha.Service.PluginManager
+defmodule Flezha do
+  alias Flezha.Service.PipelineManager
+  alias Flezha.Service.PluginManager
 
   @moduledoc """
-  Documentation for `Aflecha`.
+  Documentation for `Flezha`.
   """
 
   defdelegate start_pipeline(group_id, pipeline), to: PipelineManager

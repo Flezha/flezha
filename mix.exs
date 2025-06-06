@@ -1,4 +1,4 @@
-defmodule Aflecha.MixProject do
+defmodule Flezha.MixProject do
   use Mix.Project
 
   def project do
@@ -17,7 +17,7 @@ defmodule Aflecha.MixProject do
   def application do
     [
       extra_applications: [:logger, :runtime_tools, :wx, :observer, :inets, :crypto, :ssl],
-      mod: {Aflecha.Application, []}
+      mod: {Flezha.Application, []}
     ]
   end
 

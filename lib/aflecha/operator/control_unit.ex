@@ -1,7 +1,7 @@
-defmodule Aflecha.Operator.ControlUnit do
-  alias Aflecha.Service.Identificator
-  alias Aflecha.Operator.ControlChannel
-  alias Aflecha.Service.ConcurrencyMapper
+defmodule Flezha.Operator.ControlUnit do
+  alias Flezha.Service.Identificator
+  alias Flezha.Operator.ControlChannel
+  alias Flezha.Service.ConcurrencyMapper
 
   use GenServer
 

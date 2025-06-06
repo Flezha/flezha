@@ -1,3 +1,3 @@
-defmodule Aflecha.Plugin.PluginBase do
+defmodule Flezha.Plugin.PluginBase do
   @callback plugin_id() :: String.t()
 end

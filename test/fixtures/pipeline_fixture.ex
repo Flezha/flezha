@@ -1,14 +1,14 @@
-defmodule AflechaTest.Fixtures.PipelineFixture do
-  alias Aflecha.Service.PluginManager
-  alias Aflecha.Service.Identificator
+defmodule FlezhaTest.Fixtures.PipelineFixture do
+  alias Flezha.Service.PluginManager
+  alias Flezha.Service.Identificator
   alias ProcessHub.Constant.Hook
 
-  use Aflecha.Constant
+  use Flezha.Constant
 
   # TODO: refactor based on new plugin system.
 
   def get(id, factory_id) do
-    %Aflecha.Pipeline.Builder{
+    %Flezha.Pipeline.Builder{
       id: id || "my_pipeline",
       factory_id: factory_id || "do_nothing"
     }
@@ -28,7 +28,7 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
       }
     )
 
-    result = Aflecha.Service.PipelineManager.start_pipeline(group, pipeline)
+    result = Flezha.Service.PipelineManager.start_pipeline(group, pipeline)
 
     receive do
       :hook_reg_insert_recv -> :ok
@@ -46,12 +46,12 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
   end
 
   def stop(pipeline_id, group \\ @default_group) do
-    Aflecha.Service.PipelineManager.stop_pipeline(group, pipeline_id)
+    Flezha.Service.PipelineManager.stop_pipeline(group, pipeline_id)
   end
 
   def attach_output_msg({:ok, %{pipeline_id: pipeline_id}} = start_res, group \\ @default_group) do
     {:ok, "binding added"} =
-      PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
+      PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
         group: group,
         pipeline_id: pipeline_id,
         trigger: :on_output,
@@ -64,7 +64,7 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
   # TODO: refactor.
   # def attach_input(pipeline, handler, opts \\ []) do
   #   {:ok, __id} =
-  #     Aflecha.add_io(
+  #     Flezha.add_io(
   #       @default_group,
   #       pipeline.id,
   #       get_io_handler(handler, :input),
@@ -77,7 +77,7 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
 
   # def attach_output(pipeline, handler) do
   #   {:ok, _id} =
-  #     Aflecha.add_io(
+  #     Flezha.add_io(
   #       @default_group,
   #       pipeline.id,
   #       get_io_handler(handler, :output),
@@ -102,7 +102,7 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
   # end
 
   # defp default_input_handler() do
-  #   %Aflecha.IO.Handler.Websocket{
+  #   %Flezha.IO.Handler.Websocket{
   #     uri: @testnet_ws_uri,
   #     post_connect: %{
   #       payload: {
@@ -122,6 +122,6 @@ defmodule AflechaTest.Fixtures.PipelineFixture do
   # end
 
   # defp default_output_handler() do
-  #   %Aflecha.IO.Handler.StdIO{}
+  #   %Flezha.IO.Handler.StdIO{}
   # end
 end

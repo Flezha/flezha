@@ -1,4 +1,4 @@
-defmodule Aflecha.Service.EventManager do
+defmodule Flezha.Service.EventManager do
   alias :blockade, as: Blockade
 
   @event_manager :aflecha_event_manager

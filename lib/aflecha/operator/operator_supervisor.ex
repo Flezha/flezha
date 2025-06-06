@@ -1,9 +1,9 @@
-defmodule Aflecha.Operator.OperatorSupervisor do
-  alias Aflecha.Operator.ControlUnit
-  alias Aflecha.Operator.ControlChannel
-  alias Aflecha.Service.Identificator
-  alias Aflecha.Socket.Listener
-  alias Aflecha.Socket.Support, as: SocketSupport
+defmodule Flezha.Operator.OperatorSupervisor do
+  alias Flezha.Operator.ControlUnit
+  alias Flezha.Operator.ControlChannel
+  alias Flezha.Service.Identificator
+  alias Flezha.Socket.Listener
+  alias Flezha.Socket.Support, as: SocketSupport
 
   use Supervisor
 
@@ -48,11 +48,11 @@ defmodule Aflecha.Operator.OperatorSupervisor do
       },
       %{
         id: :primary_stream_sup,
-        start: {Aflecha.Operator.StreamSup, :start_link, [{operator_id, :primary}]}
+        start: {Flezha.Operator.StreamSup, :start_link, [{operator_id, :primary}]}
       },
       %{
         id: :secondary_stream_sup,
-        start: {Aflecha.Operator.StreamSup, :start_link, [{operator_id, :secondary}]}
+        start: {Flezha.Operator.StreamSup, :start_link, [{operator_id, :secondary}]}
       }
     ]
 

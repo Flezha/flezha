@@ -1,4 +1,4 @@
-# Aflecha
+# Flezha
 
 ## Description
 Distributed stateful pipelines. Provdes a static and dynamic creation of pipelines.

@@ -1,7 +1,7 @@
-defmodule Aflecha.Cluster.Orchestrator do
-  alias Aflecha.Cluster.DiscoveryProtocol
-  alias Aflecha.Cluster.ManualDiscovery
-  alias Aflecha.Cluster.K8sPodDiscovery
+defmodule Flezha.Cluster.Orchestrator do
+  alias Flezha.Cluster.DiscoveryProtocol
+  alias Flezha.Cluster.ManualDiscovery
+  alias Flezha.Cluster.K8sPodDiscovery
 
   use GenServer
 

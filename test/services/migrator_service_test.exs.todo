@@ -1,8 +1,8 @@
-defmodule AflechaTest.MigratorServiceTest do
+defmodule FlezhaTest.MigratorServiceTest do
   use ExUnit.Case
-  use Aflecha.Constant
+  use Flezha.Constant
 
-  doctest Aflecha.Worker.MigratorService
+  doctest Flezha.Worker.MigratorService
 
   @pipeline_id "test_migrator"
 
@@ -14,7 +14,7 @@ defmodule AflechaTest.MigratorServiceTest do
 
   test "serialize worker" do
     serialized_data =
-      Aflecha.Worker.MigratorService.serialize_pipeline(
+      Flezha.Worker.MigratorService.serialize_pipeline(
         @default_group,
         @pipeline_id
       )
@@ -25,13 +25,13 @@ defmodule AflechaTest.MigratorServiceTest do
 
   test "deserialize worker" do
     serialized_data =
-      Aflecha.Worker.MigratorService.serialize_pipeline(
+      Flezha.Worker.MigratorService.serialize_pipeline(
         @default_group,
         @pipeline_id
       )
 
     assert :ok ===
-             Aflecha.Worker.MigratorService.deserialize_pipeline(
+             Flezha.Worker.MigratorService.deserialize_pipeline(
                @default_group,
                @pipeline_id,
                serialized_data

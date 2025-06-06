@@ -1,5 +1,5 @@
-defmodule Aflecha.Plugin.PipelinePlugin do
-  alias Aflecha.Service.PipelineManager
+defmodule Flezha.Plugin.PipelinePlugin do
+  alias Flezha.Service.PipelineManager
 
   defmacro __using__(_opts) do
     quote do

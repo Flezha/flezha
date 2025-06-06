@@ -1,4 +1,4 @@
-defmodule Aflecha.Service.Identificator do
+defmodule Flezha.Service.Identificator do
   def child_spec(opts) do
     %{
       id: __MODULE__,

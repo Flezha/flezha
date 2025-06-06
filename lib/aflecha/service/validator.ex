@@ -1,8 +1,8 @@
-defmodule Aflecha.Service.Validator do
-  alias Aflecha.Service.Identificator
-  alias Aflecha.Service.HubManager
+defmodule Flezha.Service.Validator do
+  alias Flezha.Service.Identificator
+  alias Flezha.Service.HubManager
 
-  use Aflecha.Constant
+  use Flezha.Constant
 
   def byte_limit_exceed(value, max_length \\ @pipeline_id_max_bytes) do
     case byte_size(value) > max_length do

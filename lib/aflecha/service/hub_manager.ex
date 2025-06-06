@@ -1,9 +1,9 @@
-defmodule Aflecha.Service.HubManager do
-  alias Aflecha.Service.Identificator
+defmodule Flezha.Service.HubManager do
+  alias Flezha.Service.Identificator
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
-  alias Aflecha.Service.PipelineManager
+  alias Flezha.Service.PipelineManager
 
   use Supervisor
 
@@ -77,7 +77,7 @@ defmodule Aflecha.Service.HubManager do
       Hook.registry_pid_inserted(),
       %HookManager{
         id: operator_id <> "_hub_pid_insertion",
-        m: Aflecha.Service.HubManager,
+        m: Flezha.Service.HubManager,
         f: :hook_insert_pid,
         a: [operator_id, :_]
       }
@@ -197,7 +197,7 @@ defmodule Aflecha.Service.HubManager do
         Hook.child_data_alter() => [
           %ProcessHub.Service.HookManager{
             id: ProcessHub.Constant.Hook.child_data_alter(),
-            m: Aflecha.Service.HubManager,
+            m: Flezha.Service.HubManager,
             f: :alter_child_data,
             a: [hub_id, :_]
           }

@@ -28,7 +28,7 @@ fn handle_enable(args: Vec<String>) {
     let command = get_aflecha_command();
     
     let rpc_command = format!(
-        "Aflecha.Service.RpcCookbook.enable_plugin(\"{}\", \"{}\")",
+        "Flezha.Service.RpcCookbook.enable_plugin(\"{}\", \"{}\")",
         plugin_id,
         pluggin_settings
     );

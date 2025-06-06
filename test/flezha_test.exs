@@ -1,18 +1,18 @@
-defmodule AflechaTest do
-  alias Aflecha.Service.Identificator
-  alias Aflecha.Service.HubManager
-  alias Aflecha.Operator.FleetManager
-  alias AflechaTest.Fixtures.PipelineFixture
-  alias Aflecha.Service.PluginManager
-  alias Aflecha.Service.PipelineManager
-  alias AflechaTest.Helper.NodeTestHelper
-  alias AflechaTest.Helper.PipelineTestHelper
-  alias AflechaTest.Helper.MessageTestHelper
+defmodule FlezhaTest do
+  alias Flezha.Service.Identificator
+  alias Flezha.Service.HubManager
+  alias Flezha.Operator.FleetManager
+  alias FlezhaTest.Fixtures.PipelineFixture
+  alias Flezha.Service.PluginManager
+  alias Flezha.Service.PipelineManager
+  alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.PipelineTestHelper
+  alias FlezhaTest.Helper.MessageTestHelper
 
   use ExUnit.Case
-  use Aflecha.Constant
+  use Flezha.Constant
 
-  doctest Aflecha
+  doctest Flezha
 
   @default_group "default"
   @temp_group "test_temp_group"
@@ -36,14 +36,14 @@ defmodule AflechaTest do
   end
 
   test "operator node connect" do
-    res = Aflecha.Operator.FleetManager.active_operators(@default_group)
+    res = Flezha.Operator.FleetManager.active_operators(@default_group)
     assert length(res) === 2
     Enum.each(res, &assert(is_binary(&1)))
   end
 
   @tag :pipeline_start
   test "pipeline adding" do
-    pipeline = %Aflecha.Pipeline.Builder{
+    pipeline = %Flezha.Pipeline.Builder{
       id: "default_pipeline_test",
       factory_id: @test_pipeline_factory
     }
@@ -76,7 +76,7 @@ defmodule AflechaTest do
   test "pipeline adding non existing factory" do
     pipeline_id = "non_existing_factory_err"
 
-    pipeline = %Aflecha.Pipeline.Builder{
+    pipeline = %Flezha.Pipeline.Builder{
       id: pipeline_id,
       factory_id: "non_existing_factory"
     }
@@ -93,7 +93,7 @@ defmodule AflechaTest do
   test "websocket plugin connection start" do
     pipeline_id = "websocket_plugin_test"
 
-    pipeline = %Aflecha.Pipeline.Builder{
+    pipeline = %Flezha.Pipeline.Builder{
       id: pipeline_id,
       factory_id: @test_pipeline_factory
     }
@@ -102,7 +102,7 @@ defmodule AflechaTest do
 
     # TODO: add failures also.
     res =
-      PluginManager.enable_plugin(%Aflecha.Plugin.Provider.Websocket{
+      PluginManager.enable_plugin(%Flezha.Plugin.Provider.Websocket{
         group: @default_group,
         pipeline_id: pipeline_id,
         uri: @testnet_ws_uri,
@@ -129,7 +129,7 @@ defmodule AflechaTest do
   test "beam msg forward plugin connection start" do
     pipeline_id = "beam_msg_forw_plugin_test"
 
-    pipeline = %Aflecha.Pipeline.Builder{
+    pipeline = %Flezha.Pipeline.Builder{
       id: pipeline_id,
       factory_id: @test_pipeline_factory
     }
@@ -137,7 +137,7 @@ defmodule AflechaTest do
     {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
 
     res =
-      PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
+      PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
         group: @default_group,
         pipeline_id: pipeline_id,
         trigger: :on_output,
@@ -150,7 +150,7 @@ defmodule AflechaTest do
   test "pipeline flow generation -> beam msg forward" do
     pipeline_id = "data_flow_test"
 
-    pipeline = %Aflecha.Pipeline.Builder{
+    pipeline = %Flezha.Pipeline.Builder{
       id: pipeline_id,
       factory_id: @test_compare_filter_factory,
       init_values: %{"comparable" => "hello world", "inverted" => false}
@@ -158,14 +158,14 @@ defmodule AflechaTest do
 
     {:ok, _} = PipelineManager.start_pipeline(@default_group, pipeline)
 
-    PluginManager.enable_plugin(%Aflecha.Plugin.Provider.BeamMsgForward{
+    PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
       group: @default_group,
       pipeline_id: pipeline_id,
       trigger: :on_output,
       recv_pid: self()
     })
 
-    PluginManager.enable_plugin(%Aflecha.Plugin.Provider.Websocket{
+    PluginManager.enable_plugin(%Flezha.Plugin.Provider.Websocket{
       group: @default_group,
       pipeline_id: pipeline_id,
       trigger: :proactive,
@@ -210,7 +210,7 @@ defmodule AflechaTest do
     PipelineTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "state_2"})
 
     {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
-    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    pipeline_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert pipeline_state === %{
              "binary_inputs" => [],
@@ -243,7 +243,7 @@ defmodule AflechaTest do
       "text_inputs" => ["test_state_1", "test_state_2"]
     }
 
-    PluginManager.enable_plugin(%Aflecha.Plugin.Provider.StdOut{
+    PluginManager.enable_plugin(%Flezha.Plugin.Provider.StdOut{
       group: @default_group,
       pipeline_id: pipeline_id,
       trigger: :proactive
@@ -251,7 +251,7 @@ defmodule AflechaTest do
 
     {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
     {:ok, old_overwatch_state} = PipelineManager.get_overwatch_state(@default_group, pipeline_id)
-    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    pipeline_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert pipeline_state === test_state
 
@@ -262,7 +262,7 @@ defmodule AflechaTest do
 
     {:ok, json_state} = PipelineManager.get_pipeline_state(@default_group, pipeline_id)
     {:ok, new_overwatch_state} = PipelineManager.get_overwatch_state(@default_group, pipeline_id)
-    pipeline_state = Aflecha.Service.Payloader.json_to_map(json_state)
+    pipeline_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert pipeline_state === test_state
     assert new_overwatch_state.bindings === old_overwatch_state.bindings
@@ -276,7 +276,7 @@ defmodule AflechaTest do
 
     NodeTestHelper.stop_operator(group_id, operator_id)
 
-    assert Aflecha.Operator.FleetManager.active_operators(group_id) === []
+    assert Flezha.Operator.FleetManager.active_operators(group_id) === []
   end
 
   @tag :operator_disconnect_migrate_op

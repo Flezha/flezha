@@ -1,12 +1,12 @@
-defmodule Aflecha.Cluster.ManualDiscovery do
-  alias Aflecha.Cluster.DiscoveryProtocol
+defmodule Flezha.Cluster.ManualDiscovery do
+  alias Flezha.Cluster.DiscoveryProtocol
 
   @type t() :: %__MODULE__{
           initial_nodes: [node()]
         }
   defstruct [:initial_nodes]
 
-  defimpl DiscoveryProtocol, for: Aflecha.Cluster.ManualDiscovery do
+  defimpl DiscoveryProtocol, for: Flezha.Cluster.ManualDiscovery do
     @impl true
     def get_nodes(struct) do
       nodes =

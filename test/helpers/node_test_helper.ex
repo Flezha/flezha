@@ -1,18 +1,18 @@
-defmodule AflechaTest.Helper.NodeTestHelper do
-  use Aflecha.Constant
+defmodule FlezhaTest.Helper.NodeTestHelper do
+  use Flezha.Constant
   use ExUnit.Case
 
   # TODO: remove or refactor.
   # def test_pipeline(pipeline_id) do
   #   pipeline =
-  #     AflechaTest.Fixtures.PipelineFixture.get(
+  #     FlezhaTest.Fixtures.PipelineFixture.get(
   #       pipeline_id,
   #       @factory_increment_state
   #     )
-  #     |> AflechaTest.Fixtures.PipelineFixture.start()
+  #     |> FlezhaTest.Fixtures.PipelineFixture.start()
 
   #   on_exit(fn ->
-  #     AflechaTest.Fixtures.PipelineFixture.stop(pipeline.id)
+  #     FlezhaTest.Fixtures.PipelineFixture.stop(pipeline.id)
   #   end)
 
   #   pipeline
@@ -125,8 +125,8 @@ defmodule AflechaTest.Helper.NodeTestHelper do
       "cargo run --manifest-path=#{current_path}/test/apps/rust_operator/Cargo.toml --target-dir=./target -- " <>
         group_id
 
-    Aflecha.Service.EventManager.add_handler(:operator_connected_event)
-    Aflecha.Service.PortPilot.open_port(command)
+    Flezha.Service.EventManager.add_handler(:operator_connected_event)
+    Flezha.Service.PortPilot.open_port(command)
 
     operator_id =
       receive do
@@ -136,14 +136,14 @@ defmodule AflechaTest.Helper.NodeTestHelper do
       end
 
     # Remove the handler to duplicate events.
-    Aflecha.Service.EventManager.rem_handler(:operator_connected_event)
+    Flezha.Service.EventManager.rem_handler(:operator_connected_event)
 
     operator_id
   end
 
   def stop_operator(group_id, operator_id) do
-    Aflecha.Service.EventManager.add_handler(:operator_disconnected_event)
-    Aflecha.Operator.FleetManager.disconnect_operator(group_id, operator_id)
+    Flezha.Service.EventManager.add_handler(:operator_disconnected_event)
+    Flezha.Operator.FleetManager.disconnect_operator(group_id, operator_id)
 
     receive do
       {:operator_disconnected_event, {^group_id, ^operator_id}} -> :ok
@@ -152,7 +152,7 @@ defmodule AflechaTest.Helper.NodeTestHelper do
     end
 
     # Remove the handler to duplicate events.
-    Aflecha.Service.EventManager.rem_handler(:operator_disconnected_event)
+    Flezha.Service.EventManager.rem_handler(:operator_disconnected_event)
 
     :ok
   end
