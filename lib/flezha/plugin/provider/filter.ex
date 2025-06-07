@@ -25,7 +25,13 @@ defmodule Flezha.Plugin.Provider.Filter do
   defimpl PipelineBinding, for: Flezha.Plugin.Provider.Filter do
     @impl true
     def bind(settings) do
-      {:ok, settings}
+      case Regex.compile(settings.regex_pattern) do
+        {:ok, compiled_regex} ->
+          {:ok, %{settings | regex_pattern: compiled_regex}}
+
+        {:error, reason} ->
+          {:error, "Invalid regex pattern: #{reason}"}
+      end
     end
 
     @impl true

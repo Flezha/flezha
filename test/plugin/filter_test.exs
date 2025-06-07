@@ -5,7 +5,7 @@ defmodule FlezhaTest.Plugin.FilterTest do
 
   test "filter input" do
     settings = %Flezha.Plugin.Provider.Filter{
-      regex_pattern: ~r/^heartbeat message$/,
+      regex_pattern: "^heartbeat message$",
       inverted: false,
       group: "test_group",
       pipeline_id: "test_pipeline",
@@ -32,7 +32,7 @@ defmodule FlezhaTest.Plugin.FilterTest do
 
   test "filter input inverted" do
     settings = %Flezha.Plugin.Provider.Filter{
-      regex_pattern: ~r/^heartbeat message$/,
+      regex_pattern: "^heartbeat message$",
       inverted: true,
       group: "test_group",
       pipeline_id: "test_pipeline",
