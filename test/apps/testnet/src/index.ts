@@ -5,7 +5,7 @@ import ServerContract from './server/server_contract';
 std_listener();
 
 const servers: [ServerContract] = [
-  new WebsocketServer(parseInt(process.env.AFLECHA_TESTNET_WS_PORT || '4500'))
+  new WebsocketServer(parseInt(process.env.FLEZHA_TESTNET_WS_PORT || '4500'))
 ];
 
 servers.forEach((server) => server.start());

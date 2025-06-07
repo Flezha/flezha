@@ -18,7 +18,7 @@ defmodule Flezha.Service.PortPilot do
         {:spawn, command},
         [
           :binary,
-          {:env, [{~c"AFLECHA_SOCKET_FILES_PATH", String.to_charlist(socket_files_path)}]}
+          {:env, [{~c"FLEZHA_SOCKET_FILES_PATH", String.to_charlist(socket_files_path)}]}
         ]
       )
 

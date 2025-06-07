@@ -17,7 +17,7 @@ docker buildx build --platform linux/amd64,linux/arm64 -t alfetahe/flezha:0.1.4 
 ```bash
 docker run -d \
   --name flezha_container \
-  -e AFLECHA_MAX_RECONNECTS=3 \
+  -e FLEZHA_MAX_RECONNECTS=3 \
   alfetahe/flezha:0.1.4  
 ```
 

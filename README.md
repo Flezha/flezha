@@ -15,7 +15,7 @@ Distributed stateful pipelines. Provdes a static and dynamic creation of pipelin
 Starting the node and specifying the external processes to be used by the node mynode.
 PROD:
 ```bash
-RELEASE_NODE=mynode AFLECHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/flezha/test/apps/rust_operator/Cargo.toml --target-dir=./target" _build/prod/rel/flezha/bin/agent start --mode=attached_iex
+RELEASE_NODE=mynode FLEZHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/flezha/test/apps/rust_operator/Cargo.toml --target-dir=./target" _build/prod/rel/flezha/bin/agent start --mode=attached_iex
 ```
 
 DEV:

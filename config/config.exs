@@ -17,7 +17,7 @@ config :flezha,
     Flezha.Plugin.Provider.Websocket,
     Flezha.Plugin.Provider.BeamMsgForward,
     Flezha.Plugin.Provider.StdOut,
-    Flezha.Plugin.Provider.Filter,
+    Flezha.Plugin.Provider.Filter
   ]
 
 config :logger,
