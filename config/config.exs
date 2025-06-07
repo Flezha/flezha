@@ -16,7 +16,8 @@ config :flezha,
     Flezha.Plugin.Provider.Kafka.Producer,
     Flezha.Plugin.Provider.Websocket,
     Flezha.Plugin.Provider.BeamMsgForward,
-    Flezha.Plugin.Provider.StdOut
+    Flezha.Plugin.Provider.StdOut,
+    Flezha.Plugin.Provider.Filter,
   ]
 
 config :logger,
