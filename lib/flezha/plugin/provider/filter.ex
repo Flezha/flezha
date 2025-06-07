@@ -29,8 +29,8 @@ defmodule Flezha.Plugin.Provider.Filter do
     end
 
     @impl true
-    def exec(settings, payload) do
-      if Regex.match?(payload, settings.regex_pattern) do
+    def exec(settings, {_type, message} = payload) do
+      if Regex.match?(settings.regex_pattern, message) do
         if settings.inverted do
           {:skip, :normal}
         else
