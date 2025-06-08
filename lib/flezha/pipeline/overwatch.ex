@@ -177,7 +177,10 @@ defmodule Flezha.Pipeline.Overwatch do
     # Meaning we should store the handling type in the overwatch state.
     payload = exec_binding(state.bindings.on_input, payload)
 
-    GenServer.cast(state.channel, {:io_in, state.id, payload, :stream})
+    case payload do
+      nil -> nil
+      _ -> GenServer.cast(state.channel, {:io_in, state.id, payload, :stream})
+    end
 
     {:noreply, state}
   end
