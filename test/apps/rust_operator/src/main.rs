@@ -5,6 +5,7 @@ use std::env;
 
 use flezha_operator::{
     PipelineResultType,
+    PipelineStep,
     define_pipeline_factory
 };
 
@@ -49,6 +50,58 @@ fn std_keeper() -> thread::JoinHandle<()> {
     }
 }
 
+// STEP DEFINITIONS --------------------------------------------------------------------
+struct DoNothingStep;
+impl PipelineStep<DoNothingState> for DoNothingStep {
+    fn run(&mut self, input: flezha_operator::PipelineInput, _state: &mut DoNothingState) -> io::Result<flezha_operator::PipelineOutput> {
+        Ok(input.into())
+    }
+}
+
+struct StoreInputStep;
+impl PipelineStep<StoreInputState> for StoreInputStep {
+    fn run(&mut self, input: flezha_operator::PipelineInput, state: &mut StoreInputState) -> io::Result<flezha_operator::PipelineOutput> {
+        match input {
+            flezha_operator::PipelineInput::Text(text) => {
+                state.text_inputs.push(text.clone());
+                Ok(flezha_operator::PipelineOutput::Text(text))
+            }
+            flezha_operator::PipelineInput::Binary(binary) => {
+                state.binary_inputs.push(binary.clone());
+                Ok(flezha_operator::PipelineOutput::Binary(binary))
+            }
+        }
+    }
+}
+
+struct CompareFilterStep;
+impl PipelineStep<CompareFilterState> for CompareFilterStep {
+    fn run(&mut self, input: flezha_operator::PipelineInput, state: &mut CompareFilterState) -> io::Result<flezha_operator::PipelineOutput> {
+        let text = match input {
+            flezha_operator::PipelineInput::Text(text) => text,
+            flezha_operator::PipelineInput::Binary(binary) => String::from_utf8(binary).unwrap()
+        };
+
+        if state.inverted {
+            if state.comparable == text {
+                Ok(flezha_operator::PipelineOutput::Text("Matched".to_string()))
+            } else {
+                Ok(flezha_operator::PipelineOutput::Text(text))
+            }
+        } else {
+            if state.comparable == text {
+                Ok(flezha_operator::PipelineOutput::Text(text))
+            } else {
+                Ok(flezha_operator::PipelineOutput::Text("Not matched".to_string()))
+            }
+        }
+    }
+}
+
+// STATE DEFINITIONS -------------------------------------------------------------------
+#[derive(Serialize, Deserialize)]
+struct DoNothingState {}
+
 #[derive(Serialize, Deserialize)]
 struct StoreInputState {
     binary_inputs: Vec<Vec<u8>>,
@@ -61,9 +114,7 @@ struct CompareFilterState {
     inverted: bool,
 }
 
-#[derive(Serialize, Deserialize)]
-struct DoNothingState {}
-
+// FACTORY DEFINITIONS -----------------------------------------------------------------
 fn define_factories() {
     define_pipeline_factory! {
         factory_id: "store_input".to_string(),
@@ -73,20 +124,7 @@ fn define_factories() {
             text_inputs: vec![]
         },
         steps: [
-            |input: PipelineInput, state: &mut StoreInputState| -> io::Result<PipelineOutput> {
-                match input {
-                    PipelineInput::Text(text) => {
-                        state.text_inputs.push(text.clone());
-                        Ok(PipelineOutput::Text(text))
-                    }
-                    PipelineInput::Binary(binary) => {
-                        state.binary_inputs.push(binary.clone());
-                        Ok(PipelineOutput::Binary(binary))
-                    }
-                }
-
-                // Ok(input.into())
-            }
+            StoreInputStep
         ]
     }
 
@@ -98,26 +136,7 @@ fn define_factories() {
             inverted: false
         },
         steps: [
-            |input: PipelineInput, state: &mut CompareFilterState| -> io::Result<PipelineOutput> {
-                let text = match input {
-                    PipelineInput::Text(text) => text,
-                    PipelineInput::Binary(binary) => String::from_utf8(binary).unwrap()
-                };
-
-                if state.inverted {
-                    if state.comparable == text {
-                        Ok(PipelineOutput::Text("Matched".to_string()))
-                    } else {
-                        Ok(PipelineOutput::Text(text))
-                    }
-                } else {
-                    if state.comparable == text {
-                        Ok(PipelineOutput::Text(text))
-                    } else {
-                        Ok(PipelineOutput::Text("Not matched".to_string()))
-                    }
-                }
-            }
+            CompareFilterStep
         ]
     }
 
@@ -126,9 +145,7 @@ fn define_factories() {
         result_type: PipelineResultType::Forward,
         state: DoNothingState{},
         steps: [
-            |input: PipelineInput, _state: &mut DoNothingState| -> io::Result<PipelineOutput> {
-                Ok(input.into())
-            }
+            DoNothingStep
         ]
     }
 }
