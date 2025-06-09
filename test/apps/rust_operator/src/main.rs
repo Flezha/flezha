@@ -53,14 +53,14 @@ fn std_keeper() -> thread::JoinHandle<()> {
 // STEP DEFINITIONS --------------------------------------------------------------------
 struct DoNothingStep;
 impl PipelineStep<DoNothingState> for DoNothingStep {
-    fn run(&mut self, input: flezha_operator::PipelineInput, _state: &mut DoNothingState) -> io::Result<flezha_operator::PipelineOutput> {
+    fn process(&mut self, input: flezha_operator::PipelineInput, _state: &mut DoNothingState) -> io::Result<flezha_operator::PipelineOutput> {
         Ok(input.into())
     }
 }
 
 struct StoreInputStep;
 impl PipelineStep<StoreInputState> for StoreInputStep {
-    fn run(&mut self, input: flezha_operator::PipelineInput, state: &mut StoreInputState) -> io::Result<flezha_operator::PipelineOutput> {
+    fn process(&mut self, input: flezha_operator::PipelineInput, state: &mut StoreInputState) -> io::Result<flezha_operator::PipelineOutput> {
         match input {
             flezha_operator::PipelineInput::Text(text) => {
                 state.text_inputs.push(text.clone());
@@ -76,7 +76,7 @@ impl PipelineStep<StoreInputState> for StoreInputStep {
 
 struct CompareFilterStep;
 impl PipelineStep<CompareFilterState> for CompareFilterStep {
-    fn run(&mut self, input: flezha_operator::PipelineInput, state: &mut CompareFilterState) -> io::Result<flezha_operator::PipelineOutput> {
+    fn process(&mut self, input: flezha_operator::PipelineInput, state: &mut CompareFilterState) -> io::Result<flezha_operator::PipelineOutput> {
         let text = match input {
             flezha_operator::PipelineInput::Text(text) => text,
             flezha_operator::PipelineInput::Binary(binary) => String::from_utf8(binary).unwrap()
