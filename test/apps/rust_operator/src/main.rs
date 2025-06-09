@@ -96,6 +96,10 @@ impl PipelineStep<CompareFilterState> for CompareFilterStep {
             }
         }
     }
+
+    fn post_create(&mut self, _state: &mut CompareFilterState) {
+
+    }
 }
 
 // STATE DEFINITIONS -------------------------------------------------------------------
