@@ -370,17 +370,23 @@ defmodule Flezha.Operator.FleetManager do
 
         FleetSupervisor.start_operator_sup(group_id, operator_id, sock)
 
-        :ok =
+        owner_result =
           SocketSupport.pass_ownership(
             sock,
             OperatorSupervisor.find_control_channel(operator_id)
           )
 
-        GenServer.call(control_channel, {:handle_frame, bytes_rest})
-        GenServer.call(control_unit, :command_assign_operator_id)
-        GenServer.call(control_unit, :command_sockets_connect)
+        case owner_result do
+          :ok ->
+            GenServer.call(control_channel, {:handle_frame, bytes_rest})
+            GenServer.call(control_unit, :command_assign_operator_id)
+            GenServer.call(control_unit, :command_sockets_connect)
 
-        {:ok, group_id, operator_id}
+            {:ok, group_id, operator_id}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
 
       err ->
         err
