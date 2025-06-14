@@ -29,7 +29,12 @@ defmodule Flezha.Plugin.PipelinePlugin do
         end
       end
 
-      defoverridable enable: 1, disable: 1
+      def pre_enable(settings) do
+        # This function can be overridden by the plugin to perform any pre-enable actions.
+        {:ok, settings}
+      end
+
+      defoverridable enable: 1, disable: 1, pre_enable: 1
     end
   end
 

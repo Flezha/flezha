@@ -15,6 +15,28 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     defimpl PluginProtocol, for: Flezha.Plugin.Provider.Kafka.Producer do
       use PipelinePlugin
+
+      def pre_enable(settings) do
+        settings =
+          if is_binary(settings.hosts) do
+            # If hosts is a string, we assume it's a comma-separated list of host:port pairs.
+            hosts =
+              settings.hosts
+              |> String.split(",")
+              |> Enum.map(fn host ->
+                case String.split(host, ":") do
+                  [host, port] -> {host, String.to_integer(port)}
+                  _ -> throw("Invalid host format: #{host}")
+                end
+              end)
+
+            %{settings | hosts: hosts}
+          else
+            settings
+          end
+
+        {:ok, settings}
+      end
     end
 
     defimpl PipelineBinding, for: Flezha.Plugin.Provider.Kafka.Producer do

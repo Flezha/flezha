@@ -36,7 +36,8 @@ defmodule Flezha.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      {:process_hub, path: "../process-hub"},
+      {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
+      # {:process_hub, path: "./process-hub"},
       # {:process_hub, "~> 0.3.2-alpha"},
       {:blockade, "~> 0.2.1"},
       {:fresh, "~> 0.4.4"},

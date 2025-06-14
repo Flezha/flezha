@@ -39,3 +39,6 @@ flezha-*.tar
 
 # ElixirLS
 .elixir_ls/
+
+# Local process hub codebase.
+/process-hub

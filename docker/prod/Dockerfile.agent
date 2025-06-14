@@ -1,5 +1,5 @@
 # Stage 1: Build the Rust CLI
-FROM rust:1.83.0 AS rust-build
+FROM rust:1.87.0 AS rust-build
 
 # Set working directory for Rust build
 WORKDIR /cli
@@ -8,7 +8,7 @@ WORKDIR /cli
 COPY ../cli ./
 
 # Build the Rust project
-RUN cargo build
+RUN cargo build --release
 
 # Stage 2: Build the Elixir app
 FROM elixir:1.17-otp-27 AS build
@@ -26,18 +26,35 @@ COPY ../lib ./lib
 COPY ../config ./config
 COPY ../test ./test
 COPY ../rel ./rel
+COPY ../protobufs ./protobufs
 
 # Copy the Rust build artifacts from the previous stage
 COPY --from=rust-build /cli /app/cli
 
 # Fetch dependencies
-RUN MIX_ENV=dev mix deps.get
+RUN MIX_ENV=prod mix deps.get
+
+# Install system deps
+RUN apt-get update && apt-get install -y \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set version
+ENV PROTOC_VERSION=23.4
+
+# Install protoc
+RUN curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip \
+    && unzip protoc-${PROTOC_VERSION}-linux-x86_64.zip -d /usr/local \
+    && rm protoc-${PROTOC_VERSION}-linux-x86_64.zip
+
+RUN protoc --version
 
 # Compile the project
-RUN ERL_FLAGS="+JMsingle true" MIX_ENV=dev mix compile
+RUN ERL_FLAGS="+JMsingle true" MIX_ENV=prod mix compile
 
 # Create release
-RUN MIX_ENV=dev mix release --overwrite
+RUN MIX_ENV=prod mix release --overwrite
 
 # Stage 3: Final image
 FROM elixir:1.17-otp-27
@@ -46,16 +63,20 @@ FROM elixir:1.17-otp-27
 WORKDIR /flezha
 
 # Set environment variables
-ENV MIX_ENV=dev
+ENV MIX_ENV=prod
 
 # Create a non-root user and switch to it
-RUN addgroup --system flezha && adduser --system flezha --ingroup flezha
+RUN addgroup --system --gid 1000 flezha && adduser --system --uid 1000 --ingroup flezha flezha
 
-# Copy only the necessary files from the _build/dev/rel/flezha directory
-COPY --from=build /app/_build/dev/rel/flezha /flezha/
+# Copy only the necessary files from the _build/prod/rel/flezha directory
+COPY --from=build /app/_build/prod/rel/flezha /flezha/
 
 # Copy the Rust build artifacts to the final image
 COPY --from=build /app/cli /flezha/cli
+
+RUN mkdir -p /flezha/socket_data && \
+    chown -R flezha:flezha /flezha/socket_data && \
+    chmod -R g+rw /flezha/socket_data
 
 # Change the owner of the /flezha directory
 RUN chown -R flezha:flezha /flezha

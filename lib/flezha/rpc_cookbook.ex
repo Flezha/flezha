@@ -92,9 +92,9 @@ defmodule Flezha.Service.RpcCookbook do
     plugin_settings = atom_converter(plugin_settings)
 
     # TODO: test with wrong module and wrong settings.
-    plugin_struct = struct!(module, plugin_settings)
-
-    PluginManager.enable_plugin(plugin_struct)
+    module
+    |> struct!(plugin_settings)
+    |> PluginManager.enable_plugin()
   end
 
   defp atom_converter(orig_map) do
