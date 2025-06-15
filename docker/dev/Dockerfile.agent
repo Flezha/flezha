@@ -1,15 +1,36 @@
 # Build from the Elixir image
 FROM elixir:1.17-otp-27
 
+# Install the necessary dependencies
+RUN apt-get update && apt-get install -y \
+    libssl-dev \
+    pkg-config \
+    build-essential
+
+# Copy the current directory contents into the container at /flezha
+WORKDIR /flezha
+COPY . .
+
 # Create a non-root user and its home directory
 RUN addgroup --gid 1000 flezha && adduser --uid 1000 --gid 1000 --home /home/flezha flezha
 
-# Change the owner of the /home/flezha directory
-RUN chown -R flezha:flezha /home/flezha
+# Create home directory for the flezha user
+RUN mkdir -p /home/flezha && \
+    chown flezha:flezha /home/flezha
 
-# Switch to the flezha user before installing Rust
-USER flezha
+# Set home directory for the flezha user
 ENV HOME=/home/flezha
+
+# Switch to the root user to install Node.js and npm
+USER root    
+WORKDIR /home/flezha
+
+# Install Node.js and npm
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs
+
+# Install TypeScript globally
+RUN npm install -g typescript
 
 # Install Rust and necessary tools
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
@@ -19,28 +40,46 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
     rustup update && \
     rustup default stable
 
-# Switch to the root user to install Node.js and npm
-USER root    
+RUN mkdir -p /flezha/socket_data && \
+    chown -R flezha:flezha /flezha/socket_data && \
+    chmod -R g+rw /flezha/socket_data
 
-# Install Node.js and npm
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y nodejs
+# Set version
+ENV PROTOC_VERSION=23.4
 
-# Install TypeScript globally
-RUN npm install -g typescript
+# Install protoc
+RUN curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip \
+    && unzip protoc-${PROTOC_VERSION}-linux-x86_64.zip -d /usr/local \
+    && rm protoc-${PROTOC_VERSION}-linux-x86_64.zip
 
-# Set the working directory
-WORKDIR /flezha
-
-# Install system dependencies as root
-RUN mix local.hex --force && \
-    mix local.rebar --force
+RUN protoc --version    
 
 # Change the owner of the /flezha directory
 RUN chown -R flezha:flezha /flezha
 
-# Switch to the flezha user
-USER flezha
+# Ensure the flezha user owns the .cargo directory
+RUN mkdir -p /home/flezha/.cargo && \
+    chown -R flezha:flezha /home/flezha/.cargo && \
+    chmod -R u+rw /home/flezha/.cargo
 
-# Start the application
+# Build the CLI application
+USER flezha
+WORKDIR /flezha/cli
+RUN . "$HOME/.cargo/env" && cargo build
+
+# Set the working directory
+WORKDIR /flezha
+
+# Install system dependencies
+RUN mix local.hex --force && \
+    mix local.rebar --force
+
+# Build the Elixir application
+RUN mix deps.get && \
+    mix compile && \
+    mix release --overwrite  
+
+# Copy the    
+
+# Keep the terminal open
 CMD ["tail", "-f", "/dev/null"]
