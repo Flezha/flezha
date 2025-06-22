@@ -1,7 +1,7 @@
 import Config
 
 config :flezha,
-  testnet_enabled: true
+  testnet_enabled: false
 
 config :kafka_ex,
   brokers: [

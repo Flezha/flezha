@@ -44,6 +44,11 @@ RUN mkdir -p /flezha/socket_data && \
     chown -R flezha:flezha /flezha/socket_data && \
     chmod -R g+rw /flezha/socket_data
 
+# Build the testnet application
+WORKDIR /flezha/test/apps/testnet
+RUN npm install
+RUN npm run build
+
 # Set version
 ENV PROTOC_VERSION=23.4
 
