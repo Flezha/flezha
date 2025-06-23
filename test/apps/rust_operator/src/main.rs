@@ -6,7 +6,7 @@ use std::env;
 use flezha_operator::{
     PipelineResultType,
     PipelineStep,
-    define_pipeline_factory
+    create_pipeline_factory
 };
 
 use serde::{Serialize, Deserialize};
@@ -103,16 +103,16 @@ impl PipelineStep<CompareFilterState> for CompareFilterStep {
 }
 
 // STATE DEFINITIONS -------------------------------------------------------------------
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct DoNothingState {}
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct StoreInputState {
     binary_inputs: Vec<Vec<u8>>,
     text_inputs: Vec<String>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct CompareFilterState {
     comparable: String,
     inverted: bool,
@@ -120,36 +120,30 @@ struct CompareFilterState {
 
 // FACTORY DEFINITIONS -----------------------------------------------------------------
 fn define_factories() {
-    define_pipeline_factory! {
-        factory_id: "store_input".to_string(),
-        result_type: PipelineResultType::Forward,
-        state: StoreInputState{
+    create_pipeline_factory(
+        "store_input".to_string(),
+        PipelineResultType::Forward,
+        StoreInputState{
             binary_inputs: vec![],
             text_inputs: vec![]
         },
-        steps: [
-            StoreInputStep
-        ]
-    }
+         || vec![Box::new(StoreInputStep{})]
+    );
 
-    define_pipeline_factory! {
-        factory_id: "compare_filter".to_string(),
-        result_type: PipelineResultType::Forward,
-        state: CompareFilterState{
+    create_pipeline_factory(
+        "compare_filter".to_string(),
+        PipelineResultType::Forward,
+        CompareFilterState{
             comparable: "default".to_string(),
             inverted: false
         },
-        steps: [
-            CompareFilterStep
-        ]
-    }
+        || vec![Box::new(CompareFilterStep{})]
+    );
 
-    define_pipeline_factory! {
-        factory_id: "do_nothing".to_string(),
-        result_type: PipelineResultType::Forward,
-        state: DoNothingState{},
-        steps: [
-            DoNothingStep
-        ]
-    }
+    create_pipeline_factory(
+        "do_nothing".to_string(),
+        PipelineResultType::Forward,
+        DoNothingState{},
+        || vec![Box::new(DoNothingStep{})]
+    ); 
 }
