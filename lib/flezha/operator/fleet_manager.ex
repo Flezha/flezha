@@ -245,7 +245,7 @@ defmodule Flezha.Operator.FleetManager do
       {:ok, frame} ->
         {payloads, _buffer} = Payloader.parse_frame(frame)
 
-        [{"connect_control_channel", init_message} | bytes_rest] = payloads
+        [{"connect_control_channel", _virtual_channel, init_message} | bytes_rest] = payloads
 
         init_payload = Payloader.json_to_map(init_message)
         group_id = Map.get(init_payload, "group_id")

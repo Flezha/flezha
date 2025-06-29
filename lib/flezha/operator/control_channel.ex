@@ -108,7 +108,7 @@ defmodule Flezha.Operator.ControlChannel do
   defp handle_payload(%{buffer: buffer} = state, frame) do
     {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
 
-    Enum.each(payloads, fn {_payload_id, message} ->
+    Enum.each(payloads, fn {_payload_id, _virtual_channel, message} ->
       # Send the payload the the control unit.
       GenServer.cast(
         state.control_unit,

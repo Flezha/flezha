@@ -63,18 +63,18 @@ defmodule Flezha.Service.Payloader do
     end
   end
 
-  defp handle_incomplete_buf(buf, payload_id, frame, bytes_to_take) do
+  defp handle_incomplete_buf(buf, payload_id, virtual_channel, frame, bytes_to_take) do
     frame_size = byte_size(frame)
 
     if frame_size >= bytes_to_take do
       <<message::binary-size(bytes_to_take), bytes_left::binary>> = frame
 
-      {{:complete, {payload_id, buf <> message}}, bytes_left}
+      {{:complete, {payload_id, virtual_channel, buf <> message}}, bytes_left}
     else
       <<message::binary-size(frame_size), _bytes_left::binary>> = frame
       bytes_to_take = bytes_to_take - frame_size
 
-      {{:incomplete, {payload_id, buf <> message, bytes_to_take}}, <<>>}
+      {{:incomplete, {payload_id, virtual_channel, buf <> message, bytes_to_take}}, <<>>}
     end
   end
 
@@ -95,20 +95,22 @@ defmodule Flezha.Service.Payloader do
           {:empty, _buf} ->
             {{:empty, <<>>}, <<>>}
 
-          {:incomplete, {payload_id, message_buf, bytes_to_take}} ->
-            handle_incomplete_buf(message_buf, payload_id, frame, bytes_to_take)
+          {:incomplete, {payload_id, virtual_channel, message_buf, bytes_to_take}} ->
+            handle_incomplete_buf(message_buf, payload_id, virtual_channel, frame, bytes_to_take)
         end
     end
   end
 
   defp parse_payload_new(frame) do
     case frame do
-      <<id::binary-size(32), payload_size::64, frame_bytes::binary>> ->
+      <<id::binary-size(32), virtual_channel::binary-size(1), payload_size::64,
+        frame_bytes::binary>> ->
         payload_id_trimmed = String.trim_trailing(id)
 
         handle_incomplete_buf(
           <<>>,
           payload_id_trimmed,
+          virtual_channel,
           frame_bytes,
           payload_size
         )

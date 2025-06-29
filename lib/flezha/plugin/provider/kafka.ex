@@ -8,10 +8,11 @@ defmodule Flezha.Plugin.Provider.Kafka do
     @behaviour PluginBase
 
     @enforce_keys PipelinePlugin.default_keys() ++ [:hosts, :topic, :partition]
-    defstruct @enforce_keys ++ [
-      :conn,
-      required_acks: 1
-    ]
+    defstruct @enforce_keys ++
+                [
+                  :conn,
+                  required_acks: 1
+                ]
 
     @impl true
     def plugin_id(), do: "pipeline_kafka_producer"
@@ -63,8 +64,9 @@ defmodule Flezha.Plugin.Provider.Kafka do
               topic: settings.topic,
               partition: settings.partition,
               required_acks: settings.required_acks,
-              messages: [%KafkaEx.Protocol.Produce.Message{value: message}]},
-              worker_name: settings.conn
+              messages: [%KafkaEx.Protocol.Produce.Message{value: message}]
+            },
+            worker_name: settings.conn
           )
 
         case res do
