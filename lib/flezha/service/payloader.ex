@@ -10,7 +10,7 @@ defmodule Flezha.Service.Payloader do
     end
   end
 
-  def build_from_bin(id, message) when is_binary(id) and is_binary(message) do
+  def build_from_bin(id, virtual_channel, message) when is_binary(id) and is_binary(message) do
     # Ensure id is exactly 32 bytes.
     payload_id_padded = String.pad_trailing(id, 32)
 
@@ -24,7 +24,7 @@ defmodule Flezha.Service.Payloader do
       <<0::size(8 * (8 - byte_size(message_size_binary)))>> <> message_size_binary
 
     # Construct the payload.
-    payload_id_padded <> message_size_padded <> message
+    payload_id_padded <> <<virtual_channel>> <> message_size_padded <> message
   end
 
   # TODO: update the doc, describe what is going on.

@@ -36,6 +36,8 @@ defmodule Flezha.Operator.ControlChannel do
         payload =
           Payloader.build_from_bin(
             "control_command",
+            # TODO: Hardcoded virtual channel.
+            1,
             IO.iodata_to_binary(iodata)
           )
 

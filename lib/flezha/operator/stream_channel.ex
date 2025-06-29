@@ -113,6 +113,8 @@ defmodule Flezha.Operator.StreamChannel do
       sock,
       Payloader.build_from_bin(
         pipeline_id,
+        # TODO: Hardcoded virtual channel.
+        1,
         input_type(type) <> handling_type(handling_type) <> message
       )
     )
