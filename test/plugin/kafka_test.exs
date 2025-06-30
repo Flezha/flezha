@@ -30,7 +30,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
   test "kafka producer exec" do
     KafkaEx
-    |> expect(:produce, fn _, _, _, _ -> {:ok, :success} end)
+    |> expect(:produce, fn _, _ -> {:ok, :success} end)
 
     settings = %Flezha.Plugin.Provider.Kafka.Producer{
       group: "test_group",
