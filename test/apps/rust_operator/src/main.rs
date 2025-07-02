@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::env;
 
 use flezha_operator::{
-    PipelineResultType,
+    PipelineSettings,
     PipelineStep,
     create_pipeline_factory
 };
@@ -122,7 +122,7 @@ struct CompareFilterState {
 fn define_factories() {
     create_pipeline_factory(
         "store_input".to_string(),
-        PipelineResultType::Forward,
+        PipelineSettings::default(),
         StoreInputState{
             binary_inputs: vec![],
             text_inputs: vec![]
@@ -132,7 +132,7 @@ fn define_factories() {
 
     create_pipeline_factory(
         "compare_filter".to_string(),
-        PipelineResultType::Forward,
+        PipelineSettings::default(),
         CompareFilterState{
             comparable: "default".to_string(),
             inverted: false
@@ -142,7 +142,7 @@ fn define_factories() {
 
     create_pipeline_factory(
         "do_nothing".to_string(),
-        PipelineResultType::Forward,
+        PipelineSettings::default(),
         DoNothingState{},
         || vec![Box::new(DoNothingStep{})]
     ); 
