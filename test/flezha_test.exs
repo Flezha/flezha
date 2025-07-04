@@ -26,7 +26,7 @@ defmodule FlezhaTest do
     %{}
   end
 
-  setup context do
+  setup _context do
     on_exit(fn ->
       PipelineManager.stop_all_pipelines(@default_group)
       FleetManager.stop_group(@temp_group)
@@ -404,7 +404,7 @@ defmodule FlezhaTest do
     rem_operator_2 = NodeTestHelper.start_operator_remote(peer_node, group_id)
 
     self = self()
-    node = node()
+    _node = node()
 
     ProcessHub.Service.HookManager.register_handler(
       Identificator.hub(group_id),
