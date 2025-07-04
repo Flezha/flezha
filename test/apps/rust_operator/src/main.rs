@@ -52,47 +52,34 @@ fn std_keeper() -> thread::JoinHandle<()> {
 
 // STEP DEFINITIONS --------------------------------------------------------------------
 struct DoNothingStep;
-impl PipelineStep<DoNothingState> for DoNothingStep {
-    fn process(&mut self, input: flezha_operator::PipelineInput, _state: &mut DoNothingState) -> io::Result<flezha_operator::PipelineOutput> {
-        Ok(input.into())
+impl PipelineStep<DoNothingState, String> for DoNothingStep {
+    fn process(&mut self, input: String, _state: &mut DoNothingState) -> io::Result<String> {
+        Ok(input)
     }
 }
 
 struct StoreInputStep;
-impl PipelineStep<StoreInputState> for StoreInputStep {
-    fn process(&mut self, input: flezha_operator::PipelineInput, state: &mut StoreInputState) -> io::Result<flezha_operator::PipelineOutput> {
-        match input {
-            flezha_operator::PipelineInput::Text(text) => {
-                state.text_inputs.push(text.clone());
-                Ok(flezha_operator::PipelineOutput::Text(text))
-            }
-            flezha_operator::PipelineInput::Binary(binary) => {
-                state.binary_inputs.push(binary.clone());
-                Ok(flezha_operator::PipelineOutput::Binary(binary))
-            }
-        }
+impl PipelineStep<StoreInputState, String> for StoreInputStep {
+    fn process(&mut self, input: String, state: &mut StoreInputState) -> io::Result<String> {
+        state.text_inputs.push(input.clone());
+        Ok(input)
     }
 }
 
 struct CompareFilterStep;
-impl PipelineStep<CompareFilterState> for CompareFilterStep {
-    fn process(&mut self, input: flezha_operator::PipelineInput, state: &mut CompareFilterState) -> io::Result<flezha_operator::PipelineOutput> {
-        let text = match input {
-            flezha_operator::PipelineInput::Text(text) => text,
-            flezha_operator::PipelineInput::Binary(binary) => String::from_utf8(binary).unwrap()
-        };
-
+impl PipelineStep<CompareFilterState, String> for CompareFilterStep {
+    fn process(&mut self, input: String, state: &mut CompareFilterState) -> io::Result<String> {
         if state.inverted {
-            if state.comparable == text {
-                Ok(flezha_operator::PipelineOutput::Text("Matched".to_string()))
+            if state.comparable == input {
+                Ok(input)
             } else {
-                Ok(flezha_operator::PipelineOutput::Text(text))
+                Ok("Not matched".to_string())
             }
         } else {
-            if state.comparable == text {
-                Ok(flezha_operator::PipelineOutput::Text(text))
+            if state.comparable == input {
+                Ok(input)
             } else {
-                Ok(flezha_operator::PipelineOutput::Text("Not matched".to_string()))
+                Ok("Not matched".to_string())
             }
         }
     }
@@ -122,7 +109,7 @@ struct CompareFilterState {
 fn define_factories() {
     create_pipeline_factory(
         "store_input".to_string(),
-        PipelineSettings::default(),
+        PipelineSettings::<String>::default(),
         StoreInputState{
             binary_inputs: vec![],
             text_inputs: vec![]
@@ -132,7 +119,7 @@ fn define_factories() {
 
     create_pipeline_factory(
         "compare_filter".to_string(),
-        PipelineSettings::default(),
+        PipelineSettings::<String>::default(),
         CompareFilterState{
             comparable: "default".to_string(),
             inverted: false
@@ -142,7 +129,7 @@ fn define_factories() {
 
     create_pipeline_factory(
         "do_nothing".to_string(),
-        PipelineSettings::default(),
+        PipelineSettings::<String>::default(),
         DoNothingState{},
         || vec![Box::new(DoNothingStep{})]
     ); 
