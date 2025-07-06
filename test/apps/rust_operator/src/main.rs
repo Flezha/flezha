@@ -1,15 +1,11 @@
-use std::thread::{self};
-use std::io::{self, Read};
-use std::time::Duration;
 use std::env;
+use std::io::{self, Read};
+use std::thread::{self};
+use std::time::Duration;
 
-use flezha_operator::{
-    PipelineSettings,
-    PipelineStep,
-    create_pipeline_factory
-};
+use flezha_operator::{create_pipeline_factory, PipelineSettings, PipelineStep};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 fn main() {
     define_factories();
 
@@ -26,7 +22,7 @@ fn group() -> String {
         return args[1].clone();
     }
 
-    return "default".to_string()
+    return "default".to_string();
 }
 
 fn std_keeper() -> thread::JoinHandle<()> {
@@ -83,9 +79,7 @@ impl PipelineStep<CompareFilterState, String> for CompareFilterStep {
         }
     }
 
-    fn post_create(&mut self, _state: &mut CompareFilterState) {
-
-    }
+    fn post_create(&mut self, _state: &mut CompareFilterState) {}
 }
 
 // STATE DEFINITIONS -------------------------------------------------------------------
@@ -95,7 +89,7 @@ struct DoNothingState {}
 #[derive(Serialize, Deserialize, Clone)]
 struct StoreInputState {
     binary_inputs: Vec<Vec<u8>>,
-    text_inputs: Vec<String>
+    text_inputs: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -109,27 +103,27 @@ fn define_factories() {
     create_pipeline_factory(
         "store_input".to_string(),
         PipelineSettings::<String, StoreInputState>::default(),
-        StoreInputState{
+        StoreInputState {
             binary_inputs: vec![],
-            text_inputs: vec![]
+            text_inputs: vec![],
         },
-         || vec![Box::new(StoreInputStep{})]
+        || vec![Box::new(StoreInputStep {})],
     );
 
     create_pipeline_factory(
         "compare_filter".to_string(),
         PipelineSettings::<String, CompareFilterState>::default(),
-        CompareFilterState{
+        CompareFilterState {
             comparable: "default".to_string(),
-            inverted: false
+            inverted: false,
         },
-        || vec![Box::new(CompareFilterStep{})]
+        || vec![Box::new(CompareFilterStep {})],
     );
 
     create_pipeline_factory(
         "do_nothing".to_string(),
         PipelineSettings::<String, DoNothingState>::default(),
-        DoNothingState{},
-        || vec![Box::new(DoNothingStep{})]
-    ); 
+        DoNothingState {},
+        || vec![Box::new(DoNothingStep {})],
+    );
 }
