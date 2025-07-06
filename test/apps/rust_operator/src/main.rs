@@ -10,7 +10,6 @@ use flezha_operator::{
 };
 
 use serde::{Serialize, Deserialize};
-
 fn main() {
     define_factories();
 
