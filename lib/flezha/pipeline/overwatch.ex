@@ -152,9 +152,10 @@ defmodule Flezha.Pipeline.Overwatch do
   end
 
   @impl true
-  def handle_call({:io_in, payload}, _from, state) do
-    payload = exec_binding(state.bindings.on_input, payload)
+  def handle_call({:io_in, payload, virtual_channel}, _from, state) do
+    payload = exec_bindings(state.bindings.on_input, payload, virtual_channel)
 
+    # TODO: Perhaps pass the virtual channel to the exec_bindings function
     case payload do
       nil -> nil
       _ -> GenServer.call(state.channel, {:io_in, state.id, payload, :stream})
@@ -171,11 +172,11 @@ defmodule Flezha.Pipeline.Overwatch do
   end
 
   @impl true
-  def handle_cast({:io_in, payload}, state) do
+  def handle_cast({:io_in, payload, virtual_channel}, state) do
     # TODO: were currently hardcoding the handling_type to :stream (:task is also a option)
     # The pipeline itself should be able to define the handling type.
     # Meaning we should store the handling type in the overwatch state.
-    payload = exec_binding(state.bindings.on_input, payload)
+    payload = exec_bindings(state.bindings.on_input, payload, virtual_channel)
 
     case payload do
       nil -> nil
@@ -186,15 +187,15 @@ defmodule Flezha.Pipeline.Overwatch do
   end
 
   @impl true
-  def handle_cast({:io_out, payload}, state) do
-    exec_binding(state.bindings.on_output, payload)
+  def handle_cast({:io_out, payload, virtual_channel}, state) do
+    exec_bindings(state.bindings.on_output, payload, virtual_channel)
 
     {:noreply, state}
   end
 
   @impl true
   def handle_info({:binding_interval_exec, binding}, state) do
-    exec_binding(binding, nil)
+    PipelineBinding.exec(binding, {:binary, nil})
     add_interval_binding(binding)
 
     {:noreply, state}
@@ -359,13 +360,17 @@ defmodule Flezha.Pipeline.Overwatch do
     end
   end
 
-  defp exec_binding(bindings, payload) do
-    Enum.reduce_while(bindings, payload, fn binding, p ->
-      case PipelineBinding.exec(binding, p) do
-        {:ok, p} -> {:cont, p}
-        {:skip, :normal} -> {:halt, nil}
-        {:error, _} -> {:cont, p}
-      end
+  defp exec_bindings(bindings, payload, virtual_channel) do
+    Enum.reduce_while(bindings, payload, fn
+      binding = %{virtual_channel: vc}, p when vc === virtual_channel ->
+        case PipelineBinding.exec(binding, p) do
+          {:ok, p} -> {:cont, p}
+          {:skip, :normal} -> {:halt, nil}
+          {:error, _} -> {:cont, p}
+        end
+
+      _, p ->
+        {:cont, p}
     end)
   end
 

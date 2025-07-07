@@ -2,7 +2,7 @@ defmodule FlezhaTest.Helper.PipelineTestHelper do
   alias Flezha.Service.PipelineManager
 
   def send_sync_io(pipeline_id, group_id, msg) do
-    PipelineManager.send_io(pipeline_id, group_id, msg)
+    PipelineManager.send_io(pipeline_id, group_id, msg, 1)
 
     receive do
       {:message_forward, msg} -> msg

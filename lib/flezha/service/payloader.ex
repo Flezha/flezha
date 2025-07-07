@@ -103,8 +103,7 @@ defmodule Flezha.Service.Payloader do
 
   defp parse_payload_new(frame) do
     case frame do
-      <<id::binary-size(32), virtual_channel::binary-size(1), payload_size::64,
-        frame_bytes::binary>> ->
+      <<id::binary-size(32), virtual_channel::size(8), payload_size::64, frame_bytes::binary>> ->
         payload_id_trimmed = String.trim_trailing(id)
 
         handle_incomplete_buf(

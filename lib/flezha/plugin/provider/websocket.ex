@@ -10,13 +10,13 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   @behaviour PluginBase
 
-  @enforce_keys PipelinePlugin.default_keys() ++ [:uri]
+  @enforce_keys PipelinePlugin.required_pipeline_keys() ++ [:uri]
   defstruct @enforce_keys ++
               [
                 :conn,
                 post_connect: %{},
                 ws_opts: []
-              ]
+              ] ++ PipelinePlugin.optional_pipeline_keys()
 
   @impl true
   def plugin_id(), do: "pipeline_websocket"
@@ -34,7 +34,8 @@ defmodule Flezha.Plugin.Provider.Websocket do
         Websocket.start_link(settings.uri,
           ws_opts: settings.ws_opts,
           post_connect: settings.post_connect,
-          overwatcher_pid: self()
+          overwatcher_pid: self(),
+          virtual_channel: settings.virtual_channel
         )
 
       case res do
@@ -44,6 +45,11 @@ defmodule Flezha.Plugin.Provider.Websocket do
     end
 
     @impl true
+    @spec exec(
+            %Flezha.Plugin.Provider.Websocket{},
+            {:binary, binary()} | {:ping, binary()} | {:pong, binary()} | {:text, binary()}
+          ) ::
+            {:ok, {:binary, binary()} | {:ping, binary()} | {:pong, binary()} | {:text, binary()}}
     def exec(settings, payload) do
       Websocket.send_payload(settings.conn, payload)
 
@@ -57,7 +63,8 @@ defmodule Flezha.Plugin.Provider.Websocket do
       __MODULE__,
       %{
         post_connect: opts[:post_connect],
-        overwatcher_pid: opts[:overwatcher_pid]
+        overwatcher_pid: opts[:overwatcher_pid],
+        virtual_channel: opts[:virtual_channel]
       },
       opts[:ws_opts]
     )
@@ -98,8 +105,11 @@ defmodule Flezha.Plugin.Provider.Websocket do
   end
 
   @impl Fresh
-  def handle_in({type, message} = _p, %{overwatcher_pid: overwatcher} = state) do
-    GenServer.cast(overwatcher, {:io_in, {type, message}})
+  def handle_in(
+        {type, message} = _p,
+        %{overwatcher_pid: overwatcher, virtual_channel: vc} = state
+      ) do
+    GenServer.cast(overwatcher, {:io_in, {type, message}, vc})
 
     {:ok, state}
   end

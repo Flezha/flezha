@@ -87,12 +87,12 @@ defmodule Flezha.Operator.StreamChannel do
 
     {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
 
-    Enum.each(payloads, fn {pipeline_id, _virtual_channel, message} ->
+    Enum.each(payloads, fn {pipeline_id, virtual_channel, message} ->
       pipelines = Map.get(pipeline_mappings, pipeline_id, [])
 
       # TODO: Are we handling binary or text data?
       Enum.each(pipelines, fn pid ->
-        GenServer.cast(pid, {:io_out, {:text, message}})
+        GenServer.cast(pid, {:io_out, {:text, message}, virtual_channel})
       end)
     end)
 

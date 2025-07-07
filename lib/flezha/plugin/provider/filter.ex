@@ -6,14 +6,14 @@ defmodule Flezha.Plugin.Provider.Filter do
 
   @behaviour PluginBase
 
-  @enforce_keys PipelinePlugin.default_keys() ++
+  @enforce_keys PipelinePlugin.required_pipeline_keys() ++
                   [
                     :regex_pattern
                   ]
   defstruct @enforce_keys ++
               [
                 inverted: false
-              ]
+              ] ++ PipelinePlugin.optional_pipeline_keys()
 
   @impl true
   def plugin_id(), do: "pipeline_io_filter"

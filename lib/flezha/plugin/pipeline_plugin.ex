@@ -38,7 +38,11 @@ defmodule Flezha.Plugin.PipelinePlugin do
     end
   end
 
-  def default_keys() do
+  def required_pipeline_keys() do
     [:group, :pipeline_id, :trigger]
+  end
+
+  def optional_pipeline_keys() do
+    [virtual_channel: 1]
   end
 end

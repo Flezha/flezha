@@ -6,8 +6,8 @@ defmodule Flezha.Plugin.Provider.StdOut do
 
   @behaviour PluginBase
 
-  @enforce_keys PipelinePlugin.default_keys()
-  defstruct @enforce_keys
+  @enforce_keys PipelinePlugin.required_pipeline_keys()
+  defstruct @enforce_keys ++ PipelinePlugin.optional_pipeline_keys()
 
   @impl true
   def plugin_id(), do: "pipeline_stdout"

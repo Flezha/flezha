@@ -7,12 +7,12 @@ defmodule Flezha.Plugin.Provider.Kafka do
   defmodule Producer do
     @behaviour PluginBase
 
-    @enforce_keys PipelinePlugin.default_keys() ++ [:hosts, :topic, :partition]
+    @enforce_keys PipelinePlugin.required_pipeline_keys() ++ [:hosts, :topic, :partition]
     defstruct @enforce_keys ++
                 [
                   :conn,
                   required_acks: 1
-                ]
+                ] ++ PipelinePlugin.optional_pipeline_keys()
 
     @impl true
     def plugin_id(), do: "pipeline_kafka_producer"
