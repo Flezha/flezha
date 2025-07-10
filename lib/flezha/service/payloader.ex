@@ -28,7 +28,6 @@ defmodule Flezha.Service.Payloader do
   end
 
   # TODO: update the doc, describe what is going on.
-  # First bytes are the message prefix: FLZP
   # Second 32 bytes are the id.
   # Next 8 bytes are the message size.
   # Message itself is {message_size} bytes long.
@@ -43,7 +42,11 @@ defmodule Flezha.Service.Payloader do
         # Append to the payload list to preserve the order of the payloads.
         payloads = payloads ++ [payload]
 
-        parse_frame({:empty, <<>>}, bytes_left, payloads)
+        if bytes_left === <<>> do
+          {payloads, {:empty, <<>>}}
+        else
+          parse_frame({:empty, <<>>}, bytes_left, payloads)
+        end
 
       _ ->
         {payloads, buffer}
@@ -63,7 +66,7 @@ defmodule Flezha.Service.Payloader do
     end
   end
 
-  defp handle_incomplete_buf(buf, payload_id, virtual_channel, frame, bytes_to_take) do
+  defp handle_incomplete_msg_buf(buf, payload_id, virtual_channel, frame, bytes_to_take) do
     frame_size = byte_size(frame)
 
     if frame_size >= bytes_to_take do
@@ -74,39 +77,42 @@ defmodule Flezha.Service.Payloader do
       <<message::binary-size(frame_size), _bytes_left::binary>> = frame
       bytes_to_take = bytes_to_take - frame_size
 
-      {{:incomplete, {payload_id, virtual_channel, buf <> message, bytes_to_take}}, <<>>}
+      {{:incomplete_msg, {payload_id, virtual_channel, buf <> message, bytes_to_take}}, <<>>}
     end
   end
 
-  defp fill_buffer(buffer, <<>>), do: buffer
+  def handle_incomplete_frame_buf(buf, frame) do
+    new_frame = buf <> frame
+
+    parse_payload_new(new_frame)
+  end
+
+  defp fill_buffer(buffer, <<>>), do: {buffer, <<>>}
 
   defp fill_buffer(buffer, frame) do
-    case frame do
-      # TODO: update the prefix
-      # FLZP payload prefix means its new payload.
-      <<70, 76, 90, 80, bytes_rest::binary>> ->
-        parse_payload_new(bytes_rest)
+    case buffer do
+      # The existing buffer was empty, treat the frame as a new payload.
+      {:empty, _buf} ->
+        parse_payload_new(frame)
 
-      # The frame is not a new payload.
-      # It is a continuation of the previous payload.
-      _ ->
-        case buffer do
-          # The existing buffer was empty, drop the frame
-          {:empty, _buf} ->
-            {{:empty, <<>>}, <<>>}
+      {:incomplete_frame, buf} ->
+        handle_incomplete_frame_buf(buf, frame)
 
-          {:incomplete, {payload_id, virtual_channel, message_buf, bytes_to_take}} ->
-            handle_incomplete_buf(message_buf, payload_id, virtual_channel, frame, bytes_to_take)
-        end
+      {:incomplete_msg, {payload_id, virtual_channel, message_buf, bytes_to_take}} ->
+        handle_incomplete_msg_buf(message_buf, payload_id, virtual_channel, frame, bytes_to_take)
+
+      any ->
+        raise "Unexpected buffer state: #{inspect(any)}"
     end
   end
 
   defp parse_payload_new(frame) do
     case frame do
+      # A frame that may be missing some message bytes.
       <<id::binary-size(32), virtual_channel::size(8), payload_size::64, frame_bytes::binary>> ->
         payload_id_trimmed = String.trim_trailing(id)
 
-        handle_incomplete_buf(
+        handle_incomplete_msg_buf(
           <<>>,
           payload_id_trimmed,
           virtual_channel,
@@ -114,9 +120,9 @@ defmodule Flezha.Service.Payloader do
           payload_size
         )
 
+      # Can't be parsed as a new frame.
       _ ->
-        # The frame is malformed, drop it.
-        {{:empty, <<>>}, <<>>}
+        {{:incomplete_frame, frame}, <<>>}
     end
   end
 end

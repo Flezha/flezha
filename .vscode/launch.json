@@ -24,6 +24,24 @@
                 "test/**/test_helper.exs",
                 "test/**/*_test.exs"
             ]
+        },
+        {
+            "type": "mix_task",
+            "name": "mix test single",
+            "request": "launch",
+            "task": "test",
+            "taskArgs": [
+                "--trace",
+                "--only",
+                "flow_test"
+            ],
+            "exitAfterTaskReturns": false,
+            "startApps": true,
+            "projectDir": "${workspaceRoot}",
+            "requireFiles": [
+                "test/**/test_helper.exs",
+                "test/**/*_test.exs"
+            ]
         }
     ]
 }

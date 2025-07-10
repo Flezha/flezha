@@ -247,6 +247,8 @@ defmodule Flezha.Operator.FleetManager do
 
         [{"connect_control_channel", _virtual_channel, init_message} | bytes_rest] = payloads
 
+        bytes_rest = if bytes_rest === [], do: "", else: bytes_rest
+
         init_payload = Payloader.json_to_map(init_message)
         group_id = Map.get(init_payload, "group_id")
         factory_ids = Map.get(init_payload, "factory_ids")

@@ -195,7 +195,7 @@ defmodule Flezha.Pipeline.Overwatch do
 
   @impl true
   def handle_info({:binding_interval_exec, binding}, state) do
-    PipelineBinding.exec(binding, {:binary, nil})
+    PipelineBinding.exec(binding, {:binary, ""})
     add_interval_binding(binding)
 
     {:noreply, state}
