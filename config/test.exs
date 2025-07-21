@@ -32,7 +32,7 @@ config :flezha,
   ]
 
 config :logger,
-  level: :error
+  level: :warning
 
 config :kafka_ex,
   brokers: [

@@ -485,44 +485,101 @@ defmodule FlezhaTest do
 
   @tag :flow_test
   test "flow test" do
-    pipeline_id = "flow_test"
+    num_pipelines = 10
+    test_messages_per_pipeline = 3000
 
-    pipeline = %Flezha.Pipeline.Builder{
-      id: pipeline_id,
-      factory_id: @test_pipeline_factory
-    }
+    IO.puts("Starting flow test with #{num_pipelines} pipelines...")
 
-    {:ok, %{pid: pipeline_pid}} = PipelineManager.start_pipeline(@default_group, pipeline)
+    # Step 1: Create and start 1000 pipelines
+    {pipeline_creation_time, pipeline_infos} = :timer.tc(fn ->
+      for i <- 1..num_pipelines do
+        pipeline_id = "flow_test_#{i}"
 
-    PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
-      group: @default_group,
-      pipeline_id: pipeline_id,
-      trigger: :on_output,
-      recv_pid: self()
-    })
+        pipeline = %Flezha.Pipeline.Builder{
+          id: pipeline_id,
+          factory_id: @test_pipeline_factory
+        }
 
-    test_size = 100_000
+        case PipelineManager.start_pipeline(@default_group, pipeline) do
+          {:ok, info} -> {pipeline_id, info}
+          error ->
+            IO.puts("Failed to start pipeline #{pipeline_id}: #{inspect(error)}")
+            nil
+        end
+      end
+      |> Enum.filter(&(&1 != nil))
+    end)
 
-    for x <- 1..test_size do
-      GenServer.cast(pipeline_pid, {:io_in, {:text, "my_msg #{x}"}, 1})
-    end
+    IO.puts("Pipeline creation took: #{pipeline_creation_time / 1000} ms for #{length(pipeline_infos)} pipelines")
 
-    :timer.tc(fn ->
-      for _x <- 1..test_size do
+    # Step 2: Enable plugins for all pipelines
+    {plugin_setup_time, _} = :timer.tc(fn ->
+      Enum.each(pipeline_infos, fn {pipeline_id, _info} ->
+        # Enable BeamMsgForward plugin
+        PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
+          group: @default_group,
+          pipeline_id: pipeline_id,
+          trigger: :on_output,
+          recv_pid: self()
+        })
+
+        # Enable StdOut plugin
+        PluginManager.enable_plugin(%Flezha.Plugin.Provider.StdOut{
+          group: @default_group,
+          pipeline_id: pipeline_id,
+          trigger: :proactive
+        })
+      end)
+    end)
+
+    IO.puts("Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(pipeline_infos)} pipelines")
+
+    # Step 3: Send test messages to all pipelines
+    total_messages = length(pipeline_infos) * test_messages_per_pipeline
+    IO.puts("Sending #{total_messages} total messages (#{test_messages_per_pipeline} per pipeline)...")
+
+    {message_send_time, _} = :timer.tc(fn ->
+      Enum.each(pipeline_infos, fn {pipeline_id, %{pid: pipeline_pid}} ->
+        for msg_num <- 1..test_messages_per_pipeline do
+          GenServer.cast(pipeline_pid, {:io_in, {:text, "test_msg_#{pipeline_id}_#{msg_num}"}, 1})
+        end
+      end)
+    end)
+
+    IO.puts("Message sending took: #{message_send_time / 1000} ms")
+
+    # Step 4: Receive and measure response time
+    {message_receive_time, _} = :timer.tc(fn ->
+      for _x <- 1..total_messages do
         receive do
           {:message_forward, _msg} ->
             :ok
-            # assert msg === {:text, "my_msg #{x}"}
         after
-          2000 ->
-            assert false
+          10_000 ->
+            IO.puts("Timeout waiting for message #{_x}/#{total_messages}")
+            assert false, "Timeout waiting for messages"
         end
       end
-
-      nil
     end)
-    |> dbg()
 
-    assert true
+    IO.puts("Message processing took: #{message_receive_time / 1000} ms for #{total_messages} messages")
+
+    # Calculate throughput metrics
+    total_time = pipeline_creation_time + plugin_setup_time + message_send_time + message_receive_time
+    throughput_msgs_per_sec = (total_messages * 1_000_000) / message_receive_time
+
+    IO.puts("\n=== Performance Summary ===")
+    IO.puts("Pipelines created: #{length(pipeline_infos)}")
+    IO.puts("Total messages processed: #{total_messages}")
+    IO.puts("Pipeline creation: #{pipeline_creation_time / 1000} ms")
+    IO.puts("Plugin setup: #{plugin_setup_time / 1000} ms")
+    IO.puts("Message sending: #{message_send_time / 1000} ms")
+    IO.puts("Message processing: #{message_receive_time / 1000} ms")
+    IO.puts("Total time: #{total_time / 1000} ms")
+    IO.puts("Throughput: #{Float.round(throughput_msgs_per_sec, 2)} messages/second")
+    IO.puts("Average time per pipeline: #{(total_time / length(pipeline_infos)) / 1000} ms")
+
+    assert length(pipeline_infos) > 0, "No pipelines were created successfully"
+    assert total_messages > 0, "No messages were processed"
   end
 end
