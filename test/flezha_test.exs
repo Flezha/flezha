@@ -483,46 +483,46 @@ defmodule FlezhaTest do
     assert length(HubManager.get_hub_nodes(group_id, true)) === 1
   end
 
-  # @tag :flow_test
-  # test "flow test" do
-  #   pipeline_id = "flow_test"
+  @tag :flow_test
+  test "flow test" do
+    pipeline_id = "flow_test"
 
-  #   pipeline = %Flezha.Pipeline.Builder{
-  #     id: pipeline_id,
-  #     factory_id: @test_pipeline_factory
-  #   }
+    pipeline = %Flezha.Pipeline.Builder{
+      id: pipeline_id,
+      factory_id: @test_pipeline_factory
+    }
 
-  #   {:ok, %{pid: pipeline_pid}} = PipelineManager.start_pipeline(@default_group, pipeline)
+    {:ok, %{pid: pipeline_pid}} = PipelineManager.start_pipeline(@default_group, pipeline)
 
-  #   PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
-  #     group: @default_group,
-  #     pipeline_id: pipeline_id,
-  #     trigger: :on_output,
-  #     recv_pid: self()
-  #   })
+    PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
+      group: @default_group,
+      pipeline_id: pipeline_id,
+      trigger: :on_output,
+      recv_pid: self()
+    })
 
-  #   test_size = 100_000
+    test_size = 100_000
 
-  #   for x <- 1..test_size do
-  #     GenServer.cast(pipeline_pid, {:io_in, {:text, "my_msg #{x}"}, 1})
-  #   end
+    for x <- 1..test_size do
+      GenServer.cast(pipeline_pid, {:io_in, {:text, "my_msg #{x}"}, 1})
+    end
 
-  #   :timer.tc(fn ->
-  #     for x <- 1..test_size do
-  #       receive do
-  #         {:message_forward, msg} ->
-  #           :ok
-  #           # assert msg === {:text, "my_msg #{x}"}
-  #       after
-  #         2000 ->
-  #           assert false
-  #       end
-  #     end
+    :timer.tc(fn ->
+      for _x <- 1..test_size do
+        receive do
+          {:message_forward, _msg} ->
+            :ok
+            # assert msg === {:text, "my_msg #{x}"}
+        after
+          2000 ->
+            assert false
+        end
+      end
 
-  #     nil
-  #   end)
-  #   |> dbg()
+      nil
+    end)
+    |> dbg()
 
-  #   assert true
-  # end
+    assert true
+  end
 end
