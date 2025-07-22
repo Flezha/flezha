@@ -486,11 +486,10 @@ defmodule FlezhaTest do
   @tag :flow_test
   test "flow test" do
     num_pipelines = 10
-    test_messages_per_pipeline = 100_000
+    test_messages_per_pipeline = 100000
 
     IO.puts("Starting flow test with #{num_pipelines} pipelines...")
 
-    # Step 1: Create and start 1000 pipelines
     {pipeline_creation_time, pipeline_infos} = :timer.tc(fn ->
       for i <- 1..num_pipelines do
         pipeline_id = "flow_test_#{i}"
