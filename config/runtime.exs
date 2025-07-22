@@ -39,6 +39,9 @@ config :flezha,
   # The node host name. For Kubernetes, it is the Pod IP.
   node_host_name: System.get_env("FLEZHA_NODE_HOST", "127.0.0.1"),
 
+  # Number of concurrent channels to use for unix domain sockets.
+  concurrent_channel_count: System.get_env("FLEZHA_CONCURRENT_CHANNEL_COUNT", "0") |> String.to_integer(),
+
   # ------------------------------------------------------------------------------------------------
   # Manual cluster discovery.
 

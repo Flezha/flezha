@@ -1,12 +1,12 @@
 defmodule Flezha.Operator.StreamSup do
-  alias Flezha.Service.ConcurrencyMapper
+  alias Flezha.Service.ConfigManager
   alias Flezha.Operator.StreamChannel
   alias Flezha.Service.Identificator
 
   use Supervisor
 
   def stream_specs(operator_id, type) do
-    for x <- 1..ConcurrencyMapper.concurrent_entity_count() do
+    for x <- 1..ConfigManager.concurrent_channel_count() do
       id =
         case type do
           :primary -> Identificator.stream_channel_primary(operator_id, x)

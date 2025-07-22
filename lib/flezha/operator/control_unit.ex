@@ -1,7 +1,7 @@
 defmodule Flezha.Operator.ControlUnit do
   alias Flezha.Service.Identificator
   alias Flezha.Operator.ControlChannel
-  alias Flezha.Service.ConcurrencyMapper
+  alias Flezha.Service.ConfigManager
 
   use GenServer
 
@@ -72,7 +72,7 @@ defmodule Flezha.Operator.ControlUnit do
 
   @impl true
   def handle_call(:command_sockets_connect, from, state) do
-    sockets_count = ConcurrencyMapper.concurrent_entity_count()
+    sockets_count = ConfigManager.concurrent_channel_count()
 
     {:ok, ref} =
       ControlChannel.send_control(

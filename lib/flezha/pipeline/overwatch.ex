@@ -1,6 +1,6 @@
 defmodule Flezha.Pipeline.Overwatch do
   alias Flezha.Service.HubManager
-  alias Flezha.Service.ConcurrencyMapper
+  alias Flezha.Service.ConfigManager
   alias Flezha.Operator.StreamSup
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
@@ -298,7 +298,7 @@ defmodule Flezha.Pipeline.Overwatch do
     pipeline_int = String.to_charlist(pipeline_id) |> Enum.sum()
 
     # Pick the channel index based on the channel_name_int.
-    count = ConcurrencyMapper.concurrent_entity_count()
+    count = ConfigManager.concurrent_channel_count()
     channel_index = rem(pipeline_int, count)
 
     StreamSup.stream_ids(operator_id, :primary) |> Enum.at(channel_index)
