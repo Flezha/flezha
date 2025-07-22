@@ -550,13 +550,13 @@ defmodule FlezhaTest do
 
     # Step 4: Receive and measure response time
     {message_receive_time, _} = :timer.tc(fn ->
-      for _x <- 1..total_messages do
+      for x <- 1..total_messages do
         receive do
           {:message_forward, _msg} ->
             :ok
         after
           10_000 ->
-            IO.puts("Timeout waiting for message #{_x}/#{total_messages}")
+            IO.puts("Timeout waiting for message #{x}/#{total_messages}")
             assert false, "Timeout waiting for messages"
         end
       end
