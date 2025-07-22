@@ -485,8 +485,8 @@ defmodule FlezhaTest do
 
   @tag :flow_test
   test "flow test" do
-    num_pipelines = 100
-    test_messages_per_pipeline = 10000
+    num_pipelines = 10
+    test_messages_per_pipeline = 100_000
 
     IO.puts("Starting flow test with #{num_pipelines} pipelines...")
 
