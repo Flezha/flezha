@@ -3,17 +3,46 @@
 ### 1/10k
 Pipelines created: 1
 Total messages processed: 10000
-Pipeline creation: 11.81 ms
-Plugin setup: 17.728 ms
-Message sending: 10.487 ms
-Message processing: 306.824 ms
-Total time: 346.849 ms
-Throughput: 32591.97 messages/second
-Average time per pipeline: 346.849 ms
+Pipeline creation: 29.405 ms
+Plugin setup: 16.8 ms
+Message sending: 18.141 ms
+Message processing: 253.284 ms
+Total time: 317.63 ms
+Throughput: 39481.37 messages/second
+Average time per pipeline: 317.63 ms
 
 ### 10/10k
-fails timeout...
+Pipelines created: 10
+Total messages processed: 100000
+Pipeline creation: 41.22 ms
+Plugin setup: 13.765 ms
+Message sending: 324.687 ms
+Message processing: 1432.709 ms
+Total time: 1812.381 ms
+Throughput: 69797.84 messages/second
+Average time per pipeline: 181.2381 ms
 
+### 100/10k
+Pipelines created: 100
+Total messages processed: 1000000
+Pipeline creation: 129.656 ms
+Plugin setup: 23.057 ms
+Message sending: 2811.538 ms
+Message processing: 18302.149 ms
+Total time: 21266.4 ms
+Throughput: 54638.39 messages/second
+Average time per pipeline: 212.664 ms
+
+### 10/100k
+Pipelines created: 10
+Total messages processed: 1000000
+Pipeline creation: 36.673 ms
+Plugin setup: 21.923 ms
+Message sending: 3418.824 ms
+Message processing: 19198.176 ms
+Total time: 22675.596 ms
+Throughput: 52088.28 messages/second
+Average time per pipeline: 2267.5596 ms
 
 ## old impl:
 
