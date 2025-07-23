@@ -3,6 +3,7 @@ use std::io::{self, Read};
 use std::thread::{self};
 use std::time::Duration;
 
+use flezha_operator::computation::ComputationError;
 use flezha_operator::{register_factory, ComputationSettings, ComputationHandler};
 
 use serde::{Deserialize, Serialize};
@@ -47,23 +48,23 @@ fn std_keeper() -> thread::JoinHandle<()> {
 
 // STEP DEFINITIONS --------------------------------------------------------------------
 struct DoNothingComputation;
-impl ComputationHandler<DoNothingState, String> for DoNothingComputation {
-    fn process(&mut self, input: String, _state: &mut DoNothingState) -> io::Result<String> {
+impl ComputationHandler<DoNothingState, String, String> for DoNothingComputation {
+    fn process(&mut self, input: String, _state: &mut DoNothingState) -> Result<String, ComputationError> {
         Ok(input)
     }
 }
 
 struct StoreInputComputation;
-impl ComputationHandler<StoreInputState, String> for StoreInputComputation {
-    fn process(&mut self, input: String, state: &mut StoreInputState) -> io::Result<String> {
+impl ComputationHandler<StoreInputState, String, String> for StoreInputComputation {
+    fn process(&mut self, input: String, state: &mut StoreInputState) -> Result<String, ComputationError> {
         state.text_inputs.push(input.clone());
         Ok(input)
     }
 }
 
 struct CompareFilterComputation;
-impl ComputationHandler<CompareFilterState, String> for CompareFilterComputation {
-    fn process(&mut self, input: String, state: &mut CompareFilterState) -> io::Result<String> {
+impl ComputationHandler<CompareFilterState, String, String> for CompareFilterComputation {
+    fn process(&mut self, input: String, state: &mut CompareFilterState) -> Result<String, ComputationError> {
         if state.inverted {
             if state.comparable == input {
                 Ok(input)
@@ -102,7 +103,7 @@ struct CompareFilterState {
 fn define_factories() {
     register_factory(
         "store_input".to_string(),
-        ComputationSettings::<String, StoreInputState>::default(),
+        ComputationSettings::<StoreInputState, String, String>::default(),
         StoreInputState {
             binary_inputs: vec![],
             text_inputs: vec![],
@@ -112,7 +113,7 @@ fn define_factories() {
 
     register_factory(
         "compare_filter".to_string(),
-        ComputationSettings::<String, CompareFilterState>::default(),
+        ComputationSettings::<CompareFilterState, String, String>::default(),
         CompareFilterState {
             comparable: "default".to_string(),
             inverted: false,
@@ -122,7 +123,7 @@ fn define_factories() {
 
     register_factory(
         "do_nothing".to_string(),
-        ComputationSettings::<String, DoNothingState>::default(),
+        ComputationSettings::<DoNothingState, String, String>::default(),
         DoNothingState {},
         || Box::new(DoNothingComputation {}),
     );
