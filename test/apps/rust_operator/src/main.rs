@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use std::thread::{self};
 use std::time::Duration;
 
-use flezha_operator::{create_pipeline_factory, PipelineSettings, PipelineStep};
+use flezha_operator::{register_factory, ComputationSettings, PipelineStep};
 
 use serde::{Deserialize, Serialize};
 fn main() {
@@ -100,9 +100,9 @@ struct CompareFilterState {
 
 // FACTORY DEFINITIONS -----------------------------------------------------------------
 fn define_factories() {
-    create_pipeline_factory(
+    register_factory(
         "store_input".to_string(),
-        PipelineSettings::<String, StoreInputState>::default(),
+        ComputationSettings::<String, StoreInputState>::default(),
         StoreInputState {
             binary_inputs: vec![],
             text_inputs: vec![],
@@ -110,9 +110,9 @@ fn define_factories() {
         || vec![Box::new(StoreInputStep {})],
     );
 
-    create_pipeline_factory(
+    register_factory(
         "compare_filter".to_string(),
-        PipelineSettings::<String, CompareFilterState>::default(),
+        ComputationSettings::<String, CompareFilterState>::default(),
         CompareFilterState {
             comparable: "default".to_string(),
             inverted: false,
@@ -120,9 +120,9 @@ fn define_factories() {
         || vec![Box::new(CompareFilterStep {})],
     );
 
-    create_pipeline_factory(
+    register_factory(
         "do_nothing".to_string(),
-        PipelineSettings::<String, DoNothingState>::default(),
+        ComputationSettings::<String, DoNothingState>::default(),
         DoNothingState {},
         || vec![Box::new(DoNothingStep {})],
     );
