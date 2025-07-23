@@ -30,13 +30,13 @@ defmodule Flezha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:get_pipeline_state, pipeline_id}, from, state) do
+  def handle_call({:get_pipeline_state, computation_id}, from, state) do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
         {
           :get_pipeline_state,
-          %OperatorCommands.ComputationState{pipeline_id: pipeline_id}
+          %OperatorCommands.ComputationState{computation_id: computation_id}
         }
       )
 
@@ -100,7 +100,7 @@ defmodule Flezha.Operator.ControlUnit do
       end
 
     command = %OperatorCommands.AddComputation{
-      pipeline_id: pipeline.id,
+      computation_id: pipeline.id,
       factory_id: pipeline.factory_id,
       init_values: init_values
     }
@@ -111,13 +111,13 @@ defmodule Flezha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:stop_pipeline, pipeline_id}, from, state) do
+  def handle_call({:stop_pipeline, computation_id}, from, state) do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
         {
           :rem_pipeline,
-          %OperatorCommands.RemComputation{pipeline_id: pipeline_id}
+          %OperatorCommands.RemComputation{computation_id: computation_id}
         }
       )
 

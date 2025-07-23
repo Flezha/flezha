@@ -8,7 +8,7 @@ defmodule FlezhaTest.Plugin.FilterTest do
       regex_pattern: "^{\"event\": \"heartbeat\"}$",
       inverted: false,
       group: "test_group",
-      pipeline_id: "test_pipeline",
+      computation_id: "test_pipeline",
       trigger: :test
     }
 
@@ -35,7 +35,7 @@ defmodule FlezhaTest.Plugin.FilterTest do
       regex_pattern: "^{\"event\": \"heartbeat\"}$",
       inverted: true,
       group: "test_group",
-      pipeline_id: "test_pipeline",
+      computation_id: "test_pipeline",
       trigger: :test
     }
 

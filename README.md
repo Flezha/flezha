@@ -49,7 +49,7 @@ _build/dev/rel/flezha/bin/pipeline stop my_pipeline
 ### Enabling websocket plugin for pipeline. 
 ```bash
 _build/dev/rel/flezha/bin/plugin enable pipeline_websocket  --settings='{
-  "pipeline_id": "my_pipeline",
+  "computation_id": "my_pipeline",
   "trigger": "proactive",
   "uri": "ws://localhost:4500",
   "post_connect": {
@@ -63,7 +63,7 @@ _build/dev/rel/flezha/bin/plugin enable pipeline_websocket  --settings='{
 
 ```bash
 _build/dev/rel/flezha/bin/plugin enable pipeline_stdout  --settings='{
-  "pipeline_id": "my_pipeline",
+  "computation_id": "my_pipeline",
   "trigger": "on_out",
 }'
 ```

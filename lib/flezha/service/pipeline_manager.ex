@@ -18,16 +18,16 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
-  def get_pipeline_pid(group_id, pipeline_id) do
-    case HubManager.get_pid(group_id, pipeline_id) do
+  def get_pipeline_pid(group_id, computation_id) do
+    case HubManager.get_pid(group_id, computation_id) do
       {:ok, pid} -> {:ok, pid}
       {:error, "no pid found"} -> {:error, "pipeline not found"}
       err -> err
     end
   end
 
-  def get_overwatch_state(group_id, pipeline_id) do
-    case get_pipeline_pid(group_id, pipeline_id) do
+  def get_overwatch_state(group_id, computation_id) do
+    case get_pipeline_pid(group_id, computation_id) do
       {:ok, pipeline_pid} ->
         {:ok, GenServer.call(pipeline_pid, :get_overwatch_state)}
 
@@ -56,8 +56,8 @@ defmodule Flezha.Service.ComputationManager do
   Removes a pipeline.
   """
   @spec stop_pipeline(String.t(), String.t()) :: :ok | {:error, String.t()}
-  def stop_pipeline(group_id, pipeline_id) do
-    case get_pipeline_pid(group_id, pipeline_id) do
+  def stop_pipeline(group_id, computation_id) do
+    case get_pipeline_pid(group_id, computation_id) do
       {:ok, pipeline_pid} ->
         case GenServer.call(pipeline_pid, :stop_pipeline) do
           :ok -> :ok
@@ -72,7 +72,7 @@ defmodule Flezha.Service.ComputationManager do
   def stop_all_pipelines(group_id) do
     pipelines = HubManager.get_all_pipelines(group_id)
 
-    Enum.map(pipelines, fn {_pipeline_id, pipeline_pid} ->
+    Enum.map(pipelines, fn {_computation_id, pipeline_pid} ->
       if Process.alive?(pipeline_pid) do
         GenServer.call(pipeline_pid, :stop_pipeline)
       else
@@ -81,8 +81,8 @@ defmodule Flezha.Service.ComputationManager do
     end)
   end
 
-  def send_io(pipeline_id, group_id, message, virtual_channel) do
-    case get_pipeline_pid(group_id, pipeline_id) do
+  def send_io(computation_id, group_id, message, virtual_channel) do
+    case get_pipeline_pid(group_id, computation_id) do
       {:ok, pipeline_pid} ->
         GenServer.cast(pipeline_pid, {:io_in, message, virtual_channel})
 
@@ -91,8 +91,8 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
-  def create_snapshot(group_id, pipeline_id) do
-    case get_pipeline_pid(group_id, pipeline_id) do
+  def create_snapshot(group_id, computation_id) do
+    case get_pipeline_pid(group_id, computation_id) do
       {:ok, pipeline_pid} ->
         GenServer.call(pipeline_pid, :create_snapshot)
 
@@ -122,24 +122,24 @@ defmodule Flezha.Service.ComputationManager do
       |> ProcessHub.await()
 
     case result do
-      {:ok, {_pipeline_id, [{node, pid}]}} ->
+      {:ok, {_computation_id, [{node, pid}]}} ->
         {:ok, operator_id} = GenServer.call(pid, :registry_operator_set)
 
         {:ok,
          %{
-           pipeline_id: pipeline.id,
+           computation_id: pipeline.id,
            operator_id: operator_id,
            node: node,
            pid: pid
          }}
 
       {:error, reason} ->
-        {{pipeline_id, node, {error_msg, _}}, _partial_success} = reason
+        {{computation_id, node, {error_msg, _}}, _partial_success} = reason
 
         {
           :error,
           %{
-            pipeline_id: pipeline_id,
+            computation_id: computation_id,
             node: node,
             reason: error_msg
           }
@@ -147,15 +147,15 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
-  def exist?(group_id, pipeline_id) do
-    case get_pipeline_pid(group_id, pipeline_id) do
+  def exist?(group_id, computation_id) do
+    case get_pipeline_pid(group_id, computation_id) do
       {:ok, _pid} -> true
       {:error, _reason} -> false
     end
   end
 
-  def get_pipeline_state(group_id, pipeline_id) do
-    case get_pipeline_pid(group_id, pipeline_id) do
+  def get_pipeline_state(group_id, computation_id) do
+    case get_pipeline_pid(group_id, computation_id) do
       {:ok, pipeline_pid} -> GenServer.call(pipeline_pid, :get_pipeline_state)
       err -> err
     end

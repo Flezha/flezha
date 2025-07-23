@@ -9,14 +9,14 @@ defmodule Flezha.Service.RpcCookbook do
   alias Flezha.Service.ConfigManager
 
   @doc "Starts a pipeline."
-  def pipeline_start(group_id, pipeline_id, factory_id, init_values, opts \\ []) do
+  def pipeline_start(group_id, computation_id, factory_id, init_values, opts \\ []) do
     opts =
       Payloader.json_to_map(opts)
       |> atom_converter()
       |> Keyword.new()
 
     pipeline = %Flezha.Computation.Builder{
-      id: pipeline_id,
+      id: computation_id,
       factory_id: factory_id,
       init_values: Payloader.json_to_map(init_values),
       opts: opts
@@ -29,16 +29,16 @@ defmodule Flezha.Service.RpcCookbook do
   end
 
   @doc "Stops a pipelinene."
-  def pipeline_stop(group_id, pipeline_id) do
-    case ComputationManager.stop_pipeline(group_id(group_id), pipeline_id) do
+  def pipeline_stop(group_id, computation_id) do
+    case ComputationManager.stop_pipeline(group_id(group_id), computation_id) do
       :ok -> IO.puts("Computation has been stopped")
       {:error, reason} -> IO.puts("Error stopping pipeline: #{inspect(reason)}")
     end
   end
 
   @doc "Get pipeline state."
-  def pipeline_state(group_id, pipeline_id) do
-    result = ComputationManager.get_pipeline_state(group_id(group_id), pipeline_id)
+  def pipeline_state(group_id, computation_id) do
+    result = ComputationManager.get_pipeline_state(group_id(group_id), computation_id)
 
     message =
       case result do

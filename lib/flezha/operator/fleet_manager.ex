@@ -323,7 +323,7 @@ defmodule Flezha.Operator.FleetManager do
 
     # Let all overwatchers migrate their state to the new operator.
     HubManager.operator_pipelines(group_id, old_operator)
-    |> Enum.each(fn {_pipeline_id, [{_node, pipeline_pid}]} ->
+    |> Enum.each(fn {_computation_id, [{_node, pipeline_pid}]} ->
       GenServer.call(pipeline_pid, {:operator_migrate, new_operator})
     end)
 
@@ -338,8 +338,8 @@ defmodule Flezha.Operator.FleetManager do
     # overwatchers pids.
     overwatchers =
       HubManager.operator_pipelines(group_id, new_operator)
-      |> Enum.map(fn {pipeline_id, node_pids} ->
-        {pipeline_id, Enum.map(node_pids, &elem(&1, 1))}
+      |> Enum.map(fn {computation_id, node_pids} ->
+        {computation_id, Enum.map(node_pids, &elem(&1, 1))}
       end)
 
     stream_channels =

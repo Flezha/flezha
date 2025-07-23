@@ -111,7 +111,7 @@ defmodule Flezha.Computation.Overwatch do
 
   @impl true
   def handle_call(:get_pipeline_state, _from, state) do
-    command = %OperatorCommands.ComputationState{pipeline_id: state.id}
+    command = %OperatorCommands.ComputationState{computation_id: state.id}
 
     # TODO: any rpc command may timeout causing the pipeline overwatch to crash.
     # We should handle this in the control unit.
@@ -212,8 +212,8 @@ defmodule Flezha.Computation.Overwatch do
     {:noreply, %__MODULE__{state | snapshot: snapshot}}
   end
 
-  defp create_snapshot(pipeline_id, operator_id) do
-    command = %OperatorCommands.ComputationState{pipeline_id: pipeline_id}
+  defp create_snapshot(computation_id, operator_id) do
+    command = %OperatorCommands.ComputationState{computation_id: computation_id}
 
     case send_control(operator_id, {:pipeline_state, command}) do
       {:ok, snapshot} ->
@@ -241,7 +241,7 @@ defmodule Flezha.Computation.Overwatch do
   @impl true
   def alter_handover_state(state, {handover_state, pipe_serialized}) do
     command = %OperatorCommands.MigrationDeserialization{
-      pipeline_id: state.id,
+      computation_id: state.id,
       factory_id: Map.get(handover_state, :factory_id),
       serialized_state: pipe_serialized
     }
@@ -293,9 +293,9 @@ defmodule Flezha.Computation.Overwatch do
 
   defp schedule_snapshot(_snapshot_interval), do: nil
 
-  defp attach_channel(pipeline_id, operator_id) do
-    # Get numeric representation of the pipeline_id string.
-    pipeline_int = String.to_charlist(pipeline_id) |> Enum.sum()
+  defp attach_channel(computation_id, operator_id) do
+    # Get numeric representation of the computation_id string.
+    pipeline_int = String.to_charlist(computation_id) |> Enum.sum()
 
     # Pick the channel index based on the channel_name_int.
     count = ConfigManager.concurrent_channel_count()
@@ -341,8 +341,8 @@ defmodule Flezha.Computation.Overwatch do
     end
   end
 
-  defp serialize_pipeline_sdk(operator_id, pipeline_id) do
-    command = %OperatorCommands.MigrationSerialization{pipeline_id: pipeline_id}
+  defp serialize_pipeline_sdk(operator_id, computation_id) do
+    command = %OperatorCommands.MigrationSerialization{computation_id: computation_id}
 
     result = send_control(operator_id, {:migration_serialization, command})
 

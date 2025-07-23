@@ -7,14 +7,14 @@ defmodule FlezhaTest.RpcCookbookServiceTest do
   end
 
   test "rpc start worker" do
-    pipeline_id = "test_rpc_start_comp"
+    computation_id = "test_rpc_start_comp"
     factory_id = "increment_state"
     {:ok, init_values} = Jason.encode(%{"value" => 100})
 
     result =
       Flezha.Service.RpcCookbook.worker_start(
         @default_group,
-        pipeline_id,
+        computation_id,
         factory_id,
         init_values
       )
@@ -23,12 +23,12 @@ defmodule FlezhaTest.RpcCookbookServiceTest do
   end
 
   test "rpc stop worker" do
-    pipeline_id = "test_rpc_stop_comp"
+    computation_id = "test_rpc_stop_comp"
 
-    FlezhaTest.Fixtures.Worker.get(pipeline_id, nil)
+    FlezhaTest.Fixtures.Worker.get(computation_id, nil)
     |> FlezhaTest.Fixtures.Worker.start()
 
-    result1 = Flezha.Service.RpcCookbook.worker_stop(@default_group, pipeline_id)
+    result1 = Flezha.Service.RpcCookbook.worker_stop(@default_group, computation_id)
     result2 = Flezha.Service.RpcCookbook.worker_stop(@default_group, "non_existent")
 
     assert result1 === :ok
@@ -38,19 +38,19 @@ defmodule FlezhaTest.RpcCookbookServiceTest do
   end
 
   test "rpc no operator specified" do
-    pipeline_id = "test_rpc_no_operator"
+    computation_id = "test_rpc_no_operator"
 
     result1 =
-      Flezha.Service.RpcCookbook.worker_start("", pipeline_id, @factory_do_nothing, "{}")
+      Flezha.Service.RpcCookbook.worker_start("", computation_id, @factory_do_nothing, "{}")
 
-    result2 = Flezha.Service.RpcCookbook.worker_stop("", pipeline_id)
+    result2 = Flezha.Service.RpcCookbook.worker_stop("", computation_id)
 
     assert elem(result1, 0) === :ok
     assert result2 === :ok
   end
 
   test "rpc add io" do
-    pipeline_id = "test_rpc_add_io"
+    computation_id = "test_rpc_add_io"
     io_mode = :input
     io_params_json = ~s(
       {
@@ -71,14 +71,14 @@ defmodule FlezhaTest.RpcCookbookServiceTest do
       }
     )
 
-    NodeTestHelper.test_worker(pipeline_id)
+    NodeTestHelper.test_worker(computation_id)
 
     opts = [handling_type: :task]
 
     result1 =
       Flezha.Service.RpcCookbook.add_io(
         @default_group,
-        pipeline_id,
+        computation_id,
         io_params_json,
         io_mode,
         opts

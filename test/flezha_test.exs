@@ -51,50 +51,50 @@ defmodule FlezhaTest do
     {status, info} = ComputationManager.start_pipeline(@default_group, pipeline)
 
     assert status === :ok
-    assert info[:pipeline_id] === "default_pipeline_test"
+    assert info[:computation_id] === "default_pipeline_test"
     assert info[:node] === @node_name
     assert is_pid(info[:pid])
     assert is_binary(info[:operator_id])
   end
 
   test "pipeline removing" do
-    pipeline_id = "default_pipeline_stop_test"
+    computation_id = "default_pipeline_stop_test"
 
     {:ok, %{pid: _pipeline_pid}} =
-      pipeline_id
+      computation_id
       |> ComputationFixture.get(@test_store_input_factory)
       |> ComputationFixture.start()
 
-    assert :ok === ComputationManager.stop_pipeline(@default_group, pipeline_id)
+    assert :ok === ComputationManager.stop_pipeline(@default_group, computation_id)
 
     # TODO: add hook instead to listen to process removal.
     Process.sleep(100)
 
-    assert ComputationManager.exist?(@default_group, pipeline_id) === false
+    assert ComputationManager.exist?(@default_group, computation_id) === false
   end
 
   test "pipeline adding non existing factory" do
-    pipeline_id = "non_existing_factory_err"
+    computation_id = "non_existing_factory_err"
 
     pipeline = %Flezha.Computation.Builder{
-      id: pipeline_id,
+      id: computation_id,
       factory_id: "non_existing_factory"
     }
 
-    {status, %{pipeline_id: pid, node: node, reason: reason}} =
+    {status, %{computation_id: pid, node: node, reason: reason}} =
       ComputationManager.start_pipeline(@default_group, pipeline)
 
     assert status === :error
-    assert pid === pipeline_id
+    assert pid === computation_id
     assert node === @node_name
     assert reason === "Factory with id non_existing_factory does not exist"
   end
 
   test "websocket plugin connection start" do
-    pipeline_id = "websocket_plugin_test"
+    computation_id = "websocket_plugin_test"
 
     pipeline = %Flezha.Computation.Builder{
-      id: pipeline_id,
+      id: computation_id,
       factory_id: @test_pipeline_factory
     }
 
@@ -104,7 +104,7 @@ defmodule FlezhaTest do
     res =
       PluginManager.enable_plugin(%Flezha.Plugin.Provider.Websocket{
         group: @default_group,
-        pipeline_id: pipeline_id,
+        computation_id: computation_id,
         uri: @testnet_ws_uri,
         trigger: :proactive,
         post_connect: %{
@@ -127,10 +127,10 @@ defmodule FlezhaTest do
   end
 
   test "beam msg forward plugin connection start" do
-    pipeline_id = "beam_msg_forw_plugin_test"
+    computation_id = "beam_msg_forw_plugin_test"
 
     pipeline = %Flezha.Computation.Builder{
-      id: pipeline_id,
+      id: computation_id,
       factory_id: @test_pipeline_factory
     }
 
@@ -139,7 +139,7 @@ defmodule FlezhaTest do
     res =
       PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
         group: @default_group,
-        pipeline_id: pipeline_id,
+        computation_id: computation_id,
         trigger: :on_output,
         recv_pid: self()
       })
@@ -148,10 +148,10 @@ defmodule FlezhaTest do
   end
 
   test "pipeline flow generation -> beam msg forward" do
-    pipeline_id = "data_flow_test"
+    computation_id = "data_flow_test"
 
     pipeline = %Flezha.Computation.Builder{
-      id: pipeline_id,
+      id: computation_id,
       factory_id: @test_compare_filter_factory,
       init_values: %{"comparable" => "hello world", "inverted" => false}
     }
@@ -160,14 +160,14 @@ defmodule FlezhaTest do
 
     PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
       group: @default_group,
-      pipeline_id: pipeline_id,
+      computation_id: computation_id,
       trigger: :on_output,
       recv_pid: self()
     })
 
     PluginManager.enable_plugin(%Flezha.Plugin.Provider.Websocket{
       group: @default_group,
-      pipeline_id: pipeline_id,
+      computation_id: computation_id,
       trigger: :proactive,
       uri: @testnet_ws_uri,
       post_connect: %{
@@ -198,18 +198,18 @@ defmodule FlezhaTest do
 
   @tag :get_pipeline_state
   test "get pipeline state" do
-    pipeline_id = "get_state_test"
+    computation_id = "get_state_test"
 
     {:ok, %{pid: _pipeline_pid}} =
-      pipeline_id
+      computation_id
       |> ComputationFixture.get(@test_store_input_factory)
       |> ComputationFixture.start()
       |> ComputationFixture.attach_output_msg()
 
-    ComputationTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "state_1"})
-    ComputationTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "state_2"})
+    ComputationTestHelper.send_sync_io(computation_id, @default_group, {:text, "state_1"})
+    ComputationTestHelper.send_sync_io(computation_id, @default_group, {:text, "state_2"})
 
-    {:ok, json_state} = ComputationManager.get_pipeline_state(@default_group, pipeline_id)
+    {:ok, json_state} = ComputationManager.get_pipeline_state(@default_group, computation_id)
     pipeline_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert pipeline_state === %{
@@ -227,16 +227,16 @@ defmodule FlezhaTest do
 
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
-    pipeline_id = "pipeline_migration_test"
+    computation_id = "pipeline_migration_test"
 
     {:ok, %{pid: _pipeline_pid, node: _pnode}} =
-      pipeline_id
+      computation_id
       |> ComputationFixture.get(@test_store_input_factory)
       |> ComputationFixture.start()
       |> ComputationFixture.attach_output_msg()
 
-    ComputationTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "test_state_1"})
-    ComputationTestHelper.send_sync_io(pipeline_id, @default_group, {:text, "test_state_2"})
+    ComputationTestHelper.send_sync_io(computation_id, @default_group, {:text, "test_state_1"})
+    ComputationTestHelper.send_sync_io(computation_id, @default_group, {:text, "test_state_2"})
 
     test_state = %{
       "binary_inputs" => [],
@@ -245,12 +245,12 @@ defmodule FlezhaTest do
 
     PluginManager.enable_plugin(%Flezha.Plugin.Provider.StdOut{
       group: @default_group,
-      pipeline_id: pipeline_id,
+      computation_id: computation_id,
       trigger: :proactive
     })
 
-    {:ok, json_state} = ComputationManager.get_pipeline_state(@default_group, pipeline_id)
-    {:ok, old_overwatch_state} = ComputationManager.get_overwatch_state(@default_group, pipeline_id)
+    {:ok, json_state} = ComputationManager.get_pipeline_state(@default_group, computation_id)
+    {:ok, old_overwatch_state} = ComputationManager.get_overwatch_state(@default_group, computation_id)
     pipeline_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert pipeline_state === test_state
@@ -260,8 +260,8 @@ defmodule FlezhaTest do
     # TODO: add hook here instead
     Process.sleep(500)
 
-    {:ok, json_state} = ComputationManager.get_pipeline_state(@default_group, pipeline_id)
-    {:ok, new_overwatch_state} = ComputationManager.get_overwatch_state(@default_group, pipeline_id)
+    {:ok, json_state} = ComputationManager.get_pipeline_state(@default_group, computation_id)
+    {:ok, new_overwatch_state} = ComputationManager.get_overwatch_state(@default_group, computation_id)
     pipeline_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert pipeline_state === test_state
@@ -282,8 +282,8 @@ defmodule FlezhaTest do
   @tag :operator_disconnect_migrate_op
   test "operator disconnect migrate op" do
     group_id = @temp_group
-    pipeline_id_1 = "pipeline_1"
-    pipeline_id_2 = "pipeline_2"
+    computation_id_1 = "pipeline_1"
+    computation_id_2 = "pipeline_2"
 
     # Start 2 operators under the same group.
     operator_id_1 = NodeTestHelper.start_operator(group_id)
@@ -291,22 +291,22 @@ defmodule FlezhaTest do
 
     # Start a few pipelines and store some state on them.
     {:ok, %{pid: _pipeline_pid_1, operator_id: pipe1_op}} =
-      pipeline_id_1
+      computation_id_1
       |> ComputationFixture.get(@test_store_input_factory)
       |> ComputationFixture.start(group_id)
       |> ComputationFixture.attach_output_msg(group_id)
 
     {:ok, %{pid: _pipeline_pid_2, operator_id: _pipe2_op}} =
-      pipeline_id_2
+      computation_id_2
       |> ComputationFixture.get(@test_store_input_factory)
       |> ComputationFixture.start(group_id)
       |> ComputationFixture.attach_output_msg(group_id)
 
-    ComputationTestHelper.send_sync_io(pipeline_id_1, group_id, {:text, "state_1"})
-    ComputationTestHelper.send_sync_io(pipeline_id_2, group_id, {:text, "state_2"})
+    ComputationTestHelper.send_sync_io(computation_id_1, group_id, {:text, "state_1"})
+    ComputationTestHelper.send_sync_io(computation_id_2, group_id, {:text, "state_2"})
 
-    ComputationManager.create_snapshot(group_id, pipeline_id_1)
-    ComputationManager.create_snapshot(group_id, pipeline_id_2)
+    ComputationManager.create_snapshot(group_id, computation_id_1)
+    ComputationManager.create_snapshot(group_id, computation_id_2)
 
     active_operator = if pipe1_op === operator_id_1, do: operator_id_2, else: operator_id_1
 
@@ -315,13 +315,13 @@ defmodule FlezhaTest do
 
     # Make sure all the pipelines are migrated to the other operator.
     ComputationManager.pipeline_registry(group_id)
-    |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+    |> Enum.each(fn {_computation_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
       assert new_operator === active_operator
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, pipeline_id_1)
-    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, pipeline_id_2)
+    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, computation_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
@@ -335,26 +335,26 @@ defmodule FlezhaTest do
     operator_id_2 = NodeTestHelper.start_operator(group_id)
 
     # Start a few pipelines and store some state on them.
-    pipeline_id_1 = "pipeline_1"
-    pipeline_id_2 = "pipeline_2"
+    computation_id_1 = "pipeline_1"
+    computation_id_2 = "pipeline_2"
 
     {:ok, %{pid: _pipeline_pid_1, operator_id: _pipe1_op}} =
-      pipeline_id_1
+      computation_id_1
       |> ComputationFixture.get(@test_store_input_factory)
       |> ComputationFixture.start(group_id)
       |> ComputationFixture.attach_output_msg(group_id)
 
     {:ok, %{pid: _pipeline_pid_2, operator_id: _pipe2_op}} =
-      pipeline_id_2
+      computation_id_2
       |> ComputationFixture.get(@test_store_input_factory)
       |> ComputationFixture.start(group_id)
       |> ComputationFixture.attach_output_msg(group_id)
 
-    ComputationTestHelper.send_sync_io(pipeline_id_1, group_id, {:text, "state_1"})
-    ComputationTestHelper.send_sync_io(pipeline_id_2, group_id, {:text, "state_2"})
+    ComputationTestHelper.send_sync_io(computation_id_1, group_id, {:text, "state_1"})
+    ComputationTestHelper.send_sync_io(computation_id_2, group_id, {:text, "state_2"})
 
-    ComputationManager.create_snapshot(group_id, pipeline_id_1)
-    ComputationManager.create_snapshot(group_id, pipeline_id_2)
+    ComputationManager.create_snapshot(group_id, computation_id_1)
+    ComputationManager.create_snapshot(group_id, computation_id_2)
 
     # Trigger the operator disconnect.
     NodeTestHelper.stop_operator(group_id, operator_id_1)
@@ -365,13 +365,13 @@ defmodule FlezhaTest do
 
     # Make sure all the pipelines are migrated to the new operator.
     ComputationManager.pipeline_registry(group_id)
-    |> Enum.each(fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+    |> Enum.each(fn {_computation_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
       assert new_operator === operator_id_3
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, pipeline_id_1)
-    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, pipeline_id_2)
+    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, computation_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
@@ -393,8 +393,8 @@ defmodule FlezhaTest do
   @tag :operator_disconnect_migrate_hub
   test "operator disconnect migrate hub" do
     group_id = @temp_group
-    pipeline_id_1 = "pipeline_1"
-    pipeline_id_2 = "pipeline_2"
+    computation_id_1 = "pipeline_1"
+    computation_id_2 = "pipeline_2"
 
     {_peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
@@ -430,13 +430,13 @@ defmodule FlezhaTest do
 
     # Start a few pipelines and store some state on them.
     {:ok, %{pid: _pipeline_pid_1, operator_id: pipe1_op}} =
-      pipeline_id_1
+      computation_id_1
       |> ComputationFixture.get(@test_store_input_factory)
       |> ComputationFixture.start(group_id)
       |> ComputationFixture.attach_output_msg(group_id)
 
     {:ok, %{pid: _pipeline_pid_2, operator_id: pipe2_op}} =
-      pipeline_id_2
+      computation_id_2
       |> ComputationFixture.get(@test_store_input_factory)
       |> ComputationFixture.start(group_id)
       |> ComputationFixture.attach_output_msg(group_id)
@@ -444,17 +444,17 @@ defmodule FlezhaTest do
     # Make sure that atleast one of the pipelines is running on the remote operator.
     assert pipe1_op !== operator_id_1 or pipe2_op !== operator_id_1
 
-    ComputationTestHelper.send_sync_io(pipeline_id_1, group_id, {:text, "state_1"})
-    ComputationTestHelper.send_sync_io(pipeline_id_2, group_id, {:text, "state_2"})
+    ComputationTestHelper.send_sync_io(computation_id_1, group_id, {:text, "state_1"})
+    ComputationTestHelper.send_sync_io(computation_id_2, group_id, {:text, "state_2"})
 
     # Check the states before operator migrations.
-    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, pipeline_id_1)
-    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, pipeline_id_2)
+    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, computation_id_2)
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
 
-    ComputationManager.create_snapshot(group_id, pipeline_id_1)
-    ComputationManager.create_snapshot(group_id, pipeline_id_2)
+    ComputationManager.create_snapshot(group_id, computation_id_1)
+    ComputationManager.create_snapshot(group_id, computation_id_2)
 
     # Trigger the operator disconnect.
     NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_1)
@@ -469,13 +469,13 @@ defmodule FlezhaTest do
     # Make sure all the pipelines are migrated to the other operator.
     reg = ComputationManager.pipeline_registry(group_id)
 
-    Enum.each(reg, fn {_pipeline_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+    Enum.each(reg, fn {_computation_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
       assert new_operator === operator_id_1
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, pipeline_id_1)
-    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, pipeline_id_2)
+    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, computation_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
@@ -492,17 +492,17 @@ defmodule FlezhaTest do
 
   #   {pipeline_creation_time, pipeline_infos} = :timer.tc(fn ->
   #     for i <- 1..num_pipelines do
-  #       pipeline_id = "flow_test_#{i}"
+  #       computation_id = "flow_test_#{i}"
 
   #       pipeline = %Flezha.Computation.Builder{
-  #         id: pipeline_id,
+  #         id: computation_id,
   #         factory_id: @test_pipeline_factory
   #       }
 
   #       case ComputationManager.start_pipeline(@default_group, pipeline) do
-  #         {:ok, info} -> {pipeline_id, info}
+  #         {:ok, info} -> {computation_id, info}
   #         error ->
-  #           IO.puts("Failed to start pipeline #{pipeline_id}: #{inspect(error)}")
+  #           IO.puts("Failed to start pipeline #{computation_id}: #{inspect(error)}")
   #           nil
   #       end
   #     end
@@ -513,11 +513,11 @@ defmodule FlezhaTest do
 
   #   # Step 2: Enable plugins for all pipelines
   #   {plugin_setup_time, _} = :timer.tc(fn ->
-  #     Enum.each(pipeline_infos, fn {pipeline_id, _info} ->
+  #     Enum.each(pipeline_infos, fn {computation_id, _info} ->
   #       # Enable BeamMsgForward plugin
   #       PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
   #         group: @default_group,
-  #         pipeline_id: pipeline_id,
+  #         computation_id: computation_id,
   #         trigger: :on_output,
   #         recv_pid: self()
   #       })
@@ -525,7 +525,7 @@ defmodule FlezhaTest do
   #       # Enable StdOut plugin
   #       PluginManager.enable_plugin(%Flezha.Plugin.Provider.StdOut{
   #         group: @default_group,
-  #         pipeline_id: pipeline_id,
+  #         computation_id: computation_id,
   #         trigger: :proactive
   #       })
   #     end)
@@ -538,9 +538,9 @@ defmodule FlezhaTest do
   #   IO.puts("Sending #{total_messages} total messages (#{test_messages_per_pipeline} per pipeline)...")
 
   #   {message_send_time, _} = :timer.tc(fn ->
-  #     Enum.each(pipeline_infos, fn {pipeline_id, %{pid: pipeline_pid}} ->
+  #     Enum.each(pipeline_infos, fn {computation_id, %{pid: pipeline_pid}} ->
   #       for msg_num <- 1..test_messages_per_pipeline do
-  #         GenServer.cast(pipeline_pid, {:io_in, {:text, "test_msg_#{pipeline_id}_#{msg_num}"}, 1})
+  #         GenServer.cast(pipeline_pid, {:io_in, {:text, "test_msg_#{computation_id}_#{msg_num}"}, 1})
   #       end
   #     end)
   #   end)

@@ -34,27 +34,27 @@ message ConnectSocket {
 }
 
 message AddComputation {
-    string pipeline_id = 1;
+    string computation_id = 1;
     string factory_id = 2;
     string init_values = 3;
 }
 
 message RemComputation {
-    string pipeline_id = 1;
+    string computation_id = 1;
 }
 
 message MigrationSerialization {
-    string pipeline_id = 1;
+    string computation_id = 1;
 }
 
 message MigrationDeserialization {
-    string pipeline_id = 1;
+    string computation_id = 1;
     string factory_id = 2;
     bytes serialized_state = 3;
 }
 
 message ComputationState {
-    string pipeline_id = 1;
+    string computation_id = 1;
 }
 
 message OperatorDisconnect {}

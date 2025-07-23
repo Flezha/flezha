@@ -24,14 +24,14 @@ fn main() {
 }
 
 fn handle_start(args: Vec<String>) {
-    let example_usage = format!("Usage: {} start <pipeline_id> <factory_id> [--group=<group_id> |-g=<group_id>] [--init_values=<json> |-iv=<json>]", args[0]);
+    let example_usage = format!("Usage: {} start <computation_id> <factory_id> [--group=<group_id> |-g=<group_id>] [--init_values=<json> |-iv=<json>]", args[0]);
 
     if args.len() < 3 {
         eprintln!("{}", format!("Error: Invalid number of arguments.\n {}",  example_usage));
         exit(1);
     }
 
-    let pipeline_id = &args[2];
+    let computation_id = &args[2];
     let factory_id = &args[3];
     let init_values = get_json(&args[4..], "--init_values=", "-iv=");
 
@@ -49,7 +49,7 @@ fn handle_start(args: Vec<String>) {
     let rpc_command = format!(
         "Flezha.Service.RpcCookbook.pipeline_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\")", 
         group_id,
-        pipeline_id,
+        computation_id,
         factory_id,
         init_values,
         opts_json,
@@ -71,17 +71,17 @@ fn handle_start(args: Vec<String>) {
 
 fn handle_stop(args: Vec<String>) {
     if args.len() < 1 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} stop <pipeline_id>", args[0]);
+        eprintln!("Error: Invalid number of arguments. Usage: {} stop <computation_id>", args[0]);
         exit(1);
     }
 
-    let pipeline_id = &args[2];
+    let computation_id = &args[2];
     let group_id = get_namespace(&args[3..]);
 
     let rpc_command = format!(
         "Flezha.Service.RpcCookbook.pipeline_stop(\"{}\", \"{}\")", 
         group_id,
-        pipeline_id,
+        computation_id,
     );
 
     let command = get_flezha_command();
@@ -103,17 +103,17 @@ fn handle_stop(args: Vec<String>) {
 
 fn handle_state(args: Vec<String>) {
     if args.len() < 1 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} state <pipeline_id>", args[0]);
+        eprintln!("Error: Invalid number of arguments. Usage: {} state <computation_id>", args[0]);
         exit(1);
     }
 
-    let pipeline_id = &args[2];
+    let computation_id = &args[2];
     let group_id = get_namespace(&args[3..]);
 
     let rpc_command = format!(
         "Flezha.Service.RpcCookbook.pipeline_state(\"{}\", \"{}\")", 
         group_id,
-        pipeline_id,
+        computation_id,
     );
 
     let command = get_flezha_command();

@@ -4,7 +4,7 @@ defmodule Flezha.Plugin.ComputationPlugin do
   defmacro __using__(_opts) do
     quote do
       def enable(settings) do
-        case ComputationManager.get_pipeline_pid(settings.group, settings.pipeline_id) do
+        case ComputationManager.get_pipeline_pid(settings.group, settings.computation_id) do
           {:ok, pipeline_pid} ->
             GenServer.call(pipeline_pid, {:add_binding, settings})
 
@@ -17,7 +17,7 @@ defmodule Flezha.Plugin.ComputationPlugin do
       end
 
       def disable(settings) do
-        case ComputationManager.get_pipeline_pid(settings.group, settings.pipeline_id) do
+        case ComputationManager.get_pipeline_pid(settings.group, settings.computation_id) do
           {:ok, pipeline_pid} ->
             GenServer.call(pipeline_pid, {:remove_binding, settings})
 
@@ -39,7 +39,7 @@ defmodule Flezha.Plugin.ComputationPlugin do
   end
 
   def required_pipeline_keys() do
-    [:group, :pipeline_id, :trigger]
+    [:group, :computation_id, :trigger]
   end
 
   def optional_pipeline_keys() do

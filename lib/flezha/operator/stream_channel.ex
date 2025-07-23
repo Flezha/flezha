@@ -36,28 +36,28 @@ defmodule Flezha.Operator.StreamChannel do
 
   @impl true
   def handle_cast(
-        {:io_in, pipeline_id, {type, message}, handling_type},
+        {:io_in, computation_id, {type, message}, handling_type},
         %{sock: sock} = state
       ) do
-    send_channel_payload(sock, pipeline_id, type, handling_type, message)
+    send_channel_payload(sock, computation_id, type, handling_type, message)
 
     {:noreply, state}
   end
 
   @impl true
   def handle_call(
-        {:io_in, pipeline_id, {type, message}, handling_type},
+        {:io_in, computation_id, {type, message}, handling_type},
         _from,
         %{sock: sock} = state
       ) do
-    send_channel_payload(sock, pipeline_id, type, handling_type, message)
+    send_channel_payload(sock, computation_id, type, handling_type, message)
 
     {:reply, :ok, state}
   end
 
   @impl true
-  def handle_call({:pipeline_pid_update, pipeline_id, updated_pids}, _from, state) do
-    pipeline_mapping = Map.put(state[:pipeline_mapping], pipeline_id, updated_pids)
+  def handle_call({:pipeline_pid_update, computation_id, updated_pids}, _from, state) do
+    pipeline_mapping = Map.put(state[:pipeline_mapping], computation_id, updated_pids)
 
     {:reply, :ok, Map.put(state, :pipeline_mapping, pipeline_mapping)}
   end
@@ -65,8 +65,8 @@ defmodule Flezha.Operator.StreamChannel do
   @impl true
   def handle_call({:pipeline_bulk_insert, pipelines}, _from, state) do
     pipeline_mapping =
-      Enum.reduce(pipelines, state.pipeline_mapping, fn {pipeline_id, updated_pids}, acc ->
-        Map.put(acc, pipeline_id, updated_pids)
+      Enum.reduce(pipelines, state.pipeline_mapping, fn {computation_id, updated_pids}, acc ->
+        Map.put(acc, computation_id, updated_pids)
       end)
 
     {:reply, :ok, Map.put(state, :pipeline_mapping, pipeline_mapping)}
@@ -87,8 +87,8 @@ defmodule Flezha.Operator.StreamChannel do
 
     {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
 
-    Enum.each(payloads, fn {pipeline_id, virtual_channel, message} ->
-      pipelines = Map.get(pipeline_mappings, pipeline_id, [])
+    Enum.each(payloads, fn {computation_id, virtual_channel, message} ->
+      pipelines = Map.get(pipeline_mappings, computation_id, [])
 
       # TODO: Are we handling binary or text data?
       Enum.each(pipelines, fn pid ->
@@ -108,11 +108,11 @@ defmodule Flezha.Operator.StreamChannel do
     {:noreply, state}
   end
 
-  defp send_channel_payload(sock, pipeline_id, type, handling_type, message) do
+  defp send_channel_payload(sock, computation_id, type, handling_type, message) do
     :gen_tcp.send(
       sock,
       Payloader.build_from_bin(
-        pipeline_id,
+        computation_id,
         # TODO: Hardcoded virtual channel.
         1,
         input_type(type) <> handling_type(handling_type) <> message

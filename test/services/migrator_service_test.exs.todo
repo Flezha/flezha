@@ -4,10 +4,10 @@ defmodule FlezhaTest.MigratorServiceTest do
 
   doctest Flezha.Worker.MigratorService
 
-  @pipeline_id "test_migrator"
+  @computation_id "test_migrator"
 
   setup do
-    worker = NodeTestHelper.test_worker(@pipeline_id)
+    worker = NodeTestHelper.test_worker(@computation_id)
 
     %{worker: worker}
   end
@@ -16,7 +16,7 @@ defmodule FlezhaTest.MigratorServiceTest do
     serialized_data =
       Flezha.Worker.MigratorService.serialize_pipeline(
         @default_group,
-        @pipeline_id
+        @computation_id
       )
 
     assert is_list(serialized_data)
@@ -27,13 +27,13 @@ defmodule FlezhaTest.MigratorServiceTest do
     serialized_data =
       Flezha.Worker.MigratorService.serialize_pipeline(
         @default_group,
-        @pipeline_id
+        @computation_id
       )
 
     assert :ok ===
              Flezha.Worker.MigratorService.deserialize_pipeline(
                @default_group,
-               @pipeline_id,
+               @computation_id,
                serialized_data
              )
   end
