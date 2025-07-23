@@ -1,5 +1,5 @@
 defmodule Flezha.Service.Payloader do
-  alias Flezha.Pipeline.Builder, as: PipelineBuilder
+  alias Flezha.Computation.Builder, as: ComputationBuilder
 
   def json_to_map(""), do: %{}
 
@@ -56,8 +56,8 @@ defmodule Flezha.Service.Payloader do
   def construct_pipeline!(input, type) do
     result =
       case type do
-        :json -> PipelineBuilder.from_json(input)
-        :map -> PipelineBuilder.from_map(input)
+        :json -> ComputationBuilder.from_json(input)
+        :map -> ComputationBuilder.from_map(input)
       end
 
     case result do

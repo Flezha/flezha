@@ -1,4 +1,4 @@
-defmodule Flezha.Service.PipelineManager do
+defmodule Flezha.Service.ComputationManager do
   @moduledoc """
   Manages the pipeline startings and stoppings.
   """
@@ -6,7 +6,7 @@ defmodule Flezha.Service.PipelineManager do
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
   alias Flezha.Operator.FleetManager
-  alias Flezha.Pipeline.Builder, as: PipelineBuilder
+  alias Flezha.Computation.Builder, as: ComputationBuilder
 
   def pipeline_registry(group_id) do
     case HubManager.get_registry(group_id) do
@@ -39,10 +39,10 @@ defmodule Flezha.Service.PipelineManager do
   @doc """
   Starts a new pipeline to the operator.
   """
-  @spec start_pipeline(String.t(), PipelineBuilder.t()) ::
+  @spec start_pipeline(String.t(), ComputationBuilder.t()) ::
           {:ok, pid()} | {:error, String.t()}
   def start_pipeline(group_id, pipeline) do
-    case PipelineBuilder.validate_pipeline(group_id, pipeline) do
+    case ComputationBuilder.validate_pipeline(group_id, pipeline) do
       {:error, reason} ->
         {:error, reason}
 
@@ -105,7 +105,7 @@ defmodule Flezha.Service.PipelineManager do
     child_spec = %{
       id: pipeline.id,
       start: {
-        Flezha.Pipeline.Overwatch,
+        Flezha.Computation.Overwatch,
         :start_link,
         [{group_id, pipeline}]
       },

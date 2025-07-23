@@ -1,8 +1,8 @@
-defmodule FlezhaTest.Helper.PipelineTestHelper do
-  alias Flezha.Service.PipelineManager
+defmodule FlezhaTest.Helper.ComputationTestHelper do
+  alias Flezha.Service.ComputationManager
 
   def send_sync_io(pipeline_id, group_id, msg) do
-    PipelineManager.send_io(pipeline_id, group_id, msg, 1)
+    ComputationManager.send_io(pipeline_id, group_id, msg, 1)
 
     receive do
       {:message_forward, msg} -> msg

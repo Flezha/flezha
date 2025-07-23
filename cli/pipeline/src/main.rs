@@ -95,7 +95,7 @@ fn handle_stop(args: Vec<String>) {
         .status();
 
     match status {
-        Ok(status) if status.success() => println!("Pipeline stopped successfully."),
+        Ok(status) if status.success() => println!("Computation stopped successfully."),
         Ok(_) => eprintln!("Unknown status returned."),
         Err(e) => eprintln!("Failed to stop pipeline: {}", e),
     }

@@ -5,14 +5,14 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   # TODO: remove or refactor.
   # def test_pipeline(pipeline_id) do
   #   pipeline =
-  #     FlezhaTest.Fixtures.PipelineFixture.get(
+  #     FlezhaTest.Fixtures.ComputationFixture.get(
   #       pipeline_id,
   #       @factory_increment_state
   #     )
-  #     |> FlezhaTest.Fixtures.PipelineFixture.start()
+  #     |> FlezhaTest.Fixtures.ComputationFixture.start()
 
   #   on_exit(fn ->
-  #     FlezhaTest.Fixtures.PipelineFixture.stop(pipeline.id)
+  #     FlezhaTest.Fixtures.ComputationFixture.stop(pipeline.id)
   #   end)
 
   #   pipeline

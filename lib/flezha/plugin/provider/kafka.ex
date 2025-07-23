@@ -1,24 +1,24 @@
 defmodule Flezha.Plugin.Provider.Kafka do
-  alias Flezha.Plugin.PipelineBinding
-  alias Flezha.Plugin.PipelinePlugin
+  alias Flezha.Plugin.ComputationBinding
+  alias Flezha.Plugin.ComputationPlugin
   alias Flezha.Plugin.PluginBase
   alias Flezha.Plugin.PluginProtocol
 
   defmodule Producer do
     @behaviour PluginBase
 
-    @enforce_keys PipelinePlugin.required_pipeline_keys() ++ [:hosts, :topic, :partition]
+    @enforce_keys ComputationPlugin.required_pipeline_keys() ++ [:hosts, :topic, :partition]
     defstruct @enforce_keys ++
                 [
                   :conn,
                   required_acks: 1
-                ] ++ PipelinePlugin.optional_pipeline_keys()
+                ] ++ ComputationPlugin.optional_pipeline_keys()
 
     @impl true
     def plugin_id(), do: "pipeline_kafka_producer"
 
     defimpl PluginProtocol, for: Flezha.Plugin.Provider.Kafka.Producer do
-      use PipelinePlugin
+      use ComputationPlugin
 
       def pre_enable(settings) do
         settings =
@@ -43,7 +43,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
       end
     end
 
-    defimpl PipelineBinding, for: Flezha.Plugin.Provider.Kafka.Producer do
+    defimpl ComputationBinding, for: Flezha.Plugin.Provider.Kafka.Producer do
       # TODO: The system needs to be intelligent enough to know when to reuse a connection
       # and when to create a new one. We may need a separate GenServer handling the connections.
       @impl true

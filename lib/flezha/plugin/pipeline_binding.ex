@@ -1,4 +1,4 @@
-defprotocol Flezha.Plugin.PipelineBinding do
+defprotocol Flezha.Plugin.ComputationBinding do
   @spec bind(t()) :: {:ok, t()} | {:error, String.t()}
   def bind(settings)
 

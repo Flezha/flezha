@@ -1,4 +1,4 @@
-defmodule Flezha.Pipeline.Builder do
+defmodule Flezha.Computation.Builder do
   alias Flezha.Service.Validator
 
   @type t() :: %__MODULE__{

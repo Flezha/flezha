@@ -1,4 +1,4 @@
-defmodule FlezhaTest.Fixtures.PipelineFixture do
+defmodule FlezhaTest.Fixtures.ComputationFixture do
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Identificator
   alias ProcessHub.Constant.Hook
@@ -8,7 +8,7 @@ defmodule FlezhaTest.Fixtures.PipelineFixture do
   # TODO: refactor based on new plugin system.
 
   def get(id, factory_id) do
-    %Flezha.Pipeline.Builder{
+    %Flezha.Computation.Builder{
       id: id || "my_pipeline",
       factory_id: factory_id || "do_nothing"
     }
@@ -28,7 +28,7 @@ defmodule FlezhaTest.Fixtures.PipelineFixture do
       }
     )
 
-    result = Flezha.Service.PipelineManager.start_pipeline(group, pipeline)
+    result = Flezha.Service.ComputationManager.start_pipeline(group, pipeline)
 
     receive do
       :hook_reg_insert_recv -> :ok
@@ -46,7 +46,7 @@ defmodule FlezhaTest.Fixtures.PipelineFixture do
   end
 
   def stop(pipeline_id, group \\ @default_group) do
-    Flezha.Service.PipelineManager.stop_pipeline(group, pipeline_id)
+    Flezha.Service.ComputationManager.stop_pipeline(group, pipeline_id)
   end
 
   def attach_output_msg({:ok, %{pipeline_id: pipeline_id}} = start_res, group \\ @default_group) do

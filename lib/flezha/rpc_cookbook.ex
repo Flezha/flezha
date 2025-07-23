@@ -3,7 +3,7 @@ defmodule Flezha.Service.RpcCookbook do
   Provides recipes for the RPC calls.
   """
 
-  alias Flezha.Service.PipelineManager
+  alias Flezha.Service.ComputationManager
   alias Flezha.Service.Payloader
   alias Flezha.Service.PluginManager
   alias Flezha.Service.ConfigManager
@@ -15,30 +15,30 @@ defmodule Flezha.Service.RpcCookbook do
       |> atom_converter()
       |> Keyword.new()
 
-    pipeline = %Flezha.Pipeline.Builder{
+    pipeline = %Flezha.Computation.Builder{
       id: pipeline_id,
       factory_id: factory_id,
       init_values: Payloader.json_to_map(init_values),
       opts: opts
     }
 
-    case PipelineManager.start_pipeline(group_id(group_id), pipeline) do
-      {:ok, _} -> IO.puts("Pipeline has been started")
+    case ComputationManager.start_pipeline(group_id(group_id), pipeline) do
+      {:ok, _} -> IO.puts("Computation has been started")
       {:error, reason} -> IO.puts("Error starting pipeline: #{inspect(reason)}")
     end
   end
 
   @doc "Stops a pipelinene."
   def pipeline_stop(group_id, pipeline_id) do
-    case PipelineManager.stop_pipeline(group_id(group_id), pipeline_id) do
-      :ok -> IO.puts("Pipeline has been stopped")
+    case ComputationManager.stop_pipeline(group_id(group_id), pipeline_id) do
+      :ok -> IO.puts("Computation has been stopped")
       {:error, reason} -> IO.puts("Error stopping pipeline: #{inspect(reason)}")
     end
   end
 
   @doc "Get pipeline state."
   def pipeline_state(group_id, pipeline_id) do
-    result = PipelineManager.get_pipeline_state(group_id(group_id), pipeline_id)
+    result = ComputationManager.get_pipeline_state(group_id(group_id), pipeline_id)
 
     message =
       case result do

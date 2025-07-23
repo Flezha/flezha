@@ -1,10 +1,10 @@
-defmodule Flezha.Plugin.PipelinePlugin do
-  alias Flezha.Service.PipelineManager
+defmodule Flezha.Plugin.ComputationPlugin do
+  alias Flezha.Service.ComputationManager
 
   defmacro __using__(_opts) do
     quote do
       def enable(settings) do
-        case PipelineManager.get_pipeline_pid(settings.group, settings.pipeline_id) do
+        case ComputationManager.get_pipeline_pid(settings.group, settings.pipeline_id) do
           {:ok, pipeline_pid} ->
             GenServer.call(pipeline_pid, {:add_binding, settings})
 
@@ -17,7 +17,7 @@ defmodule Flezha.Plugin.PipelinePlugin do
       end
 
       def disable(settings) do
-        case PipelineManager.get_pipeline_pid(settings.group, settings.pipeline_id) do
+        case ComputationManager.get_pipeline_pid(settings.group, settings.pipeline_id) do
           {:ok, pipeline_pid} ->
             GenServer.call(pipeline_pid, {:remove_binding, settings})
 

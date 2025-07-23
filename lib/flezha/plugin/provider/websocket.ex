@@ -1,6 +1,6 @@
 defmodule Flezha.Plugin.Provider.Websocket do
-  alias Flezha.Plugin.PipelineBinding
-  alias Flezha.Plugin.PipelinePlugin
+  alias Flezha.Plugin.ComputationBinding
+  alias Flezha.Plugin.ComputationPlugin
   alias Flezha.Plugin.PluginProtocol
   alias Flezha.Plugin.PluginBase
 
@@ -10,22 +10,22 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   @behaviour PluginBase
 
-  @enforce_keys PipelinePlugin.required_pipeline_keys() ++ [:uri]
+  @enforce_keys ComputationPlugin.required_pipeline_keys() ++ [:uri]
   defstruct @enforce_keys ++
               [
                 :conn,
                 post_connect: %{},
                 ws_opts: []
-              ] ++ PipelinePlugin.optional_pipeline_keys()
+              ] ++ ComputationPlugin.optional_pipeline_keys()
 
   @impl true
   def plugin_id(), do: "pipeline_websocket"
 
   defimpl PluginProtocol, for: Flezha.Plugin.Provider.Websocket do
-    use PipelinePlugin
+    use ComputationPlugin
   end
 
-  defimpl PipelineBinding, for: Flezha.Plugin.Provider.Websocket do
+  defimpl ComputationBinding, for: Flezha.Plugin.Provider.Websocket do
     alias Flezha.Plugin.Provider.Websocket
 
     @impl true

@@ -1,22 +1,22 @@
 defmodule Flezha.Plugin.Provider.BeamMsgForward do
-  alias Flezha.Plugin.PipelineBinding
-  alias Flezha.Plugin.PipelinePlugin
+  alias Flezha.Plugin.ComputationBinding
+  alias Flezha.Plugin.ComputationPlugin
   alias Flezha.Plugin.PluginBase
   alias Flezha.Plugin.PluginProtocol
 
   @behaviour PluginBase
 
-  @enforce_keys PipelinePlugin.required_pipeline_keys() ++ [:recv_pid]
-  defstruct @enforce_keys ++ PipelinePlugin.optional_pipeline_keys()
+  @enforce_keys ComputationPlugin.required_pipeline_keys() ++ [:recv_pid]
+  defstruct @enforce_keys ++ ComputationPlugin.optional_pipeline_keys()
 
   @impl true
   def plugin_id(), do: "pipeline_beam_msg"
 
   defimpl PluginProtocol, for: Flezha.Plugin.Provider.BeamMsgForward do
-    use PipelinePlugin
+    use ComputationPlugin
   end
 
-  defimpl PipelineBinding, for: Flezha.Plugin.Provider.BeamMsgForward do
+  defimpl ComputationBinding, for: Flezha.Plugin.Provider.BeamMsgForward do
     @impl true
     def bind(settings) do
       {:ok, settings}

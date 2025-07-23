@@ -1,22 +1,22 @@
 defmodule Flezha.Plugin.Provider.StdOut do
-  alias Flezha.Plugin.PipelineBinding
-  alias Flezha.Plugin.PipelinePlugin
+  alias Flezha.Plugin.ComputationBinding
+  alias Flezha.Plugin.ComputationPlugin
   alias Flezha.Plugin.PluginBase
   alias Flezha.Plugin.PluginProtocol
 
   @behaviour PluginBase
 
-  @enforce_keys PipelinePlugin.required_pipeline_keys()
-  defstruct @enforce_keys ++ PipelinePlugin.optional_pipeline_keys()
+  @enforce_keys ComputationPlugin.required_pipeline_keys()
+  defstruct @enforce_keys ++ ComputationPlugin.optional_pipeline_keys()
 
   @impl true
   def plugin_id(), do: "pipeline_stdout"
 
   defimpl PluginProtocol, for: Flezha.Plugin.Provider.StdOut do
-    use PipelinePlugin
+    use ComputationPlugin
   end
 
-  defimpl PipelineBinding, for: Flezha.Plugin.Provider.StdOut do
+  defimpl ComputationBinding, for: Flezha.Plugin.Provider.StdOut do
     @impl true
     def bind(settings) do
       {:ok, settings}

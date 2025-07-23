@@ -1,28 +1,28 @@
 defmodule Flezha.Plugin.Provider.Filter do
-  alias Flezha.Plugin.PipelineBinding
-  alias Flezha.Plugin.PipelinePlugin
+  alias Flezha.Plugin.ComputationBinding
+  alias Flezha.Plugin.ComputationPlugin
   alias Flezha.Plugin.PluginBase
   alias Flezha.Plugin.PluginProtocol
 
   @behaviour PluginBase
 
-  @enforce_keys PipelinePlugin.required_pipeline_keys() ++
+  @enforce_keys ComputationPlugin.required_pipeline_keys() ++
                   [
                     :regex_pattern
                   ]
   defstruct @enforce_keys ++
               [
                 inverted: false
-              ] ++ PipelinePlugin.optional_pipeline_keys()
+              ] ++ ComputationPlugin.optional_pipeline_keys()
 
   @impl true
   def plugin_id(), do: "pipeline_io_filter"
 
   defimpl PluginProtocol, for: Flezha.Plugin.Provider.Filter do
-    use PipelinePlugin
+    use ComputationPlugin
   end
 
-  defimpl PipelineBinding, for: Flezha.Plugin.Provider.Filter do
+  defimpl ComputationBinding, for: Flezha.Plugin.Provider.Filter do
     @impl true
     def bind(settings) do
       case Regex.compile(settings.regex_pattern) do

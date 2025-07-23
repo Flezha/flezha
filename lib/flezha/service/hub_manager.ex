@@ -3,7 +3,7 @@ defmodule Flezha.Service.HubManager do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
-  alias Flezha.Service.PipelineManager
+  alias Flezha.Service.ComputationManager
 
   use Supervisor
 
@@ -164,7 +164,7 @@ defmodule Flezha.Service.HubManager do
           {group_id, pipeline}
       end
 
-    assigned_operator = PipelineManager.assign_operator(group_id)
+    assigned_operator = ComputationManager.assign_operator(group_id)
     new_args = [{group_id, assigned_operator, pipeline}]
 
     child_data

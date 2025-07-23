@@ -36,7 +36,7 @@ defmodule Flezha.Operator.ControlUnit do
         state.operator_id,
         {
           :get_pipeline_state,
-          %OperatorCommands.PipelineState{pipeline_id: pipeline_id}
+          %OperatorCommands.ComputationState{pipeline_id: pipeline_id}
         }
       )
 
@@ -99,7 +99,7 @@ defmodule Flezha.Operator.ControlUnit do
           ""
       end
 
-    command = %OperatorCommands.AddPipeline{
+    command = %OperatorCommands.AddComputation{
       pipeline_id: pipeline.id,
       factory_id: pipeline.factory_id,
       init_values: init_values
@@ -117,7 +117,7 @@ defmodule Flezha.Operator.ControlUnit do
         state.operator_id,
         {
           :rem_pipeline,
-          %OperatorCommands.RemPipeline{pipeline_id: pipeline_id}
+          %OperatorCommands.RemComputation{pipeline_id: pipeline_id}
         }
       )
 

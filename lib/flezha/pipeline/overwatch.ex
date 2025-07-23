@@ -1,10 +1,10 @@
-defmodule Flezha.Pipeline.Overwatch do
+defmodule Flezha.Computation.Overwatch do
   alias Flezha.Service.HubManager
   alias Flezha.Service.ConfigManager
   alias Flezha.Operator.StreamSup
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
-  alias Flezha.Plugin.PipelineBinding
+  alias Flezha.Plugin.ComputationBinding
 
   require Logger
 
@@ -111,7 +111,7 @@ defmodule Flezha.Pipeline.Overwatch do
 
   @impl true
   def handle_call(:get_pipeline_state, _from, state) do
-    command = %OperatorCommands.PipelineState{pipeline_id: state.id}
+    command = %OperatorCommands.ComputationState{pipeline_id: state.id}
 
     # TODO: any rpc command may timeout causing the pipeline overwatch to crash.
     # We should handle this in the control unit.
@@ -134,7 +134,7 @@ defmodule Flezha.Pipeline.Overwatch do
         true -> state.init_values
       end
 
-    pipeline = %Flezha.Pipeline.Builder{
+    pipeline = %Flezha.Computation.Builder{
       id: state.id,
       factory_id: state.factory_id,
       init_values: init_values,
@@ -195,7 +195,7 @@ defmodule Flezha.Pipeline.Overwatch do
 
   @impl true
   def handle_info({:binding_interval_exec, binding}, state) do
-    PipelineBinding.exec(binding, {:binary, ""})
+    ComputationBinding.exec(binding, {:binary, ""})
     add_interval_binding(binding)
 
     {:noreply, state}
@@ -213,7 +213,7 @@ defmodule Flezha.Pipeline.Overwatch do
   end
 
   defp create_snapshot(pipeline_id, operator_id) do
-    command = %OperatorCommands.PipelineState{pipeline_id: pipeline_id}
+    command = %OperatorCommands.ComputationState{pipeline_id: pipeline_id}
 
     case send_control(operator_id, {:pipeline_state, command}) do
       {:ok, snapshot} ->
@@ -325,7 +325,7 @@ defmodule Flezha.Pipeline.Overwatch do
   end
 
   defp add_binding(bindings, binding) do
-    case PipelineBinding.bind(binding) do
+    case ComputationBinding.bind(binding) do
       {:ok, binding} ->
         binding_group = [binding | Map.get(bindings, binding.trigger, [])]
 
@@ -363,7 +363,7 @@ defmodule Flezha.Pipeline.Overwatch do
   defp exec_bindings(bindings, payload, virtual_channel) do
     Enum.reduce_while(bindings, payload, fn
       binding = %{virtual_channel: vc}, p when vc === virtual_channel ->
-        case PipelineBinding.exec(binding, p) do
+        case ComputationBinding.exec(binding, p) do
           {:ok, p} -> {:cont, p}
           {:skip, :normal} -> {:halt, nil}
           {:error, _} -> {:cont, p}

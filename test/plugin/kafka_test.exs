@@ -1,5 +1,5 @@
 defmodule FlezhaTest.Plugin.KafkaTest do
-  alias Flezha.Plugin.PipelineBinding
+  alias Flezha.Plugin.ComputationBinding
 
   use ExUnit.Case
   use Mimic
@@ -21,7 +21,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       partition: @test_partition
     }
 
-    result = PipelineBinding.bind(settings)
+    result = ComputationBinding.bind(settings)
 
     assert elem(result, 0) == :ok
     assert is_struct(elem(result, 1), Flezha.Plugin.Provider.Kafka.Producer)
@@ -42,7 +42,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       conn: self()
     }
 
-    result = PipelineBinding.exec(settings, {:text, "test_data"})
+    result = ComputationBinding.exec(settings, {:text, "test_data"})
 
     assert elem(result, 0) == :ok
     assert elem(result, 1) == {:text, "test_data"}

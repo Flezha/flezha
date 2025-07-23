@@ -9,11 +9,11 @@ message CommandRequest {
     oneof command {
         AssignOperatorId assign_operator_id = 2;
         ConnectSocket connect_socket = 3;
-        AddPipeline add_pipeline = 4;
-        RemPipeline rem_pipeline = 5;
+        AddComputation add_pipeline = 4;
+        RemComputation rem_pipeline = 5;
         MigrationSerialization migration_serialization = 6;
         MigrationDeserialization migration_deserialization = 7;
-        PipelineState pipeline_state = 8;
+        ComputationState pipeline_state = 8;
         OperatorDisconnect operator_disconnect = 9;
     }
 }
@@ -33,13 +33,13 @@ message ConnectSocket {
     uint32 sockets_count = 1;
 }
 
-message AddPipeline {
+message AddComputation {
     string pipeline_id = 1;
     string factory_id = 2;
     string init_values = 3;
 }
 
-message RemPipeline {
+message RemComputation {
     string pipeline_id = 1;
 }
 
@@ -53,7 +53,7 @@ message MigrationDeserialization {
     bytes serialized_state = 3;
 }
 
-message PipelineState {
+message ComputationState {
     string pipeline_id = 1;
 }
 

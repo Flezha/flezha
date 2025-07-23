@@ -1,15 +1,15 @@
-defmodule FlezhaTest.PipelineManagerTest do
+defmodule FlezhaTest.ComputationManagerTest do
   use ExUnit.Case
   use Flezha.Constant
 
-  import Flezha.Service.PipelineManager
+  import Flezha.Service.ComputationManager
 
-  doctest Flezha.Service.PipelineManager
+  doctest Flezha.Service.ComputationManager
 
   test "start worker" do
     pipeline_id = "test_worker_start"
 
-    worker = %Flezha.Pipeline.Builder{
+    worker = %Flezha.Computation.Builder{
       id: pipeline_id,
       factory_id: @factory_do_nothing
     }
@@ -23,7 +23,7 @@ defmodule FlezhaTest.PipelineManagerTest do
   end
 
   test "stop worker" do
-    worker = %Flezha.Pipeline.Builder{
+    worker = %Flezha.Computation.Builder{
       id: "rem_compuation_test",
       factory_id: @factory_do_nothing
     }
@@ -45,12 +45,12 @@ defmodule FlezhaTest.PipelineManagerTest do
   end
 
   test "validate worker length" do
-    valid_worker = %Flezha.Pipeline.Builder{
+    valid_worker = %Flezha.Computation.Builder{
       id: "worker_string_32_bytes_long",
       factory_id: @factory_do_nothing
     }
 
-    invalid_worker = %Flezha.Pipeline.Builder{
+    invalid_worker = %Flezha.Computation.Builder{
       id: "some_very_long_pipeline_id_that_should_fail",
       factory_id: @factory_do_nothing
     }
