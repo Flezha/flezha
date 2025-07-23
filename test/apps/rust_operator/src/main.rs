@@ -46,23 +46,23 @@ fn std_keeper() -> thread::JoinHandle<()> {
 }
 
 // STEP DEFINITIONS --------------------------------------------------------------------
-struct DoNothingStep;
-impl ComputationHandler<DoNothingState, String> for DoNothingStep {
+struct DoNothingComputation;
+impl ComputationHandler<DoNothingState, String> for DoNothingComputation {
     fn process(&mut self, input: String, _state: &mut DoNothingState) -> io::Result<String> {
         Ok(input)
     }
 }
 
-struct StoreInputStep;
-impl ComputationHandler<StoreInputState, String> for StoreInputStep {
+struct StoreInputComputation;
+impl ComputationHandler<StoreInputState, String> for StoreInputComputation {
     fn process(&mut self, input: String, state: &mut StoreInputState) -> io::Result<String> {
         state.text_inputs.push(input.clone());
         Ok(input)
     }
 }
 
-struct CompareFilterStep;
-impl ComputationHandler<CompareFilterState, String> for CompareFilterStep {
+struct CompareFilterComputation;
+impl ComputationHandler<CompareFilterState, String> for CompareFilterComputation {
     fn process(&mut self, input: String, state: &mut CompareFilterState) -> io::Result<String> {
         if state.inverted {
             if state.comparable == input {
@@ -107,7 +107,7 @@ fn define_factories() {
             binary_inputs: vec![],
             text_inputs: vec![],
         },
-        || vec![Box::new(StoreInputStep {})],
+        || Box::new(StoreInputComputation {}),
     );
 
     register_factory(
@@ -117,13 +117,13 @@ fn define_factories() {
             comparable: "default".to_string(),
             inverted: false,
         },
-        || vec![Box::new(CompareFilterStep {})],
+        || Box::new(CompareFilterComputation {}),
     );
 
     register_factory(
         "do_nothing".to_string(),
         ComputationSettings::<String, DoNothingState>::default(),
         DoNothingState {},
-        || vec![Box::new(DoNothingStep {})],
+        || Box::new(DoNothingComputation {}),
     );
 }
