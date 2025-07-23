@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use std::thread::{self};
 use std::time::Duration;
 
-use flezha_operator::{register_factory, ComputationSettings, PipelineStep};
+use flezha_operator::{register_factory, ComputationSettings, ComputationHandler};
 
 use serde::{Deserialize, Serialize};
 fn main() {
@@ -47,14 +47,14 @@ fn std_keeper() -> thread::JoinHandle<()> {
 
 // STEP DEFINITIONS --------------------------------------------------------------------
 struct DoNothingStep;
-impl PipelineStep<DoNothingState, String> for DoNothingStep {
+impl ComputationHandler<DoNothingState, String> for DoNothingStep {
     fn process(&mut self, input: String, _state: &mut DoNothingState) -> io::Result<String> {
         Ok(input)
     }
 }
 
 struct StoreInputStep;
-impl PipelineStep<StoreInputState, String> for StoreInputStep {
+impl ComputationHandler<StoreInputState, String> for StoreInputStep {
     fn process(&mut self, input: String, state: &mut StoreInputState) -> io::Result<String> {
         state.text_inputs.push(input.clone());
         Ok(input)
@@ -62,7 +62,7 @@ impl PipelineStep<StoreInputState, String> for StoreInputStep {
 }
 
 struct CompareFilterStep;
-impl PipelineStep<CompareFilterState, String> for CompareFilterStep {
+impl ComputationHandler<CompareFilterState, String> for CompareFilterStep {
     fn process(&mut self, input: String, state: &mut CompareFilterState) -> io::Result<String> {
         if state.inverted {
             if state.comparable == input {
