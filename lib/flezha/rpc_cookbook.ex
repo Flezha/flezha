@@ -37,8 +37,8 @@ defmodule Flezha.Service.RpcCookbook do
   end
 
   @doc "Get pipeline state."
-  def pipeline_state(group_id, computation_id) do
-    result = ComputationManager.get_pipeline_state(group_id(group_id), computation_id)
+  def computation_state(group_id, computation_id) do
+    result = ComputationManager.get_computation_state(group_id(group_id), computation_id)
 
     message =
       case result do

@@ -154,9 +154,9 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
-  def get_pipeline_state(group_id, computation_id) do
+  def get_computation_state(group_id, computation_id) do
     case get_pipeline_pid(group_id, computation_id) do
-      {:ok, pipeline_pid} -> GenServer.call(pipeline_pid, :get_pipeline_state)
+      {:ok, pipeline_pid} -> GenServer.call(pipeline_pid, :get_computation_state)
       err -> err
     end
   end

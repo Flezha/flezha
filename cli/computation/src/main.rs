@@ -111,7 +111,7 @@ fn handle_state(args: Vec<String>) {
     let group_id = get_namespace(&args[3..]);
 
     let rpc_command = format!(
-        "Flezha.Service.RpcCookbook.pipeline_state(\"{}\", \"{}\")", 
+        "Flezha.Service.RpcCookbook.computation_state(\"{}\", \"{}\")", 
         group_id,
         computation_id,
     );

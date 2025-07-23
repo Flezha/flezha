@@ -30,12 +30,12 @@ defmodule Flezha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:get_pipeline_state, computation_id}, from, state) do
+  def handle_call({:get_computation_state, computation_id}, from, state) do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
         {
-          :get_pipeline_state,
+          :get_computation_state,
           %OperatorCommands.ComputationState{computation_id: computation_id}
         }
       )
@@ -87,7 +87,7 @@ defmodule Flezha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:start_pipeline, pipeline}, from, state) do
+  def handle_call({:start_computation, pipeline}, from, state) do
     # TODO: Not sure if we should convert to map from the beginning.
     init_values =
       case pipeline.init_values !== %{} do
@@ -105,7 +105,7 @@ defmodule Flezha.Operator.ControlUnit do
       init_values: init_values
     }
 
-    {:ok, ref} = ControlChannel.send_control(state.operator_id, {:add_pipeline, command})
+    {:ok, ref} = ControlChannel.send_control(state.operator_id, {:add_computation, command})
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
   end
@@ -116,7 +116,7 @@ defmodule Flezha.Operator.ControlUnit do
       ControlChannel.send_control(
         state.operator_id,
         {
-          :rem_pipeline,
+          :rem_computation,
           %OperatorCommands.RemComputation{computation_id: computation_id}
         }
       )

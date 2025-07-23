@@ -196,7 +196,7 @@ defmodule FlezhaTest do
     end
   end
 
-  @tag :get_pipeline_state
+  @tag :get_computation_state
   test "get pipeline state" do
     computation_id = "get_state_test"
 
@@ -209,10 +209,10 @@ defmodule FlezhaTest do
     ComputationTestHelper.send_sync_io(computation_id, @default_group, {:text, "state_1"})
     ComputationTestHelper.send_sync_io(computation_id, @default_group, {:text, "state_2"})
 
-    {:ok, json_state} = ComputationManager.get_pipeline_state(@default_group, computation_id)
-    pipeline_state = Flezha.Service.Payloader.json_to_map(json_state)
+    {:ok, json_state} = ComputationManager.get_computation_state(@default_group, computation_id)
+    computation_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert pipeline_state === %{
+    assert computation_state === %{
              "binary_inputs" => [],
              "text_inputs" => ["state_1", "state_2"]
            }
@@ -249,22 +249,22 @@ defmodule FlezhaTest do
       trigger: :proactive
     })
 
-    {:ok, json_state} = ComputationManager.get_pipeline_state(@default_group, computation_id)
+    {:ok, json_state} = ComputationManager.get_computation_state(@default_group, computation_id)
     {:ok, old_overwatch_state} = ComputationManager.get_overwatch_state(@default_group, computation_id)
-    pipeline_state = Flezha.Service.Payloader.json_to_map(json_state)
+    computation_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert pipeline_state === test_state
+    assert computation_state === test_state
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
 
     # TODO: add hook here instead
     Process.sleep(500)
 
-    {:ok, json_state} = ComputationManager.get_pipeline_state(@default_group, computation_id)
+    {:ok, json_state} = ComputationManager.get_computation_state(@default_group, computation_id)
     {:ok, new_overwatch_state} = ComputationManager.get_overwatch_state(@default_group, computation_id)
-    pipeline_state = Flezha.Service.Payloader.json_to_map(json_state)
+    computation_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert pipeline_state === test_state
+    assert computation_state === test_state
     assert new_overwatch_state.bindings === old_overwatch_state.bindings
     assert new_overwatch_state.init_values === old_overwatch_state.init_values
   end
@@ -320,8 +320,8 @@ defmodule FlezhaTest do
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, computation_id_2)
+    {:ok, json_state_1} = ComputationManager.get_computation_state(group_id, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_computation_state(group_id, computation_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
@@ -370,8 +370,8 @@ defmodule FlezhaTest do
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, computation_id_2)
+    {:ok, json_state_1} = ComputationManager.get_computation_state(group_id, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_computation_state(group_id, computation_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
@@ -448,8 +448,8 @@ defmodule FlezhaTest do
     ComputationTestHelper.send_sync_io(computation_id_2, group_id, {:text, "state_2"})
 
     # Check the states before operator migrations.
-    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, computation_id_2)
+    {:ok, json_state_1} = ComputationManager.get_computation_state(group_id, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_computation_state(group_id, computation_id_2)
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
 
@@ -474,8 +474,8 @@ defmodule FlezhaTest do
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_pipeline_state(group_id, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_pipeline_state(group_id, computation_id_2)
+    {:ok, json_state_1} = ComputationManager.get_computation_state(group_id, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_computation_state(group_id, computation_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"

@@ -110,12 +110,12 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def handle_call(:get_pipeline_state, _from, state) do
+  def handle_call(:get_computation_state, _from, state) do
     command = %OperatorCommands.ComputationState{computation_id: state.id}
 
     # TODO: any rpc command may timeout causing the pipeline overwatch to crash.
     # We should handle this in the control unit.
-    result = send_control(state.operator_id, {:pipeline_state, command})
+    result = send_control(state.operator_id, {:computation_state, command})
 
     {:reply, result, state}
   end
@@ -215,7 +215,7 @@ defmodule Flezha.Computation.Overwatch do
   defp create_snapshot(computation_id, operator_id) do
     command = %OperatorCommands.ComputationState{computation_id: computation_id}
 
-    case send_control(operator_id, {:pipeline_state, command}) do
+    case send_control(operator_id, {:computation_state, command}) do
       {:ok, snapshot} ->
         snapshot
 
@@ -283,7 +283,7 @@ defmodule Flezha.Computation.Overwatch do
   defp start_pipeline_sdk(operator_id, pipeline) do
     GenServer.call(
       Identificator.control_unit(operator_id),
-      {:start_pipeline, pipeline}
+      {:start_computation, pipeline}
     )
   end
 

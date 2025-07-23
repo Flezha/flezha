@@ -9,11 +9,11 @@ message CommandRequest {
     oneof command {
         AssignOperatorId assign_operator_id = 2;
         ConnectSocket connect_socket = 3;
-        AddComputation add_pipeline = 4;
-        RemComputation rem_pipeline = 5;
+        AddComputation add_computation = 4;
+        RemComputation rem_computation = 5;
         MigrationSerialization migration_serialization = 6;
         MigrationDeserialization migration_deserialization = 7;
-        ComputationState pipeline_state = 8;
+        ComputationState computation_state = 8;
         OperatorDisconnect operator_disconnect = 9;
     }
 }
