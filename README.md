@@ -1,7 +1,7 @@
 # Flezha
 
 ## Description
-Distributed stateful pipelines. Provdes a static and dynamic creation of pipelines.
+Distributed stateful computations. Provdes a static and dynamic creation of computations.
 
 ## Building
 - Copy `.env.example` and rename to `.env`
@@ -29,27 +29,27 @@ Stopping the node.
 _build/dev/rel/flezha/bin/agent stop
 ```
 
-### Starting a pipeline.
+### Starting a computation.
 ```bash
-_build/dev/rel/flezha/bin/pipeline start my_pipeline compare_filter --init_values='{
+_build/dev/rel/flezha/bin/computation start my_computation compare_filter --init_values='{
   "comparable": "hello world", 
   "inverted": false
 }'
 ```
 
 ```bash
-_build/dev/rel/flezha/bin/pipeline start my_pipeline do_nothing
+_build/dev/rel/flezha/bin/computation start my_computation do_nothing
 ```
 
-### Stop a pipeline.
+### Stop a computation.
 ```bash
-_build/dev/rel/flezha/bin/pipeline stop my_pipeline
+_build/dev/rel/flezha/bin/computation stop my_computation
 ```
 
-### Enabling websocket plugin for pipeline. 
+### Enabling websocket plugin for computation. 
 ```bash
-_build/dev/rel/flezha/bin/plugin enable pipeline_websocket  --settings='{
-  "computation_id": "my_pipeline",
+_build/dev/rel/flezha/bin/plugin enable computation_websocket  --settings='{
+  "computation_id": "my_computation",
   "trigger": "proactive",
   "uri": "ws://localhost:4500",
   "post_connect": {
@@ -62,15 +62,15 @@ _build/dev/rel/flezha/bin/plugin enable pipeline_websocket  --settings='{
 ```
 
 ```bash
-_build/dev/rel/flezha/bin/plugin enable pipeline_stdout  --settings='{
-  "computation_id": "my_pipeline",
+_build/dev/rel/flezha/bin/plugin enable computation_stdout  --settings='{
+  "computation_id": "my_computation",
   "trigger": "on_out",
 }'
 ```
 
-### Get pipeline state.
+### Get computation state.
 ```bash
-_build/dev/rel/flezha/bin/pipeline state my_pipeline
+_build/dev/rel/flezha/bin/computation state my_computation
 ```
 
 

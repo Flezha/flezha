@@ -6,11 +6,11 @@ defmodule Flezha.Plugin.Provider.StdOut do
 
   @behaviour PluginBase
 
-  @enforce_keys ComputationPlugin.required_pipeline_keys()
-  defstruct @enforce_keys ++ ComputationPlugin.optional_pipeline_keys()
+  @enforce_keys ComputationPlugin.required_computation_keys()
+  defstruct @enforce_keys ++ ComputationPlugin.optional_computation_keys()
 
   @impl true
-  def plugin_id(), do: "pipeline_stdout"
+  def plugin_id(), do: "computation_stdout"
 
   defimpl PluginProtocol, for: Flezha.Plugin.Provider.StdOut do
     use ComputationPlugin

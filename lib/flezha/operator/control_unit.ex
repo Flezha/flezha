@@ -87,12 +87,12 @@ defmodule Flezha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:start_computation, pipeline}, from, state) do
+  def handle_call({:start_computation, computation}, from, state) do
     # TODO: Not sure if we should convert to map from the beginning.
     init_values =
-      case pipeline.init_values !== %{} do
+      case computation.init_values !== %{} do
         true ->
-          {:ok, json_iv} = Jason.encode(pipeline.init_values)
+          {:ok, json_iv} = Jason.encode(computation.init_values)
           json_iv
 
         false ->
@@ -100,8 +100,8 @@ defmodule Flezha.Operator.ControlUnit do
       end
 
     command = %OperatorCommands.AddComputation{
-      computation_id: pipeline.id,
-      factory_id: pipeline.factory_id,
+      computation_id: computation.id,
+      factory_id: computation.factory_id,
       init_values: init_values
     }
 
@@ -111,7 +111,7 @@ defmodule Flezha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:stop_pipeline, computation_id}, from, state) do
+  def handle_call({:stop_computation, computation_id}, from, state) do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,

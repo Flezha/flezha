@@ -6,11 +6,11 @@ defmodule Flezha.Plugin.Provider.BeamMsgForward do
 
   @behaviour PluginBase
 
-  @enforce_keys ComputationPlugin.required_pipeline_keys() ++ [:recv_pid]
-  defstruct @enforce_keys ++ ComputationPlugin.optional_pipeline_keys()
+  @enforce_keys ComputationPlugin.required_computation_keys() ++ [:recv_pid]
+  defstruct @enforce_keys ++ ComputationPlugin.optional_computation_keys()
 
   @impl true
-  def plugin_id(), do: "pipeline_beam_msg"
+  def plugin_id(), do: "computation_beam_msg"
 
   defimpl PluginProtocol, for: Flezha.Plugin.Provider.BeamMsgForward do
     use ComputationPlugin

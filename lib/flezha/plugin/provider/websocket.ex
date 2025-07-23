@@ -10,16 +10,16 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   @behaviour PluginBase
 
-  @enforce_keys ComputationPlugin.required_pipeline_keys() ++ [:uri]
+  @enforce_keys ComputationPlugin.required_computation_keys() ++ [:uri]
   defstruct @enforce_keys ++
               [
                 :conn,
                 post_connect: %{},
                 ws_opts: []
-              ] ++ ComputationPlugin.optional_pipeline_keys()
+              ] ++ ComputationPlugin.optional_computation_keys()
 
   @impl true
-  def plugin_id(), do: "pipeline_websocket"
+  def plugin_id(), do: "computation_websocket"
 
   defimpl PluginProtocol, for: Flezha.Plugin.Provider.Websocket do
     use ComputationPlugin

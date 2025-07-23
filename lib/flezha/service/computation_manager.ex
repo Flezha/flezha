@@ -1,6 +1,6 @@
 defmodule Flezha.Service.ComputationManager do
   @moduledoc """
-  Manages the pipeline startings and stoppings.
+  Manages the computation startings and stoppings.
   """
 
   alias Flezha.Service.HubManager
@@ -8,7 +8,7 @@ defmodule Flezha.Service.ComputationManager do
   alias Flezha.Operator.FleetManager
   alias Flezha.Computation.Builder, as: ComputationBuilder
 
-  def pipeline_registry(group_id) do
+  def computation_registry(group_id) do
     case HubManager.get_registry(group_id) do
       {:ok, registry} ->
         registry
@@ -18,18 +18,18 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
-  def get_pipeline_pid(group_id, computation_id) do
+  def get_computation_pid(group_id, computation_id) do
     case HubManager.get_pid(group_id, computation_id) do
       {:ok, pid} -> {:ok, pid}
-      {:error, "no pid found"} -> {:error, "pipeline not found"}
+      {:error, "no pid found"} -> {:error, "computation not found"}
       err -> err
     end
   end
 
   def get_overwatch_state(group_id, computation_id) do
-    case get_pipeline_pid(group_id, computation_id) do
-      {:ok, pipeline_pid} ->
-        {:ok, GenServer.call(pipeline_pid, :get_overwatch_state)}
+    case get_computation_pid(group_id, computation_id) do
+      {:ok, computation_pid} ->
+        {:ok, GenServer.call(computation_pid, :get_overwatch_state)}
 
       err ->
         err
@@ -37,29 +37,29 @@ defmodule Flezha.Service.ComputationManager do
   end
 
   @doc """
-  Starts a new pipeline to the operator.
+  Starts a new computation to the operator.
   """
-  @spec start_pipeline(String.t(), ComputationBuilder.t()) ::
+  @spec start_computation(String.t(), ComputationBuilder.t()) ::
           {:ok, pid()} | {:error, String.t()}
-  def start_pipeline(group_id, pipeline) do
-    case ComputationBuilder.validate_pipeline(group_id, pipeline) do
+  def start_computation(group_id, computation) do
+    case ComputationBuilder.validate_computation(group_id, computation) do
       {:error, reason} ->
         {:error, reason}
 
       :ok ->
         # TODO: we should validate the group_id also.
-        init_pipeline(group_id, pipeline)
+        init_computation(group_id, computation)
     end
   end
 
   @doc """
-  Removes a pipeline.
+  Removes a computation.
   """
-  @spec stop_pipeline(String.t(), String.t()) :: :ok | {:error, String.t()}
-  def stop_pipeline(group_id, computation_id) do
-    case get_pipeline_pid(group_id, computation_id) do
-      {:ok, pipeline_pid} ->
-        case GenServer.call(pipeline_pid, :stop_pipeline) do
+  @spec stop_computation(String.t(), String.t()) :: :ok | {:error, String.t()}
+  def stop_computation(group_id, computation_id) do
+    case get_computation_pid(group_id, computation_id) do
+      {:ok, computation_pid} ->
+        case GenServer.call(computation_pid, :stop_computation) do
           :ok -> :ok
           {:error, reason} -> {:error, reason}
         end
@@ -69,22 +69,22 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
-  def stop_all_pipelines(group_id) do
-    pipelines = HubManager.get_all_pipelines(group_id)
+  def stop_all_computations(group_id) do
+    computations = HubManager.get_all_computations(group_id)
 
-    Enum.map(pipelines, fn {_computation_id, pipeline_pid} ->
-      if Process.alive?(pipeline_pid) do
-        GenServer.call(pipeline_pid, :stop_pipeline)
+    Enum.map(computations, fn {_computation_id, computation_pid} ->
+      if Process.alive?(computation_pid) do
+        GenServer.call(computation_pid, :stop_computation)
       else
-        {:error, "pipeline not alive"}
+        {:error, "computation not alive"}
       end
     end)
   end
 
   def send_io(computation_id, group_id, message, virtual_channel) do
-    case get_pipeline_pid(group_id, computation_id) do
-      {:ok, pipeline_pid} ->
-        GenServer.cast(pipeline_pid, {:io_in, message, virtual_channel})
+    case get_computation_pid(group_id, computation_id) do
+      {:ok, computation_pid} ->
+        GenServer.cast(computation_pid, {:io_in, message, virtual_channel})
 
       err ->
         err
@@ -92,22 +92,22 @@ defmodule Flezha.Service.ComputationManager do
   end
 
   def create_snapshot(group_id, computation_id) do
-    case get_pipeline_pid(group_id, computation_id) do
-      {:ok, pipeline_pid} ->
-        GenServer.call(pipeline_pid, :create_snapshot)
+    case get_computation_pid(group_id, computation_id) do
+      {:ok, computation_pid} ->
+        GenServer.call(computation_pid, :create_snapshot)
 
       err ->
         err
     end
   end
 
-  defp init_pipeline(group_id, pipeline) do
+  defp init_computation(group_id, computation) do
     child_spec = %{
-      id: pipeline.id,
+      id: computation.id,
       start: {
         Flezha.Computation.Overwatch,
         :start_link,
-        [{group_id, pipeline}]
+        [{group_id, computation}]
       },
       restart: :transient
     }
@@ -127,7 +127,7 @@ defmodule Flezha.Service.ComputationManager do
 
         {:ok,
          %{
-           computation_id: pipeline.id,
+           computation_id: computation.id,
            operator_id: operator_id,
            node: node,
            pid: pid
@@ -148,15 +148,15 @@ defmodule Flezha.Service.ComputationManager do
   end
 
   def exist?(group_id, computation_id) do
-    case get_pipeline_pid(group_id, computation_id) do
+    case get_computation_pid(group_id, computation_id) do
       {:ok, _pid} -> true
       {:error, _reason} -> false
     end
   end
 
   def get_computation_state(group_id, computation_id) do
-    case get_pipeline_pid(group_id, computation_id) do
-      {:ok, pipeline_pid} -> GenServer.call(pipeline_pid, :get_computation_state)
+    case get_computation_pid(group_id, computation_id) do
+      {:ok, computation_pid} -> GenServer.call(computation_pid, :get_computation_state)
       err -> err
     end
   end

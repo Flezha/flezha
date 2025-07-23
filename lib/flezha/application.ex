@@ -50,7 +50,7 @@ defmodule Flezha.Application do
   @impl true
   def prep_stop(_state) do
     # We need to stop the hub manager first to keep the operators
-    # running while pipelines are stopped.
+    # running while computations are stopped.
     Flezha.Service.HubManager.stop_hub_manager()
   end
 

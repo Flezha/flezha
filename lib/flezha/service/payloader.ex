@@ -53,7 +53,7 @@ defmodule Flezha.Service.Payloader do
     end
   end
 
-  def construct_pipeline!(input, type) do
+  def construct_computation!(input, type) do
     result =
       case type do
         :json -> ComputationBuilder.from_json(input)
@@ -61,7 +61,7 @@ defmodule Flezha.Service.Payloader do
       end
 
     case result do
-      {:ok, pipeline} -> pipeline
+      {:ok, computation} -> computation
       {:error, reason} -> raise reason
     end
   end

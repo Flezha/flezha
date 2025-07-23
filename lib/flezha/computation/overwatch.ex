@@ -32,19 +32,19 @@ defmodule Flezha.Computation.Overwatch do
   # TODO: binding on migration we should rerun all of them.
   # TODO: add ability to remove bindings.
   @impl true
-  def init({group_id, operator_id, pipeline}) do
-    snapshot_interval = Keyword.get(pipeline.opts, :snapshot_interval, @snapshop_interval)
+  def init({group_id, operator_id, computation}) do
+    snapshot_interval = Keyword.get(computation.opts, :snapshot_interval, @snapshop_interval)
 
     # TODO: Perhaps move to handle continue.
     schedule_snapshot(snapshot_interval)
 
     state = %__MODULE__{
-      id: pipeline.id,
+      id: computation.id,
       group_id: group_id,
-      factory_id: pipeline.factory_id,
-      init_values: pipeline.init_values,
+      factory_id: computation.factory_id,
+      init_values: computation.init_values,
       operator_id: operator_id,
-      channel: attach_channel(pipeline.id, operator_id),
+      channel: attach_channel(computation.id, operator_id),
       snapshot_interval: snapshot_interval,
       snapshot: nil,
       bindings: %{
@@ -55,7 +55,7 @@ defmodule Flezha.Computation.Overwatch do
       }
     }
 
-    case start_pipeline_sdk(operator_id, pipeline) do
+    case start_computation_sdk(operator_id, computation) do
       {:ok, _} ->
         {:ok, state, {:continue, :additional_init}}
 
@@ -71,16 +71,16 @@ defmodule Flezha.Computation.Overwatch do
 
   @impl true
   def handle_call(:registry_operator_set, _from, state) do
-    HubManager.pipeline_set_operator(state.group_id, state.id, state.operator_id)
+    HubManager.computation_set_operator(state.group_id, state.id, state.operator_id)
 
     {:reply, {:ok, state.operator_id}, state}
   end
 
   @impl true
-  def handle_call(:stop_pipeline, from, state) do
+  def handle_call(:stop_computation, from, state) do
     GenServer.call(
       Identificator.control_unit(state.operator_id),
-      {:stop_pipeline, state.id}
+      {:stop_computation, state.id}
     )
 
     GenServer.reply(from, :ok)
@@ -113,7 +113,7 @@ defmodule Flezha.Computation.Overwatch do
   def handle_call(:get_computation_state, _from, state) do
     command = %OperatorCommands.ComputationState{computation_id: state.id}
 
-    # TODO: any rpc command may timeout causing the pipeline overwatch to crash.
+    # TODO: any rpc command may timeout causing the computation overwatch to crash.
     # We should handle this in the control unit.
     result = send_control(state.operator_id, {:computation_state, command})
 
@@ -134,14 +134,14 @@ defmodule Flezha.Computation.Overwatch do
         true -> state.init_values
       end
 
-    pipeline = %Flezha.Computation.Builder{
+    computation = %Flezha.Computation.Builder{
       id: state.id,
       factory_id: state.factory_id,
       init_values: init_values,
       opts: []
     }
 
-    start_pipeline_sdk(new_operator_id, pipeline)
+    start_computation_sdk(new_operator_id, computation)
 
     {:reply, :ok, state}
   end
@@ -174,7 +174,7 @@ defmodule Flezha.Computation.Overwatch do
   @impl true
   def handle_cast({:io_in, payload, virtual_channel}, state) do
     # TODO: were currently hardcoding the handling_type to :stream (:task is also a option)
-    # The pipeline itself should be able to define the handling type.
+    # The computation itself should be able to define the handling type.
     # Meaning we should store the handling type in the overwatch state.
     payload = exec_bindings(state.bindings.on_input, payload, virtual_channel)
 
@@ -227,7 +227,7 @@ defmodule Flezha.Computation.Overwatch do
   @impl true
   def prepare_handover_state(state) do
     serialize_data =
-      case serialize_pipeline_sdk(state.operator_id, state.id) do
+      case serialize_computation_sdk(state.operator_id, state.id) do
         nil ->
           state.snapshot
 
@@ -249,7 +249,7 @@ defmodule Flezha.Computation.Overwatch do
     result = send_control(state.operator_id, {:migration_deserialization, command})
 
     case result do
-      {:error, reason} -> Logger.error("Failed to deserialize pipeline: #{inspect(reason)}")
+      {:error, reason} -> Logger.error("Failed to deserialize computation: #{inspect(reason)}")
       _else -> :ok
     end
 
@@ -280,10 +280,10 @@ defmodule Flezha.Computation.Overwatch do
     end
   end
 
-  defp start_pipeline_sdk(operator_id, pipeline) do
+  defp start_computation_sdk(operator_id, computation) do
     GenServer.call(
       Identificator.control_unit(operator_id),
-      {:start_computation, pipeline}
+      {:start_computation, computation}
     )
   end
 
@@ -295,11 +295,11 @@ defmodule Flezha.Computation.Overwatch do
 
   defp attach_channel(computation_id, operator_id) do
     # Get numeric representation of the computation_id string.
-    pipeline_int = String.to_charlist(computation_id) |> Enum.sum()
+    computation_int = String.to_charlist(computation_id) |> Enum.sum()
 
     # Pick the channel index based on the channel_name_int.
     count = ConfigManager.concurrent_channel_count()
-    channel_index = rem(pipeline_int, count)
+    channel_index = rem(computation_int, count)
 
     StreamSup.stream_ids(operator_id, :primary) |> Enum.at(channel_index)
   end
@@ -341,7 +341,7 @@ defmodule Flezha.Computation.Overwatch do
     end
   end
 
-  defp serialize_pipeline_sdk(operator_id, computation_id) do
+  defp serialize_computation_sdk(operator_id, computation_id) do
     command = %OperatorCommands.MigrationSerialization{computation_id: computation_id}
 
     result = send_control(operator_id, {:migration_serialization, command})
@@ -353,7 +353,7 @@ defmodule Flezha.Computation.Overwatch do
       {:error, reason} ->
         # TODO: we should actually check if overwatch status is :ok
         if Application.get_env(:flezha, :env) !== :test do
-          Logger.error("Failed to serialize pipeline: #{inspect(reason)}")
+          Logger.error("Failed to serialize computation: #{inspect(reason)}")
         end
 
         nil

@@ -22,22 +22,22 @@ defmodule Flezha.Computation.Builder do
          {:ok, factory_id} <- get_from_map(values_map, "factory_id"),
          init_values <- Map.get(values_map, "init_values", %{}),
          {:ok, init_values_json} <- Jason.decode(init_values) do
-      pipeline = %__MODULE__{
+      computation = %__MODULE__{
         id: id,
         factory_id: factory_id,
         init_values: init_values_json
       }
 
-      {:ok, pipeline}
+      {:ok, computation}
     else
       err -> err
     end
   end
 
-  def validate_pipeline(group_id, pipeline) do
-    with :ok <- Validator.byte_limit_exceed(pipeline.id),
+  def validate_computation(group_id, computation) do
+    with :ok <- Validator.byte_limit_exceed(computation.id),
          :ok <- Validator.valid_group(group_id),
-         :ok <- Validator.pipeline_unique(group_id, pipeline.id) do
+         :ok <- Validator.computation_unique(group_id, computation.id) do
       :ok
     else
       {:error, reason} -> {:error, reason}

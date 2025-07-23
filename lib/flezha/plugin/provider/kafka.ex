@@ -7,15 +7,15 @@ defmodule Flezha.Plugin.Provider.Kafka do
   defmodule Producer do
     @behaviour PluginBase
 
-    @enforce_keys ComputationPlugin.required_pipeline_keys() ++ [:hosts, :topic, :partition]
+    @enforce_keys ComputationPlugin.required_computation_keys() ++ [:hosts, :topic, :partition]
     defstruct @enforce_keys ++
                 [
                   :conn,
                   required_acks: 1
-                ] ++ ComputationPlugin.optional_pipeline_keys()
+                ] ++ ComputationPlugin.optional_computation_keys()
 
     @impl true
-    def plugin_id(), do: "pipeline_kafka_producer"
+    def plugin_id(), do: "computation_kafka_producer"
 
     defimpl PluginProtocol, for: Flezha.Plugin.Provider.Kafka.Producer do
       use ComputationPlugin

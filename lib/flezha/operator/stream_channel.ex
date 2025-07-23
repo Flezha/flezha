@@ -19,7 +19,7 @@ defmodule Flezha.Operator.StreamChannel do
       %{
         lsock: lsock,
         sock: nil,
-        pipeline_mapping: %{},
+        computation_mapping: %{},
         name: name,
         buffer: {:empty, <<>>}
       },
@@ -56,20 +56,20 @@ defmodule Flezha.Operator.StreamChannel do
   end
 
   @impl true
-  def handle_call({:pipeline_pid_update, computation_id, updated_pids}, _from, state) do
-    pipeline_mapping = Map.put(state[:pipeline_mapping], computation_id, updated_pids)
+  def handle_call({:computation_pid_update, computation_id, updated_pids}, _from, state) do
+    computation_mapping = Map.put(state[:computation_mapping], computation_id, updated_pids)
 
-    {:reply, :ok, Map.put(state, :pipeline_mapping, pipeline_mapping)}
+    {:reply, :ok, Map.put(state, :computation_mapping, computation_mapping)}
   end
 
   @impl true
-  def handle_call({:pipeline_bulk_insert, pipelines}, _from, state) do
-    pipeline_mapping =
-      Enum.reduce(pipelines, state.pipeline_mapping, fn {computation_id, updated_pids}, acc ->
+  def handle_call({:computation_bulk_insert, computations}, _from, state) do
+    computation_mapping =
+      Enum.reduce(computations, state.computation_mapping, fn {computation_id, updated_pids}, acc ->
         Map.put(acc, computation_id, updated_pids)
       end)
 
-    {:reply, :ok, Map.put(state, :pipeline_mapping, pipeline_mapping)}
+    {:reply, :ok, Map.put(state, :computation_mapping, computation_mapping)}
   end
 
   @impl true
@@ -83,15 +83,15 @@ defmodule Flezha.Operator.StreamChannel do
 
   @impl true
   def handle_info({:tcp, _port, frame}, %{buffer: buffer} = state) do
-    pipeline_mappings = state.pipeline_mapping
+    computation_mappings = state.computation_mapping
 
     {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
 
     Enum.each(payloads, fn {computation_id, virtual_channel, message} ->
-      pipelines = Map.get(pipeline_mappings, computation_id, [])
+      computations = Map.get(computation_mappings, computation_id, [])
 
       # TODO: Are we handling binary or text data?
-      Enum.each(pipelines, fn pid ->
+      Enum.each(computations, fn pid ->
         GenServer.cast(pid, {:io_out, {:text, message}, virtual_channel})
       end)
     end)

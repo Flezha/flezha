@@ -8,35 +8,35 @@ defmodule Flezha.Service.RpcCookbook do
   alias Flezha.Service.PluginManager
   alias Flezha.Service.ConfigManager
 
-  @doc "Starts a pipeline."
-  def pipeline_start(group_id, computation_id, factory_id, init_values, opts \\ []) do
+  @doc "Starts a computation."
+  def computation_start(group_id, computation_id, factory_id, init_values, opts \\ []) do
     opts =
       Payloader.json_to_map(opts)
       |> atom_converter()
       |> Keyword.new()
 
-    pipeline = %Flezha.Computation.Builder{
+    computation = %Flezha.Computation.Builder{
       id: computation_id,
       factory_id: factory_id,
       init_values: Payloader.json_to_map(init_values),
       opts: opts
     }
 
-    case ComputationManager.start_pipeline(group_id(group_id), pipeline) do
+    case ComputationManager.start_computation(group_id(group_id), computation) do
       {:ok, _} -> IO.puts("Computation has been started")
-      {:error, reason} -> IO.puts("Error starting pipeline: #{inspect(reason)}")
+      {:error, reason} -> IO.puts("Error starting computation: #{inspect(reason)}")
     end
   end
 
-  @doc "Stops a pipelinene."
-  def pipeline_stop(group_id, computation_id) do
-    case ComputationManager.stop_pipeline(group_id(group_id), computation_id) do
+  @doc "Stops a computationne."
+  def computation_stop(group_id, computation_id) do
+    case ComputationManager.stop_computation(group_id(group_id), computation_id) do
       :ok -> IO.puts("Computation has been stopped")
-      {:error, reason} -> IO.puts("Error stopping pipeline: #{inspect(reason)}")
+      {:error, reason} -> IO.puts("Error stopping computation: #{inspect(reason)}")
     end
   end
 
-  @doc "Get pipeline state."
+  @doc "Get computation state."
   def computation_state(group_id, computation_id) do
     result = ComputationManager.get_computation_state(group_id(group_id), computation_id)
 

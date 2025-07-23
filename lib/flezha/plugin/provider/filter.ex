@@ -6,17 +6,17 @@ defmodule Flezha.Plugin.Provider.Filter do
 
   @behaviour PluginBase
 
-  @enforce_keys ComputationPlugin.required_pipeline_keys() ++
+  @enforce_keys ComputationPlugin.required_computation_keys() ++
                   [
                     :regex_pattern
                   ]
   defstruct @enforce_keys ++
               [
                 inverted: false
-              ] ++ ComputationPlugin.optional_pipeline_keys()
+              ] ++ ComputationPlugin.optional_computation_keys()
 
   @impl true
-  def plugin_id(), do: "pipeline_io_filter"
+  def plugin_id(), do: "computation_io_filter"
 
   defimpl PluginProtocol, for: Flezha.Plugin.Provider.Filter do
     use ComputationPlugin

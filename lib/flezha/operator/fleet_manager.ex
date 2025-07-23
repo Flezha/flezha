@@ -322,12 +322,12 @@ defmodule Flezha.Operator.FleetManager do
     new_operator = Enum.random(available_operators)
 
     # Let all overwatchers migrate their state to the new operator.
-    HubManager.operator_pipelines(group_id, old_operator)
-    |> Enum.each(fn {_computation_id, [{_node, pipeline_pid}]} ->
-      GenServer.call(pipeline_pid, {:operator_migrate, new_operator})
+    HubManager.operator_computations(group_id, old_operator)
+    |> Enum.each(fn {_computation_id, [{_node, computation_pid}]} ->
+      GenServer.call(computation_pid, {:operator_migrate, new_operator})
     end)
 
-    # Switch pipeline overwatchers to the new operator.
+    # Switch computation overwatchers to the new operator.
     HubManager.operator_switch(group_id, old_operator, new_operator)
 
     # Reset the hub handler to pick up any process restarts and pid changes.
@@ -337,7 +337,7 @@ defmodule Flezha.Operator.FleetManager do
     # Notify the new operator stream channels to pick up the
     # overwatchers pids.
     overwatchers =
-      HubManager.operator_pipelines(group_id, new_operator)
+      HubManager.operator_computations(group_id, new_operator)
       |> Enum.map(fn {computation_id, node_pids} ->
         {computation_id, Enum.map(node_pids, &elem(&1, 1))}
       end)
@@ -347,7 +347,7 @@ defmodule Flezha.Operator.FleetManager do
         Supervisor.which_children(Identificator.stream_sup_secondary(new_operator))
 
     Enum.each(stream_channels, fn {_, pid, _, _} ->
-      GenServer.call(pid, {:pipeline_bulk_insert, overwatchers})
+      GenServer.call(pid, {:computation_bulk_insert, overwatchers})
     end)
 
     # Remove the old operator from the group.

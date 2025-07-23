@@ -65,10 +65,10 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def get_all_pipelines(group_id) do
+  def get_all_computations(group_id) do
     Identificator.hub(group_id)
     |> ProcessHub.process_list(:global)
-    |> Enum.map(fn {computation_id, [{_node, pipeline_pid}]} -> {computation_id, pipeline_pid} end)
+    |> Enum.map(fn {computation_id, [{_node, computation_pid}]} -> {computation_id, computation_pid} end)
   end
 
   def register_handler(group_id, operator_id) do
@@ -92,7 +92,7 @@ defmodule Flezha.Service.HubManager do
     )
   end
 
-  def operator_pipelines(group_id, operator_id) do
+  def operator_computations(group_id, operator_id) do
     hub_id = Identificator.hub(group_id)
 
     ProcessHub.tag_query(hub_id, operator_id)
@@ -102,16 +102,16 @@ defmodule Flezha.Service.HubManager do
     hub_id = Identificator.hub(group_id)
 
     # Updates the operator id in the registry.
-    operator_pipelines(group_id, old_operator_id)
-    |> Enum.each(fn {computation_id, [{_node, _pipeline_pid}]} ->
-      pipeline_set_operator(group_id, computation_id, new_operator_id)
+    operator_computations(group_id, old_operator_id)
+    |> Enum.each(fn {computation_id, [{_node, _computation_pid}]} ->
+      computation_set_operator(group_id, computation_id, new_operator_id)
     end)
 
     # Propagate the change to all nodes in the group.
     ProcessHub.Service.Synchronizer.trigger_sync(hub_id)
   end
 
-  def pipeline_set_operator(group_id, computation_id, operator_id) do
+  def computation_set_operator(group_id, computation_id, operator_id) do
     hub_id = Identificator.hub(group_id)
 
     case ProcessHub.is_alive?(hub_id) do
@@ -127,7 +127,7 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  # TODO: we should also remove the pids incase the pipeline is removed.
+  # TODO: we should also remove the pids incase the computation is removed.
   def hook_insert_pid(operator_id, {computation_id, node_pids}) do
     curr_node = node()
 
@@ -147,7 +147,7 @@ defmodule Flezha.Service.HubManager do
             Supervisor.which_children(Identificator.stream_sup_secondary(operator_id))
 
         Enum.each(stream_channels, fn {_, pid, _, _} ->
-          GenServer.call(pid, {:pipeline_pid_update, computation_id, updated_pids})
+          GenServer.call(pid, {:computation_pid_update, computation_id, updated_pids})
         end)
     end
   end
@@ -155,17 +155,17 @@ defmodule Flezha.Service.HubManager do
   def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do
     %{start: {m, f, [arg]}} = cs
 
-    {group_id, pipeline} =
+    {group_id, computation} =
       case arg do
-        {group_id, pipeline} ->
-          {group_id, pipeline}
+        {group_id, computation} ->
+          {group_id, computation}
 
-        {group_id, _existing_operator, pipeline} ->
-          {group_id, pipeline}
+        {group_id, _existing_operator, computation} ->
+          {group_id, computation}
       end
 
     assigned_operator = ComputationManager.assign_operator(group_id)
-    new_args = [{group_id, assigned_operator, pipeline}]
+    new_args = [{group_id, assigned_operator, computation}]
 
     child_data
     |> put_in([:child_spec, :start], {m, f, new_args})

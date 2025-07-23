@@ -14,7 +14,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
     settings = %Flezha.Plugin.Provider.Kafka.Producer{
       group: "test_group",
-      computation_id: "test_pipeline",
+      computation_id: "test_computation",
       trigger: nil,
       hosts: [@test_broker],
       topic: @test_topic,
@@ -34,7 +34,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
     settings = %Flezha.Plugin.Provider.Kafka.Producer{
       group: "test_group",
-      computation_id: "test_pipeline",
+      computation_id: "test_computation",
       trigger: nil,
       hosts: [@test_broker],
       topic: @test_topic,

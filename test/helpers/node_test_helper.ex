@@ -3,8 +3,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   use ExUnit.Case
 
   # TODO: remove or refactor.
-  # def test_pipeline(computation_id) do
-  #   pipeline =
+  # def test_computation(computation_id) do
+  #   computation =
   #     FlezhaTest.Fixtures.ComputationFixture.get(
   #       computation_id,
   #       @factory_increment_state
@@ -12,10 +12,10 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   #     |> FlezhaTest.Fixtures.ComputationFixture.start()
 
   #   on_exit(fn ->
-  #     FlezhaTest.Fixtures.ComputationFixture.stop(pipeline.id)
+  #     FlezhaTest.Fixtures.ComputationFixture.stop(computation.id)
   #   end)
 
-  #   pipeline
+  #   computation
   # end
 
   def node_name() do

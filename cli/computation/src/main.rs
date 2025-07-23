@@ -47,7 +47,7 @@ fn handle_start(args: Vec<String>) {
     let group_id = get_namespace(&args[4..]);
 
     let rpc_command = format!(
-        "Flezha.Service.RpcCookbook.pipeline_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\")", 
+        "Flezha.Service.RpcCookbook.computation_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\")", 
         group_id,
         computation_id,
         factory_id,
@@ -55,7 +55,7 @@ fn handle_start(args: Vec<String>) {
         opts_json,
     );
 
-    println!("Starting pipeline...");
+    println!("Starting computation...");
 
     let status = Command::new(command)
         .arg("rpc")
@@ -79,14 +79,14 @@ fn handle_stop(args: Vec<String>) {
     let group_id = get_namespace(&args[3..]);
 
     let rpc_command = format!(
-        "Flezha.Service.RpcCookbook.pipeline_stop(\"{}\", \"{}\")", 
+        "Flezha.Service.RpcCookbook.computation_stop(\"{}\", \"{}\")", 
         group_id,
         computation_id,
     );
 
     let command = get_flezha_command();
 
-    println!("Stopping pipeline...");
+    println!("Stopping computation...");
 
     // Attempt to execute the external command.
     let status = Command::new(command)
@@ -97,7 +97,7 @@ fn handle_stop(args: Vec<String>) {
     match status {
         Ok(status) if status.success() => println!("Computation stopped successfully."),
         Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to stop pipeline: {}", e),
+        Err(e) => eprintln!("Failed to stop computation: {}", e),
     }
 }
 
@@ -126,6 +126,6 @@ fn handle_state(args: Vec<String>) {
     match status {
         Ok(status) if status.success() => {},
         Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to get pipeline state: {}", e),
+        Err(e) => eprintln!("Failed to get computation state: {}", e),
     }
 }

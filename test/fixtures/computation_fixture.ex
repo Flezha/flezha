@@ -9,12 +9,12 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
 
   def get(id, factory_id) do
     %Flezha.Computation.Builder{
-      id: id || "my_pipeline",
+      id: id || "my_computation",
       factory_id: factory_id || "do_nothing"
     }
   end
 
-  def start(pipeline, group \\ @default_group) do
+  def start(computation, group \\ @default_group) do
     self = self()
 
     ProcessHub.Service.HookManager.register_handler(
@@ -28,7 +28,7 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
       }
     )
 
-    result = Flezha.Service.ComputationManager.start_pipeline(group, pipeline)
+    result = Flezha.Service.ComputationManager.start_computation(group, computation)
 
     receive do
       :hook_reg_insert_recv -> :ok
@@ -46,7 +46,7 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
   end
 
   def stop(computation_id, group \\ @default_group) do
-    Flezha.Service.ComputationManager.stop_pipeline(group, computation_id)
+    Flezha.Service.ComputationManager.stop_computation(group, computation_id)
   end
 
   def attach_output_msg({:ok, %{computation_id: computation_id}} = start_res, group \\ @default_group) do
@@ -62,30 +62,30 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
   end
 
   # TODO: refactor.
-  # def attach_input(pipeline, handler, opts \\ []) do
+  # def attach_input(computation, handler, opts \\ []) do
   #   {:ok, __id} =
   #     Flezha.add_io(
   #       @default_group,
-  #       pipeline.id,
+  #       computation.id,
   #       get_io_handler(handler, :input),
   #       :input,
   #       handling_type: Keyword.get(opts, :handling_type, :task)
   #     )
 
-  #   pipeline
+  #   computation
   # end
 
-  # def attach_output(pipeline, handler) do
+  # def attach_output(computation, handler) do
   #   {:ok, _id} =
   #     Flezha.add_io(
   #       @default_group,
-  #       pipeline.id,
+  #       computation.id,
   #       get_io_handler(handler, :output),
   #       :output,
   #       []
   #     )
 
-  #   pipeline
+  #   computation
   # end
 
   # defp get_io_handler(handler, type) do
