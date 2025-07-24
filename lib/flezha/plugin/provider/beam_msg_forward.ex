@@ -24,6 +24,8 @@ defmodule Flezha.Plugin.Provider.BeamMsgForward do
 
     @impl true
     def exec(settings, payload) do
+      dbg()
+
       case Process.send(settings.recv_pid, {:message_forward, payload}, []) do
         :ok -> {:ok, payload}
         _ -> {:error, :send_failed}

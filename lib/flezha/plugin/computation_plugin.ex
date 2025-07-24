@@ -43,6 +43,6 @@ defmodule Flezha.Plugin.ComputationPlugin do
   end
 
   def optional_computation_keys() do
-    [virtual_channel: 1]
+    [virtual_channel: "1"]
   end
 end

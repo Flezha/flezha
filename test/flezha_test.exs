@@ -147,6 +147,7 @@ defmodule FlezhaTest do
     assert res === {:ok, "binding added"}
   end
 
+  @tag :computation_flow_msg_forward
   test "computation flow generation -> beam msg forward" do
     computation_id = "data_flow_test"
 

@@ -87,12 +87,12 @@ defmodule Flezha.Operator.StreamChannel do
 
     {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
 
-    Enum.each(payloads, fn {computation_id, virtual_channel, message} ->
+    Enum.each(payloads, fn {computation_id, message, metadata} ->
       computations = Map.get(computation_mappings, computation_id, [])
 
       # TODO: Are we handling binary or text data?
       Enum.each(computations, fn pid ->
-        GenServer.cast(pid, {:io_out, {:text, message}, virtual_channel})
+        GenServer.cast(pid, {:io_out, {:text, message}, metadata})
       end)
     end)
 
@@ -113,9 +113,9 @@ defmodule Flezha.Operator.StreamChannel do
       sock,
       Payloader.build_from_bin(
         computation_id,
+        input_type(type) <> handling_type(handling_type) <> message,
         # TODO: Hardcoded virtual channel.
-        1,
-        input_type(type) <> handling_type(handling_type) <> message
+        %{"virtual_channel" => "1"}
       )
     )
   end

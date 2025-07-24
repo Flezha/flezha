@@ -152,8 +152,8 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def handle_call({:io_in, payload, virtual_channel}, _from, state) do
-    payload = exec_bindings(state.bindings.on_input, payload, virtual_channel)
+  def handle_call({:io_in, payload, metadata}, _from, state) do
+    payload = exec_bindings(state.bindings.on_input, payload, metadata)
 
     # TODO: Perhaps pass the virtual channel to the exec_bindings function
     case payload do
@@ -172,11 +172,11 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def handle_cast({:io_in, payload, virtual_channel}, state) do
+  def handle_cast({:io_in, payload, metadata}, state) do
     # TODO: were currently hardcoding the handling_type to :stream (:task is also a option)
     # The computation itself should be able to define the handling type.
     # Meaning we should store the handling type in the overwatch state.
-    payload = exec_bindings(state.bindings.on_input, payload, virtual_channel)
+    payload = exec_bindings(state.bindings.on_input, payload, metadata)
 
     case payload do
       nil -> nil
@@ -187,8 +187,8 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def handle_cast({:io_out, payload, virtual_channel}, state) do
-    exec_bindings(state.bindings.on_output, payload, virtual_channel)
+  def handle_cast({:io_out, payload, metadata}, state) do
+    exec_bindings(state.bindings.on_output, payload, metadata)
 
     {:noreply, state}
   end
@@ -360,7 +360,11 @@ defmodule Flezha.Computation.Overwatch do
     end
   end
 
-  defp exec_bindings(bindings, payload, virtual_channel) do
+  defp exec_bindings(bindings, payload, metadata) do
+    virtual_channel = Map.get(metadata, "virtual_channel", "1") # |> String.to_integer()
+
+    dbg()
+
     Enum.reduce_while(bindings, payload, fn
       binding = %{virtual_channel: vc}, p when vc === virtual_channel ->
         case ComputationBinding.exec(binding, p) do

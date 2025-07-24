@@ -81,10 +81,10 @@ defmodule Flezha.Service.ComputationManager do
     end)
   end
 
-  def send_io(computation_id, group_id, message, virtual_channel) do
+  def send_io(computation_id, group_id, message, metadata) do
     case get_computation_pid(group_id, computation_id) do
       {:ok, computation_pid} ->
-        GenServer.cast(computation_pid, {:io_in, message, virtual_channel})
+        GenServer.cast(computation_pid, {:io_in, message, metadata})
 
       err ->
         err

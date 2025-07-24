@@ -36,9 +36,9 @@ defmodule Flezha.Operator.ControlChannel do
         payload =
           Payloader.build_from_bin(
             "control_command",
+            IO.iodata_to_binary(iodata),
             # TODO: Hardcoded virtual channel.
-            1,
-            IO.iodata_to_binary(iodata)
+            %{"virtual_channel" => 1}
           )
 
         GenServer.call(control_channel, {:send_control, payload})
@@ -110,7 +110,7 @@ defmodule Flezha.Operator.ControlChannel do
   defp handle_payload(%{buffer: buffer} = state, frame) do
     {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
 
-    Enum.each(payloads, fn {_payload_id, _virtual_channel, message} ->
+    Enum.each(payloads, fn {_payload_id, message, _metadata} ->
       # Send the payload the the control unit.
       GenServer.cast(
         state.control_unit,

@@ -109,7 +109,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
         {type, message} = _p,
         %{overwatcher_pid: overwatcher, virtual_channel: vc} = state
       ) do
-    GenServer.cast(overwatcher, {:io_in, {type, message}, vc})
+    GenServer.cast(overwatcher, {:io_in, {type, message}, %{"virtual_channel" => vc}})
 
     {:ok, state}
   end

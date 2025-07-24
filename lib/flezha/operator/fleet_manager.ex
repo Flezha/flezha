@@ -245,7 +245,7 @@ defmodule Flezha.Operator.FleetManager do
       {:ok, frame} ->
         {payloads, _buffer} = Payloader.parse_frame(frame)
 
-        [{"connect_control_channel", _virtual_channel, init_message} | bytes_rest] = payloads
+        [{"connect_control_channel", init_message, _metadata} | bytes_rest] = payloads
 
         bytes_rest = if bytes_rest === [], do: "", else: bytes_rest
 
