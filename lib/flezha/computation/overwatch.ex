@@ -360,7 +360,7 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   defp exec_bindings(bindings, payload, metadata) do
-    allowed_group = Map.get(metadata, :allowed_group, 0)
+    allowed_group = Map.get(metadata, :allowed_plugin_group, 0)
 
     Enum.reduce_while(bindings, payload, fn
       binding, p when allowed_group === binding.plugin_group ->
