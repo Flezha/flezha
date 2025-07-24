@@ -36,9 +36,7 @@ defmodule Flezha.Operator.ControlChannel do
         payload =
           Payloader.build_from_bin(
             "control_command",
-            IO.iodata_to_binary(iodata),
-            # TODO: Hardcoded virtual channel.
-            %{"virtual_channel" => 1}
+            IO.iodata_to_binary(iodata)
           )
 
         GenServer.call(control_channel, {:send_control, payload})
