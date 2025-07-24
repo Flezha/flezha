@@ -68,7 +68,9 @@ defmodule Flezha.Service.HubManager do
   def get_all_computations(group_id) do
     Identificator.hub(group_id)
     |> ProcessHub.process_list(:global)
-    |> Enum.map(fn {computation_id, [{_node, computation_pid}]} -> {computation_id, computation_pid} end)
+    |> Enum.map(fn {computation_id, [{_node, computation_pid}]} ->
+      {computation_id, computation_pid}
+    end)
   end
 
   def register_handler(group_id, operator_id) do

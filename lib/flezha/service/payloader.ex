@@ -49,6 +49,7 @@ defmodule Flezha.Service.Payloader do
     case rest do
       <<key::binary-size(key_size), value::binary-size(value_size), remaining::binary>> ->
         deserialize_metadata_pairs(remaining, Map.put(acc, key, value))
+
       _ ->
         acc
     end
@@ -157,7 +158,12 @@ defmodule Flezha.Service.Payloader do
         handle_incomplete_metadata_size_buffered(payload_id, message, metadata_size_buf, frame)
 
       {:incomplete_metadata, {payload_id, message, metadata_buf, metadata_bytes_to_take}} ->
-        handle_incomplete_metadata_buf(payload_id, message, metadata_buf <> frame, metadata_bytes_to_take)
+        handle_incomplete_metadata_buf(
+          payload_id,
+          message,
+          metadata_buf <> frame,
+          metadata_bytes_to_take
+        )
 
       any ->
         raise "Unexpected buffer state: #{inspect(any)}"
@@ -173,7 +179,9 @@ defmodule Flezha.Service.Payloader do
           {{:complete, {payload_id, message, metadata}}, bytes_left}
         else
           metadata_bytes_to_take = metadata_size - byte_size(metadata_frame)
-          {{:incomplete_metadata, {payload_id, message, metadata_frame, metadata_bytes_to_take}}, <<>>}
+
+          {{:incomplete_metadata, {payload_id, message, metadata_frame, metadata_bytes_to_take}},
+           <<>>}
         end
 
       # If we don't have enough bytes for metadata size, buffer what we have
@@ -196,7 +204,9 @@ defmodule Flezha.Service.Payloader do
           {{:complete, {payload_id, message, metadata}}, bytes_left}
         else
           metadata_bytes_to_take = metadata_size - byte_size(metadata_frame)
-          {{:incomplete_metadata, {payload_id, message, metadata_frame, metadata_bytes_to_take}}, <<>>}
+
+          {{:incomplete_metadata, {payload_id, message, metadata_frame, metadata_bytes_to_take}},
+           <<>>}
         end
 
       # Still don't have enough bytes for metadata size

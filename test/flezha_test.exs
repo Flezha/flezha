@@ -103,6 +103,7 @@ defmodule FlezhaTest do
     # TODO: add failures also.
     res =
       PluginManager.enable_plugin(%Flezha.Plugin.Provider.Websocket{
+        id: "websocket_plugin",
         group: @default_group,
         computation_id: computation_id,
         uri: @testnet_ws_uri,
@@ -138,6 +139,7 @@ defmodule FlezhaTest do
 
     res =
       PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
+        id: "beam_msg_forward",
         group: @default_group,
         computation_id: computation_id,
         trigger: :on_output,
@@ -160,6 +162,7 @@ defmodule FlezhaTest do
     {:ok, _} = ComputationManager.start_computation(@default_group, computation)
 
     PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
+      id: "beam_msg_forward",
       group: @default_group,
       computation_id: computation_id,
       trigger: :on_output,
@@ -167,6 +170,7 @@ defmodule FlezhaTest do
     })
 
     PluginManager.enable_plugin(%Flezha.Plugin.Provider.Websocket{
+      id: "websocket_plugin",
       group: @default_group,
       computation_id: computation_id,
       trigger: :proactive,
@@ -245,13 +249,17 @@ defmodule FlezhaTest do
     }
 
     PluginManager.enable_plugin(%Flezha.Plugin.Provider.StdOut{
+      id: "stdout_plugin",
       group: @default_group,
       computation_id: computation_id,
       trigger: :proactive
     })
 
     {:ok, json_state} = ComputationManager.get_computation_state(@default_group, computation_id)
-    {:ok, old_overwatch_state} = ComputationManager.get_overwatch_state(@default_group, computation_id)
+
+    {:ok, old_overwatch_state} =
+      ComputationManager.get_overwatch_state(@default_group, computation_id)
+
     computation_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert computation_state === test_state
@@ -262,7 +270,10 @@ defmodule FlezhaTest do
     Process.sleep(500)
 
     {:ok, json_state} = ComputationManager.get_computation_state(@default_group, computation_id)
-    {:ok, new_overwatch_state} = ComputationManager.get_overwatch_state(@default_group, computation_id)
+
+    {:ok, new_overwatch_state} =
+      ComputationManager.get_overwatch_state(@default_group, computation_id)
+
     computation_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert computation_state === test_state

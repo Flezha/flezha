@@ -65,7 +65,8 @@ defmodule Flezha.Operator.StreamChannel do
   @impl true
   def handle_call({:computation_bulk_insert, computations}, _from, state) do
     computation_mapping =
-      Enum.reduce(computations, state.computation_mapping, fn {computation_id, updated_pids}, acc ->
+      Enum.reduce(computations, state.computation_mapping, fn {computation_id, updated_pids},
+                                                              acc ->
         Map.put(acc, computation_id, updated_pids)
       end)
 
@@ -114,8 +115,7 @@ defmodule Flezha.Operator.StreamChannel do
       Payloader.build_from_bin(
         computation_id,
         input_type(type) <> handling_type(handling_type) <> message,
-        # TODO: Hardcoded virtual channel.
-        %{"virtual_channel" => "1"}
+        %{}
       )
     )
   end

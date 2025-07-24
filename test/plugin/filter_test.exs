@@ -5,6 +5,7 @@ defmodule FlezhaTest.Plugin.FilterTest do
 
   test "filter input" do
     settings = %Flezha.Plugin.Provider.Filter{
+      id: "filter_1",
       regex_pattern: "^{\"event\": \"heartbeat\"}$",
       inverted: false,
       group: "test_group",
@@ -32,6 +33,7 @@ defmodule FlezhaTest.Plugin.FilterTest do
 
   test "filter input inverted" do
     settings = %Flezha.Plugin.Provider.Filter{
+      id: "filter_1",
       regex_pattern: "^{\"event\": \"heartbeat\"}$",
       inverted: true,
       group: "test_group",

@@ -39,10 +39,10 @@ defmodule Flezha.Plugin.ComputationPlugin do
   end
 
   def required_computation_keys() do
-    [:group, :computation_id, :trigger]
+    [:id, :group, :computation_id, :trigger]
   end
 
   def optional_computation_keys() do
-    [virtual_channel: "1"]
+    [plugin_group: 0]
   end
 end

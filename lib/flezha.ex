@@ -12,7 +12,9 @@ defmodule Flezha do
 
   defdelegate enable_plugin(plugin_settings), to: PluginManager
 
-  defdelegate computation_state(group_id, computation), to: ComputationManager, as: :get_computation_state
+  defdelegate computation_state(group_id, computation),
+    to: ComputationManager,
+    as: :get_computation_state
 
   # TODO: Disable plugin
 end

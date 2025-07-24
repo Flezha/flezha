@@ -155,7 +155,6 @@ defmodule Flezha.Computation.Overwatch do
   def handle_call({:io_in, payload, metadata}, _from, state) do
     payload = exec_bindings(state.bindings.on_input, payload, metadata)
 
-    # TODO: Perhaps pass the virtual channel to the exec_bindings function
     case payload do
       nil -> nil
       _ -> GenServer.call(state.channel, {:io_in, state.id, payload, :stream})
@@ -361,12 +360,10 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   defp exec_bindings(bindings, payload, metadata) do
-    virtual_channel = Map.get(metadata, "virtual_channel", "1") # |> String.to_integer()
-
-    dbg()
+    allowed_group = Map.get(metadata, :allowed_group, 0)
 
     Enum.reduce_while(bindings, payload, fn
-      binding = %{virtual_channel: vc}, p when vc === virtual_channel ->
+      binding, p when allowed_group === binding.plugin_group ->
         case ComputationBinding.exec(binding, p) do
           {:ok, p} -> {:cont, p}
           {:skip, :normal} -> {:halt, nil}

@@ -15,7 +15,8 @@ defmodule Flezha.Plugin.Provider.Websocket do
               [
                 :conn,
                 post_connect: %{},
-                ws_opts: []
+                ws_opts: [],
+                payload_metadata: %{}
               ] ++ ComputationPlugin.optional_computation_keys()
 
   @impl true
@@ -35,7 +36,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
           ws_opts: settings.ws_opts,
           post_connect: settings.post_connect,
           overwatcher_pid: self(),
-          virtual_channel: settings.virtual_channel
+          payload_metadata: settings.payload_metadata
         )
 
       case res do
@@ -64,7 +65,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
       %{
         post_connect: opts[:post_connect],
         overwatcher_pid: opts[:overwatcher_pid],
-        virtual_channel: opts[:virtual_channel]
+        payload_metadata: Keyword.get(opts, :payload_metadata, %{})
       },
       opts[:ws_opts]
     )
@@ -107,9 +108,9 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @impl Fresh
   def handle_in(
         {type, message} = _p,
-        %{overwatcher_pid: overwatcher, virtual_channel: vc} = state
+        %{overwatcher_pid: overwatcher, payload_metadata: metadata} = state
       ) do
-    GenServer.cast(overwatcher, {:io_in, {type, message}, %{"virtual_channel" => vc}})
+    GenServer.cast(overwatcher, {:io_in, {type, message}, metadata})
 
     {:ok, state}
   end

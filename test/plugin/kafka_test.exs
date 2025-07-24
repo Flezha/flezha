@@ -13,6 +13,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     |> expect(:start_link_worker, fn _x, _y -> {:ok, self()} end)
 
     settings = %Flezha.Plugin.Provider.Kafka.Producer{
+      id: "kafka_producer",
       group: "test_group",
       computation_id: "test_computation",
       trigger: nil,
@@ -33,6 +34,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     |> expect(:produce, fn _, _ -> {:ok, :success} end)
 
     settings = %Flezha.Plugin.Provider.Kafka.Producer{
+      id: "kafka_producer",
       group: "test_group",
       computation_id: "test_computation",
       trigger: nil,
