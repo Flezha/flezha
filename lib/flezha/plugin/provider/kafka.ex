@@ -64,7 +64,11 @@ defmodule Flezha.Plugin.Provider.Kafka do
               topic: settings.topic,
               partition: settings.partition,
               required_acks: settings.required_acks,
-              messages: [%KafkaEx.Protocol.Produce.Message{value: message}]
+              messages: [%KafkaEx.Protocol.Produce.Message{
+                value: message,
+                timestamp: System.system_time(:millisecond)
+              }],
+              api_version: 3
             },
             worker_name: settings.conn
           )

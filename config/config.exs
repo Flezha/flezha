@@ -63,7 +63,7 @@ config :kafka_ex,
   # Set this value to true if you do not want the default
   # `KafkaEx.Server` worker to start during application start-up -
   # i.e., if you want to start your own set of named workers
-  disable_default_worker: true
+  disable_default_worker: true,
 
 # Timeout value, in msec, for synchronous operations (e.g., network calls).
 # If this value is greater than GenServer's default timeout of 5000, it will also
@@ -113,6 +113,6 @@ config :kafka_ex,
 # set this to the version of the kafka broker that you are using
 # include only major.minor.patch versions.  must be at least 0.8.0
 # use "kayrock" for the new client
-# kafka_version: "0.10.1"
+  kafka_version: "kayrock"
 
 import_config "#{Mix.env()}.exs"
