@@ -64,13 +64,11 @@ defmodule Flezha.Service.Payloader do
 
   def parse_frame(buffer, frame, payloads) do
     {buffer, bytes_left} = fill_buffer(buffer, frame)
-    # IO.puts("DEBUG: parse_frame - buffer state: #{inspect(buffer)}, bytes_left size: #{byte_size(bytes_left)}")
 
     case buffer do
       {:complete, payload} ->
         # Append to the payload list to preserve the order of the payloads.
         payloads = payloads ++ [payload]
-        # IO.puts("DEBUG: Payload complete: #{inspect(payload)}")
 
         if bytes_left === <<>> do
           {payloads, {:empty, <<>>}}
@@ -81,10 +79,8 @@ defmodule Flezha.Service.Payloader do
       _ ->
         # If we have bytes left and buffer is incomplete, continue processing
         if bytes_left !== <<>> do
-          # IO.puts("DEBUG: Buffer incomplete but have bytes_left, continuing processing")
           parse_frame(buffer, bytes_left, payloads)
         else
-          # IO.puts("DEBUG: Buffer incomplete, returning: #{inspect(buffer)}")
           {payloads, buffer}
         end
     end
@@ -105,18 +101,15 @@ defmodule Flezha.Service.Payloader do
 
   defp handle_incomplete_msg_buf(buf, payload_id, frame, bytes_to_take) do
     frame_size = byte_size(frame)
-    # IO.puts("DEBUG: handle_incomplete_msg_buf - frame_size: #{frame_size}, bytes_to_take: #{bytes_to_take}")
 
     if frame_size >= bytes_to_take do
       <<message::binary-size(bytes_to_take), bytes_left::binary>> = frame
       complete_message = buf <> message
-      # IO.puts("DEBUG: Message complete, transitioning to incomplete_metadata. bytes_left size: #{byte_size(bytes_left)}")
 
       {{:incomplete_metadata, {payload_id, complete_message}}, bytes_left}
     else
       <<message::binary-size(frame_size), _bytes_left::binary>> = frame
       bytes_to_take = bytes_to_take - frame_size
-      # IO.puts("DEBUG: Still need more message bytes: #{bytes_to_take}")
 
       {{:incomplete_msg, {payload_id, buf <> message, bytes_to_take}}, <<>>}
     end
@@ -172,30 +165,22 @@ defmodule Flezha.Service.Payloader do
   end
 
   defp handle_incomplete_metadata_size(payload_id, message, frame) do
-    # IO.puts("DEBUG: handle_incomplete_metadata_size called with frame size: #{byte_size(frame)}")
-    # IO.puts("DEBUG: frame content: #{inspect(frame)}")
-
     case frame do
       <<metadata_size::16, metadata_frame::binary>> ->
-        # IO.puts("DEBUG: metadata_size: #{metadata_size}, metadata_frame size: #{byte_size(metadata_frame)}")
         if byte_size(metadata_frame) >= metadata_size do
           <<metadata_binary::binary-size(metadata_size), bytes_left::binary>> = metadata_frame
           metadata = deserialize_metadata(metadata_binary)
-          # IO.puts("DEBUG: Successfully parsed metadata: #{inspect(metadata)}")
           {{:complete, {payload_id, message, metadata}}, bytes_left}
         else
           metadata_bytes_to_take = metadata_size - byte_size(metadata_frame)
-          # IO.puts("DEBUG: Need more metadata bytes: #{metadata_bytes_to_take}")
           {{:incomplete_metadata, {payload_id, message, metadata_frame, metadata_bytes_to_take}}, <<>>}
         end
 
       # If we don't have enough bytes for metadata size, buffer what we have
       _ when byte_size(frame) < 2 ->
-        # IO.puts("DEBUG: Frame too small for metadata size, buffering")
         {{:incomplete_metadata, {payload_id, message, frame}}, <<>>}
 
       _ ->
-        # IO.puts("DEBUG: Failed to parse metadata size")
         {{:incomplete_metadata, {payload_id, message}}, <<>>}
     end
   end
