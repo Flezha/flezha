@@ -49,7 +49,7 @@ defmodule Flezha.Computation.Overwatch do
       channel: attach_channel(computation.id, operator_id),
       snapshot_interval: snapshot_interval,
       snapshot: nil,
-      default_input_type: Keyword.get(computation.opts, :default_input_type, "1"),
+      default_input_type: Keyword.get(computation.opts, :default_input_type, "2"),
       bindings: %{
         on_input: [],
         on_output: [],
