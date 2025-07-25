@@ -23,7 +23,7 @@ defmodule Flezha.Computation.Overwatch do
     snapshot_interval: @snapshop_interval,
     snapshot: nil,
     init_values: %{},
-    default_input_type: :binary
+    default_input_type: "1" # 1 - binary, 2 - text, 3 - custom
   ]
 
   def start_link(args) do
@@ -48,7 +48,7 @@ defmodule Flezha.Computation.Overwatch do
       channel: attach_channel(computation.id, operator_id),
       snapshot_interval: snapshot_interval,
       snapshot: nil,
-      default_input_type: Keyword.get(computation.opts, :default_input_type, :binary),
+      default_input_type: Keyword.get(computation.opts, :default_input_type, "1"),
       bindings: %{
         on_input: [],
         on_output: [],
@@ -155,6 +155,7 @@ defmodule Flezha.Computation.Overwatch do
 
   @impl true
   def handle_call({:io_in, message, metadata}, _from, state) do
+    metadata = Map.put_new(metadata, "input_type", state.default_input_type)
     payload = exec_bindings(state.bindings.on_input, {message, metadata})
 
     case payload do
@@ -174,6 +175,7 @@ defmodule Flezha.Computation.Overwatch do
 
   @impl true
   def handle_cast({:io_in, message, metadata}, state) do
+    metadata = Map.put_new(metadata, "input_type", state.default_input_type)
     payload = exec_bindings(state.bindings.on_input, {message, metadata})
 
     case payload do
