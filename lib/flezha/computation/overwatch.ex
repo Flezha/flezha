@@ -23,7 +23,8 @@ defmodule Flezha.Computation.Overwatch do
     snapshot_interval: @snapshop_interval,
     snapshot: nil,
     init_values: %{},
-    default_input_type: "1" # 1 - binary, 2 - text, 3 - custom
+    # 1 - binary, 2 - text, 3 - custom
+    default_input_type: "1"
   ]
 
   def start_link(args) do
