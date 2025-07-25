@@ -7,10 +7,11 @@ defmodule Flezha.Plugin.Provider.Kafka do
   defmodule Producer do
     @behaviour PluginBase
 
-    @enforce_keys ComputationPlugin.required_computation_keys() ++ [:hosts, :topic, :partition]
+    @enforce_keys ComputationPlugin.required_computation_keys() ++ [:hosts, :topic]
     defstruct @enforce_keys ++
                 [
                   :conn,
+                  partition: nil,
                   required_acks: 1
                 ] ++ ComputationPlugin.optional_computation_keys()
 
@@ -59,7 +60,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
       @impl true
       def exec(settings, {message, metadata} = payload) do
         partition =
-          case Map.get(metadata, "partition") do
+          case Map.get(metadata, "kafka_msg_partition") do
             nil -> settings.partition
             string_val -> String.to_integer(string_val)
           end
@@ -73,7 +74,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
               messages: [
                 %KafkaEx.Protocol.Produce.Message{
                   value: message,
-                  key: Map.get(metadata, "key", nil),
+                  key: Map.get(metadata, "kafka_msg_key", nil),
                   timestamp: System.system_time(:millisecond)
                 }
               ],
