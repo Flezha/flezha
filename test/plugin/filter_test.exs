@@ -18,13 +18,13 @@ defmodule FlezhaTest.Plugin.FilterTest do
     assert elem(result, 0) == :ok
     assert is_struct(elem(result, 1), Flezha.Plugin.Provider.Filter)
 
-    payload = {:text, "{\"event\": \"heartbeat\"}"}
+    payload = {"{\"event\": \"heartbeat\"}", %{}}
     exec_result = ComputationBinding.exec(elem(result, 1), payload)
 
     assert elem(exec_result, 0) == :ok
     assert elem(exec_result, 1) == payload
 
-    payload2 = {:text, "{\"event\": \"heartbeat2\"}"}
+    payload2 = {"{\"event\": \"heartbeat2\"}", %{}}
     exec_result2 = ComputationBinding.exec(elem(result, 1), payload2)
 
     assert elem(exec_result2, 0) == :skip
@@ -46,16 +46,16 @@ defmodule FlezhaTest.Plugin.FilterTest do
     assert elem(result, 0) == :ok
     assert is_struct(elem(result, 1), Flezha.Plugin.Provider.Filter)
 
-    payload = {:text, "{\"event\": \"heartbeat\"}"}
+    payload = {"{\"event\": \"heartbeat\"}", %{}}
     exec_result = ComputationBinding.exec(elem(result, 1), payload)
 
     assert elem(exec_result, 0) == :skip
     assert elem(exec_result, 1) == :normal
 
-    payload2 = {:text, "{\"event\": \"heartbeat2\"}"}
+    payload2 = {"{\"event\": \"heartbeat2\"}", %{}}
     exec_result2 = ComputationBinding.exec(elem(result, 1), payload2)
 
     assert elem(exec_result2, 0) == :ok
-    assert elem(exec_result2, 1) == {:text, "{\"event\": \"heartbeat2\"}"}
+    assert elem(exec_result2, 1) == {"{\"event\": \"heartbeat2\"}", %{}}
   end
 end

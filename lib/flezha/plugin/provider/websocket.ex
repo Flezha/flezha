@@ -46,13 +46,8 @@ defmodule Flezha.Plugin.Provider.Websocket do
     end
 
     @impl true
-    @spec exec(
-            %Flezha.Plugin.Provider.Websocket{},
-            {:binary, binary()} | {:ping, binary()} | {:pong, binary()} | {:text, binary()}
-          ) ::
-            {:ok, {:binary, binary()} | {:ping, binary()} | {:pong, binary()} | {:text, binary()}}
-    def exec(settings, payload) do
-      Websocket.send_payload(settings.conn, payload)
+    def exec(settings, {message, _metadata} = payload) do
+      Websocket.send_payload(settings.conn, message)
 
       {:ok, payload}
     end
@@ -107,10 +102,10 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   @impl Fresh
   def handle_in(
-        {type, message} = _p,
+        {_type, message} = _p,
         %{overwatcher_pid: overwatcher, payload_metadata: metadata} = state
       ) do
-    GenServer.cast(overwatcher, {:io_in, {type, message}, metadata})
+    GenServer.cast(overwatcher, {:io_in, message, metadata})
 
     {:ok, state}
   end

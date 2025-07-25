@@ -90,6 +90,7 @@ defmodule FlezhaTest do
     assert reason === "Factory with id non_existing_factory does not exist"
   end
 
+  @tag :websocket_plugin
   test "websocket plugin connection start" do
     computation_id = "websocket_plugin_test"
 
@@ -194,7 +195,7 @@ defmodule FlezhaTest do
     for _ <- 1..1 do
       receive do
         {:message_forward, msg} ->
-          assert msg === {:text, "hello world"}
+          assert msg === "hello world"
       after
         2000 -> assert false
       end
@@ -211,8 +212,8 @@ defmodule FlezhaTest do
       |> ComputationFixture.start()
       |> ComputationFixture.attach_output_msg()
 
-    ComputationTestHelper.send_sync_io(computation_id, @default_group, {:text, "state_1"})
-    ComputationTestHelper.send_sync_io(computation_id, @default_group, {:text, "state_2"})
+    ComputationTestHelper.send_sync_io(computation_id, @default_group, "state_1", %{})
+    ComputationTestHelper.send_sync_io(computation_id, @default_group, "state_2", %{})
 
     {:ok, json_state} = ComputationManager.get_computation_state(@default_group, computation_id)
     computation_state = Flezha.Service.Payloader.json_to_map(json_state)
@@ -240,8 +241,8 @@ defmodule FlezhaTest do
       |> ComputationFixture.start()
       |> ComputationFixture.attach_output_msg()
 
-    ComputationTestHelper.send_sync_io(computation_id, @default_group, {:text, "test_state_1"})
-    ComputationTestHelper.send_sync_io(computation_id, @default_group, {:text, "test_state_2"})
+    ComputationTestHelper.send_sync_io(computation_id, @default_group, "test_state_1", %{})
+    ComputationTestHelper.send_sync_io(computation_id, @default_group, "test_state_2", %{})
 
     test_state = %{
       "binary_inputs" => [],
@@ -314,8 +315,8 @@ defmodule FlezhaTest do
       |> ComputationFixture.start(group_id)
       |> ComputationFixture.attach_output_msg(group_id)
 
-    ComputationTestHelper.send_sync_io(computation_id_1, group_id, {:text, "state_1"})
-    ComputationTestHelper.send_sync_io(computation_id_2, group_id, {:text, "state_2"})
+    ComputationTestHelper.send_sync_io(computation_id_1, group_id, "state_1", %{})
+    ComputationTestHelper.send_sync_io(computation_id_2, group_id, "state_2", %{})
 
     ComputationManager.create_snapshot(group_id, computation_id_1)
     ComputationManager.create_snapshot(group_id, computation_id_2)
@@ -362,8 +363,8 @@ defmodule FlezhaTest do
       |> ComputationFixture.start(group_id)
       |> ComputationFixture.attach_output_msg(group_id)
 
-    ComputationTestHelper.send_sync_io(computation_id_1, group_id, {:text, "state_1"})
-    ComputationTestHelper.send_sync_io(computation_id_2, group_id, {:text, "state_2"})
+    ComputationTestHelper.send_sync_io(computation_id_1, group_id, "state_1", %{})
+    ComputationTestHelper.send_sync_io(computation_id_2, group_id, "state_2", %{})
 
     ComputationManager.create_snapshot(group_id, computation_id_1)
     ComputationManager.create_snapshot(group_id, computation_id_2)
@@ -456,8 +457,8 @@ defmodule FlezhaTest do
     # Make sure that atleast one of the computations is running on the remote operator.
     assert pipe1_op !== operator_id_1 or pipe2_op !== operator_id_1
 
-    ComputationTestHelper.send_sync_io(computation_id_1, group_id, {:text, "state_1"})
-    ComputationTestHelper.send_sync_io(computation_id_2, group_id, {:text, "state_2"})
+    ComputationTestHelper.send_sync_io(computation_id_1, group_id, "state_1", %{})
+    ComputationTestHelper.send_sync_io(computation_id_2, group_id, "state_2", %{})
 
     # Check the states before operator migrations.
     {:ok, json_state_1} = ComputationManager.get_computation_state(group_id, computation_id_1)
@@ -552,7 +553,7 @@ defmodule FlezhaTest do
   #   {message_send_time, _} = :timer.tc(fn ->
   #     Enum.each(computation_infos, fn {computation_id, %{pid: computation_pid}} ->
   #       for msg_num <- 1..test_messages_per_computation do
-  #         GenServer.cast(computation_pid, {:io_in, {:text, "test_msg_#{computation_id}_#{msg_num}"}, 1})
+  #         GenServer.cast(computation_pid, {:io_in, {"test_msg_#{computation_id}_#{msg_num}", %{}}})
   #       end
   #     end)
   #   end)

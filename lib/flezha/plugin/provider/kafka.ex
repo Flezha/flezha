@@ -57,7 +57,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
       end
 
       @impl true
-      def exec(settings, {_type, message} = payload) do
+      def exec(settings, {message, _metadata} = payload) do
         res =
           KafkaEx.produce(
             %KafkaEx.Protocol.Produce.Request{

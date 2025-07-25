@@ -36,21 +36,21 @@ defmodule Flezha.Operator.StreamChannel do
 
   @impl true
   def handle_cast(
-        {:io_in, computation_id, {type, message}, handling_type},
+        {:io_in, computation_id, {message, metadata}},
         %{sock: sock} = state
       ) do
-    send_channel_payload(sock, computation_id, type, handling_type, message)
+    send_channel_payload(sock, computation_id, message, metadata)
 
     {:noreply, state}
   end
 
   @impl true
   def handle_call(
-        {:io_in, computation_id, {type, message}, handling_type},
+        {:io_in, computation_id, {message, metadata}},
         _from,
         %{sock: sock} = state
       ) do
-    send_channel_payload(sock, computation_id, type, handling_type, message)
+    send_channel_payload(sock, computation_id, message, metadata)
 
     {:reply, :ok, state}
   end
@@ -91,9 +91,8 @@ defmodule Flezha.Operator.StreamChannel do
     Enum.each(payloads, fn {computation_id, message, metadata} ->
       computations = Map.get(computation_mappings, computation_id, [])
 
-      # TODO: Are we handling binary or text data?
       Enum.each(computations, fn pid ->
-        GenServer.cast(pid, {:io_out, {:text, message}, metadata})
+        GenServer.cast(pid, {:io_out, message, metadata})
       end)
     end)
 
@@ -109,14 +108,10 @@ defmodule Flezha.Operator.StreamChannel do
     {:noreply, state}
   end
 
-  defp send_channel_payload(sock, computation_id, type, handling_type, message) do
+  defp send_channel_payload(sock, computation_id, message, metadata) do
     :gen_tcp.send(
       sock,
-      Payloader.build_from_bin(
-        computation_id,
-        input_type(type) <> handling_type(handling_type) <> message,
-        %{}
-      )
+      Payloader.build_from_bin(computation_id, message, metadata)
     )
   end
 
@@ -127,21 +122,5 @@ defmodule Flezha.Operator.StreamChannel do
     :gen_tcp.controlling_process(socket, self())
 
     socket
-  end
-
-  defp input_type(type) do
-    # Binary is 1, Text is 2, wrapped in a 8-bit integer
-    case type do
-      :binary -> <<1::size(8)>>
-      :text -> <<2::size(8)>>
-    end
-  end
-
-  defp handling_type(handling_type) do
-    # Stream is 1, Task is 2, wrapped in a 8-bit integer
-    case handling_type do
-      :stream -> <<1::size(8)>>
-      :task -> <<2::size(8)>>
-    end
   end
 end

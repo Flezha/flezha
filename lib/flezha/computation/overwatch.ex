@@ -22,7 +22,9 @@ defmodule Flezha.Computation.Overwatch do
     :bindings,
     snapshot_interval: @snapshop_interval,
     snapshot: nil,
-    init_values: %{}
+    init_values: %{},
+    default_worker_type: :thread_pool,
+    default_input_type: :binary
   ]
 
   def start_link(args) do
@@ -47,6 +49,8 @@ defmodule Flezha.Computation.Overwatch do
       channel: attach_channel(computation.id, operator_id),
       snapshot_interval: snapshot_interval,
       snapshot: nil,
+      default_input_type: Keyword.get(computation.opts, :default_input_type, :binary),
+      default_worker_type: Keyword.get(computation.opts, :default_worker_type, :thread_pool),
       bindings: %{
         on_input: [],
         on_output: [],
@@ -152,12 +156,12 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def handle_call({:io_in, payload, metadata}, _from, state) do
-    payload = exec_bindings(state.bindings.on_input, payload, metadata)
+  def handle_call({:io_in, message, metadata}, _from, state) do
+    payload = exec_bindings(state.bindings.on_input, {message, metadata})
 
     case payload do
       nil -> nil
-      _ -> GenServer.call(state.channel, {:io_in, state.id, payload, :stream})
+      _ -> GenServer.call(state.channel, {:io_in, state.id, payload})
     end
 
     {:reply, :ok, state}
@@ -171,30 +175,27 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def handle_cast({:io_in, payload, metadata}, state) do
-    # TODO: were currently hardcoding the handling_type to :stream (:task is also a option)
-    # The computation itself should be able to define the handling type.
-    # Meaning we should store the handling type in the overwatch state.
-    payload = exec_bindings(state.bindings.on_input, payload, metadata)
+  def handle_cast({:io_in, message, metadata}, state) do
+    payload = exec_bindings(state.bindings.on_input, {message, metadata})
 
     case payload do
       nil -> nil
-      _ -> GenServer.cast(state.channel, {:io_in, state.id, payload, :stream})
+      _ -> GenServer.cast(state.channel, {:io_in, state.id, payload})
     end
 
     {:noreply, state}
   end
 
   @impl true
-  def handle_cast({:io_out, payload, metadata}, state) do
-    exec_bindings(state.bindings.on_output, payload, metadata)
+  def handle_cast({:io_out, message, metadata}, state) do
+    exec_bindings(state.bindings.on_output, {message, metadata})
 
     {:noreply, state}
   end
 
   @impl true
   def handle_info({:binding_interval_exec, binding}, state) do
-    ComputationBinding.exec(binding, {:binary, ""})
+    ComputationBinding.exec(binding, {"", %{}})
     add_interval_binding(binding)
 
     {:noreply, state}
@@ -359,19 +360,19 @@ defmodule Flezha.Computation.Overwatch do
     end
   end
 
-  defp exec_bindings(bindings, payload, metadata) do
+  defp exec_bindings(bindings, {message, metadata}) do
     allowed_group = Map.get(metadata, :allowed_plugin_group, 0)
 
-    Enum.reduce_while(bindings, payload, fn
-      binding, p when allowed_group === binding.plugin_group ->
-        case ComputationBinding.exec(binding, p) do
-          {:ok, p} -> {:cont, p}
+    Enum.reduce_while(bindings, {message, metadata}, fn
+      binding, payload when allowed_group === binding.plugin_group ->
+        case ComputationBinding.exec(binding, payload) do
+          {:ok, payload} -> {:cont, payload}
           {:skip, :normal} -> {:halt, nil}
-          {:error, _} -> {:cont, p}
+          {:error, _} -> {:cont, payload}
         end
 
-      _, p ->
-        {:cont, p}
+      _, payload ->
+        {:cont, payload}
     end)
   end
 
