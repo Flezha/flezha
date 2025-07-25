@@ -43,6 +43,6 @@ defmodule Flezha.Plugin.ComputationPlugin do
   end
 
   def optional_computation_keys() do
-    [plugin_group: 0]
+    [plugin_group: "0"]
   end
 end

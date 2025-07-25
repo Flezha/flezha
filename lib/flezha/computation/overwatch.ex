@@ -362,10 +362,10 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   defp exec_bindings(bindings, {message, metadata}) do
-    allowed_group = Map.get(metadata, "allowed_plugin_group", 0)
+    plugin_group = Map.get(metadata, "plugin_group", "0")
 
     Enum.reduce_while(bindings, {message, metadata}, fn
-      binding, payload when allowed_group === binding.plugin_group ->
+      binding, payload when plugin_group === binding.plugin_group ->
         case ComputationBinding.exec(binding, payload) do
           {:ok, payload} -> {:cont, payload}
           {:skip, :normal} -> {:halt, nil}
