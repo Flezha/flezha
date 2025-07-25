@@ -24,7 +24,7 @@ defmodule Flezha.Computation.Overwatch do
     snapshot: nil,
     init_values: %{},
     # 1 - binary, 2 - text, 3 - custom
-    default_input_type: "1"
+    default_input_type: "2"
   ]
 
   def start_link(args) do
