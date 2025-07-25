@@ -57,16 +57,17 @@ defmodule Flezha.Plugin.Provider.Kafka do
       end
 
       @impl true
-      def exec(settings, {message, _metadata} = payload) do
+      def exec(settings, {message, metadata} = payload) do
         res =
           KafkaEx.produce(
             %KafkaEx.Protocol.Produce.Request{
               topic: settings.topic,
-              partition: settings.partition,
+              partition: Map.get(metadata, "partition", settings.partition),
               required_acks: settings.required_acks,
               messages: [
                 %KafkaEx.Protocol.Produce.Message{
                   value: message,
+                  key: Map.get(metadata, "key", nil),
                   timestamp: System.system_time(:millisecond)
                 }
               ],
