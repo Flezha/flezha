@@ -23,7 +23,6 @@ defmodule Flezha.Computation.Overwatch do
     snapshot_interval: @snapshop_interval,
     snapshot: nil,
     init_values: %{},
-    default_worker_type: :thread_pool,
     default_input_type: :binary
   ]
 
@@ -50,7 +49,6 @@ defmodule Flezha.Computation.Overwatch do
       snapshot_interval: snapshot_interval,
       snapshot: nil,
       default_input_type: Keyword.get(computation.opts, :default_input_type, :binary),
-      default_worker_type: Keyword.get(computation.opts, :default_worker_type, :thread_pool),
       bindings: %{
         on_input: [],
         on_output: [],

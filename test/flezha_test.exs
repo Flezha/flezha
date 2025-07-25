@@ -496,102 +496,124 @@ defmodule FlezhaTest do
     assert length(HubManager.get_hub_nodes(group_id, true)) === 1
   end
 
-  # @tag :flow_test
-  # test "flow test" do
-  #   num_computations = 10
-  #   test_messages_per_computation = 10_000
+  @tag :flow_test
+  test "flow test" do
+    num_computations = 10
+    test_messages_per_computation = 10_000
 
-  #   IO.puts("Starting flow test with #{num_computations} computations...")
+    IO.puts("Starting flow test with #{num_computations} computations...")
 
-  #   {computation_creation_time, computation_infos} = :timer.tc(fn ->
-  #     for i <- 1..num_computations do
-  #       computation_id = "flow_test_#{i}"
+    {computation_creation_time, computation_infos} =
+      :timer.tc(fn ->
+        for i <- 1..num_computations do
+          computation_id = "flow_test_#{i}"
 
-  #       computation = %Flezha.Computation.Builder{
-  #         id: computation_id,
-  #         factory_id: @test_computation_factory
-  #       }
+          computation = %Flezha.Computation.Builder{
+            id: computation_id,
+            factory_id: @test_computation_factory
+          }
 
-  #       case ComputationManager.start_computation(@default_group, computation) do
-  #         {:ok, info} -> {computation_id, info}
-  #         error ->
-  #           IO.puts("Failed to start computation #{computation_id}: #{inspect(error)}")
-  #           nil
-  #       end
-  #     end
-  #     |> Enum.filter(&(&1 != nil))
-  #   end)
+          case ComputationManager.start_computation(@default_group, computation) do
+            {:ok, info} ->
+              {computation_id, info}
 
-  #   IO.puts("Computation creation took: #{computation_creation_time / 1000} ms for #{length(computation_infos)} computations")
+            error ->
+              IO.puts("Failed to start computation #{computation_id}: #{inspect(error)}")
+              nil
+          end
+        end
+        |> Enum.filter(&(&1 != nil))
+      end)
 
-  #   # Step 2: Enable plugins for all computations
-  #   {plugin_setup_time, _} = :timer.tc(fn ->
-  #     Enum.each(computation_infos, fn {computation_id, _info} ->
-  #       # Enable BeamMsgForward plugin
-  #       PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
-  #         group: @default_group,
-  #         computation_id: computation_id,
-  #         trigger: :on_output,
-  #         recv_pid: self()
-  #       })
+    IO.puts(
+      "Computation creation took: #{computation_creation_time / 1000} ms for #{length(computation_infos)} computations"
+    )
 
-  #       # Enable StdOut plugin
-  #       PluginManager.enable_plugin(%Flezha.Plugin.Provider.StdOut{
-  #         group: @default_group,
-  #         computation_id: computation_id,
-  #         trigger: :proactive
-  #       })
-  #     end)
-  #   end)
+    # Step 2: Enable plugins for all computations
+    {plugin_setup_time, _} =
+      :timer.tc(fn ->
+        Enum.each(computation_infos, fn {computation_id, _info} ->
+          # Enable BeamMsgForward plugin
+          PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
+            id: "beam_msg_forward",
+            group: @default_group,
+            computation_id: computation_id,
+            trigger: :on_output,
+            recv_pid: self()
+          })
 
-  #   IO.puts("Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(computation_infos)} computations")
+          # Enable StdOut plugin
+          PluginManager.enable_plugin(%Flezha.Plugin.Provider.StdOut{
+            id: "stdout_plugin",
+            group: @default_group,
+            computation_id: computation_id,
+            trigger: :proactive
+          })
+        end)
+      end)
 
-  #   # Step 3: Send test messages to all computations
-  #   total_messages = length(computation_infos) * test_messages_per_computation
-  #   IO.puts("Sending #{total_messages} total messages (#{test_messages_per_computation} per computation)...")
+    IO.puts(
+      "Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(computation_infos)} computations"
+    )
 
-  #   {message_send_time, _} = :timer.tc(fn ->
-  #     Enum.each(computation_infos, fn {computation_id, %{pid: computation_pid}} ->
-  #       for msg_num <- 1..test_messages_per_computation do
-  #         GenServer.cast(computation_pid, {:io_in, {"test_msg_#{computation_id}_#{msg_num}", %{}}})
-  #       end
-  #     end)
-  #   end)
+    # Step 3: Send test messages to all computations
+    total_messages = length(computation_infos) * test_messages_per_computation
 
-  #   IO.puts("Message sending took: #{message_send_time / 1000} ms")
+    IO.puts(
+      "Sending #{total_messages} total messages (#{test_messages_per_computation} per computation)..."
+    )
 
-  #   # Step 4: Receive and measure response time
-  #   {message_receive_time, _} = :timer.tc(fn ->
-  #     for x <- 1..total_messages do
-  #       receive do
-  #         {:message_forward, _msg} ->
-  #           :ok
-  #       after
-  #         10_000 ->
-  #           IO.puts("Timeout waiting for message #{x}/#{total_messages}")
-  #           assert false, "Timeout waiting for messages"
-  #       end
-  #     end
-  #   end)
+    {message_send_time, _} =
+      :timer.tc(fn ->
+        Enum.each(computation_infos, fn {computation_id, %{pid: computation_pid}} ->
+          for msg_num <- 1..test_messages_per_computation do
+            GenServer.cast(
+              computation_pid,
+              {:io_in, "test_msg_#{computation_id}_#{msg_num}", %{}}
+            )
+          end
+        end)
+      end)
 
-  #   IO.puts("Message processing took: #{message_receive_time / 1000} ms for #{total_messages} messages")
+    IO.puts("Message sending took: #{message_send_time / 1000} ms")
 
-  #   # Calculate throughput metrics
-  #   total_time = computation_creation_time + plugin_setup_time + message_send_time + message_receive_time
-  #   throughput_msgs_per_sec = (total_messages * 1_000_000) / message_receive_time
+    # Step 4: Receive and measure response time
+    {message_receive_time, _} =
+      :timer.tc(fn ->
+        for x <- 1..total_messages do
+          receive do
+            {:message_forward, _msg} ->
+              :ok
+          after
+            10_000 ->
+              IO.puts("Timeout waiting for message #{x}/#{total_messages}")
+              assert false, "Timeout waiting for messages"
+          end
+        end
+      end)
 
-  #   IO.puts("\n=== Performance Summary ===")
-  #   IO.puts("Computations created: #{length(computation_infos)}")
-  #   IO.puts("Total messages processed: #{total_messages}")
-  #   IO.puts("Computation creation: #{computation_creation_time / 1000} ms")
-  #   IO.puts("Plugin setup: #{plugin_setup_time / 1000} ms")
-  #   IO.puts("Message sending: #{message_send_time / 1000} ms")
-  #   IO.puts("Message processing: #{message_receive_time / 1000} ms")
-  #   IO.puts("Total time: #{total_time / 1000} ms")
-  #   IO.puts("Throughput: #{Float.round(throughput_msgs_per_sec, 2)} messages/second")
-  #   IO.puts("Average time per computation: #{(total_time / length(computation_infos)) / 1000} ms")
+    IO.puts(
+      "Message processing took: #{message_receive_time / 1000} ms for #{total_messages} messages"
+    )
 
-  #   assert length(computation_infos) > 0, "No computations were created successfully"
-  #   assert total_messages > 0, "No messages were processed"
-  # end
+    # Calculate throughput metrics
+    total_time =
+      computation_creation_time + plugin_setup_time + message_send_time + message_receive_time
+
+    throughput_msgs_per_sec = total_messages * 1_000_000 / message_receive_time
+
+    IO.puts("\n=== Performance Summary ===")
+    IO.puts("Computations created: #{length(computation_infos)}")
+    IO.puts("Total messages processed: #{total_messages}")
+    IO.puts("Computation creation: #{computation_creation_time / 1000} ms")
+    IO.puts("Plugin setup: #{plugin_setup_time / 1000} ms")
+    IO.puts("Message sending: #{message_send_time / 1000} ms")
+    IO.puts("Message processing: #{message_receive_time / 1000} ms")
+    IO.puts("Total time: #{total_time / 1000} ms")
+    IO.puts("Throughput: #{Float.round(throughput_msgs_per_sec, 2)} messages/second")
+    IO.puts("Average time per computation: #{total_time / length(computation_infos) / 1000} ms")
+
+    assert length(computation_infos) > 0, "No computations were created successfully"
+    assert total_messages > 0, "No messages were processed"
+  end
 end
