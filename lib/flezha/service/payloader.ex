@@ -23,8 +23,12 @@ defmodule Flezha.Service.Payloader do
     metadata_size = byte_size(metadata_binary)
     metadata_size_binary = <<metadata_size::16>>
 
-    # Construct the payload: payload_id (32) + message_size (4) + message + metadata_size (2) + metadata
-    payload_id_padded <> message_size_binary <> message <> metadata_size_binary <> metadata_binary
+    # Calculate payload size: message_size (4) + message + metadata_size (2) + metadata
+    payload_size = 4 + byte_size(message) + 2 + byte_size(metadata_binary)
+    payload_size_binary = <<payload_size::32>>
+
+    # Construct the payload: payload_id (32) + payload_size (4) + [message_size (4) + message + metadata_size (2) + metadata]
+    payload_id_padded <> payload_size_binary <> message_size_binary <> message <> metadata_size_binary <> metadata_binary
   end
 
   defp serialize_metadata(metadata) when is_map(metadata) do
@@ -57,10 +61,8 @@ defmodule Flezha.Service.Payloader do
 
   # Binary message format:
   # - First 32 bytes: payload_id (padded with spaces if needed)
-  # - Next 4 bytes: message_size (32-bit big-endian integer, 4GB limit)
-  # - Next {message_size} bytes: the actual message
-  # - Next 2 bytes: metadata_size (16-bit big-endian integer)
-  # - Next {metadata_size} bytes: metadata (key-value pairs with 1-byte size prefixes)
+  # - Next 4 bytes: payload_size (32-bit big-endian integer)
+  # - Next {payload_size} bytes: [message_size (4) + message + metadata_size (2) + metadata]
   def parse_frame(frame), do: parse_frame({:empty, <<>>}, frame, [])
 
   def parse_frame(buffer, frame, payloads) do
@@ -100,140 +102,67 @@ defmodule Flezha.Service.Payloader do
     end
   end
 
-  defp handle_incomplete_msg_buf(buf, payload_id, frame, bytes_to_take) do
-    frame_size = byte_size(frame)
-
-    if frame_size >= bytes_to_take do
-      <<message::binary-size(bytes_to_take), bytes_left::binary>> = frame
-      complete_message = buf <> message
-
-      {{:incomplete_metadata, {payload_id, complete_message}}, bytes_left}
+  defp handle_incomplete_header(buf, frame) do
+    combined_buf = buf <> frame
+    
+    if byte_size(combined_buf) >= 36 do
+      <<payload_id::binary-size(32), payload_size::32, bytes_left::binary>> = combined_buf
+      payload_id_trimmed = String.trim_trailing(payload_id)
+      
+      handle_incomplete_payload(payload_id_trimmed, payload_size, <<>>, bytes_left)
     else
-      <<message::binary-size(frame_size), _bytes_left::binary>> = frame
-      bytes_to_take = bytes_to_take - frame_size
-
-      {{:incomplete_msg, {payload_id, buf <> message, bytes_to_take}}, <<>>}
+      {{:incomplete_header, combined_buf}, <<>>}
     end
   end
 
-  defp handle_incomplete_metadata_buf(payload_id, message, frame, metadata_bytes_to_take) do
-    frame_size = byte_size(frame)
+  defp handle_incomplete_payload(payload_id, payload_size, buf, frame) do
+    combined_buf = buf <> frame
+    
+    if byte_size(combined_buf) >= payload_size do
+      <<payload_data::binary-size(payload_size), bytes_left::binary>> = combined_buf
+      
+      case parse_payload_data(payload_id, payload_data) do
+        {:ok, parsed_payload} ->
+          {{:complete, parsed_payload}, bytes_left}
+        {:error, _reason} ->
+          # Skip this payload and continue with bytes_left
+          {{:empty, <<>>}, bytes_left}
+      end
+    else
+      {{:incomplete_payload, payload_id, payload_size, combined_buf}, <<>>}
+    end
+  end
 
-    if frame_size >= metadata_bytes_to_take do
-      <<metadata_binary::binary-size(metadata_bytes_to_take), bytes_left::binary>> = frame
+  defp parse_payload_data(payload_id, payload_data) do
+    try do
+      <<message_size::32, rest::binary>> = payload_data
+      <<message::binary-size(message_size), metadata_rest::binary>> = rest
+      <<metadata_size::16, metadata_binary::binary-size(metadata_size)>> = metadata_rest
+      
       metadata = deserialize_metadata(metadata_binary)
-
-      {{:complete, {payload_id, message, metadata}}, bytes_left}
-    else
-      metadata_bytes_to_take = metadata_bytes_to_take - frame_size
-
-      {{:incomplete_metadata, {payload_id, message, frame, metadata_bytes_to_take}}, <<>>}
+      {:ok, {payload_id, message, metadata}}
+    rescue
+      _ -> {:error, :invalid_payload}
     end
-  end
-
-  def handle_incomplete_frame_buf(buf, frame) do
-    new_frame = buf <> frame
-
-    parse_payload_new(new_frame)
   end
 
   defp fill_buffer(buffer, <<>>), do: {buffer, <<>>}
 
   defp fill_buffer(buffer, frame) do
     case buffer do
-      # The existing buffer was empty, treat the frame as a new payload.
       {:empty, _buf} ->
-        parse_payload_new(frame)
+        # Start parsing from the beginning
+        handle_incomplete_header(<<>>, frame)
 
-      {:incomplete_frame, buf} ->
-        handle_incomplete_frame_buf(buf, frame)
+      {:incomplete_header, buf} ->
+        handle_incomplete_header(buf, frame)
 
-      {:incomplete_msg, {payload_id, message_buf, bytes_to_take}} ->
-        handle_incomplete_msg_buf(message_buf, payload_id, frame, bytes_to_take)
-
-      {:incomplete_metadata, {payload_id, message}} ->
-        handle_incomplete_metadata_size(payload_id, message, frame)
-
-      {:incomplete_metadata, {payload_id, message, metadata_size_buf}} ->
-        handle_incomplete_metadata_size_buffered(payload_id, message, metadata_size_buf, frame)
-
-      {:incomplete_metadata, {payload_id, message, metadata_buf, metadata_bytes_to_take}} ->
-        handle_incomplete_metadata_buf(
-          payload_id,
-          message,
-          metadata_buf <> frame,
-          metadata_bytes_to_take
-        )
+      {:incomplete_payload, payload_id, payload_size, buf} ->
+        handle_incomplete_payload(payload_id, payload_size, buf, frame)
 
       any ->
         raise "Unexpected buffer state: #{inspect(any)}"
     end
   end
 
-  defp handle_incomplete_metadata_size(payload_id, message, frame) do
-    case frame do
-      <<metadata_size::16, metadata_frame::binary>> ->
-        if byte_size(metadata_frame) >= metadata_size do
-          <<metadata_binary::binary-size(metadata_size), bytes_left::binary>> = metadata_frame
-          metadata = deserialize_metadata(metadata_binary)
-          {{:complete, {payload_id, message, metadata}}, bytes_left}
-        else
-          metadata_bytes_to_take = metadata_size - byte_size(metadata_frame)
-
-          {{:incomplete_metadata, {payload_id, message, metadata_frame, metadata_bytes_to_take}},
-           <<>>}
-        end
-
-      # If we don't have enough bytes for metadata size, buffer what we have
-      _ when byte_size(frame) < 2 ->
-        {{:incomplete_metadata, {payload_id, message, frame}}, <<>>}
-
-      _ ->
-        {{:incomplete_metadata, {payload_id, message}}, <<>>}
-    end
-  end
-
-  defp handle_incomplete_metadata_size_buffered(payload_id, message, metadata_size_buf, frame) do
-    combined_buf = metadata_size_buf <> frame
-
-    case combined_buf do
-      <<metadata_size::16, metadata_frame::binary>> ->
-        if byte_size(metadata_frame) >= metadata_size do
-          <<metadata_binary::binary-size(metadata_size), bytes_left::binary>> = metadata_frame
-          metadata = deserialize_metadata(metadata_binary)
-          {{:complete, {payload_id, message, metadata}}, bytes_left}
-        else
-          metadata_bytes_to_take = metadata_size - byte_size(metadata_frame)
-
-          {{:incomplete_metadata, {payload_id, message, metadata_frame, metadata_bytes_to_take}},
-           <<>>}
-        end
-
-      # Still don't have enough bytes for metadata size
-      _ when byte_size(combined_buf) < 2 ->
-        {{:incomplete_metadata, {payload_id, message, combined_buf}}, <<>>}
-
-      _ ->
-        {{:incomplete_metadata, {payload_id, message}}, <<>>}
-    end
-  end
-
-  defp parse_payload_new(frame) do
-    case frame do
-      # A frame that may be missing some message bytes - new format: payload_id (32) + message_size (4) + message + metadata_size (2) + metadata
-      <<id::binary-size(32), message_size::32, frame_bytes::binary>> ->
-        payload_id_trimmed = String.trim_trailing(id)
-
-        handle_incomplete_msg_buf(
-          <<>>,
-          payload_id_trimmed,
-          frame_bytes,
-          message_size
-        )
-
-      # Can't be parsed as a new frame.
-      _ ->
-        {{:incomplete_frame, frame}, <<>>}
-    end
-  end
 end
