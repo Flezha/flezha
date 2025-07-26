@@ -48,9 +48,9 @@ spec:
             - name: FLEZHA_K8S_SELECTOR
               value: "app=flezha"
             - name: FLEZHA_K8S_MASTER_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.hostIP
+              value: "kubernetes.default.svc"
+            - name: FLEZHA_K8S_MASTER_PORT
+              value: "443"
           volumeMounts:
             - name: flezha-sockets
               mountPath: /flezha/sockets
