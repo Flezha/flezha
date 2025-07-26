@@ -15,6 +15,10 @@ spec:
       serviceAccountName: flezha-reader
       imagePullSecrets:
         - name: dockerhub-secret
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: flezha
           image: alfetahe/flezha:0.1.4
