@@ -96,4 +96,4 @@ USER flezha
 WORKDIR /flezha
 
 # Start the application
-CMD ["tail", "-f", "/dev/null"]
+CMD ["bin/agent", "start", "--mode=attached"]
