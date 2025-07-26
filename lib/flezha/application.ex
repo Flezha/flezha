@@ -19,16 +19,8 @@ defmodule Flezha.Application do
       FleetManager,
       {Flezha.Socket.Listener, {:control_listener, &SocketSupport.control_socket_path/0}},
       {Flezha.Socket.Dispatcher, &FleetManager.connect_handler/1},
-      Flezha.Service.PortPilot
-
-      # Flezha.Service.Warden,
-      # Flezha.Service.Identificator,
-      # Flezha.Service.EventManager,
-      # {Flezha.Socket.Listener, {:control_listener, Support.control_socket_path()}},
-      # {Flezha.Socket.Dispatcher, &Flezha.Operator.FleetManager.connect_handler/1},
-      # Flezha.Service.PortPilot,
-      # Flezha.Cluster.Orchestrator,
-      # Flezha.Operator.Controller
+      Flezha.Service.PortPilot,
+      Flezha.Cluster.Orchestrator
     ]
 
     # If Testnet is enabled, we start the TestnetSupervisor
