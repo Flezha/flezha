@@ -35,6 +35,9 @@ spec:
               mountPath: /shared/sockets  # Access to Flezha's Unix sockets
             - name: operator-service-x-data
               mountPath: /app/data
+          env:
+            - name: FLEZHA_SOCKET_FILES_PATH
+              value: "/shared/sockets"
       volumes:
         - name: flezha-sockets
           hostPath:
