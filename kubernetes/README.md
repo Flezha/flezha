@@ -10,4 +10,5 @@ It creates a namespace, role, service account, role binding and a statefulset.
 - Apply the role binding: `kubectl apply -f flezha-rolebinding.yaml`
 
 ## Deploy
-- Apply the statefulset: `kubectl apply -f flezha-statefulset.yaml`
+- Apply the daemonset for the flezha agents: `kubectl apply -f kubernetes/flezha-daemonset.yaml`
+- Apply the deployments for X services: `kubectl apply -f kubernetes/service-template.yaml`

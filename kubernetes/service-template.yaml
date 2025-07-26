@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-x
+  namespace: flezha
+spec:
+  replicas: 5  # X replicas - will distribute across available nodes
+  selector:
+    matchLabels:
+      app: service-x
+  template:
+    metadata:
+      labels:
+        app: service-x
+    spec:
+      imagePullSecrets:
+        - name: dockerhub-secret
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - service-x
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: service-x
+          image: your-service-x:latest
+          volumeMounts:
+            - name: flezha-sockets
+              mountPath: /shared/sockets  # Access to Flezha's Unix sockets
+            - name: service-data
+              mountPath: /app/data
+      volumes:
+        - name: flezha-sockets
+          hostPath:
+            path: /opt/flezha-sockets  # Same path as Flezha DaemonSet
+            type: Directory
+        - name: service-data
+          hostPath:
+            path: /opt/service-x-data
+            type: DirectoryOrCreate
