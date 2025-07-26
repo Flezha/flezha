@@ -19,6 +19,17 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      initContainers:
+        - name: fix-permissions
+          image: busybox:1.35
+          command: ['sh', '-c', 'chown -R 1000:1000 /flezha/sockets /flezha/data && chmod -R 755 /flezha/sockets /flezha/data']
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: flezha-sockets
+              mountPath: /flezha/sockets
+            - name: flezha-data
+              mountPath: /flezha/data
       containers:
         - name: flezha
           image: alfetahe/flezha:0.1.4
