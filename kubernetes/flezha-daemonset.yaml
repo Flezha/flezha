@@ -32,7 +32,7 @@ spec:
               mountPath: /flezha/data
       containers:
         - name: flezha
-          image: alfetahe/flezha:0.1.4
+          image: alfetahe/flezha:0.1.6
           ports:
             - name: epmd
               containerPort: 4369
