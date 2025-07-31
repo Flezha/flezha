@@ -1,7 +1,7 @@
 import Config
 
 external_processes =
-  if config_env() in [:test] do
+  if config_env() in [:test, :dev] do
     {:ok, current_path} = :file.get_cwd()
 
     [

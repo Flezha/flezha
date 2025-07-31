@@ -6,11 +6,15 @@ services:
       dockerfile: docker/dev/Dockerfile.agent
     container_name: flezha_agent_dev
     # TODO:   image: flezha:latest
+    environment:
+      FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
     depends_on:
       - kafka
     volumes:
       - socket_data:/socket_data
       - ../../:/flezha
+    networks:
+      - flezha_network
 
   zookeeper:
     image: zookeeper:3.9.3
@@ -59,3 +63,7 @@ services:
 volumes:
   socket_data:
     driver: local
+
+networks:
+  flezha_network:
+    external: true
