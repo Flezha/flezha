@@ -1,4 +1,4 @@
-defmodule FlezhaTest.RpcCookbookServiceTest do
+defmodule FlezhaTest.CliManagerServiceTest do
   use ExUnit.Case
   use Flezha.Constant
 
@@ -12,7 +12,7 @@ defmodule FlezhaTest.RpcCookbookServiceTest do
     {:ok, init_values} = Jason.encode(%{"value" => 100})
 
     result =
-      Flezha.Service.RpcCookbook.worker_start(
+      Flezha.Service.CliManager.worker_start(
         @default_group,
         computation_id,
         factory_id,
@@ -28,8 +28,8 @@ defmodule FlezhaTest.RpcCookbookServiceTest do
     FlezhaTest.Fixtures.Worker.get(computation_id, nil)
     |> FlezhaTest.Fixtures.Worker.start()
 
-    result1 = Flezha.Service.RpcCookbook.worker_stop(@default_group, computation_id)
-    result2 = Flezha.Service.RpcCookbook.worker_stop(@default_group, "non_existent")
+    result1 = Flezha.Service.CliManager.worker_stop(@default_group, computation_id)
+    result2 = Flezha.Service.CliManager.worker_stop(@default_group, "non_existent")
 
     assert result1 === :ok
     assert result2 |> elem(0) === :error
@@ -41,9 +41,9 @@ defmodule FlezhaTest.RpcCookbookServiceTest do
     computation_id = "test_rpc_no_operator"
 
     result1 =
-      Flezha.Service.RpcCookbook.worker_start("", computation_id, @factory_do_nothing, "{}")
+      Flezha.Service.CliManager.worker_start("", computation_id, @factory_do_nothing, "{}")
 
-    result2 = Flezha.Service.RpcCookbook.worker_stop("", computation_id)
+    result2 = Flezha.Service.CliManager.worker_stop("", computation_id)
 
     assert elem(result1, 0) === :ok
     assert result2 === :ok
@@ -76,7 +76,7 @@ defmodule FlezhaTest.RpcCookbookServiceTest do
     opts = [handling_type: :task]
 
     result1 =
-      Flezha.Service.RpcCookbook.add_io(
+      Flezha.Service.CliManager.add_io(
         @default_group,
         computation_id,
         io_params_json,
@@ -85,7 +85,7 @@ defmodule FlezhaTest.RpcCookbookServiceTest do
       )
 
     result2 =
-      Flezha.Service.RpcCookbook.add_io(
+      Flezha.Service.CliManager.add_io(
         @default_group,
         "non_existent",
         io_params_json,
