@@ -58,6 +58,8 @@ defmodule Flezha.MixProject do
     File.cp!("cli/target/#{env}/agent", Path.join(release.path, "bin/agent"))
     File.cp!("cli/target/#{env}/computation", Path.join(release.path, "bin/computation"))
     File.cp!("cli/target/#{env}/plugin", Path.join(release.path, "bin/plugin"))
+    File.cp!("cli/target/#{env}/group", Path.join(release.path, "bin/group"))
+    File.cp!("cli/target/#{env}/operator", Path.join(release.path, "bin/operator"))
 
     release
   end

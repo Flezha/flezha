@@ -5,5 +5,7 @@ members = [
     "shared_lib",
     "agent",
     "computation",
-    "plugin"
+    "plugin",
+    "group",
+    "operator"
 ]

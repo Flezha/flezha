@@ -18,6 +18,15 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
+  def get_computation_ids(group_id) do
+    computations =
+      group_id
+      |> HubManager.get_all_computations()
+      |> Enum.map(&elem(&1, 0))
+
+    {:ok, computations}
+  end
+
   def get_computation_pid(group_id, computation_id) do
     case HubManager.get_pid(group_id, computation_id) do
       {:ok, pid} -> {:ok, pid}

@@ -28,6 +28,22 @@ defmodule Flezha.Service.HubManager do
     ProcessHub.is_alive?(Identificator.hub(group_id))
   end
 
+  def get_running_group_ids() do
+    Supervisor.which_children(__MODULE__)
+    |> Enum.map(fn {id, _pid, _type, _modules} -> id end)
+    |> Enum.filter(fn id -> ProcessHub.is_alive?(id) end)
+    |> Enum.map(&extract_group_id_from_hub/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp extract_group_id_from_hub(hub_id) when is_atom(hub_id) do
+    hub_id
+    |> Atom.to_string()
+    |> String.replace_suffix("_hub", "")
+  end
+
+  defp extract_group_id_from_hub(_), do: nil
+
   def get_registry(group_id) do
     hub_id = Identificator.hub(group_id)
 
@@ -50,7 +66,13 @@ defmodule Flezha.Service.HubManager do
           []
       end
 
-    ProcessHub.nodes(Identificator.hub(group_id), opts)
+    hub_id = Identificator.hub(group_id)
+
+    if ProcessHub.is_alive?(hub_id) do
+      ProcessHub.nodes(hub_id, opts)
+    else
+      []
+    end
   end
 
   def get_pid(group_id, computation_id) do
@@ -66,11 +88,16 @@ defmodule Flezha.Service.HubManager do
   end
 
   def get_all_computations(group_id) do
-    Identificator.hub(group_id)
-    |> ProcessHub.process_list(:global)
-    |> Enum.map(fn {computation_id, [{_node, computation_pid}]} ->
-      {computation_id, computation_pid}
-    end)
+    hub_id = Identificator.hub(group_id)
+
+    if ProcessHub.is_alive?(hub_id) do
+      ProcessHub.process_list(hub_id, :global)
+      |> Enum.map(fn {computation_id, [{_node, computation_pid}]} ->
+        {computation_id, computation_pid}
+      end)
+    else
+      []
+    end
   end
 
   def register_handler(group_id, operator_id) do

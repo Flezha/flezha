@@ -1,0 +1,7 @@
+[package]
+name = "group"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared_lib = { path = "../shared_lib" }

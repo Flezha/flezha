@@ -67,5 +67,5 @@ pub fn get_json(slice: &[String], long_key: &str, short_key: &str) -> String {
         return "{}".to_string();
     }
 
-    json.replace("\"", "\\\"")
+    json
 }

@@ -28,7 +28,9 @@ defmodule Flezha.Service.Payloader do
     payload_size_binary = <<payload_size::32>>
 
     # Construct the payload: payload_id (32) + payload_size (4) + [message_size (4) + message + metadata_size (2) + metadata]
-    payload_id_padded <> payload_size_binary <> message_size_binary <> message <> metadata_size_binary <> metadata_binary
+    payload_id_padded <>
+      payload_size_binary <>
+      message_size_binary <> message <> metadata_size_binary <> metadata_binary
   end
 
   defp serialize_metadata(metadata) when is_map(metadata) do
@@ -104,11 +106,11 @@ defmodule Flezha.Service.Payloader do
 
   defp handle_incomplete_header(buf, frame) do
     combined_buf = buf <> frame
-    
+
     if byte_size(combined_buf) >= 36 do
       <<payload_id::binary-size(32), payload_size::32, bytes_left::binary>> = combined_buf
       payload_id_trimmed = String.trim_trailing(payload_id)
-      
+
       handle_incomplete_payload(payload_id_trimmed, payload_size, <<>>, bytes_left)
     else
       {{:incomplete_header, combined_buf}, <<>>}
@@ -117,13 +119,14 @@ defmodule Flezha.Service.Payloader do
 
   defp handle_incomplete_payload(payload_id, payload_size, buf, frame) do
     combined_buf = buf <> frame
-    
+
     if byte_size(combined_buf) >= payload_size do
       <<payload_data::binary-size(payload_size), bytes_left::binary>> = combined_buf
-      
+
       case parse_payload_data(payload_id, payload_data) do
         {:ok, parsed_payload} ->
           {{:complete, parsed_payload}, bytes_left}
+
         {:error, _reason} ->
           # Skip this payload and continue with bytes_left
           {{:empty, <<>>}, bytes_left}
@@ -138,7 +141,7 @@ defmodule Flezha.Service.Payloader do
       <<message_size::32, rest::binary>> = payload_data
       <<message::binary-size(message_size), metadata_rest::binary>> = rest
       <<metadata_size::16, metadata_binary::binary-size(metadata_size)>> = metadata_rest
-      
+
       metadata = deserialize_metadata(metadata_binary)
       {:ok, {payload_id, message, metadata}}
     rescue
@@ -164,5 +167,4 @@ defmodule Flezha.Service.Payloader do
         raise "Unexpected buffer state: #{inspect(any)}"
     end
   end
-
 end
