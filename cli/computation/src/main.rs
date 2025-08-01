@@ -1,4 +1,4 @@
-use shared_lib::{extract_param, get_flezha_command, get_json, get_namespace};
+use shared_lib::{extract_param, get_flezha_command, get_json, get_namespace, get_output_format};
 use std::collections::HashMap;
 use std::env;
 use std::process::{exit, Command};
@@ -17,9 +17,10 @@ fn main() {
         "stop" => handle_stop(args),
         "state" => handle_state(args),
         "list" => handle_list(args),
+        "info" => handle_info(args),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', or 'list' only.",
+                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', or 'info' only.",
                 args[1]
             );
             exit(1);
@@ -28,7 +29,7 @@ fn main() {
 }
 
 fn handle_start(args: Vec<String>) {
-    let example_usage = format!("Usage: {} start <computation_id> <factory_id> [--group=<group_id> |-g=<group_id>] [--init_values=<json> |-iv=<json>]", args[0]);
+    let example_usage = format!("Usage: {} start <computation_id> <factory_id> [--group <group_id> | -g <group_id>] [--init_values <json> | -iv <json>]", args[0]);
 
     if args.len() < 3 {
         eprintln!(
@@ -40,7 +41,7 @@ fn handle_start(args: Vec<String>) {
 
     let computation_id = &args[2];
     let factory_id = &args[3];
-    let init_values = get_json(&args[4..], "--init_values=", "-iv=");
+    let init_values = get_json(&args[4..], "--init_values", "-iv");
 
     let mut opts: HashMap<String, String> = HashMap::new();
 
@@ -136,19 +137,58 @@ fn handle_state(args: Vec<String>) {
 
 fn handle_list(args: Vec<String>) {
     let group_id = get_namespace(&args[2..]);
+    let output_format = get_output_format(&args[2..]);
 
     let command = get_flezha_command();
     let rpc_command = format!(
-        "Flezha.Service.CliManager.list_computations(\"{}\")",
-        group_id
+        "Flezha.Service.CliManager.list_computations(\"{}\", \"{}\")",
+        group_id, output_format
     );
 
-    let display_group = if group_id.is_empty() {
-        "default"
-    } else {
-        &group_id
-    };
-    println!("Fetching computations for group '{}'...", display_group);
+    // Only show progress message for text output
+    if output_format == "text" {
+        let display_group = if group_id.is_empty() {
+            "default"
+        } else {
+            &group_id
+        };
+        println!("Fetching computations for group '{}'...", display_group);
+    }
+
+    let status = Command::new(command)
+        .arg("rpc")
+        .arg(rpc_command)
+        .status()
+        .expect("Failed to execute command");
+
+    if !status.success() {
+        eprintln!("Error: Command execution failed.");
+        exit(1);
+    }
+}
+
+fn handle_info(args: Vec<String>) {
+    let group_id = get_namespace(&args[2..]);
+    let output_format = get_output_format(&args[2..]);
+
+    let command = get_flezha_command();
+    let rpc_command = format!(
+        "Flezha.Service.CliManager.computation_info(\"{}\", \"{}\")",
+        group_id, output_format
+    );
+
+    // Only show progress message for text output
+    if output_format == "text" {
+        let display_group = if group_id.is_empty() {
+            "default"
+        } else {
+            &group_id
+        };
+        println!(
+            "Fetching computation information for group '{}'...",
+            display_group
+        );
+    }
 
     let status = Command::new(command)
         .arg("rpc")
