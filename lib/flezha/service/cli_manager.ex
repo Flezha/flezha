@@ -39,25 +39,25 @@ defmodule Flezha.Service.CliManager do
   @doc "Get computation state."
   def computation_state(group_id, computation_id) do
     group_display = if group_id == "", do: "default", else: group_id
-    
+
     case ComputationManager.get_computation_state(group_id(group_id), computation_id) do
       {:ok, json_state} when is_binary(json_state) ->
         IO.puts("State for computation '#{computation_id}' in group '#{group_display}':")
         IO.puts(json_state)
-      
+
       {:ok, state} ->
         IO.puts("State for computation '#{computation_id}' in group '#{group_display}':")
         IO.puts(inspect(state))
-      
+
       {:error, :not_found} ->
         IO.puts("Computation '#{computation_id}' not found in group '#{group_display}'.")
-      
+
       {:error, reason} when is_binary(reason) ->
         IO.puts("Error getting computation state: #{reason}")
-      
+
       {:error, reason} ->
         IO.puts("Error getting computation state: #{inspect(reason)}")
-      
+
       other ->
         IO.puts("Unexpected result: #{inspect(other)}")
     end
@@ -143,91 +143,324 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc "Lists all running groups."
-  def list_groups() do
+  def list_groups(output_format \\ "text") do
     case Flezha.list_groups() do
       {:ok, groups} when is_list(groups) ->
-        if Enum.empty?(groups) do
-          IO.puts("No running groups found.")
-        else
-          IO.puts("Running groups:")
-          Enum.each(groups, &IO.puts("  - #{&1}"))
-        end
+        handle_list_groups_output(groups, output_format)
 
       groups when is_list(groups) ->
-        if Enum.empty?(groups) do
-          IO.puts("No running groups found.")
-        else
-          IO.puts("Running groups:")
-          Enum.each(groups, &IO.puts("  - #{&1}"))
-        end
+        handle_list_groups_output(groups, output_format)
 
       {:error, reason} ->
-        IO.puts("Error listing groups: #{inspect(reason)}")
+        handle_list_groups_error(reason, output_format)
 
       other ->
-        IO.puts("Unexpected result: #{inspect(other)}")
+        handle_list_groups_error(other, output_format)
     end
   end
 
+  defp handle_list_groups_output(groups, "json") do
+    result = %{
+      groups: groups
+    }
+
+    IO.puts(Jason.encode!(result))
+  end
+
+  defp handle_list_groups_output(groups, _) do
+    if Enum.empty?(groups) do
+      IO.puts("No running groups found.")
+    else
+      IO.puts("Running groups:")
+      Enum.each(groups, &IO.puts("  - #{&1}"))
+    end
+  end
+
+  defp handle_list_groups_error(reason, "json") do
+    result = %{
+      error: inspect(reason)
+    }
+
+    IO.puts(Jason.encode!(result))
+  end
+
+  defp handle_list_groups_error(reason, _) do
+    IO.puts("Error listing groups: #{inspect(reason)}")
+  end
+
   @doc "Lists operators for a specific group."
-  def list_operators(group_id) do
+  def list_operators(group_id, output_format \\ "text") do
     group_display = if group_id == "", do: "default", else: group_id
 
     case Flezha.list_operators(group_display) do
       {:ok, operators} when is_list(operators) ->
-        if Enum.empty?(operators) do
-          IO.puts("No operators found for group '#{group_display}'.")
-        else
-          IO.puts("Operators in group '#{group_display}':")
-          Enum.each(operators, &IO.puts("  - #{&1}"))
-        end
+        handle_list_operators_output(operators, group_display, output_format)
 
       operators when is_list(operators) ->
-        if Enum.empty?(operators) do
-          IO.puts("No operators found for group '#{group_display}'.")
-        else
-          IO.puts("Operators in group '#{group_display}':")
-          Enum.each(operators, &IO.puts("  - #{&1}"))
-        end
+        handle_list_operators_output(operators, group_display, output_format)
 
       {:error, reason} ->
-        IO.puts("Error listing operators: #{inspect(reason)}")
+        handle_list_operators_error(reason, output_format)
 
       other ->
-        IO.puts("Unexpected result: #{inspect(other)}")
+        handle_list_operators_error(other, output_format)
     end
   end
 
+  defp handle_list_operators_output(operators, group_display, "json") do
+    result = %{
+      group: group_display,
+      operators: operators
+    }
+
+    IO.puts(Jason.encode!(result))
+  end
+
+  defp handle_list_operators_output(operators, group_display, _) do
+    if Enum.empty?(operators) do
+      IO.puts("No operators found for group '#{group_display}'.")
+    else
+      IO.puts("Operators in group '#{group_display}':")
+      Enum.each(operators, &IO.puts("  - #{&1}"))
+    end
+  end
+
+  defp handle_list_operators_error(reason, "json") do
+    result = %{
+      error: inspect(reason)
+    }
+
+    IO.puts(Jason.encode!(result))
+  end
+
+  defp handle_list_operators_error(reason, _) do
+    IO.puts("Error listing operators: #{inspect(reason)}")
+  end
+
   @doc "Lists computations for a specific group."
-  def list_computations(group_id) do
+  def list_computations(group_id, output_format \\ "text") do
+    group_display = if group_id == "", do: "default", else: group_id
+
+    case Flezha.list_computations(group_display) do
+      {:ok, computations} when is_list(computations) ->
+        handle_list_computations_output(computations, group_display, output_format)
+
+      computations when is_list(computations) ->
+        handle_list_computations_output(computations, group_display, output_format)
+
+      {:error, reason} ->
+        handle_list_computations_error(reason, output_format)
+
+      other ->
+        handle_list_computations_error(other, output_format)
+    end
+  end
+
+  defp handle_list_computations_output(computations, group_display, "json") do
+    result = %{
+      group: group_display,
+      computations: computations
+    }
+
+    IO.puts(Jason.encode!(result))
+  end
+
+  defp handle_list_computations_output(computations, group_display, _) do
+    if Enum.empty?(computations) do
+      IO.puts("No computations found for group '#{group_display}'.")
+    else
+      IO.puts("Computations in group '#{group_display}':")
+      Enum.each(computations, &IO.puts("  - #{&1}"))
+    end
+  end
+
+  defp handle_list_computations_error(reason, "json") do
+    result = %{
+      error: inspect(reason)
+    }
+
+    IO.puts(Jason.encode!(result))
+  end
+
+  defp handle_list_computations_error(reason, _) do
+    IO.puts("Error listing computations: #{inspect(reason)}")
+  end
+
+  @doc "Shows detailed information about computations and their overwatch plugins."
+  def computation_info(group_id, output_format \\ "text") do
     group_display = if group_id == "", do: "default", else: group_id
 
     case Flezha.list_computations(group_display) do
       {:ok, computations} when is_list(computations) ->
         if Enum.empty?(computations) do
-          IO.puts("No computations found for group '#{group_display}'.")
+          handle_empty_computations(group_display, output_format)
         else
-          IO.puts("Computations in group '#{group_display}':")
-          Enum.each(computations, &IO.puts("  - #{&1}"))
+          handle_computation_info_output(computations, group_display, output_format)
         end
 
       computations when is_list(computations) ->
         if Enum.empty?(computations) do
-          IO.puts("No computations found for group '#{group_display}'.")
+          handle_empty_computations(group_display, output_format)
         else
-          IO.puts("Computations in group '#{group_display}':")
-          Enum.each(computations, &IO.puts("  - #{&1}"))
+          handle_computation_info_output(computations, group_display, output_format)
         end
 
       {:error, reason} ->
-        IO.puts("Error listing computations: #{inspect(reason)}")
+        handle_computation_info_error(reason, output_format)
 
       other ->
-        IO.puts("Unexpected result: #{inspect(other)}")
+        handle_computation_info_error(other, output_format)
     end
   end
 
-  # TODO: disable_plugin
+  defp handle_empty_computations(group_display, "json") do
+    result = %{
+      group: group_display,
+      computations: [],
+      message: "No computations found"
+    }
+
+    IO.puts(Jason.encode!(result))
+  end
+
+  defp handle_empty_computations(group_display, _) do
+    IO.puts("No computations found for group '#{group_display}'.")
+  end
+
+  defp handle_computation_info_output(computations, group_display, "json") do
+    computation_data =
+      Enum.map(computations, fn computation_id ->
+        case ComputationManager.get_overwatch_state(group_display, computation_id) do
+          {:ok, state} ->
+            %{
+              id: computation_id,
+              operator_id: state.operator_id,
+              group_id: state.group_id,
+              default_input_type: state.default_input_type,
+              bindings: format_bindings_json(state.bindings)
+            }
+
+          {:error, reason} ->
+            %{
+              id: computation_id,
+              error: inspect(reason)
+            }
+        end
+      end)
+
+    result = %{
+      group: group_display,
+      computations: computation_data
+    }
+
+    IO.puts(Jason.encode!(result))
+  end
+
+  defp handle_computation_info_output(computations, group_display, _) do
+    IO.puts("Computation information for group '#{group_display}':")
+    IO.puts("")
+
+    Enum.each(computations, fn computation_id ->
+      case ComputationManager.get_overwatch_state(group_display, computation_id) do
+        {:ok, state} ->
+          display_computation_info(computation_id, state)
+
+        {:error, reason} ->
+          IO.puts("Computation: #{computation_id}")
+          IO.puts("  Error getting overwatch state: #{inspect(reason)}")
+          IO.puts("")
+      end
+    end)
+  end
+
+  defp handle_computation_info_error(reason, "json") do
+    result = %{
+      error: inspect(reason)
+    }
+
+    IO.puts(Jason.encode!(result))
+  end
+
+  defp handle_computation_info_error(reason, _) do
+    IO.puts("Error listing computations: #{inspect(reason)}")
+  end
+
+  defp format_bindings_json(bindings) do
+    Enum.map(bindings, fn {trigger, bindings_list} ->
+      formatted_bindings =
+        Enum.map(bindings_list, fn binding ->
+          %{
+            id: Map.get(binding, :id, "unknown"),
+            plugin_group: Map.get(binding, :plugin_group, "0"),
+            module:
+              case binding do
+                %{__struct__: module} -> module |> to_string() |> String.split(".") |> List.last()
+                _ -> "unknown"
+              end
+          }
+        end)
+
+      %{
+        trigger: trigger,
+        bindings: formatted_bindings
+      }
+    end)
+  end
+
+  defp display_computation_info(computation_id, state) do
+    IO.puts("Computation: #{computation_id}")
+    IO.puts("  Operator ID: #{state.operator_id}")
+    IO.puts("  Group ID: #{state.group_id}")
+    IO.puts("  Default Input Type: #{state.default_input_type}")
+    IO.puts("  Bindings:")
+
+    # Display each binding type and its plugins
+    Enum.each(state.bindings, fn {trigger, bindings_list} ->
+      if not Enum.empty?(bindings_list) do
+        IO.puts("    #{trigger}:")
+
+        Enum.each(bindings_list, fn binding ->
+          # Extract available binding information
+          id = Map.get(binding, :id, "unknown")
+          plugin_group = Map.get(binding, :plugin_group, "0")
+
+          # Try to get the module name which might indicate plugin type
+          module_name =
+            case binding do
+              %{__struct__: module} -> module |> to_string() |> String.split(".") |> List.last()
+              _ -> "unknown"
+            end
+
+          IO.puts("      - ID: #{id}")
+          IO.puts("        Plugin Group: #{plugin_group}")
+          IO.puts("        Module: #{module_name}")
+        end)
+      end
+    end)
+
+    IO.puts("")
+  end
+
+  @doc "Disables plugin."
+  def disable_plugin(group_id, computation_id, plugin_id) do
+    group_display = if group_id == "", do: "default", else: group_id
+
+    case ComputationManager.get_computation_pid(group_display, computation_id) do
+      {:ok, computation_pid} ->
+        case GenServer.call(computation_pid, {:remove_binding, plugin_id}) do
+          :ok ->
+            IO.puts(
+              "Plugin '#{plugin_id}' disabled successfully from computation '#{computation_id}'."
+            )
+
+          {:error, reason} ->
+            IO.puts("Error disabling plugin: #{inspect(reason)}")
+        end
+
+      {:error, reason} ->
+        IO.puts("Error finding computation '#{computation_id}': #{inspect(reason)}")
+    end
+  end
 
   defp group_id(group_id) do
     case group_id do

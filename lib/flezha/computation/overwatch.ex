@@ -103,6 +103,17 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
+  def handle_call({:remove_binding, binding_id}, _from, state) do
+    case remove_binding(state.bindings, binding_id) do
+      {:ok, bindings} ->
+        {:reply, :ok, %__MODULE__{state | bindings: bindings}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
   def handle_call(:get_operator, _from, %__MODULE__{operator_id: operator} = state) do
     {:reply, operator, state}
   end
@@ -383,5 +394,21 @@ defmodule Flezha.Computation.Overwatch do
     if is_integer(interval) do
       Process.send_after(self(), {:binding_interval_exec, binding}, interval)
     end
+  end
+
+  defp remove_binding(bindings, binding_id) do
+    # Remove binding with matching id from all trigger categories
+    updated_bindings =
+      Enum.map(bindings, fn {trigger, bindings_list} ->
+        filtered_bindings =
+          Enum.reject(bindings_list, fn binding ->
+            Map.get(binding, :id) == binding_id
+          end)
+
+        {trigger, filtered_bindings}
+      end)
+      |> Map.new()
+
+    {:ok, updated_bindings}
   end
 end

@@ -1,6 +1,6 @@
-use std::env;
-use std::process::{Command, exit};
 use shared_lib::get_flezha_command;
+use std::env;
+use std::process::{exit, Command};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -15,7 +15,10 @@ fn main() {
         "start" => handle_start(args),
         "stop" => handle_stop(args),
         _ => {
-            eprintln!("Error: Invalid argument '{}'. Use 'start' or 'stop' only.", args[1]);
+            eprintln!(
+                "Error: Invalid argument '{}'. Use 'start' or 'stop' only.",
+                args[1]
+            );
             exit(1);
         }
     }
@@ -60,9 +63,7 @@ fn handle_start(_args: Vec<String>) {
     println!("Starting flezha agent...");
 
     // Attempt to execute the external command.
-    let status = Command::new(command)
-        .arg(command_mode)
-        .status();
+    let status = Command::new(command).arg(command_mode).status();
 
     match status {
         Ok(status) if status.success() => println!("Agent started successfully."),
@@ -77,9 +78,7 @@ fn handle_stop(_args: Vec<String>) {
     println!("Stopping flezha agent...");
 
     // Attempt to execute the external command.
-    let status = Command::new(command)
-        .arg("stop")
-        .status();
+    let status = Command::new(command).arg("stop").status();
 
     match status {
         Ok(status) if status.success() => println!("Program stopped successfully."),

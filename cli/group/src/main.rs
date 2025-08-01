@@ -1,4 +1,4 @@
-use shared_lib::get_flezha_command;
+use shared_lib::{get_flezha_command, get_output_format};
 use std::env;
 use std::process::{Command, exit};
 
@@ -11,7 +11,7 @@ fn main() {
     }
 
     match args[1].as_str() {
-        "list" => handle_list(),
+        "list" => handle_list(args),
         _ => {
             eprintln!("Error: Invalid argument '{}'. Use 'list' only.", args[1]);
             exit(1);
@@ -19,11 +19,19 @@ fn main() {
     }
 }
 
-fn handle_list() {
-    let command = get_flezha_command();
-    let rpc_command = "Flezha.Service.CliManager.list_groups()";
+fn handle_list(args: Vec<String>) {
+    let output_format = get_output_format(&args[2..]);
 
-    println!("Fetching groups...");
+    let command = get_flezha_command();
+    let rpc_command = format!(
+        "Flezha.Service.CliManager.list_groups(\"{}\")",
+        output_format
+    );
+
+    // Only show progress message for text output
+    if output_format == "text" {
+        println!("Fetching groups...");
+    }
 
     let status = Command::new(command)
         .arg("rpc")
