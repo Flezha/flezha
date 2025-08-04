@@ -7,6 +7,7 @@ defmodule Flezha.Service.CliManager do
   alias Flezha.Service.Payloader
   alias Flezha.Service.PluginManager
   alias Flezha.Service.ConfigManager
+  alias Flezha.Plugin.Provider.MonitoredIOForward
 
   @doc "Starts a computation."
   def computation_start(group_id, computation_id, factory_id, init_values, opts \\ []) do
@@ -63,6 +64,28 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
+  @doc "Listens to a computation IO."
+  def computation_listen(group_id, computation_id, io_type) do
+    group_display = if group_id == "", do: "default", else: group_id
+
+    io_type =
+      case io_type do
+        "input" -> :on_input
+        "output" -> :on_output
+        _ -> raise "Invalid IO type. Use 'input' or 'output'."
+      end
+
+    PluginManager.enable_plugin(%MonitoredIOForward{
+      id: "monitored_io_forward",
+      group: group_display,
+      computation_id: computation_id,
+      trigger: io_type,
+      recv_pid: self()
+    })
+
+    listen_loop()
+  end
+
   @doc "Enalbes plugin."
   def enable_plugin(plugin_id, plugin_settings) do
     with {:ok, module} <- get_plugin_mod(plugin_id),
@@ -72,6 +95,18 @@ defmodule Flezha.Service.CliManager do
       {:error, reason} ->
         IO.puts("Error enabling plugin #{inspect(reason)}.")
     end
+  end
+
+  defp listen_loop() do
+    receive do
+      {:message_forward, {message, _metadata}} ->
+        IO.puts(message)
+
+      {:heartbeat_keepalive, pid} ->
+        Process.send(pid, {:heartbeat_keepalive, :ok}, [])
+    end
+
+    listen_loop()
   end
 
   defp get_plugin_mod(plugin_id) do

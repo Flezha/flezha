@@ -18,9 +18,10 @@ fn main() {
         "state" => handle_state(args),
         "list" => handle_list(args),
         "info" => handle_info(args),
+        "io_listen" => handle_io_listen(args),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', or 'info' only.",
+                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', 'info', or 'io_listen' only.",
                 args[1]
             );
             exit(1);
@@ -189,6 +190,48 @@ fn handle_info(args: Vec<String>) {
             display_group
         );
     }
+
+    let status = Command::new(command)
+        .arg("rpc")
+        .arg(rpc_command)
+        .status()
+        .expect("Failed to execute command");
+
+    if !status.success() {
+        eprintln!("Error: Command execution failed.");
+        exit(1);
+    }
+}
+
+fn handle_io_listen(args: Vec<String>) {
+    let example_usage = format!("Usage: {} io_listen input|output <computation_id> [--group <group_id> | -g <group_id>]", args[0]);
+
+    if args.len() < 4 {
+        eprintln!(
+            "{}",
+            format!("Error: Invalid number of arguments.\n {}", example_usage)
+        );
+        exit(1);
+    }
+
+    let io_type = &args[2];
+    let computation_id = &args[3];
+    
+    // Validate io_type
+    if io_type != "input" && io_type != "output" {
+        eprintln!("Error: Invalid IO type '{}'. Use 'input' or 'output' only.", io_type);
+        exit(1);
+    }
+
+    let group_id = get_namespace(&args[4..]);
+    let command = get_flezha_command();
+
+    let rpc_command = format!(
+        "Flezha.Service.CliManager.computation_listen(\"{}\", \"{}\", \"{}\")",
+        group_id, computation_id, io_type
+    );
+
+    println!("Starting IO listener for computation '{}' ({} mode)...", computation_id, io_type);
 
     let status = Command::new(command)
         .arg("rpc")
