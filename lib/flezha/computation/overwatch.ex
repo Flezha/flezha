@@ -4,7 +4,8 @@ defmodule Flezha.Computation.Overwatch do
   alias Flezha.Operator.StreamSup
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
-  alias Flezha.Plugin.ComputationBinding
+  alias Flezha.Computation.IOBinding
+  alias Flezha.Plugin.Type.IOBindingPlugin
 
   require Logger
 
@@ -31,8 +32,6 @@ defmodule Flezha.Computation.Overwatch do
     GenServer.start_link(__MODULE__, args)
   end
 
-  # TODO: binding on migration we should rerun all of them.
-  # TODO: add ability to remove bindings.
   @impl true
   def init({group_id, operator_id, computation}) do
     snapshot_interval = Keyword.get(computation.opts, :snapshot_interval, @snapshop_interval)
@@ -92,8 +91,8 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def handle_call({:add_binding, binding}, _from, state) do
-    case add_binding(state.bindings, binding) do
+  def handle_call({:enable_plugin, plugin}, _from, state) do
+    case add_binding(state.bindings, plugin) do
       {:ok, bindings} ->
         {:reply, :ok, %__MODULE__{state | bindings: bindings}}
 
@@ -103,14 +102,10 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def handle_call({:remove_binding, binding_id}, _from, state) do
-    case remove_binding(state.bindings, binding_id) do
-      {:ok, bindings} ->
-        {:reply, :ok, %__MODULE__{state | bindings: bindings}}
+  def handle_call({:disable_plugin, binding_id}, _from, state) do
+    {:ok, bindings} = remove_binding(state.bindings, binding_id)
 
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
+    {:reply, :ok, %__MODULE__{state | bindings: bindings}}
   end
 
   @impl true
@@ -206,11 +201,58 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def handle_info({:binding_interval_exec, binding}, state) do
-    ComputationBinding.exec(binding, {"", %{}})
-    add_interval_binding(binding)
+  def handle_info({:binding_interval_exec, %IOBindingPlugin{provider: provider}} = plugin, state) do
+    IOBinding.exec(provider, {"", %{}})
+    add_interval_binding(plugin)
 
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
+    # Find the binding by the pid.
+    binding =
+      Enum.find(state.bindings, fn {_trigger, bindings} ->
+        Enum.any?(bindings, fn %IOBindingPlugin{pid: binding_pid} -> binding_pid == pid end)
+      end)
+
+    case is_struct(binding) do
+      true ->
+        case reason do
+          :normal ->
+            Logger.info("Binding with pid #{inspect(pid)} terminated normally.")
+
+            # Remove the binding from the state.
+            {:ok, new_bindings} = remove_binding(state.bindings, binding.instance_id)
+
+            {:noreply, %__MODULE__{state | bindings: new_bindings}}
+
+          _ ->
+            Logger.error(
+              "Binding with pid #{inspect(pid)} terminated with reason: #{inspect(reason)}"
+            )
+
+            # Try to restart the binding.
+            {:ok, new_bindings} = remove_binding(state.bindings, binding.instance_id)
+
+            new_bindings =
+              case add_binding(new_bindings, binding) do
+                {:ok, restarted_bindings} ->
+                  restarted_bindings
+
+                {:error, reason} ->
+                  Logger.error("Failed to restart binding: #{inspect(reason)}")
+                  new_bindings
+              end
+
+            {:noreply, %__MODULE__{state | bindings: new_bindings}}
+        end
+
+      false ->
+        Logger.error("Binding not found for pid #{inspect(pid)} with reason: #{inspect(reason)}")
+
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -323,8 +365,8 @@ defmodule Flezha.Computation.Overwatch do
       end)
       |> List.flatten()
 
-    Enum.reduce(migr_bindings, default_bindings, fn binding, acc ->
-      case add_binding(acc, binding) do
+    Enum.reduce(migr_bindings, default_bindings, fn plugin, acc ->
+      case add_binding(acc, plugin) do
         {:ok, new_bindings} ->
           new_bindings
 
@@ -336,17 +378,30 @@ defmodule Flezha.Computation.Overwatch do
     end)
   end
 
-  defp add_binding(bindings, binding) do
-    case ComputationBinding.bind(binding) do
-      {:ok, binding} ->
-        binding_group = [binding | Map.get(bindings, binding.trigger, [])]
+  defp add_binding(bindings, plugin) do
+    case IOBinding.bind(plugin.provider) do
+      {:ok, {plugin_provider, pid}} ->
+        plugin = %IOBindingPlugin{plugin | provider: plugin_provider, pid: pid}
 
-        case binding.trigger do
-          :interval -> add_interval_binding(binding)
+        # Add binding to the group and sort by weight (ascending - smaller weight executes first)
+        binding_group =
+          [plugin | Map.get(bindings, plugin.trigger, [])]
+          |> Enum.sort_by(fn %IOBindingPlugin{weight: weight} -> weight end)
+
+        case plugin.trigger do
+          :interval -> add_interval_binding(plugin)
           _ -> nil
         end
 
-        {:ok, Map.put(bindings, binding.trigger, binding_group)}
+        case is_pid(pid) do
+          true ->
+            Process.monitor(pid)
+
+          false ->
+            nil
+        end
+
+        {:ok, Map.put(bindings, plugin.trigger, binding_group)}
 
       {:error, reason} ->
         {:error, reason}
@@ -376,8 +431,8 @@ defmodule Flezha.Computation.Overwatch do
     plugin_group = Map.get(metadata, "plugin_group", "0")
 
     Enum.reduce_while(bindings, {message, metadata}, fn
-      binding, payload when plugin_group === binding.plugin_group ->
-        case ComputationBinding.exec(binding, payload) do
+      %IOBindingPlugin{provider: p, plugin_group: pg}, payload when plugin_group === pg ->
+        case IOBinding.exec(p, payload) do
           {:ok, payload} -> {:cont, payload}
           {:skip, :normal} -> {:halt, nil}
           {:error, _} -> {:cont, payload}
@@ -388,11 +443,11 @@ defmodule Flezha.Computation.Overwatch do
     end)
   end
 
-  defp add_interval_binding(binding) do
-    interval = Map.get(binding.interval, :interval, nil)
+  defp add_interval_binding(plugin) do
+    interval = Map.get(plugin.interval, :interval, nil)
 
     if is_integer(interval) do
-      Process.send_after(self(), {:binding_interval_exec, binding}, interval)
+      Process.send_after(self(), {:binding_interval_exec, plugin}, interval)
     end
   end
 
@@ -401,8 +456,8 @@ defmodule Flezha.Computation.Overwatch do
     updated_bindings =
       Enum.map(bindings, fn {trigger, bindings_list} ->
         filtered_bindings =
-          Enum.reject(bindings_list, fn binding ->
-            Map.get(binding, :id) == binding_id
+          Enum.reject(bindings_list, fn %IOBindingPlugin{instance_id: id} ->
+            id == binding_id
           end)
 
         {trigger, filtered_bindings}
