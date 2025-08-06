@@ -1,56 +1,71 @@
 defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   alias Flezha.Service.PluginManager
-  alias Flezha.Plugin.ComputationBinding
-  alias Flezha.Plugin.ComputationPlugin
-  alias Flezha.Plugin.PluginBase
-  alias Flezha.Plugin.PluginProtocol
-
-  @behaviour PluginBase
+  alias Flezha.Computation.IOBinding
+  alias Flezha.Plugin.Type.IOBindingPlugin
+  alias Flezha.Plugin.ProviderBehaviour
 
   use GenServer
+  use ProviderBehaviour
 
-  @enforce_keys [:recv_pid] ++ ComputationPlugin.required_computation_keys()
-  defstruct @enforce_keys ++
-              [:binding_pid, heartbeat_interval: 5000] ++
-              ComputationPlugin.optional_computation_keys()
+  @enforce_keys [:recv_pid, :instance_id, :computation_id, :group]
+  defstruct @enforce_keys ++ [:binding_pid, heartbeat_interval: 5000]
 
-  @impl PluginBase
-  def plugin_id(), do: "monitored_io_forward"
+  defp convert_value(:recv_pid, value) when is_binary(value) do
+    case String.to_existing_atom(value) do
+      pid when is_atom(pid) ->
+        case Process.whereis(pid) do
+          nil -> {:error, "Process #{value} not found"}
+          pid -> pid
+        end
 
-  defimpl PluginProtocol, for: Flezha.Plugin.Provider.MonitoredIOForward do
-    use ComputationPlugin
+      _ ->
+        {:error, "Invalid PID format"}
+    end
   end
 
-  defimpl ComputationBinding, for: Flezha.Plugin.Provider.MonitoredIOForward do
-    @impl ComputationBinding
-    def bind(settings) do
-      {:ok, pid} = GenServer.start_link(Flezha.Plugin.Provider.MonitoredIOForward, settings)
+  defp convert_value(:heartbeat_interval, value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int_val, ""} -> int_val
+      _ -> 5000
+    end
+  end
 
-      {:ok,
-       %Flezha.Plugin.Provider.MonitoredIOForward{
-         settings
-         | binding_pid: pid
-       }}
+  defimpl IOBinding, for: Flezha.Plugin.Provider.MonitoredIOForward do
+    @impl IOBinding
+    def bind(binding) do
+      {:ok, pid} = GenServer.start_link(Flezha.Plugin.Provider.MonitoredIOForward, binding)
+
+      binding = %Flezha.Plugin.Provider.MonitoredIOForward{
+        binding
+        | binding_pid: pid
+      }
+
+      {:ok, {binding, pid}}
     end
 
     @impl true
-    def exec(settings, payload) do
-      case Process.send(settings.recv_pid, {:message_forward, payload}, []) do
+    def exec(binding, payload) do
+      case Process.send(binding.recv_pid, {:message_forward, payload}, []) do
         :ok -> {:ok, payload}
         _ -> {:error, :send_failed}
       end
     end
+
+    @impl true
+    def pre_bind(binding) do
+      {:ok, binding}
+    end
   end
 
-  def start_link(settings) do
-    GenServer.start_link(__MODULE__, settings)
+  def start_link(binding) do
+    GenServer.start_link(__MODULE__, binding)
   end
 
   @impl GenServer
-  def init(settings) do
-    schedule_heartbeat(settings.heartbeat_interval)
+  def init(binding) do
+    schedule_heartbeat(binding.heartbeat_interval)
 
-    {:ok, settings}
+    {:ok, binding}
   end
 
   @impl GenServer
@@ -69,7 +84,15 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
         {:noreply, state}
     after
       state.heartbeat_interval ->
-        Task.start(fn -> PluginManager.disable_plugin(state) end)
+        Task.start(fn ->
+          PluginManager.disable_plugin(%IOBindingPlugin{
+            instance_id: state.instance_id,
+            computation_id: state.computation_id,
+            group: state.group,
+            trigger: nil,
+            provider: nil
+          })
+        end)
 
         {:stop, :normal, state}
     end

@@ -1,33 +1,42 @@
 defmodule Flezha.Plugin.Provider.BeamMsgForward do
-  alias Flezha.Plugin.ComputationBinding
-  alias Flezha.Plugin.ComputationPlugin
-  alias Flezha.Plugin.PluginBase
-  alias Flezha.Plugin.PluginProtocol
+  alias Flezha.Computation.IOBinding
+  alias Flezha.Plugin.ProviderBehaviour
 
-  @behaviour PluginBase
+  use ProviderBehaviour
 
-  @enforce_keys ComputationPlugin.required_computation_keys() ++ [:recv_pid]
-  defstruct @enforce_keys ++ ComputationPlugin.optional_computation_keys()
+  @enforce_keys [:recv_pid]
+  defstruct @enforce_keys
 
-  @impl true
-  def plugin_id(), do: "computation_beam_msg"
+  defp convert_value(:recv_pid, value) when is_binary(value) do
+    case String.to_existing_atom(value) do
+      pid when is_atom(pid) ->
+        case Process.whereis(pid) do
+          nil -> {:error, "Process #{value} not found"}
+          pid -> pid
+        end
 
-  defimpl PluginProtocol, for: Flezha.Plugin.Provider.BeamMsgForward do
-    use ComputationPlugin
+      _ ->
+        {:error, "Invalid PID format"}
+    end
   end
 
-  defimpl ComputationBinding, for: Flezha.Plugin.Provider.BeamMsgForward do
+  defimpl IOBinding, for: Flezha.Plugin.Provider.BeamMsgForward do
     @impl true
-    def bind(settings) do
-      {:ok, settings}
+    def bind(binding) do
+      {:ok, {binding, nil}}
     end
 
     @impl true
-    def exec(settings, {message, _metadata} = payload) do
-      case Process.send(settings.recv_pid, {:message_forward, message}, []) do
+    def exec(binding, {message, _metadata} = payload) do
+      case Process.send(binding.recv_pid, {:message_forward, message}, []) do
         :ok -> {:ok, payload}
         _ -> {:error, "send_failed"}
       end
+    end
+
+    @impl true
+    def pre_bind(binding) do
+      {:ok, binding}
     end
   end
 end

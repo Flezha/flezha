@@ -1,4 +1,4 @@
-use shared_lib::{get_flezha_command, get_json, get_namespace};
+use shared_lib::{get_flezha_command, get_namespace, extract_flags_with_prefix, serialize_flags};
 use std::env;
 use std::process::{exit, Command};
 
@@ -20,8 +20,8 @@ fn main() {
 
 fn handle_enable(args: Vec<String>) {
     let example_usage = format!(
-        "Usage: {} enable <plugin_id> [--settings <json> | -s <json>]",
-        args[0]
+        "Usage: {} enable <plugin_id> [--Xkey=value]\nExample: {} enable computation_kafka_producer --Xinstance_id=kafka1 --Xgroup=default --Xcomputation_id=comp1 --Xtrigger=on_output --Xhosts=kafka:9092 --Xtopic=my_topic",
+        args[0], args[0]
     );
 
     if args.len() < 3 {
@@ -33,25 +33,24 @@ fn handle_enable(args: Vec<String>) {
     }
 
     let plugin_id = &args[2];
-    let plugin_settings = get_json(&args[3..], "--settings", "-s");
     let command = get_flezha_command();
 
-    // Clean the JSON string - remove newlines and extra whitespace that cause parsing issues
-    let cleaned_settings = plugin_settings
-        .replace("\n", " ")
-        .replace("\r", " ")
-        .split_whitespace()
-        .collect::<Vec<&str>>()
-        .join(" ");
-
-    // Remove trailing commas that make JSON invalid
-    let fixed_settings = cleaned_settings.replace(", }", " }").replace(",}", "}");
-
-    let escaped_settings = fixed_settings.replace("\"", "\\\"");
+    // Extract all X-prefixed flags 
+    let all_flags = extract_flags_with_prefix(&args[3..], "X");
+    
+    // Separate type flags (IOBindingPlugin fields) from provider flags
+    let type_field_names = ["instance_id", "group", "computation_id", "trigger", "plugin_group", "weight"];
+    let (type_flags, provider_flags): (Vec<_>, Vec<_>) = all_flags.into_iter()
+        .partition(|(key, _)| type_field_names.contains(&key.as_str()));
+    
+    let type_flags_json = serialize_flags(&type_flags);
+    let provider_flags_json = serialize_flags(&provider_flags);
 
     let rpc_command = format!(
-        "Flezha.Service.CliManager.enable_plugin(\"{}\", \"{}\")",
-        plugin_id, escaped_settings
+        "Flezha.Service.CliManager.enable_plugin_with_flags(\"{}\", \"{}\", \"{}\")",
+        plugin_id,
+        type_flags_json.replace("\"", "\\\""),
+        provider_flags_json.replace("\"", "\\\"")
     );
 
     println!("Enabling plugin...");

@@ -8,6 +8,7 @@ defmodule Flezha.Service.CliManager do
   alias Flezha.Service.PluginManager
   alias Flezha.Service.ConfigManager
   alias Flezha.Plugin.Provider.MonitoredIOForward
+  alias Flezha.Plugin.Type.IOBindingPlugin
 
   @doc "Starts a computation."
   def computation_start(group_id, computation_id, factory_id, init_values, opts \\ []) do
@@ -75,12 +76,19 @@ defmodule Flezha.Service.CliManager do
         _ -> raise "Invalid IO type. Use 'input' or 'output'."
       end
 
-    PluginManager.enable_plugin(%MonitoredIOForward{
-      id: "monitored_io_forward",
+    provider = %MonitoredIOForward{
+      recv_pid: self(),
+      instance_id: "monitored_io_forward_dynamic",
+      computation_id: computation_id,
+      group: group_display
+    }
+
+    PluginManager.enable_plugin(%IOBindingPlugin{
+      provider: provider,
+      instance_id: "monitored_io_forward_dynamic",
       group: group_display,
       computation_id: computation_id,
-      trigger: io_type,
-      recv_pid: self()
+      trigger: io_type
     })
 
     listen_loop()
@@ -95,6 +103,62 @@ defmodule Flezha.Service.CliManager do
       {:error, reason} ->
         IO.puts("Error enabling plugin #{inspect(reason)}.")
     end
+  end
+
+  @doc "Enables plugin with weight."
+  def enable_plugin(plugin_id, plugin_settings, weight) do
+    with {:ok, module} <- get_plugin_mod(plugin_id),
+         {:ok, _msg} <- handle_plugin_action(module, plugin_settings, weight) do
+      IO.puts("Plugin #{plugin_id} enabled successfully.")
+    else
+      {:error, reason} ->
+        IO.puts("Error enabling plugin #{inspect(reason)}.")
+    end
+  end
+
+  @doc "Enables plugin with flags."
+  def enable_plugin_with_flags(plugin_id, type_flags_json, provider_flags_json) do
+    with {:ok, {plugin_type, module}} <- get_plugin_info(plugin_id),
+         {:ok, type_flags} <- Jason.decode(type_flags_json),
+         {:ok, provider_flags} <- Jason.decode(provider_flags_json),
+         {:ok, plugin_struct} <-
+           build_plugin_struct(plugin_type, module, type_flags, provider_flags) do
+      case PluginManager.enable_plugin(plugin_struct) do
+        {:ok, _msg} -> IO.puts("Plugin #{plugin_id} enabled successfully.")
+        {:error, reason} -> IO.puts("Error enabling plugin. #{inspect(reason)}.")
+      end
+    else
+      {:error, reason} ->
+        IO.puts("Error enabling plugin. #{inspect(reason)}.")
+    end
+  end
+
+  defp get_plugin_info(plugin_id) do
+    enabled_plugins = ConfigManager.get_enabled_plugins()
+
+    case Enum.find(enabled_plugins, fn {_type, id, _module} -> id == plugin_id end) do
+      {plugin_type, ^plugin_id, module} -> {:ok, {plugin_type, module}}
+      nil -> {:error, "plugin not found, make sure the plugin is enabled in config."}
+    end
+  end
+
+  defp build_plugin_struct("io_binding", provider_module, type_flags, provider_flags) do
+    # Use the provider's build function to create the provider struct
+    case provider_module.build(provider_flags) do
+      {:ok, provider_struct} ->
+        # Use IOBindingPlugin's build function to create the wrapper
+        case IOBindingPlugin.build(type_flags, provider_struct) do
+          {:ok, plugin_struct} -> {:ok, plugin_struct}
+          {:error, reason} -> {:error, "Failed to create IOBindingPlugin: #{inspect(reason)}"}
+        end
+
+      {:error, reason} ->
+        {:error, "Failed to create provider struct: #{inspect(reason)}"}
+    end
+  end
+
+  defp build_plugin_struct(plugin_type, _module, _type_flags, _provider_flags) do
+    {:error, "Unsupported plugin type: #{plugin_type}"}
   end
 
   defp listen_loop() do
@@ -136,6 +200,28 @@ defmodule Flezha.Service.CliManager do
       end
 
     plugin_settings = Map.put_new(plugin_settings, :group, "default")
+
+    # Convert any custom keys to atoms.
+    plugin_settings = atom_converter(plugin_settings)
+
+    # TODO: test with wrong module and wrong settings.
+    module
+    |> struct!(plugin_settings)
+    |> PluginManager.enable_plugin()
+  end
+
+  defp handle_plugin_action(module, plugin_settings, weight) do
+    plugin_settings =
+      case Jason.decode(plugin_settings, keys: :atoms!) do
+        {:ok, map} -> map
+        # TODO: we should return error.
+        {:error, reason} -> raise reason
+      end
+
+    plugin_settings =
+      plugin_settings
+      |> Map.put_new(:group, "default")
+      |> Map.put(:weight, weight)
 
     # Convert any custom keys to atoms.
     plugin_settings = atom_converter(plugin_settings)
@@ -456,17 +542,20 @@ defmodule Flezha.Service.CliManager do
 
         Enum.each(bindings_list, fn binding ->
           # Extract available binding information
-          id = Map.get(binding, :id, "unknown")
+          instance_id = Map.get(binding, :instance_id, "unknown")
           plugin_group = Map.get(binding, :plugin_group, "0")
 
           # Try to get the module name which might indicate plugin type
           module_name =
             case binding do
-              %{__struct__: module} -> module |> to_string() |> String.split(".") |> List.last()
-              _ -> "unknown"
+              %{provider: %{__struct__: module}} ->
+                module |> to_string() |> String.split(".") |> List.last()
+
+              _ ->
+                "unknown"
             end
 
-          IO.puts("      - ID: #{id}")
+          IO.puts("      - Instance ID: #{instance_id}")
           IO.puts("        Plugin Group: #{plugin_group}")
           IO.puts("        Module: #{module_name}")
         end)
@@ -482,7 +571,7 @@ defmodule Flezha.Service.CliManager do
 
     case ComputationManager.get_computation_pid(group_display, computation_id) do
       {:ok, computation_pid} ->
-        case GenServer.call(computation_pid, {:remove_binding, plugin_id}) do
+        case GenServer.call(computation_pid, {:disable_plugin, plugin_id}) do
           :ok ->
             IO.puts(
               "Plugin '#{plugin_id}' disabled successfully from computation '#{computation_id}'."

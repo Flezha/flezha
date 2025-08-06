@@ -49,17 +49,18 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
     Flezha.Service.ComputationManager.stop_computation(group, computation_id)
   end
 
-  def attach_output_msg(
-        {:ok, %{computation_id: computation_id}} = start_res,
-        group \\ @default_group
-      ) do
-    {:ok, "binding added"} =
-      PluginManager.enable_plugin(%Flezha.Plugin.Provider.BeamMsgForward{
-        id: "output_msg_handler",
+  def attach_output_msg({:ok, %{computation_id: cid}} = start_res, group \\ @default_group) do
+    {:ok, "plugin enabled"} =
+      PluginManager.enable_plugin(%Flezha.Plugin.Type.IOBindingPlugin{
+        instance_id: "output_msg_handler",
         group: group,
-        computation_id: computation_id,
+        computation_id: cid,
         trigger: :on_output,
-        recv_pid: self()
+        provider: %Flezha.Plugin.Provider.BeamMsgForward{
+          recv_pid: self()
+        },
+        plugin_group: "0",
+        weight: 0
       })
 
     start_res

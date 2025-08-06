@@ -1,0 +1,94 @@
+defmodule Flezha.Plugin.ProviderBehaviour do
+  @moduledoc """
+  Behaviour for plugin providers with automatic build/1 implementation.
+
+  Usage:
+    defmodule MyProvider do
+      use Flezha.Plugin.ProviderBehaviour
+
+      @enforce_keys [:required_field]
+      defstruct @enforce_keys ++ [optional_field: "default"]
+
+      # Optionally override convert_value for custom field processing
+      defp convert_value(:special_field, value) do
+        # custom conversion logic
+      end
+
+      # The build/1 function is automatically generated
+    end
+  """
+
+  @callback build(map()) :: {:ok, struct()} | {:error, String.t()}
+
+  defmacro __using__(_opts) do
+    quote do
+      @behaviour Flezha.Plugin.ProviderBehaviour
+
+      def build(string_map) do
+        # Get struct fields at runtime
+        struct_sample = struct!(__MODULE__)
+        struct_fields = Map.keys(struct_sample) |> Enum.reject(&(&1 == :__struct__))
+
+        # Try to determine required fields by attempting to create struct
+        enforce_keys = get_required_fields(__MODULE__)
+
+        params =
+          Enum.reduce(struct_fields, %{}, fn field, acc ->
+            field_str = Atom.to_string(field)
+
+            case Map.get(string_map, field_str) do
+              nil -> acc
+              value -> Map.put(acc, field, convert_value(field, value))
+            end
+          end)
+
+        # Validate required fields
+        missing_fields =
+          Enum.filter(enforce_keys, fn key ->
+            not Map.has_key?(params, key)
+          end)
+
+        if Enum.empty?(missing_fields) do
+          try do
+            {:ok, struct!(__MODULE__, params)}
+          rescue
+            e -> {:error, "Failed to create struct: #{Exception.message(e)}"}
+          end
+        else
+          {:error, "Missing required fields: #{inspect(missing_fields)}"}
+        end
+      end
+
+      defp get_required_fields(module) do
+        try do
+          # Try to create struct with empty map - if it succeeds, no required fields
+          struct!(module, %{})
+          []
+        rescue
+          e in ArgumentError ->
+            # Parse the error message to extract required field names
+            message = Exception.message(e)
+
+            case Regex.run(
+                   ~r/the following keys must also be given when building struct (.+): \[(.+)\]/,
+                   message
+                 ) do
+              [_, _struct_name, fields_str] ->
+                fields_str
+                |> String.split(", ")
+                |> Enum.map(&String.trim/1)
+                |> Enum.map(&String.to_existing_atom/1)
+
+              _ ->
+                []
+            end
+        end
+      end
+
+      # Default convert_value - can be overridden
+      defp convert_value(_field, value), do: value
+
+      defoverridable convert_value: 2
+    end
+  end
+end

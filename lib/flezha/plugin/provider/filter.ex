@@ -1,33 +1,26 @@
 defmodule Flezha.Plugin.Provider.Filter do
-  alias Flezha.Plugin.ComputationBinding
-  alias Flezha.Plugin.ComputationPlugin
-  alias Flezha.Plugin.PluginBase
-  alias Flezha.Plugin.PluginProtocol
+  alias Flezha.Computation.IOBinding
+  alias Flezha.Plugin.ProviderBehaviour
 
-  @behaviour PluginBase
+  use ProviderBehaviour
 
-  @enforce_keys ComputationPlugin.required_computation_keys() ++
-                  [
-                    :regex_pattern
-                  ]
-  defstruct @enforce_keys ++
-              [
-                inverted: false
-              ] ++ ComputationPlugin.optional_computation_keys()
+  @enforce_keys [:regex_pattern]
+  defstruct @enforce_keys ++ [inverted: false]
 
-  @impl true
-  def plugin_id(), do: "computation_io_filter"
-
-  defimpl PluginProtocol, for: Flezha.Plugin.Provider.Filter do
-    use ComputationPlugin
+  defp convert_value(:inverted, value) when is_binary(value) do
+    case String.downcase(value) do
+      "true" -> true
+      "false" -> false
+      _ -> false
+    end
   end
 
-  defimpl ComputationBinding, for: Flezha.Plugin.Provider.Filter do
+  defimpl IOBinding, for: Flezha.Plugin.Provider.Filter do
     @impl true
-    def bind(settings) do
-      case Regex.compile(settings.regex_pattern) do
+    def bind(binding) do
+      case Regex.compile(binding.regex_pattern) do
         {:ok, compiled_regex} ->
-          {:ok, %{settings | regex_pattern: compiled_regex}}
+          {:ok, %{binding | regex_pattern: compiled_regex}}
 
         {:error, reason} ->
           {:error, "Invalid regex pattern: #{reason}"}
@@ -35,20 +28,25 @@ defmodule Flezha.Plugin.Provider.Filter do
     end
 
     @impl true
-    def exec(settings, {message, _metadata} = payload) do
-      if Regex.match?(settings.regex_pattern, message) do
-        if settings.inverted do
+    def exec(binding, {message, _metadata} = payload) do
+      if Regex.match?(binding.regex_pattern, message) do
+        if binding.inverted do
           {:skip, :normal}
         else
           {:ok, payload}
         end
       else
-        if settings.inverted do
+        if binding.inverted do
           {:ok, payload}
         else
           {:skip, :normal}
         end
       end
+    end
+
+    @impl true
+    def pre_bind(binding) do
+      {:ok, {binding, nil}}
     end
   end
 end

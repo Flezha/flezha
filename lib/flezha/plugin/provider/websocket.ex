@@ -1,55 +1,71 @@
 defmodule Flezha.Plugin.Provider.Websocket do
-  alias Flezha.Plugin.ComputationBinding
-  alias Flezha.Plugin.ComputationPlugin
-  alias Flezha.Plugin.PluginProtocol
-  alias Flezha.Plugin.PluginBase
+  alias Flezha.Computation.IOBinding
+  alias Flezha.Plugin.ProviderBehaviour
 
   require Logger
 
   use Fresh
+  use ProviderBehaviour
 
-  @behaviour PluginBase
-
-  @enforce_keys ComputationPlugin.required_computation_keys() ++ [:uri]
+  @enforce_keys [:uri]
   defstruct @enforce_keys ++
               [
                 :conn,
                 post_connect: %{},
                 ws_opts: [],
                 payload_metadata: %{}
-              ] ++ ComputationPlugin.optional_computation_keys()
+              ]
 
-  @impl true
-  def plugin_id(), do: "computation_websocket"
-
-  defimpl PluginProtocol, for: Flezha.Plugin.Provider.Websocket do
-    use ComputationPlugin
+  defp convert_value(:post_connect, value) when is_binary(value) do
+    case Jason.decode(value) do
+      {:ok, map} -> map
+      _ -> %{}
+    end
   end
 
-  defimpl ComputationBinding, for: Flezha.Plugin.Provider.Websocket do
+  defp convert_value(:ws_opts, value) when is_binary(value) do
+    case Jason.decode(value) do
+      {:ok, list} when is_list(list) -> list
+      _ -> []
+    end
+  end
+
+  defp convert_value(:payload_metadata, value) when is_binary(value) do
+    case Jason.decode(value) do
+      {:ok, map} -> map
+      _ -> %{}
+    end
+  end
+
+  defimpl IOBinding, for: Flezha.Plugin.Provider.Websocket do
     alias Flezha.Plugin.Provider.Websocket
 
     @impl true
-    def bind(settings) do
+    def bind(binding) do
       res =
-        Websocket.start_link(settings.uri,
-          ws_opts: settings.ws_opts,
-          post_connect: settings.post_connect,
+        Websocket.start_link(binding.uri,
+          ws_opts: binding.ws_opts,
+          post_connect: binding.post_connect,
           overwatcher_pid: self(),
-          payload_metadata: settings.payload_metadata
+          payload_metadata: binding.payload_metadata
         )
 
       case res do
-        {:ok, pid} -> {:ok, %Websocket{settings | conn: pid}}
+        {:ok, pid} -> {:ok, {%Websocket{binding | conn: pid}, pid}}
         {:error, reason} -> {:error, reason}
       end
     end
 
     @impl true
-    def exec(settings, {message, _metadata} = payload) do
-      Websocket.send_payload(settings.conn, message)
+    def exec(binding, {message, _metadata} = payload) do
+      Websocket.send_payload(binding.conn, message)
 
       {:ok, payload}
+    end
+
+    @impl true
+    def pre_bind(binding) do
+      {:ok, binding}
     end
   end
 
@@ -70,17 +86,17 @@ defmodule Flezha.Plugin.Provider.Websocket do
   def handle_connect(_status, _headers, state) do
     Logger.info("Connected to websocket!")
 
-    pcp = state.post_connect[:payload]
+    pcp = state.post_connect["payload"]
 
-    if is_map(pcp) && Map.has_key?(pcp, :type) && Map.has_key?(pcp, :message) do
+    if is_map(pcp) && Map.has_key?(pcp, "type") && Map.has_key?(pcp, "message") do
       type =
-        case pcp.type do
+        case pcp["type"] do
           "text" -> :text
           "binary" -> :binary
           _ -> :text
         end
 
-      message = pcp.message
+      message = pcp["message"]
 
       send_payload(self(), {type, message})
     end

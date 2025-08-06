@@ -1,59 +1,51 @@
 defmodule FlezhaTest.Plugin.FilterTest do
-  alias Flezha.Plugin.ComputationBinding
+  alias Flezha.Computation.IOBinding
 
   use ExUnit.Case
 
   test "filter input" do
-    settings = %Flezha.Plugin.Provider.Filter{
-      id: "filter_1",
+    provider = %Flezha.Plugin.Provider.Filter{
       regex_pattern: "^{\"event\": \"heartbeat\"}$",
-      inverted: false,
-      group: "test_group",
-      computation_id: "test_computation",
-      trigger: :test
+      inverted: false
     }
 
-    result = ComputationBinding.bind(settings)
+    result = IOBinding.bind(provider)
 
     assert elem(result, 0) == :ok
     assert is_struct(elem(result, 1), Flezha.Plugin.Provider.Filter)
 
     payload = {"{\"event\": \"heartbeat\"}", %{}}
-    exec_result = ComputationBinding.exec(elem(result, 1), payload)
+    exec_result = IOBinding.exec(elem(result, 1), payload)
 
     assert elem(exec_result, 0) == :ok
     assert elem(exec_result, 1) == payload
 
     payload2 = {"{\"event\": \"heartbeat2\"}", %{}}
-    exec_result2 = ComputationBinding.exec(elem(result, 1), payload2)
+    exec_result2 = IOBinding.exec(elem(result, 1), payload2)
 
     assert elem(exec_result2, 0) == :skip
     assert elem(exec_result2, 1) == :normal
   end
 
   test "filter input inverted" do
-    settings = %Flezha.Plugin.Provider.Filter{
-      id: "filter_1",
+    provider = %Flezha.Plugin.Provider.Filter{
       regex_pattern: "^{\"event\": \"heartbeat\"}$",
-      inverted: true,
-      group: "test_group",
-      computation_id: "test_computation",
-      trigger: :test
+      inverted: true
     }
 
-    result = ComputationBinding.bind(settings)
+    result = IOBinding.bind(provider)
 
     assert elem(result, 0) == :ok
     assert is_struct(elem(result, 1), Flezha.Plugin.Provider.Filter)
 
     payload = {"{\"event\": \"heartbeat\"}", %{}}
-    exec_result = ComputationBinding.exec(elem(result, 1), payload)
+    exec_result = IOBinding.exec(elem(result, 1), payload)
 
     assert elem(exec_result, 0) == :skip
     assert elem(exec_result, 1) == :normal
 
     payload2 = {"{\"event\": \"heartbeat2\"}", %{}}
-    exec_result2 = ComputationBinding.exec(elem(result, 1), payload2)
+    exec_result2 = IOBinding.exec(elem(result, 1), payload2)
 
     assert elem(exec_result2, 0) == :ok
     assert elem(exec_result2, 1) == {"{\"event\": \"heartbeat2\"}", %{}}

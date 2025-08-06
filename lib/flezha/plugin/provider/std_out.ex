@@ -1,32 +1,27 @@
 defmodule Flezha.Plugin.Provider.StdOut do
-  alias Flezha.Plugin.ComputationBinding
-  alias Flezha.Plugin.ComputationPlugin
-  alias Flezha.Plugin.PluginBase
-  alias Flezha.Plugin.PluginProtocol
+  alias Flezha.Computation.IOBinding
+  alias Flezha.Plugin.ProviderBehaviour
 
-  @behaviour PluginBase
+  use ProviderBehaviour
 
-  @enforce_keys ComputationPlugin.required_computation_keys()
-  defstruct @enforce_keys ++ ComputationPlugin.optional_computation_keys()
+  defstruct []
 
-  @impl true
-  def plugin_id(), do: "computation_stdout"
-
-  defimpl PluginProtocol, for: Flezha.Plugin.Provider.StdOut do
-    use ComputationPlugin
-  end
-
-  defimpl ComputationBinding, for: Flezha.Plugin.Provider.StdOut do
+  defimpl IOBinding, for: Flezha.Plugin.Provider.StdOut do
     @impl true
-    def bind(settings) do
-      {:ok, settings}
+    def bind(binding) do
+      {:ok, binding}
     end
 
     @impl true
-    def exec(_settings, payload) do
+    def exec(_plugin, payload) do
       IO.puts(inspect(payload))
 
       {:ok, payload}
+    end
+
+    @impl true
+    def pre_bind(binding) do
+      {:ok, {binding, nil}}
     end
   end
 end

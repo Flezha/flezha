@@ -1,8 +1,8 @@
 defmodule Flezha.Service.PluginManager do
   alias Flezha.Plugin.PluginProtocol
 
-  def enable_plugin(plugin_settings) do
-    plugin_settings
+  def enable_plugin(plugin) do
+    plugin
     |> PluginProtocol.pre_enable()
     |> case do
       {:ok, settings} -> settings
@@ -11,7 +11,7 @@ defmodule Flezha.Service.PluginManager do
     |> PluginProtocol.enable()
   end
 
-  def disable_plugin(plugin_settings) do
-    PluginProtocol.disable(plugin_settings)
+  def disable_plugin(plugin) do
+    PluginProtocol.disable(plugin)
   end
 end

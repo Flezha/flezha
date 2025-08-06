@@ -13,12 +13,12 @@ config :flezha,
   # ------------------------------------------------------------------------------------------------
   # Enabled plugins.
   enabled_plugins: [
-    Flezha.Plugin.Provider.Kafka.Producer,
-    Flezha.Plugin.Provider.Websocket,
-    Flezha.Plugin.Provider.BeamMsgForward,
-    Flezha.Plugin.Provider.StdOut,
-    Flezha.Plugin.Provider.Filter,
-    Flezha.Plugin.Provider.MonitoredIOForward
+    {"io_binding", "computation_kafka_producer", Flezha.Plugin.Provider.Kafka.Producer},
+    {"io_binding", "computation_websocket", Flezha.Plugin.Provider.Websocket},
+    {"io_binding", "computation_beam_msg", Flezha.Plugin.Provider.BeamMsgForward},
+    {"io_binding", "computation_stdout", Flezha.Plugin.Provider.StdOut},
+    {"io_binding", "computation_io_filter", Flezha.Plugin.Provider.Filter},
+    {"io_binding", "monitored_io_forward", Flezha.Plugin.Provider.MonitoredIOForward}
   ]
 
 config :logger,

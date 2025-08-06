@@ -1,50 +1,34 @@
 defmodule Flezha.Plugin.Provider.Kafka do
-  alias Flezha.Plugin.ComputationBinding
-  alias Flezha.Plugin.ComputationPlugin
-  alias Flezha.Plugin.PluginBase
-  alias Flezha.Plugin.PluginProtocol
+  alias Flezha.Computation.IOBinding
 
   defmodule Producer do
-    @behaviour PluginBase
+    alias Flezha.Plugin.ProviderBehaviour
 
-    @enforce_keys ComputationPlugin.required_computation_keys() ++ [:hosts, :topic]
+    use ProviderBehaviour
+
+    @enforce_keys [:hosts, :topic]
     defstruct @enforce_keys ++
                 [
                   :conn,
                   partition: nil,
                   required_acks: 1
-                ] ++ ComputationPlugin.optional_computation_keys()
+                ]
 
-    @impl true
-    def plugin_id(), do: "computation_kafka_producer"
-
-    defimpl PluginProtocol, for: Flezha.Plugin.Provider.Kafka.Producer do
-      use ComputationPlugin
-
-      def pre_enable(settings) do
-        settings =
-          if is_binary(settings.hosts) do
-            # If hosts is a string, we assume it's a comma-separated list of host:port pairs.
-            hosts =
-              settings.hosts
-              |> String.split(",")
-              |> Enum.map(fn host ->
-                case String.split(host, ":") do
-                  [host, port] -> {host, String.to_integer(port)}
-                  _ -> throw("Invalid host format: #{host}")
-                end
-              end)
-
-            %{settings | hosts: hosts}
-          else
-            settings
-          end
-
-        {:ok, settings}
+    defp convert_value(:partition, value) when is_binary(value) do
+      case Integer.parse(value) do
+        {int_val, ""} -> int_val
+        _ -> nil
       end
     end
 
-    defimpl ComputationBinding, for: Flezha.Plugin.Provider.Kafka.Producer do
+    defp convert_value(:required_acks, value) when is_binary(value) do
+      case Integer.parse(value) do
+        {int_val, ""} -> int_val
+        _ -> 1
+      end
+    end
+
+    defimpl IOBinding, for: Flezha.Plugin.Provider.Kafka.Producer do
       # TODO: The system needs to be intelligent enough to know when to reuse a connection
       # and when to create a new one. We may need a separate GenServer handling the connections.
       @impl true
@@ -52,7 +36,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
         res = KafkaEx.start_link_worker(:no_name, uris: settings.hosts)
 
         case res do
-          {:ok, pid} -> {:ok, %Producer{settings | conn: pid}}
+          {:ok, pid} -> {:ok, {%Producer{settings | conn: pid}, pid}}
           {:error, reason} -> {:error, reason}
         end
       end
@@ -89,6 +73,29 @@ defmodule Flezha.Plugin.Provider.Kafka do
           {:error, reason} -> {:error, reason}
           any -> {:error, any}
         end
+      end
+
+      @impl true
+      def pre_bind(settings) do
+        settings =
+          if is_binary(settings.hosts) do
+            # If hosts is a string, we assume it's a comma-separated list of host:port pairs.
+            hosts =
+              settings.hosts
+              |> String.split(",")
+              |> Enum.map(fn host ->
+                case String.split(host, ":") do
+                  [host, port] -> {host, String.to_integer(port)}
+                  _ -> throw("Invalid host format: #{host}")
+                end
+              end)
+
+            %{settings | hosts: hosts}
+          else
+            settings
+          end
+
+        {:ok, settings}
       end
     end
   end
