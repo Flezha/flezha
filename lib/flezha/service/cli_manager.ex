@@ -24,15 +24,15 @@ defmodule Flezha.Service.CliManager do
       opts: opts
     }
 
-    case ComputationManager.start_computation(group_id(group_id), computation) do
+    case ComputationManager.start_computation(normalize_group_id(group_id), computation) do
       {:ok, _} -> IO.puts("Computation has been started")
       {:error, reason} -> IO.puts("Error starting computation: #{inspect(reason)}")
     end
   end
 
-  @doc "Stops a computationne."
+  @doc "Stops a computation."
   def computation_stop(group_id, computation_id) do
-    case ComputationManager.stop_computation(group_id(group_id), computation_id) do
+    case ComputationManager.stop_computation(normalize_group_id(group_id), computation_id) do
       :ok -> IO.puts("Computation has been stopped")
       {:error, reason} -> IO.puts("Error stopping computation: #{inspect(reason)}")
     end
@@ -40,9 +40,9 @@ defmodule Flezha.Service.CliManager do
 
   @doc "Get computation state."
   def computation_state(group_id, computation_id) do
-    group_display = if group_id == "", do: "default", else: group_id
+    group_display = normalize_group_id(group_id)
 
-    case ComputationManager.get_computation_state(group_id(group_id), computation_id) do
+    case ComputationManager.get_computation_state(normalize_group_id(group_id), computation_id) do
       {:ok, json_state} when is_binary(json_state) ->
         IO.puts("State for computation '#{computation_id}' in group '#{group_display}':")
         IO.puts(json_state)
@@ -67,7 +67,7 @@ defmodule Flezha.Service.CliManager do
 
   @doc "Listens to a computation IO."
   def computation_listen(group_id, computation_id, io_type) do
-    group_display = if group_id == "", do: "default", else: group_id
+    group_display = normalize_group_id(group_id)
 
     io_type =
       case io_type do
@@ -151,7 +151,7 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp atom_converter(orig_map) do
-    mappings = %{
+    string_to_atom = %{
       "on_input" => :on_input,
       "on_output" => :on_output,
       "interval" => :interval,
@@ -159,175 +159,119 @@ defmodule Flezha.Service.CliManager do
       "snapshot_interval" => :snapshot_interval
     }
 
-    Enum.map(orig_map, fn {key, value} ->
-      case key do
-        :trigger ->
-          if Map.has_key?(mappings, value) do
-            {key, mappings[value]}
-          else
-            {key, value}
-          end
-
-        any ->
-          case Map.has_key?(mappings, any) do
-            false ->
-              {key, value}
-
-            true ->
-              {mappings[any], value}
-          end
-      end
+    Enum.reduce(orig_map, %{}, fn {key, value}, acc ->
+      new_key = Map.get(string_to_atom, key, key)
+      new_value = if key == :trigger, do: Map.get(string_to_atom, value, value), else: value
+      Map.put(acc, new_key, new_value)
     end)
-    |> Map.new()
   end
 
   @doc "Lists all running groups."
   def list_groups(output_format \\ "text") do
     case Flezha.list_groups() do
       {:ok, groups} when is_list(groups) ->
-        handle_list_groups_output(groups, output_format)
+        handle_list_output(groups, "running groups", output_format)
 
       groups when is_list(groups) ->
-        handle_list_groups_output(groups, output_format)
+        handle_list_output(groups, "running groups", output_format)
 
       {:error, reason} ->
-        handle_list_groups_error(reason, output_format)
+        handle_list_error(reason, "listing groups", output_format)
 
       other ->
-        handle_list_groups_error(other, output_format)
+        handle_list_error(other, "listing groups", output_format)
     end
   end
 
-  defp handle_list_groups_output(groups, "json") do
-    result = %{
-      groups: groups
-    }
+  # Generic output handlers that work for all list operations
+  defp handle_list_output(items, item_name, "json", context \\ nil) do
+    result =
+      case context do
+        nil -> %{String.to_atom(item_name) => items}
+        %{key: key, value: value} -> %{String.to_atom(item_name) => items, key => value}
+      end
 
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_list_groups_output(groups, _) do
-    if Enum.empty?(groups) do
-      IO.puts("No running groups found.")
-    else
-      IO.puts("Running groups:")
-      Enum.each(groups, &IO.puts("  - #{&1}"))
-    end
+  defp handle_list_output([], item_name, _, context) do
+    message =
+      case context do
+        nil -> "No #{item_name} found."
+        %{display: display, value: value} -> "No #{item_name} found for #{display} '#{value}'."
+      end
+
+    IO.puts(message)
   end
 
-  defp handle_list_groups_error(reason, "json") do
-    result = %{
-      error: inspect(reason)
-    }
+  defp handle_list_output(items, item_name, _, context) do
+    header =
+      case context do
+        nil ->
+          "#{String.capitalize(item_name)}:"
 
+        %{display: display, value: value} ->
+          "#{String.capitalize(item_name)} in #{display} '#{value}':"
+      end
+
+    IO.puts(header)
+    Enum.each(items, &IO.puts("  - #{&1}"))
+  end
+
+  defp handle_list_error(reason, _operation, "json") do
+    result = %{error: inspect(reason)}
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_list_groups_error(reason, _) do
-    IO.puts("Error listing groups: #{inspect(reason)}")
+  defp handle_list_error(reason, operation, _) do
+    IO.puts("Error #{operation}: #{inspect(reason)}")
   end
 
   @doc "Lists operators for a specific group."
   def list_operators(group_id, output_format \\ "text") do
-    group_display = if group_id == "", do: "default", else: group_id
+    group_display = normalize_group_id(group_id)
 
     case Flezha.list_operators(group_display) do
       {:ok, operators} when is_list(operators) ->
-        handle_list_operators_output(operators, group_display, output_format)
+        context = %{key: :group, value: group_display, display: "group"}
+        handle_list_output(operators, "operators", output_format, context)
 
       operators when is_list(operators) ->
-        handle_list_operators_output(operators, group_display, output_format)
+        context = %{key: :group, value: group_display, display: "group"}
+        handle_list_output(operators, "operators", output_format, context)
 
       {:error, reason} ->
-        handle_list_operators_error(reason, output_format)
+        handle_list_error(reason, "listing operators", output_format)
 
       other ->
-        handle_list_operators_error(other, output_format)
+        handle_list_error(other, "listing operators", output_format)
     end
-  end
-
-  defp handle_list_operators_output(operators, group_display, "json") do
-    result = %{
-      group: group_display,
-      operators: operators
-    }
-
-    IO.puts(Jason.encode!(result))
-  end
-
-  defp handle_list_operators_output(operators, group_display, _) do
-    if Enum.empty?(operators) do
-      IO.puts("No operators found for group '#{group_display}'.")
-    else
-      IO.puts("Operators in group '#{group_display}':")
-      Enum.each(operators, &IO.puts("  - #{&1}"))
-    end
-  end
-
-  defp handle_list_operators_error(reason, "json") do
-    result = %{
-      error: inspect(reason)
-    }
-
-    IO.puts(Jason.encode!(result))
-  end
-
-  defp handle_list_operators_error(reason, _) do
-    IO.puts("Error listing operators: #{inspect(reason)}")
   end
 
   @doc "Lists computations for a specific group."
   def list_computations(group_id, output_format \\ "text") do
-    group_display = if group_id == "", do: "default", else: group_id
+    group_display = normalize_group_id(group_id)
 
     case Flezha.list_computations(group_display) do
       {:ok, computations} when is_list(computations) ->
-        handle_list_computations_output(computations, group_display, output_format)
+        context = %{key: :group, value: group_display, display: "group"}
+        handle_list_output(computations, "computations", output_format, context)
 
       computations when is_list(computations) ->
-        handle_list_computations_output(computations, group_display, output_format)
+        context = %{key: :group, value: group_display, display: "group"}
+        handle_list_output(computations, "computations", output_format, context)
 
       {:error, reason} ->
-        handle_list_computations_error(reason, output_format)
+        handle_list_error(reason, "listing computations", output_format)
 
       other ->
-        handle_list_computations_error(other, output_format)
+        handle_list_error(other, "listing computations", output_format)
     end
-  end
-
-  defp handle_list_computations_output(computations, group_display, "json") do
-    result = %{
-      group: group_display,
-      computations: computations
-    }
-
-    IO.puts(Jason.encode!(result))
-  end
-
-  defp handle_list_computations_output(computations, group_display, _) do
-    if Enum.empty?(computations) do
-      IO.puts("No computations found for group '#{group_display}'.")
-    else
-      IO.puts("Computations in group '#{group_display}':")
-      Enum.each(computations, &IO.puts("  - #{&1}"))
-    end
-  end
-
-  defp handle_list_computations_error(reason, "json") do
-    result = %{
-      error: inspect(reason)
-    }
-
-    IO.puts(Jason.encode!(result))
-  end
-
-  defp handle_list_computations_error(reason, _) do
-    IO.puts("Error listing computations: #{inspect(reason)}")
   end
 
   @doc "Shows detailed information about computations and their overwatch plugins."
   def computation_info(group_id, output_format \\ "text") do
-    group_display = if group_id == "", do: "default", else: group_id
+    group_display = normalize_group_id(group_id)
 
     case Flezha.list_computations(group_display) do
       {:ok, computations} when is_list(computations) ->
@@ -345,10 +289,10 @@ defmodule Flezha.Service.CliManager do
         end
 
       {:error, reason} ->
-        handle_computation_info_error(reason, output_format)
+        handle_list_error(reason, "listing computations", output_format)
 
       other ->
-        handle_computation_info_error(other, output_format)
+        handle_list_error(other, "listing computations", output_format)
     end
   end
 
@@ -410,18 +354,6 @@ defmodule Flezha.Service.CliManager do
           IO.puts("")
       end
     end)
-  end
-
-  defp handle_computation_info_error(reason, "json") do
-    result = %{
-      error: inspect(reason)
-    }
-
-    IO.puts(Jason.encode!(result))
-  end
-
-  defp handle_computation_info_error(reason, _) do
-    IO.puts("Error listing computations: #{inspect(reason)}")
   end
 
   defp format_bindings_json(bindings) do
@@ -490,10 +422,6 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp group_id(group_id) do
-    case group_id do
-      "" -> "default"
-      _ -> group_id
-    end
-  end
+  defp normalize_group_id(""), do: "default"
+  defp normalize_group_id(group_id), do: group_id
 end
