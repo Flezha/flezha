@@ -443,7 +443,7 @@ defmodule Flezha.Computation.Overwatch do
     plugin_group = Map.get(metadata, "plugin_group", "0")
 
     Enum.reduce_while(bindings, {message, metadata}, fn
-      %IOBindingPlugin{provider: p, plugin_group: pg}, payload when plugin_group === pg ->
+      {_, %IOBindingPlugin{provider: p, plugin_group: pg}}, payload when plugin_group === pg ->
         case IOBinding.exec(p, payload) do
           {:ok, payload} -> {:cont, payload}
           {:skip, :normal} -> {:halt, nil}

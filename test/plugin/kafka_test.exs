@@ -21,8 +21,8 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     result = IOBinding.bind(provider)
 
     assert elem(result, 0) == :ok
-    assert is_struct(elem(result, 1), Flezha.Plugin.Provider.Kafka.Producer)
-    assert is_pid(elem(result, 1).conn)
+    assert is_struct(result |> elem(1) |> elem(0), Flezha.Plugin.Provider.Kafka.Producer)
+    assert is_pid(result |> elem(1) |> elem(1))
   end
 
   test "kafka producer exec" do

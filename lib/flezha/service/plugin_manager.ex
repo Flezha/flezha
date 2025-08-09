@@ -16,11 +16,11 @@ defmodule Flezha.Service.PluginManager do
   end
 
   def register_plugin(plugin_id, info) do
-    GenServer.cast(__MODULE__, {:add_plugin, plugin_id, info})
+    GenServer.cast(__MODULE__, {:register_plugin, plugin_id, info})
   end
 
   def unregister_plugin(plugin_id) do
-    GenServer.cast(__MODULE__, {:remove_plugin, plugin_id})
+    GenServer.cast(__MODULE__, {:unregister_plugin, plugin_id})
   end
 
   def start_link(_) do
@@ -32,6 +32,7 @@ defmodule Flezha.Service.PluginManager do
     {:ok, %{}}
   end
 
+  @impl true
   def handle_call({:enable_plugin, plugin_id, plugin}, _from, state) do
     module = plugin.__struct__
 
