@@ -41,7 +41,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
     alias Flezha.Plugin.Provider.Websocket
 
     @impl true
-    def plugin_type(), do: :io_binding
+    def plugin_type(_), do: :io_binding
 
     @impl true
     def bind(binding) do

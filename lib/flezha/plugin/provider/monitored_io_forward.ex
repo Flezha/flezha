@@ -32,7 +32,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
 
   defimpl IOBinding, for: Flezha.Plugin.Provider.MonitoredIOForward do
     @impl true
-    def plugin_type(), do: :io_binding
+    def plugin_type(_), do: :io_binding
 
     @impl true
     def bind(binding) do

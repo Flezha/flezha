@@ -8,7 +8,7 @@ defmodule Flezha.Plugin.Provider.StdOut do
 
   defimpl IOBinding, for: Flezha.Plugin.Provider.StdOut do
     @impl true
-    def plugin_type(), do: :io_binding
+    def plugin_type(_), do: :io_binding
 
     @impl true
     def bind(binding) do

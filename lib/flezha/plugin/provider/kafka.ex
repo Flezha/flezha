@@ -30,7 +30,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     defimpl IOBinding, for: Flezha.Plugin.Provider.Kafka.Producer do
       @impl true
-      def plugin_type(), do: :io_binding
+      def plugin_type(_), do: :io_binding
 
       # TODO: The system needs to be intelligent enough to know when to reuse a connection
       # and when to create a new one. We may need a separate GenServer handling the connections.
