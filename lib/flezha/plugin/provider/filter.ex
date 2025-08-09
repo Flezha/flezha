@@ -23,7 +23,7 @@ defmodule Flezha.Plugin.Provider.Filter do
     def bind(binding) do
       case Regex.compile(binding.regex_pattern) do
         {:ok, compiled_regex} ->
-          {:ok, %{binding | regex_pattern: compiled_regex}}
+          {:ok, {%{binding | regex_pattern: compiled_regex}, nil}}
 
         {:error, reason} ->
           {:error, "Invalid regex pattern: #{reason}"}

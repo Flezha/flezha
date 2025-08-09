@@ -12,7 +12,7 @@ defmodule Flezha.Plugin.Provider.StdOut do
 
     @impl true
     def bind(binding) do
-      {:ok, binding}
+      {:ok, {binding, nil}}
     end
 
     @impl true

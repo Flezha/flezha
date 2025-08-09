@@ -18,9 +18,9 @@ defmodule Flezha do
 
   defdelegate list_computations(group_id), to: ComputationManager, as: :get_computation_ids
 
-  defdelegate enable_plugin(plugin_settings), to: PluginManager
+  defdelegate enable_plugin(plugin_id, plugin), to: PluginManager
 
-  defdelegate disable_plugin(plugin_settings), to: PluginManager
+  defdelegate disable_plugin(plugin_id), to: PluginManager
 
   defdelegate computation_state(group_id, computation),
     to: ComputationManager,
