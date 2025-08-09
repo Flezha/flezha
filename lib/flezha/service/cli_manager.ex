@@ -95,12 +95,12 @@ defmodule Flezha.Service.CliManager do
 
   @doc "Enables plugin."
   def enable_plugin(plugin_id, provider_id, plugin_flags_json, opts_json) do
-    with {:ok, provider_module} <- get_plugin_provider_mod(provider_id),
+    with {:ok, provider_mod} <- get_plugin_provider_mod(provider_id),
          {:ok, plugin_flags} <- Jason.decode(plugin_flags_json),
          {:ok, opts} <- Jason.decode(opts_json),
-         {:ok, plugin_struct} <-
-           build_plugin_struct_dynamic(provider_module, opts, plugin_flags) do
-      case PluginManager.enable_plugin(plugin_id, plugin_struct) do
+         {:ok, plugin_struct} <- apply(provider_mod, :build, [plugin_flags]),
+         {:ok, plugin} <- build_plugin(provider_mod, plugin_struct, plugin_flags, opts) do
+      case PluginManager.enable_plugin(plugin_id, plugin) do
         {:ok, _msg} -> IO.puts("Plugin #{plugin_id} enabled successfully.")
         {:error, reason} -> IO.puts("Error enabling plugin: #{inspect(reason)}.")
       end
@@ -110,23 +110,23 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp build_plugin_struct("io_binding", provider_module, opts, plugin_flags) do
-    # Use the provider's build function to create the provider struct
-    case provider_module.build(plugin_flags) do
-      {:ok, provider_struct} ->
-        # Use IOBindingPlugin's build function to create the wrapper
-        case IOBindingPlugin.build(opts, provider_struct) do
-          {:ok, plugin_struct} -> {:ok, plugin_struct}
-          {:error, reason} -> {:error, "Failed to create IOBindingPlugin: #{inspect(reason)}"}
-        end
+  defp build_plugin(provider_mod, provider, plugin_flags, opts) do
+    case apply(provider_mod, :plugin_type, []) do
+      :io_binding ->
+        plugin = %IOBindingPlugin{
+          provider: provider,
+          group: Map.get(opts, "group", "default"),
+          computation_id: Map.get(plugin_flags, "computation_id"),
+          trigger: Map.get(plugin_flags, "trigger"),
+          weight: Map.get(plugin_flags, "weight", 0),
+          plugin_group: Map.get(plugin_flags, "plugin_group", "0")
+        }
 
-      {:error, reason} ->
-        {:error, "Failed to create provider struct: #{inspect(reason)}"}
+        {:ok, plugin}
+
+      _ ->
+        {:error, "unknown plugin type"}
     end
-  end
-
-  defp build_plugin_struct(plugin_type, _module, _opts, _plugin_flags) do
-    {:error, "Unsupported plugin type: #{plugin_type}"}
   end
 
   defp listen_loop() do
@@ -148,47 +148,6 @@ defmodule Flezha.Service.CliManager do
       nil -> {:error, "plugin provider not found, make sure the plugin is enabled."}
       module -> {:ok, module}
     end
-  end
-
-  defp handle_plugin_action(module, plugin_settings) do
-    plugin_settings =
-      case Jason.decode(plugin_settings, keys: :atoms!) do
-        {:ok, map} -> map
-        # TODO: we should return error.
-        {:error, reason} -> raise reason
-      end
-
-    plugin_settings = Map.put_new(plugin_settings, :group, "default")
-
-    # Convert any custom keys to atoms.
-    plugin_settings = atom_converter(plugin_settings)
-
-    # TODO: test with wrong module and wrong settings.
-    module
-    |> struct!(plugin_settings)
-    |> PluginManager.enable_plugin()
-  end
-
-  defp handle_plugin_action(module, plugin_settings, weight) do
-    plugin_settings =
-      case Jason.decode(plugin_settings, keys: :atoms!) do
-        {:ok, map} -> map
-        # TODO: we should return error.
-        {:error, reason} -> raise reason
-      end
-
-    plugin_settings =
-      plugin_settings
-      |> Map.put_new(:group, "default")
-      |> Map.put(:weight, weight)
-
-    # Convert any custom keys to atoms.
-    plugin_settings = atom_converter(plugin_settings)
-
-    # TODO: test with wrong module and wrong settings.
-    module
-    |> struct!(plugin_settings)
-    |> PluginManager.enable_plugin()
   end
 
   defp atom_converter(orig_map) do
@@ -499,9 +458,8 @@ defmodule Flezha.Service.CliManager do
       if not Enum.empty?(bindings_list) do
         IO.puts("    #{trigger}:")
 
-        Enum.each(bindings_list, fn binding ->
+        Enum.each(bindings_list, fn {plugin_id, binding} ->
           # Extract available binding information
-          instance_id = Map.get(binding, :instance_id, "unknown")
           plugin_group = Map.get(binding, :plugin_group, "0")
 
           # Try to get the module name which might indicate plugin type
@@ -514,7 +472,7 @@ defmodule Flezha.Service.CliManager do
                 "unknown"
             end
 
-          IO.puts("      - Instance ID: #{instance_id}")
+          IO.puts("      - Plugin ID: #{plugin_id}")
           IO.puts("        Plugin Group: #{plugin_group}")
           IO.puts("        Module: #{module_name}")
         end)

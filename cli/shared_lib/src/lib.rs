@@ -8,7 +8,7 @@ pub fn get_flezha_command() -> String {
         .expect("Failed to get current directory");
 
     current_dir
-        .join(format!("flezha{}", extension))
+        .join(format!("flzvm{}", extension))
         .to_str()
         .expect("Failed to convert path to string")
         .to_string()
@@ -126,11 +126,11 @@ pub fn get_output_format(slice: &[String]) -> String {
 
 pub fn get_weight(slice: &[String]) -> Option<i32> {
     let weight_str = get_parameter(slice, "--weight", "-w");
-    
+
     if weight_str.is_empty() {
         return None;
     }
-    
+
     match weight_str.parse::<i32>() {
         Ok(weight) => Some(weight),
         Err(_) => None,
@@ -139,7 +139,7 @@ pub fn get_weight(slice: &[String]) -> Option<i32> {
 
 pub fn extract_flags_with_prefix(args: &[String], prefix: &str) -> Vec<(String, String)> {
     let mut flags = Vec::new();
-    
+
     for (i, arg) in args.iter().enumerate() {
         // Handle --Tkey=value or --Pkey=value format
         if let Some(rest) = arg.strip_prefix(&format!("--{}", prefix)) {
@@ -158,15 +158,16 @@ pub fn extract_flags_with_prefix(args: &[String], prefix: &str) -> Vec<(String, 
             }
         }
     }
-    
+
     flags
 }
 
 fn strip_quotes(value: &str) -> String {
     let trimmed = value.trim();
-    if (trimmed.starts_with('"') && trimmed.ends_with('"')) ||
-       (trimmed.starts_with('\'') && trimmed.ends_with('\'')) {
-        trimmed[1..trimmed.len()-1].to_string()
+    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+    {
+        trimmed[1..trimmed.len() - 1].to_string()
     } else {
         value.to_string()
     }
@@ -176,8 +177,9 @@ pub fn serialize_flags(flags: &[(String, String)]) -> String {
     if flags.is_empty() {
         return "{}".to_string();
     }
-    
-    let json_pairs: Vec<String> = flags.iter()
+
+    let json_pairs: Vec<String> = flags
+        .iter()
         .map(|(key, value)| {
             // Check if value looks like JSON (starts with { or [)
             if value.trim_start().starts_with('{') || value.trim_start().starts_with('[') {
@@ -187,39 +189,53 @@ pub fn serialize_flags(flags: &[(String, String)]) -> String {
             }
         })
         .collect();
-    
+
     format!("{{{}}}", json_pairs.join(", "))
 }
 
 pub fn extract_x_flags(args: &[String]) -> Vec<(String, String)> {
     let mut flags = Vec::new();
-    
-    for arg in args.iter() {
-        if let Some(rest) = arg.strip_prefix('X') {
+
+    for (i, arg) in args.iter().enumerate() {
+        // Handle --Xkey=value format
+        if let Some(rest) = arg.strip_prefix("--X") {
             if let Some(eq_pos) = rest.find('=') {
                 let key = &rest[..eq_pos];
                 let value = &rest[eq_pos + 1..];
                 flags.push((key.to_string(), strip_quotes(value)));
             }
         }
+        // Handle --Xkey value format (space-separated)
+        else if arg.starts_with("--X") && i + 1 < args.len() {
+            if let Some(key) = arg.strip_prefix("--X") {
+                if !key.contains('=') {
+                    flags.push((key.to_string(), strip_quotes(&args[i + 1])));
+                }
+            }
+        }
     }
-    
+
     flags
 }
 
+// TODO: refactor this.
 pub fn extract_opts_with_default_group(args: &[String]) -> Vec<(String, String)> {
     let mut flags = Vec::new();
     let mut i = 0;
-    
+
     while i < args.len() {
         let arg = &args[i];
-        
-        // Skip X-prefixed flags
-        if arg.starts_with('X') {
+
+        // Skip --X-prefixed flags
+        if arg.starts_with("--X") {
+            // If it's --Xkey value format (space-separated), skip the next argument too
+            if !arg.contains('=') && i + 1 < args.len() {
+                i += 1; // Skip the value argument
+            }
             i += 1;
             continue;
         }
-        
+
         // Handle --option=value format
         if let Some(eq_pos) = arg.find('=') {
             if arg.starts_with("--") {
@@ -245,14 +261,14 @@ pub fn extract_opts_with_default_group(args: &[String]) -> Vec<(String, String)>
             flags.push((key.to_string(), strip_quotes(value)));
             i += 1; // Skip the next argument as it's the value
         }
-        
+
         i += 1;
     }
-    
+
     // Add default group if not specified
     if !flags.iter().any(|(key, _)| key == "group") {
         flags.push(("group".to_string(), "default".to_string()));
     }
-    
+
     flags
 }

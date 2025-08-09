@@ -7,6 +7,9 @@ defmodule Flezha.Plugin.Provider.Filter do
   @enforce_keys [:regex_pattern]
   defstruct @enforce_keys ++ [inverted: false]
 
+  @impl true
+  def plugin_type(), do: :io_binding
+
   defp convert_value(:inverted, value) when is_binary(value) do
     case String.downcase(value) do
       "true" -> true
@@ -16,9 +19,6 @@ defmodule Flezha.Plugin.Provider.Filter do
   end
 
   defimpl IOBinding, for: Flezha.Plugin.Provider.Filter do
-    @impl true
-    def plugin_type(_), do: :io_binding
-
     @impl true
     def bind(binding) do
       case Regex.compile(binding.regex_pattern) do

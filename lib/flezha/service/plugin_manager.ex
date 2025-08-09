@@ -4,14 +4,14 @@ defmodule Flezha.Service.PluginManager do
   def enable_plugin(plugin_id, plugin) do
     case GenServer.call(__MODULE__, {:enable_plugin, plugin_id, plugin}) do
       {:ok, msg} -> {:ok, msg}
-      {:error, reason} -> raise "Error enabling plugin: #{reason}"
+      {:error, reason} -> {:error, reason}
     end
   end
 
   def disable_plugin(plugin_id) do
     case GenServer.call(__MODULE__, {:disable_plugin, plugin_id}) do
       {:ok, msg} -> {:ok, msg}
-      {:error, reason} -> raise "Error disabling plugin: #{reason}"
+      {:error, reason} -> {:error, reason}
     end
   end
 

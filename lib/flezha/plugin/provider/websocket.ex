@@ -16,6 +16,9 @@ defmodule Flezha.Plugin.Provider.Websocket do
                 payload_metadata: %{}
               ]
 
+  @impl true
+  def plugin_type(), do: :io_binding
+
   defp convert_value(:post_connect, value) when is_binary(value) do
     case Jason.decode(value) do
       {:ok, map} -> map
@@ -39,9 +42,6 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   defimpl IOBinding, for: Flezha.Plugin.Provider.Websocket do
     alias Flezha.Plugin.Provider.Websocket
-
-    @impl true
-    def plugin_type(_), do: :io_binding
 
     @impl true
     def bind(binding) do

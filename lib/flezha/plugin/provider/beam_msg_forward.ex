@@ -7,6 +7,9 @@ defmodule Flezha.Plugin.Provider.BeamMsgForward do
   @enforce_keys [:recv_pid]
   defstruct @enforce_keys
 
+  @impl true
+  def plugin_type(), do: :io_binding
+
   defp convert_value(:recv_pid, value) when is_binary(value) do
     case String.to_existing_atom(value) do
       pid when is_atom(pid) ->
@@ -21,9 +24,6 @@ defmodule Flezha.Plugin.Provider.BeamMsgForward do
   end
 
   defimpl IOBinding, for: Flezha.Plugin.Provider.BeamMsgForward do
-    @impl true
-    def plugin_type(_), do: :io_binding
-
     @impl true
     def bind(binding) do
       {:ok, {binding, nil}}

@@ -9,6 +9,9 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   @enforce_keys [:recv_pid, :plugin_id, :computation_id, :group]
   defstruct @enforce_keys ++ [:binding_pid, heartbeat_interval: 5000]
 
+  @impl true
+  def plugin_type(), do: :io_binding
+
   defp convert_value(:recv_pid, value) when is_binary(value) do
     case String.to_existing_atom(value) do
       pid when is_atom(pid) ->
@@ -30,9 +33,6 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   end
 
   defimpl IOBinding, for: Flezha.Plugin.Provider.MonitoredIOForward do
-    @impl true
-    def plugin_type(_), do: :io_binding
-
     @impl true
     def bind(binding) do
       {:ok, pid} = GenServer.start_link(Flezha.Plugin.Provider.MonitoredIOForward, binding)

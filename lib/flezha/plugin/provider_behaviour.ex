@@ -18,6 +18,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     end
   """
 
+  @callback plugin_type() :: :io_binding
   @callback build(map()) :: {:ok, struct()} | {:error, String.t()}
 
   defmacro __using__(_opts) do
@@ -25,12 +26,17 @@ defmodule Flezha.Plugin.ProviderBehaviour do
       @behaviour Flezha.Plugin.ProviderBehaviour
 
       def build(string_map) do
-        # Get struct fields at runtime
-        struct_sample = struct!(__MODULE__)
-        struct_fields = Map.keys(struct_sample) |> Enum.reject(&(&1 == :__struct__))
-
         # Try to determine required fields by attempting to create struct
         enforce_keys = get_required_fields(__MODULE__)
+
+        # Get struct fields at runtime - use a sample with dummy values for enforce_keys
+        dummy_params =
+          Enum.reduce(enforce_keys, %{}, fn key, acc ->
+            Map.put(acc, key, "dummy")
+          end)
+
+        struct_sample = struct!(__MODULE__, dummy_params)
+        struct_fields = Map.keys(struct_sample) |> Enum.reject(&(&1 == :__struct__))
 
         params =
           Enum.reduce(struct_fields, %{}, fn field, acc ->
@@ -77,7 +83,11 @@ defmodule Flezha.Plugin.ProviderBehaviour do
                 fields_str
                 |> String.split(", ")
                 |> Enum.map(&String.trim/1)
-                |> Enum.map(&String.to_existing_atom/1)
+                |> Enum.map(fn field_str ->
+                  # Remove the colon prefix if present
+                  field_str = String.replace_prefix(field_str, ":", "")
+                  String.to_existing_atom(field_str)
+                end)
 
               _ ->
                 []
@@ -85,10 +95,14 @@ defmodule Flezha.Plugin.ProviderBehaviour do
         end
       end
 
-      # Default convert_value - can be overridden
+      # Default convert_value with catch-all clause
       defp convert_value(_field, value), do: value
 
       defoverridable convert_value: 2
+
+      # Re-inject the catch-all clause to ensure it's always available
+      # This will be the last clause, so specific clauses take precedence
+      defp convert_value(_field, value), do: value
     end
   end
 end
