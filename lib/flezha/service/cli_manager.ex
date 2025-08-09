@@ -110,32 +110,6 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  @doc "Enables plugin with flags."
-  def enable_plugin_with_flags(plugin_id, type_flags_json, provider_flags_json) do
-    with {:ok, {plugin_type, module}} <- get_plugin_info(plugin_id),
-         {:ok, type_flags} <- Jason.decode(type_flags_json),
-         {:ok, provider_flags} <- Jason.decode(provider_flags_json),
-         {:ok, plugin_struct} <-
-           build_plugin_struct(plugin_type, module, type_flags, provider_flags) do
-      case PluginManager.enable_plugin(plugin_struct) do
-        {:ok, _msg} -> IO.puts("Plugin #{plugin_id} enabled successfully.")
-        {:error, reason} -> IO.puts("Error enabling plugin. #{inspect(reason)}.")
-      end
-    else
-      {:error, reason} ->
-        IO.puts("Error enabling plugin. #{inspect(reason)}.")
-    end
-  end
-
-  defp get_plugin_info(plugin_id) do
-    enabled_plugins = ConfigManager.get_enabled_plugins()
-
-    case Enum.find(enabled_plugins, fn {_type, id, _module} -> id == plugin_id end) do
-      {plugin_type, ^plugin_id, module} -> {:ok, {plugin_type, module}}
-      nil -> {:error, "plugin not found, make sure the plugin is enabled in config."}
-    end
-  end
-
   defp build_plugin_struct("io_binding", provider_module, opts, plugin_flags) do
     # Use the provider's build function to create the provider struct
     case provider_module.build(plugin_flags) do
