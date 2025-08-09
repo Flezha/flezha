@@ -1,4 +1,4 @@
-use shared_lib::{get_flezha_command, get_namespace, extract_flags_with_prefix, serialize_flags};
+use shared_lib::{get_flezha_command, get_namespace, extract_x_flags, extract_opts_with_default_group, serialize_flags};
 use std::env;
 use std::process::{exit, Command};
 
@@ -20,11 +20,11 @@ fn main() {
 
 fn handle_enable(args: Vec<String>) {
     let example_usage = format!(
-        "Usage: {} enable <plugin_id> [--Xkey=value]\nExample: {} enable computation_kafka_producer --Xinstance_id=kafka1 --Xgroup=default --Xcomputation_id=comp1 --Xtrigger=on_output --Xhosts=kafka:9092 --Xtopic=my_topic",
+        "Usage: {} enable <plugin_id> <provider_id> [Xkey=value] [--option value]\nExample: {} enable computation_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic --group mygroup",
         args[0], args[0]
     );
 
-    if args.len() < 3 {
+    if args.len() < 4 {
         eprintln!(
             "{}",
             format!("Error: Invalid number of arguments.\n {}", example_usage)
@@ -33,24 +33,23 @@ fn handle_enable(args: Vec<String>) {
     }
 
     let plugin_id = &args[2];
+    let provider_id = &args[3];
     let command = get_flezha_command();
 
-    // Extract all X-prefixed flags 
-    let all_flags = extract_flags_with_prefix(&args[3..], "X");
+    // Extract X-prefixed flags (plugin settings)
+    let x_flags = extract_x_flags(&args[4..]);
+    let x_flags_json = serialize_flags(&x_flags);
     
-    // Separate type flags (IOBindingPlugin fields) from provider flags
-    let type_field_names = ["instance_id", "group", "computation_id", "trigger", "plugin_group", "weight"];
-    let (type_flags, provider_flags): (Vec<_>, Vec<_>) = all_flags.into_iter()
-        .partition(|(key, _)| type_field_names.contains(&key.as_str()));
-    
-    let type_flags_json = serialize_flags(&type_flags);
-    let provider_flags_json = serialize_flags(&provider_flags);
+    // Extract opts flags (CLI options with default group)
+    let opts_flags = extract_opts_with_default_group(&args[4..]);
+    let opts_json = serialize_flags(&opts_flags);
 
     let rpc_command = format!(
-        "Flezha.Service.CliManager.enable_plugin_with_flags(\"{}\", \"{}\", \"{}\")",
+        "Flezha.Service.CliManager.enable_plugin(\"{}\", \"{}\", \"{}\", \"{}\")",
         plugin_id,
-        type_flags_json.replace("\"", "\\\""),
-        provider_flags_json.replace("\"", "\\\"")
+        provider_id,
+        x_flags_json.replace("\"", "\\\""),
+        opts_json.replace("\"", "\\\"")
     );
 
     println!("Enabling plugin...");

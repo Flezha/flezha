@@ -12,14 +12,14 @@ config :flezha,
   # TODO: we need to dynamically load the plugins from .env.
   # ------------------------------------------------------------------------------------------------
   # Enabled plugins.
-  enabled_plugins: [
-    {"computation_kafka_producer", Flezha.Plugin.Provider.Kafka.Producer},
-    {"computation_websocket", Flezha.Plugin.Provider.Websocket},
-    {"computation_beam_msg", Flezha.Plugin.Provider.BeamMsgForward},
-    {"computation_stdout", Flezha.Plugin.Provider.StdOut},
-    {"computation_io_filter", Flezha.Plugin.Provider.Filter},
-    {"monitored_io_forward", Flezha.Plugin.Provider.MonitoredIOForward}
-  ]
+  enabled_plugins: %{
+    "computation_kafka_producer" => Flezha.Plugin.Provider.Kafka.Producer,
+    "computation_websocket" => Flezha.Plugin.Provider.Websocket,
+    "computation_beam_msg" => Flezha.Plugin.Provider.BeamMsgForward,
+    "computation_stdout" => Flezha.Plugin.Provider.StdOut,
+    "computation_io_filter" => Flezha.Plugin.Provider.Filter,
+    "monitored_io_forward" => Flezha.Plugin.Provider.MonitoredIOForward
+  }
 
 config :logger,
   handle_sasl_reports: true,

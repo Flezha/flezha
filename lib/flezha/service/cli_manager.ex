@@ -93,25 +93,20 @@ defmodule Flezha.Service.CliManager do
     listen_loop()
   end
 
-  @doc "Enalbes plugin."
-  def enable_plugin(plugin_id, plugin_settings) do
-    with {:ok, module} <- get_plugin_mod(plugin_id),
-         {:ok, _msg} <- handle_plugin_action(module, plugin_settings) do
-      IO.puts("Plugin #{plugin_id} enabled successfully.")
+  @doc "Enables plugin."
+  def enable_plugin(plugin_id, provider_id, plugin_flags_json, opts_json) do
+    with {:ok, provider_module} <- get_plugin_provider_mod(provider_id),
+         {:ok, plugin_flags} <- Jason.decode(plugin_flags_json),
+         {:ok, opts} <- Jason.decode(opts_json),
+         {:ok, plugin_struct} <-
+           build_plugin_struct_dynamic(provider_module, opts, plugin_flags) do
+      case PluginManager.enable_plugin(plugin_id, plugin_struct) do
+        {:ok, _msg} -> IO.puts("Plugin #{plugin_id} enabled successfully.")
+        {:error, reason} -> IO.puts("Error enabling plugin: #{inspect(reason)}.")
+      end
     else
       {:error, reason} ->
-        IO.puts("Error enabling plugin #{inspect(reason)}.")
-    end
-  end
-
-  @doc "Enables plugin with weight."
-  def enable_plugin(plugin_id, plugin_settings, weight) do
-    with {:ok, module} <- get_plugin_mod(plugin_id),
-         {:ok, _msg} <- handle_plugin_action(module, plugin_settings, weight) do
-      IO.puts("Plugin #{plugin_id} enabled successfully.")
-    else
-      {:error, reason} ->
-        IO.puts("Error enabling plugin #{inspect(reason)}.")
+        IO.puts("Error enabling plugin: #{inspect(reason)}.")
     end
   end
 
@@ -141,12 +136,12 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp build_plugin_struct("io_binding", provider_module, type_flags, provider_flags) do
+  defp build_plugin_struct("io_binding", provider_module, opts, plugin_flags) do
     # Use the provider's build function to create the provider struct
-    case provider_module.build(provider_flags) do
+    case provider_module.build(plugin_flags) do
       {:ok, provider_struct} ->
         # Use IOBindingPlugin's build function to create the wrapper
-        case IOBindingPlugin.build(type_flags, provider_struct) do
+        case IOBindingPlugin.build(opts, provider_struct) do
           {:ok, plugin_struct} -> {:ok, plugin_struct}
           {:error, reason} -> {:error, "Failed to create IOBindingPlugin: #{inspect(reason)}"}
         end
@@ -156,7 +151,7 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp build_plugin_struct(plugin_type, _module, _type_flags, _provider_flags) do
+  defp build_plugin_struct(plugin_type, _module, _opts, _plugin_flags) do
     {:error, "Unsupported plugin type: #{plugin_type}"}
   end
 
@@ -172,21 +167,12 @@ defmodule Flezha.Service.CliManager do
     listen_loop()
   end
 
-  defp get_plugin_mod(plugin_id) do
+  defp get_plugin_provider_mod(provider_id) do
     enabled_plugins = ConfigManager.get_enabled_plugins()
 
-    plugin_mappings =
-      Enum.map(enabled_plugins, fn plugin_module ->
-        {
-          apply(plugin_module, :plugin_id, []),
-          {:mod, plugin_module}
-        }
-      end)
-      |> Map.new()
-
-    case Map.get(plugin_mappings, plugin_id, nil) do
-      {:mod, module} -> {:ok, module}
-      nil -> {:error, "plugin not found, make sure the plugin is enabled."}
+    case Map.get(enabled_plugins, provider_id, nil) do
+      nil -> {:error, "plugin provider not found, make sure the plugin is enabled."}
+      module -> {:ok, module}
     end
   end
 
