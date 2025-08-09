@@ -19,7 +19,7 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
         result = GenServer.call(computation_pid, {:enable_plugin, plugin_id, plugin})
 
         case result do
-          :ok -> {:ok, {plugin.computation_id}}
+          :ok -> {:ok, {__MODULE__, {plugin.group, plugin.computation_id}}}
           {:error, reason} -> {:error, reason}
         end
 
@@ -28,8 +28,21 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
     end
   end
 
-  alias Flezha.Plugin.PluginProtocol
-  alias Flezha.Computation.IOBinding
+  @impl true
+  def disable(plugin_id, {group, computation_id}) do
+    case ComputationManager.get_computation_pid(group, computation_id) do
+      {:ok, computation_pid} ->
+        result = GenServer.call(computation_pid, {:disable_plugin, plugin_id})
+
+        case result do
+          :ok -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+
+      err ->
+        err
+    end
+  end
 
   def build(string_map, provider_struct) do
     struct_fields = [:group, :computation_id, :trigger, :plugin_group, :weight]
@@ -87,21 +100,4 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
   end
 
   defp convert_value(_field, value), do: value
-
-  defimpl PluginProtocol, for: Flezha.Plugin.Type.IOBindingPlugin do
-    alias Flezha.Plugin.Type.IOBindingPlugin
-
-    def disable(plugin) do
-      case ComputationManager.get_computation_pid(plugin.group, plugin.computation_id) do
-        {:ok, computation_pid} ->
-          GenServer.call(computation_pid, {:disable_plugin, plugin.instance_id})
-
-          # TODO: handle errors too.
-          {:ok, "plugin disabled"}
-
-        err ->
-          err
-      end
-    end
-  end
 end

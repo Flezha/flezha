@@ -51,8 +51,7 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
 
   def attach_output_msg({:ok, %{computation_id: cid}} = start_res, group \\ @default_group) do
     {:ok, "plugin enabled"} =
-      PluginManager.enable_plugin(%Flezha.Plugin.Type.IOBindingPlugin{
-        instance_id: "output_msg_handler",
+      PluginManager.enable_plugin("output_msg_handler", %Flezha.Plugin.Driver.IOBindingPlugin{
         group: group,
         computation_id: cid,
         trigger: :on_output,

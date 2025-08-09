@@ -103,8 +103,7 @@ defmodule FlezhaTest do
 
     # TODO: add failures also.
     res =
-      PluginManager.enable_plugin(%Flezha.Plugin.Type.IOBindingPlugin{
-        instance_id: "websocket_plugin",
+      PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
         group: @default_group,
         computation_id: computation_id,
         trigger: :proactive,
@@ -141,8 +140,7 @@ defmodule FlezhaTest do
     {:ok, _} = ComputationManager.start_computation(@default_group, computation)
 
     res =
-      PluginManager.enable_plugin(%Flezha.Plugin.Type.IOBindingPlugin{
-        instance_id: "websocket_plugin",
+      PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
         group: @default_group,
         computation_id: computation_id,
         trigger: :on_output,
@@ -166,8 +164,7 @@ defmodule FlezhaTest do
 
     {:ok, _} = ComputationManager.start_computation(@default_group, computation)
 
-    PluginManager.enable_plugin(%Flezha.Plugin.Type.IOBindingPlugin{
-      instance_id: "beam_msg_forward",
+    PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
       group: @default_group,
       computation_id: computation_id,
       trigger: :on_output,
@@ -176,8 +173,7 @@ defmodule FlezhaTest do
       }
     })
 
-    PluginManager.enable_plugin(%Flezha.Plugin.Type.IOBindingPlugin{
-      instance_id: "websocket_plugin",
+    PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
       group: @default_group,
       computation_id: computation_id,
       trigger: :proactive,
@@ -257,8 +253,7 @@ defmodule FlezhaTest do
       "text_inputs" => ["test_state_1", "test_state_2"]
     }
 
-    PluginManager.enable_plugin(%Flezha.Plugin.Type.IOBindingPlugin{
-      instance_id: "stdout_plugin",
+    PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
       group: @default_group,
       computation_id: computation_id,
       trigger: :proactive,
@@ -543,8 +538,7 @@ defmodule FlezhaTest do
       :timer.tc(fn ->
         Enum.each(computation_infos, fn {computation_id, _info} ->
           # Enable BeamMsgForward plugin
-          PluginManager.enable_plugin(%Flezha.Plugin.Type.IOBindingPlugin{
-            instance_id: "beam_msg_forward",
+          PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
             group: @default_group,
             computation_id: computation_id,
             trigger: :on_output,
@@ -554,8 +548,7 @@ defmodule FlezhaTest do
           })
 
           # Enable StdOut plugin
-          PluginManager.enable_plugin(%Flezha.Plugin.Type.IOBindingPlugin{
-            instance_id: "stdout_plugin",
+          PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
             group: @default_group,
             computation_id: computation_id,
             trigger: :proactive,

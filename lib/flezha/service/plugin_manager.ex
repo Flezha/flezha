@@ -1,6 +1,4 @@
 defmodule Flezha.Service.PluginManager do
-  alias Flezha.Plugin.PluginProtocol
-
   use GenServer
 
   def enable_plugin(plugin_id, plugin) do
@@ -10,8 +8,19 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  def disable_plugin(plugin) do
-    PluginProtocol.disable(plugin)
+  def disable_plugin(plugin_id) do
+    case GenServer.call(__MODULE__, {:disable_plugin, plugin_id}) do
+      {:ok, msg} -> {:ok, msg}
+      {:error, reason} -> raise "Error disabling plugin: #{reason}"
+    end
+  end
+
+  def register_plugin(plugin_id, info) do
+    GenServer.cast(__MODULE__, {:add_plugin, plugin_id, info})
+  end
+
+  def unregister_plugin(plugin_id) do
+    GenServer.cast(__MODULE__, {:remove_plugin, plugin_id})
   end
 
   def start_link(_) do
@@ -33,5 +42,26 @@ defmodule Flezha.Service.PluginManager do
       end
 
     {:reply, reply, new_state}
+  end
+
+  def handle_call({:disable_plugin, plugin_id}, _from, state) do
+    case Map.get(state, plugin_id) do
+      nil ->
+        {:reply, {:error, "plugin not found"}, state}
+
+      {module, info} ->
+        apply(module, :disable, [plugin_id, info])
+        {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
+    end
+  end
+
+  @impl true
+  def handle_cast({:register_plugin, plugin_id, info}, state) do
+    {:noreply, Map.put(state, plugin_id, info)}
+  end
+
+  @impl true
+  def handle_cast({:unregister_plugin, plugin_id}, state) do
+    {:noreply, Map.delete(state, plugin_id)}
   end
 end

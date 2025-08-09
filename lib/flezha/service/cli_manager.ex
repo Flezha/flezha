@@ -8,7 +8,7 @@ defmodule Flezha.Service.CliManager do
   alias Flezha.Service.PluginManager
   alias Flezha.Service.ConfigManager
   alias Flezha.Plugin.Provider.MonitoredIOForward
-  alias Flezha.Plugin.Type.IOBindingPlugin
+  alias Flezha.Plugin.Driver.IOBindingPlugin
 
   @doc "Starts a computation."
   def computation_start(group_id, computation_id, factory_id, init_values, opts \\ []) do
@@ -78,14 +78,13 @@ defmodule Flezha.Service.CliManager do
 
     provider = %MonitoredIOForward{
       recv_pid: self(),
-      instance_id: "monitored_io_forward_dynamic",
+      plugin_id: "monitored_io_forward_dynamic",
       computation_id: computation_id,
       group: group_display
     }
 
-    PluginManager.enable_plugin(%IOBindingPlugin{
+    PluginManager.enable_plugin("monitored_io_forward_dynamic", %IOBindingPlugin{
       provider: provider,
-      instance_id: "monitored_io_forward_dynamic",
       group: group_display,
       computation_id: computation_id,
       trigger: io_type

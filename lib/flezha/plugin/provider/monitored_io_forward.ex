@@ -1,13 +1,12 @@
 defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   alias Flezha.Service.PluginManager
   alias Flezha.Computation.IOBinding
-  alias Flezha.Plugin.Type.IOBindingPlugin
   alias Flezha.Plugin.ProviderBehaviour
 
   use GenServer
   use ProviderBehaviour
 
-  @enforce_keys [:recv_pid, :instance_id, :computation_id, :group]
+  @enforce_keys [:recv_pid, :plugin_id, :computation_id, :group]
   defstruct @enforce_keys ++ [:binding_pid, heartbeat_interval: 5000]
 
   defp convert_value(:recv_pid, value) when is_binary(value) do
@@ -83,13 +82,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
     after
       state.heartbeat_interval ->
         Task.start(fn ->
-          PluginManager.disable_plugin(%IOBindingPlugin{
-            instance_id: state.instance_id,
-            computation_id: state.computation_id,
-            group: state.group,
-            trigger: nil,
-            provider: nil
-          })
+          PluginManager.disable_plugin(state.plugin_id)
         end)
 
         {:stop, :normal, state}
