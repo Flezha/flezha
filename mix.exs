@@ -60,6 +60,7 @@ defmodule Flezha.MixProject do
     File.cp!("cli/target/#{env}/plugin", Path.join(release.path, "bin/plugin"))
     File.cp!("cli/target/#{env}/group", Path.join(release.path, "bin/group"))
     File.cp!("cli/target/#{env}/operator", Path.join(release.path, "bin/operator"))
+    File.rename!(Path.join(release.path, "bin/flezha"), Path.join(release.path, "bin/flzvm"))
 
     release
   end
