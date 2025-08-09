@@ -8,6 +8,9 @@ defmodule Flezha.Plugin.Provider.StdOut do
 
   defimpl IOBinding, for: Flezha.Plugin.Provider.StdOut do
     @impl true
+    def plugin_type(), do: :io_binding
+
+    @impl true
     def bind(binding) do
       {:ok, binding}
     end
@@ -17,11 +20,6 @@ defmodule Flezha.Plugin.Provider.StdOut do
       IO.puts(inspect(payload))
 
       {:ok, payload}
-    end
-
-    @impl true
-    def pre_bind(binding) do
-      {:ok, {binding, nil}}
     end
   end
 end

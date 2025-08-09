@@ -1,9 +1,10 @@
-defmodule Flezha.Plugin.Type.IOBindingPlugin do
+defmodule Flezha.Plugin.Driver.IOBindingPlugin do
+  alias Flezha.Plugin.PluginBehaviour
   alias Flezha.Service.ComputationManager
-  alias Flezha.Plugin.PluginProtocol
-  alias Flezha.Computation.IOBinding
 
-  @enforce_keys [:instance_id, :group, :computation_id, :trigger, :provider]
+  @behaviour PluginBehaviour
+
+  @enforce_keys [:group, :computation_id, :trigger, :provider]
   defstruct @enforce_keys ++
               [
                 pid: nil,
@@ -11,8 +12,27 @@ defmodule Flezha.Plugin.Type.IOBindingPlugin do
                 weight: 0
               ]
 
+  @impl true
+  def enable(plugin_id, plugin) do
+    case ComputationManager.get_computation_pid(plugin.group, plugin.computation_id) do
+      {:ok, computation_pid} ->
+        result = GenServer.call(computation_pid, {:enable_plugin, plugin_id, plugin})
+
+        case result do
+          :ok -> {:ok, {plugin.computation_id}}
+          {:error, reason} -> {:error, reason}
+        end
+
+      err ->
+        err
+    end
+  end
+
+  alias Flezha.Plugin.PluginProtocol
+  alias Flezha.Computation.IOBinding
+
   def build(string_map, provider_struct) do
-    struct_fields = [:instance_id, :group, :computation_id, :trigger, :plugin_group, :weight]
+    struct_fields = [:group, :computation_id, :trigger, :plugin_group, :weight]
 
     params =
       Enum.reduce(struct_fields, %{}, fn field, acc ->
@@ -71,19 +91,6 @@ defmodule Flezha.Plugin.Type.IOBindingPlugin do
   defimpl PluginProtocol, for: Flezha.Plugin.Type.IOBindingPlugin do
     alias Flezha.Plugin.Type.IOBindingPlugin
 
-    def enable(plugin) do
-      case ComputationManager.get_computation_pid(plugin.group, plugin.computation_id) do
-        {:ok, computation_pid} ->
-          GenServer.call(computation_pid, {:enable_plugin, plugin})
-
-          # TODO: handle errors too.
-          {:ok, "plugin enabled"}
-
-        err ->
-          err
-      end
-    end
-
     def disable(plugin) do
       case ComputationManager.get_computation_pid(plugin.group, plugin.computation_id) do
         {:ok, computation_pid} ->
@@ -94,15 +101,6 @@ defmodule Flezha.Plugin.Type.IOBindingPlugin do
 
         err ->
           err
-      end
-    end
-
-    def pre_enable(plugin) do
-      result = IOBinding.pre_bind(plugin.provider)
-
-      case result do
-        {:ok, provider} -> {:ok, %IOBindingPlugin{plugin | provider: provider}}
-        {:error, reason} -> {:error, reason}
       end
     end
   end

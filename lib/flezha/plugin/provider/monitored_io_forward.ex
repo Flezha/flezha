@@ -31,7 +31,10 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   end
 
   defimpl IOBinding, for: Flezha.Plugin.Provider.MonitoredIOForward do
-    @impl IOBinding
+    @impl true
+    def plugin_type(), do: :io_binding
+
+    @impl true
     def bind(binding) do
       {:ok, pid} = GenServer.start_link(Flezha.Plugin.Provider.MonitoredIOForward, binding)
 
@@ -49,11 +52,6 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
         :ok -> {:ok, payload}
         _ -> {:error, :send_failed}
       end
-    end
-
-    @impl true
-    def pre_bind(binding) do
-      {:ok, binding}
     end
   end
 

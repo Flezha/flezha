@@ -17,6 +17,9 @@ defmodule Flezha.Plugin.Provider.Filter do
 
   defimpl IOBinding, for: Flezha.Plugin.Provider.Filter do
     @impl true
+    def plugin_type(), do: :io_binding
+
+    @impl true
     def bind(binding) do
       case Regex.compile(binding.regex_pattern) do
         {:ok, compiled_regex} ->
@@ -42,11 +45,6 @@ defmodule Flezha.Plugin.Provider.Filter do
           {:skip, :normal}
         end
       end
-    end
-
-    @impl true
-    def pre_bind(binding) do
-      {:ok, {binding, nil}}
     end
   end
 end

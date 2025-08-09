@@ -41,6 +41,9 @@ defmodule Flezha.Plugin.Provider.Websocket do
     alias Flezha.Plugin.Provider.Websocket
 
     @impl true
+    def plugin_type(), do: :io_binding
+
+    @impl true
     def bind(binding) do
       res =
         Websocket.start_link(binding.uri,
@@ -61,11 +64,6 @@ defmodule Flezha.Plugin.Provider.Websocket do
       Websocket.send_payload(binding.conn, message)
 
       {:ok, payload}
-    end
-
-    @impl true
-    def pre_bind(binding) do
-      {:ok, binding}
     end
   end
 

@@ -19,6 +19,7 @@ defmodule Flezha.Application do
       FleetManager,
       {Flezha.Socket.Listener, {:control_listener, &SocketSupport.control_socket_path/0}},
       {Flezha.Socket.Dispatcher, &FleetManager.connect_handler/1},
+      Flezha.Service.PluginManager,
       Flezha.Service.PortPilot,
       Flezha.Cluster.Orchestrator
     ]

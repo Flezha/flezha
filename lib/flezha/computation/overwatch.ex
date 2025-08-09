@@ -91,8 +91,8 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def handle_call({:enable_plugin, plugin}, _from, state) do
-    case add_binding(state.bindings, plugin) do
+  def handle_call({:enable_plugin, plugin_id, plugin}, _from, state) do
+    case add_binding(state.bindings, plugin_id, plugin) do
       {:ok, bindings} ->
         {:reply, :ok, %__MODULE__{state | bindings: bindings}}
 
@@ -211,19 +211,19 @@ defmodule Flezha.Computation.Overwatch do
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
     # Find the binding by the pid.
-    binding =
+    {plugin_id, plugin} =
       Enum.find(state.bindings, fn {_trigger, bindings} ->
-        Enum.any?(bindings, fn %IOBindingPlugin{pid: binding_pid} -> binding_pid == pid end)
+        Enum.any?(bindings, fn {_id, %IOBindingPlugin{pid: binding_pid}} -> binding_pid == pid end)
       end)
 
-    case is_struct(binding) do
+    case is_struct(plugin) do
       true ->
         case reason do
           :normal ->
             Logger.info("Binding with pid #{inspect(pid)} terminated normally.")
 
             # Remove the binding from the state.
-            {:ok, new_bindings} = remove_binding(state.bindings, binding.instance_id)
+            {:ok, new_bindings} = remove_binding(state.bindings, plugin_id)
 
             {:noreply, %__MODULE__{state | bindings: new_bindings}}
 
@@ -233,10 +233,10 @@ defmodule Flezha.Computation.Overwatch do
             )
 
             # Try to restart the binding.
-            {:ok, new_bindings} = remove_binding(state.bindings, binding.instance_id)
+            {:ok, new_bindings} = remove_binding(state.bindings, plugin_id)
 
             new_bindings =
-              case add_binding(new_bindings, binding) do
+              case add_binding(new_bindings, plugin_id, plugin) do
                 {:ok, restarted_bindings} ->
                   restarted_bindings
 
@@ -365,8 +365,8 @@ defmodule Flezha.Computation.Overwatch do
       end)
       |> List.flatten()
 
-    Enum.reduce(migr_bindings, default_bindings, fn plugin, acc ->
-      case add_binding(acc, plugin) do
+    Enum.reduce(migr_bindings, default_bindings, fn {plugin_id, plugin}, acc ->
+      case add_binding(acc, plugin_id, plugin) do
         {:ok, new_bindings} ->
           new_bindings
 
@@ -378,15 +378,15 @@ defmodule Flezha.Computation.Overwatch do
     end)
   end
 
-  defp add_binding(bindings, plugin) do
+  defp add_binding(bindings, plugin_id, plugin) do
     case IOBinding.bind(plugin.provider) do
       {:ok, {plugin_provider, pid}} ->
         plugin = %IOBindingPlugin{plugin | provider: plugin_provider, pid: pid}
 
         # Add binding to the group and sort by weight (ascending - smaller weight executes first)
         binding_group =
-          [plugin | Map.get(bindings, plugin.trigger, [])]
-          |> Enum.sort_by(fn %IOBindingPlugin{weight: weight} -> weight end)
+          [{plugin_id, plugin} | Map.get(bindings, plugin.trigger, [])]
+          |> Enum.sort_by(fn {_id, %IOBindingPlugin{weight: weight}} -> weight end)
 
         case plugin.trigger do
           :interval -> add_interval_binding(plugin)
@@ -451,13 +451,13 @@ defmodule Flezha.Computation.Overwatch do
     end
   end
 
-  defp remove_binding(bindings, binding_id) do
+  defp remove_binding(bindings, plugin_id) do
     # Remove binding with matching id from all trigger categories
     updated_bindings =
       Enum.map(bindings, fn {trigger, bindings_list} ->
         filtered_bindings =
-          Enum.reject(bindings_list, fn %IOBindingPlugin{instance_id: id} ->
-            id == binding_id
+          Enum.reject(bindings_list, fn {binding_id, _plugin} ->
+            plugin_id == binding_id
           end)
 
         {trigger, filtered_bindings}
