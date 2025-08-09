@@ -483,23 +483,10 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc "Disables plugin."
-  def disable_plugin(group_id, computation_id, plugin_id) do
-    group_display = if group_id == "", do: "default", else: group_id
-
-    case ComputationManager.get_computation_pid(group_display, computation_id) do
-      {:ok, computation_pid} ->
-        case GenServer.call(computation_pid, {:disable_plugin, plugin_id}) do
-          :ok ->
-            IO.puts(
-              "Plugin '#{plugin_id}' disabled successfully from computation '#{computation_id}'."
-            )
-
-          {:error, reason} ->
-            IO.puts("Error disabling plugin: #{inspect(reason)}")
-        end
-
-      {:error, reason} ->
-        IO.puts("Error finding computation '#{computation_id}': #{inspect(reason)}")
+  def disable_plugin(plugin_id) do
+    case PluginManager.disable_plugin(plugin_id) do
+      {:ok, _msg} -> IO.puts("Plugin #{plugin_id} disabled successfully.")
+      {:error, reason} -> IO.puts("Error disabling plugin: #{inspect(reason)}.")
     end
   end
 
