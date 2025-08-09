@@ -113,16 +113,15 @@ defmodule Flezha.Service.CliManager do
   defp build_plugin(provider_mod, provider, plugin_flags, opts) do
     case apply(provider_mod, :plugin_type, []) do
       :io_binding ->
-        plugin = %IOBindingPlugin{
-          provider: provider,
-          group: Map.get(opts, "group", "default"),
-          computation_id: Map.get(plugin_flags, "computation_id"),
-          trigger: Map.get(plugin_flags, "trigger"),
-          weight: Map.get(plugin_flags, "weight", 0),
-          plugin_group: Map.get(plugin_flags, "plugin_group", "0")
-        }
+        # Prepare plugin_flags with opts merged in
+        build_params = 
+          plugin_flags
+          |> Map.put("group", Map.get(opts, "group", "default"))
 
-        {:ok, plugin}
+        case IOBindingPlugin.build(build_params, provider) do
+          {:ok, plugin} -> {:ok, plugin}
+          {:error, reason} -> {:error, reason}
+        end
 
       _ ->
         {:error, "unknown plugin type"}
@@ -359,10 +358,11 @@ defmodule Flezha.Service.CliManager do
   defp format_bindings_json(bindings) do
     Enum.map(bindings, fn {trigger, bindings_list} ->
       formatted_bindings =
-        Enum.map(bindings_list, fn binding ->
+        Enum.map(bindings_list, fn {plugin_id, binding} ->
           %{
-            id: Map.get(binding, :id, "unknown"),
+            id: plugin_id,
             plugin_group: Map.get(binding, :plugin_group, "0"),
+            position: Map.get(binding, :position, nil),
             module:
               case binding do
                 %{__struct__: module} -> module |> to_string() |> String.split(".") |> List.last()
@@ -407,6 +407,8 @@ defmodule Flezha.Service.CliManager do
           IO.puts("      - Plugin ID: #{plugin_id}")
           IO.puts("        Plugin Group: #{plugin_group}")
           IO.puts("        Module: #{module_name}")
+          IO.puts("        Trigger: #{inspect(binding.trigger)}")
+          IO.puts("        Position: #{binding.position}")
         end)
       end
     end)

@@ -384,10 +384,9 @@ defmodule Flezha.Computation.Overwatch do
       {:ok, {plugin_provider, pid}} ->
         plugin = %IOBindingPlugin{plugin | provider: plugin_provider, pid: pid}
 
-        # Add binding to the group and sort by weight (ascending - smaller weight executes first)
-        binding_group =
-          [{plugin_id, plugin} | Map.get(bindings, plugin.trigger, [])]
-          |> Enum.sort_by(fn {_id, %IOBindingPlugin{weight: weight}} -> weight end)
+        # Add binding to the group using position-based insertion
+        current_bindings = Map.get(bindings, plugin.trigger, [])
+        binding_group = insert_plugin_by_position(current_bindings, {plugin_id, plugin})
 
         case plugin.trigger do
           :interval -> add_interval_binding(plugin)
@@ -463,14 +462,55 @@ defmodule Flezha.Computation.Overwatch do
     end
   end
 
+  defp recalculate_positions(bindings_list) do
+    # Recalculate positions for all plugins to ensure they are sequential starting from 0
+    Enum.with_index(bindings_list, 0)
+    |> Enum.map(fn {{plugin_id, plugin}, new_position} ->
+      {plugin_id, %IOBindingPlugin{plugin | position: new_position}}
+    end)
+  end
+
+  defp insert_plugin_by_position(current_bindings, {plugin_id, plugin}) do
+    case plugin.position do
+      nil ->
+        # No position specified, add to the end and update positions
+        new_position = length(current_bindings)
+        updated_plugin = %IOBindingPlugin{plugin | position: new_position}
+        current_bindings ++ [{plugin_id, updated_plugin}]
+
+      target_position when is_integer(target_position) and target_position >= 0 ->
+        # Insert at specific position and shift others
+        {before_split, after_split} = Enum.split(current_bindings, target_position)
+
+        # Update positions for plugins that are shifted
+        shifted_after =
+          Enum.with_index(after_split, target_position + 1)
+          |> Enum.map(fn {{id, plugin_struct}, new_pos} ->
+            {id, %IOBindingPlugin{plugin_struct | position: new_pos}}
+          end)
+
+        # Update position for the new plugin
+        updated_plugin = %IOBindingPlugin{plugin | position: target_position}
+
+        before_split ++ [{plugin_id, updated_plugin}] ++ shifted_after
+
+      _ ->
+        # Invalid position, treat as nil
+        new_position = length(current_bindings)
+        updated_plugin = %IOBindingPlugin{plugin | position: new_position}
+        current_bindings ++ [{plugin_id, updated_plugin}]
+    end
+  end
+
   defp remove_binding(bindings, plugin_id, opts) do
-    # Remove binding with matching id from all trigger categories
+    # Remove binding with matching id from all trigger categories and recalculate positions
     updated_bindings =
       Enum.map(bindings, fn {trigger, bindings_list} ->
         filtered_bindings =
           Enum.reject(bindings_list, fn {binding_id, _plugin} ->
             plugin_id == binding_id
           end)
+          |> recalculate_positions()
 
         {trigger, filtered_bindings}
       end)

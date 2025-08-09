@@ -124,19 +124,6 @@ pub fn get_output_format(slice: &[String]) -> String {
     }
 }
 
-pub fn get_weight(slice: &[String]) -> Option<i32> {
-    let weight_str = get_parameter(slice, "--weight", "-w");
-
-    if weight_str.is_empty() {
-        return None;
-    }
-
-    match weight_str.parse::<i32>() {
-        Ok(weight) => Some(weight),
-        Err(_) => None,
-    }
-}
-
 pub fn extract_flags_with_prefix(args: &[String], prefix: &str) -> Vec<(String, String)> {
     let mut flags = Vec::new();
 

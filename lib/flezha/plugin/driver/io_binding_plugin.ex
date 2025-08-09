@@ -9,7 +9,7 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
               [
                 pid: nil,
                 plugin_group: "0",
-                weight: 0
+                position: nil
               ]
 
   @impl true
@@ -45,7 +45,7 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
   end
 
   def build(string_map, provider_struct) do
-    struct_fields = [:group, :computation_id, :trigger, :plugin_group, :weight]
+    struct_fields = [:group, :computation_id, :trigger, :plugin_group, :position]
 
     params =
       Enum.reduce(struct_fields, %{}, fn field, acc ->
@@ -62,7 +62,7 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
       params
       |> Map.put_new(:group, "default")
       |> Map.put_new(:plugin_group, "0")
-      |> Map.put_new(:weight, 0)
+      |> Map.put_new(:position, nil)
       |> Map.put(:provider, provider_struct)
 
     # Validate required fields
@@ -92,10 +92,10 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
     end
   end
 
-  defp convert_value(:weight, value) when is_binary(value) do
+  defp convert_value(:position, value) when is_binary(value) do
     case Integer.parse(value) do
       {int_val, ""} -> int_val
-      _ -> 0
+      _ -> nil
     end
   end
 

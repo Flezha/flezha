@@ -58,8 +58,7 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
         provider: %Flezha.Plugin.Provider.BeamMsgForward{
           recv_pid: self()
         },
-        plugin_group: "0",
-        weight: 0
+        plugin_group: "0"
       })
 
     start_res
