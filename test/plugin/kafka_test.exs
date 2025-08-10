@@ -1,5 +1,5 @@
 defmodule FlezhaTest.Plugin.KafkaTest do
-  alias Flezha.Computation.IOBinding
+  alias Flezha.Processor.IOBinding
 
   use ExUnit.Case
   use Mimic

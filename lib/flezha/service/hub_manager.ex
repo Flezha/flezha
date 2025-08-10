@@ -3,7 +3,7 @@ defmodule Flezha.Service.HubManager do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
-  alias Flezha.Service.ComputationManager
+  alias Flezha.Service.ProcessorManager
 
   use Supervisor
 
@@ -75,10 +75,10 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def get_pid(namespace, computation_id) do
+  def get_pid(namespace, processor_id) do
     hub_id = Identificator.hub(namespace)
 
-    case ProcessHub.get_pids(hub_id, computation_id) do
+    case ProcessHub.get_pids(hub_id, processor_id) do
       [] ->
         {:error, "no pid found"}
 
@@ -87,13 +87,13 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def get_all_computations(namespace) do
+  def get_all_processors(namespace) do
     hub_id = Identificator.hub(namespace)
 
     if ProcessHub.is_alive?(hub_id) do
       ProcessHub.process_list(hub_id, :global)
-      |> Enum.map(fn {computation_id, [{_node, computation_pid}]} ->
-        {computation_id, computation_pid}
+      |> Enum.map(fn {processor_id, [{_node, processor_pid}]} ->
+        {processor_id, processor_pid}
       end)
     else
       []
@@ -121,7 +121,7 @@ defmodule Flezha.Service.HubManager do
     )
   end
 
-  def operator_computations(namespace, operator_id) do
+  def operator_processors(namespace, operator_id) do
     hub_id = Identificator.hub(namespace)
 
     ProcessHub.tag_query(hub_id, operator_id)
@@ -131,21 +131,21 @@ defmodule Flezha.Service.HubManager do
     hub_id = Identificator.hub(namespace)
 
     # Updates the operator id in the registry.
-    operator_computations(namespace, old_operator_id)
-    |> Enum.each(fn {computation_id, [{_node, _computation_pid}]} ->
-      computation_set_operator(namespace, computation_id, new_operator_id)
+    operator_processors(namespace, old_operator_id)
+    |> Enum.each(fn {processor_id, [{_node, _processor_pid}]} ->
+      processor_set_operator(namespace, processor_id, new_operator_id)
     end)
 
     # Propagate the change to all nodes in the namespace.
     ProcessHub.Service.Synchronizer.trigger_sync(hub_id)
   end
 
-  def computation_set_operator(namespace, computation_id, operator_id) do
+  def processor_set_operator(namespace, processor_id, operator_id) do
     hub_id = Identificator.hub(namespace)
 
     case ProcessHub.is_alive?(hub_id) do
       true ->
-        ProcessRegistry.update(hub_id, computation_id, fn cspec, node_pids, metadata ->
+        ProcessRegistry.update(hub_id, processor_id, fn cspec, node_pids, metadata ->
           {cspec, node_pids, Map.put(metadata, :tag, operator_id)}
         end)
 
@@ -156,8 +156,8 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  # TODO: we should also remove the pids incase the computation is removed.
-  def hook_insert_pid(operator_id, {computation_id, node_pids}) do
+  # TODO: we should also remove the pids incase the processor is removed.
+  def hook_insert_pid(operator_id, {processor_id, node_pids}) do
     curr_node = node()
 
     updated_pids =
@@ -176,7 +176,7 @@ defmodule Flezha.Service.HubManager do
             Supervisor.which_children(Identificator.stream_sup_secondary(operator_id))
 
         Enum.each(stream_channels, fn {_, pid, _, _} ->
-          GenServer.call(pid, {:computation_pid_update, computation_id, updated_pids})
+          GenServer.call(pid, {:processor_pid_update, processor_id, updated_pids})
         end)
     end
   end
@@ -184,17 +184,17 @@ defmodule Flezha.Service.HubManager do
   def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do
     %{start: {m, f, [arg]}} = cs
 
-    {namespace, computation} =
+    {namespace, processor} =
       case arg do
-        {namespace, computation} ->
-          {namespace, computation}
+        {namespace, processor} ->
+          {namespace, processor}
 
-        {namespace, _existing_operator, computation} ->
-          {namespace, computation}
+        {namespace, _existing_operator, processor} ->
+          {namespace, processor}
       end
 
-    assigned_operator = ComputationManager.assign_operator(namespace)
-    new_args = [{namespace, assigned_operator, computation}]
+    assigned_operator = ProcessorManager.assign_operator(namespace)
+    new_args = [{namespace, assigned_operator, processor}]
 
     child_data
     |> put_in([:child_spec, :start], {m, f, new_args})

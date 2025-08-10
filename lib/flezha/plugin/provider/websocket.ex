@@ -1,5 +1,5 @@
 defmodule Flezha.Plugin.Provider.Websocket do
-  alias Flezha.Computation.IOBinding
+  alias Flezha.Processor.IOBinding
   alias Flezha.Plugin.ProviderBehaviour
 
   require Logger

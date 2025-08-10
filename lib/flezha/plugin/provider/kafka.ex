@@ -1,5 +1,5 @@
 defmodule Flezha.Plugin.Provider.Kafka do
-  alias Flezha.Computation.IOBinding
+  alias Flezha.Processor.IOBinding
 
   defmodule Producer do
     alias Flezha.Plugin.ProviderBehaviour

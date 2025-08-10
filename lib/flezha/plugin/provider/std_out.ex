@@ -1,5 +1,5 @@
 defmodule Flezha.Plugin.Provider.StdOut do
-  alias Flezha.Computation.IOBinding
+  alias Flezha.Processor.IOBinding
   alias Flezha.Plugin.ProviderBehaviour
 
   use ProviderBehaviour

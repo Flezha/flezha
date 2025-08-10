@@ -1,10 +1,10 @@
 defmodule Flezha.Plugin.Driver.IOBindingPlugin do
   alias Flezha.Plugin.PluginBehaviour
-  alias Flezha.Service.ComputationManager
+  alias Flezha.Service.ProcessorManager
 
   @behaviour PluginBehaviour
 
-  @enforce_keys [:namespace, :computation_id, :trigger, :provider]
+  @enforce_keys [:namespace, :processor_id, :trigger, :provider]
   defstruct @enforce_keys ++
               [
                 pid: nil,
@@ -14,12 +14,12 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
 
   @impl true
   def enable(plugin_id, plugin) do
-    case ComputationManager.get_computation_pid(plugin.namespace, plugin.computation_id) do
-      {:ok, computation_pid} ->
-        result = GenServer.call(computation_pid, {:enable_plugin, plugin_id, plugin})
+    case ProcessorManager.get_processor_pid(plugin.namespace, plugin.processor_id) do
+      {:ok, processor_pid} ->
+        result = GenServer.call(processor_pid, {:enable_plugin, plugin_id, plugin})
 
         case result do
-          :ok -> {:ok, {__MODULE__, {plugin.namespace, plugin.computation_id}}}
+          :ok -> {:ok, {__MODULE__, {plugin.namespace, plugin.processor_id}}}
           {:error, reason} -> {:error, reason}
         end
 
@@ -29,10 +29,10 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
   end
 
   @impl true
-  def disable(plugin_id, {namespace, computation_id}) do
-    case ComputationManager.get_computation_pid(namespace, computation_id) do
-      {:ok, computation_pid} ->
-        result = GenServer.call(computation_pid, {:disable_plugin, plugin_id})
+  def disable(plugin_id, {namespace, processor_id}) do
+    case ProcessorManager.get_processor_pid(namespace, processor_id) do
+      {:ok, processor_pid} ->
+        result = GenServer.call(processor_pid, {:disable_plugin, plugin_id})
 
         case result do
           :ok -> :ok
@@ -45,7 +45,7 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
   end
 
   def build(string_map, provider_struct) do
-    struct_fields = [:namespace, :computation_id, :trigger, :plugin_group, :position]
+    struct_fields = [:namespace, :processor_id, :trigger, :plugin_group, :position]
 
     params =
       Enum.reduce(struct_fields, %{}, fn field, acc ->

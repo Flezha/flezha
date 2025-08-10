@@ -2,7 +2,7 @@ use crate::utils::{extract_param, get_flezha_command, get_json, get_namespace, g
 use std::collections::HashMap;
 use std::process::{exit, Command};
 
-pub fn handle_computation_command(args: &[String]) {
+pub fn handle_processor_command(args: &[String]) {
     if args.is_empty() {
         eprintln!("Error: Invalid number of arguments. See help for more information.");
         exit(1);
@@ -26,14 +26,14 @@ pub fn handle_computation_command(args: &[String]) {
 }
 
 fn handle_start(args: &[String]) {
-    let example_usage = "Usage: flz computation start <computation_id> <factory_id> [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>]";
+    let example_usage = "Usage: flz processor start <processor_id> <factory_id> [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>]";
 
     if args.len() < 3 {
         eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
         exit(1);
     }
 
-    let computation_id = &args[1];
+    let processor_id = &args[1];
     let factory_id = &args[2];
     let init_values = get_json(&args[3..], "--init_values", "-iv");
 
@@ -52,11 +52,11 @@ fn handle_start(args: &[String]) {
     let escaped_opts_json = opts_json.replace("\"", "\\\"");
 
     let rpc_command = format!(
-        "Flezha.Service.CliManager.computation_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
-        namespace, computation_id, factory_id, escaped_init_values, escaped_opts_json,
+        "Flezha.Service.CliManager.processor_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
+        namespace, processor_id, factory_id, escaped_init_values, escaped_opts_json,
     );
 
-    println!("Starting computation...");
+    println!("Starting processor...");
 
     let status = Command::new(command)
         .arg("rpc")
@@ -72,44 +72,44 @@ fn handle_start(args: &[String]) {
 
 fn handle_stop(args: &[String]) {
     if args.len() < 2 {
-        eprintln!("Error: Invalid number of arguments. Usage: flz computation stop <computation_id>");
+        eprintln!("Error: Invalid number of arguments. Usage: flz processor stop <processor_id>");
         exit(1);
     }
 
-    let computation_id = &args[1];
+    let processor_id = &args[1];
     let namespace = get_namespace(&args[2..]);
 
     let rpc_command = format!(
-        "Flezha.Service.CliManager.computation_stop(\"{}\", \"{}\")",
-        namespace, computation_id,
+        "Flezha.Service.CliManager.processor_stop(\"{}\", \"{}\")",
+        namespace, processor_id,
     );
 
     let command = get_flezha_command();
 
-    println!("Stopping computation...");
+    println!("Stopping processor...");
 
     // Attempt to execute the external command.
     let status = Command::new(command).arg("rpc").arg(rpc_command).status();
 
     match status {
-        Ok(status) if status.success() => println!("Computation stopped successfully."),
+        Ok(status) if status.success() => println!("Processor stopped successfully."),
         Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to stop computation: {}", e),
+        Err(e) => eprintln!("Failed to stop processor: {}", e),
     }
 }
 
 fn handle_state(args: &[String]) {
     if args.len() < 2 {
-        eprintln!("Error: Invalid number of arguments. Usage: flz computation state <computation_id>");
+        eprintln!("Error: Invalid number of arguments. Usage: flz processor state <processor_id>");
         exit(1);
     }
 
-    let computation_id = &args[1];
+    let processor_id = &args[1];
     let namespace = get_namespace(&args[2..]);
 
     let rpc_command = format!(
-        "Flezha.Service.CliManager.computation_state(\"{}\", \"{}\")",
-        namespace, computation_id,
+        "Flezha.Service.CliManager.processor_state(\"{}\", \"{}\")",
+        namespace, processor_id,
     );
 
     let command = get_flezha_command();
@@ -119,7 +119,7 @@ fn handle_state(args: &[String]) {
     match status {
         Ok(status) if status.success() => {}
         Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to get computation state: {}", e),
+        Err(e) => eprintln!("Failed to get processor state: {}", e),
     }
 }
 
@@ -129,7 +129,7 @@ fn handle_list(args: &[String]) {
 
     let command = get_flezha_command();
     let rpc_command = format!(
-        "Flezha.Service.CliManager.list_computations(\"{}\", \"{}\")",
+        "Flezha.Service.CliManager.list_processors(\"{}\", \"{}\")",
         namespace, output_format
     );
 
@@ -141,7 +141,7 @@ fn handle_list(args: &[String]) {
             &namespace
         };
         println!(
-            "Fetching computations for namespace '{}'...",
+            "Fetching processors for namespace '{}'...",
             display_namespace
         );
     }
@@ -164,7 +164,7 @@ fn handle_info(args: &[String]) {
 
     let command = get_flezha_command();
     let rpc_command = format!(
-        "Flezha.Service.CliManager.computation_info(\"{}\", \"{}\")",
+        "Flezha.Service.CliManager.processor_info(\"{}\", \"{}\")",
         namespace, output_format
     );
 
@@ -176,7 +176,7 @@ fn handle_info(args: &[String]) {
             &namespace
         };
         println!(
-            "Fetching computation information for namespace '{}'...",
+            "Fetching processor information for namespace '{}'...",
             display_namespace
         );
     }
@@ -194,7 +194,7 @@ fn handle_info(args: &[String]) {
 }
 
 fn handle_io_listen(args: &[String]) {
-    let example_usage = "Usage: flz computation io_listen input|output <computation_id> [--namespace <namespace> | -n <namespace>]";
+    let example_usage = "Usage: flz processor io_listen input|output <processor_id> [--namespace <namespace> | -n <namespace>]";
 
     if args.len() < 3 {
         eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
@@ -202,7 +202,7 @@ fn handle_io_listen(args: &[String]) {
     }
 
     let io_type = &args[1];
-    let computation_id = &args[2];
+    let processor_id = &args[2];
 
     // Validate io_type
     if io_type != "input" && io_type != "output" {
@@ -217,13 +217,13 @@ fn handle_io_listen(args: &[String]) {
     let command = get_flezha_command();
 
     let rpc_command = format!(
-        "Flezha.Service.CliManager.computation_listen(\"{}\", \"{}\", \"{}\")",
-        namespace, computation_id, io_type
+        "Flezha.Service.CliManager.processor_listen(\"{}\", \"{}\", \"{}\")",
+        namespace, processor_id, io_type
     );
 
     println!(
-        "Starting IO listener for computation '{}' ({} mode)...",
-        computation_id, io_type
+        "Starting IO listener for processor '{}' ({} mode)...",
+        processor_id, io_type
     );
 
     let status = Command::new(command)

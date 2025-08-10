@@ -1,4 +1,4 @@
-defmodule FlezhaTest.Fixtures.ComputationFixture do
+defmodule FlezhaTest.Fixtures.ProcessorFixture do
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Identificator
   alias ProcessHub.Constant.Hook
@@ -8,13 +8,13 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
   # TODO: refactor based on new plugin system.
 
   def get(id, factory_id) do
-    %Flezha.Computation.Builder{
-      id: id || "my_computation",
+    %Flezha.Processor.Builder{
+      id: id || "my_processor",
       factory_id: factory_id || "do_nothing"
     }
   end
 
-  def start(computation, namespace \\ @default_namespace) do
+  def start(processor, namespace \\ @default_namespace) do
     self = self()
 
     ProcessHub.Service.HookManager.register_handler(
@@ -28,7 +28,7 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
       }
     )
 
-    result = Flezha.Service.ComputationManager.start_computation(namespace, computation)
+    result = Flezha.Service.ProcessorManager.start_processor(namespace, processor)
 
     receive do
       :hook_reg_insert_recv -> :ok
@@ -45,18 +45,18 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
     result
   end
 
-  def stop(computation_id, namespace \\ @default_namespace) do
-    Flezha.Service.ComputationManager.stop_computation(namespace, computation_id)
+  def stop(processor_id, namespace \\ @default_namespace) do
+    Flezha.Service.ProcessorManager.stop_processor(namespace, processor_id)
   end
 
   def attach_output_msg(
-        {:ok, %{computation_id: cid}} = start_res,
+        {:ok, %{processor_id: cid}} = start_res,
         namespace \\ @default_namespace
       ) do
     {:ok, "plugin enabled"} =
       PluginManager.enable_plugin("output_msg_handler", %Flezha.Plugin.Driver.IOBindingPlugin{
         namespace: namespace,
-        computation_id: cid,
+        processor_id: cid,
         trigger: :on_output,
         provider: %Flezha.Plugin.Provider.BeamMsgForward{
           recv_pid: self()
@@ -68,30 +68,30 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
   end
 
   # TODO: refactor.
-  # def attach_input(computation, handler, opts \\ []) do
+  # def attach_input(processor, handler, opts \\ []) do
   #   {:ok, __id} =
   #     Flezha.add_io(
   #       @default_namespace,
-  #       computation.id,
+  #       processor.id,
   #       get_io_handler(handler, :input),
   #       :input,
   #       handling_type: Keyword.get(opts, :handling_type, :task)
   #     )
 
-  #   computation
+  #   processor
   # end
 
-  # def attach_output(computation, handler) do
+  # def attach_output(processor, handler) do
   #   {:ok, _id} =
   #     Flezha.add_io(
   #       @default_namespace,
-  #       computation.id,
+  #       processor.id,
   #       get_io_handler(handler, :output),
   #       :output,
   #       []
   #     )
 
-  #   computation
+  #   processor
   # end
 
   # defp get_io_handler(handler, type) do

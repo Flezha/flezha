@@ -3,19 +3,19 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   use ExUnit.Case
 
   # TODO: remove or refactor.
-  # def test_computation(computation_id) do
-  #   computation =
-  #     FlezhaTest.Fixtures.ComputationFixture.get(
-  #       computation_id,
+  # def test_processor(processor_id) do
+  #   processor =
+  #     FlezhaTest.Fixtures.ProcessorFixture.get(
+  #       processor_id,
   #       @factory_increment_state
   #     )
-  #     |> FlezhaTest.Fixtures.ComputationFixture.start()
+  #     |> FlezhaTest.Fixtures.ProcessorFixture.start()
 
   #   on_exit(fn ->
-  #     FlezhaTest.Fixtures.ComputationFixture.stop(computation.id)
+  #     FlezhaTest.Fixtures.ProcessorFixture.stop(processor.id)
   #   end)
 
-  #   computation
+  #   processor
   # end
 
   def node_name() do

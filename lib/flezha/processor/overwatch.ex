@@ -1,11 +1,11 @@
-defmodule Flezha.Computation.Overwatch do
+defmodule Flezha.Processor.Overwatch do
   alias Flezha.Service.HubManager
   alias Flezha.Service.ConfigManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
   alias Flezha.Operator.StreamSup
-  alias Flezha.Computation.IOBinding
+  alias Flezha.Processor.IOBinding
   alias Flezha.Plugin.Driver.IOBindingPlugin
 
   require Logger
@@ -34,22 +34,22 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def init({namespace, operator_id, computation}) do
-    snapshot_interval = Keyword.get(computation.opts, :snapshot_interval, @snapshop_interval)
+  def init({namespace, operator_id, processor}) do
+    snapshot_interval = Keyword.get(processor.opts, :snapshot_interval, @snapshop_interval)
 
     # TODO: Perhaps move to handle continue.
     schedule_snapshot(snapshot_interval)
 
     state = %__MODULE__{
-      id: computation.id,
+      id: processor.id,
       namespace: namespace,
-      factory_id: computation.factory_id,
-      init_values: computation.init_values,
+      factory_id: processor.factory_id,
+      init_values: processor.init_values,
       operator_id: operator_id,
-      channel: attach_channel(computation.id, operator_id),
+      channel: attach_channel(processor.id, operator_id),
       snapshot_interval: snapshot_interval,
       snapshot: nil,
-      default_input_type: Keyword.get(computation.opts, :default_input_type, "2"),
+      default_input_type: Keyword.get(processor.opts, :default_input_type, "2"),
       bindings: %{
         on_input: [],
         on_output: [],
@@ -58,7 +58,7 @@ defmodule Flezha.Computation.Overwatch do
       }
     }
 
-    case start_computation_sdk(operator_id, computation) do
+    case start_processor_sdk(operator_id, processor) do
       {:ok, _} ->
         {:ok, state, {:continue, :additional_init}}
 
@@ -74,16 +74,16 @@ defmodule Flezha.Computation.Overwatch do
 
   @impl true
   def handle_call(:registry_operator_set, _from, state) do
-    HubManager.computation_set_operator(state.namespace, state.id, state.operator_id)
+    HubManager.processor_set_operator(state.namespace, state.id, state.operator_id)
 
     {:reply, {:ok, state.operator_id}, state}
   end
 
   @impl true
-  def handle_call(:stop_computation, from, state) do
+  def handle_call(:stop_processor, from, state) do
     GenServer.call(
       Identificator.control_unit(state.operator_id),
-      {:stop_computation, state.id}
+      {:stop_processor, state.id}
     )
 
     GenServer.reply(from, :ok)
@@ -120,12 +120,12 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def handle_call(:get_computation_state, _from, state) do
-    command = %OperatorCommands.ComputationState{computation_id: state.id}
+  def handle_call(:get_processor_state, _from, state) do
+    command = %OperatorCommands.ProcessorState{processor_id: state.id}
 
-    # TODO: any rpc command may timeout causing the computation overwatch to crash.
+    # TODO: any rpc command may timeout causing the processor overwatch to crash.
     # We should handle this in the control unit.
-    result = send_control(state.operator_id, {:computation_state, command})
+    result = send_control(state.operator_id, {:processor_state, command})
 
     {:reply, result, state}
   end
@@ -144,14 +144,14 @@ defmodule Flezha.Computation.Overwatch do
         true -> state.init_values
       end
 
-    computation = %Flezha.Computation.Builder{
+    processor = %Flezha.Processor.Builder{
       id: state.id,
       factory_id: state.factory_id,
       init_values: init_values,
       opts: []
     }
 
-    start_computation_sdk(new_operator_id, computation)
+    start_processor_sdk(new_operator_id, processor)
 
     {:reply, :ok, state}
   end
@@ -267,10 +267,10 @@ defmodule Flezha.Computation.Overwatch do
     {:noreply, %__MODULE__{state | snapshot: snapshot}}
   end
 
-  defp create_snapshot(computation_id, operator_id) do
-    command = %OperatorCommands.ComputationState{computation_id: computation_id}
+  defp create_snapshot(processor_id, operator_id) do
+    command = %OperatorCommands.ProcessorState{processor_id: processor_id}
 
-    case send_control(operator_id, {:computation_state, command}) do
+    case send_control(operator_id, {:processor_state, command}) do
       {:ok, snapshot} ->
         snapshot
 
@@ -282,7 +282,7 @@ defmodule Flezha.Computation.Overwatch do
   @impl true
   def prepare_handover_state(state) do
     serialize_data =
-      case serialize_computation_sdk(state.operator_id, state.id) do
+      case serialize_processor_sdk(state.operator_id, state.id) do
         nil ->
           state.snapshot
 
@@ -296,7 +296,7 @@ defmodule Flezha.Computation.Overwatch do
   @impl true
   def alter_handover_state(state, {handover_state, pipe_serialized}) do
     command = %OperatorCommands.MigrationDeserialization{
-      computation_id: state.id,
+      processor_id: state.id,
       factory_id: Map.get(handover_state, :factory_id),
       serialized_state: pipe_serialized
     }
@@ -304,7 +304,7 @@ defmodule Flezha.Computation.Overwatch do
     result = send_control(state.operator_id, {:migration_deserialization, command})
 
     case result do
-      {:error, reason} -> Logger.error("Failed to deserialize computation: #{inspect(reason)}")
+      {:error, reason} -> Logger.error("Failed to deserialize processor: #{inspect(reason)}")
       _else -> :ok
     end
 
@@ -335,10 +335,10 @@ defmodule Flezha.Computation.Overwatch do
     end
   end
 
-  defp start_computation_sdk(operator_id, computation) do
+  defp start_processor_sdk(operator_id, processor) do
     GenServer.call(
       Identificator.control_unit(operator_id),
-      {:start_computation, computation}
+      {:start_processor, processor}
     )
   end
 
@@ -348,13 +348,13 @@ defmodule Flezha.Computation.Overwatch do
 
   defp schedule_snapshot(_snapshot_interval), do: nil
 
-  defp attach_channel(computation_id, operator_id) do
-    # Get numeric representation of the computation_id string.
-    computation_int = String.to_charlist(computation_id) |> Enum.sum()
+  defp attach_channel(processor_id, operator_id) do
+    # Get numeric representation of the processor_id string.
+    processor_int = String.to_charlist(processor_id) |> Enum.sum()
 
     # Pick the channel index based on the channel_name_int.
     count = ConfigManager.concurrent_channel_count()
-    channel_index = rem(computation_int, count)
+    channel_index = rem(processor_int, count)
 
     StreamSup.stream_ids(operator_id, :primary) |> Enum.at(channel_index)
   end
@@ -405,7 +405,7 @@ defmodule Flezha.Computation.Overwatch do
           true ->
             PluginManager.register_plugin(plugin_id, {
               plugin.__struct__,
-              {plugin.namespace, plugin.computation_id}
+              {plugin.namespace, plugin.processor_id}
             })
 
           _ ->
@@ -419,8 +419,8 @@ defmodule Flezha.Computation.Overwatch do
     end
   end
 
-  defp serialize_computation_sdk(operator_id, computation_id) do
-    command = %OperatorCommands.MigrationSerialization{computation_id: computation_id}
+  defp serialize_processor_sdk(operator_id, processor_id) do
+    command = %OperatorCommands.MigrationSerialization{processor_id: processor_id}
 
     result = send_control(operator_id, {:migration_serialization, command})
 
@@ -431,7 +431,7 @@ defmodule Flezha.Computation.Overwatch do
       {:error, reason} ->
         # TODO: we should actually check if overwatch status is :ok
         if Application.get_env(:flezha, :env) !== :test do
-          Logger.error("Failed to serialize computation: #{inspect(reason)}")
+          Logger.error("Failed to serialize processor: #{inspect(reason)}")
         end
 
         nil

@@ -1,5 +1,5 @@
 defmodule FlezhaTest.Plugin.FilterTest do
-  alias Flezha.Computation.IOBinding
+  alias Flezha.Processor.IOBinding
 
   use ExUnit.Case
 

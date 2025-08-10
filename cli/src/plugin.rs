@@ -23,7 +23,7 @@ pub fn handle_plugin_command(args: &[String]) {
 }
 
 fn handle_enable(args: &[String]) {
-    let example_usage = "Usage: flz plugin enable <plugin_id> <provider_id> [Xkey=value] [--option value]\nExample: flz plugin enable computation_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic --namespace mynamespace";
+    let example_usage = "Usage: flz plugin enable <plugin_id> <provider_id> [Xkey=value] [--option value]\nExample: flz plugin enable processor_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic --namespace mynamespace";
 
     if args.len() < 3 {
         eprintln!("Error: Invalid number of arguments.\n {}", example_usage);

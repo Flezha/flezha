@@ -1,4 +1,4 @@
-defprotocol Flezha.Computation.IOBinding do
+defprotocol Flezha.Processor.IOBinding do
   @spec bind(t()) :: {:ok, {t(), pid() | nil}} | {:error, String.t()}
   def bind(settings)
 

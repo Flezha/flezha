@@ -1,6 +1,6 @@
 defmodule Flezha do
   alias Flezha.Service.HubManager
-  alias Flezha.Service.ComputationManager
+  alias Flezha.Service.ProcessorManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
 
@@ -8,21 +8,21 @@ defmodule Flezha do
   Documentation for `Flezha`.
   """
 
-  defdelegate start_computation(namespace, computation), to: ComputationManager
+  defdelegate start_processor(namespace, processor), to: ProcessorManager
 
-  defdelegate stop_computation(namespace, computation), to: ComputationManager
+  defdelegate stop_processor(namespace, processor), to: ProcessorManager
 
   defdelegate list_namespaces(), to: HubManager, as: :get_running_namespaces
 
   defdelegate list_operators(namespace), to: OperatorManager, as: :get_global_operators
 
-  defdelegate list_computations(namespace), to: ComputationManager, as: :get_computation_ids
+  defdelegate list_processors(namespace), to: ProcessorManager, as: :get_processor_ids
 
   defdelegate enable_plugin(plugin_id, plugin), to: PluginManager
 
   defdelegate disable_plugin(plugin_id), to: PluginManager
 
-  defdelegate computation_state(namespace, computation),
-    to: ComputationManager,
-    as: :get_computation_state
+  defdelegate processor_state(namespace, processor),
+    to: ProcessorManager,
+    as: :get_processor_state
 end

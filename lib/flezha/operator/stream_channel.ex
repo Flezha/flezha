@@ -19,7 +19,7 @@ defmodule Flezha.Operator.StreamChannel do
       %{
         lsock: lsock,
         sock: nil,
-        computation_mapping: %{},
+        processor_mapping: %{},
         name: name,
         buffer: {:empty, <<>>}
       },
@@ -36,41 +36,40 @@ defmodule Flezha.Operator.StreamChannel do
 
   @impl true
   def handle_cast(
-        {:io_in, computation_id, {message, metadata}},
+        {:io_in, processor_id, {message, metadata}},
         %{sock: sock} = state
       ) do
-    send_channel_payload(sock, computation_id, message, metadata)
+    send_channel_payload(sock, processor_id, message, metadata)
 
     {:noreply, state}
   end
 
   @impl true
   def handle_call(
-        {:io_in, computation_id, {message, metadata}},
+        {:io_in, processor_id, {message, metadata}},
         _from,
         %{sock: sock} = state
       ) do
-    send_channel_payload(sock, computation_id, message, metadata)
+    send_channel_payload(sock, processor_id, message, metadata)
 
     {:reply, :ok, state}
   end
 
   @impl true
-  def handle_call({:computation_pid_update, computation_id, updated_pids}, _from, state) do
-    computation_mapping = Map.put(state[:computation_mapping], computation_id, updated_pids)
+  def handle_call({:processor_pid_update, processor_id, updated_pids}, _from, state) do
+    processor_mapping = Map.put(state[:processor_mapping], processor_id, updated_pids)
 
-    {:reply, :ok, Map.put(state, :computation_mapping, computation_mapping)}
+    {:reply, :ok, Map.put(state, :processor_mapping, processor_mapping)}
   end
 
   @impl true
-  def handle_call({:computation_bulk_insert, computations}, _from, state) do
-    computation_mapping =
-      Enum.reduce(computations, state.computation_mapping, fn {computation_id, updated_pids},
-                                                              acc ->
-        Map.put(acc, computation_id, updated_pids)
+  def handle_call({:processor_bulk_insert, processors}, _from, state) do
+    processor_mapping =
+      Enum.reduce(processors, state.processor_mapping, fn {processor_id, updated_pids}, acc ->
+        Map.put(acc, processor_id, updated_pids)
       end)
 
-    {:reply, :ok, Map.put(state, :computation_mapping, computation_mapping)}
+    {:reply, :ok, Map.put(state, :processor_mapping, processor_mapping)}
   end
 
   @impl true
@@ -84,14 +83,14 @@ defmodule Flezha.Operator.StreamChannel do
 
   @impl true
   def handle_info({:tcp, _port, frame}, %{buffer: buffer} = state) do
-    computation_mappings = state.computation_mapping
+    processor_mappings = state.processor_mapping
 
     {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
 
-    Enum.each(payloads, fn {computation_id, message, metadata} ->
-      computations = Map.get(computation_mappings, computation_id, [])
+    Enum.each(payloads, fn {processor_id, message, metadata} ->
+      processors = Map.get(processor_mappings, processor_id, [])
 
-      Enum.each(computations, fn pid ->
+      Enum.each(processors, fn pid ->
         GenServer.cast(pid, {:io_out, message, metadata})
       end)
     end)
@@ -108,10 +107,10 @@ defmodule Flezha.Operator.StreamChannel do
     {:noreply, state}
   end
 
-  defp send_channel_payload(sock, computation_id, message, metadata) do
+  defp send_channel_payload(sock, processor_id, message, metadata) do
     :gen_tcp.send(
       sock,
-      Payloader.build_from_bin(computation_id, message, metadata)
+      Payloader.build_from_bin(processor_id, message, metadata)
     )
   end
 

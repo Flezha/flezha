@@ -4,19 +4,19 @@ defmodule FlezhaTest.MigratorServiceTest do
 
   doctest Flezha.Worker.MigratorService
 
-  @computation_id "test_migrator"
+  @processor_id "test_migrator"
 
   setup do
-    worker = NodeTestHelper.test_worker(@computation_id)
+    worker = NodeTestHelper.test_worker(@processor_id)
 
     %{worker: worker}
   end
 
   test "serialize worker" do
     serialized_data =
-      Flezha.Worker.MigratorService.serialize_computation(
+      Flezha.Worker.MigratorService.serialize_processor(
         @default_namespace,
-        @computation_id
+        @processor_id
       )
 
     assert is_list(serialized_data)
@@ -25,15 +25,15 @@ defmodule FlezhaTest.MigratorServiceTest do
 
   test "deserialize worker" do
     serialized_data =
-      Flezha.Worker.MigratorService.serialize_computation(
+      Flezha.Worker.MigratorService.serialize_processor(
         @default_namespace,
-        @computation_id
+        @processor_id
       )
 
     assert :ok ===
-             Flezha.Worker.MigratorService.deserialize_computation(
+             Flezha.Worker.MigratorService.deserialize_processor(
                @default_namespace,
-               @computation_id,
+               @processor_id,
                serialized_data
              )
   end

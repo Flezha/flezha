@@ -2,11 +2,11 @@ defmodule FlezhaTest do
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Operator.FleetManager
-  alias FlezhaTest.Fixtures.ComputationFixture
+  alias FlezhaTest.Fixtures.ProcessorFixture
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.ComputationManager
+  alias Flezha.Service.ProcessorManager
   alias FlezhaTest.Helper.NodeTestHelper
-  alias FlezhaTest.Helper.ComputationTestHelper
+  alias FlezhaTest.Helper.ProcessorTestHelper
   alias FlezhaTest.Helper.MessageTestHelper
 
   use ExUnit.Case
@@ -19,7 +19,7 @@ defmodule FlezhaTest do
   @node_name NodeTestHelper.node_name()
 
   @test_store_input_factory "store_input"
-  @test_computation_factory "do_nothing"
+  @test_processor_factory "do_nothing"
   @test_compare_filter_factory "compare_filter"
 
   setup_all do
@@ -28,7 +28,7 @@ defmodule FlezhaTest do
 
   setup _context do
     on_exit(fn ->
-      ComputationManager.stop_all_computations(@default_namespace)
+      ProcessorManager.stop_all_processors(@default_namespace)
       FleetManager.stop_namespace(@temp_namespace)
     end)
 
@@ -41,71 +41,71 @@ defmodule FlezhaTest do
     Enum.each(res, &assert(is_binary(&1)))
   end
 
-  @tag :computation_start
-  test "computation adding" do
-    computation = %Flezha.Computation.Builder{
-      id: "default_computation_test",
-      factory_id: @test_computation_factory
+  @tag :processor_start
+  test "processor adding" do
+    processor = %Flezha.Processor.Builder{
+      id: "default_processor_test",
+      factory_id: @test_processor_factory
     }
 
-    {status, info} = ComputationManager.start_computation(@default_namespace, computation)
+    {status, info} = ProcessorManager.start_processor(@default_namespace, processor)
 
     assert status === :ok
-    assert info[:computation_id] === "default_computation_test"
+    assert info[:processor_id] === "default_processor_test"
     assert info[:node] === @node_name
     assert is_pid(info[:pid])
     assert is_binary(info[:operator_id])
   end
 
-  test "computation removing" do
-    computation_id = "default_computation_stop_test"
+  test "processor removing" do
+    processor_id = "default_processor_stop_test"
 
-    {:ok, %{pid: _computation_pid}} =
-      computation_id
-      |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start()
+    {:ok, %{pid: _processor_pid}} =
+      processor_id
+      |> ProcessorFixture.get(@test_store_input_factory)
+      |> ProcessorFixture.start()
 
-    assert :ok === ComputationManager.stop_computation(@default_namespace, computation_id)
+    assert :ok === ProcessorManager.stop_processor(@default_namespace, processor_id)
 
     # TODO: add hook instead to listen to process removal.
     Process.sleep(100)
 
-    assert ComputationManager.exist?(@default_namespace, computation_id) === false
+    assert ProcessorManager.exist?(@default_namespace, processor_id) === false
   end
 
-  test "computation adding non existing factory" do
-    computation_id = "non_existing_factory_err"
+  test "processor adding non existing factory" do
+    processor_id = "non_existing_factory_err"
 
-    computation = %Flezha.Computation.Builder{
-      id: computation_id,
+    processor = %Flezha.Processor.Builder{
+      id: processor_id,
       factory_id: "non_existing_factory"
     }
 
-    {status, %{computation_id: pid, node: node, reason: reason}} =
-      ComputationManager.start_computation(@default_namespace, computation)
+    {status, %{processor_id: pid, node: node, reason: reason}} =
+      ProcessorManager.start_processor(@default_namespace, processor)
 
     assert status === :error
-    assert pid === computation_id
+    assert pid === processor_id
     assert node === @node_name
     assert reason === "Factory with id non_existing_factory does not exist"
   end
 
   @tag :websocket_plugin
   test "websocket plugin connection start" do
-    computation_id = "websocket_plugin_test"
+    processor_id = "websocket_plugin_test"
 
-    computation = %Flezha.Computation.Builder{
-      id: computation_id,
-      factory_id: @test_computation_factory
+    processor = %Flezha.Processor.Builder{
+      id: processor_id,
+      factory_id: @test_processor_factory
     }
 
-    {:ok, _} = ComputationManager.start_computation(@default_namespace, computation)
+    {:ok, _} = ProcessorManager.start_processor(@default_namespace, processor)
 
     # TODO: add failures also.
     res =
       PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
         namespace: @default_namespace,
-        computation_id: computation_id,
+        processor_id: processor_id,
         trigger: :proactive,
         provider: %Flezha.Plugin.Provider.Websocket{
           uri: @testnet_ws_uri,
@@ -130,19 +130,19 @@ defmodule FlezhaTest do
   end
 
   test "beam msg forward plugin connection start" do
-    computation_id = "beam_msg_forw_plugin_test"
+    processor_id = "beam_msg_forw_plugin_test"
 
-    computation = %Flezha.Computation.Builder{
-      id: computation_id,
-      factory_id: @test_computation_factory
+    processor = %Flezha.Processor.Builder{
+      id: processor_id,
+      factory_id: @test_processor_factory
     }
 
-    {:ok, _} = ComputationManager.start_computation(@default_namespace, computation)
+    {:ok, _} = ProcessorManager.start_processor(@default_namespace, processor)
 
     res =
       PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
         namespace: @default_namespace,
-        computation_id: computation_id,
+        processor_id: processor_id,
         trigger: :on_output,
         provider: %Flezha.Plugin.Provider.BeamMsgForward{
           recv_pid: self()
@@ -152,21 +152,21 @@ defmodule FlezhaTest do
     assert res === {:ok, "plugin enabled"}
   end
 
-  @tag :computation_flow_msg_forward
-  test "computation flow generation -> beam msg forward" do
-    computation_id = "data_flow_test"
+  @tag :processor_flow_msg_forward
+  test "processor flow generation -> beam msg forward" do
+    processor_id = "data_flow_test"
 
-    computation = %Flezha.Computation.Builder{
-      id: computation_id,
+    processor = %Flezha.Processor.Builder{
+      id: processor_id,
       factory_id: @test_compare_filter_factory,
       init_values: %{"comparable" => "hello world", "inverted" => false}
     }
 
-    {:ok, _} = ComputationManager.start_computation(@default_namespace, computation)
+    {:ok, _} = ProcessorManager.start_processor(@default_namespace, processor)
 
     PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
       namespace: @default_namespace,
-      computation_id: computation_id,
+      processor_id: processor_id,
       trigger: :on_output,
       provider: %Flezha.Plugin.Provider.BeamMsgForward{
         recv_pid: self()
@@ -175,7 +175,7 @@ defmodule FlezhaTest do
 
     PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
       namespace: @default_namespace,
-      computation_id: computation_id,
+      processor_id: processor_id,
       trigger: :proactive,
       provider: %Flezha.Plugin.Provider.Websocket{
         uri: @testnet_ws_uri,
@@ -206,25 +206,25 @@ defmodule FlezhaTest do
     end
   end
 
-  @tag :get_computation_state
-  test "get computation state" do
-    computation_id = "get_state_test"
+  @tag :get_processor_state
+  test "get processor state" do
+    processor_id = "get_state_test"
 
-    {:ok, %{pid: _computation_pid}} =
-      computation_id
-      |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start()
-      |> ComputationFixture.attach_output_msg()
+    {:ok, %{pid: _processor_pid}} =
+      processor_id
+      |> ProcessorFixture.get(@test_store_input_factory)
+      |> ProcessorFixture.start()
+      |> ProcessorFixture.attach_output_msg()
 
-    ComputationTestHelper.send_sync_io(computation_id, @default_namespace, "state_1", %{})
-    ComputationTestHelper.send_sync_io(computation_id, @default_namespace, "state_2", %{})
+    ProcessorTestHelper.send_sync_io(processor_id, @default_namespace, "state_1", %{})
+    ProcessorTestHelper.send_sync_io(processor_id, @default_namespace, "state_2", %{})
 
     {:ok, json_state} =
-      ComputationManager.get_computation_state(@default_namespace, computation_id)
+      ProcessorManager.get_processor_state(@default_namespace, processor_id)
 
-    computation_state = Flezha.Service.Payloader.json_to_map(json_state)
+    processor_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert computation_state === %{
+    assert processor_state === %{
              "binary_inputs" => [],
              "text_inputs" => ["state_1", "state_2"]
            }
@@ -232,23 +232,23 @@ defmodule FlezhaTest do
 
   # # # # TODO: add test to handle large control requests and stream requests.
 
-  @tag :computation_migration
-  test "computation migration" do
+  @tag :processor_migration
+  test "processor migration" do
     # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
     # then get the state of the new migrated process to see if it matches the state1 string.
 
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
-    computation_id = "computation_migration_test"
+    processor_id = "processor_migration_test"
 
-    {:ok, %{pid: _computation_pid, node: _pnode}} =
-      computation_id
-      |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start()
-      |> ComputationFixture.attach_output_msg()
+    {:ok, %{pid: _processor_pid, node: _pnode}} =
+      processor_id
+      |> ProcessorFixture.get(@test_store_input_factory)
+      |> ProcessorFixture.start()
+      |> ProcessorFixture.attach_output_msg()
 
-    ComputationTestHelper.send_sync_io(computation_id, @default_namespace, "test_state_1", %{})
-    ComputationTestHelper.send_sync_io(computation_id, @default_namespace, "test_state_2", %{})
+    ProcessorTestHelper.send_sync_io(processor_id, @default_namespace, "test_state_1", %{})
+    ProcessorTestHelper.send_sync_io(processor_id, @default_namespace, "test_state_2", %{})
 
     test_state = %{
       "binary_inputs" => [],
@@ -257,20 +257,20 @@ defmodule FlezhaTest do
 
     PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
       namespace: @default_namespace,
-      computation_id: computation_id,
+      processor_id: processor_id,
       trigger: :proactive,
       provider: %Flezha.Plugin.Provider.StdOut{}
     })
 
     {:ok, json_state} =
-      ComputationManager.get_computation_state(@default_namespace, computation_id)
+      ProcessorManager.get_processor_state(@default_namespace, processor_id)
 
     {:ok, old_overwatch_state} =
-      ComputationManager.get_overwatch_state(@default_namespace, computation_id)
+      ProcessorManager.get_overwatch_state(@default_namespace, processor_id)
 
-    computation_state = Flezha.Service.Payloader.json_to_map(json_state)
+    processor_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert computation_state === test_state
+    assert processor_state === test_state
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
 
@@ -278,14 +278,14 @@ defmodule FlezhaTest do
     Process.sleep(500)
 
     {:ok, json_state} =
-      ComputationManager.get_computation_state(@default_namespace, computation_id)
+      ProcessorManager.get_processor_state(@default_namespace, processor_id)
 
     {:ok, new_overwatch_state} =
-      ComputationManager.get_overwatch_state(@default_namespace, computation_id)
+      ProcessorManager.get_overwatch_state(@default_namespace, processor_id)
 
-    computation_state = Flezha.Service.Payloader.json_to_map(json_state)
+    processor_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert computation_state === test_state
+    assert processor_state === test_state
     assert new_overwatch_state.bindings === old_overwatch_state.bindings
     assert new_overwatch_state.init_values === old_overwatch_state.init_values
   end
@@ -303,46 +303,46 @@ defmodule FlezhaTest do
   @tag :operator_disconnect_migrate_op
   test "operator disconnect migrate op" do
     namespace = @temp_namespace
-    computation_id_1 = "computation_1"
-    computation_id_2 = "computation_2"
+    processor_id_1 = "processor_1"
+    processor_id_2 = "processor_2"
 
     # Start 2 operators under the same namespace.
     operator_id_1 = NodeTestHelper.start_operator(namespace)
     operator_id_2 = NodeTestHelper.start_operator(namespace)
 
-    # Start a few computations and store some state on them.
-    {:ok, %{pid: _computation_pid_1, operator_id: pipe1_op}} =
-      computation_id_1
-      |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(namespace)
-      |> ComputationFixture.attach_output_msg(namespace)
+    # Start a few processors and store some state on them.
+    {:ok, %{pid: _processor_pid_1, operator_id: pipe1_op}} =
+      processor_id_1
+      |> ProcessorFixture.get(@test_store_input_factory)
+      |> ProcessorFixture.start(namespace)
+      |> ProcessorFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _computation_pid_2, operator_id: _pipe2_op}} =
-      computation_id_2
-      |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(namespace)
-      |> ComputationFixture.attach_output_msg(namespace)
+    {:ok, %{pid: _processor_pid_2, operator_id: _pipe2_op}} =
+      processor_id_2
+      |> ProcessorFixture.get(@test_store_input_factory)
+      |> ProcessorFixture.start(namespace)
+      |> ProcessorFixture.attach_output_msg(namespace)
 
-    ComputationTestHelper.send_sync_io(computation_id_1, namespace, "state_1", %{})
-    ComputationTestHelper.send_sync_io(computation_id_2, namespace, "state_2", %{})
+    ProcessorTestHelper.send_sync_io(processor_id_1, namespace, "state_1", %{})
+    ProcessorTestHelper.send_sync_io(processor_id_2, namespace, "state_2", %{})
 
-    ComputationManager.create_snapshot(namespace, computation_id_1)
-    ComputationManager.create_snapshot(namespace, computation_id_2)
+    ProcessorManager.create_snapshot(namespace, processor_id_1)
+    ProcessorManager.create_snapshot(namespace, processor_id_2)
 
     active_operator = if pipe1_op === operator_id_1, do: operator_id_2, else: operator_id_1
 
     # Trigger the operator disconnect.
     NodeTestHelper.stop_operator(namespace, pipe1_op)
 
-    # Make sure all the computations are migrated to the other operator.
-    ComputationManager.computation_registry(namespace)
-    |> Enum.each(fn {_computation_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+    # Make sure all the processors are migrated to the other operator.
+    ProcessorManager.processor_registry(namespace)
+    |> Enum.each(fn {_processor_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
       assert new_operator === active_operator
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_computation_state(namespace, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_computation_state(namespace, computation_id_2)
+    {:ok, json_state_1} = ProcessorManager.get_processor_state(namespace, processor_id_1)
+    {:ok, json_state_2} = ProcessorManager.get_processor_state(namespace, processor_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
@@ -355,27 +355,27 @@ defmodule FlezhaTest do
     operator_id_1 = NodeTestHelper.start_operator(namespace)
     operator_id_2 = NodeTestHelper.start_operator(namespace)
 
-    # Start a few computations and store some state on them.
-    computation_id_1 = "computation_1"
-    computation_id_2 = "computation_2"
+    # Start a few processors and store some state on them.
+    processor_id_1 = "processor_1"
+    processor_id_2 = "processor_2"
 
-    {:ok, %{pid: _computation_pid_1, operator_id: _pipe1_op}} =
-      computation_id_1
-      |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(namespace)
-      |> ComputationFixture.attach_output_msg(namespace)
+    {:ok, %{pid: _processor_pid_1, operator_id: _pipe1_op}} =
+      processor_id_1
+      |> ProcessorFixture.get(@test_store_input_factory)
+      |> ProcessorFixture.start(namespace)
+      |> ProcessorFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _computation_pid_2, operator_id: _pipe2_op}} =
-      computation_id_2
-      |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(namespace)
-      |> ComputationFixture.attach_output_msg(namespace)
+    {:ok, %{pid: _processor_pid_2, operator_id: _pipe2_op}} =
+      processor_id_2
+      |> ProcessorFixture.get(@test_store_input_factory)
+      |> ProcessorFixture.start(namespace)
+      |> ProcessorFixture.attach_output_msg(namespace)
 
-    ComputationTestHelper.send_sync_io(computation_id_1, namespace, "state_1", %{})
-    ComputationTestHelper.send_sync_io(computation_id_2, namespace, "state_2", %{})
+    ProcessorTestHelper.send_sync_io(processor_id_1, namespace, "state_1", %{})
+    ProcessorTestHelper.send_sync_io(processor_id_2, namespace, "state_2", %{})
 
-    ComputationManager.create_snapshot(namespace, computation_id_1)
-    ComputationManager.create_snapshot(namespace, computation_id_2)
+    ProcessorManager.create_snapshot(namespace, processor_id_1)
+    ProcessorManager.create_snapshot(namespace, processor_id_2)
 
     # Trigger the operator disconnect.
     NodeTestHelper.stop_operator(namespace, operator_id_1)
@@ -384,15 +384,15 @@ defmodule FlezhaTest do
     # Start a new operator under the same namespace.
     operator_id_3 = NodeTestHelper.start_operator(namespace)
 
-    # Make sure all the computations are migrated to the new operator.
-    ComputationManager.computation_registry(namespace)
-    |> Enum.each(fn {_computation_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+    # Make sure all the processors are migrated to the new operator.
+    ProcessorManager.processor_registry(namespace)
+    |> Enum.each(fn {_processor_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
       assert new_operator === operator_id_3
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_computation_state(namespace, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_computation_state(namespace, computation_id_2)
+    {:ok, json_state_1} = ProcessorManager.get_processor_state(namespace, processor_id_1)
+    {:ok, json_state_2} = ProcessorManager.get_processor_state(namespace, processor_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
@@ -414,8 +414,8 @@ defmodule FlezhaTest do
   @tag :operator_disconnect_migrate_hub
   test "operator disconnect migrate hub" do
     namespace = @temp_namespace
-    computation_id_1 = "computation_1"
-    computation_id_2 = "computation_2"
+    processor_id_1 = "processor_1"
+    processor_id_2 = "processor_2"
 
     {_peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
@@ -449,54 +449,54 @@ defmodule FlezhaTest do
       }
     )
 
-    # Start a few computations and store some state on them.
-    {:ok, %{pid: _computation_pid_1, operator_id: pipe1_op}} =
-      computation_id_1
-      |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(namespace)
-      |> ComputationFixture.attach_output_msg(namespace)
+    # Start a few processors and store some state on them.
+    {:ok, %{pid: _processor_pid_1, operator_id: pipe1_op}} =
+      processor_id_1
+      |> ProcessorFixture.get(@test_store_input_factory)
+      |> ProcessorFixture.start(namespace)
+      |> ProcessorFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _computation_pid_2, operator_id: pipe2_op}} =
-      computation_id_2
-      |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(namespace)
-      |> ComputationFixture.attach_output_msg(namespace)
+    {:ok, %{pid: _processor_pid_2, operator_id: pipe2_op}} =
+      processor_id_2
+      |> ProcessorFixture.get(@test_store_input_factory)
+      |> ProcessorFixture.start(namespace)
+      |> ProcessorFixture.attach_output_msg(namespace)
 
-    # Make sure that atleast one of the computations is running on the remote operator.
+    # Make sure that atleast one of the processors is running on the remote operator.
     assert pipe1_op !== operator_id_1 or pipe2_op !== operator_id_1
 
-    ComputationTestHelper.send_sync_io(computation_id_1, namespace, "state_1", %{})
-    ComputationTestHelper.send_sync_io(computation_id_2, namespace, "state_2", %{})
+    ProcessorTestHelper.send_sync_io(processor_id_1, namespace, "state_1", %{})
+    ProcessorTestHelper.send_sync_io(processor_id_2, namespace, "state_2", %{})
 
     # Check the states before operator migrations.
-    {:ok, json_state_1} = ComputationManager.get_computation_state(namespace, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_computation_state(namespace, computation_id_2)
+    {:ok, json_state_1} = ProcessorManager.get_processor_state(namespace, processor_id_1)
+    {:ok, json_state_2} = ProcessorManager.get_processor_state(namespace, processor_id_2)
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
 
-    ComputationManager.create_snapshot(namespace, computation_id_1)
-    ComputationManager.create_snapshot(namespace, computation_id_2)
+    ProcessorManager.create_snapshot(namespace, processor_id_1)
+    ProcessorManager.create_snapshot(namespace, processor_id_2)
 
     # Trigger the operator disconnect.
     NodeTestHelper.stop_operator_remote(peer_node, namespace, rem_operator_1)
     NodeTestHelper.stop_operator_remote(peer_node, namespace, rem_operator_2)
 
     # Need to wait 4 times process inserted hook to be called.
-    # With each operator disconnect we update the tag of the computation.
+    # With each operator disconnect we update the tag of the processor.
     # Wait for other hooks as well.
     MessageTestHelper.recv_num(:hook_insert_recv, 4)
     MessageTestHelper.recv_num(:hook_pstartup_recv, 2)
 
-    # Make sure all the computations are migrated to the other operator.
-    reg = ComputationManager.computation_registry(namespace)
+    # Make sure all the processors are migrated to the other operator.
+    reg = ProcessorManager.processor_registry(namespace)
 
-    Enum.each(reg, fn {_computation_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
+    Enum.each(reg, fn {_processor_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
       assert new_operator === operator_id_1
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_computation_state(namespace, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_computation_state(namespace, computation_id_2)
+    {:ok, json_state_1} = ProcessorManager.get_processor_state(namespace, processor_id_1)
+    {:ok, json_state_2} = ProcessorManager.get_processor_state(namespace, processor_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
@@ -506,27 +506,27 @@ defmodule FlezhaTest do
 
   @tag :flow_test
   test "flow test" do
-    num_computations = 100
-    test_messages_per_computation = 1000
+    num_processors = 100
+    test_messages_per_processor = 1000
 
-    IO.puts("Starting flow test with #{num_computations} computations...")
+    IO.puts("Starting flow test with #{num_processors} processors...")
 
-    {computation_creation_time, computation_infos} =
+    {processor_creation_time, processor_infos} =
       :timer.tc(fn ->
-        for i <- 1..num_computations do
-          computation_id = "flow_test_#{i}"
+        for i <- 1..num_processors do
+          processor_id = "flow_test_#{i}"
 
-          computation = %Flezha.Computation.Builder{
-            id: computation_id,
-            factory_id: @test_computation_factory
+          processor = %Flezha.Processor.Builder{
+            id: processor_id,
+            factory_id: @test_processor_factory
           }
 
-          case ComputationManager.start_computation(@default_namespace, computation) do
+          case ProcessorManager.start_processor(@default_namespace, processor) do
             {:ok, info} ->
-              {computation_id, info}
+              {processor_id, info}
 
             error ->
-              IO.puts("Failed to start computation #{computation_id}: #{inspect(error)}")
+              IO.puts("Failed to start processor #{processor_id}: #{inspect(error)}")
               nil
           end
         end
@@ -534,17 +534,17 @@ defmodule FlezhaTest do
       end)
 
     IO.puts(
-      "Computation creation took: #{computation_creation_time / 1000} ms for #{length(computation_infos)} computations"
+      "Processor creation took: #{processor_creation_time / 1000} ms for #{length(processor_infos)} processors"
     )
 
-    # Step 2: Enable plugins for all computations
+    # Step 2: Enable plugins for all processors
     {plugin_setup_time, _} =
       :timer.tc(fn ->
-        Enum.each(computation_infos, fn {computation_id, _info} ->
+        Enum.each(processor_infos, fn {processor_id, _info} ->
           # Enable BeamMsgForward plugin
           PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
             namespace: @default_namespace,
-            computation_id: computation_id,
+            processor_id: processor_id,
             trigger: :on_output,
             provider: %Flezha.Plugin.Provider.BeamMsgForward{
               recv_pid: self()
@@ -554,7 +554,7 @@ defmodule FlezhaTest do
           # Enable StdOut plugin
           PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
             namespace: @default_namespace,
-            computation_id: computation_id,
+            processor_id: processor_id,
             trigger: :proactive,
             provider: %Flezha.Plugin.Provider.StdOut{}
           })
@@ -562,23 +562,23 @@ defmodule FlezhaTest do
       end)
 
     IO.puts(
-      "Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(computation_infos)} computations"
+      "Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(processor_infos)} processors"
     )
 
-    # Step 3: Send test messages to all computations
-    total_messages = length(computation_infos) * test_messages_per_computation
+    # Step 3: Send test messages to all processors
+    total_messages = length(processor_infos) * test_messages_per_processor
 
     IO.puts(
-      "Sending #{total_messages} total messages (#{test_messages_per_computation} per computation)..."
+      "Sending #{total_messages} total messages (#{test_messages_per_processor} per processor)..."
     )
 
     {message_send_time, _} =
       :timer.tc(fn ->
-        Enum.each(computation_infos, fn {computation_id, %{pid: computation_pid}} ->
-          for msg_num <- 1..test_messages_per_computation do
+        Enum.each(processor_infos, fn {processor_id, %{pid: processor_pid}} ->
+          for msg_num <- 1..test_messages_per_processor do
             GenServer.cast(
-              computation_pid,
-              {:io_in, "test_msg_#{computation_id}_#{msg_num}", %{}}
+              processor_pid,
+              {:io_in, "test_msg_#{processor_id}_#{msg_num}", %{}}
             )
           end
         end)
@@ -607,22 +607,22 @@ defmodule FlezhaTest do
 
     # Calculate throughput metrics
     total_time =
-      computation_creation_time + plugin_setup_time + message_send_time + message_receive_time
+      processor_creation_time + plugin_setup_time + message_send_time + message_receive_time
 
     throughput_msgs_per_sec = total_messages * 1_000_000 / message_receive_time
 
     IO.puts("\n=== Performance Summary ===")
-    IO.puts("Computations created: #{length(computation_infos)}")
+    IO.puts("Processors created: #{length(processor_infos)}")
     IO.puts("Total messages processed: #{total_messages}")
-    IO.puts("Computation creation: #{computation_creation_time / 1000} ms")
+    IO.puts("Processor creation: #{processor_creation_time / 1000} ms")
     IO.puts("Plugin setup: #{plugin_setup_time / 1000} ms")
     IO.puts("Message sending: #{message_send_time / 1000} ms")
     IO.puts("Message processing: #{message_receive_time / 1000} ms")
     IO.puts("Total time: #{total_time / 1000} ms")
     IO.puts("Throughput: #{Float.round(throughput_msgs_per_sec, 2)} messages/second")
-    IO.puts("Average time per computation: #{total_time / length(computation_infos) / 1000} ms")
+    IO.puts("Average time per processor: #{total_time / length(processor_infos) / 1000} ms")
 
-    assert length(computation_infos) > 0, "No computations were created successfully"
+    assert length(processor_infos) > 0, "No processors were created successfully"
     assert total_messages > 0, "No messages were processed"
   end
 end

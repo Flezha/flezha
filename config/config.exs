@@ -13,11 +13,11 @@ config :flezha,
   # ------------------------------------------------------------------------------------------------
   # Enabled plugins.
   enabled_plugins: %{
-    "computation_kafka_producer" => Flezha.Plugin.Provider.Kafka.Producer,
-    "computation_websocket" => Flezha.Plugin.Provider.Websocket,
-    "computation_beam_msg" => Flezha.Plugin.Provider.BeamMsgForward,
-    "computation_stdout" => Flezha.Plugin.Provider.StdOut,
-    "computation_io_filter" => Flezha.Plugin.Provider.Filter,
+    "processor_kafka_producer" => Flezha.Plugin.Provider.Kafka.Producer,
+    "processor_websocket" => Flezha.Plugin.Provider.Websocket,
+    "processor_beam_msg" => Flezha.Plugin.Provider.BeamMsgForward,
+    "processor_stdout" => Flezha.Plugin.Provider.StdOut,
+    "processor_io_filter" => Flezha.Plugin.Provider.Filter,
     "monitored_io_forward" => Flezha.Plugin.Provider.MonitoredIOForward
   }
 

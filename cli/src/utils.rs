@@ -124,31 +124,6 @@ pub fn get_output_format(slice: &[String]) -> String {
     }
 }
 
-pub fn extract_flags_with_prefix(args: &[String], prefix: &str) -> Vec<(String, String)> {
-    let mut flags = Vec::new();
-
-    for (i, arg) in args.iter().enumerate() {
-        // Handle --Tkey=value or --Pkey=value format
-        if let Some(rest) = arg.strip_prefix(&format!("--{}", prefix)) {
-            if let Some(eq_pos) = rest.find('=') {
-                let key = &rest[..eq_pos];
-                let value = &rest[eq_pos + 1..];
-                flags.push((key.to_string(), strip_quotes(value)));
-            }
-        }
-        // Handle --Tkey value or --Pkey value format (space-separated)
-        else if arg.starts_with(&format!("--{}", prefix)) && i + 1 < args.len() {
-            if let Some(key) = arg.strip_prefix(&format!("--{}", prefix)) {
-                if !key.contains('=') {
-                    flags.push((key.to_string(), strip_quotes(&args[i + 1])));
-                }
-            }
-        }
-    }
-
-    flags
-}
-
 fn strip_quotes(value: &str) -> String {
     let trimmed = value.trim();
     if (trimmed.starts_with('"') && trimmed.ends_with('"'))

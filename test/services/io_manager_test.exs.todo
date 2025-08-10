@@ -5,10 +5,10 @@ defmodule FlezhaTest.IOManagerTest do
 
   doctest Flezha.IO.IOManager
 
-  @computation_id "test_io_manager"
+  @processor_id "test_io_manager"
 
   setup do
-    worker = NodeTestHelper.test_worker(@computation_id)
+    worker = NodeTestHelper.test_worker(@processor_id)
 
     %{worker: worker}
   end
@@ -17,7 +17,7 @@ defmodule FlezhaTest.IOManagerTest do
     res1 =
       IOManager.add_io(
         @default_namespace,
-        @computation_id,
+        @processor_id,
         %Flezha.IO.Handler.BeamProcess{output_pid: self()},
         :input,
         []

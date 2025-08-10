@@ -1,12 +1,12 @@
 defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   alias Flezha.Service.PluginManager
-  alias Flezha.Computation.IOBinding
+  alias Flezha.Processor.IOBinding
   alias Flezha.Plugin.ProviderBehaviour
 
   use GenServer
   use ProviderBehaviour
 
-  @enforce_keys [:recv_pid, :plugin_id, :computation_id, :namespace]
+  @enforce_keys [:recv_pid, :plugin_id, :processor_id, :namespace]
   defstruct @enforce_keys ++ [:binding_pid, heartbeat_interval: 5000]
 
   @impl true

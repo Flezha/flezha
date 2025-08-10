@@ -3,73 +3,73 @@ defmodule Flezha.Service.CliManager do
   Provides recipes for the RPC calls.
   """
 
-  alias Flezha.Service.ComputationManager
+  alias Flezha.Service.ProcessorManager
   alias Flezha.Service.Payloader
   alias Flezha.Service.PluginManager
   alias Flezha.Service.ConfigManager
   alias Flezha.Plugin.Provider.MonitoredIOForward
   alias Flezha.Plugin.Driver.IOBindingPlugin
 
-  @doc "Starts a computation."
-  def computation_start(namespace, computation_id, factory_id, init_values, opts \\ []) do
+  @doc "Starts a processor."
+  def processor_start(namespace, processor_id, factory_id, init_values, opts \\ []) do
     opts =
       Payloader.json_to_map(opts)
       |> atom_converter()
       |> Keyword.new()
 
-    computation = %Flezha.Computation.Builder{
-      id: computation_id,
+    processor = %Flezha.Processor.Builder{
+      id: processor_id,
       factory_id: factory_id,
       init_values: Payloader.json_to_map(init_values),
       opts: opts
     }
 
-    case ComputationManager.start_computation(normalize_namespace(namespace), computation) do
-      {:ok, _} -> IO.puts("Computation has been started")
-      {:error, reason} -> IO.puts("Error starting computation: #{inspect(reason)}")
+    case ProcessorManager.start_processor(normalize_namespace(namespace), processor) do
+      {:ok, _} -> IO.puts("Processor has been started")
+      {:error, reason} -> IO.puts("Error starting processor: #{inspect(reason)}")
     end
   end
 
-  @doc "Stops a computation."
-  def computation_stop(namespace, computation_id) do
-    case ComputationManager.stop_computation(normalize_namespace(namespace), computation_id) do
-      :ok -> IO.puts("Computation has been stopped")
-      {:error, reason} -> IO.puts("Error stopping computation: #{inspect(reason)}")
+  @doc "Stops a processor."
+  def processor_stop(namespace, processor_id) do
+    case ProcessorManager.stop_processor(normalize_namespace(namespace), processor_id) do
+      :ok -> IO.puts("Processor has been stopped")
+      {:error, reason} -> IO.puts("Error stopping processor: #{inspect(reason)}")
     end
   end
 
-  @doc "Get computation state."
-  def computation_state(namespace, computation_id) do
+  @doc "Get processor state."
+  def processor_state(namespace, processor_id) do
     namespace_display = normalize_namespace(namespace)
 
-    case ComputationManager.get_computation_state(
+    case ProcessorManager.get_processor_state(
            normalize_namespace(namespace),
-           computation_id
+           processor_id
          ) do
       {:ok, json_state} when is_binary(json_state) ->
-        IO.puts("State for computation '#{computation_id}' in namespace '#{namespace_display}':")
+        IO.puts("State for processor '#{processor_id}' in namespace '#{namespace_display}':")
         IO.puts(json_state)
 
       {:ok, state} ->
-        IO.puts("State for computation '#{computation_id}' in namespace '#{namespace_display}':")
+        IO.puts("State for processor '#{processor_id}' in namespace '#{namespace_display}':")
         IO.puts(inspect(state))
 
       {:error, :not_found} ->
-        IO.puts("Computation '#{computation_id}' not found in namespace '#{namespace_display}'.")
+        IO.puts("Processor '#{processor_id}' not found in namespace '#{namespace_display}'.")
 
       {:error, reason} when is_binary(reason) ->
-        IO.puts("Error getting computation state: #{reason}")
+        IO.puts("Error getting processor state: #{reason}")
 
       {:error, reason} ->
-        IO.puts("Error getting computation state: #{inspect(reason)}")
+        IO.puts("Error getting processor state: #{inspect(reason)}")
 
       other ->
         IO.puts("Unexpected result: #{inspect(other)}")
     end
   end
 
-  @doc "Listens to a computation IO."
-  def computation_listen(namespace, computation_id, io_type) do
+  @doc "Listens to a processor IO."
+  def processor_listen(namespace, processor_id, io_type) do
     namespace_display = normalize_namespace(namespace)
 
     io_type =
@@ -82,14 +82,14 @@ defmodule Flezha.Service.CliManager do
     provider = %MonitoredIOForward{
       recv_pid: self(),
       plugin_id: "monitored_io_forward_dynamic",
-      computation_id: computation_id,
+      processor_id: processor_id,
       namespace: namespace_display
     }
 
     PluginManager.enable_plugin("monitored_io_forward_dynamic", %IOBindingPlugin{
       provider: provider,
       namespace: namespace_display,
-      computation_id: computation_id,
+      processor_id: processor_id,
       trigger: io_type
     })
 
@@ -250,75 +250,75 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  @doc "Lists computations for a specific namespace."
-  def list_computations(namespace, output_format \\ "text") do
+  @doc "Lists processors for a specific namespace."
+  def list_processors(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_computations(namespace_display) do
-      {:ok, computations} when is_list(computations) ->
+    case Flezha.list_processors(namespace_display) do
+      {:ok, processors} when is_list(processors) ->
         context = %{key: :namespace, value: namespace_display, display: "namespace"}
-        handle_list_output(computations, "computations", output_format, context)
+        handle_list_output(processors, "processors", output_format, context)
 
-      computations when is_list(computations) ->
+      processors when is_list(processors) ->
         context = %{key: :namespace, value: namespace_display, display: "namespace"}
-        handle_list_output(computations, "computations", output_format, context)
+        handle_list_output(processors, "processors", output_format, context)
 
       {:error, reason} ->
-        handle_list_error(reason, "listing computations", output_format)
+        handle_list_error(reason, "listing processors", output_format)
 
       other ->
-        handle_list_error(other, "listing computations", output_format)
+        handle_list_error(other, "listing processors", output_format)
     end
   end
 
-  @doc "Shows detailed information about computations and their overwatch plugins."
-  def computation_info(namespace, output_format \\ "text") do
+  @doc "Shows detailed information about processors and their overwatch plugins."
+  def processor_info(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_computations(namespace_display) do
-      {:ok, computations} when is_list(computations) ->
-        if Enum.empty?(computations) do
-          handle_empty_computations(namespace_display, output_format)
+    case Flezha.list_processors(namespace_display) do
+      {:ok, processors} when is_list(processors) ->
+        if Enum.empty?(processors) do
+          handle_empty_processors(namespace_display, output_format)
         else
-          handle_computation_info_output(computations, namespace_display, output_format)
+          handle_processor_info_output(processors, namespace_display, output_format)
         end
 
-      computations when is_list(computations) ->
-        if Enum.empty?(computations) do
-          handle_empty_computations(namespace_display, output_format)
+      processors when is_list(processors) ->
+        if Enum.empty?(processors) do
+          handle_empty_processors(namespace_display, output_format)
         else
-          handle_computation_info_output(computations, namespace_display, output_format)
+          handle_processor_info_output(processors, namespace_display, output_format)
         end
 
       {:error, reason} ->
-        handle_list_error(reason, "listing computations", output_format)
+        handle_list_error(reason, "listing processors", output_format)
 
       other ->
-        handle_list_error(other, "listing computations", output_format)
+        handle_list_error(other, "listing processors", output_format)
     end
   end
 
-  defp handle_empty_computations(namespace_display, "json") do
+  defp handle_empty_processors(namespace_display, "json") do
     result = %{
       namespace: namespace_display,
-      computations: [],
-      message: "No computations found"
+      processors: [],
+      message: "No processors found"
     }
 
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_empty_computations(namespace_display, _) do
-    IO.puts("No computations found for namespace '#{namespace_display}'.")
+  defp handle_empty_processors(namespace_display, _) do
+    IO.puts("No processors found for namespace '#{namespace_display}'.")
   end
 
-  defp handle_computation_info_output(computations, namespace_display, "json") do
-    computation_data =
-      Enum.map(computations, fn computation_id ->
-        case ComputationManager.get_overwatch_state(namespace_display, computation_id) do
+  defp handle_processor_info_output(processors, namespace_display, "json") do
+    processor_data =
+      Enum.map(processors, fn processor_id ->
+        case ProcessorManager.get_overwatch_state(namespace_display, processor_id) do
           {:ok, state} ->
             %{
-              id: computation_id,
+              id: processor_id,
               operator_id: state.operator_id,
               namespace: state.namespace,
               default_input_type: state.default_input_type,
@@ -327,7 +327,7 @@ defmodule Flezha.Service.CliManager do
 
           {:error, reason} ->
             %{
-              id: computation_id,
+              id: processor_id,
               error: inspect(reason)
             }
         end
@@ -335,23 +335,23 @@ defmodule Flezha.Service.CliManager do
 
     result = %{
       namespace: namespace_display,
-      computations: computation_data
+      processors: processor_data
     }
 
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_computation_info_output(computations, namespace_display, _) do
-    IO.puts("Computation information for namespace '#{namespace_display}':")
+  defp handle_processor_info_output(processors, namespace_display, _) do
+    IO.puts("Processor information for namespace '#{namespace_display}':")
     IO.puts("")
 
-    Enum.each(computations, fn computation_id ->
-      case ComputationManager.get_overwatch_state(namespace_display, computation_id) do
+    Enum.each(processors, fn processor_id ->
+      case ProcessorManager.get_overwatch_state(namespace_display, processor_id) do
         {:ok, state} ->
-          display_computation_info(computation_id, state)
+          display_processor_info(processor_id, state)
 
         {:error, reason} ->
-          IO.puts("Computation: #{computation_id}")
+          IO.puts("Processor: #{processor_id}")
           IO.puts("  Error getting overwatch state: #{inspect(reason)}")
           IO.puts("")
       end
@@ -381,8 +381,8 @@ defmodule Flezha.Service.CliManager do
     end)
   end
 
-  defp display_computation_info(computation_id, state) do
-    IO.puts("Computation: #{computation_id}")
+  defp display_processor_info(processor_id, state) do
+    IO.puts("Processor: #{processor_id}")
     IO.puts("  Operator ID: #{state.operator_id}")
     IO.puts("  Group ID: #{state.namespace}")
     IO.puts("  Default Input Type: #{state.default_input_type}")

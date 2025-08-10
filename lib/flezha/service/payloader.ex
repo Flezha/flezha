@@ -1,5 +1,5 @@
 defmodule Flezha.Service.Payloader do
-  alias Flezha.Computation.Builder, as: ComputationBuilder
+  alias Flezha.Processor.Builder, as: ProcessorBuilder
 
   def json_to_map(""), do: %{}
 
@@ -91,15 +91,15 @@ defmodule Flezha.Service.Payloader do
     end
   end
 
-  def construct_computation!(input, type) do
+  def construct_processor!(input, type) do
     result =
       case type do
-        :json -> ComputationBuilder.from_json(input)
-        :map -> ComputationBuilder.from_map(input)
+        :json -> ProcessorBuilder.from_json(input)
+        :map -> ProcessorBuilder.from_map(input)
       end
 
     case result do
-      {:ok, computation} -> computation
+      {:ok, processor} -> processor
       {:error, reason} -> raise reason
     end
   end

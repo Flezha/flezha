@@ -9,11 +9,11 @@ message CommandRequest {
     oneof command {
         AssignOperatorId assign_operator_id = 2;
         ConnectSocket connect_socket = 3;
-        AddComputation add_computation = 4;
-        RemComputation rem_computation = 5;
+        AddProcessor add_processor = 4;
+        RemProcessor rem_processor = 5;
         MigrationSerialization migration_serialization = 6;
         MigrationDeserialization migration_deserialization = 7;
-        ComputationState computation_state = 8;
+        ProcessorState processor_state = 8;
         OperatorDisconnect operator_disconnect = 9;
     }
 }
@@ -33,28 +33,28 @@ message ConnectSocket {
     uint32 sockets_count = 1;
 }
 
-message AddComputation {
-    string computation_id = 1;
+message AddProcessor {
+    string processor_id = 1;
     string factory_id = 2;
     string init_values = 3;
 }
 
-message RemComputation {
-    string computation_id = 1;
+message RemProcessor {
+    string processor_id = 1;
 }
 
 message MigrationSerialization {
-    string computation_id = 1;
+    string processor_id = 1;
 }
 
 message MigrationDeserialization {
-    string computation_id = 1;
+    string processor_id = 1;
     string factory_id = 2;
     bytes serialized_state = 3;
 }
 
-message ComputationState {
-    string computation_id = 1;
+message ProcessorState {
+    string processor_id = 1;
 }
 
 message OperatorDisconnect {}

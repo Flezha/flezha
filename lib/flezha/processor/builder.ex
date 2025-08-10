@@ -1,4 +1,4 @@
-defmodule Flezha.Computation.Builder do
+defmodule Flezha.Processor.Builder do
   alias Flezha.Service.Validator
 
   @type t() :: %__MODULE__{
@@ -22,22 +22,22 @@ defmodule Flezha.Computation.Builder do
          {:ok, factory_id} <- get_from_map(values_map, "factory_id"),
          init_values <- Map.get(values_map, "init_values", %{}),
          {:ok, init_values_json} <- Jason.decode(init_values) do
-      computation = %__MODULE__{
+      processor = %__MODULE__{
         id: id,
         factory_id: factory_id,
         init_values: init_values_json
       }
 
-      {:ok, computation}
+      {:ok, processor}
     else
       err -> err
     end
   end
 
-  def validate_computation(namespace, computation) do
-    with :ok <- Validator.byte_limit_exceed(computation.id),
+  def validate_processor(namespace, processor) do
+    with :ok <- Validator.byte_limit_exceed(processor.id),
          :ok <- Validator.valid_namespace(namespace),
-         :ok <- Validator.computation_unique(namespace, computation.id) do
+         :ok <- Validator.processor_unique(namespace, processor.id) do
       :ok
     else
       {:error, reason} -> {:error, reason}

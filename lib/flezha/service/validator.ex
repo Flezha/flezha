@@ -4,9 +4,9 @@ defmodule Flezha.Service.Validator do
 
   use Flezha.Constant
 
-  def byte_limit_exceed(value, max_length \\ @computation_id_max_bytes) do
+  def byte_limit_exceed(value, max_length \\ @processor_id_max_bytes) do
     case byte_size(value) > max_length do
-      true -> {:error, "computation id exceeds #{@computation_id_max_bytes} bytes"}
+      true -> {:error, "processor id exceeds #{@processor_id_max_bytes} bytes"}
       false -> :ok
     end
   end
@@ -18,16 +18,16 @@ defmodule Flezha.Service.Validator do
     end
   end
 
-  def computation_unique(namespace, computation_id) do
+  def processor_unique(namespace, processor_id) do
     result =
       ProcessHub.child_lookup(
         Identificator.hub(namespace),
-        computation_id
+        processor_id
       )
 
     case result do
       nil -> :ok
-      _ -> {:error, "computation id already in use"}
+      _ -> {:error, "processor id already in use"}
     end
   end
 end

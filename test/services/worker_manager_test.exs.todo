@@ -1,16 +1,16 @@
-defmodule FlezhaTest.ComputationManagerTest do
+defmodule FlezhaTest.ProcessorManagerTest do
   use ExUnit.Case
   use Flezha.Constant
 
-  import Flezha.Service.ComputationManager
+  import Flezha.Service.ProcessorManager
 
-  doctest Flezha.Service.ComputationManager
+  doctest Flezha.Service.ProcessorManager
 
   test "start worker" do
-    computation_id = "test_worker_start"
+    processor_id = "test_worker_start"
 
-    worker = %Flezha.Computation.Builder{
-      id: computation_id,
+    worker = %Flezha.Processor.Builder{
+      id: processor_id,
       factory_id: @factory_do_nothing
     }
 
@@ -18,13 +18,13 @@ defmodule FlezhaTest.ComputationManagerTest do
 
     assert elem(result, 0) === :ok
     assert is_tuple(elem(result, 1))
-    assert result |> elem(1) |> elem(0) === computation_id
+    assert result |> elem(1) |> elem(0) === processor_id
     assert is_list(result |> elem(1) |> elem(1))
   end
 
   test "stop worker" do
-    worker = %Flezha.Computation.Builder{
-      id: "rem_compuation_test",
+    worker = %Flezha.Processor.Builder{
+      id: "rem_process_test",
       factory_id: @factory_do_nothing
     }
 
@@ -45,13 +45,13 @@ defmodule FlezhaTest.ComputationManagerTest do
   end
 
   test "validate worker length" do
-    valid_worker = %Flezha.Computation.Builder{
+    valid_worker = %Flezha.Processor.Builder{
       id: "worker_string_32_bytes_long",
       factory_id: @factory_do_nothing
     }
 
-    invalid_worker = %Flezha.Computation.Builder{
-      id: "some_very_long_computation_id_that_should_fail",
+    invalid_worker = %Flezha.Processor.Builder{
+      id: "some_very_long_processor_id_that_should_fail",
       factory_id: @factory_do_nothing
     }
 

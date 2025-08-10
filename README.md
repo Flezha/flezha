@@ -1,7 +1,7 @@
 # Flezha
 
 ## Description
-Distributed stateful computations. Provdes a static and dynamic creation of computations.
+Distributed stateful processors. Provdes a static and dynamic creation of processors.
 
 ## Building
 - Copy `.env.example` and rename to `.env`
@@ -15,41 +15,41 @@ Distributed stateful computations. Provdes a static and dynamic creation of comp
 Starting the node and specifying the external processes to be used by the node mynode.
 PROD:
 ```bash
-RELEASE_NODE=mynode FLEZHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/flezha/test/apps/rust_operator/Cargo.toml --target-dir=./target" _build/prod/rel/flezha/bin/agent start --mode=attached_iex
+RELEASE_NODE=mynode FLEZHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/flezha/test/apps/rust_operator/Cargo.toml --target-dir=./target" _build/prod/rel/flezha/bin/flz agent start --mode=attached_iex
 ```
 
 DEV:
 ```bash
-RELEASE_NODE=mynode _build/dev/rel/flezha/bin/agent start --mode=attached_iex
+RELEASE_NODE=mynode _build/dev/rel/flezha/bin/flz agent start --mode=attached_iex
 ```
 
 ### Stop agent
 Stopping the node.
 ```bash
-_build/dev/rel/flezha/bin/agent stop
+_build/dev/rel/flezha/bin/flz agent stop
 ```
 
-### Starting a computation.
+### Starting a processor.
 ```bash
-_build/dev/rel/flezha/bin/computation start my_computation compare_filter --init_values='{
+_build/dev/rel/flezha/bin/flz processor start my_processor compare_filter --init_values='{
   "comparable": "hello world", 
   "inverted": false
 }'
 ```
 
 ```bash
-_build/dev/rel/flezha/bin/computation start my_computation do_nothing
+_build/dev/rel/flezha/bin/flzprocessor start my_processor do_nothing
 ```
 
-### Stop a computation.
+### Stop a processor.
 ```bash
-_build/dev/rel/flezha/bin/computation stop my_computation
+_build/dev/rel/flezha/bin/flz processor stop my_processor
 ```
 
-### Enabling websocket plugin for computation. 
+### Enabling websocket plugin for processor. 
 ```bash
-_build/dev/rel/flezha/bin/plugin enable computation_websocket  --settings='{
-  "computation_id": "my_computation",
+_build/dev/rel/flezha/bin/flz plugin enable processor_websocket  --settings='{
+  "processor_id": "my_processor",
   "trigger": "proactive",
   "uri": "ws://localhost:4500",
   "post_connect": {
@@ -62,15 +62,15 @@ _build/dev/rel/flezha/bin/plugin enable computation_websocket  --settings='{
 ```
 
 ```bash
-_build/dev/rel/flezha/bin/plugin enable computation_stdout  --settings='{
-  "computation_id": "my_computation",
+_build/dev/rel/flezha/bin/flz plugin enable processor_stdout  --settings='{
+  "processor_id": "my_processor",
   "trigger": "on_out",
 }'
 ```
 
-### Get computation state.
+### Get processor state.
 ```bash
-_build/dev/rel/flezha/bin/computation state my_computation
+_build/dev/rel/flezha/bin/flz processor state my_processor
 ```
 
 

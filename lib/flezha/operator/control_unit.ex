@@ -30,13 +30,13 @@ defmodule Flezha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:get_computation_state, computation_id}, from, state) do
+  def handle_call({:get_processor_state, processor_id}, from, state) do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
         {
-          :get_computation_state,
-          %OperatorCommands.ComputationState{computation_id: computation_id}
+          :get_processor_state,
+          %OperatorCommands.ProcessorState{processor_id: processor_id}
         }
       )
 
@@ -87,37 +87,37 @@ defmodule Flezha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call({:start_computation, computation}, from, state) do
+  def handle_call({:start_processor, processor}, from, state) do
     # TODO: Not sure if we should convert to map from the beginning.
     init_values =
-      case computation.init_values !== %{} do
+      case processor.init_values !== %{} do
         true ->
-          {:ok, json_iv} = Jason.encode(computation.init_values)
+          {:ok, json_iv} = Jason.encode(processor.init_values)
           json_iv
 
         false ->
           ""
       end
 
-    command = %OperatorCommands.AddComputation{
-      computation_id: computation.id,
-      factory_id: computation.factory_id,
+    command = %OperatorCommands.AddProcessor{
+      processor_id: processor.id,
+      factory_id: processor.factory_id,
       init_values: init_values
     }
 
-    {:ok, ref} = ControlChannel.send_control(state.operator_id, {:add_computation, command})
+    {:ok, ref} = ControlChannel.send_control(state.operator_id, {:add_processor, command})
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
   end
 
   @impl true
-  def handle_call({:stop_computation, computation_id}, from, state) do
+  def handle_call({:stop_processor, processor_id}, from, state) do
     {:ok, ref} =
       ControlChannel.send_control(
         state.operator_id,
         {
-          :rem_computation,
-          %OperatorCommands.RemComputation{computation_id: computation_id}
+          :rem_processor,
+          %OperatorCommands.RemProcessor{processor_id: processor_id}
         }
       )
 
