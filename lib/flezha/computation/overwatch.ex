@@ -17,7 +17,7 @@ defmodule Flezha.Computation.Overwatch do
 
   defstruct [
     :id,
-    :group_id,
+    :namespace,
     :operator_id,
     :factory_id,
     :channel,
@@ -34,7 +34,7 @@ defmodule Flezha.Computation.Overwatch do
   end
 
   @impl true
-  def init({group_id, operator_id, computation}) do
+  def init({namespace, operator_id, computation}) do
     snapshot_interval = Keyword.get(computation.opts, :snapshot_interval, @snapshop_interval)
 
     # TODO: Perhaps move to handle continue.
@@ -42,7 +42,7 @@ defmodule Flezha.Computation.Overwatch do
 
     state = %__MODULE__{
       id: computation.id,
-      group_id: group_id,
+      namespace: namespace,
       factory_id: computation.factory_id,
       init_values: computation.init_values,
       operator_id: operator_id,
@@ -74,7 +74,7 @@ defmodule Flezha.Computation.Overwatch do
 
   @impl true
   def handle_call(:registry_operator_set, _from, state) do
-    HubManager.computation_set_operator(state.group_id, state.id, state.operator_id)
+    HubManager.computation_set_operator(state.namespace, state.id, state.operator_id)
 
     {:reply, {:ok, state.operator_id}, state}
   end
@@ -384,9 +384,9 @@ defmodule Flezha.Computation.Overwatch do
       {:ok, {plugin_provider, pid}} ->
         plugin = %IOBindingPlugin{plugin | provider: plugin_provider, pid: pid}
 
-        # Add binding to the group using position-based insertion
+        # Add binding to the namespace using position-based insertion
         current_bindings = Map.get(bindings, plugin.trigger, [])
-        binding_group = insert_plugin_by_position(current_bindings, {plugin_id, plugin})
+        binding_namespace = insert_plugin_by_position(current_bindings, {plugin_id, plugin})
 
         case plugin.trigger do
           :interval -> add_interval_binding(plugin)
@@ -405,14 +405,14 @@ defmodule Flezha.Computation.Overwatch do
           true ->
             PluginManager.register_plugin(plugin_id, {
               plugin.__struct__,
-              {plugin.group, plugin.computation_id}
+              {plugin.namespace, plugin.computation_id}
             })
 
           _ ->
             nil
         end
 
-        {:ok, Map.put(bindings, plugin.trigger, binding_group)}
+        {:ok, Map.put(bindings, plugin.trigger, binding_namespace)}
 
       {:error, reason} ->
         {:error, reason}
@@ -442,7 +442,8 @@ defmodule Flezha.Computation.Overwatch do
     plugin_group = Map.get(metadata, "plugin_group", "0")
 
     Enum.reduce_while(bindings, {message, metadata}, fn
-      {_, %IOBindingPlugin{provider: p, plugin_group: pg}}, payload when plugin_group === pg ->
+      {_, %IOBindingPlugin{provider: p, plugin_group: pg}}, payload
+      when plugin_group === pg ->
         case IOBinding.exec(p, payload) do
           {:ok, payload} -> {:cont, payload}
           {:skip, :normal} -> {:halt, nil}

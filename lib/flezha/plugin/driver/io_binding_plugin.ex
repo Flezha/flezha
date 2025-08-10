@@ -4,7 +4,7 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
 
   @behaviour PluginBehaviour
 
-  @enforce_keys [:group, :computation_id, :trigger, :provider]
+  @enforce_keys [:namespace, :computation_id, :trigger, :provider]
   defstruct @enforce_keys ++
               [
                 pid: nil,
@@ -14,12 +14,12 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
 
   @impl true
   def enable(plugin_id, plugin) do
-    case ComputationManager.get_computation_pid(plugin.group, plugin.computation_id) do
+    case ComputationManager.get_computation_pid(plugin.namespace, plugin.computation_id) do
       {:ok, computation_pid} ->
         result = GenServer.call(computation_pid, {:enable_plugin, plugin_id, plugin})
 
         case result do
-          :ok -> {:ok, {__MODULE__, {plugin.group, plugin.computation_id}}}
+          :ok -> {:ok, {__MODULE__, {plugin.namespace, plugin.computation_id}}}
           {:error, reason} -> {:error, reason}
         end
 
@@ -29,8 +29,8 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
   end
 
   @impl true
-  def disable(plugin_id, {group, computation_id}) do
-    case ComputationManager.get_computation_pid(group, computation_id) do
+  def disable(plugin_id, {namespace, computation_id}) do
+    case ComputationManager.get_computation_pid(namespace, computation_id) do
       {:ok, computation_pid} ->
         result = GenServer.call(computation_pid, {:disable_plugin, plugin_id})
 
@@ -45,7 +45,7 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
   end
 
   def build(string_map, provider_struct) do
-    struct_fields = [:group, :computation_id, :trigger, :plugin_group, :position]
+    struct_fields = [:namespace, :computation_id, :trigger, :plugin_group, :position]
 
     params =
       Enum.reduce(struct_fields, %{}, fn field, acc ->
@@ -60,7 +60,7 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
     # Set defaults
     params =
       params
-      |> Map.put_new(:group, "default")
+      |> Map.put_new(:namespace, "default")
       |> Map.put_new(:plugin_group, "0")
       |> Map.put_new(:position, nil)
       |> Map.put(:provider, provider_struct)

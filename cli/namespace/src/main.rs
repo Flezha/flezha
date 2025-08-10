@@ -24,13 +24,13 @@ fn handle_list(args: Vec<String>) {
 
     let command = get_flezha_command();
     let rpc_command = format!(
-        "Flezha.Service.CliManager.list_groups(\"{}\")",
+        "Flezha.Service.CliManager.list_namespaces(\"{}\")",
         output_format
     );
 
     // Only show progress message for text output
     if output_format == "text" {
-        println!("Fetching groups...");
+        println!("Fetching namespaces...");
     }
 
     let status = Command::new(command)

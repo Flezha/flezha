@@ -16,7 +16,7 @@ defmodule FlezhaTest.IOManagerTest do
   test "add IO input" do
     res1 =
       IOManager.add_io(
-        @default_group,
+        @default_namespace,
         @computation_id,
         %Flezha.IO.Handler.BeamProcess{output_pid: self()},
         :input,
@@ -25,7 +25,7 @@ defmodule FlezhaTest.IOManagerTest do
 
     res2 =
       IOManager.add_io(
-        @default_group,
+        @default_namespace,
         "none",
         %Flezha.IO.Handler.BeamProcess{output_pid: self()},
         :input,

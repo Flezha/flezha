@@ -8,8 +8,8 @@ defmodule Flezha.Operator.ControlChannel do
 
   use GenServer
 
-  def start_link({group_id, operator_id, sock}) do
-    GenServer.start_link(__MODULE__, {group_id, operator_id, sock},
+  def start_link({namespace, operator_id, sock}) do
+    GenServer.start_link(__MODULE__, {namespace, operator_id, sock},
       name: Identificator.control_channel(operator_id)
     )
   end
@@ -46,12 +46,12 @@ defmodule Flezha.Operator.ControlChannel do
   end
 
   @impl true
-  def init({group_id, operator_id, sock}) do
+  def init({namespace, operator_id, sock}) do
     SocketSupport.set_active(sock)
 
     {:ok,
      %{
-       group_id: group_id,
+       namespace: namespace,
        operator_id: operator_id,
        sock: sock,
        control_unit: Identificator.control_unit(operator_id),
@@ -81,12 +81,12 @@ defmodule Flezha.Operator.ControlChannel do
   @impl true
   def handle_info({:tcp_closed, _socket}, state) do
     Logger.warning(
-      "TCP connection closed for control socket for #{state.operator_id} on #{state.group_id}"
+      "TCP connection closed for control socket for #{state.operator_id} on #{state.namespace}"
     )
 
     GenServer.call(FleetManager, {
       :operator_disconnected,
-      state.group_id,
+      state.namespace,
       state.operator_id
     })
 

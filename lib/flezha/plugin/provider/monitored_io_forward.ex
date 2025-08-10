@@ -6,7 +6,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   use GenServer
   use ProviderBehaviour
 
-  @enforce_keys [:recv_pid, :plugin_id, :computation_id, :group]
+  @enforce_keys [:recv_pid, :plugin_id, :computation_id, :namespace]
   defstruct @enforce_keys ++ [:binding_pid, heartbeat_interval: 5000]
 
   @impl true

@@ -4,6 +4,7 @@
         "./sdk/rust/Cargo.toml",
         "./cli/agent/Cargo.toml",
         "./cli/computation/Cargo.toml",
+        "./cli/namespace/Cargo.toml",
         "./cli/plugin/Cargo.toml",
     ],
     "rust-analyzer.cargo.loadOutDirsFromCheck": true,

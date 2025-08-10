@@ -30,7 +30,7 @@ fn main() {
 }
 
 fn handle_start(args: Vec<String>) {
-    let example_usage = format!("Usage: {} start <computation_id> <factory_id> [--group <group_id> | -g <group_id>] [--init_values <json> | -iv <json>]", args[0]);
+    let example_usage = format!("Usage: {} start <computation_id> <factory_id> [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>]", args[0]);
 
     if args.len() < 3 {
         eprintln!(
@@ -53,14 +53,14 @@ fn handle_start(args: Vec<String>) {
 
     let opts_json = serde_json::to_string(&opts).unwrap();
     let command = get_flezha_command();
-    let group_id = get_namespace(&args[4..]);
+    let namespace = get_namespace(&args[4..]);
 
     let escaped_init_values = init_values.replace("\"", "\\\"");
     let escaped_opts_json = opts_json.replace("\"", "\\\"");
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.computation_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
-        group_id, computation_id, factory_id, escaped_init_values, escaped_opts_json,
+        namespace, computation_id, factory_id, escaped_init_values, escaped_opts_json,
     );
 
     println!("Starting computation...");
@@ -87,11 +87,11 @@ fn handle_stop(args: Vec<String>) {
     }
 
     let computation_id = &args[2];
-    let group_id = get_namespace(&args[3..]);
+    let namespace = get_namespace(&args[3..]);
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.computation_stop(\"{}\", \"{}\")",
-        group_id, computation_id,
+        namespace, computation_id,
     );
 
     let command = get_flezha_command();
@@ -118,11 +118,11 @@ fn handle_state(args: Vec<String>) {
     }
 
     let computation_id = &args[2];
-    let group_id = get_namespace(&args[3..]);
+    let namespace = get_namespace(&args[3..]);
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.computation_state(\"{}\", \"{}\")",
-        group_id, computation_id,
+        namespace, computation_id,
     );
 
     let command = get_flezha_command();
@@ -137,23 +137,26 @@ fn handle_state(args: Vec<String>) {
 }
 
 fn handle_list(args: Vec<String>) {
-    let group_id = get_namespace(&args[2..]);
+    let namespace = get_namespace(&args[2..]);
     let output_format = get_output_format(&args[2..]);
 
     let command = get_flezha_command();
     let rpc_command = format!(
         "Flezha.Service.CliManager.list_computations(\"{}\", \"{}\")",
-        group_id, output_format
+        namespace, output_format
     );
 
     // Only show progress message for text output
     if output_format == "text" {
-        let display_group = if group_id.is_empty() {
+        let display_namespace = if namespace.is_empty() {
             "default"
         } else {
-            &group_id
+            &namespace
         };
-        println!("Fetching computations for group '{}'...", display_group);
+        println!(
+            "Fetching computations for namespace '{}'...",
+            display_namespace
+        );
     }
 
     let status = Command::new(command)
@@ -169,25 +172,25 @@ fn handle_list(args: Vec<String>) {
 }
 
 fn handle_info(args: Vec<String>) {
-    let group_id = get_namespace(&args[2..]);
+    let namespace = get_namespace(&args[2..]);
     let output_format = get_output_format(&args[2..]);
 
     let command = get_flezha_command();
     let rpc_command = format!(
         "Flezha.Service.CliManager.computation_info(\"{}\", \"{}\")",
-        group_id, output_format
+        namespace, output_format
     );
 
     // Only show progress message for text output
     if output_format == "text" {
-        let display_group = if group_id.is_empty() {
+        let display_namespace = if namespace.is_empty() {
             "default"
         } else {
-            &group_id
+            &namespace
         };
         println!(
-            "Fetching computation information for group '{}'...",
-            display_group
+            "Fetching computation information for namespace '{}'...",
+            display_namespace
         );
     }
 
@@ -204,7 +207,7 @@ fn handle_info(args: Vec<String>) {
 }
 
 fn handle_io_listen(args: Vec<String>) {
-    let example_usage = format!("Usage: {} io_listen input|output <computation_id> [--group <group_id> | -g <group_id>]", args[0]);
+    let example_usage = format!("Usage: {} io_listen input|output <computation_id> [--namespace <namespace> | -n <namespace>]", args[0]);
 
     if args.len() < 4 {
         eprintln!(
@@ -216,22 +219,28 @@ fn handle_io_listen(args: Vec<String>) {
 
     let io_type = &args[2];
     let computation_id = &args[3];
-    
+
     // Validate io_type
     if io_type != "input" && io_type != "output" {
-        eprintln!("Error: Invalid IO type '{}'. Use 'input' or 'output' only.", io_type);
+        eprintln!(
+            "Error: Invalid IO type '{}'. Use 'input' or 'output' only.",
+            io_type
+        );
         exit(1);
     }
 
-    let group_id = get_namespace(&args[4..]);
+    let namespace = get_namespace(&args[4..]);
     let command = get_flezha_command();
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.computation_listen(\"{}\", \"{}\", \"{}\")",
-        group_id, computation_id, io_type
+        namespace, computation_id, io_type
     );
 
-    println!("Starting IO listener for computation '{}' ({} mode)...", computation_id, io_type);
+    println!(
+        "Starting IO listener for computation '{}' ({} mode)...",
+        computation_id, io_type
+    );
 
     let status = Command::new(command)
         .arg("rpc")

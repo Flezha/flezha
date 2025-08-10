@@ -14,11 +14,11 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
     }
   end
 
-  def start(computation, group \\ @default_group) do
+  def start(computation, namespace \\ @default_namespace) do
     self = self()
 
     ProcessHub.Service.HookManager.register_handler(
-      Identificator.hub(group),
+      Identificator.hub(namespace),
       Hook.registry_pid_inserted(),
       %ProcessHub.Service.HookManager{
         id: "registry_pid_inserted",
@@ -28,7 +28,7 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
       }
     )
 
-    result = Flezha.Service.ComputationManager.start_computation(group, computation)
+    result = Flezha.Service.ComputationManager.start_computation(namespace, computation)
 
     receive do
       :hook_reg_insert_recv -> :ok
@@ -37,7 +37,7 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
     end
 
     ProcessHub.Service.HookManager.cancel_handler(
-      Identificator.hub(group),
+      Identificator.hub(namespace),
       Hook.registry_pid_inserted(),
       "registry_pid_inserted"
     )
@@ -45,14 +45,17 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
     result
   end
 
-  def stop(computation_id, group \\ @default_group) do
-    Flezha.Service.ComputationManager.stop_computation(group, computation_id)
+  def stop(computation_id, namespace \\ @default_namespace) do
+    Flezha.Service.ComputationManager.stop_computation(namespace, computation_id)
   end
 
-  def attach_output_msg({:ok, %{computation_id: cid}} = start_res, group \\ @default_group) do
+  def attach_output_msg(
+        {:ok, %{computation_id: cid}} = start_res,
+        namespace \\ @default_namespace
+      ) do
     {:ok, "plugin enabled"} =
       PluginManager.enable_plugin("output_msg_handler", %Flezha.Plugin.Driver.IOBindingPlugin{
-        group: group,
+        namespace: namespace,
         computation_id: cid,
         trigger: :on_output,
         provider: %Flezha.Plugin.Provider.BeamMsgForward{
@@ -68,7 +71,7 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
   # def attach_input(computation, handler, opts \\ []) do
   #   {:ok, __id} =
   #     Flezha.add_io(
-  #       @default_group,
+  #       @default_namespace,
   #       computation.id,
   #       get_io_handler(handler, :input),
   #       :input,
@@ -81,7 +84,7 @@ defmodule FlezhaTest.Fixtures.ComputationFixture do
   # def attach_output(computation, handler) do
   #   {:ok, _id} =
   #     Flezha.add_io(
-  #       @default_group,
+  #       @default_namespace,
   #       computation.id,
   #       get_io_handler(handler, :output),
   #       :output,

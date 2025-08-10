@@ -16,10 +16,10 @@ defmodule Flezha.Operator.FleetSupervisor do
     Supervisor.stop(__MODULE__)
   end
 
-  def start_operator_sup(group_id, operator_id, sock) do
+  def start_operator_sup(namespace, operator_id, sock) do
     Supervisor.start_child(__MODULE__, %{
       id: operator_id,
-      start: {OperatorSupervisor, :start_link, [{group_id, operator_id, sock}]}
+      start: {OperatorSupervisor, :start_link, [{namespace, operator_id, sock}]}
     })
   end
 

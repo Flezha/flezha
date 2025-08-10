@@ -15,37 +15,37 @@ defmodule Flezha.Service.HubManager do
     Supervisor.stop(__MODULE__)
   end
 
-  def start_hub(group_id) do
-    Supervisor.start_child(__MODULE__, process_hub(group_id))
+  def start_hub(namespace) do
+    Supervisor.start_child(__MODULE__, process_hub(namespace))
   end
 
-  def stop_hub(group_id) do
-    Supervisor.terminate_child(__MODULE__, Identificator.hub(group_id))
-    Supervisor.delete_child(__MODULE__, Identificator.hub(group_id))
+  def stop_hub(namespace) do
+    Supervisor.terminate_child(__MODULE__, Identificator.hub(namespace))
+    Supervisor.delete_child(__MODULE__, Identificator.hub(namespace))
   end
 
-  def hub_alive?(group_id) do
-    ProcessHub.is_alive?(Identificator.hub(group_id))
+  def hub_alive?(namespace) do
+    ProcessHub.is_alive?(Identificator.hub(namespace))
   end
 
-  def get_running_group_ids() do
+  def get_running_namespaces() do
     Supervisor.which_children(__MODULE__)
     |> Enum.map(fn {id, _pid, _type, _modules} -> id end)
     |> Enum.filter(fn id -> ProcessHub.is_alive?(id) end)
-    |> Enum.map(&extract_group_id_from_hub/1)
+    |> Enum.map(&extract_namespace_from_hub/1)
     |> Enum.reject(&is_nil/1)
   end
 
-  defp extract_group_id_from_hub(hub_id) when is_atom(hub_id) do
+  defp extract_namespace_from_hub(hub_id) when is_atom(hub_id) do
     hub_id
     |> Atom.to_string()
     |> String.replace_suffix("_hub", "")
   end
 
-  defp extract_group_id_from_hub(_), do: nil
+  defp extract_namespace_from_hub(_), do: nil
 
-  def get_registry(group_id) do
-    hub_id = Identificator.hub(group_id)
+  def get_registry(namespace) do
+    hub_id = Identificator.hub(namespace)
 
     case ProcessHub.is_alive?(hub_id) do
       true ->
@@ -56,7 +56,7 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def get_hub_nodes(group_id, include_local \\ false) do
+  def get_hub_nodes(namespace, include_local \\ false) do
     opts =
       case include_local do
         true ->
@@ -66,7 +66,7 @@ defmodule Flezha.Service.HubManager do
           []
       end
 
-    hub_id = Identificator.hub(group_id)
+    hub_id = Identificator.hub(namespace)
 
     if ProcessHub.is_alive?(hub_id) do
       ProcessHub.nodes(hub_id, opts)
@@ -75,8 +75,8 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def get_pid(group_id, computation_id) do
-    hub_id = Identificator.hub(group_id)
+  def get_pid(namespace, computation_id) do
+    hub_id = Identificator.hub(namespace)
 
     case ProcessHub.get_pids(hub_id, computation_id) do
       [] ->
@@ -87,8 +87,8 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def get_all_computations(group_id) do
-    hub_id = Identificator.hub(group_id)
+  def get_all_computations(namespace) do
+    hub_id = Identificator.hub(namespace)
 
     if ProcessHub.is_alive?(hub_id) do
       ProcessHub.process_list(hub_id, :global)
@@ -100,9 +100,9 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def register_handler(group_id, operator_id) do
+  def register_handler(namespace, operator_id) do
     HookManager.register_handler(
-      Identificator.hub(group_id),
+      Identificator.hub(namespace),
       Hook.registry_pid_inserted(),
       %HookManager{
         id: operator_id <> "_hub_pid_insertion",
@@ -113,35 +113,35 @@ defmodule Flezha.Service.HubManager do
     )
   end
 
-  def unregister_handler(group_id, operator_id) do
+  def unregister_handler(namespace, operator_id) do
     HookManager.cancel_handler(
-      Identificator.hub(group_id),
+      Identificator.hub(namespace),
       Hook.registry_pid_inserted(),
       operator_id <> "_hub_pid_insertion"
     )
   end
 
-  def operator_computations(group_id, operator_id) do
-    hub_id = Identificator.hub(group_id)
+  def operator_computations(namespace, operator_id) do
+    hub_id = Identificator.hub(namespace)
 
     ProcessHub.tag_query(hub_id, operator_id)
   end
 
-  def operator_switch(group_id, old_operator_id, new_operator_id) do
-    hub_id = Identificator.hub(group_id)
+  def operator_switch(namespace, old_operator_id, new_operator_id) do
+    hub_id = Identificator.hub(namespace)
 
     # Updates the operator id in the registry.
-    operator_computations(group_id, old_operator_id)
+    operator_computations(namespace, old_operator_id)
     |> Enum.each(fn {computation_id, [{_node, _computation_pid}]} ->
-      computation_set_operator(group_id, computation_id, new_operator_id)
+      computation_set_operator(namespace, computation_id, new_operator_id)
     end)
 
-    # Propagate the change to all nodes in the group.
+    # Propagate the change to all nodes in the namespace.
     ProcessHub.Service.Synchronizer.trigger_sync(hub_id)
   end
 
-  def computation_set_operator(group_id, computation_id, operator_id) do
-    hub_id = Identificator.hub(group_id)
+  def computation_set_operator(namespace, computation_id, operator_id) do
+    hub_id = Identificator.hub(namespace)
 
     case ProcessHub.is_alive?(hub_id) do
       true ->
@@ -184,17 +184,17 @@ defmodule Flezha.Service.HubManager do
   def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do
     %{start: {m, f, [arg]}} = cs
 
-    {group_id, computation} =
+    {namespace, computation} =
       case arg do
-        {group_id, computation} ->
-          {group_id, computation}
+        {namespace, computation} ->
+          {namespace, computation}
 
-        {group_id, _existing_operator, computation} ->
-          {group_id, computation}
+        {namespace, _existing_operator, computation} ->
+          {namespace, computation}
       end
 
-    assigned_operator = ComputationManager.assign_operator(group_id)
-    new_args = [{group_id, assigned_operator, computation}]
+    assigned_operator = ComputationManager.assign_operator(namespace)
+    new_args = [{namespace, assigned_operator, computation}]
 
     child_data
     |> put_in([:child_spec, :start], {m, f, new_args})
@@ -206,8 +206,8 @@ defmodule Flezha.Service.HubManager do
     Supervisor.init([], strategy: :one_for_one)
   end
 
-  defp process_hub(group_id) do
-    hub_id = Identificator.hub(group_id)
+  defp process_hub(namespace) do
+    hub_id = Identificator.hub(namespace)
 
     # TODO: The hub settings should be configurable.
     ProcessHub.child_spec(%ProcessHub{

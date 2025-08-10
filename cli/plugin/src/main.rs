@@ -1,4 +1,6 @@
-use shared_lib::{get_flezha_command, extract_x_flags, extract_opts_with_default_group, serialize_flags};
+use shared_lib::{
+    extract_opts_with_default_namespace, extract_x_flags, get_flezha_command, serialize_flags,
+};
 use std::env;
 use std::process::{exit, Command};
 
@@ -20,7 +22,7 @@ fn main() {
 
 fn handle_enable(args: Vec<String>) {
     let example_usage = format!(
-        "Usage: {} enable <plugin_id> <provider_id> [Xkey=value] [--option value]\nExample: {} enable computation_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic --group mygroup",
+        "Usage: {} enable <plugin_id> <provider_id> [Xkey=value] [--option value]\nExample: {} enable computation_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic --namespace mynamespace",
         args[0], args[0]
     );
 
@@ -39,9 +41,9 @@ fn handle_enable(args: Vec<String>) {
     // Extract X-prefixed flags (plugin settings)
     let x_flags = extract_x_flags(&args[4..]);
     let x_flags_json = serialize_flags(&x_flags);
-    
-    // Extract opts flags (CLI options with default group)
-    let opts_flags = extract_opts_with_default_group(&args[4..]);
+
+    // Extract opts flags (CLI options with default namespace)
+    let opts_flags = extract_opts_with_default_namespace(&args[4..]);
     let opts_json = serialize_flags(&opts_flags);
 
     let rpc_command = format!(
@@ -68,10 +70,7 @@ fn handle_enable(args: Vec<String>) {
 }
 
 fn handle_disable(args: Vec<String>) {
-    let example_usage = format!(
-        "Usage: {} disable <plugin_id>",
-        args[0]
-    );
+    let example_usage = format!("Usage: {} disable <plugin_id>", args[0]);
 
     if args.len() < 3 {
         eprintln!(

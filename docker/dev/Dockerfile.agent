@@ -12,7 +12,7 @@ WORKDIR /flezha
 COPY . .
 
 # Create a non-root user and its home directory
-RUN addgroup --gid 1000 flezha && adduser --uid 1000 --gid 1000 --home /home/flezha flezha
+RUN addnamespace --gid 1000 flezha && adduser --uid 1000 --gid 1000 --home /home/flezha flezha
 
 # Create home directory for the flezha user
 RUN mkdir -p /home/flezha && \

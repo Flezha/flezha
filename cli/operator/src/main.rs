@@ -20,23 +20,26 @@ fn main() {
 }
 
 fn handle_list(args: Vec<String>) {
-    let group_id = get_namespace(&args[2..]);
+    let namespace = get_namespace(&args[2..]);
     let output_format = get_output_format(&args[2..]);
 
     let command = get_flezha_command();
     let rpc_command = format!(
         "Flezha.Service.CliManager.list_operators(\"{}\", \"{}\")",
-        group_id, output_format
+        namespace, output_format
     );
 
     // Only show progress message for text output
     if output_format == "text" {
-        let display_group = if group_id.is_empty() {
+        let display_namespace = if namespace.is_empty() {
             "default"
         } else {
-            &group_id
+            &namespace
         };
-        println!("Fetching operators for group '{}'...", display_group);
+        println!(
+            "Fetching operators for namespace '{}'...",
+            display_namespace
+        );
     }
 
     let status = Command::new(command)

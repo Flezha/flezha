@@ -11,17 +11,17 @@ defmodule Flezha.Service.Validator do
     end
   end
 
-  def valid_group(group_id) do
-    case HubManager.hub_alive?(group_id) do
+  def valid_namespace(namespace) do
+    case HubManager.hub_alive?(namespace) do
       true -> :ok
-      false -> {:error, "no operators in group #{group_id}"}
+      false -> {:error, "no operators in namespace #{namespace}"}
     end
   end
 
-  def computation_unique(group_id, computation_id) do
+  def computation_unique(namespace, computation_id) do
     result =
       ProcessHub.child_lookup(
-        Identificator.hub(group_id),
+        Identificator.hub(namespace),
         computation_id
       )
 

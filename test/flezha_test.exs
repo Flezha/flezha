@@ -14,8 +14,8 @@ defmodule FlezhaTest do
 
   doctest Flezha
 
-  @default_group "default"
-  @temp_group "test_temp_group"
+  @default_namespace "default"
+  @temp_namespace "test_temp_namespace"
   @node_name NodeTestHelper.node_name()
 
   @test_store_input_factory "store_input"
@@ -28,15 +28,15 @@ defmodule FlezhaTest do
 
   setup _context do
     on_exit(fn ->
-      ComputationManager.stop_all_computations(@default_group)
-      FleetManager.stop_group(@temp_group)
+      ComputationManager.stop_all_computations(@default_namespace)
+      FleetManager.stop_namespace(@temp_namespace)
     end)
 
     :ok
   end
 
   test "operator node connect" do
-    res = Flezha.Operator.FleetManager.active_operators(@default_group)
+    res = Flezha.Operator.FleetManager.active_operators(@default_namespace)
     assert length(res) === 2
     Enum.each(res, &assert(is_binary(&1)))
   end
@@ -48,7 +48,7 @@ defmodule FlezhaTest do
       factory_id: @test_computation_factory
     }
 
-    {status, info} = ComputationManager.start_computation(@default_group, computation)
+    {status, info} = ComputationManager.start_computation(@default_namespace, computation)
 
     assert status === :ok
     assert info[:computation_id] === "default_computation_test"
@@ -65,12 +65,12 @@ defmodule FlezhaTest do
       |> ComputationFixture.get(@test_store_input_factory)
       |> ComputationFixture.start()
 
-    assert :ok === ComputationManager.stop_computation(@default_group, computation_id)
+    assert :ok === ComputationManager.stop_computation(@default_namespace, computation_id)
 
     # TODO: add hook instead to listen to process removal.
     Process.sleep(100)
 
-    assert ComputationManager.exist?(@default_group, computation_id) === false
+    assert ComputationManager.exist?(@default_namespace, computation_id) === false
   end
 
   test "computation adding non existing factory" do
@@ -82,7 +82,7 @@ defmodule FlezhaTest do
     }
 
     {status, %{computation_id: pid, node: node, reason: reason}} =
-      ComputationManager.start_computation(@default_group, computation)
+      ComputationManager.start_computation(@default_namespace, computation)
 
     assert status === :error
     assert pid === computation_id
@@ -99,12 +99,12 @@ defmodule FlezhaTest do
       factory_id: @test_computation_factory
     }
 
-    {:ok, _} = ComputationManager.start_computation(@default_group, computation)
+    {:ok, _} = ComputationManager.start_computation(@default_namespace, computation)
 
     # TODO: add failures also.
     res =
       PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
-        group: @default_group,
+        namespace: @default_namespace,
         computation_id: computation_id,
         trigger: :proactive,
         provider: %Flezha.Plugin.Provider.Websocket{
@@ -137,11 +137,11 @@ defmodule FlezhaTest do
       factory_id: @test_computation_factory
     }
 
-    {:ok, _} = ComputationManager.start_computation(@default_group, computation)
+    {:ok, _} = ComputationManager.start_computation(@default_namespace, computation)
 
     res =
       PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
-        group: @default_group,
+        namespace: @default_namespace,
         computation_id: computation_id,
         trigger: :on_output,
         provider: %Flezha.Plugin.Provider.BeamMsgForward{
@@ -162,10 +162,10 @@ defmodule FlezhaTest do
       init_values: %{"comparable" => "hello world", "inverted" => false}
     }
 
-    {:ok, _} = ComputationManager.start_computation(@default_group, computation)
+    {:ok, _} = ComputationManager.start_computation(@default_namespace, computation)
 
     PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
-      group: @default_group,
+      namespace: @default_namespace,
       computation_id: computation_id,
       trigger: :on_output,
       provider: %Flezha.Plugin.Provider.BeamMsgForward{
@@ -174,7 +174,7 @@ defmodule FlezhaTest do
     })
 
     PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
-      group: @default_group,
+      namespace: @default_namespace,
       computation_id: computation_id,
       trigger: :proactive,
       provider: %Flezha.Plugin.Provider.Websocket{
@@ -216,10 +216,12 @@ defmodule FlezhaTest do
       |> ComputationFixture.start()
       |> ComputationFixture.attach_output_msg()
 
-    ComputationTestHelper.send_sync_io(computation_id, @default_group, "state_1", %{})
-    ComputationTestHelper.send_sync_io(computation_id, @default_group, "state_2", %{})
+    ComputationTestHelper.send_sync_io(computation_id, @default_namespace, "state_1", %{})
+    ComputationTestHelper.send_sync_io(computation_id, @default_namespace, "state_2", %{})
 
-    {:ok, json_state} = ComputationManager.get_computation_state(@default_group, computation_id)
+    {:ok, json_state} =
+      ComputationManager.get_computation_state(@default_namespace, computation_id)
+
     computation_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert computation_state === %{
@@ -245,8 +247,8 @@ defmodule FlezhaTest do
       |> ComputationFixture.start()
       |> ComputationFixture.attach_output_msg()
 
-    ComputationTestHelper.send_sync_io(computation_id, @default_group, "test_state_1", %{})
-    ComputationTestHelper.send_sync_io(computation_id, @default_group, "test_state_2", %{})
+    ComputationTestHelper.send_sync_io(computation_id, @default_namespace, "test_state_1", %{})
+    ComputationTestHelper.send_sync_io(computation_id, @default_namespace, "test_state_2", %{})
 
     test_state = %{
       "binary_inputs" => [],
@@ -254,16 +256,17 @@ defmodule FlezhaTest do
     }
 
     PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
-      group: @default_group,
+      namespace: @default_namespace,
       computation_id: computation_id,
       trigger: :proactive,
       provider: %Flezha.Plugin.Provider.StdOut{}
     })
 
-    {:ok, json_state} = ComputationManager.get_computation_state(@default_group, computation_id)
+    {:ok, json_state} =
+      ComputationManager.get_computation_state(@default_namespace, computation_id)
 
     {:ok, old_overwatch_state} =
-      ComputationManager.get_overwatch_state(@default_group, computation_id)
+      ComputationManager.get_overwatch_state(@default_namespace, computation_id)
 
     computation_state = Flezha.Service.Payloader.json_to_map(json_state)
 
@@ -274,10 +277,11 @@ defmodule FlezhaTest do
     # TODO: add hook here instead
     Process.sleep(500)
 
-    {:ok, json_state} = ComputationManager.get_computation_state(@default_group, computation_id)
+    {:ok, json_state} =
+      ComputationManager.get_computation_state(@default_namespace, computation_id)
 
     {:ok, new_overwatch_state} =
-      ComputationManager.get_overwatch_state(@default_group, computation_id)
+      ComputationManager.get_overwatch_state(@default_namespace, computation_id)
 
     computation_state = Flezha.Service.Payloader.json_to_map(json_state)
 
@@ -288,57 +292,57 @@ defmodule FlezhaTest do
 
   @tag :operator_disconnect
   test "operator disconnect" do
-    group_id = @temp_group
-    operator_id = NodeTestHelper.start_operator(group_id)
+    namespace = @temp_namespace
+    operator_id = NodeTestHelper.start_operator(namespace)
 
-    NodeTestHelper.stop_operator(group_id, operator_id)
+    NodeTestHelper.stop_operator(namespace, operator_id)
 
-    assert Flezha.Operator.FleetManager.active_operators(group_id) === []
+    assert Flezha.Operator.FleetManager.active_operators(namespace) === []
   end
 
   @tag :operator_disconnect_migrate_op
   test "operator disconnect migrate op" do
-    group_id = @temp_group
+    namespace = @temp_namespace
     computation_id_1 = "computation_1"
     computation_id_2 = "computation_2"
 
-    # Start 2 operators under the same group.
-    operator_id_1 = NodeTestHelper.start_operator(group_id)
-    operator_id_2 = NodeTestHelper.start_operator(group_id)
+    # Start 2 operators under the same namespace.
+    operator_id_1 = NodeTestHelper.start_operator(namespace)
+    operator_id_2 = NodeTestHelper.start_operator(namespace)
 
     # Start a few computations and store some state on them.
     {:ok, %{pid: _computation_pid_1, operator_id: pipe1_op}} =
       computation_id_1
       |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(group_id)
-      |> ComputationFixture.attach_output_msg(group_id)
+      |> ComputationFixture.start(namespace)
+      |> ComputationFixture.attach_output_msg(namespace)
 
     {:ok, %{pid: _computation_pid_2, operator_id: _pipe2_op}} =
       computation_id_2
       |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(group_id)
-      |> ComputationFixture.attach_output_msg(group_id)
+      |> ComputationFixture.start(namespace)
+      |> ComputationFixture.attach_output_msg(namespace)
 
-    ComputationTestHelper.send_sync_io(computation_id_1, group_id, "state_1", %{})
-    ComputationTestHelper.send_sync_io(computation_id_2, group_id, "state_2", %{})
+    ComputationTestHelper.send_sync_io(computation_id_1, namespace, "state_1", %{})
+    ComputationTestHelper.send_sync_io(computation_id_2, namespace, "state_2", %{})
 
-    ComputationManager.create_snapshot(group_id, computation_id_1)
-    ComputationManager.create_snapshot(group_id, computation_id_2)
+    ComputationManager.create_snapshot(namespace, computation_id_1)
+    ComputationManager.create_snapshot(namespace, computation_id_2)
 
     active_operator = if pipe1_op === operator_id_1, do: operator_id_2, else: operator_id_1
 
     # Trigger the operator disconnect.
-    NodeTestHelper.stop_operator(group_id, pipe1_op)
+    NodeTestHelper.stop_operator(namespace, pipe1_op)
 
     # Make sure all the computations are migrated to the other operator.
-    ComputationManager.computation_registry(group_id)
+    ComputationManager.computation_registry(namespace)
     |> Enum.each(fn {_computation_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
       assert new_operator === active_operator
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_computation_state(group_id, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_computation_state(group_id, computation_id_2)
+    {:ok, json_state_1} = ComputationManager.get_computation_state(namespace, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_computation_state(namespace, computation_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
@@ -346,10 +350,10 @@ defmodule FlezhaTest do
 
   @tag :operator_disconnect_preserve
   test "operator disconnect preserve" do
-    # Start 2 operators under the same group.
-    group_id = @temp_group
-    operator_id_1 = NodeTestHelper.start_operator(group_id)
-    operator_id_2 = NodeTestHelper.start_operator(group_id)
+    # Start 2 operators under the same namespace.
+    namespace = @temp_namespace
+    operator_id_1 = NodeTestHelper.start_operator(namespace)
+    operator_id_2 = NodeTestHelper.start_operator(namespace)
 
     # Start a few computations and store some state on them.
     computation_id_1 = "computation_1"
@@ -358,43 +362,43 @@ defmodule FlezhaTest do
     {:ok, %{pid: _computation_pid_1, operator_id: _pipe1_op}} =
       computation_id_1
       |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(group_id)
-      |> ComputationFixture.attach_output_msg(group_id)
+      |> ComputationFixture.start(namespace)
+      |> ComputationFixture.attach_output_msg(namespace)
 
     {:ok, %{pid: _computation_pid_2, operator_id: _pipe2_op}} =
       computation_id_2
       |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(group_id)
-      |> ComputationFixture.attach_output_msg(group_id)
+      |> ComputationFixture.start(namespace)
+      |> ComputationFixture.attach_output_msg(namespace)
 
-    ComputationTestHelper.send_sync_io(computation_id_1, group_id, "state_1", %{})
-    ComputationTestHelper.send_sync_io(computation_id_2, group_id, "state_2", %{})
+    ComputationTestHelper.send_sync_io(computation_id_1, namespace, "state_1", %{})
+    ComputationTestHelper.send_sync_io(computation_id_2, namespace, "state_2", %{})
 
-    ComputationManager.create_snapshot(group_id, computation_id_1)
-    ComputationManager.create_snapshot(group_id, computation_id_2)
+    ComputationManager.create_snapshot(namespace, computation_id_1)
+    ComputationManager.create_snapshot(namespace, computation_id_2)
 
     # Trigger the operator disconnect.
-    NodeTestHelper.stop_operator(group_id, operator_id_1)
-    NodeTestHelper.stop_operator(group_id, operator_id_2)
+    NodeTestHelper.stop_operator(namespace, operator_id_1)
+    NodeTestHelper.stop_operator(namespace, operator_id_2)
 
-    # Start a new operator under the same group.
-    operator_id_3 = NodeTestHelper.start_operator(group_id)
+    # Start a new operator under the same namespace.
+    operator_id_3 = NodeTestHelper.start_operator(namespace)
 
     # Make sure all the computations are migrated to the new operator.
-    ComputationManager.computation_registry(group_id)
+    ComputationManager.computation_registry(namespace)
     |> Enum.each(fn {_computation_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
       assert new_operator === operator_id_3
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_computation_state(group_id, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_computation_state(group_id, computation_id_2)
+    {:ok, json_state_1} = ComputationManager.get_computation_state(namespace, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_computation_state(namespace, computation_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
 
     # Stop the new operator.
-    NodeTestHelper.stop_operator(group_id, operator_id_3)
+    NodeTestHelper.stop_operator(namespace, operator_id_3)
 
     # Adjust the operator cleanup interval and trigger the cleanup.
     Application.put_env(:flezha, :operator_keepalive, "0")
@@ -404,27 +408,27 @@ defmodule FlezhaTest do
     Application.put_env(:flezha, :operator_keepalive, "30000")
 
     # Make sure the hub is stopped.
-    assert HubManager.hub_alive?(group_id) === false
+    assert HubManager.hub_alive?(namespace) === false
   end
 
   @tag :operator_disconnect_migrate_hub
   test "operator disconnect migrate hub" do
-    group_id = @temp_group
+    namespace = @temp_namespace
     computation_id_1 = "computation_1"
     computation_id_2 = "computation_2"
 
     {_peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
     # Start the operators.
-    operator_id_1 = NodeTestHelper.start_operator(group_id)
-    rem_operator_1 = NodeTestHelper.start_operator_remote(peer_node, group_id)
-    rem_operator_2 = NodeTestHelper.start_operator_remote(peer_node, group_id)
+    operator_id_1 = NodeTestHelper.start_operator(namespace)
+    rem_operator_1 = NodeTestHelper.start_operator_remote(peer_node, namespace)
+    rem_operator_2 = NodeTestHelper.start_operator_remote(peer_node, namespace)
 
     self = self()
     _node = node()
 
     ProcessHub.Service.HookManager.register_handler(
-      Identificator.hub(group_id),
+      Identificator.hub(namespace),
       ProcessHub.Constant.Hook.registry_pid_inserted(),
       %ProcessHub.Service.HookManager{
         id: "hub_insert_hook_test",
@@ -435,7 +439,7 @@ defmodule FlezhaTest do
     )
 
     ProcessHub.Service.HookManager.register_handler(
-      Identificator.hub(group_id),
+      Identificator.hub(namespace),
       ProcessHub.Constant.Hook.process_startups(),
       %ProcessHub.Service.HookManager{
         id: "hub_pstartup_hook_test",
@@ -449,33 +453,33 @@ defmodule FlezhaTest do
     {:ok, %{pid: _computation_pid_1, operator_id: pipe1_op}} =
       computation_id_1
       |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(group_id)
-      |> ComputationFixture.attach_output_msg(group_id)
+      |> ComputationFixture.start(namespace)
+      |> ComputationFixture.attach_output_msg(namespace)
 
     {:ok, %{pid: _computation_pid_2, operator_id: pipe2_op}} =
       computation_id_2
       |> ComputationFixture.get(@test_store_input_factory)
-      |> ComputationFixture.start(group_id)
-      |> ComputationFixture.attach_output_msg(group_id)
+      |> ComputationFixture.start(namespace)
+      |> ComputationFixture.attach_output_msg(namespace)
 
     # Make sure that atleast one of the computations is running on the remote operator.
     assert pipe1_op !== operator_id_1 or pipe2_op !== operator_id_1
 
-    ComputationTestHelper.send_sync_io(computation_id_1, group_id, "state_1", %{})
-    ComputationTestHelper.send_sync_io(computation_id_2, group_id, "state_2", %{})
+    ComputationTestHelper.send_sync_io(computation_id_1, namespace, "state_1", %{})
+    ComputationTestHelper.send_sync_io(computation_id_2, namespace, "state_2", %{})
 
     # Check the states before operator migrations.
-    {:ok, json_state_1} = ComputationManager.get_computation_state(group_id, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_computation_state(group_id, computation_id_2)
+    {:ok, json_state_1} = ComputationManager.get_computation_state(namespace, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_computation_state(namespace, computation_id_2)
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
 
-    ComputationManager.create_snapshot(group_id, computation_id_1)
-    ComputationManager.create_snapshot(group_id, computation_id_2)
+    ComputationManager.create_snapshot(namespace, computation_id_1)
+    ComputationManager.create_snapshot(namespace, computation_id_2)
 
     # Trigger the operator disconnect.
-    NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_1)
-    NodeTestHelper.stop_operator_remote(peer_node, group_id, rem_operator_2)
+    NodeTestHelper.stop_operator_remote(peer_node, namespace, rem_operator_1)
+    NodeTestHelper.stop_operator_remote(peer_node, namespace, rem_operator_2)
 
     # Need to wait 4 times process inserted hook to be called.
     # With each operator disconnect we update the tag of the computation.
@@ -484,20 +488,20 @@ defmodule FlezhaTest do
     MessageTestHelper.recv_num(:hook_pstartup_recv, 2)
 
     # Make sure all the computations are migrated to the other operator.
-    reg = ComputationManager.computation_registry(group_id)
+    reg = ComputationManager.computation_registry(namespace)
 
     Enum.each(reg, fn {_computation_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
       assert new_operator === operator_id_1
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ComputationManager.get_computation_state(group_id, computation_id_1)
-    {:ok, json_state_2} = ComputationManager.get_computation_state(group_id, computation_id_2)
+    {:ok, json_state_1} = ComputationManager.get_computation_state(namespace, computation_id_1)
+    {:ok, json_state_2} = ComputationManager.get_computation_state(namespace, computation_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
 
-    assert length(HubManager.get_hub_nodes(group_id, true)) === 1
+    assert length(HubManager.get_hub_nodes(namespace, true)) === 1
   end
 
   @tag :flow_test
@@ -517,7 +521,7 @@ defmodule FlezhaTest do
             factory_id: @test_computation_factory
           }
 
-          case ComputationManager.start_computation(@default_group, computation) do
+          case ComputationManager.start_computation(@default_namespace, computation) do
             {:ok, info} ->
               {computation_id, info}
 
@@ -539,7 +543,7 @@ defmodule FlezhaTest do
         Enum.each(computation_infos, fn {computation_id, _info} ->
           # Enable BeamMsgForward plugin
           PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
-            group: @default_group,
+            namespace: @default_namespace,
             computation_id: computation_id,
             trigger: :on_output,
             provider: %Flezha.Plugin.Provider.BeamMsgForward{
@@ -549,7 +553,7 @@ defmodule FlezhaTest do
 
           # Enable StdOut plugin
           PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
-            group: @default_group,
+            namespace: @default_namespace,
             computation_id: computation_id,
             trigger: :proactive,
             provider: %Flezha.Plugin.Provider.StdOut{}

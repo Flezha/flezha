@@ -29,7 +29,7 @@ defmodule Flezha.BootLoader do
   end
 
   @impl true
-  def handle_info({:operator_connected_event, {"test_temp_group", _}}, state) do
+  def handle_info({:operator_connected_event, {"test_temp_namespace", _}}, state) do
     {:noreply, state}
   end
 

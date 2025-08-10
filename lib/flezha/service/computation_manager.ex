@@ -8,8 +8,8 @@ defmodule Flezha.Service.ComputationManager do
   alias Flezha.Operator.FleetManager
   alias Flezha.Computation.Builder, as: ComputationBuilder
 
-  def computation_registry(group_id) do
-    case HubManager.get_registry(group_id) do
+  def computation_registry(namespace) do
+    case HubManager.get_registry(namespace) do
       {:ok, registry} ->
         registry
 
@@ -18,25 +18,25 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
-  def get_computation_ids(group_id) do
+  def get_computation_ids(namespace) do
     computations =
-      group_id
+      namespace
       |> HubManager.get_all_computations()
       |> Enum.map(&elem(&1, 0))
 
     {:ok, computations}
   end
 
-  def get_computation_pid(group_id, computation_id) do
-    case HubManager.get_pid(group_id, computation_id) do
+  def get_computation_pid(namespace, computation_id) do
+    case HubManager.get_pid(namespace, computation_id) do
       {:ok, pid} -> {:ok, pid}
       {:error, "no pid found"} -> {:error, "computation not found"}
       err -> err
     end
   end
 
-  def get_overwatch_state(group_id, computation_id) do
-    case get_computation_pid(group_id, computation_id) do
+  def get_overwatch_state(namespace, computation_id) do
+    case get_computation_pid(namespace, computation_id) do
       {:ok, computation_pid} ->
         {:ok, GenServer.call(computation_pid, :get_overwatch_state)}
 
@@ -50,14 +50,14 @@ defmodule Flezha.Service.ComputationManager do
   """
   @spec start_computation(String.t(), ComputationBuilder.t()) ::
           {:ok, pid()} | {:error, String.t()}
-  def start_computation(group_id, computation) do
-    case ComputationBuilder.validate_computation(group_id, computation) do
+  def start_computation(namespace, computation) do
+    case ComputationBuilder.validate_computation(namespace, computation) do
       {:error, reason} ->
         {:error, reason}
 
       :ok ->
-        # TODO: we should validate the group_id also.
-        init_computation(group_id, computation)
+        # TODO: we should validate the namespace also.
+        init_computation(namespace, computation)
     end
   end
 
@@ -65,8 +65,8 @@ defmodule Flezha.Service.ComputationManager do
   Removes a computation.
   """
   @spec stop_computation(String.t(), String.t()) :: :ok | {:error, String.t()}
-  def stop_computation(group_id, computation_id) do
-    case get_computation_pid(group_id, computation_id) do
+  def stop_computation(namespace, computation_id) do
+    case get_computation_pid(namespace, computation_id) do
       {:ok, computation_pid} ->
         case GenServer.call(computation_pid, :stop_computation) do
           :ok -> :ok
@@ -78,8 +78,8 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
-  def stop_all_computations(group_id) do
-    computations = HubManager.get_all_computations(group_id)
+  def stop_all_computations(namespace) do
+    computations = HubManager.get_all_computations(namespace)
 
     Enum.map(computations, fn {_computation_id, computation_pid} ->
       if Process.alive?(computation_pid) do
@@ -90,8 +90,8 @@ defmodule Flezha.Service.ComputationManager do
     end)
   end
 
-  def send_io(computation_id, group_id, message, metadata) do
-    case get_computation_pid(group_id, computation_id) do
+  def send_io(computation_id, namespace, message, metadata) do
+    case get_computation_pid(namespace, computation_id) do
       {:ok, computation_pid} ->
         GenServer.cast(computation_pid, {:io_in, message, metadata})
 
@@ -100,8 +100,8 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
-  def create_snapshot(group_id, computation_id) do
-    case get_computation_pid(group_id, computation_id) do
+  def create_snapshot(namespace, computation_id) do
+    case get_computation_pid(namespace, computation_id) do
       {:ok, computation_pid} ->
         GenServer.call(computation_pid, :create_snapshot)
 
@@ -110,19 +110,19 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
-  defp init_computation(group_id, computation) do
+  defp init_computation(namespace, computation) do
     child_spec = %{
       id: computation.id,
       start: {
         Flezha.Computation.Overwatch,
         :start_link,
-        [{group_id, computation}]
+        [{namespace, computation}]
       },
       restart: :transient
     }
 
     result =
-      Identificator.hub(group_id)
+      Identificator.hub(namespace)
       |> ProcessHub.start_child(child_spec,
         async_wait: true,
         # We will get the errors from the start result.
@@ -156,22 +156,22 @@ defmodule Flezha.Service.ComputationManager do
     end
   end
 
-  def exist?(group_id, computation_id) do
-    case get_computation_pid(group_id, computation_id) do
+  def exist?(namespace, computation_id) do
+    case get_computation_pid(namespace, computation_id) do
       {:ok, _pid} -> true
       {:error, _reason} -> false
     end
   end
 
-  def get_computation_state(group_id, computation_id) do
-    case get_computation_pid(group_id, computation_id) do
+  def get_computation_state(namespace, computation_id) do
+    case get_computation_pid(namespace, computation_id) do
       {:ok, computation_pid} -> GenServer.call(computation_pid, :get_computation_state)
       err -> err
     end
   end
 
-  def assign_operator(group_id) do
-    select_operator(FleetManager.active_operators(group_id))
+  def assign_operator(namespace) do
+    select_operator(FleetManager.active_operators(namespace))
   end
 
   defp select_operator(operator_ids) do

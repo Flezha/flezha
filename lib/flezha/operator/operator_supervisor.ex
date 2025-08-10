@@ -7,22 +7,22 @@ defmodule Flezha.Operator.OperatorSupervisor do
 
   use Supervisor
 
-  def start_link({group_id, operator_id, sock}) do
-    Supervisor.start_link(__MODULE__, {group_id, operator_id, sock},
+  def start_link({namespace, operator_id, sock}) do
+    Supervisor.start_link(__MODULE__, {namespace, operator_id, sock},
       name: Identificator.unit_sup(operator_id)
     )
   end
 
   @impl true
-  def init({group_id, operator_id, sock}) do
+  def init({namespace, operator_id, sock}) do
     children = [
       %{
         id: ControlUnit,
-        start: {ControlUnit, :start_link, [{group_id, operator_id}]}
+        start: {ControlUnit, :start_link, [{namespace, operator_id}]}
       },
       %{
         id: ControlChannel,
-        start: {ControlChannel, :start_link, [{group_id, operator_id, sock}]}
+        start: {ControlChannel, :start_link, [{namespace, operator_id, sock}]}
       },
       %{
         id: :primary_stream_listener,

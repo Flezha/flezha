@@ -13,7 +13,7 @@ defmodule FlezhaTest.CliManagerServiceTest do
 
     result =
       Flezha.Service.CliManager.worker_start(
-        @default_group,
+        @default_namespace,
         computation_id,
         factory_id,
         init_values
@@ -28,8 +28,8 @@ defmodule FlezhaTest.CliManagerServiceTest do
     FlezhaTest.Fixtures.Worker.get(computation_id, nil)
     |> FlezhaTest.Fixtures.Worker.start()
 
-    result1 = Flezha.Service.CliManager.worker_stop(@default_group, computation_id)
-    result2 = Flezha.Service.CliManager.worker_stop(@default_group, "non_existent")
+    result1 = Flezha.Service.CliManager.worker_stop(@default_namespace, computation_id)
+    result2 = Flezha.Service.CliManager.worker_stop(@default_namespace, "non_existent")
 
     assert result1 === :ok
     assert result2 |> elem(0) === :error
@@ -77,7 +77,7 @@ defmodule FlezhaTest.CliManagerServiceTest do
 
     result1 =
       Flezha.Service.CliManager.add_io(
-        @default_group,
+        @default_namespace,
         computation_id,
         io_params_json,
         io_mode,
@@ -86,7 +86,7 @@ defmodule FlezhaTest.CliManagerServiceTest do
 
     result2 =
       Flezha.Service.CliManager.add_io(
-        @default_group,
+        @default_namespace,
         "non_existent",
         io_params_json,
         io_mode,

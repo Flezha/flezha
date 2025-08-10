@@ -4,19 +4,19 @@ use std::thread::{self};
 use std::time::Duration;
 
 use flezha_operator::computation::ComputationError;
-use flezha_operator::{register_factory, ComputationSettings, ComputationHandler};
+use flezha_operator::{register_factory, ComputationHandler, ComputationSettings};
 
 use serde::{Deserialize, Serialize};
 fn main() {
     define_factories();
 
-    let _operator = flezha_operator::new(group());
+    let _operator = flezha_operator::new(namespace());
 
     // To keep the process alive while the agent is running.
     std_keeper();
 }
 
-fn group() -> String {
+fn namespace() -> String {
     let args: Vec<String> = env::args().collect();
 
     if args.len() > 1 {
@@ -49,14 +49,22 @@ fn std_keeper() -> thread::JoinHandle<()> {
 // STEP DEFINITIONS --------------------------------------------------------------------
 struct DoNothingComputation;
 impl ComputationHandler<DoNothingState, String, String> for DoNothingComputation {
-    fn process(&mut self, input: String, _state: &mut DoNothingState) -> Result<String, ComputationError> {
+    fn process(
+        &mut self,
+        input: String,
+        _state: &mut DoNothingState,
+    ) -> Result<String, ComputationError> {
         Ok(input)
     }
 }
 
 struct StoreInputComputation;
 impl ComputationHandler<StoreInputState, String, String> for StoreInputComputation {
-    fn process(&mut self, input: String, state: &mut StoreInputState) -> Result<String, ComputationError> {
+    fn process(
+        &mut self,
+        input: String,
+        state: &mut StoreInputState,
+    ) -> Result<String, ComputationError> {
         state.text_inputs.push(input.clone());
         Ok(input)
     }
@@ -64,7 +72,11 @@ impl ComputationHandler<StoreInputState, String, String> for StoreInputComputati
 
 struct CompareFilterComputation;
 impl ComputationHandler<CompareFilterState, String, String> for CompareFilterComputation {
-    fn process(&mut self, input: String, state: &mut CompareFilterState) -> Result<String, ComputationError> {
+    fn process(
+        &mut self,
+        input: String,
+        state: &mut CompareFilterState,
+    ) -> Result<String, ComputationError> {
         if state.inverted {
             if state.comparable == input {
                 Ok(input)

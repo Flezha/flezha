@@ -15,7 +15,7 @@ defmodule FlezhaTest.MigratorServiceTest do
   test "serialize worker" do
     serialized_data =
       Flezha.Worker.MigratorService.serialize_computation(
-        @default_group,
+        @default_namespace,
         @computation_id
       )
 
@@ -26,13 +26,13 @@ defmodule FlezhaTest.MigratorServiceTest do
   test "deserialize worker" do
     serialized_data =
       Flezha.Worker.MigratorService.serialize_computation(
-        @default_group,
+        @default_namespace,
         @computation_id
       )
 
     assert :ok ===
              Flezha.Worker.MigratorService.deserialize_computation(
-               @default_group,
+               @default_namespace,
                @computation_id,
                serialized_data
              )

@@ -34,10 +34,10 @@ defmodule Flezha.Computation.Builder do
     end
   end
 
-  def validate_computation(group_id, computation) do
+  def validate_computation(namespace, computation) do
     with :ok <- Validator.byte_limit_exceed(computation.id),
-         :ok <- Validator.valid_group(group_id),
-         :ok <- Validator.computation_unique(group_id, computation.id) do
+         :ok <- Validator.valid_namespace(namespace),
+         :ok <- Validator.computation_unique(namespace, computation.id) do
       :ok
     else
       {:error, reason} -> {:error, reason}

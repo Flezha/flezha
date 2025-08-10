@@ -8,20 +8,20 @@ defmodule Flezha.Operator.ControlUnit do
   require Logger
 
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
-  def start_link({group_id, operator_id}) do
+  def start_link({namespace, operator_id}) do
     GenServer.start_link(
       __MODULE__,
-      {group_id, operator_id},
+      {namespace, operator_id},
       name: Identificator.control_unit(operator_id)
     )
   end
 
   @impl true
-  def init({group_id, operator_id}) do
+  def init({namespace, operator_id}) do
     {
       :ok,
       %{
-        group_id: group_id,
+        namespace: namespace,
         operator_id: operator_id,
         response_refs: %{},
         env: Application.get_env(:flezha, :env)

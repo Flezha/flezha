@@ -79,58 +79,62 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end
   end
 
-  def start_operator_remote(node, group) do
+  def start_operator_remote(node, namespace) do
     self = self()
-    :erpc.call(node, Kernel, :spawn, [__MODULE__, :start_operator_recv, [group, self]])
+    :erpc.call(node, Kernel, :spawn, [__MODULE__, :start_operator_recv, [namespace, self]])
 
     receive do
-      {:remote_operator_connected, ^group, operator_id} -> operator_id
+      {:remote_operator_connected, ^namespace, operator_id} -> operator_id
     end
   end
 
-  def stop_operator_remote(node, group, operator_id) do
+  def stop_operator_remote(node, namespace, operator_id) do
     self = self()
 
-    :erpc.call(node, Kernel, :spawn, [__MODULE__, :stop_operator_recv, [group, operator_id, self]])
+    :erpc.call(node, Kernel, :spawn, [
+      __MODULE__,
+      :stop_operator_recv,
+      [namespace, operator_id, self]
+    ])
 
     receive do
-      {:remote_operator_disconnected, ^group, ^operator_id} -> :ok
+      {:remote_operator_disconnected, ^namespace, ^operator_id} -> :ok
     end
   end
 
-  def start_operator_recv(group, recv_pid) do
-    operator_id = start_operator(group)
+  def start_operator_recv(namespace, recv_pid) do
+    operator_id = start_operator(namespace)
 
-    Process.send(recv_pid, {:remote_operator_connected, group, operator_id}, [])
+    Process.send(recv_pid, {:remote_operator_connected, namespace, operator_id}, [])
 
     receive do
       :any -> :ok
     end
   end
 
-  def stop_operator_recv(group, operator_id, recv_pid) do
-    stop_operator(group, operator_id)
+  def stop_operator_recv(namespace, operator_id, recv_pid) do
+    stop_operator(namespace, operator_id)
 
-    Process.send(recv_pid, {:remote_operator_disconnected, group, operator_id}, [])
+    Process.send(recv_pid, {:remote_operator_disconnected, namespace, operator_id}, [])
 
     receive do
       :any -> :ok
     end
   end
 
-  def start_operator(group_id \\ "test_temp_group") do
+  def start_operator(namespace \\ "test_temp_namespace") do
     {:ok, current_path} = :file.get_cwd()
 
     command =
       "cargo run --manifest-path=#{current_path}/test/apps/rust_operator/Cargo.toml --target-dir=./target -- " <>
-        group_id
+        namespace
 
     Flezha.Service.EventManager.add_handler(:operator_connected_event)
     Flezha.Service.PortPilot.open_port(command)
 
     operator_id =
       receive do
-        {:operator_connected_event, {^group_id, operator_id}} -> operator_id
+        {:operator_connected_event, {^namespace, operator_id}} -> operator_id
       after
         2000 -> raise "temporary test operator not connected"
       end
@@ -141,12 +145,12 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     operator_id
   end
 
-  def stop_operator(group_id, operator_id) do
+  def stop_operator(namespace, operator_id) do
     Flezha.Service.EventManager.add_handler(:operator_disconnected_event)
-    Flezha.Operator.FleetManager.disconnect_operator(group_id, operator_id)
+    Flezha.Operator.FleetManager.disconnect_operator(namespace, operator_id)
 
     receive do
-      {:operator_disconnected_event, {^group_id, ^operator_id}} -> :ok
+      {:operator_disconnected_event, {^namespace, ^operator_id}} -> :ok
     after
       2000 -> raise "temporary test operator not disconnected"
     end

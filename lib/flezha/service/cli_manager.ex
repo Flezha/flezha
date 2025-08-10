@@ -11,7 +11,7 @@ defmodule Flezha.Service.CliManager do
   alias Flezha.Plugin.Driver.IOBindingPlugin
 
   @doc "Starts a computation."
-  def computation_start(group_id, computation_id, factory_id, init_values, opts \\ []) do
+  def computation_start(namespace, computation_id, factory_id, init_values, opts \\ []) do
     opts =
       Payloader.json_to_map(opts)
       |> atom_converter()
@@ -24,35 +24,38 @@ defmodule Flezha.Service.CliManager do
       opts: opts
     }
 
-    case ComputationManager.start_computation(normalize_group_id(group_id), computation) do
+    case ComputationManager.start_computation(normalize_namespace(namespace), computation) do
       {:ok, _} -> IO.puts("Computation has been started")
       {:error, reason} -> IO.puts("Error starting computation: #{inspect(reason)}")
     end
   end
 
   @doc "Stops a computation."
-  def computation_stop(group_id, computation_id) do
-    case ComputationManager.stop_computation(normalize_group_id(group_id), computation_id) do
+  def computation_stop(namespace, computation_id) do
+    case ComputationManager.stop_computation(normalize_namespace(namespace), computation_id) do
       :ok -> IO.puts("Computation has been stopped")
       {:error, reason} -> IO.puts("Error stopping computation: #{inspect(reason)}")
     end
   end
 
   @doc "Get computation state."
-  def computation_state(group_id, computation_id) do
-    group_display = normalize_group_id(group_id)
+  def computation_state(namespace, computation_id) do
+    namespace_display = normalize_namespace(namespace)
 
-    case ComputationManager.get_computation_state(normalize_group_id(group_id), computation_id) do
+    case ComputationManager.get_computation_state(
+           normalize_namespace(namespace),
+           computation_id
+         ) do
       {:ok, json_state} when is_binary(json_state) ->
-        IO.puts("State for computation '#{computation_id}' in group '#{group_display}':")
+        IO.puts("State for computation '#{computation_id}' in namespace '#{namespace_display}':")
         IO.puts(json_state)
 
       {:ok, state} ->
-        IO.puts("State for computation '#{computation_id}' in group '#{group_display}':")
+        IO.puts("State for computation '#{computation_id}' in namespace '#{namespace_display}':")
         IO.puts(inspect(state))
 
       {:error, :not_found} ->
-        IO.puts("Computation '#{computation_id}' not found in group '#{group_display}'.")
+        IO.puts("Computation '#{computation_id}' not found in namespace '#{namespace_display}'.")
 
       {:error, reason} when is_binary(reason) ->
         IO.puts("Error getting computation state: #{reason}")
@@ -66,8 +69,8 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc "Listens to a computation IO."
-  def computation_listen(group_id, computation_id, io_type) do
-    group_display = normalize_group_id(group_id)
+  def computation_listen(namespace, computation_id, io_type) do
+    namespace_display = normalize_namespace(namespace)
 
     io_type =
       case io_type do
@@ -80,12 +83,12 @@ defmodule Flezha.Service.CliManager do
       recv_pid: self(),
       plugin_id: "monitored_io_forward_dynamic",
       computation_id: computation_id,
-      group: group_display
+      namespace: namespace_display
     }
 
     PluginManager.enable_plugin("monitored_io_forward_dynamic", %IOBindingPlugin{
       provider: provider,
-      group: group_display,
+      namespace: namespace_display,
       computation_id: computation_id,
       trigger: io_type
     })
@@ -114,9 +117,9 @@ defmodule Flezha.Service.CliManager do
     case apply(provider_mod, :plugin_type, []) do
       :io_binding ->
         # Prepare plugin_flags with opts merged in
-        build_params = 
+        build_params =
           plugin_flags
-          |> Map.put("group", Map.get(opts, "group", "default"))
+          |> Map.put("namespace", Map.get(opts, "namespace", "default"))
 
         case IOBindingPlugin.build(build_params, provider) do
           {:ok, plugin} -> {:ok, plugin}
@@ -165,20 +168,20 @@ defmodule Flezha.Service.CliManager do
     end)
   end
 
-  @doc "Lists all running groups."
-  def list_groups(output_format \\ "text") do
-    case Flezha.list_groups() do
-      {:ok, groups} when is_list(groups) ->
-        handle_list_output(groups, "running groups", output_format)
+  @doc "Lists all running namespaces."
+  def list_namespaces(output_format \\ "text") do
+    case Flezha.list_namespaces() do
+      {:ok, namespaces} when is_list(namespaces) ->
+        handle_list_output(namespaces, "running namespaces", output_format)
 
-      groups when is_list(groups) ->
-        handle_list_output(groups, "running groups", output_format)
+      namespaces when is_list(namespaces) ->
+        handle_list_output(namespaces, "running namespaces", output_format)
 
       {:error, reason} ->
-        handle_list_error(reason, "listing groups", output_format)
+        handle_list_error(reason, "listing namespaces", output_format)
 
       other ->
-        handle_list_error(other, "listing groups", output_format)
+        handle_list_error(other, "listing namespaces", output_format)
     end
   end
 
@@ -226,17 +229,17 @@ defmodule Flezha.Service.CliManager do
     IO.puts("Error #{operation}: #{inspect(reason)}")
   end
 
-  @doc "Lists operators for a specific group."
-  def list_operators(group_id, output_format \\ "text") do
-    group_display = normalize_group_id(group_id)
+  @doc "Lists operators for a specific namespace."
+  def list_operators(namespace, output_format \\ "text") do
+    namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_operators(group_display) do
+    case Flezha.list_operators(namespace_display) do
       {:ok, operators} when is_list(operators) ->
-        context = %{key: :group, value: group_display, display: "group"}
+        context = %{key: :namespace, value: namespace_display, display: "namespace"}
         handle_list_output(operators, "operators", output_format, context)
 
       operators when is_list(operators) ->
-        context = %{key: :group, value: group_display, display: "group"}
+        context = %{key: :namespace, value: namespace_display, display: "namespace"}
         handle_list_output(operators, "operators", output_format, context)
 
       {:error, reason} ->
@@ -247,17 +250,17 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  @doc "Lists computations for a specific group."
-  def list_computations(group_id, output_format \\ "text") do
-    group_display = normalize_group_id(group_id)
+  @doc "Lists computations for a specific namespace."
+  def list_computations(namespace, output_format \\ "text") do
+    namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_computations(group_display) do
+    case Flezha.list_computations(namespace_display) do
       {:ok, computations} when is_list(computations) ->
-        context = %{key: :group, value: group_display, display: "group"}
+        context = %{key: :namespace, value: namespace_display, display: "namespace"}
         handle_list_output(computations, "computations", output_format, context)
 
       computations when is_list(computations) ->
-        context = %{key: :group, value: group_display, display: "group"}
+        context = %{key: :namespace, value: namespace_display, display: "namespace"}
         handle_list_output(computations, "computations", output_format, context)
 
       {:error, reason} ->
@@ -269,22 +272,22 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc "Shows detailed information about computations and their overwatch plugins."
-  def computation_info(group_id, output_format \\ "text") do
-    group_display = normalize_group_id(group_id)
+  def computation_info(namespace, output_format \\ "text") do
+    namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_computations(group_display) do
+    case Flezha.list_computations(namespace_display) do
       {:ok, computations} when is_list(computations) ->
         if Enum.empty?(computations) do
-          handle_empty_computations(group_display, output_format)
+          handle_empty_computations(namespace_display, output_format)
         else
-          handle_computation_info_output(computations, group_display, output_format)
+          handle_computation_info_output(computations, namespace_display, output_format)
         end
 
       computations when is_list(computations) ->
         if Enum.empty?(computations) do
-          handle_empty_computations(group_display, output_format)
+          handle_empty_computations(namespace_display, output_format)
         else
-          handle_computation_info_output(computations, group_display, output_format)
+          handle_computation_info_output(computations, namespace_display, output_format)
         end
 
       {:error, reason} ->
@@ -295,9 +298,9 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp handle_empty_computations(group_display, "json") do
+  defp handle_empty_computations(namespace_display, "json") do
     result = %{
-      group: group_display,
+      namespace: namespace_display,
       computations: [],
       message: "No computations found"
     }
@@ -305,19 +308,19 @@ defmodule Flezha.Service.CliManager do
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_empty_computations(group_display, _) do
-    IO.puts("No computations found for group '#{group_display}'.")
+  defp handle_empty_computations(namespace_display, _) do
+    IO.puts("No computations found for namespace '#{namespace_display}'.")
   end
 
-  defp handle_computation_info_output(computations, group_display, "json") do
+  defp handle_computation_info_output(computations, namespace_display, "json") do
     computation_data =
       Enum.map(computations, fn computation_id ->
-        case ComputationManager.get_overwatch_state(group_display, computation_id) do
+        case ComputationManager.get_overwatch_state(namespace_display, computation_id) do
           {:ok, state} ->
             %{
               id: computation_id,
               operator_id: state.operator_id,
-              group_id: state.group_id,
+              namespace: state.namespace,
               default_input_type: state.default_input_type,
               bindings: format_bindings_json(state.bindings)
             }
@@ -331,19 +334,19 @@ defmodule Flezha.Service.CliManager do
       end)
 
     result = %{
-      group: group_display,
+      namespace: namespace_display,
       computations: computation_data
     }
 
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_computation_info_output(computations, group_display, _) do
-    IO.puts("Computation information for group '#{group_display}':")
+  defp handle_computation_info_output(computations, namespace_display, _) do
+    IO.puts("Computation information for namespace '#{namespace_display}':")
     IO.puts("")
 
     Enum.each(computations, fn computation_id ->
-      case ComputationManager.get_overwatch_state(group_display, computation_id) do
+      case ComputationManager.get_overwatch_state(namespace_display, computation_id) do
         {:ok, state} ->
           display_computation_info(computation_id, state)
 
@@ -381,7 +384,7 @@ defmodule Flezha.Service.CliManager do
   defp display_computation_info(computation_id, state) do
     IO.puts("Computation: #{computation_id}")
     IO.puts("  Operator ID: #{state.operator_id}")
-    IO.puts("  Group ID: #{state.group_id}")
+    IO.puts("  Group ID: #{state.namespace}")
     IO.puts("  Default Input Type: #{state.default_input_type}")
     IO.puts("  Bindings:")
 
@@ -424,6 +427,6 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp normalize_group_id(""), do: "default"
-  defp normalize_group_id(group_id), do: group_id
+  defp normalize_namespace(""), do: "default"
+  defp normalize_namespace(namespace), do: namespace
 end

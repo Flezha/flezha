@@ -6,6 +6,6 @@ members = [
     "agent",
     "computation",
     "plugin",
-    "group",
+    "namespace",
     "operator"
 ]

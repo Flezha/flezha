@@ -17,7 +17,7 @@ defmodule Flezha.Service.Identificator do
     )
   end
 
-  def unique_id(group_id) do
+  def unique_id(namespace) do
     rand_nums =
       Enum.reduce(1..4, "", fn _x, acc ->
         rand_num =
@@ -27,11 +27,11 @@ defmodule Flezha.Service.Identificator do
         rand_num <> acc
       end)
 
-    id = group_id <> "_" <> rand_nums
+    id = namespace <> "_" <> rand_nums
 
     case Registry.lookup(__MODULE__, id) do
       [] -> id
-      _ -> unique_id(group_id)
+      _ -> unique_id(namespace)
     end
   end
 
@@ -43,8 +43,8 @@ defmodule Flezha.Service.Identificator do
     gen_via(operator_id, "cc")
   end
 
-  def hub(group_id) do
-    gen_id(group_id, "hub") |> String.to_atom()
+  def hub(namespace) do
+    gen_id(namespace, "hub") |> String.to_atom()
   end
 
   def stream_listener(operator_id, type) do

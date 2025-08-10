@@ -23,7 +23,7 @@ pub fn get_extension() -> String {
 }
 
 pub fn get_namespace(slice: &[String]) -> String {
-    get_parameter(slice, "--group", "-g")
+    get_parameter(slice, "--namespace", "-n")
 }
 
 pub fn get_parameter(slice: &[String], long_key: &str, short_key: &str) -> String {
@@ -206,7 +206,7 @@ pub fn extract_x_flags(args: &[String]) -> Vec<(String, String)> {
 }
 
 // TODO: refactor this.
-pub fn extract_opts_with_default_group(args: &[String]) -> Vec<(String, String)> {
+pub fn extract_opts_with_default_namespace(args: &[String]) -> Vec<(String, String)> {
     let mut flags = Vec::new();
     let mut i = 0;
 
@@ -241,7 +241,7 @@ pub fn extract_opts_with_default_group(args: &[String]) -> Vec<(String, String)>
         // Handle -o value format (space-separated)
         else if arg.starts_with("-") && !arg.starts_with("--") && i + 1 < args.len() {
             let key = match arg.as_str() {
-                "-g" => "group",
+                "-n" => "namespace",
                 _ => &arg[1..], // Remove the single dash
             };
             let value = &args[i + 1];
@@ -252,9 +252,9 @@ pub fn extract_opts_with_default_group(args: &[String]) -> Vec<(String, String)>
         i += 1;
     }
 
-    // Add default group if not specified
-    if !flags.iter().any(|(key, _)| key == "group") {
-        flags.push(("group".to_string(), "default".to_string()));
+    // Add default namespace if not specified
+    if !flags.iter().any(|(key, _)| key == "namespace") {
+        flags.push(("namespace".to_string(), "default".to_string()));
     }
 
     flags
