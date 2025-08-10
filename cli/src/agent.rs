@@ -1,43 +1,35 @@
-use shared_lib::get_flezha_command;
-use std::env;
+use crate::utils::get_flezha_command;
 use std::process::{exit, Command};
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-
-    // Check if at least one argument is provided
-    if args.len() < 2 {
+pub fn handle_agent_command(args: &[String]) {
+    if args.is_empty() {
         eprintln!("Error: Invalid number of arguments. See `help` for more information.");
         exit(1);
     }
 
-    match args[1].as_str() {
+    match args[0].as_str() {
         "start" => handle_start(args),
         "stop" => handle_stop(args),
         _ => {
             eprintln!(
                 "Error: Invalid argument '{}'. Use 'start' or 'stop' only.",
-                args[1]
+                args[0]
             );
             exit(1);
         }
     }
 }
 
-fn handle_start(_args: Vec<String>) {
-    let args: Vec<String> = env::args().collect();
-
-    // Check if at least one argument is provided
-    if args.len() < 2 {
-        eprintln!("Error: Invalid number of arguments. Usage: {} <start> [--mode={{attached|daemon|attached_iex|daemon_iex}} | -m=]", args[0]);
+fn handle_start(args: &[String]) {
+    if args.len() < 1 {
+        eprintln!("Error: Invalid number of arguments. Usage: flz agent start [--mode={{attached|daemon|attached_iex|daemon_iex}} | -m=]");
         exit(1);
     }
 
-    // Determine the extension based on the operating system
     let mut mode_arg = String::from("");
 
     // Process the arguments to find the mode parameter
-    for arg in &args[2..] {
+    for arg in &args[1..] {
         if arg.starts_with("--mode=") {
             mode_arg = arg[7..].to_string();
         } else if arg.starts_with("-m=") {
@@ -72,7 +64,7 @@ fn handle_start(_args: Vec<String>) {
     }
 }
 
-fn handle_stop(_args: Vec<String>) {
+fn handle_stop(_args: &[String]) {
     let command = get_flezha_command();
 
     println!("Stopping flezha agent...");

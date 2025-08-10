@@ -1,18 +1,14 @@
-use shared_lib::{extract_param, get_flezha_command, get_json, get_namespace, get_output_format};
+use crate::utils::{extract_param, get_flezha_command, get_json, get_namespace, get_output_format};
 use std::collections::HashMap;
-use std::env;
 use std::process::{exit, Command};
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-
-    // Check if at least one argument is provided
-    if args.len() < 2 {
+pub fn handle_computation_command(args: &[String]) {
+    if args.is_empty() {
         eprintln!("Error: Invalid number of arguments. See help for more information.");
         exit(1);
     }
 
-    match args[1].as_str() {
+    match args[0].as_str() {
         "start" => handle_start(args),
         "stop" => handle_stop(args),
         "state" => handle_state(args),
@@ -22,38 +18,35 @@ fn main() {
         _ => {
             eprintln!(
                 "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', 'info', or 'io_listen' only.",
-                args[1]
+                args[0]
             );
             exit(1);
         }
     }
 }
 
-fn handle_start(args: Vec<String>) {
-    let example_usage = format!("Usage: {} start <computation_id> <factory_id> [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>]", args[0]);
+fn handle_start(args: &[String]) {
+    let example_usage = "Usage: flz computation start <computation_id> <factory_id> [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>]";
 
     if args.len() < 3 {
-        eprintln!(
-            "{}",
-            format!("Error: Invalid number of arguments.\n {}", example_usage)
-        );
+        eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
         exit(1);
     }
 
-    let computation_id = &args[2];
-    let factory_id = &args[3];
-    let init_values = get_json(&args[4..], "--init_values", "-iv");
+    let computation_id = &args[1];
+    let factory_id = &args[2];
+    let init_values = get_json(&args[3..], "--init_values", "-iv");
 
     let mut opts: HashMap<String, String> = HashMap::new();
 
-    let spt = extract_param(&args[4..], "--snapshot-interval", "-si");
+    let spt = extract_param(&args[3..], "--snapshot-interval", "-si");
     if spt.is_some() {
         opts.insert("snapshot_interval".to_string(), spt.unwrap());
     }
 
     let opts_json = serde_json::to_string(&opts).unwrap();
     let command = get_flezha_command();
-    let namespace = get_namespace(&args[4..]);
+    let namespace = get_namespace(&args[3..]);
 
     let escaped_init_values = init_values.replace("\"", "\\\"");
     let escaped_opts_json = opts_json.replace("\"", "\\\"");
@@ -77,17 +70,14 @@ fn handle_start(args: Vec<String>) {
     }
 }
 
-fn handle_stop(args: Vec<String>) {
-    if args.len() < 1 {
-        eprintln!(
-            "Error: Invalid number of arguments. Usage: {} stop <computation_id>",
-            args[0]
-        );
+fn handle_stop(args: &[String]) {
+    if args.len() < 2 {
+        eprintln!("Error: Invalid number of arguments. Usage: flz computation stop <computation_id>");
         exit(1);
     }
 
-    let computation_id = &args[2];
-    let namespace = get_namespace(&args[3..]);
+    let computation_id = &args[1];
+    let namespace = get_namespace(&args[2..]);
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.computation_stop(\"{}\", \"{}\")",
@@ -108,17 +98,14 @@ fn handle_stop(args: Vec<String>) {
     }
 }
 
-fn handle_state(args: Vec<String>) {
-    if args.len() < 1 {
-        eprintln!(
-            "Error: Invalid number of arguments. Usage: {} state <computation_id>",
-            args[0]
-        );
+fn handle_state(args: &[String]) {
+    if args.len() < 2 {
+        eprintln!("Error: Invalid number of arguments. Usage: flz computation state <computation_id>");
         exit(1);
     }
 
-    let computation_id = &args[2];
-    let namespace = get_namespace(&args[3..]);
+    let computation_id = &args[1];
+    let namespace = get_namespace(&args[2..]);
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.computation_state(\"{}\", \"{}\")",
@@ -136,9 +123,9 @@ fn handle_state(args: Vec<String>) {
     }
 }
 
-fn handle_list(args: Vec<String>) {
-    let namespace = get_namespace(&args[2..]);
-    let output_format = get_output_format(&args[2..]);
+fn handle_list(args: &[String]) {
+    let namespace = get_namespace(&args[1..]);
+    let output_format = get_output_format(&args[1..]);
 
     let command = get_flezha_command();
     let rpc_command = format!(
@@ -171,9 +158,9 @@ fn handle_list(args: Vec<String>) {
     }
 }
 
-fn handle_info(args: Vec<String>) {
-    let namespace = get_namespace(&args[2..]);
-    let output_format = get_output_format(&args[2..]);
+fn handle_info(args: &[String]) {
+    let namespace = get_namespace(&args[1..]);
+    let output_format = get_output_format(&args[1..]);
 
     let command = get_flezha_command();
     let rpc_command = format!(
@@ -206,19 +193,16 @@ fn handle_info(args: Vec<String>) {
     }
 }
 
-fn handle_io_listen(args: Vec<String>) {
-    let example_usage = format!("Usage: {} io_listen input|output <computation_id> [--namespace <namespace> | -n <namespace>]", args[0]);
+fn handle_io_listen(args: &[String]) {
+    let example_usage = "Usage: flz computation io_listen input|output <computation_id> [--namespace <namespace> | -n <namespace>]";
 
-    if args.len() < 4 {
-        eprintln!(
-            "{}",
-            format!("Error: Invalid number of arguments.\n {}", example_usage)
-        );
+    if args.len() < 3 {
+        eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
         exit(1);
     }
 
-    let io_type = &args[2];
-    let computation_id = &args[3];
+    let io_type = &args[1];
+    let computation_id = &args[2];
 
     // Validate io_type
     if io_type != "input" && io_type != "output" {
@@ -229,7 +213,7 @@ fn handle_io_listen(args: Vec<String>) {
         exit(1);
     }
 
-    let namespace = get_namespace(&args[4..]);
+    let namespace = get_namespace(&args[3..]);
     let command = get_flezha_command();
 
     let rpc_command = format!(

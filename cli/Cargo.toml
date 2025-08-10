@@ -1,11 +1,11 @@
-[workspace]
-resolver = "2"
+[package]
+name = "flz"
+version = "0.1.0"
+edition = "2021"
 
-members = [
-    "shared_lib",
-    "agent",
-    "computation",
-    "plugin",
-    "namespace",
-    "operator"
-]
+[dependencies]
+serde_json = "1.0"
+
+[[bin]]
+name = "flz"
+path = "src/main.rs"

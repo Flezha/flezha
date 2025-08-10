@@ -3,18 +3,10 @@
 version = 4
 
 [[package]]
-name = "agent"
-version = "0.1.0"
-dependencies = [
- "shared_lib",
-]
-
-[[package]]
-name = "computation"
+name = "flz"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "shared_lib",
 ]
 
 [[package]]
@@ -28,27 +20,6 @@ name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
-
-[[package]]
-name = "namespace"
-version = "0.1.0"
-dependencies = [
- "shared_lib",
-]
-
-[[package]]
-name = "operator"
-version = "0.1.0"
-dependencies = [
- "shared_lib",
-]
-
-[[package]]
-name = "plugin"
-version = "0.1.0"
-dependencies = [
- "shared_lib",
-]
 
 [[package]]
 name = "proc-macro2"
@@ -105,10 +76,6 @@ dependencies = [
  "ryu",
  "serde",
 ]
-
-[[package]]
-name = "shared_lib"
-version = "0.1.0"
 
 [[package]]
 name = "syn"

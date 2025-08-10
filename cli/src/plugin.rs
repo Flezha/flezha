@@ -1,49 +1,45 @@
-use shared_lib::{
+use crate::utils::{
     extract_opts_with_default_namespace, extract_x_flags, get_flezha_command, serialize_flags,
 };
-use std::env;
 use std::process::{exit, Command};
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
+pub fn handle_plugin_command(args: &[String]) {
+    if args.is_empty() {
+        eprintln!("Error: No plugin command specified.");
+        exit(1);
+    }
 
-    match args[1].as_str() {
+    match args[0].as_str() {
         "enable" => handle_enable(args),
         "disable" => handle_disable(args),
         _ => {
             eprintln!(
                 "Error: Invalid argument '{}'. Use 'enable' or 'disable' only.",
-                args[1]
+                args[0]
             );
             exit(1);
         }
     }
 }
 
-fn handle_enable(args: Vec<String>) {
-    let example_usage = format!(
-        "Usage: {} enable <plugin_id> <provider_id> [Xkey=value] [--option value]\nExample: {} enable computation_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic --namespace mynamespace",
-        args[0], args[0]
-    );
+fn handle_enable(args: &[String]) {
+    let example_usage = "Usage: flz plugin enable <plugin_id> <provider_id> [Xkey=value] [--option value]\nExample: flz plugin enable computation_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic --namespace mynamespace";
 
-    if args.len() < 4 {
-        eprintln!(
-            "{}",
-            format!("Error: Invalid number of arguments.\n {}", example_usage)
-        );
+    if args.len() < 3 {
+        eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
         exit(1);
     }
 
-    let plugin_id = &args[2];
-    let provider_id = &args[3];
+    let plugin_id = &args[1];
+    let provider_id = &args[2];
     let command = get_flezha_command();
 
     // Extract X-prefixed flags (plugin settings)
-    let x_flags = extract_x_flags(&args[4..]);
+    let x_flags = extract_x_flags(&args[3..]);
     let x_flags_json = serialize_flags(&x_flags);
 
     // Extract opts flags (CLI options with default namespace)
-    let opts_flags = extract_opts_with_default_namespace(&args[4..]);
+    let opts_flags = extract_opts_with_default_namespace(&args[3..]);
     let opts_json = serialize_flags(&opts_flags);
 
     let rpc_command = format!(
@@ -69,18 +65,15 @@ fn handle_enable(args: Vec<String>) {
     }
 }
 
-fn handle_disable(args: Vec<String>) {
-    let example_usage = format!("Usage: {} disable <plugin_id>", args[0]);
+fn handle_disable(args: &[String]) {
+    let example_usage = "Usage: flz plugin disable <plugin_id>";
 
-    if args.len() < 3 {
-        eprintln!(
-            "{}",
-            format!("Error: Invalid number of arguments.\n {}", example_usage)
-        );
+    if args.len() < 2 {
+        eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
         exit(1);
     }
 
-    let plugin_id = &args[2];
+    let plugin_id = &args[1];
     let command = get_flezha_command();
 
     let rpc_command = format!(

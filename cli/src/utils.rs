@@ -205,7 +205,6 @@ pub fn extract_x_flags(args: &[String]) -> Vec<(String, String)> {
     flags
 }
 
-// TODO: refactor this.
 pub fn extract_opts_with_default_namespace(args: &[String]) -> Vec<(String, String)> {
     let mut flags = Vec::new();
     let mut i = 0;

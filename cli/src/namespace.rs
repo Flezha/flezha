@@ -1,26 +1,23 @@
-use shared_lib::{get_flezha_command, get_output_format};
-use std::env;
+use crate::utils::{get_flezha_command, get_output_format};
 use std::process::{Command, exit};
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() < 2 {
+pub fn handle_namespace_command(args: &[String]) {
+    if args.is_empty() {
         eprintln!("Error: Invalid number of arguments. See help for more information.");
         exit(1);
     }
 
-    match args[1].as_str() {
+    match args[0].as_str() {
         "list" => handle_list(args),
         _ => {
-            eprintln!("Error: Invalid argument '{}'. Use 'list' only.", args[1]);
+            eprintln!("Error: Invalid argument '{}'. Use 'list' only.", args[0]);
             exit(1);
         }
     }
 }
 
-fn handle_list(args: Vec<String>) {
-    let output_format = get_output_format(&args[2..]);
+fn handle_list(args: &[String]) {
+    let output_format = get_output_format(&args[1..]);
 
     let command = get_flezha_command();
     let rpc_command = format!(
