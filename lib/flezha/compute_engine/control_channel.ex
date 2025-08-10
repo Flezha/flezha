@@ -1,21 +1,21 @@
-defmodule Flezha.Operator.ControlChannel do
+defmodule Flezha.ComputeEngine.ControlChannel do
   alias Flezha.Socket.Support, as: SocketSupport
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
-  alias Flezha.Operator.FleetManager
+  alias Flezha.ComputeEngine.FleetManager
 
   require Logger
 
   use GenServer
 
-  def start_link({namespace, operator_id, sock}) do
-    GenServer.start_link(__MODULE__, {namespace, operator_id, sock},
-      name: Identificator.control_channel(operator_id)
+  def start_link({namespace, compute_engine_id, sock}) do
+    GenServer.start_link(__MODULE__, {namespace, compute_engine_id, sock},
+      name: Identificator.control_channel(compute_engine_id)
     )
   end
 
-  def send_control(operator_id, command) do
-    control_channel = Identificator.control_channel(operator_id)
+  def send_control(compute_engine_id, command) do
+    control_channel = Identificator.control_channel(compute_engine_id)
 
     case GenServer.whereis(control_channel) do
       nil ->
@@ -26,7 +26,7 @@ defmodule Flezha.Operator.ControlChannel do
 
         req =
           struct(
-            OperatorCommands.CommandRequest,
+            ComputeEngineCommands.CommandRequest,
             reference_id: ref,
             command: command
           )
@@ -46,15 +46,15 @@ defmodule Flezha.Operator.ControlChannel do
   end
 
   @impl true
-  def init({namespace, operator_id, sock}) do
+  def init({namespace, compute_engine_id, sock}) do
     SocketSupport.set_active(sock)
 
     {:ok,
      %{
        namespace: namespace,
-       operator_id: operator_id,
+       compute_engine_id: compute_engine_id,
        sock: sock,
-       control_unit: Identificator.control_unit(operator_id),
+       control_unit: Identificator.control_unit(compute_engine_id),
        buffer: {:empty, <<>>}
      }}
   end
@@ -81,13 +81,13 @@ defmodule Flezha.Operator.ControlChannel do
   @impl true
   def handle_info({:tcp_closed, _socket}, state) do
     Logger.warning(
-      "TCP connection closed for control socket for #{state.operator_id} on #{state.namespace}"
+      "TCP connection closed for control socket for #{state.compute_engine_id} on #{state.namespace}"
     )
 
     GenServer.call(FleetManager, {
-      :operator_disconnected,
+      :compute_engine_disconnected,
       state.namespace,
-      state.operator_id
+      state.compute_engine_id
     })
 
     {:noreply, state}

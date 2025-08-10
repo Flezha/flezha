@@ -1,20 +1,20 @@
 syntax = "proto3";
 
 
-package operator_commands;
+package compute_engine_commands;
 
 message CommandRequest {
     string reference_id = 1;
     
     oneof command {
-        AssignOperatorId assign_operator_id = 2;
+        AssignComputeEngineId assign_compute_engine_id = 2;
         ConnectSocket connect_socket = 3;
         AddProcessor add_processor = 4;
         RemProcessor rem_processor = 5;
         MigrationSerialization migration_serialization = 6;
         MigrationDeserialization migration_deserialization = 7;
         ProcessorState processor_state = 8;
-        OperatorDisconnect operator_disconnect = 9;
+        ComputeEngineDisconnect compute_engine_disconnect = 9;
     }
 }
 
@@ -25,8 +25,8 @@ message CommandResponse {
     bytes raw_data = 4;
 }
 
-message AssignOperatorId {
-    string operator_id = 1;
+message AssignComputeEngineId {
+    string compute_engine_id = 1;
 }
 
 message ConnectSocket {
@@ -57,4 +57,4 @@ message ProcessorState {
     string processor_id = 1;
 }
 
-message OperatorDisconnect {}
+message ComputeEngineDisconnect {}

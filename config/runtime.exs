@@ -5,8 +5,8 @@ external_processes =
     {:ok, current_path} = :file.get_cwd()
 
     [
-      "cargo run --manifest-path=#{current_path}/test/apps/rust_operator/Cargo.toml --target-dir=./target",
-      "cargo run --manifest-path=#{current_path}/test/apps/rust_operator/Cargo.toml --target-dir=./target"
+      "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target",
+      "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target"
     ]
   else
     System.get_env("FLEZHA_EXTERNAL_PROCESSES", "") |> String.split(",", trim: true)
@@ -103,13 +103,14 @@ config :flezha,
   external_processes: external_processes,
 
   # ------------------------------------------------------------------------------------------------
-  # The minimum number of milliseconds to wait before removing a disconnected operator.
+  # The minimum number of milliseconds to wait before removing a disconnected compute_engine.
   #
-  # This option can be used to prevent the operator from being removed too quickly
-  # when it is disconnected from the cluster. For example, if the operator is
+  # This option can be used to prevent the compute_engine from being removed too quickly
+  # when it is disconnected from the cluster. For example, if the compute_engine is
   # restarted or updated.
   #
   # Leave 0 to disable this feature.
   #
   # The default is 30 seconds.
-  operator_keepalive: System.get_env("FLEZHA_OPERATOR_KEEPALIVE", "30000") |> String.to_integer()
+  compute_engine_keepalive:
+    System.get_env("FLEZHA_OPERATOR_KEEPALIVE", "30000") |> String.to_integer()

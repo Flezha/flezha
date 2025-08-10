@@ -14,7 +14,7 @@ defmodule Flezha.Service.Validator do
   def valid_namespace(namespace) do
     case HubManager.hub_alive?(namespace) do
       true -> :ok
-      false -> {:error, "no operators in namespace #{namespace}"}
+      false -> {:error, "no compute_engines in namespace #{namespace}"}
     end
   end
 

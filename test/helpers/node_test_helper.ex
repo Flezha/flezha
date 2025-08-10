@@ -79,84 +79,88 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end
   end
 
-  def start_operator_remote(node, namespace) do
+  def start_compute_engine_remote(node, namespace) do
     self = self()
-    :erpc.call(node, Kernel, :spawn, [__MODULE__, :start_operator_recv, [namespace, self]])
+    :erpc.call(node, Kernel, :spawn, [__MODULE__, :start_compute_engine_recv, [namespace, self]])
 
     receive do
-      {:remote_operator_connected, ^namespace, operator_id} -> operator_id
+      {:remote_compute_engine_connected, ^namespace, compute_engine_id} -> compute_engine_id
     end
   end
 
-  def stop_operator_remote(node, namespace, operator_id) do
+  def stop_compute_engine_remote(node, namespace, compute_engine_id) do
     self = self()
 
     :erpc.call(node, Kernel, :spawn, [
       __MODULE__,
-      :stop_operator_recv,
-      [namespace, operator_id, self]
+      :stop_compute_engine_recv,
+      [namespace, compute_engine_id, self]
     ])
 
     receive do
-      {:remote_operator_disconnected, ^namespace, ^operator_id} -> :ok
+      {:remote_compute_engine_disconnected, ^namespace, ^compute_engine_id} -> :ok
     end
   end
 
-  def start_operator_recv(namespace, recv_pid) do
-    operator_id = start_operator(namespace)
+  def start_compute_engine_recv(namespace, recv_pid) do
+    compute_engine_id = start_compute_engine(namespace)
 
-    Process.send(recv_pid, {:remote_operator_connected, namespace, operator_id}, [])
+    Process.send(recv_pid, {:remote_compute_engine_connected, namespace, compute_engine_id}, [])
 
     receive do
       :any -> :ok
     end
   end
 
-  def stop_operator_recv(namespace, operator_id, recv_pid) do
-    stop_operator(namespace, operator_id)
+  def stop_compute_engine_recv(namespace, compute_engine_id, recv_pid) do
+    stop_compute_engine(namespace, compute_engine_id)
 
-    Process.send(recv_pid, {:remote_operator_disconnected, namespace, operator_id}, [])
+    Process.send(
+      recv_pid,
+      {:remote_compute_engine_disconnected, namespace, compute_engine_id},
+      []
+    )
 
     receive do
       :any -> :ok
     end
   end
 
-  def start_operator(namespace \\ "test_temp_namespace") do
+  def start_compute_engine(namespace \\ "test_temp_namespace") do
     {:ok, current_path} = :file.get_cwd()
 
     command =
-      "cargo run --manifest-path=#{current_path}/test/apps/rust_operator/Cargo.toml --target-dir=./target -- " <>
+      "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- " <>
         namespace
 
-    Flezha.Service.EventManager.add_handler(:operator_connected_event)
+    Flezha.Service.EventManager.add_handler(:compute_engine_connected_event)
     Flezha.Service.PortPilot.open_port(command)
 
-    operator_id =
+    compute_engine_id =
       receive do
-        {:operator_connected_event, {^namespace, operator_id}} -> operator_id
+        {:compute_engine_connected_event, {^namespace, compute_engine_id}} -> compute_engine_id
       after
-        2000 -> raise "temporary test operator not connected"
+        2000 -> raise "temporary test compute_engine not connected"
       end
 
     # Remove the handler to duplicate events.
-    Flezha.Service.EventManager.rem_handler(:operator_connected_event)
+    Flezha.Service.EventManager.rem_handler(:compute_engine_connected_event)
 
-    operator_id
+    compute_engine_id
   end
 
-  def stop_operator(namespace, operator_id) do
-    Flezha.Service.EventManager.add_handler(:operator_disconnected_event)
-    Flezha.Operator.FleetManager.disconnect_operator(namespace, operator_id)
+  def stop_compute_engine(namespace, compute_engine_id) do
+    Flezha.Service.EventManager.add_handler(:compute_engine_disconnected_event)
+    Flezha.ComputeEngine.FleetManager.disconnect_compute_engine(namespace, compute_engine_id)
 
     receive do
-      {:operator_disconnected_event, {^namespace, ^operator_id}} -> :ok
+      {:compute_engine_disconnected_event, {^namespace, ^compute_engine_id}} -> :ok
     after
-      2000 -> raise "temporary test operator not disconnected"
+      2000 -> raise "temporary test compute_engine not disconnected"
     end
 
     # Remove the handler to duplicate events.
-    Flezha.Service.EventManager.rem_handler(:operator_disconnected_event)
+    Flezha.Service.EventManager.rem_handler(:compute_engine_disconnected_event)
 
     :ok
   end

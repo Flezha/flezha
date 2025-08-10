@@ -1,4 +1,4 @@
-defmodule Flezha.Operator.StreamChannel do
+defmodule Flezha.ComputeEngine.StreamChannel do
   alias Flezha.Service.Payloader
   alias Flezha.Service.Identificator
 
@@ -6,13 +6,13 @@ defmodule Flezha.Operator.StreamChannel do
 
   use GenServer
 
-  def start_link({operator_id, name, type}) do
-    GenServer.start_link(__MODULE__, {operator_id, type, name}, name: name)
+  def start_link({compute_engine_id, name, type}) do
+    GenServer.start_link(__MODULE__, {compute_engine_id, type, name}, name: name)
   end
 
   @impl true
-  def init({operator_id, type, name}) do
-    lsock = GenServer.call(Identificator.stream_listener(operator_id, type), :get_socket)
+  def init({compute_engine_id, type, name}) do
+    lsock = GenServer.call(Identificator.stream_listener(compute_engine_id, type), :get_socket)
 
     {
       :ok,

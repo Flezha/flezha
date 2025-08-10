@@ -3,14 +3,14 @@ use std::io::{self, Read};
 use std::thread::{self};
 use std::time::Duration;
 
-use flezha_operator::processor::ProcessorError;
-use flezha_operator::{register_factory, ProcessorHandler, ProcessorSettings};
+use flezha_compute_engine::processor::ProcessorError;
+use flezha_compute_engine::{register_factory, ProcessorHandler, ProcessorSettings};
 
 use serde::{Deserialize, Serialize};
 fn main() {
     define_factories();
 
-    let _operator = flezha_operator::new(namespace());
+    let _compute_engine = flezha_compute_engine::new(namespace());
 
     // To keep the process alive while the agent is running.
     std_keeper();

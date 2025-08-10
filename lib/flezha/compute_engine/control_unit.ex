@@ -1,6 +1,6 @@
-defmodule Flezha.Operator.ControlUnit do
+defmodule Flezha.ComputeEngine.ControlUnit do
   alias Flezha.Service.Identificator
-  alias Flezha.Operator.ControlChannel
+  alias Flezha.ComputeEngine.ControlChannel
   alias Flezha.Service.ConfigManager
 
   use GenServer
@@ -8,21 +8,21 @@ defmodule Flezha.Operator.ControlUnit do
   require Logger
 
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
-  def start_link({namespace, operator_id}) do
+  def start_link({namespace, compute_engine_id}) do
     GenServer.start_link(
       __MODULE__,
-      {namespace, operator_id},
-      name: Identificator.control_unit(operator_id)
+      {namespace, compute_engine_id},
+      name: Identificator.control_unit(compute_engine_id)
     )
   end
 
   @impl true
-  def init({namespace, operator_id}) do
+  def init({namespace, compute_engine_id}) do
     {
       :ok,
       %{
         namespace: namespace,
-        operator_id: operator_id,
+        compute_engine_id: compute_engine_id,
         response_refs: %{},
         env: Application.get_env(:flezha, :env)
       }
@@ -33,10 +33,10 @@ defmodule Flezha.Operator.ControlUnit do
   def handle_call({:get_processor_state, processor_id}, from, state) do
     {:ok, ref} =
       ControlChannel.send_control(
-        state.operator_id,
+        state.compute_engine_id,
         {
           :get_processor_state,
-          %OperatorCommands.ProcessorState{processor_id: processor_id}
+          %ComputeEngineCommands.ProcessorState{processor_id: processor_id}
         }
       )
 
@@ -45,7 +45,7 @@ defmodule Flezha.Operator.ControlUnit do
 
   @impl true
   def handle_call({:send_control, command}, from, state) do
-    res = ControlChannel.send_control(state.operator_id, command)
+    res = ControlChannel.send_control(state.compute_engine_id, command)
 
     case res do
       {:ok, ref} ->
@@ -57,13 +57,13 @@ defmodule Flezha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call(:command_assign_operator_id, from, state) do
+  def handle_call(:command_assign_compute_engine_id, from, state) do
     {:ok, ref} =
       ControlChannel.send_control(
-        state.operator_id,
+        state.compute_engine_id,
         {
-          :assign_operator_id,
-          %OperatorCommands.AssignOperatorId{operator_id: state.operator_id}
+          :assign_compute_engine_id,
+          %ComputeEngineCommands.AssignComputeEngineId{compute_engine_id: state.compute_engine_id}
         }
       )
 
@@ -76,10 +76,10 @@ defmodule Flezha.Operator.ControlUnit do
 
     {:ok, ref} =
       ControlChannel.send_control(
-        state.operator_id,
+        state.compute_engine_id,
         {
           :connect_socket,
-          %OperatorCommands.ConnectSocket{sockets_count: sockets_count}
+          %ComputeEngineCommands.ConnectSocket{sockets_count: sockets_count}
         }
       )
 
@@ -99,13 +99,13 @@ defmodule Flezha.Operator.ControlUnit do
           ""
       end
 
-    command = %OperatorCommands.AddProcessor{
+    command = %ComputeEngineCommands.AddProcessor{
       processor_id: processor.id,
       factory_id: processor.factory_id,
       init_values: init_values
     }
 
-    {:ok, ref} = ControlChannel.send_control(state.operator_id, {:add_processor, command})
+    {:ok, ref} = ControlChannel.send_control(state.compute_engine_id, {:add_processor, command})
 
     {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
   end
@@ -114,10 +114,10 @@ defmodule Flezha.Operator.ControlUnit do
   def handle_call({:stop_processor, processor_id}, from, state) do
     {:ok, ref} =
       ControlChannel.send_control(
-        state.operator_id,
+        state.compute_engine_id,
         {
           :rem_processor,
-          %OperatorCommands.RemProcessor{processor_id: processor_id}
+          %ComputeEngineCommands.RemProcessor{processor_id: processor_id}
         }
       )
 
@@ -125,13 +125,13 @@ defmodule Flezha.Operator.ControlUnit do
   end
 
   @impl true
-  def handle_call(:disconnect_operator, from, state) do
+  def handle_call(:disconnect_compute_engine, from, state) do
     {:ok, ref} =
       ControlChannel.send_control(
-        state.operator_id,
+        state.compute_engine_id,
         {
-          :operator_disconnect,
-          %OperatorCommands.OperatorDisconnect{}
+          :compute_engine_disconnect,
+          %ComputeEngineCommands.ComputeEngineDisconnect{}
         }
       )
 
@@ -144,7 +144,7 @@ defmodule Flezha.Operator.ControlUnit do
   end
 
   defp handle_payload(state, payload) do
-    {:ok, response} = OperatorCommands.CommandResponse.decode(payload)
+    {:ok, response} = ComputeEngineCommands.CommandResponse.decode(payload)
     ref = Map.get(response, :reference_id, nil)
 
     reply =

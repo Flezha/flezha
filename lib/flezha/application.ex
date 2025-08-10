@@ -2,7 +2,7 @@ defmodule Flezha.Application do
   @moduledoc false
 
   alias Flezha.Socket.Support, as: SocketSupport
-  alias Flezha.Operator.FleetManager
+  alias Flezha.ComputeEngine.FleetManager
 
   require Logger
 
@@ -15,7 +15,7 @@ defmodule Flezha.Application do
       Flezha.BootLoader,
       Flezha.Service.Identificator,
       Flezha.Service.HubManager,
-      Flezha.Operator.FleetSupervisor,
+      Flezha.ComputeEngine.FleetSupervisor,
       FleetManager,
       {Flezha.Socket.Listener, {:control_listener, &SocketSupport.control_socket_path/0}},
       {Flezha.Socket.Dispatcher, &FleetManager.connect_handler/1},
@@ -42,7 +42,7 @@ defmodule Flezha.Application do
 
   @impl true
   def prep_stop(_state) do
-    # We need to stop the hub manager first to keep the operators
+    # We need to stop the hub manager first to keep the compute_engines
     # running while processors are stopped.
     Flezha.Service.HubManager.stop_hub_manager()
   end

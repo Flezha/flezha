@@ -37,8 +37,8 @@ defmodule FlezhaTest.CliManagerServiceTest do
     assert is_list(result2 |> elem(1) |> elem(1))
   end
 
-  test "rpc no operator specified" do
-    processor_id = "test_rpc_no_operator"
+  test "rpc no compute_engine specified" do
+    processor_id = "test_rpc_no_compute_engine"
 
     result1 =
       Flezha.Service.CliManager.worker_start("", processor_id, @factory_do_nothing, "{}")

@@ -2,7 +2,7 @@ erl_crash.dump
 deps
 _build
 cover
-test/apps/rust_operator/target
+test/apps/rust_compute_engine/target
 cli/target
 target/
 flezha-*.tar

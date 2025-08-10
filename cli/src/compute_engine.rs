@@ -1,7 +1,7 @@
 use crate::utils::{get_flezha_command, get_namespace, get_output_format};
-use std::process::{Command, exit};
+use std::process::{exit, Command};
 
-pub fn handle_operator_command(args: &[String]) {
+pub fn handle_compute_engine_command(args: &[String]) {
     if args.is_empty() {
         eprintln!("Error: Invalid number of arguments. See help for more information.");
         exit(1);
@@ -22,7 +22,7 @@ fn handle_list(args: &[String]) {
 
     let command = get_flezha_command();
     let rpc_command = format!(
-        "Flezha.Service.CliManager.list_operators(\"{}\", \"{}\")",
+        "Flezha.Service.CliManager.list_compute_engines(\"{}\", \"{}\")",
         namespace, output_format
     );
 
@@ -34,7 +34,7 @@ fn handle_list(args: &[String]) {
             &namespace
         };
         println!(
-            "Fetching operators for namespace '{}'...",
+            "Fetching compute_engines for namespace '{}'...",
             display_namespace
         );
     }

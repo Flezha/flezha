@@ -12,7 +12,7 @@ config :flezha,
       end
     end,
     fn ->
-      Flezha.Service.EventManager.add_handler(:operator_connected_event)
+      Flezha.Service.EventManager.add_handler(:compute_engine_connected_event)
     end,
     fn ->
       # Update the socket files path.
@@ -23,9 +23,9 @@ config :flezha,
     fn ->
       for _x <- 1..2 do
         receive do
-          {:operator_connected_event, {"default", _}} -> :ok
+          {:compute_engine_connected_event, {"default", _}} -> :ok
         after
-          3000 -> raise "Operator not connected"
+          3000 -> raise "ComputeEngine not connected"
         end
       end
     end

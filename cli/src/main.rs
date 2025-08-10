@@ -1,6 +1,6 @@
 mod agent;
+mod compute_engine;
 mod namespace;
-mod operator;
 mod plugin;
 mod processor;
 mod utils;
@@ -20,7 +20,7 @@ fn main() {
         "agent" => agent::handle_agent_command(&args[2..]),
         "processor" => processor::handle_processor_command(&args[2..]),
         "namespace" => namespace::handle_namespace_command(&args[2..]),
-        "operator" => operator::handle_operator_command(&args[2..]),
+        "compute-engine" => compute_engine::handle_compute_engine_command(&args[2..]),
         "plugin" => plugin::handle_plugin_command(&args[2..]),
         "help" | "--help" | "-h" => print_help(),
         _ => {
@@ -53,8 +53,8 @@ fn print_help() {
     println!("    namespace    Namespace management commands");
     println!("      list       List namespaces");
     println!();
-    println!("    operator     Operator management commands");
-    println!("      list       List operators");
+    println!("    compute_engine     ComputeEngine management commands");
+    println!("      list       List compute_engines");
     println!();
     println!("    plugin       Plugin management commands");
     println!("      enable     Enable a plugin");

@@ -5,7 +5,7 @@ defmodule Flezha.Service.ProcessorManager do
 
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
-  alias Flezha.Operator.FleetManager
+  alias Flezha.ComputeEngine.FleetManager
   alias Flezha.Processor.Builder, as: ProcessorBuilder
 
   def processor_registry(namespace) do
@@ -46,7 +46,7 @@ defmodule Flezha.Service.ProcessorManager do
   end
 
   @doc """
-  Starts a new processor to the operator.
+  Starts a new processor to the compute_engine.
   """
   @spec start_processor(String.t(), ProcessorBuilder.t()) ::
           {:ok, pid()} | {:error, String.t()}
@@ -132,12 +132,12 @@ defmodule Flezha.Service.ProcessorManager do
 
     case result do
       {:ok, {_processor_id, [{node, pid}]}} ->
-        {:ok, operator_id} = GenServer.call(pid, :registry_operator_set)
+        {:ok, compute_engine_id} = GenServer.call(pid, :registry_compute_engine_set)
 
         {:ok,
          %{
            processor_id: processor.id,
-           operator_id: operator_id,
+           compute_engine_id: compute_engine_id,
            node: node,
            pid: pid
          }}
@@ -170,12 +170,12 @@ defmodule Flezha.Service.ProcessorManager do
     end
   end
 
-  def assign_operator(namespace) do
-    select_operator(FleetManager.active_operators(namespace))
+  def assign_compute_engine(namespace) do
+    select_compute_engine(FleetManager.active_compute_engines(namespace))
   end
 
-  defp select_operator(operator_ids) do
+  defp select_compute_engine(compute_engine_ids) do
     # TODO: add load balancing here.
-    Enum.random(operator_ids)
+    Enum.random(compute_engine_ids)
   end
 end

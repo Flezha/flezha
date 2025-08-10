@@ -6,7 +6,7 @@ Distributed stateful processors. Provdes a static and dynamic creation of proces
 ## Building
 - Copy `.env.example` and rename to `.env`
 - Navigate to the testnet app(`test/apps/testnet`) and follow the instruction from the `README.md` file.
-- Build the `rust_operator` application.
+- Build the `rust_compute_engine` application.
 - Build the agent `mix compile`
 
 ## Examples
@@ -15,7 +15,7 @@ Distributed stateful processors. Provdes a static and dynamic creation of proces
 Starting the node and specifying the external processes to be used by the node mynode.
 PROD:
 ```bash
-RELEASE_NODE=mynode FLEZHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/flezha/test/apps/rust_operator/Cargo.toml --target-dir=./target" _build/prod/rel/flezha/bin/flz agent start --mode=attached_iex
+RELEASE_NODE=mynode FLEZHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/flezha/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target" _build/prod/rel/flezha/bin/flz agent start --mode=attached_iex
 ```
 
 DEV:

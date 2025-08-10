@@ -1,6 +1,6 @@
 {
     "rust-analyzer.linkedProjects": [
-        "./test/apps/rust_operator/Cargo.toml",
+        "./test/apps/rust_compute_engine/Cargo.toml",
         "./sdk/rust/Cargo.toml",
         "./cli/agent/Cargo.toml",
         "./cli/processor/Cargo.toml",

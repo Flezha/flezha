@@ -17,15 +17,15 @@ defmodule Flezha.Socket.Support do
   end
 
   def control_socket_path() do
-    sockets_base_path() <> "/operator_control_channel.sock"
+    sockets_base_path() <> "/compute_engine_control_channel.sock"
   end
 
-  def stream_socket_path(operator_id, type) when is_atom(operator_id) do
-    stream_socket_path(Atom.to_string(operator_id), type)
+  def stream_socket_path(compute_engine_id, type) when is_atom(compute_engine_id) do
+    stream_socket_path(Atom.to_string(compute_engine_id), type)
   end
 
-  def stream_socket_path(operator_id, type) when is_binary(operator_id) do
-    sockets_base_path() <> "/#{Atom.to_string(type)}_stream_#{operator_id}.sock"
+  def stream_socket_path(compute_engine_id, type) when is_binary(compute_engine_id) do
+    sockets_base_path() <> "/#{Atom.to_string(type)}_stream_#{compute_engine_id}.sock"
   end
 
   defp sockets_base_path() do

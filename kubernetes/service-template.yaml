@@ -1,39 +1,39 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: operator-service-x
+  name: compute-engine-service-x
   namespace: flezha
 spec:
-  replicas: 3  # X replicas - will distribute across available nodes
+  replicas: 3 # X replicas - will distribute across available nodes
   selector:
     matchLabels:
-      app: operator-service-x
+      app: compute-engine-service-x
   template:
     metadata:
       labels:
-        app: operator-service-x
+        app: compute-engine-service-x
     spec:
       imagePullSecrets:
         - name: dockerhub-secret
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchExpressions:
-                - key: app
-                  operator: In
-                  values:
-                  - operator-service-x
-              topologyKey: kubernetes.io/hostname
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      compute_engine: In
+                      values:
+                        - compute-engine-service-x
+                topologyKey: kubernetes.io/hostname
       containers:
-        - name: operator-service-x
-          image: your-operator-service-x:latest
+        - name: compute-engine-service-x
+          image: your-compute-engine-service-x:latest
           volumeMounts:
             - name: flezha-sockets
-              mountPath: /shared/sockets  # Access to Flezha's Unix sockets
-            - name: operator-service-x-data
+              mountPath: /shared/sockets # Access to Flezha's Unix sockets
+            - name: compute-engine-service-x-data
               mountPath: /app/data
           env:
             - name: FLEZHA_SOCKET_FILES_PATH
@@ -41,9 +41,9 @@ spec:
       volumes:
         - name: flezha-sockets
           hostPath:
-            path: /opt/flezha-sockets  # Same path as Flezha DaemonSet
+            path: /opt/flezha-sockets # Same path as Flezha DaemonSet
             type: Directory
-        - name: operator-service-x-data
+        - name: compute-engine-service-x-data
           hostPath:
-            path: /opt/operator-service-x-data
+            path: /opt/compute-engine-service-x-data
             type: DirectoryOrCreate

@@ -55,7 +55,7 @@ services:
 
   # rust:
   #   build:
-  #     context: ../test/apps/rust_operator
+  #     context: ../test/apps/rust_compute_engine
   #     dockerfile: ./Dockerfile.rust
   #   volumes:
   #     - socket_data:/socket_data

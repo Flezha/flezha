@@ -1,7 +1,7 @@
 defmodule FlezhaTest do
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
-  alias Flezha.Operator.FleetManager
+  alias Flezha.ComputeEngine.FleetManager
   alias FlezhaTest.Fixtures.ProcessorFixture
   alias Flezha.Service.PluginManager
   alias Flezha.Service.ProcessorManager
@@ -35,8 +35,8 @@ defmodule FlezhaTest do
     :ok
   end
 
-  test "operator node connect" do
-    res = Flezha.Operator.FleetManager.active_operators(@default_namespace)
+  test "compute_engine node connect" do
+    res = Flezha.ComputeEngine.FleetManager.active_compute_engines(@default_namespace)
     assert length(res) === 2
     Enum.each(res, &assert(is_binary(&1)))
   end
@@ -54,7 +54,7 @@ defmodule FlezhaTest do
     assert info[:processor_id] === "default_processor_test"
     assert info[:node] === @node_name
     assert is_pid(info[:pid])
-    assert is_binary(info[:operator_id])
+    assert is_binary(info[:compute_engine_id])
   end
 
   test "processor removing" do
@@ -290,34 +290,34 @@ defmodule FlezhaTest do
     assert new_overwatch_state.init_values === old_overwatch_state.init_values
   end
 
-  @tag :operator_disconnect
-  test "operator disconnect" do
+  @tag :compute_engine_disconnect
+  test "compute_engine disconnect" do
     namespace = @temp_namespace
-    operator_id = NodeTestHelper.start_operator(namespace)
+    compute_engine_id = NodeTestHelper.start_compute_engine(namespace)
 
-    NodeTestHelper.stop_operator(namespace, operator_id)
+    NodeTestHelper.stop_compute_engine(namespace, compute_engine_id)
 
-    assert Flezha.Operator.FleetManager.active_operators(namespace) === []
+    assert Flezha.ComputeEngine.FleetManager.active_compute_engines(namespace) === []
   end
 
-  @tag :operator_disconnect_migrate_op
-  test "operator disconnect migrate op" do
+  @tag :compute_engine_disconnect_migrate_op
+  test "compute_engine disconnect migrate op" do
     namespace = @temp_namespace
     processor_id_1 = "processor_1"
     processor_id_2 = "processor_2"
 
-    # Start 2 operators under the same namespace.
-    operator_id_1 = NodeTestHelper.start_operator(namespace)
-    operator_id_2 = NodeTestHelper.start_operator(namespace)
+    # Start 2 compute_engines under the same namespace.
+    compute_engine_id_1 = NodeTestHelper.start_compute_engine(namespace)
+    compute_engine_id_2 = NodeTestHelper.start_compute_engine(namespace)
 
     # Start a few processors and store some state on them.
-    {:ok, %{pid: _processor_pid_1, operator_id: pipe1_op}} =
+    {:ok, %{pid: _processor_pid_1, compute_engine_id: pipe1_op}} =
       processor_id_1
       |> ProcessorFixture.get(@test_store_input_factory)
       |> ProcessorFixture.start(namespace)
       |> ProcessorFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _processor_pid_2, operator_id: _pipe2_op}} =
+    {:ok, %{pid: _processor_pid_2, compute_engine_id: _pipe2_op}} =
       processor_id_2
       |> ProcessorFixture.get(@test_store_input_factory)
       |> ProcessorFixture.start(namespace)
@@ -329,15 +329,16 @@ defmodule FlezhaTest do
     ProcessorManager.create_snapshot(namespace, processor_id_1)
     ProcessorManager.create_snapshot(namespace, processor_id_2)
 
-    active_operator = if pipe1_op === operator_id_1, do: operator_id_2, else: operator_id_1
+    active_compute_engine =
+      if pipe1_op === compute_engine_id_1, do: compute_engine_id_2, else: compute_engine_id_1
 
-    # Trigger the operator disconnect.
-    NodeTestHelper.stop_operator(namespace, pipe1_op)
+    # Trigger the compute_engine disconnect.
+    NodeTestHelper.stop_compute_engine(namespace, pipe1_op)
 
-    # Make sure all the processors are migrated to the other operator.
+    # Make sure all the processors are migrated to the other compute_engine.
     ProcessorManager.processor_registry(namespace)
-    |> Enum.each(fn {_processor_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
-      assert new_operator === active_operator
+    |> Enum.each(fn {_processor_id, {_cspec, _cnodes, %{tag: new_compute_engine}}} ->
+      assert new_compute_engine === active_compute_engine
     end)
 
     # Make sure the states have been migrated.
@@ -348,24 +349,24 @@ defmodule FlezhaTest do
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
   end
 
-  @tag :operator_disconnect_preserve
-  test "operator disconnect preserve" do
-    # Start 2 operators under the same namespace.
+  @tag :compute_engine_disconnect_preserve
+  test "compute_engine disconnect preserve" do
+    # Start 2 compute_engines under the same namespace.
     namespace = @temp_namespace
-    operator_id_1 = NodeTestHelper.start_operator(namespace)
-    operator_id_2 = NodeTestHelper.start_operator(namespace)
+    compute_engine_id_1 = NodeTestHelper.start_compute_engine(namespace)
+    compute_engine_id_2 = NodeTestHelper.start_compute_engine(namespace)
 
     # Start a few processors and store some state on them.
     processor_id_1 = "processor_1"
     processor_id_2 = "processor_2"
 
-    {:ok, %{pid: _processor_pid_1, operator_id: _pipe1_op}} =
+    {:ok, %{pid: _processor_pid_1, compute_engine_id: _pipe1_op}} =
       processor_id_1
       |> ProcessorFixture.get(@test_store_input_factory)
       |> ProcessorFixture.start(namespace)
       |> ProcessorFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _processor_pid_2, operator_id: _pipe2_op}} =
+    {:ok, %{pid: _processor_pid_2, compute_engine_id: _pipe2_op}} =
       processor_id_2
       |> ProcessorFixture.get(@test_store_input_factory)
       |> ProcessorFixture.start(namespace)
@@ -377,17 +378,17 @@ defmodule FlezhaTest do
     ProcessorManager.create_snapshot(namespace, processor_id_1)
     ProcessorManager.create_snapshot(namespace, processor_id_2)
 
-    # Trigger the operator disconnect.
-    NodeTestHelper.stop_operator(namespace, operator_id_1)
-    NodeTestHelper.stop_operator(namespace, operator_id_2)
+    # Trigger the compute_engine disconnect.
+    NodeTestHelper.stop_compute_engine(namespace, compute_engine_id_1)
+    NodeTestHelper.stop_compute_engine(namespace, compute_engine_id_2)
 
-    # Start a new operator under the same namespace.
-    operator_id_3 = NodeTestHelper.start_operator(namespace)
+    # Start a new compute_engine under the same namespace.
+    compute_engine_id_3 = NodeTestHelper.start_compute_engine(namespace)
 
-    # Make sure all the processors are migrated to the new operator.
+    # Make sure all the processors are migrated to the new compute_engine.
     ProcessorManager.processor_registry(namespace)
-    |> Enum.each(fn {_processor_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
-      assert new_operator === operator_id_3
+    |> Enum.each(fn {_processor_id, {_cspec, _cnodes, %{tag: new_compute_engine}}} ->
+      assert new_compute_engine === compute_engine_id_3
     end)
 
     # Make sure the states have been migrated.
@@ -397,32 +398,32 @@ defmodule FlezhaTest do
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
 
-    # Stop the new operator.
-    NodeTestHelper.stop_operator(namespace, operator_id_3)
+    # Stop the new compute_engine.
+    NodeTestHelper.stop_compute_engine(namespace, compute_engine_id_3)
 
-    # Adjust the operator cleanup interval and trigger the cleanup.
-    Application.put_env(:flezha, :operator_keepalive, "0")
-    GenServer.call(FleetManager, :operator_cleanup)
+    # Adjust the compute_engine cleanup interval and trigger the cleanup.
+    Application.put_env(:flezha, :compute_engine_keepalive, "0")
+    GenServer.call(FleetManager, :compute_engine_cleanup)
 
-    # Reset the operator keepalive to its default value.
-    Application.put_env(:flezha, :operator_keepalive, "30000")
+    # Reset the compute_engine keepalive to its default value.
+    Application.put_env(:flezha, :compute_engine_keepalive, "30000")
 
     # Make sure the hub is stopped.
     assert HubManager.hub_alive?(namespace) === false
   end
 
-  @tag :operator_disconnect_migrate_hub
-  test "operator disconnect migrate hub" do
+  @tag :compute_engine_disconnect_migrate_hub
+  test "compute_engine disconnect migrate hub" do
     namespace = @temp_namespace
     processor_id_1 = "processor_1"
     processor_id_2 = "processor_2"
 
     {_peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
-    # Start the operators.
-    operator_id_1 = NodeTestHelper.start_operator(namespace)
-    rem_operator_1 = NodeTestHelper.start_operator_remote(peer_node, namespace)
-    rem_operator_2 = NodeTestHelper.start_operator_remote(peer_node, namespace)
+    # Start the compute_engines.
+    compute_engine_id_1 = NodeTestHelper.start_compute_engine(namespace)
+    rem_compute_engine_1 = NodeTestHelper.start_compute_engine_remote(peer_node, namespace)
+    rem_compute_engine_2 = NodeTestHelper.start_compute_engine_remote(peer_node, namespace)
 
     self = self()
     _node = node()
@@ -450,25 +451,25 @@ defmodule FlezhaTest do
     )
 
     # Start a few processors and store some state on them.
-    {:ok, %{pid: _processor_pid_1, operator_id: pipe1_op}} =
+    {:ok, %{pid: _processor_pid_1, compute_engine_id: pipe1_op}} =
       processor_id_1
       |> ProcessorFixture.get(@test_store_input_factory)
       |> ProcessorFixture.start(namespace)
       |> ProcessorFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _processor_pid_2, operator_id: pipe2_op}} =
+    {:ok, %{pid: _processor_pid_2, compute_engine_id: pipe2_op}} =
       processor_id_2
       |> ProcessorFixture.get(@test_store_input_factory)
       |> ProcessorFixture.start(namespace)
       |> ProcessorFixture.attach_output_msg(namespace)
 
-    # Make sure that atleast one of the processors is running on the remote operator.
-    assert pipe1_op !== operator_id_1 or pipe2_op !== operator_id_1
+    # Make sure that atleast one of the processors is running on the remote compute_engine.
+    assert pipe1_op !== compute_engine_id_1 or pipe2_op !== compute_engine_id_1
 
     ProcessorTestHelper.send_sync_io(processor_id_1, namespace, "state_1", %{})
     ProcessorTestHelper.send_sync_io(processor_id_2, namespace, "state_2", %{})
 
-    # Check the states before operator migrations.
+    # Check the states before compute_engine migrations.
     {:ok, json_state_1} = ProcessorManager.get_processor_state(namespace, processor_id_1)
     {:ok, json_state_2} = ProcessorManager.get_processor_state(namespace, processor_id_2)
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
@@ -477,21 +478,21 @@ defmodule FlezhaTest do
     ProcessorManager.create_snapshot(namespace, processor_id_1)
     ProcessorManager.create_snapshot(namespace, processor_id_2)
 
-    # Trigger the operator disconnect.
-    NodeTestHelper.stop_operator_remote(peer_node, namespace, rem_operator_1)
-    NodeTestHelper.stop_operator_remote(peer_node, namespace, rem_operator_2)
+    # Trigger the compute_engine disconnect.
+    NodeTestHelper.stop_compute_engine_remote(peer_node, namespace, rem_compute_engine_1)
+    NodeTestHelper.stop_compute_engine_remote(peer_node, namespace, rem_compute_engine_2)
 
     # Need to wait 4 times process inserted hook to be called.
-    # With each operator disconnect we update the tag of the processor.
+    # With each compute_engine disconnect we update the tag of the processor.
     # Wait for other hooks as well.
     MessageTestHelper.recv_num(:hook_insert_recv, 4)
     MessageTestHelper.recv_num(:hook_pstartup_recv, 2)
 
-    # Make sure all the processors are migrated to the other operator.
+    # Make sure all the processors are migrated to the other compute_engine.
     reg = ProcessorManager.processor_registry(namespace)
 
-    Enum.each(reg, fn {_processor_id, {_cspec, _cnodes, %{tag: new_operator}}} ->
-      assert new_operator === operator_id_1
+    Enum.each(reg, fn {_processor_id, {_cspec, _cnodes, %{tag: new_compute_engine}}} ->
+      assert new_compute_engine === compute_engine_id_1
     end)
 
     # Make sure the states have been migrated.

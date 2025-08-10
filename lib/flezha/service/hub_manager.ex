@@ -100,53 +100,53 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def register_handler(namespace, operator_id) do
+  def register_handler(namespace, compute_engine_id) do
     HookManager.register_handler(
       Identificator.hub(namespace),
       Hook.registry_pid_inserted(),
       %HookManager{
-        id: operator_id <> "_hub_pid_insertion",
+        id: compute_engine_id <> "_hub_pid_insertion",
         m: Flezha.Service.HubManager,
         f: :hook_insert_pid,
-        a: [operator_id, :_]
+        a: [compute_engine_id, :_]
       }
     )
   end
 
-  def unregister_handler(namespace, operator_id) do
+  def unregister_handler(namespace, compute_engine_id) do
     HookManager.cancel_handler(
       Identificator.hub(namespace),
       Hook.registry_pid_inserted(),
-      operator_id <> "_hub_pid_insertion"
+      compute_engine_id <> "_hub_pid_insertion"
     )
   end
 
-  def operator_processors(namespace, operator_id) do
+  def compute_engine_processors(namespace, compute_engine_id) do
     hub_id = Identificator.hub(namespace)
 
-    ProcessHub.tag_query(hub_id, operator_id)
+    ProcessHub.tag_query(hub_id, compute_engine_id)
   end
 
-  def operator_switch(namespace, old_operator_id, new_operator_id) do
+  def compute_engine_switch(namespace, old_compute_engine_id, new_compute_engine_id) do
     hub_id = Identificator.hub(namespace)
 
-    # Updates the operator id in the registry.
-    operator_processors(namespace, old_operator_id)
+    # Updates the compute_engine id in the registry.
+    compute_engine_processors(namespace, old_compute_engine_id)
     |> Enum.each(fn {processor_id, [{_node, _processor_pid}]} ->
-      processor_set_operator(namespace, processor_id, new_operator_id)
+      processor_set_compute_engine(namespace, processor_id, new_compute_engine_id)
     end)
 
     # Propagate the change to all nodes in the namespace.
     ProcessHub.Service.Synchronizer.trigger_sync(hub_id)
   end
 
-  def processor_set_operator(namespace, processor_id, operator_id) do
+  def processor_set_compute_engine(namespace, processor_id, compute_engine_id) do
     hub_id = Identificator.hub(namespace)
 
     case ProcessHub.is_alive?(hub_id) do
       true ->
         ProcessRegistry.update(hub_id, processor_id, fn cspec, node_pids, metadata ->
-          {cspec, node_pids, Map.put(metadata, :tag, operator_id)}
+          {cspec, node_pids, Map.put(metadata, :tag, compute_engine_id)}
         end)
 
         :ok
@@ -157,7 +157,7 @@ defmodule Flezha.Service.HubManager do
   end
 
   # TODO: we should also remove the pids incase the processor is removed.
-  def hook_insert_pid(operator_id, {processor_id, node_pids}) do
+  def hook_insert_pid(compute_engine_id, {processor_id, node_pids}) do
     curr_node = node()
 
     updated_pids =
@@ -172,8 +172,8 @@ defmodule Flezha.Service.HubManager do
 
       _ ->
         stream_channels =
-          Supervisor.which_children(Identificator.stream_sup_primary(operator_id)) ++
-            Supervisor.which_children(Identificator.stream_sup_secondary(operator_id))
+          Supervisor.which_children(Identificator.stream_sup_primary(compute_engine_id)) ++
+            Supervisor.which_children(Identificator.stream_sup_secondary(compute_engine_id))
 
         Enum.each(stream_channels, fn {_, pid, _, _} ->
           GenServer.call(pid, {:processor_pid_update, processor_id, updated_pids})
@@ -189,16 +189,16 @@ defmodule Flezha.Service.HubManager do
         {namespace, processor} ->
           {namespace, processor}
 
-        {namespace, _existing_operator, processor} ->
+        {namespace, _existing_compute_engine, processor} ->
           {namespace, processor}
       end
 
-    assigned_operator = ProcessorManager.assign_operator(namespace)
-    new_args = [{namespace, assigned_operator, processor}]
+    assigned_compute_engine = ProcessorManager.assign_compute_engine(namespace)
+    new_args = [{namespace, assigned_compute_engine, processor}]
 
     child_data
     |> put_in([:child_spec, :start], {m, f, new_args})
-    |> put_in([:metadata, :tag], assigned_operator)
+    |> put_in([:metadata, :tag], assigned_compute_engine)
   end
 
   @impl true

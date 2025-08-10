@@ -229,24 +229,24 @@ defmodule Flezha.Service.CliManager do
     IO.puts("Error #{operation}: #{inspect(reason)}")
   end
 
-  @doc "Lists operators for a specific namespace."
-  def list_operators(namespace, output_format \\ "text") do
+  @doc "Lists compute_engines for a specific namespace."
+  def list_compute_engines(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_operators(namespace_display) do
-      {:ok, operators} when is_list(operators) ->
+    case Flezha.list_compute_engines(namespace_display) do
+      {:ok, compute_engines} when is_list(compute_engines) ->
         context = %{key: :namespace, value: namespace_display, display: "namespace"}
-        handle_list_output(operators, "operators", output_format, context)
+        handle_list_output(compute_engines, "compute_engines", output_format, context)
 
-      operators when is_list(operators) ->
+      compute_engines when is_list(compute_engines) ->
         context = %{key: :namespace, value: namespace_display, display: "namespace"}
-        handle_list_output(operators, "operators", output_format, context)
+        handle_list_output(compute_engines, "compute_engines", output_format, context)
 
       {:error, reason} ->
-        handle_list_error(reason, "listing operators", output_format)
+        handle_list_error(reason, "listing compute_engines", output_format)
 
       other ->
-        handle_list_error(other, "listing operators", output_format)
+        handle_list_error(other, "listing compute_engines", output_format)
     end
   end
 
@@ -319,7 +319,7 @@ defmodule Flezha.Service.CliManager do
           {:ok, state} ->
             %{
               id: processor_id,
-              operator_id: state.operator_id,
+              compute_engine_id: state.compute_engine_id,
               namespace: state.namespace,
               default_input_type: state.default_input_type,
               bindings: format_bindings_json(state.bindings)
@@ -383,7 +383,7 @@ defmodule Flezha.Service.CliManager do
 
   defp display_processor_info(processor_id, state) do
     IO.puts("Processor: #{processor_id}")
-    IO.puts("  Operator ID: #{state.operator_id}")
+    IO.puts("  ComputeEngine ID: #{state.compute_engine_id}")
     IO.puts("  Group ID: #{state.namespace}")
     IO.puts("  Default Input Type: #{state.default_input_type}")
     IO.puts("  Bindings:")
