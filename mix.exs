@@ -55,11 +55,7 @@ defmodule Flezha.MixProject do
         _ -> "debug"
       end
 
-    File.cp!("cli/target/#{env}/agent", Path.join(release.path, "bin/agent"))
-    File.cp!("cli/target/#{env}/computation", Path.join(release.path, "bin/computation"))
-    File.cp!("cli/target/#{env}/plugin", Path.join(release.path, "bin/plugin"))
-    File.cp!("cli/target/#{env}/namespace", Path.join(release.path, "bin/namespace"))
-    File.cp!("cli/target/#{env}/operator", Path.join(release.path, "bin/operator"))
+    File.cp!("cli/target/#{env}/flz", Path.join(release.path, "bin/flz"))
     File.rename!(Path.join(release.path, "bin/flezha"), Path.join(release.path, "bin/flzvm"))
 
     release
