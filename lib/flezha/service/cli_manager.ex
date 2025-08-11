@@ -170,63 +170,47 @@ defmodule Flezha.Service.CliManager do
 
   @doc "Lists all running namespaces."
   def list_namespaces(output_format \\ "text") do
-    case Flezha.list_namespaces() do
-      {:ok, namespaces} when is_list(namespaces) ->
-        handle_list_output(namespaces, "running namespaces", output_format)
+    namespaces = Flezha.list_namespaces()
+    handle_list_output(namespaces, "running namespaces", output_format)
+  end
 
-      namespaces when is_list(namespaces) ->
-        handle_list_output(namespaces, "running namespaces", output_format)
+  # Generic output handler that works for all list operations
+  defp handle_list_output(items, item_name, output_format, context \\ nil) do
+    case {items, output_format} do
+      {items, "json"} ->
+        result =
+          case context do
+            nil -> %{String.to_atom(item_name) => items}
+            %{key: key, value: value} -> %{String.to_atom(item_name) => items, key => value}
+          end
 
-      {:error, reason} ->
-        handle_list_error(reason, "listing namespaces", output_format)
+        IO.puts(Jason.encode!(result))
 
-      other ->
-        handle_list_error(other, "listing namespaces", output_format)
+      {[], _} ->
+        message =
+          case context do
+            nil ->
+              "No #{item_name} found."
+
+            %{display: display, value: value} ->
+              "No #{item_name} found for #{display} '#{value}'."
+          end
+
+        IO.puts(message)
+
+      {items, _} ->
+        header =
+          case context do
+            nil ->
+              "#{String.capitalize(item_name)}:"
+
+            %{display: display, value: value} ->
+              "#{String.capitalize(item_name)} in #{display} '#{value}':"
+          end
+
+        IO.puts(header)
+        Enum.each(items, &IO.puts("  - #{&1}"))
     end
-  end
-
-  # Generic output handlers that work for all list operations
-  defp handle_list_output(items, item_name, "json", context \\ nil) do
-    result =
-      case context do
-        nil -> %{String.to_atom(item_name) => items}
-        %{key: key, value: value} -> %{String.to_atom(item_name) => items, key => value}
-      end
-
-    IO.puts(Jason.encode!(result))
-  end
-
-  defp handle_list_output([], item_name, _, context) do
-    message =
-      case context do
-        nil -> "No #{item_name} found."
-        %{display: display, value: value} -> "No #{item_name} found for #{display} '#{value}'."
-      end
-
-    IO.puts(message)
-  end
-
-  defp handle_list_output(items, item_name, _, context) do
-    header =
-      case context do
-        nil ->
-          "#{String.capitalize(item_name)}:"
-
-        %{display: display, value: value} ->
-          "#{String.capitalize(item_name)} in #{display} '#{value}':"
-      end
-
-    IO.puts(header)
-    Enum.each(items, &IO.puts("  - #{&1}"))
-  end
-
-  defp handle_list_error(reason, _operation, "json") do
-    result = %{error: inspect(reason)}
-    IO.puts(Jason.encode!(result))
-  end
-
-  defp handle_list_error(reason, operation, _) do
-    IO.puts("Error #{operation}: #{inspect(reason)}")
   end
 
   @doc "Lists compute_engines for a specific namespace."
@@ -237,16 +221,6 @@ defmodule Flezha.Service.CliManager do
       {:ok, compute_engines} when is_list(compute_engines) ->
         context = %{key: :namespace, value: namespace_display, display: "namespace"}
         handle_list_output(compute_engines, "compute_engines", output_format, context)
-
-      compute_engines when is_list(compute_engines) ->
-        context = %{key: :namespace, value: namespace_display, display: "namespace"}
-        handle_list_output(compute_engines, "compute_engines", output_format, context)
-
-      {:error, reason} ->
-        handle_list_error(reason, "listing compute_engines", output_format)
-
-      other ->
-        handle_list_error(other, "listing compute_engines", output_format)
     end
   end
 
@@ -255,19 +229,9 @@ defmodule Flezha.Service.CliManager do
     namespace_display = normalize_namespace(namespace)
 
     case Flezha.list_processors(namespace_display) do
-      {:ok, processors} when is_list(processors) ->
+      {:ok, processors} ->
         context = %{key: :namespace, value: namespace_display, display: "namespace"}
         handle_list_output(processors, "processors", output_format, context)
-
-      processors when is_list(processors) ->
-        context = %{key: :namespace, value: namespace_display, display: "namespace"}
-        handle_list_output(processors, "processors", output_format, context)
-
-      {:error, reason} ->
-        handle_list_error(reason, "listing processors", output_format)
-
-      other ->
-        handle_list_error(other, "listing processors", output_format)
     end
   end
 
@@ -276,25 +240,12 @@ defmodule Flezha.Service.CliManager do
     namespace_display = normalize_namespace(namespace)
 
     case Flezha.list_processors(namespace_display) do
-      {:ok, processors} when is_list(processors) ->
+      {:ok, processors} ->
         if Enum.empty?(processors) do
           handle_empty_processors(namespace_display, output_format)
         else
           handle_processor_info_output(processors, namespace_display, output_format)
         end
-
-      processors when is_list(processors) ->
-        if Enum.empty?(processors) do
-          handle_empty_processors(namespace_display, output_format)
-        else
-          handle_processor_info_output(processors, namespace_display, output_format)
-        end
-
-      {:error, reason} ->
-        handle_list_error(reason, "listing processors", output_format)
-
-      other ->
-        handle_list_error(other, "listing processors", output_format)
     end
   end
 
