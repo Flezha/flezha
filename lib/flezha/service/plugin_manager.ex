@@ -37,9 +37,11 @@ defmodule Flezha.Service.PluginManager do
     module = plugin.__struct__
 
     {reply, new_state} =
-      case apply(module, :enable, [plugin_id, plugin]) do
-        {:ok, info} -> {{:ok, "plugin enabled"}, Map.put(state, plugin_id, info)}
-        {:error, reason} -> {{:error, reason}, state}
+      with :ok <- plugin_id_unique(state, plugin_id),
+           {:ok, info} <- apply(module, :enable, [plugin_id, plugin]) do
+        {{:ok, "plugin enabled"}, Map.put(state, plugin_id, info)}
+      else
+        err -> {err, state}
       end
 
     {:reply, reply, new_state}
@@ -64,5 +66,12 @@ defmodule Flezha.Service.PluginManager do
   @impl true
   def handle_cast({:unregister_plugin, plugin_id}, state) do
     {:noreply, Map.delete(state, plugin_id)}
+  end
+
+  defp plugin_id_unique(plugins, plugin_id) do
+    case Map.get(plugins, plugin_id, nil) do
+      nil -> :ok
+      _ -> {:error, "plugin already registered"}
+    end
   end
 end
