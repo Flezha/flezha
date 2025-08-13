@@ -43,11 +43,11 @@ fn handle_enable(args: &[String]) {
     let opts_json = serialize_flags(&opts_flags);
 
     let rpc_command = format!(
-        "Flezha.Service.CliManager.enable_plugin(\"{}\", \"{}\", \"{}\", \"{}\")",
+        "Flezha.Service.CliManager.enable_plugin(\"{}\", \"{}\", {}, {})",
         plugin_id,
         provider_id,
-        x_flags_json.replace("\"", "\\\""),
-        opts_json.replace("\"", "\\\"")
+        serde_json::to_string(&x_flags_json).unwrap(),
+        serde_json::to_string(&opts_json).unwrap()
     );
 
     println!("Enabling plugin...");

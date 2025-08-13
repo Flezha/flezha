@@ -11,20 +11,13 @@ defmodule Flezha.Plugin.Provider.Websocket do
   defstruct @enforce_keys ++
               [
                 :conn,
-                post_connect: %{},
+                post_connect: "",
                 ws_opts: [],
                 payload_metadata: %{}
               ]
 
   @impl true
   def plugin_type(), do: :io_binding
-
-  defp convert_value(:post_connect, value) when is_binary(value) do
-    case Jason.decode(value) do
-      {:ok, map} -> map
-      _ -> %{}
-    end
-  end
 
   defp convert_value(:ws_opts, value) when is_binary(value) do
     case Jason.decode(value) do
