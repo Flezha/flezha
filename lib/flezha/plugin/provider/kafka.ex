@@ -46,7 +46,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
       end
 
       @impl true
-      def exec(settings, {message, metadata} = payload) do
+      def handle_io(settings, {message, metadata} = payload) do
         partition =
           case Map.get(metadata, "kafka_msg_partition") do
             nil -> settings.partition

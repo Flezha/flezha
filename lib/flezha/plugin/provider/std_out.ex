@@ -16,7 +16,7 @@ defmodule Flezha.Plugin.Provider.StdOut do
     end
 
     @impl true
-    def exec(_plugin, payload) do
+    def handle_io(_plugin, payload) do
       IO.puts(inspect(payload))
 
       {:ok, payload}

@@ -38,7 +38,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
     end
 
     @impl true
-    def exec(binding, payload) do
+    def handle_io(binding, payload) do
       case Process.send(binding.recv_pid, {:message_forward, payload}, []) do
         :ok -> {:ok, payload}
         _ -> {:error, :send_failed}

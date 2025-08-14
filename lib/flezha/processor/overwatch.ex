@@ -37,7 +37,6 @@ defmodule Flezha.Processor.Overwatch do
   def init({namespace, compute_engine_id, processor}) do
     snapshot_interval = Keyword.get(processor.opts, :snapshot_interval, @snapshop_interval)
 
-    # TODO: Perhaps move to handle continue.
     schedule_snapshot(snapshot_interval)
 
     state = %__MODULE__{
@@ -207,7 +206,7 @@ defmodule Flezha.Processor.Overwatch do
 
   @impl true
   def handle_info({:binding_interval_exec, %IOBindingPlugin{provider: provider}} = plugin, state) do
-    IOBinding.exec(provider, {"", %{}})
+    IOBinding.handle_io(provider, {"", %{}})
     add_interval_binding(plugin)
 
     {:noreply, state}
@@ -448,7 +447,7 @@ defmodule Flezha.Processor.Overwatch do
     Enum.reduce_while(bindings, {message, metadata}, fn
       {_, %IOBindingPlugin{provider: p, plugin_group: pg}}, payload
       when plugin_group === pg ->
-        case IOBinding.exec(p, payload) do
+        case IOBinding.handle_io(p, payload) do
           {:ok, payload} -> {:cont, payload}
           {:skip, :normal} -> {:halt, nil}
           {:error, _} -> {:cont, payload}

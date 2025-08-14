@@ -47,8 +47,8 @@ defmodule Flezha.Plugin.Provider.Websocket do
     end
 
     @impl true
-    def exec(binding, {message, _metadata} = payload) do
-      Websocket.send_payload(binding.conn, message)
+    def handle_io(binding, {message, metadata} = payload) do
+      Websocket.send_payload(binding.conn, {metadata.type, message})
 
       {:ok, payload}
     end

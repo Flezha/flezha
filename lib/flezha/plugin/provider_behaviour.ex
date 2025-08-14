@@ -39,14 +39,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
         struct_sample = struct!(__MODULE__, dummy_params)
         struct_fields = Map.keys(struct_sample) |> Enum.reject(&(&1 == :__struct__))
 
-        # Validate required fields
-        missing_fields =
-          Enum.filter(enforce_keys, fn key ->
-            not Map.has_key?(params, key)
-          end)
-
         {convert_status, params_data} =
-          Enum.reduce_while(struct_fields, {:ok, %{}}, fn field, {_, params} ->
+          Enum.reduce_while(struct_fields, {:ok, %{}}, fn field, {_status, params} ->
             field_str = Atom.to_string(field)
 
             case Map.get(string_map, field_str) do
@@ -55,10 +49,20 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
               value ->
                 case convert_value(field, value) do
-                  {:ok, converted_value} -> Map.put(params, field, converted_value)
-                  {:error, reason} -> {:halt, {:error, "Invalid value for #{field}: #{reason}"}}
+                  {:ok, converted_value} ->
+                    params = Map.put(params, field, converted_value)
+                    {:cont, {:ok, params}}
+
+                  {:error, reason} ->
+                    {:halt, {:error, "Invalid value for #{field}: #{reason}"}}
                 end
             end
+          end)
+
+        # Validate required fields
+        missing_fields =
+          Enum.filter(enforce_keys, fn key ->
+            not Map.has_key?(params_data, key)
           end)
 
         cond do
@@ -112,6 +116,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   defmacro __before_compile__(_env) do
     quote do
       # Default convert_value catch-all clause - injected at the end
+      defp convert_value(nil, value), do: {:error, "Empty value provided for field"}
       defp convert_value(_field, value), do: {:ok, value}
     end
   end
