@@ -5,7 +5,7 @@ defmodule Flezha.Service.Parser do
 
       case Process.whereis(pname) do
         nil -> {:error, "Process #{pname} not found"}
-        pid -> pid
+        pid -> {:ok, pid}
       end
     catch
       _ -> {:error, "Invalid PID format"}

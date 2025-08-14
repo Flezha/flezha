@@ -19,15 +19,15 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     defp convert_value(:partition, value) when is_binary(value) do
       case Integer.parse(value) do
-        {int_val, ""} -> int_val
-        _ -> nil
+        {int_val, ""} -> {:ok, int_val}
+        _ -> {:error, "Invalid value for partition: #{value}"}
       end
     end
 
     defp convert_value(:required_acks, value) when is_binary(value) do
       case Integer.parse(value) do
-        {int_val, ""} -> int_val
-        _ -> 1
+        {int_val, ""} -> {:ok, int_val}
+        _ -> {:error, "Invalid value for required_acks: #{value}"}
       end
     end
 

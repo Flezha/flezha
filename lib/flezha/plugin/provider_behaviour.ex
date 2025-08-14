@@ -39,30 +39,41 @@ defmodule Flezha.Plugin.ProviderBehaviour do
         struct_sample = struct!(__MODULE__, dummy_params)
         struct_fields = Map.keys(struct_sample) |> Enum.reject(&(&1 == :__struct__))
 
-        params =
-          Enum.reduce(struct_fields, %{}, fn field, acc ->
-            field_str = Atom.to_string(field)
-
-            case Map.get(string_map, field_str) do
-              nil -> acc
-              value -> Map.put(acc, field, convert_value(field, value))
-            end
-          end)
-
         # Validate required fields
         missing_fields =
           Enum.filter(enforce_keys, fn key ->
             not Map.has_key?(params, key)
           end)
 
-        if Enum.empty?(missing_fields) do
-          try do
-            {:ok, struct!(__MODULE__, params)}
-          rescue
-            e -> {:error, "Failed to create struct: #{Exception.message(e)}"}
-          end
-        else
-          {:error, "Missing required fields: #{inspect(missing_fields)}"}
+        {convert_status, params_data} =
+          Enum.reduce_while(struct_fields, {:ok, %{}}, fn field, {_, params} ->
+            field_str = Atom.to_string(field)
+
+            case Map.get(string_map, field_str) do
+              nil ->
+                {:cont, {:ok, params}}
+
+              value ->
+                case convert_value(field, value) do
+                  {:ok, converted_value} -> Map.put(params, field, converted_value)
+                  {:error, reason} -> {:halt, {:error, "Invalid value for #{field}: #{reason}"}}
+                end
+            end
+          end)
+
+        cond do
+          !Enum.empty?(missing_fields) ->
+            {:error, "Missing required fields: #{inspect(missing_fields)}"}
+
+          convert_status == :error ->
+            {:error, "Failed to convert fields: #{inspect(params_data)}"}
+
+          true ->
+            try do
+              {:ok, struct!(__MODULE__, params_data)}
+            rescue
+              e -> {:error, "Failed to create struct: #{Exception.message(e)}"}
+            end
         end
       end
 
@@ -101,7 +112,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   defmacro __before_compile__(_env) do
     quote do
       # Default convert_value catch-all clause - injected at the end
-      defp convert_value(_field, value), do: value
+      defp convert_value(_field, value), do: {:ok, value}
     end
   end
 end

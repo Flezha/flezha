@@ -12,9 +12,9 @@ defmodule Flezha.Plugin.Provider.Filter do
 
   defp convert_value(:inverted, value) when is_binary(value) do
     case String.downcase(value) do
-      "true" -> true
-      "false" -> false
-      _ -> false
+      "true" -> {:ok, true}
+      "false" -> {:ok, false}
+      _ -> {:error, "Invalid value for inverted: #{value}"}
     end
   end
 

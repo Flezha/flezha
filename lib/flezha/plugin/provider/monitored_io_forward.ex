@@ -19,8 +19,8 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
 
   defp convert_value(:heartbeat_interval, value) when is_binary(value) do
     case Integer.parse(value) do
-      {int_val, ""} -> int_val
-      _ -> 5000
+      {int_val, ""} -> {:ok, int_val}
+      _ -> {:error, "Invalid value for heartbeat_interval: #{value}"}
     end
   end
 

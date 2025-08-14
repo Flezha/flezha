@@ -20,17 +20,11 @@ defmodule Flezha.Plugin.Provider.Websocket do
   def plugin_type(), do: :io_binding
 
   defp convert_value(:ws_opts, value) when is_binary(value) do
-    case Jason.decode(value) do
-      {:ok, list} when is_list(list) -> list
-      _ -> []
-    end
+    Jason.decode(value)
   end
 
   defp convert_value(:payload_metadata, value) when is_binary(value) do
-    case Jason.decode(value) do
-      {:ok, map} -> map
-      _ -> %{}
-    end
+    Jason.decode(value)
   end
 
   defimpl IOBinding, for: Flezha.Plugin.Provider.Websocket do

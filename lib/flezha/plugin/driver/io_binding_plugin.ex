@@ -53,7 +53,7 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
 
         case Map.get(string_map, field_str) do
           nil -> acc
-          value -> Map.put(acc, field, convert_value(field, value))
+          value -> Map.put(acc, field, static_convert(field, value))
         end
       end)
 
@@ -82,7 +82,7 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
     end
   end
 
-  defp convert_value(:trigger, value) when is_binary(value) do
+  defp static_convert(:trigger, value) when is_binary(value) do
     case value do
       "on_input" -> :on_input
       "on_output" -> :on_output
@@ -92,12 +92,12 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
     end
   end
 
-  defp convert_value(:position, value) when is_binary(value) do
+  defp static_convert(:position, value) when is_binary(value) do
     case Integer.parse(value) do
       {int_val, ""} -> int_val
       _ -> nil
     end
   end
 
-  defp convert_value(_field, value), do: value
+  defp static_convert(_field, value), do: value
 end
