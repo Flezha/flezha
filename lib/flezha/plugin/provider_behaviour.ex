@@ -24,6 +24,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   defmacro __using__(_opts) do
     quote do
       @behaviour Flezha.Plugin.ProviderBehaviour
+      @before_compile Flezha.Plugin.ProviderBehaviour
 
       def build(string_map) do
         # Try to determine required fields by attempting to create struct
@@ -94,14 +95,12 @@ defmodule Flezha.Plugin.ProviderBehaviour do
             end
         end
       end
+    end
+  end
 
-      # Default convert_value with catch-all clause
-      defp convert_value(_field, value), do: value
-
-      defoverridable convert_value: 2
-
-      # Re-inject the catch-all clause to ensure it's always available
-      # This will be the last clause, so specific clauses take precedence
+  defmacro __before_compile__(_env) do
+    quote do
+      # Default convert_value catch-all clause - injected at the end
       defp convert_value(_field, value), do: value
     end
   end

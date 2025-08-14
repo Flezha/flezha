@@ -1,6 +1,7 @@
 defmodule Flezha.Plugin.Provider.BeamMsgForward do
   alias Flezha.Processor.IOBinding
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Service.Parser
 
   use ProviderBehaviour
 
@@ -11,16 +12,7 @@ defmodule Flezha.Plugin.Provider.BeamMsgForward do
   def plugin_type(), do: :io_binding
 
   defp convert_value(:recv_pid, value) when is_binary(value) do
-    case String.to_existing_atom(value) do
-      pid when is_atom(pid) ->
-        case Process.whereis(pid) do
-          nil -> {:error, "Process #{value} not found"}
-          pid -> pid
-        end
-
-      _ ->
-        {:error, "Invalid PID format"}
-    end
+    Parser.string_to_pid(value)
   end
 
   defimpl IOBinding, for: Flezha.Plugin.Provider.BeamMsgForward do
