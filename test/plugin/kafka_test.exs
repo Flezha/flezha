@@ -36,7 +36,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       conn: self()
     }
 
-    result = IOBinding.exec(provider, {"test_data", %{}})
+    result = IOBinding.handle_io(provider, {"test_data", %{}})
 
     assert elem(result, 0) == :ok
     assert elem(result, 1) == {"test_data", %{}}

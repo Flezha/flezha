@@ -15,13 +15,13 @@ defmodule FlezhaTest.Plugin.FilterTest do
     assert is_struct(result |> elem(1) |> elem(0), Flezha.Plugin.Provider.Filter)
 
     payload = {"{\"event\": \"heartbeat\"}", %{}}
-    exec_result = IOBinding.exec(result |> elem(1) |> elem(0), payload)
+    exec_result = IOBinding.handle_io(result |> elem(1) |> elem(0), payload)
 
     assert elem(exec_result, 0) == :ok
     assert elem(exec_result, 1) == payload
 
     payload2 = {"{\"event\": \"heartbeat2\"}", %{}}
-    exec_result2 = IOBinding.exec(result |> elem(1) |> elem(0), payload2)
+    exec_result2 = IOBinding.handle_io(result |> elem(1) |> elem(0), payload2)
 
     assert elem(exec_result2, 0) == :skip
     assert elem(exec_result2, 1) == :normal
@@ -39,13 +39,13 @@ defmodule FlezhaTest.Plugin.FilterTest do
     assert is_struct(result |> elem(1) |> elem(0), Flezha.Plugin.Provider.Filter)
 
     payload = {"{\"event\": \"heartbeat\"}", %{}}
-    exec_result = IOBinding.exec(result |> elem(1) |> elem(0), payload)
+    exec_result = IOBinding.handle_io(result |> elem(1) |> elem(0), payload)
 
     assert elem(exec_result, 0) == :skip
     assert elem(exec_result, 1) == :normal
 
     payload2 = {"{\"event\": \"heartbeat2\"}", %{}}
-    exec_result2 = IOBinding.exec(result |> elem(1) |> elem(0), payload2)
+    exec_result2 = IOBinding.handle_io(result |> elem(1) |> elem(0), payload2)
 
     assert elem(exec_result2, 0) == :ok
     assert elem(exec_result2, 1) == {"{\"event\": \"heartbeat2\"}", %{}}

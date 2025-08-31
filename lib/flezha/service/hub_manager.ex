@@ -101,23 +101,25 @@ defmodule Flezha.Service.HubManager do
   end
 
   def register_handler(namespace, compute_engine_id) do
-    HookManager.register_handler(
+    ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
       Hook.registry_pid_inserted(),
-      %HookManager{
-        id: compute_engine_id <> "_hub_pid_insertion",
-        m: Flezha.Service.HubManager,
-        f: :hook_insert_pid,
-        a: [compute_engine_id, :_]
-      }
+      [
+        %HookManager{
+          id: compute_engine_id <> "_hub_pid_insertion",
+          m: Flezha.Service.HubManager,
+          f: :hook_insert_pid,
+          a: [compute_engine_id, :_]
+        }
+      ]
     )
   end
 
   def unregister_handler(namespace, compute_engine_id) do
-    HookManager.cancel_handler(
+    ProcessHub.cancel_hook_handlers(
       Identificator.hub(namespace),
       Hook.registry_pid_inserted(),
-      compute_engine_id <> "_hub_pid_insertion"
+      [compute_engine_id <> "_hub_pid_insertion"]
     )
   end
 
@@ -137,7 +139,9 @@ defmodule Flezha.Service.HubManager do
     end)
 
     # Propagate the change to all nodes in the namespace.
-    ProcessHub.Service.Synchronizer.trigger_sync(hub_id)
+    hub_id
+    |> ProcessHub.Coordinator.get_hub()
+    |> ProcessHub.Service.Synchronizer.trigger_sync()
   end
 
   def processor_set_compute_engine(namespace, processor_id, compute_engine_id) do
@@ -224,9 +228,9 @@ defmodule Flezha.Service.HubManager do
       },
       hooks: %{
         Hook.child_data_alter() => [
-          %ProcessHub.Service.HookManager{
+          %HookManager{
             id: ProcessHub.Constant.Hook.child_data_alter(),
-            m: Flezha.Service.HubManager,
+            m: __MODULE__,
             f: :alter_child_data,
             a: [hub_id, :_]
           }

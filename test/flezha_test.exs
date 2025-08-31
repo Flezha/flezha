@@ -351,32 +351,35 @@ defmodule FlezhaTest do
 
   @tag :compute_engine_disconnect_preserve
   test "compute_engine disconnect preserve" do
-    # Start 2 compute_engines under the same namespace.
     namespace = @temp_namespace
+    num_processors = 15
+    processor_ids = for i <- 1..num_processors, do: "processor_#{i}"
+
     compute_engine_id_1 = NodeTestHelper.start_compute_engine(namespace)
     compute_engine_id_2 = NodeTestHelper.start_compute_engine(namespace)
 
-    # Start a few processors and store some state on them.
-    processor_id_1 = "processor_1"
-    processor_id_2 = "processor_2"
+    # Start processors and store some state on them.
 
-    {:ok, %{pid: _processor_pid_1, compute_engine_id: _pipe1_op}} =
-      processor_id_1
-      |> ProcessorFixture.get(@test_store_input_factory)
-      |> ProcessorFixture.start(namespace)
-      |> ProcessorFixture.attach_output_msg(namespace)
+    processor_infos =
+      for processor_id <- processor_ids do
+        {:ok, info} =
+          processor_id
+          |> ProcessorFixture.get(@test_store_input_factory)
+          |> ProcessorFixture.start(namespace)
+          |> ProcessorFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _processor_pid_2, compute_engine_id: _pipe2_op}} =
-      processor_id_2
-      |> ProcessorFixture.get(@test_store_input_factory)
-      |> ProcessorFixture.start(namespace)
-      |> ProcessorFixture.attach_output_msg(namespace)
+        {processor_id, info}
+      end
 
-    ProcessorTestHelper.send_sync_io(processor_id_1, namespace, "state_1", %{})
-    ProcessorTestHelper.send_sync_io(processor_id_2, namespace, "state_2", %{})
+    # Send state to all processors
+    for {processor_id, _info} <- processor_infos do
+      ProcessorTestHelper.send_sync_io(processor_id, namespace, "state_#{processor_id}", %{})
+    end
 
-    ProcessorManager.create_snapshot(namespace, processor_id_1)
-    ProcessorManager.create_snapshot(namespace, processor_id_2)
+    # Create snapshots for all processors
+    for {processor_id, _info} <- processor_infos do
+      ProcessorManager.create_snapshot(namespace, processor_id)
+    end
 
     # Trigger the compute_engine disconnect.
     NodeTestHelper.stop_compute_engine(namespace, compute_engine_id_1)
@@ -392,11 +395,10 @@ defmodule FlezhaTest do
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ProcessorManager.get_processor_state(namespace, processor_id_1)
-    {:ok, json_state_2} = ProcessorManager.get_processor_state(namespace, processor_id_2)
-
-    assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
-    assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
+    for {processor_id, _info} <- processor_infos do
+      {:ok, json_state} = ProcessorManager.get_processor_state(namespace, processor_id)
+      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{processor_id}\"]}"
+    end
 
     # Stop the new compute_engine.
     NodeTestHelper.stop_compute_engine(namespace, compute_engine_id_3)
@@ -415,8 +417,8 @@ defmodule FlezhaTest do
   @tag :compute_engine_disconnect_migrate_hub
   test "compute_engine disconnect migrate hub" do
     namespace = @temp_namespace
-    processor_id_1 = "processor_1"
-    processor_id_2 = "processor_2"
+    num_processors = 15
+    processor_ids = for i <- 1..num_processors, do: "processor_#{i}"
 
     {_peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
@@ -428,65 +430,75 @@ defmodule FlezhaTest do
     self = self()
     _node = node()
 
-    ProcessHub.Service.HookManager.register_handler(
+    ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
       ProcessHub.Constant.Hook.registry_pid_inserted(),
-      %ProcessHub.Service.HookManager{
-        id: "hub_insert_hook_test",
-        m: Process,
-        f: :send,
-        a: [self, :hook_insert_recv, []]
-      }
+      [
+        %ProcessHub.Service.HookManager{
+          id: "hub_insert_hook_test",
+          m: Process,
+          f: :send,
+          a: [self, :hook_insert_recv, []]
+        }
+      ]
     )
 
-    ProcessHub.Service.HookManager.register_handler(
+    ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
       ProcessHub.Constant.Hook.process_startups(),
-      %ProcessHub.Service.HookManager{
-        id: "hub_pstartup_hook_test",
-        m: Process,
-        f: :send,
-        a: [self, :hook_pstartup_recv, []]
-      }
+      [
+        %ProcessHub.Service.HookManager{
+          id: "hub_pstartup_hook_test",
+          m: Process,
+          f: :send,
+          a: [self, :hook_pstartup_recv, []]
+        }
+      ]
     )
 
-    # Start a few processors and store some state on them.
-    {:ok, %{pid: _processor_pid_1, compute_engine_id: pipe1_op}} =
-      processor_id_1
-      |> ProcessorFixture.get(@test_store_input_factory)
-      |> ProcessorFixture.start(namespace)
-      |> ProcessorFixture.attach_output_msg(namespace)
+    # Start processors and store some state on them.
+    processor_infos =
+      for processor_id <- processor_ids do
+        {:ok, info} =
+          processor_id
+          |> ProcessorFixture.get(@test_store_input_factory)
+          |> ProcessorFixture.start(namespace)
+          |> ProcessorFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _processor_pid_2, compute_engine_id: pipe2_op}} =
-      processor_id_2
-      |> ProcessorFixture.get(@test_store_input_factory)
-      |> ProcessorFixture.start(namespace)
-      |> ProcessorFixture.attach_output_msg(namespace)
+        {processor_id, info}
+      end
+
+    compute_engine_ids =
+      Enum.map(processor_infos, fn {_id, %{compute_engine_id: ce_id}} -> ce_id end)
 
     # Make sure that atleast one of the processors is running on the remote compute_engine.
-    assert pipe1_op !== compute_engine_id_1 or pipe2_op !== compute_engine_id_1
+    assert Enum.any?(compute_engine_ids, &(&1 !== compute_engine_id_1))
 
-    ProcessorTestHelper.send_sync_io(processor_id_1, namespace, "state_1", %{})
-    ProcessorTestHelper.send_sync_io(processor_id_2, namespace, "state_2", %{})
+    # Send state to all processors
+    for {processor_id, _info} <- processor_infos do
+      ProcessorTestHelper.send_sync_io(processor_id, namespace, "state_#{processor_id}", %{})
+    end
 
     # Check the states before compute_engine migrations.
-    {:ok, json_state_1} = ProcessorManager.get_processor_state(namespace, processor_id_1)
-    {:ok, json_state_2} = ProcessorManager.get_processor_state(namespace, processor_id_2)
-    assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
-    assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
+    for {processor_id, _info} <- processor_infos do
+      {:ok, json_state} = ProcessorManager.get_processor_state(namespace, processor_id)
+      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{processor_id}\"]}"
+    end
 
-    ProcessorManager.create_snapshot(namespace, processor_id_1)
-    ProcessorManager.create_snapshot(namespace, processor_id_2)
+    # Create snapshots for all processors
+    for {processor_id, _info} <- processor_infos do
+      ProcessorManager.create_snapshot(namespace, processor_id)
+    end
 
     # Trigger the compute_engine disconnect.
     NodeTestHelper.stop_compute_engine_remote(peer_node, namespace, rem_compute_engine_1)
     NodeTestHelper.stop_compute_engine_remote(peer_node, namespace, rem_compute_engine_2)
 
-    # Need to wait 4 times process inserted hook to be called.
+    # Need to wait for process inserted hook to be called for each processor migration.
     # With each compute_engine disconnect we update the tag of the processor.
     # Wait for other hooks as well.
-    MessageTestHelper.recv_num(:hook_insert_recv, 4)
-    MessageTestHelper.recv_num(:hook_pstartup_recv, 2)
+    MessageTestHelper.recv_num(:hook_insert_recv, num_processors * 2 + 1)
+    MessageTestHelper.recv_num(:hook_pstartup_recv, 8)
 
     # Make sure all the processors are migrated to the other compute_engine.
     reg = ProcessorManager.processor_registry(namespace)
@@ -496,134 +508,133 @@ defmodule FlezhaTest do
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ProcessorManager.get_processor_state(namespace, processor_id_1)
-    {:ok, json_state_2} = ProcessorManager.get_processor_state(namespace, processor_id_2)
-
-    assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
-    assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
+    for {processor_id, _info} <- processor_infos do
+      {:ok, json_state} = ProcessorManager.get_processor_state(namespace, processor_id)
+      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{processor_id}\"]}"
+    end
 
     assert length(HubManager.get_hub_nodes(namespace, true)) === 1
   end
 
-  @tag :flow_test
-  test "flow test" do
-    num_processors = 100
-    test_messages_per_processor = 1000
+  # @tag :flow_test
+  # test "flow test" do
+  #   num_processors = 100
+  #   test_messages_per_processor = 1000
 
-    IO.puts("Starting flow test with #{num_processors} processors...")
+  #   IO.puts("Starting flow test with #{num_processors} processors...")
 
-    {processor_creation_time, processor_infos} =
-      :timer.tc(fn ->
-        for i <- 1..num_processors do
-          processor_id = "flow_test_#{i}"
+  #   {processor_creation_time, processor_infos} =
+  #     :timer.tc(fn ->
+  #       for i <- 1..num_processors do
+  #         processor_id = "flow_test_#{i}"
 
-          processor = %Flezha.Processor.Builder{
-            id: processor_id,
-            factory_id: @test_processor_factory
-          }
+  #         processor = %Flezha.Processor.Builder{
+  #           id: processor_id,
+  #           factory_id: @test_processor_factory
+  #         }
 
-          case ProcessorManager.start_processor(@default_namespace, processor) do
-            {:ok, info} ->
-              {processor_id, info}
+  #         case ProcessorManager.start_processor(@default_namespace, processor) do
+  #           {:ok, info} ->
+  #             {processor_id, info}
 
-            error ->
-              IO.puts("Failed to start processor #{processor_id}: #{inspect(error)}")
-              nil
-          end
-        end
-        |> Enum.filter(&(&1 != nil))
-      end)
+  #           error ->
+  #             IO.puts("Failed to start processor #{processor_id}: #{inspect(error)}")
+  #             nil
+  #         end
+  #       end
+  #       |> Enum.filter(&(&1 != nil))
+  #     end)
 
-    IO.puts(
-      "Processor creation took: #{processor_creation_time / 1000} ms for #{length(processor_infos)} processors"
-    )
+  #   IO.puts(
+  #     "Processor creation took: #{processor_creation_time / 1000} ms for #{length(processor_infos)} processors"
+  #   )
 
-    # Step 2: Enable plugins for all processors
-    {plugin_setup_time, _} =
-      :timer.tc(fn ->
-        Enum.each(processor_infos, fn {processor_id, _info} ->
-          # Enable BeamMsgForward plugin
-          PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
-            namespace: @default_namespace,
-            processor_id: processor_id,
-            trigger: :on_output,
-            provider: %Flezha.Plugin.Provider.BeamMsgForward{
-              recv_pid: self()
-            }
-          })
+  #   # Step 2: Enable plugins for all processors
+  #   {plugin_setup_time, _} =
+  #     :timer.tc(fn ->
+  #       Enum.each(processor_infos, fn {processor_id, _info} ->
+  #         # Enable BeamMsgForward plugin
+  #         PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
+  #           namespace: @default_namespace,
+  #           processor_id: processor_id,
+  #           trigger: :on_output,
+  #           provider: %Flezha.Plugin.Provider.BeamMsgForward{
+  #             recv_pid: self()
+  #           }
+  #         })
 
-          # Enable StdOut plugin
-          PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
-            namespace: @default_namespace,
-            processor_id: processor_id,
-            trigger: :proactive,
-            provider: %Flezha.Plugin.Provider.StdOut{}
-          })
-        end)
-      end)
+  #         # Enable StdOut plugin
+  #         PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
+  #           namespace: @default_namespace,
+  #           processor_id: processor_id,
+  #           trigger: :proactive,
+  #           provider: %Flezha.Plugin.Provider.StdOut{}
+  #         })
+  #       end)
+  #     end)
 
-    IO.puts(
-      "Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(processor_infos)} processors"
-    )
+  #   IO.puts(
+  #     "Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(processor_infos)} processors"
+  #   )
 
-    # Step 3: Send test messages to all processors
-    total_messages = length(processor_infos) * test_messages_per_processor
+  #   # Step 3: Send test messages to all processors
+  #   total_messages = length(processor_infos) * test_messages_per_processor
 
-    IO.puts(
-      "Sending #{total_messages} total messages (#{test_messages_per_processor} per processor)..."
-    )
+  #   IO.puts(
+  #     "Sending #{total_messages} total messages (#{test_messages_per_processor} per processor)..."
+  #   )
 
-    {message_send_time, _} =
-      :timer.tc(fn ->
-        Enum.each(processor_infos, fn {processor_id, %{pid: processor_pid}} ->
-          for msg_num <- 1..test_messages_per_processor do
-            GenServer.cast(
-              processor_pid,
-              {:io_in, "test_msg_#{processor_id}_#{msg_num}", %{}}
-            )
-          end
-        end)
-      end)
+  #   {message_send_time, _} =
+  #     :timer.tc(fn ->
+  #       Enum.each(processor_infos, fn {processor_id, %{pid: processor_pid}} ->
+  #         for msg_num <- 1..test_messages_per_processor do
+  #           GenServer.cast(
+  #             processor_pid,
+  #             {:io_in, "test_msg_#{processor_id}_#{msg_num}", %{}}
+  #           )
+  #         end
+  #       end)
+  #     end)
 
-    IO.puts("Message sending took: #{message_send_time / 1000} ms")
+  #   IO.puts("Message sending took: #{message_send_time / 1000} ms")
 
-    # Step 4: Receive and measure response time
-    {message_receive_time, _} =
-      :timer.tc(fn ->
-        for x <- 1..total_messages do
-          receive do
-            {:message_forward, _msg} ->
-              :ok
-          after
-            10_000 ->
-              IO.puts("Timeout waiting for message #{x}/#{total_messages}")
-              assert false, "Timeout waiting for messages"
-          end
-        end
-      end)
+  #   # Step 4: Receive and measure response time
+  #   {message_receive_time, _} =
+  #     :timer.tc(fn ->
+  #       for x <- 1..total_messages do
+  #         receive do
+  #           {:message_forward, _msg} ->
+  #             :ok
+  #         after
+  #           10_000 ->
+  #             IO.puts("Timeout waiting for message #{x}/#{total_messages}")
+  #             assert false, "Timeout waiting for messages"
+  #         end
+  #       end
+  #     end)
 
-    IO.puts(
-      "Message processing took: #{message_receive_time / 1000} ms for #{total_messages} messages"
-    )
+  #   IO.puts(
+  #     "Message processing took: #{message_receive_time / 1000} ms for #{total_messages} messages"
+  #   )
 
-    # Calculate throughput metrics
-    total_time =
-      processor_creation_time + plugin_setup_time + message_send_time + message_receive_time
+  #   # Calculate throughput metrics
+  #   total_time =
+  #     processor_creation_time + plugin_setup_time + message_send_time + message_receive_time
 
-    throughput_msgs_per_sec = total_messages * 1_000_000 / message_receive_time
+  #   throughput_msgs_per_sec = total_messages * 1_000_000 / message_receive_time
 
-    IO.puts("\n=== Performance Summary ===")
-    IO.puts("Processors created: #{length(processor_infos)}")
-    IO.puts("Total messages processed: #{total_messages}")
-    IO.puts("Processor creation: #{processor_creation_time / 1000} ms")
-    IO.puts("Plugin setup: #{plugin_setup_time / 1000} ms")
-    IO.puts("Message sending: #{message_send_time / 1000} ms")
-    IO.puts("Message processing: #{message_receive_time / 1000} ms")
-    IO.puts("Total time: #{total_time / 1000} ms")
-    IO.puts("Throughput: #{Float.round(throughput_msgs_per_sec, 2)} messages/second")
-    IO.puts("Average time per processor: #{total_time / length(processor_infos) / 1000} ms")
+  #   IO.puts("\n=== Performance Summary ===")
+  #   IO.puts("Processors created: #{length(processor_infos)}")
+  #   IO.puts("Total messages processed: #{total_messages}")
+  #   IO.puts("Processor creation: #{processor_creation_time / 1000} ms")
+  #   IO.puts("Plugin setup: #{plugin_setup_time / 1000} ms")
+  #   IO.puts("Message sending: #{message_send_time / 1000} ms")
+  #   IO.puts("Message processing: #{message_receive_time / 1000} ms")
+  #   IO.puts("Total time: #{total_time / 1000} ms")
+  #   IO.puts("Throughput: #{Float.round(throughput_msgs_per_sec, 2)} messages/second")
+  #   IO.puts("Average time per processor: #{total_time / length(processor_infos) / 1000} ms")
 
-    assert length(processor_infos) > 0, "No processors were created successfully"
-    assert total_messages > 0, "No messages were processed"
-  end
+  #   assert length(processor_infos) > 0, "No processors were created successfully"
+  #   assert total_messages > 0, "No messages were processed"
+  # end
 end

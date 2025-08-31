@@ -130,10 +130,10 @@ defmodule Flezha.Service.ProcessorManager do
       )
       |> ProcessHub.Future.await()
 
-    case ProcessHub.StartResult.status() do
+    case ProcessHub.StartResult.status(result) do
       :ok ->
         pid = ProcessHub.StartResult.pid(result)
-        node = ProcessHub.StartResult.node(result)
+        processor_node = ProcessHub.StartResult.node(result)
 
         {:ok, compute_engine_id} = GenServer.call(pid, :registry_compute_engine_set)
 
@@ -141,23 +141,22 @@ defmodule Flezha.Service.ProcessorManager do
          %{
            processor_id: processor.id,
            compute_engine_id: compute_engine_id,
-           node: node,
+           node: processor_node,
            pid: pid
          }}
 
       :error ->
-        reason =
+        {_, processor_node, {reason, _}} =
           result
           |> ProcessHub.StartResult.errors()
           |> List.first()
-          |> elem(1)
 
         {
           :error,
           %{
-            processor_id: processor_id,
-            node: node,
-            reason: inspect(reason)
+            processor_id: processor.id,
+            node: processor_node,
+            reason: reason
           }
         }
     end

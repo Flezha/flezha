@@ -23,6 +23,10 @@ defmodule Flezha.Service.PluginManager do
     GenServer.cast(__MODULE__, {:unregister_plugin, plugin_id})
   end
 
+  def get_plugins do
+    GenServer.call(__MODULE__, :get_plugins)
+  end
+
   def start_link(_) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
@@ -30,6 +34,11 @@ defmodule Flezha.Service.PluginManager do
   @impl GenServer
   def init(:ok) do
     {:ok, %{}}
+  end
+
+  @impl true
+  def handle_call(:get_plugins, _from, state) do
+    {:reply, state, state}
   end
 
   @impl true

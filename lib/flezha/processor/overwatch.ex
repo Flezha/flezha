@@ -26,7 +26,9 @@ defmodule Flezha.Processor.Overwatch do
     snapshot: nil,
     init_values: %{},
     # 1 - binary, 2 - text, 3 - custom
-    default_input_type: "2"
+    default_input_type: "2",
+    # Map to store plugin restart retry information: %{plugin_id => %{count: count, plugin: plugin}}
+    plugin_restart_retries: %{}
   ]
 
   def start_link(args) do
@@ -35,6 +37,8 @@ defmodule Flezha.Processor.Overwatch do
 
   @impl true
   def init({namespace, compute_engine_id, processor}) do
+    Process.flag(:trap_exit, true)
+
     snapshot_interval = Keyword.get(processor.opts, :snapshot_interval, @snapshop_interval)
 
     schedule_snapshot(snapshot_interval)
@@ -49,6 +53,7 @@ defmodule Flezha.Processor.Overwatch do
       snapshot_interval: snapshot_interval,
       snapshot: nil,
       default_input_type: Keyword.get(processor.opts, :default_input_type, "2"),
+      plugin_restart_retries: %{},
       bindings: %{
         on_input: [],
         on_output: [],
@@ -72,6 +77,17 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
+  def terminate(reason, state) do
+    unregister_plugins(state.bindings)
+
+    Logger.info(
+      "Terminating processor #{state.id} in namespace #{state.namespace}: #{inspect(reason)}"
+    )
+
+    :ok
+  end
+
+  @impl true
   def handle_call(:registry_compute_engine_set, _from, state) do
     HubManager.processor_set_compute_engine(state.namespace, state.id, state.compute_engine_id)
 
@@ -84,6 +100,8 @@ defmodule Flezha.Processor.Overwatch do
       Identificator.control_unit(state.compute_engine_id),
       {:stop_processor, state.id}
     )
+
+    unregister_plugins(state.bindings)
 
     GenServer.reply(from, :ok)
 
@@ -215,44 +233,33 @@ defmodule Flezha.Processor.Overwatch do
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
     # Find the binding by the pid.
-    {plugin_id, plugin} =
-      Enum.find(state.bindings, fn {_trigger, bindings} ->
-        Enum.any?(bindings, fn {_id, %IOBindingPlugin{pid: binding_pid}} -> binding_pid == pid end)
-      end)
+    plugin_info = find_plugin_by_pid(state.bindings, pid)
 
-    case is_struct(plugin) do
-      true ->
+    case plugin_info do
+      {plugin_id, plugin} ->
         case reason do
           :normal ->
             Logger.info("Binding with pid #{inspect(pid)} terminated normally.")
 
-            # Remove the binding from the state.
+            # Remove the binding from the state and clear any retry info
             {:ok, new_bindings} = remove_binding(state.bindings, plugin_id, unregister: true)
+            new_retries = Map.delete(state.plugin_restart_retries, plugin_id)
 
-            {:noreply, %__MODULE__{state | bindings: new_bindings}}
+            {:noreply,
+             %__MODULE__{state | bindings: new_bindings, plugin_restart_retries: new_retries}}
 
           _ ->
             Logger.error(
               "Binding with pid #{inspect(pid)} terminated with reason: #{inspect(reason)}"
             )
 
-            # Try to restart the binding.
-            {:ok, new_bindings} = remove_binding(state.bindings, plugin_id, unregister: true)
+            # Try to restart the binding with retry mechanism
+            {_, new_state} = attempt_restart(state, plugin_id, plugin)
 
-            new_bindings =
-              case add_binding(new_bindings, plugin_id, plugin, register: true) do
-                {:ok, restarted_bindings} ->
-                  restarted_bindings
-
-                {:error, reason} ->
-                  Logger.error("Failed to restart binding: #{inspect(reason)}")
-                  new_bindings
-              end
-
-            {:noreply, %__MODULE__{state | bindings: new_bindings}}
+            {:noreply, new_state}
         end
 
-      false ->
+      nil ->
         Logger.error("Binding not found for pid #{inspect(pid)} with reason: #{inspect(reason)}")
 
         {:noreply, state}
@@ -268,6 +275,20 @@ defmodule Flezha.Processor.Overwatch do
     end
 
     {:noreply, %__MODULE__{state | snapshot: snapshot}}
+  end
+
+  @impl true
+  def handle_info({:retry_plugin_restart, plugin_id}, state) do
+    case Map.get(state.plugin_restart_retries, plugin_id) do
+      %{plugin: plugin} ->
+        {_, new_state} = attempt_restart(state, plugin_id, plugin)
+
+        {:noreply, new_state}
+
+      nil ->
+        Logger.warning("Retry restart called for plugin #{plugin_id} but no retry info found")
+        {:noreply, state}
+    end
   end
 
   defp create_snapshot(processor_id, compute_engine_id) do
@@ -318,6 +339,68 @@ defmodule Flezha.Processor.Overwatch do
       | bindings: new_bindings,
         init_values: handover_state.init_values
     }
+  end
+
+  # Helper functions for retry logic
+
+  defp find_plugin_by_pid(bindings, pid) do
+    Enum.find_value(bindings, fn {_trigger, bindings_list} ->
+      Enum.find_value(bindings_list, fn {plugin_id, %IOBindingPlugin{pid: binding_pid} = plugin} ->
+        if binding_pid == pid, do: {plugin_id, plugin}, else: nil
+      end)
+    end)
+  end
+
+  defp retry_delay(count) do
+    # Start with 4 seconds, then double each time: 4, 8, 16, 32, ...
+    (4000 * :math.pow(2, count)) |> round()
+  end
+
+  defp schedule_restart(plugin_id, delay) do
+    Process.send_after(self(), {:retry_plugin_restart, plugin_id}, delay)
+  end
+
+  defp handle_restart_failure(state, plugin_id, plugin, reason) do
+    retry_info = Map.get(state.plugin_restart_retries, plugin_id, %{count: 0, plugin: plugin})
+    new_count = retry_info.count + 1
+    delay = retry_delay(retry_info.count)
+
+    Logger.warning(
+      "Failed to restart plugin #{plugin_id} (attempt #{new_count}). " <>
+        "Scheduling retry in #{delay}ms. Reason: #{inspect(reason)}"
+    )
+
+    updated_retry_info = %{count: new_count, plugin: plugin}
+    new_retries = Map.put(state.plugin_restart_retries, plugin_id, updated_retry_info)
+
+    schedule_restart(plugin_id, delay)
+
+    %__MODULE__{state | plugin_restart_retries: new_retries}
+  end
+
+  defp handle_restart_success(state, plugin_id, new_bindings) do
+    # Reset retry count on successful restart
+    new_retries = Map.delete(state.plugin_restart_retries, plugin_id)
+
+    Logger.info("Successfully restarted plugin #{plugin_id}")
+
+    %__MODULE__{
+      state
+      | bindings: new_bindings,
+        plugin_restart_retries: new_retries
+    }
+  end
+
+  defp attempt_restart(state, plugin_id, plugin) do
+    {:ok, new_bindings} = remove_binding(state.bindings, plugin_id, unregister: true)
+
+    case add_binding(new_bindings, plugin_id, plugin, register: true) do
+      {:ok, restarted_bindings} ->
+        {:ok, handle_restart_success(state, plugin_id, restarted_bindings)}
+
+      {:error, reason} ->
+        {:error, handle_restart_failure(state, plugin_id, plugin, reason)}
+    end
   end
 
   defp send_control(compute_engine_id, command) do
@@ -529,5 +612,13 @@ defmodule Flezha.Processor.Overwatch do
     end
 
     {:ok, updated_bindings}
+  end
+
+  defp unregister_plugins(bindings) do
+    Enum.each(bindings, fn {_binding_type, plugin_bindings} ->
+      Enum.each(plugin_bindings, fn {plugin_id, _plugin} ->
+        PluginManager.unregister_plugin(plugin_id)
+      end)
+    end)
   end
 end

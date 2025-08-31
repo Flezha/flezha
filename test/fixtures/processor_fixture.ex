@@ -17,15 +17,17 @@ defmodule FlezhaTest.Fixtures.ProcessorFixture do
   def start(processor, namespace \\ @default_namespace) do
     self = self()
 
-    ProcessHub.Service.HookManager.register_handler(
+    ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
       Hook.registry_pid_inserted(),
-      %ProcessHub.Service.HookManager{
-        id: "registry_pid_inserted",
-        m: Process,
-        f: :send,
-        a: [self, :hook_reg_insert_recv, []]
-      }
+      [
+        %ProcessHub.Service.HookManager{
+          id: "registry_pid_inserted",
+          m: Process,
+          f: :send,
+          a: [self, :hook_reg_insert_recv, []]
+        }
+      ]
     )
 
     result = Flezha.Service.ProcessorManager.start_processor(namespace, processor)
@@ -36,10 +38,10 @@ defmodule FlezhaTest.Fixtures.ProcessorFixture do
       2000 -> raise "Timeout waiting for process registration"
     end
 
-    ProcessHub.Service.HookManager.cancel_handler(
+    ProcessHub.cancel_hook_handlers(
       Identificator.hub(namespace),
       Hook.registry_pid_inserted(),
-      "registry_pid_inserted"
+      ["registry_pid_inserted"]
     )
 
     result
@@ -54,15 +56,18 @@ defmodule FlezhaTest.Fixtures.ProcessorFixture do
         namespace \\ @default_namespace
       ) do
     {:ok, "plugin enabled"} =
-      PluginManager.enable_plugin("output_msg_handler", %Flezha.Plugin.Driver.IOBindingPlugin{
-        namespace: namespace,
-        processor_id: cid,
-        trigger: :on_output,
-        provider: %Flezha.Plugin.Provider.BeamMsgForward{
-          recv_pid: self()
-        },
-        plugin_group: "0"
-      })
+      PluginManager.enable_plugin(
+        cid <> "_output_msg_handler",
+        %Flezha.Plugin.Driver.IOBindingPlugin{
+          namespace: namespace,
+          processor_id: cid,
+          trigger: :on_output,
+          provider: %Flezha.Plugin.Provider.BeamMsgForward{
+            recv_pid: self()
+          },
+          plugin_group: "0"
+        }
+      )
 
     start_res
   end
