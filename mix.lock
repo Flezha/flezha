@@ -1,5 +1,5 @@
 %{
-  "blockade": {:hex, :blockade, "0.2.1", "2a91de67a337ae146f368cfc0bfc850a0cf9b5390408b323f263f8608ba33361", [:rebar3], [], "hexpm", "d319b643c9bd20b4499e0a2fe254c37ec9e3682ae62ec211a0cabca62ca5f245"},
+  "blockade": {:hex, :blockade, "0.2.2", "96be65f7901d615bc3011306f483e90c43c45eba7c9f3c3bee6e1f089fe03fc8", [:rebar3], [], "hexpm", "abfd1886b11921ecb3d5f55310a3013de94a2300944e81f2429105fe8f8ba5e7"},
   "castore": {:hex, :castore, "1.0.9", "5cc77474afadf02c7c017823f460a17daa7908e991b0cc917febc90e466a375c", [:mix], [], "hexpm", "5ea956504f1ba6f2b4eb707061d8e17870de2bee95fb59d512872c2ef06925e7"},
   "connection": {:hex, :connection, "1.1.0", "ff2a49c4b75b6fb3e674bfc5536451607270aac754ffd1bdfe175abe4a6d7a68", [:mix], [], "hexpm", "722c1eb0a418fbe91ba7bd59a47e28008a189d47e37e0e7bb85585a016b2869c"},
   "crc32cer": {:hex, :crc32cer, "0.1.11", "b550da6d615feb72a882d15d020f8f7dee72dfb2cb1bcdf3b1ee8dc2afd68cfc", [:rebar3], [], "hexpm", "a39b8f0b1990ac1bf06c3a247fc6a178b740cdfc33c3b53688dc7dd6b1855942"},
@@ -13,7 +13,7 @@
   "mimic": {:hex, :mimic, "1.11.0", "49b126687520b6e179acab305068ad7d72bfea8abe94908a6c0c8ca0a5b7bdc7", [:mix], [{:ham, "~> 0.2", [hex: :ham, repo: "hexpm", optional: false]}], "hexpm", "8b16b1809ca947cffbaede146cd42da8c1c326af67a84b59b01c204d54e4f1a2"},
   "mint": {:hex, :mint, "1.6.2", "af6d97a4051eee4f05b5500671d47c3a67dac7386045d87a904126fd4bbcea2e", [:mix], [{:castore, "~> 0.1.0 or ~> 1.0", [hex: :castore, repo: "hexpm", optional: true]}, {:hpax, "~> 0.1.1 or ~> 0.2.0 or ~> 1.0", [hex: :hpax, repo: "hexpm", optional: false]}], "hexpm", "5ee441dffc1892f1ae59127f74afe8fd82fda6587794278d924e4d90ea3d63f9"},
   "mint_web_socket": {:hex, :mint_web_socket, "1.0.4", "0b539116dbb3d3f861cdf5e15e269a933cb501c113a14db7001a3157d96ffafd", [:mix], [{:mint, ">= 1.4.1 and < 2.0.0-0", [hex: :mint, repo: "hexpm", optional: false]}], "hexpm", "027d4c5529c45a4ba0ce27a01c0f35f284a5468519c045ca15f43decb360a991"},
-  "process_hub": {:git, "https://github.com/alfetahe/process-hub", "64d303a13efbcba8f15964fd31d4aac258be524f", [branch: "dev"]},
+  "process_hub": {:git, "https://github.com/alfetahe/process-hub", "6fcf3d752dd8806a8c9e32f5f5278b20c1758a50", [branch: "dev"]},
   "protox": {:hex, :protox, "2.0.4", "2a86ae3699696c5d92e15804968ce6a6827a8d9516d0bbabcf16584dec710ae1", [:mix], [], "hexpm", "8ac5a03bb84da4c75d76dc29cd46008081c2068ad0f6f0da4c051093d6e24c01"},
   "varint": {:hex, :varint, "1.5.1", "17160c70d0428c3f8a7585e182468cac10bbf165c2360cf2328aaa39d3fb1795", [:mix], [], "hexpm", "24f3deb61e91cb988056de79d06f01161dd01be5e0acae61d8d936a552f1be73"},
 }

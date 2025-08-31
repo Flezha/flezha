@@ -49,7 +49,7 @@ defmodule Flezha.Service.ProcessorManager do
   Starts a new processor to the compute_engine.
   """
   @spec start_processor(String.t(), ProcessorBuilder.t()) ::
-          {:ok, pid()} | {:error, String.t()}
+          {:ok, map()} | {:error, String.t()}
   def start_processor(namespace, processor) do
     case ProcessorBuilder.validate_processor(namespace, processor) do
       {:error, reason} ->
@@ -124,14 +124,17 @@ defmodule Flezha.Service.ProcessorManager do
     result =
       Identificator.hub(namespace)
       |> ProcessHub.start_child(child_spec,
-        async_wait: true,
+        awaitable: true,
         # We will get the errors from the start result.
         disable_logging: true
       )
-      |> ProcessHub.await()
+      |> ProcessHub.Future.await()
 
-    case result do
-      {:ok, {_processor_id, [{node, pid}]}} ->
+    case ProcessHub.StartResult.status() do
+      :ok ->
+        pid = ProcessHub.StartResult.pid(result)
+        node = ProcessHub.StartResult.node(result)
+
         {:ok, compute_engine_id} = GenServer.call(pid, :registry_compute_engine_set)
 
         {:ok,
@@ -142,15 +145,19 @@ defmodule Flezha.Service.ProcessorManager do
            pid: pid
          }}
 
-      {:error, reason} ->
-        {{processor_id, node, {error_msg, _}}, _partial_success} = reason
+      :error ->
+        reason =
+          result
+          |> ProcessHub.StartResult.errors()
+          |> List.first()
+          |> elem(1)
 
         {
           :error,
           %{
             processor_id: processor_id,
             node: node,
-            reason: error_msg
+            reason: inspect(reason)
           }
         }
     end
