@@ -518,7 +518,7 @@ defmodule FlezhaTest do
 
   # @tag :flow_test
   # test "flow test" do
-  #   num_processors = 100
+  #   num_processors = 1000
   #   test_messages_per_processor = 1000
 
   #   IO.puts("Starting flow test with #{num_processors} processors...")
@@ -554,22 +554,28 @@ defmodule FlezhaTest do
   #     :timer.tc(fn ->
   #       Enum.each(processor_infos, fn {processor_id, _info} ->
   #         # Enable BeamMsgForward plugin
-  #         PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
-  #           namespace: @default_namespace,
-  #           processor_id: processor_id,
-  #           trigger: :on_output,
-  #           provider: %Flezha.Plugin.Provider.BeamMsgForward{
-  #             recv_pid: self()
+  #         PluginManager.enable_plugin(
+  #           processor_id <> "_beam_msg_forward",
+  #           %Flezha.Plugin.Driver.IOBindingPlugin{
+  #             namespace: @default_namespace,
+  #             processor_id: processor_id,
+  #             trigger: :on_output,
+  #             provider: %Flezha.Plugin.Provider.BeamMsgForward{
+  #               recv_pid: self()
+  #             }
   #           }
-  #         })
+  #         )
 
   #         # Enable StdOut plugin
-  #         PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
-  #           namespace: @default_namespace,
-  #           processor_id: processor_id,
-  #           trigger: :proactive,
-  #           provider: %Flezha.Plugin.Provider.StdOut{}
-  #         })
+  #         PluginManager.enable_plugin(
+  #           processor_id <> "_stdout_plugin",
+  #           %Flezha.Plugin.Driver.IOBindingPlugin{
+  #             namespace: @default_namespace,
+  #             processor_id: processor_id,
+  #             trigger: :proactive,
+  #             provider: %Flezha.Plugin.Provider.StdOut{}
+  #           }
+  #         )
   #       end)
   #     end)
 
