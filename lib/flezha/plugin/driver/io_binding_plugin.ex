@@ -8,6 +8,7 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
   defstruct @enforce_keys ++
               [
                 pid: nil,
+                monitor_ref: nil,
                 plugin_group: "0",
                 position: nil
               ]

@@ -267,6 +267,19 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
+  def handle_info({:EXIT, pid, reason}, state) do
+    case reason do
+      :normal ->
+        Logger.info("Process #{inspect(pid)} exited normally.")
+
+      _ ->
+        Logger.error("Process #{inspect(pid)} exited with reason: #{inspect(reason)}")
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(:schedule_snapshot, state) do
     snapshot = create_snapshot(state.id, state.compute_engine_id)
 
@@ -470,6 +483,15 @@ defmodule Flezha.Processor.Overwatch do
       {:ok, {plugin_provider, pid}} ->
         plugin = %IOBindingPlugin{plugin | provider: plugin_provider, pid: pid}
 
+        plugin =
+          case is_pid(pid) do
+            true ->
+              %IOBindingPlugin{plugin | monitor_ref: Process.monitor(pid)}
+
+            false ->
+              plugin
+          end
+
         # Add binding to the namespace using position-based insertion
         current_bindings = Map.get(bindings, plugin.trigger, [])
         binding_namespace = insert_plugin_by_position(current_bindings, {plugin_id, plugin})
@@ -477,14 +499,6 @@ defmodule Flezha.Processor.Overwatch do
         case plugin.trigger do
           :interval -> add_interval_binding(plugin)
           _ -> nil
-        end
-
-        case is_pid(pid) do
-          true ->
-            Process.monitor(pid)
-
-          false ->
-            nil
         end
 
         case Keyword.get(opts, :register) do
@@ -594,8 +608,19 @@ defmodule Flezha.Processor.Overwatch do
     updated_bindings =
       Enum.map(bindings, fn {trigger, bindings_list} ->
         filtered_bindings =
-          Enum.reject(bindings_list, fn {binding_id, _plugin} ->
-            plugin_id == binding_id
+          Enum.reject(bindings_list, fn {binding_id, plugin} ->
+            condition = plugin_id === binding_id
+
+            if condition do
+              # Unmonitor and send exit signal to the plugin process if it's still alive
+              if is_pid(plugin.pid) and Process.alive?(plugin.pid) do
+                Process.demonitor(plugin.monitor_ref)
+                Process.unlink(plugin.pid)
+                Process.exit(plugin.pid, :shutdown)
+              end
+            end
+
+            condition
           end)
           |> recalculate_positions()
 

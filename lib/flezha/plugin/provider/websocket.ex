@@ -68,6 +68,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
   end
 
   @impl Fresh
+  def handle_terminate(reason, _state) do
+    Logger.info("Websocket terminating: #{inspect(reason)}")
+    :ok
+  end
+
+  @impl Fresh
   def handle_connect(_status, _headers, state) do
     Logger.info("Connected to websocket!")
 
@@ -113,7 +119,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   @impl Fresh
   def handle_info(any, state) do
-    Logger.warning("Received info: #{inspect(any)}")
+    Logger.warning("Received unexpected info at websocket process: #{inspect(any)}")
 
     {:ok, state}
   end
