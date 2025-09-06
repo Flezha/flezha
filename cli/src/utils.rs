@@ -157,24 +157,28 @@ pub fn serialize_flags(flags: &[(String, String)]) -> String {
 
 pub fn extract_x_flags(args: &[String]) -> Vec<(String, String)> {
     let mut flags = Vec::new();
+    let mut i = 0;
 
-    for (i, arg) in args.iter().enumerate() {
-        // Handle --Xkey=value format
+    while i < args.len() {
+        let arg = &args[i];
+        
+        // Handle --X prefixed arguments
         if let Some(rest) = arg.strip_prefix("--X") {
+            // Handle --Xkey=value format
             if let Some(eq_pos) = rest.find('=') {
                 let key = &rest[..eq_pos];
                 let value = &rest[eq_pos + 1..];
                 flags.push((key.to_string(), strip_quotes(value)));
             }
-        }
-        // Handle --Xkey value format (space-separated)
-        else if arg.starts_with("--X") && i + 1 < args.len() {
-            if let Some(key) = arg.strip_prefix("--X") {
-                if !key.contains('=') {
-                    flags.push((key.to_string(), strip_quotes(&args[i + 1])));
-                }
+            // Handle --Xkey value format (space-separated)
+            else if i + 1 < args.len() {
+                let key = rest;
+                flags.push((key.to_string(), strip_quotes(&args[i + 1])));
+                i += 1; // Skip the next argument as it's the value
             }
         }
+        
+        i += 1;
     }
 
     flags
