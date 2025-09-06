@@ -9,8 +9,9 @@ pub fn handle_namespace_command(args: &[String]) {
 
     match args[0].as_str() {
         "list" => handle_list(args),
+        "help" | "--help" | "-h" => print_namespace_help(),
         _ => {
-            eprintln!("Error: Invalid argument '{}'. Use 'list' only.", args[0]);
+            eprintln!("Error: Invalid argument '{}'. Use 'list' or 'help'.", args[0]);
             exit(1);
         }
     }
@@ -40,4 +41,17 @@ fn handle_list(args: &[String]) {
         eprintln!("Error: Command execution failed.");
         exit(1);
     }
+}
+
+fn print_namespace_help() {
+    println!("flz namespace - Namespace management commands");
+    println!();
+    println!("USAGE:");
+    println!("    flz namespace <COMMAND>");
+    println!();
+    println!("COMMANDS:");
+    println!("    list    List namespaces");
+    println!("    help    Show this help message");
+    println!();
+    println!("Use 'flz namespace <COMMAND> --help' for more information on a specific command.");
 }

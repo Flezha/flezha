@@ -15,9 +15,10 @@ pub fn handle_processor_command(args: &[String]) {
         "list" => handle_list(args),
         "info" => handle_info(args),
         "io_listen" => handle_io_listen(args),
+        "help" | "--help" | "-h" => print_processor_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', 'info', or 'io_listen' only.",
+                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', 'info', 'io_listen', or 'help'.",
                 args[0]
             );
             exit(1);
@@ -236,4 +237,22 @@ fn handle_io_listen(args: &[String]) {
         eprintln!("Error: Command execution failed.");
         exit(1);
     }
+}
+
+fn print_processor_help() {
+    println!("flz processor - Processor management commands");
+    println!();
+    println!("USAGE:");
+    println!("    flz processor <COMMAND>");
+    println!();
+    println!("COMMANDS:");
+    println!("    start       Start a processor");
+    println!("    stop        Stop a processor");
+    println!("    state       Get processor state");
+    println!("    list        List processors");
+    println!("    info        Get processor info");
+    println!("    io_listen   Listen to processor I/O");
+    println!("    help        Show this help message");
+    println!();
+    println!("Use 'flz processor <COMMAND> --help' for more information on a specific command.");
 }

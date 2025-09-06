@@ -9,8 +9,9 @@ pub fn handle_compute_engine_command(args: &[String]) {
 
     match args[0].as_str() {
         "list" => handle_list(args),
+        "help" | "--help" | "-h" => print_compute_engine_help(),
         _ => {
-            eprintln!("Error: Invalid argument '{}'. Use 'list' only.", args[0]);
+            eprintln!("Error: Invalid argument '{}'. Use 'list' or 'help'.", args[0]);
             exit(1);
         }
     }
@@ -49,4 +50,17 @@ fn handle_list(args: &[String]) {
         eprintln!("Error: Command execution failed.");
         exit(1);
     }
+}
+
+fn print_compute_engine_help() {
+    println!("flz compute-engine - Compute engine management commands");
+    println!();
+    println!("USAGE:");
+    println!("    flz compute-engine <COMMAND>");
+    println!();
+    println!("COMMANDS:");
+    println!("    list    List compute engines");
+    println!("    help    Show this help message");
+    println!();
+    println!("Use 'flz compute-engine <COMMAND> --help' for more information on a specific command.");
 }
