@@ -212,10 +212,24 @@ pub fn extract_opts_with_default_namespace(args: &[String]) -> Vec<(String, Stri
             flags.push((key.to_string(), strip_quotes(value)));
             i += 1; // Skip the next argument as it's the value
         }
+        // Handle -o=value format
+        else if arg.starts_with("-") && !arg.starts_with("--") && arg.contains('=') {
+            if let Some(eq_pos) = arg.find('=') {
+                let key_part = &arg[1..eq_pos]; // Remove the single dash
+                let key = match key_part {
+                    "n" => "namespace",
+                    "o" => "output",
+                    _ => key_part,
+                };
+                let value = &arg[eq_pos + 1..];
+                flags.push((key.to_string(), strip_quotes(value)));
+            }
+        }
         // Handle -o value format (space-separated)
         else if arg.starts_with("-") && !arg.starts_with("--") && i + 1 < args.len() {
             let key = match arg.as_str() {
                 "-n" => "namespace",
+                "-o" => "output",
                 _ => &arg[1..], // Remove the single dash
             };
             let value = &args[i + 1];

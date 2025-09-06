@@ -1,4 +1,4 @@
-use crate::utils::get_flezha_command;
+use crate::utils::{get_flezha_command, get_parameter};
 use std::process::{exit, Command};
 
 pub fn handle_agent_command(args: &[String]) {
@@ -26,16 +26,7 @@ fn handle_start(args: &[String]) {
         exit(1);
     }
 
-    let mut mode_arg = String::from("");
-
-    // Process the arguments to find the mode parameter
-    for arg in &args[1..] {
-        if arg.starts_with("--mode=") {
-            mode_arg = arg[7..].to_string();
-        } else if arg.starts_with("-m=") {
-            mode_arg = arg[3..].to_string();
-        }
-    }
+    let mode_arg = get_parameter(&args[1..], "--mode", "-m");
 
     // Determine the command argument based on the mode
     let command_mode = match mode_arg.as_str() {
