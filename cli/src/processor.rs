@@ -226,12 +226,17 @@ fn handle_io_listen(args: &[String]) {
         "Starting IO listener for processor '{}' ({} mode)...",
         processor_id, io_type
     );
+    println!("Press Ctrl+C to stop listening");
 
-    let status = Command::new(command)
+    // Set up signal handling to clean up on Ctrl+C
+    let mut child = Command::new(command)
         .arg("rpc")
         .arg(rpc_command)
-        .status()
+        .spawn()
         .expect("Failed to execute command");
+    
+    // Wait for the child process and handle signals
+    let status = child.wait().expect("Failed to wait for command");
 
     if !status.success() {
         eprintln!("Error: Command execution failed.");

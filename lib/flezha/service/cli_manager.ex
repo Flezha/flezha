@@ -79,21 +79,27 @@ defmodule Flezha.Service.CliManager do
         _ -> raise "Invalid IO type. Use 'input' or 'output'."
       end
 
+    # Generate dynamic plugin ID with 6-digit random number
+    plugin_id = "io_listener_#{:rand.uniform(999999) |> Integer.to_string() |> String.pad_leading(6, "0")}"
+
     provider = %MonitoredIOForward{
       recv_pid: self(),
-      plugin_id: "monitored_io_forward_dynamic",
+      plugin_id: plugin_id,
       processor_id: processor_id,
       namespace: namespace_display
     }
 
-    PluginManager.enable_plugin("monitored_io_forward_dynamic", %IOBindingPlugin{
+    PluginManager.enable_plugin(plugin_id, %IOBindingPlugin{
       provider: provider,
       namespace: namespace_display,
       processor_id: processor_id,
       trigger: io_type
     })
 
-    listen_loop()
+    # Set up signal trapping for graceful shutdown
+    Process.flag(:trap_exit, true)
+    
+    listen_loop(plugin_id)
   end
 
   @doc "Enables plugin."
@@ -131,16 +137,26 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp listen_loop() do
+  defp listen_loop(plugin_id) do
     receive do
       {:message_forward, {message, _metadata}} ->
         IO.puts(message)
 
       {:heartbeat_keepalive, pid} ->
         Process.send(pid, {:heartbeat_keepalive, :ok}, [])
+      
+      {:EXIT, _pid, reason} ->
+        cleanup_io_listen(plugin_id)
+        exit(reason)
     end
 
-    listen_loop()
+    listen_loop(plugin_id)
+  end
+  
+  defp cleanup_io_listen(plugin_id) do
+    IO.puts("\nShutting down IO listener...")
+    PluginManager.disable_plugin(plugin_id)
+    :timer.sleep(100)
   end
 
   defp get_plugin_provider_mod(provider_id) do
