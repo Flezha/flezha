@@ -74,6 +74,32 @@ _build/dev/rel/flezha/bin/flz processor state my_processor
 ```
 
 
+### Performance Testing
+Run performance tests to measure processor throughput and message processing capabilities:
+
+```bash
+# Run with default settings (1000 processors, 1000 messages per processor)
+MIX_ENV=prod mix bench
+
+# Run with custom settings
+MIX_ENV=prod mix bench --num-processors 100 --messages-per-processor 100
+
+# Short form aliases
+MIX_ENV=prod mix bench -n 100 -m 50
+MIX_ENV=prod mix bench -n 100 -m 50
+```
+
+**Options:**
+- `--num-processors` / `-n`: Number of processors to create (default: 1000)
+- `--messages-per-processor` / `-m`: Number of messages to send per processor (default: 1000)
+
+The performance test creates multiple processors, enables plugins, sends messages, and measures:
+- Processor creation time
+- Plugin setup time  
+- Message sending time
+- Message processing time
+- Overall throughput (messages/second)
+
 ### Development
 Run the application inside the docker containers.
 See `docker/dev/README.md` for more information.
