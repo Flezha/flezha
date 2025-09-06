@@ -20,6 +20,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   @callback plugin_type() :: :io_binding
   @callback build(map()) :: {:ok, struct()} | {:error, String.t()}
+  @callback help() :: String.t()
 
   defmacro __using__(_opts) do
     quote do
@@ -80,6 +81,68 @@ defmodule Flezha.Plugin.ProviderBehaviour do
             end
         end
       end
+
+      def help() do
+        module_name = __MODULE__ |> Module.split() |> List.last()
+
+        # Get struct fields
+        enforce_keys = get_required_fields(__MODULE__)
+
+        dummy_params =
+          Enum.reduce(enforce_keys, %{}, fn key, acc -> Map.put(acc, key, "dummy") end)
+
+        struct_sample = struct!(__MODULE__, dummy_params)
+        struct_fields = Map.keys(struct_sample) |> Enum.reject(&(&1 == :__struct__))
+
+        required_fields = Enum.map(enforce_keys, &Atom.to_string/1)
+
+        optional_fields =
+          struct_fields |> Enum.reject(&(&1 in enforce_keys)) |> Enum.map(&Atom.to_string/1)
+
+        help_text =
+          """
+          #{module_name} Plugin Help
+
+          USAGE:
+              flz plugin enable <plugin_id> #{module_name |> String.downcase()} [OPTIONS]
+
+          REQUIRED PARAMETERS (X-prefixed):
+          """ <>
+            if Enum.empty?(required_fields) do
+              "    None\n"
+            else
+              (Enum.map(required_fields, fn field ->
+                 "    --X#{field} <value>    #{String.capitalize(field)}"
+               end)
+               |> Enum.join("\n")) <> "\n"
+            end <>
+            """
+
+            OPTIONAL PARAMETERS (X-prefixed):
+            """ <>
+            if Enum.empty?(optional_fields) do
+              "    None\n"
+            else
+              (Enum.map(optional_fields, fn field ->
+                 "    --X#{field} <value>    #{String.capitalize(field)}"
+               end)
+               |> Enum.join("\n")) <> "\n"
+            end <>
+            """
+
+            COMMON OPTIONS:
+                --namespace <namespace>    Namespace (default: default)
+                --processor_id <id>       Target processor ID
+                --trigger <trigger>       Trigger mode (on_input|on_output|proactive|interval)
+                --position <num>          Plugin position
+
+            Override this help/0 function in your provider module for custom help text.
+            """
+
+        help_text
+      end
+
+      defoverridable help: 0
 
       defp get_required_fields(module) do
         try do

@@ -19,6 +19,55 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @impl true
   def plugin_type(), do: :io_binding
 
+  @impl true
+  def help() do
+    """
+    WebSocket Plugin Help
+
+    DESCRIPTION:
+        Connects to a WebSocket server and forwards processor I/O through the WebSocket connection.
+        Can send a post-connect message after establishing the connection.
+
+    USAGE:
+        flz plugin enable <plugin_id> processor_websocket [OPTIONS]
+
+    REQUIRED PARAMETERS (X-prefixed):
+        --Xuri <uri>                  WebSocket server URI (e.g., ws://localhost:4500)
+
+    OPTIONAL PARAMETERS (X-prefixed):
+        --Xpost_connect <json>        JSON message to send after connecting
+        --Xws_opts <json>             WebSocket connection options as JSON
+        --Xpayload_metadata <json>    Metadata to include with payloads
+
+    COMMON OPTIONS:
+        --namespace <namespace>       Namespace (default: default)
+        --processor_id <id>          Target processor ID (required)
+        --trigger <trigger>          Trigger mode: on_input|on_output|proactive|interval
+        --position <num>             Plugin position in the chain
+
+    TRIGGER MODES:
+        on_input    - Triggered when processor receives input
+        on_output   - Triggered when processor produces output  
+        proactive   - Plugin actively polls/generates data
+        interval    - Triggered at regular intervals
+
+    EXAMPLES:
+        # Basic WebSocket connection
+        flz plugin enable ws_conn processor_websocket \\
+            --Xuri=ws://localhost:4500 \\
+            --processor_id=my_processor \\
+            --trigger=proactive
+
+        # With post-connect message
+        flz plugin enable ws_conn processor_websocket \\
+            --Xuri=ws://localhost:4500 \\
+            --Xpost_connect='{"type":"subscribe","channel":"updates"}' \\
+            --processor_id=my_processor \\
+            --trigger=proactive \\
+            --namespace=production
+    """
+  end
+
   defp convert_value(:ws_opts, value) when is_binary(value) do
     Jason.decode(value)
   end

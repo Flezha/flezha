@@ -12,9 +12,11 @@ pub fn handle_plugin_command(args: &[String]) {
     match args[0].as_str() {
         "enable" => handle_enable(args),
         "disable" => handle_disable(args),
+        "help" => handle_help(args),
+        "list" => handle_list(args),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'enable' or 'disable' only.",
+                "Error: Invalid argument '{}'. Use 'enable', 'disable', 'help', or 'list'.",
                 args[0]
             );
             exit(1);
@@ -94,4 +96,68 @@ fn handle_disable(args: &[String]) {
         eprintln!("Error: Command execution failed.");
         exit(1);
     }
+}
+
+fn handle_help(args: &[String]) {
+    if args.len() < 2 {
+        print_plugin_help();
+        return;
+    }
+
+    let provider_id = &args[1];
+    let command = get_flezha_command();
+
+    let rpc_command = format!(
+        "Flezha.Service.CliManager.plugin_help(\"{}\")",
+        provider_id
+    );
+
+    println!("Getting help for plugin '{}'...", provider_id);
+
+    let status = Command::new(command)
+        .arg("rpc")
+        .arg(rpc_command)
+        .status()
+        .expect("Failed to execute command");
+
+    if !status.success() {
+        eprintln!("Error: Command execution failed.");
+        exit(1);
+    }
+}
+
+fn handle_list(_args: &[String]) {
+    let command = get_flezha_command();
+
+    let rpc_command = "Flezha.Service.CliManager.list_plugins()";
+
+    let status = Command::new(command)
+        .arg("rpc")
+        .arg(rpc_command)
+        .status()
+        .expect("Failed to execute command");
+
+    if !status.success() {
+        eprintln!("Error: Command execution failed.");
+        exit(1);
+    }
+}
+
+fn print_plugin_help() {
+    println!("flz plugin - Plugin management commands");
+    println!();
+    println!("USAGE:");
+    println!("    flz plugin <COMMAND>");
+    println!();
+    println!("COMMANDS:");
+    println!("    enable     Enable a plugin");
+    println!("    disable    Disable a plugin");
+    println!("    help       Show help for a specific plugin provider");
+    println!("    list       List all available plugin providers");
+    println!();
+    println!("EXAMPLES:");
+    println!("    flz plugin list");
+    println!("    flz plugin help processor_websocket");
+    println!("    flz plugin enable ws_id processor_websocket --Xuri=ws://localhost:4500");
+    println!("    flz plugin disable ws_id");
 }

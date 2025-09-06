@@ -378,6 +378,53 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
+  @doc "Show help for a specific plugin provider."
+  def plugin_help(provider_id) do
+    case get_plugin_provider_mod(provider_id) do
+      {:ok, provider_mod} ->
+        try do
+          help_text = apply(provider_mod, :help, [])
+          IO.puts(help_text)
+        rescue
+          UndefinedFunctionError ->
+            IO.puts(
+              "Help not available for plugin '#{provider_id}'. The plugin provider does not implement help/0."
+            )
+
+          e ->
+            IO.puts("Error getting help for plugin '#{provider_id}': #{Exception.message(e)}")
+        end
+
+      {:error, reason} ->
+        IO.puts("Error: #{reason}")
+    end
+  end
+
+  @doc "List all available plugin providers."
+  def list_plugins() do
+    enabled_plugins = ConfigManager.get_enabled_plugins()
+
+    IO.puts("Available Plugin Providers:")
+    IO.puts("==========================")
+
+    Enum.each(enabled_plugins, fn {provider_id, module} ->
+      IO.puts("  #{provider_id}")
+      IO.puts("    Module: #{inspect(module)}")
+
+      # Try to get plugin type
+      try do
+        plugin_type = apply(module, :plugin_type, [])
+        IO.puts("    Type: #{plugin_type}")
+      rescue
+        _ -> nil
+      end
+
+      IO.puts("")
+    end)
+
+    IO.puts("Use 'flz plugin help <provider_id>' for detailed help on a specific plugin.")
+  end
+
   defp normalize_namespace(""), do: "default"
   defp normalize_namespace(namespace), do: namespace
 end
