@@ -10,7 +10,7 @@ docker build -t flezha:latest -f docker/prod/Dockerfile.agent .
 
 ## Build docker image for multiple platforms and push to docker hub
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64 -f docker/prod/Dockerfile.agent -t alfetahe/flezha:0.1.6 . --push
+docker buildx build --platform linux/amd64,linux/arm64 -f docker/prod/Dockerfile.agent -t alfetahe/flezha:0.0.1 . --push
 ```
 
 ## Run docker image
@@ -18,12 +18,12 @@ docker buildx build --platform linux/amd64,linux/arm64 -f docker/prod/Dockerfile
 docker run -d \
   --name flezha_container \
   -e FLEZHA_MAX_RECONNECTS=3 \
-  alfetahe/flezha:0.1.6  
+  alfetahe/flezha:0.0.1
 ```
 
 ## Export docker image
 ```bash
-docker save -o flezha.tar alfetahe/flezha:0.1.6
+docker save -o flezha.tar alfetahe/flezha:0.0.1
 ```
 
 ## Start the containers:
