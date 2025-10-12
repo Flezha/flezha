@@ -22,7 +22,7 @@ config :flezha,
   }
 
 config :logger,
-  backends: [:console, LoggerFileBackend],
+  backends: [:console, {LoggerFileBackend, :file_log}],
   handle_sasl_reports: true,
   handle_otp_reports: true,
   level: :warning
@@ -31,7 +31,7 @@ config :logger, :console,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id, :module, :function]
 
-config :logger, LoggerFileBackend,
+config :logger, :file_log,
   path: "logs/flezha.log",
   level: :debug,
   format: "$time $metadata[$level] $message\n",

@@ -3,7 +3,7 @@ import Config
 config :flezha,
   testnet_enabled: true
 
-config :logger, LoggerFileBackend,
+config :logger, :file_log,
   path: "logs/dev/flezha.log",
   level: :debug
 
