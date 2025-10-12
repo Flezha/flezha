@@ -33,7 +33,7 @@ config :logger, :console,
 
 config :logger, :file_log,
   path: "logs/flezha.log",
-  level: :debug,
+  level: :info,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id, :module, :function, :line],
   rotate: %{max_bytes: 10_485_760, keep: 5}

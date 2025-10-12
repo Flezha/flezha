@@ -114,3 +114,14 @@ config :flezha,
   # The default is 30 seconds.
   compute_engine_keepalive:
     System.get_env("FLEZHA_OPERATOR_KEEPALIVE", "30000") |> String.to_integer()
+
+# ------------------------------------------------------------------------------------------------
+# Logger configuration.
+
+config :logger, :file_log,
+  path: System.get_env("FLEZHA_LOG_PATH", "logs/flezha.log"),
+  level: System.get_env("FLEZHA_LOG_LEVEL", "info") |> String.to_atom(),
+  rotate: %{
+    max_bytes: System.get_env("FLEZHA_LOG_MAX_BYTES", "10485760") |> String.to_integer(),
+    keep: System.get_env("FLEZHA_LOG_KEEP_FILES", "5") |> String.to_integer()
+  }

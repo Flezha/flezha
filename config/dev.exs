@@ -4,7 +4,6 @@ config :flezha,
   testnet_enabled: true
 
 config :logger, :file_log,
-  path: "logs/dev/flezha.log",
   level: :debug
 
 config :kafka_ex,
