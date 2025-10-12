@@ -47,13 +47,13 @@ defmodule Mix.Tasks.Bench do
 
     # Set logging to only show warnings and errors BEFORE starting application
     Logger.configure(level: :warning)
-    
+
     # Also configure logger through Application environment
     Application.put_env(:logger, :level, :warning)
-    
+
     # Ensure application is started
     Mix.Task.run("app.start")
-    
+
     # Re-configure logger after app start to ensure it sticks
     Logger.configure(level: :warning)
 

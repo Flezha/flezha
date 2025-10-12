@@ -22,9 +22,21 @@ config :flezha,
   }
 
 config :logger,
+  backends: [:console, LoggerFileBackend],
   handle_sasl_reports: true,
   handle_otp_reports: true,
   level: :warning
+
+config :logger, :console,
+  format: "$time $metadata[$level] $message\n",
+  metadata: [:request_id, :module, :function]
+
+config :logger, LoggerFileBackend,
+  path: "logs/flezha.log",
+  level: :debug,
+  format: "$time $metadata[$level] $message\n",
+  metadata: [:request_id, :module, :function, :line],
+  rotate: %{max_bytes: 10_485_760, keep: 5}
 
 config :kafka_ex,
   # A list of brokers to connect to. This can be in either of the following formats

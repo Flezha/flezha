@@ -80,7 +80,8 @@ defmodule Flezha.Service.CliManager do
       end
 
     # Generate dynamic plugin ID with 6-digit random number
-    plugin_id = "io_listener_#{:rand.uniform(999999) |> Integer.to_string() |> String.pad_leading(6, "0")}"
+    plugin_id =
+      "io_listener_#{:rand.uniform(999_999) |> Integer.to_string() |> String.pad_leading(6, "0")}"
 
     provider = %MonitoredIOForward{
       recv_pid: self(),
@@ -98,7 +99,7 @@ defmodule Flezha.Service.CliManager do
 
     # Set up signal trapping for graceful shutdown
     Process.flag(:trap_exit, true)
-    
+
     listen_loop(plugin_id)
   end
 
@@ -144,7 +145,7 @@ defmodule Flezha.Service.CliManager do
 
       {:heartbeat_keepalive, pid} ->
         Process.send(pid, {:heartbeat_keepalive, :ok}, [])
-      
+
       {:EXIT, _pid, reason} ->
         cleanup_io_listen(plugin_id)
         exit(reason)
@@ -152,7 +153,7 @@ defmodule Flezha.Service.CliManager do
 
     listen_loop(plugin_id)
   end
-  
+
   defp cleanup_io_listen(plugin_id) do
     IO.puts("\nShutting down IO listener...")
     PluginManager.disable_plugin(plugin_id)

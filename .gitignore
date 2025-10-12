@@ -42,3 +42,6 @@ flezha-*.tar
 
 # Local process hub codebase.
 /process-hub
+
+# Log files
+/logs/
