@@ -45,8 +45,6 @@ defmodule Flezha.Service.PortPilot do
 
   @impl true
   def handle_info({_port, {:data, port_msg}}, state) do
-    # TODO: dbg(port_msg)
-
     Logger.warning("Received unexpected message from port: #{inspect(port_msg)}")
 
     {:noreply, state}

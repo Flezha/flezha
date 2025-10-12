@@ -113,6 +113,19 @@ defmodule Flezha.Service.HubManager do
         }
       ]
     )
+
+    ProcessHub.register_hook_handlers(
+      Identificator.hub(namespace),
+      Hook.registry_pid_removed(),
+      [
+        %HookManager{
+          id: compute_engine_id <> "_hub_pid_removal",
+          m: Flezha.Service.HubManager,
+          f: :hook_remove_pid,
+          a: [compute_engine_id, :_]
+        }
+      ]
+    )
   end
 
   def unregister_handler(namespace, compute_engine_id) do
@@ -160,7 +173,6 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  # TODO: we should also remove the pids incase the processor is removed.
   def hook_insert_pid(compute_engine_id, {processor_id, node_pids}) do
     curr_node = node()
 
@@ -183,6 +195,10 @@ defmodule Flezha.Service.HubManager do
           GenServer.call(pid, {:processor_pid_update, processor_id, updated_pids})
         end)
     end
+  end
+
+  def hook_remove_pid(compute_engine_id, processor_id) do
+    # TODO: Implement.
   end
 
   def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do
