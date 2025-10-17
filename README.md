@@ -11,7 +11,7 @@ Distributed stateful processors. Provdes a static and dynamic creation of proces
 
 ## Examples
 
-### Start agent
+### Start agent (started automatically for dev mode)
 Starting the node and specifying the external processes to be used by the node mynode.
 PROD:
 ```bash

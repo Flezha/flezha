@@ -3,8 +3,7 @@ import Config
 config :flezha,
   testnet_enabled: true
 
-config :logger, :file_log,
-  level: :debug
+config :logger, :file_log, level: :debug
 
 config :kafka_ex,
   brokers: [

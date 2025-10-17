@@ -13,6 +13,8 @@ services:
     volumes:
       - socket_data:/socket_data
       - ../../:/flezha
+      - /flezha/_build
+      - /flezha/cli/target
     networks:
       - flezha_network
 
@@ -24,6 +26,8 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
+    networks:
+      - flezha_network
 
   kafka:
     image: bitnami/kafka:3.9.0
@@ -37,6 +41,8 @@ services:
       - "9092:9092"
     depends_on:
       - zookeeper
+    networks:
+      - flezha_network
 
   kafka_ui:
     image: provectuslabs/kafka-ui:latest
@@ -47,11 +53,11 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
-      KAFKA_CLUSTERS_0_SCHEMA_REGISTRY: http://schema-registry:8081
-      KAFKA_CLUSTERS_0_CONNECT: http://connect:8083
-      KAFKA_CLUSTERS_0_JMX_PORT: 9999
-      KAFKA_CLUSTERS_0_JMX_USERNAME: admin
-      KAFKA_CLUSTERS_0_JMX_PASSWORD: admin
+    depends_on:
+      - kafka
+      - zookeeper
+    networks:
+      - flezha_network
 
   # rust:
   #   build:

@@ -2,33 +2,54 @@
 
 Run the following commands from the project *root* directory.
 
-# TODO: update names
-## Build docker image
+# Build, run and manage docker image
+- Create docker network (if not exists)
 ```bash
-docker build -t flezha:latest -f docker/dev/Dockerfile.agent .
+docker network create flezha_network
 ```
 
-## Build docker image for multiple platforms and push to docker hub
-```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t alfetahe/flezha:0.1.6 . --push
-```
-
-## Run docker image
-```bash
-docker run -d \
-  --name flezha_container \
-  -e FLEZHA_MAX_RECONNECTS=3 \
-  alfetahe/flezha:0.1.6  
-```
-
-## Export docker image
-```bash
-docker save -o flezha.tar alfetahe/flezha:0.1.6
-```
-
-## Start the containers:
+- Build the images and start the containers:
 ```bash
 docker compose -f docker/dev/docker-compose.yml up
+```
+
+- Start the agent inside the container, build rust cli commands and start iex:
+```bash
+docker exec -it flezha_agent_dev bash
+mix release 
+_build/dev/rel/flezha/bin/flz agent start --mode=attached_iex
+
+# Or use directly IEX (you wont be able to use the CLI commands then) by default:
+iex --name flezha@127.0.0.1 --cookie flezha_dev_cookie -S mix
+```
+
+- Start another terminal to agent container:
+```bash
+docker exec -it flezha_agent_dev bash
+
+
+# Start processor, websocket plugin and kafka output plugins:
+_build/dev/rel/flezha/bin/flz processor start my_processor store_input --init_values '{"binary_inputs": [], "text_inputs": ["FIRST"]}' 
+
+
+_build/dev/rel/flezha/bin/flz plugin enable test_plugin_ws processor_websocket \
+      --Xprocessor_id="my_processor" \
+      --Xtrigger="proactive" \
+      --Xuri="ws://localhost:4500" \
+      --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":1000}}"}}' \
+      --Xposition=0
+
+
+_build/dev/rel/flezha/bin/flz plugin enable test_plugin_kafka processor_kafka_producer \
+  --Xprocessor_id=my_processor \
+  --Xtrigger=on_output \
+  --Xhosts=kafka:9092 \
+  --Xtopic=test_topic
+  
+  
+# Listen to processor IO:  
+_build/dev/rel/flezha/bin/flz processor io_listen input my_processor
+_build/dev/rel/flezha/bin/flz processor io_listen output my_processor
 ```
 
 # Kafka UI:
