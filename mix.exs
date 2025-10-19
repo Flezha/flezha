@@ -39,7 +39,6 @@ defmodule Flezha.MixProject do
       # {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
       # {:process_hub, path: "../process-hub"},
       {:process_hub, "~> 0.4.0-beta"},
-      # {:process_hub, "~> 0.3.2-alpha"},
       {:blockade, "~> 0.2.2"},
       {:fresh, "~> 0.4.4"},
       {:kafka_ex, "~> 0.14.0"},
