@@ -2,6 +2,12 @@
 
 Run the following commands from the project *root* directory.
 
+# ADD step to copy the .env.example to .env file if you don't have it yet:
+```bash
+cp .env.example .env
+# TODO: check the default values inside .env and maybe create separate for dev and prod and testing.
+```
+
 # Build, run and manage docker image
 - Create docker network (if not exists)
 ```bash
