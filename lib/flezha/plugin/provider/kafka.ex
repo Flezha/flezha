@@ -10,7 +10,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     defstruct @enforce_keys ++
                 [
                   :conn,
-                  partition: nil,
+                  partition: 0,
                   required_acks: 1
                 ]
 
