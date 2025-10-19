@@ -23,7 +23,15 @@ _build/dev/rel/flezha/bin/flz agent start --mode=attached_iex
 iex --name flezha@127.0.0.1 --cookie flezha_dev_cookie -S mix
 ```
 
-- Start another terminal to agent container:
+- Start another terminal on agent container to start the compute engine (you can start multiple instances of compute engines):
+```bash
+docker exec -it flezha_agent_dev bash
+cd test/apps/rust_compute_engine
+cargo run --target-dir=./target
+```
+
+
+- Start another terminal on agent container:
 ```bash
 docker exec -it flezha_agent_dev bash
 
