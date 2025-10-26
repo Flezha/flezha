@@ -1,12 +1,13 @@
 package com.flezha.sdk;
 
-import java.util.concurrent.Executors;
-import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.*;
+import com.flezha.sdk.Flezha.FlezhaMessage;
 
 public class Flezha {
   protected String id;
-  protected ArrayBlockingQueue<FlezhaMessage> rxChannel;
-  private static final executor = Executors.newVirtualThreadPerTaskExecutor();
+  protected LinkedBlockingQueue<FlezhaMessage> rxChannel;
+  protected LinkedBlockingQueue<FlezhaMessage> txChannel;
+  private static final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
   public enum FlezhaMessage {
     SOMETHING
@@ -15,8 +16,8 @@ public class Flezha {
   private Flezha(String id) {
     this.id = id;
 
-    rxChannel = new ArrayBlockingQueue<FlezhaMessage>();
-    txChannel = new ArrayBlockingQueue<FlezhaMessage>();
+    rxChannel = new LinkedBlockingQueue<FlezhaMessage>();
+    txChannel = new LinkedBlockingQueue<FlezhaMessage>();
 
     executor.submit(() -> {
       var computeEngine = new ComputeEngine(id, rxChannel, txChannel);
