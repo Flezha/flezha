@@ -1,6 +1,6 @@
 # Flezha Agent - Production Docker Build
 
-Run the following commands from the **flezha project root** directory (not market-analyzer root).
+Run the following commands from the **flezha project root** directory.
 
 ## Build Local Image (Single Architecture)
 
@@ -51,19 +51,3 @@ docker save -o flezha-0.0.1.tar alfetahe/flezha:0.0.1
 docker compose -f docker/prod/docker-compose.yml up -d
 ```
 
-## Kubernetes Deployment
-
-For production K8s/K3s deployment, the images are pulled automatically from Docker Hub:
-
-```bash
-# Deploy to Kubernetes (from market-analyzer root)
-kubectl apply -f kubernetes/flezha-daemonset.yaml
-```
-
-See the market-analyzer project's `DEPLOY.md` for complete Kubernetes deployment instructions.
-
-## Kafka UI
-
-When deployed with Kafka, Kafka UI is accessible at:
-- **Docker**: `http://localhost:8080/`
-- **Kubernetes**: `http://<node-ip>:30080/`
