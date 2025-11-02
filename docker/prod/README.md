@@ -1,35 +1,69 @@
-# Docker DEV
+# Flezha Agent - Production Docker Build
 
-Run the following commands from the project *root* directory.
+Run the following commands from the **flezha project root** directory (not market-analyzer root).
 
-# TODO: update names
-## Build docker image
+## Build Local Image (Single Architecture)
+
 ```bash
 docker build -t flezha:latest -f docker/prod/Dockerfile.agent .
 ```
 
-## Build docker image for multiple platforms and push to docker hub
+## Build Multi-Architecture Image and Push to Docker Hub
+
+**Recommended for production deployment (supports both amd64 and arm64 platforms):**
+
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64 -f docker/prod/Dockerfile.agent -t alfetahe/flezha:0.0.1 . --push
+# Setup buildx (one-time)
+docker buildx create --name multiarch --use
+docker buildx inspect --bootstrap
+
+# Build and push with both version and latest tags
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f docker/prod/Dockerfile.agent \
+  -t alfetahe/flezha:0.0.1 \
+  -t alfetahe/flezha:latest \
+  . --push
 ```
 
-## Run docker image
+## Run Docker Image
+
 ```bash
 docker run -d \
   --name flezha_container \
   -e FLEZHA_MAX_RECONNECTS=3 \
-  alfetahe/flezha:0.0.1
+  alfetahe/flezha:latest
 ```
 
-## Export docker image
+## Export Docker Image
+
 ```bash
-docker save -o flezha.tar alfetahe/flezha:0.0.1
+# Export latest
+docker save -o flezha-latest.tar alfetahe/flezha:latest
+
+# Export specific version
+docker save -o flezha-0.0.1.tar alfetahe/flezha:0.0.1
 ```
 
-## Start the containers:
+## Docker Compose Deployment
+
 ```bash
-docker compose -f docker/dev/docker-compose.yml up
+# Start production containers
+docker compose -f docker/prod/docker-compose.yml up -d
 ```
 
-# Kafka UI:
-Kafka UI can be seen on: `http://localhost:8080/`
+## Kubernetes Deployment
+
+For production K8s/K3s deployment, the images are pulled automatically from Docker Hub:
+
+```bash
+# Deploy to Kubernetes (from market-analyzer root)
+kubectl apply -f kubernetes/flezha-daemonset.yaml
+```
+
+See the market-analyzer project's `DEPLOY.md` for complete Kubernetes deployment instructions.
+
+## Kafka UI
+
+When deployed with Kafka, Kafka UI is accessible at:
+- **Docker**: `http://localhost:8080/`
+- **Kubernetes**: `http://<node-ip>:30080/`

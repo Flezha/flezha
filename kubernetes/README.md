@@ -1,7 +1,43 @@
-# Kubernetes resource files
+# Kubernetes Resource Files
 
-These files can be used as a reference for deploying the application to a Kubernetes cluster.
-It creates a namespace, role, service account, role binding and a statefulset.
+These files can be used as a reference for deploying the Flezha agent to a Kubernetes cluster.
+They create a namespace, role, service account, role binding, and a daemonset.
+
+## Docker Images
+
+The Flezha agent is available as a multi-architecture Docker image on Docker Hub:
+
+- **Image**: `alfetahe/flezha:latest` (or `alfetahe/flezha:0.0.1` for specific version)
+- **Platforms**: `linux/amd64`, `linux/arm64`
+- **Pull Policy**: The daemonset uses `imagePullPolicy: IfNotPresent` by default
+
+### Using Private Images
+
+If using a private Docker registry, create an image pull secret:
+
+```bash
+kubectl create secret docker-registry dockerhub-secret \
+  --docker-server=docker.io \
+  --docker-username=<your-username> \
+  --docker-password=<your-password> \
+  -n flezha
+```
+
+The daemonset is already configured to use `dockerhub-secret` via `imagePullSecrets`.
+
+### Building Custom Images
+
+To build your own multi-arch image:
+
+```bash
+# From flezha root directory
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f docker/prod/Dockerfile.agent \
+  -t alfetahe/flezha:latest \
+  . --push
+```
+
+See `docker/prod/README.md` for detailed build instructions.
 
 ## Setup
 - Apply the namespace: `kubectl apply -f flezha-namespace.yaml`
