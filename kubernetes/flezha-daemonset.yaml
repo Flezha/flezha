@@ -22,7 +22,7 @@ spec:
       initContainers:
         - name: fix-permissions
           image: busybox:1.35
-          command: ['sh', '-c', 'chown -R 1000:1000 /flezha/sockets /flezha/data /var/log/flezha && chmod -R 755 /flezha/sockets /flezha/data /var/log/flezha']
+          command: ['sh', '-c', 'mkdir -p /flezha/sockets /flezha/data /var/log/flezha && chown -R 1000:1000 /flezha/sockets /flezha/data /var/log/flezha && chmod -R 755 /flezha/sockets /flezha/data /var/log/flezha']
           securityContext:
             runAsUser: 0
           volumeMounts:
