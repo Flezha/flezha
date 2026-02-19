@@ -275,6 +275,14 @@ defmodule Flezha.ComputeEngine.FleetManager do
   end
 
   defp handle_compute_engine_disconnect(state, namespace, compute_engine_id) do
+    if not Map.has_key?(state.compute_engine_namespaces, namespace) do
+      state
+    else
+      do_handle_compute_engine_disconnect(state, namespace, compute_engine_id)
+    end
+  end
+
+  defp do_handle_compute_engine_disconnect(state, namespace, compute_engine_id) do
     FleetSupervisor.stop_compute_engine_sup(compute_engine_id)
 
     # Cancel any hub handlers for the compute_engine.

@@ -197,7 +197,7 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def hook_remove_pid(compute_engine_id, %{child_id: _processor_id}) do
+  def hook_remove_pid(_compute_engine_id, %{child_id: _processor_id}) do
     # TODO: Implement.
   end
 
@@ -214,6 +214,11 @@ defmodule Flezha.Service.HubManager do
       end
 
     assigned_compute_engine = ProcessorManager.assign_compute_engine(namespace)
+
+    if is_nil(assigned_compute_engine) do
+      raise "No active compute engines available in namespace #{namespace}"
+    end
+
     new_args = [{namespace, assigned_compute_engine, processor}]
 
     child_data

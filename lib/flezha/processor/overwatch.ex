@@ -78,6 +78,15 @@ defmodule Flezha.Processor.Overwatch do
 
   @impl true
   def terminate(reason, state) do
+    try do
+      GenServer.call(
+        Identificator.control_unit(state.compute_engine_id),
+        {:stop_processor, state.id}
+      )
+    catch
+      :exit, _ -> :ok
+    end
+
     unregister_plugins(state.bindings)
 
     Logger.info(
@@ -95,17 +104,8 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
-  def handle_call(:stop_processor, from, state) do
-    GenServer.call(
-      Identificator.control_unit(state.compute_engine_id),
-      {:stop_processor, state.id}
-    )
-
-    unregister_plugins(state.bindings)
-
-    GenServer.reply(from, :ok)
-
-    {:stop, :normal, state}
+  def handle_call(:stop_processor, _from, state) do
+    {:stop, :normal, :ok, state}
   end
 
   @impl true

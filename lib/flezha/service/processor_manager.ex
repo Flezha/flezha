@@ -3,6 +3,8 @@ defmodule Flezha.Service.ProcessorManager do
   Manages the processor startings and stoppings.
   """
 
+  require Logger
+
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
   alias Flezha.ComputeEngine.FleetManager
@@ -79,15 +81,21 @@ defmodule Flezha.Service.ProcessorManager do
   end
 
   def stop_all_processors(namespace) do
+    hub_id = Identificator.hub(namespace)
     processors = HubManager.get_all_processors(namespace)
+    processor_ids = Enum.map(processors, fn {id, _pid} -> id end)
 
-    Enum.map(processors, fn {_processor_id, processor_pid} ->
-      if Process.alive?(processor_pid) do
-        GenServer.call(processor_pid, :stop_processor)
-      else
-        {:error, "processor not alive"}
+    if processor_ids != [] do
+      try do
+        hub_id
+        |> ProcessHub.stop_children(processor_ids, awaitable: true)
+        |> ProcessHub.Future.await()
+      catch
+        :exit, _ -> :ok
       end
-    end)
+    end
+
+    :ok
   end
 
   def send_io(processor_id, namespace, message, metadata) do
@@ -130,35 +138,42 @@ defmodule Flezha.Service.ProcessorManager do
       )
       |> ProcessHub.Future.await()
 
-    case ProcessHub.StartResult.status(result) do
-      :ok ->
-        pid = ProcessHub.StartResult.pid(result)
-        processor_node = ProcessHub.StartResult.node(result)
+    case result do
+      %ProcessHub.StartResult{} ->
+        our_started =
+          Enum.find(result.started || [], fn {cid, _} -> cid == processor.id end)
 
-        {:ok, compute_engine_id} = GenServer.call(pid, :registry_compute_engine_set)
+        case our_started do
+          {_cid, [{processor_node, pid}]} ->
+            {:ok, compute_engine_id} = GenServer.call(pid, :registry_compute_engine_set)
 
-        {:ok,
-         %{
-           processor_id: processor.id,
-           compute_engine_id: compute_engine_id,
-           node: processor_node,
-           pid: pid
-         }}
+            {:ok,
+             %{
+               processor_id: processor.id,
+               compute_engine_id: compute_engine_id,
+               node: processor_node,
+               pid: pid
+             }}
 
-      :error ->
-        {_, processor_node, {reason, _}} =
-          result
-          |> ProcessHub.StartResult.errors()
-          |> List.first()
+          _ ->
+            Logger.warning(
+              "Processor #{processor.id} failed to start. " <>
+                "Started: #{inspect(result.started)}, Errors: #{inspect(result.errors)}, " <>
+                "Status: #{inspect(result.status)}"
+            )
 
-        {
-          :error,
-          %{
-            processor_id: processor.id,
-            node: processor_node,
-            reason: reason
-          }
-        }
+            reason =
+              case Enum.find(result.errors || [], fn {cid, _} -> cid == processor.id end) do
+                {_cid, {reason, _child_spec}} -> reason
+                {_cid, reason} -> reason
+                _ -> :unknown
+              end
+
+            {:error, %{processor_id: processor.id, node: node(), reason: reason}}
+        end
+
+      {:error, reason} ->
+        {:error, %{processor_id: processor.id, node: node(), reason: reason}}
     end
   end
 
@@ -177,11 +192,9 @@ defmodule Flezha.Service.ProcessorManager do
   end
 
   def assign_compute_engine(namespace) do
-    select_compute_engine(FleetManager.active_compute_engines(namespace))
-  end
-
-  defp select_compute_engine(compute_engine_ids) do
-    # TODO: add load balancing here.
-    Enum.random(compute_engine_ids)
+    case FleetManager.active_compute_engines(namespace) do
+      [] -> nil
+      compute_engine_ids -> Enum.random(compute_engine_ids)
+    end
   end
 end

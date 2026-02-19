@@ -8,4 +8,12 @@ defmodule FlezhaTest.Helper.MessageTestHelper do
       end
     end
   end
+
+  def recv_drain(msg, timeout \\ 2000) do
+    receive do
+      ^msg -> 1 + recv_drain(msg, timeout)
+    after
+      timeout -> 0
+    end
+  end
 end

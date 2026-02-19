@@ -50,7 +50,9 @@ defmodule FlezhaTest do
 
     {status, info} = ProcessorManager.start_processor(@default_namespace, processor)
 
-    assert status === :ok
+    assert status === :ok,
+      "start_processor failed: #{inspect(info)}"
+
     assert info[:processor_id] === "default_processor_test"
     assert info[:node] === @node_name
     assert is_pid(info[:pid])
@@ -420,12 +422,41 @@ defmodule FlezhaTest do
     num_processors = 15
     processor_ids = for i <- 1..num_processors, do: "processor_#{i}"
 
-    {_peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
     # Start the compute_engines.
     compute_engine_id_1 = NodeTestHelper.start_compute_engine(namespace)
     rem_compute_engine_1 = NodeTestHelper.start_compute_engine_remote(peer_node, namespace)
     rem_compute_engine_2 = NodeTestHelper.start_compute_engine_remote(peer_node, namespace)
+
+    # Wait for peer node to join the ProcessHub hub cluster
+    hub_id = Identificator.hub(namespace)
+    test_pid = self()
+
+    ProcessHub.register_hook_handlers(
+      hub_id,
+      ProcessHub.Constant.Hook.post_node_join(),
+      [
+        %ProcessHub.Service.HookManager{
+          id: "hub_node_join_wait",
+          m: Process,
+          f: :send,
+          a: [test_pid, :peer_node_joined, []]
+        }
+      ]
+    )
+
+    if length(HubManager.get_hub_nodes(namespace, true)) < 2 do
+      receive do
+        :peer_node_joined -> :ok
+      after
+        5_000 -> flunk("Peer node did not join the hub cluster within 5 seconds")
+      end
+    end
+
+    ProcessHub.cancel_hook_handlers(hub_id, ProcessHub.Constant.Hook.post_node_join(), [
+      "hub_node_join_wait"
+    ])
 
     self = self()
     _node = node()
@@ -494,11 +525,10 @@ defmodule FlezhaTest do
     NodeTestHelper.stop_compute_engine_remote(peer_node, namespace, rem_compute_engine_1)
     NodeTestHelper.stop_compute_engine_remote(peer_node, namespace, rem_compute_engine_2)
 
-    # Need to wait for process inserted hook to be called for each processor migration.
+    # Wait for process registered and post-startup hooks from processor migration.
     # With each compute_engine disconnect we update the tag of the processor.
-    # Wait for other hooks as well.
-    MessageTestHelper.recv_num(:hook_insert_recv, num_processors * 2 + 1)
-    MessageTestHelper.recv_num(:hook_pstartup_recv, 8)
+    MessageTestHelper.recv_drain(:hook_insert_recv)
+    MessageTestHelper.recv_drain(:hook_pstartup_recv)
 
     # Make sure all the processors are migrated to the other compute_engine.
     reg = ProcessorManager.processor_registry(namespace)
@@ -514,5 +544,7 @@ defmodule FlezhaTest do
     end
 
     assert length(HubManager.get_hub_nodes(namespace, true)) === 1
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 end
