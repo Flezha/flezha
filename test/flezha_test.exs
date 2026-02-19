@@ -445,7 +445,7 @@ defmodule FlezhaTest do
 
     ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
-      ProcessHub.Constant.Hook.process_startups(),
+      ProcessHub.Constant.Hook.post_children_start(),
       [
         %ProcessHub.Service.HookManager{
           id: "hub_pstartup_hook_test",
