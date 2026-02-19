@@ -197,7 +197,7 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def hook_remove_pid(compute_engine_id, %{child_id: processor_id}) do
+  def hook_remove_pid(compute_engine_id, %{child_id: _processor_id}) do
     # TODO: Implement.
   end
 
