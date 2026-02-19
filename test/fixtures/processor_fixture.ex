@@ -19,10 +19,10 @@ defmodule FlezhaTest.Fixtures.ProcessorFixture do
 
     ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
-      Hook.registry_pid_inserted(),
+      Hook.child_registered(),
       [
         %ProcessHub.Service.HookManager{
-          id: "registry_pid_inserted",
+          id: "child_registered",
           m: Process,
           f: :send,
           a: [self, :hook_reg_insert_recv, []]
@@ -40,8 +40,8 @@ defmodule FlezhaTest.Fixtures.ProcessorFixture do
 
     ProcessHub.cancel_hook_handlers(
       Identificator.hub(namespace),
-      Hook.registry_pid_inserted(),
-      ["registry_pid_inserted"]
+      Hook.child_registered(),
+      ["child_registered"]
     )
 
     result

@@ -103,7 +103,7 @@ defmodule Flezha.Service.HubManager do
   def register_handler(namespace, compute_engine_id) do
     ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
-      Hook.registry_pid_inserted(),
+      Hook.child_registered(),
       [
         %HookManager{
           id: compute_engine_id <> "_hub_pid_insertion",
@@ -116,7 +116,7 @@ defmodule Flezha.Service.HubManager do
 
     ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
-      Hook.registry_pid_removed(),
+      Hook.child_registered(),
       [
         %HookManager{
           id: compute_engine_id <> "_hub_pid_removal",
@@ -131,7 +131,7 @@ defmodule Flezha.Service.HubManager do
   def unregister_handler(namespace, compute_engine_id) do
     ProcessHub.cancel_hook_handlers(
       Identificator.hub(namespace),
-      Hook.registry_pid_inserted(),
+      Hook.child_registered(),
       [compute_engine_id <> "_hub_pid_insertion"]
     )
   end
@@ -173,7 +173,7 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def hook_insert_pid(compute_engine_id, {processor_id, node_pids}) do
+  def hook_insert_pid(compute_engine_id, %{child_id: processor_id, node_pids: node_pids}) do
     curr_node = node()
 
     updated_pids =
@@ -197,7 +197,7 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def hook_remove_pid(compute_engine_id, processor_id) do
+  def hook_remove_pid(compute_engine_id, %{child_id: processor_id}) do
     # TODO: Implement.
   end
 
@@ -238,9 +238,7 @@ defmodule Flezha.Service.HubManager do
       partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
       distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
-        retention: 4000,
-        handover: true,
-        confirm_handover: true
+        handover: true
       },
       hooks: %{
         Hook.child_data_alter() => [

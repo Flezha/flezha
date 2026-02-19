@@ -30,7 +30,7 @@ services:
       - flezha_network
 
   kafka:
-    image: bitnami/kafka:3.9.0
+    image: confluentinc/cp-kafka:7.8.6
     container_name: kafka
     environment:
       KAFKA_BROKER_ID: 1

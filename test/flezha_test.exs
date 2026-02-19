@@ -432,7 +432,7 @@ defmodule FlezhaTest do
 
     ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
-      ProcessHub.Constant.Hook.registry_pid_inserted(),
+      ProcessHub.Constant.Hook.child_registered(),
       [
         %ProcessHub.Service.HookManager{
           id: "hub_insert_hook_test",
