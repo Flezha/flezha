@@ -88,7 +88,7 @@ defmodule Flezha.Service.ProcessorManager do
     if processor_ids != [] do
       try do
         hub_id
-        |> ProcessHub.stop_children(processor_ids, awaitable: true)
+        |> ProcessHub.stop_children(processor_ids, awaitable: true, timeout: 15_000)
         |> ProcessHub.Future.await()
       catch
         :exit, _ -> :ok
@@ -134,7 +134,8 @@ defmodule Flezha.Service.ProcessorManager do
       |> ProcessHub.start_child(child_spec,
         awaitable: true,
         # We will get the errors from the start result.
-        disable_logging: true
+        disable_logging: true,
+        timeout: 15_000
       )
       |> ProcessHub.Future.await()
 
@@ -164,6 +165,7 @@ defmodule Flezha.Service.ProcessorManager do
 
             reason =
               case Enum.find(result.errors || [], fn {cid, _} -> cid == processor.id end) do
+                {_cid, {:error, reason}} -> reason
                 {_cid, {reason, _child_spec}} -> reason
                 {_cid, reason} -> reason
                 _ -> :unknown

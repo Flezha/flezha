@@ -45,6 +45,36 @@ defmodule Flezha.ComputeEngine.ControlChannel do
     end
   end
 
+  def send_control_async(compute_engine_id, command) do
+    control_channel = Identificator.control_channel(compute_engine_id)
+
+    case GenServer.whereis(control_channel) do
+      nil ->
+        :ok
+
+      _ ->
+        ref = gen_ref()
+
+        req =
+          struct(
+            ComputeEngineCommands.CommandRequest,
+            reference_id: ref,
+            command: command
+          )
+
+        {:ok, iodata, _size} = Protox.encode(req)
+
+        payload =
+          Payloader.build_from_bin(
+            "control_command",
+            IO.iodata_to_binary(iodata)
+          )
+
+        GenServer.cast(control_channel, {:send_control_async, payload})
+        :ok
+    end
+  end
+
   @impl true
   def init({namespace, compute_engine_id, sock}) do
     SocketSupport.set_active(sock)
@@ -76,6 +106,16 @@ defmodule Flezha.ComputeEngine.ControlChannel do
   @impl true
   def handle_call({:handle_frame, frame}, _from, state) do
     {:reply, :ok, handle_payload(state, frame)}
+  end
+
+  @impl true
+  def handle_cast({:send_control_async, payload}, state) do
+    case Map.get(state, :sock, nil) do
+      nil -> :ok
+      socket -> :gen_tcp.send(socket, payload)
+    end
+
+    {:noreply, state}
   end
 
   @impl true

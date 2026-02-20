@@ -245,6 +245,9 @@ defmodule Flezha.Service.HubManager do
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
         handover: true
       },
+      # Processor startup involves multiple GenServer hops and socket communication
+      # to the compute engine (Rust), so the default 5s is too tight.
+      cross_node_request_timeout: 10_000,
       hooks: %{
         Hook.child_data_alter() => [
           %HookManager{

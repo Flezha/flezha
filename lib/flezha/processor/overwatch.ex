@@ -64,7 +64,7 @@ defmodule Flezha.Processor.Overwatch do
 
     case start_processor_sdk(compute_engine_id, processor) do
       {:ok, _} ->
-        {:ok, state, {:continue, :additional_init}}
+        {:ok, state}
 
       {:error, reason} ->
         {:error, reason}
@@ -72,22 +72,15 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
-  def handle_continue(:additional_init, state) do
-    {:noreply, state}
-  end
-
-  @impl true
   def terminate(reason, state) do
-    try do
-      GenServer.call(
+    unless is_nil(state.compute_engine_id) do
+      GenServer.cast(
         Identificator.control_unit(state.compute_engine_id),
-        {:stop_processor, state.id}
+        {:stop_processor_async, state.id}
       )
-    catch
-      :exit, _ -> :ok
-    end
 
-    unregister_plugins(state.bindings)
+      unregister_plugins(state.bindings)
+    end
 
     Logger.info(
       "Terminating processor #{state.id} in namespace #{state.namespace}: #{inspect(reason)}"
@@ -104,8 +97,17 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
-  def handle_call(:stop_processor, _from, state) do
-    {:stop, :normal, :ok, state}
+  def handle_call(:stop_processor, from, state) do
+    GenServer.call(
+      Identificator.control_unit(state.compute_engine_id),
+      {:stop_processor, state.id}
+    )
+
+    unregister_plugins(state.bindings)
+
+    GenServer.reply(from, :ok)
+
+    {:stop, :normal, %{state | compute_engine_id: nil}}
   end
 
   @impl true
@@ -437,7 +439,8 @@ defmodule Flezha.Processor.Overwatch do
   defp start_processor_sdk(compute_engine_id, processor) do
     GenServer.call(
       Identificator.control_unit(compute_engine_id),
-      {:start_processor, processor}
+      {:start_processor, processor},
+      8_000
     )
   end
 

@@ -139,6 +139,19 @@ defmodule Flezha.ComputeEngine.ControlUnit do
   end
 
   @impl true
+  def handle_cast({:stop_processor_async, processor_id}, state) do
+    ControlChannel.send_control_async(
+      state.compute_engine_id,
+      {
+        :rem_processor,
+        %ComputeEngineCommands.RemProcessor{processor_id: processor_id}
+      }
+    )
+
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_cast({:handle_payload, payload}, state) do
     {:noreply, handle_payload(state, payload)}
   end
