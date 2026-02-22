@@ -15,8 +15,8 @@ defmodule Mix.Tasks.Bench do
 
   ## Options
 
-    * `--num-processors` - Number of processors to create (default: 1000)
-    * `--messages-per-processor` - Number of messages to send per processor (default: 1000)
+    * `--num-processors` - Number of processors to create (default: 100)
+    * `--messages-per-processor` - Number of messages to send per processor (default: 100)
 
   """
 
@@ -37,8 +37,8 @@ defmodule Mix.Tasks.Bench do
         ]
       )
 
-    num_processors = opts[:num_processors] || 1000
-    test_messages_per_processor = opts[:messages_per_processor] || 1000
+    num_processors = opts[:num_processors] || 100
+    test_messages_per_processor = opts[:messages_per_processor] || 100
 
     IO.puts("Starting Flezha performance test...")
     IO.puts("Processors: #{num_processors}")

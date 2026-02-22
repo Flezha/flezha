@@ -61,18 +61,15 @@ ensure_network() {
 cmd_build() {
     ensure_env_file
     ensure_network
-    echo "Building and starting dev containers..."
-    docker compose -f "$COMPOSE_FILE" up --build -d
-    echo ""
-    echo "Dev environment is running."
-    echo "Run './scripts/dev.sh shell' to open a shell in the agent container."
+    echo "Building dev containers..."
+    docker compose -f "$COMPOSE_FILE" build
 }
 
 cmd_up() {
     ensure_env_file
     ensure_network
     echo "Starting dev containers..."
-    docker compose -f "$COMPOSE_FILE" up -d
+    docker compose -f "$COMPOSE_FILE" up -d -V
     echo ""
     echo "Dev environment is running."
     echo "Run './scripts/dev.sh shell' to open a shell in the agent container."

@@ -88,7 +88,8 @@ defmodule Flezha.Transport.CertGenerator do
 
     validity = validity_record()
 
-    issuer = elem(ca_cert, 3)
+    ca_tbs = elem(ca_cert, 1)
+    issuer = elem(ca_tbs, 6)
     subject = {:rdnSequence, [[attribute_record(:commonName, hostname)]]}
 
     san_extension = san_extension(hostname)
@@ -163,7 +164,8 @@ defmodule Flezha.Transport.CertGenerator do
   end
 
   defp attribute_record(:commonName, value) do
-    {:AttributeTypeAndValue, {2, 5, 4, 3}, {:utf8String, value}}
+    encoded_value = :public_key.der_encode(:"X520CommonName", {:utf8String, value})
+    {:AttributeTypeAndValue, {2, 5, 4, 3}, encoded_value}
   end
 
   defp basic_constraints_extension(is_ca) do

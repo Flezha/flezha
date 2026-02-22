@@ -18,6 +18,7 @@ services:
       - socket_data:/socket_data
       - ../../:/flezha
       - /flezha/_build
+      - /flezha/deps
       - /flezha/cli/target
     networks:
       - flezha_network
