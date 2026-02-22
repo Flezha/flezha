@@ -14,20 +14,40 @@ defmodule Flezha.ComputeEngine.StreamChannel do
   @impl true
   def init({compute_engine_id, type, name}) do
     transport = Resolver.transport_module()
-    lsock = GenServer.call(Identificator.stream_listener(compute_engine_id, type), :get_socket)
 
-    {
-      :ok,
-      %{
-        lsock: lsock,
-        sock: nil,
-        transport: transport,
-        processor_mapping: %{},
-        name: name,
-        buffer: {:empty, <<>>}
-      },
-      {:continue, :accept_connection}
-    }
+    case Application.get_env(:flezha, :transport) do
+      :quic ->
+        # In QUIC mode, no per-stream socket listeners exist.
+        # Wait for QuicStreamAcceptor to attach a stream via {:quic_stream_attached, stream}.
+        {
+          :ok,
+          %{
+            lsock: nil,
+            sock: nil,
+            transport: transport,
+            processor_mapping: %{},
+            name: name,
+            buffer: {:empty, <<>>}
+          }
+        }
+
+      _ ->
+        # UDS mode: connect to listener and accept connection.
+        lsock = GenServer.call(Identificator.stream_listener(compute_engine_id, type), :get_socket)
+
+        {
+          :ok,
+          %{
+            lsock: lsock,
+            sock: nil,
+            transport: transport,
+            processor_mapping: %{},
+            name: name,
+            buffer: {:empty, <<>>}
+          },
+          {:continue, :accept_connection}
+        }
+    end
   end
 
   @impl true

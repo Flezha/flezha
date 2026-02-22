@@ -2,8 +2,10 @@ defmodule Flezha.ComputeEngine.ComputeEngineSupervisor do
   alias Flezha.ComputeEngine.ControlUnit
   alias Flezha.ComputeEngine.ControlChannel
   alias Flezha.Service.Identificator
+  alias Flezha.Service.ConfigManager
   alias Flezha.Socket.Listener
   alias Flezha.Socket.Support, as: SocketSupport
+  alias Flezha.Transport.QuicStreamAcceptor
 
   use Supervisor
 
@@ -14,7 +16,7 @@ defmodule Flezha.ComputeEngine.ComputeEngineSupervisor do
   end
 
   @impl true
-  def init({namespace, compute_engine_id, {:quic, _conn, control_stream}}) do
+  def init({namespace, compute_engine_id, {:quic, conn, control_stream}}) do
     # QUIC mode: no per-stream socket listeners needed.
     # Streams are multiplexed over the QUIC connection.
     children = [
@@ -33,6 +35,12 @@ defmodule Flezha.ComputeEngine.ComputeEngineSupervisor do
       %{
         id: :secondary_stream_sup,
         start: {Flezha.ComputeEngine.StreamSup, :start_link, [{compute_engine_id, :secondary}]}
+      },
+      %{
+        id: QuicStreamAcceptor,
+        start:
+          {QuicStreamAcceptor, :start_link,
+           [{compute_engine_id, conn, ConfigManager.concurrent_channel_count()}]}
       }
     ]
 
