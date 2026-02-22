@@ -5,7 +5,8 @@ Distributed stateful processors. Provdes a static and dynamic creation of proces
 
 ## Building
 - Copy `.env.example` and rename to `.env`
-- Navigate to the testnet app(`test/apps/testnet`) and follow the instruction from the `README.md` file.
+- Install testnet dependencies: `cd test/apps/testnet && npm install`
+- Build the testnet: `npm run build` (from `test/apps/testnet`)
 - Build the `rust_compute_engine` application.
 - Build the agent `mix compile`
 
