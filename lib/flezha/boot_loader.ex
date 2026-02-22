@@ -11,7 +11,13 @@ defmodule Flezha.BootLoader do
   def init(_) do
     run_pre_hooks()
 
-    Flezha.Socket.Support.prepare_socket_dir()
+    case Application.get_env(:flezha, :transport, :uds) do
+      :quic ->
+        Flezha.Transport.CertGenerator.ensure_certs()
+
+      _ ->
+        Flezha.Socket.Support.prepare_socket_dir()
+    end
 
     {:ok, %{boot_ready: false}, {:continue, :boot}}
   end

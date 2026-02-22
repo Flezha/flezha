@@ -44,7 +44,8 @@ defmodule Flezha.MixProject do
       {:kafka_ex, "~> 0.14.0"},
       {:protox, "~> 2.0"},
       {:mimic, "~> 1.11"},
-      {:logger_file_backend, "~> 0.0.13"}
+      {:logger_file_backend, "~> 0.0.13"},
+      {:quicer, "~> 0.2.15"}
     ]
   end
 

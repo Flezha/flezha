@@ -2,10 +2,10 @@ defmodule Flezha.ComputeEngine.FleetManager do
   alias Flezha.ComputeEngine.ComputeEngineSupervisor
   alias Flezha.ComputeEngine.FleetSupervisor
   alias Flezha.Service.Payloader
-  alias Flezha.Socket.Support, as: SocketSupport
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.EventManager
+  alias Flezha.Transport.Resolver
 
   require Logger
 
@@ -16,11 +16,23 @@ defmodule Flezha.ComputeEngine.FleetManager do
   end
 
   def connect_handler(sock) do
-    :ok = SocketSupport.pass_ownership(sock, Process.whereis(__MODULE__))
+    transport = Resolver.transport_module()
+    :ok = transport.controlling_process(sock, Process.whereis(__MODULE__))
 
     case GenServer.call(__MODULE__, {:compute_engine_connect, sock}) do
       {:error, reason} ->
         Logger.error("Failed to connect compute_engine: #{inspect(reason)}")
+        nil
+
+      {:ok, _result} ->
+        :ok
+    end
+  end
+
+  def connect_handler_quic(conn, control_stream) do
+    case GenServer.call(__MODULE__, {:compute_engine_connect_quic, conn, control_stream}) do
+      {:error, reason} ->
+        Logger.error("Failed to connect compute_engine via QUIC: #{inspect(reason)}")
         nil
 
       {:ok, _result} ->
@@ -106,6 +118,40 @@ defmodule Flezha.ComputeEngine.FleetManager do
   @impl true
   def handle_call({:compute_engine_connect, sock}, _from, state) do
     case compute_engine_connect(state.compute_engine_namespaces, sock) do
+      {:ok, namespace, compute_engine_id} ->
+        timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+
+        state =
+          case Map.get(state.compute_engine_namespaces, namespace, nil) do
+            nil -> put_in(state, [:compute_engine_namespaces, namespace], %{})
+            _ -> state
+          end
+
+        state =
+          put_in(
+            state,
+            [:compute_engine_namespaces, namespace, compute_engine_id],
+            {:active, timestamp}
+          )
+
+        state = try_migrate_compute_engine(state, namespace, compute_engine_id)
+
+        EventManager.dispatch(
+          :compute_engine_connected_event,
+          {namespace, compute_engine_id},
+          %{members: :local}
+        )
+
+        {:reply, {:ok, {namespace, compute_engine_id}}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:compute_engine_connect_quic, conn, control_stream}, _from, state) do
+    case compute_engine_connect_quic(state.compute_engine_namespaces, conn, control_stream) do
       {:ok, namespace, compute_engine_id} ->
         timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
@@ -253,6 +299,8 @@ defmodule Flezha.ComputeEngine.FleetManager do
   end
 
   defp extract_control_info(sock) do
+    transport = Resolver.transport_module()
+
     case :gen_tcp.recv(sock, 0, 5000) do
       {:ok, frame} ->
         {payloads, _buffer} = Payloader.parse_frame(frame)
@@ -268,7 +316,7 @@ defmodule Flezha.ComputeEngine.FleetManager do
         {:ok, namespace, factory_ids, bytes_rest}
 
       {:error, reason} ->
-        :gen_tcp.close(sock)
+        transport.close(sock)
 
         {:error, reason}
     end
@@ -392,8 +440,10 @@ defmodule Flezha.ComputeEngine.FleetManager do
 
         FleetSupervisor.start_compute_engine_sup(namespace, compute_engine_id, sock)
 
+        transport = Resolver.transport_module()
+
         owner_result =
-          SocketSupport.pass_ownership(
+          transport.controlling_process(
             sock,
             ComputeEngineSupervisor.find_control_channel(compute_engine_id)
           )
@@ -412,6 +462,61 @@ defmodule Flezha.ComputeEngine.FleetManager do
 
       err ->
         err
+    end
+  end
+
+  defp compute_engine_connect_quic(_compute_engine_namespaces, conn, control_stream) do
+    case extract_control_info_quic(control_stream) do
+      {:ok, namespace, _factory_ids, bytes_rest} ->
+        compute_engine_id = Identificator.unique_id(namespace)
+        control_unit = Identificator.control_unit(compute_engine_id)
+        control_channel = Identificator.control_channel(compute_engine_id)
+
+        # Only one hub per namespace.
+        if !HubManager.hub_alive?(namespace) do
+          HubManager.start_hub(namespace)
+        end
+
+        # Need to register handler for each compute_engine.
+        HubManager.register_handler(namespace, compute_engine_id)
+
+        # Start supervisor with QUIC transport info
+        FleetSupervisor.start_compute_engine_sup(
+          namespace,
+          compute_engine_id,
+          {:quic, conn, control_stream}
+        )
+
+        GenServer.call(control_channel, {:handle_frame, bytes_rest})
+        GenServer.call(control_unit, :command_assign_compute_engine_id)
+        GenServer.call(control_unit, :command_sockets_connect)
+
+        {:ok, namespace, compute_engine_id}
+
+      err ->
+        err
+    end
+  end
+
+  defp extract_control_info_quic(stream) do
+    case :quicer.recv(stream, 0) do
+      {:ok, frame} ->
+        {payloads, _buffer} = Payloader.parse_frame(frame)
+
+        [{"connect_control_channel", init_message, _metadata} | bytes_rest] = payloads
+
+        bytes_rest = if bytes_rest === [], do: "", else: bytes_rest
+
+        init_payload = Payloader.json_to_map(init_message)
+        namespace = Map.get(init_payload, "namespace")
+        factory_ids = Map.get(init_payload, "factory_ids")
+
+        {:ok, namespace, factory_ids, bytes_rest}
+
+      {:error, reason} ->
+        :quicer.close_stream(stream)
+
+        {:error, reason}
     end
   end
 end

@@ -1,6 +1,7 @@
 defmodule Flezha.ComputeEngine.StreamChannel do
   alias Flezha.Service.Payloader
   alias Flezha.Service.Identificator
+  alias Flezha.Transport.Resolver
 
   require Logger
 
@@ -12,6 +13,7 @@ defmodule Flezha.ComputeEngine.StreamChannel do
 
   @impl true
   def init({compute_engine_id, type, name}) do
+    transport = Resolver.transport_module()
     lsock = GenServer.call(Identificator.stream_listener(compute_engine_id, type), :get_socket)
 
     {
@@ -19,6 +21,7 @@ defmodule Flezha.ComputeEngine.StreamChannel do
       %{
         lsock: lsock,
         sock: nil,
+        transport: transport,
         processor_mapping: %{},
         name: name,
         buffer: {:empty, <<>>}
@@ -29,7 +32,7 @@ defmodule Flezha.ComputeEngine.StreamChannel do
 
   @impl true
   def handle_continue(:accept_connection, state) do
-    socket = accept_connection(state.lsock)
+    socket = accept_connection(state.lsock, state.transport)
 
     {:noreply, %{state | sock: socket}}
   end
@@ -39,7 +42,7 @@ defmodule Flezha.ComputeEngine.StreamChannel do
         {:io_in, processor_id, {message, metadata}},
         %{sock: sock} = state
       ) do
-    send_channel_payload(sock, processor_id, message, metadata)
+    send_channel_payload(state.transport, sock, processor_id, message, metadata)
 
     {:noreply, state}
   end
@@ -50,7 +53,7 @@ defmodule Flezha.ComputeEngine.StreamChannel do
         _from,
         %{sock: sock} = state
       ) do
-    send_channel_payload(sock, processor_id, message, metadata)
+    send_channel_payload(state.transport, sock, processor_id, message, metadata)
 
     {:reply, :ok, state}
   end
@@ -73,16 +76,46 @@ defmodule Flezha.ComputeEngine.StreamChannel do
   end
 
   @impl true
-  def handle_info({:tcp_closed, _socket}, state) do
-    Logger.warning("TCP connection closed for IO socket.")
+  def handle_call({:quic_stream_attached, stream}, _from, state) do
+    {:reply, :ok, %{state | sock: stream}}
+  end
 
-    socket = accept_connection(state.lsock)
+  # UDS transport messages
+  @impl true
+  def handle_info({:tcp_closed, _socket}, state) do
+    Logger.warning("Connection closed for IO socket.")
+
+    socket = accept_connection(state.lsock, state.transport)
 
     {:noreply, %{state | sock: socket}}
   end
 
   @impl true
-  def handle_info({:tcp, _port, frame}, %{buffer: buffer} = state) do
+  def handle_info({:tcp, _port, frame}, state) do
+    handle_incoming_data(state, frame)
+  end
+
+  # QUIC transport messages
+  @impl true
+  def handle_info({:quic, :data, _stream, frame}, state) do
+    handle_incoming_data(state, frame)
+  end
+
+  @impl true
+  def handle_info({:quic, :stream_closed, _stream, _flags}, state) do
+    Logger.warning("QUIC stream closed for IO socket.")
+
+    {:noreply, %{state | sock: nil}}
+  end
+
+  @impl true
+  def handle_info(msg, state) do
+    Logger.warning("Unexpected message at io channel: #{inspect(msg)}")
+
+    {:noreply, state}
+  end
+
+  defp handle_incoming_data(%{buffer: buffer} = state, frame) do
     processor_mappings = state.processor_mapping
 
     {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
@@ -100,25 +133,18 @@ defmodule Flezha.ComputeEngine.StreamChannel do
     {:noreply, state}
   end
 
-  @impl true
-  def handle_info(msg, state) do
-    Logger.warning("Unexpected message at io channel: #{inspect(msg)}")
-
-    {:noreply, state}
-  end
-
-  defp send_channel_payload(sock, processor_id, message, metadata) do
-    :gen_tcp.send(
+  defp send_channel_payload(transport, sock, processor_id, message, metadata) do
+    transport.send_data(
       sock,
       Payloader.build_from_bin(processor_id, message, metadata)
     )
   end
 
-  defp accept_connection(lsock) do
+  defp accept_connection(lsock, transport) do
     {:ok, socket} = :gen_tcp.accept(lsock)
 
-    :inet.setopts(socket, [{:active, true}])
-    :gen_tcp.controlling_process(socket, self())
+    transport.set_active(socket)
+    transport.controlling_process(socket, self())
 
     socket
   end

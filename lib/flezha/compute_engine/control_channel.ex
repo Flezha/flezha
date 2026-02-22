@@ -1,8 +1,8 @@
 defmodule Flezha.ComputeEngine.ControlChannel do
-  alias Flezha.Socket.Support, as: SocketSupport
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
   alias Flezha.ComputeEngine.FleetManager
+  alias Flezha.Transport.Resolver
 
   require Logger
 
@@ -77,13 +77,15 @@ defmodule Flezha.ComputeEngine.ControlChannel do
 
   @impl true
   def init({namespace, compute_engine_id, sock}) do
-    SocketSupport.set_active(sock)
+    transport = Resolver.transport_module()
+    transport.set_active(sock)
 
     {:ok,
      %{
        namespace: namespace,
        compute_engine_id: compute_engine_id,
        sock: sock,
+       transport: transport,
        control_unit: Identificator.control_unit(compute_engine_id),
        buffer: {:empty, <<>>}
      }}
@@ -97,7 +99,7 @@ defmodule Flezha.ComputeEngine.ControlChannel do
           {:error, :no_connection_available}
 
         socket ->
-          :gen_tcp.send(socket, payload)
+          state.transport.send_data(socket, payload)
       end
 
     {:reply, res, state}
@@ -112,25 +114,16 @@ defmodule Flezha.ComputeEngine.ControlChannel do
   def handle_cast({:send_control_async, payload}, state) do
     case Map.get(state, :sock, nil) do
       nil -> :ok
-      socket -> :gen_tcp.send(socket, payload)
+      socket -> state.transport.send_data(socket, payload)
     end
 
     {:noreply, state}
   end
 
+  # UDS transport messages
   @impl true
   def handle_info({:tcp_closed, _socket}, state) do
-    Logger.warning(
-      "TCP connection closed for control socket for #{state.compute_engine_id} on #{state.namespace}"
-    )
-
-    GenServer.call(FleetManager, {
-      :compute_engine_disconnected,
-      state.namespace,
-      state.compute_engine_id
-    })
-
-    {:noreply, state}
+    handle_connection_closed(state)
   end
 
   @impl true
@@ -138,9 +131,34 @@ defmodule Flezha.ComputeEngine.ControlChannel do
     {:noreply, handle_payload(state, frame)}
   end
 
+  # QUIC transport messages
+  @impl true
+  def handle_info({:quic, :data, _stream, frame}, state) do
+    {:noreply, handle_payload(state, frame)}
+  end
+
+  @impl true
+  def handle_info({:quic, :stream_closed, _stream, _flags}, state) do
+    handle_connection_closed(state)
+  end
+
   @impl true
   def handle_info(msg, state) do
     Logger.warning("Unexpected message at control channel: #{inspect(msg)}")
+
+    {:noreply, state}
+  end
+
+  defp handle_connection_closed(state) do
+    Logger.warning(
+      "Connection closed for control socket for #{state.compute_engine_id} on #{state.namespace}"
+    )
+
+    GenServer.call(FleetManager, {
+      :compute_engine_disconnected,
+      state.namespace,
+      state.compute_engine_id
+    })
 
     {:noreply, state}
   end

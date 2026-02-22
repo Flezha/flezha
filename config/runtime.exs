@@ -95,6 +95,18 @@ config :flezha,
   k8s_selector: System.get_env("FLEZHA_K8S_SELECTOR", "app=flezha"),
 
   # ------------------------------------------------------------------------------------------------
+  # Transport configurations.
+  #
+  # Available options: "uds" (Unix Domain Sockets, default), "quic"
+  transport: System.get_env("FLEZHA_TRANSPORT", "uds") |> String.to_atom(),
+
+  # QUIC transport settings.
+  quic_listen_address: System.get_env("FLEZHA_QUIC_ADDRESS", "0.0.0.0:4433"),
+  ca_cert_path: System.get_env("FLEZHA_CA_CERT_PATH", "app_data/certs/ca.pem"),
+  server_cert_path: System.get_env("FLEZHA_SERVER_CERT_PATH", "app_data/certs/server.pem"),
+  server_key_path: System.get_env("FLEZHA_SERVER_KEY_PATH", "app_data/certs/server.key"),
+
+  # ------------------------------------------------------------------------------------------------
   # Socket configurations.
   socket_files_path: System.get_env("FLEZHA_SOCKET_FILES_PATH", "app_data/sockets/"),
 
