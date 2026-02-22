@@ -5,7 +5,8 @@ FROM elixir:1.17-otp-27
 RUN apt-get update && apt-get install -y \
     libssl-dev \
     pkg-config \
-    build-essential
+    build-essential \
+    cmake
 
 # Copy the current directory contents into the container at /flezha
 WORKDIR /flezha
@@ -71,6 +72,10 @@ RUN mkdir -p /home/flezha/.cargo && \
 USER flezha
 WORKDIR /flezha/cli
 RUN . "$HOME/.cargo/env" && cargo build
+
+# Build the compute engine binary
+WORKDIR /flezha/test/apps/rust_compute_engine
+RUN . "$HOME/.cargo/env" && cargo build --target-dir=./target
 
 # Set the working directory
 WORKDIR /flezha

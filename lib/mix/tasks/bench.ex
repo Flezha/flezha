@@ -123,8 +123,14 @@ defmodule Mix.Tasks.Bench do
 
     # Start multiple compute engines
     for i <- 1..count do
+      binary_path = "#{current_path}/test/apps/rust_compute_engine/target/debug/rust_compute_engine"
+
       command =
-        "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- #{namespace}"
+        if File.exists?(binary_path) do
+          "#{binary_path} #{namespace}"
+        else
+          "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- #{namespace}"
+        end
 
       # Add event handler to wait for connection
       Flezha.Service.EventManager.add_handler(:compute_engine_connected_event)

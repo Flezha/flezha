@@ -19,6 +19,7 @@ defmodule Flezha.Transport.QuicListener do
 
   @impl true
   def init(_opts) do
+    {:ok, _} = Application.ensure_all_started(:quicer)
     CertGenerator.ensure_certs()
 
     {address, port} = parse_listen_address()

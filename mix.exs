@@ -17,6 +17,7 @@ defmodule Flezha.MixProject do
   def application do
     [
       extra_applications: [:logger, :runtime_tools, :wx, :observer, :inets, :crypto, :ssl],
+      included_applications: [:quicer],
       mod: {Flezha.Application, []}
     ]
   end
