@@ -6,14 +6,16 @@ set -e
 # Wrapper for `mix bench` with configurable parameters.
 #
 # Usage:
-#   ./scripts/bench.sh [--num-processors N] [--messages-per-processor N]
+#   ./scripts/bench.sh [--num-processors N] [--messages-per-processor N] [--transport uds|quic]
 #
 # Defaults:
 #   --num-processors 100
 #   --messages-per-processor 100
+#   --transport uds
 
 NUM_PROCESSORS=100
 MESSAGES_PER_PROCESSOR=100
+TRANSPORT="uds"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -25,12 +27,21 @@ while [[ $# -gt 0 ]]; do
             MESSAGES_PER_PROCESSOR="$2"
             shift 2
             ;;
+        --transport|-t)
+            TRANSPORT="$2"
+            if [[ "$TRANSPORT" != "uds" && "$TRANSPORT" != "quic" ]]; then
+                echo "Error: --transport must be 'uds' or 'quic', got '$TRANSPORT'"
+                exit 1
+            fi
+            shift 2
+            ;;
         --help|-h)
             echo "Usage: ./scripts/bench.sh [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  -n, --num-processors N          Number of processors (default: 100)"
             echo "  -m, --messages-per-processor N   Messages per processor (default: 100)"
+            echo "  -t, --transport uds|quic         Transport to use (default: uds)"
             echo "  -h, --help                       Show this help message"
             exit 0
             ;;
@@ -42,5 +53,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo "Running benchmark: $NUM_PROCESSORS processors, $MESSAGES_PER_PROCESSOR messages each"
+echo "Running benchmark: $NUM_PROCESSORS processors, $MESSAGES_PER_PROCESSOR messages each (transport: $TRANSPORT)"
+export FLEZHA_TRANSPORT="$TRANSPORT"
 mix bench --num-processors "$NUM_PROCESSORS" --messages-per-processor "$MESSAGES_PER_PROCESSOR"
