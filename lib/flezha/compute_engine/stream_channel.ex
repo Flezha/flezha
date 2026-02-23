@@ -33,7 +33,8 @@ defmodule Flezha.ComputeEngine.StreamChannel do
 
       _ ->
         # UDS mode: connect to listener and accept connection.
-        lsock = GenServer.call(Identificator.stream_listener(compute_engine_id, type), :get_socket)
+        lsock =
+          GenServer.call(Identificator.stream_listener(compute_engine_id, type), :get_socket)
 
         {
           :ok,
@@ -115,10 +116,10 @@ defmodule Flezha.ComputeEngine.StreamChannel do
     handle_incoming_data(state, frame)
   end
 
-  # QUIC transport messages
+  # QUIC transport messages — active mode delivers {quic, binary, stream, props}
   @impl true
-  def handle_info({:quic, :data, _stream, frame}, state) do
-    handle_incoming_data(state, frame)
+  def handle_info({:quic, data, _stream, _props}, state) when is_binary(data) do
+    handle_incoming_data(state, data)
   end
 
   @impl true
@@ -126,6 +127,11 @@ defmodule Flezha.ComputeEngine.StreamChannel do
     Logger.warning("QUIC stream closed for IO socket.")
 
     {:noreply, %{state | sock: nil}}
+  end
+
+  @impl true
+  def handle_info({:quic, :send_shutdown_complete, _stream, _status}, state) do
+    {:noreply, state}
   end
 
   @impl true

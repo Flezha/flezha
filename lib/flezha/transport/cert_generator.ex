@@ -12,7 +12,10 @@ defmodule Flezha.Transport.CertGenerator do
 
   def ensure_certs do
     ca_cert_path = Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem")
-    server_cert_path = Application.get_env(:flezha, :server_cert_path, "app_data/certs/server.pem")
+
+    server_cert_path =
+      Application.get_env(:flezha, :server_cert_path, "app_data/certs/server.pem")
+
     server_key_path = Application.get_env(:flezha, :server_key_path, "app_data/certs/server.key")
 
     if File.exists?(ca_cert_path) and File.exists?(server_cert_path) and
@@ -164,7 +167,7 @@ defmodule Flezha.Transport.CertGenerator do
   end
 
   defp attribute_record(:commonName, value) do
-    encoded_value = :public_key.der_encode(:"X520CommonName", {:utf8String, value})
+    encoded_value = :public_key.der_encode(:X520CommonName, {:utf8String, value})
     {:AttributeTypeAndValue, {2, 5, 4, 3}, encoded_value}
   end
 
@@ -184,8 +187,7 @@ defmodule Flezha.Transport.CertGenerator do
       {:iPAddress, [127, 0, 0, 1]}
     ]
 
-    {:Extension, {2, 5, 29, 17}, false,
-     :public_key.der_encode(:SubjectAltName, san_entries)}
+    {:Extension, {2, 5, 29, 17}, false, :public_key.der_encode(:SubjectAltName, san_entries)}
   end
 
   defp pem_encode_cert(cert) do

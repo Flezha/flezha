@@ -1,8 +1,7 @@
 defmodule Flezha.Service.PortPilot do
   require Logger
 
-  # TODO: change back to 5 or make it configurable
-  @port_down_counter 1
+  @port_down_counter 10
 
   use GenServer
 
@@ -13,12 +12,21 @@ defmodule Flezha.Service.PortPilot do
   def open_port(command) do
     socket_files_path = Application.fetch_env!(:flezha, :socket_files_path)
 
+    transport = Application.get_env(:flezha, :transport, :uds) |> to_string()
+    ca_cert_path = Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem")
+
+    env = [
+      {~c"FLEZHA_SOCKET_FILES_PATH", String.to_charlist(socket_files_path)},
+      {~c"FLEZHA_TRANSPORT", String.to_charlist(transport)},
+      {~c"FLEZHA_CA_CERT_PATH", String.to_charlist(ca_cert_path)}
+    ]
+
     port =
       Port.open(
         {:spawn, command},
         [
           :binary,
-          {:env, [{~c"FLEZHA_SOCKET_FILES_PATH", String.to_charlist(socket_files_path)}]}
+          {:env, env}
         ]
       )
 

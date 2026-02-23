@@ -17,9 +17,9 @@ services:
     volumes:
       - socket_data:/socket_data
       - ../../:/flezha
-      - /flezha/_build
-      - /flezha/deps
-      - /flezha/cli/target
+      - flezha_build:/flezha/_build
+      - flezha_deps:/flezha/deps
+      - flezha_cli_target:/flezha/cli/target
     networks:
       - flezha_network
 
@@ -76,6 +76,12 @@ services:
 
 volumes:
   socket_data:
+    driver: local
+  flezha_build:
+    driver: local
+  flezha_deps:
+    driver: local
+  flezha_cli_target:
     driver: local
 
 networks:

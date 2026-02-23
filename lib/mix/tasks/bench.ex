@@ -123,7 +123,8 @@ defmodule Mix.Tasks.Bench do
 
     # Start multiple compute engines
     for i <- 1..count do
-      binary_path = "#{current_path}/test/apps/rust_compute_engine/target/debug/rust_compute_engine"
+      binary_path =
+        "#{current_path}/test/apps/rust_compute_engine/target/debug/rust_compute_engine"
 
       command =
         if File.exists?(binary_path) do

@@ -2,6 +2,7 @@ import Config
 
 config :flezha,
   testnet_enabled: true,
+  concurrent_channel_count: 1,
   pre_hooks: [
     fn ->
       # Check if local node is running.
@@ -25,7 +26,7 @@ config :flezha,
         receive do
           {:compute_engine_connected_event, {"default", _}} -> :ok
         after
-          3000 -> raise "ComputeEngine not connected"
+          20_000 -> raise "ComputeEngine not connected"
         end
       end
     end

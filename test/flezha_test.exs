@@ -51,7 +51,7 @@ defmodule FlezhaTest do
     {status, info} = ProcessorManager.start_processor(@default_namespace, processor)
 
     assert status === :ok,
-      "start_processor failed: #{inspect(info)}"
+           "start_processor failed: #{inspect(info)}"
 
     assert info[:processor_id] === "default_processor_test"
     assert info[:node] === @node_name

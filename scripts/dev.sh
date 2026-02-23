@@ -20,6 +20,7 @@ set -e
 #   down     - Stop and remove containers
 #   shell    - Open a shell in the running agent container
 #   logs     - Follow agent container logs
+#   clean    - Remove build cache volumes and stop containers
 #   help     - Show this help message
 #
 # After the environment is running, you can:
@@ -69,7 +70,7 @@ cmd_up() {
     ensure_env_file
     ensure_network
     echo "Starting dev containers..."
-    docker compose -f "$COMPOSE_FILE" up -d -V
+    docker compose -f "$COMPOSE_FILE" up -d
     echo ""
     echo "Dev environment is running."
     echo "Run './scripts/dev.sh shell' to open a shell in the agent container."
@@ -89,6 +90,12 @@ cmd_logs() {
     docker compose -f "$COMPOSE_FILE" logs -f agent
 }
 
+cmd_clean() {
+    echo "Removing build cache volumes..."
+    docker compose -f "$COMPOSE_FILE" down -v
+    echo "Build cache cleared. Run './scripts/dev.sh up' to rebuild."
+}
+
 cmd_help() {
     # Print the usage section from the header comment
     sed -n '/^# Usage:/,/^[^#]/p' "$0" | head -n -1 | sed 's/^# \?//'
@@ -103,6 +110,7 @@ case "$COMMAND" in
     down)  cmd_down ;;
     shell) cmd_shell ;;
     logs)  cmd_logs ;;
+    clean) cmd_clean ;;
     help)  cmd_help ;;
     *)
         echo "Unknown command: $COMMAND"

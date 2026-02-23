@@ -30,13 +30,38 @@ defmodule Flezha.ComputeEngine.FleetManager do
   end
 
   def connect_handler_quic(conn, control_stream) do
-    case GenServer.call(__MODULE__, {:compute_engine_connect_quic, conn, control_stream}) do
-      {:error, reason} ->
-        Logger.error("Failed to connect compute_engine via QUIC: #{inspect(reason)}")
-        nil
+    # Extract control info here (in the Task that owns the stream)
+    # because quicer.recv delivers messages to the stream owner.
+    case extract_control_info_quic(control_stream) do
+      {:ok, namespace, factory_ids, bytes_rest} ->
+        args = {conn, control_stream, namespace, factory_ids, bytes_rest}
 
-      {:ok, _result} ->
-        :ok
+        case GenServer.call(__MODULE__, {:compute_engine_connect_quic, args}, 15_000) do
+          {:error, reason} ->
+            Logger.error("Failed to connect compute_engine via QUIC: #{inspect(reason)}")
+            nil
+
+          {:ok, {_namespace, compute_engine_id}} ->
+            # Transfer control stream ownership from this Task (the stream acceptor)
+            # to the ControlChannel process. Only the current owner can transfer.
+            control_channel_pid =
+              ComputeEngineSupervisor.find_control_channel(compute_engine_id)
+
+            :quicer.controlling_process(control_stream, control_channel_pid)
+            :quicer.setopt(control_stream, :active, true)
+
+            # Send setup commands now that the ControlChannel owns the stream
+            # and can receive SDK responses.
+            control_unit = Identificator.control_unit(compute_engine_id)
+            GenServer.call(control_unit, :command_assign_compute_engine_id)
+            GenServer.call(control_unit, :command_sockets_connect)
+            :ok
+        end
+
+      {:error, reason} ->
+        Logger.error("Failed to extract QUIC control info: #{inspect(reason)}")
+        :quicer.close_connection(conn)
+        nil
     end
   end
 
@@ -150,8 +175,8 @@ defmodule Flezha.ComputeEngine.FleetManager do
   end
 
   @impl true
-  def handle_call({:compute_engine_connect_quic, conn, control_stream}, _from, state) do
-    case compute_engine_connect_quic(state.compute_engine_namespaces, conn, control_stream) do
+  def handle_call({:compute_engine_connect_quic, args}, _from, state) do
+    case compute_engine_connect_quic(state.compute_engine_namespaces, args) do
       {:ok, namespace, compute_engine_id} ->
         timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
@@ -465,37 +490,31 @@ defmodule Flezha.ComputeEngine.FleetManager do
     end
   end
 
-  defp compute_engine_connect_quic(_compute_engine_namespaces, conn, control_stream) do
-    case extract_control_info_quic(control_stream) do
-      {:ok, namespace, _factory_ids, bytes_rest} ->
-        compute_engine_id = Identificator.unique_id(namespace)
-        control_unit = Identificator.control_unit(compute_engine_id)
-        control_channel = Identificator.control_channel(compute_engine_id)
+  defp compute_engine_connect_quic(
+         _compute_engine_namespaces,
+         {conn, control_stream, namespace, _factory_ids, bytes_rest}
+       ) do
+    compute_engine_id = Identificator.unique_id(namespace)
+    control_channel = Identificator.control_channel(compute_engine_id)
 
-        # Only one hub per namespace.
-        if !HubManager.hub_alive?(namespace) do
-          HubManager.start_hub(namespace)
-        end
-
-        # Need to register handler for each compute_engine.
-        HubManager.register_handler(namespace, compute_engine_id)
-
-        # Start supervisor with QUIC transport info
-        FleetSupervisor.start_compute_engine_sup(
-          namespace,
-          compute_engine_id,
-          {:quic, conn, control_stream}
-        )
-
-        GenServer.call(control_channel, {:handle_frame, bytes_rest})
-        GenServer.call(control_unit, :command_assign_compute_engine_id)
-        GenServer.call(control_unit, :command_sockets_connect)
-
-        {:ok, namespace, compute_engine_id}
-
-      err ->
-        err
+    # Only one hub per namespace.
+    if !HubManager.hub_alive?(namespace) do
+      HubManager.start_hub(namespace)
     end
+
+    # Need to register handler for each compute_engine.
+    HubManager.register_handler(namespace, compute_engine_id)
+
+    # Start supervisor with QUIC transport info
+    FleetSupervisor.start_compute_engine_sup(
+      namespace,
+      compute_engine_id,
+      {:quic, conn, control_stream}
+    )
+
+    GenServer.call(control_channel, {:handle_frame, bytes_rest})
+
+    {:ok, namespace, compute_engine_id}
   end
 
   defp extract_control_info_quic(stream) do

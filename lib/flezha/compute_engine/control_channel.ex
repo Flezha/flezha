@@ -78,7 +78,12 @@ defmodule Flezha.ComputeEngine.ControlChannel do
   @impl true
   def init({namespace, compute_engine_id, sock}) do
     transport = Resolver.transport_module()
-    transport.set_active(sock)
+
+    # For UDS, set_active here (socket ownership already transferred).
+    # For QUIC, FleetManager calls set_active after controlling_process.
+    if Resolver.transport_type() != :quic do
+      transport.set_active(sock)
+    end
 
     {:ok,
      %{
@@ -131,15 +136,20 @@ defmodule Flezha.ComputeEngine.ControlChannel do
     {:noreply, handle_payload(state, frame)}
   end
 
-  # QUIC transport messages
+  # QUIC transport messages — active mode delivers {quic, binary, stream, props}
   @impl true
-  def handle_info({:quic, :data, _stream, frame}, state) do
-    {:noreply, handle_payload(state, frame)}
+  def handle_info({:quic, data, _stream, _props}, state) when is_binary(data) do
+    {:noreply, handle_payload(state, data)}
   end
 
   @impl true
   def handle_info({:quic, :stream_closed, _stream, _flags}, state) do
     handle_connection_closed(state)
+  end
+
+  @impl true
+  def handle_info({:quic, :send_shutdown_complete, _stream, _status}, state) do
+    {:noreply, state}
   end
 
   @impl true

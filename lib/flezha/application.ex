@@ -18,11 +18,13 @@ defmodule Flezha.Application do
         Flezha.Service.HubManager,
         Flezha.ComputeEngine.FleetSupervisor,
         FleetManager
-      ] ++ transport_children() ++ [
-        Flezha.Service.PluginManager,
-        Flezha.Service.PortPilot,
-        Flezha.Cluster.Orchestrator
-      ]
+      ] ++
+        transport_children() ++
+        [
+          Flezha.Service.PluginManager,
+          Flezha.Service.PortPilot,
+          Flezha.Cluster.Orchestrator
+        ]
 
     # If Testnet is enabled, we start the TestnetSupervisor
     children =
@@ -61,7 +63,7 @@ defmodule Flezha.Application do
   end
 
   defp validate_boot_ready() do
-    case GenServer.call(Flezha.BootLoader, :boot_ready?, 7000) do
+    case GenServer.call(Flezha.BootLoader, :boot_ready?, 30_000) do
       true -> :ok
       false -> raise "Boot not ready"
     end
