@@ -31,7 +31,7 @@ This is intentional — the guard is in `test/quic_test.exs:18`.
 ## Architecture Overview
 
 ```
-[Rust SDK (Quinn/rustls)] ──QUIC──> [Elixir Agent (quicer/MsQuic)]
+[Rust SDK (quinn-proto/rustls)] ──QUIC──> [Elixir Agent (quicer/MsQuic)]
 
 SDK per connection (control_unit.rs):
   1. Opens QUIC connection to server (127.0.0.1:4433)
@@ -214,14 +214,14 @@ Reads `Application.get_env(:flezha, :transport)` and returns the transport modul
 ## Rust SDK Side — File-by-File Reference
 
 ### `sdk/rust/src/transport/quic.rs`
-QUIC client using Quinn (built on rustls).
+QUIC client using quinn-proto (runtime-free state machine) driven by mio + crossbeam.
 
-- `QuicClient::connect(address, ca_cert_path)`: Creates tokio runtime, loads CA cert, configures ALPN `"flezha"`, connects to server
-- `QuicClient::open_bidi_stream()`: Opens a bidirectional stream, returns `QuicBidiStream`
-- `QuicBidiStream`: Wraps `Arc<Mutex<SendStream>>` + `Arc<Mutex<RecvStream>>` + `Arc<Runtime>`
-- Implements `std::io::Read` and `std::io::Write` by blocking on the tokio runtime
+- `QuicClient::connect(address, ca_cert_path)`: Loads CA cert, configures ALPN `"flezha"`, creates UDP socket with mio, performs blocking QUIC handshake via quinn-proto, spawns I/O driver thread
+- `QuicClient::open_bidi_stream()`: Sends `DriverCommand::OpenStream` to driver thread, returns `QuicBidiStream`
+- `QuicBidiStream`: Communicates with the I/O driver thread via crossbeam channels — writes send `DriverCommand::Write`, reads consume from a per-stream `crossbeam::bounded(64)` channel
+- Implements `std::io::Read` and `std::io::Write` via crossbeam channel communication (no async runtime)
 - Also implements `Read`/`Write` for `&QuicBidiStream` (needed for `Arc<FlezhaStream>` usage)
-- `try_clone()`: Clones by sharing Arc references (mutex-protected)
+- `try_clone()`: Clones by sharing channel senders and `Arc<Mutex<ChannelReader>>`
 
 ### `sdk/rust/src/transport/config.rs`
 Transport configuration from environment variables.

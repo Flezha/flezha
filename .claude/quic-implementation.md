@@ -30,7 +30,7 @@ Flezha uses a transport abstraction layer to support multiple communication back
 
 | File | Purpose |
 |------|---------|
-| `sdk/rust/src/transport/quic.rs` | `QuicClient` (quinn-based), `QuicBidiStream` with Read/Write traits |
+| `sdk/rust/src/transport/quic.rs` | `QuicClient` (quinn-proto + mio driver), `QuicBidiStream` with Read/Write traits |
 | `sdk/rust/src/transport/mod.rs` | `FlezhaStream` enum (Unix \| Quic variants) |
 | `sdk/rust/src/transport/protocol.rs` | Stream type constants (`STREAM_TYPE_PRIMARY=0x01`, `STREAM_TYPE_SECONDARY=0x02`) |
 | `sdk/rust/src/transport/config.rs` | Transport configuration |
@@ -68,7 +68,7 @@ Binary framing (all streams): `[payload_id(32)] [payload_size(4)] [message_size(
 
 ## Key Implementation Details
 
-- **Rust QUIC:** Blocking reads on tokio runtime (thread-per-stream model)
+- **Rust QUIC:** quinn-proto I/O driver thread with mio poll loop and crossbeam channels
 - **Elixir QUIC:** `:quicer` NIF (MsQuic) with active mode for message delivery
 - QUIC messages arrive as `{:quic, :data, stream, frame}` vs UDS `{:tcp, port, frame}`
 - Stream closure signal: `{:quic, :stream_closed, stream, flags}`
@@ -77,7 +77,7 @@ Binary framing (all streams): `[payload_id(32)] [payload_size(4)] [message_size(
 ## Dependencies
 
 - **Elixir:** `quicer ~> 0.2.15` (MsQuic NIF binding)
-- **Rust:** `quinn 0.11`, `rustls 0.23`, `tokio 1`
+- **Rust:** `quinn-proto 0.11`, `rustls 0.23`, `mio 0.8`, `crossbeam 0.8`
 
 ## Environment Variables
 
@@ -91,7 +91,7 @@ Binary framing (all streams): `[payload_id(32)] [payload_size(4)] [message_size(
 
 ## Patterns & Differences from UDS
 
-- UDS uses mio-based polling; QUIC uses thread-per-stream blocking reads
+- UDS uses mio-based polling; QUIC uses a single mio-based I/O driver thread with crossbeam channels
 - UDS has separate socket listeners per stream; QUIC waits for `QuicStreamAcceptor` attachment
 - `ControlChannel` handles both `{:tcp, ...}` and `{:quic, ...}` message formats via pattern matching
 - `StreamChannel` handles both transport types with pattern matching
