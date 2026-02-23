@@ -8,9 +8,10 @@ defmodule Flezha.Transport.QuicStreamAcceptor do
   MsQuic's acceptor queue).
 
   When the SDK opens data streams (after ConnectSocket command), each stream
-  sends a first byte identifying its type:
-  - 0x01: Primary stream (agent writes input to SDK)
-  - 0x02: Secondary stream (SDK writes output to agent)
+  sends two bytes: a type byte and a channel index byte.
+  - Type 0x01: Primary stream (agent writes input to SDK)
+  - Type 0x02: Secondary stream (SDK writes output to agent)
+  - Index: 0-based channel index (converted to 1-based for StreamChannel routing)
   """
 
   alias Flezha.Transport.Protocol
@@ -53,14 +54,14 @@ defmodule Flezha.Transport.QuicStreamAcceptor do
   end
 
   defp route_stream(compute_engine_id, stream) do
-    case :quicer.recv(stream, 1) do
-      {:ok, <<type_byte>>} ->
+    case :quicer.recv(stream, 2) do
+      {:ok, <<type_byte, stream_index>>} ->
         case type_byte do
           unquote(Protocol.stream_type_primary()) ->
-            route_to_channel(compute_engine_id, stream, :primary)
+            route_to_channel(compute_engine_id, stream, :primary, stream_index + 1)
 
           unquote(Protocol.stream_type_secondary()) ->
-            route_to_channel(compute_engine_id, stream, :secondary)
+            route_to_channel(compute_engine_id, stream, :secondary, stream_index + 1)
 
           other ->
             Logger.error("Unknown QUIC stream type byte: #{other}")
@@ -68,19 +69,12 @@ defmodule Flezha.Transport.QuicStreamAcceptor do
         end
 
       {:error, reason} ->
-        Logger.error("Failed to read stream type byte: #{inspect(reason)}")
+        Logger.error("Failed to read stream type/index bytes: #{inspect(reason)}")
         :quicer.close_stream(stream)
     end
   end
 
-  defp route_to_channel(compute_engine_id, stream, type) do
-    # Determine channel index based on stream type
-    # Since tasks run concurrently, we use a simple approach:
-    # each type gets index 1 (for single channel) or we track via the GenServer.
-    # For now, with concurrent_channel_count streams, we use index 1.
-    # TODO: Support multiple channels per type with proper index tracking.
-    index = 1
-
+  defp route_to_channel(compute_engine_id, stream, type, index) do
     channel_name =
       case type do
         :primary -> Identificator.stream_channel_primary(compute_engine_id, index)
