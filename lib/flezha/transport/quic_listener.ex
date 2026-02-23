@@ -50,7 +50,9 @@ defmodule Flezha.Transport.QuicListener do
       alpn: [~c"flezha"],
       peer_bidi_stream_count: 100,
       peer_unidi_stream_count: 10,
-      idle_timeout_ms: 30_000
+      idle_timeout_ms: 60_000,
+      stream_recv_window_default: 8_388_608,
+      conn_flow_control_window: 16_777_216
     }
 
     case :quicer.listen(port, listen_opts) do
