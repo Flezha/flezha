@@ -7,4 +7,5 @@ rustler::atoms! {
     flz_data,
     flz_closed,
     flz_connection,
+    flz_stream,
 }

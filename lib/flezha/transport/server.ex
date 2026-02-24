@@ -2,26 +2,43 @@ defmodule Flezha.Transport.Server do
   @moduledoc """
   GenServer that manages the NIF transport server lifecycle.
 
-  Starts the NIF UDS server, receives connections, reads the initial
-  `connect_control_channel` frame, and dispatches to FleetManager.
+  Starts either a UDS or QUIC NIF server (based on config), receives
+  connections, reads the initial `connect_control_channel` frame, and
+  dispatches to FleetManager.
 
   ## Message flow
 
-  1. NIF accepts connection → sends `{:flz_connection, stream_ref}` here
+  1. NIF accepts connection/stream → sends `{:flz_connection, stream_ref}` here
   2. NIF reads data on the new stream, parses frames →
      sends `{:flz_data, stream_id, payload_id, message, metadata}` here
   3. This module receives the `connect_control_channel` frame and dispatches
      to FleetManager, which starts the compute engine supervisor and
      transfers stream ownership to the ControlChannel process.
+
+  ## Transport modes
+
+  - **UDS**: One control channel socket. Per-compute-engine stream sockets
+    are created by StreamAcceptors inside ComputeEngineSupervisor.
+  - **QUIC**: Single UDP socket handles everything. Control channels arrive
+    as `{:flz_connection, stream_ref}`. Data streams arrive as
+    `{:flz_stream, stream_ref, type, index}` after the 2-byte type prefix
+    is consumed by the NIF driver. This module routes data streams to the
+    correct StreamChannel based on the most recently established compute engine.
   """
 
   alias Flezha.Transport.Native
+  alias Flezha.Transport.Resolver
   alias Flezha.ComputeEngine.FleetManager
+  alias Flezha.ComputeEngine.StreamSup
   alias Flezha.Socket.Support, as: SocketSupport
 
   require Logger
 
   use GenServer
+
+  # Stream type constants (match flz_transport protocol.rs)
+  @stream_type_primary 1
+  @stream_type_secondary 2
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -29,24 +46,67 @@ defmodule Flezha.Transport.Server do
 
   @impl true
   def init(_opts) do
+    case Resolver.transport_type() do
+      :quic -> init_quic()
+      _uds -> init_uds()
+    end
+  end
+
+  defp init_uds do
     socket_path = SocketSupport.control_socket_path()
 
     case Native.start_uds_server(socket_path, self()) do
       {:ok, server_ref} ->
-        Logger.info("NIF transport server started on #{socket_path}")
-        {:ok, %{server_ref: server_ref, pending_streams: %{}}}
+        Logger.info("NIF transport server (UDS) started on #{socket_path}")
+        {:ok, %{server_ref: server_ref, transport: :uds, pending_streams: %{}}}
 
       {:error, reason} ->
-        Logger.error("Failed to start NIF transport server: #{inspect(reason)}")
+        Logger.error("Failed to start NIF UDS server: #{inspect(reason)}")
         {:stop, reason}
     end
   end
 
-  # New connection accepted — activate and store the stream_ref.
+  defp init_quic do
+    # Ensure TLS certificates exist before starting QUIC server.
+    Flezha.Transport.CertGenerator.ensure_certs()
+
+    bind_address = Application.get_env(:flezha, :quic_listen_address, "0.0.0.0:4433")
+    cert_path = Application.get_env(:flezha, :server_cert_path, "app_data/certs/server.pem")
+    key_path = Application.get_env(:flezha, :server_key_path, "app_data/certs/server.key")
+
+    Logger.info(
+      "[Transport.Server] Starting QUIC server: bind=#{bind_address}, cert=#{cert_path}, key=#{key_path}"
+    )
+
+    case Native.start_quic_server(bind_address, cert_path, key_path, self()) do
+      {:ok, server_ref} ->
+        Logger.info("NIF transport server (QUIC) started on #{bind_address}")
+
+        {:ok,
+         %{
+           server_ref: server_ref,
+           transport: :quic,
+           pending_streams: %{},
+           # QUIC routing state: most recently established compute_engine_id.
+           # Used to route {:flz_stream, ...} data streams to the right StreamChannels.
+           quic_current_ce_id: nil,
+           # Round-robin counters per compute engine for primary/secondary streams.
+           quic_stream_counters: %{}
+         }}
+
+      {:error, reason} ->
+        Logger.error("Failed to start NIF QUIC server: #{inspect(reason)}")
+        {:stop, reason}
+    end
+  end
+
+  # New connection/stream accepted — activate and store the stream_ref.
   # Streams start in passive mode by default, so we must set_active to receive data.
   @impl true
   def handle_info({:flz_connection, stream_ref}, state) do
-    Logger.info("[Transport.Server] New connection accepted")
+    Logger.info(
+      "[Transport.Server] New connection accepted (#{state.transport}), stream_ref=#{inspect(stream_ref)}"
+    )
 
     # Activate the stream so we receive the connect_control_channel frame.
     Native.set_active(stream_ref)
@@ -55,12 +115,37 @@ defmodule Flezha.Transport.Server do
     {:noreply, %{state | pending_streams: pending}}
   end
 
+  # QUIC data stream identified — route to the correct StreamChannel.
+  # Sent by the QUIC driver after reading the 2-byte type+index prefix.
+  @impl true
+  def handle_info({:flz_stream, stream_ref, stream_type, index}, state) do
+    Logger.info(
+      "[Transport.Server] QUIC data stream arrived: type=#{stream_type}, index=#{index}, stream_ref=#{inspect(stream_ref)}"
+    )
+
+    ce_id = state[:quic_current_ce_id]
+
+    if ce_id == nil do
+      Logger.warning(
+        "[Transport.Server] {:flz_stream} arrived but no compute engine established yet"
+      )
+
+      {:noreply, state}
+    else
+      route_quic_data_stream(stream_ref, stream_type, index, ce_id, state)
+    end
+  end
+
   # Data frame: connect_control_channel handshake
   @impl true
   def handle_info(
         {:flz_data, _stream_id, "connect_control_channel", message, _metadata},
         state
       ) do
+    Logger.info(
+      "[Transport.Server] Received connect_control_channel frame, pending_streams=#{map_size(state.pending_streams)}"
+    )
+
     # Find the pending stream (most recent connection)
     case Map.keys(state.pending_streams) do
       [stream_ref | _rest] ->
@@ -106,8 +191,66 @@ defmodule Flezha.Transport.Server do
     init_payload = Flezha.Service.Payloader.json_to_map(init_message)
     namespace = Map.get(init_payload, "namespace")
 
-    # Dispatch to FleetManager
-    FleetManager.connect_handler(stream_ref, namespace, init_payload)
+    # Dispatch to FleetManager — this creates the ComputeEngineSupervisor.
+    case FleetManager.connect_handler(stream_ref, namespace, init_payload) do
+      {:ok, compute_engine_id} ->
+        # For QUIC, track the current compute_engine_id for data stream routing.
+        state =
+          if state.transport == :quic do
+            %{state | quic_current_ce_id: compute_engine_id}
+          else
+            state
+          end
+
+        {:noreply, state}
+
+      {:error, reason} ->
+        Logger.error("[Transport.Server] Failed to establish compute engine: #{inspect(reason)}")
+        {:noreply, state}
+    end
+  end
+
+  # Route a QUIC data stream to the correct StreamChannel process.
+  defp route_quic_data_stream(stream_ref, stream_type, index, compute_engine_id, state) do
+    type =
+      case stream_type do
+        @stream_type_primary ->
+          :primary
+
+        @stream_type_secondary ->
+          :secondary
+
+        _ ->
+          Logger.warning("[Transport.Server] Unknown stream type: #{stream_type}")
+          nil
+      end
+
+    if type do
+      stream_ids = StreamSup.stream_ids(compute_engine_id, type)
+      count = length(stream_ids)
+
+      if count == 0 do
+        Logger.warning("[Transport.Server] No #{type} stream channels for #{compute_engine_id}")
+      else
+        # Use the index from the SDK to pick the stream channel.
+        stream_name = Enum.at(stream_ids, rem(index, count))
+        stream_pid = GenServer.whereis(stream_name)
+
+        if stream_pid do
+          Native.controlling_process(stream_ref, stream_pid)
+          Native.set_active(stream_ref)
+          GenServer.call(stream_pid, {:attach_stream, stream_ref})
+
+          Logger.debug(
+            "[Transport.Server] QUIC #{type} stream ##{index} → #{inspect(stream_name)}"
+          )
+        else
+          Logger.warning(
+            "[Transport.Server] StreamChannel #{inspect(stream_name)} not found for QUIC #{type} stream"
+          )
+        end
+      end
+    end
 
     {:noreply, state}
   end

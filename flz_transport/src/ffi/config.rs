@@ -30,6 +30,7 @@ pub struct FlezhaConfig {
 
 /// Internal owned representation of the configuration.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) struct FlezhaConfigOwned {
     pub transport: FlezhaTransport,
     pub quic_address: String,

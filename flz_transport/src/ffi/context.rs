@@ -9,11 +9,13 @@ use super::types::FlezhaLogLevel;
 /// Created via `flezha_context_new`, destroyed via `flezha_context_destroy`.
 /// All operations on a live context are thread-safe.
 /// Creation and destruction must not be concurrent with other operations on the same context.
+#[allow(dead_code)]
 pub struct FlezhaContext {
     pub(crate) config: FlezhaConfigOwned,
     pub(crate) log_state: Mutex<LogState>,
 }
 
+#[allow(dead_code)]
 impl FlezhaContext {
     pub(crate) fn new(config: FlezhaConfigOwned) -> Self {
         FlezhaContext {

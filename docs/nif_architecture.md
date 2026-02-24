@@ -14,7 +14,8 @@ The `flz_nif` crate is a Rustler NIF that wraps the `flz_transport` shared libra
 │                                                         │
 │  Transport.Server ← {:flz_connection, stream_ref}      │
 │       │            ← {:flz_data, id, pid, msg, meta}   │
-│       ▼                                                 │
+│       │            ← {:flz_stream, ref, type, index}   │
+│       ▼              (QUIC data streams only)           │
 │  FleetManager.connect_handler/3                         │
 │       │                                                 │
 │       ▼                                                 │
@@ -22,13 +23,16 @@ The `flz_nif` crate is a Rustler NIF that wraps the `flz_transport` shared libra
 │    ├── ControlChannel ← {:flz_data, ...}               │
 │    ├── StreamSup :primary                               │
 │    │     └── StreamChannel(s) ← {:flz_data, ...}       │
-│    └── StreamSup :secondary                             │
-│          └── StreamChannel(s) ← {:flz_data, ...}       │
+│    ├── StreamSup :secondary                             │
+│    │     └── StreamChannel(s) ← {:flz_data, ...}       │
+│    ├── StreamAcceptor :primary  (UDS only)              │
+│    └── StreamAcceptor :secondary (UDS only)             │
 │                                                         │
 │  ──── NIF Boundary ────────────────────────────────     │
 │                                                         │
 │  Flezha.Transport.Native (Rustler NIF module)           │
-│    start_uds_server/2, stop_server/1                    │
+│    start_uds_server/2, start_quic_server/4              │
+│    stop_server/1                                        │
 │    send_data/2, send_frame/4                            │
 │    set_active/1, set_passive/1, close/1                 │
 │    controlling_process/2                                 │
@@ -37,13 +41,19 @@ The `flz_nif` crate is a Rustler NIF that wraps the `flz_transport` shared libra
 ┌─────────────────────────▼───────────────────────────────┐
 │              flz_nif (Rust cdylib)                      │
 │                                                         │
-│  NIF Functions ──crossbeam channel──▶ Driver Thread     │
-│    (server.rs, stream.rs)             (uds_driver.rs)   │
+│  NIF Functions ──crossbeam channel──▶ Driver Thread(s)  │
+│    (server.rs, stream.rs)            (uds_driver.rs     │
+│                                       quic_driver.rs)   │
 │                                                         │
-│  Driver Thread (mio event loop):                        │
-│    ├── Token(0): UnixListener (accept new connections)  │
-│    ├── Token(1): Waker (NIF command notification)       │
+│  UDS Driver (mio event loop):                           │
+│    ├── Token(0): UnixListener (accept connections)      │
+│    ├── Token(1): Waker (NIF commands)                   │
 │    └── Token(N): Connected streams (per-stream read)    │
+│                                                         │
+│  QUIC Driver (mio event loop):                          │
+│    ├── Token(0): UDP socket (QUIC datagrams)            │
+│    ├── Token(1): Waker (NIF commands)                   │
+│    └── quinn-proto (connection + stream state machine)  │
 │                                                         │
 │  Per-stream:                                            │
 │    raw bytes ──▶ FrameBuffer ──▶ ParsedFrame            │
@@ -52,6 +62,7 @@ The `flz_nif` crate is a Rustler NIF that wraps the `flz_transport` shared libra
 │  Reuses from flz_transport:                             │
 │    - payloader::build_from_binary (frame building)      │
 │    - payloader metadata format (serialize/deserialize)  │
+│    - quinn_proto (QUIC protocol state machine)          │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -59,22 +70,23 @@ The `flz_nif` crate is a Rustler NIF that wraps the `flz_transport` shared libra
 
 ```
 flz_nif/
-├── Cargo.toml           # cdylib, deps: flz_transport, rustler, crossbeam, mio
+├── Cargo.toml           # cdylib, deps: flz_transport, rustler, crossbeam, mio, quinn-proto, rustls
 └── src/
     ├── lib.rs           # rustler::init!, resource registration, module declarations
-    ├── atoms.rs         # Atoms: ok, error, flz_data, flz_closed, flz_connection
+    ├── atoms.rs         # Atoms: ok, error, flz_data, flz_closed, flz_connection, flz_stream
     ├── resources.rs     # ResourceArc types: TransportServer, StreamHandle
     ├── frame_buffer.rs  # Stateful frame parser (port of Elixir Payloader.parse_frame)
-    ├── server.rs        # NIF functions: start_uds_server, stop_server
+    ├── server.rs        # NIF functions: start_uds_server, start_quic_server, stop_server
     ├── stream.rs        # NIF functions: send_data, send_frame, set_active, etc.
-    └── uds_driver.rs    # mio-based UDS server driver thread
+    ├── uds_driver.rs    # mio-based UDS server driver thread
+    └── quic_driver.rs   # mio+quinn-proto QUIC server driver thread
 ```
 
 ## Resource Types
 
 ### TransportServer
 
-Opaque handle to a running transport server, held by Elixir as a NIF resource reference.
+Opaque handle to a running transport server (UDS or QUIC), held by Elixir as a NIF resource reference.
 
 ```rust
 pub struct TransportServer {
@@ -88,7 +100,7 @@ When dropped, sends `Shutdown` command to the driver thread and joins it.
 
 ### StreamHandle
 
-Opaque handle to a single stream (connection) on the server.
+Opaque handle to a single stream on the server. For UDS this represents a Unix socket connection. For QUIC this represents a single bidirectional QUIC stream.
 
 ```rust
 pub struct StreamHandle {
@@ -103,7 +115,7 @@ When dropped, sends `CloseStream` command to the driver thread.
 
 ## FrameBuffer (frame_buffer.rs)
 
-Port of Elixir's `Payloader.parse_frame/3` state machine. Accumulates bytes and handles partial headers/payloads across TCP segment boundaries.
+Port of Elixir's `Payloader.parse_frame/3` state machine. Accumulates bytes and handles partial headers/payloads across segment boundaries.
 
 ### States
 
@@ -141,13 +153,6 @@ Metadata format: `[key_len(1)] [val_len(1)] [key_bytes] [val_bytes] ...` (repeat
 
 Single background thread per server, driven by mio. Created when `start_uds_server/2` is called.
 
-### Initialization
-
-1. Driver thread creates its own `mio::Poll` and `mio::Waker`
-2. Binds a `UnixListener` on the specified socket path
-3. Sends `DriverReady { waker }` back to the NIF via a oneshot channel
-4. Enters the event loop
-
 ### Event Loop
 
 ```
@@ -159,21 +164,107 @@ loop {
     //    → Create StreamHandle ResourceArc
     //    → enif_send {:flz_connection, stream_ref} to acceptor
 
-    // 2. Read from readable streams
+    // 2. Flush writable streams (backpressure relief)
+    //    → Write buffered data when socket becomes writable
+
+    // 3. Read from readable streams
     //    → Feed bytes into per-stream FrameBuffer
     //    → For each complete frame: enif_send {:flz_data, stream_id, payload_id, message, metadata}
     //    → On EOF: enif_send {:flz_closed, stream_id, reason}
 
-    // 3. Process commands from NIF (crossbeam channel)
+    // 4. Process commands from NIF (crossbeam channel)
     //    → SendData, SendFrame, SetActive, SetPassive, CloseStream, UpdateOwner, Shutdown
+
+    // 5. Flush pending writes for all streams
 }
 ```
 
-### Message Format (Rust → Elixir)
+### Write Backpressure
+
+Per-stream write buffering handles non-blocking socket backpressure:
+- Data is appended to `write_buffer` and an immediate flush is attempted
+- On `WouldBlock`, the stream is registered for `WRITABLE` events
+- When writable, buffered data is flushed
+- Once fully flushed, the stream reverts to `READABLE` only
+
+## QUIC Driver Thread (quic_driver.rs)
+
+Single background thread per QUIC server, driven by mio + quinn-proto. Created when `start_quic_server/4` is called.
+
+### Architecture
+
+The QUIC driver handles multiple concurrent connections, each with multiple bidirectional streams:
+
+```
+quinn-proto::Endpoint (stateless QUIC protocol handling)
+    └── HashMap<ConnectionHandle, ConnectionState>
+            └── HashMap<StreamId, QuicStreamState>
+                    ├── FrameBuffer (per-stream frame parser)
+                    ├── TypeByteState (data stream identification)
+                    ├── write_buffer (backpressure handling)
+                    └── active/passive mode
+```
+
+### TLS Configuration
+
+- Server certificates loaded from PEM files (generated by `CertGenerator` in Elixir)
+- ALPN protocol: `"flezha"`
+- rustls ServerConfig with no client auth
+- Transport config: keep_alive 5s, 8MB stream window, 16MB connection window, 128 max bidi streams
+
+### Stream Type Detection (QUIC only)
+
+In QUIC mode, a single connection carries both the control channel and data streams:
+
+- **First bidi stream per connection** = control channel (no prefix bytes)
+- **Subsequent bidi streams** = data streams (prefixed with `[type_byte, index_byte]`)
+
+The driver tracks per-connection stream count and per-stream `TypeByteState`:
+- `ControlChannel` — data goes directly to FrameBuffer
+- `AwaitingPrefix` — accumulating the 2-byte prefix
+- `DataStream { type, index }` — prefix consumed, data goes to FrameBuffer
+
+When the prefix is read:
+- Control streams: `{:flz_connection, stream_ref}` sent immediately
+- Data streams: `{:flz_stream, stream_ref, type, index}` sent after prefix read
+
+### Event Loop
+
+```
+loop {
+    // Compute poll timeout from all active connection timers
+    poll(timeout: min(connection_timeouts, 50ms))
+
+    // 1. Handle connection timers
+    // 2. Read UDP datagrams → route to quinn-proto endpoint
+    //    → ConnectionEvent: route to connection
+    //    → Response: send reply datagram
+    //    → NewConnection: accept, create ConnectionState
+    // 3. Pump endpoint ↔ connection events
+    // 4. Poll connection events:
+    //    → StreamEvent::Opened{Bi}: accept stream, create StreamHandle
+    //    → StreamEvent::Readable: drain data → FrameBuffer → deliver frames
+    //    → StreamEvent::Writable: flush write buffer
+    //    → StreamEvent::Finished: close stream, notify owner
+    //    → ConnectionLost: close all streams, notify owners
+    // 5. Process NIF commands (same as UDS: SendData, SendFrame, etc.)
+    // 6. Flush pending writes and outgoing packets
+}
+```
+
+### Write Backpressure (QUIC)
+
+Uses quinn-proto's flow control:
+- Write attempt via `connection.send_stream(id).write(data)`
+- On `WriteError::Blocked`, buffer data and wait for `StreamEvent::Writable`
+- On writable, retry flushing buffered data
+
+## Message Format (Rust → Elixir)
 
 | Message | Meaning |
 |---------|---------|
-| `{:flz_connection, stream_ref}` | New connection accepted |
+| `{:flz_connection, stream_ref}` | New connection accepted (UDS) or control channel stream (QUIC) |
+| `{:flz_stream, stream_ref, type, index}` | New QUIC data stream identified (type: 1=primary, 2=secondary) |
 | `{:flz_data, stream_id, payload_id, message, metadata}` | Complete parsed frame |
 | `{:flz_closed, stream_id, reason}` | Stream/connection closed |
 
@@ -182,8 +273,8 @@ Messages are sent via `OwnedEnv::send_and_clear()` (Rustler wrapper for `enif_se
 ### Active/Passive Mode
 
 Each stream has an `active` flag:
-- **Active** (default): parsed frames are immediately sent as Erlang messages
-- **Passive**: frames are buffered in `passive_queue` until `set_active` is called, at which point all queued frames are flushed
+- **Active**: parsed frames are immediately sent as Erlang messages
+- **Passive** (default): frames are buffered in `passive_queue` until `set_active` is called, at which point all queued frames are flushed
 
 ## NIF Functions
 
@@ -192,6 +283,7 @@ Each stream has an `active` flag:
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `start_uds_server` | `(socket_path, acceptor_pid) → {:ok, server_ref}` | Start UDS server |
+| `start_quic_server` | `(bind_address, cert_path, key_path, acceptor_pid) → {:ok, server_ref}` | Start QUIC server |
 | `stop_server` | `(server_ref) → :ok` | Stop server, close all streams |
 
 ### Stream Operations
@@ -207,65 +299,81 @@ Each stream has an `active` flag:
 
 `send_frame/4` builds the binary frame via `payloader::build_from_binary` in Rust, avoiding a round-trip to Elixir for frame construction.
 
-## Elixir Module Changes
+## Elixir Module Integration
 
-### New Modules
+### Transport.Server
 
-| Module | Purpose |
-|--------|---------|
-| `Flezha.Transport.Native` | Rustler NIF module, implements `Transport.Behaviour` |
-| `Flezha.Transport.Server` | GenServer managing NIF server lifecycle |
+GenServer managing the NIF server lifecycle. Starts UDS or QUIC based on `FLEZHA_TRANSPORT` config.
 
-### Modified Modules
+**UDS mode:**
+- Calls `Native.start_uds_server(path, self())`
+- Receives `{:flz_connection, stream_ref}` for each new SDK connection
+- After control channel handshake, StreamAcceptors handle data stream routing
 
-| Module | Changes |
-|--------|---------|
-| `Application` | `transport_children/0` returns single `Transport.Server` for all transports |
-| `FleetManager` | Unified `connect_handler/3` replacing separate UDS/QUIC handlers |
-| `ControlChannel` | Handles `{:flz_data, ...}` instead of `{:tcp, ...}` / `{:quic, ...}`. No buffer state. |
-| `StreamChannel` | Handles `{:flz_data, ...}`. No UDS accept or QUIC stream_attached logic. |
-| `ComputeEngineSupervisor` | Single `init/1` clause. No socket listeners or QuicStreamAcceptor. |
-| `Resolver` | Always returns `Transport.Native` |
-| `Payloader` | Removed `parse_frame/3` (moved to Rust FrameBuffer). Retains `build_from_bin/3`. |
+**QUIC mode:**
+- Calls `CertGenerator.ensure_certs()` then `Native.start_quic_server(addr, cert, key, self())`
+- Control channels arrive as `{:flz_connection, stream_ref}` (first bidi stream per connection)
+- Data streams arrive as `{:flz_stream, stream_ref, type, index}` (subsequent bidi streams)
+- Routes data streams to StreamChannels using stream type + index
 
-### Modules to Delete (after full migration)
+### ComputeEngineSupervisor
 
-| Module | Reason |
-|--------|--------|
-| `Flezha.Transport.Quic` | Replaced by `Transport.Native` |
-| `Flezha.Transport.QuicListener` | Replaced by NIF server |
-| `Flezha.Transport.QuicStreamAcceptor` | Stream routing handled in NIF |
-| `Flezha.Socket.Listener` | Replaced by NIF server |
-| `Flezha.Socket.Dispatcher` | Replaced by NIF server |
-| `Flezha.Transport.Uds` | Replaced by `Transport.Native` |
+**UDS mode:** Starts StreamAcceptors (primary + secondary) that create per-stream UDS sockets.
+**QUIC mode:** No StreamAcceptors — data streams are routed by Transport.Server.
 
-## Connection Lifecycle (UDS)
+### StreamAcceptor (UDS only)
+
+Starts a NIF UDS server on per-compute-engine stream socket paths and routes incoming SDK connections to StreamChannel processes in round-robin order.
+
+## Connection Lifecycle
+
+### UDS
 
 ```
-SDK Process                    NIF Driver Thread              Elixir Agent
+SDK Process                    NIF UDS Driver                 Elixir Agent
     │                               │                              │
-    │── connect(UDS) ──────────────▶│                              │
+    │── connect(control.sock) ─────▶│                              │
     │                               │── {:flz_connection, ref} ──▶│ Transport.Server
-    │                               │                              │
     │── send(connect_control_ch) ──▶│                              │
     │                               │── {:flz_data, ...,           │
-    │                               │   "connect_control_channel", │
-    │                               │   message, metadata) ──────▶│ Transport.Server
+    │                               │   "connect_control_channel") │
+    │                               │                         ────▶│ Transport.Server
+    │                               │                              │── FleetManager
+    │                               │                              │   └── start ComputeEngineSup
+    │◀─ AssignComputeEngineId ──────│◀─ send_frame ────────────────│ ControlChannel
+    │◀─ ConnectSocket ──────────────│◀─ send_frame ────────────────│ ControlChannel
     │                               │                              │
-    │                               │                              │── FleetManager.connect_handler/3
-    │                               │                              │   ├── start_compute_engine_sup
-    │                               │                              │   ├── Native.controlling_process
-    │                               │                              │   │   (→ ControlChannel now owns stream)
-    │                               │                              │   ├── Native.set_active
-    │                               │                              │   ├── command_assign_compute_engine_id
-    │                               │                              │   └── command_sockets_connect
+    │── connect(primary.sock) ─────▶│ StreamAcceptor UDS driver    │
+    │                               │── route to StreamChannel ───▶│
+```
+
+### QUIC
+
+```
+SDK Process                    NIF QUIC Driver                Elixir Agent
     │                               │                              │
-    │◀─ AssignComputeEngineId ──────│◀─ Native.send_data ─────────│ ControlChannel
-    │◀─ ConnectSocket ──────────────│◀─ Native.send_data ─────────│ ControlChannel
+    │── QUIC connect ──────────────▶│                              │
+    │   (UDP handshake via          │                              │
+    │    quinn-proto)               │                              │
     │                               │                              │
-    │── open data streams ─────────▶│                              │
-    │   (new UDS connections)       │── {:flz_connection, ref} ──▶│ Transport.Server
-    │                               │                              │   └── route to StreamChannel
+    │── open bidi stream (control)─▶│                              │
+    │                               │── {:flz_connection, ref} ──▶│ Transport.Server
+    │── send(connect_control_ch) ──▶│                              │
+    │                               │── {:flz_data, ...,           │
+    │                               │   "connect_control_channel") │
+    │                               │                         ────▶│ Transport.Server
+    │                               │                              │── FleetManager
+    │◀─ AssignComputeEngineId ──────│◀─ send_frame ────────────────│ ControlChannel
+    │◀─ ConnectSocket ──────────────│◀─ send_frame ────────────────│ ControlChannel
+    │                               │                              │
+    │── open bidi stream (primary)─▶│                              │
+    │── write [0x01, index] ───────▶│                              │
+    │                               │── {:flz_stream, ref, 1, i)─▶│ Transport.Server
+    │                               │                              │── route to StreamChannel
+    │── open bidi stream (secondary)│                              │
+    │── write [0x02, index] ───────▶│                              │
+    │                               │── {:flz_stream, ref, 2, i)─▶│ Transport.Server
+    │                               │                              │── route to StreamChannel
 ```
 
 ## Key Design Decisions
@@ -276,9 +384,12 @@ SDK Process                    NIF Driver Thread              Elixir Agent
 | Crate location | Separate `flz_nif/` | Avoids conflating cdylib targets (C FFI vs Rustler) |
 | Server logic | In `flz_nif`, not `flz_transport` | Server I/O model (enif_send) is fundamentally different from client |
 | Driver threading | Single mio thread per server | Matches existing QuicClient pattern, proven in codebase |
+| QUIC library | quinn-proto (same as SDK client) | Consistent protocol handling, no second QUIC library needed |
+| Stream type detection | 2-byte prefix consumed in Rust driver | Prevents FrameBuffer corruption from non-frame bytes |
+| QUIC data routing | Transport.Server routes by type+index | Simpler than per-connection acceptors; matches existing UDS pattern |
 | Message delivery | OwnedEnv + enif_send | Standard Rustler pattern for async message delivery to BEAM |
 | Outbound framing | `send_frame` NIF builds frame in Rust | Avoids round-trip; one NIF call instead of build+send |
-| Poll timeout | 50ms | Balance between latency and CPU usage for command processing |
+| Poll timeout | 50ms (UDS), dynamic (QUIC) | QUIC uses connection timer deadlines for lower latency |
 
 ## Testing
 
@@ -298,9 +409,17 @@ Tests the FrameBuffer with:
 
 ### Integration
 
-1. NIF loading: `Flezha.Transport.Native` loads in `iex`
-2. UDS: `mix test` — existing test suite with NIF transport
-3. Cross-SDK: Rust SDK connects to agent via NIF server
+```bash
+# UDS mode (default)
+mix test
+
+# QUIC mode
+FLEZHA_TRANSPORT=quic mix test test/quic_test.exs
+
+# Benchmarks
+./scripts/bench.sh          # UDS
+FLEZHA_TRANSPORT=quic ./scripts/bench.sh  # QUIC
+```
 
 ## Building
 
@@ -327,27 +446,18 @@ mix compile
 cargo test --workspace
 ```
 
-### Build Artifacts
-
-| Artifact | Location | Purpose |
-|----------|----------|---------|
-| `libflz_nif.so` | `priv/native/flz_nif.so` | NIF shared object loaded by BEAM |
-| `libflz_transport.rlib` | `target/release/deps/` | Rust library linked into flz_nif |
-
-### Known Warnings
-
-- `non_local_definitions` in `flz_nif/src/lib.rs` — from `rustler::resource!` macro, harmless
-- `:quicer` undefined warnings in old transport modules — these modules are pending deletion (Phase 3)
-- `flz_transport` dead code warnings — FFI fields prepared for future server mode
-
 ## Dependency Graph
 
 ```
 flz_nif (cdylib, Rustler NIF)
-  └── flz_transport (rlib)
-        ├── payloader (frame building/parsing)
-        ├── protocol (stream type constants)
-        └── config (env var reading)
+  ├── flz_transport (rlib)
+  │     ├── payloader (frame building/parsing)
+  │     ├── protocol (stream type constants)
+  │     └── config (env var reading)
+  ├── quinn-proto (QUIC protocol state machine)
+  ├── rustls (TLS for QUIC)
+  ├── mio (non-blocking I/O)
+  └── crossbeam (NIF ↔ driver channels)
 
 sdk/rust (Compute Engine)
   └── flz_transport (rlib)
@@ -360,13 +470,6 @@ Elixir Agent
         └── Transport.Native (NIF stubs)
               └── Transport.Server (GenServer)
 ```
-
-## Future Work (Phase 2)
-
-- `quic_driver.rs`: QUIC server driver using quinn-proto (mirrors UDS driver architecture)
-- `start_quic_server/4` NIF function
-- `{:flz_stream, conn_ref, stream_ref, type_byte, index}` message for QUIC data streams
-- `Transport.Server` handles both QUIC and UDS based on config
 
 ## Future Work (Phase 3 — Cleanup)
 

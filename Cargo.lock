@@ -169,10 +169,14 @@ name = "flz_nif"
 version = "0.1.0"
 dependencies = [
  "byteorder",
+ "bytes",
  "crossbeam",
  "flz_transport",
  "mio",
+ "quinn-proto",
  "rustler",
+ "rustls",
+ "rustls-pemfile",
 ]
 
 [[package]]

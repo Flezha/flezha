@@ -23,6 +23,10 @@ defmodule Flezha.Transport.Native do
   @doc "Start a UDS server listening on `socket_path`. Returns `{:ok, server_ref}`."
   def start_uds_server(_socket_path, _acceptor_pid), do: :erlang.nif_error(:not_loaded)
 
+  @doc "Start a QUIC server listening on `bind_address`. Returns `{:ok, server_ref}`."
+  def start_quic_server(_bind_address, _cert_path, _key_path, _acceptor_pid),
+    do: :erlang.nif_error(:not_loaded)
+
   @doc "Stop a running transport server."
   def stop_server(_server_ref), do: :erlang.nif_error(:not_loaded)
 
@@ -46,6 +50,6 @@ defmodule Flezha.Transport.Native do
   def send_frame(_stream_ref, _payload_id, _message, _metadata),
     do: :erlang.nif_error(:not_loaded)
 
-  @doc "Disable active mode — the driver buffers incoming frames."Rea
+  @doc "Disable active mode — the driver buffers incoming frames."
   def set_passive(_stream_ref), do: :erlang.nif_error(:not_loaded)
 end

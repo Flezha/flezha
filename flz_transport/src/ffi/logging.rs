@@ -11,6 +11,7 @@ pub(crate) struct LogState {
 unsafe impl Send for LogState {}
 unsafe impl Sync for LogState {}
 
+#[allow(dead_code)]
 impl LogState {
     pub fn new() -> Self {
         LogState {

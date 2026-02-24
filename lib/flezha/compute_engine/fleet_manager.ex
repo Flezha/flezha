@@ -31,10 +31,10 @@ defmodule Flezha.ComputeEngine.FleetManager do
          ) do
       {:error, reason} ->
         Logger.error("Failed to connect compute_engine: #{inspect(reason)}")
-        nil
+        {:error, reason}
 
-      {:ok, _result} ->
-        :ok
+      {:ok, {_namespace, compute_engine_id}} ->
+        {:ok, compute_engine_id}
     end
   end
 
@@ -344,6 +344,7 @@ defmodule Flezha.ComputeEngine.FleetManager do
   defp compute_engine_connect(stream_ref, namespace) do
     compute_engine_id = Identificator.unique_id(namespace)
     control_unit = Identificator.control_unit(compute_engine_id)
+
     if !HubManager.hub_alive?(namespace) do
       HubManager.start_hub(namespace)
     end

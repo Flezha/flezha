@@ -2,6 +2,7 @@ defmodule Flezha.ComputeEngine.ComputeEngineSupervisor do
   alias Flezha.ComputeEngine.ControlUnit
   alias Flezha.ComputeEngine.ControlChannel
   alias Flezha.ComputeEngine.StreamAcceptor
+  alias Flezha.Transport.Resolver
   alias Flezha.Service.Identificator
 
   use Supervisor
@@ -14,9 +15,7 @@ defmodule Flezha.ComputeEngine.ComputeEngineSupervisor do
 
   @impl true
   def init({namespace, compute_engine_id, stream_ref}) do
-    # Unified init — works for both UDS and QUIC via NIF.
-    # stream_ref is a NIF StreamHandle resource.
-    # Data streams are opened later by the SDK after ConnectSocket command.
+    # Core children for all transport modes.
     children = [
       %{
         id: ControlUnit,
@@ -33,16 +32,29 @@ defmodule Flezha.ComputeEngine.ComputeEngineSupervisor do
       %{
         id: :secondary_stream_sup,
         start: {Flezha.ComputeEngine.StreamSup, :start_link, [{compute_engine_id, :secondary}]}
-      },
-      %{
-        id: :primary_acceptor,
-        start: {StreamAcceptor, :start_link, [{compute_engine_id, :primary}]}
-      },
-      %{
-        id: :secondary_acceptor,
-        start: {StreamAcceptor, :start_link, [{compute_engine_id, :secondary}]}
       }
     ]
+
+    # UDS mode: StreamAcceptors start per-stream NIF UDS servers.
+    # QUIC mode: Data streams are routed by Transport.Server (no acceptors needed).
+    children =
+      case Resolver.transport_type() do
+        :quic ->
+          children
+
+        _uds ->
+          children ++
+            [
+              %{
+                id: :primary_acceptor,
+                start: {StreamAcceptor, :start_link, [{compute_engine_id, :primary}]}
+              },
+              %{
+                id: :secondary_acceptor,
+                start: {StreamAcceptor, :start_link, [{compute_engine_id, :secondary}]}
+              }
+            ]
+      end
 
     Supervisor.init(children, strategy: :one_for_one)
   end
