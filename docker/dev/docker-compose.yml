@@ -19,7 +19,7 @@ services:
       - ../../:/flezha
       - flezha_build:/flezha/_build
       - flezha_deps:/flezha/deps
-      - flezha_cli_target:/flezha/cli/target
+      - flezha_cargo_target:/flezha/target
     networks:
       - flezha_network
 
@@ -81,7 +81,7 @@ volumes:
     driver: local
   flezha_deps:
     driver: local
-  flezha_cli_target:
+  flezha_cargo_target:
     driver: local
 
 networks:

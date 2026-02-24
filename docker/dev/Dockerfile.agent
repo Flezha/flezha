@@ -68,14 +68,10 @@ RUN mkdir -p /home/flezha/.cargo && \
     chown -R flezha:flezha /home/flezha/.cargo && \
     chmod -R u+rw /home/flezha/.cargo
 
-# Build the CLI application
+# Build the entire Rust workspace (flz_transport, SDK, CLI, test compute engine)
 USER flezha
-WORKDIR /flezha/cli
-RUN . "$HOME/.cargo/env" && cargo build
-
-# Build the compute engine binary
-WORKDIR /flezha/test/apps/rust_compute_engine
-RUN . "$HOME/.cargo/env" && cargo build --target-dir=./target
+WORKDIR /flezha
+RUN . "$HOME/.cargo/env" && cargo build --workspace
 
 # Set the working directory
 WORKDIR /flezha

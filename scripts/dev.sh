@@ -32,9 +32,11 @@ set -e
 #     mix release
 #     _build/dev/rel/flezha/bin/flz agent start --mode=attached_iex
 #
+#   Build the Rust workspace (libflezha, SDK, CLI, test app):
+#     cargo build --workspace
+#
 #   Start a compute engine (in a separate terminal/shell):
-#     cd test/apps/rust_compute_engine
-#     cargo run --target-dir=./target
+#     cargo run -p rust_compute_engine
 #
 #   Run the benchmark:
 #     mix bench --num-processors 1000 --messages-per-processor 1000

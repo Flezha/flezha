@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::str;
 
-use crate::processor::PayloadMetadata;
+/// Metadata key-value pairs attached to a payload frame.
+pub type PayloadMetadata = HashMap<String, String>;
 
 pub fn extract_payload<R: Read>(
     mut reader: R,

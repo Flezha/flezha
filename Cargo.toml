@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "flz_transport",
+    "sdk/rust",
+    "cli",
+    "test/apps/rust_compute_engine",
+]
+resolver = "2"
