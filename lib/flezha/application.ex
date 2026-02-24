@@ -1,7 +1,6 @@
 defmodule Flezha.Application do
   @moduledoc false
 
-  alias Flezha.Socket.Support, as: SocketSupport
   alias Flezha.ComputeEngine.FleetManager
 
   require Logger
@@ -50,16 +49,7 @@ defmodule Flezha.Application do
   end
 
   defp transport_children do
-    case Application.get_env(:flezha, :transport, :uds) do
-      :quic ->
-        [{Flezha.Transport.QuicListener, []}]
-
-      _ ->
-        [
-          {Flezha.Socket.Listener, {:control_listener, &SocketSupport.control_socket_path/0}},
-          {Flezha.Socket.Dispatcher, &FleetManager.connect_handler/1}
-        ]
-    end
+    [{Flezha.Transport.Server, []}]
   end
 
   defp validate_boot_ready() do

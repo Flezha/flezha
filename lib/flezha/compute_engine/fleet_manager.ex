@@ -1,11 +1,10 @@
 defmodule Flezha.ComputeEngine.FleetManager do
   alias Flezha.ComputeEngine.ComputeEngineSupervisor
   alias Flezha.ComputeEngine.FleetSupervisor
-  alias Flezha.Service.Payloader
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.EventManager
-  alias Flezha.Transport.Resolver
+  alias Flezha.Transport.Native
 
   require Logger
 
@@ -15,53 +14,27 @@ defmodule Flezha.ComputeEngine.FleetManager do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   end
 
-  def connect_handler(sock) do
-    transport = Resolver.transport_module()
-    :ok = transport.controlling_process(sock, Process.whereis(__MODULE__))
+  @doc """
+  Unified connection handler for all transports.
 
-    case GenServer.call(__MODULE__, {:compute_engine_connect, sock}) do
+  Called by Transport.Server when a new SDK connects.
+  `stream_ref` is a NIF StreamHandle resource.
+  `namespace` is extracted from the connect_control_channel frame.
+  `init_payload` is the decoded JSON from the initial frame.
+  """
+  def connect_handler(stream_ref, namespace, init_payload) do
+    factory_ids = Map.get(init_payload, "factory_ids")
+
+    case GenServer.call(
+           __MODULE__,
+           {:compute_engine_connect, stream_ref, namespace, factory_ids}
+         ) do
       {:error, reason} ->
         Logger.error("Failed to connect compute_engine: #{inspect(reason)}")
         nil
 
       {:ok, _result} ->
         :ok
-    end
-  end
-
-  def connect_handler_quic(conn, control_stream) do
-    # Extract control info here (in the Task that owns the stream)
-    # because quicer.recv delivers messages to the stream owner.
-    case extract_control_info_quic(control_stream) do
-      {:ok, namespace, factory_ids, bytes_rest} ->
-        args = {conn, control_stream, namespace, factory_ids, bytes_rest}
-
-        case GenServer.call(__MODULE__, {:compute_engine_connect_quic, args}, 15_000) do
-          {:error, reason} ->
-            Logger.error("Failed to connect compute_engine via QUIC: #{inspect(reason)}")
-            nil
-
-          {:ok, {_namespace, compute_engine_id}} ->
-            # Transfer control stream ownership from this Task (the stream acceptor)
-            # to the ControlChannel process. Only the current owner can transfer.
-            control_channel_pid =
-              ComputeEngineSupervisor.find_control_channel(compute_engine_id)
-
-            :quicer.controlling_process(control_stream, control_channel_pid)
-            :quicer.setopt(control_stream, :active, true)
-
-            # Send setup commands now that the ControlChannel owns the stream
-            # and can receive SDK responses.
-            control_unit = Identificator.control_unit(compute_engine_id)
-            GenServer.call(control_unit, :command_assign_compute_engine_id)
-            GenServer.call(control_unit, :command_sockets_connect)
-            :ok
-        end
-
-      {:error, reason} ->
-        Logger.error("Failed to extract QUIC control info: #{inspect(reason)}")
-        :quicer.close_connection(conn)
-        nil
     end
   end
 
@@ -86,7 +59,6 @@ defmodule Flezha.ComputeEngine.FleetManager do
 
   @impl true
   def handle_call({:disconnect_compute_engine, namespace, compute_engine_id}, _from, state) do
-    # Check if the compute_engine is in the namespace.
     case get_in(state.compute_engine_namespaces, [namespace, compute_engine_id]) do
       nil ->
         {:reply, {:error, "compute_engine not found"}, state}
@@ -124,14 +96,12 @@ defmodule Flezha.ComputeEngine.FleetManager do
           {:namespace_not_found, state.compute_engine_namespaces}
 
         _ ->
-          # Stop all the compute_engines in the namespace.
           compute_engine_ids = get_compute_engine_ids(state, namespace, :active)
 
           Enum.each(compute_engine_ids, fn compute_engine_id ->
             FleetSupervisor.stop_compute_engine_sup(compute_engine_id)
           end)
 
-          # Stop the namespace hub.
           HubManager.stop_hub(namespace)
 
           {:ok, Map.delete(state.compute_engine_namespaces, namespace)}
@@ -141,42 +111,12 @@ defmodule Flezha.ComputeEngine.FleetManager do
   end
 
   @impl true
-  def handle_call({:compute_engine_connect, sock}, _from, state) do
-    case compute_engine_connect(state.compute_engine_namespaces, sock) do
-      {:ok, namespace, compute_engine_id} ->
-        timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
-
-        state =
-          case Map.get(state.compute_engine_namespaces, namespace, nil) do
-            nil -> put_in(state, [:compute_engine_namespaces, namespace], %{})
-            _ -> state
-          end
-
-        state =
-          put_in(
-            state,
-            [:compute_engine_namespaces, namespace, compute_engine_id],
-            {:active, timestamp}
-          )
-
-        state = try_migrate_compute_engine(state, namespace, compute_engine_id)
-
-        EventManager.dispatch(
-          :compute_engine_connected_event,
-          {namespace, compute_engine_id},
-          %{members: :local}
-        )
-
-        {:reply, {:ok, {namespace, compute_engine_id}}, state}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
-  end
-
-  @impl true
-  def handle_call({:compute_engine_connect_quic, args}, _from, state) do
-    case compute_engine_connect_quic(state.compute_engine_namespaces, args) do
+  def handle_call(
+        {:compute_engine_connect, stream_ref, namespace, _factory_ids},
+        _from,
+        state
+      ) do
+    case compute_engine_connect(stream_ref, namespace) do
       {:ok, namespace, compute_engine_id} ->
         timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
@@ -248,7 +188,6 @@ defmodule Flezha.ComputeEngine.FleetManager do
     now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
     keep_alive = get_compute_engine_keepalive()
 
-    # Get all namespaces.
     namespaces = Map.keys(state.compute_engine_namespaces)
 
     removal =
@@ -259,9 +198,7 @@ defmodule Flezha.ComputeEngine.FleetManager do
           Enum.map(in_active_compute_engines, fn compute_engine_id ->
             {_status, timestamp} = state.compute_engine_namespaces[namespace][compute_engine_id]
 
-            # Check if the compute_engine is still inactive after X seconds.
             if timestamp + keep_alive <= now do
-              # Stop the namespace hub.
               HubManager.get_registry(namespace)
               HubManager.stop_hub(namespace)
               compute_engine_id
@@ -273,7 +210,6 @@ defmodule Flezha.ComputeEngine.FleetManager do
         {namespace, removal_compute_engines}
       end)
 
-    # Remove the inactive compute_engines from the state.
     compute_engine_namespaces =
       Enum.reduce(removal, state.compute_engine_namespaces, fn {namespace,
                                                                 removal_compute_engines},
@@ -283,7 +219,6 @@ defmodule Flezha.ComputeEngine.FleetManager do
             if compute_engine_id == nil do
               acc
             else
-              # Remove the compute_engine from the namespace.
               Map.delete(acc, compute_engine_id)
             end
           end)
@@ -295,8 +230,6 @@ defmodule Flezha.ComputeEngine.FleetManager do
   end
 
   defp try_migrate_compute_engine(state, namespace, compute_engine_id) do
-    # Check if any existing inactive compute_engines are present in the namespace.
-    # If so, we need to migrate the overwatchers to the new compute_engine.
     in_active_compute_engines = get_compute_engine_ids(state, namespace, :inactive)
 
     namespace_compute_engines =
@@ -323,30 +256,6 @@ defmodule Flezha.ComputeEngine.FleetManager do
     |> Enum.map(fn {compute_engine_id, {_, _}} -> compute_engine_id end)
   end
 
-  defp extract_control_info(sock) do
-    transport = Resolver.transport_module()
-
-    case :gen_tcp.recv(sock, 0, 5000) do
-      {:ok, frame} ->
-        {payloads, _buffer} = Payloader.parse_frame(frame)
-
-        [{"connect_control_channel", init_message, _metadata} | bytes_rest] = payloads
-
-        bytes_rest = if bytes_rest === [], do: "", else: bytes_rest
-
-        init_payload = Payloader.json_to_map(init_message)
-        namespace = Map.get(init_payload, "namespace")
-        factory_ids = Map.get(init_payload, "factory_ids")
-
-        {:ok, namespace, factory_ids, bytes_rest}
-
-      {:error, reason} ->
-        transport.close(sock)
-
-        {:error, reason}
-    end
-  end
-
   defp handle_compute_engine_disconnect(state, namespace, compute_engine_id) do
     if not Map.has_key?(state.compute_engine_namespaces, namespace) do
       state
@@ -358,7 +267,6 @@ defmodule Flezha.ComputeEngine.FleetManager do
   defp do_handle_compute_engine_disconnect(state, namespace, compute_engine_id) do
     FleetSupervisor.stop_compute_engine_sup(compute_engine_id)
 
-    # Cancel any hub handlers for the compute_engine.
     if HubManager.hub_alive?(namespace) do
       HubManager.unregister_handler(namespace, compute_engine_id)
     end
@@ -372,18 +280,12 @@ defmodule Flezha.ComputeEngine.FleetManager do
 
     namespace_compute_engines =
       cond do
-        # We can delegate the work to other compute_engines in the same namespace.
         !Enum.empty?(compute_engine_ids) ->
           compute_engine_reroute(state, namespace, compute_engine_id, compute_engine_ids)
 
-        # Current agent has no other compute_engines to delegate the work to, but
-        # there are other agents in the namespace who can take over the work.
         Enum.empty?(compute_engine_ids) && !Enum.empty?(other_agents) ->
           hub_migrate(state, namespace, compute_engine_id)
 
-        # No other agents in the namespace or compute_engines to delegate the work to.
-        # We need to preserve the state of the compute_engine for some time until
-        # new compute_engines connect.
         Enum.empty?(compute_engine_ids) && Enum.empty?(other_agents) ->
           compute_engine_preserve(state, namespace, compute_engine_id)
       end
@@ -406,29 +308,22 @@ defmodule Flezha.ComputeEngine.FleetManager do
   defp compute_engine_preserve(state, namespace, compute_engine_id) do
     compute_engine = {:inactive, DateTime.utc_now() |> DateTime.to_unix(:millisecond)}
 
-    # Mark the compute_engine as inactive.
     put_in(state.compute_engine_namespaces[namespace], [compute_engine_id], compute_engine)
   end
 
   defp compute_engine_reroute(state, namespace, old_compute_engine, available_compute_engines) do
-    # TODO: select the best compute_engine to delegate the work to.
     new_compute_engine = Enum.random(available_compute_engines)
 
-    # Let all overwatchers migrate their state to the new compute_engine.
     HubManager.compute_engine_processors(namespace, old_compute_engine)
     |> Enum.each(fn {_processor_id, [{_node, processor_pid}]} ->
       GenServer.call(processor_pid, {:compute_engine_migrate, new_compute_engine})
     end)
 
-    # Switch processor overwatchers to the new compute_engine.
     HubManager.compute_engine_switch(namespace, old_compute_engine, new_compute_engine)
 
-    # Reset the hub handler to pick up any process restarts and pid changes.
     HubManager.unregister_handler(namespace, old_compute_engine)
     HubManager.register_handler(namespace, new_compute_engine)
 
-    # Notify the new compute_engine stream channels to pick up the
-    # overwatchers pids.
     overwatchers =
       HubManager.compute_engine_processors(namespace, new_compute_engine)
       |> Enum.map(fn {processor_id, node_pids} ->
@@ -443,99 +338,31 @@ defmodule Flezha.ComputeEngine.FleetManager do
       GenServer.call(pid, {:processor_bulk_insert, overwatchers})
     end)
 
-    # Remove the old compute_engine from the namespace.
     Map.delete(state.compute_engine_namespaces[namespace], old_compute_engine)
   end
 
-  defp compute_engine_connect(_compute_engine_namespaces, sock) do
-    case extract_control_info(sock) do
-      # TODO: register factory ids.
-      {:ok, namespace, _factory_ids, bytes_rest} ->
-        compute_engine_id = Identificator.unique_id(namespace)
-        control_unit = Identificator.control_unit(compute_engine_id)
-        control_channel = Identificator.control_channel(compute_engine_id)
-
-        # Only one hub per namespace.
-        if !HubManager.hub_alive?(namespace) do
-          HubManager.start_hub(namespace)
-        end
-
-        # Need to register handler for each compute_engine.
-        HubManager.register_handler(namespace, compute_engine_id)
-
-        FleetSupervisor.start_compute_engine_sup(namespace, compute_engine_id, sock)
-
-        transport = Resolver.transport_module()
-
-        owner_result =
-          transport.controlling_process(
-            sock,
-            ComputeEngineSupervisor.find_control_channel(compute_engine_id)
-          )
-
-        case owner_result do
-          :ok ->
-            GenServer.call(control_channel, {:handle_frame, bytes_rest})
-            GenServer.call(control_unit, :command_assign_compute_engine_id)
-            GenServer.call(control_unit, :command_sockets_connect)
-
-            {:ok, namespace, compute_engine_id}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      err ->
-        err
-    end
-  end
-
-  defp compute_engine_connect_quic(
-         _compute_engine_namespaces,
-         {conn, control_stream, namespace, _factory_ids, bytes_rest}
-       ) do
+  defp compute_engine_connect(stream_ref, namespace) do
     compute_engine_id = Identificator.unique_id(namespace)
-    control_channel = Identificator.control_channel(compute_engine_id)
-
-    # Only one hub per namespace.
+    control_unit = Identificator.control_unit(compute_engine_id)
     if !HubManager.hub_alive?(namespace) do
       HubManager.start_hub(namespace)
     end
 
-    # Need to register handler for each compute_engine.
     HubManager.register_handler(namespace, compute_engine_id)
 
-    # Start supervisor with QUIC transport info
-    FleetSupervisor.start_compute_engine_sup(
-      namespace,
-      compute_engine_id,
-      {:quic, conn, control_stream}
-    )
+    FleetSupervisor.start_compute_engine_sup(namespace, compute_engine_id, stream_ref)
 
-    GenServer.call(control_channel, {:handle_frame, bytes_rest})
+    # Transfer ownership of the stream to the ControlChannel process
+    control_channel_pid =
+      ComputeEngineSupervisor.find_control_channel(compute_engine_id)
+
+    Native.controlling_process(stream_ref, control_channel_pid)
+    Native.set_active(stream_ref)
+
+    # Send setup commands
+    GenServer.call(control_unit, :command_assign_compute_engine_id)
+    GenServer.call(control_unit, :command_sockets_connect)
 
     {:ok, namespace, compute_engine_id}
-  end
-
-  defp extract_control_info_quic(stream) do
-    case :quicer.recv(stream, 0) do
-      {:ok, frame} ->
-        {payloads, _buffer} = Payloader.parse_frame(frame)
-
-        [{"connect_control_channel", init_message, _metadata} | bytes_rest] = payloads
-
-        bytes_rest = if bytes_rest === [], do: "", else: bytes_rest
-
-        init_payload = Payloader.json_to_map(init_message)
-        namespace = Map.get(init_payload, "namespace")
-        factory_ids = Map.get(init_payload, "factory_ids")
-
-        {:ok, namespace, factory_ids, bytes_rest}
-
-      {:error, reason} ->
-        :quicer.close_stream(stream)
-
-        {:error, reason}
-    end
   end
 end

@@ -1,7 +1,5 @@
 defmodule Flezha.ComputeEngine.StreamChannel do
-  alias Flezha.Service.Payloader
-  alias Flezha.Service.Identificator
-  alias Flezha.Transport.Resolver
+  alias Flezha.Transport.Native
 
   require Logger
 
@@ -12,58 +10,25 @@ defmodule Flezha.ComputeEngine.StreamChannel do
   end
 
   @impl true
-  def init({compute_engine_id, type, name}) do
-    transport = Resolver.transport_module()
-
-    case Application.get_env(:flezha, :transport) do
-      :quic ->
-        # In QUIC mode, no per-stream socket listeners exist.
-        # Wait for QuicStreamAcceptor to attach a stream via {:quic_stream_attached, stream}.
-        {
-          :ok,
-          %{
-            lsock: nil,
-            sock: nil,
-            transport: transport,
-            processor_mapping: %{},
-            name: name,
-            buffer: {:empty, <<>>}
-          }
-        }
-
-      _ ->
-        # UDS mode: connect to listener and accept connection.
-        lsock =
-          GenServer.call(Identificator.stream_listener(compute_engine_id, type), :get_socket)
-
-        {
-          :ok,
-          %{
-            lsock: lsock,
-            sock: nil,
-            transport: transport,
-            processor_mapping: %{},
-            name: name,
-            buffer: {:empty, <<>>}
-          },
-          {:continue, :accept_connection}
-        }
-    end
-  end
-
-  @impl true
-  def handle_continue(:accept_connection, state) do
-    socket = accept_connection(state.lsock, state.transport)
-
-    {:noreply, %{state | sock: socket}}
+  def init({_compute_engine_id, _type, name}) do
+    # In NIF mode, streams are attached later via {:attach_stream, stream_ref}.
+    # No per-stream socket listeners or QUIC stream acceptors needed.
+    {
+      :ok,
+      %{
+        stream_ref: nil,
+        processor_mapping: %{},
+        name: name
+      }
+    }
   end
 
   @impl true
   def handle_cast(
         {:io_in, processor_id, {message, metadata}},
-        %{sock: sock} = state
+        %{stream_ref: stream_ref} = state
       ) do
-    send_channel_payload(state.transport, sock, processor_id, message, metadata)
+    send_channel_payload(stream_ref, processor_id, message, metadata)
 
     {:noreply, state}
   end
@@ -72,9 +37,9 @@ defmodule Flezha.ComputeEngine.StreamChannel do
   def handle_call(
         {:io_in, processor_id, {message, metadata}},
         _from,
-        %{sock: sock} = state
+        %{stream_ref: stream_ref} = state
       ) do
-    send_channel_payload(state.transport, sock, processor_id, message, metadata)
+    send_channel_payload(stream_ref, processor_id, message, metadata)
 
     {:reply, :ok, state}
   end
@@ -96,42 +61,30 @@ defmodule Flezha.ComputeEngine.StreamChannel do
     {:reply, :ok, Map.put(state, :processor_mapping, processor_mapping)}
   end
 
+  # Attach a NIF stream ref (replaces both UDS accept and QUIC stream_attached)
   @impl true
-  def handle_call({:quic_stream_attached, stream}, _from, state) do
-    {:reply, :ok, %{state | sock: stream}}
+  def handle_call({:attach_stream, stream_ref}, _from, state) do
+    {:reply, :ok, %{state | stream_ref: stream_ref}}
   end
 
-  # UDS transport messages
+  # Unified NIF transport message — complete parsed frame
   @impl true
-  def handle_info({:tcp_closed, _socket}, state) do
+  def handle_info({:flz_data, _stream_id, processor_id, message, metadata}, state) do
+    processors = Map.get(state.processor_mapping, processor_id, [])
+
+    Enum.each(processors, fn pid ->
+      GenServer.cast(pid, {:io_out, message, metadata})
+    end)
+
+    {:noreply, state}
+  end
+
+  # NIF transport: stream closed
+  @impl true
+  def handle_info({:flz_closed, _stream_id, _reason}, state) do
     Logger.warning("Connection closed for IO socket.")
 
-    socket = accept_connection(state.lsock, state.transport)
-
-    {:noreply, %{state | sock: socket}}
-  end
-
-  @impl true
-  def handle_info({:tcp, _port, frame}, state) do
-    handle_incoming_data(state, frame)
-  end
-
-  # QUIC transport messages — active mode delivers {quic, binary, stream, props}
-  @impl true
-  def handle_info({:quic, data, _stream, _props}, state) when is_binary(data) do
-    handle_incoming_data(state, data)
-  end
-
-  @impl true
-  def handle_info({:quic, :stream_closed, _stream, _flags}, state) do
-    Logger.warning("QUIC stream closed for IO socket.")
-
-    {:noreply, %{state | sock: nil}}
-  end
-
-  @impl true
-  def handle_info({:quic, :send_shutdown_complete, _stream, _status}, state) do
-    {:noreply, state}
+    {:noreply, %{state | stream_ref: nil}}
   end
 
   @impl true
@@ -141,37 +94,9 @@ defmodule Flezha.ComputeEngine.StreamChannel do
     {:noreply, state}
   end
 
-  defp handle_incoming_data(%{buffer: buffer} = state, frame) do
-    processor_mappings = state.processor_mapping
+  defp send_channel_payload(nil, _processor_id, _message, _metadata), do: :ok
 
-    {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
-
-    Enum.each(payloads, fn {processor_id, message, metadata} ->
-      processors = Map.get(processor_mappings, processor_id, [])
-
-      Enum.each(processors, fn pid ->
-        GenServer.cast(pid, {:io_out, message, metadata})
-      end)
-    end)
-
-    state = Map.put(state, :buffer, buffer)
-
-    {:noreply, state}
-  end
-
-  defp send_channel_payload(transport, sock, processor_id, message, metadata) do
-    transport.send_data(
-      sock,
-      Payloader.build_from_bin(processor_id, message, metadata)
-    )
-  end
-
-  defp accept_connection(lsock, transport) do
-    {:ok, socket} = :gen_tcp.accept(lsock)
-
-    transport.set_active(socket)
-    transport.controlling_process(socket, self())
-
-    socket
+  defp send_channel_payload(stream_ref, processor_id, message, metadata) do
+    Native.send_frame(stream_ref, processor_id, message, metadata)
   end
 end

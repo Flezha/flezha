@@ -17,7 +17,6 @@ defmodule Flezha.MixProject do
   def application do
     [
       extra_applications: [:logger, :runtime_tools, :wx, :observer, :inets, :crypto, :ssl],
-      included_applications: [:quicer],
       mod: {Flezha.Application, []}
     ]
   end
@@ -46,7 +45,7 @@ defmodule Flezha.MixProject do
       {:protox, "~> 2.0"},
       {:mimic, "~> 1.11"},
       {:logger_file_backend, "~> 0.0.13"},
-      {:quicer, "~> 0.2.15"}
+      {:rustler, "~> 0.35"}
     ]
   end
 

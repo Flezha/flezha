@@ -1,0 +1,16 @@
+[package]
+name = "flz_nif"
+version = "0.1.0"
+edition = "2021"
+description = "Rustler NIF wrapping flz_transport for the Elixir agent"
+
+[lib]
+name = "flz_nif"
+crate-type = ["cdylib"]
+
+[dependencies]
+flz_transport = { path = "../flz_transport" }
+rustler = "0.35"
+crossbeam = "0.8"
+mio = { version = "0.8.11", features = ["os-poll", "os-ext", "net"] }
+byteorder = "1.4"

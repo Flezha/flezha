@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "flz_transport",
+    "flz_nif",
     "sdk/rust",
     "cli",
     "test/apps/rust_compute_engine",

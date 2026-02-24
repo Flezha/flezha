@@ -1,24 +1,22 @@
 defmodule Flezha.ComputeEngine.ComputeEngineSupervisor do
   alias Flezha.ComputeEngine.ControlUnit
   alias Flezha.ComputeEngine.ControlChannel
+  alias Flezha.ComputeEngine.StreamAcceptor
   alias Flezha.Service.Identificator
-  alias Flezha.Service.ConfigManager
-  alias Flezha.Socket.Listener
-  alias Flezha.Socket.Support, as: SocketSupport
-  alias Flezha.Transport.QuicStreamAcceptor
 
   use Supervisor
 
-  def start_link({namespace, compute_engine_id, transport_info}) do
-    Supervisor.start_link(__MODULE__, {namespace, compute_engine_id, transport_info},
+  def start_link({namespace, compute_engine_id, stream_ref}) do
+    Supervisor.start_link(__MODULE__, {namespace, compute_engine_id, stream_ref},
       name: Identificator.unit_sup(compute_engine_id)
     )
   end
 
   @impl true
-  def init({namespace, compute_engine_id, {:quic, conn, control_stream}}) do
-    # QUIC mode: no per-stream socket listeners needed.
-    # Streams are multiplexed over the QUIC connection.
+  def init({namespace, compute_engine_id, stream_ref}) do
+    # Unified init — works for both UDS and QUIC via NIF.
+    # stream_ref is a NIF StreamHandle resource.
+    # Data streams are opened later by the SDK after ConnectSocket command.
     children = [
       %{
         id: ControlUnit,
@@ -26,7 +24,7 @@ defmodule Flezha.ComputeEngine.ComputeEngineSupervisor do
       },
       %{
         id: ControlChannel,
-        start: {ControlChannel, :start_link, [{namespace, compute_engine_id, control_stream}]}
+        start: {ControlChannel, :start_link, [{namespace, compute_engine_id, stream_ref}]}
       },
       %{
         id: :primary_stream_sup,
@@ -37,57 +35,12 @@ defmodule Flezha.ComputeEngine.ComputeEngineSupervisor do
         start: {Flezha.ComputeEngine.StreamSup, :start_link, [{compute_engine_id, :secondary}]}
       },
       %{
-        id: QuicStreamAcceptor,
-        start:
-          {QuicStreamAcceptor, :start_link,
-           [{compute_engine_id, conn, ConfigManager.concurrent_channel_count()}]}
-      }
-    ]
-
-    Supervisor.init(children, strategy: :one_for_one)
-  end
-
-  @impl true
-  def init({namespace, compute_engine_id, sock}) do
-    # UDS mode: use socket listeners for stream connections.
-    children = [
-      %{
-        id: ControlUnit,
-        start: {ControlUnit, :start_link, [{namespace, compute_engine_id}]}
+        id: :primary_acceptor,
+        start: {StreamAcceptor, :start_link, [{compute_engine_id, :primary}]}
       },
       %{
-        id: ControlChannel,
-        start: {ControlChannel, :start_link, [{namespace, compute_engine_id, sock}]}
-      },
-      %{
-        id: :primary_stream_listener,
-        start:
-          {Listener, :start_link,
-           [
-             {
-               Identificator.stream_listener(compute_engine_id, :primary),
-               fn -> SocketSupport.stream_socket_path(compute_engine_id, :primary) end
-             }
-           ]}
-      },
-      %{
-        id: :secondary_stream_listener,
-        start:
-          {Listener, :start_link,
-           [
-             {
-               Identificator.stream_listener(compute_engine_id, :secondary),
-               fn -> SocketSupport.stream_socket_path(compute_engine_id, :secondary) end
-             }
-           ]}
-      },
-      %{
-        id: :primary_stream_sup,
-        start: {Flezha.ComputeEngine.StreamSup, :start_link, [{compute_engine_id, :primary}]}
-      },
-      %{
-        id: :secondary_stream_sup,
-        start: {Flezha.ComputeEngine.StreamSup, :start_link, [{compute_engine_id, :secondary}]}
+        id: :secondary_acceptor,
+        start: {StreamAcceptor, :start_link, [{compute_engine_id, :secondary}]}
       }
     ]
 

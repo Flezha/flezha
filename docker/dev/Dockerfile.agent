@@ -41,6 +41,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
     rustup update && \
     rustup default stable
 
+# Make Rust available in PATH for all subsequent RUN commands (needed for Rustler NIF compilation)
+ENV PATH="/home/flezha/.cargo/bin:${PATH}"
+
 RUN mkdir -p /flezha/socket_data && \
     chown -R flezha:flezha /flezha/socket_data && \
     chmod -R g+rw /flezha/socket_data
@@ -80,10 +83,13 @@ WORKDIR /flezha
 RUN mix local.hex --force && \
     mix local.rebar --force
 
+# Symlink CLI binary to expected path (workspace build outputs to target/, not cli/target/)
+RUN mkdir -p cli/target && ln -sf /flezha/target/debug cli/target/debug
+
 # Build the Elixir application
 RUN mix deps.get && \
     mix compile && \
-    mix release --overwrite  
+    mix release --overwrite
 
 # Copy the    
 

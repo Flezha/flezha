@@ -2,14 +2,14 @@ defmodule Flezha.ComputeEngine.ControlChannel do
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
   alias Flezha.ComputeEngine.FleetManager
-  alias Flezha.Transport.Resolver
+  alias Flezha.Transport.Native
 
   require Logger
 
   use GenServer
 
-  def start_link({namespace, compute_engine_id, sock}) do
-    GenServer.start_link(__MODULE__, {namespace, compute_engine_id, sock},
+  def start_link({namespace, compute_engine_id, stream_ref}) do
+    GenServer.start_link(__MODULE__, {namespace, compute_engine_id, stream_ref},
       name: Identificator.control_channel(compute_engine_id)
     )
   end
@@ -76,80 +76,58 @@ defmodule Flezha.ComputeEngine.ControlChannel do
   end
 
   @impl true
-  def init({namespace, compute_engine_id, sock}) do
-    transport = Resolver.transport_module()
-
-    # For UDS, set_active here (socket ownership already transferred).
-    # For QUIC, FleetManager calls set_active after controlling_process.
-    if Resolver.transport_type() != :quic do
-      transport.set_active(sock)
-    end
-
+  def init({namespace, compute_engine_id, stream_ref}) do
     {:ok,
      %{
        namespace: namespace,
        compute_engine_id: compute_engine_id,
-       sock: sock,
-       transport: transport,
-       control_unit: Identificator.control_unit(compute_engine_id),
-       buffer: {:empty, <<>>}
+       stream_ref: stream_ref,
+       control_unit: Identificator.control_unit(compute_engine_id)
      }}
   end
 
   @impl true
   def handle_call({:send_control, payload}, _from, state) do
     res =
-      case Map.get(state, :sock, nil) do
+      case Map.get(state, :stream_ref, nil) do
         nil ->
           {:error, :no_connection_available}
 
-        socket ->
-          state.transport.send_data(socket, payload)
+        stream_ref ->
+          Native.send_data(stream_ref, payload)
       end
 
     {:reply, res, state}
   end
 
   @impl true
-  def handle_call({:handle_frame, frame}, _from, state) do
-    {:reply, :ok, handle_payload(state, frame)}
+  def handle_call({:handle_frame, _frame}, _from, state) do
+    # No longer needed — framing is done in Rust NIF
+    {:reply, :ok, state}
   end
 
   @impl true
   def handle_cast({:send_control_async, payload}, state) do
-    case Map.get(state, :sock, nil) do
+    case Map.get(state, :stream_ref, nil) do
       nil -> :ok
-      socket -> state.transport.send_data(socket, payload)
+      stream_ref -> Native.send_data(stream_ref, payload)
     end
 
     {:noreply, state}
   end
 
-  # UDS transport messages
+  # Unified NIF transport message — complete parsed frame
   @impl true
-  def handle_info({:tcp_closed, _socket}, state) do
-    handle_connection_closed(state)
-  end
+  def handle_info({:flz_data, _stream_id, _payload_id, message, _metadata}, state) do
+    GenServer.cast(state.control_unit, {:handle_payload, message})
 
-  @impl true
-  def handle_info({:tcp, _port, frame}, state) do
-    {:noreply, handle_payload(state, frame)}
-  end
-
-  # QUIC transport messages — active mode delivers {quic, binary, stream, props}
-  @impl true
-  def handle_info({:quic, data, _stream, _props}, state) when is_binary(data) do
-    {:noreply, handle_payload(state, data)}
-  end
-
-  @impl true
-  def handle_info({:quic, :stream_closed, _stream, _flags}, state) do
-    handle_connection_closed(state)
-  end
-
-  @impl true
-  def handle_info({:quic, :send_shutdown_complete, _stream, _status}, state) do
     {:noreply, state}
+  end
+
+  # NIF transport: connection closed
+  @impl true
+  def handle_info({:flz_closed, _stream_id, _reason}, state) do
+    handle_connection_closed(state)
   end
 
   @impl true
@@ -171,20 +149,6 @@ defmodule Flezha.ComputeEngine.ControlChannel do
     })
 
     {:noreply, state}
-  end
-
-  defp handle_payload(%{buffer: buffer} = state, frame) do
-    {payloads, buffer} = Payloader.parse_frame(buffer, frame, [])
-
-    Enum.each(payloads, fn {_payload_id, message, _metadata} ->
-      # Send the payload the the control unit.
-      GenServer.cast(
-        state.control_unit,
-        {:handle_payload, message}
-      )
-    end)
-
-    Map.put(state, :buffer, buffer)
   end
 
   defp gen_ref() do
