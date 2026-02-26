@@ -22,7 +22,13 @@ spec:
       initContainers:
         - name: fix-permissions
           image: busybox:1.35
-          command: ['sh', '-c', 'mkdir -p /flezha/sockets /flezha/data /var/log/flezha && chown -R 1000:1000 /flezha/sockets /flezha/data /var/log/flezha && chmod -R 755 /flezha/sockets /flezha/data /var/log/flezha']
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /flezha/sockets /flezha/data /flezha/certs /var/log/flezha && \
+              chown -R 1000:1000 /flezha/sockets /flezha/data /flezha/certs /var/log/flezha && \
+              chmod -R 755 /flezha/sockets /flezha/data /flezha/certs /var/log/flezha
           securityContext:
             runAsUser: 0
           volumeMounts:
@@ -30,30 +36,32 @@ spec:
               mountPath: /flezha/sockets
             - name: flezha-data
               mountPath: /flezha/data
+            - name: flezha-certs
+              mountPath: /flezha/certs
             - name: flezha-logs
               mountPath: /var/log/flezha
       containers:
         - name: flezha
+          # Update VERSION tag before deploying
           image: alfetahe/flezha:0.1.6
           ports:
             - name: epmd
               containerPort: 4369
               protocol: TCP
+            - name: quic
+              containerPort: 4433
+              protocol: UDP
+          # Pull env vars from ConfigMap (flezha-configmap.yaml)
+          envFrom:
+            - configMapRef:
+                name: flezha-config
           env:
             - name: FLEZHA_NODE_HOST
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
-            - name: FLEZHA_CLUSTER_DISCOVERY            
-              value: "k8s_pod_discovery"
-            - name: FLEZHA_RECONNECT_INTERVAL
-              value: "2"
-            - name: FLEZHA_MAX_RECONNECTS
-              value: "10"
             - name: FLEZHA_NODE_NAME
               value: "flezha"
-            - name: FLEZHA_K8S_IP_LOOKUP_MODE
-              value: "pods"
             - name: FLEZHA_K8S_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -64,19 +72,15 @@ spec:
                   fieldPath: metadata.labels['app']
             - name: FLEZHA_K8S_SELECTOR
               value: "app=flezha"
-            - name: FLEZHA_K8S_MASTER_NAME
-              value: "kubernetes.default.svc"
-            - name: FLEZHA_K8S_MASTER_PORT
-              value: "443"
             - name: FLEZHA_SOCKET_FILES_PATH
               value: "/flezha/sockets"
-            - name: FLEZHA_LOG_PATH
-              value: "/var/log/flezha/flezha.log"
           volumeMounts:
             - name: flezha-sockets
               mountPath: /flezha/sockets
             - name: flezha-data
               mountPath: /flezha/data
+            - name: flezha-certs
+              mountPath: /flezha/app_data/certs
             - name: flezha-logs
               mountPath: /var/log/flezha
       volumes:
@@ -87,6 +91,11 @@ spec:
         - name: flezha-data
           hostPath:
             path: /opt/flezha-data
+            type: DirectoryOrCreate
+        - name: flezha-certs
+          # Per-node hostPath: certs auto-generated on first run, persisted across pod restarts
+          hostPath:
+            path: /opt/flezha-certs
             type: DirectoryOrCreate
         - name: flezha-logs
           hostPath:

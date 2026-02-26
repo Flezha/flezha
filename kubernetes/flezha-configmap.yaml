@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flezha-config
+  namespace: flezha
+data:
+  FLEZHA_TRANSPORT: "uds"
+  FLEZHA_CLUSTER_DISCOVERY: "k8s_pod_discovery"
+  FLEZHA_K8S_IP_LOOKUP_MODE: "pods"
+  FLEZHA_K8S_MASTER_NAME: "kubernetes.default.svc"
+  FLEZHA_K8S_MASTER_PORT: "443"
+  FLEZHA_RECONNECT_INTERVAL: "2000"
+  FLEZHA_MAX_RECONNECTS: "10"
+  FLEZHA_OPERATOR_KEEPALIVE: "30000"
+  FLEZHA_QUIC_ADDRESS: "0.0.0.0:4433"
+  FLEZHA_CA_CERT_PATH: "/flezha/app_data/certs/ca.pem"
+  FLEZHA_SERVER_CERT_PATH: "/flezha/app_data/certs/server.pem"
+  FLEZHA_SERVER_KEY_PATH: "/flezha/app_data/certs/server.key"
+  FLEZHA_LOG_PATH: "/var/log/flezha/flezha.log"

@@ -8,13 +8,24 @@ services:
     # TODO:   image: flezha:latest
     environment:
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
+      FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
     depends_on:
       - kafka
     ulimits:
       nofile:
         soft: 65536
         hard: 65536
+    healthcheck:
+      test: ["CMD", "sh", "-c", "pgrep -f 'beam.smp\\|tail' > /dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     volumes:
+      # Named-volume priming pattern: the Dockerfile build pre-populates these
+      # volumes so the bind-mounted source tree doesn't need to be rebuilt from
+      # scratch on first `up`. Source changes are reflected immediately via the
+      # bind mount (../../:/flezha).
       - socket_data:/socket_data
       - ../../:/flezha
       - flezha_build:/flezha/_build
@@ -26,6 +37,7 @@ services:
   zookeeper:
     image: zookeeper:3.9.3
     container_name: zookeeper
+    restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -37,6 +49,7 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.8.6
     container_name: kafka
+    restart: unless-stopped
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -49,6 +62,12 @@ services:
       - "9092:9092"
     depends_on:
       - zookeeper
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - flezha_network
 

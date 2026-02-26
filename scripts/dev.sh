@@ -12,28 +12,34 @@ set -e
 #   - Run this script from the project root directory
 #
 # Usage:
-#   ./scripts/dev.sh [command]
+#   ./scripts/dev.sh [command] [args...]
 #
 # Commands:
 #   build    - Build images and start containers
 #   up       - Start containers (without rebuilding)
 #   down     - Stop and remove containers
 #   shell    - Open a shell in the running agent container
+#   iex      - Open an IEX session inside the running agent container
 #   logs     - Follow agent container logs
 #   clean    - Remove build cache volumes and stop containers
+#   rebuild  - Full clean rebuild: down + remove volumes + build + up
+#   status   - Show container status
+#   release  - Build an Elixir release inside the running container
+#   cargo    - Run a cargo command inside the running container
+#              e.g.  ./scripts/dev.sh cargo build --workspace
 #   help     - Show this help message
 #
 # After the environment is running, you can:
 #
 #   Start the agent (with IEX):
-#     iex --name flezha@127.0.0.1 --cookie flezha_dev_cookie -S mix
+#     ./scripts/dev.sh iex
 #
 #   Or start the agent via release:
-#     mix release
-#     _build/dev/rel/flezha/bin/flz agent start --mode=attached_iex
+#     ./scripts/dev.sh release
+#     _build/dev/rel/flezha/bin/flzvm start
 #
 #   Build the Rust workspace (libflezha, SDK, CLI, test app):
-#     cargo build --workspace
+#     ./scripts/dev.sh cargo build --workspace
 #
 #   Start a compute engine (in a separate terminal/shell):
 #     cargo run -p rust_compute_engine
@@ -88,6 +94,12 @@ cmd_shell() {
     docker exec -it "$CONTAINER_NAME" bash
 }
 
+cmd_iex() {
+    echo "Opening IEX session in $CONTAINER_NAME..."
+    docker exec -it "$CONTAINER_NAME" \
+        iex --name flezha@127.0.0.1 --cookie flezha_dev_cookie -S mix
+}
+
 cmd_logs() {
     docker compose -f "$COMPOSE_FILE" logs -f agent
 }
@@ -98,6 +110,31 @@ cmd_clean() {
     echo "Build cache cleared. Run './scripts/dev.sh up' to rebuild."
 }
 
+cmd_rebuild() {
+    echo "Full rebuild: stopping, clearing volumes, rebuilding..."
+    docker compose -f "$COMPOSE_FILE" down -v
+    ensure_env_file
+    ensure_network
+    docker compose -f "$COMPOSE_FILE" build
+    docker compose -f "$COMPOSE_FILE" up -d
+    echo ""
+    echo "Dev environment rebuilt and running."
+}
+
+cmd_status() {
+    docker compose -f "$COMPOSE_FILE" ps
+}
+
+cmd_release() {
+    echo "Building Elixir release inside $CONTAINER_NAME..."
+    docker exec "$CONTAINER_NAME" bash -c "mix release --overwrite"
+}
+
+cmd_cargo() {
+    echo "Running: cargo $*"
+    docker exec -it "$CONTAINER_NAME" bash -c ". \"\$HOME/.cargo/env\" && cargo $*"
+}
+
 cmd_help() {
     # Print the usage section from the header comment
     sed -n '/^# Usage:/,/^[^#]/p' "$0" | head -n -1 | sed 's/^# \?//'
@@ -105,15 +142,21 @@ cmd_help() {
 
 # Main
 COMMAND="${1:-build}"
+shift || true
 
 case "$COMMAND" in
-    build) cmd_build ;;
-    up)    cmd_up ;;
-    down)  cmd_down ;;
-    shell) cmd_shell ;;
-    logs)  cmd_logs ;;
-    clean) cmd_clean ;;
-    help)  cmd_help ;;
+    build)   cmd_build ;;
+    up)      cmd_up ;;
+    down)    cmd_down ;;
+    shell)   cmd_shell ;;
+    iex)     cmd_iex ;;
+    logs)    cmd_logs ;;
+    clean)   cmd_clean ;;
+    rebuild) cmd_rebuild ;;
+    status)  cmd_status ;;
+    release) cmd_release ;;
+    cargo)   cmd_cargo "$@" ;;
+    help)    cmd_help ;;
     *)
         echo "Unknown command: $COMMAND"
         cmd_help

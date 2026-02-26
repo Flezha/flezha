@@ -14,7 +14,11 @@ defmodule Flezha.Transport.Native do
     * `{:flz_closed, stream_id, reason}` — stream/connection closed
   """
 
-  use Rustler, otp_app: :flezha, crate: "flz_nif", path: "flz_nif"
+  use Rustler,
+    otp_app: :flezha,
+    crate: "flz_nif",
+    path: "flz_nif",
+    skip_compilation?: System.get_env("RUSTLER_SKIP_COMPILATION") == "true"
 
   @behaviour Flezha.Transport.Behaviour
 

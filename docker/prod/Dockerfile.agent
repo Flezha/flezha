@@ -1,60 +1,45 @@
-# Stage 1: Build the Rust CLI
+# ============================================================
+# Stage 1 — Rust builder
+# Compiles flz_nif (.so) and CLI binary (flz) with --release.
+# ============================================================
 FROM rust:1.87.0 AS rust-build
 
-# Set working directory for Rust build
-WORKDIR /cli
+WORKDIR /workspace
 
-# Copy the Rust CLI project
-COPY ../cli ./
+# Copy entire workspace so all crate dependencies resolve
+COPY . .
 
-# Build the Rust project
-RUN cargo build --release
+# Build NIF shared library and CLI binary
+RUN cargo build --release -p flz_nif -p cli
 
-# Stage 2: Build the Elixir app
+# ============================================================
+# Stage 2 — Elixir builder
+# Compiles Elixir source and assembles the release.
+# The NIF .so is copied from Stage 1; cargo is NOT invoked.
+# ============================================================
 FROM elixir:1.17-otp-27 AS build
 
-# Set current working directory.
 WORKDIR /app
 
-# Install system dependencies
-RUN mix local.hex --force
-RUN mix local.rebar --force
-
-# Copy all the necessary files to the container
-COPY ../mix.exs ./mix.exs
-COPY ../lib ./lib
-COPY ../config ./config
-COPY ../test ./test
-COPY ../rel ./rel
-COPY ../protobufs ./protobufs
-
-# Copy the Rust build artifacts from the previous stage
-COPY --from=rust-build /cli /app/cli
-
-# Fetch dependencies
-RUN MIX_ENV=prod mix deps.get
-
-# Install system deps
+# Install system dependencies needed by mix deps / protobuf
 RUN apt-get update && apt-get install -y \
-    curl \
-    unzip \
-    cmake \
-    build-essential \
     libssl-dev \
     pkg-config \
+    build-essential \
+    cmake \
+    curl \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Set version
-ENV PROTOC_VERSION=23.4
-
 # Install protoc (architecture-aware)
+ENV PROTOC_VERSION=23.4
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
-    PROTOC_ARCH="x86_64"; \
+      PROTOC_ARCH="x86_64"; \
     elif [ "$ARCH" = "aarch64" ]; then \
-    PROTOC_ARCH="aarch_64"; \
+      PROTOC_ARCH="aarch_64"; \
     else \
-    echo "Unsupported architecture: $ARCH" && exit 1; \
+      echo "Unsupported architecture: $ARCH" && exit 1; \
     fi && \
     curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip \
     && unzip protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip -d /usr/local \
@@ -62,42 +47,54 @@ RUN ARCH=$(uname -m) && \
 
 RUN protoc --version
 
-# Compile the project
-RUN ERL_FLAGS="+JMsingle true" MIX_ENV=prod mix compile
+# Copy Elixir source files
+COPY mix.exs mix.lock ./
+COPY lib ./lib
+COPY config ./config
+COPY rel ./rel
+COPY protobufs ./protobufs
 
-# Create release
-RUN MIX_ENV=prod mix release --overwrite
+# Place the pre-built NIF where Rustler expects it (skips cargo recompilation)
+RUN mkdir -p priv/native
+COPY --from=rust-build /workspace/target/release/libflz_nif.so ./priv/native/libflz_nif.so
 
-# Stage 3: Final image
-FROM elixir:1.17-otp-27
+# Place the pre-built CLI binary where mix.exs copy_cli_commands/1 expects it
+RUN mkdir -p cli/target/release
+COPY --from=rust-build /workspace/target/release/flz ./cli/target/release/flz
 
-# Set the working directory
-WORKDIR /flezha
-
-# Set environment variables
+# Tell Rustler not to invoke cargo — use the pre-built .so above
+ENV RUSTLER_SKIP_COMPILATION=true
 ENV MIX_ENV=prod
 
-# Create a non-root user and switch to it
-RUN addgroup --system --gid 1000 flezha && adduser --system --uid 1000 --ingroup flezha flezha
+RUN mix local.hex --force && mix local.rebar --force
+RUN mix deps.get --only prod
+RUN ERL_FLAGS="+JMsingle true" MIX_ENV=prod mix compile
+RUN MIX_ENV=prod mix release --overwrite
 
-# Copy only the necessary files from the _build/prod/rel/flezha directory
-COPY --from=build /app/_build/prod/rel/flezha /flezha/
+# ============================================================
+# Stage 3 — Runtime image
+# Minimal image containing only the assembled release.
+# ============================================================
+FROM elixir:1.17-otp-27
 
-# Copy the Rust build artifacts to the final image
-COPY --from=build /app/cli /flezha/cli
-
-RUN mkdir -p /flezha/socket_data && \
-    chown -R flezha:flezha /flezha/socket_data && \
-    chmod -R g+rw /flezha/socket_data
-
-# Change the owner of the /flezha directory
-RUN chown -R flezha:flezha /flezha
-
-# Switch to the flezha user
-USER flezha
-
-# Set the working directory
 WORKDIR /flezha
 
-# Start the application using flz CLI
-CMD ["bin/flz", "agent", "start", "--mode=attached"]
+ENV MIX_ENV=prod
+
+# Create non-root user
+RUN addgroup --system --gid 1000 flezha && \
+    adduser --system --uid 1000 --ingroup flezha flezha
+
+# Copy assembled release from Stage 2
+COPY --from=build /app/_build/prod/rel/flezha /flezha/
+
+# Create runtime directories
+RUN mkdir -p /flezha/app_data/sockets \
+             /flezha/app_data/certs \
+             /flezha/app_data/logs && \
+    chown -R flezha:flezha /flezha
+
+USER flezha
+
+# bin/flzvm — Elixir release binary (renamed from bin/flezha by copy_cli_commands/1)
+CMD ["bin/flzvm", "start"]

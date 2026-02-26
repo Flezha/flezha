@@ -1,0 +1,80 @@
+# Prod docker-compose for local smoke testing.
+# Uses the built prod image — no source bind-mounts.
+#
+# Usage:
+#   VERSION=0.2.0 docker compose -f docker/prod/docker-compose.yml up
+#
+# Build the image first:
+#   VERSION=0.2.0 make docker-build
+
+services:
+  agent:
+    image: alfetahe/flezha:${VERSION:-latest}
+    container_name: flezha_agent_prod
+    restart: unless-stopped
+    environment:
+      MIX_ENV: prod
+      FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
+      FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
+      FLEZHA_LOG_PATH: /flezha/app_data/logs/flezha.log
+      FLEZHA_LOG_LEVEL: ${FLEZHA_LOG_LEVEL:-info}
+    depends_on:
+      - kafka
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - flezha_sockets:/flezha/app_data/sockets
+      - flezha_data:/flezha/app_data/data
+      - flezha_certs:/flezha/app_data/certs
+      - flezha_logs:/flezha/app_data/logs
+    networks:
+      - flezha_network
+
+  zookeeper:
+    image: zookeeper:3.9.3
+    container_name: zookeeper_prod
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - flezha_network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.8.6
+    container_name: kafka_prod
+    restart: unless-stopped
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper_prod:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka_prod:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    depends_on:
+      - zookeeper
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - flezha_network
+
+volumes:
+  flezha_sockets:
+    driver: local
+  flezha_data:
+    driver: local
+  flezha_certs:
+    driver: local
+  flezha_logs:
+    driver: local
+
+networks:
+  flezha_network:
+    driver: bridge
