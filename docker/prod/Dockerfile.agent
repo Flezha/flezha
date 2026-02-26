@@ -10,7 +10,7 @@ WORKDIR /workspace
 COPY . .
 
 # Build NIF shared library and CLI binary
-RUN cargo build --release -p flz_nif -p cli
+RUN cargo build --release -p flz_nif -p flz
 
 # ============================================================
 # Stage 2 — Elixir builder
@@ -56,7 +56,7 @@ COPY protobufs ./protobufs
 
 # Place the pre-built NIF where Rustler expects it (skips cargo recompilation)
 RUN mkdir -p priv/native
-COPY --from=rust-build /workspace/target/release/libflz_nif.so ./priv/native/libflz_nif.so
+COPY --from=rust-build /workspace/target/release/libflz_nif.so ./priv/native/flz_nif.so
 
 # Place the pre-built CLI binary where mix.exs copy_cli_commands/1 expects it
 RUN mkdir -p cli/target/release

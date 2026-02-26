@@ -43,7 +43,8 @@ spec:
       containers:
         - name: flezha
           # Update VERSION tag before deploying
-          image: alfetahe/flezha:0.1.6
+          image: alfetahe/flezha:dev-latest
+          imagePullPolicy: Always
           ports:
             - name: epmd
               containerPort: 4369
