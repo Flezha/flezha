@@ -35,6 +35,9 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -f docker/prod/Dockerfile.agent \
   -t alfetahe/flezha:latest \
   . --push
+
+# Build for same arhitecture
+docker build -f docker/prod/Dockerfile.agent -t alfetahe/flezha:latest . && docker push alfetahe/flezha:latest
 ```
 
 See `docker/prod/README.md` for detailed build instructions.
