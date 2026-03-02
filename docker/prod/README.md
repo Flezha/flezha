@@ -10,7 +10,12 @@ docker build -t flezha:latest -f docker/prod/Dockerfile.agent .
 
 ## Build Multi-Architecture Image and Push to Docker Hub
 
-**Recommended for production deployment (supports both amd64 and arm64 platforms):**
+The result is a single manifest list under one tag (e.g. `latest`) that serves both
+`linux/amd64` and `linux/arm64`. Docker automatically pulls the correct variant per host.
+
+### Option A — Single machine (QEMU emulation)
+
+Simplest setup. The non-native platform (usually arm64) is emulated and compiles slowly
 
 ```bash
 # Setup buildx (one-time)
@@ -24,6 +29,47 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -t alfetahe/flezha:latest \
   . --push
 ```
+
+### Option B — Two native machines (faster, recommended)
+
+Build each architecture on its own machine, push them as separate tags, then combine
+them into one manifest list. All commands use standard `docker` — no SSH magic required.
+
+**On your amd64 machine:**
+
+```bash
+docker build -f docker/prod/Dockerfile.agent \
+  -t alfetahe/flezha:amd64 .
+docker push alfetahe/flezha:amd64
+```
+
+**On your arm64 machine (SSH in normally, then run):**
+
+```bash
+docker build -f docker/prod/Dockerfile.agent \
+  -t alfetahe/flezha:arm64 .
+docker push alfetahe/flezha:arm64
+```
+
+**Back on either machine — combine into one manifest and push:**
+
+```bash
+docker manifest create alfetahe/flezha:latest \
+  alfetahe/flezha:amd64 \
+  alfetahe/flezha:arm64
+
+docker manifest push alfetahe/flezha:latest
+
+# Optionally tag a version as well
+docker manifest create alfetahe/flezha:0.0.1 \
+  alfetahe/flezha:amd64 \
+  alfetahe/flezha:arm64
+
+docker manifest push alfetahe/flezha:0.0.1
+```
+
+Both options produce the same single `latest` tag on Docker Hub — a manifest list
+containing one image digest per architecture.
 
 ## Run Docker Image
 

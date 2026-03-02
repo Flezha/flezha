@@ -41,7 +41,7 @@ defmodule Flezha.MixProject do
       {:process_hub, "~> 0.5.0-beta"},
       {:blockade, "~> 0.2.2"},
       {:fresh, "~> 0.4.4"},
-      {:kafka_ex, "~> 0.14.0"},
+      {:kafka_ex, github: "alfetahe/kafka_ex", branch: "fix/setopts-invalid-socket-crash"},
       {:protox, "~> 2.0"},
       {:mimic, "~> 1.11"},
       {:logger_file_backend, "~> 0.0.13"},
