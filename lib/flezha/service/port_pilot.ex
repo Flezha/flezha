@@ -2,6 +2,7 @@ defmodule Flezha.Service.PortPilot do
   require Logger
 
   @port_down_counter 10
+  @backoff_ms 5_000
 
   use GenServer
 
@@ -67,10 +68,7 @@ defmodule Flezha.Service.PortPilot do
   def handle_info({:DOWN, _ref, :port, port, :normal}, state) do
     Logger.error("Port application down")
 
-    if state.port_down_counter > @port_down_counter do
-      raise "Port application malfunction"
-    end
-
+    counter = Map.get(state, :port_down_counter, 0) + 1
     ports = Map.delete(state.ports, port)
 
     ports =
@@ -79,16 +77,28 @@ defmodule Flezha.Service.PortPilot do
           ports
 
         command ->
-          {port, _} = open_port(command)
-          Map.put(ports, port, command)
+          if counter > @port_down_counter do
+            Logger.error(
+              "Port application malfunction — too many crashes (#{counter}), backing off #{@backoff_ms}ms"
+            )
+
+            Process.send_after(self(), {:restart_port, command}, @backoff_ms)
+            ports
+          else
+            {new_port, _} = open_port(command)
+            Map.put(ports, new_port, command)
+          end
       end
 
-    new_state =
-      state
-      |> Map.put(:ports, ports)
-      |> Map.put(:port_down_counter, Map.get(state, :port_down_counter, 0) + 1)
+    {:noreply, %{state | ports: ports, port_down_counter: counter}}
+  end
 
-    {:noreply, new_state}
+  @impl true
+  def handle_info({:restart_port, command}, state) do
+    Logger.info("Port application restarting after backoff")
+    {port, _} = open_port(command)
+    ports = Map.put(state.ports, port, command)
+    {:noreply, %{state | ports: ports, port_down_counter: 0}}
   end
 
   @impl true

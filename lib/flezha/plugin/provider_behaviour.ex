@@ -21,6 +21,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @callback plugin_type() :: :io_binding
   @callback build(map()) :: {:ok, struct()} | {:error, String.t()}
   @callback help() :: String.t()
+  @callback provider_info() :: map()
 
   defmacro __using__(_opts) do
     quote do
@@ -142,7 +143,25 @@ defmodule Flezha.Plugin.ProviderBehaviour do
         help_text
       end
 
-      defoverridable help: 0
+      def provider_info() do
+        enforce_keys = get_required_fields(__MODULE__)
+
+        dummy_params =
+          Enum.reduce(enforce_keys, %{}, fn key, acc -> Map.put(acc, key, "dummy") end)
+
+        struct_sample = struct!(__MODULE__, dummy_params)
+        all_fields = Map.keys(struct_sample) |> Enum.reject(&(&1 == :__struct__))
+        optional_fields = all_fields -- enforce_keys
+
+        %{
+          module: inspect(__MODULE__),
+          type: plugin_type(),
+          required_fields: Enum.map(enforce_keys, &Atom.to_string/1),
+          optional_fields: Enum.map(optional_fields, &Atom.to_string/1)
+        }
+      end
+
+      defoverridable help: 0, provider_info: 0
 
       defp get_required_fields(module) do
         try do
