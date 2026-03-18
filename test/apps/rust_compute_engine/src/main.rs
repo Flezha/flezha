@@ -121,6 +121,7 @@ fn define_factories() {
             text_inputs: vec![],
         },
         || Box::new(StoreInputProcessor {}),
+        Some("Accumulates all inputs in state for later retrieval".to_string()),
     );
 
     register_factory(
@@ -131,6 +132,7 @@ fn define_factories() {
             inverted: false,
         },
         || Box::new(CompareFilterProcessor {}),
+        Some("Filters by comparing input against a stored value".to_string()),
     );
 
     register_factory(
@@ -138,5 +140,6 @@ fn define_factories() {
         ProcessorSettings::<DoNothingState, String, String>::default(),
         DoNothingState {},
         || Box::new(DoNothingProcessor {}),
+        Some("Passes input through unchanged".to_string()),
     );
 }

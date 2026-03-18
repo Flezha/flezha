@@ -20,6 +20,8 @@ defmodule Flezha do
 
   defdelegate list_processors(namespace), to: ProcessorManager, as: :get_processor_ids
 
+  defdelegate list_factories(namespace), to: Flezha.ComputeEngine.FleetManager
+
   defdelegate enable_plugin(plugin_id, plugin), to: PluginManager
 
   defdelegate disable_plugin(plugin_id), to: PluginManager

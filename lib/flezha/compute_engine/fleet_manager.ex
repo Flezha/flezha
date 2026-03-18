@@ -22,12 +22,16 @@ defmodule Flezha.ComputeEngine.FleetManager do
   `namespace` is extracted from the connect_control_channel frame.
   `init_payload` is the decoded JSON from the initial frame.
   """
+  def list_factories(namespace) do
+    GenServer.call(__MODULE__, {:list_factories, namespace})
+  end
+
   def connect_handler(stream_ref, namespace, init_payload) do
-    factory_ids = Map.get(init_payload, "factory_ids")
+    factories = parse_factories(init_payload)
 
     case GenServer.call(
            __MODULE__,
-           {:compute_engine_connect, stream_ref, namespace, factory_ids}
+           {:compute_engine_connect, stream_ref, namespace, factories}
          ) do
       {:error, reason} ->
         Logger.error("Failed to connect compute_engine: #{inspect(reason)}")
@@ -54,7 +58,7 @@ defmodule Flezha.ComputeEngine.FleetManager do
   def init(_) do
     schedule_compute_engine_cleanup()
 
-    {:ok, %{compute_engine_namespaces: %{}}}
+    {:ok, %{compute_engine_namespaces: %{}, namespace_factories: %{}}}
   end
 
   @impl true
@@ -107,12 +111,27 @@ defmodule Flezha.ComputeEngine.FleetManager do
           {:ok, Map.delete(state.compute_engine_namespaces, namespace)}
       end
 
-    {:reply, reply, Map.put(state, :compute_engine_namespaces, compute_engine_namespaces)}
+    state = Map.put(state, :compute_engine_namespaces, compute_engine_namespaces)
+    state = Map.update!(state, :namespace_factories, &Map.delete(&1, namespace))
+    {:reply, reply, state}
+  end
+
+  @impl true
+  def handle_call({:list_factories, namespace}, _from, state) do
+    factories =
+      state.namespace_factories
+      |> Map.get(namespace, %{})
+      |> Enum.map(fn {factory_id, info} ->
+        %{id: factory_id, description: info.description}
+      end)
+      |> Enum.sort_by(& &1.id)
+
+    {:reply, {:ok, factories}, state}
   end
 
   @impl true
   def handle_call(
-        {:compute_engine_connect, stream_ref, namespace, _factory_ids},
+        {:compute_engine_connect, stream_ref, namespace, factories},
         _from,
         state
       ) do
@@ -133,6 +152,7 @@ defmodule Flezha.ComputeEngine.FleetManager do
             {:active, timestamp}
           )
 
+        state = store_factories(state, namespace, compute_engine_id, factories)
         state = try_migrate_compute_engine(state, namespace, compute_engine_id)
 
         EventManager.dispatch(
@@ -226,7 +246,15 @@ defmodule Flezha.ComputeEngine.FleetManager do
         Map.put(acc, namespace, namespace_compute_engines)
       end)
 
-    %{state | compute_engine_namespaces: compute_engine_namespaces}
+    state = %{state | compute_engine_namespaces: compute_engine_namespaces}
+
+    # Clean factory refs for removed CEs
+    Enum.reduce(removal, state, fn {namespace, removal_compute_engines}, acc ->
+      Enum.reduce(removal_compute_engines, acc, fn
+        nil, acc -> acc
+        ce_id, acc -> remove_ce_factories(acc, namespace, ce_id)
+      end)
+    end)
   end
 
   defp try_migrate_compute_engine(state, namespace, compute_engine_id) do
@@ -266,6 +294,8 @@ defmodule Flezha.ComputeEngine.FleetManager do
 
   defp do_handle_compute_engine_disconnect(state, namespace, compute_engine_id) do
     FleetSupervisor.stop_compute_engine_sup(compute_engine_id)
+
+    state = remove_ce_factories(state, namespace, compute_engine_id)
 
     if HubManager.hub_alive?(namespace) do
       HubManager.unregister_handler(namespace, compute_engine_id)
@@ -365,5 +395,50 @@ defmodule Flezha.ComputeEngine.FleetManager do
     GenServer.call(control_unit, :command_sockets_connect)
 
     {:ok, namespace, compute_engine_id}
+  end
+
+  defp parse_factories(init_payload) do
+    case Map.get(init_payload, "factories") do
+      nil ->
+        # Backward compat: old SDKs only send factory_ids
+        (Map.get(init_payload, "factory_ids") || [])
+        |> Enum.map(fn id -> %{"id" => id, "description" => nil} end)
+
+      factories when is_list(factories) ->
+        factories
+    end
+  end
+
+  defp store_factories(state, namespace, compute_engine_id, factories) do
+    ns_factories = Map.get(state.namespace_factories, namespace, %{})
+
+    ns_factories =
+      Enum.reduce(factories, ns_factories, fn factory, acc ->
+        factory_id = factory["id"]
+        existing = Map.get(acc, factory_id, %{description: nil, ce_ids: MapSet.new()})
+
+        description = factory["description"] || existing.description
+
+        Map.put(acc, factory_id, %{
+          description: description,
+          ce_ids: MapSet.put(existing.ce_ids, compute_engine_id)
+        })
+      end)
+
+    put_in(state, [:namespace_factories, namespace], ns_factories)
+  end
+
+  defp remove_ce_factories(state, namespace, compute_engine_id) do
+    ns_factories = Map.get(state.namespace_factories, namespace, %{})
+
+    ns_factories =
+      ns_factories
+      |> Enum.map(fn {factory_id, info} ->
+        {factory_id, %{info | ce_ids: MapSet.delete(info.ce_ids, compute_engine_id)}}
+      end)
+      |> Enum.reject(fn {_factory_id, info} -> MapSet.size(info.ce_ids) == 0 end)
+      |> Map.new()
+
+    put_in(state, [:namespace_factories, namespace], ns_factories)
   end
 end
