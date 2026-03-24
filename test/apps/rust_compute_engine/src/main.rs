@@ -4,7 +4,7 @@ use std::thread::{self};
 use std::time::Duration;
 
 use flezha_compute_engine::processor::ProcessorError;
-use flezha_compute_engine::{register_factory, ProcessorHandler, ProcessorSettings};
+use flezha_compute_engine::{register_factory, FactoryMetadata, ProcessorHandler, ProcessorSettings};
 
 use serde::{Deserialize, Serialize};
 fn main() {
@@ -121,7 +121,7 @@ fn define_factories() {
             text_inputs: vec![],
         },
         || Box::new(StoreInputProcessor {}),
-        Some("Accumulates all inputs in state for later retrieval".to_string()),
+        FactoryMetadata::new("Accumulates all inputs in state for later retrieval"),
     );
 
     register_factory(
@@ -132,7 +132,7 @@ fn define_factories() {
             inverted: false,
         },
         || Box::new(CompareFilterProcessor {}),
-        Some("Filters by comparing input against a stored value".to_string()),
+        FactoryMetadata::new("Filters by comparing input against a stored value"),
     );
 
     register_factory(
@@ -140,6 +140,6 @@ fn define_factories() {
         ProcessorSettings::<DoNothingState, String, String>::default(),
         DoNothingState {},
         || Box::new(DoNothingProcessor {}),
-        Some("Passes input through unchanged".to_string()),
+        FactoryMetadata::new("Passes input through unchanged"),
     );
 }
