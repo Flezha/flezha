@@ -64,6 +64,9 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       "app_data/sockets/#{node_name}/"
     ])
 
+    # Peer nodes only need UDS transport (avoids QUIC port conflicts).
+    :erpc.call(node_name, Application, :put_env, [:flezha, :transports, [:uds]])
+
     # Start the flezha application on the peer node.
     :erpc.call(node_name, Application, :ensure_all_started, [:flezha], 10000)
 
@@ -126,15 +129,16 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end
   end
 
-  def start_compute_engine(namespace \\ "test_temp_namespace") do
+  def start_compute_engine(namespace \\ "test_temp_namespace", opts \\ []) do
     {:ok, current_path} = :file.get_cwd()
+    transport = Keyword.get(opts, :transport, :uds)
 
     command =
       "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- " <>
         namespace
 
     Flezha.Service.EventManager.add_handler(:compute_engine_connected_event)
-    Flezha.Service.PortPilot.open_port(command)
+    Flezha.Service.PortPilot.open_port(command, transport: transport)
 
     compute_engine_id =
       receive do

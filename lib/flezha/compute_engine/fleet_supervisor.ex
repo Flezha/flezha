@@ -16,10 +16,11 @@ defmodule Flezha.ComputeEngine.FleetSupervisor do
     Supervisor.stop(__MODULE__)
   end
 
-  def start_compute_engine_sup(namespace, compute_engine_id, sock) do
+  def start_compute_engine_sup(namespace, compute_engine_id, sock, transport) do
     Supervisor.start_child(__MODULE__, %{
       id: compute_engine_id,
-      start: {ComputeEngineSupervisor, :start_link, [{namespace, compute_engine_id, sock}]}
+      start:
+        {ComputeEngineSupervisor, :start_link, [{namespace, compute_engine_id, sock, transport}]}
     })
   end
 

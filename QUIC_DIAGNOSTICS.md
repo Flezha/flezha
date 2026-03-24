@@ -59,6 +59,13 @@ BootLoader starts BEFORE QuicListener and PortPilot. Its `handle_continue` fires
 
 ## Test Command
 ```bash
+# Both UDS and QUIC tests run together (both transports enabled by default in test mode):
+mix test
+
 # In Docker dev container:
-docker exec flezha_agent_dev bash -c '. "$HOME/.cargo/env" && cd /flezha && FLEZHA_TRANSPORT=quic mix test test/quic_test.exs'
+docker exec flezha_agent_dev bash -c '. "$HOME/.cargo/env" && cd /flezha && mix test'
 ```
+
+> **Note:** Since the per-namespace transport architecture change, both UDS and QUIC transport
+> servers start simultaneously in test mode. QUIC tests use their own namespace with dedicated
+> QUIC compute engines, so `FLEZHA_TRANSPORT=quic` is no longer needed for `mix test`.

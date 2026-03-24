@@ -26,12 +26,12 @@ defmodule Flezha.ComputeEngine.FleetManager do
     GenServer.call(__MODULE__, {:list_factories, namespace})
   end
 
-  def connect_handler(stream_ref, namespace, init_payload) do
+  def connect_handler(stream_ref, namespace, init_payload, transport) do
     factories = parse_factories(init_payload)
 
     case GenServer.call(
            __MODULE__,
-           {:compute_engine_connect, stream_ref, namespace, factories}
+           {:compute_engine_connect, stream_ref, namespace, factories, transport}
          ) do
       {:error, reason} ->
         Logger.error("Failed to connect compute_engine: #{inspect(reason)}")
@@ -131,11 +131,11 @@ defmodule Flezha.ComputeEngine.FleetManager do
 
   @impl true
   def handle_call(
-        {:compute_engine_connect, stream_ref, namespace, factories},
+        {:compute_engine_connect, stream_ref, namespace, factories, transport},
         _from,
         state
       ) do
-    case compute_engine_connect(stream_ref, namespace) do
+    case compute_engine_connect(stream_ref, namespace, transport) do
       {:ok, namespace, compute_engine_id} ->
         timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
@@ -371,7 +371,7 @@ defmodule Flezha.ComputeEngine.FleetManager do
     Map.delete(state.compute_engine_namespaces[namespace], old_compute_engine)
   end
 
-  defp compute_engine_connect(stream_ref, namespace) do
+  defp compute_engine_connect(stream_ref, namespace, transport) do
     compute_engine_id = Identificator.unique_id(namespace)
     control_unit = Identificator.control_unit(compute_engine_id)
 
@@ -381,7 +381,7 @@ defmodule Flezha.ComputeEngine.FleetManager do
 
     HubManager.register_handler(namespace, compute_engine_id)
 
-    FleetSupervisor.start_compute_engine_sup(namespace, compute_engine_id, stream_ref)
+    FleetSupervisor.start_compute_engine_sup(namespace, compute_engine_id, stream_ref, transport)
 
     # Transfer ownership of the stream to the ControlChannel process
     control_channel_pid =

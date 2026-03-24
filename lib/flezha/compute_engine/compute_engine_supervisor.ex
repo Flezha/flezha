@@ -2,19 +2,18 @@ defmodule Flezha.ComputeEngine.ComputeEngineSupervisor do
   alias Flezha.ComputeEngine.ControlUnit
   alias Flezha.ComputeEngine.ControlChannel
   alias Flezha.ComputeEngine.StreamAcceptor
-  alias Flezha.Transport.Resolver
   alias Flezha.Service.Identificator
 
   use Supervisor
 
-  def start_link({namespace, compute_engine_id, stream_ref}) do
-    Supervisor.start_link(__MODULE__, {namespace, compute_engine_id, stream_ref},
+  def start_link({namespace, compute_engine_id, stream_ref, transport}) do
+    Supervisor.start_link(__MODULE__, {namespace, compute_engine_id, stream_ref, transport},
       name: Identificator.unit_sup(compute_engine_id)
     )
   end
 
   @impl true
-  def init({namespace, compute_engine_id, stream_ref}) do
+  def init({namespace, compute_engine_id, stream_ref, transport}) do
     # Core children for all transport modes.
     children = [
       %{
@@ -38,7 +37,7 @@ defmodule Flezha.ComputeEngine.ComputeEngineSupervisor do
     # UDS mode: StreamAcceptors start per-stream NIF UDS servers.
     # QUIC mode: Data streams are routed by Transport.Server (no acceptors needed).
     children =
-      case Resolver.transport_type() do
+      case transport do
         :quic ->
           children
 

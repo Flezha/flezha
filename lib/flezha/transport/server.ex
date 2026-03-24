@@ -1,10 +1,11 @@
 defmodule Flezha.Transport.Server do
   @moduledoc """
-  GenServer that manages the NIF transport server lifecycle.
+  GenServer that manages a NIF transport server lifecycle.
 
-  Starts either a UDS or QUIC NIF server (based on config), receives
-  connections, reads the initial `connect_control_channel` frame, and
-  dispatches to FleetManager.
+  Multiple instances can run simultaneously — one per enabled transport type.
+  Each instance starts either a UDS or QUIC NIF server (based on its init arg),
+  receives connections, reads the initial `connect_control_channel` frame, and
+  dispatches to FleetManager with the transport type attached.
 
   ## Message flow
 
@@ -27,7 +28,6 @@ defmodule Flezha.Transport.Server do
   """
 
   alias Flezha.Transport.Native
-  alias Flezha.Transport.Resolver
   alias Flezha.ComputeEngine.FleetManager
   alias Flezha.ComputeEngine.StreamSup
   alias Flezha.Socket.Support, as: SocketSupport
@@ -41,16 +41,16 @@ defmodule Flezha.Transport.Server do
   @stream_type_secondary 2
 
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    transport = Keyword.fetch!(opts, :transport)
+    GenServer.start_link(__MODULE__, transport, name: name(transport))
   end
 
+  def name(:uds), do: :"#{__MODULE__}.Uds"
+  def name(:quic), do: :"#{__MODULE__}.Quic"
+
   @impl true
-  def init(_opts) do
-    case Resolver.transport_type() do
-      :quic -> init_quic()
-      _uds -> init_uds()
-    end
-  end
+  def init(:uds), do: init_uds()
+  def init(:quic), do: init_quic()
 
   defp init_uds do
     socket_path = SocketSupport.control_socket_path()
@@ -192,7 +192,7 @@ defmodule Flezha.Transport.Server do
     namespace = Map.get(init_payload, "namespace")
 
     # Dispatch to FleetManager — this creates the ComputeEngineSupervisor.
-    case FleetManager.connect_handler(stream_ref, namespace, init_payload) do
+    case FleetManager.connect_handler(stream_ref, namespace, init_payload, state.transport) do
       {:ok, compute_engine_id} ->
         # For QUIC, track the current compute_engine_id for data stream routing.
         state =

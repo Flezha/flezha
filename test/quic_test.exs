@@ -3,35 +3,40 @@ defmodule FlezhaQuicTest do
   alias FlezhaTest.Fixtures.ProcessorFixture
   alias Flezha.Service.ProcessorManager
   alias FlezhaTest.Helper.ProcessorTestHelper
+  alias FlezhaTest.Helper.NodeTestHelper
 
   use ExUnit.Case
   use Flezha.Constant
 
   @moduletag :quic
 
-  @default_namespace "default"
+  @quic_namespace "quic_test_namespace"
 
   @test_processor_factory "do_nothing"
   @test_store_input_factory "store_input"
 
   setup_all do
-    if Application.get_env(:flezha, :transport) != :quic do
-      raise "QUIC tests require FLEZHA_TRANSPORT=quic"
-    end
+    # Start 2 compute engines connected via QUIC for this test module.
+    ce_id_1 = NodeTestHelper.start_compute_engine(@quic_namespace, transport: :quic)
+    ce_id_2 = NodeTestHelper.start_compute_engine(@quic_namespace, transport: :quic)
 
-    %{}
+    on_exit(fn ->
+      FleetManager.stop_namespace(@quic_namespace)
+    end)
+
+    %{compute_engine_ids: [ce_id_1, ce_id_2]}
   end
 
   setup _context do
     on_exit(fn ->
-      ProcessorManager.stop_all_processors(@default_namespace)
+      ProcessorManager.stop_all_processors(@quic_namespace)
     end)
 
     :ok
   end
 
   test "compute engines connected via QUIC" do
-    res = FleetManager.active_compute_engines(@default_namespace)
+    res = FleetManager.active_compute_engines(@quic_namespace)
     assert length(res) === 2
     Enum.each(res, &assert(is_binary(&1)))
   end
@@ -42,7 +47,7 @@ defmodule FlezhaQuicTest do
       factory_id: @test_processor_factory
     }
 
-    {status, info} = ProcessorManager.start_processor(@default_namespace, processor)
+    {status, info} = ProcessorManager.start_processor(@quic_namespace, processor)
 
     assert status === :ok,
            "start_processor failed: #{inspect(info)}"
@@ -58,10 +63,10 @@ defmodule FlezhaQuicTest do
     {:ok, _info} =
       processor_id
       |> ProcessorFixture.get(@test_processor_factory)
-      |> ProcessorFixture.start()
-      |> ProcessorFixture.attach_output_msg()
+      |> ProcessorFixture.start(@quic_namespace)
+      |> ProcessorFixture.attach_output_msg(@quic_namespace)
 
-    ProcessorManager.send_io(processor_id, @default_namespace, "quic_hello", %{})
+    ProcessorManager.send_io(processor_id, @quic_namespace, "quic_hello", %{})
 
     receive do
       {:message_forward, msg} ->
@@ -77,14 +82,14 @@ defmodule FlezhaQuicTest do
     {:ok, _info} =
       processor_id
       |> ProcessorFixture.get(@test_store_input_factory)
-      |> ProcessorFixture.start()
-      |> ProcessorFixture.attach_output_msg()
+      |> ProcessorFixture.start(@quic_namespace)
+      |> ProcessorFixture.attach_output_msg(@quic_namespace)
 
-    ProcessorTestHelper.send_sync_io(processor_id, @default_namespace, "quic_state_1", %{})
-    ProcessorTestHelper.send_sync_io(processor_id, @default_namespace, "quic_state_2", %{})
+    ProcessorTestHelper.send_sync_io(processor_id, @quic_namespace, "quic_state_1", %{})
+    ProcessorTestHelper.send_sync_io(processor_id, @quic_namespace, "quic_state_2", %{})
 
     {:ok, json_state} =
-      ProcessorManager.get_processor_state(@default_namespace, processor_id)
+      ProcessorManager.get_processor_state(@quic_namespace, processor_id)
 
     processor_state = Flezha.Service.Payloader.json_to_map(json_state)
 
@@ -100,10 +105,10 @@ defmodule FlezhaQuicTest do
     {:ok, _info} =
       processor_id
       |> ProcessorFixture.get(@test_processor_factory)
-      |> ProcessorFixture.start()
-      |> ProcessorFixture.attach_output_msg()
+      |> ProcessorFixture.start(@quic_namespace)
+      |> ProcessorFixture.attach_output_msg(@quic_namespace)
 
-    result = ProcessorTestHelper.send_sync_io(processor_id, @default_namespace, "quic_echo", %{})
+    result = ProcessorTestHelper.send_sync_io(processor_id, @quic_namespace, "quic_echo", %{})
 
     assert result === "quic_echo"
   end

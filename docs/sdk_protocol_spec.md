@@ -24,12 +24,12 @@
 
 ### What is Flezha?
 
-Flezha is a distributed stream-processing platform. The **Agent** (an Elixir/OTP application) orchestrates work across one or more **Compute Engines** (SDK processes). Each SDK process connects to the agent over Unix domain sockets, registers processor factories, and executes data-processing logic on behalf of the agent.
+Flezha is a distributed stream-processing platform. The **Agent** (an Elixir/OTP application) orchestrates work across one or more **Compute Engines** (SDK processes). Each SDK process connects to the agent over a configurable transport (UDS or QUIC), registers processor factories, and executes data-processing logic on behalf of the agent.
 
 ### Architecture
 
 ```
-+-------------------+         Unix Domain Sockets         +-------------------+
++-------------------+      UDS or QUIC Transport          +-------------------+
 |                   |  Control Channel (Protobuf/binary)  |                   |
 |   Flezha Agent    | <=================================> |   SDK Process     |
 |   (Elixir/OTP)    |                                     |  (Compute Engine) |
@@ -39,6 +39,8 @@ Flezha is a distributed stream-processing platform. The **Agent** (an Elixir/OTP
 |                   | <───────────────────────────────── |                   |
 +-------------------+                                     +-------------------+
 ```
+
+The agent can run both UDS and QUIC transport servers simultaneously (configured via `FLEZHA_TRANSPORTS`). Each compute engine connects using one transport type, determined by its `FLEZHA_TRANSPORT` environment variable.
 
 ### Two Communication Layers
 
@@ -51,11 +53,13 @@ Flezha is a distributed stream-processing platform. The **Agent** (an Elixir/OTP
 
 ## 2. Transport Layer
 
-### Socket Type
+Flezha supports two transport types. Multiple transports can be active simultaneously — each compute engine chooses its transport via the `FLEZHA_TRANSPORT` env var.
 
-All sockets are **Unix Domain Sockets** using `SOCK_STREAM` (TCP-like, reliable, ordered byte streams).
+### UDS (Unix Domain Sockets)
 
-### Socket File Paths
+All sockets are `SOCK_STREAM` (TCP-like, reliable, ordered byte streams).
+
+#### Socket File Paths
 
 The base path for all socket files is determined by:
 
@@ -66,7 +70,7 @@ The base path for all socket files is determined by:
 
 Trailing slashes are stripped before path construction.
 
-### Socket Types
+#### Socket Types
 
 There are three socket types. In all cases, the **agent listens** and the **SDK connects**.
 
@@ -93,6 +97,32 @@ The agent creates a listening socket for each primary stream after the SDK has b
 ```
 
 The agent creates a listening socket for each secondary stream. The SDK connects. Data flows **SDK -> agent** (the SDK sends processor output back to the agent).
+
+### QUIC
+
+When `FLEZHA_TRANSPORT=quic`, the SDK connects to the agent via a single QUIC connection (UDP). All communication multiplexes over bidirectional QUIC streams within that connection.
+
+| Setting | Env Variable | Default |
+|---------|-------------|---------|
+| Server bind address | `FLEZHA_QUIC_ADDRESS` | `0.0.0.0:4433` |
+| CA certificate | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` |
+| Server certificate | `FLEZHA_SERVER_CERT_PATH` | `app_data/certs/server.pem` |
+| Server key | `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/server.key` |
+
+TLS certificates are auto-generated on first startup if absent.
+
+#### QUIC Stream Mapping
+
+- **First bidi stream** opened by the SDK = control channel (no prefix bytes, same framing as UDS)
+- **Subsequent bidi streams** = data streams, prefixed with a 2-byte identifier:
+  - Byte 0: stream type (`0x01` = primary, `0x02` = secondary)
+  - Byte 1: stream index (round-robin channel selector)
+
+The prefix is consumed by the NIF driver and not visible to the framing layer.
+
+### Multi-Transport Support
+
+The agent can listen on both UDS and QUIC simultaneously by setting `FLEZHA_TRANSPORTS=uds,quic` (or in test mode, both are enabled by default). Each compute engine independently chooses its transport. The transport type is threaded through the supervisor chain so that UDS compute engines get StreamAcceptors and QUIC ones rely on the Transport.Server for data stream routing.
 
 ---
 

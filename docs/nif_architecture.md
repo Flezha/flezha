@@ -16,7 +16,7 @@ The `flz_nif` crate is a Rustler NIF that wraps the `flz_transport` shared libra
 │       │            ← {:flz_data, id, pid, msg, meta}   │
 │       │            ← {:flz_stream, ref, type, index}   │
 │       ▼              (QUIC data streams only)           │
-│  FleetManager.connect_handler/3                         │
+│  FleetManager.connect_handler/4                         │
 │       │                                                 │
 │       ▼                                                 │
 │  ComputeEngineSupervisor                                │
@@ -303,14 +303,17 @@ Each stream has an `active` flag:
 
 ### Transport.Server
 
-GenServer managing the NIF server lifecycle. Starts UDS or QUIC based on `FLEZHA_TRANSPORT` config.
+GenServer managing a NIF server lifecycle. Multiple instances run simultaneously — one per
+enabled transport (configured via `FLEZHA_TRANSPORTS` / `transports` app env). Each instance
+is parameterized with its transport type at startup and passes it through to FleetManager
+when a compute engine connects.
 
-**UDS mode:**
+**UDS instance** (`Flezha.Transport.Server.Uds`):
 - Calls `Native.start_uds_server(path, self())`
 - Receives `{:flz_connection, stream_ref}` for each new SDK connection
 - After control channel handshake, StreamAcceptors handle data stream routing
 
-**QUIC mode:**
+**QUIC instance** (`Flezha.Transport.Server.Quic`):
 - Calls `CertGenerator.ensure_certs()` then `Native.start_quic_server(addr, cert, key, self())`
 - Control channels arrive as `{:flz_connection, stream_ref}` (first bidi stream per connection)
 - Data streams arrive as `{:flz_stream, stream_ref, type, index}` (subsequent bidi streams)
@@ -318,8 +321,10 @@ GenServer managing the NIF server lifecycle. Starts UDS or QUIC based on `FLEZHA
 
 ### ComputeEngineSupervisor
 
-**UDS mode:** Starts StreamAcceptors (primary + secondary) that create per-stream UDS sockets.
-**QUIC mode:** No StreamAcceptors — data streams are routed by Transport.Server.
+Receives the transport type from FleetManager (which gets it from Transport.Server).
+
+**UDS transport:** Starts StreamAcceptors (primary + secondary) that create per-stream UDS sockets.
+**QUIC transport:** No StreamAcceptors — data streams are routed by Transport.Server.
 
 ### StreamAcceptor (UDS only)
 
@@ -410,11 +415,8 @@ Tests the FrameBuffer with:
 ### Integration
 
 ```bash
-# UDS mode (default)
+# Run all tests (UDS + QUIC) — both transports enabled by default in test mode
 mix test
-
-# QUIC mode
-FLEZHA_TRANSPORT=quic mix test test/quic_test.exs
 
 # Benchmarks
 ./scripts/bench.sh          # UDS

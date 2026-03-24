@@ -100,6 +100,21 @@ config :flezha,
   # Available options: "uds" (Unix Domain Sockets, default), "quic"
   transport: System.get_env("FLEZHA_TRANSPORT", "uds") |> String.to_atom(),
 
+  # List of transports to enable simultaneously.
+  # In test mode, both UDS and QUIC are enabled by default so all tests run with `mix test`.
+  # Can be overridden with FLEZHA_TRANSPORTS=uds,quic
+  transports:
+    (case {System.get_env("FLEZHA_TRANSPORTS"), config_env()} do
+       {nil, :test} ->
+         [:uds, :quic]
+
+       {nil, _} ->
+         [System.get_env("FLEZHA_TRANSPORT", "uds") |> String.to_atom()]
+
+       {val, _} ->
+         val |> String.split(",", trim: true) |> Enum.map(&String.to_atom/1)
+     end),
+
   # QUIC transport settings.
   quic_listen_address: System.get_env("FLEZHA_QUIC_ADDRESS", "0.0.0.0:4433"),
   ca_cert_path: System.get_env("FLEZHA_CA_CERT_PATH", "app_data/certs/ca.pem"),

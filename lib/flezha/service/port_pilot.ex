@@ -10,10 +10,13 @@ defmodule Flezha.Service.PortPilot do
     GenServer.start_link(__MODULE__, arg, name: __MODULE__)
   end
 
-  def open_port(command) do
+  def open_port(command, opts \\ []) do
     socket_files_path = Application.fetch_env!(:flezha, :socket_files_path)
 
-    transport = Application.get_env(:flezha, :transport, :uds) |> to_string()
+    transport =
+      Keyword.get(opts, :transport, Application.get_env(:flezha, :transport, :uds))
+      |> to_string()
+
     ca_cert_path = Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem")
 
     quic_address = Application.get_env(:flezha, :quic_listen_address, "0.0.0.0:4433")

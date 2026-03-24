@@ -11,12 +11,14 @@ defmodule Flezha.BootLoader do
   def init(_) do
     run_pre_hooks()
 
-    case Application.get_env(:flezha, :transport, :uds) do
-      :quic ->
-        Flezha.Transport.CertGenerator.ensure_certs()
+    transports = Application.get_env(:flezha, :transports, [:uds])
 
-      _ ->
-        Flezha.Socket.Support.prepare_socket_dir()
+    if :uds in transports do
+      Flezha.Socket.Support.prepare_socket_dir()
+    end
+
+    if :quic in transports do
+      Flezha.Transport.CertGenerator.ensure_certs()
     end
 
     {:ok, %{boot_ready: false}, {:continue, :boot}}
@@ -35,7 +37,7 @@ defmodule Flezha.BootLoader do
   end
 
   @impl true
-  def handle_info({:compute_engine_connected_event, {"test_temp_namespace", _}}, state) do
+  def handle_info({:compute_engine_connected_event, _}, state) do
     {:noreply, state}
   end
 

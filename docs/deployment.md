@@ -29,7 +29,8 @@ Key variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `FLEZHA_TRANSPORT` | `uds` | Transport layer: `uds` or `quic` |
+| `FLEZHA_TRANSPORT` | `uds` | Default transport layer: `uds` or `quic` |
+| `FLEZHA_TRANSPORTS` | (derived) | Comma-separated list of transports to enable simultaneously (e.g. `uds,quic`). Defaults to the value of `FLEZHA_TRANSPORT`. In test mode defaults to `uds,quic`. |
 | `FLEZHA_SOCKET_FILES_PATH` | `/flezha/socket_data/` | UDS socket directory |
 | `FLEZHA_QUIC_ADDRESS` | `0.0.0.0:4433` | QUIC bind address |
 | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` | TLS CA certificate (auto-generated if absent) |
@@ -259,7 +260,8 @@ Key ConfigMap values:
 
 | Key | Default | Notes |
 |---|---|---|
-| `FLEZHA_TRANSPORT` | `uds` | Change to `quic` to enable QUIC transport |
+| `FLEZHA_TRANSPORT` | `uds` | Default transport for auto-started compute engines |
+| `FLEZHA_TRANSPORTS` | (derived) | Comma-separated list to enable multiple transports simultaneously (e.g. `uds,quic`) |
 | `FLEZHA_QUIC_ADDRESS` | `0.0.0.0:4433` | QUIC listen address (UDP port 4433 exposed) |
 | `FLEZHA_CA_CERT_PATH` | `/flezha/app_data/certs/ca.pem` | Auto-generated on first run |
 | `FLEZHA_SERVER_CERT_PATH` | `/flezha/app_data/certs/server.pem` | Auto-generated on first run |
@@ -279,7 +281,7 @@ Certs are generated automatically on first startup and persist on the host node.
 
 ### QUIC port
 
-When `FLEZHA_TRANSPORT=quic`, the agent listens on UDP port 4433. The DaemonSet exposes this port:
+When QUIC is enabled (via `FLEZHA_TRANSPORT=quic` or `FLEZHA_TRANSPORTS=uds,quic`), the agent listens on UDP port 4433. The DaemonSet exposes this port:
 
 ```yaml
 ports:

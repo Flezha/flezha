@@ -49,7 +49,14 @@ defmodule Flezha.Application do
   end
 
   defp transport_children do
-    [{Flezha.Transport.Server, []}]
+    transports = Application.get_env(:flezha, :transports, [:uds])
+
+    Enum.map(transports, fn transport ->
+      Supervisor.child_spec(
+        {Flezha.Transport.Server, [transport: transport]},
+        id: {Flezha.Transport.Server, transport}
+      )
+    end)
   end
 
   defp validate_boot_ready() do
