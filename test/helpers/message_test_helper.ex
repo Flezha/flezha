@@ -16,4 +16,24 @@ defmodule FlezhaTest.Helper.MessageTestHelper do
       timeout -> 0
     end
   end
+
+  def flush(msg) do
+    receive do
+      ^msg -> flush(msg)
+    after
+      0 -> :ok
+    end
+  end
+
+  def recv_until(msg, condition, timeout \\ 5000) do
+    if condition.() do
+      :ok
+    else
+      receive do
+        ^msg -> recv_until(msg, condition, timeout)
+      after
+        timeout -> raise "Condition not met within #{timeout}ms"
+      end
+    end
+  end
 end

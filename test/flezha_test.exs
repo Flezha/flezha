@@ -551,17 +551,15 @@ defmodule FlezhaTest do
     NodeTestHelper.stop_compute_engine_remote(peer_node, namespace, rem_compute_engine_1)
     NodeTestHelper.stop_compute_engine_remote(peer_node, namespace, rem_compute_engine_2)
 
-    # Wait for process registered and post-startup hooks from processor migration.
-    # With each compute_engine disconnect we update the tag of the processor.
-    MessageTestHelper.recv_drain(:hook_insert_recv, 500)
-    MessageTestHelper.recv_drain(:hook_pstartup_recv, 500)
-
-    # Make sure all the processors are migrated to the other compute_engine.
-    reg = ProcessorManager.processor_registry(namespace)
-
-    Enum.each(reg, fn {_processor_id, {_cspec, _cnodes, %{tag: new_compute_engine}}} ->
-      assert new_compute_engine === compute_engine_id_1
+    # Wait for cross-node ProcessHub sync via hook messages (pure message passing).
+    # Each :hook_insert_recv arrives when the local registry syncs a tag update.
+    # We check the condition after each message — no polling, no sleeping.
+    MessageTestHelper.recv_until(:hook_insert_recv, fn ->
+      ProcessorManager.processor_registry(namespace)
+      |> Enum.all?(fn {_, {_, _, %{tag: tag}}} -> tag === compute_engine_id_1 end)
     end)
+
+    MessageTestHelper.flush(:hook_pstartup_recv)
 
     # Make sure the states have been migrated.
     for {processor_id, _info} <- processor_infos do

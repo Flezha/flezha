@@ -329,10 +329,10 @@ defmodule Flezha.ComputeEngine.FleetManager do
     put_in(state, [:compute_engine_namespaces, namespace], namespace_compute_engines)
   end
 
-  defp hub_migrate(state, namespace, _compute_engine_id) do
+  defp hub_migrate(_state, namespace, _compute_engine_id) do
     HubManager.stop_hub(namespace)
 
-    Map.delete(state.compute_engine_namespaces, namespace)
+    %{}
   end
 
   defp compute_engine_preserve(state, namespace, compute_engine_id) do
