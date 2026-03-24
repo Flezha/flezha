@@ -243,7 +243,7 @@ defmodule FlezhaTest do
 
     processor_id = "processor_migration_test"
 
-    {:ok, %{pid: _processor_pid, node: _pnode}} =
+    {:ok, %{pid: _processor_pid, node: pnode}} =
       processor_id
       |> ProcessorFixture.get(@test_store_input_factory)
       |> ProcessorFixture.start()
@@ -274,10 +274,36 @@ defmodule FlezhaTest do
 
     assert processor_state === test_state
 
+    test_pid = self()
+
+    ProcessHub.register_hook_handlers(
+      Identificator.hub(@default_namespace),
+      ProcessHub.Constant.Hook.post_children_start(),
+      [
+        %ProcessHub.Service.HookManager{
+          id: "migration_wait",
+          m: Process,
+          f: :send,
+          a: [test_pid, :migration_complete, []]
+        }
+      ]
+    )
+
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
 
-    # TODO: add hook here instead
-    Process.sleep(500)
+    if pnode == peer_node do
+      receive do
+        :migration_complete -> :ok
+      after
+        5000 -> flunk("Migration did not complete within 5 seconds")
+      end
+    end
+
+    ProcessHub.cancel_hook_handlers(
+      Identificator.hub(@default_namespace),
+      ProcessHub.Constant.Hook.post_children_start(),
+      ["migration_wait"]
+    )
 
     {:ok, json_state} =
       ProcessorManager.get_processor_state(@default_namespace, processor_id)
@@ -527,8 +553,8 @@ defmodule FlezhaTest do
 
     # Wait for process registered and post-startup hooks from processor migration.
     # With each compute_engine disconnect we update the tag of the processor.
-    MessageTestHelper.recv_drain(:hook_insert_recv)
-    MessageTestHelper.recv_drain(:hook_pstartup_recv)
+    MessageTestHelper.recv_drain(:hook_insert_recv, 500)
+    MessageTestHelper.recv_drain(:hook_pstartup_recv, 500)
 
     # Make sure all the processors are migrated to the other compute_engine.
     reg = ProcessorManager.processor_registry(namespace)
