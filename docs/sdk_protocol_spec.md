@@ -412,6 +412,50 @@ The agent sends a `ComputeEngineDisconnect` command. The SDK:
 3. The agent closes the control socket after receiving the response.
 4. The SDK should also shut down its stream sockets.
 
+This is an **intentional** disconnect — the SDK should NOT attempt to reconnect.
+
+#### Auto-Reconnection (Unexpected Disconnect)
+
+If the control channel drops unexpectedly (agent crash, container restart, network failure), the SDK detects the disconnection and automatically reconnects:
+
+```
+SDK                                        Agent
+ │                                           │
+ │     ══ Agent goes down ══                 ✗
+ │
+ │  Control listener detects read error
+ │  (BrokenPipe / UnexpectedEof)
+ │
+ │  SDK clears all state:
+ │    - io_streams (dead)
+ │    - processors (will be re-added)
+ │    - work queues (stale stream refs)
+ │    - compute_engine_id → "undefined"
+ │
+ │  Retry with exponential backoff:
+ │    200ms, 400ms, 800ms, ... cap 30s
+ │
+ │     ══ Agent comes back up ══             │
+ │                                           │
+ │──── 1. Reconnect to control socket ──────>│
+ │──── 2. Send handshake init message ──────>│
+ │                                           │
+ │     (normal lifecycle resumes from Step 3) │
+ │                                           │
+ │<─── 4. AssignComputeEngineId (new ID) ───│
+ │<─── 6. ConnectSocket ────────────────────│
+ │<─── 9. AddProcessor (for each) ──────────│
+ │                                           │
+ │         ═══ READY ═══                     │
+```
+
+**Key behaviors:**
+- The SDK distinguishes intentional disconnects (`ComputeEngineDisconnect` command sets status to `Stopped`) from unexpected ones (status is `Running`). Only unexpected disconnects trigger reconnection.
+- The agent treats the reconnection as a **new connection** — it assigns a fresh `compute_engine_id` and re-sends the full command sequence.
+- Processor factories remain registered in the SDK process; the agent re-creates processor instances via `AddProcessor`.
+- In-flight worker work completes (writes to dead streams fail silently); workers return to the pool after reconnection.
+- Backoff schedule: 200ms, 400ms, 800ms, 1.6s, 3.2s, 6.4s, 12.8s, 25.6s, capped at 30s.
+
 ---
 
 ## 6. Command Reference
@@ -662,7 +706,7 @@ new(namespace: string) -> SDK
 ```
 
 1. All factories must be registered before calling `new()`.
-2. Connects to the agent's control socket.
+2. Connects to the agent's control socket. If the agent is not available, retries with exponential backoff (200ms → 30s cap) until the connection succeeds. This allows compute engines to start before the agent.
 3. Sends the handshake init message with the namespace and registered factory IDs.
 4. Blocks until `AssignComputeEngineId` is received and processed.
 5. Returns the SDK handle.
@@ -845,8 +889,8 @@ CommandResponse {
 
 ### Connection Close Detection
 
-- **TCP close**: The agent detects a closed control socket via `:tcp_closed` messages. This triggers compute engine disconnect handling (preservation, migration, or rerouting depending on namespace state).
-- **SDK side**: Read errors (0 bytes read, `BrokenPipe`) on the control socket indicate the agent has disconnected.
+- **Agent side**: The agent detects a closed control socket via `{:flz_closed, ...}` NIF messages. This triggers compute engine disconnect handling (preservation, migration, or rerouting depending on namespace state).
+- **SDK side**: The control listener thread distinguishes transient read errors (`WouldBlock`, `Interrupted`) from fatal ones (`BrokenPipe`, `UnexpectedEof`, `ConnectionReset`). Transient errors are retried; fatal errors trigger auto-reconnection (see Section 5, Auto-Reconnection).
 
 ### Incomplete Frame Handling
 
@@ -863,4 +907,8 @@ If a frame fails to parse (corrupt data), the SDK should:
 
 ### Reconnection
 
-The current protocol does not define automatic reconnection. If the control socket is closed, the SDK process should exit. The agent manages compute engine lifecycle, including keepalive timeouts (configurable via `FLEZHA_OPERATOR_KEEPALIVE`, default 30000ms) to preserve state for potential reconnection by a new SDK process.
+The SDK automatically reconnects when the control channel drops unexpectedly. See Section 5 (Auto-Reconnection) for the full reconnection flow.
+
+**Intentional vs unexpected disconnect:** When the agent sends `ComputeEngineDisconnect`, the SDK sets its status to `Stopped` and does **not** reconnect. When the connection drops without this command (agent crash, network failure), the SDK's status is still `Running`, and it enters the reconnection loop with exponential backoff.
+
+**Agent-side keepalive:** The agent preserves compute engine state for a configurable window (default 30000ms, via `FLEZHA_OPERATOR_KEEPALIVE`) after detecting a disconnect. If a new SDK process with the same namespace connects within this window, the agent may migrate preserved processors to the new compute engine.
