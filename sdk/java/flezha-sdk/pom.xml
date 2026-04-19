@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.flezha</groupId>
+        <artifactId>flezha-sdk-parent</artifactId>
+        <version>0.1.0</version>
+    </parent>
+
+    <artifactId>flezha-sdk</artifactId>
+    <packaging>jar</packaging>
+    <name>Flezha SDK (fat jar)</name>
+    <description>Aggregator — the published fat jar containing API, runtime, native bindings, and protobuf generated classes.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.flezha</groupId>
+            <artifactId>flezha-sdk-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.flezha</groupId>
+            <artifactId>flezha-sdk-protobuf</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.flezha</groupId>
+            <artifactId>flezha-sdk-runtime</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.flezha</groupId>
+            <artifactId>flezha-sdk-native</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <shadedArtifactAttached>false</shadedArtifactAttached>
+                            <finalName>${project.artifactId}-${project.version}</finalName>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -3,6 +3,10 @@ syntax = "proto3";
 
 package compute_engine_commands;
 
+option java_package = "com.flezha.sdk.proto";
+option java_multiple_files = true;
+option java_outer_classname = "ComputeEngineCommandsProto";
+
 message CommandRequest {
     string reference_id = 1;
     

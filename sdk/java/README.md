@@ -1,133 +1,102 @@
 # Flezha Java SDK
 
-Java SDK for interacting with the Flezha platform.
+Java 21 SDK for authoring Flezha compute engines. Feature parity with the
+Rust SDK (`sdk/rust/`), talks to the existing Elixir agent through JNI
+bindings over `flz_transport`. Supports both UDS and QUIC transports.
 
-## Prerequisites
+## Quickstart
 
-- Java 21 or higher
-- Gradle (included via Gradle wrapper)
+```java
+public class EchoHandler implements ProcessorHandler<EchoState, String, String> {
+    @Override
+    public String process(String input, EchoState state) {
+        return input;
+    }
+}
 
-## Building the Project
+public static void main(String[] args) {
+    ProcessorSettings<EchoState, String, String> settings =
+        ProcessorSettings.<EchoState, String, String>builder()
+            .inputTransformer(InputTransformers.text())
+            .outputTransformer(OutputTransformers.pipeToAgentText())
+            .runner(ProcessorRunner.THREAD_POOL)
+            .build();
 
-To build the project, run:
+    FactoryRegistry.registerFactory("echo", settings, new EchoState(), EchoHandler::new);
 
-```bash
-./gradlew build
+    Flezha sdk = Flezha.newInstance(args[0]);
+    System.out.println("assigned id: " + sdk.getId());
+}
 ```
 
-This will compile the code, run tests, and create the build artifacts in the `build/` directory.
+## Build Prerequisites
 
-## Running Tests
+- **Java 21** or newer (JDK with `javac`). The build is pinned to Java 21 via
+  `maven-compiler-plugin`'s `<release>21</release>` and enforced by
+  `maven-enforcer-plugin`.
+- **Rust stable toolchain** (`cargo`, `rustc`). Needed to build the `flz_jni`
+  bridge crate that produces `libflz_transport.{so,dylib,dll}`.
+- **[cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)** for the
+  native cross-build. Install via `cargo install cargo-zigbuild`. The Zig
+  toolchain is pulled in by `cargo-zigbuild` itself.
 
-To run the test suite:
+## Entry point: `mvn package`
 
-```bash
-./gradlew test
-```
-
-To run tests with verbose output:
-
-```bash
-./gradlew test --info
-```
-
-To run tests continuously (useful during development):
-
-```bash
-./gradlew test --continuous
-```
-
-## Running the SDK
-
-To run the main application:
-
-```bash
-./gradlew run
-```
-
-Alternatively, you can build and run the JAR directly:
-
-```bash
-./gradlew build
-java -jar build/libs/java.jar
-```
-
-## Development
-
-### Clean Build Artifacts
-
-To clean all build artifacts:
-
-```bash
-./gradlew clean
-```
-
-### Rebuild from Scratch
-
-```bash
-./gradlew clean build
-```
-
-### Check Dependencies
-
-To see the dependency tree:
-
-```bash
-./gradlew dependencies
-```
-
-## Project Structure
+Portable build (bundles all five per-OS native binaries into the fat jar):
 
 ```
-sdk/java/
-├── src/
-│   ├── main/
-│   │   └── java/
-│   │       └── com/
-│   │           └── flezha/
-│   │               └── sdk/
-│   │                   └── Main.java
-│   └── test/
-│       └── java/
-│           └── com/
-│               └── flezha/
-│                   └── sdk/
-├── build.gradle.kts
-├── settings.gradle
-└── README.md
+mvn -f sdk/java/pom.xml -P native-build package
 ```
 
-## Gradle Tasks
+Fast local iteration (builds only the host triple — **non-portable**):
 
-Common Gradle tasks:
+```
+mvn -f sdk/java/pom.xml -P host-only package
+```
 
-- `./gradlew build` - Build the project
-- `./gradlew test` - Run tests
-- `./gradlew run` - Run the application
-- `./gradlew clean` - Clean build artifacts
-- `./gradlew jar` - Build JAR file
-- `./gradlew tasks` - List all available tasks
+## Modules
 
-## IDE Setup
+| Module | Purpose |
+|---|---|
+| `flezha-sdk-api` | Public API: `Flezha`, `FactoryRegistry`, `ProcessorHandler`, sealed input/output/result types, transformers. No native dependency. |
+| `flezha-sdk-protobuf` | Java classes generated from `protobufs/compute_engine_commands.proto`. Pure generated code; no hand-written sources. |
+| `flezha-sdk-runtime` | Control plane, data plane, framing, worker pool, reconnect, command dispatch. |
+| `flezha-sdk-native` | JNI bindings (`NativeTransport`) + bundled per-OS `libflz_transport` native binaries. |
+| `flezha-sdk` | Fat-jar aggregator — the published artifact. |
+| `flezha-sdk-integration-tests` | End-to-end tests against a running agent (typically driven by the Elixir harness via `mix test.java_sdk`). |
 
-### IntelliJ IDEA
+## Running tests
 
-1. Open IntelliJ IDEA
-2. Select "Open" and choose the `sdk/java` directory
-3. IntelliJ will automatically detect the Gradle project and import it
+Unit tests (no agent required):
 
-### Eclipse
+```
+mvn -f sdk/java/pom.xml test
+```
 
-1. Install the Gradle plugin (Buildship)
-2. File → Import → Gradle → Existing Gradle Project
-3. Select the `sdk/java` directory
+With coverage report (JaCoCo):
 
-### VS Code
+```
+mvn -f sdk/java/pom.xml -P coverage verify
+```
 
-1. Install the Java Extension Pack
-2. Install the Gradle for Java extension
-3. Open the `sdk/java` directory
+Integration tests (against a live agent):
 
-## License
+```
+mix test.java_sdk  # from the repo root; runs the full Java-runtime matrix
+```
 
-See the main Flezha project for license information.
+## Environment variables
+
+All SDK configuration is read from environment variables matching the
+Rust SDK and documented in `docs/sdk_protocol_spec.md` §2:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `FLEZHA_TRANSPORT` | `uds` | `uds` or `quic`. |
+| `FLEZHA_QUIC_ADDRESS` | `127.0.0.1:4433` | QUIC only. |
+| `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` | QUIC only. |
+| `FLEZHA_SERVER_CERT_PATH` | `app_data/certs/cert.pem` | Server mode only. |
+| `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/key.pem` | Server mode only. |
+| `FLEZHA_SOCKET_FILES_PATH` | `app_data/sockets` | UDS only. |
+| `FLEZHA_WORKER_POOL_SIZE` | `Runtime.availableProcessors()` | Size of the shared executor for `THREAD_POOL` runners. |
+| `FLEZHA_NATIVE_LIB_DIR` | `$TMPDIR` | Override the directory the SDK extracts `libflz_transport` into. Use this on hardened containers where `/tmp` is noexec. |

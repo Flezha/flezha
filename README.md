@@ -104,3 +104,31 @@ The performance test creates multiple processors, enables plugins, sends message
 ### Development
 Run the application inside the docker containers.
 See `docker/dev/README.md` for more information.
+
+### Running Java SDK tests
+
+Flezha ships a Java 21 SDK under `sdk/java/`. Its integration matrix runs
+against the unchanged Elixir agent over both UDS and QUIC transports, and
+covers both the Rust and Java runtimes. The single entry point is:
+
+```bash
+mix test.java_sdk
+```
+
+This alias (defined in `mix.exs`):
+1. Cross-builds the host-triple `flz_jni` cdylib via
+   `scripts/build-native.sh` and stages it at
+   `sdk/java/flezha-sdk-native/src/main/resources/native/<os>-<arch>/libflz_transport.<ext>`.
+2. Builds the Java SDK fat jar (`mvn -f sdk/java/pom.xml -P host-only package`).
+3. Builds the Java test compute engine
+   (`mvn -f test/apps/java_compute_engine/pom.xml package`).
+4. Runs `mix test --only java_sdk`.
+
+Prerequisites: Java 21, Rust stable, `cargo-zigbuild`
+(`cargo install cargo-zigbuild`), and a Zig toolchain (pulled in by
+`cargo-zigbuild`).
+
+On hardened containers where `/tmp` is mounted `noexec`, set
+`FLEZHA_NATIVE_LIB_DIR=/path/to/writable` so `NativeLibraryLoader` can
+extract `libflz_transport` somewhere it can be loaded. See
+`sdk/java/README.md` for the full env-var reference.

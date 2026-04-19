@@ -1,7 +1,6 @@
-# Gradle build outputs
-build/
-.gradle/
-gradle-app.setting
+# Maven build outputs
+target/
+dependency-reduced-pom.xml
 
 # Compiled class files
 *.class
@@ -53,5 +52,5 @@ Thumbs.db
 *.tmp
 *.backup
 
-# Test outputs
-test-output/
+# Bundled native binaries (populated by native-build profile)
+flezha-sdk-native/src/main/resources/native/

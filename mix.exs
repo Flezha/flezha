@@ -9,7 +9,24 @@ defmodule Flezha.MixProject do
       start_permanent: Mix.env() == :prod,
       releases: releases(),
       elixirc_paths: elixirc_paths(Mix.env()),
-      deps: deps()
+      deps: deps(),
+      aliases: aliases()
+    ]
+  end
+
+  # Aliases are invoked via `mix <alias>`. `test.java_sdk` is the single
+  # entry point for the Java-runtime integration matrix: build the host-triple
+  # flz_jni cdylib, stage it into flezha-sdk-native resources, build the
+  # Java SDK jar plus the test compute engine jar, and run
+  # `mix test --only java_sdk`.
+  defp aliases do
+    [
+      "test.java_sdk": [
+        "cmd scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native --targets host",
+        "cmd mvn -q -f sdk/java/pom.xml -P host-only -DskipTests package",
+        "cmd mvn -q -f test/apps/java_compute_engine/pom.xml -DskipTests package",
+        "test --only java_sdk"
+      ]
     ]
   end
 

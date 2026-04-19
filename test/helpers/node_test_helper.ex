@@ -132,10 +132,9 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   def start_compute_engine(namespace \\ "test_temp_namespace", opts \\ []) do
     {:ok, current_path} = :file.get_cwd()
     transport = Keyword.get(opts, :transport, :uds)
+    runtime = Keyword.get(opts, :runtime, :rust)
 
-    command =
-      "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- " <>
-        namespace
+    command = build_command(runtime, current_path, namespace)
 
     Flezha.Service.EventManager.add_handler(:compute_engine_connected_event)
     Flezha.Service.PortPilot.open_port(command, transport: transport)
@@ -151,6 +150,29 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     Flezha.Service.EventManager.rem_handler(:compute_engine_connected_event)
 
     compute_engine_id
+  end
+
+  # Build the command line used to launch the compute engine for a given runtime.
+  # Keep `:rust` as the default so every existing test keeps working unchanged.
+  defp build_command(:rust, current_path, namespace) do
+    "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- " <>
+      namespace
+  end
+
+  defp build_command(:java, current_path, namespace) do
+    jar_path =
+      Path.join([
+        current_path,
+        "test/apps/java_compute_engine/target/java_compute_engine.jar"
+      ])
+
+    if not File.exists?(jar_path) do
+      raise "Java compute engine jar not found at #{jar_path}. " <>
+              "Build it first with `mvn -f test/apps/java_compute_engine/pom.xml package` " <>
+              "or run the full pipeline via `mix test.java_sdk`."
+    end
+
+    "java -jar #{jar_path} #{namespace}"
   end
 
   def stop_compute_engine(namespace, compute_engine_id) do

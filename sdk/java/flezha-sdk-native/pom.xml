@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.flezha</groupId>
+        <artifactId>flezha-sdk-parent</artifactId>
+        <version>0.1.0</version>
+    </parent>
+
+    <artifactId>flezha-sdk-native</artifactId>
+    <packaging>jar</packaging>
+    <name>Flezha SDK Native</name>
+    <description>JNI bindings + bundled per-OS flz_transport native binaries.</description>
+
+    <properties>
+        <!-- Directory that contains the build-native.sh helper script. -->
+        <build.native.script>${project.basedir}/../../../scripts/build-native.sh</build.native.script>
+        <native.output.dir>${project.basedir}/src/main/resources/native</native.output.dir>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.flezha</groupId>
+            <artifactId>flezha-sdk-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.findbugs</groupId>
+            <artifactId>jsr305</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- JNI tests require the host-triple native binary to be staged. -->
+                    <excludedGroups>jni,stress</excludedGroups>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>jni-tests</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludedGroups>stress</excludedGroups>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>stress-tests</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludedGroups>-</excludedGroups>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <!--
+          native-build: Cross-compile flz_jni for all five supported target triples
+          via cargo-zigbuild. Fails if any of the five resulting binaries is missing
+          from native-output-dir.
+        -->
+        <profile>
+            <id>native-build</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>cross-build</id>
+                                <phase>generate-resources</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>${build.native.script}</executable>
+                                    <arguments>
+                                        <argument>--output</argument>
+                                        <argument>${native.output.dir}</argument>
+                                        <argument>--targets</argument>
+                                        <argument>all</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>require-all-native-binaries</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireFilesExist>
+                                            <files>
+                                                <file>${native.output.dir}/linux-x64/libflz_transport.so</file>
+                                                <file>${native.output.dir}/linux-arm64/libflz_transport.so</file>
+                                                <file>${native.output.dir}/macos-x64/libflz_transport.dylib</file>
+                                                <file>${native.output.dir}/macos-arm64/libflz_transport.dylib</file>
+                                                <file>${native.output.dir}/windows-x64/libflz_transport.dll</file>
+                                            </files>
+                                            <message>native-build profile is missing one of the five required libflz_transport binaries.</message>
+                                        </requireFilesExist>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+          host-only: Fast local iteration — build only the current host triple and
+          emit a LOUD warning marker in target/ that the resulting jar is non-portable.
+        -->
+        <profile>
+            <id>host-only</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>host-build</id>
+                                <phase>generate-resources</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>${build.native.script}</executable>
+                                    <arguments>
+                                        <argument>--output</argument>
+                                        <argument>${native.output.dir}</argument>
+                                        <argument>--targets</argument>
+                                        <argument>host</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>write-non-portable-warning</id>
+                                <phase>generate-resources</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>sh</executable>
+                                    <arguments>
+                                        <argument>-c</argument>
+                                        <argument>mkdir -p ${project.build.directory} &amp;&amp; echo 'WARNING: This jar was built with the host-only profile. It contains native binaries for ONLY the host triple and is NOT portable.' &gt; ${project.build.directory}/NON_PORTABLE_WARNING.txt &amp;&amp; cat ${project.build.directory}/NON_PORTABLE_WARNING.txt &gt;&amp;2</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

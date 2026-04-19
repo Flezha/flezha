@@ -2,6 +2,7 @@
 members = [
     "flz_transport",
     "flz_nif",
+    "flz_jni",
     "sdk/rust",
     "cli",
     "test/apps/rust_compute_engine",

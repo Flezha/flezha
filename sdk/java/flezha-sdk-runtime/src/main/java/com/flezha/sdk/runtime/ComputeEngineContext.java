@@ -1,0 +1,92 @@
+package com.flezha.sdk.runtime;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.flezha.sdk.runtime.config.FlezhaEnv;
+import com.flezha.sdk.runtime.processor.ProcessorRegistry;
+import com.flezha.sdk.runtime.stream.StreamRegistry;
+import com.flezha.sdk.runtime.worker.ProcessorDispatcher;
+import java.util.concurrent.atomic.AtomicReference;
+import javax.annotation.Nonnull;
+
+/**
+ * Shared runtime state. Threads own references to the context and read/write
+ * sub-components under their own synchronization (each sub-component is
+ * independently thread-safe).
+ */
+public final class ComputeEngineContext {
+
+    private final String namespace;
+    private final FlezhaEnv.ResolvedConfig config;
+    private final long nativeHandle;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ProcessorRegistry processorRegistry = new ProcessorRegistry();
+    private final StreamRegistry streamRegistry = new StreamRegistry();
+    private final AtomicReference<String> computeEngineId = new AtomicReference<>("undefined");
+    private final AtomicReference<ComputeEngineStatus> status =
+            new AtomicReference<>(ComputeEngineStatus.STARTING);
+    private ProcessorDispatcher processorDispatcher;
+
+    public ComputeEngineContext(
+            @Nonnull String namespace,
+            @Nonnull FlezhaEnv.ResolvedConfig config,
+            long nativeHandle) {
+        this.namespace = namespace;
+        this.config = config;
+        this.nativeHandle = nativeHandle;
+    }
+
+    @Nonnull
+    public String namespace() {
+        return namespace;
+    }
+
+    @Nonnull
+    public FlezhaEnv.ResolvedConfig config() {
+        return config;
+    }
+
+    public long nativeHandle() {
+        return nativeHandle;
+    }
+
+    @Nonnull
+    public ObjectMapper objectMapper() {
+        return objectMapper;
+    }
+
+    @Nonnull
+    public ProcessorRegistry processorRegistry() {
+        return processorRegistry;
+    }
+
+    @Nonnull
+    public StreamRegistry streamRegistry() {
+        return streamRegistry;
+    }
+
+    @Nonnull
+    public String computeEngineId() {
+        return computeEngineId.get();
+    }
+
+    public void setComputeEngineId(@Nonnull String id) {
+        computeEngineId.set(id);
+    }
+
+    @Nonnull
+    public ComputeEngineStatus status() {
+        return status.get();
+    }
+
+    public void setStatus(@Nonnull ComputeEngineStatus newStatus) {
+        status.set(newStatus);
+    }
+
+    public void setProcessorDispatcher(@Nonnull ProcessorDispatcher dispatcher) {
+        this.processorDispatcher = dispatcher;
+    }
+
+    public ProcessorDispatcher processorDispatcher() {
+        return processorDispatcher;
+    }
+}
