@@ -45,3 +45,7 @@ flezha-*.tar
 
 # Log files
 /logs/
+
+# Openspecs
+/openspec/changes
+!/openspec/changes/archive
