@@ -13,8 +13,17 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/rust-sdk-perf.yml"
+  # Mirror the PR path filters on push. A main commit that doesn't touch
+  # dispatch-relevant code can't change the perf baseline, so the previous
+  # cached `rust-sdk-perf-main-*` baseline remains valid for future PR diffs.
   push:
     branches: [main]
+    paths:
+      - "sdk/rust/**"
+      - "flz_transport/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/rust-sdk-perf.yml"
   workflow_dispatch:
 
 env:

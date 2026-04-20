@@ -12,8 +12,20 @@ on:
       - "test/java_sdk/**"
       - "scripts/build-native.sh"
       - ".github/workflows/java-sdk.yml"
+  # Mirror the PR path filters on push so unrelated main commits (e.g. agent-
+  # only changes) don't trigger a 30-45 min native cross-build + Maven run.
   push:
     branches: [main]
+    paths:
+      - "sdk/java/**"
+      - "flz_jni/**"
+      - "flz_transport/**"
+      - "protobufs/**"
+      - "test/apps/java_compute_engine/**"
+      - "test/helpers/node_test_helper.ex"
+      - "test/java_sdk/**"
+      - "scripts/build-native.sh"
+      - ".github/workflows/java-sdk.yml"
 
 env:
   CARGO_TERM_COLOR: always
