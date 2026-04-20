@@ -130,6 +130,20 @@ config :flezha,
   external_processes: external_processes,
 
   # ------------------------------------------------------------------------------------------------
+  # Failure-recovery subsystem env vars.
+  recovery_window_ms:
+    (case Integer.parse(System.get_env("FLEZHA_RECOVERY_WINDOW_MS", "10000")) do
+       {n, ""} when n >= 0 -> n
+       _ -> 10_000
+     end),
+  recovery_data_dir: System.get_env("FLEZHA_DATA_DIR", "app_data/recovery"),
+  recovery_enabled:
+    (case System.get_env("FLEZHA_RECOVERY_ENABLED") do
+       nil -> Application.get_env(:flezha, :recovery_enabled, true)
+       val -> String.downcase(val) in ["true", "1", "yes"]
+     end),
+
+  # ------------------------------------------------------------------------------------------------
   # The minimum number of milliseconds to wait before removing a disconnected compute_engine.
   #
   # This option can be used to prevent the compute_engine from being removed too quickly

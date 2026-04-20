@@ -17,3 +17,8 @@ data:
   FLEZHA_SERVER_CERT_PATH: "/flezha/app_data/certs/server.pem"
   FLEZHA_SERVER_KEY_PATH: "/flezha/app_data/certs/server.key"
   FLEZHA_LOG_PATH: "/var/log/flezha/flezha.log"
+  # Failure-recovery subsystem. The DETS file lives under FLEZHA_DATA_DIR,
+  # which must be mounted from persistent storage (see flezha-daemonset.yaml).
+  FLEZHA_RECOVERY_ENABLED: "true"
+  FLEZHA_RECOVERY_WINDOW_MS: "10000"
+  FLEZHA_DATA_DIR: "/var/lib/flezha"

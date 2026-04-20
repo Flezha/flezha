@@ -1,0 +1,47 @@
+# docker-compose.local-test.yml
+# =============================================================================
+# Local-only compose overlay for exercising the failure-recovery subsystem
+# end-to-end against a locally-built agent image + a host-built rust compute
+# engine sidecar. This file is NEVER applied automatically — invoke it
+# explicitly with `-f`:
+#
+#   VERSION=local docker compose \
+#     -f docker/prod/docker-compose.yml \
+#     -f docker/prod/docker-compose.local-test.yml \
+#     up -d agent kafka zookeeper
+#
+# Prerequisites (run once from the repo root):
+#   1. cargo build --release --manifest-path test/apps/rust_compute_engine/Cargo.toml
+#   2. docker build -t alfetahe/flezha:local -f docker/prod/Dockerfile.agent .
+#
+# What this overlay does:
+#   - pins the agent image to the locally-built `alfetahe/flezha:local` tag
+#   - bind-mounts the host-built rust_compute_engine binary into the
+#     agent container at /flezha/compute_engine
+#   - sets FLEZHA_EXTERNAL_PROCESSES so the agent launches that binary on
+#     startup under the "default" namespace
+#   - shortens FLEZHA_RECOVERY_WINDOW_MS to 3 s for fast restart cycles
+#
+# The bind-mount path is relative to THIS file's directory, so the binary
+# at `<repo>/target/release/rust_compute_engine` is the one that shows up
+# inside the container at `/flezha/compute_engine`.
+#
+# NB: this overlay requires a Linux host (the mounted binary is an x86_64
+# ELF). On macOS / Windows hosts, either cross-compile the compute engine
+# for linux/amd64 or bake it into a custom Dockerfile stage.
+
+services:
+  agent:
+    image: alfetahe/flezha:local
+    environment:
+      # Launch one rust compute engine on agent startup under the default
+      # namespace. Trailing "default" is the namespace CLI arg the binary
+      # expects.
+      FLEZHA_EXTERNAL_PROCESSES: "/flezha/compute_engine default"
+      # Shorten the recovery window so kill+restart cycles are quick.
+      FLEZHA_RECOVERY_WINDOW_MS: "3000"
+      FLEZHA_RECOVERY_ENABLED: "true"
+    volumes:
+      # Host-side: <repo>/target/release/rust_compute_engine (built via cargo).
+      # Container-side: referenced by FLEZHA_EXTERNAL_PROCESSES above.
+      - ../../target/release/rust_compute_engine:/flezha/compute_engine:ro

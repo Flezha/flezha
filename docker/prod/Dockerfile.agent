@@ -88,10 +88,15 @@ RUN addgroup --system --gid 1000 flezha && \
 # Copy assembled release from Stage 2
 COPY --from=build /app/_build/prod/rel/flezha /flezha/
 
-# Create runtime directories
+# Create runtime directories. These get overlaid by named volumes / bind
+# mounts at runtime — docker initialises an empty named volume from the
+# mountpoint's ownership in the image, so each dir MUST exist here with
+# flezha:flezha ownership or the non-root container process will get
+# EACCES on first write. `recovery/` backs the failure-recovery DETS files.
 RUN mkdir -p /flezha/app_data/sockets \
              /flezha/app_data/certs \
-             /flezha/app_data/logs && \
+             /flezha/app_data/logs \
+             /flezha/app_data/recovery && \
     chown -R flezha:flezha /flezha
 
 USER flezha

@@ -128,6 +128,58 @@ The performance test creates multiple processors, enables plugins, sends message
 - Message processing time
 - Overall throughput (messages/second)
 
+### Failure recovery
+
+Agents durably record the child specs of the processors they host **and**
+the plugins attached to those processors, so that after a cluster-wide
+failure (every agent going down together) each agent can relaunch *its
+own* processors and re-wire their IO bindings without needing the SDK to
+reissue `AddProcessor` or `enable_plugin` calls. Recovery runs in two
+phases — processors first, plugins second — within a bounded window, and
+is short-circuited if any peer is already healthy. The subsystem is
+described in
+[`openspec/changes/add-failure-recovery-mode/`](openspec/changes/add-failure-recovery-mode/).
+
+Operator-facing points:
+
+- **Volume requirement.** Both DETS files (`recovery.dets` and
+  `recovery_plugins.dets`) live under `FLEZHA_DATA_DIR` (default
+  `app_data/recovery/` on a host machine, `/flezha/app_data/recovery/` in
+  the provided k8s/docker manifests). In containerised deployments the
+  directory **must** be mounted from persistent storage; otherwise
+  recovery is a no-op and the cluster behaves exactly as it does today.
+- **Window.** On startup the agent waits `FLEZHA_RECOVERY_WINDOW_MS`
+  (default 10 s) before running recovery. During the window it exchanges a
+  SYSMODE value with every connecting peer; if *any* peer is already in
+  `:normal`, recovery is skipped (the peer is authoritative, ProcessHub
+  will redistribute).
+- **Disabling.** Set `FLEZHA_RECOVERY_ENABLED=false` to short-circuit
+  SysMode to `:normal` immediately. Hooks remain wired but recovery is
+  never executed.
+- **Plugin coverage.** Not every plugin is recoverable — the agent cannot
+  reopen a plugin whose state is bound to a caller pid that died with the
+  previous BEAM. Per-provider status:
+
+  | Provider                   | Recoverable | Reason                                       |
+  | -------------------------- | ----------- | -------------------------------------------- |
+  | `processor_kafka_producer` | yes         | broker list + topic are pure config          |
+  | `processor_websocket`      | yes         | URI + post-connect payload replayed on bind  |
+  | `processor_stdout`         | yes         | stateless                                    |
+  | `processor_io_filter`      | yes         | regex + inversion flag                       |
+  | `processor_beam_msg`       | **no**      | `recv_pid` dies with the original caller     |
+  | `monitored_io_forward`     | **no**      | `recv_pid` + heartbeat loop to dead caller   |
+
+  Non-recoverable plugins are never persisted; SDK clients or operators
+  must re-establish them on reconnect (the existing SDK-reconnect path
+  already does this).
+- **Observability.** The subsystem emits telemetry at
+  `[:flezha, :recovery, :store_opened | :plugin_store_opened | :sysmode_changed | :completed]`.
+  The `:completed` event's measurements include both processor counts
+  (`recovered`, `failed`) and plugin counts (`plugins_recovered`,
+  `plugins_failed`, `plugins_skipped_missing_processor`). A single INFO
+  log line on startup reports the resolved data dir, initial SYSMODE, and
+  DETS row counts.
+
 ### Development
 Run the application inside the docker containers.
 See `docker/dev/README.md` for more information.

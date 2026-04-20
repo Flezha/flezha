@@ -1,5 +1,7 @@
 defmodule Flezha.Plugin.Driver.IOBindingPlugin do
   alias Flezha.Plugin.PluginBehaviour
+  alias Flezha.Plugin.Provider.BeamMsgForward
+  alias Flezha.Plugin.Provider.MonitoredIOForward
   alias Flezha.Service.ProcessorManager
 
   @behaviour PluginBehaviour
@@ -12,6 +14,14 @@ defmodule Flezha.Plugin.Driver.IOBindingPlugin do
                 plugin_group: "0",
                 position: nil
               ]
+
+  # Providers that carry a caller-bound pid and cannot be restored after a
+  # restart: the original pid is gone and reopening them would silently drop
+  # data. Extend this list consciously when adding a new pid-bound provider.
+  @impl true
+  def recoverable?(%__MODULE__{provider: %BeamMsgForward{}}), do: false
+  def recoverable?(%__MODULE__{provider: %MonitoredIOForward{}}), do: false
+  def recoverable?(%__MODULE__{}), do: true
 
   @impl true
   def enable(plugin_id, plugin) do

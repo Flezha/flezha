@@ -33,7 +33,7 @@ defmodule Flezha.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger, :runtime_tools, :wx, :observer, :inets, :crypto, :ssl],
+      extra_applications: [:logger, :runtime_tools, :wx, :observer, :inets, :crypto, :ssl, :telemetry],
       mod: {Flezha.Application, []}
     ]
   end
@@ -53,6 +53,7 @@ defmodule Flezha.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
+      {:telemetry, "~> 1.0"},
       # {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
       # {:process_hub, path: "../process-hub"},
       {:process_hub, "~> 0.5.0-beta"},

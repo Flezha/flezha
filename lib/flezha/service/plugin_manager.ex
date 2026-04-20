@@ -48,6 +48,7 @@ defmodule Flezha.Service.PluginManager do
     {reply, new_state} =
       with :ok <- plugin_id_unique(state, plugin_id),
            {:ok, info} <- apply(module, :enable, [plugin_id, plugin]) do
+        notify_recovery_enabled(plugin_id, plugin)
         {{:ok, "plugin enabled"}, Map.put(state, plugin_id, info)}
       else
         err -> {err, state}
@@ -63,6 +64,7 @@ defmodule Flezha.Service.PluginManager do
 
       {module, info} ->
         apply(module, :disable, [plugin_id, info])
+        notify_recovery_disabled(plugin_id)
         {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
     end
   end
@@ -81,6 +83,27 @@ defmodule Flezha.Service.PluginManager do
     case Map.get(plugins, plugin_id, nil) do
       nil -> :ok
       _ -> {:error, "plugin already registered"}
+    end
+  end
+
+  # Forward enable/disable events to the failure-recovery subsystem so it can
+  # persist recoverable plugins and drop them on disable. Kept as a module
+  # call (not a GenServer message) so the persist happens synchronously with
+  # enable success; try/catch guards test isolation when Coordinator/store
+  # aren't running.
+  defp notify_recovery_enabled(plugin_id, plugin) do
+    try do
+      Flezha.Recovery.Coordinator.on_plugin_enabled(plugin_id, plugin)
+    catch
+      _kind, _reason -> :ok
+    end
+  end
+
+  defp notify_recovery_disabled(plugin_id) do
+    try do
+      Flezha.Recovery.Coordinator.on_plugin_disabled(plugin_id)
+    catch
+      _kind, _reason -> :ok
     end
   end
 end

@@ -33,6 +33,7 @@ flezha-*.tar
 
 # Application data.
 /app_data/sockets/*
+/app_data/recovery/
 
 # Ignore environment variables file
 .env
@@ -49,3 +50,6 @@ flezha-*.tar
 # Openspecs
 /openspec/changes
 !/openspec/changes/archive
+
+# Ad-hoc local test scripts (e.g. test-recovery-start.sh/stop.sh).
+/scripts/temp/

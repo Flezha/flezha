@@ -52,6 +52,21 @@ See `docker/prod/README.md` for detailed build instructions.
 - Apply the daemonset for the flezha agents: `kubectl apply -f kubernetes/flezha-daemonset.yaml`
 - Apply the deployments for X(compute_engines) services: `kubectl apply -f kubernetes/service-template.yaml`
 
+## Failure recovery volume
+
+The DaemonSet mounts a node-local `hostPath` at `/opt/flezha-recovery` into
+the container at `/var/lib/flezha`. This directory holds both of the
+recovery DETS files:
+
+- `recovery.dets` — processor child specs.
+- `recovery_plugins.dets` — recoverable plugin bindings.
+
+A single volume carries both. `FLEZHA_DATA_DIR`, `FLEZHA_RECOVERY_ENABLED`,
+and `FLEZHA_RECOVERY_WINDOW_MS` are set via `flezha-configmap.yaml`. See
+the top-level [README.md](../README.md#failure-recovery) for the
+per-provider recoverability table and the semantics of the recovery
+window.
+
 ## Logs
 
 Agent logs are persisted on the host machine at `/opt/flezha-logs/`.

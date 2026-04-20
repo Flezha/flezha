@@ -58,6 +58,7 @@ defmodule Flezha.Cluster.Orchestrator do
         case Node.connect(node) do
           true ->
             Node.monitor(node, true)
+            notify_recovery_peer_connected(node)
 
           false ->
             # Retry again.
@@ -75,14 +76,32 @@ defmodule Flezha.Cluster.Orchestrator do
     Enum.each(to_connect, fn node ->
       if !Enum.member?(connected, node) do
         case Node.connect(node) do
-          true -> Node.monitor(node, true)
-          false -> schedule_reconnect(node, 0)
-          :ignored -> nil
+          true ->
+            Node.monitor(node, true)
+            notify_recovery_peer_connected(node)
+
+          false ->
+            schedule_reconnect(node, 0)
+
+          :ignored ->
+            nil
         end
       end
     end)
 
     discovery_handler
+  end
+
+  # Forward a successful `Node.connect/1` to the recovery SysMode so it can
+  # exchange SYSMODE values with the peer. The SysMode GenServer may not yet
+  # be running during the earliest phase of startup — tolerate that silently
+  # (peer_connected/1 itself short-circuits on :noproc).
+  defp notify_recovery_peer_connected(peer_node) do
+    try do
+      Flezha.Recovery.SysMode.peer_connected(peer_node)
+    catch
+      _kind, _reason -> :ok
+    end
   end
 
   defp schedule_reconnect(node, retries_count) do

@@ -3,6 +3,11 @@ import Config
 config :flezha,
   testnet_enabled: true,
   concurrent_channel_count: 1,
+  recovery_enabled: false,
+  # Tests manage Recovery.Store/SysMode/Coordinator lifecycle themselves
+  # inside tmp-dir fixtures; having the application also start them would
+  # collide on the singleton process names.
+  recovery_autostart: false,
   pre_hooks: [
     fn ->
       # Check if local node is running.

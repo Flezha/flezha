@@ -26,9 +26,9 @@ spec:
             - sh
             - -c
             - |
-              mkdir -p /flezha/sockets /flezha/data /flezha/certs /var/log/flezha && \
-              chown -R 1000:1000 /flezha/sockets /flezha/data /flezha/certs /var/log/flezha && \
-              chmod -R 755 /flezha/sockets /flezha/data /flezha/certs /var/log/flezha
+              mkdir -p /flezha/sockets /flezha/data /flezha/certs /var/log/flezha /var/lib/flezha && \
+              chown -R 1000:1000 /flezha/sockets /flezha/data /flezha/certs /var/log/flezha /var/lib/flezha && \
+              chmod -R 755 /flezha/sockets /flezha/data /flezha/certs /var/log/flezha /var/lib/flezha
           securityContext:
             runAsUser: 0
           volumeMounts:
@@ -40,6 +40,8 @@ spec:
               mountPath: /flezha/certs
             - name: flezha-logs
               mountPath: /var/log/flezha
+            - name: flezha-recovery
+              mountPath: /var/lib/flezha
       containers:
         - name: flezha
           # Update VERSION tag before deploying
@@ -84,6 +86,11 @@ spec:
               mountPath: /flezha/app_data/certs
             - name: flezha-logs
               mountPath: /var/log/flezha
+            - name: flezha-recovery
+              # Must match FLEZHA_DATA_DIR in the ConfigMap. The DETS file lives
+              # here; losing this volume reverts agents to today's behaviour of
+              # empty recovery on restart.
+              mountPath: /var/lib/flezha
       volumes:
         - name: flezha-sockets
           hostPath:
@@ -101,4 +108,12 @@ spec:
         - name: flezha-logs
           hostPath:
             path: /opt/flezha-logs
+            type: DirectoryOrCreate
+        - name: flezha-recovery
+          # Node-local host path for the recovery DETS file. DaemonSet means
+          # each pod is pinned to a node, so a host path is sufficient — the
+          # same pod comes back to the same node's /opt/flezha-recovery dir
+          # after a restart and reads the file it wrote before going down.
+          hostPath:
+            path: /opt/flezha-recovery
             type: DirectoryOrCreate
