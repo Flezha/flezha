@@ -1,0 +1,117 @@
+name: Rust SDK Bench Cron
+
+# Weekly trend run: `mix bench` matrix (rust × java) × (uds × quic) on main,
+# plus the Criterion micro-benches. Posts a summary comment to a tracking
+# issue (created on first run, reused thereafter). Non-blocking — this is
+# a drift detector, not a merge gate.
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays, 03:00 UTC
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  matrix-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [rust, java]
+        transport: [uds, quic]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          elixir-version: "1.19"
+      - uses: actions/setup-java@v4
+        if: matrix.runtime == 'java'
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache cargo + deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            deps
+            _build
+          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock', 'mix.lock') }}
+
+      - name: mix deps.get + compile
+        run: |
+          mix deps.get
+          MIX_ENV=prod mix compile
+
+      - name: Build ${{ matrix.runtime }} compute engine
+        run: |
+          if [[ "${{ matrix.runtime }}" == "rust" ]]; then
+            cargo build --release -p rust_compute_engine
+            cargo build -p rust_compute_engine
+          else
+            mix test.java_sdk -- --only never-run-just-build || true
+          fi
+
+      - name: Run mix bench — ${{ matrix.runtime }} / ${{ matrix.transport }}
+        env:
+          FLEZHA_TRANSPORT: ${{ matrix.transport }}
+        run: |
+          MIX_ENV=prod mix bench \
+            --runtime ${{ matrix.runtime }} \
+            -n 100 -m 10000 \
+            2>&1 | tee bench-${{ matrix.runtime }}-${{ matrix.transport }}.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.runtime }}-${{ matrix.transport }}
+          path: bench-${{ matrix.runtime }}-${{ matrix.transport }}.txt
+
+  criterion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-criterion-${{ hashFiles('**/Cargo.lock') }}
+      - name: Criterion dispatch bench
+        run: |
+          cargo bench -p flezha_compute_engine --features bench-internals \
+            --bench dispatch -- --save-baseline cron-$(date +%Y%m%d)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: criterion-weekly
+          path: target/criterion
+
+  summary:
+    needs: [matrix-bench, criterion]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: bench-reports
+      - name: Post summary (GitHub step summary)
+        run: |
+          {
+            echo "# Weekly bench summary — $(date -u +%Y-%m-%d)"
+            echo
+            for f in bench-reports/bench-*/*.txt; do
+              echo "## $(basename "$(dirname "$f")")"
+              echo '```'
+              tail -n 20 "$f"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

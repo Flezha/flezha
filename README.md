@@ -98,6 +98,21 @@ diff bench-rust.txt bench-java.txt
 ./scripts/bench.sh --runtime java --transport quic -n 100 -m 1000
 ```
 
+The Rust SDK's dispatch core was rewritten to use per-processor mailboxes
+and a work-stealing pool — see
+[`openspec/changes/optimize-rust-sdk-dispatch/`](openspec/changes/optimize-rust-sdk-dispatch/)
+and [`docs/shared_library_architecture.md`](docs/shared_library_architecture.md)
+for the design, and [`sdk/rust/CHANGELOG.md`](sdk/rust/CHANGELOG.md) for
+the summary. The `--runtime rust` bench is now competitive with Java on
+modern x86_64 hardware; lower-spec laptops will see a smaller but still
+meaningful speedup. Criterion dispatch micro-benches live at
+`sdk/rust/benches/` and run via:
+
+```bash
+cargo bench -p flezha_compute_engine --features bench-internals --bench dispatch
+```
+
+
 **Options:**
 - `--num-processors` / `-n`: Number of processors to create (default: 100)
 - `--messages-per-processor` / `-m`: Number of messages to send per processor (default: 100)

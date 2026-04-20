@@ -1,0 +1,143 @@
+name: Rust SDK Perf
+
+# Regression gate for the Rust SDK dispatch path. Builds the `fast-dispatch`
+# feature, runs the Criterion micro-benches with --save-baseline pr, then
+# compares against the baseline saved on main. Fails if dispatch throughput
+# regresses by more than the tolerance set via REGRESSION_TOLERANCE_PCT.
+
+on:
+  pull_request:
+    paths:
+      - "sdk/rust/**"
+      - "flz_transport/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/rust-sdk-perf.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  REGRESSION_TOLERANCE_PCT: "10"
+
+jobs:
+  dispatch-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-perf-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-perf-
+
+      # ---------------------------------------------------------------------
+      # On `push: main` we capture a fresh baseline called `main` and save it
+      # to Actions cache so future PRs can download and compare.
+      # ---------------------------------------------------------------------
+      - name: Build fast-dispatch benches
+        run: |
+          cargo build --release \
+            -p flezha_compute_engine \
+            --features bench-internals \
+            --bench dispatch
+          cargo build --release \
+            -p flezha_compute_engine \
+            --features bench-internals \
+            --bench correctness
+
+      - name: Run correctness bench (fail if any invariant violated)
+        run: |
+          BIN=$(ls target/release/deps/correctness-* | grep -v '\.d$' | head -1)
+          "$BIN"
+
+      - name: Run dispatch bench — baseline "pr" (PRs) or "main" (push)
+        id: run-bench
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            BASELINE=main
+          else
+            BASELINE=pr
+          fi
+          echo "baseline=$BASELINE" >> "$GITHUB_OUTPUT"
+          cargo bench -p flezha_compute_engine \
+            --features bench-internals \
+            --bench dispatch \
+            -- --save-baseline "$BASELINE"
+
+      # ---------------------------------------------------------------------
+      # PR gate: download the main baseline (if available) and diff.
+      # The Criterion output under `target/criterion/<bench>/<id>/change/`
+      # contains the change percentage; we parse those and fail if any
+      # exceeds the tolerance.
+      # ---------------------------------------------------------------------
+      - name: Download main baseline (PR only)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/cache/restore@v4
+        id: restore-main
+        with:
+          path: target/criterion
+          key: rust-sdk-perf-main-${{ github.sha }}
+          restore-keys: |
+            rust-sdk-perf-main-
+
+      - name: Compare PR vs main
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+          # Re-run benches comparing against the cached "main" baseline.
+          # Criterion prints a line like `change: [-1.234% -0.456% +0.789%]`
+          # per bench; the middle value is the estimated change.
+          LOG=$(cargo bench -p flezha_compute_engine \
+            --features bench-internals \
+            --bench dispatch \
+            -- --baseline main 2>&1 | tee /dev/stderr)
+          REGRESSED=0
+          while IFS= read -r line; do
+            # Look for the estimated change line (middle value). Positive
+            # percentages on throughput-named benches mean SLOWER.
+            if echo "$line" | grep -qE 'change:.*\[.*%.*%.*%\]'; then
+              MID=$(echo "$line" | sed -E 's/.*\[[^ ]+ ([+-]?[0-9.]+)%.*/\1/')
+              # Tolerate ≤ REGRESSION_TOLERANCE_PCT increase. On throughput
+              # benches (names contain "throughput_"), an increase in time
+              # is a regression.
+              THRESHOLD=${REGRESSION_TOLERANCE_PCT}
+              AWK_OUT=$(awk -v a="$MID" -v t="$THRESHOLD" 'BEGIN { if (a > t) print "bad"; else print "ok" }')
+              if [[ "$AWK_OUT" == "bad" ]]; then
+                echo "::error::Perf regression detected: change = ${MID}% (tolerance ${THRESHOLD}%)"
+                REGRESSED=1
+              fi
+            fi
+          done <<< "$LOG"
+          if [[ $REGRESSED -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Save main baseline to cache (push only)
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/cache/save@v4
+        with:
+          path: target/criterion
+          key: rust-sdk-perf-main-${{ github.sha }}
+
+      - name: Upload Criterion report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-report-${{ github.sha }}
+          path: target/criterion
+          retention-days: 30

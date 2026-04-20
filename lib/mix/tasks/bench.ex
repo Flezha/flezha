@@ -183,13 +183,33 @@ defmodule Mix.Tasks.Bench do
   end
 
   defp build_command(:rust, current_path, namespace) do
-    binary_path =
+    # Prefer the optimized release binary (any of the three locations cargo
+    # may produce it, depending on whether the user ran `cargo build
+    # --release` at the workspace root or inside the test app). Falling back
+    # to the debug binary is a ~5× throughput penalty on this workload and
+    # the default-target-dir layout changed during the shared-library split,
+    # so check both paths before dropping to `cargo run`.
+    candidates = [
+      "#{current_path}/target/release/rust_compute_engine",
+      "#{current_path}/test/apps/rust_compute_engine/target/release/rust_compute_engine",
+      "#{current_path}/target/debug/rust_compute_engine",
       "#{current_path}/test/apps/rust_compute_engine/target/debug/rust_compute_engine"
+    ]
 
-    if File.exists?(binary_path) do
-      "#{binary_path} #{namespace}"
-    else
-      "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- #{namespace}"
+    case Enum.find(candidates, &File.exists?/1) do
+      nil ->
+        "cargo run --release --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- #{namespace}"
+
+      path ->
+        if String.contains?(path, "/debug/") do
+          IO.warn(
+            "mix bench is using the DEBUG Rust compute_engine binary at #{path} — " <>
+              "this is ~5× slower than release. Build with " <>
+              "`cargo build -p rust_compute_engine --release` for representative numbers."
+          )
+        end
+
+        "#{path} #{namespace}"
     end
   end
 

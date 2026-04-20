@@ -128,6 +128,67 @@ pub fn build_from_str(payload_id: &str, message: &str, metadata: PayloadMetadata
     build_payload(payload_id, message.as_bytes(), metadata)
 }
 
+/// Zero-alloc variant of `build_from_binary`: appends the framed payload
+/// bytes to `out` in-place. Used by the hot path to batch many outputs
+/// into a single write syscall.
+pub fn build_from_binary_into(
+    out: &mut Vec<u8>,
+    payload_id: &str,
+    message: &[u8],
+    metadata: &PayloadMetadata,
+) {
+    append_payload(out, payload_id, message, metadata);
+}
+
+pub fn build_from_str_into(
+    out: &mut Vec<u8>,
+    payload_id: &str,
+    message: &str,
+    metadata: &PayloadMetadata,
+) {
+    append_payload(out, payload_id, message.as_bytes(), metadata);
+}
+
+fn append_payload(
+    out: &mut Vec<u8>,
+    payload_id: &str,
+    message: &[u8],
+    metadata: &PayloadMetadata,
+) {
+    // Serialize metadata directly into the metadata region after we write
+    // the metadata_size. We can't do that cleanly because metadata_size
+    // precedes the bytes, so serialize to a scratch Vec first.
+    let metadata_binary = serialize_metadata(metadata);
+    let metadata_size = metadata_binary.len() as u16;
+    let message_size = message.len() as u32;
+    let payload_size = 4 + message.len() + 2 + metadata_binary.len();
+
+    // Reserve in-place to avoid resizes during the appends below.
+    out.reserve(32 + 4 + payload_size);
+
+    // Write the payload ID (32 bytes, space-padded).
+    let id_bytes = payload_id.as_bytes();
+    if id_bytes.len() >= 32 {
+        out.extend_from_slice(&id_bytes[..32]);
+    } else {
+        out.extend_from_slice(id_bytes);
+        for _ in id_bytes.len()..32 {
+            out.push(b' ');
+        }
+    }
+
+    // Payload size (4 BE).
+    out.extend_from_slice(&(payload_size as u32).to_be_bytes());
+
+    // Message size (4 BE) + message.
+    out.extend_from_slice(&message_size.to_be_bytes());
+    out.extend_from_slice(message);
+
+    // Metadata size (2 BE) + metadata.
+    out.extend_from_slice(&metadata_size.to_be_bytes());
+    out.extend_from_slice(&metadata_binary);
+}
+
 fn build_payload(payload_id: &str, message: &[u8], metadata: PayloadMetadata) -> Vec<u8> {
     // Serialize metadata
     let metadata_binary = serialize_metadata(&metadata);

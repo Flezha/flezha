@@ -79,8 +79,73 @@ On the agent side, the same library replaces `:quicer` (MsQuic NIF) with a Rustl
 | `command/*.rs` | Individual command handlers (assign, connect, add/rem processor, etc.) |
 | `processor/mod.rs` | Processor trait, types, factory registration |
 | `processor/executor.rs` | Processor execution and output piping |
-| `processor/factory_registry.rs` | Global factory registry, ProcessorHandle |
+| `processor/factory_registry.rs` | Global factory registry, ProcessorHandle, `ProcessorRegistry` (DashMap-backed live instance map under fast-dispatch) |
 | `lib.rs` | `Flezha` struct, public API (`new`, `get_processors`) |
+
+## Rust SDK dispatch
+
+The Rust SDK (`sdk/rust/`) has two dispatch backends selected at compile
+time via the `fast-dispatch` cargo feature. Both preserve the same public
+API and sticky per-processor ordering semantics — the feature flag only
+changes the internal fast path.
+
+### Legacy (default: `fast-dispatch` off)
+
+`compute_engine/legacy.rs`. Every inbound message crosses the coordinator
+channel (`crossbeam::channel`) into `ComputeEngineNode`'s message loop,
+which performs a lock-heavy check-out: `RwLock<HashMap<processor>>` read
+→ processor `Mutex` acquire for runner type → `processor_workers` /
+`available_workers` / `processor_queues` / `pending_processors`
+bookkeeping → dispatch to a fixed worker over `Sender<WorkerPoolMessage>`.
+The worker runs the processor and checks back in, which triggers the next
+queued item in FIFO order. Sticky ordering comes from the `processor_workers`
+map that pins one processor to one worker at a time.
+
+### Fast (opt-in: `fast-dispatch` on — per-processor mailboxes)
+
+`compute_engine/fast.rs` + `compute_engine/mailbox.rs` +
+`compute_engine/work_stealing_pool.rs`. Every processor owns:
+  - an `Arc<Mutex<ProcessorBox>>` — same inner lock as before (the
+    `Processor` trait uses `&mut self`, so a lock is required).
+  - a `Mailbox<ProcessorPayload>` — a `crossbeam::queue::SegQueue` plus
+    an `AtomicBool inflight` flag.
+
+Stream-reader threads (one per primary stream) push directly into the
+target processor's mailbox and CAS `inflight false→true`. The CAS winner
+submits a drain closure into a **Chase-Lev work-stealing pool** built on
+`crossbeam-deque::{Injector, Worker, Stealer}`; N worker threads
+(default `num_cpus::get()`, override via `FLEZHA_WORKER_POOL_SIZE`) poll
+their own deque, the shared injector, and steal from siblings.
+
+The drain closure loops: pop one item, take the processor lock, run, pipe
+the `ProcessorResult` (PipeToAgent writes the secondary stream, PipeToProcessor
+pushes into the target processor's mailbox, preserving downstream
+ordering). On an observed-empty queue, the drain stores `inflight = false`
+and re-checks the queue — this is the classic "re-CAS on wake miss" that
+closes the race where a concurrent push beat the store (see
+`compute_engine/mailbox.rs` docstring for the worked case).
+
+Sticky per-processor ordering is preserved: only the CAS winner drains,
+and the inflight flag guarantees at most one drainer at a time per
+mailbox. Work-stealing provides load balance across processors; the
+inflight flag is what provides serialization within a processor.
+
+The coordinator thread still exists under fast-dispatch but handles only
+control-plane traffic (`HandleCommandAction`, `ReturnProcessors`,
+`Reconnect`). Under fast-dispatch, the `ComputeEngineMessage` enum has
+the data-plane variants (`WorkerCheckOut` / `WorkerCheckIn` /
+`WorkerInitCheckIn`) removed at the type level — attempting to send one
+is a compile error.
+
+### Feature-flag rollout
+
+The flag defaults OFF on the published `flezha_compute_engine` crate
+during rollout (to give a single-cycle A/B against the legacy path) and
+ON for in-repo consumers (`test/apps/rust_compute_engine`). See
+`openspec/changes/optimize-rust-sdk-dispatch/` for the full proposal,
+design, and tasks. The Criterion suite at `sdk/rust/benches/` pins
+dispatch throughput and contention-read metrics so CI catches future
+regressions.
 
 ## C API Surface
 
