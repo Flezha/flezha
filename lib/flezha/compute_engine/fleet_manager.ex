@@ -135,37 +135,37 @@ defmodule Flezha.ComputeEngine.FleetManager do
         _from,
         state
       ) do
-    case compute_engine_connect(stream_ref, namespace, transport) do
-      {:ok, namespace, compute_engine_id} ->
-        timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+    # compute_engine_connect/3 currently always returns {:ok, ...} — no error
+    # path exists at the agent level yet. If one is ever added, re-introduce
+    # the {:error, reason} branch here.
+    {:ok, namespace, compute_engine_id} =
+      compute_engine_connect(stream_ref, namespace, transport)
 
-        state =
-          case Map.get(state.compute_engine_namespaces, namespace, nil) do
-            nil -> put_in(state, [:compute_engine_namespaces, namespace], %{})
-            _ -> state
-          end
+    timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
-        state =
-          put_in(
-            state,
-            [:compute_engine_namespaces, namespace, compute_engine_id],
-            {:active, timestamp}
-          )
+    state =
+      case Map.get(state.compute_engine_namespaces, namespace, nil) do
+        nil -> put_in(state, [:compute_engine_namespaces, namespace], %{})
+        _ -> state
+      end
 
-        state = store_factories(state, namespace, compute_engine_id, factories)
-        state = try_migrate_compute_engine(state, namespace, compute_engine_id)
+    state =
+      put_in(
+        state,
+        [:compute_engine_namespaces, namespace, compute_engine_id],
+        {:active, timestamp}
+      )
 
-        EventManager.dispatch(
-          :compute_engine_connected_event,
-          {namespace, compute_engine_id},
-          %{members: :local}
-        )
+    state = store_factories(state, namespace, compute_engine_id, factories)
+    state = try_migrate_compute_engine(state, namespace, compute_engine_id)
 
-        {:reply, {:ok, {namespace, compute_engine_id}}, state}
+    EventManager.dispatch(
+      :compute_engine_connected_event,
+      {namespace, compute_engine_id},
+      %{members: :local}
+    )
 
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
+    {:reply, {:ok, {namespace, compute_engine_id}}, state}
   end
 
   @impl true

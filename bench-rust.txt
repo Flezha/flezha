@@ -1,0 +1,30 @@
+Starting Flezha performance test...
+Runtime: rust
+Processors: 1000
+Messages per processor: 1000
+
+Setting up test environment with compute engines...
+Started 2 compute engines for performance testing
+Starting flow test with 1000 processors...
+Processor creation took: 1388.57 ms for 1000 processors
+Plugin setup took: 40.726 ms for 1000 processors
+Sending 1000000 total messages (1000 per processor)...
+Message sending took: 2535.918 ms
+Message processing took: 12831.302 ms for 1000000 messages
+
+=== Performance Summary ===
+Processors created: 1000
+Total messages processed: 1000000
+Processor creation: 1388.57 ms
+Plugin setup: 40.726 ms
+Message sending: 2535.918 ms
+Message processing: 12831.302 ms
+Total time: 16796.516 ms
+Throughput: 77934.41 messages/second
+Average time per processor: 16.796516 ms
+
+Performance test completed successfully!
+Cleaning up test environment...
+02:05:28.570 module=Flezha.ComputeEngine.ControlChannel function=handle_connection_closed/1 [warning] Connection closed for control socket for bench_25137793770 on bench
+02:05:28.569 module=Flezha.ComputeEngine.ControlChannel function=handle_connection_closed/1 [warning] Connection closed for control socket for bench_381779108586 on bench
+Test environment cleanup completed

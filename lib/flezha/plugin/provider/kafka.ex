@@ -35,8 +35,8 @@ defmodule Flezha.Plugin.Provider.Kafka do
       # TODO: The system needs to be intelligent enough to know when to reuse a connection
       # and when to create a new one. We may need a separate GenServer handling the connections.
       @impl true
-      def bind(settings) do
-        settings = pre_bind(settings)
+      def bind(%Producer{} = settings) do
+        %Producer{} = settings = pre_bind(settings)
         res = KafkaEx.start_link_worker(:no_name, uris: settings.hosts)
 
         case res do

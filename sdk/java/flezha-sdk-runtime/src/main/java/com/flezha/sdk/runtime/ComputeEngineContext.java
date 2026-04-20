@@ -3,8 +3,11 @@ package com.flezha.sdk.runtime;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.processor.ProcessorRegistry;
+import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
 import com.flezha.sdk.runtime.stream.StreamRegistry;
 import com.flezha.sdk.runtime.worker.ProcessorDispatcher;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nonnull;
 
@@ -21,6 +24,7 @@ public final class ComputeEngineContext {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ProcessorRegistry processorRegistry = new ProcessorRegistry();
     private final StreamRegistry streamRegistry = new StreamRegistry();
+    private final Map<Long, PrimaryStreamReader> primaryReaders = new ConcurrentHashMap<>();
     private final AtomicReference<String> computeEngineId = new AtomicReference<>("undefined");
     private final AtomicReference<ComputeEngineStatus> status =
             new AtomicReference<>(ComputeEngineStatus.STARTING);
@@ -62,6 +66,12 @@ public final class ComputeEngineContext {
     @Nonnull
     public StreamRegistry streamRegistry() {
         return streamRegistry;
+    }
+
+    /** Per-primary-stream frame parsers + dispatch. Populated by ConnectSocketHandler. */
+    @Nonnull
+    public Map<Long, PrimaryStreamReader> primaryReaders() {
+        return primaryReaders;
     }
 
     @Nonnull

@@ -175,14 +175,19 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     "java -jar #{jar_path} #{namespace}"
   end
 
-  def stop_compute_engine(namespace, compute_engine_id) do
+  def stop_compute_engine(namespace, compute_engine_id, opts \\ []) do
+    # QUIC session teardown runs more cleanup than UDS, so allow a wider
+    # default window; callers can tighten it via `timeout: N` when testing
+    # UDS-only paths that should disconnect quickly.
+    timeout = Keyword.get(opts, :timeout, 5_000)
+
     Flezha.Service.EventManager.add_handler(:compute_engine_disconnected_event)
     Flezha.ComputeEngine.FleetManager.disconnect_compute_engine(namespace, compute_engine_id)
 
     receive do
       {:compute_engine_disconnected_event, {^namespace, ^compute_engine_id}} -> :ok
     after
-      2000 -> raise "temporary test compute_engine not disconnected"
+      timeout -> raise "temporary test compute_engine not disconnected"
     end
 
     # Remove the handler to duplicate events.

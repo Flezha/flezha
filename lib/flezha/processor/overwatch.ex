@@ -111,7 +111,7 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
-  def handle_call({:enable_plugin, plugin_id, plugin}, _from, state) do
+  def handle_call({:enable_plugin, plugin_id, plugin}, _from, %__MODULE__{} = state) do
     case add_binding(state.bindings, plugin_id, plugin, []) do
       {:ok, bindings} ->
         {:reply, :ok, %__MODULE__{state | bindings: bindings}}
@@ -122,7 +122,7 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
-  def handle_call({:disable_plugin, plugin_id}, _from, state) do
+  def handle_call({:disable_plugin, plugin_id}, _from, %__MODULE__{} = state) do
     {:ok, bindings} = remove_binding(state.bindings, plugin_id, [])
 
     {:reply, :ok, %__MODULE__{state | bindings: bindings}}
@@ -154,7 +154,7 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
-  def handle_call({:compute_engine_migrate, new_compute_engine_id}, _from, state) do
+  def handle_call({:compute_engine_migrate, new_compute_engine_id}, _from, %__MODULE__{} = state) do
     state = %__MODULE__{
       state
       | compute_engine_id: new_compute_engine_id,
@@ -198,7 +198,7 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
-  def handle_call(:create_snapshot, _from, state) do
+  def handle_call(:create_snapshot, _from, %__MODULE__{} = state) do
     snapshot = create_snapshot(state.id, state.compute_engine_id)
 
     {:reply, {:ok, snapshot}, %__MODULE__{state | snapshot: snapshot}}
@@ -233,7 +233,7 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
+  def handle_info({:DOWN, _ref, :process, pid, reason}, %__MODULE__{} = state) do
     # Find the binding by the pid.
     plugin_info = find_plugin_by_pid(state.bindings, pid)
 
@@ -282,7 +282,7 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
-  def handle_info(:schedule_snapshot, state) do
+  def handle_info(:schedule_snapshot, %__MODULE__{} = state) do
     snapshot = create_snapshot(state.id, state.compute_engine_id)
 
     if state.snapshot_interval > 0 do
@@ -333,7 +333,7 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   @impl true
-  def alter_handover_state(state, {handover_state, pipe_serialized}) do
+  def alter_handover_state(%__MODULE__{} = state, {handover_state, pipe_serialized}) do
     command = %ComputeEngineCommands.MigrationDeserialization{
       processor_id: state.id,
       factory_id: Map.get(handover_state, :factory_id),
@@ -375,7 +375,7 @@ defmodule Flezha.Processor.Overwatch do
     Process.send_after(self(), {:retry_plugin_restart, plugin_id}, delay)
   end
 
-  defp handle_restart_failure(state, plugin_id, plugin, reason) do
+  defp handle_restart_failure(%__MODULE__{} = state, plugin_id, plugin, reason) do
     retry_info = Map.get(state.plugin_restart_retries, plugin_id, %{count: 0, plugin: plugin})
     new_count = retry_info.count + 1
     delay = retry_delay(retry_info.count)
@@ -393,7 +393,7 @@ defmodule Flezha.Processor.Overwatch do
     %__MODULE__{state | plugin_restart_retries: new_retries}
   end
 
-  defp handle_restart_success(state, plugin_id, new_bindings) do
+  defp handle_restart_success(%__MODULE__{} = state, plugin_id, new_bindings) do
     # Reset retry count on successful restart
     new_retries = Map.delete(state.plugin_restart_retries, plugin_id)
 
@@ -481,7 +481,7 @@ defmodule Flezha.Processor.Overwatch do
     end)
   end
 
-  defp add_binding(bindings, plugin_id, plugin, opts) do
+  defp add_binding(bindings, plugin_id, %IOBindingPlugin{} = plugin, opts) do
     case IOBinding.bind(plugin.provider) do
       {:ok, {plugin_provider, pid}} ->
         plugin = %IOBindingPlugin{plugin | provider: plugin_provider, pid: pid}
@@ -569,12 +569,12 @@ defmodule Flezha.Processor.Overwatch do
   defp recalculate_positions(bindings_list) do
     # Recalculate positions for all plugins to ensure they are sequential starting from 0
     Enum.with_index(bindings_list, 0)
-    |> Enum.map(fn {{plugin_id, plugin}, new_position} ->
+    |> Enum.map(fn {{plugin_id, %IOBindingPlugin{} = plugin}, new_position} ->
       {plugin_id, %IOBindingPlugin{plugin | position: new_position}}
     end)
   end
 
-  defp insert_plugin_by_position(current_bindings, {plugin_id, plugin}) do
+  defp insert_plugin_by_position(current_bindings, {plugin_id, %IOBindingPlugin{} = plugin}) do
     case plugin.position do
       nil ->
         # No position specified, add to the end and update positions
@@ -589,7 +589,7 @@ defmodule Flezha.Processor.Overwatch do
         # Update positions for plugins that are shifted
         shifted_after =
           Enum.with_index(after_split, target_position + 1)
-          |> Enum.map(fn {{id, plugin_struct}, new_pos} ->
+          |> Enum.map(fn {{id, %IOBindingPlugin{} = plugin_struct}, new_pos} ->
             {id, %IOBindingPlugin{plugin_struct | position: new_pos}}
           end)
 

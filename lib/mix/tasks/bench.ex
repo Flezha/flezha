@@ -12,12 +12,27 @@ defmodule Mix.Tasks.Bench do
   ## Usage
 
       mix bench --num-processors 1000 --messages-per-processor 1000
+      mix bench --runtime java -n 100 -m 1000
 
   ## Options
 
-    * `--num-processors` - Number of processors to create (default: 100)
-    * `--messages-per-processor` - Number of messages to send per processor (default: 100)
+    * `--num-processors` / `-n` - Number of processors to create (default: 100)
+    * `--messages-per-processor` / `-m` - Number of messages to send per processor (default: 100)
+    * `--runtime` / `-r` - Which SDK to benchmark: `rust` (default) or `java`.
+      The `java` runtime requires the test jar at
+      `test/apps/java_compute_engine/target/java_compute_engine.jar`. Build it
+      with `mix test.java_sdk` (builds host `flz_jni` + Maven) or
+      `mvn -f test/apps/java_compute_engine/pom.xml package`.
 
+  ## Comparing SDKs
+
+      mix bench --runtime rust -n 100 -m 1000 | tee bench-rust.txt
+      mix bench --runtime java -n 100 -m 1000 | tee bench-java.txt
+
+  The runtime selector only governs how the compute engine processes are
+  launched — the agent, protocol, and measurement code are identical
+  across runs, so the Throughput / Message processing numbers are directly
+  comparable.
   """
 
   @default_namespace "default"
@@ -29,21 +44,27 @@ defmodule Mix.Tasks.Bench do
       OptionParser.parse(args,
         switches: [
           num_processors: :integer,
-          messages_per_processor: :integer
+          messages_per_processor: :integer,
+          runtime: :string
         ],
         aliases: [
           n: :num_processors,
-          m: :messages_per_processor
+          m: :messages_per_processor,
+          r: :runtime
         ]
       )
 
     num_processors = opts[:num_processors] || 100
     test_messages_per_processor = opts[:messages_per_processor] || 100
+    runtime = parse_runtime(opts[:runtime])
 
     IO.puts("Starting Flezha performance test...")
+    IO.puts("Runtime: #{runtime}")
     IO.puts("Processors: #{num_processors}")
     IO.puts("Messages per processor: #{test_messages_per_processor}")
     IO.puts("")
+
+    Process.put(:bench_runtime, runtime)
 
     # Set logging to only show warnings and errors BEFORE starting application
     Logger.configure(level: :warning)
@@ -57,13 +78,21 @@ defmodule Mix.Tasks.Bench do
     # Re-configure logger after app start to ensure it sticks
     Logger.configure(level: :warning)
 
-    # Check if we can use the default namespace or need to set up a test environment
+    # Default namespace is pre-populated with Rust compute engines by the agent
+    # on boot (see config/runtime.exs). Reuse them for runtime=:rust; for
+    # runtime=:java we must spawn fresh Java engines in the bench namespace.
     namespace =
-      if compute_engines_available?(@default_namespace) do
-        @default_namespace
-      else
-        setup_test_environment()
-        @bench_namespace
+      cond do
+        runtime != :rust ->
+          setup_test_environment()
+          @bench_namespace
+
+        compute_engines_available?(@default_namespace) ->
+          @default_namespace
+
+        true ->
+          setup_test_environment()
+          @bench_namespace
       end
 
     try do
@@ -118,20 +147,11 @@ defmodule Mix.Tasks.Bench do
   end
 
   defp start_compute_engines(namespace, count) do
-    # Get current working directory for the cargo command
     {:ok, current_path} = :file.get_cwd()
+    runtime = Process.get(:bench_runtime, :rust)
 
-    # Start multiple compute engines
     for i <- 1..count do
-      binary_path =
-        "#{current_path}/test/apps/rust_compute_engine/target/debug/rust_compute_engine"
-
-      command =
-        if File.exists?(binary_path) do
-          "#{binary_path} #{namespace}"
-        else
-          "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- #{namespace}"
-        end
+      command = build_command(runtime, current_path, namespace)
 
       # Add event handler to wait for connection
       Flezha.Service.EventManager.add_handler(:compute_engine_connected_event)
@@ -152,6 +172,47 @@ defmodule Mix.Tasks.Bench do
 
       compute_engine_id
     end
+  end
+
+  defp parse_runtime(nil), do: :rust
+  defp parse_runtime("rust"), do: :rust
+  defp parse_runtime("java"), do: :java
+
+  defp parse_runtime(other) do
+    raise "Unknown --runtime value: #{inspect(other)}. Expected \"rust\" or \"java\"."
+  end
+
+  defp build_command(:rust, current_path, namespace) do
+    binary_path =
+      "#{current_path}/test/apps/rust_compute_engine/target/debug/rust_compute_engine"
+
+    if File.exists?(binary_path) do
+      "#{binary_path} #{namespace}"
+    else
+      "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- #{namespace}"
+    end
+  end
+
+  defp build_command(:java, current_path, namespace) do
+    jar_path =
+      Path.join([
+        current_path,
+        "test/apps/java_compute_engine/target/java_compute_engine.jar"
+      ])
+
+    if not File.exists?(jar_path) do
+      raise """
+      Java compute engine jar not found at #{jar_path}.
+
+      Build it first with one of:
+        mix test.java_sdk   # full pipeline: build flz_jni + Maven + run tests
+        mvn -f test/apps/java_compute_engine/pom.xml package
+
+      Then retry: mix bench --runtime java ...
+      """
+    end
+
+    "java -jar #{jar_path} #{namespace}"
   end
 
   defp run_performance_test(namespace, num_processors, test_messages_per_processor) do

@@ -13,7 +13,6 @@ import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
 import com.flezha.sdk.runtime.worker.DefaultProcessorDispatcher;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.Nonnull;
@@ -73,29 +72,28 @@ public final class FlezhaImpl implements Flezha {
                 new DefaultProcessorDispatcher(ctx, resolved.workerPoolSize());
         ctx.setProcessorDispatcher(dispatcher);
 
-        // Dispatcher will route events by streamId: every opened stream
-        // registers its own PrimaryStreamReader in streamReaders below.
-        Map<Long, PrimaryStreamReader> streamReaders = new ConcurrentHashMap<>();
-
         CountDownLatch assignLatch = new CountDownLatch(1);
         ReconnectCoordinator[] coordinatorRef = new ReconnectCoordinator[1];
 
         NativeEventDispatcher eventDispatcher = new NativeEventDispatcher() {
+            private final FrameParser controlParser = new FrameParser();
+            private CommandRouter controlRouter;
+
             @Override
             public void onData(long streamId, byte[] data) {
-                PrimaryStreamReader reader = streamReaders.get(streamId);
+                // Primary stream? Route to its per-stream reader.
+                PrimaryStreamReader reader = ctx.primaryReaders().get(streamId);
                 if (reader != null) {
                     reader.onData(data);
                     return;
                 }
-                // Control-stream frames aren't registered in streamReaders;
-                // they are handled by the latch-driven control loop below.
+                // Otherwise it's the control stream.
                 routeControlData(streamId, data);
             }
 
             @Override
             public void onStreamClosed(long streamId) {
-                streamReaders.remove(streamId);
+                ctx.primaryReaders().remove(streamId);
             }
 
             @Override
@@ -106,23 +104,24 @@ public final class FlezhaImpl implements Flezha {
                 }
             }
 
-            private final FrameParser controlParser = new FrameParser();
-            private CommandRouter controlRouter;
-
             private void routeControlData(long streamId, byte[] data) {
                 if (controlRouter == null) {
                     controlRouter = new CommandRouter(ctx, streamId);
                 }
-                for (Frame frame : controlParser.feed(data)) {
-                    if (ControlChannel.HANDSHAKE_PAYLOAD_ID.equals(frame.payloadId())) {
-                        continue;
+                try {
+                    for (Frame frame : controlParser.feed(data)) {
+                        if (ControlChannel.HANDSHAKE_PAYLOAD_ID.equals(frame.payloadId())) {
+                            continue;
+                        }
+                        controlRouter.route(frame);
+                        if (ctx.computeEngineId() != null
+                                && !ctx.computeEngineId().equals("undefined")
+                                && assignLatch.getCount() > 0) {
+                            assignLatch.countDown();
+                        }
                     }
-                    controlRouter.route(frame);
-                    if (ctx.computeEngineId() != null
-                            && !ctx.computeEngineId().equals("undefined")
-                            && assignLatch.getCount() > 0) {
-                        assignLatch.countDown();
-                    }
+                } catch (Throwable t) {
+                    LOG.error("control stream frame parse failed: {}", t.toString());
                 }
             }
         };
@@ -146,13 +145,6 @@ public final class FlezhaImpl implements Flezha {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-
-        // Register PrimaryStreamReaders for any already-opened primary streams.
-        // In practice the agent sends ConnectSocket later, at which point the
-        // handler opens streams and we need to register readers. The
-        // ConnectSocketHandler does this directly via streamRegistry + this
-        // map — but because the reader must know the ctx, we expose a hook.
-        ctx.streamRegistry().clear(); // fresh start; handler will re-populate
 
         ReconnectCoordinator coordinator = new ReconnectCoordinator(ctx, () -> {
             // Reconnect hook: attempt to re-open the control stream and

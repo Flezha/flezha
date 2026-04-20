@@ -160,11 +160,16 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_contextDestr
             let mut guard = (*ctx_ptr).streams.lock().unwrap();
             guard.drain().map(|(_, v)| v).collect()
         };
+        let current_tid = thread::current().id();
         for entry in streams {
             entry.shutdown.store(true, Ordering::SeqCst);
             let _ = entry.stream.shutdown(std::net::Shutdown::Both);
             if let Some(handle) = entry.reader.lock().unwrap().take() {
-                let _ = handle.join();
+                // Never block-join the thread that called us (happens when a
+                // reader panics into on_connection_lost → Java → contextDestroy).
+                if handle.thread().id() != current_tid {
+                    let _ = handle.join();
+                }
             }
         }
 
@@ -380,7 +385,12 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_streamClose<
         entry.shutdown.store(true, Ordering::SeqCst);
         let _ = entry.stream.shutdown(std::net::Shutdown::Both);
         if let Some(handle) = entry.reader.lock().unwrap().take() {
-            let _ = handle.join();
+            // Never block-join the current thread (e.g., when a
+            // ComputeEngineDisconnect handler on the control reader thread
+            // closes the control stream in-line).
+            if handle.thread().id() != thread::current().id() {
+                let _ = handle.join();
+            }
         }
     }
 }

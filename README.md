@@ -79,7 +79,7 @@ _build/dev/rel/flezha/bin/flz processor state my_processor
 Run performance tests to measure processor throughput and message processing capabilities:
 
 ```bash
-# Run with default settings (1000 processors, 1000 messages per processor)
+# Run with default settings (100 processors, 100 messages per processor)
 MIX_ENV=prod mix bench
 
 # Run with custom settings
@@ -87,12 +87,24 @@ MIX_ENV=prod mix bench --num-processors 100 --messages-per-processor 100
 
 # Short form aliases
 MIX_ENV=prod mix bench -n 100 -m 50
-MIX_ENV=prod mix bench -n 100 -m 50
+
+# Bench the Rust SDK (default) vs the Java SDK — same agent, same protocol,
+# same measurement code, so the Throughput numbers are directly comparable.
+MIX_ENV=prod mix bench --runtime rust -n 100 -m 1000 | tee bench-rust.txt
+MIX_ENV=prod mix bench --runtime java -n 100 -m 1000 | tee bench-java.txt
+diff bench-rust.txt bench-java.txt
+
+# scripts/bench.sh is a thin wrapper that also passes FLEZHA_TRANSPORT:
+./scripts/bench.sh --runtime java --transport quic -n 100 -m 1000
 ```
 
 **Options:**
-- `--num-processors` / `-n`: Number of processors to create (default: 1000)
-- `--messages-per-processor` / `-m`: Number of messages to send per processor (default: 1000)
+- `--num-processors` / `-n`: Number of processors to create (default: 100)
+- `--messages-per-processor` / `-m`: Number of messages to send per processor (default: 100)
+- `--runtime` / `-r`: Which SDK to benchmark — `rust` (default) or `java`. The
+  `java` runtime requires the test jar at
+  `test/apps/java_compute_engine/target/java_compute_engine.jar` (build with
+  `mix test.java_sdk` or `mvn -f test/apps/java_compute_engine/pom.xml package`).
 
 The performance test creates multiple processors, enables plugins, sends messages, and measures:
 - Processor creation time
