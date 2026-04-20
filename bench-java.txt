@@ -1,27 +1,27 @@
 Starting Flezha performance test...
 Runtime: java
-Processors: 1000
+Processors: 100
 Messages per processor: 1000
 
 Setting up test environment with compute engines...
 Started 2 compute engines for performance testing
-Starting flow test with 1000 processors...
-Processor creation took: 3567.279 ms for 1000 processors
-Plugin setup took: 46.957 ms for 1000 processors
-Sending 1000000 total messages (1000 per processor)...
-Message sending took: 4505.627 ms
-Message processing took: 2954.566 ms for 1000000 messages
+Starting flow test with 100 processors...
+Processor creation took: 243.639 ms for 100 processors
+Plugin setup took: 9.493 ms for 100 processors
+Sending 100000 total messages (1000 per processor)...
+Message sending took: 682.685 ms
+Message processing took: 355.808 ms for 100000 messages
 
 === Performance Summary ===
-Processors created: 1000
-Total messages processed: 1000000
-Processor creation: 3567.279 ms
-Plugin setup: 46.957 ms
-Message sending: 4505.627 ms
-Message processing: 2954.566 ms
-Total time: 11074.429 ms
-Throughput: 338459.18 messages/second
-Average time per processor: 11.074429 ms
+Processors created: 100
+Total messages processed: 100000
+Processor creation: 243.639 ms
+Plugin setup: 9.493 ms
+Message sending: 682.685 ms
+Message processing: 355.808 ms
+Total time: 1291.625 ms
+Throughput: 281050.45 messages/second
+Average time per processor: 12.91625 ms
 
 Performance test completed successfully!
 Cleaning up test environment...
