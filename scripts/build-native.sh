@@ -104,6 +104,7 @@ esac
 HOST_TRIPLE="$(rustc -vV | awk '/^host:/ {print $2}')"
 
 command -v cargo >/dev/null 2>&1 || { echo "cargo not found on PATH" >&2; exit 1; }
+command -v rustup >/dev/null 2>&1 || { echo "rustup not found on PATH" >&2; exit 1; }
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -115,6 +116,11 @@ for triple in "${TRIPLES[@]}"; do
   fi
 
   echo "==> Building flz_jni for ${triple}"
+
+  if ! rustup target list --installed 2>/dev/null | grep -qx "${triple}"; then
+    echo "    installing rustup target ${triple}"
+    rustup target add "${triple}"
+  fi
 
   if [[ "${triple}" == "${HOST_TRIPLE}" ]]; then
     (cd "${REPO_ROOT}" && cargo build --release -p flz_jni --target "${triple}")
