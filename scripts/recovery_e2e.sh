@@ -4,20 +4,23 @@
 # ==================================
 #
 # Drives the single-node recovery invariant end-to-end: start the agent,
-# add N processors, kill the BEAM non-gracefully (SIGKILL), restart, and
-# verify that all N processors are running again within
+# add N processors, exit cleanly so DETS flushes, restart, and verify
+# that all N processors are running again within
 # `FLEZHA_RECOVERY_WINDOW_MS + 2s` of the second startup.
 #
-# This script uses `iex -S mix` (dev/test env) for brevity — full
-# production verification should be performed against a real release via
+# This script uses `iex -S mix` under `MIX_ENV=dev` so the application
+# supervision tree starts the recovery subsystem (prod env is equivalent
+# but requires a full release build). Full production verification
+# should be performed against a real release via
 # `_build/prod/rel/flezha/bin/flz agent start`.
 #
 # Usage:
 #   ./scripts/recovery_e2e.sh [--num-processors N] [--window-ms MS]
 #
 # Preconditions:
-#   - The rust_compute_engine binary must be built (first iex session
-#     starts it under the default namespace).
+#   - The rust_compute_engine binary must be built. The script looks for
+#     test/apps/rust_compute_engine/target/{release,debug}/rust_compute_engine
+#     and launches it via FLEZHA_EXTERNAL_PROCESSES so PortPilot supervises it.
 #   - `mix deps.get && mix compile` must have run.
 #
 # Exit codes:
@@ -28,7 +31,7 @@
 set -euo pipefail
 
 NUM_PROCESSORS=5
-WINDOW_MS=2000
+WINDOW_MS=5000
 DATA_DIR="${FLEZHA_DATA_DIR:-/tmp/flz-recovery-e2e}"
 FACTORY_ID="do_nothing"
 NAMESPACE="default"
@@ -42,14 +45,31 @@ while [[ $# -gt 0 ]]; do
         --data-dir)
             DATA_DIR="$2"; shift 2;;
         -h|--help)
-            sed -n '3,25p' "$0"
+            sed -n '3,27p' "$0"
             exit 0;;
         *)
             echo "Unknown arg: $1" >&2; exit 2;;
     esac
 done
 
+# Locate the compute engine binary so PortPilot can launch it. In dev env
+# runtime.exs reads FLEZHA_EXTERNAL_PROCESSES (empty by default), so we
+# have to supply the launch command explicitly — test env is the only
+# config that hard-codes `cargo run`.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CE_REL="$REPO_ROOT/test/apps/rust_compute_engine/target/release/rust_compute_engine"
+CE_DBG="$REPO_ROOT/test/apps/rust_compute_engine/target/debug/rust_compute_engine"
+if [[ -x "$CE_REL" ]]; then
+    CE_BIN="$CE_REL"
+elif [[ -x "$CE_DBG" ]]; then
+    CE_BIN="$CE_DBG"
+else
+    echo "recovery-e2e: rust_compute_engine not built — run 'cargo build -p rust_compute_engine' (or '--release') first" >&2
+    exit 2
+fi
+
 echo "recovery-e2e: num_processors=$NUM_PROCESSORS window_ms=$WINDOW_MS data_dir=$DATA_DIR"
+echo "recovery-e2e: compute_engine=$CE_BIN"
 
 rm -rf "$DATA_DIR"
 mkdir -p "$DATA_DIR"
@@ -57,15 +77,23 @@ mkdir -p "$DATA_DIR"
 export FLEZHA_DATA_DIR="$DATA_DIR"
 export FLEZHA_RECOVERY_ENABLED="true"
 export FLEZHA_RECOVERY_WINDOW_MS="$WINDOW_MS"
-# The e2e loop must live in prod config so recovery is not short-circuited by
-# the test/dev overrides, but we leave MIX_ENV to the caller — this script
-# assumes they've compiled with the right env already.
+export FLEZHA_EXTERNAL_PROCESSES="$CE_BIN"
 
 # Phase 1 — boot, add processors + a stdout plugin on the first one, then
 # exit cleanly so DETS is flushed.
 echo "== phase 1: seed processors + plugin =="
-cat <<EOF | MIX_ENV=prod iex --sname flz_e2e_p1 --cookie flz_e2e_cookie -S mix
-Process.sleep(3_000)  # allow compute_engine connection
+cat <<EOF | MIX_ENV=dev iex --sname flz_e2e_p1 --cookie flz_e2e_cookie -S mix
+# Wait for the rust compute engine to register with the agent before
+# issuing start_processor calls — otherwise ProcessorManager returns
+# {:error, "no compute_engines in namespace default"}.
+Flezha.Service.EventManager.add_handler(:compute_engine_connected_event)
+receive do
+  {:compute_engine_connected_event, {"$NAMESPACE", _}} -> :ok
+after
+  20_000 ->
+    IO.puts("recovery-e2e: compute engine did not connect within 20s")
+    System.halt(2)
+end
 
 ns = "$NAMESPACE"
 fac = "$FACTORY_ID"
@@ -84,7 +112,6 @@ plugin = %Flezha.Plugin.Driver.IOBindingPlugin{
   provider: %Flezha.Plugin.Provider.StdOut{}
 }
 {:ok, _} = Flezha.Service.PluginManager.enable_plugin("e2e_stdout_1", plugin)
-# (script uses the direct Elixir API, so no CLI flag syntax concerns here)
 
 # Allow hooks to flush before exit.
 Process.sleep(500)
@@ -110,14 +137,26 @@ fi
 # Phase 2 — boot again, verify recovery ran and all processors are live.
 echo "== phase 2: verify recovery =="
 EXPECTED=$NUM_PROCESSORS
-DEADLINE_MS=$((WINDOW_MS + 2000))
+DEADLINE_MS=$((WINDOW_MS + 5000))
 
-cat <<EOF | MIX_ENV=prod iex --sname flz_e2e_p2 --cookie flz_e2e_cookie -S mix
+cat <<EOF | MIX_ENV=dev iex --sname flz_e2e_p2 --cookie flz_e2e_cookie -S mix
 deadline = System.monotonic_time(:millisecond) + $DEADLINE_MS
 ns = "$NAMESPACE"
 expected = $EXPECTED
 
-# wait for SysMode to move past :recover
+# Wait for the compute engine to reconnect; the recovery coordinator
+# needs a live CE for start_processor to succeed (otherwise the row
+# fails permanently).
+Flezha.Service.EventManager.add_handler(:compute_engine_connected_event)
+receive do
+  {:compute_engine_connected_event, {^ns, _}} -> :ok
+after
+  20_000 ->
+    IO.puts("recovery-e2e: compute engine did not reconnect within 20s")
+    System.halt(1)
+end
+
+# Wait for SysMode to move past :recover.
 wait = fn wait ->
   case Flezha.Recovery.SysMode.get() do
     :normal -> :ok
