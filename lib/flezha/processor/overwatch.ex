@@ -6,6 +6,7 @@ defmodule Flezha.Processor.Overwatch do
   alias Flezha.Service.Payloader
   alias Flezha.ComputeEngine.StreamSup
   alias Flezha.Processor.IOBinding
+  alias Flezha.Processor.InitStateResolver
   alias Flezha.Plugin.Driver.IOBindingPlugin
 
   require Logger
@@ -62,12 +63,33 @@ defmodule Flezha.Processor.Overwatch do
       }
     }
 
-    case start_processor_sdk(compute_engine_id, processor) do
-      {:ok, _} ->
-        {:ok, state}
+    plugins = Keyword.get(processor.opts, :init_state_plugins, [])
 
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, state, processor} <- resolve_init_state(state, processor, plugins),
+         {:ok, _} <- start_processor_sdk(compute_engine_id, processor) do
+      {:ok, state}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp resolve_init_state(%__MODULE__{} = state, processor, plugins) do
+    if plugins != [] and processor.init_values == %{} do
+      base_context = %{
+        processor_id: processor.id,
+        namespace: state.namespace,
+        factory_id: processor.factory_id
+      }
+
+      case InitStateResolver.resolve(plugins, base_context) do
+        {:ok, resolved} ->
+          {:ok, %{state | init_values: resolved}, %{processor | init_values: resolved}}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      {:ok, state, processor}
     end
   end
 
