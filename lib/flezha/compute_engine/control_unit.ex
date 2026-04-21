@@ -16,6 +16,50 @@ defmodule Flezha.ComputeEngine.ControlUnit do
     )
   end
 
+  @doc """
+  Sends a `ProcessorMessage` to the SDK-side processor via the control
+  channel and returns the decoded `ProcessorMessageResponse`.
+
+  Mirrors the `ProcessorState` request/reply pattern: the compute engine's
+  reply (a protobuf-encoded `ProcessorMessageResponse`) is delivered by
+  `handle_payload/2` as the `raw_data` field of the outer `CommandResponse`.
+  An empty `error` string is mapped to `{:ok, payload}`; a non-empty error
+  becomes `{:error, error}`. Transport-layer or encoding failures surface as
+  `{:error, reason}` unchanged.
+  """
+  @spec send_processor_message(binary(), binary(), binary()) ::
+          {:ok, binary()} | {:error, term()}
+  def send_processor_message(compute_engine_id, processor_id, payload)
+      when is_binary(compute_engine_id) and is_binary(processor_id) and is_binary(payload) do
+    command = %ComputeEngineCommands.ProcessorMessage{
+      processor_id: processor_id,
+      payload: payload
+    }
+
+    case GenServer.call(
+           Identificator.control_unit(compute_engine_id),
+           {:send_control, {:processor_message, command}}
+         ) do
+      {:ok, raw_data} -> decode_processor_message_response(raw_data)
+      {:error, _} = err -> err
+    end
+  catch
+    :exit, reason -> {:error, {:control_unit_exit, reason}}
+  end
+
+  defp decode_processor_message_response(raw_data) do
+    case ComputeEngineCommands.ProcessorMessageResponse.decode(raw_data) do
+      {:ok, %ComputeEngineCommands.ProcessorMessageResponse{error: "", payload: payload}} ->
+        {:ok, payload}
+
+      {:ok, %ComputeEngineCommands.ProcessorMessageResponse{error: err}} ->
+        {:error, err}
+
+      {:error, reason} ->
+        {:error, {:decode_error, reason}}
+    end
+  end
+
   @impl true
   def init({namespace, compute_engine_id}) do
     {

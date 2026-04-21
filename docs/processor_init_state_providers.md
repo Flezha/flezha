@@ -165,3 +165,92 @@ On cold start the DB fetch runs first; missing rows return `%{}` and the
 overlay supplies defaults. If the DB is down the first plugin's
 `on_error: :fail` (default) aborts startup; changing it to `:empty` would
 let the defaults alone seed the processor.
+
+## First-party `FromProcessor` provider
+
+`Flezha.Processor.InitState.Providers.FromProcessor` seeds a cold-starting
+processor from another running processor. It is the first concrete
+consumer of the generic
+[processor message-handler](processor_message_handlers.md) routing
+mechanism.
+
+```elixir
+alias Flezha.Processor.Builder
+alias Flezha.Processor.InitStatePlugin
+alias Flezha.Processor.InitState.Providers.FromProcessor
+
+from_source =
+  InitStatePlugin.new(
+    provider: FromProcessor,
+    opts: %{
+      source_processor_id: "orders-aggregator",
+      handler_key: :fetch_init_state,
+      request_timeout_ms: 2_000
+    },
+    on_error: :fail,
+    timeout_ms: 5_000
+  )
+
+processor = %Builder{
+  id: "orders-shadow",
+  factory_id: "order_aggregator",
+  opts: [init_state_plugins: [from_source]]
+}
+```
+
+### opts
+
+| Key                    | Type                 | Default                                 | Notes |
+| ---------------------- | -------------------- | --------------------------------------- | ----- |
+| `:source_processor_id` | `String.t()`         | **required**                            | Target processor's id |
+| `:handler_key`         | `atom()`             | **required**                            | Must match a registered `MessageHandlerPlugin` on the source |
+| `:source_namespace`    | `atom() \| String.t()` | `context.namespace`                   | Namespace of the source processor |
+| `:request_payload`     | `binary()`           | `<<>>`                                  | Opaque bytes handed to the handler |
+| `:request_timeout_ms`  | `pos_integer()`      | `4_000`                                 | Kept strictly below the outer `%InitStatePlugin{}.timeout_ms` |
+
+### Return values
+
+- `{:ok, map}` — a JSON-decoded top-level object is shallow-merged into
+  the init-state accumulator.
+- `{:error, :source_processor_not_found}` — the source was not found in
+  the registry (namespace + processor id lookup failed).
+- `{:error, :timeout}` — the handler did not reply within
+  `:request_timeout_ms`.
+- `{:error, {:invalid_reply_payload, :not_a_map}}` — the reply decoded to
+  a non-object JSON value (array, string, number, boolean, `null`).
+- `{:error, {:invalid_reply_payload, reason}}` — the reply bytes were not
+  valid JSON; `reason` describes the decoder failure.
+- `{:error, {:missing_opt, key}}` — the plugin's `opts` omits a required
+  field.
+- Any other `{:error, reason}` from the handler is propagated unchanged —
+  the outer `%InitStatePlugin{}.on_error` decides whether to abort or
+  continue.
+
+### Handler contract
+
+The source processor must have a `MessageHandlerPlugin` registered under
+the chosen `handler_key`. The canonical setup pairs `FromProcessor` on
+the consumer side with `Flezha.Plugin.Provider.MessageForward` on the
+source side so the actual state assembly happens in the source
+processor's SDK factory (via `handle_message`). The handler must return
+JSON-encoded bytes that decode to a top-level object compatible with the
+consumer's factory state schema.
+
+### Caveats
+
+- **Open authorization (v1).** Any cluster-reachable caller can invoke
+  the source's handler. Real ACLs are deferred; a handler plugin's own
+  code may inspect `context.from` to gate requests. See
+  [processor_message_handlers.md](processor_message_handlers.md) for the
+  details.
+- **Cross-node latency eats the caller's timeout budget.** Size
+  `:request_timeout_ms` to leave headroom under the enclosing
+  `%InitStatePlugin{}.timeout_ms` (default 5 000 ms), and size the outer
+  `timeout_ms` below the `start_processor_sdk` 8-second ceiling when
+  running across BEAM nodes.
+- **Mid-migration races degrade cleanly.** A source that migrates while a
+  `FromProcessor` call is in flight either succeeds (resolve-and-send
+  before handover, or resolve-after-swap), times out (resolve-before,
+  send-after-old-pid), or returns `{:error, :source_processor_not_found}`
+  (resolve-during-gap). None crash the caller or either Overwatch. The
+  outer `on_error` decides the consumer's behavior.

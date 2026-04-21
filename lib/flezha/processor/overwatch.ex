@@ -8,6 +8,7 @@ defmodule Flezha.Processor.Overwatch do
   alias Flezha.Processor.IOBinding
   alias Flezha.Processor.InitStateResolver
   alias Flezha.Plugin.Driver.IOBindingPlugin
+  alias Flezha.Plugin.Driver.MessageHandlerPlugin
 
   require Logger
 
@@ -29,7 +30,11 @@ defmodule Flezha.Processor.Overwatch do
     # 1 - binary, 2 - text, 3 - custom
     default_input_type: "2",
     # Map to store plugin restart retry information: %{plugin_id => %{count: count, plugin: plugin}}
-    plugin_restart_retries: %{}
+    plugin_restart_retries: %{},
+    # %{handler_key :: atom() => {plugin_id :: term(), MessageHandlerPlugin.t()}}.
+    # Separate from `bindings` so IO-binding lifecycle (monitors, restart,
+    # `{:DOWN, ...}` dispatch) stays scoped to `IOBindingPlugin` pids only.
+    handlers: %{}
   ]
 
   def start_link(args) do
@@ -60,7 +65,8 @@ defmodule Flezha.Processor.Overwatch do
         on_output: [],
         interval: [],
         proactive: []
-      }
+      },
+      handlers: %{}
     }
 
     plugins = Keyword.get(processor.opts, :init_state_plugins, [])
@@ -102,6 +108,7 @@ defmodule Flezha.Processor.Overwatch do
       )
 
       unregister_plugins(state.bindings)
+      unregister_handlers(state.handlers)
     end
 
     Logger.info(
@@ -126,6 +133,7 @@ defmodule Flezha.Processor.Overwatch do
     )
 
     unregister_plugins(state.bindings)
+    unregister_handlers(state.handlers)
 
     GenServer.reply(from, :ok)
 
@@ -148,6 +156,31 @@ defmodule Flezha.Processor.Overwatch do
     {:ok, bindings} = remove_binding(state.bindings, plugin_id, [])
 
     {:reply, :ok, %__MODULE__{state | bindings: bindings}}
+  end
+
+  @impl true
+  def handle_call(
+        {:enable_message_handler, plugin_id, %MessageHandlerPlugin{} = plugin},
+        _from,
+        %__MODULE__{} = state
+      ) do
+    case Map.get(state.handlers, plugin.handler_key) do
+      nil ->
+        handlers = Map.put(state.handlers, plugin.handler_key, {plugin_id, plugin})
+        {:reply, :ok, %__MODULE__{state | handlers: handlers}}
+
+      _existing ->
+        {:reply, {:error, {:handler_key_conflict, plugin.handler_key}}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:disable_message_handler, plugin_id}, _from, %__MODULE__{} = state) do
+    handlers =
+      Enum.reject(state.handlers, fn {_key, {pid_id, _plugin}} -> pid_id == plugin_id end)
+      |> Map.new()
+
+    {:reply, :ok, %__MODULE__{state | handlers: handlers}}
   end
 
   @impl true
@@ -328,6 +361,54 @@ defmodule Flezha.Processor.Overwatch do
     end
   end
 
+  # Route a typed request envelope to the matching handler plugin. The
+  # handler runs in a short-lived Task under
+  # `Flezha.Processor.MessageHandlerTaskSup` so a blocking handler (e.g. the
+  # default `MessageForward` provider's synchronous SDK roundtrip) does not
+  # stall IO and other lifecycle messages on this Overwatch. No catch-all
+  # handle_info/2 is introduced — out-of-contract messages still crash
+  # Overwatch and trigger supervisor restart, preserving the existing
+  # signal for misrouted messages.
+  @impl true
+  def handle_info(
+        {:flezha_request, handler_key, payload, reply_to, ref},
+        %__MODULE__{} = state
+      ) do
+    case Map.get(state.handlers, handler_key) do
+      nil ->
+        send(reply_to, {:flezha_response, ref, {:error, {:unknown_handler_key, handler_key}}})
+
+        {:noreply, state}
+
+      {_plugin_id, %MessageHandlerPlugin{provider: provider, opts: opts}} ->
+        context = %{
+          processor_id: state.id,
+          namespace: state.namespace,
+          compute_engine_id: state.compute_engine_id,
+          handler_key: handler_key,
+          from: reply_to,
+          opts: opts
+        }
+
+        Task.Supervisor.start_child(
+          Flezha.Processor.MessageHandlerTaskSup,
+          fn ->
+            result =
+              try do
+                provider.handle(payload, context)
+              catch
+                kind, reason ->
+                  {:error, {:exception, kind, reason}}
+              end
+
+            send(reply_to, {:flezha_response, ref, result})
+          end
+        )
+
+        {:noreply, state}
+    end
+  end
+
   defp create_snapshot(processor_id, compute_engine_id) do
     command = %ComputeEngineCommands.ProcessorState{processor_id: processor_id}
 
@@ -370,11 +451,13 @@ defmodule Flezha.Processor.Overwatch do
     end
 
     new_bindings = sync_bindings(state.bindings, handover_state.bindings)
+    new_handlers = sync_handlers(Map.get(handover_state, :handlers, %{}))
 
     %__MODULE__{
       state
       | bindings: new_bindings,
-        init_values: handover_state.init_values
+        init_values: handover_state.init_values,
+        handlers: new_handlers
     }
   end
 
@@ -502,6 +585,19 @@ defmodule Flezha.Processor.Overwatch do
       end
     end)
   end
+
+  defp sync_handlers(handover_handlers) when is_map(handover_handlers) do
+    Enum.reduce(handover_handlers, %{}, fn {handler_key, {plugin_id, plugin}}, acc ->
+      PluginManager.register_plugin(plugin_id, {
+        plugin.__struct__,
+        {plugin.namespace, plugin.processor_id}
+      })
+
+      Map.put(acc, handler_key, {plugin_id, plugin})
+    end)
+  end
+
+  defp sync_handlers(_), do: %{}
 
   defp add_binding(bindings, plugin_id, %IOBindingPlugin{} = plugin, opts) do
     case IOBinding.bind(plugin.provider) do
@@ -671,4 +767,12 @@ defmodule Flezha.Processor.Overwatch do
       end)
     end)
   end
+
+  defp unregister_handlers(handlers) when is_map(handlers) do
+    Enum.each(handlers, fn {_key, {plugin_id, _plugin}} ->
+      PluginManager.unregister_plugin(plugin_id)
+    end)
+  end
+
+  defp unregister_handlers(_), do: :ok
 end

@@ -25,7 +25,8 @@ defmodule Flezha.Application do
         [
           Flezha.Service.PluginManager,
           Flezha.Service.PortPilot,
-          Flezha.Cluster.Orchestrator
+          Flezha.Cluster.Orchestrator,
+          {Task.Supervisor, name: Flezha.Processor.MessageHandlerTaskSup}
         ]
 
     # If Testnet is enabled, we start the TestnetSupervisor

@@ -11,6 +11,7 @@ import com.flezha.sdk.runtime.control.handlers.ComputeEngineDisconnectHandler;
 import com.flezha.sdk.runtime.control.handlers.ConnectSocketHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationDeserializationHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationSerializationHandler;
+import com.flezha.sdk.runtime.control.handlers.ProcessorMessageHandler;
 import com.flezha.sdk.runtime.control.handlers.ProcessorStateHandler;
 import com.flezha.sdk.runtime.control.handlers.RemProcessorHandler;
 import com.flezha.sdk.runtime.framing.Frame;
@@ -46,7 +47,8 @@ public final class CommandRouter {
                 CommandRequest.CommandCase.PROCESSOR_STATE, new ProcessorStateHandler(),
                 CommandRequest.CommandCase.MIGRATION_SERIALIZATION, new MigrationSerializationHandler(),
                 CommandRequest.CommandCase.MIGRATION_DESERIALIZATION, new MigrationDeserializationHandler(),
-                CommandRequest.CommandCase.COMPUTE_ENGINE_DISCONNECT, new ComputeEngineDisconnectHandler());
+                CommandRequest.CommandCase.COMPUTE_ENGINE_DISCONNECT, new ComputeEngineDisconnectHandler(),
+                CommandRequest.CommandCase.PROCESSOR_MESSAGE, new ProcessorMessageHandler());
     }
 
     public void route(@Nonnull Frame frame) {

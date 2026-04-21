@@ -44,6 +44,13 @@ public final class Main {
                 new CompareFilterProcessor.State("default", false),
                 CompareFilterProcessor::new,
                 FactoryMetadata.of("Filters by comparing input against a stored value"));
+
+        FactoryRegistry.registerFactory(
+                "echo_message",
+                EchoMessageProcessor.settings(),
+                new EchoMessageProcessor.State(),
+                EchoMessageProcessor::new,
+                FactoryMetadata.of("Echoes handleMessage payload back verbatim"));
     }
 
     private static void stdKeeper() {

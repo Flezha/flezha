@@ -103,6 +103,13 @@ public final class ProcessorInstance<State, Input, Output> {
         casted.postCreate(state);
     }
 
+    @SuppressWarnings("unchecked")
+    public synchronized byte[] handleMessage(@Nonnull byte[] payload) throws Exception {
+        ProcessorHandler<State, Input, Output> casted =
+                (ProcessorHandler<State, Input, Output>) handler;
+        return casted.handleMessage(payload, state);
+    }
+
     public synchronized byte[] serializeState(@Nonnull ObjectMapper mapper) throws Exception {
         return mapper.writeValueAsBytes(state);
     }

@@ -9,7 +9,7 @@ option java_outer_classname = "ComputeEngineCommandsProto";
 
 message CommandRequest {
     string reference_id = 1;
-    
+
     oneof command {
         AssignComputeEngineId assign_compute_engine_id = 2;
         ConnectSocket connect_socket = 3;
@@ -19,6 +19,7 @@ message CommandRequest {
         MigrationDeserialization migration_deserialization = 7;
         ProcessorState processor_state = 8;
         ComputeEngineDisconnect compute_engine_disconnect = 9;
+        ProcessorMessage processor_message = 10;
     }
 }
 
@@ -62,3 +63,13 @@ message ProcessorState {
 }
 
 message ComputeEngineDisconnect {}
+
+message ProcessorMessage {
+    string processor_id = 1;
+    bytes payload = 2;
+}
+
+message ProcessorMessageResponse {
+    bytes payload = 1;
+    string error = 2;
+}

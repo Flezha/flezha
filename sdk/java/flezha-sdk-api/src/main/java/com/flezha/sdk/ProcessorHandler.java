@@ -31,4 +31,15 @@ public interface ProcessorHandler<State, Input, Output> {
      */
     default void postCreate(@Nonnull State state) {
     }
+
+    /**
+     * Optional handler for typed request/reply messages routed by the
+     * agent's {@code processor-message-handlers} mechanism. Default throws
+     * to surface mis-routing as a loud, non-empty
+     * {@code ProcessorMessageResponse.error}.
+     */
+    @Nonnull
+    default byte[] handleMessage(@Nonnull byte[] payload, @Nonnull State state) throws Exception {
+        throw new UnsupportedOperationException("processor does not support handleMessage");
+    }
 }

@@ -223,6 +223,7 @@ message CommandRequest {
         MigrationDeserialization migration_deserialization = 7;
         ProcessorState processor_state = 8;
         ComputeEngineDisconnect compute_engine_disconnect = 9;
+        ProcessorMessage processor_message = 10;
     }
 }
 
@@ -266,6 +267,16 @@ message ProcessorState {
 }
 
 message ComputeEngineDisconnect {}
+
+message ProcessorMessage {
+    string processor_id = 1;
+    bytes payload = 2;
+}
+
+message ProcessorMessageResponse {
+    bytes payload = 1;
+    string error = 2;
+}
 ```
 
 ### Request/Response Pattern
@@ -574,6 +585,28 @@ All commands are sent as `CommandRequest` messages from the agent to the SDK. Th
 | Behavior | SDK sets status to `Stopped`. After sending the response, the SDK should close the control socket. |
 | Response status | `"success"` |
 | Response raw_data | empty |
+
+### ProcessorMessage
+
+| Field | Value |
+|-------|-------|
+| Direction | Agent -> SDK |
+| Proto message | `ProcessorMessage { processor_id: string, payload: bytes }` |
+| Behavior | SDK locates the processor by id and invokes the factory's `handle_message(payload)` hook. The return value (reply bytes on success, error string on failure) is wrapped into a protobuf-encoded `ProcessorMessageResponse` and written as the outer `CommandResponse.raw_data`. Factories that do not override `handle_message` return the default "unsupported" error — mis-routing is loud, not silent. |
+| Response status | `"success"` when the processor was found; `"error"` only when the processor id is unknown |
+| Response raw_data | Protobuf-encoded `ProcessorMessageResponse { payload: bytes, error: string }` — an empty `error` means success and the agent reads `payload`; a non-empty `error` means the factory reported a failure and the agent discards `payload` |
+| Possible errors | `"Processor with id {id} not found"` (CommandResponse.errors); factory-supplied error string (ProcessorMessageResponse.error) |
+
+The agent SHALL treat a non-empty `ProcessorMessageResponse.error` as an
+error condition regardless of `payload` contents. Used by the
+[processor-message-handlers](../docs/processor_message_handlers.md)
+mechanism — specifically the first-party
+`Flezha.Plugin.Provider.MessageForward` provider — to bridge
+Elixir-side request/reply envelopes to the SDK factory. The caller side
+is expected to set its own timeout; there is no server-side deadline
+propagation. v1 is open-auth; scoping is the caller's responsibility.
+Payloads are opaque bytes and share the control stream with other
+commands — keep them small to avoid head-of-line contention.
 
 ---
 

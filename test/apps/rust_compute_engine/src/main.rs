@@ -58,6 +58,71 @@ impl ProcessorHandler<DoNothingState, String, String> for DoNothingProcessor {
     }
 }
 
+// Used by the processor-message-handlers integration tests: echoes the
+// request payload verbatim so the agent can assert round-trip equality.
+struct EchoMessageProcessor;
+impl ProcessorHandler<EchoMessageState, String, String> for EchoMessageProcessor {
+    fn process(
+        &mut self,
+        input: String,
+        _state: &mut EchoMessageState,
+    ) -> Result<String, ProcessorError> {
+        Ok(input)
+    }
+
+    fn handle_message(
+        &mut self,
+        payload: &[u8],
+        _state: &mut EchoMessageState,
+    ) -> Result<Vec<u8>, String> {
+        Ok(payload.to_vec())
+    }
+}
+
+// Used by the processor-message-handlers integration tests: returns a
+// deterministic error string so the agent can assert error propagation.
+struct ErrorMessageProcessor;
+impl ProcessorHandler<EchoMessageState, String, String> for ErrorMessageProcessor {
+    fn process(
+        &mut self,
+        input: String,
+        _state: &mut EchoMessageState,
+    ) -> Result<String, ProcessorError> {
+        Ok(input)
+    }
+
+    fn handle_message(
+        &mut self,
+        _payload: &[u8],
+        _state: &mut EchoMessageState,
+    ) -> Result<Vec<u8>, String> {
+        Err("handle_message_error".to_string())
+    }
+}
+
+// Used by the FromProcessor init-state integration test: returns a
+// JSON-encoded map compatible with the `store_input` factory state so a
+// consumer processor can be seeded from the reply via the init-state
+// chain.
+struct JsonStateMessageProcessor;
+impl ProcessorHandler<StoreInputState, String, String> for JsonStateMessageProcessor {
+    fn process(
+        &mut self,
+        input: String,
+        _state: &mut StoreInputState,
+    ) -> Result<String, ProcessorError> {
+        Ok(input)
+    }
+
+    fn handle_message(
+        &mut self,
+        _payload: &[u8],
+        _state: &mut StoreInputState,
+    ) -> Result<Vec<u8>, String> {
+        Ok(br#"{"binary_inputs":[],"text_inputs":["seeded_from_source"]}"#.to_vec())
+    }
+}
+
 struct StoreInputProcessor;
 impl ProcessorHandler<StoreInputState, String, String> for StoreInputProcessor {
     fn process(
@@ -111,6 +176,9 @@ struct CompareFilterState {
     inverted: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct EchoMessageState {}
+
 // FACTORY DEFINITIONS -----------------------------------------------------------------
 fn define_factories() {
     register_factory(
@@ -141,5 +209,32 @@ fn define_factories() {
         DoNothingState {},
         || Box::new(DoNothingProcessor {}),
         FactoryMetadata::new("Passes input through unchanged"),
+    );
+
+    register_factory(
+        "echo_message".to_string(),
+        ProcessorSettings::<EchoMessageState, String, String>::default(),
+        EchoMessageState {},
+        || Box::new(EchoMessageProcessor {}),
+        FactoryMetadata::new("Echoes handle_message payload back verbatim"),
+    );
+
+    register_factory(
+        "error_message".to_string(),
+        ProcessorSettings::<EchoMessageState, String, String>::default(),
+        EchoMessageState {},
+        || Box::new(ErrorMessageProcessor {}),
+        FactoryMetadata::new("Returns a fixed error from handle_message"),
+    );
+
+    register_factory(
+        "json_state_message".to_string(),
+        ProcessorSettings::<StoreInputState, String, String>::default(),
+        StoreInputState {
+            binary_inputs: vec![],
+            text_inputs: vec![],
+        },
+        || Box::new(JsonStateMessageProcessor {}),
+        FactoryMetadata::new("Returns a JSON-encoded state map from handle_message"),
     );
 }
