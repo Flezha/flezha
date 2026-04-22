@@ -4,6 +4,8 @@ pub mod quic;
 
 use std::io::{self, Read, Write};
 use std::net::Shutdown;
+
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
 use quic::QuicBidiStream;
@@ -12,6 +14,7 @@ use quic::QuicBidiStream;
 use std::os::unix::io::AsRawFd;
 
 pub enum FlezhaStream {
+    #[cfg(unix)]
     Unix(UnixStream),
     Quic(QuicBidiStream),
 }
@@ -19,6 +22,7 @@ pub enum FlezhaStream {
 impl FlezhaStream {
     pub fn try_clone(&self) -> io::Result<FlezhaStream> {
         match self {
+            #[cfg(unix)]
             FlezhaStream::Unix(stream) => Ok(FlezhaStream::Unix(stream.try_clone()?)),
             FlezhaStream::Quic(stream) => Ok(FlezhaStream::Quic(stream.try_clone())),
         }
@@ -26,6 +30,7 @@ impl FlezhaStream {
 
     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
         match self {
+            #[cfg(unix)]
             FlezhaStream::Unix(stream) => stream.set_nonblocking(nonblocking),
             FlezhaStream::Quic(_) => Ok(()), // QUIC manages this internally
         }
@@ -33,8 +38,12 @@ impl FlezhaStream {
 
     pub fn shutdown(&self, how: Shutdown) -> io::Result<()> {
         match self {
+            #[cfg(unix)]
             FlezhaStream::Unix(stream) => stream.shutdown(how),
-            FlezhaStream::Quic(_) => Ok(()), // QUIC streams are closed when dropped
+            FlezhaStream::Quic(_) => {
+                let _ = how;
+                Ok(()) // QUIC streams are closed when dropped
+            }
         }
     }
 
@@ -50,6 +59,7 @@ impl FlezhaStream {
 impl Read for FlezhaStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
+            #[cfg(unix)]
             FlezhaStream::Unix(stream) => stream.read(buf),
             FlezhaStream::Quic(stream) => stream.read(buf),
         }
@@ -59,6 +69,7 @@ impl Read for FlezhaStream {
 impl Write for FlezhaStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
+            #[cfg(unix)]
             FlezhaStream::Unix(stream) => stream.write(buf),
             FlezhaStream::Quic(stream) => stream.write(buf),
         }
@@ -66,6 +77,7 @@ impl Write for FlezhaStream {
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
+            #[cfg(unix)]
             FlezhaStream::Unix(stream) => stream.flush(),
             FlezhaStream::Quic(stream) => stream.flush(),
         }
@@ -76,6 +88,7 @@ impl Write for FlezhaStream {
 impl Read for &FlezhaStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
+            #[cfg(unix)]
             FlezhaStream::Unix(stream) => (&*stream).read(buf),
             FlezhaStream::Quic(stream) => (&*stream).read(buf),
         }
@@ -85,6 +98,7 @@ impl Read for &FlezhaStream {
 impl Write for &FlezhaStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
+            #[cfg(unix)]
             FlezhaStream::Unix(stream) => (&*stream).write(buf),
             FlezhaStream::Quic(stream) => (&*stream).write(buf),
         }
@@ -92,6 +106,7 @@ impl Write for &FlezhaStream {
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
+            #[cfg(unix)]
             FlezhaStream::Unix(stream) => (&*stream).flush(),
             FlezhaStream::Quic(stream) => (&*stream).flush(),
         }

@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -401,6 +402,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_streamClose<
 
 fn open_control(ctx: &JniContext) -> std::io::Result<Arc<FlezhaStream>> {
     match ctx.config.transport {
+        #[cfg(unix)]
         Transport::Uds => {
             let path = format!(
                 "{}/compute_engine_control_channel.sock",
@@ -410,6 +412,11 @@ fn open_control(ctx: &JniContext) -> std::io::Result<Arc<FlezhaStream>> {
             let unix = UnixStream::connect(&path)?;
             Ok(Arc::new(FlezhaStream::Unix(unix)))
         }
+        #[cfg(not(unix))]
+        Transport::Uds => Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "UDS transport is not supported on this platform; use QUIC",
+        )),
         Transport::Quic => {
             let client = QuicClient::connect(&ctx.config.quic_address, &ctx.config.ca_cert_path)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -429,6 +436,7 @@ fn open_data_stream(
     index: u8,
 ) -> std::io::Result<Arc<FlezhaStream>> {
     match ctx.config.transport {
+        #[cfg(unix)]
         Transport::Uds => {
             let kind = match stream_type {
                 protocol::STREAM_TYPE_PRIMARY => "primary",
@@ -444,6 +452,14 @@ fn open_data_stream(
             );
             let unix = UnixStream::connect(&path)?;
             Ok(Arc::new(FlezhaStream::Unix(unix)))
+        }
+        #[cfg(not(unix))]
+        Transport::Uds => {
+            let _ = stream_type;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "UDS transport is not supported on this platform; use QUIC",
+            ))
         }
         Transport::Quic => {
             let client = {
