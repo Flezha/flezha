@@ -8,47 +8,47 @@ The processor-init-state capability lets operators hydrate a processor's initial
 
 ### Requirement: Per-processor init-state plugin configuration
 
-The system SHALL allow configuring an ordered list of init-state plugins per processor via `Flezha.Processor.Builder.opts[:init_state_plugins]`. Each entry MUST be a `%Flezha.Processor.InitStatePlugin{}` struct carrying `provider` (a module implementing the `Flezha.Processor.InitStateProvider` behaviour), `opts` (a map of provider configuration), `on_error` (`:fail` or `:empty`, default `:fail`), and `timeout_ms` (positive integer, default `5000`).
+The system SHALL allow configuring init-state plugins per processor via `Flezha.Processor.Builder.opts[:plugins]`. Each entry MUST be a `%Flezha.Plugin{}` struct whose `subscriptions` list contains one `{:on_processor_init, sub_opts}` entry. `sub_opts` is a keyword list supporting `position` (non-negative integer, default assigned by insertion order), `on_error` (`:fail` or `:empty`, default `:fail`), and `timeout_ms` (positive integer, default `5000`). The plugin's `provider` module MUST implement an `on_processor_init/2` callback receiving `(Flezha.Plugin.Extension.Ctx.Init.t(), opts :: map())`.
 
-#### Scenario: No init-state plugins configured
-- **WHEN** a processor is started whose Builder `opts` does not include `:init_state_plugins` (or sets it to `[]`)
-- **THEN** the processor's `init_values` MUST be exactly what the Builder provided, and no provider module is invoked
+#### Scenario: No init-state subscribers configured
+- **WHEN** a processor is started whose Builder `opts` contains no `%Flezha.Plugin{}` subscribing to `:on_processor_init` (either because `opts[:plugins]` is empty, absent, or none of the listed plugins subscribe to that extension)
+- **THEN** the processor's `init_values` MUST be exactly what the Builder provided, no provider callback is invoked, and the active-mask bit for `:on_processor_init` MUST remain clear
 
-#### Scenario: Single plugin configured
-- **WHEN** a processor is started with one `%InitStatePlugin{}` entry and the Builder's `init_values` is `%{}`
-- **THEN** the provider's `resolve/1` callback MUST be invoked exactly once, and its returned map MUST be sent to the SDK as `init_values` in the `AddProcessor` command
+#### Scenario: Single subscriber configured
+- **WHEN** a processor is started with one `%Flezha.Plugin{subscriptions: [{:on_processor_init, _}]}` entry and the Builder's `init_values` is `%{}`
+- **THEN** the provider module's `on_processor_init/2` callback MUST be invoked exactly once, and the resulting `accumulated` map MUST be sent to the SDK as `init_values` in the `AddProcessor` command
 
-#### Scenario: Multiple plugins configured
-- **WHEN** a processor is started with an ordered list `[p1, p2, p3]` of init-state plugins and Builder `init_values` is `%{}`
-- **THEN** the providers MUST be invoked in the order `p1 → p2 → p3`, each receiving the accumulated map produced by its predecessors
+#### Scenario: Multiple subscribers configured
+- **WHEN** a processor is started with three plugins `[p1, p2, p3]` each subscribing to `:on_processor_init` with positions 0, 1, 2, and the Builder `init_values` is `%{}`
+- **THEN** the subscribers MUST be invoked in order of their `position` (0 → 1 → 2), each receiving the `Flezha.Plugin.Extension.Ctx.Init` context whose `accumulated` field holds the shallow-merged output of all predecessors
 
 ### Requirement: Init-state provider context
 
-The system SHALL invoke each provider's `resolve/1` callback with a context map containing exactly these keys: `processor_id` (string), `namespace` (atom), `factory_id` (string), `accumulated` (map of state accumulated from prior plugins in the chain), and `opts` (the plugin's own configuration map as set on `%InitStatePlugin{}.opts`).
+The system SHALL invoke each `:on_processor_init` subscriber's `on_processor_init/2` callback with a `%Flezha.Plugin.Extension.Ctx.Init{}` struct containing exactly these fields: `processor_id` (string), `namespace` (atom), `factory_id` (string), and `accumulated` (map of state accumulated from prior subscribers in the fold). The second argument MUST be the subscriber's `opts` map (the `%Flezha.Plugin{}.opts` for this plugin).
 
-#### Scenario: First plugin in chain receives empty accumulator
-- **WHEN** the first plugin's `resolve/1` is invoked
-- **THEN** `context.accumulated` MUST equal `%{}`
+#### Scenario: First subscriber in chain receives empty accumulator
+- **WHEN** the first subscriber's `on_processor_init/2` is invoked
+- **THEN** the ctx's `accumulated` field MUST equal the Builder's `init_values` (typically `%{}` for cold start)
 
-#### Scenario: Later plugin receives merged predecessors
-- **WHEN** a plugin at position N (N ≥ 2) has its `resolve/1` invoked, and all predecessors returned `{:ok, map}`
-- **THEN** `context.accumulated` MUST equal the shallow merge (in order) of every predecessor's returned map
+#### Scenario: Later subscriber receives merged predecessors
+- **WHEN** a subscriber at position N (N ≥ 1) has its `on_processor_init/2` invoked, and all predecessors returned `{:ok, ctx_with_merged_accumulator}`
+- **THEN** the ctx's `accumulated` field MUST equal the shallow merge (in order) of every predecessor's returned map
 
-#### Scenario: Provider receives processor identity
-- **WHEN** a provider's `resolve/1` is invoked for a processor with id `"proc-42"` in namespace `:tenant_a` with factory id `"fact-7"`
-- **THEN** `context.processor_id` MUST be `"proc-42"`, `context.namespace` MUST be `:tenant_a`, and `context.factory_id` MUST be `"fact-7"`
+#### Scenario: Subscriber receives processor identity
+- **WHEN** a subscriber's `on_processor_init/2` is invoked for a processor with id `"proc-42"` in namespace `:tenant_a` with factory id `"fact-7"`
+- **THEN** the ctx's `processor_id` MUST be `"proc-42"`, `namespace` MUST be `:tenant_a`, and `factory_id` MUST be `"fact-7"`
 
 ### Requirement: Shallow merge combination
 
-The system SHALL combine each provider's `{:ok, map}` return value into the accumulator by shallow merge (`Map.merge/2`), with the provider's returned keys taking precedence over existing accumulator keys for the same key.
+The system SHALL combine each subscriber's `{:ok, ctx}` return value into the accumulator by shallow-merging `ctx.accumulated` into the chain-level accumulator via `Map.merge/2`, with the subscriber's returned keys taking precedence over existing accumulator keys for the same key.
 
-#### Scenario: Later plugin overrides earlier plugin's key
-- **WHEN** plugin `p1` returns `{:ok, %{"a" => 1, "b" => 2}}` and plugin `p2` returns `{:ok, %{"b" => 99, "c" => 3}}`
+#### Scenario: Later subscriber overrides earlier subscriber's key
+- **WHEN** subscriber `p1` returns `{:ok, %Ctx.Init{accumulated: %{"a" => 1, "b" => 2}}}` and subscriber `p2` returns `{:ok, %Ctx.Init{accumulated: %{"b" => 99, "c" => 3}}}`
 - **THEN** the final `init_values` MUST be `%{"a" => 1, "b" => 99, "c" => 3}`
 
-#### Scenario: Plugin returns empty map
-- **WHEN** a plugin returns `{:ok, %{}}`
-- **THEN** the accumulator MUST pass through unchanged to the next plugin
+#### Scenario: Subscriber returns empty accumulator
+- **WHEN** a subscriber returns `{:ok, %Ctx.Init{accumulated: %{}}}`
+- **THEN** the accumulator MUST pass through unchanged to the next subscriber
 
 ### Requirement: Cold-start only, snapshot-wins on migration
 
@@ -68,31 +68,31 @@ The system SHALL invoke the init-state plugin chain only when a processor is sta
 
 ### Requirement: Per-plugin timeout enforcement
 
-The system SHALL enforce each plugin's `timeout_ms` by running its `resolve/1` invocation inside an isolated task. If the task does not return within `timeout_ms` milliseconds, the system MUST forcibly terminate the task and treat the timeout as an error for the plugin's `on_error` handling. A plugin crashing or raising MUST NOT crash the Overwatch process.
+The system SHALL enforce each `:on_processor_init` subscriber's `timeout_ms` by running its `on_processor_init/2` invocation inside an isolated task. If the task does not return within `timeout_ms` milliseconds, the system MUST forcibly terminate the task and treat the timeout as an error for the subscriber's `on_error` handling. A subscriber crashing or raising MUST NOT crash the Overwatch process. Timeout and exception handling MUST be driven by the fold-kind dispatch semantics defined in the `processor-extensions` capability.
 
-#### Scenario: Provider returns within timeout
-- **WHEN** a provider's `resolve/1` returns `{:ok, map}` within `timeout_ms`
-- **THEN** the chain continues with the returned map merged into the accumulator
+#### Scenario: Subscriber returns within timeout
+- **WHEN** a subscriber's `on_processor_init/2` returns `{:ok, ctx}` within `timeout_ms`
+- **THEN** the chain continues with the returned ctx merged into the accumulator
 
-#### Scenario: Provider exceeds timeout
-- **WHEN** a provider's `resolve/1` does not return within `timeout_ms`
-- **THEN** the system MUST terminate the provider task and dispatch an error to the plugin's `on_error` handler (default `:fail`)
+#### Scenario: Subscriber exceeds timeout
+- **WHEN** a subscriber's `on_processor_init/2` does not return within `timeout_ms`
+- **THEN** the system MUST terminate the subscriber task and dispatch an error to the subscriber's `on_error` handler (default `:fail`)
 
-#### Scenario: Provider raises an exception
-- **WHEN** a provider's `resolve/1` raises an exception
-- **THEN** the system MUST capture the exception without crashing Overwatch and dispatch an error to the plugin's `on_error` handler
+#### Scenario: Subscriber raises an exception
+- **WHEN** a subscriber's `on_processor_init/2` raises an exception
+- **THEN** the system MUST capture the exception without crashing Overwatch and dispatch an error to the subscriber's `on_error` handler
 
 ### Requirement: Configurable failure semantics
 
-The system SHALL, on any plugin error (explicit `{:error, reason}` return, timeout, or exception), dispatch based on the plugin's `on_error` field. When `on_error: :fail` (the default), `Overwatch.init/1` MUST return `{:error, reason}` (the same shape as the existing `start_processor_sdk` error path), and the processor MUST NOT be started. When `on_error: :empty`, the plugin MUST be skipped and the accumulator MUST pass through unchanged to the next plugin.
+The system SHALL, on any `:on_processor_init` subscriber error (explicit `{:error, reason}` return, timeout, or exception), dispatch based on the subscription's `on_error` option. When `on_error: :fail` (the default), `Overwatch.init/1` MUST return `{:error, reason}` and the processor MUST NOT be started. When `on_error: :empty`, the failed subscriber MUST be skipped and the accumulator MUST pass through unchanged to the next subscriber in the fold.
 
 #### Scenario: Default failure aborts processor start
-- **WHEN** a plugin with `on_error: :fail` returns `{:error, :db_unreachable}`
+- **WHEN** a subscriber with `on_error: :fail` returns `{:error, :db_unreachable}`
 - **THEN** `Overwatch.init/1` MUST return `{:error, :db_unreachable}` and the SDK MUST NOT receive an `AddProcessor` command for this processor
 
 #### Scenario: Degrading failure continues the chain
-- **WHEN** a plugin with `on_error: :empty` returns `{:error, any}` or times out
-- **THEN** the plugin MUST be skipped, the accumulator MUST pass through unchanged to the next plugin, and the chain MUST continue
+- **WHEN** a subscriber with `on_error: :empty` returns `{:error, any}` or times out
+- **THEN** the subscriber MUST be skipped, the accumulator MUST pass through unchanged to the next subscriber, and the fold MUST continue
 
 #### Scenario: Mid-chain failure with :fail
 - **WHEN** a chain `[p1, p2, p3]` is running and `p2` (with `on_error: :fail`) returns `{:error, reason}`
@@ -100,15 +100,15 @@ The system SHALL, on any plugin error (explicit `{:error, reason}` return, timeo
 
 ### Requirement: Plugin configuration validation
 
-The system SHALL validate each entry of `processor.opts[:init_state_plugins]` before invocation. An entry that is not a `%Flezha.Processor.InitStatePlugin{}` struct, or whose `provider` module is not loaded or does not export `resolve/1`, MUST be treated as an error for that plugin's `on_error` handling (or `:fail` if `on_error` cannot be read).
+The system SHALL validate each `%Flezha.Plugin{}` subscribed to `:on_processor_init` at subscribe time via `Flezha.Plugin.Extension.Table.subscribe/3`. An entry whose `provider` module is not loaded, does not export `on_processor_init/2`, or whose subscription opts contain invalid values (e.g. non-integer `timeout_ms`, unknown `on_error`) MUST cause `subscribe/3` to return `{:error, reason}` without mutating table state. When validation fails for a plugin provided via `Builder.opts[:plugins]`, the failure MUST be handled by the plugin's `on_error` policy (or `:fail` if `on_error` cannot be read).
 
-#### Scenario: Non-struct entry
-- **WHEN** `processor.opts[:init_state_plugins]` contains an entry that is not a `%InitStatePlugin{}`
-- **THEN** the system MUST produce an error of the form `{:invalid_init_state_plugin, reason}` and apply `:fail` semantics
+#### Scenario: Provider module does not implement on_processor_init/2
+- **WHEN** a `%Flezha.Plugin{}` subscribes to `:on_processor_init` but its `provider` module does not export `on_processor_init/2`
+- **THEN** `subscribe/3` MUST return `{:error, {:missing_callback, :on_processor_init}}` and the plugin's `on_error` policy MUST be applied when encountered via Builder opts
 
-#### Scenario: Provider module does not implement resolve/1
-- **WHEN** a `%InitStatePlugin{}` names a provider module that does not export `resolve/1`
-- **THEN** the system MUST produce an error of the form `{:invalid_init_state_plugin, reason}` and apply the plugin's `on_error` policy
+#### Scenario: Subscription opts are invalid
+- **WHEN** a plugin subscribes to `:on_processor_init` with a non-positive `timeout_ms` or an `on_error` value other than `:fail` or `:empty`
+- **THEN** `subscribe/3` MUST return `{:error, {:invalid_subscription_opts, reason}}` and the plugin's `on_error` policy MUST be applied when encountered via Builder opts
 
 ### Requirement: No SDK or protocol change
 
@@ -117,3 +117,5 @@ The system SHALL feed the resolved map into the existing `init_values` field of 
 #### Scenario: SDK receives resolved values identically to inline values
 - **WHEN** init-state plugins resolve to a map `M` and `AddProcessor` is sent to the SDK
 - **THEN** the SDK MUST observe the same `init_values == M` as if the caller had baked `M` into the Builder directly
+</content>
+</invoke>

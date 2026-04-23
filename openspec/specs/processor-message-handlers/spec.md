@@ -2,21 +2,21 @@
 
 ## Purpose
 
-The processor-message-handlers capability enables typed request/reply messaging to a running processor from any cluster-reachable caller — including other processors — routed by the processor's Overwatch to a per-processor handler plugin selected by an atom `handler_key`. Plugins implement `Flezha.Plugin.MessageHandlerBehaviour` and are attached per processor via `Flezha.Plugin.Driver.MessageHandlerPlugin`; the first-party `Flezha.Plugin.Provider.MessageForward` provider round-trips the payload to the SDK-side processor factory via a new `ProcessorMessage` / `ProcessorMessageResponse` control-channel command pair, mirroring the existing `ProcessorState` request/reply path. SDK factories expose an optional `handle_message` callback (Rust and Java) that defaults to an explicit "unsupported" error so existing factories keep working. Requests are synchronous with a caller-side timeout (caller's deadline wins; late replies are discarded), the Overwatch is isolated from handler failures, and handler registrations survive processor migration via the existing ProcessHub handover path. Authorization is open in v1; scoping (namespace/node ACLs), fire-and-forget/streaming replies, fan-out per key, and SDK-side deadline propagation are explicitly deferred.
+The processor-message-handlers capability enables typed request/reply messaging to a running processor from any cluster-reachable caller — including other processors — routed by the processor's Overwatch to a per-processor handler plugin selected by an atom `handler_key`. Plugins are represented as `%Flezha.Plugin{}` entries subscribing to the `:on_message` extension point and are enabled per processor via `Flezha.Service.PluginManager.enable_plugin/2`; the first-party `Flezha.Plugin.Provider.MessageForward` provider round-trips the payload to the SDK-side processor factory via a new `ProcessorMessage` / `ProcessorMessageResponse` control-channel command pair, mirroring the existing `ProcessorState` request/reply path. SDK factories expose an optional `handle_message` callback (Rust and Java) that defaults to an explicit "unsupported" error so existing factories keep working. Requests are synchronous with a caller-side timeout (caller's deadline wins; late replies are discarded), the Overwatch is isolated from handler failures, and handler registrations survive processor migration via the existing ProcessHub handover path. Authorization is open in v1; scoping (namespace/node ACLs), fire-and-forget/streaming replies, fan-out per key, and SDK-side deadline propagation are explicitly deferred.
 
 ## Requirements
 
 ### Requirement: Per-processor message handler plugin configuration
 
-The system SHALL allow configuring message handler plugins on a running processor via `Flezha.Service.PluginManager.enable_plugin/2` using `Flezha.Plugin.Driver.MessageHandlerPlugin` entries. Each entry MUST carry `namespace` (string), `processor_id` (string), `handler_key` (atom), `provider` (a module implementing `Flezha.Plugin.MessageHandlerBehaviour`), and `opts` (a map of provider-specific configuration).
+The system SHALL allow configuring message handlers on a running processor via `Flezha.Service.PluginManager.enable_plugin/2` using `%Flezha.Plugin{}` entries whose `subscriptions` list contains one `{:on_message, sub_opts}` entry. `sub_opts` MUST contain `key: atom` identifying the request key this handler serves. The plugin's `provider` module MUST implement an `on_message/2` callback receiving `(Flezha.Plugin.Extension.Ctx.Msg.t(), opts :: map())`.
 
 #### Scenario: Enable handler with unique key
-- **WHEN** a `MessageHandlerPlugin` is enabled on a processor with `handler_key: :fetch_init_state` and no prior plugin on that processor uses the same key
-- **THEN** the enable call MUST succeed and subsequent requests to the processor with that key MUST be routed to this plugin
+- **WHEN** a `%Flezha.Plugin{}` subscribes to `{:on_message, [key: :fetch_init_state]}` on a processor where no other plugin uses that key on the `:on_message` extension
+- **THEN** the enable call MUST succeed and subsequent requests to the processor with that key MUST be routed to this plugin's `on_message/2` callback
 
 #### Scenario: Enable handler with conflicting key
-- **WHEN** a `MessageHandlerPlugin` is enabled on a processor with `handler_key: :fetch_init_state` and another plugin on the same processor already uses that key
-- **THEN** the enable call MUST return `{:error, {:handler_key_conflict, :fetch_init_state}}` and the existing handler MUST remain registered unchanged
+- **WHEN** a `%Flezha.Plugin{}` subscribes to `{:on_message, [key: :fetch_init_state]}` on a processor where another plugin already serves that key on `:on_message`
+- **THEN** the enable call MUST return `{:error, {:key_conflict, :on_message, :fetch_init_state}}` and the existing handler MUST remain registered unchanged
 
 ### Requirement: Typed request envelope routing
 
@@ -40,23 +40,23 @@ The system SHALL route incoming messages of the shape `{:flezha_request, handler
 
 ### Requirement: Handler plugin invocation and context
 
-The system SHALL invoke the matched plugin's `Flezha.Plugin.MessageHandlerBehaviour.handle/2` callback with the request payload and a context map containing at least these keys: `processor_id` (string), `namespace` (string), `compute_engine_id` (string), `handler_key` (atom), `from` (pid), and `opts` (the plugin's configuration map).
+The system SHALL invoke the matched subscriber's `on_message/2` callback with a `%Flezha.Plugin.Extension.Ctx.Msg{}` struct containing exactly these fields: `key` (atom), `payload` (binary), `reply_to` (pid), `ref` (reference), `processor_id` (string), `namespace` (string), and `compute_engine_id` (string). The second argument MUST be the subscriber's `opts` map.
 
 #### Scenario: Handler receives full context
-- **WHEN** a handler plugin is invoked for a request on processor `"proc-1"` in namespace `"tenant-a"` from caller pid `P`
-- **THEN** the `handle/2` callback MUST be invoked with `(payload, context)` where `context.processor_id == "proc-1"`, `context.namespace == "tenant-a"`, `context.from == P`, and `context.opts` equals the plugin's configured `opts` map
+- **WHEN** a handler is invoked for a request on processor `"proc-1"` in namespace `"tenant-a"` from caller pid `P`
+- **THEN** the `on_message/2` callback MUST be invoked with `(ctx, opts)` where `ctx.processor_id == "proc-1"`, `ctx.namespace == "tenant-a"`, `ctx.reply_to == P`, and `opts` equals the subscriber's configured `opts` map
 
 #### Scenario: Handler returns an error result
-- **WHEN** the handler's `handle/2` returns `{:error, reason}`
+- **WHEN** the handler's `on_message/2` returns `{:error, reason}`
 - **THEN** the caller MUST receive `{:flezha_response, ref, {:error, reason}}`
 
 #### Scenario: Handler raises an exception
-- **WHEN** the handler's `handle/2` raises an exception
+- **WHEN** the handler's `on_message/2` raises an exception
 - **THEN** the Overwatch MUST NOT crash and the caller MUST receive `{:flezha_response, ref, {:error, {:exception, kind, reason}}}`
 
 ### Requirement: SDK round-trip via first-party MessageForward provider
 
-The system SHALL ship a first-party provider `Flezha.Plugin.Provider.MessageForward` implementing `Flezha.Plugin.MessageHandlerBehaviour`. Its `handle/2` MUST forward the payload to the SDK-side processor by sending a `ComputeEngineCommands.ProcessorMessage { processor_id, payload }` on the control channel and waiting for a `ComputeEngineCommands.ProcessorMessageResponse { payload, error }`. When `error` is empty, `handle/2` MUST return `{:ok, response.payload}`; otherwise it MUST return `{:error, response.error}`.
+The system SHALL ship a first-party provider `Flezha.Plugin.Provider.MessageForward` implementing `on_message/2`. The callback MUST forward the payload to the SDK-side processor by sending a `ComputeEngineCommands.ProcessorMessage { processor_id, payload }` on the control channel and waiting for a `ComputeEngineCommands.ProcessorMessageResponse { payload, error }`. When `error` is empty, `on_message/2` MUST return `{:ok, response.payload}`; otherwise it MUST return `{:error, response.error}`.
 
 #### Scenario: Factory returns success payload
 - **WHEN** the SDK factory's `handle_message(payload)` returns success bytes `B`
@@ -112,10 +112,10 @@ The system SHALL expose an optional `handle_message` callback on the Rust and Ja
 
 ### Requirement: Handler plugins survive processor migration
 
-The system SHALL migrate `MessageHandlerPlugin` registrations along with the processor via the existing ProcessHub handover path. After migration to a new compute engine, previously registered handlers MUST remain reachable under the same `handler_key` and MUST continue to route requests identically.
+The system SHALL migrate `:on_message` subscriptions along with the processor via the existing ProcessHub handover path. `Flezha.Plugin.Extension.Table.rehydrate/2` MUST re-establish the subscription set on the destination node so that, after migration, previously registered handlers remain reachable under the same key and continue to route requests identically.
 
 #### Scenario: Handler remains registered after migration
-- **WHEN** a processor with a `MessageHandlerPlugin` registered at `handler_key: :k` is migrated to a new node
+- **WHEN** a processor with an `:on_message` subscription serving `key: :k` is migrated to a new node
 - **THEN** sending `{:flezha_request, :k, payload, self(), ref}` to the new Overwatch pid MUST produce a reply from the same plugin code as before migration
 
 ### Requirement: Overwatch lifetime isolation from handler failures
@@ -125,3 +125,5 @@ The system SHALL isolate the Overwatch GenServer from handler plugin failures. A
 #### Scenario: Handler process crash during dispatch
 - **WHEN** a handler plugin's `handle/2` raises an exception
 - **THEN** the Overwatch MUST continue running, MUST continue serving other requests on other `handler_key`s, and the caller MUST receive `{:error, {:exception, kind, reason}}`
+</content>
+</invoke>
