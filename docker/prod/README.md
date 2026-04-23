@@ -5,11 +5,17 @@ Run the following commands from the **flezha project root** directory.
 ## Build Local Image (Single Architecture)
 
 ```bash
-# Build with tag
-docker build -f docker/prod/Dockerfile.agent -t alfetahe/flezha:latest .
+# Build and push on amd64
+docker build -f docker/prod/Dockerfile.agent -t alfetahe/flezha:latest-amd64 .
+docker push alfetahe/flezha:latest-amd64
 
-# Push both tag
-docker push alfetahe/flezha:latest  
+# Build and push on arm64
+docker build -f docker/prod/Dockerfile.agent -t alfetahe/flezha:latest-arm64 .
+docker push alfetahe/flezha:latest-arm64
+
+# Push to the latest
+docker buildx imagetools create -t alfetahe/flezha:latest \
+  alfetahe/flezha:latest-amd64 alfetahe/flezha:latest-arm64
 ```
 
 ## Build Multi-Architecture Image and Push to Docker Hub
