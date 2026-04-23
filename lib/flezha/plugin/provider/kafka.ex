@@ -13,6 +13,9 @@ defmodule Flezha.Plugin.Provider.Kafka do
     Optional opts:
       * `:partition` (integer, default 0)
       * `:required_acks` (integer, default 1)
+      * `:plugin_group` (string) — when set, only publishes messages whose
+        metadata `"plugin_group"` matches. Lets multiple producers share one
+        event stream and route to different topics by group tag.
     """
 
     alias Flezha.Plugin.Extension.Ctx
@@ -24,6 +27,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     defstruct @enforce_keys ++
                 [
                   :conn,
+                  :plugin_group,
                   partition: 0,
                   required_acks: 1
                 ]
@@ -58,6 +62,18 @@ defmodule Flezha.Plugin.Provider.Kafka do
     def on_output(%Ctx.IO{} = ctx, opts), do: produce(ctx, opts)
 
     defp produce(%Ctx.IO{message: msg, metadata: md} = ctx, opts) do
+      case Map.get(opts, :plugin_group) do
+        nil ->
+          do_produce(ctx, opts, msg, md)
+
+        group ->
+          if Map.get(md, "plugin_group") == group,
+            do: do_produce(ctx, opts, msg, md),
+            else: {:ok, ctx}
+      end
+    end
+
+    defp do_produce(%Ctx.IO{} = ctx, opts, msg, md) do
       partition =
         case Map.get(md, "kafka_msg_partition") do
           nil -> Map.get(opts, :partition, 0)
