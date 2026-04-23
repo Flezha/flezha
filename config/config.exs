@@ -33,7 +33,37 @@ config :flezha,
     "processor_stdout" => Flezha.Plugin.Provider.StdOut,
     "processor_io_filter" => Flezha.Plugin.Provider.Filter,
     "monitored_io_forward" => Flezha.Plugin.Provider.MonitoredIOForward
-  }
+  },
+
+  # ------------------------------------------------------------------------------------------------
+  # Installable plugin subsystem (Jenkins-style runtime plugin lifecycle).
+  # See `lib/flezha/plugin/installer/` and `docs/plugin_installation.md`.
+  #
+  # - `plugin_installer_enabled`: master feature flag. When `false`, the
+  #   `Flezha.Plugin.Installer.Supervisor` subtree is not started and the
+  #   `Recovery.Coordinator` falls back to its pre-existing behaviour.
+  # - `:plugin_installer` keyword list:
+  #   - `plugin_root`: filesystem root for staging + installed plugins.
+  #     `staging/<uuid>/` holds in-flight extractions;
+  #     `installed/<id>/<version>/` holds the canonical layout per plugin.
+  #   - `trusted_keys`: list of Ed25519 public keys (raw 32-byte binaries or
+  #     PEM-encoded strings) used to verify `signature.sig` over
+  #     `CHECKSUMS.sha256` bytes.
+  #   - `require_signature`: when `true`, packages without `signature.sig`
+  #     are rejected. Implies `allow_unsigned: false`.
+  #   - `allow_unsigned`: when `false`, packages without `signature.sig` are
+  #     rejected even if `require_signature: false`.
+  #   - `max_package_bytes`: uncompressed-size ceiling for `.fpz` archives.
+  #   - `max_source_files`: upper bound on files under `src/` per package.
+  plugin_installer_enabled: false,
+  plugin_installer: [
+    plugin_root: "app_data/plugins",
+    trusted_keys: [],
+    require_signature: false,
+    allow_unsigned: true,
+    max_package_bytes: 50_000_000,
+    max_source_files: 200
+  ]
 
 config :logger,
   backends: [:console, {LoggerFileBackend, :file_log}],

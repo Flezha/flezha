@@ -47,6 +47,19 @@ _build/dev/rel/flezha/bin/flzprocessor start my_processor do_nothing
 _build/dev/rel/flezha/bin/flz processor stop my_processor
 ```
 
+### Installable plugins
+```bash
+# Full lifecycle reference (install / upgrade / uninstall / enable / disable)
+# lives in docs/plugin_installation.md — including package layout, manifest
+# schema, checksum generation, and Ed25519 signing.
+_build/dev/rel/flezha/bin/flz plugin install /path/to/my_plugin-1.0.0.fpz
+_build/dev/rel/flezha/bin/flz plugin enable my_plugin
+```
+
+See [`docs/plugin_installation.md`](docs/plugin_installation.md) for the
+full authoring guide and [`examples/plugins/hello_world/`](examples/plugins/hello_world/)
+for a minimal copy-paste starting point.
+
 ### Enabling websocket plugin for processor. 
 ```bash
 _build/dev/rel/flezha/bin/flz plugin enable processor_websocket  --settings='{

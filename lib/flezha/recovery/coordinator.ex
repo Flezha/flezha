@@ -273,14 +273,34 @@ defmodule Flezha.Recovery.Coordinator do
 
   defp run_plugin_phase do
     rows = PluginStore.all()
+    installer_ids = installed_ids_safe()
 
     Enum.reduce_while(rows, {0, 0, 0, false}, fn
       {plugin_id, %{plugin: %Plugin{} = plugin}}, {ok, err, skipped, _} ->
         if abort_flag?() do
           {:halt, {ok, err, skipped, true}}
         else
-          case processor_present?(plugin) do
-            false ->
+          cond do
+            # If the installer is running, persisted plugin rows whose id
+            # belongs to the installer's catalog must still be there when we
+            # restart. Missing means the operator uninstalled out-of-band;
+            # skip the row rather than crash the recovery loop.
+            orphaned_installed_plugin?(plugin_id, installer_ids) ->
+              Logger.warning(
+                "[recovery] skipping orphaned plugin row #{inspect(plugin_id)} — " <>
+                  "installer catalog no longer tracks it"
+              )
+
+              :telemetry.execute(
+                [:flezha, :recovery, :orphaned_plugin],
+                %{count: 1},
+                %{plugin_id: plugin_id}
+              )
+
+              PluginStore.delete(plugin_id)
+              {:cont, {ok, err, skipped + 1, false}}
+
+            not processor_present?(plugin) ->
               Logger.warning(
                 "[recovery] dropping plugin #{inspect(plugin_id)} — owning processor " <>
                   "#{inspect(plugin.processor_id)} in namespace " <>
@@ -323,6 +343,36 @@ defmodule Flezha.Recovery.Coordinator do
         PluginStore.delete(plugin_id)
         {:cont, {ok, err, skipped + 1, false}}
     end)
+  end
+
+  # Returns `:none` if the installer isn't started (feature flag off) or
+  # the set of known installer-owned plugin ids otherwise. `:none` disables
+  # the orphan check — legacy compile-time plugins aren't in any catalog.
+  defp installed_ids_safe do
+    if function_exported?(Flezha.Plugin.Installer, :installed_ids, 0) do
+      case Process.whereis(Flezha.Plugin.Installer) do
+        nil -> :none
+        _ -> Flezha.Plugin.Installer.installed_ids()
+      end
+    else
+      :none
+    end
+  rescue
+    _ -> :none
+  end
+
+  defp orphaned_installed_plugin?(_plugin_id, :none), do: false
+
+  # An installer-owned recovery row is orphaned iff its plugin id is a
+  # provision id (plugin_id:provision_id shape) whose package is no longer
+  # tracked by the Installer catalog. For legacy (non-installer) rows the
+  # id has no colon and we leave the row alone.
+  defp orphaned_installed_plugin?(plugin_id, id_set) do
+    with [pkg, _provision] <- String.split(plugin_id, ":", parts: 2) do
+      not MapSet.member?(id_set, pkg)
+    else
+      _ -> false
+    end
   end
 
   defp processor_present?(%Plugin{namespace: ns, processor_id: pid_id}) do

@@ -144,6 +144,24 @@ config :flezha,
      end),
 
   # ------------------------------------------------------------------------------------------------
+  # Installable plugin subsystem — staged rollout lever. See
+  # `docs/plugin_installation.md` for the full design.
+  #
+  # - `FLEZHA_PLUGIN_INSTALLER_ENABLED=true` flips the feature on in this
+  #   environment without a code change — used by staging to validate the
+  #   subsystem before flipping the compiled-in default.
+  # - `FLEZHA_PLUGIN_ROOT` points staging/prod at a persistent volume
+  #   (defaults to `app_data/plugins`).
+  # - `FLEZHA_PLUGIN_REQUIRE_SIGNATURE=true` forces every install to
+  #   carry a valid Ed25519 signature against `FLEZHA_PLUGIN_TRUSTED_KEYS`
+  #   (comma-separated PEM files on disk).
+  plugin_installer_enabled:
+    Flezha.Plugin.Installer.RuntimeConfig.resolve_enabled(
+      System.get_env(),
+      Application.get_env(:flezha, :plugin_installer_enabled, false)
+    ),
+
+  # ------------------------------------------------------------------------------------------------
   # The minimum number of milliseconds to wait before removing a disconnected compute_engine.
   #
   # This option can be used to prevent the compute_engine from being removed too quickly
@@ -155,6 +173,21 @@ config :flezha,
   # The default is 30 seconds.
   compute_engine_keepalive:
     System.get_env("FLEZHA_OPERATOR_KEEPALIVE", "30000") |> String.to_integer()
+
+# ------------------------------------------------------------------------------------------------
+# Installable plugin installer keyword list (env-var driven). Only set when
+# any of the FLEZHA_PLUGIN_* vars are present so the compile-time defaults
+# from `config/config.exs` win otherwise. The parse logic lives in
+# `Flezha.Plugin.Installer.RuntimeConfig` so it stays unit-testable.
+plugin_env_map = System.get_env()
+
+if Flezha.Plugin.Installer.RuntimeConfig.any_env_var_present?(plugin_env_map) do
+  base = Application.get_env(:flezha, :plugin_installer, [])
+
+  config :flezha,
+    :plugin_installer,
+    Flezha.Plugin.Installer.RuntimeConfig.resolve_plugin_installer(plugin_env_map, base)
+end
 
 # ------------------------------------------------------------------------------------------------
 # Logger configuration.

@@ -398,6 +398,133 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
+  ## Installable-plugin subsystem bridges -------------------------------------
+
+  @doc "Install a plugin from a `.fpz` archive."
+  def install_plugin(path, _opts_json) do
+    case Flezha.Plugin.Installer.install(path) do
+      {:ok, installed} ->
+        IO.puts(
+          "Installed plugin #{installed.id}@#{installed.version} (status: #{installed.status})"
+        )
+
+      {:error, reason} ->
+        IO.puts("Error installing plugin: #{inspect(reason)}.")
+    end
+  end
+
+  @doc "Upgrade an installed plugin to a new version in `path`."
+  def upgrade_plugin(plugin_id, path, _opts_json) do
+    case Flezha.Plugin.Installer.upgrade(plugin_id, path) do
+      {:ok, installed} ->
+        IO.puts("Upgraded plugin #{installed.id} to #{installed.version}")
+
+      {:error, reason} ->
+        IO.puts("Error upgrading plugin: #{inspect(reason)}.")
+    end
+  end
+
+  @doc "Uninstall an installed plugin by id."
+  def uninstall_plugin(plugin_id, _opts_json) do
+    case Flezha.Plugin.Installer.uninstall(plugin_id) do
+      :ok -> IO.puts("Uninstalled plugin #{plugin_id}.")
+      {:error, reason} -> IO.puts("Error uninstalling plugin: #{inspect(reason)}.")
+    end
+  end
+
+  @doc "Enable an installed plugin (routes through the Installer)."
+  def installer_enable_plugin(plugin_id, _opts_json) do
+    case Flezha.Plugin.Installer.enable(plugin_id) do
+      :ok -> IO.puts("Plugin #{plugin_id} enabled successfully.")
+      {:error, reason} -> IO.puts("Error enabling plugin: #{inspect(reason)}.")
+    end
+  end
+
+  @doc "Disable an installed plugin (routes through the Installer)."
+  def installer_disable_plugin(plugin_id, _opts_json) do
+    case Flezha.Plugin.Installer.disable(plugin_id) do
+      :ok -> IO.puts("Plugin #{plugin_id} disabled successfully.")
+      {:error, reason} -> IO.puts("Error disabling plugin: #{inspect(reason)}.")
+    end
+  end
+
+  @doc """
+  List every installed plugin. `format` is `"text" | "json"`.
+  """
+  def list_installed_plugins(format \\ "text") do
+    plugins = Flezha.Plugin.Installer.list()
+
+    case format do
+      "json" ->
+        plugins
+        |> Enum.map(&installed_plugin_to_json/1)
+        |> Jason.encode!()
+        |> IO.puts()
+
+      _ ->
+        if plugins == [] do
+          IO.puts("No plugins installed.")
+        else
+          IO.puts("Installed plugins:")
+
+          Enum.each(plugins, fn p ->
+            IO.puts("  #{p.id}@#{p.version} (#{p.status}) — #{p.description || ""}")
+          end)
+        end
+    end
+  end
+
+  @doc "Return detailed information about an installed plugin."
+  def installed_plugin_info(plugin_id) do
+    case Flezha.Plugin.Installer.info(plugin_id) do
+      {:ok, p} ->
+        IO.puts("#{p.id}@#{p.version}")
+        IO.puts("  Status: #{p.status}")
+        IO.puts("  Description: #{p.description || "(none)"}")
+        IO.puts("  Author: #{p.author || "(none)"}")
+        IO.puts("  Modules: #{inspect(p.modules)}")
+        IO.puts("  Provides:")
+
+        Enum.each(p.provides, fn prov ->
+          IO.puts("    - #{Map.get(prov, :id)} -> #{inspect(Map.get(prov, :provider))}")
+        end)
+
+      {:error, :not_found} ->
+        IO.puts("Plugin '#{plugin_id}' not installed.")
+    end
+  end
+
+  @doc """
+  Returns `true` when `plugin_id` is tracked by `Flezha.Plugin.Installer`,
+  so the CLI's `enable`/`disable` commands know which code path to use.
+  """
+  def installed_plugin?(plugin_id) do
+    case Flezha.Plugin.Installer.info(plugin_id) do
+      {:ok, _} -> true
+      _ -> false
+    end
+  end
+
+  defp installed_plugin_to_json(%Flezha.Plugin.Installer.InstalledPlugin{} = p) do
+    %{
+      id: p.id,
+      version: p.version,
+      status: p.status,
+      description: p.description,
+      author: p.author,
+      modules: Enum.map(p.modules, &inspect/1),
+      provides:
+        Enum.map(p.provides, fn prov ->
+          %{
+            id: Map.get(prov, :id),
+            provider: inspect(Map.get(prov, :provider)),
+            scope: Map.get(prov, :scope)
+          }
+        end),
+      installed_at: p.installed_at
+    }
+  end
+
   @doc "Show help for a specific plugin provider."
   def plugin_help(provider_id) do
     case get_plugin_provider_mod(provider_id) do

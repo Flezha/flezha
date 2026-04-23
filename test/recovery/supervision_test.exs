@@ -85,10 +85,34 @@ defmodule Flezha.Recovery.SupervisionTest do
     assert idx.("recovery_children()") < idx.("Flezha.Service.HubManager")
     assert idx.("recovery_children()") < idx.("Flezha.ComputeEngine.FleetSupervisor")
 
-    # And the helper returns the four modules in the expected order:
-    # Store → PluginStore → SysMode → Coordinator.
-    assert source =~
-             ~r/Flezha\.Recovery\.Store\s*,\s*Flezha\.Recovery\.PluginStore\s*,\s*Flezha\.Recovery\.SysMode\s*,\s*Flezha\.Recovery\.Coordinator/s
+    # Extract only the body of `recovery_children/0` to avoid matching
+    # comment references. The installable-plugin supervisor may be
+    # spliced between SysMode and Coordinator when the feature flag
+    # is on, so check relative ordering of the four names in that body.
+    body =
+      Regex.run(~r/defp recovery_children do\b(.*?)^  end$/sm, source, capture: :all_but_first)
+      |> case do
+        [b] -> b
+        _ -> flunk("could not extract recovery_children/0 body")
+      end
+
+    body_idx = fn needle ->
+      case :binary.match(body, needle) do
+        :nomatch -> flunk("expected #{inspect(needle)} in recovery_children body")
+        {pos, _} -> pos
+      end
+    end
+
+    positions =
+      [
+        "Flezha.Recovery.Store",
+        "Flezha.Recovery.PluginStore",
+        "Flezha.Recovery.SysMode",
+        "Flezha.Recovery.Coordinator"
+      ]
+      |> Enum.map(body_idx)
+
+    assert positions == Enum.sort(positions)
   end
 
   defp restore(key, nil), do: Application.delete_env(:flezha, key)

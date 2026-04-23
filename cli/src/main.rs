@@ -50,6 +50,8 @@ fn print_help() {
     println!("EXAMPLES:");
     println!("    flz agent start");
     println!("    flz processor start my_comp my_factory --namespace prod");
+    println!("    flz plugin install /path/to/my_plugin-1.0.0.fpz");
+    println!("    flz plugin list --installed");
     println!("    flz plugin enable kafka_producer provider1 Xhosts=localhost:9092");
     println!("    flz namespace list --output json");
 }
