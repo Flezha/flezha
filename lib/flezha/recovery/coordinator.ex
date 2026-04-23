@@ -4,24 +4,19 @@ defmodule Flezha.Recovery.Coordinator do
   and runs the two-phase recovery loop when `Flezha.Recovery.SysMode`
   requests it.
 
-  Processor hooks are registered in each hub's spec (see
-  `Flezha.Service.HubManager.process_hub/1`); plugin hooks fire from
-  `Flezha.Service.PluginManager` directly into this module's
-  `on_plugin_enabled/2` / `on_plugin_disabled/1`.
-
-  The Coordinator exposes its own ETS table (`:flz_recovery_abort`) as the
-  shared abort-flag carrier so the recovery loop can poll it between rows
-  without blocking on a GenServer call from SysMode. The flag halts whichever
-  phase (processors or plugins) is currently in-flight.
+  Plugin rows persisted here are `%Flezha.Plugin{}` structs with transient
+  fields (worker pids, KafkaEx conns, Websocket conns) stripped. The stored
+  row carries a `:version` tag — on boot, mismatched versions clear the
+  DETS file to prevent struct-shape drift from leaking across releases.
   """
 
   use GenServer
 
   require Logger
 
-  alias Flezha.Plugin.Driver.IOBindingPlugin
-  alias Flezha.Plugin.Provider.Kafka
-  alias Flezha.Plugin.Provider.Websocket
+  alias Flezha.Plugin
+  alias Flezha.Plugin.Provider.BeamMsgForward
+  alias Flezha.Plugin.Provider.MonitoredIOForward
   alias Flezha.Recovery.PluginStore
   alias Flezha.Recovery.Store
   alias Flezha.Recovery.SysMode
@@ -29,33 +24,28 @@ defmodule Flezha.Recovery.Coordinator do
   @ets :flz_recovery_abort
   @abort_key :abort
 
+  # Bump when the persisted shape of `%Flezha.Plugin{}` changes in a way
+  # that requires discarding on-disk rows.
+  @plugin_shape_version 2
+
   ## Public API
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc """
-  Asynchronously starts the recovery loop. Called by SysMode when its window
-  timer fires while in `:recover`. When finished, notifies SysMode via
-  `Flezha.Recovery.SysMode.notify_recovery_done/1`.
-  """
+  @doc "Asynchronously starts the recovery loop."
   @spec start_recovery_async() :: :ok
   def start_recovery_async do
     GenServer.cast(__MODULE__, :start_recovery_async)
   end
 
-  @doc """
-  Synchronously runs the recovery loop and returns the combined
-  processor + plugin counts. Primarily used by tests; SysMode uses
-  `start_recovery_async/0`.
-  """
+  @doc "Synchronously runs the recovery loop and returns combined counts."
   @spec run_recovery() :: map()
   def run_recovery do
     GenServer.call(__MODULE__, :run_recovery, 60_000)
   end
 
-  @doc "Enable or disable the mid-loop abort flag."
   @spec set_abort_flag(boolean()) :: :ok
   def set_abort_flag(value) when is_boolean(value) do
     ensure_ets()
@@ -73,14 +63,8 @@ defmodule Flezha.Recovery.Coordinator do
     end
   end
 
-  ## ProcessHub hook handlers (wired via HubManager)
+  ## ProcessHub hook handlers
 
-  @doc """
-  Registered as `Hook.post_children_start()`. Payload shape:
-  `%{children: [%{child_id, pid, result, nodes, child_spec, metadata}]}`.
-
-  For each child hosted on the current node, persists a row in the Store.
-  """
   def on_post_children_start(%{children: children}) when is_list(children) do
     current_node = node()
 
@@ -99,9 +83,6 @@ defmodule Flezha.Recovery.Coordinator do
 
   def on_post_children_start(_), do: :ok
 
-  @doc """
-  Registered as `Hook.child_unregistered()`. Payload shape: `%{child_id: cid}`.
-  """
   def on_child_unregistered(%{child_id: child_id}) when is_binary(child_id) do
     Store.delete(child_id)
     :ok
@@ -109,18 +90,15 @@ defmodule Flezha.Recovery.Coordinator do
 
   def on_child_unregistered(_), do: :ok
 
-  ## PluginManager hook handlers (called directly from PluginManager)
+  ## PluginManager hook handlers
 
-  @doc """
-  Invoked by `PluginManager` after a successful `enable_plugin/2`. Persists
-  the plugin iff its driver reports `recoverable?/1 == true`.
-  """
-  @spec on_plugin_enabled(binary(), struct()) :: :ok
-  def on_plugin_enabled(plugin_id, plugin) do
+  @spec on_plugin_enabled(binary(), Plugin.t()) :: :ok
+  def on_plugin_enabled(plugin_id, %Plugin{} = plugin) do
     try do
       if recoverable?(plugin) do
         stripped = strip_transient_fields(plugin)
-        PluginStore.put(plugin_id, stripped)
+        row = %{plugin: stripped, version: @plugin_shape_version}
+        PluginStore.put(plugin_id, row)
       end
 
       :ok
@@ -134,10 +112,6 @@ defmodule Flezha.Recovery.Coordinator do
     end
   end
 
-  @doc """
-  Invoked by `PluginManager` after a successful `disable_plugin/1`. Removes
-  any persisted row for the given plugin_id (idempotent).
-  """
   @spec on_plugin_disabled(binary()) :: :ok
   def on_plugin_disabled(plugin_id) do
     try do
@@ -157,19 +131,20 @@ defmodule Flezha.Recovery.Coordinator do
 
   @doc """
   Nils fields that hold a live pid or external-connection ref before
-  persisting. Re-enable re-populates them by invoking the driver's normal
-  enable path. See design §D12.
+  persisting. Re-enable re-populates them via `init_provider/1`.
   """
-  @spec strip_transient_fields(struct()) :: struct()
-  def strip_transient_fields(%IOBindingPlugin{} = plugin) do
-    %IOBindingPlugin{plugin | pid: nil, monitor_ref: nil, provider: strip_provider(plugin.provider)}
+  @spec strip_transient_fields(Plugin.t()) :: Plugin.t()
+  def strip_transient_fields(%Plugin{opts: opts} = plugin) do
+    %Plugin{plugin | opts: strip_opts(opts)}
   end
 
-  def strip_transient_fields(other), do: other
+  defp strip_opts(opts) when is_map(opts) do
+    opts
+    |> Map.delete(:conn)
+    |> Map.delete(:binding_pid)
+  end
 
-  defp strip_provider(%Kafka.Producer{} = p), do: %Kafka.Producer{p | conn: nil}
-  defp strip_provider(%Websocket{} = p), do: %Websocket{p | conn: nil}
-  defp strip_provider(other), do: other
+  defp strip_opts(opts), do: opts
 
   ## GenServer callbacks
 
@@ -177,6 +152,10 @@ defmodule Flezha.Recovery.Coordinator do
   def init(_opts) do
     ensure_ets()
     set_abort_flag(false)
+
+    # Clear any persisted plugin rows whose shape version doesn't match.
+    clear_incompatible_plugin_rows()
+
     {:ok, %{}}
   end
 
@@ -196,11 +175,8 @@ defmodule Flezha.Recovery.Coordinator do
 
   defp persist_child(child_id, child_spec, metadata) do
     case extract_namespace_and_processor(child_spec, metadata) do
-      {:ok, namespace, processor} ->
-        Store.put(child_id, namespace, processor)
-
-      :skip ->
-        :ok
+      {:ok, namespace, processor} -> Store.put(child_id, namespace, processor)
+      :skip -> :ok
     end
   end
 
@@ -235,7 +211,6 @@ defmodule Flezha.Recovery.Coordinator do
     aborted = aborted_after_proc or aborted_after_plugin
 
     measurements = %{
-      # Back-compat names for existing :completed consumers.
       recovered: proc_recovered,
       failed: proc_failed,
       duration_ms: duration_ms,
@@ -300,7 +275,7 @@ defmodule Flezha.Recovery.Coordinator do
     rows = PluginStore.all()
 
     Enum.reduce_while(rows, {0, 0, 0, false}, fn
-      {plugin_id, %{plugin: plugin}}, {ok, err, skipped, _} ->
+      {plugin_id, %{plugin: %Plugin{} = plugin}}, {ok, err, skipped, _} ->
         if abort_flag?() do
           {:halt, {ok, err, skipped, true}}
         else
@@ -339,10 +314,18 @@ defmodule Flezha.Recovery.Coordinator do
               end
           end
         end
+
+      {plugin_id, _malformed_row}, {ok, err, skipped, _} ->
+        Logger.warning(
+          "[recovery] dropping malformed plugin row #{inspect(plugin_id)}"
+        )
+
+        PluginStore.delete(plugin_id)
+        {:cont, {ok, err, skipped + 1, false}}
     end)
   end
 
-  defp processor_present?(%{namespace: ns, processor_id: pid_id}) do
+  defp processor_present?(%Plugin{namespace: ns, processor_id: pid_id}) do
     case Flezha.Service.ProcessorManager.get_processor_pid(ns, pid_id) do
       {:ok, pid} when is_pid(pid) -> Process.alive?(pid)
       _ -> false
@@ -380,22 +363,33 @@ defmodule Flezha.Recovery.Coordinator do
     end
   end
 
-  # Permanent errors are those where retrying without intervention won't help:
-  # module missing, id collision, or explicit validation failures. Everything
-  # else (network errors, broker unreachable, etc.) stays transient so the
-  # next recovery window gets another shot.
-  defp classify_plugin_error("plugin already registered"), do: {:error, "plugin already registered", :permanent}
+  defp classify_plugin_error("plugin already registered"),
+    do: {:error, "plugin already registered", :permanent}
+
   defp classify_plugin_error(%UndefinedFunctionError{} = e), do: {:error, e, :permanent}
   defp classify_plugin_error({:undef, _} = e), do: {:error, e, :permanent}
   defp classify_plugin_error(reason), do: {:error, reason, :transient}
 
-  defp recoverable?(plugin) do
-    module = plugin.__struct__
+  # A plugin is recoverable iff none of its subscriptions carry a
+  # transient-bound provider (e.g. a caller pid that won't survive a BEAM
+  # restart). The test fixtures currently flag `BeamMsgForward` and
+  # `MonitoredIOForward` as non-recoverable.
+  defp recoverable?(%Plugin{provider: provider}) do
+    provider not in [BeamMsgForward, MonitoredIOForward]
+  end
 
-    if function_exported?(module, :recoverable?, 1) do
-      module.recoverable?(plugin)
-    else
-      true
+  defp clear_incompatible_plugin_rows do
+    try do
+      rows = PluginStore.all()
+
+      Enum.each(rows, fn {id, row} ->
+        case row do
+          %{version: v} when v == @plugin_shape_version -> :ok
+          _ -> PluginStore.delete(id)
+        end
+      end)
+    catch
+      _, _ -> :ok
     end
   end
 

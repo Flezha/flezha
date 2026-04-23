@@ -1,17 +1,17 @@
-# processor-init-state-from-processor Specification
+# processor-init-state-sibling Specification
 
 ## Purpose
 
-The processor-init-state-from-processor capability ships a first-party `Flezha.Processor.InitState.Providers.FromProcessor` init-state provider that seeds a cold-starting processor's initial state from another running processor. It is composed on top of `processor-init-state` (as a provider entry in a processor's `Builder.opts[:init_state_plugins]` chain) and `processor-message-handlers` (as the transport for the typed request envelope). The provider resolves the source processor via `Flezha.Service.ProcessorManager.get_processor_pid/2`, sends a `{:flezha_request, handler_key, payload, self(), ref}` envelope, decodes the reply as a JSON object into a map, and returns it to the enclosing init-state chain. It propagates handler errors verbatim so the outer `%InitStatePlugin{}.on_error` policy decides whether to abort or continue, and it bounds its own `receive` strictly below the enclosing `InitStatePlugin.timeout_ms` so the inner wait times out before `Task.shutdown(:brutal_kill)` fires. The provider performs no hidden state mutation on the source processor — it only sends typed request envelopes via the message-handler surface.
+The processor-init-state-sibling capability ships a first-party `Flezha.Processor.InitState.Providers.Sibling` init-state provider that seeds a cold-starting processor's initial state from another running processor. It is composed on top of `processor-init-state` (as a provider entry in a processor's `Builder.opts[:init_state_plugins]` chain) and `processor-message-handlers` (as the transport for the typed request envelope). The provider resolves the source processor via `Flezha.Service.ProcessorManager.get_processor_pid/2`, sends a `{:flezha_request, handler_key, payload, self(), ref}` envelope, decodes the reply as a JSON object into a map, and returns it to the enclosing init-state chain. It propagates handler errors verbatim so the outer `%InitStatePlugin{}.on_error` policy decides whether to abort or continue, and it bounds its own `receive` strictly below the enclosing `InitStatePlugin.timeout_ms` so the inner wait times out before `Task.shutdown(:brutal_kill)` fires. The provider performs no hidden state mutation on the source processor — it only sends typed request envelopes via the message-handler surface.
 
 ## Requirements
 
-### Requirement: First-party `FromProcessor` init-state provider
+### Requirement: First-party `Sibling` init-state provider
 
-The system SHALL ship a first-party `Flezha.Processor.InitState.Providers.FromProcessor` module implementing `Flezha.Processor.InitStateProvider`. The provider SHALL be configurable as an entry in a processor's `Builder.opts[:init_state_plugins]` chain via `%Flezha.Processor.InitStatePlugin{}.provider == Flezha.Processor.InitState.Providers.FromProcessor` with the provider's own `opts` map carrying at least `:source_processor_id` (string), `:source_namespace` (string, defaults to the starting processor's namespace), `:handler_key` (atom), optional `:request_payload` (binary, defaults to `<<>>`), and optional `:request_timeout_ms` (positive integer, defaults to a value below the enclosing `InitStatePlugin.timeout_ms`).
+The system SHALL ship a first-party `Flezha.Processor.InitState.Providers.Sibling` module implementing `Flezha.Processor.InitStateProvider`. The provider SHALL be configurable as an entry in a processor's `Builder.opts[:init_state_plugins]` chain via `%Flezha.Processor.InitStatePlugin{}.provider == Flezha.Processor.InitState.Providers.Sibling` with the provider's own `opts` map carrying at least `:source_processor_id` (string), `:source_namespace` (string, defaults to the starting processor's namespace), `:handler_key` (atom), optional `:request_payload` (binary, defaults to `<<>>`), and optional `:request_timeout_ms` (positive integer, defaults to a value below the enclosing `InitStatePlugin.timeout_ms`).
 
 #### Scenario: Provider is configured on a processor's init-state chain
-- **WHEN** a processor is started cold with `opts: [init_state_plugins: [%InitStatePlugin{provider: Flezha.Processor.InitState.Providers.FromProcessor, opts: %{source_processor_id: "src", handler_key: :fetch_init_state}}]]`
+- **WHEN** a processor is started cold with `opts: [init_state_plugins: [%InitStatePlugin{provider: Flezha.Processor.InitState.Providers.Sibling, opts: %{source_processor_id: "src", handler_key: :fetch_init_state}}]]`
 - **THEN** the provider's `resolve/1` MUST be invoked during `Overwatch.init/1` exactly once, following the existing cold-start gating rules of `processor-init-state`
 
 ### Requirement: Source processor lookup and request dispatch
@@ -66,6 +66,6 @@ The provider SHALL enforce its `:request_timeout_ms` strictly below the enclosin
 
 The provider SHALL only send typed request envelopes to the source processor's Overwatch. It MUST NOT invoke migration handlers, state serialization commands, or any API that mutates the source processor's observable state.
 
-#### Scenario: Source processor state is unchanged after a FromProcessor request
-- **WHEN** a `FromProcessor` request is served by the source processor
+#### Scenario: Source processor state is unchanged after a Sibling request
+- **WHEN** a `Sibling` request is served by the source processor
 - **THEN** calling `Flezha.Service.ProcessorManager.get_processor_state/2` on the source before and after the request MUST return the same state (up to any mutations the source processor itself performs via normal IO)

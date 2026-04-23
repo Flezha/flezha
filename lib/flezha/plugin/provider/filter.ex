@@ -1,5 +1,14 @@
 defmodule Flezha.Plugin.Provider.Filter do
-  alias Flezha.Processor.IOBinding
+  @moduledoc """
+  First-party `:on_input` / `:on_output` transform subscriber that filters
+  the payload by regex.
+
+  Opts:
+    * `:regex_pattern` (string, required)
+    * `:inverted` (boolean, default false)
+  """
+
+  alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
 
   use ProviderBehaviour
@@ -18,33 +27,29 @@ defmodule Flezha.Plugin.Provider.Filter do
     end
   end
 
-  defimpl IOBinding, for: Flezha.Plugin.Provider.Filter do
-    @impl true
-    def bind(binding) do
-      case Regex.compile(binding.regex_pattern) do
-        {:ok, compiled_regex} ->
-          {:ok, {%{binding | regex_pattern: compiled_regex}, nil}}
+  def init_provider(opts) do
+    pattern = Map.fetch!(opts, :regex_pattern)
 
-        {:error, reason} ->
-          {:error, "Invalid regex pattern: #{reason}"}
-      end
+    case Regex.compile(pattern) do
+      {:ok, compiled} -> {:ok, Map.put(opts, :regex, compiled)}
+      {:error, reason} -> {:error, {:invalid_regex, reason}}
     end
+  end
 
-    @impl true
-    def handle_io(binding, {message, _metadata} = payload) do
-      if Regex.match?(binding.regex_pattern, message) do
-        if binding.inverted do
-          {:skip, :normal}
-        else
-          {:ok, payload}
-        end
-      else
-        if binding.inverted do
-          {:ok, payload}
-        else
-          {:skip, :normal}
-        end
-      end
+  def on_input(%Ctx.IO{} = ctx, opts), do: filter(ctx, opts)
+  def on_output(%Ctx.IO{} = ctx, opts), do: filter(ctx, opts)
+
+  defp filter(%Ctx.IO{message: msg} = ctx, opts) do
+    regex = Map.fetch!(opts, :regex)
+    inverted = Map.get(opts, :inverted, false)
+
+    matches? = Regex.match?(regex, msg)
+
+    cond do
+      matches? and inverted -> {:skip, :normal}
+      matches? -> {:ok, ctx}
+      not matches? and inverted -> {:ok, ctx}
+      true -> {:skip, :normal}
     end
   end
 end

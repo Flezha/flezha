@@ -271,24 +271,30 @@ defmodule Mix.Tasks.Bench do
           # Enable BeamMsgForward plugin
           PluginManager.enable_plugin(
             processor_id <> "_beam_msg_forward",
-            %Flezha.Plugin.Driver.IOBindingPlugin{
+            %Flezha.Plugin{
+              id: processor_id <> "_beam_msg_forward",
               namespace: namespace,
               processor_id: processor_id,
-              trigger: :on_output,
-              provider: %Flezha.Plugin.Provider.BeamMsgForward{
-                recv_pid: self()
-              }
+              provider: Flezha.Plugin.Provider.BeamMsgForward,
+              opts: %{recv_pid: self()},
+              subscriptions: [{:on_output, []}]
             }
           )
 
-          # Enable StdOut plugin
+          # Enable StdOut plugin. In the legacy bench this was attached with
+          # `trigger: :proactive` — a silent no-op (proactive was only
+          # registered, never dispatched). Preserve that shape with an
+          # empty subscriptions list: the plugin is enabled (so enable
+          # overhead is measured) but no callback fires on messages.
           PluginManager.enable_plugin(
             processor_id <> "_stdout_plugin",
-            %Flezha.Plugin.Driver.IOBindingPlugin{
+            %Flezha.Plugin{
+              id: processor_id <> "_stdout_plugin",
               namespace: namespace,
               processor_id: processor_id,
-              trigger: :proactive,
-              provider: %Flezha.Plugin.Provider.StdOut{}
+              provider: Flezha.Plugin.Provider.StdOut,
+              opts: %{},
+              subscriptions: []
             }
           )
         end)

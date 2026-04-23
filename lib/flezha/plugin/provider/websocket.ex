@@ -1,5 +1,15 @@
 defmodule Flezha.Plugin.Provider.Websocket do
-  alias Flezha.Processor.IOBinding
+  @moduledoc """
+  First-party Websocket provider. `init_provider/1` starts a Fresh WebSocket
+  connection process; incoming frames are cast as `{:io_in, msg, metadata}`
+  to the overwatcher pid. The plugin subscribes to `:on_terminate` so the
+  connection is closed cleanly when the plugin is disabled.
+
+  Required opts: `:uri`.
+  Optional opts: `:post_connect`, `:ws_opts`, `:payload_metadata`.
+  """
+
+  alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
 
   require Logger
@@ -19,55 +29,6 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @impl true
   def plugin_type(), do: :io_binding
 
-  @impl true
-  def help() do
-    """
-    WebSocket Plugin Help
-
-    DESCRIPTION:
-        Connects to a WebSocket server and forwards processor I/O through the WebSocket connection.
-        Can send a post-connect message after establishing the connection.
-
-    USAGE:
-        flz plugin enable <plugin_id> processor_websocket [OPTIONS]
-
-    REQUIRED PARAMETERS (X-prefixed):
-        --Xuri <uri>                  WebSocket server URI (e.g., ws://localhost:4500)
-
-    OPTIONAL PARAMETERS (X-prefixed):
-        --Xpost_connect <json>        JSON message to send after connecting
-        --Xws_opts <json>             WebSocket connection options as JSON
-        --Xpayload_metadata <json>    Metadata to include with payloads
-
-    COMMON OPTIONS:
-        --namespace <namespace>       Namespace (default: default)
-        --processor_id <id>          Target processor ID (required)
-        --trigger <trigger>          Trigger mode: on_input|on_output|proactive|interval
-        --position <num>             Plugin position in the chain
-
-    TRIGGER MODES:
-        on_input    - Triggered when processor receives input
-        on_output   - Triggered when processor produces output  
-        proactive   - Plugin actively polls/generates data
-        interval    - Triggered at regular intervals
-
-    EXAMPLES:
-        # Basic WebSocket connection
-        flz plugin enable ws_conn processor_websocket \\
-            --Xuri=ws://localhost:4500 \\
-            --processor_id=my_processor \\
-            --trigger=proactive
-
-        # With post-connect message
-        flz plugin enable ws_conn processor_websocket \\
-            --Xuri=ws://localhost:4500 \\
-            --Xpost_connect='{"type":"subscribe","channel":"updates"}' \\
-            --processor_id=my_processor \\
-            --trigger=proactive \\
-            --namespace=production
-    """
-  end
-
   defp convert_value(:ws_opts, value) when is_binary(value) do
     Jason.decode(value)
   end
@@ -76,32 +37,29 @@ defmodule Flezha.Plugin.Provider.Websocket do
     Jason.decode(value)
   end
 
-  defimpl IOBinding, for: Flezha.Plugin.Provider.Websocket do
-    alias Flezha.Plugin.Provider.Websocket
+  def init_provider(opts) do
+    uri = Map.fetch!(opts, :uri)
 
-    @impl true
-    def bind(binding) do
-      res =
-        Websocket.start_link(binding.uri,
-          ws_opts: binding.ws_opts,
-          post_connect: binding.post_connect,
-          overwatcher_pid: self(),
-          payload_metadata: binding.payload_metadata
-        )
-
-      case res do
-        {:ok, pid} -> {:ok, {%Websocket{binding | conn: pid}, pid}}
-        {:error, reason} -> {:error, reason}
-      end
-    end
-
-    @impl true
-    def handle_io(binding, {message, metadata} = payload) do
-      Websocket.send_payload(binding.conn, {metadata.type, message})
-
-      {:ok, payload}
+    case start_link(uri,
+           ws_opts: Map.get(opts, :ws_opts, []),
+           post_connect: Map.get(opts, :post_connect, ""),
+           overwatcher_pid: self(),
+           payload_metadata: Map.get(opts, :payload_metadata, %{})
+         ) do
+      {:ok, pid} -> {:ok, Map.put(opts, :conn, pid), pid}
+      {:error, reason} -> {:error, reason}
     end
   end
+
+  # :on_interval tick triggers nothing; connection is driven by the Fresh pid.
+  def on_interval(%Ctx.Tick{}, _opts), do: :ok
+
+  def on_terminate(%Ctx.Terminate{}, %{conn: pid}) when is_pid(pid) do
+    if Process.alive?(pid), do: Process.exit(pid, :shutdown)
+    :ok
+  end
+
+  def on_terminate(%Ctx.Terminate{}, _opts), do: :ok
 
   def start_link(uri, opts) do
     Fresh.start_link(
@@ -145,14 +103,11 @@ defmodule Flezha.Plugin.Provider.Websocket do
   end
 
   @impl Fresh
-  def handle_control({:pong, _}, state) do
-    {:ok, state}
-  end
+  def handle_control({:pong, _}, state), do: {:ok, state}
 
   @impl Fresh
   def handle_control(control_frame, state) do
     Logger.warning("Received unexpected control frame: #{inspect(control_frame)}")
-
     {:ok, state}
   end
 
@@ -162,14 +117,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
         %{overwatcher_pid: overwatcher, payload_metadata: metadata} = state
       ) do
     GenServer.cast(overwatcher, {:io_in, message, metadata})
-
     {:ok, state}
   end
 
   @impl Fresh
   def handle_info(any, state) do
     Logger.warning("Received unexpected info at websocket process: #{inspect(any)}")
-
     {:ok, state}
   end
 

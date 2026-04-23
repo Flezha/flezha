@@ -100,7 +100,7 @@ impl ProcessorHandler<EchoMessageState, String, String> for ErrorMessageProcesso
     }
 }
 
-// Used by the FromProcessor init-state integration test: returns a
+// Used by the Sibling init-state integration test: returns a
 // JSON-encoded map compatible with the `store_input` factory state so a
 // consumer processor can be seeded from the reply via the init-state
 // chain.

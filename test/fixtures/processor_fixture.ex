@@ -55,17 +55,18 @@ defmodule FlezhaTest.Fixtures.ProcessorFixture do
         {:ok, %{processor_id: cid}} = start_res,
         namespace \\ @default_namespace
       ) do
+    plugin_id = cid <> "_output_msg_handler"
+
     {:ok, "plugin enabled"} =
       PluginManager.enable_plugin(
-        cid <> "_output_msg_handler",
-        %Flezha.Plugin.Driver.IOBindingPlugin{
+        plugin_id,
+        %Flezha.Plugin{
+          id: plugin_id,
           namespace: namespace,
           processor_id: cid,
-          trigger: :on_output,
-          provider: %Flezha.Plugin.Provider.BeamMsgForward{
-            recv_pid: self()
-          },
-          plugin_group: "0"
+          provider: Flezha.Plugin.Provider.BeamMsgForward,
+          opts: %{recv_pid: self()},
+          subscriptions: [{:on_output, []}]
         }
       )
 

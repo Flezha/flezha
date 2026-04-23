@@ -29,15 +29,15 @@ defmodule Flezha.Recovery.PluginStore do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc "Insert or overwrite the row for `plugin_id`. No-op if store is down."
-  @spec put(plugin_id(), struct()) :: :ok | {:error, term()}
-  def put(plugin_id, plugin) when is_binary(plugin_id) and is_struct(plugin) do
+  @doc """
+  Insert or overwrite the row for `plugin_id`. Accepts either a plugin
+  struct (wrapped automatically into the row shape) or a full row map
+  (merged with `stored_node` / `inserted_at`). No-op if store is down.
+  """
+  @spec put(plugin_id(), struct() | map()) :: :ok | {:error, term()}
+  def put(plugin_id, plugin_or_row) when is_binary(plugin_id) do
     if table_ready?() do
-      row = %{
-        plugin: plugin,
-        stored_node: node(),
-        inserted_at: System.system_time(:millisecond)
-      }
+      row = build_row(plugin_or_row)
 
       case :dets.insert(@table, {plugin_id, row}) do
         :ok -> :ok
@@ -46,6 +46,20 @@ defmodule Flezha.Recovery.PluginStore do
     else
       :ok
     end
+  end
+
+  defp build_row(plugin) when is_struct(plugin) do
+    %{
+      plugin: plugin,
+      stored_node: node(),
+      inserted_at: System.system_time(:millisecond)
+    }
+  end
+
+  defp build_row(%{plugin: _} = row) when is_map(row) do
+    row
+    |> Map.put_new(:stored_node, node())
+    |> Map.put_new(:inserted_at, System.system_time(:millisecond))
   end
 
   @doc "Delete the row for `plugin_id`. Idempotent; no-op if store is down."

@@ -1,5 +1,10 @@
 defmodule Flezha.Plugin.Provider.StdOut do
-  alias Flezha.Processor.IOBinding
+  @moduledoc """
+  First-party `:on_input` / `:on_output` transform subscriber that prints
+  the payload to stdout and passes it through unchanged.
+  """
+
+  alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
 
   use ProviderBehaviour
@@ -9,17 +14,11 @@ defmodule Flezha.Plugin.Provider.StdOut do
   @impl true
   def plugin_type(), do: :io_binding
 
-  defimpl IOBinding, for: Flezha.Plugin.Provider.StdOut do
-    @impl true
-    def bind(binding) do
-      {:ok, {binding, nil}}
-    end
+  def on_input(%Ctx.IO{} = ctx, _opts), do: print(ctx)
+  def on_output(%Ctx.IO{} = ctx, _opts), do: print(ctx)
 
-    @impl true
-    def handle_io(_plugin, payload) do
-      IO.puts(inspect(payload))
-
-      {:ok, payload}
-    end
+  defp print(%Ctx.IO{message: msg, metadata: md} = ctx) do
+    IO.puts(inspect({msg, md}))
+    {:ok, ctx}
   end
 end

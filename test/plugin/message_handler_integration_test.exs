@@ -1,18 +1,13 @@
 defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
   @moduledoc """
   End-to-end integration tests for `processor-message-handlers` and the
-  `FromProcessor` init-state provider. These exercise a real
-  `rust_compute_engine` via the default testnet compute-engines — the test
-  binary registers `echo_message`, `error_message`, and
-  `json_state_message` factories that override `handle_message` with
-  deterministic replies.
+  `Sibling` init-state provider under the unified extension-system.
   """
 
-  alias Flezha.Plugin.Driver.MessageHandlerPlugin
+  alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MessageForward
   alias Flezha.Processor.Builder
-  alias Flezha.Processor.InitStatePlugin
-  alias Flezha.Processor.InitState.Providers.FromProcessor
+  alias Flezha.Processor.InitState.Providers.Sibling
   alias Flezha.Service.PluginManager
   alias Flezha.Service.ProcessorManager
 
@@ -25,9 +20,9 @@ defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
     :ok
   end
 
-  defp request(pid, handler_key, payload, timeout_ms \\ 2_000) do
+  defp request(pid, key, payload, timeout_ms \\ 2_000) do
     ref = make_ref()
-    send(pid, {:flezha_request, handler_key, payload, self(), ref})
+    send(pid, {:flezha_request, key, payload, self(), ref})
 
     receive do
       {:flezha_response, ^ref, result} -> result
@@ -36,7 +31,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
     end
   end
 
-  test "11.1 factory handle_message echoes payload round-trips via MessageForward" do
+  test "factory handle_message echoes payload round-trips via MessageForward" do
     processor_id = "mh_int_echo"
 
     assert {:ok, %{pid: overwatch_pid}} =
@@ -46,18 +41,20 @@ defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
              })
 
     assert {:ok, "plugin enabled"} =
-             PluginManager.enable_plugin("mh_int_echo_plugin", %MessageHandlerPlugin{
+             PluginManager.enable_plugin("mh_int_echo_plugin", %Plugin{
+               id: "mh_int_echo_plugin",
                namespace: @namespace,
                processor_id: processor_id,
-               handler_key: :sdk_echo,
-               provider: MessageForward
+               provider: MessageForward,
+               opts: %{},
+               subscriptions: [{:on_message, [key: :sdk_echo]}]
              })
 
     payload = <<1, 2, 3, 4, 5>>
     assert {:ok, ^payload} = request(overwatch_pid, :sdk_echo, payload)
   end
 
-  test "11.2 factory handle_message returns error string surfaced to caller" do
+  test "factory handle_message returns error string surfaced to caller" do
     processor_id = "mh_int_error"
 
     assert {:ok, %{pid: overwatch_pid}} =
@@ -67,17 +64,19 @@ defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
              })
 
     assert {:ok, "plugin enabled"} =
-             PluginManager.enable_plugin("mh_int_error_plugin", %MessageHandlerPlugin{
+             PluginManager.enable_plugin("mh_int_error_plugin", %Plugin{
+               id: "mh_int_error_plugin",
                namespace: @namespace,
                processor_id: processor_id,
-               handler_key: :sdk_err,
-               provider: MessageForward
+               provider: MessageForward,
+               opts: %{},
+               subscriptions: [{:on_message, [key: :sdk_err]}]
              })
 
     assert {:error, "handle_message_error"} = request(overwatch_pid, :sdk_err, "ignored")
   end
 
-  test "11.3 factory without handle_message returns non-empty error and stays healthy" do
+  test "factory without handle_message returns non-empty error and stays healthy" do
     processor_id = "mh_int_unsupported"
 
     assert {:ok, %{pid: overwatch_pid}} =
@@ -87,23 +86,23 @@ defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
              })
 
     assert {:ok, "plugin enabled"} =
-             PluginManager.enable_plugin("mh_int_unsupported_plugin", %MessageHandlerPlugin{
+             PluginManager.enable_plugin("mh_int_unsupported_plugin", %Plugin{
+               id: "mh_int_unsupported_plugin",
                namespace: @namespace,
                processor_id: processor_id,
-               handler_key: :unsupported,
-               provider: MessageForward
+               provider: MessageForward,
+               opts: %{},
+               subscriptions: [{:on_message, [key: :unsupported]}]
              })
 
     assert {:error, msg} = request(overwatch_pid, :unsupported, <<>>)
     assert is_binary(msg) and msg != ""
 
-    # Processor is still healthy: existing control commands (get state)
-    # keep working and the Overwatch pid is still alive.
     assert Process.alive?(overwatch_pid)
     assert {:ok, _json_state} = ProcessorManager.get_processor_state(@namespace, processor_id)
   end
 
-  test "11.4 FromProcessor init-state seeds a new processor from a running source" do
+  test "Sibling init-state seeds a new processor from a running source" do
     source_id = "mh_int_source"
     consumer_id = "mh_int_consumer"
 
@@ -114,28 +113,31 @@ defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
              })
 
     assert {:ok, "plugin enabled"} =
-             PluginManager.enable_plugin("mh_int_source_plugin", %MessageHandlerPlugin{
+             PluginManager.enable_plugin("mh_int_source_plugin", %Plugin{
+               id: "mh_int_source_plugin",
                namespace: @namespace,
                processor_id: source_id,
-               handler_key: :fetch_init_state,
-               provider: MessageForward
+               provider: MessageForward,
+               opts: %{},
+               subscriptions: [{:on_message, [key: :fetch_init_state]}]
              })
 
-    from_plugin =
-      InitStatePlugin.new(
-        provider: FromProcessor,
-        opts: %{
-          source_processor_id: source_id,
-          handler_key: :fetch_init_state,
-          request_timeout_ms: 2_000
-        }
-      )
+    from_plugin = %Plugin{
+      id: "from-processor",
+      provider: Sibling,
+      opts: %{
+        source_processor_id: source_id,
+        handler_key: :fetch_init_state,
+        request_timeout_ms: 2_000
+      },
+      subscriptions: [{:on_processor_init, []}]
+    }
 
     assert {:ok, _} =
              ProcessorManager.start_processor(@namespace, %Builder{
                id: consumer_id,
                factory_id: "store_input",
-               opts: [init_state_plugins: [from_plugin]]
+               opts: [plugins: [from_plugin]]
              })
 
     assert {:ok, json_state} =
@@ -147,38 +149,37 @@ defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
            }
   end
 
-  test "11.5 FromProcessor on_error: :empty with unreachable source lets consumer start empty" do
+  test "Sibling on_error: :empty with unreachable source lets consumer start empty" do
     consumer_id = "mh_int_consumer_degraded"
 
-    from_plugin =
-      InitStatePlugin.new(
-        provider: FromProcessor,
-        on_error: :empty,
-        opts: %{
-          source_processor_id: "does_not_exist",
-          handler_key: :fetch_init_state,
-          request_timeout_ms: 500
-        }
-      )
+    from_plugin = %Plugin{
+      id: "from-processor-empty",
+      provider: Sibling,
+      opts: %{
+        source_processor_id: "does_not_exist",
+        handler_key: :fetch_init_state,
+        request_timeout_ms: 500
+      },
+      subscriptions: [{:on_processor_init, [on_error: :empty]}]
+    }
 
     assert {:ok, _} =
              ProcessorManager.start_processor(@namespace, %Builder{
                id: consumer_id,
                factory_id: "store_input",
-               opts: [init_state_plugins: [from_plugin]]
+               opts: [plugins: [from_plugin]]
              })
 
     assert {:ok, json_state} =
              ProcessorManager.get_processor_state(@namespace, consumer_id)
 
-    # Empty init_values → SDK keeps the factory default (empty StoreInputState).
     assert Flezha.Service.Payloader.json_to_map(json_state) == %{
              "binary_inputs" => [],
              "text_inputs" => []
            }
   end
 
-  test "11.6 handler is still reachable under the same key after compute-engine migration" do
+  test "handler is still reachable under the same key after compute-engine migration" do
     processor_id = "mh_int_migrated"
 
     assert {:ok, %{pid: pid, compute_engine_id: current_id}} =
@@ -188,19 +189,17 @@ defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
              })
 
     assert {:ok, "plugin enabled"} =
-             PluginManager.enable_plugin("mh_int_migrated_plugin", %MessageHandlerPlugin{
+             PluginManager.enable_plugin("mh_int_migrated_plugin", %Plugin{
+               id: "mh_int_migrated_plugin",
                namespace: @namespace,
                processor_id: processor_id,
-               handler_key: :sdk_echo,
-               provider: MessageForward
+               provider: MessageForward,
+               opts: %{},
+               subscriptions: [{:on_message, [key: :sdk_echo]}]
              })
 
-    # Sanity check before migration.
     assert {:ok, "before"} = request(pid, :sdk_echo, "before")
 
-    # Drive the migration code path (alter_handover_state) on the same
-    # Overwatch pid — this exercises `sync_handlers/1` which re-registers
-    # the MessageHandlerPlugin with PluginManager after handover.
     try do
       GenServer.call(pid, {:compute_engine_migrate, current_id})
     catch

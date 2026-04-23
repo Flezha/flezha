@@ -1,19 +1,29 @@
 defmodule Flezha.Processor.Overwatch do
   alias Flezha.Service.HubManager
   alias Flezha.Service.ConfigManager
-  alias Flezha.Service.PluginManager
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
   alias Flezha.ComputeEngine.StreamSup
-  alias Flezha.Processor.IOBinding
-  alias Flezha.Processor.InitStateResolver
-  alias Flezha.Plugin.Driver.IOBindingPlugin
-  alias Flezha.Plugin.Driver.MessageHandlerPlugin
+  alias Flezha.Plugin
+  alias Flezha.Plugin.Extension
+  alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.Extension.Table
 
   require Logger
 
   use GenServer
   use ProcessHub.Strategy.Migration.HotSwap
+
+  use Flezha.Plugin.Host,
+    extensions: [
+      {:on_processor_init, :fold, Flezha.Plugin.Extension.Ctx.Init},
+      {:on_input, :transform, Flezha.Plugin.Extension.Ctx.IO},
+      {:on_output, :transform, Flezha.Plugin.Extension.Ctx.IO},
+      {:on_interval, :timer, Flezha.Plugin.Extension.Ctx.Tick},
+      {:on_message, :request, Flezha.Plugin.Extension.Ctx.Msg},
+      {:on_snapshot, :fanout, Flezha.Plugin.Extension.Ctx.Snapshot},
+      {:on_terminate, :fanout, Flezha.Plugin.Extension.Ctx.Terminate}
+    ]
 
   @snapshop_interval 60_000
 
@@ -23,18 +33,11 @@ defmodule Flezha.Processor.Overwatch do
     :compute_engine_id,
     :factory_id,
     :channel,
-    :bindings,
+    :extensions,
     snapshot_interval: @snapshop_interval,
     snapshot: nil,
     init_values: %{},
-    # 1 - binary, 2 - text, 3 - custom
-    default_input_type: "2",
-    # Map to store plugin restart retry information: %{plugin_id => %{count: count, plugin: plugin}}
-    plugin_restart_retries: %{},
-    # %{handler_key :: atom() => {plugin_id :: term(), MessageHandlerPlugin.t()}}.
-    # Separate from `bindings` so IO-binding lifecycle (monitors, restart,
-    # `{:DOWN, ...}` dispatch) stays scoped to `IOBindingPlugin` pids only.
-    handlers: %{}
+    default_input_type: "2"
   ]
 
   def start_link(args) do
@@ -59,19 +62,13 @@ defmodule Flezha.Processor.Overwatch do
       snapshot_interval: snapshot_interval,
       snapshot: nil,
       default_input_type: Keyword.get(processor.opts, :default_input_type, "2"),
-      plugin_restart_retries: %{},
-      bindings: %{
-        on_input: [],
-        on_output: [],
-        interval: [],
-        proactive: []
-      },
-      handlers: %{}
+      extensions: Table.new(__extensions_catalog__())
     }
 
-    plugins = Keyword.get(processor.opts, :init_state_plugins, [])
+    plugins = Keyword.get(processor.opts, :plugins, [])
 
-    with {:ok, state, processor} <- resolve_init_state(state, processor, plugins),
+    with {:ok, state} <- subscribe_initial_plugins(state, plugins),
+         {:ok, state, processor} <- resolve_init_state(state, processor),
          {:ok, _} <- start_processor_sdk(compute_engine_id, processor) do
       {:ok, state}
     else
@@ -79,16 +76,26 @@ defmodule Flezha.Processor.Overwatch do
     end
   end
 
-  defp resolve_init_state(%__MODULE__{} = state, processor, plugins) do
-    if plugins != [] and processor.init_values == %{} do
-      base_context = %{
+  defp subscribe_initial_plugins(%__MODULE__{} = state, plugins) do
+    entries = Enum.map(plugins, fn %Plugin{id: id} = plugin -> {id, plugin} end)
+
+    case Table.bulk_subscribe(state.extensions, entries) do
+      {:ok, table} -> {:ok, %{state | extensions: table}}
+      {:error, {_plugin_id, reason}} -> {:error, reason}
+    end
+  end
+
+  defp resolve_init_state(%__MODULE__{} = state, processor) do
+    if processor.init_values == %{} do
+      ctx = %Ctx.Init{
         processor_id: processor.id,
         namespace: state.namespace,
-        factory_id: processor.factory_id
+        factory_id: processor.factory_id,
+        accumulated: %{}
       }
 
-      case InitStateResolver.resolve(plugins, base_context) do
-        {:ok, resolved} ->
+      case Extension.run(state.extensions, :on_processor_init, ctx) do
+        {:ok, %Ctx.Init{accumulated: resolved}} ->
           {:ok, %{state | init_values: resolved}, %{processor | init_values: resolved}}
 
         {:error, reason} ->
@@ -107,14 +114,27 @@ defmodule Flezha.Processor.Overwatch do
         {:stop_processor_async, state.id}
       )
 
-      unregister_plugins(state.bindings)
-      unregister_handlers(state.handlers)
+      fire_on_terminate(state, reason)
+      state = %{state | extensions: Table.teardown_all(state.extensions)}
+      _ = state
     end
 
     Logger.info(
       "Terminating processor #{state.id} in namespace #{state.namespace}: #{inspect(reason)}"
     )
 
+    :ok
+  end
+
+  defp fire_on_terminate(%__MODULE__{} = state, reason) do
+    ctx = %Ctx.Terminate{
+      processor_id: state.id,
+      namespace: state.namespace,
+      compute_engine_id: state.compute_engine_id,
+      reason: reason
+    }
+
+    Extension.run(state.extensions, :on_terminate, ctx)
     :ok
   end
 
@@ -132,55 +152,30 @@ defmodule Flezha.Processor.Overwatch do
       {:stop_processor, state.id}
     )
 
-    unregister_plugins(state.bindings)
-    unregister_handlers(state.handlers)
+    fire_on_terminate(state, :stopped)
+    table = Table.teardown_all(state.extensions)
 
     GenServer.reply(from, :ok)
 
-    {:stop, :normal, %{state | compute_engine_id: nil}}
-  end
-
-  @impl true
-  def handle_call({:enable_plugin, plugin_id, plugin}, _from, %__MODULE__{} = state) do
-    case add_binding(state.bindings, plugin_id, plugin, []) do
-      {:ok, bindings} ->
-        {:reply, :ok, %__MODULE__{state | bindings: bindings}}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
-  end
-
-  @impl true
-  def handle_call({:disable_plugin, plugin_id}, _from, %__MODULE__{} = state) do
-    {:ok, bindings} = remove_binding(state.bindings, plugin_id, [])
-
-    {:reply, :ok, %__MODULE__{state | bindings: bindings}}
+    {:stop, :normal, %{state | compute_engine_id: nil, extensions: table}}
   end
 
   @impl true
   def handle_call(
-        {:enable_message_handler, plugin_id, %MessageHandlerPlugin{} = plugin},
+        {:plugin_subscribe, plugin_id, %Plugin{} = plugin},
         _from,
         %__MODULE__{} = state
       ) do
-    case Map.get(state.handlers, plugin.handler_key) do
-      nil ->
-        handlers = Map.put(state.handlers, plugin.handler_key, {plugin_id, plugin})
-        {:reply, :ok, %__MODULE__{state | handlers: handlers}}
-
-      _existing ->
-        {:reply, {:error, {:handler_key_conflict, plugin.handler_key}}, state}
+    case Table.subscribe(state.extensions, plugin_id, plugin) do
+      {:ok, table} -> {:reply, :ok, %{state | extensions: table}}
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   @impl true
-  def handle_call({:disable_message_handler, plugin_id}, _from, %__MODULE__{} = state) do
-    handlers =
-      Enum.reject(state.handlers, fn {_key, {pid_id, _plugin}} -> pid_id == plugin_id end)
-      |> Map.new()
-
-    {:reply, :ok, %__MODULE__{state | handlers: handlers}}
+  def handle_call({:plugin_unsubscribe, plugin_id}, _from, %__MODULE__{} = state) do
+    table = Table.unsubscribe(state.extensions, plugin_id)
+    {:reply, :ok, %{state | extensions: table}}
   end
 
   @impl true
@@ -201,8 +196,6 @@ defmodule Flezha.Processor.Overwatch do
   def handle_call(:get_processor_state, _from, state) do
     command = %ComputeEngineCommands.ProcessorState{processor_id: state.id}
 
-    # TODO: any rpc command may timeout causing the processor overwatch to crash.
-    # We should handle this in the control unit.
     result = send_control(state.compute_engine_id, {:processor_state, command})
 
     {:reply, result, state}
@@ -242,7 +235,7 @@ defmodule Flezha.Processor.Overwatch do
   @impl true
   def handle_call({:io_in, message, metadata}, _from, state) do
     metadata = Map.put_new(metadata, "input_type", state.default_input_type)
-    payload = exec_bindings(state.bindings.on_input, {message, metadata})
+    payload = run_io(state, :on_input, message, metadata)
 
     case payload do
       nil -> nil
@@ -262,7 +255,7 @@ defmodule Flezha.Processor.Overwatch do
   @impl true
   def handle_cast({:io_in, message, metadata}, state) do
     metadata = Map.put_new(metadata, "input_type", state.default_input_type)
-    payload = exec_bindings(state.bindings.on_input, {message, metadata})
+    payload = run_io(state, :on_input, message, metadata)
 
     case payload do
       nil -> nil
@@ -274,50 +267,42 @@ defmodule Flezha.Processor.Overwatch do
 
   @impl true
   def handle_cast({:io_out, message, metadata}, state) do
-    exec_bindings(state.bindings.on_output, {message, metadata})
-
+    run_io(state, :on_output, message, metadata)
     {:noreply, state}
   end
 
-  @impl true
-  def handle_info({:binding_interval_exec, %IOBindingPlugin{provider: provider}} = plugin, state) do
-    IOBinding.handle_io(provider, {"", %{}})
-    add_interval_binding(plugin)
+  defp run_io(%__MODULE__{} = state, extension, message, metadata) do
+    ctx = %Ctx.IO{
+      processor_id: state.id,
+      namespace: state.namespace,
+      compute_engine_id: state.compute_engine_id,
+      message: message,
+      metadata: metadata
+    }
 
-    {:noreply, state}
+    case Extension.run(state.extensions, extension, ctx) do
+      {:ok, %Ctx.IO{message: msg, metadata: md}} -> {msg, md}
+      {:skip, _reason} -> nil
+      {:error, _reason} -> {message, metadata}
+    end
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, pid, reason}, %__MODULE__{} = state) do
-    # Find the binding by the pid.
-    plugin_info = find_plugin_by_pid(state.bindings, pid)
+  def handle_info({:extension_timer, name, plugin_id}, %__MODULE__{} = state) do
+    table = Table.fire_timer(state.extensions, name, plugin_id)
+    {:noreply, %{state | extensions: table}}
+  end
 
-    case plugin_info do
-      {plugin_id, plugin} ->
-        case reason do
-          :normal ->
-            Logger.info("Binding with pid #{inspect(pid)} terminated normally.")
+  @impl true
+  def handle_info({:DOWN, ref, :process, pid, reason}, %__MODULE__{} = state) do
+    case Table.handle_down(state.extensions, ref, pid, reason) do
+      {:ok, table} ->
+        {:noreply, %{state | extensions: table}}
 
-            # Remove the binding from the state and clear any retry info
-            {:ok, new_bindings} = remove_binding(state.bindings, plugin_id, unregister: true)
-            new_retries = Map.delete(state.plugin_restart_retries, plugin_id)
-
-            {:noreply,
-             %__MODULE__{state | bindings: new_bindings, plugin_restart_retries: new_retries}}
-
-          _ ->
-            Logger.error(
-              "Binding with pid #{inspect(pid)} terminated with reason: #{inspect(reason)}"
-            )
-
-            # Try to restart the binding with retry mechanism
-            {_, new_state} = attempt_restart(state, plugin_id, plugin)
-
-            {:noreply, new_state}
-        end
-
-      nil ->
-        Logger.error("Binding not found for pid #{inspect(pid)} with reason: #{inspect(reason)}")
+      :ignore ->
+        Logger.error(
+          "Binding not found for pid #{inspect(pid)} with reason: #{inspect(reason)}"
+        )
 
         {:noreply, state}
     end
@@ -326,11 +311,8 @@ defmodule Flezha.Processor.Overwatch do
   @impl true
   def handle_info({:EXIT, pid, reason}, state) do
     case reason do
-      :normal ->
-        Logger.info("Process #{inspect(pid)} exited normally.")
-
-      _ ->
-        Logger.error("Process #{inspect(pid)} exited with reason: #{inspect(reason)}")
+      :normal -> Logger.info("Process #{inspect(pid)} exited normally.")
+      _ -> Logger.error("Process #{inspect(pid)} exited with reason: #{inspect(reason)}")
     end
 
     {:noreply, state}
@@ -339,6 +321,15 @@ defmodule Flezha.Processor.Overwatch do
   @impl true
   def handle_info(:schedule_snapshot, %__MODULE__{} = state) do
     snapshot = create_snapshot(state.id, state.compute_engine_id)
+
+    ctx = %Ctx.Snapshot{
+      processor_id: state.id,
+      namespace: state.namespace,
+      compute_engine_id: state.compute_engine_id,
+      snapshot: snapshot
+    }
+
+    Extension.run(state.extensions, :on_snapshot, ctx)
 
     if state.snapshot_interval > 0 do
       schedule_snapshot(state.snapshot_interval)
@@ -349,75 +340,36 @@ defmodule Flezha.Processor.Overwatch do
 
   @impl true
   def handle_info({:retry_plugin_restart, plugin_id}, state) do
-    case Map.get(state.plugin_restart_retries, plugin_id) do
-      %{plugin: plugin} ->
-        {_, new_state} = attempt_restart(state, plugin_id, plugin)
-
-        {:noreply, new_state}
-
-      nil ->
-        Logger.warning("Retry restart called for plugin #{plugin_id} but no retry info found")
-        {:noreply, state}
-    end
+    table = Table.retry(state.extensions, plugin_id)
+    {:noreply, %{state | extensions: table}}
   end
 
-  # Route a typed request envelope to the matching handler plugin. The
-  # handler runs in a short-lived Task under
-  # `Flezha.Processor.MessageHandlerTaskSup` so a blocking handler (e.g. the
-  # default `MessageForward` provider's synchronous SDK roundtrip) does not
-  # stall IO and other lifecycle messages on this Overwatch. No catch-all
-  # handle_info/2 is introduced — out-of-contract messages still crash
-  # Overwatch and trigger supervisor restart, preserving the existing
-  # signal for misrouted messages.
   @impl true
   def handle_info(
         {:flezha_request, handler_key, payload, reply_to, ref},
         %__MODULE__{} = state
       ) do
-    case Map.get(state.handlers, handler_key) do
-      nil ->
-        send(reply_to, {:flezha_response, ref, {:error, {:unknown_handler_key, handler_key}}})
+    ctx = %Ctx.Msg{
+      key: handler_key,
+      payload: payload,
+      reply_to: reply_to,
+      ref: ref,
+      processor_id: state.id,
+      namespace: state.namespace,
+      compute_engine_id: state.compute_engine_id
+    }
 
-        {:noreply, state}
+    Extension.run(state.extensions, :on_message, ctx)
 
-      {_plugin_id, %MessageHandlerPlugin{provider: provider, opts: opts}} ->
-        context = %{
-          processor_id: state.id,
-          namespace: state.namespace,
-          compute_engine_id: state.compute_engine_id,
-          handler_key: handler_key,
-          from: reply_to,
-          opts: opts
-        }
-
-        Task.Supervisor.start_child(
-          Flezha.Processor.MessageHandlerTaskSup,
-          fn ->
-            result =
-              try do
-                provider.handle(payload, context)
-              catch
-                kind, reason ->
-                  {:error, {:exception, kind, reason}}
-              end
-
-            send(reply_to, {:flezha_response, ref, result})
-          end
-        )
-
-        {:noreply, state}
-    end
+    {:noreply, state}
   end
 
   defp create_snapshot(processor_id, compute_engine_id) do
     command = %ComputeEngineCommands.ProcessorState{processor_id: processor_id}
 
     case send_control(compute_engine_id, {:processor_state, command}) do
-      {:ok, snapshot} ->
-        snapshot
-
-      {:error, _reason} ->
-        nil
+      {:ok, snapshot} -> snapshot
+      {:error, _reason} -> nil
     end
   end
 
@@ -425,14 +377,19 @@ defmodule Flezha.Processor.Overwatch do
   def prepare_handover_state(state) do
     serialize_data =
       case serialize_processor_sdk(state.compute_engine_id, state.id) do
-        nil ->
-          state.snapshot
-
-        data ->
-          data
+        nil -> state.snapshot
+        data -> data
       end
 
-    {state, serialize_data}
+    handover = %{
+      id: state.id,
+      namespace: state.namespace,
+      factory_id: state.factory_id,
+      init_values: state.init_values,
+      plugins: Table.serializable_plugins(state.extensions)
+    }
+
+    {handover, serialize_data}
   end
 
   @impl true
@@ -450,77 +407,15 @@ defmodule Flezha.Processor.Overwatch do
       _else -> :ok
     end
 
-    new_bindings = sync_bindings(state.bindings, handover_state.bindings)
-    new_handlers = sync_handlers(Map.get(handover_state, :handlers, %{}))
+    # Tear down existing, then rehydrate.
+    table = Table.teardown_all(state.extensions)
+    rehydrated = Table.rehydrate(table, Map.get(handover_state, :plugins, []))
 
     %__MODULE__{
       state
-      | bindings: new_bindings,
-        init_values: handover_state.init_values,
-        handlers: new_handlers
+      | extensions: rehydrated,
+        init_values: handover_state.init_values
     }
-  end
-
-  # Helper functions for retry logic
-
-  defp find_plugin_by_pid(bindings, pid) do
-    Enum.find_value(bindings, fn {_trigger, bindings_list} ->
-      Enum.find_value(bindings_list, fn {plugin_id, %IOBindingPlugin{pid: binding_pid} = plugin} ->
-        if binding_pid == pid, do: {plugin_id, plugin}, else: nil
-      end)
-    end)
-  end
-
-  defp retry_delay(count) do
-    # Start with 4 seconds, then double each time: 4, 8, 16, 32, ...
-    (4000 * :math.pow(2, count)) |> round()
-  end
-
-  defp schedule_restart(plugin_id, delay) do
-    Process.send_after(self(), {:retry_plugin_restart, plugin_id}, delay)
-  end
-
-  defp handle_restart_failure(%__MODULE__{} = state, plugin_id, plugin, reason) do
-    retry_info = Map.get(state.plugin_restart_retries, plugin_id, %{count: 0, plugin: plugin})
-    new_count = retry_info.count + 1
-    delay = retry_delay(retry_info.count)
-
-    Logger.warning(
-      "Failed to restart plugin #{plugin_id} (attempt #{new_count}). " <>
-        "Scheduling retry in #{delay}ms. Reason: #{inspect(reason)}"
-    )
-
-    updated_retry_info = %{count: new_count, plugin: plugin}
-    new_retries = Map.put(state.plugin_restart_retries, plugin_id, updated_retry_info)
-
-    schedule_restart(plugin_id, delay)
-
-    %__MODULE__{state | plugin_restart_retries: new_retries}
-  end
-
-  defp handle_restart_success(%__MODULE__{} = state, plugin_id, new_bindings) do
-    # Reset retry count on successful restart
-    new_retries = Map.delete(state.plugin_restart_retries, plugin_id)
-
-    Logger.info("Successfully restarted plugin #{plugin_id}")
-
-    %__MODULE__{
-      state
-      | bindings: new_bindings,
-        plugin_restart_retries: new_retries
-    }
-  end
-
-  defp attempt_restart(state, plugin_id, plugin) do
-    {:ok, new_bindings} = remove_binding(state.bindings, plugin_id, unregister: true)
-
-    case add_binding(new_bindings, plugin_id, plugin, register: true) do
-      {:ok, restarted_bindings} ->
-        {:ok, handle_restart_success(state, plugin_id, restarted_bindings)}
-
-      {:error, reason} ->
-        {:error, handle_restart_failure(state, plugin_id, plugin, reason)}
-    end
   end
 
   defp send_control(compute_engine_id, command) do
@@ -556,88 +451,11 @@ defmodule Flezha.Processor.Overwatch do
   defp schedule_snapshot(_snapshot_interval), do: nil
 
   defp attach_channel(processor_id, compute_engine_id) do
-    # Get numeric representation of the processor_id string.
     processor_int = String.to_charlist(processor_id) |> Enum.sum()
-
-    # Pick the channel index based on the channel_name_int.
     count = ConfigManager.concurrent_channel_count()
     channel_index = rem(processor_int, count)
 
     StreamSup.stream_ids(compute_engine_id, :primary) |> Enum.at(channel_index)
-  end
-
-  defp sync_bindings(default_bindings, handover_bindings) do
-    migr_bindings =
-      Enum.map(handover_bindings, fn {_trigger, bindings} ->
-        bindings
-      end)
-      |> List.flatten()
-
-    Enum.reduce(migr_bindings, default_bindings, fn {plugin_id, plugin}, acc ->
-      case add_binding(acc, plugin_id, plugin, register: true) do
-        {:ok, new_bindings} ->
-          new_bindings
-
-        {:error, reason} ->
-          Logger.error("Failed to synchronize binding: #{inspect(reason)}")
-
-          acc
-      end
-    end)
-  end
-
-  defp sync_handlers(handover_handlers) when is_map(handover_handlers) do
-    Enum.reduce(handover_handlers, %{}, fn {handler_key, {plugin_id, plugin}}, acc ->
-      PluginManager.register_plugin(plugin_id, {
-        plugin.__struct__,
-        {plugin.namespace, plugin.processor_id}
-      })
-
-      Map.put(acc, handler_key, {plugin_id, plugin})
-    end)
-  end
-
-  defp sync_handlers(_), do: %{}
-
-  defp add_binding(bindings, plugin_id, %IOBindingPlugin{} = plugin, opts) do
-    case IOBinding.bind(plugin.provider) do
-      {:ok, {plugin_provider, pid}} ->
-        plugin = %IOBindingPlugin{plugin | provider: plugin_provider, pid: pid}
-
-        plugin =
-          case is_pid(pid) do
-            true ->
-              %IOBindingPlugin{plugin | monitor_ref: Process.monitor(pid)}
-
-            false ->
-              plugin
-          end
-
-        # Add binding to the namespace using position-based insertion
-        current_bindings = Map.get(bindings, plugin.trigger, [])
-        binding_namespace = insert_plugin_by_position(current_bindings, {plugin_id, plugin})
-
-        case plugin.trigger do
-          :interval -> add_interval_binding(plugin)
-          _ -> nil
-        end
-
-        case Keyword.get(opts, :register) do
-          true ->
-            PluginManager.register_plugin(plugin_id, {
-              plugin.__struct__,
-              {plugin.namespace, plugin.processor_id}
-            })
-
-          _ ->
-            nil
-        end
-
-        {:ok, Map.put(bindings, plugin.trigger, binding_namespace)}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
   end
 
   defp serialize_processor_sdk(compute_engine_id, processor_id) do
@@ -650,7 +468,6 @@ defmodule Flezha.Processor.Overwatch do
         serialized_data
 
       {:error, reason} ->
-        # TODO: we should actually check if overwatch status is :ok
         if Application.get_env(:flezha, :env) !== :test do
           Logger.error("Failed to serialize processor: #{inspect(reason)}")
         end
@@ -658,121 +475,4 @@ defmodule Flezha.Processor.Overwatch do
         nil
     end
   end
-
-  defp exec_bindings(bindings, {message, metadata}) do
-    plugin_group = Map.get(metadata, "plugin_group", "0")
-
-    Enum.reduce_while(bindings, {message, metadata}, fn
-      {_, %IOBindingPlugin{provider: p, plugin_group: pg}}, payload
-      when plugin_group === pg ->
-        case IOBinding.handle_io(p, payload) do
-          {:ok, payload} -> {:cont, payload}
-          {:skip, :normal} -> {:halt, nil}
-          {:error, _} -> {:cont, payload}
-        end
-
-      _, payload ->
-        {:cont, payload}
-    end)
-  end
-
-  defp add_interval_binding(plugin) do
-    interval = Map.get(plugin.interval, :interval, nil)
-
-    if is_integer(interval) do
-      Process.send_after(self(), {:binding_interval_exec, plugin}, interval)
-    end
-  end
-
-  defp recalculate_positions(bindings_list) do
-    # Recalculate positions for all plugins to ensure they are sequential starting from 0
-    Enum.with_index(bindings_list, 0)
-    |> Enum.map(fn {{plugin_id, %IOBindingPlugin{} = plugin}, new_position} ->
-      {plugin_id, %IOBindingPlugin{plugin | position: new_position}}
-    end)
-  end
-
-  defp insert_plugin_by_position(current_bindings, {plugin_id, %IOBindingPlugin{} = plugin}) do
-    case plugin.position do
-      nil ->
-        # No position specified, add to the end and update positions
-        new_position = length(current_bindings)
-        updated_plugin = %IOBindingPlugin{plugin | position: new_position}
-        current_bindings ++ [{plugin_id, updated_plugin}]
-
-      target_position when is_integer(target_position) and target_position >= 0 ->
-        # Insert at specific position and shift others
-        {before_split, after_split} = Enum.split(current_bindings, target_position)
-
-        # Update positions for plugins that are shifted
-        shifted_after =
-          Enum.with_index(after_split, target_position + 1)
-          |> Enum.map(fn {{id, %IOBindingPlugin{} = plugin_struct}, new_pos} ->
-            {id, %IOBindingPlugin{plugin_struct | position: new_pos}}
-          end)
-
-        # Update position for the new plugin
-        updated_plugin = %IOBindingPlugin{plugin | position: target_position}
-
-        before_split ++ [{plugin_id, updated_plugin}] ++ shifted_after
-
-      _ ->
-        # Invalid position, treat as nil
-        new_position = length(current_bindings)
-        updated_plugin = %IOBindingPlugin{plugin | position: new_position}
-        current_bindings ++ [{plugin_id, updated_plugin}]
-    end
-  end
-
-  defp remove_binding(bindings, plugin_id, opts) do
-    # Remove binding with matching id from all trigger categories and recalculate positions
-    updated_bindings =
-      Enum.map(bindings, fn {trigger, bindings_list} ->
-        filtered_bindings =
-          Enum.reject(bindings_list, fn {binding_id, plugin} ->
-            condition = plugin_id === binding_id
-
-            if condition do
-              # Unmonitor and send exit signal to the plugin process if it's still alive
-              if is_pid(plugin.pid) and Process.alive?(plugin.pid) do
-                Process.demonitor(plugin.monitor_ref)
-                Process.unlink(plugin.pid)
-                Process.exit(plugin.pid, :shutdown)
-              end
-            end
-
-            condition
-          end)
-          |> recalculate_positions()
-
-        {trigger, filtered_bindings}
-      end)
-      |> Map.new()
-
-    case Keyword.get(opts, :unregister) do
-      true ->
-        PluginManager.unregister_plugin(plugin_id)
-
-      _ ->
-        nil
-    end
-
-    {:ok, updated_bindings}
-  end
-
-  defp unregister_plugins(bindings) do
-    Enum.each(bindings, fn {_binding_type, plugin_bindings} ->
-      Enum.each(plugin_bindings, fn {plugin_id, _plugin} ->
-        PluginManager.unregister_plugin(plugin_id)
-      end)
-    end)
-  end
-
-  defp unregister_handlers(handlers) when is_map(handlers) do
-    Enum.each(handlers, fn {_key, {plugin_id, _plugin}} ->
-      PluginManager.unregister_plugin(plugin_id)
-    end)
-  end
-
-  defp unregister_handlers(_), do: :ok
 end

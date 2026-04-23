@@ -105,11 +105,12 @@ defmodule FlezhaTest do
 
     # TODO: add failures also.
     res =
-      PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
+      PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin{
+        id: "websocket_plugin",
         namespace: @default_namespace,
         processor_id: processor_id,
-        trigger: :proactive,
-        provider: %Flezha.Plugin.Provider.Websocket{
+        provider: Flezha.Plugin.Provider.Websocket,
+        opts: %{
           uri: @testnet_ws_uri,
           post_connect: %{
             payload: %{
@@ -125,7 +126,8 @@ defmodule FlezhaTest do
               )
             }
           }
-        }
+        },
+        subscriptions: [{:on_terminate, []}]
       })
 
     assert res === {:ok, "plugin enabled"}
@@ -142,13 +144,13 @@ defmodule FlezhaTest do
     {:ok, _} = ProcessorManager.start_processor(@default_namespace, processor)
 
     res =
-      PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
+      PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin{
+        id: "beam_msg_forward",
         namespace: @default_namespace,
         processor_id: processor_id,
-        trigger: :on_output,
-        provider: %Flezha.Plugin.Provider.BeamMsgForward{
-          recv_pid: self()
-        }
+        provider: Flezha.Plugin.Provider.BeamMsgForward,
+        opts: %{recv_pid: self()},
+        subscriptions: [{:on_output, []}]
       })
 
     assert res === {:ok, "plugin enabled"}
@@ -166,20 +168,21 @@ defmodule FlezhaTest do
 
     {:ok, _} = ProcessorManager.start_processor(@default_namespace, processor)
 
-    PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin.Driver.IOBindingPlugin{
+    PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin{
+      id: "beam_msg_forward",
       namespace: @default_namespace,
       processor_id: processor_id,
-      trigger: :on_output,
-      provider: %Flezha.Plugin.Provider.BeamMsgForward{
-        recv_pid: self()
-      }
+      provider: Flezha.Plugin.Provider.BeamMsgForward,
+      opts: %{recv_pid: self()},
+      subscriptions: [{:on_output, []}]
     })
 
-    PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
+    PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin{
+      id: "websocket_plugin",
       namespace: @default_namespace,
       processor_id: processor_id,
-      trigger: :proactive,
-      provider: %Flezha.Plugin.Provider.Websocket{
+      provider: Flezha.Plugin.Provider.Websocket,
+      opts: %{
         uri: @testnet_ws_uri,
         post_connect: %{
           "payload" => %{
@@ -195,7 +198,8 @@ defmodule FlezhaTest do
           )
           }
         }
-      }
+      },
+      subscriptions: [{:on_terminate, []}]
     })
 
     for _ <- 1..1 do
@@ -257,11 +261,13 @@ defmodule FlezhaTest do
       "text_inputs" => ["test_state_1", "test_state_2"]
     }
 
-    PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin.Driver.IOBindingPlugin{
+    PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin{
+      id: "stdout_plugin",
       namespace: @default_namespace,
       processor_id: processor_id,
-      trigger: :proactive,
-      provider: %Flezha.Plugin.Provider.StdOut{}
+      provider: Flezha.Plugin.Provider.StdOut,
+      opts: %{},
+      subscriptions: [{:on_output, []}]
     })
 
     {:ok, json_state} =
@@ -314,7 +320,10 @@ defmodule FlezhaTest do
     processor_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert processor_state === test_state
-    assert new_overwatch_state.bindings === old_overwatch_state.bindings
+
+    old_plugins = Map.keys(old_overwatch_state.extensions.plugins) |> Enum.sort()
+    new_plugins = Map.keys(new_overwatch_state.extensions.plugins) |> Enum.sort()
+    assert new_plugins === old_plugins
     assert new_overwatch_state.init_values === old_overwatch_state.init_values
   end
 

@@ -14,7 +14,7 @@ defmodule Flezha.Recovery.E2ETest do
   use ExUnit.Case, async: false
   use Mimic
 
-  alias Flezha.Plugin.Driver.IOBindingPlugin
+  alias Flezha.Plugin
   alias Flezha.Plugin.Provider.StdOut
   alias Flezha.Recovery.Coordinator
   alias Flezha.Recovery.PluginStore
@@ -155,11 +155,13 @@ defmodule Flezha.Recovery.E2ETest do
     assert :ok = Coordinator.on_post_children_start(payload)
 
     # Persist the plugin via the plugin hook handler.
-    plugin = %IOBindingPlugin{
+    plugin = %Plugin{
+      id: "stdout-plug",
       namespace: "default",
       processor_id: "recov-with-plugin",
-      trigger: :on_output,
-      provider: %StdOut{}
+      provider: StdOut,
+      opts: %{},
+      subscriptions: [{:on_output, []}]
     }
 
     assert :ok = Coordinator.on_plugin_enabled("stdout-plug", plugin)

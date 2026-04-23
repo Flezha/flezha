@@ -3,12 +3,12 @@ defmodule Flezha.Service.CliManager do
   Provides recipes for the RPC calls.
   """
 
-  alias Flezha.Service.ProcessorManager
+  alias Flezha.Plugin
+  alias Flezha.Plugin.Provider.MonitoredIOForward
+  alias Flezha.Service.ConfigManager
   alias Flezha.Service.Payloader
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.ConfigManager
-  alias Flezha.Plugin.Provider.MonitoredIOForward
-  alias Flezha.Plugin.Driver.IOBindingPlugin
+  alias Flezha.Service.ProcessorManager
 
   @doc "Starts a processor."
   def processor_start(namespace, processor_id, factory_id, init_values, opts \\ []) do
@@ -72,32 +72,32 @@ defmodule Flezha.Service.CliManager do
   def processor_listen(namespace, processor_id, io_type) do
     namespace_display = normalize_namespace(namespace)
 
-    io_type =
+    extension =
       case io_type do
         "input" -> :on_input
         "output" -> :on_output
         _ -> raise "Invalid IO type. Use 'input' or 'output'."
       end
 
-    # Generate dynamic plugin ID with 6-digit random number
     plugin_id =
       "io_listener_#{:rand.uniform(999_999) |> Integer.to_string() |> String.pad_leading(6, "0")}"
 
-    provider = %MonitoredIOForward{
-      recv_pid: self(),
-      plugin_id: plugin_id,
-      processor_id: processor_id,
-      namespace: namespace_display
-    }
-
-    PluginManager.enable_plugin(plugin_id, %IOBindingPlugin{
-      provider: provider,
+    plugin = %Plugin{
+      id: plugin_id,
+      provider: MonitoredIOForward,
       namespace: namespace_display,
       processor_id: processor_id,
-      trigger: io_type
-    })
+      opts: %{
+        recv_pid: self(),
+        plugin_id: plugin_id,
+        processor_id: processor_id,
+        namespace: namespace_display
+      },
+      subscriptions: [{extension, []}]
+    }
 
-    # Set up signal trapping for graceful shutdown
+    PluginManager.enable_plugin(plugin_id, plugin)
+
     Process.flag(:trap_exit, true)
 
     listen_loop(plugin_id)
@@ -107,36 +107,72 @@ defmodule Flezha.Service.CliManager do
   def enable_plugin(plugin_id, provider_id, plugin_flags_json, opts_json) do
     with {:ok, provider_mod} <- get_plugin_provider_mod(provider_id),
          {:ok, plugin_flags} <- Jason.decode(plugin_flags_json),
-         {:ok, opts} <- Jason.decode(opts_json),
-         {:ok, plugin_struct} <- apply(provider_mod, :build, [plugin_flags]),
-         {:ok, plugin} <- build_plugin(provider_mod, plugin_struct, plugin_flags, opts) do
+         {:ok, opts} <- Jason.decode(opts_json) do
+      subscriptions = extract_subscriptions(plugin_flags, opts)
+      namespace = Map.get(opts, "namespace", "default")
+      processor_id = Map.get(plugin_flags, "processor_id") || Map.get(opts, "processor_id")
+
+      plugin = %Plugin{
+        id: plugin_id,
+        provider: provider_mod,
+        namespace: namespace,
+        processor_id: processor_id,
+        opts: atomize_keys(plugin_flags),
+        subscriptions: subscriptions
+      }
+
       case PluginManager.enable_plugin(plugin_id, plugin) do
         {:ok, _msg} -> IO.puts("Plugin #{plugin_id} enabled successfully.")
         {:error, reason} -> IO.puts("Error enabling plugin: #{inspect(reason)}.")
       end
     else
-      {:error, reason} ->
-        IO.puts("Error enabling plugin: #{inspect(reason)}.")
+      {:error, reason} -> IO.puts("Error enabling plugin: #{inspect(reason)}.")
     end
   end
 
-  defp build_plugin(provider_mod, provider, plugin_flags, opts) do
-    case apply(provider_mod, :plugin_type, []) do
-      :io_binding ->
-        # Prepare plugin_flags with opts merged in
-        build_params =
-          plugin_flags
-          |> Map.put("namespace", Map.get(opts, "namespace", "default"))
+  # Build subscriptions from the legacy `--trigger=on_input` shape (single
+  # trigger) OR the new `--extension=on_input` repeatable shape. The legacy
+  # trigger values `:proactive` and `:interval` both map onto `:on_interval`.
+  defp extract_subscriptions(plugin_flags, opts) do
+    extensions =
+      plugin_flags
+      |> Map.get("extensions")
+      |> List.wrap()
 
-        case IOBindingPlugin.build(build_params, provider) do
-          {:ok, plugin} -> {:ok, plugin}
-          {:error, reason} -> {:error, reason}
-        end
+    extensions =
+      if extensions == [],
+        do: Map.get(opts, "extensions") |> List.wrap(),
+        else: extensions
 
-      _ ->
-        {:error, "unknown plugin type"}
+    if extensions != [] do
+      Enum.map(extensions, fn e ->
+        {String.to_atom(Map.get(e, "name")), atomize_keyword(Map.get(e, "opts", %{}))}
+      end)
+    else
+      trigger = Map.get(opts, "trigger") || Map.get(plugin_flags, "trigger")
+      trigger_to_subscription(trigger)
     end
   end
+
+  defp trigger_to_subscription("on_input"), do: [{:on_input, []}]
+  defp trigger_to_subscription("on_output"), do: [{:on_output, []}]
+  defp trigger_to_subscription("interval"), do: [{:on_interval, [interval_ms: 5_000]}]
+  defp trigger_to_subscription("proactive"), do: [{:on_terminate, []}]
+  defp trigger_to_subscription(_), do: [{:on_input, []}]
+
+  defp atomize_keys(map) when is_map(map) do
+    Map.new(map, fn {k, v} ->
+      {(is_binary(k) && String.to_atom(k)) || k, v}
+    end)
+  end
+
+  defp atomize_keys(other), do: other
+
+  defp atomize_keyword(map) when is_map(map) do
+    Enum.map(map, fn {k, v} -> {(is_binary(k) && String.to_atom(k)) || k, v} end)
+  end
+
+  defp atomize_keyword(_), do: []
 
   defp listen_loop(plugin_id) do
     receive do
@@ -173,15 +209,18 @@ defmodule Flezha.Service.CliManager do
     string_to_atom = %{
       "on_input" => :on_input,
       "on_output" => :on_output,
-      "interval" => :interval,
-      "proactive" => :proactive,
-      "snapshot_interval" => :snapshot_interval
+      "on_interval" => :on_interval,
+      "on_processor_init" => :on_processor_init,
+      "on_message" => :on_message,
+      "on_snapshot" => :on_snapshot,
+      "on_terminate" => :on_terminate,
+      "snapshot_interval" => :snapshot_interval,
+      "plugins" => :plugins
     }
 
     Enum.reduce(orig_map, %{}, fn {key, value}, acc ->
       new_key = Map.get(string_to_atom, key, key)
-      new_value = if key == :trigger, do: Map.get(string_to_atom, value, value), else: value
-      Map.put(acc, new_key, new_value)
+      Map.put(acc, new_key, value)
     end)
   end
 
@@ -191,7 +230,6 @@ defmodule Flezha.Service.CliManager do
     handle_list_output(namespaces, "running namespaces", output_format)
   end
 
-  # Generic output handler that works for all list operations
   defp handle_list_output(items, item_name, output_format, context \\ nil) do
     case {items, output_format} do
       {items, "json"} ->
@@ -206,11 +244,8 @@ defmodule Flezha.Service.CliManager do
       {[], _} ->
         message =
           case context do
-            nil ->
-              "No #{item_name} found."
-
-            %{display: display, value: value} ->
-              "No #{item_name} found for #{display} '#{value}'."
+            nil -> "No #{item_name} found."
+            %{display: display, value: value} -> "No #{item_name} found for #{display} '#{value}'."
           end
 
         IO.puts(message)
@@ -218,11 +253,8 @@ defmodule Flezha.Service.CliManager do
       {items, _} ->
         header =
           case context do
-            nil ->
-              "#{String.capitalize(item_name)}:"
-
-            %{display: display, value: value} ->
-              "#{String.capitalize(item_name)} in #{display} '#{value}':"
+            nil -> "#{String.capitalize(item_name)}:"
+            %{display: display, value: value} -> "#{String.capitalize(item_name)} in #{display} '#{value}':"
           end
 
         IO.puts(header)
@@ -252,7 +284,7 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  @doc "Shows detailed information about processors and their overwatch plugins."
+  @doc "Shows detailed information about processors and their enabled plugins."
   def processor_info(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
 
@@ -290,22 +322,15 @@ defmodule Flezha.Service.CliManager do
               compute_engine_id: state.compute_engine_id,
               namespace: state.namespace,
               default_input_type: state.default_input_type,
-              bindings: format_bindings_json(state.bindings)
+              plugins: format_plugins_json(state.extensions)
             }
 
           {:error, reason} ->
-            %{
-              id: processor_id,
-              error: inspect(reason)
-            }
+            %{id: processor_id, error: inspect(reason)}
         end
       end)
 
-    result = %{
-      namespace: namespace_display,
-      processors: processor_data
-    }
-
+    result = %{namespace: namespace_display, processors: processor_data}
     IO.puts(Jason.encode!(result))
   end
 
@@ -326,63 +351,41 @@ defmodule Flezha.Service.CliManager do
     end)
   end
 
-  defp format_bindings_json(bindings) do
-    Enum.map(bindings, fn {trigger, bindings_list} ->
-      formatted_bindings =
-        Enum.map(bindings_list, fn {plugin_id, binding} ->
-          %{
-            id: plugin_id,
-            plugin_group: Map.get(binding, :plugin_group, "0"),
-            position: Map.get(binding, :position, nil),
-            module:
-              case binding do
-                %{__struct__: module} -> module |> to_string() |> String.split(".") |> List.last()
-                _ -> "unknown"
-              end
-          }
-        end)
-
+  defp format_plugins_json(%{plugins: plugins}) do
+    Enum.map(plugins, fn {plugin_id, plugin} ->
       %{
-        trigger: trigger,
-        bindings: formatted_bindings
+        id: plugin_id,
+        provider: inspect(plugin.provider),
+        subscriptions:
+          Enum.map(plugin.subscriptions, fn {name, opts} ->
+            %{extension: Atom.to_string(name), opts: Map.new(opts)}
+          end)
       }
     end)
   end
+
+  defp format_plugins_json(_), do: []
 
   defp display_processor_info(processor_id, state) do
     IO.puts("Processor: #{processor_id}")
     IO.puts("  ComputeEngine ID: #{state.compute_engine_id}")
     IO.puts("  Group ID: #{state.namespace}")
     IO.puts("  Default Input Type: #{state.default_input_type}")
-    IO.puts("  Bindings:")
+    IO.puts("  Plugins:")
 
-    # Display each binding type and its plugins
-    Enum.each(state.bindings, fn {trigger, bindings_list} ->
-      if not Enum.empty?(bindings_list) do
-        IO.puts("    #{trigger}:")
+    case state.extensions do
+      %{plugins: plugins} when map_size(plugins) > 0 ->
+        Enum.each(plugins, fn {plugin_id, plugin} ->
+          IO.puts("    - #{plugin_id}: #{inspect(plugin.provider)}")
 
-        Enum.each(bindings_list, fn {plugin_id, binding} ->
-          # Extract available binding information
-          plugin_group = Map.get(binding, :plugin_group, "0")
-
-          # Try to get the module name which might indicate plugin type
-          module_name =
-            case binding do
-              %{provider: %{__struct__: module}} ->
-                module |> to_string() |> String.split(".") |> List.last()
-
-              _ ->
-                "unknown"
-            end
-
-          IO.puts("      - Plugin ID: #{plugin_id}")
-          IO.puts("        Plugin Group: #{plugin_group}")
-          IO.puts("        Module: #{module_name}")
-          IO.puts("        Trigger: #{inspect(binding.trigger)}")
-          IO.puts("        Position: #{binding.position}")
+          Enum.each(plugin.subscriptions, fn {name, opts} ->
+            IO.puts("        subscription: #{name} #{inspect(opts)}")
+          end)
         end)
-      end
-    end)
+
+      _ ->
+        IO.puts("    (none)")
+    end
 
     IO.puts("")
   end
@@ -402,6 +405,8 @@ defmodule Flezha.Service.CliManager do
         try do
           help_text = apply(provider_mod, :help, [])
           IO.puts(help_text)
+          IO.puts("")
+          print_supported_extensions(provider_mod)
         rescue
           UndefinedFunctionError ->
             IO.puts(
@@ -417,6 +422,24 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
+  defp print_supported_extensions(provider_mod) do
+    extensions =
+      for ext <- [
+            :on_processor_init,
+            :on_input,
+            :on_output,
+            :on_interval,
+            :on_message,
+            :on_snapshot,
+            :on_terminate
+          ],
+          function_exported?(provider_mod, ext, 2),
+          do: ext
+
+    IO.puts("SUPPORTED EXTENSIONS:")
+    Enum.each(extensions, &IO.puts("    --extension=#{&1}"))
+  end
+
   @doc "List all available plugin providers."
   def list_plugins() do
     enabled_plugins = ConfigManager.get_enabled_plugins()
@@ -428,7 +451,6 @@ defmodule Flezha.Service.CliManager do
       IO.puts("  #{provider_id}")
       IO.puts("    Module: #{inspect(module)}")
 
-      # Try to get plugin type
       try do
         plugin_type = apply(module, :plugin_type, [])
         IO.puts("    Type: #{plugin_type}")

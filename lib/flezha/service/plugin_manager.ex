@@ -1,7 +1,18 @@
 defmodule Flezha.Service.PluginManager do
+  @moduledoc """
+  Per-node registry of enabled `%Flezha.Plugin{}` entries. Routes
+  `enable_plugin/2` into the owning processor's Overwatch via the unified
+  `{:plugin_subscribe, ...}` / `{:plugin_unsubscribe, ...}` messages.
+  """
+
   use GenServer
 
-  def enable_plugin(plugin_id, plugin) do
+  alias Flezha.Plugin
+  alias Flezha.Service.ProcessorManager
+
+  ## Public API
+
+  def enable_plugin(plugin_id, %Plugin{} = plugin) do
     case GenServer.call(__MODULE__, {:enable_plugin, plugin_id, plugin}) do
       {:ok, msg} -> {:ok, msg}
       {:error, reason} -> {:error, reason}
@@ -31,6 +42,8 @@ defmodule Flezha.Service.PluginManager do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
 
+  ## GenServer
+
   @impl GenServer
   def init(:ok) do
     {:ok, %{}}
@@ -42,14 +55,13 @@ defmodule Flezha.Service.PluginManager do
   end
 
   @impl true
-  def handle_call({:enable_plugin, plugin_id, plugin}, _from, state) do
-    module = plugin.__struct__
-
+  def handle_call({:enable_plugin, plugin_id, %Plugin{} = plugin}, _from, state) do
     {reply, new_state} =
       with :ok <- plugin_id_unique(state, plugin_id),
-           {:ok, info} <- apply(module, :enable, [plugin_id, plugin]) do
+           {:ok, pid} <- resolve_processor(plugin),
+           :ok <- forward_subscribe(pid, plugin_id, plugin) do
         notify_recovery_enabled(plugin_id, plugin)
-        {{:ok, "plugin enabled"}, Map.put(state, plugin_id, info)}
+        {{:ok, "plugin enabled"}, Map.put(state, plugin_id, {plugin.namespace, plugin.processor_id})}
       else
         err -> {err, state}
       end
@@ -62,10 +74,18 @@ defmodule Flezha.Service.PluginManager do
       nil ->
         {:reply, {:error, "plugin not found"}, state}
 
-      {module, info} ->
-        apply(module, :disable, [plugin_id, info])
-        notify_recovery_disabled(plugin_id)
-        {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
+      {namespace, processor_id} ->
+        case ProcessorManager.get_processor_pid(namespace, processor_id) do
+          {:ok, pid} ->
+            _ = GenServer.call(pid, {:plugin_unsubscribe, plugin_id})
+            notify_recovery_disabled(plugin_id)
+            {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
+
+          _ ->
+            # Processor gone — treat as disabled locally.
+            notify_recovery_disabled(plugin_id)
+            {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
+        end
     end
   end
 
@@ -79,6 +99,8 @@ defmodule Flezha.Service.PluginManager do
     {:noreply, Map.delete(state, plugin_id)}
   end
 
+  ## Private
+
   defp plugin_id_unique(plugins, plugin_id) do
     case Map.get(plugins, plugin_id, nil) do
       nil -> :ok
@@ -86,11 +108,17 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  # Forward enable/disable events to the failure-recovery subsystem so it can
-  # persist recoverable plugins and drop them on disable. Kept as a module
-  # call (not a GenServer message) so the persist happens synchronously with
-  # enable success; try/catch guards test isolation when Coordinator/store
-  # aren't running.
+  defp resolve_processor(%Plugin{namespace: ns, processor_id: pid_id}) do
+    ProcessorManager.get_processor_pid(ns, pid_id)
+  end
+
+  defp forward_subscribe(pid, plugin_id, plugin) do
+    case GenServer.call(pid, {:plugin_subscribe, plugin_id, plugin}) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp notify_recovery_enabled(plugin_id, plugin) do
     try do
       Flezha.Recovery.Coordinator.on_plugin_enabled(plugin_id, plugin)

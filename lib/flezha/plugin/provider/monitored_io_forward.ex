@@ -1,8 +1,17 @@
 defmodule Flezha.Plugin.Provider.MonitoredIOForward do
-  alias Flezha.Service.PluginManager
-  alias Flezha.Processor.IOBinding
+  @moduledoc """
+  First-party IO-forward subscriber that spawns a heartbeat GenServer to
+  keep the remote receiver alive. The process is owned by the
+  `Extension.Table` monitor set — if it dies the plugin is disabled.
+
+  Required opts: `:recv_pid`, `:plugin_id`, `:processor_id`, `:namespace`.
+  Optional: `:heartbeat_interval` (ms, default 5000).
+  """
+
+  alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Service.Parser
+  alias Flezha.Service.PluginManager
 
   use GenServer
   use ProviderBehaviour
@@ -24,25 +33,20 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
     end
   end
 
-  defimpl IOBinding, for: Flezha.Plugin.Provider.MonitoredIOForward do
-    @impl true
-    def bind(binding) do
-      {:ok, pid} = GenServer.start_link(Flezha.Plugin.Provider.MonitoredIOForward, binding)
-
-      binding = %Flezha.Plugin.Provider.MonitoredIOForward{
-        binding
-        | binding_pid: pid
-      }
-
-      {:ok, {binding, pid}}
+  def init_provider(opts) do
+    case GenServer.start_link(__MODULE__, opts) do
+      {:ok, pid} -> {:ok, Map.put(opts, :binding_pid, pid), pid}
+      {:error, reason} -> {:error, reason}
     end
+  end
 
-    @impl true
-    def handle_io(binding, payload) do
-      case Process.send(binding.recv_pid, {:message_forward, payload}, []) do
-        :ok -> {:ok, payload}
-        _ -> {:error, :send_failed}
-      end
+  def on_input(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
+  def on_output(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
+
+  defp forward(%Ctx.IO{message: msg, metadata: md} = ctx, %{recv_pid: recv_pid}) do
+    case Process.send(recv_pid, {:message_forward, {msg, md}}, []) do
+      :ok -> {:ok, ctx}
+      _ -> {:error, :send_failed}
     end
   end
 
@@ -51,10 +55,16 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   end
 
   @impl GenServer
-  def init(binding) do
-    schedule_heartbeat(binding.heartbeat_interval)
+  def init(opts) do
+    interval = Map.get(opts, :heartbeat_interval, 5000)
+    schedule_heartbeat(interval)
 
-    {:ok, binding}
+    {:ok,
+     %{
+       recv_pid: Map.fetch!(opts, :recv_pid),
+       plugin_id: Map.fetch!(opts, :plugin_id),
+       heartbeat_interval: interval
+     }}
   end
 
   @impl GenServer
@@ -73,10 +83,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
         {:noreply, state}
     after
       state.heartbeat_interval ->
-        Task.start(fn ->
-          PluginManager.disable_plugin(state.plugin_id)
-        end)
-
+        Task.start(fn -> PluginManager.disable_plugin(state.plugin_id) end)
         {:stop, :normal, state}
     end
   end

@@ -1,6 +1,7 @@
 defmodule FlezhaTest.Processor.OverwatchInitStateTest do
+  alias Flezha.Plugin
+  alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Processor.Builder
-  alias Flezha.Processor.InitStatePlugin
   alias Flezha.Service.ProcessorManager
 
   use ExUnit.Case
@@ -9,19 +10,16 @@ defmodule FlezhaTest.Processor.OverwatchInitStateTest do
   @factory "store_input"
 
   defmodule ProbeProvider do
-    @behaviour Flezha.Processor.InitStateProvider
-    @impl true
-    def resolve(context) do
-      pid = Map.fetch!(context.opts, :report_to)
+    def on_processor_init(%Ctx.Init{} = ctx, opts) do
+      pid = Map.fetch!(opts, :report_to)
       send(pid, {:probe, :called})
-      {:ok, Map.get(context.opts, :return, %{})}
+      ret = Map.get(opts, :return, %{})
+      {:ok, %Ctx.Init{ctx | accumulated: Map.merge(ctx.accumulated, ret)}}
     end
   end
 
   defmodule FailProvider do
-    @behaviour Flezha.Processor.InitStateProvider
-    @impl true
-    def resolve(_context), do: {:error, :intentional_failure}
+    def on_processor_init(_ctx, _opts), do: {:error, :intentional_failure}
   end
 
   setup do
@@ -32,19 +30,20 @@ defmodule FlezhaTest.Processor.OverwatchInitStateTest do
   test "4.2.1 cold start with empty inline init_values runs chain and SDK observes resolved map" do
     processor_id = "init_state_cold_start_test"
 
-    plugin =
-      InitStatePlugin.new(
-        provider: ProbeProvider,
-        opts: %{
-          report_to: self(),
-          return: %{"binary_inputs" => [], "text_inputs" => ["seeded_by_plugin"]}
-        }
-      )
+    plugin = %Plugin{
+      id: "probe",
+      provider: ProbeProvider,
+      opts: %{
+        report_to: self(),
+        return: %{"binary_inputs" => [], "text_inputs" => ["seeded_by_plugin"]}
+      },
+      subscriptions: [{:on_processor_init, []}]
+    }
 
     processor = %Builder{
       id: processor_id,
       factory_id: @factory,
-      opts: [init_state_plugins: [plugin]]
+      opts: [plugins: [plugin]]
     }
 
     assert {:ok, _} = ProcessorManager.start_processor(@namespace, processor)
@@ -62,20 +61,21 @@ defmodule FlezhaTest.Processor.OverwatchInitStateTest do
   test "4.2.2 cold start with non-empty inline init_values bypasses chain" do
     processor_id = "init_state_inline_bypass_test"
 
-    plugin =
-      InitStatePlugin.new(
-        provider: ProbeProvider,
-        opts: %{
-          report_to: self(),
-          return: %{"binary_inputs" => [], "text_inputs" => ["FROM_PLUGIN"]}
-        }
-      )
+    plugin = %Plugin{
+      id: "probe",
+      provider: ProbeProvider,
+      opts: %{
+        report_to: self(),
+        return: %{"binary_inputs" => [], "text_inputs" => ["FROM_PLUGIN"]}
+      },
+      subscriptions: [{:on_processor_init, []}]
+    }
 
     processor = %Builder{
       id: processor_id,
       factory_id: @factory,
       init_values: %{"binary_inputs" => [], "text_inputs" => ["FROM_INLINE"]},
-      opts: [init_state_plugins: [plugin]]
+      opts: [plugins: [plugin]]
     }
 
     assert {:ok, _} = ProcessorManager.start_processor(@namespace, processor)
@@ -93,16 +93,17 @@ defmodule FlezhaTest.Processor.OverwatchInitStateTest do
   test "4.2.3 migration path does not invoke resolver even when plugins are configured" do
     processor_id = "init_state_migration_test"
 
-    plugin =
-      InitStatePlugin.new(
-        provider: ProbeProvider,
-        opts: %{report_to: self(), return: %{"binary_inputs" => [], "text_inputs" => ["x"]}}
-      )
+    plugin = %Plugin{
+      id: "probe",
+      provider: ProbeProvider,
+      opts: %{report_to: self(), return: %{"binary_inputs" => [], "text_inputs" => ["x"]}},
+      subscriptions: [{:on_processor_init, []}]
+    }
 
     processor = %Builder{
       id: processor_id,
       factory_id: @factory,
-      opts: [init_state_plugins: [plugin]]
+      opts: [plugins: [plugin]]
     }
 
     assert {:ok, %{pid: pid, compute_engine_id: current_id}} =
@@ -122,12 +123,17 @@ defmodule FlezhaTest.Processor.OverwatchInitStateTest do
   test "4.2.4 {:error, reason} from resolver surfaces and processor is not registered" do
     processor_id = "init_state_error_surfaces_test"
 
-    plugin = InitStatePlugin.new(provider: FailProvider)
+    plugin = %Plugin{
+      id: "fail",
+      provider: FailProvider,
+      opts: %{},
+      subscriptions: [{:on_processor_init, []}]
+    }
 
     processor = %Builder{
       id: processor_id,
       factory_id: @factory,
-      opts: [init_state_plugins: [plugin]]
+      opts: [plugins: [plugin]]
     }
 
     assert {:error, %{reason: :intentional_failure}} =

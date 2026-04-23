@@ -1,53 +1,43 @@
 defmodule FlezhaTest.Plugin.FilterTest do
-  alias Flezha.Processor.IOBinding
+  alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.Provider.Filter
 
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
-  test "filter input" do
-    provider = %Flezha.Plugin.Provider.Filter{
-      regex_pattern: "^{\"event\": \"heartbeat\"}$",
-      inverted: false
-    }
-
-    result = IOBinding.bind(provider)
-
-    assert elem(result, 0) == :ok
-    assert is_struct(result |> elem(1) |> elem(0), Flezha.Plugin.Provider.Filter)
-
-    payload = {"{\"event\": \"heartbeat\"}", %{}}
-    exec_result = IOBinding.handle_io(result |> elem(1) |> elem(0), payload)
-
-    assert elem(exec_result, 0) == :ok
-    assert elem(exec_result, 1) == payload
-
-    payload2 = {"{\"event\": \"heartbeat2\"}", %{}}
-    exec_result2 = IOBinding.handle_io(result |> elem(1) |> elem(0), payload2)
-
-    assert elem(exec_result2, 0) == :skip
-    assert elem(exec_result2, 1) == :normal
+  defp init_filter(opts) do
+    {:ok, opts} = Filter.init_provider(opts)
+    opts
   end
 
-  test "filter input inverted" do
-    provider = %Flezha.Plugin.Provider.Filter{
-      regex_pattern: "^{\"event\": \"heartbeat\"}$",
-      inverted: true
-    }
+  test "filter input (match passes)" do
+    opts = init_filter(%{regex_pattern: "^{\"event\": \"heartbeat\"}$", inverted: false})
 
-    result = IOBinding.bind(provider)
+    ctx = %Ctx.IO{processor_id: "p", namespace: "n", message: "{\"event\": \"heartbeat\"}", metadata: %{}}
 
-    assert elem(result, 0) == :ok
-    assert is_struct(result |> elem(1) |> elem(0), Flezha.Plugin.Provider.Filter)
+    assert {:ok, ^ctx} = Filter.on_input(ctx, opts)
+  end
 
-    payload = {"{\"event\": \"heartbeat\"}", %{}}
-    exec_result = IOBinding.handle_io(result |> elem(1) |> elem(0), payload)
+  test "filter input (no match skips)" do
+    opts = init_filter(%{regex_pattern: "^{\"event\": \"heartbeat\"}$", inverted: false})
 
-    assert elem(exec_result, 0) == :skip
-    assert elem(exec_result, 1) == :normal
+    ctx = %Ctx.IO{processor_id: "p", namespace: "n", message: "{\"event\": \"heartbeat2\"}", metadata: %{}}
 
-    payload2 = {"{\"event\": \"heartbeat2\"}", %{}}
-    exec_result2 = IOBinding.handle_io(result |> elem(1) |> elem(0), payload2)
+    assert {:skip, :normal} = Filter.on_input(ctx, opts)
+  end
 
-    assert elem(exec_result2, 0) == :ok
-    assert elem(exec_result2, 1) == {"{\"event\": \"heartbeat2\"}", %{}}
+  test "filter input inverted (match skips)" do
+    opts = init_filter(%{regex_pattern: "^{\"event\": \"heartbeat\"}$", inverted: true})
+
+    ctx = %Ctx.IO{processor_id: "p", namespace: "n", message: "{\"event\": \"heartbeat\"}", metadata: %{}}
+
+    assert {:skip, :normal} = Filter.on_input(ctx, opts)
+  end
+
+  test "filter input inverted (no match passes)" do
+    opts = init_filter(%{regex_pattern: "^{\"event\": \"heartbeat\"}$", inverted: true})
+
+    ctx = %Ctx.IO{processor_id: "p", namespace: "n", message: "{\"event\": \"heartbeat2\"}", metadata: %{}}
+
+    assert {:ok, ^ctx} = Filter.on_input(ctx, opts)
   end
 end

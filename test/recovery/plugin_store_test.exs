@@ -7,10 +7,10 @@ defmodule Flezha.Recovery.PluginStoreTest do
 
   use ExUnit.Case, async: false
 
+  alias Flezha.Plugin
+  alias Flezha.Plugin.Provider.StdOut
   alias Flezha.Recovery.PluginStore
   alias Flezha.Recovery.Store
-  alias Flezha.Plugin.Driver.IOBindingPlugin
-  alias Flezha.Plugin.Provider.StdOut
 
   setup do
     tmp = Path.join(System.tmp_dir!(), "flz_plugin_store_test_#{System.unique_integer([:positive])}")
@@ -59,7 +59,7 @@ defmodule Flezha.Recovery.PluginStoreTest do
     rows = PluginStore.all() |> Enum.sort_by(&elem(&1, 0))
     assert [{"p-1", r1}, {"p-2", _r2}] = rows
     assert r1.plugin.processor_id == "p-1"
-    assert r1.plugin.provider.__struct__ == StdOut
+    assert r1.plugin.provider == StdOut
     assert r1.stored_node == node()
     assert is_integer(r1.inserted_at)
 
@@ -136,11 +136,13 @@ defmodule Flezha.Recovery.PluginStoreTest do
   end
 
   defp sample_plugin(processor_id) do
-    %IOBindingPlugin{
+    %Plugin{
+      id: processor_id,
       namespace: "default",
       processor_id: processor_id,
-      trigger: :on_output,
-      provider: %StdOut{}
+      provider: StdOut,
+      opts: %{},
+      subscriptions: [{:on_output, []}]
     }
   end
 
