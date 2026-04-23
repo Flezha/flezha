@@ -21,7 +21,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   defstruct @enforce_keys ++
               [
                 :conn,
-                post_connect: "",
+                post_connect: %{},
                 ws_opts: [],
                 payload_metadata: %{}
               ]
@@ -37,12 +37,34 @@ defmodule Flezha.Plugin.Provider.Websocket do
     Jason.decode(value)
   end
 
+  # `handle_connect/3` indexes `state.post_connect["payload"]`, so the value
+  # must be a map. CLI flags arrive as strings — decode them here.
+  defp convert_value(:post_connect, value) when is_binary(value) and value != "" do
+    Jason.decode(value)
+  end
+
+  defp convert_value(:post_connect, _), do: {:ok, %{}}
+
+  # init_provider receives `opts` from Flezha.Plugin, where the value may be
+  # a raw JSON string (legacy CLI path), a map (installer/new path), or nil.
+  # Coerce all of those to a map so handle_connect/3 can safely index into it.
+  defp normalize_post_connect(value) when is_map(value), do: value
+
+  defp normalize_post_connect(value) when is_binary(value) and value != "" do
+    case Jason.decode(value) do
+      {:ok, decoded} when is_map(decoded) -> decoded
+      _ -> %{}
+    end
+  end
+
+  defp normalize_post_connect(_), do: %{}
+
   def init_provider(opts) do
     uri = Map.fetch!(opts, :uri)
 
     case start_link(uri,
            ws_opts: Map.get(opts, :ws_opts, []),
-           post_connect: Map.get(opts, :post_connect, ""),
+           post_connect: normalize_post_connect(Map.get(opts, :post_connect)),
            overwatcher_pid: self(),
            payload_metadata: Map.get(opts, :payload_metadata, %{})
          ) do
