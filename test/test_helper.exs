@@ -1,4 +1,4 @@
-ExUnit.start()
+ExUnit.start(exclude: [:system])
 
 Mimic.copy(KafkaEx)
 Mimic.copy(Flezha.Service.ProcessorManager)
