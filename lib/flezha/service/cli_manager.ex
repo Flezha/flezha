@@ -836,9 +836,13 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp build_snapshot_opts(map) do
+    namespace = Map.get(map, "namespace")
+    namespace = if is_binary(namespace) and namespace != "", do: namespace, else: nil
+
     [
       peer_timeout_ms: parse_pos_int(Map.get(map, "peer_timeout_ms"), 5_000),
-      strict?: parse_bool(Map.get(map, "strict"), false)
+      strict?: parse_bool(Map.get(map, "strict"), false),
+      namespace: namespace
     ]
   end
 

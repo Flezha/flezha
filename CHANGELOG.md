@@ -6,7 +6,9 @@
 
 - New top-level CLI commands `flz cluster snapshot <file>` and
   `flz cluster restore <file>` for explicit, operator-driven cluster-wide
-  state capture and restore. See [`docs/cluster-snapshot.md`](docs/cluster-snapshot.md).
+  state capture and restore. Both commands accept `--namespace NS` for
+  per-namespace operations; default behaviour without the flag is
+  cluster-wide. See [`docs/cluster-snapshot.md`](docs/cluster-snapshot.md).
 - `Flezha.Cluster.Snapshot` and `Flezha.Cluster.Snapshot.Coordinator`
   Elixir modules implementing the gather/apply RPC fan-out and the atomic
   ETF file write.

@@ -9,7 +9,7 @@ file. Restore is the inverse.
 ## Commands
 
 ```sh
-flz cluster snapshot <file> [--peer-timeout-ms N] [--strict]
+flz cluster snapshot <file> [--peer-timeout-ms N] [--strict] [--namespace NS]
 flz cluster restore  <file> [--warn-if-older-than DURATION] [--namespace NS] [--peer-timeout-ms N]
 ```
 
@@ -23,6 +23,7 @@ typically a shared volume in containerised deployments.
 |------|---------|-----------|
 | `--peer-timeout-ms` | `5000` | Per-peer RPC timeout. Peers that do not respond within this window are logged at WARN and skipped. |
 | `--strict` | best-effort | When set, any peer failure aborts the snapshot and writes nothing. Use this for backups; omit for rolling deploys. |
+| `--namespace` | cluster-wide | Capture only entries belonging to `NS`. Other namespaces are pruned from the file (processors, plugins, captured states). Mirrors restore's `--namespace`; pass it on both ends for symmetric per-namespace backups. |
 
 ### restore flags
 

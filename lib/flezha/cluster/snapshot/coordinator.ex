@@ -25,7 +25,8 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   @type snapshot_opts :: [
           peer_timeout_ms: pos_integer(),
           strict?: boolean(),
-          state_cap_bytes: pos_integer()
+          state_cap_bytes: pos_integer(),
+          namespace: binary() | nil
         ]
 
   @type restore_opts :: [
@@ -48,6 +49,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   def snapshot(path, opts \\ []) do
     peer_timeout = Keyword.get(opts, :peer_timeout_ms, @default_peer_timeout_ms)
     strict? = Keyword.get(opts, :strict?, false)
+    namespace_filter = Keyword.get(opts, :namespace)
     state_cap = state_cap_bytes(opts)
 
     nodes = visible_nodes()
@@ -70,7 +72,10 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
           end)
         end
 
-        payload = build_payload(ok_results, ring, state_cap, strict?)
+        payload =
+          ok_results
+          |> build_payload(ring, state_cap, strict?)
+          |> apply_namespace_filter(namespace_filter)
 
         case write_atomic(path, Encoding.encode(payload)) do
           {:ok, bytes} ->
@@ -213,6 +218,31 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
 
         Map.put(entry, :last_observed_node, peer)
     end
+  end
+
+  # Trim a built payload to a single namespace. Mirrors restore's
+  # `filter_namespace/2` so operators see symmetric semantics: pass
+  # `--namespace prod` on either end and the result is restricted to
+  # `prod` entries. The kept payload's `captured_states` map is pruned
+  # to just the surviving processor ids so the on-disk file size scales
+  # with the filtered set.
+  defp apply_namespace_filter(payload, nil), do: payload
+
+  defp apply_namespace_filter(payload, namespace) when is_binary(namespace) do
+    kept_processors = filter_namespace(payload.processors, namespace)
+    kept_plugins = filter_namespace(payload.plugins, namespace)
+
+    kept_ids = MapSet.new(kept_processors, fn entry -> entry.processor.id end)
+
+    pruned_states =
+      Map.filter(payload.captured_states, fn {id, _bin} -> MapSet.member?(kept_ids, id) end)
+
+    %{
+      payload
+      | processors: kept_processors,
+        plugins: kept_plugins,
+        captured_states: pruned_states
+    }
   end
 
   defp drop_oversized(captured_states, cap) do

@@ -24,7 +24,7 @@ pub fn handle_cluster_command(args: &[String]) {
 
 fn handle_snapshot(args: &[String]) {
     let example_usage =
-        "Usage: flz cluster snapshot <file> [--peer-timeout-ms N] [--strict]";
+        "Usage: flz cluster snapshot <file> [--peer-timeout-ms N] [--strict] [--namespace NS]";
 
     if args.len() < 2 {
         eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
@@ -34,8 +34,17 @@ fn handle_snapshot(args: &[String]) {
     let file = &args[1];
     let peer_timeout = extract_param(&args[2..], "--peer-timeout-ms", "--peer-timeout-ms");
     let strict = args.iter().any(|a| a == "--strict");
+    let namespace = get_namespace(&args[2..]);
 
-    let opts_json = build_snapshot_opts_json(peer_timeout.as_deref(), strict);
+    let opts_json = build_snapshot_opts_json(
+        peer_timeout.as_deref(),
+        strict,
+        if namespace.is_empty() {
+            None
+        } else {
+            Some(namespace.as_str())
+        },
+    );
     let escaped_opts = opts_json.replace('\"', "\\\"");
 
     let rpc_command = format!(
@@ -98,7 +107,11 @@ fn handle_restore(args: &[String]) {
     }
 }
 
-fn build_snapshot_opts_json(peer_timeout: Option<&str>, strict: bool) -> String {
+fn build_snapshot_opts_json(
+    peer_timeout: Option<&str>,
+    strict: bool,
+    namespace: Option<&str>,
+) -> String {
     let mut entries: Vec<String> = Vec::new();
 
     if let Some(t) = peer_timeout {
@@ -107,6 +120,10 @@ fn build_snapshot_opts_json(peer_timeout: Option<&str>, strict: bool) -> String 
 
     if strict {
         entries.push("\"strict\": true".to_string());
+    }
+
+    if let Some(ns) = namespace {
+        entries.push(format!("\"namespace\": \"{}\"", ns));
     }
 
     format!("{{{}}}", entries.join(", "))
@@ -148,6 +165,7 @@ fn print_cluster_help() {
     println!("snapshot options:");
     println!("    --peer-timeout-ms <N>   Per-peer RPC timeout in ms (default 5000)");
     println!("    --strict                Abort on any peer failure (default best-effort)");
+    println!("    --namespace <NS>        Capture only entries in NS (default cluster-wide)");
     println!();
     println!("restore options:");
     println!("    --warn-if-older-than <DURATION>");
@@ -165,15 +183,24 @@ mod tests {
 
     #[test]
     fn snapshot_opts_empty_when_no_flags() {
-        let json = build_snapshot_opts_json(None, false);
+        let json = build_snapshot_opts_json(None, false, None);
         assert_eq!(json, "{}");
     }
 
     #[test]
     fn snapshot_opts_includes_strict_and_timeout() {
-        let json = build_snapshot_opts_json(Some("3000"), true);
+        let json = build_snapshot_opts_json(Some("3000"), true, None);
         assert!(json.contains("\"peer_timeout_ms\": \"3000\""));
         assert!(json.contains("\"strict\": true"));
+    }
+
+    #[test]
+    fn snapshot_opts_includes_namespace_when_set() {
+        let json = build_snapshot_opts_json(None, false, Some("prod"));
+        assert!(json.contains("\"namespace\": \"prod\""));
+        // No `strict` or `peer_timeout_ms` keys when those are unset.
+        assert!(!json.contains("\"strict\""));
+        assert!(!json.contains("\"peer_timeout_ms\""));
     }
 
     #[test]
