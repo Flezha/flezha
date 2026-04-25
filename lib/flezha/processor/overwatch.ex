@@ -332,9 +332,7 @@ defmodule Flezha.Processor.Overwatch do
         {:noreply, %{state | extensions: table}}
 
       :ignore ->
-        Logger.error(
-          "Binding not found for pid #{inspect(pid)} with reason: #{inspect(reason)}"
-        )
+        Logger.error("Binding not found for pid #{inspect(pid)} with reason: #{inspect(reason)}")
 
         {:noreply, state}
     end
@@ -515,7 +513,8 @@ defmodule Flezha.Processor.Overwatch do
     end
   end
 
-  defp schedule_snapshot(snapshot_interval) when is_integer(snapshot_interval) and snapshot_interval > 0 do
+  defp schedule_snapshot(snapshot_interval)
+       when is_integer(snapshot_interval) and snapshot_interval > 0 do
     Process.send_after(self(), :schedule_snapshot, snapshot_interval)
   end
 

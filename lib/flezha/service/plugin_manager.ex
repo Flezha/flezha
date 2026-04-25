@@ -140,7 +140,8 @@ defmodule Flezha.Service.PluginManager do
   # letting the call cascade into ProcessHub's storage layer where a
   # nil hub_id raises an ETS lookup ArgumentError.
   defp resolve_processor(%Plugin{namespace: ns, processor_id: pid_id}) do
-    {:error, "plugin missing namespace or processor_id (got namespace=#{inspect(ns)}, processor_id=#{inspect(pid_id)})"}
+    {:error,
+     "plugin missing namespace or processor_id (got namespace=#{inspect(ns)}, processor_id=#{inspect(pid_id)})"}
   end
 
   defp forward_subscribe(pid, plugin_id, plugin) do

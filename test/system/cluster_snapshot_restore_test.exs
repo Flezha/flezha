@@ -133,6 +133,7 @@ defmodule Flezha.Cluster.SnapshotRestoreSystemTest do
 
     # Wait for ProcessHub to re-register our two processors.
     wait_for_processors_visible(processor_ids)
+
     after_restore_ids =
       HubManager.get_all_processors(@namespace)
       |> Enum.map(fn {id, _pid} -> id end)
