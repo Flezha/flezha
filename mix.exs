@@ -14,6 +14,14 @@ defmodule Flezha.MixProject do
     ]
   end
 
+  # Mix only auto-sets MIX_ENV=test for the literal `mix test` task.
+  # Aliases that wrap `test ...` need an explicit hint, otherwise the
+  # inner call complains that it's running in :dev. Listed here is every
+  # alias that ultimately invokes `test`.
+  def cli do
+    [preferred_envs: ["test.java_sdk": :test]]
+  end
+
   # Aliases are invoked via `mix <alias>`. `test.java_sdk` runs the Java
   # integration matrix against the *committed* test compute-engine fat jar
   # at `test/apps/java_compute_engine/dist/java_compute_engine.jar`. The
