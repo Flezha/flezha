@@ -1,0 +1,74 @@
+name: Docker
+
+# Builds the prod agent image and fails if it exceeds IMAGE_SIZE_LIMIT_BYTES.
+# Triggers only on packaging-relevant changes so most PRs skip the build.
+
+on:
+  pull_request:
+    paths:
+      - "docker/prod/**"
+      - "mix.exs"
+      - "mix.lock"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "flz_nif/**"
+      - ".dockerignore"
+      - ".github/workflows/docker.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker/prod/**"
+      - "mix.exs"
+      - "mix.lock"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "flz_nif/**"
+      - ".dockerignore"
+      - ".github/workflows/docker.yml"
+
+env:
+  # 300 MiB. Documented in docker/prod/README.md.
+  IMAGE_SIZE_LIMIT_BYTES: 314572800
+
+jobs:
+  docker-size-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build prod image
+        run: |
+          docker build \
+            -f docker/prod/Dockerfile.agent \
+            -t flezha:size-check \
+            --load \
+            .
+
+      - name: Measure image size
+        id: size
+        run: |
+          SIZE=$(docker image inspect flezha:size-check --format '{{.Size}}')
+          SIZE_MB=$(awk "BEGIN { printf \"%.1f\", ${SIZE}/1024/1024 }")
+          LIMIT_MB=$(awk "BEGIN { printf \"%.1f\", ${IMAGE_SIZE_LIMIT_BYTES}/1024/1024 }")
+          echo "size_bytes=${SIZE}" >> "$GITHUB_OUTPUT"
+          echo "size_mb=${SIZE_MB}" >> "$GITHUB_OUTPUT"
+          echo "limit_mb=${LIMIT_MB}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Prod image size"
+            echo ""
+            echo "- Size: **${SIZE_MB} MiB** (${SIZE} bytes)"
+            echo "- Limit: **${LIMIT_MB} MiB** (${IMAGE_SIZE_LIMIT_BYTES} bytes)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce size budget
+        run: |
+          SIZE=${{ steps.size.outputs.size_bytes }}
+          if [ "${SIZE}" -gt "${IMAGE_SIZE_LIMIT_BYTES}" ]; then
+            echo "::error::prod image size ${{ steps.size.outputs.size_mb }} MiB exceeds threshold ${{ steps.size.outputs.limit_mb }} MiB"
+            exit 1
+          fi
+          echo "prod image ${{ steps.size.outputs.size_mb }} MiB is within ${{ steps.size.outputs.limit_mb }} MiB budget"

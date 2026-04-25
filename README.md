@@ -9,6 +9,16 @@ Distributed stateful processors. Provides static and dynamic creation of process
 - Installable plugin subsystem ([`docs/plugin_installation.md`](docs/plugin_installation.md))
 - Cluster-wide snapshot & restore via `flz cluster` ([`docs/cluster-snapshot.md`](docs/cluster-snapshot.md))
 
+## Image size and supported architectures
+
+The prod agent image runs on `debian:bookworm-slim` with a bundled-ERTS
+Mix release (see [`docker/prod/README.md`](docker/prod/README.md)) under
+a **300 MiB** budget enforced by the `docker-size-gate` job in
+[`.github/workflows/docker.yml`](.github/workflows/docker.yml). Supported
+platforms: `linux/amd64` and `linux/arm64` (`make docker-build-multiarch`).
+The `protoc` install layer rejects any other `uname -m` with
+`Unsupported architecture: <arch>`.
+
 ## Building
 - Copy `.env.example` and rename to `.env`
 - Install testnet dependencies: `cd test/apps/testnet && npm install`

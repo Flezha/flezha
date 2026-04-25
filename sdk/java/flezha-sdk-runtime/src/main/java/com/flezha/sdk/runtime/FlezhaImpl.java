@@ -2,6 +2,8 @@ package com.flezha.sdk.runtime;
 
 import com.flezha.sdk.FactoryRegistry;
 import com.flezha.sdk.Flezha;
+import com.flezha.sdk.native_.FlezhaNativeException;
+import com.flezha.sdk.native_.FlezhaStatus;
 import com.flezha.sdk.native_.NativeEventDispatcher;
 import com.flezha.sdk.native_.NativeTransport;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
@@ -108,20 +110,37 @@ public final class FlezhaImpl implements Flezha {
                 if (controlRouter == null) {
                     controlRouter = new CommandRouter(ctx, streamId);
                 }
+                Iterable<Frame> frames;
                 try {
-                    for (Frame frame : controlParser.feed(data)) {
-                        if (ControlChannel.HANDSHAKE_PAYLOAD_ID.equals(frame.payloadId())) {
-                            continue;
-                        }
-                        controlRouter.route(frame);
-                        if (ctx.computeEngineId() != null
-                                && !ctx.computeEngineId().equals("undefined")
-                                && assignLatch.getCount() > 0) {
-                            assignLatch.countDown();
-                        }
-                    }
+                    frames = controlParser.feed(data);
                 } catch (Throwable t) {
                     LOG.error("control stream frame parse failed: {}", t.toString());
+                    return;
+                }
+                for (Frame frame : frames) {
+                    if (ControlChannel.HANDSHAKE_PAYLOAD_ID.equals(frame.payloadId())) {
+                        continue;
+                    }
+                    try {
+                        controlRouter.route(frame);
+                    } catch (FlezhaNativeException e) {
+                        // Agent closed the control socket (shutdown / disconnect)
+                        // before the response write completed. Benign at teardown.
+                        if (e.getStatus() == FlezhaStatus.IO_ERROR) {
+                            LOG.debug("control stream closed before response: {}", e.getMessage());
+                        } else {
+                            LOG.error("control stream route failed: {}", e.toString());
+                        }
+                        return;
+                    } catch (Throwable t) {
+                        LOG.error("control stream route failed: {}", t.toString());
+                        return;
+                    }
+                    if (ctx.computeEngineId() != null
+                            && !ctx.computeEngineId().equals("undefined")
+                            && assignLatch.getCount() > 0) {
+                        assignLatch.countDown();
+                    }
                 }
             }
         };

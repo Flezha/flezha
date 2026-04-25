@@ -32,6 +32,27 @@ cp .env.example .env
 ```
 
 # Build, run and manage docker image
+
+The dev image (`alfetahe/flezha:latest-dev`) bundles the full toolchain
+— Elixir+OTP, Rust, Node.js+npm+TypeScript, protoc — so `docker compose
+up` gives a ready-to-go shell against bind-mounted source.
+
+## Build and push the dev image
+
+```bash
+# Build for the current host arch
+docker build -f docker/dev/Dockerfile.agent -t alfetahe/flezha:latest-dev .
+docker push alfetahe/flezha:latest-dev
+
+# Multi-arch (linux/amd64,linux/arm64)
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f docker/dev/Dockerfile.agent \
+  -t alfetahe/flezha:latest-dev \
+  . --push
+```
+
+## Run via docker compose
+
 - Create docker network (if not exists)
 ```bash
 docker network create flezha_network
@@ -57,6 +78,11 @@ iex --name flezha@127.0.0.1 --cookie flezha_dev_cookie -S mix
 docker exec -it flezha_agent_dev bash
 cd test/apps/rust_compute_engine
 cargo run --target-dir=./target
+```
+
+- Build the testnet TS app inside the container (one-time setup):
+```bash
+docker exec -it flezha_agent_dev bash -c "cd test/apps/testnet && npm install && npm run build"
 ```
 
 

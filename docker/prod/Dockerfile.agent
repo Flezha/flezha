@@ -1,107 +1,122 @@
-# ============================================================
-# Stage 1 — Rust builder
-# Compiles flz_nif (.so) and CLI binary (flz) with --release.
-# ============================================================
-FROM rust:1.87.0 AS rust-build
+# syntax=docker/dockerfile:1.7
+
+# Stage 1 — Rust builder. Builds flz_nif.so and the flz CLI binary with
+# --release. protoc lives here because prost-build needs it; the Elixir
+# stage uses pure-Elixir protox.
+FROM rust:1.87.0-slim-bookworm AS rust-build
 
 WORKDIR /workspace
 
-# Copy entire workspace so all crate dependencies resolve
+ENV PROTOC_VERSION=23.4
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        unzip \
+        pkg-config \
+        libssl-dev \
+    && ARCH=$(uname -m) \
+    && case "$ARCH" in \
+         x86_64)   PROTOC_ARCH="x86_64" ;; \
+         aarch64)  PROTOC_ARCH="aarch_64" ;; \
+         *)        echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+       esac \
+    && curl -L -o /tmp/protoc.zip \
+        "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip" \
+    && unzip -q /tmp/protoc.zip -d /usr/local \
+    && rm /tmp/protoc.zip \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 
-# Build NIF shared library and CLI binary
-RUN cargo build --release -p flz_nif -p flz
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/workspace/target \
+    cargo build --release -p flz_nif -p flz \
+    && mkdir -p /artifacts \
+    && cp target/release/libflz_nif.so /artifacts/flz_nif.so \
+    && cp target/release/flz /artifacts/flz
 
-# ============================================================
-# Stage 2 — Elixir builder
-# Compiles Elixir source and assembles the release.
-# The NIF .so is copied from Stage 1; cargo is NOT invoked.
-# ============================================================
-FROM elixir:1.17-otp-27 AS build
+# Stage 2 — Elixir builder. Assembles the Mix release using the
+# pre-built NIF + CLI from Stage 1; cargo is not invoked here.
+FROM hexpm/elixir:1.17.3-erlang-27.2-debian-bookworm-20241202-slim AS elixir-build
 
 WORKDIR /app
 
-# Install system dependencies needed by mix deps / protobuf
-RUN apt-get update && apt-get install -y \
-    libssl-dev \
-    pkg-config \
-    build-essential \
-    cmake \
-    curl \
-    unzip \
+# protobuf-compiler is needed by `use Protox` in lib/flezha/compute_engine/
+# commands_proto.ex, which shells out to protoc at compile time.
+# git is needed by mix.exs's kafka_ex github: dep.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        build-essential \
+        git \
+        protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
-# Install protoc (architecture-aware)
-ENV PROTOC_VERSION=23.4
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then \
-      PROTOC_ARCH="x86_64"; \
-    elif [ "$ARCH" = "aarch64" ]; then \
-      PROTOC_ARCH="aarch_64"; \
-    else \
-      echo "Unsupported architecture: $ARCH" && exit 1; \
-    fi && \
-    curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip \
-    && unzip protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip -d /usr/local \
-    && rm protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip
+ENV MIX_ENV=prod \
+    LANG=C.UTF-8
 
-RUN protoc --version
-
-# Copy Elixir source files
+# Copy mix metadata first to maximise layer-cache hits when only source changes.
 COPY mix.exs mix.lock ./
-COPY lib ./lib
+
+RUN --mount=type=cache,target=/root/.hex \
+    --mount=type=cache,target=/root/.mix \
+    mix local.hex --force \
+    && mix local.rebar --force \
+    && mix deps.get --only prod
+
+# RUSTLER_SKIP_COMPILATION makes rustler pick up the .so dropped into
+# priv/native/ below instead of invoking cargo again.
+ENV RUSTLER_SKIP_COMPILATION=true
+
 COPY config ./config
 COPY rel ./rel
 COPY protobufs ./protobufs
+COPY lib ./lib
 
-# Place the pre-built NIF where Rustler expects it (skips cargo recompilation)
-RUN mkdir -p priv/native
-COPY --from=rust-build /workspace/target/release/libflz_nif.so ./priv/native/flz_nif.so
+RUN mkdir -p priv/native cli/target/release
+COPY --from=rust-build /artifacts/flz_nif.so ./priv/native/flz_nif.so
+COPY --from=rust-build /artifacts/flz         ./cli/target/release/flz
 
-# Place the pre-built CLI binary where mix.exs copy_cli_commands/1 expects it
-RUN mkdir -p cli/target/release
-COPY --from=rust-build /workspace/target/release/flz ./cli/target/release/flz
+RUN --mount=type=cache,target=/root/.hex \
+    --mount=type=cache,target=/root/.mix \
+    ERL_FLAGS="+JMsingle true" mix compile \
+    && mix release --overwrite
 
-# Tell Rustler not to invoke cargo — use the pre-built .so above
-ENV RUSTLER_SKIP_COMPILATION=true
-ENV MIX_ENV=prod
-
-RUN mix local.hex --force && mix local.rebar --force
-RUN mix deps.get --only prod
-RUN ERL_FLAGS="+JMsingle true" MIX_ENV=prod mix compile
-RUN MIX_ENV=prod mix release --overwrite
-
-# ============================================================
-# Stage 3 — Runtime image
-# Minimal image containing only the assembled release.
-# ============================================================
-FROM elixir:1.17-otp-27
+# Stage 3 — runtime image. The Mix release bundles ERTS, so the runtime
+# only needs basic shared libs and tini. Operators attach via
+# `bin/flzvm remote` (the dist-node rsh shipped inside the release).
+FROM debian:bookworm-slim AS runtime
 
 WORKDIR /flezha
 
-ENV MIX_ENV=prod
+ENV LANG=C.UTF-8 \
+    MIX_ENV=prod
 
-# Create non-root user
-RUN addgroup --system --gid 1000 flezha && \
-    adduser --system --uid 1000 --ingroup flezha flezha
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libssl3 \
+        libstdc++6 \
+        libtinfo6 \
+        locales \
+        ca-certificates \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy assembled release from Stage 2
-COPY --from=build /app/_build/prod/rel/flezha /flezha/
+RUN addgroup --system --gid 1000 flezha \
+    && adduser --system --uid 1000 --ingroup flezha flezha
 
-# Create runtime directories. These get overlaid by named volumes / bind
-# mounts at runtime — docker initialises an empty named volume from the
-# mountpoint's ownership in the image, so each dir MUST exist here with
-# flezha:flezha ownership or the non-root container process will get
-# EACCES on first write. `snapshots/` is the default operator path for
-# `flz cluster snapshot/restore` (override per-invocation by passing an
-# absolute path).
+COPY --from=elixir-build /app/_build/prod/rel/flezha /flezha/
+
+# Named volumes inherit the mount-point's image-time ownership, so each
+# overlaid dir must exist with flezha:flezha or the non-root process
+# hits EACCES on first write.
 RUN mkdir -p /flezha/app_data/sockets \
              /flezha/app_data/certs \
              /flezha/app_data/logs \
-             /flezha/app_data/snapshots && \
-    chown -R flezha:flezha /flezha
+             /flezha/app_data/snapshots \
+    && chown -R flezha:flezha /flezha
 
 USER flezha
 
-# bin/flzvm — Elixir release binary (renamed from bin/flezha by copy_cli_commands/1)
+# tini handles zombie reaping and signal forwarding for the BEAM.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["bin/flzvm", "start"]

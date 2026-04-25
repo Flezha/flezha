@@ -2,6 +2,40 @@
 
 Run the following commands from the **flezha project root** directory.
 
+## Image layout
+
+`docker/prod/Dockerfile.agent` is a three-stage build:
+
+- **Stage 1** — `rust:1.87.0-slim-bookworm`: builds `flz_nif.so` and the
+  `flz` CLI binary with `--release`. `protoc` lives here because
+  `prost-build` needs it.
+- **Stage 2** — `hexpm/elixir:1.17.3-erlang-27.2-debian-bookworm-...-slim`:
+  assembles the Mix release with `include_erts: true`, consuming the
+  Stage 1 artefacts via `RUSTLER_SKIP_COMPILATION=true`.
+- **Stage 3** — `debian:bookworm-slim`: runtime. Apt-installs `libssl3`,
+  `libstdc++6`, `libtinfo6`, `locales`, `ca-certificates`, `tini`. The
+  release bundles its own ERTS — there is no system Elixir or Erlang in
+  the runtime image, and `:wx` / `:observer` are not packaged.
+
+Attach a shell against a running container via the release's dist-node
+entry points:
+
+```bash
+docker exec <container>     bin/flzvm rpc 'IO.puts("ok")'
+docker exec -it <container> bin/flzvm remote
+```
+
+## Image size budget
+
+`.github/workflows/docker.yml` runs `docker-size-gate` on PRs that touch
+`docker/prod/**`, `mix.exs`, `mix.lock`, `Cargo.toml`, `Cargo.lock`, or
+`flz_nif/**`. The job builds the prod image, prints its size to the
+GitHub step summary, and fails if the image exceeds the budget.
+
+Budget: **300 MiB** (`IMAGE_SIZE_LIMIT_BYTES=314572800`). Adjust with a
+one-line edit if a legitimate size change ships in the same PR.
+
+
 ## Build Local Image (Single Architecture)
 
 ```bash

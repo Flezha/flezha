@@ -13,7 +13,6 @@ flz_transport = { path = "../flz_transport" }
 rustler = "0.35"
 crossbeam = "0.8"
 mio = { version = "0.8.11", features = ["os-poll", "os-ext", "net"] }
-byteorder = "1.4"
 quinn-proto = "0.11"
 bytes = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }

@@ -1,11 +1,49 @@
-erl_crash.dump
-deps
+# build outputs
+**/target
+target-ci-local
 _build
+deps
+priv/native/*.so
+**/node_modules
+**/__pycache__
+.elixir_ls
 cover
-test/apps/rust_compute_engine/target
-cli/target
-target/
 flezha-*.tar
-.elixir_ls/
-.vscode
 
+# runtime / scratch
+app_data
+logs
+*.dump
+erl_crash.dump
+bench-*.txt
+BENCH.md
+QUIC_DIAGNOSTICS.md
+CHANGELOG.md
+TODO.md
+index.html
+
+# scm / dev / tooling
+.git
+.github
+.vscode
+.idea
+.openspec.yaml
+docker
+docs
+examples
+kubernetes
+openspec
+scripts
+
+# Java SDK is a separate deliverable — not needed for the agent build.
+sdk/java
+
+# Test tree — kept out of the prod context except for the cargo
+# workspace member, whose Cargo.toml is read during metadata resolution
+# even when only -p flz_nif -p flz is built.
+test/*
+!test/apps
+test/apps/*
+!test/apps/rust_compute_engine
+test/apps/rust_compute_engine/target
+test/apps/rust_compute_engine/dist

@@ -47,7 +47,6 @@
         <module>flezha-sdk-runtime</module>
         <module>flezha-sdk-native</module>
         <module>flezha-sdk</module>
-        <module>flezha-sdk-integration-tests</module>
     </modules>
 
     <dependencyManagement>

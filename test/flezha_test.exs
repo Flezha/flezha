@@ -17,6 +17,7 @@ defmodule FlezhaTest do
   @default_namespace "default"
   @temp_namespace "test_temp_namespace"
   @node_name NodeTestHelper.node_name()
+  @testnet_ws_uri "ws://localhost:4500"
 
   @test_store_input_factory "store_input"
   @test_processor_factory "do_nothing"

@@ -36,9 +36,11 @@ defmodule Flezha.Application do
           {Task.Supervisor, name: Flezha.Processor.MessageHandlerTaskSup}
         ]
 
-    # If Testnet is enabled, we start the TestnetSupervisor
+    # Flezha.Testnet only compiles in :test (test/support/); ensure_loaded?
+    # gates the child spec so prod boots without the module.
     children =
-      if Application.get_env(:flezha, :testnet_enabled) do
+      if Application.get_env(:flezha, :testnet_enabled) and
+           Code.ensure_loaded?(Flezha.Testnet) do
         [{Flezha.Testnet, []} | children]
       else
         children

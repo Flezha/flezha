@@ -33,22 +33,17 @@ defmodule Flezha.MixProject do
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
   def application do
-    [
-      extra_applications: [
-        :logger,
-        :runtime_tools,
-        :wx,
-        :observer,
-        :inets,
-        :crypto,
-        :ssl,
-        :telemetry
-      ],
-      mod: {Flezha.Application, []}
-    ]
+    [extra_applications: extra_applications(Mix.env()), mod: {Flezha.Application, []}]
   end
+
+  # :wx + :observer are dev-only — they pull wxWidgets shared libs the
+  # headless prod release has no use for.
+  defp extra_applications(:prod),
+    do: [:logger, :runtime_tools, :inets, :crypto, :ssl, :telemetry]
+
+  defp extra_applications(_),
+    do: [:logger, :runtime_tools, :wx, :observer, :inets, :crypto, :ssl, :telemetry]
 
   defp releases() do
     [
@@ -95,5 +90,6 @@ defmodule Flezha.MixProject do
   end
 
   defp elixirc_paths(:prod), do: ["lib"]
+  defp elixirc_paths(:test), do: ["lib", "test", "test/support"]
   defp elixirc_paths(_), do: ["lib", "test"]
 end

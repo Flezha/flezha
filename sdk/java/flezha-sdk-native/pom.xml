@@ -154,12 +154,9 @@
         </profile>
 
         <!--
-          native-verify: ONLY enforce that all five native binaries already exist
-          in native-output-dir; never invoke cargo-zigbuild. Use this when
-          binaries were produced by an upstream job and downloaded as artifacts
-          (`java-build-and-test` follows `native-cross-build`), so re-running
-          the cross-build would require cargo-zigbuild on a runner that
-          doesn't have it.
+          native-verify: assert that all five committed native binaries exist
+          in native-output-dir without invoking the build script. CI uses
+          this profile; refresh the binaries with `scripts/build-dist.sh`.
         -->
         <profile>
             <id>native-verify</id>
@@ -185,7 +182,7 @@
                                                 <file>${native.output.dir}/macos-arm64/libflz_transport.dylib</file>
                                                 <file>${native.output.dir}/windows-x64/libflz_transport.dll</file>
                                             </files>
-                                            <message>native-verify: one of the five required libflz_transport binaries is missing — the upstream native-cross-build job did not produce a complete set.</message>
+                                            <message>native-verify: one or more of the five committed libflz_transport binaries are missing. Refresh them with `scripts/build-dist.sh` and `git add` the result.</message>
                                         </requireFilesExist>
                                     </rules>
                                 </configuration>
@@ -196,52 +193,5 @@
             </build>
         </profile>
 
-        <!--
-          host-only: Fast local iteration — build only the current host triple and
-          emit a LOUD warning marker in target/ that the resulting jar is non-portable.
-        -->
-        <profile>
-            <id>host-only</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>exec-maven-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>host-build</id>
-                                <phase>generate-resources</phase>
-                                <goals>
-                                    <goal>exec</goal>
-                                </goals>
-                                <configuration>
-                                    <executable>${build.native.script}</executable>
-                                    <arguments>
-                                        <argument>--output</argument>
-                                        <argument>${native.output.dir}</argument>
-                                        <argument>--targets</argument>
-                                        <argument>host</argument>
-                                    </arguments>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>write-non-portable-warning</id>
-                                <phase>generate-resources</phase>
-                                <goals>
-                                    <goal>exec</goal>
-                                </goals>
-                                <configuration>
-                                    <executable>sh</executable>
-                                    <arguments>
-                                        <argument>-c</argument>
-                                        <argument>mkdir -p ${project.build.directory} &amp;&amp; echo 'WARNING: This jar was built with the host-only profile. It contains native binaries for ONLY the host triple and is NOT portable.' &gt; ${project.build.directory}/NON_PORTABLE_WARNING.txt &amp;&amp; cat ${project.build.directory}/NON_PORTABLE_WARNING.txt &gt;&amp;2</argument>
-                                    </arguments>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
     </profiles>
 </project>

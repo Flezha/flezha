@@ -1,105 +1,56 @@
-# Build from the Elixir image
-FROM elixir:1.17-otp-27
+# syntax=docker/dockerfile:1.7
 
-# Install the necessary dependencies
-RUN apt-get update && apt-get install -y \
-    libssl-dev \
-    pkg-config \
-    build-essential \
-    cmake
+# Dev image — bundles the full toolchain so `docker compose up` gives
+# a developer a ready-to-go shell with everything installed. The
+# compose file bind-mounts the host source over /flezha, so source
+# edits show up live inside the container.
+FROM hexpm/elixir:1.17.3-erlang-27.2-debian-bookworm-20241202-slim
 
-# Copy the current directory contents into the container at /flezha
 WORKDIR /flezha
-COPY . .
 
-# Create a non-root user and its home directory
-RUN addgroup --gid 1000 flezha && adduser --uid 1000 --gid 1000 --home /home/flezha flezha
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Create home directory for the flezha user
-RUN mkdir -p /home/flezha && \
-    chown flezha:flezha /home/flezha
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        unzip \
+        git \
+        pkg-config \
+        build-essential \
+        cmake \
+        libssl-dev \
+        protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set home directory for the flezha user
-ENV HOME=/home/flezha
+# Node.js 22 + TypeScript for the testnet TS app and the websocket-plugin
+# test cases that drive it.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g typescript \
+    && rm -rf /var/lib/apt/lists/*
 
-# Switch to the root user to install Node.js and npm
-USER root    
-WORKDIR /home/flezha
+# UID/GID 1000 matches the host convention so bind-mounted files stay
+# read/writable from both sides.
+RUN addgroup --gid 1000 flezha \
+    && adduser --uid 1000 --gid 1000 --home /home/flezha flezha
+ENV HOME=/home/flezha \
+    CARGO_HOME=/home/flezha/.cargo \
+    RUSTUP_HOME=/home/flezha/.rustup \
+    PATH="/home/flezha/.cargo/bin:${PATH}"
 
-# Install Node.js and npm
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y nodejs
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable --profile minimal \
+    && chown -R flezha:flezha /home/flezha/.cargo /home/flezha/.rustup
 
-# Install TypeScript globally
-RUN npm install -g typescript
+# socket_data is outside the bind-mount so its named-volume ownership
+# is fixed at image-build time.
+RUN mkdir -p /flezha/socket_data \
+    && chown -R flezha:flezha /flezha \
+    && chmod -R g+rw /flezha/socket_data
 
-# Install Rust and necessary tools
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
-    echo '. "$HOME/.cargo/env"' >> $HOME/.bashrc && \
-    echo '. "$HOME/.cargo/env"' >> $HOME/.profile && \
-    . "$HOME/.cargo/env" && \
-    rustup update && \
-    rustup default stable
-
-# Make Rust available in PATH for all subsequent RUN commands (needed for Rustler NIF compilation)
-ENV PATH="/home/flezha/.cargo/bin:${PATH}"
-
-RUN mkdir -p /flezha/socket_data && \
-    chown -R flezha:flezha /flezha/socket_data && \
-    chmod -R g+rw /flezha/socket_data
-
-# Build the testnet application
-WORKDIR /flezha/test/apps/testnet
-RUN npm install
-RUN npm run build
-
-# Set version
-ENV PROTOC_VERSION=23.4
-
-# Install protoc (architecture-aware: works on amd64 and arm64)
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then \
-      PROTOC_ARCH="x86_64"; \
-    elif [ "$ARCH" = "aarch64" ]; then \
-      PROTOC_ARCH="aarch_64"; \
-    else \
-      echo "Unsupported architecture: $ARCH" && exit 1; \
-    fi && \
-    curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip \
-    && unzip protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip -d /usr/local \
-    && rm protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip
-
-RUN protoc --version    
-
-# Change the owner of the /flezha directory
-RUN chown -R flezha:flezha /flezha
-
-# Ensure the flezha user owns the .cargo directory
-RUN mkdir -p /home/flezha/.cargo && \
-    chown -R flezha:flezha /home/flezha/.cargo && \
-    chmod -R u+rw /home/flezha/.cargo
-
-# Build the entire Rust workspace (flz_transport, SDK, CLI, test compute engine)
 USER flezha
-WORKDIR /flezha
-RUN . "$HOME/.cargo/env" && cargo build --workspace
 
-# Set the working directory
-WORKDIR /flezha
+RUN mix local.hex --force && mix local.rebar --force
 
-# Install system dependencies
-RUN mix local.hex --force && \
-    mix local.rebar --force
-
-# Symlink CLI binary to expected path (workspace build outputs to target/, not cli/target/)
-RUN mkdir -p cli/target && ln -sf /flezha/target/debug cli/target/debug
-
-# Build the Elixir application
-RUN mix deps.get && \
-    mix compile && \
-    mix release --overwrite
-
-# Copy the    
-
-# Keep the terminal open
+# Keep the container alive so `docker exec ... mix test` works.
 CMD ["tail", "-f", "/dev/null"]
