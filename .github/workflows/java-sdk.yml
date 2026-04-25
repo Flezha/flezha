@@ -26,8 +26,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # Runs cache@v4 / setup-beam@v1 on Node 24.
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 # Built artifacts that are *committed*:
 #   - Native binaries (libflz_transport.{so,dylib,dll} × 5 platforms) under
@@ -81,13 +79,19 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install protoc
-        # `mix compile` in lib/flezha/compute_engine/commands_proto.ex
-        # uses `Protox`, which shells out to system protoc.
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "23.4"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install protoc 23.4
+        # `mix compile` in lib/flezha/compute_engine/commands_proto.ex uses
+        # `Protox`, which shells out to system protoc. Installed manually
+        # from the GitHub release so no JavaScript action is involved
+        # (arduino/setup-protoc still ships on Node 20 and trips the
+        # runner's deprecation warning).
+        run: |
+          PROTOC_VERSION=23.4
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          sudo unzip -oq /tmp/protoc.zip -d /usr/local
+          rm /tmp/protoc.zip
+          protoc --version
 
       - name: Cargo cache
         uses: actions/cache@v5
@@ -100,8 +104,42 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-
 
+      - name: Set up Node.js (for testnet build)
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Cache testnet node_modules
+        uses: actions/cache@v5
+        with:
+          path: test/apps/testnet/node_modules
+          key: testnet-${{ runner.os }}-${{ hashFiles('test/apps/testnet/package-lock.json', 'test/apps/testnet/package.json') }}
+
+      - name: Build testnet
+        # Flezha.Testnet is a child of Flezha.Application in :test env
+        # (config/test.exs sets testnet_enabled: true) and spawns
+        # `npm start --prefix test/apps/testnet` at boot, which runs
+        # `node dist/index.js`. dist/ is gitignored, so it has to be
+        # built before mix test boots the application.
+        working-directory: test/apps/testnet
+        run: |
+          npm ci || npm install
+          npm run build
+
       - name: Elixir dependencies
         run: mix deps.get
+
+      - name: Pre-build rust_compute_engine
+        # PortPilot launches two `cargo run --quiet` processes for
+        # rust_compute_engine at boot; BootLoader's post_hook gives
+        # them 20s to connect (config/test.exs). A cold debug build
+        # of the binary + workspace deps doesn't fit in that window,
+        # so build it ahead of time into the same ./target dir the
+        # cargo-run command uses.
+        run: |
+          cargo build --quiet \
+            --manifest-path=test/apps/rust_compute_engine/Cargo.toml \
+            --target-dir=./target
 
       - name: Run Java SDK integration matrix
         run: mix test.java_sdk
