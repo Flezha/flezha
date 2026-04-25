@@ -39,7 +39,7 @@ docker buildx inspect --bootstrap
 # Build and push with both version and latest tags
 docker buildx build --platform linux/amd64,linux/arm64 \
   -f docker/prod/Dockerfile.agent \
-  -t alfetahe/flezha:0.0.1 \
+  -t alfetahe/flezha:0.2.0 \
   -t alfetahe/flezha:latest \
   . --push
 ```
@@ -75,11 +75,11 @@ docker manifest create alfetahe/flezha:latest \
 docker manifest push alfetahe/flezha:latest
 
 # Optionally tag a version as well
-docker manifest create alfetahe/flezha:0.0.1 \
+docker manifest create alfetahe/flezha:0.2.0 \
   alfetahe/flezha:amd64 \
   alfetahe/flezha:arm64
 
-docker manifest push alfetahe/flezha:0.0.1
+docker manifest push alfetahe/flezha:0.2.0
 ```
 
 Both options produce the same single `latest` tag on Docker Hub — a manifest list
@@ -101,7 +101,7 @@ docker run -d \
 docker save -o flezha-latest.tar alfetahe/flezha:latest
 
 # Export specific version
-docker save -o flezha-0.0.1.tar alfetahe/flezha:0.0.1
+docker save -o flezha-0.2.0.tar alfetahe/flezha:0.2.0
 ```
 
 ## Docker Compose Deployment

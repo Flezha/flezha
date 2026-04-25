@@ -70,6 +70,14 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # Start the flezha application on the peer node.
     :erpc.call(node_name, Application, :ensure_all_started, [:flezha], 10000)
 
+    # Mirror `test_helper.exs`'s `:logger.set_module_level/2` cap on the
+    # peer so the noisy `ProcessHub.Service.LoggerService.error/3` lines
+    # from cross-node redistribution don't leak into the suite output.
+    :erpc.call(node_name, :logger, :set_module_level, [
+      ProcessHub.Service.LoggerService,
+      :none
+    ])
+
     {peer_pid, node_name}
   end
 
@@ -155,7 +163,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   # Build the command line used to launch the compute engine for a given runtime.
   # Keep `:rust` as the default so every existing test keeps working unchanged.
   defp build_command(:rust, current_path, namespace) do
-    "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- " <>
+    "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- " <>
       namespace
   end
 
@@ -172,7 +180,13 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
               "or run the full pipeline via `mix test.java_sdk`."
     end
 
-    "java -jar #{jar_path} #{namespace}"
+    # Cap slf4j-simple at ERROR — disconnect/reconnect WARN noise from
+    # the integration matrix tests is intentional but drowns the
+    # ExUnit output. Override per-run with
+    # `-Dorg.slf4j.simpleLogger.defaultLogLevel=info` when debugging
+    # the Java side.
+    "java -Dorg.slf4j.simpleLogger.defaultLogLevel=error " <>
+      "-jar #{jar_path} #{namespace}"
   end
 
   def stop_compute_engine(namespace, compute_engine_id, opts \\ []) do

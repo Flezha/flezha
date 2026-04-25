@@ -129,8 +129,18 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  defp resolve_processor(%Plugin{namespace: ns, processor_id: pid_id}) do
+  defp resolve_processor(%Plugin{namespace: ns, processor_id: pid_id})
+       when is_binary(ns) and is_binary(pid_id) do
     ProcessorManager.get_processor_pid(ns, pid_id)
+  end
+
+  # Plugins with nil namespace/processor_id can reach this path when an
+  # operator enables a plugin via the installer CLI without first
+  # binding it to a target — surface a structured error instead of
+  # letting the call cascade into ProcessHub's storage layer where a
+  # nil hub_id raises an ETS lookup ArgumentError.
+  defp resolve_processor(%Plugin{namespace: ns, processor_id: pid_id}) do
+    {:error, "plugin missing namespace or processor_id (got namespace=#{inspect(ns)}, processor_id=#{inspect(pid_id)})"}
   end
 
   defp forward_subscribe(pid, plugin_id, plugin) do

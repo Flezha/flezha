@@ -4,9 +4,13 @@ external_processes =
   if config_env() in [:test] do
     {:ok, current_path} = :file.get_cwd()
 
+    # `--quiet` suppresses the `Finished dev profile [...] / Running [...]`
+    # banners cargo emits each time the compute_engine is re-spawned for
+    # an ad-hoc test namespace. Build cache hits still keep these calls
+    # essentially free; only the stdout noise is gone.
     [
-      "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target",
-      "cargo run --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target"
+      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target",
+      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target"
     ]
   else
     System.get_env("FLEZHA_EXTERNAL_PROCESSES", "") |> String.split(",", trim: true)

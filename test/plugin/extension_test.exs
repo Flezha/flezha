@@ -7,6 +7,8 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog, only: [capture_log: 1]
+
   @catalog Host.build_catalog(
              [
                {:on_processor_init, :fold, Ctx.Init},
@@ -214,7 +216,16 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         })
 
       ctx = %Ctx.IO{processor_id: "p", namespace: :n, message: "hi", metadata: %{}}
-      assert {:ok, %Ctx.IO{message: "HI"}} = Extension.run(table, :on_input, ctx)
+
+      log =
+        capture_log(fn ->
+          assert {:ok, %Ctx.IO{message: "HI"}} = Extension.run(table, :on_input, ctx)
+        end)
+
+      # The chain logs the subscriber error (intentional — operators rely
+      # on it during incident triage) and we assert it lands without
+      # spilling into the suite's stdout.
+      assert log =~ "transform subscriber"
     end
   end
 
@@ -246,10 +257,17 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         })
 
       ctx = %Ctx.Snapshot{processor_id: "p", namespace: :n, snapshot: nil}
-      assert :ok = Extension.run(table, :on_snapshot, ctx)
 
-      assert_received :fanout_raise_seen
-      assert_received {:fanout_called, "p"}
+      log =
+        capture_log(fn ->
+          assert :ok = Extension.run(table, :on_snapshot, ctx)
+          assert_received :fanout_raise_seen
+          assert_received {:fanout_called, "p"}
+        end)
+
+      # The fanout dispatch logs each raise/throw — we capture it here so
+      # the test's intentional `kaboom` doesn't pollute the suite output.
+      assert log =~ "fanout subscriber"
     end
   end
 

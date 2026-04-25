@@ -47,12 +47,17 @@
   removal in the next major version.
 - `Flezha.Recovery.Coordinator.run_recovery/0` emits a one-time WARN on
   first invocation per BEAM naming the new path.
-- `Flezha.Processor.InitState.Providers.Sibling` carries `@deprecated`
-  and emits a one-time WARN on first invocation per BEAM. The provider
-  remains registered for backwards compatibility.
 
 ### Removed (BREAKING)
 
+- `Flezha.Processor.InitState.Providers.Sibling` has been removed along
+  with its registration in `:enabled_plugins`, its capability spec
+  (`processor-init-state-sibling`), and the `lib/flezha/processor/init_state/`
+  tree. Restart-survival init-state seeding is now handled by
+  `flz cluster restore` priming `:initial_state_binary` directly. The
+  generic `processor-init-state` provider chain remains for non-snapshot
+  sources (HTTP, S3, computed defaults, custom modules implementing
+  `on_processor_init/2`).
 - The WAIT_FACTORY gate machinery in `Flezha.Recovery.SysMode` is gone:
   the `:recovery_wait_factory`, `:recovery_wait_namespace`, and
   `:recovery_wait_timeout_ms` application env keys; the

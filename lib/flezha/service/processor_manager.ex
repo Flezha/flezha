@@ -53,15 +53,27 @@ defmodule Flezha.Service.ProcessorManager do
   @spec start_processor(String.t(), ProcessorBuilder.t()) ::
           {:ok, map()} | {:error, String.t()}
   def start_processor(namespace, processor) do
-    case ProcessorBuilder.validate_processor(namespace, processor) do
+    with :ok <- ProcessorBuilder.validate_processor(namespace, processor),
+         :ok <- validate_factory(namespace, processor.factory_id) do
+      # TODO: we should validate the namespace also.
+      init_processor(namespace, processor)
+    else
+      {:error, reason} when is_binary(reason) ->
+        {:error, %{processor_id: processor.id, node: node(), reason: reason}}
+
       {:error, reason} ->
         {:error, reason}
-
-      :ok ->
-        # TODO: we should validate the namespace also.
-        init_processor(namespace, processor)
     end
   end
+
+  defp validate_factory(namespace, factory_id) when is_binary(factory_id) do
+    case FleetManager.compute_engines_for_factory(namespace, factory_id) do
+      [] -> {:error, "Factory with id #{factory_id} does not exist"}
+      [_ | _] -> :ok
+    end
+  end
+
+  defp validate_factory(_namespace, _factory_id), do: :ok
 
   @doc """
   Removes a processor.
@@ -118,7 +130,7 @@ defmodule Flezha.Service.ProcessorManager do
     end
   end
 
-  defp init_processor(namespace, processor) do
+  defp init_processor(namespace, processor, retries \\ 1) do
     child_spec = %{
       id: processor.id,
       start: {
@@ -139,6 +151,33 @@ defmodule Flezha.Service.ProcessorManager do
       )
       |> ProcessHub.Future.await()
 
+    # ProcessHub returns `:no_response` when its worker queue races a
+    # late-connecting compute engine — common during agent/cluster
+    # startup. Retry once with a short backoff before reporting failure;
+    # stable steady-state failures still surface to the caller.
+    case retry_no_response?(result, retries) do
+      true ->
+        Process.sleep(150)
+        init_processor(namespace, processor, retries - 1)
+
+      false ->
+        finalize_init_processor(processor, result)
+    end
+  end
+
+  defp retry_no_response?(_result, retries) when retries <= 0, do: false
+
+  defp retry_no_response?(%ProcessHub.StartResult{errors: errors}, _) when is_list(errors) do
+    Enum.any?(errors, fn
+      {_cid, :no_response} -> true
+      {_cid, {:no_response, _}} -> true
+      _ -> false
+    end)
+  end
+
+  defp retry_no_response?(_result, _retries), do: false
+
+  defp finalize_init_processor(processor, result) do
     case result do
       %ProcessHub.StartResult{} ->
         our_started =

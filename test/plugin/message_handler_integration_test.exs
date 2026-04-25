@@ -1,13 +1,12 @@
 defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
   @moduledoc """
-  End-to-end integration tests for `processor-message-handlers` and the
-  `Sibling` init-state provider under the unified extension-system.
+  End-to-end integration tests for `processor-message-handlers` under
+  the unified extension-system.
   """
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MessageForward
   alias Flezha.Processor.Builder
-  alias Flezha.Processor.InitState.Providers.Sibling
   alias Flezha.Service.PluginManager
   alias Flezha.Service.ProcessorManager
 
@@ -100,83 +99,6 @@ defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
 
     assert Process.alive?(overwatch_pid)
     assert {:ok, _json_state} = ProcessorManager.get_processor_state(@namespace, processor_id)
-  end
-
-  test "Sibling init-state seeds a new processor from a running source" do
-    source_id = "mh_int_source"
-    consumer_id = "mh_int_consumer"
-
-    assert {:ok, _} =
-             ProcessorManager.start_processor(@namespace, %Builder{
-               id: source_id,
-               factory_id: "json_state_message"
-             })
-
-    assert {:ok, "plugin enabled"} =
-             PluginManager.enable_plugin("mh_int_source_plugin", %Plugin{
-               id: "mh_int_source_plugin",
-               namespace: @namespace,
-               processor_id: source_id,
-               provider: MessageForward,
-               opts: %{},
-               subscriptions: [{:on_message, [key: :fetch_init_state]}]
-             })
-
-    from_plugin = %Plugin{
-      id: "from-processor",
-      provider: Sibling,
-      opts: %{
-        source_processor_id: source_id,
-        handler_key: :fetch_init_state,
-        request_timeout_ms: 2_000
-      },
-      subscriptions: [{:on_processor_init, []}]
-    }
-
-    assert {:ok, _} =
-             ProcessorManager.start_processor(@namespace, %Builder{
-               id: consumer_id,
-               factory_id: "store_input",
-               opts: [plugins: [from_plugin]]
-             })
-
-    assert {:ok, json_state} =
-             ProcessorManager.get_processor_state(@namespace, consumer_id)
-
-    assert Flezha.Service.Payloader.json_to_map(json_state) == %{
-             "binary_inputs" => [],
-             "text_inputs" => ["seeded_from_source"]
-           }
-  end
-
-  test "Sibling on_error: :empty with unreachable source lets consumer start empty" do
-    consumer_id = "mh_int_consumer_degraded"
-
-    from_plugin = %Plugin{
-      id: "from-processor-empty",
-      provider: Sibling,
-      opts: %{
-        source_processor_id: "does_not_exist",
-        handler_key: :fetch_init_state,
-        request_timeout_ms: 500
-      },
-      subscriptions: [{:on_processor_init, [on_error: :empty]}]
-    }
-
-    assert {:ok, _} =
-             ProcessorManager.start_processor(@namespace, %Builder{
-               id: consumer_id,
-               factory_id: "store_input",
-               opts: [plugins: [from_plugin]]
-             })
-
-    assert {:ok, json_state} =
-             ProcessorManager.get_processor_state(@namespace, consumer_id)
-
-    assert Flezha.Service.Payloader.json_to_map(json_state) == %{
-             "binary_inputs" => [],
-             "text_inputs" => []
-           }
   end
 
   test "handler is still reachable under the same key after compute-engine migration" do

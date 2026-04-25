@@ -16,6 +16,24 @@ Distributed stateful processors. Provides static and dynamic creation of process
 - Build the `rust_compute_engine` application.
 - Build the agent `mix compile`
 
+### Test prerequisites
+
+`mix test` exercises the Java SDK matrix and the cluster-system suite,
+which spawn the test Java compute engine from
+`test/apps/java_compute_engine/target/java_compute_engine.jar`. That jar
+is no longer committed (the previous convention bloated history with a
+5.8 MB binary on every rebuild). Build it once before the first
+`mix test` run, and again after any change under `sdk/java/` or
+`test/apps/java_compute_engine/`:
+
+```bash
+mvn -q -f test/apps/java_compute_engine/pom.xml -DskipTests package
+```
+
+`mix test.java_sdk` does this for you (it also rebuilds the host-target
+JNI cdylib). Skipping the build leaves the jar missing; the Java-SDK
+matrix tests then fail fast with a pointer to this command.
+
 ## Examples
 
 ### Start agent (started automatically for dev mode)

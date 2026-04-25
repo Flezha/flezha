@@ -47,10 +47,6 @@ config :flezha,
     "processor_stdout" => Flezha.Plugin.Provider.StdOut,
     "processor_io_filter" => Flezha.Plugin.Provider.Filter,
     "monitored_io_forward" => Flezha.Plugin.Provider.MonitoredIOForward,
-    # Init-state source for sibling processors (e.g. flezha_market's
-    # `market-init-state` factory on the market-app side). Attached at
-    # processor start via `flz processor start --plugins '[...]'`.
-    "init_state_sibling" => Flezha.Processor.InitState.Providers.Sibling,
     # `:on_message` provider that forwards a `{:flezha_request, key, payload,
     # reply_to, ref}` envelope to the SDK-side processor via the
     # `ProcessorMessage` control command. Attach at processor start with a
@@ -90,7 +86,6 @@ config :flezha,
   ]
 
 config :logger,
-  backends: [:console, {LoggerFileBackend, :file_log}],
   handle_sasl_reports: true,
   handle_otp_reports: true,
   level: :warning

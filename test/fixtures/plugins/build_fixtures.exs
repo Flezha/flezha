@@ -271,10 +271,22 @@ defmodule BuildFixtures do
   end
 end
 
+# Auto-run only when invoked manually as a script with an explicit
+# absolute output path:
+#
+#   mix run test/fixtures/plugins/build_fixtures.exs /tmp/fpz_out
+#
+# When `Code.require_file/1` loads this file from a test helper,
+# `System.argv()` carries whatever args were passed to the *outer* mix
+# task (e.g. `["test"]` for `mix test test`), and a permissive match
+# would write every fixture into that directory — polluting the source
+# tree. Requiring an absolute path prevents that.
 case System.argv() do
   [out] ->
-    BuildFixtures.build_all!(out)
-    IO.puts("fixtures built under #{out}")
+    if Path.type(out) == :absolute do
+      BuildFixtures.build_all!(out)
+      IO.puts("fixtures built under #{out}")
+    end
 
   _ ->
     # No-op when loaded as a script for helper usage.

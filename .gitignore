@@ -53,3 +53,12 @@ flezha-*.tar
 
 # Ad-hoc local test scripts (e.g. test-recovery-start.sh/stop.sh).
 /scripts/temp/
+
+# Maven build output. The Java compute-engine test fixture used to
+# commit `target/` (compiled .class files + the shaded jar) so contributors
+# could run `mix test` without `mvn` — but every rebuild produced a
+# 5.8 MB binary diff and Maven internal scratch (`maven-status/`,
+# `maven-archiver/`) leaked in. Building is now a documented
+# prerequisite — see README "Building" / `mix test.java_sdk`.
+test/apps/java_compute_engine/target/
+sdk/java/**/target/

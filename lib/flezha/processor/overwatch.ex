@@ -97,14 +97,14 @@ defmodule Flezha.Processor.Overwatch do
     end
   end
 
-  defp resolve_init_state(%__MODULE__{} = state, processor) do
-    # Always run the init-state fold chain, seeded with whatever the caller
-    # passed in `--init_values`. The fold may be empty (no plugins
-    # subscribed), in which case `accumulated` round-trips unchanged.
-    # Merging lets callers pass config (e.g. `symbols`, `asset_pairs`) and
-    # still receive Sibling-sourced keys like `pending_init_state_b64` on
-    # top of it — without this, supplying any init_values disabled the
-    # init-state rehydration flow entirely.
+  # Per the `processor-init-state` capability spec:
+  #   - cold start with empty init_values → chain runs
+  #   - cold start with non-empty init_values → chain MUST NOT run; inline values used as-is
+  #
+  # Migration is handled separately in `alter_handover_state/2` and never
+  # reaches this function.
+  defp resolve_init_state(%__MODULE__{} = state, %{init_values: init_values} = processor)
+       when init_values == %{} do
     ctx = %Ctx.Init{
       processor_id: processor.id,
       namespace: state.namespace,
@@ -119,6 +119,11 @@ defmodule Flezha.Processor.Overwatch do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp resolve_init_state(%__MODULE__{} = state, processor) do
+    # Non-empty inline init_values bypass the chain.
+    {:ok, %{state | init_values: processor.init_values}, processor}
   end
 
   @impl true

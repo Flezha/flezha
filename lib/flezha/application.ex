@@ -9,6 +9,15 @@ defmodule Flezha.Application do
 
   @impl true
   def start(_type, _args) do
+    # The legacy `:backends` Logger config is deprecated in newer Elixir.
+    # We register the file backend at runtime via `:logger_backends`,
+    # which silently no-ops if the dep isn't loaded so consumers that
+    # only want the default :console handler still boot cleanly.
+    if Code.ensure_loaded?(LoggerBackends) and
+         function_exported?(LoggerBackends, :add, 1) do
+      _ = LoggerBackends.add({LoggerFileBackend, :file_log})
+    end
+
     children =
       [
         Flezha.Service.EventManager,

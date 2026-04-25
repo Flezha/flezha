@@ -7,6 +7,8 @@ defmodule Flezha.Plugin.Installer.StoreTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog, only: [capture_log: 1]
+
   alias Flezha.Plugin.Installer.Store
 
   setup do
@@ -150,11 +152,18 @@ defmodule Flezha.Plugin.Installer.StoreTest do
     file = Path.join(tmp, "installed_plugins.dets")
     File.write!(file, "not a dets file")
 
-    {:ok, pid} = Store.start_link([])
-    on_exit_stop(pid)
+    log =
+      capture_log(fn ->
+        {:ok, pid} = Store.start_link([])
+        on_exit_stop(pid)
 
-    # Store is alive and empty.
-    assert Store.count() == 0
+        # Store is alive and empty.
+        assert Store.count() == 0
+      end)
+
+    # The Store logs the rotation; we capture it so the intentional
+    # corruption injection doesn't pollute the suite output.
+    assert log =~ "corrupt DETS"
 
     rotated =
       File.ls!(tmp) |> Enum.filter(&String.starts_with?(&1, "installed_plugins.dets.corrupt-"))

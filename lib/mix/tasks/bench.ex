@@ -196,7 +196,10 @@ defmodule Mix.Tasks.Bench do
       "#{current_path}/test/apps/rust_compute_engine/target/debug/rust_compute_engine"
     ]
 
-    case Enum.find(candidates, &File.exists?/1) do
+    # Filter to *regular* files — the workspace-root `target/release/`
+    # may contain a leftover empty `rust_compute_engine/` directory from
+    # a prior `cargo run` that won't exec.
+    case Enum.find(candidates, &File.regular?/1) do
       nil ->
         "cargo run --release --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- #{namespace}"
 
