@@ -50,6 +50,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   MIX_ENV: test
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   test:

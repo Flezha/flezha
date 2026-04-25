@@ -30,6 +30,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
   REGRESSION_TOLERANCE_PCT: "10"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   dispatch-bench:
