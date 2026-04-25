@@ -16,6 +16,10 @@ docker push alfetahe/flezha:latest-arm64
 # Push to the latest
 docker buildx imagetools create -t alfetahe/flezha:latest \
   alfetahe/flezha:latest-amd64 alfetahe/flezha:latest-arm64
+
+# Build and push for current architecture.
+docker build -f docker/prod/Dockerfile.agent -t alfetahe/flezha:latest .
+docker push alfetahe/flezha:latest
 ```
 
 ## Build Multi-Architecture Image and Push to Docker Hub
