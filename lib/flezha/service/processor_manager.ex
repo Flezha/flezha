@@ -130,7 +130,10 @@ defmodule Flezha.Service.ProcessorManager do
     end
   end
 
-  defp init_processor(namespace, processor, retries \\ 1) do
+  @no_response_retry_attempts 8
+  @no_response_retry_initial_ms 150
+
+  defp init_processor(namespace, processor, attempt \\ 0) do
     child_spec = %{
       id: processor.id,
       start: {
@@ -151,31 +154,38 @@ defmodule Flezha.Service.ProcessorManager do
       )
       |> ProcessHub.Future.await()
 
-    # ProcessHub returns `:no_response` when its worker queue races a
-    # late-connecting compute engine — common during agent/cluster
-    # startup. Retry once with a short backoff before reporting failure;
-    # stable steady-state failures still surface to the caller.
-    case retry_no_response?(result, retries) do
-      true ->
-        Process.sleep(150)
-        init_processor(namespace, processor, retries - 1)
+    # `:no_response` surfaces when ProcessHub's `with_partition_check`
+    # short-circuits `execute/2` without sending a response — i.e. the
+    # local hub's `dist_sup` was momentarily missing or dead, so
+    # `Service.State.is_partitioned?/1` returned `true`. The dist_sup
+    # restarts on its own; the only thing the caller can do is wait it
+    # out. Retry up to @no_response_retry_attempts times with
+    # exponential backoff (150, 300, 600, 1200, 2400, ... ms, capped at
+    # 5s) so a transient partition during agent/cluster startup, a
+    # snapshot/restore taking down `dist_sup`, or parallel-suite test
+    # churn doesn't surface as a hard failure. Stable steady-state
+    # `:no_response` (8 attempts, ~14s of wait) still propagates.
+    cond do
+      no_response?(result) and attempt < @no_response_retry_attempts ->
+        backoff = min(@no_response_retry_initial_ms * Bitwise.bsl(1, attempt), 5_000)
+        Process.sleep(backoff)
+        init_processor(namespace, processor, attempt + 1)
 
-      false ->
+      true ->
         finalize_init_processor(processor, result)
     end
   end
 
-  defp retry_no_response?(_result, retries) when retries <= 0, do: false
-
-  defp retry_no_response?(%ProcessHub.StartResult{errors: errors}, _) when is_list(errors) do
+  defp no_response?(%ProcessHub.StartResult{errors: errors}) when is_list(errors) do
     Enum.any?(errors, fn
       {_cid, :no_response} -> true
       {_cid, {:no_response, _}} -> true
+      {_cid, {:error, :no_response}} -> true
       _ -> false
     end)
   end
 
-  defp retry_no_response?(_result, _retries), do: false
+  defp no_response?(_result), do: false
 
   defp finalize_init_processor(processor, result) do
     case result do

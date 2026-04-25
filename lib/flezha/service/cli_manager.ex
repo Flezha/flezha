@@ -378,7 +378,6 @@ defmodule Flezha.Service.CliManager do
   defp cleanup_io_listen(plugin_id) do
     IO.puts("\nShutting down IO listener...")
     PluginManager.disable_plugin(plugin_id)
-    :timer.sleep(100)
   end
 
   defp get_plugin_provider_mod(provider_id) do

@@ -62,3 +62,7 @@ flezha-*.tar
 # prerequisite — see README "Building" / `mix test.java_sdk`.
 test/apps/java_compute_engine/target/
 sdk/java/**/target/
+
+# scripts/ci-local.sh isolates its Cargo artifacts here so it doesn't
+# collide with anything else under /target/.
+/target-ci-local/

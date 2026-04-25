@@ -154,6 +154,7 @@ defmodule Flezha.Cluster.SnapshotRestoreSystemTest do
   end
 
   @tag :cluster_snapshot_cst
+  @tag capture_log: true
   test "strict-mode aborts when a peer's :rpc.call fails mid-gather" do
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:cs_strict1)
 

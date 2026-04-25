@@ -322,43 +322,40 @@ defmodule Flezha.Plugin.Installer do
     Loader.load_beams(plugin_id, old_row[:version], ebin_dir, [])
   end
 
-  # Wait up to 5s for in-flight :request tasks to finish. We rely on
-  # Flezha.Processor.MessageHandlerTaskSup — check if there are any children
-  # and poll. Out-of-process MessageHandlerTaskSup may not exist in tests.
+  # Wait up to 5s for in-flight :request tasks to finish. Snapshot the
+  # current children of Flezha.Processor.MessageHandlerTaskSup, monitor
+  # each, then drain `:DOWN` messages — no polling. New tasks spawned
+  # after the snapshot are not waited on (callers serialize plugin
+  # mutations upstream, so this window is small in practice).
   defp quiesce do
-    deadline = System.monotonic_time(:millisecond) + 5_000
-
-    loop_quiesce(deadline)
-  end
-
-  defp loop_quiesce(deadline) do
-    now = System.monotonic_time(:millisecond)
-
-    if now >= deadline do
-      :ok
-    else
-      case task_sup_children_count() do
-        0 ->
-          :ok
-
-        _ ->
-          Process.sleep(50)
-          loop_quiesce(deadline)
-      end
-    end
-  end
-
-  defp task_sup_children_count do
     case Process.whereis(Flezha.Processor.MessageHandlerTaskSup) do
       nil ->
-        0
+        :ok
 
       _pid ->
         try do
-          Task.Supervisor.children(Flezha.Processor.MessageHandlerTaskSup) |> length()
+          Flezha.Processor.MessageHandlerTaskSup
+          |> Task.Supervisor.children()
+          |> Enum.map(&Process.monitor/1)
+          |> drain_downs(System.monotonic_time(:millisecond) + 5_000)
         catch
-          _, _ -> 0
+          _, _ -> :ok
         end
+    end
+  end
+
+  defp drain_downs([], _deadline), do: :ok
+
+  defp drain_downs(refs, deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {:DOWN, ref, :process, _pid, _reason} ->
+        drain_downs(List.delete(refs, ref), deadline)
+    after
+      remaining ->
+        Enum.each(refs, &Process.demonitor(&1, [:flush]))
+        :ok
     end
   end
 

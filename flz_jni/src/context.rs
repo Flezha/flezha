@@ -22,6 +22,7 @@ use jni::{JNIEnv, JavaVM};
 use flz_transport::transport::protocol;
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::FlezhaStream;
+#[cfg(unix)]
 use flz_transport::utility::path_helper;
 
 use crate::callbacks::{dispatch_connection_lost, dispatch_data, dispatch_stream_closed};
@@ -60,6 +61,7 @@ pub(crate) struct Config {
     pub(crate) transport: Transport,
     pub(crate) quic_address: String,
     pub(crate) ca_cert_path: String,
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) socket_base_path: String,
     pub(crate) compute_engine_id: Mutex<String>,
 }
