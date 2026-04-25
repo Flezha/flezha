@@ -1,0 +1,148 @@
+name: Elixir
+
+# Runs the full `mix test` suite — every ExUnit case under test/, including
+# the cluster-snapshot CST (`test/system/cluster_snapshot_restore_test.exs`)
+# tagged `:cluster_snapshot_cst`, the Java SDK matrix that talks to the
+# pre-built Java compute-engine jar, and the recovery + plugin + transport
+# unit suites. The Rustler NIF (flz_nif) is built fresh because Elixir's
+# rebar is what invokes it; the Java jar is built up-front because plain
+# `mix test` does not rebuild it.
+#
+# `mix test.java_sdk` is exercised in `java-sdk.yml`; this workflow only
+# runs plain `mix test` so the agent-side and cluster paths stay covered
+# by CI without duplicating the matrix run.
+
+on:
+  pull_request:
+    paths:
+      - "lib/**"
+      - "test/**"
+      - "config/**"
+      - "mix.exs"
+      - "mix.lock"
+      - "protobufs/**"
+      - "flz_transport/**"
+      - "flz_nif/**"
+      - "sdk/rust/**"
+      - "cli/**"
+      - "test/apps/rust_compute_engine/**"
+      - "test/apps/java_compute_engine/**"
+      - "test/apps/testnet/**"
+      - ".github/workflows/elixir.yml"
+  push:
+    branches: [main]
+    paths:
+      - "lib/**"
+      - "test/**"
+      - "config/**"
+      - "mix.exs"
+      - "mix.lock"
+      - "protobufs/**"
+      - "flz_transport/**"
+      - "flz_nif/**"
+      - "sdk/rust/**"
+      - "cli/**"
+      - "test/apps/rust_compute_engine/**"
+      - "test/apps/java_compute_engine/**"
+      - "test/apps/testnet/**"
+      - ".github/workflows/elixir.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+  MIX_ENV: test
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Erlang + Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.17"
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node.js (for testnet build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Cache Elixir deps + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: elixir-${{ runner.os }}-otp27-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            elixir-${{ runner.os }}-otp27-
+
+      - name: Cache Cargo registry + workspace target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            test/apps/rust_compute_engine/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Cache testnet node_modules
+        uses: actions/cache@v4
+        with:
+          path: test/apps/testnet/node_modules
+          key: testnet-${{ runner.os }}-${{ hashFiles('test/apps/testnet/package-lock.json', 'test/apps/testnet/package.json') }}
+
+      - name: Install protoc (Protox runtime parses .proto, but the Rust
+              workspace's prost path also needs the binary on $PATH)
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "23.4"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build testnet
+        working-directory: test/apps/testnet
+        run: |
+          npm ci || npm install
+          npm run build
+
+      - name: Build Rust workspace (rust_compute_engine + flz_nif + cli)
+        # `mix test`'s `external_processes` config invokes `cargo run --quiet`
+        # which only re-links if Cargo's index is up to date — building
+        # up-front keeps the first ExUnit case from racing the compile.
+        run: cargo build --workspace
+
+      - name: Build Java test compute-engine jar
+        # The plain `mix test` suite includes `test/java_sdk/matrix_test.exs`
+        # which spawns this jar via `node_test_helper.build_command(:java, …)`.
+        # Skipping it would fail the matrix tests with a "jar not found"
+        # raise per the helper's own check.
+        run: |
+          mvn -B -f sdk/java/pom.xml -P host-only -DskipTests package
+          mvn -B -f test/apps/java_compute_engine/pom.xml -DskipTests package
+
+      - name: Fetch Elixir deps
+        run: mix deps.get
+
+      - name: Compile Elixir (warnings as errors)
+        run: mix compile --warnings-as-errors
+
+      - name: Run mix test
+        # Default `mix test` excludes `:system` tag; the cluster-snapshot
+        # CST (`:cluster_snapshot_cst`) is included by default since it is
+        # untagged for `:system`. Adjust here if that policy changes.
+        run: mix test

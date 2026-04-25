@@ -10,23 +10,32 @@ The failure-recovery capability enables the Flezha agent to durably persist loca
 
 The Flezha agent SHALL maintain a system-mode value with exactly three states — `:bootstrap`, `:recover`, `:normal` — owned by a single GenServer reachable as `Flezha.Recovery.SysMode`. The value MUST be readable by in-node callers and observable via telemetry.
 
+When the application config `:flezha, :prefer_explicit_restore?` is `true` (default), SYSMODE SHALL accept two cast notifications from `Flezha.Cluster.Snapshot.Coordinator`:
+
+- `{:explicit_restore_in_progress, ref}` — SYSMODE transitions `:bootstrap → :normal` directly, cancels any pending bootstrap-window timer, and emits telemetry `[:flezha, :recovery, :explicit_restore_started]`. The DETS-driven `Flezha.Recovery.Coordinator.run_recovery/0` SHALL NOT be invoked once this notification is observed for the current boot.
+- `{:explicit_restore_done, ref, result}` — SYSMODE emits telemetry `[:flezha, :recovery, :explicit_restore_completed]` with the result.
+
+When `:prefer_explicit_restore?` is `false`, SYSMODE SHALL ignore those notifications and behave exactly as the prior spec described.
+
+The pre-existing scenarios (initial mode `:bootstrap`, empty DETS keeps mode at `:bootstrap`, non-empty DETS transitions to `:recover`, window elapses runs recovery, normal peer cancels recovery, recovery disabled via config) all remain valid for the case where no explicit restore is invoked. They are restated below for completeness.
+
 #### Scenario: Initial mode is :bootstrap
 - **WHEN** the agent starts and `Flezha.Recovery.SysMode` completes `init/1`
 - **THEN** the initial SYSMODE value is `:bootstrap`
 - **AND** no recovery work has been executed yet
 
 #### Scenario: Empty DETS keeps mode at :bootstrap until window elapses
-- **WHEN** the recovery DETS file is empty (or absent) at startup
+- **WHEN** the recovery DETS file is empty (or absent) at startup AND no explicit restore is in progress
 - **THEN** SYSMODE remains `:bootstrap` for the configured recovery window
 - **AND** transitions to `:normal` exactly once the window elapses
 
 #### Scenario: Non-empty DETS transitions to :recover
-- **WHEN** the recovery DETS file contains at least one persisted child-spec row at startup
+- **WHEN** the recovery DETS file contains at least one persisted child-spec row at startup AND no explicit restore is in progress
 - **THEN** SYSMODE transitions to `:recover` immediately after `init/1`
 - **AND** a one-shot window timer is armed with the configured duration
 
 #### Scenario: Window elapses from :recover runs recovery
-- **WHEN** the window timer fires and SYSMODE is `:recover` and no peer with SYSMODE `:normal` has been observed
+- **WHEN** the window timer fires and SYSMODE is `:recover` and no peer with SYSMODE `:normal` has been observed AND no explicit restore is in progress
 - **THEN** the agent executes recovery by starting every DETS-persisted child spec via `Flezha.Service.ProcessorManager.start_processor/2`
 - **AND** SYSMODE transitions to `:normal` after the recovery loop completes
 - **AND** a `[:flezha, :recovery, :completed]` telemetry event is emitted with counts of recovered and failed specs
@@ -42,9 +51,23 @@ The Flezha agent SHALL maintain a system-mode value with exactly three states �
 - **THEN** SYSMODE transitions to `:normal` immediately on startup regardless of DETS contents
 - **AND** the recovery loop is never executed
 
+#### Scenario: Explicit restore suppresses the bootstrap timer (NEW)
+- **GIVEN** an agent has just booted with non-empty DETS, SYSMODE is `:bootstrap`, the bootstrap window timer is armed, and `:prefer_explicit_restore?` is `true`
+- **WHEN** an operator runs `flz cluster restore` and the coordinator sends `{:explicit_restore_in_progress, ref}`
+- **THEN** SYSMODE cancels the timer, transitions directly to `:normal`, `run_recovery/0` is not invoked for this boot, telemetry `[:flezha, :recovery, :explicit_restore_started]` fires, and a single INFO line `[recovery] explicit restore in progress (initiator: <node>) — bootstrap timer suppressed` is emitted
+
+#### Scenario: Explicit restore notification ignored when feature is off (NEW)
+- **GIVEN** `:prefer_explicit_restore?` is `false`
+- **WHEN** the coordinator sends `{:explicit_restore_in_progress, ref}` to SYSMODE
+- **THEN** SYSMODE ignores the cast, the bootstrap window timer continues to count down, the DETS replay path remains active, and the configuration is logged once at startup so operators understand the dual-path situation
+
 ### Requirement: Durable persistence of locally hosted processors
 
 The agent SHALL durably record every processor child spec it is hosting to a node-local DETS table, and SHALL remove entries when those processors are unregistered. The DETS table MUST only contain child specs for processors this node is actually hosting.
+
+This requirement is **DEPRECATED** in favour of `cluster-snapshot-restore`. It SHALL remain functional in this release for backwards compatibility and for unattended-restart scenarios where no operator runs `flz cluster restore`. A future change (out of scope for this proposal) is expected to remove this requirement once downstream consumers have migrated.
+
+The pre-existing scenarios (locally started processor is persisted, remote-only start is not persisted, unregistered child is removed) all remain valid.
 
 #### Scenario: Locally started processor is persisted
 - **WHEN** ProcessHub fires `post_children_start_hook` with a child whose `nodes` list includes the current `node()`
@@ -58,12 +81,31 @@ The agent SHALL durably record every processor child spec it is hosting to a nod
 #### Scenario: Unregistered child is removed
 - **WHEN** ProcessHub fires `child_unregistered_hook` for a `child_id` present in DETS
 - **THEN** the corresponding DETS row is deleted
-- **AND** subsequent startups treat the child as not-to-be-recovered
 
-#### Scenario: DETS survives agent restart
-- **WHEN** the agent is stopped (graceful or crash) and restarted with the same data directory mounted
-- **THEN** `Flezha.Recovery.Store` opens the existing DETS file on startup
-- **AND** rows persisted before the stop are readable after the restart
+#### Scenario: Deprecation INFO line on agent boot (NEW)
+- **WHEN** the agent boots with `:prefer_explicit_restore?` true and finds non-empty DETS rows that have not been touched by an explicit restore in the current boot
+- **THEN** a single INFO line at boot mentions `[recovery] DETS-based replay is deprecated — prefer 'flz cluster restore' (see docs/cluster-snapshot.md)`. This line MUST not fire when DETS is empty (no false positives on cold start).
+
+### Requirement: The WAIT_FACTORY gate SHALL be removed
+
+The `:recovery_wait_factory`, `:recovery_wait_namespace`, and `:recovery_wait_timeout_ms` application env keys, the corresponding `FLEZHA_RECOVERY_WAIT_FACTORY` / `_NAMESPACE` / `_TIMEOUT_MS` environment variables, the `:wait_factory_poll` and `:wait_factory_timeout` GenServer messages in `Flezha.Recovery.SysMode`, the `factories_all_advertised?/2` helper, and the intermediate `:recover-wait-factory` SYSMODE state SHALL be removed. The gate was added to coordinate DETS replay with a downstream consumer's factory-registration startup; with `cluster-snapshot-restore` providing explicit, operator-driven restore, the gate has no role in either the new path (which suppresses the bootstrap timer outright) or the deprecated fallback path (which uses the basic `recovery_window_ms` timer).
+
+The basic `:recovery_window_ms` timer remains in place for the deprecated DETS replay fallback. SYSMODE state remains exactly the three documented values (`:bootstrap`, `:recover`, `:normal`) — the previously-undocumented `:recover-wait-factory` intermediate is gone.
+
+For backwards compatibility on operator config: when an operator-set environment variable for any of the removed names is observed at boot, the agent SHALL emit a single startup WARN naming the removed variable and pointing at `docs/cluster-snapshot.md`. The variable's value is otherwise ignored.
+
+#### Scenario: Removed env vars produce a single WARN at boot
+- **GIVEN** an operator has `FLEZHA_RECOVERY_WAIT_FACTORY=market-init-state` set at agent startup
+- **WHEN** the agent boots
+- **THEN** a single WARN line `[recovery] FLEZHA_RECOVERY_WAIT_FACTORY is no longer supported — see docs/cluster-snapshot.md` is emitted, the variable's value is not read further, and SYSMODE follows the standard three-state machine
+
+#### Scenario: Startup log line drops removed fields
+- **WHEN** SYSMODE emits its startup INFO line (per the existing `[recovery] data_dir=... rows=N mode=... window_ms=... enabled=...` shape)
+- **THEN** the line does not include `wait_factory=...` or `wait_namespace=...` fields, and structured-log consumers grepping for those tokens find none
+
+#### Scenario: SYSMODE has only three states
+- **WHEN** SYSMODE telemetry is observed across a full boot+recover lifecycle
+- **THEN** the only values seen are `:bootstrap`, `:recover`, `:normal` — never `:recover-wait-factory`
 
 ### Requirement: Configurable recovery data directory
 

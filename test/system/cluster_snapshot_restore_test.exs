@@ -152,6 +152,44 @@ defmodule Flezha.Cluster.SnapshotRestoreSystemTest do
     end
   end
 
+  @tag :cluster_snapshot_cst
+  test "strict-mode aborts when a peer's :rpc.call fails mid-gather" do
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:cs_strict1)
+
+    on_exit(fn ->
+      try do
+        NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+      catch
+        _, _ -> :ok
+      end
+    end)
+
+    wait_for_hub_join(peer_node)
+    assert peer_node in Node.list(:visible)
+
+    # Stop the flezha application on the peer so `Snapshot.local_state/0`
+    # exits with :noproc when the gather RPC arrives — `HubManager` is
+    # gone but the peer node itself stays in `Node.list(:visible)`.
+    # This is the deterministic stand-in for "peer crashed mid-gather":
+    # the node is reachable but the application is not, which is exactly
+    # what the strict-mode branch is supposed to defend against.
+    :ok = :erpc.call(peer_node, Application, :stop, [:flezha])
+
+    tmp_path =
+      Path.join(System.tmp_dir!(), "cs_strict_#{System.unique_integer([:positive])}.flz")
+
+    on_exit(fn -> File.rm(tmp_path) end)
+
+    result = Coordinator.snapshot(tmp_path, peer_timeout_ms: 2_000, strict?: true)
+
+    assert {:error, {:strict_mode, failed_peers}} = result
+    assert peer_node in failed_peers
+
+    # No file written, no leftover .tmp.
+    refute File.exists?(tmp_path)
+    refute File.exists?(tmp_path <> ".tmp")
+  end
+
   defp wait_for_processors_visible(processor_ids, attempts \\ 20) do
     visible =
       processor_ids
