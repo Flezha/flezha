@@ -1,5 +1,12 @@
 # Processor Init-State Providers
 
+> **Note:** the `Flezha.Processor.InitState.Providers.Sibling` provider is
+> **deprecated** in favour of `flz cluster restore` for restart-survival
+> seeding. See [`cluster-snapshot.md`](cluster-snapshot.md) for the
+> supported alternative. The broader provider-chain mechanism documented
+> below remains in place for non-snapshot init-state sources (HTTP, S3,
+> defaults, etc.).
+
 Init-state providers hydrate a processor's initial state at startup from
 sources external to the builder (database, HTTP, computed defaults, etc.).
 They are configured per processor, run synchronously inside

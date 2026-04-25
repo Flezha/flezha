@@ -85,7 +85,9 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         })
 
       ctx = %Ctx.Init{processor_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
-      assert {:ok, %Ctx.Init{accumulated: %{a: 1}}} = Extension.run(table, :on_processor_init, ctx)
+
+      assert {:ok, %Ctx.Init{accumulated: %{a: 1}}} =
+               Extension.run(table, :on_processor_init, ctx)
     end
 
     test "two subscribers chain in position order" do
@@ -148,7 +150,9 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         })
 
       ctx = %Ctx.Init{processor_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
-      assert {:ok, %Ctx.Init{accumulated: %{b: 2}}} = Extension.run(table, :on_processor_init, ctx)
+
+      assert {:ok, %Ctx.Init{accumulated: %{b: 2}}} =
+               Extension.run(table, :on_processor_init, ctx)
     end
   end
 

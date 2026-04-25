@@ -1,8 +1,12 @@
 defmodule Flezha.Recovery.Coordinator do
   @moduledoc """
-  Bridges ProcessHub + PluginManager lifecycle events to the recovery stores
-  and runs the two-phase recovery loop when `Flezha.Recovery.SysMode`
-  requests it.
+  **DEPRECATED.** Bridges ProcessHub + PluginManager lifecycle events to the
+  recovery stores and runs the two-phase recovery loop when
+  `Flezha.Recovery.SysMode` requests it.
+
+  Use `Flezha.Cluster.Snapshot.Coordinator.restore/2` (or `flz cluster restore`)
+  for restart-survival. This module is retained for backwards compatibility
+  and is targeted for removal in the next major version.
 
   Plugin rows persisted here are `%Flezha.Plugin{}` structs with transient
   fields (worker pids, KafkaEx conns, Websocket conns) stripped. The stored
@@ -10,19 +14,21 @@ defmodule Flezha.Recovery.Coordinator do
   DETS file to prevent struct-shape drift from leaking across releases.
   """
 
+  @deprecated "Use Flezha.Cluster.Snapshot for restart-survival. Targeted for removal in the next major version."
+
   use GenServer
 
   require Logger
 
   alias Flezha.Plugin
-  alias Flezha.Plugin.Provider.BeamMsgForward
-  alias Flezha.Plugin.Provider.MonitoredIOForward
+  alias Flezha.Recovery.PluginRecoverability
   alias Flezha.Recovery.PluginStore
   alias Flezha.Recovery.Store
   alias Flezha.Recovery.SysMode
 
   @ets :flz_recovery_abort
   @abort_key :abort
+  @deprecation_key :run_recovery_deprecation_warned
 
   # Bump when the persisted shape of `%Flezha.Plugin{}` changes in a way
   # that requires discarding on-disk rows.
@@ -104,9 +110,7 @@ defmodule Flezha.Recovery.Coordinator do
       :ok
     catch
       kind, reason ->
-        Logger.warning(
-          "[recovery] on_plugin_enabled raised #{inspect(kind)}: #{inspect(reason)}"
-        )
+        Logger.warning("[recovery] on_plugin_enabled raised #{inspect(kind)}: #{inspect(reason)}")
 
         :ok
     end
@@ -196,6 +200,7 @@ defmodule Flezha.Recovery.Coordinator do
   defp extract_namespace_and_processor(_, _), do: :skip
 
   defp do_run_recovery do
+    warn_deprecated_once()
     t0 = System.monotonic_time(:millisecond)
 
     {proc_recovered, proc_failed, aborted_after_proc} = run_processor_phase()
@@ -336,9 +341,7 @@ defmodule Flezha.Recovery.Coordinator do
         end
 
       {plugin_id, _malformed_row}, {ok, err, skipped, _} ->
-        Logger.warning(
-          "[recovery] dropping malformed plugin row #{inspect(plugin_id)}"
-        )
+        Logger.warning("[recovery] dropping malformed plugin row #{inspect(plugin_id)}")
 
         PluginStore.delete(plugin_id)
         {:cont, {ok, err, skipped + 1, false}}
@@ -420,13 +423,7 @@ defmodule Flezha.Recovery.Coordinator do
   defp classify_plugin_error({:undef, _} = e), do: {:error, e, :permanent}
   defp classify_plugin_error(reason), do: {:error, reason, :transient}
 
-  # A plugin is recoverable iff none of its subscriptions carry a
-  # transient-bound provider (e.g. a caller pid that won't survive a BEAM
-  # restart). The test fixtures currently flag `BeamMsgForward` and
-  # `MonitoredIOForward` as non-recoverable.
-  defp recoverable?(%Plugin{provider: provider}) do
-    provider not in [BeamMsgForward, MonitoredIOForward]
-  end
+  defp recoverable?(plugin), do: PluginRecoverability.recoverable?(plugin)
 
   defp clear_incompatible_plugin_rows do
     try do
@@ -452,5 +449,21 @@ defmodule Flezha.Recovery.Coordinator do
       _ ->
         :ok
     end
+  end
+
+  # Deprecation WARN — fires at most once per BEAM, the first time DETS-replay
+  # actually runs. Gating via the same ETS table the abort flag uses so we
+  # do not spawn a second named table.
+  defp warn_deprecated_once do
+    ensure_ets()
+
+    if :ets.insert_new(@ets, {@deprecation_key, true}) do
+      Logger.warning(
+        "[recovery] DETS-replay is deprecated — use 'flz cluster restore' " <>
+          "(see docs/cluster-snapshot.md)"
+      )
+    end
+
+    :ok
   end
 end

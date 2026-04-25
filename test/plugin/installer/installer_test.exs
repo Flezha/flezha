@@ -16,7 +16,9 @@ defmodule Flezha.Plugin.Installer.InstallerTest do
   alias Flezha.Plugin.Installer.Store
 
   setup do
-    tmp = Path.join(System.tmp_dir!(), "flz_installer_svc_test_#{System.unique_integer([:positive])}")
+    tmp =
+      Path.join(System.tmp_dir!(), "flz_installer_svc_test_#{System.unique_integer([:positive])}")
+
     File.mkdir_p!(tmp)
 
     prev_data_dir = Application.get_env(:flezha, :recovery_data_dir)

@@ -32,7 +32,9 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
     # Skip matrix cells that require external resources not available in the
     # local environment. The Java cells are only exercised when the jar exists.
     if runtime == :java do
-      jar_path = Path.join(File.cwd!(), "test/apps/java_compute_engine/target/java_compute_engine.jar")
+      jar_path =
+        Path.join(File.cwd!(), "test/apps/java_compute_engine/target/java_compute_engine.jar")
+
       unless File.exists?(jar_path) do
         ExUnit.Assertions.flunk(
           "Java compute engine jar missing at #{jar_path}. Run `mix test.java_sdk` to build it."
@@ -53,8 +55,11 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
 
       @tag scenario: "18.2 handshake"
       test "handshake + AssignComputeEngineId succeeds", ctx do
-        id = NodeTestHelper.start_compute_engine(@temp_namespace,
-              runtime: ctx.runtime, transport: ctx.transport)
+        id =
+          NodeTestHelper.start_compute_engine(@temp_namespace,
+            runtime: ctx.runtime,
+            transport: ctx.transport
+          )
 
         assert is_binary(id)
         assert String.length(id) > 0
@@ -62,16 +67,23 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
 
       @tag scenario: "18.3 ConnectSocket"
       test "ConnectSocket opens the correct number of stream pairs", ctx do
-        id = NodeTestHelper.start_compute_engine(@temp_namespace,
-              runtime: ctx.runtime, transport: ctx.transport)
+        id =
+          NodeTestHelper.start_compute_engine(@temp_namespace,
+            runtime: ctx.runtime,
+            transport: ctx.transport
+          )
+
         engines = FleetManager.active_compute_engines(@temp_namespace)
         assert id in engines
       end
 
       @tag scenario: "18.4 AddProcessor + data flow"
       test "AddProcessor + send input + observe output", ctx do
-        _id = NodeTestHelper.start_compute_engine(@temp_namespace,
-                runtime: ctx.runtime, transport: ctx.transport)
+        _id =
+          NodeTestHelper.start_compute_engine(@temp_namespace,
+            runtime: ctx.runtime,
+            transport: ctx.transport
+          )
 
         processor = %Flezha.Processor.Builder{
           id: "matrix_processor_#{ctx.runtime}_#{ctx.transport}",
@@ -84,14 +96,18 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
 
       @tag scenario: "18.5 PipeToProcessor local"
       test "PipeToProcessor routes locally when target exists", ctx do
-        _id = NodeTestHelper.start_compute_engine(@temp_namespace,
-                runtime: ctx.runtime, transport: ctx.transport)
+        _id =
+          NodeTestHelper.start_compute_engine(@temp_namespace,
+            runtime: ctx.runtime,
+            transport: ctx.transport
+          )
 
         for factory <- [@test_processor_factory, @test_store_input_factory] do
           processor = %Flezha.Processor.Builder{
             id: "pipe_#{factory}_#{ctx.runtime}_#{ctx.transport}",
             factory_id: factory
           }
+
           {status, _} = ProcessorManager.start_processor(@temp_namespace, processor)
           assert status === :ok
         end
@@ -102,8 +118,12 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
         # Full migration requires two compute engines; verify basic
         # add/remove succeeds as a smoke test here. The full round-trip is
         # asserted in the migration-specific suite.
-        id = NodeTestHelper.start_compute_engine(@temp_namespace,
-              runtime: ctx.runtime, transport: ctx.transport)
+        id =
+          NodeTestHelper.start_compute_engine(@temp_namespace,
+            runtime: ctx.runtime,
+            transport: ctx.transport
+          )
+
         assert is_binary(id)
       end
 
@@ -116,18 +136,31 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
       if transport != :quic do
         @tag scenario: "18.7 unexpected disconnect"
         test "unexpected disconnect triggers auto-reconnect", ctx do
-          id1 = NodeTestHelper.start_compute_engine(@temp_namespace,
-                  runtime: ctx.runtime, transport: ctx.transport)
+          id1 =
+            NodeTestHelper.start_compute_engine(@temp_namespace,
+              runtime: ctx.runtime,
+              transport: ctx.transport
+            )
+
           NodeTestHelper.stop_compute_engine(@temp_namespace, id1)
-          id2 = NodeTestHelper.start_compute_engine(@temp_namespace,
-                  runtime: ctx.runtime, transport: ctx.transport)
+
+          id2 =
+            NodeTestHelper.start_compute_engine(@temp_namespace,
+              runtime: ctx.runtime,
+              transport: ctx.transport
+            )
+
           assert id2 != id1
         end
 
         @tag scenario: "18.8 intentional disconnect"
         test "intentional ComputeEngineDisconnect shuts down cleanly", ctx do
-          id = NodeTestHelper.start_compute_engine(@temp_namespace,
-                runtime: ctx.runtime, transport: ctx.transport)
+          id =
+            NodeTestHelper.start_compute_engine(@temp_namespace,
+              runtime: ctx.runtime,
+              transport: ctx.transport
+            )
+
           NodeTestHelper.stop_compute_engine(@temp_namespace, id)
           :ok
         end

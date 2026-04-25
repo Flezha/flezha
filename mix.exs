@@ -4,7 +4,7 @@ defmodule Flezha.MixProject do
   def project do
     [
       app: :flezha,
-      version: "0.1.0",
+      version: "0.2.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       releases: releases(),
@@ -33,7 +33,16 @@ defmodule Flezha.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger, :runtime_tools, :wx, :observer, :inets, :crypto, :ssl, :telemetry],
+      extra_applications: [
+        :logger,
+        :runtime_tools,
+        :wx,
+        :observer,
+        :inets,
+        :crypto,
+        :ssl,
+        :telemetry
+      ],
       mod: {Flezha.Application, []}
     ]
   end

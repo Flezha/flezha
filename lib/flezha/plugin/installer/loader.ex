@@ -264,10 +264,12 @@ defmodule Flezha.Plugin.Installer.Loader do
         {:cont, {:ok, [pair | acc]}}
       else
         {:error, reason} ->
-          {:halt, {:error, {:partial, Enum.map(acc, &elem(&1, 0)), {:load_failed, module, reason}}}}
+          {:halt,
+           {:error, {:partial, Enum.map(acc, &elem(&1, 0)), {:load_failed, module, reason}}}}
 
         other ->
-          {:halt, {:error, {:partial, Enum.map(acc, &elem(&1, 0)), {:load_failed, module, other}}}}
+          {:halt,
+           {:error, {:partial, Enum.map(acc, &elem(&1, 0)), {:load_failed, module, other}}}}
       end
     end)
   end

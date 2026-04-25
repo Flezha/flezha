@@ -91,7 +91,9 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
              Installer.install(Path.join(f, "with_dep.fpz"))
   end
 
-  test "cycle_a + cycle_b fixtures both fail with missing-dep when installed in isolation", %{fixtures_dir: f} do
+  test "cycle_a + cycle_b fixtures both fail with missing-dep when installed in isolation", %{
+    fixtures_dir: f
+  } do
     # A true dependency cycle cannot occur through install-only because the
     # first install always hits :dependency_missing before the second can
     # land (proper cycle-detection is exercised against the resolver
@@ -136,7 +138,9 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
   test "oversize.fpz is rejected when max_package_bytes is tight", %{fixtures_dir: f} do
     # Re-configure to a small ceiling and restart the Installer so it
     # picks the new config up.
-    Application.put_env(:flezha, :plugin_installer,
+    Application.put_env(
+      :flezha,
+      :plugin_installer,
       Keyword.merge(Application.get_env(:flezha, :plugin_installer, []),
         max_package_bytes: 1_000_000
       )
@@ -149,7 +153,9 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
   test "signed.fpz verifies with paired public key", %{fixtures_dir: f} do
     pub = File.read!(Path.join(f, "signed.pub"))
 
-    Application.put_env(:flezha, :plugin_installer,
+    Application.put_env(
+      :flezha,
+      :plugin_installer,
       Keyword.merge(Application.get_env(:flezha, :plugin_installer, []),
         trusted_keys: [pub],
         require_signature: true,
@@ -162,7 +168,9 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
   end
 
   test "unsigned_required.fpz rejected when require_signature is on", %{fixtures_dir: f} do
-    Application.put_env(:flezha, :plugin_installer,
+    Application.put_env(
+      :flezha,
+      :plugin_installer,
       Keyword.merge(Application.get_env(:flezha, :plugin_installer, []),
         require_signature: true,
         allow_unsigned: false

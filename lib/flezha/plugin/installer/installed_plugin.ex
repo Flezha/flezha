@@ -19,7 +19,16 @@ defmodule Flezha.Plugin.Installer.InstalledPlugin do
         }
 
   @enforce_keys [:id, :version, :status]
-  defstruct [:id, :version, :status, :description, :author, :installed_at, provides: [], modules: []]
+  defstruct [
+    :id,
+    :version,
+    :status,
+    :description,
+    :author,
+    :installed_at,
+    provides: [],
+    modules: []
+  ]
 
   @doc "Projects a `{plugin_id, row}` tuple from the Store to a struct."
   @spec from_row({binary(), map()}) :: t()

@@ -112,7 +112,9 @@ defmodule Flezha.Plugin.Installer.PackageTest do
     ])
 
     tiny_opts = [max_package_bytes: 1_000_000, max_source_files: 200]
-    assert {:error, {:package_too_large, _size, 1_000_000}} = Package.extract(fpz, staging, tiny_opts)
+
+    assert {:error, {:package_too_large, _size, 1_000_000}} =
+             Package.extract(fpz, staging, tiny_opts)
   end
 
   test "too many source files rejected", %{tmp: tmp} do
@@ -144,6 +146,7 @@ defmodule Flezha.Plugin.Installer.PackageTest do
     ])
 
     :ok = Package.extract(fpz, staging, @opts)
+
     assert {:error, {:invalid_layout, {:unexpected_entry, "README.md"}}} =
              Package.validate_layout(staging)
   end
@@ -160,6 +163,7 @@ defmodule Flezha.Plugin.Installer.PackageTest do
     ])
 
     :ok = Package.extract(fpz, staging, @opts)
+
     assert {:error, {:invalid_layout, {:unexpected_source, _}}} =
              Package.validate_layout(staging)
   end

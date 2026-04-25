@@ -1,7 +1,13 @@
 # Flezha
 
 ## Description
-Distributed stateful processors. Provdes a static and dynamic creation of processors.
+Distributed stateful processors. Provides static and dynamic creation of processors.
+
+## Features
+- Clustered, hot-swap-migratable processors
+- SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
+- Installable plugin subsystem ([`docs/plugin_installation.md`](docs/plugin_installation.md))
+- Cluster-wide snapshot & restore via `flz cluster` ([`docs/cluster-snapshot.md`](docs/cluster-snapshot.md))
 
 ## Building
 - Copy `.env.example` and rename to `.env`

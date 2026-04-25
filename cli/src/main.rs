@@ -1,4 +1,5 @@
 mod agent;
+mod cluster;
 mod compute_engine;
 mod namespace;
 mod plugin;
@@ -22,6 +23,7 @@ fn main() {
         "namespace" => namespace::handle_namespace_command(&args[2..]),
         "compute-engine" => compute_engine::handle_compute_engine_command(&args[2..]),
         "plugin" => plugin::handle_plugin_command(&args[2..]),
+        "cluster" => cluster::handle_cluster_command(&args[2..]),
         "help" | "--help" | "-h" => print_help(),
         _ => {
             eprintln!("Error: Unknown command '{}'", args[1]);
@@ -43,6 +45,7 @@ fn print_help() {
     println!("    namespace      Namespace management commands");
     println!("    compute-engine Compute engine management commands");
     println!("    plugin         Plugin management commands");
+    println!("    cluster        Cluster snapshot/restore (see docs/cluster-snapshot.md)");
     println!("    help           Show this help message");
     println!();
     println!("Use 'flz <COMMAND> help' for more information on a specific command.");
@@ -54,4 +57,6 @@ fn print_help() {
     println!("    flz plugin list --installed");
     println!("    flz plugin enable kafka_producer provider1 Xhosts=localhost:9092");
     println!("    flz namespace list --output json");
+    println!("    flz cluster snapshot /var/lib/flezha/snap.flz");
+    println!("    flz cluster restore /var/lib/flezha/snap.flz --warn-if-older-than 24h");
 }

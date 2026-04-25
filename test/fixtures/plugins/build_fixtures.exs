@@ -117,8 +117,7 @@ defmodule BuildFixtures do
     entries = [
       {"manifest.exs", manifest},
       {"src/#{mod_filename(mod)}", src},
-      {"CHECKSUMS.sha256",
-       checksums_for(manifest, [{"src/#{mod_filename(mod)}", src}])}
+      {"CHECKSUMS.sha256", checksums_for(manifest, [{"src/#{mod_filename(mod)}", src}])}
     ]
 
     create_tarball(fpz, entries)
@@ -137,8 +136,7 @@ defmodule BuildFixtures do
     entries = [
       {"manifest.exs", manifest},
       {"src/#{mod_filename(mod)}", src},
-      {"CHECKSUMS.sha256",
-       checksums_for(manifest, [{"src/#{mod_filename(mod)}", src}])}
+      {"CHECKSUMS.sha256", checksums_for(manifest, [{"src/#{mod_filename(mod)}", src}])}
     ]
 
     create_tarball(Path.join(out, "#{id}.fpz"), entries)
@@ -201,8 +199,7 @@ defmodule BuildFixtures do
     entries = [
       {"manifest.exs", manifest},
       {"src/#{mod_filename(mod)}", src},
-      {"CHECKSUMS.sha256",
-       checksums_for(manifest, [{"src/#{mod_filename(mod)}", src}])}
+      {"CHECKSUMS.sha256", checksums_for(manifest, [{"src/#{mod_filename(mod)}", src}])}
     ]
 
     create_tarball(Path.join(out, "#{id}.fpz"), entries)

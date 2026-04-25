@@ -59,6 +59,7 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
 
     unique = System.unique_integer([:positive])
     mod = :"Elixir.FlzLoaderTest.Basic#{unique}"
+
     {:module, ^mod, bin, _} =
       defmodule_unique(unique, :basic, "def hello, do: :from_load")
 

@@ -143,16 +143,24 @@ config :flezha,
        val -> String.downcase(val) in ["true", "1", "yes"]
      end),
 
-  # When set to a factory id (e.g. "market-init-state"), `SysMode` defers
-  # `Coordinator.start_recovery_async/0` until either a connected node
-  # advertises that factory OR the wait timeout fires. Empty string ("")
-  # reverts to the raw `recovery_window_ms` timer. See design §D7.
-  recovery_wait_factory: System.get_env("FLEZHA_RECOVERY_WAIT_FACTORY", ""),
-  recovery_wait_namespace: System.get_env("FLEZHA_RECOVERY_WAIT_NAMESPACE", "default"),
-  recovery_wait_timeout_ms:
-    (case Integer.parse(System.get_env("FLEZHA_RECOVERY_WAIT_TIMEOUT_MS", "60000")) do
-       {n, ""} when n >= 0 -> n
-       _ -> 60_000
+  # When set to `false`, the SYSMODE notification path used by
+  # `flz cluster restore` is disabled and the legacy DETS-replay loop fires
+  # on the bootstrap window timer as before. Default `true` — operators on
+  # the new explicit-restore flow get bootstrap-timer suppression for free.
+  prefer_explicit_restore?:
+    (case System.get_env("FLEZHA_PREFER_EXPLICIT_RESTORE") do
+       nil -> Application.get_env(:flezha, :prefer_explicit_restore?, true)
+       val -> String.downcase(val) in ["true", "1", "yes"]
+     end),
+
+  # Per-processor cap on captured-state size when writing a cluster snapshot.
+  # Processors whose serialised state exceeds the cap are written to the
+  # snapshot without their state binary; restore primes them with empty
+  # default state and a one-time INFO log names the processor id.
+  snapshot_state_cap_bytes:
+    (case Integer.parse(System.get_env("FLEZHA_SNAPSHOT_STATE_CAP_BYTES", "8388608")) do
+       {n, ""} when n > 0 -> n
+       _ -> 8_388_608
      end),
 
   # ------------------------------------------------------------------------------------------------
@@ -218,8 +226,8 @@ if Flezha.Plugin.Installer.RuntimeConfig.any_env_var_present?(plugin_env_map) do
   base = Application.get_env(:flezha, :plugin_installer, [])
 
   config :flezha,
-    :plugin_installer,
-    Flezha.Plugin.Installer.RuntimeConfig.resolve_plugin_installer(plugin_env_map, base)
+         :plugin_installer,
+         Flezha.Plugin.Installer.RuntimeConfig.resolve_plugin_installer(plugin_env_map, base)
 end
 
 # ------------------------------------------------------------------------------------------------

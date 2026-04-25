@@ -5,7 +5,10 @@ defmodule Flezha do
   alias Flezha.Service.PluginManager
 
   @moduledoc """
-  Documentation for `Flezha`.
+  Flezha is a compute engine platform with an Elixir agent and SDK runtimes
+  in Rust, Java, and others. It supports clustered processors with hot-swap
+  migration and an explicit, CLI-driven cluster snapshot/restore mechanism
+  (see `docs/cluster-snapshot.md`).
   """
 
   defdelegate start_processor(namespace, processor), to: ProcessorManager

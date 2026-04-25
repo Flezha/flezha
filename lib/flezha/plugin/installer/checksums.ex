@@ -111,7 +111,9 @@ defmodule Flezha.Plugin.Installer.Checksums do
   end
 
   defp collect_covered_paths(staging_dir) do
-    manifest = if File.regular?(Path.join(staging_dir, "manifest.exs")), do: ["manifest.exs"], else: []
+    manifest =
+      if File.regular?(Path.join(staging_dir, "manifest.exs")), do: ["manifest.exs"], else: []
+
     src_root = Path.join(staging_dir, "src")
 
     src =

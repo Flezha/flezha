@@ -157,7 +157,8 @@ defmodule Flezha.Plugin.Installer.Compiler do
     if produced == expected_sorted do
       :ok
     else
-      {:error, {:manifest_invalid, {:module_mismatch, expected: expected_sorted, produced: produced}}}
+      {:error,
+       {:manifest_invalid, {:module_mismatch, expected: expected_sorted, produced: produced}}}
     end
   end
 end

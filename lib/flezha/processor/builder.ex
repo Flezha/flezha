@@ -1,4 +1,26 @@
 defmodule Flezha.Processor.Builder do
+  @moduledoc """
+  Constructor for processor specs handed to `Flezha.Service.ProcessorManager.start_processor/2`.
+
+  ## Recognised opts
+
+  The `opts` keyword list is opaque to most callers but a few keys are
+  contractually meaningful:
+
+    * `:default_input_type` — string tag for the processor's default input
+      type (used by the Overwatch's `:io_in` handler when metadata omits it).
+    * `:snapshot_interval` — overrides the agent-wide
+      `FLEZHA_OVERWATCH_STATE_SNAPSHOT_INTERVAL_MS` for this processor.
+      Accepts a non-negative integer (ms), the string `"disabled"`, or `:disabled`.
+    * `:plugins` — list of `%Flezha.Plugin{}` to subscribe at processor start.
+    * `:initial_state_binary` — opaque SDK-serialised state binary handed to
+      the compute engine via the `ProcessorApplyState` control command before
+      the first input is forwarded. Used by `Flezha.Cluster.Snapshot` on
+      restore so a re-spawned processor begins with primed state. SDKs that
+      do not implement Apply respond with `apply_state_not_supported` and
+      the processor proceeds with empty default state.
+  """
+
   alias Flezha.Service.Validator
 
   @type t() :: %__MODULE__{

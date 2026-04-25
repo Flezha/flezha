@@ -20,6 +20,7 @@ message CommandRequest {
         ProcessorState processor_state = 8;
         ComputeEngineDisconnect compute_engine_disconnect = 9;
         ProcessorMessage processor_message = 10;
+        ProcessorApplyState processor_apply_state = 11;
     }
 }
 
@@ -72,4 +73,16 @@ message ProcessorMessage {
 message ProcessorMessageResponse {
     bytes payload = 1;
     string error = 2;
+}
+
+// Inverse of ProcessorState. Sent by the agent to a compute-engine SDK to
+// prime a freshly-spawned processor's GenServer/struct state from a
+// previously-captured `state_binary`. Round-trips with the same opaque
+// SDK-internal serialization used by ProcessorState. SDKs that do not
+// implement Apply respond with status="error" and error[] containing the
+// canonical token "apply_state_not_supported".
+message ProcessorApplyState {
+    string processor_id = 1;
+    string factory_id = 2;
+    bytes state_binary = 3;
 }

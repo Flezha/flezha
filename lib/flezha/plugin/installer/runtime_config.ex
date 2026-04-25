@@ -39,19 +39,30 @@ defmodule Flezha.Plugin.Installer.RuntimeConfig do
   on each `FLEZHA_PLUGIN_TRUSTED_KEYS` path entry to produce its PEM
   bytes; the default reads the file from disk.
   """
-  @spec resolve_plugin_installer(%{optional(String.t()) => String.t()}, keyword(), (String.t() -> binary())) ::
+  @spec resolve_plugin_installer(%{optional(String.t()) => String.t()}, keyword(), (String.t() ->
+                                                                                      binary())) ::
           keyword()
   def resolve_plugin_installer(env_map, base, key_loader \\ &File.read!/1) do
     Keyword.merge(base,
       plugin_root:
-        Map.get(env_map, "FLEZHA_PLUGIN_ROOT", Keyword.get(base, :plugin_root, "app_data/plugins")),
+        Map.get(
+          env_map,
+          "FLEZHA_PLUGIN_ROOT",
+          Keyword.get(base, :plugin_root, "app_data/plugins")
+        ),
       trusted_keys: resolve_trusted_keys(env_map, base, key_loader),
       require_signature:
         resolve_bool(env_map, "FLEZHA_PLUGIN_REQUIRE_SIGNATURE", base, :require_signature, false),
       allow_unsigned:
         resolve_bool(env_map, "FLEZHA_PLUGIN_ALLOW_UNSIGNED", base, :allow_unsigned, true),
       max_package_bytes:
-        resolve_int(env_map, "FLEZHA_PLUGIN_MAX_PACKAGE_BYTES", base, :max_package_bytes, 50_000_000),
+        resolve_int(
+          env_map,
+          "FLEZHA_PLUGIN_MAX_PACKAGE_BYTES",
+          base,
+          :max_package_bytes,
+          50_000_000
+        ),
       max_source_files:
         resolve_int(env_map, "FLEZHA_PLUGIN_MAX_SOURCE_FILES", base, :max_source_files, 200)
     )

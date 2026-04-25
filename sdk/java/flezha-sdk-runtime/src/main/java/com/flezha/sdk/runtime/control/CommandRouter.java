@@ -11,6 +11,7 @@ import com.flezha.sdk.runtime.control.handlers.ComputeEngineDisconnectHandler;
 import com.flezha.sdk.runtime.control.handlers.ConnectSocketHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationDeserializationHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationSerializationHandler;
+import com.flezha.sdk.runtime.control.handlers.ProcessorApplyStateHandler;
 import com.flezha.sdk.runtime.control.handlers.ProcessorMessageHandler;
 import com.flezha.sdk.runtime.control.handlers.ProcessorStateHandler;
 import com.flezha.sdk.runtime.control.handlers.RemProcessorHandler;
@@ -39,16 +40,18 @@ public final class CommandRouter {
     public CommandRouter(@Nonnull ComputeEngineContext ctx, long controlStreamId) {
         this.ctx = ctx;
         this.controlStreamId = controlStreamId;
-        this.handlers = Map.of(
-                CommandRequest.CommandCase.ASSIGN_COMPUTE_ENGINE_ID, new AssignComputeEngineIdHandler(),
-                CommandRequest.CommandCase.CONNECT_SOCKET, new ConnectSocketHandler(),
-                CommandRequest.CommandCase.ADD_PROCESSOR, new AddProcessorHandler(),
-                CommandRequest.CommandCase.REM_PROCESSOR, new RemProcessorHandler(),
-                CommandRequest.CommandCase.PROCESSOR_STATE, new ProcessorStateHandler(),
-                CommandRequest.CommandCase.MIGRATION_SERIALIZATION, new MigrationSerializationHandler(),
-                CommandRequest.CommandCase.MIGRATION_DESERIALIZATION, new MigrationDeserializationHandler(),
-                CommandRequest.CommandCase.COMPUTE_ENGINE_DISCONNECT, new ComputeEngineDisconnectHandler(),
-                CommandRequest.CommandCase.PROCESSOR_MESSAGE, new ProcessorMessageHandler());
+        // Map.of has 10-entry overloads; switch to Map.ofEntries past that.
+        this.handlers = Map.ofEntries(
+                Map.entry(CommandRequest.CommandCase.ASSIGN_COMPUTE_ENGINE_ID, new AssignComputeEngineIdHandler()),
+                Map.entry(CommandRequest.CommandCase.CONNECT_SOCKET, new ConnectSocketHandler()),
+                Map.entry(CommandRequest.CommandCase.ADD_PROCESSOR, new AddProcessorHandler()),
+                Map.entry(CommandRequest.CommandCase.REM_PROCESSOR, new RemProcessorHandler()),
+                Map.entry(CommandRequest.CommandCase.PROCESSOR_STATE, new ProcessorStateHandler()),
+                Map.entry(CommandRequest.CommandCase.MIGRATION_SERIALIZATION, new MigrationSerializationHandler()),
+                Map.entry(CommandRequest.CommandCase.MIGRATION_DESERIALIZATION, new MigrationDeserializationHandler()),
+                Map.entry(CommandRequest.CommandCase.COMPUTE_ENGINE_DISCONNECT, new ComputeEngineDisconnectHandler()),
+                Map.entry(CommandRequest.CommandCase.PROCESSOR_MESSAGE, new ProcessorMessageHandler()),
+                Map.entry(CommandRequest.CommandCase.PROCESSOR_APPLY_STATE, new ProcessorApplyStateHandler()));
     }
 
     public void route(@Nonnull Frame frame) {

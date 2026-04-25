@@ -57,7 +57,9 @@ defmodule Flezha.Recovery.CoordinatorTest do
             nodes: [current],
             child_spec: %{
               id: "p-local",
-              start: {Flezha.Processor.Overwatch, :start_link, [{"ns", %Builder{id: "p-local", factory_id: "f"}}]},
+              start:
+                {Flezha.Processor.Overwatch, :start_link,
+                 [{"ns", %Builder{id: "p-local", factory_id: "f"}}]},
               restart: :transient
             },
             metadata: %{}
@@ -66,10 +68,12 @@ defmodule Flezha.Recovery.CoordinatorTest do
             child_id: "p-remote",
             pid: :c.pid(0, 250, 0),
             result: :ok,
-            nodes: [:"other@host"],
+            nodes: [:other@host],
             child_spec: %{
               id: "p-remote",
-              start: {Flezha.Processor.Overwatch, :start_link, [{"ns", %Builder{id: "p-remote", factory_id: "f"}}]},
+              start:
+                {Flezha.Processor.Overwatch, :start_link,
+                 [{"ns", %Builder{id: "p-remote", factory_id: "f"}}]},
               restart: :transient
             },
             metadata: %{}

@@ -23,7 +23,8 @@ defmodule Flezha.Plugin.Installer.Signature do
   `trusted_keys` until one validates. Returns `:ok` or
   `{:error, :signature_invalid}`.
   """
-  @spec verify(binary(), binary(), [key()]) :: :ok | {:error, :signature_invalid | :no_trusted_keys}
+  @spec verify(binary(), binary(), [key()]) ::
+          :ok | {:error, :signature_invalid | :no_trusted_keys}
   def verify(msg, signature, trusted_keys)
       when is_binary(msg) and is_binary(signature) and is_list(trusted_keys) do
     cond do

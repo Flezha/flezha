@@ -1,17 +1,21 @@
 defmodule Flezha.Recovery.PluginStore do
   @moduledoc """
-  Durable local storage for recoverable plugins enabled on this node.
+  **DEPRECATED.** Durable local storage for recoverable plugins enabled on
+  this node. Use `Flezha.Cluster.Snapshot` for restart-survival; see
+  `docs/cluster-snapshot.md`. Targeted for removal in the next major version.
 
   Parallel to `Flezha.Recovery.Store` (which covers processors) but keyed by
   `plugin_id` and backed by its own DETS file under the same
   `recovery_data_dir`. Rows are the driver struct with transient fields
-  (pids, live connection refs) stripped by the caller — see design §D12.
+  (pids, live connection refs) stripped by the caller.
 
   Opened with `auto_save: :infinity` and sync-on-event: every `put/2` and
   `delete/1` calls `:dets.sync/1` before returning. Plugin lifecycle events
   are operator-driven and infrequent, so an auto_save timer would only add
   a loss window.
   """
+
+  @deprecated "Use Flezha.Cluster.Snapshot for restart-survival. Targeted for removal in the next major version."
 
   use GenServer
 

@@ -16,7 +16,12 @@ defmodule Flezha.Recovery.StoreTest do
   @table :flz_recovery
 
   setup do
-    tmp = Path.join(System.tmp_dir!(), "flz_recovery_store_test_#{System.unique_integer([:positive])}")
+    tmp =
+      Path.join(
+        System.tmp_dir!(),
+        "flz_recovery_store_test_#{System.unique_integer([:positive])}"
+      )
+
     File.mkdir_p!(tmp)
 
     prev_dir = Application.get_env(:flezha, :recovery_data_dir)

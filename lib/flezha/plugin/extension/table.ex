@@ -176,9 +176,7 @@ defmodule Flezha.Plugin.Extension.Table do
             {:ok, do_unsubscribe(table, plugin_id, plugin)}
 
           _ ->
-            Logger.error(
-              "[Extension.Table] subscriber #{plugin_id} crashed: #{inspect(reason)}"
-            )
+            Logger.error("[Extension.Table] subscriber #{plugin_id} crashed: #{inspect(reason)}")
 
             {:ok, schedule_retry(table, plugin_id, plugin)}
         end
@@ -238,9 +236,7 @@ defmodule Flezha.Plugin.Extension.Table do
           new_table
 
         {:error, reason} ->
-          Logger.warning(
-            "[Extension.Table] failed to rehydrate #{plugin_id}: #{inspect(reason)}"
-          )
+          Logger.warning("[Extension.Table] failed to rehydrate #{plugin_id}: #{inspect(reason)}")
 
           acc
       end
@@ -321,7 +317,9 @@ defmodule Flezha.Plugin.Extension.Table do
   defp callback_name(name, _kind), do: name
 
   defp validate_sub_opts(_kind, sub_opts) when is_list(sub_opts), do: :ok
-  defp validate_sub_opts(_kind, _other), do: {:error, {:invalid_subscription_opts, :not_a_keyword}}
+
+  defp validate_sub_opts(_kind, _other),
+    do: {:error, {:invalid_subscription_opts, :not_a_keyword}}
 
   # `position` only makes sense for ordered kinds (:fold, :transform).
   defp validate_kind_specific(kind, _name, sub_opts, _table, _plugin)
@@ -735,12 +733,24 @@ defmodule Flezha.Plugin.Extension.Table do
       end)
 
     case Task.yield(task, timeout_ms) do
-      {:ok, {:ok_return, {:ok, %_{} = new_ctx}}} -> {:ok, new_ctx}
-      {:ok, {:ok_return, {:ok, other}}} -> {:error, {:invalid_return, other}}
-      {:ok, {:ok_return, {:error, reason}}} -> {:error, reason}
-      {:ok, {:ok_return, other}} -> {:error, {:invalid_return, other}}
-      {:ok, {:exception, _, _, _} = exc} -> exc
-      {:exit, reason} -> {:error, {:exit, reason}}
+      {:ok, {:ok_return, {:ok, %_{} = new_ctx}}} ->
+        {:ok, new_ctx}
+
+      {:ok, {:ok_return, {:ok, other}}} ->
+        {:error, {:invalid_return, other}}
+
+      {:ok, {:ok_return, {:error, reason}}} ->
+        {:error, reason}
+
+      {:ok, {:ok_return, other}} ->
+        {:error, {:invalid_return, other}}
+
+      {:ok, {:exception, _, _, _} = exc} ->
+        exc
+
+      {:exit, reason} ->
+        {:error, {:exit, reason}}
+
       nil ->
         Task.shutdown(task, :brutal_kill)
         :timeout
@@ -833,10 +843,11 @@ defmodule Flezha.Plugin.Extension.Table do
         remove_subscription(acc, name, plugin_id)
       end)
 
-    new_table = Enum.reduce(subs, table, fn {name, sub_opts}, acc ->
-      %{kind: kind} = Map.fetch!(acc.catalog, name)
-      add_subscription(acc, kind, name, plugin_id, plugin, sub_opts)
-    end)
+    new_table =
+      Enum.reduce(subs, table, fn {name, sub_opts}, acc ->
+        %{kind: kind} = Map.fetch!(acc.catalog, name)
+        add_subscription(acc, kind, name, plugin_id, plugin, sub_opts)
+      end)
 
     %{new_table | retries: Map.delete(new_table.retries, plugin_id)}
   rescue

@@ -429,8 +429,11 @@ defmodule Flezha.Service.CliManager do
       {[], _} ->
         message =
           case context do
-            nil -> "No #{item_name} found."
-            %{display: display, value: value} -> "No #{item_name} found for #{display} '#{value}'."
+            nil ->
+              "No #{item_name} found."
+
+            %{display: display, value: value} ->
+              "No #{item_name} found for #{display} '#{value}'."
           end
 
         IO.puts(message)
@@ -438,8 +441,11 @@ defmodule Flezha.Service.CliManager do
       {items, _} ->
         header =
           case context do
-            nil -> "#{String.capitalize(item_name)}:"
-            %{display: display, value: value} -> "#{String.capitalize(item_name)} in #{display} '#{value}':"
+            nil ->
+              "#{String.capitalize(item_name)}:"
+
+            %{display: display, value: value} ->
+              "#{String.capitalize(item_name)} in #{display} '#{value}':"
           end
 
         IO.puts(header)
@@ -778,4 +784,108 @@ defmodule Flezha.Service.CliManager do
 
   defp normalize_namespace(""), do: "default"
   defp normalize_namespace(namespace), do: namespace
+
+  ## Cluster snapshot/restore -------------------------------------------------
+
+  @doc """
+  Capture a cluster snapshot to `path`. Wired by `flz cluster snapshot`.
+  Prints a one-line operator summary and exits with a non-zero status when
+  the coordinator returns `{:error, _}`.
+  """
+  def cluster_snapshot(path, opts_json \\ "{}") do
+    opts = decode_cluster_opts(opts_json)
+    coord_opts = build_snapshot_opts(opts)
+
+    case Flezha.Cluster.Snapshot.Coordinator.snapshot(path, coord_opts) do
+      {:ok, %{processors: p, plugins: pl, bytes: b}} ->
+        IO.puts("snapshot: #{p} processors, #{pl} plugins, #{b} bytes written to #{path}")
+
+      {:error, reason} ->
+        IO.puts(:stderr, "snapshot failed: #{inspect(reason)}")
+        System.halt(1)
+    end
+  end
+
+  @doc """
+  Restore a cluster snapshot from `path`. Wired by `flz cluster restore`.
+  Prints a one-line operator summary and exits with a non-zero status when
+  the coordinator returns `{:error, _}`.
+  """
+  def cluster_restore(path, opts_json \\ "{}") do
+    opts = decode_cluster_opts(opts_json)
+    coord_opts = build_restore_opts(opts)
+
+    case Flezha.Cluster.Snapshot.Coordinator.restore(path, coord_opts) do
+      {:ok, %{processors: p, plugins: pl}} ->
+        IO.puts("restore: #{p} processors, #{pl} plugins applied from #{path}")
+
+      {:error, reason} ->
+        IO.puts(:stderr, "restore failed: #{inspect(reason)}")
+        System.halt(1)
+    end
+  end
+
+  defp decode_cluster_opts(""), do: %{}
+  defp decode_cluster_opts("{}"), do: %{}
+
+  defp decode_cluster_opts(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, map} when is_map(map) -> map
+      _ -> %{}
+    end
+  end
+
+  defp build_snapshot_opts(map) do
+    [
+      peer_timeout_ms: parse_pos_int(Map.get(map, "peer_timeout_ms"), 5_000),
+      strict?: parse_bool(Map.get(map, "strict"), false)
+    ]
+  end
+
+  defp build_restore_opts(map) do
+    namespace = Map.get(map, "namespace")
+    namespace = if is_binary(namespace) and namespace != "", do: namespace, else: nil
+
+    [
+      peer_timeout_ms: parse_pos_int(Map.get(map, "peer_timeout_ms"), 5_000),
+      warn_if_older_than_ms: parse_duration(Map.get(map, "warn_if_older_than")),
+      namespace: namespace
+    ]
+  end
+
+  defp parse_pos_int(nil, default), do: default
+  defp parse_pos_int(n, _default) when is_integer(n) and n > 0, do: n
+
+  defp parse_pos_int(n, default) when is_binary(n) do
+    case Integer.parse(n) do
+      {parsed, ""} when parsed > 0 -> parsed
+      _ -> default
+    end
+  end
+
+  defp parse_pos_int(_, default), do: default
+
+  defp parse_bool(true, _), do: true
+  defp parse_bool("true", _), do: true
+  defp parse_bool(_, default), do: default
+
+  # Accepts integers (raw ms), binary durations like "30s", "10m", "12h", "7d",
+  # or `nil`/empty (treated as `:infinity`).
+  defp parse_duration(nil), do: :infinity
+  defp parse_duration(""), do: :infinity
+  defp parse_duration("infinity"), do: :infinity
+  defp parse_duration(n) when is_integer(n) and n > 0, do: n
+
+  defp parse_duration(s) when is_binary(s) do
+    case Regex.run(~r/^(\d+)([smhd]?)$/, s) do
+      [_, num, ""] -> String.to_integer(num)
+      [_, num, "s"] -> String.to_integer(num) * 1_000
+      [_, num, "m"] -> String.to_integer(num) * 60 * 1_000
+      [_, num, "h"] -> String.to_integer(num) * 60 * 60 * 1_000
+      [_, num, "d"] -> String.to_integer(num) * 24 * 60 * 60 * 1_000
+      _ -> :infinity
+    end
+  end
+
+  defp parse_duration(_), do: :infinity
 end

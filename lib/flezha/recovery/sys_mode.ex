@@ -6,7 +6,7 @@ defmodule Flezha.Recovery.SysMode do
       :recover    -- just booted, window armed, DETS has ≥1 row
       :normal     -- authoritative peer; window elapsed or short-circuited
 
-  Transitions (see `openspec/changes/add-failure-recovery-mode/design.md`):
+  Transitions:
     - `init/1` picks `:normal` (disabled), `:recover` (rows) or `:bootstrap` (empty).
     - `{:peer_sysmode, _node, :normal}` while in `:recover` cancels the timer
       and jumps to `:normal` without running recovery (abort flag set for any
@@ -15,6 +15,10 @@ defmodule Flezha.Recovery.SysMode do
       `Coordinator` to run recovery; mode stays `:recover` until
       `:recovery_done` arrives, then → `:normal`.
     - `:window_elapsed` while in `:bootstrap` simply → `:normal`.
+    - `{:explicit_restore_in_progress, ref}` cast (from
+      `Flezha.Cluster.Snapshot.Coordinator`) cancels the bootstrap timer and
+      transitions directly to `:normal`. Gated on
+      `:flezha, :prefer_explicit_restore?` (default `true`).
 
   Recovery execution is delegated to `Flezha.Recovery.Coordinator` so SysMode
   remains responsive to peer messages (mid-recovery abort) during the loop.
@@ -24,16 +28,24 @@ defmodule Flezha.Recovery.SysMode do
 
   require Logger
 
-  alias Flezha.ComputeEngine.FleetManager
   alias Flezha.Recovery.Store
 
   @type mode() :: :bootstrap | :recover | :normal
-  @type reason() :: :init | :disabled | :window_elapsed | :peer_normal | :factory_advertised
+  @type reason() ::
+          :init
+          | :disabled
+          | :window_elapsed
+          | :peer_normal
+          | :explicit_restore
 
-  # Factory-gate poll cadence. 500ms keeps the startup delay small while the
-  # INFO throttle (see `@wait_log_interval_ms`) keeps the log quiet.
-  @wait_poll_interval_ms 500
-  @wait_log_interval_ms 5_000
+  # Legacy env vars removed in favour of `flz cluster restore`. Kept as a
+  # boot-time deprecation surface so operators with stale config see one
+  # WARN line per offending var instead of silent ignore.
+  @removed_env_vars [
+    "FLEZHA_RECOVERY_WAIT_FACTORY",
+    "FLEZHA_RECOVERY_WAIT_NAMESPACE",
+    "FLEZHA_RECOVERY_WAIT_TIMEOUT_MS"
+  ]
 
   ## Public API
 
@@ -82,34 +94,21 @@ defmodule Flezha.Recovery.SysMode do
   def init(_opts) do
     enabled = Application.get_env(:flezha, :recovery_enabled, true)
     window_ms = Application.get_env(:flezha, :recovery_window_ms, 10_000)
-    wait_factory = Application.get_env(:flezha, :recovery_wait_factory, "")
-    wait_namespace = Application.get_env(:flezha, :recovery_wait_namespace, "default")
-
-    wait_timeout_ms = Application.get_env(:flezha, :recovery_wait_timeout_ms, 60_000)
     store_count = safe_store_count()
+
+    warn_removed_env_vars()
 
     state = %{
       mode: :bootstrap,
       window_ms: window_ms,
-      wait_factory: wait_factory,
-      wait_namespace: wait_namespace,
-      wait_timeout_ms: wait_timeout_ms,
       timer: nil,
-      wait_poll_ref: nil,
-      last_wait_log_ms: 0
+      explicit_restore_ref: nil
     }
 
     state =
       cond do
         not enabled ->
           transition(state, :normal, :disabled)
-
-        store_count > 0 and wait_factory != "" ->
-          # Factory-gated recovery path (design §D7). Replay fires either on
-          # first matching advertisement or on `wait_timeout_ms`.
-          state
-          |> transition(:recover, :init)
-          |> arm_factory_gate()
 
         store_count > 0 and window_ms > 0 ->
           state
@@ -130,18 +129,33 @@ defmodule Flezha.Recovery.SysMode do
           transition(state, :normal, :window_elapsed)
       end
 
-    gate =
-      if wait_factory == "",
-        do: "disabled",
-        else: "factory=#{wait_factory} namespace=#{wait_namespace} timeout_ms=#{wait_timeout_ms}"
-
     Logger.info(
       "[recovery] data_dir=#{inspect(Application.get_env(:flezha, :recovery_data_dir))} " <>
         "rows=#{store_count} mode=#{state.mode} window_ms=#{window_ms} " <>
-        "enabled=#{enabled} wait_gate=#{gate}"
+        "enabled=#{enabled}"
     )
 
     {:ok, state}
+  end
+
+  # Boot-time WARN if any of the now-removed `FLEZHA_RECOVERY_WAIT_*` env vars
+  # is still set in the operator's environment. Quiet on a fresh boot with
+  # none of the vars set — the var-list lookup short-circuits cheaply.
+  defp warn_removed_env_vars do
+    Enum.each(@removed_env_vars, fn var ->
+      case System.get_env(var) do
+        nil ->
+          :ok
+
+        "" ->
+          :ok
+
+        _value ->
+          Logger.warning(
+            "[recovery] #{var} is no longer supported — see docs/cluster-snapshot.md"
+          )
+      end
+    end)
   end
 
   @impl true
@@ -158,7 +172,6 @@ defmodule Flezha.Recovery.SysMode do
 
     new_state =
       state
-      |> cancel_wait_poll()
       |> cancel_timer()
       |> transition(:normal, :peer_normal)
 
@@ -171,6 +184,49 @@ defmodule Flezha.Recovery.SysMode do
     {:noreply, state}
   end
 
+  # Explicit-restore notifications from `Flezha.Cluster.Snapshot.Coordinator`.
+  # When `:prefer_explicit_restore?` is on (default), a started restore
+  # cancels the bootstrap-window timer and transitions directly to `:normal`
+  # so the DETS-replay loop never fires for this boot.
+  def handle_cast({:explicit_restore_in_progress, ref}, state) do
+    if Application.get_env(:flezha, :prefer_explicit_restore?, true) do
+      :telemetry.execute(
+        [:flezha, :recovery, :explicit_restore_started],
+        %{},
+        %{ref: ref, node: node()}
+      )
+
+      Logger.info(
+        "[recovery] explicit restore in progress (initiator: #{inspect(node())}) — " <>
+          "bootstrap timer suppressed"
+      )
+
+      set_abort_flag(true)
+
+      new_state =
+        state
+        |> cancel_timer()
+        |> transition(:normal, :explicit_restore)
+        |> Map.put(:explicit_restore_ref, ref)
+
+      {:noreply, new_state}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_cast({:explicit_restore_done, ref, result}, state) do
+    if Application.get_env(:flezha, :prefer_explicit_restore?, true) do
+      :telemetry.execute(
+        [:flezha, :recovery, :explicit_restore_completed],
+        %{},
+        %{ref: ref, result: result, node: node()}
+      )
+    end
+
+    {:noreply, state}
+  end
+
   @impl true
   def handle_info(:window_elapsed, state) do
     state = %{state | timer: nil}
@@ -179,6 +235,7 @@ defmodule Flezha.Recovery.SysMode do
       case state.mode do
         :recover ->
           # Kick off async recovery; transition to :normal when :recovery_done arrives.
+          maybe_warn_dets_fallback(state)
           request_recovery()
           state
 
@@ -192,56 +249,9 @@ defmodule Flezha.Recovery.SysMode do
     {:noreply, new_state}
   end
 
-  def handle_info(:wait_factory_poll, %{mode: :recover} = state) do
-    case factories_all_advertised?(state.wait_factory, state.wait_namespace) do
-      true ->
-        Logger.info(
-          "[recovery] factories #{state.wait_factory} advertised — triggering replay"
-        )
-
-        new_state =
-          state
-          |> cancel_wait_poll()
-          |> cancel_timer()
-
-        request_recovery()
-        {:noreply, new_state}
-
-      false ->
-        {:noreply, reschedule_wait_poll(state)}
-    end
-  end
-
-  def handle_info(:wait_factory_poll, state) do
-    # Already advanced past :recover (peer_normal, :recovery_done). Drop the
-    # poll tick; any outstanding timeout is still valid and will be ignored
-    # if mode is no longer :recover.
-    {:noreply, %{state | wait_poll_ref: nil}}
-  end
-
-  def handle_info(:wait_factory_timeout, %{mode: :recover} = state) do
-    Logger.warning(
-      "[recovery] factory #{state.wait_factory} not advertised within " <>
-        "#{state.wait_timeout_ms}ms — proceeding with replay; fail-open semantics may yield empty state"
-    )
-
-    new_state =
-      state
-      |> cancel_wait_poll()
-      |> Map.put(:timer, nil)
-
-    request_recovery()
-    {:noreply, new_state}
-  end
-
-  def handle_info(:wait_factory_timeout, state) do
-    {:noreply, %{state | timer: nil}}
-  end
-
   def handle_info({:recovery_done, _result}, %{mode: :recover} = state) do
     {:noreply,
      state
-     |> cancel_wait_poll()
      |> cancel_timer()
      |> transition(:normal, :window_elapsed)}
   end
@@ -253,6 +263,22 @@ defmodule Flezha.Recovery.SysMode do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
+  # Bootstrap window has elapsed in :recover mode and no explicit_restore
+  # notification has fired. Operators on the new path get a single INFO
+  # naming `flz cluster restore` so a missing-CLI-step is loud at boot.
+  defp maybe_warn_dets_fallback(%{explicit_restore_ref: ref}) when not is_nil(ref), do: :ok
+
+  defp maybe_warn_dets_fallback(_state) do
+    if Application.get_env(:flezha, :prefer_explicit_restore?, true) do
+      Logger.info(
+        "[recovery] DETS-based replay is deprecated — prefer 'flz cluster restore' " <>
+          "(see docs/cluster-snapshot.md)"
+      )
+    end
+
+    :ok
+  end
+
   ## Helpers
 
   defp arm_timer(%{window_ms: ms} = state) when ms > 0 do
@@ -262,95 +288,12 @@ defmodule Flezha.Recovery.SysMode do
 
   defp arm_timer(state), do: state
 
-  defp arm_factory_gate(state) do
-    Logger.info(
-      "[recovery] waiting for factory #{state.wait_factory} in namespace " <>
-        "#{state.wait_namespace} (timeout=#{state.wait_timeout_ms}ms)"
-    )
-
-    timer_ref = Process.send_after(self(), :wait_factory_timeout, state.wait_timeout_ms)
-    # Kick off the first poll on the next message-loop iteration so a
-    # factory already advertised at init/1 time is caught immediately.
-    poll_ref = Process.send_after(self(), :wait_factory_poll, 0)
-
-    %{
-      state
-      | timer: timer_ref,
-        wait_poll_ref: poll_ref,
-        last_wait_log_ms: monotonic_ms()
-    }
-  end
-
-  defp reschedule_wait_poll(state) do
-    state =
-      if throttled_log_due?(state) do
-        Logger.info(
-          "[recovery] waiting for factory #{state.wait_factory} in namespace " <>
-            "#{state.wait_namespace}"
-        )
-
-        %{state | last_wait_log_ms: monotonic_ms()}
-      else
-        state
-      end
-
-    ref = Process.send_after(self(), :wait_factory_poll, @wait_poll_interval_ms)
-    %{state | wait_poll_ref: ref}
-  end
-
-  defp cancel_wait_poll(%{wait_poll_ref: nil} = state), do: state
-
-  defp cancel_wait_poll(%{wait_poll_ref: ref} = state) do
-    _ = Process.cancel_timer(ref)
-    %{state | wait_poll_ref: nil}
-  end
-
   defp cancel_timer(%{timer: nil} = state), do: state
 
   defp cancel_timer(%{timer: ref} = state) do
     _ = Process.cancel_timer(ref)
     %{state | timer: nil}
   end
-
-  defp factory_advertised?(factory_id, namespace) do
-    try do
-      case FleetManager.list_factories(namespace) do
-        {:ok, factories} when is_list(factories) ->
-          Enum.any?(factories, fn entry -> Map.get(entry, :id) == factory_id end)
-
-        _ ->
-          false
-      end
-    catch
-      _kind, _reason -> false
-    end
-  end
-
-  # Multi-factory gate — `wait_factory` may be a single id or a
-  # comma-separated list ("crypto_trades,market-init-state"). All listed
-  # factories must be advertised before replay starts, so processors whose
-  # factory lives on a slower-to-connect compute engine (e.g. market-app,
-  # which Spring Boots up ~10 s after the agent) aren't replayed before
-  # their target node registers.
-  defp factories_all_advertised?(factory_list, namespace) do
-    ids = split_factory_list(factory_list)
-    ids != [] and Enum.all?(ids, &factory_advertised?(&1, namespace))
-  end
-
-  defp split_factory_list(s) when is_binary(s) do
-    s
-    |> String.split(",", trim: true)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-  end
-
-  defp split_factory_list(_), do: []
-
-  defp throttled_log_due?(%{last_wait_log_ms: last}) do
-    monotonic_ms() - last >= @wait_log_interval_ms
-  end
-
-  defp monotonic_ms, do: System.monotonic_time(:millisecond)
 
   defp transition(%{mode: from} = state, to, reason) do
     if from == to do

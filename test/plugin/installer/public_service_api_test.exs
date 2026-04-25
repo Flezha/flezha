@@ -143,8 +143,7 @@ defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
     entries = [
       {"manifest.exs", manifest},
       {"src/#{src_filename}", src},
-      {"CHECKSUMS.sha256",
-       "#{sha(manifest)}  manifest.exs\n#{sha(src)}  src/#{src_filename}\n"}
+      {"CHECKSUMS.sha256", "#{sha(manifest)}  manifest.exs\n#{sha(src)}  src/#{src_filename}\n"}
     ]
 
     :ok = File.mkdir_p!(Path.dirname(fpz))

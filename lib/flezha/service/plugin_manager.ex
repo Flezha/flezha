@@ -80,7 +80,9 @@ defmodule Flezha.Service.PluginManager do
            {:ok, pid} <- resolve_processor(plugin),
            :ok <- forward_subscribe(pid, plugin_id, plugin) do
         notify_recovery_enabled(plugin_id, plugin)
-        {{:ok, "plugin enabled"}, Map.put(state, plugin_id, {plugin.namespace, plugin.processor_id})}
+
+        {{:ok, "plugin enabled"},
+         Map.put(state, plugin_id, {plugin.namespace, plugin.processor_id})}
       else
         err -> {err, state}
       end

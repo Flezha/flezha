@@ -1,6 +1,8 @@
 defmodule Flezha.Recovery.Store do
   @moduledoc """
-  Durable local storage for locally-hosted processor child specs.
+  **DEPRECATED.** Durable local storage for locally-hosted processor child
+  specs. Use `Flezha.Cluster.Snapshot` for restart-survival; see
+  `docs/cluster-snapshot.md`. Targeted for removal in the next major version.
 
   Backs the failure-recovery subsystem: on every start/stop observed via
   ProcessHub hooks, `Flezha.Recovery.Coordinator` writes/removes a row keyed by
@@ -14,6 +16,8 @@ defmodule Flezha.Recovery.Store do
   infrequent and operator-driven; a 5-second batching window adds a loss
   window without amortising any writes.
   """
+
+  @deprecated "Use Flezha.Cluster.Snapshot for restart-survival. Targeted for removal in the next major version."
 
   use GenServer
 
@@ -200,5 +204,4 @@ defmodule Flezha.Recovery.Store do
     _ = :dets.close(@table)
     :ok
   end
-
 end

@@ -151,10 +151,12 @@ defmodule Flezha.Plugin.Installer.Manifest do
 
   defp validate_provides(provides, modules) when is_list(provides) and provides != [] do
     mod_set = MapSet.new(modules)
-    ids = Enum.map(provides, fn
-      %{id: id} -> id
-      _ -> nil
-    end)
+
+    ids =
+      Enum.map(provides, fn
+        %{id: id} -> id
+        _ -> nil
+      end)
 
     duplicate = ids -- Enum.uniq(ids)
 
@@ -216,7 +218,9 @@ defmodule Flezha.Plugin.Installer.Manifest do
   defp require_subscriptions(subs) when is_list(subs) and subs != [] do
     Enum.reduce_while(subs, :ok, fn
       {name, opts}, _ when is_atom(name) and is_list(opts) ->
-        if Keyword.keyword?(opts), do: {:cont, :ok}, else: {:halt, {:error, {:manifest_invalid, {:invalid_subscription_opts, opts}}}}
+        if Keyword.keyword?(opts),
+          do: {:cont, :ok},
+          else: {:halt, {:error, {:manifest_invalid, {:invalid_subscription_opts, opts}}}}
 
       other, _ ->
         {:halt, {:error, {:manifest_invalid, {:invalid_subscription, other}}}}
@@ -230,7 +234,9 @@ defmodule Flezha.Plugin.Installer.Manifest do
   defp require_scope(scope), do: {:error, {:manifest_invalid, {:unsupported_scope, scope}}}
 
   defp require_default_opts(opts) when is_map(opts), do: :ok
-  defp require_default_opts(opts), do: {:error, {:manifest_invalid, {:invalid_default_opts, opts}}}
+
+  defp require_default_opts(opts),
+    do: {:error, {:manifest_invalid, {:invalid_default_opts, opts}}}
 
   defp validate_dependencies([]), do: :ok
 

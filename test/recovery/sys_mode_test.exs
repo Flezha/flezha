@@ -12,6 +12,8 @@ defmodule Flezha.Recovery.SysModeTest do
 
   use ExUnit.Case, async: false
 
+  require Logger
+
   alias Flezha.Recovery.Store
   alias Flezha.Recovery.SysMode
   alias Flezha.Processor.Builder
@@ -110,7 +112,7 @@ defmodule Flezha.Recovery.SysModeTest do
     assert_received {:sysmode_changed, %{from: :bootstrap, to: :recover, reason: :init}}
 
     # Simulate a peer reporting :normal.
-    GenServer.cast(SysMode, {:peer_sysmode, :"peer@host", :normal})
+    GenServer.cast(SysMode, {:peer_sysmode, :peer@host, :normal})
 
     assert_receive {:sysmode_changed, %{from: :recover, to: :normal, reason: :peer_normal}}, 500
     assert SysMode.get() == :normal
@@ -125,13 +127,71 @@ defmodule Flezha.Recovery.SysModeTest do
 
     assert SysMode.get() == :recover
 
-    GenServer.cast(SysMode, {:peer_sysmode, :"peer@host", :bootstrap})
-    GenServer.cast(SysMode, {:peer_sysmode, :"peer@host", :recover})
+    GenServer.cast(SysMode, {:peer_sysmode, :peer@host, :bootstrap})
+    GenServer.cast(SysMode, {:peer_sysmode, :peer@host, :recover})
 
     # Drain any messages for up to 100ms; must still be :recover.
     Process.sleep(100)
     assert SysMode.get() == :recover
     refute_received {:sysmode_changed, %{from: :recover, to: :normal}}
+  end
+
+  test "explicit_restore_in_progress cast suppresses the bootstrap timer" do
+    Application.put_env(:flezha, :prefer_explicit_restore?, true)
+
+    # Pre-seed DETS so init/1 enters :recover with a window armed.
+    {:ok, _} = Store.start_link([])
+
+    Store.put(
+      "p1",
+      "default",
+      %Builder{id: "p1", factory_id: "f1", init_values: %{}, opts: []}
+    )
+
+    {:ok, _} = SysMode.start_link([])
+    assert SysMode.get() == :recover
+
+    GenServer.cast(SysMode, {:explicit_restore_in_progress, make_ref()})
+    Process.sleep(20)
+
+    assert SysMode.get() == :normal
+    refute_receive :window_elapsed, @window_short * 5
+  end
+
+  test "explicit_restore_in_progress is ignored when feature flag is off" do
+    Application.put_env(:flezha, :prefer_explicit_restore?, false)
+
+    {:ok, _} = Store.start_link([])
+
+    Store.put(
+      "p1",
+      "default",
+      %Builder{id: "p1", factory_id: "f1", init_values: %{}, opts: []}
+    )
+
+    {:ok, _} = SysMode.start_link([])
+    assert SysMode.get() == :recover
+
+    GenServer.cast(SysMode, {:explicit_restore_in_progress, make_ref()})
+    Process.sleep(20)
+
+    # Stayed in :recover; the window timer is still ticking.
+    assert SysMode.get() == :recover
+  end
+
+  test "removed FLEZHA_RECOVERY_WAIT_FACTORY env var no longer changes SYSMODE behaviour" do
+    # The wait_factory gate is gone. Even with the legacy env var set,
+    # SYSMODE follows the standard three-state machine (no `:recover-wait-factory`).
+    System.put_env("FLEZHA_RECOVERY_WAIT_FACTORY", "market-init-state")
+
+    {:ok, _} = Store.start_link([])
+    {:ok, _} = SysMode.start_link([])
+
+    # No DETS rows → :bootstrap → :normal after the small window.
+    assert SysMode.get() == :bootstrap
+    assert_receive {:sysmode_changed, %{from: :bootstrap, to: :normal}}, @window_short * 10
+
+    System.delete_env("FLEZHA_RECOVERY_WAIT_FACTORY")
   end
 
   test "peer_connected/1 casts our mode to the peer's SysMode name" do
@@ -144,7 +204,7 @@ defmodule Flezha.Recovery.SysModeTest do
     {:ok, _} = SysMode.start_link([])
 
     # :noproc target — must be tolerated.
-    assert :ok = SysMode.peer_connected(:"nonexistent@nowhere")
+    assert :ok = SysMode.peer_connected(:nonexistent@nowhere)
     Process.sleep(20)
     assert SysMode.get() in [:bootstrap, :normal]
   end

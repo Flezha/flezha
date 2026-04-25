@@ -34,6 +34,7 @@ defmodule Flezha.Processor.Overwatch do
     :factory_id,
     :channel,
     :extensions,
+    :builder,
     snapshot_interval: @snapshop_interval,
     snapshot: nil,
     init_values: %{},
@@ -71,14 +72,16 @@ defmodule Flezha.Processor.Overwatch do
       snapshot_interval: snapshot_interval,
       snapshot: nil,
       default_input_type: Keyword.get(processor.opts, :default_input_type, "2"),
-      extensions: Table.new(__extensions_catalog__())
+      extensions: Table.new(__extensions_catalog__()),
+      builder: processor
     }
 
     plugins = Keyword.get(processor.opts, :plugins, [])
 
     with {:ok, state} <- subscribe_initial_plugins(state, plugins),
          {:ok, state, processor} <- resolve_init_state(state, processor),
-         {:ok, _} <- start_processor_sdk(compute_engine_id, processor) do
+         {:ok, _} <- start_processor_sdk(compute_engine_id, processor),
+         :ok <- maybe_apply_initial_state(state, processor) do
       {:ok, state}
     else
       {:error, reason} -> {:error, reason}
@@ -262,6 +265,18 @@ defmodule Flezha.Processor.Overwatch do
     snapshot = create_snapshot(state.id, state.compute_engine_id)
 
     {:reply, {:ok, snapshot}, %__MODULE__{state | snapshot: snapshot}}
+  end
+
+  @impl true
+  def handle_call(:get_snapshot_data, _from, %__MODULE__{} = state) do
+    data = %{
+      namespace: state.namespace,
+      builder: state.builder,
+      plugins: Table.serializable_plugins(state.extensions),
+      snapshot_binary: state.snapshot
+    }
+
+    {:reply, data, state}
   end
 
   @impl true
@@ -458,6 +473,41 @@ defmodule Flezha.Processor.Overwatch do
       # without masking genuine stalls.
       30_000
     )
+  end
+
+  # When `:initial_state_binary` is present in the builder's opts, send a
+  # `ProcessorApplyState` control command before the GenServer accepts any
+  # `:io_in` messages. The synchronous round-trip in `init/1` enforces the
+  # ordering: `:io_in` casts queue behind `init/1` and only fire after this
+  # returns. On failure (typically `apply_state_not_supported` from an SDK
+  # build that pre-dates the Apply command), log and proceed with default
+  # empty state — restore is best-effort across SDK versions.
+  defp maybe_apply_initial_state(%__MODULE__{compute_engine_id: ce_id}, processor) do
+    case Keyword.get(processor.opts, :initial_state_binary) do
+      nil ->
+        :ok
+
+      bin when is_binary(bin) ->
+        command = %ComputeEngineCommands.ProcessorApplyState{
+          processor_id: processor.id,
+          factory_id: processor.factory_id,
+          state_binary: bin
+        }
+
+        case send_control(ce_id, {:processor_apply_state, command}) do
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "[overwatch] apply_state failed for processor #{inspect(processor.id)} " <>
+                "factory #{inspect(processor.factory_id)}: #{inspect(reason)} — " <>
+                "starting with empty default state"
+            )
+
+            :ok
+        end
+    end
   end
 
   defp schedule_snapshot(snapshot_interval) when is_integer(snapshot_interval) and snapshot_interval > 0 do

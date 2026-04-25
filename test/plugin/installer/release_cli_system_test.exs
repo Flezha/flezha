@@ -147,7 +147,9 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
         case System.cmd(@flzvm, ["pid"], env: env, stderr_to_stdout: true) do
           {_, 0} ->
             # Boot-loader readiness — call BootLoader via rpc.
-            case System.cmd(@flzvm, ["rpc", "GenServer.call(Flezha.BootLoader, :boot_ready?, 5000) |> IO.puts()"],
+            case System.cmd(
+                   @flzvm,
+                   ["rpc", "GenServer.call(Flezha.BootLoader, :boot_ready?, 5000) |> IO.puts()"],
                    env: env,
                    stderr_to_stdout: true
                  ) do

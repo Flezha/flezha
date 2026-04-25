@@ -113,7 +113,7 @@ defmodule Flezha.Recovery.E2ETest do
     assert SysMode.get() == :recover
 
     # Simulate a peer reporting :bootstrap during the window — must NOT short-circuit.
-    GenServer.cast(SysMode, {:peer_sysmode, :"peerB@host", :bootstrap})
+    GenServer.cast(SysMode, {:peer_sysmode, :peerB@host, :bootstrap})
 
     # Window elapses, recovery fires.
     assert_receive {:completed, %{recovered: 3, failed: 0}}, 2_000
@@ -243,7 +243,7 @@ defmodule Flezha.Recovery.E2ETest do
     assert SysMode.get() == :recover
 
     # Peer reports :normal — must abort without starting any processor.
-    GenServer.cast(SysMode, {:peer_sysmode, :"peerB@host", :normal})
+    GenServer.cast(SysMode, {:peer_sysmode, :peerB@host, :normal})
 
     Process.sleep(100)
     refute_received {:unexpected_start, _}

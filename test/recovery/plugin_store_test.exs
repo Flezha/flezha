@@ -13,7 +13,9 @@ defmodule Flezha.Recovery.PluginStoreTest do
   alias Flezha.Recovery.Store
 
   setup do
-    tmp = Path.join(System.tmp_dir!(), "flz_plugin_store_test_#{System.unique_integer([:positive])}")
+    tmp =
+      Path.join(System.tmp_dir!(), "flz_plugin_store_test_#{System.unique_integer([:positive])}")
+
     File.mkdir_p!(tmp)
 
     prev_dir = Application.get_env(:flezha, :recovery_data_dir)

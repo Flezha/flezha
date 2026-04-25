@@ -266,6 +266,7 @@ defmodule Flezha.Plugin.Installer do
   end
 
   defp ensure_ids_match(new_id, existing_id) when new_id == existing_id, do: :ok
+
   defp ensure_ids_match(new_id, existing_id),
     do: {:error, {:id_mismatch, new_id, existing_id}}
 
@@ -337,7 +338,9 @@ defmodule Flezha.Plugin.Installer do
       :ok
     else
       case task_sup_children_count() do
-        0 -> :ok
+        0 ->
+          :ok
+
         _ ->
           Process.sleep(50)
           loop_quiesce(deadline)
@@ -347,7 +350,9 @@ defmodule Flezha.Plugin.Installer do
 
   defp task_sup_children_count do
     case Process.whereis(Flezha.Processor.MessageHandlerTaskSup) do
-      nil -> 0
+      nil ->
+        0
+
       _pid ->
         try do
           Task.Supervisor.children(Flezha.Processor.MessageHandlerTaskSup) |> length()
@@ -561,7 +566,11 @@ defmodule Flezha.Plugin.Installer do
       File.cp_r!(src_from, Path.join(install_dir, "src"))
     end
 
-    File.write!(Path.join(install_dir, "installed_at"), Integer.to_string(System.monotonic_time()))
+    File.write!(
+      Path.join(install_dir, "installed_at"),
+      Integer.to_string(System.monotonic_time())
+    )
+
     :ok
   end
 
@@ -571,7 +580,12 @@ defmodule Flezha.Plugin.Installer do
   end
 
   defp install_dir_for(cfg, plugin_id, version) do
-    Path.join([Keyword.get(cfg, :plugin_root, "app_data/plugins"), "installed", plugin_id, version])
+    Path.join([
+      Keyword.get(cfg, :plugin_root, "app_data/plugins"),
+      "installed",
+      plugin_id,
+      version
+    ])
   end
 
   defp stage_path(cfg) do
@@ -658,9 +672,15 @@ defmodule Flezha.Plugin.Installer do
 
   defp loaded_from_release?(module) do
     case :code.which(module) do
-      :non_existing -> false
-      :preloaded -> true
-      :cover_compiled -> false
+      :non_existing ->
+        false
+
+      :preloaded ->
+        true
+
+      :cover_compiled ->
+        false
+
       path when is_list(path) ->
         abs = Path.expand(List.to_string(path))
         cfg = Application.get_env(:flezha, :plugin_installer, [])
