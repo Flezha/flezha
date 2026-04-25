@@ -21,15 +21,13 @@ defmodule Flezha.Application do
     children =
       [
         Flezha.Service.EventManager,
-        Flezha.BootLoader
+        Flezha.BootLoader,
+        Flezha.Service.Identificator,
+        Flezha.Service.HubManager,
+        Flezha.ComputeEngine.FleetSupervisor,
+        FleetManager
       ] ++
-        recovery_children() ++
-        [
-          Flezha.Service.Identificator,
-          Flezha.Service.HubManager,
-          Flezha.ComputeEngine.FleetSupervisor,
-          FleetManager
-        ] ++
+        installer_children() ++
         transport_children() ++
         [
           Flezha.Service.PluginManager,
@@ -75,28 +73,6 @@ defmodule Flezha.Application do
     # We need to stop the hub manager first to keep the compute_engines
     # running while processors are stopped.
     Flezha.Service.HubManager.stop_hub_manager()
-  end
-
-  # Recovery subsystem children — Store → SysMode → Coordinator. Autostart is
-  # controlled by `:flezha, :recovery_autostart`, which defaults to true and
-  # is overridden to false in test env so each test manages its own isolated
-  # instances under a `tmp_dir` fixture.
-  #
-  # When the installable-plugin feature flag is on, the installer subtree is
-  # inserted immediately before `Flezha.Recovery.Coordinator` so boot-time
-  # module loading precedes the plugin-recovery phase.
-  defp recovery_children do
-    if Application.get_env(:flezha, :recovery_autostart, true) do
-      installer = installer_children()
-
-      [
-        Flezha.Recovery.Store,
-        Flezha.Recovery.PluginStore,
-        Flezha.Recovery.SysMode
-      ] ++ installer ++ [Flezha.Recovery.Coordinator]
-    else
-      []
-    end
   end
 
   defp installer_children do

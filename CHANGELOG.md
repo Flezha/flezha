@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.2.0 — Cluster snapshot & restore
+## 0.2.0 — Cluster snapshot & restore (replaces DETS recovery)
+
+Restart-survival is now operator-driven via `flz cluster snapshot/restore`.
+The previous DETS-based automatic recovery subsystem has been removed
+along with the SYSMODE coordinator GenServer that drove it.
 
 ### Added
 
@@ -10,63 +14,53 @@
   per-namespace operations; default behaviour without the flag is
   cluster-wide. See [`docs/cluster-snapshot.md`](docs/cluster-snapshot.md).
 - `Flezha.Cluster.Snapshot` and `Flezha.Cluster.Snapshot.Coordinator`
-  Elixir modules implementing the gather/apply RPC fan-out and the atomic
-  ETF file write.
-- `Flezha.Processor.Builder` now recognises `:initial_state_binary` in opts;
-  `Flezha.Processor.Overwatch` sends a new `ProcessorApplyState` control
-  command to the compute engine before the first input is forwarded so a
-  re-spawned processor begins with primed state.
-- New protobuf message `ProcessorApplyState` and corresponding handler in
-  the Rust and Java SDKs. Default impl returns the canonical
+  Elixir modules implementing the gather/apply RPC fan-out and the
+  atomic ETF file write.
+- `Flezha.Cluster.Snapshot.PluginRecoverability` predicate that decides
+  which plugins survive a snapshot/restore cycle.
+- `Flezha.Processor.Builder` now recognises `:initial_state_binary` in
+  opts; `Flezha.Processor.Overwatch` sends a new `ProcessorApplyState`
+  control command to the compute engine before the first input is
+  forwarded so a re-spawned processor begins with primed state.
+- New protobuf message `ProcessorApplyState` and corresponding handler
+  in the Rust and Java SDKs. Default impl returns the canonical
   `apply_state_not_supported` error so older SDK builds are detectable;
-  the agent throttles repeated WARNs to one per factory_id per BEAM.
-- `Flezha.Recovery.PluginRecoverability` shared module — moves the
-  `recoverable?/1` allow-list out of `Recovery.Coordinator` so both the
-  legacy DETS path and the new snapshot path apply the same rule.
-- New configuration keys: `:flezha, :prefer_explicit_restore?` (default
-  `true`) and `:flezha, :snapshot_state_cap_bytes` (default 8 MB), with
-  `FLEZHA_PREFER_EXPLICIT_RESTORE` and `FLEZHA_SNAPSHOT_STATE_CAP_BYTES`
-  env-var overrides.
-
-### Changed
-
-- `Flezha.Recovery.SysMode` accepts new cast notifications
-  `{:explicit_restore_in_progress, ref}` and `{:explicit_restore_done, ref, result}`
-  from `Flezha.Cluster.Snapshot.Coordinator`. The first transitions
-  SYSMODE directly from `:bootstrap` to `:normal`, suppressing the
-  bootstrap-window timer. Telemetry events
-  `[:flezha, :recovery, :explicit_restore_started]` and
-  `[:flezha, :recovery, :explicit_restore_completed]` were added.
-- Boot-time INFO log when the bootstrap-window timer fires while
-  `:prefer_explicit_restore?` is `true`, naming `flz cluster restore` as
-  the supported alternative.
-
-### Deprecated
-
-- `Flezha.Recovery.Store`, `Flezha.Recovery.PluginStore`, and
-  `Flezha.Recovery.Coordinator` carry `@deprecated` module attributes —
-  use `Flezha.Cluster.Snapshot` for restart-survival. Targeted for
-  removal in the next major version.
-- `Flezha.Recovery.Coordinator.run_recovery/0` emits a one-time WARN on
-  first invocation per BEAM naming the new path.
+  the agent logs once per processor on apply failure.
+- `:flezha, :snapshot_state_cap_bytes` configuration key (default 8 MB),
+  with `FLEZHA_SNAPSHOT_STATE_CAP_BYTES` env-var override.
 
 ### Removed (BREAKING)
 
-- `Flezha.Processor.InitState.Providers.Sibling` has been removed along
-  with its registration in `:enabled_plugins`, its capability spec
+- The entire DETS-based recovery subsystem:
+  `Flezha.Recovery.Store`, `Flezha.Recovery.PluginStore`,
+  `Flezha.Recovery.Coordinator`, `Flezha.Recovery.SysMode`. The agent no
+  longer writes child specs to a DETS file on processor start, no longer
+  reads DETS at boot, no longer maintains a SYSMODE state machine, and
+  no longer exchanges SYSMODE with peers. Recovery from an unattended
+  crash now requires the operator to run `flz cluster restore` against
+  a previously-captured snapshot file.
+- `Flezha.Processor.InitState.Providers.Sibling` along with its
+  registration in `:enabled_plugins`, its capability spec
   (`processor-init-state-sibling`), and the `lib/flezha/processor/init_state/`
   tree. Restart-survival init-state seeding is now handled by
   `flz cluster restore` priming `:initial_state_binary` directly. The
   generic `processor-init-state` provider chain remains for non-snapshot
   sources (HTTP, S3, computed defaults, custom modules implementing
   `on_processor_init/2`).
-- The WAIT_FACTORY gate machinery in `Flezha.Recovery.SysMode` is gone:
-  the `:recovery_wait_factory`, `:recovery_wait_namespace`, and
-  `:recovery_wait_timeout_ms` application env keys; the
-  `FLEZHA_RECOVERY_WAIT_FACTORY` / `_NAMESPACE` / `_TIMEOUT_MS` env vars;
-  the `:wait_factory_poll` and `:wait_factory_timeout` GenServer
-  messages; the `factories_all_advertised?/2` helper; and the previously-
-  undocumented `:recover-wait-factory` intermediate SYSMODE state.
-- Operators with the removed env vars set at boot get a single WARN line
-  pointing at `docs/cluster-snapshot.md`. The values are otherwise
-  ignored.
+- Application env keys: `:flezha, :recovery_window_ms`,
+  `:flezha, :recovery_data_dir`, `:flezha, :recovery_enabled`,
+  `:flezha, :recovery_autostart`, `:flezha, :prefer_explicit_restore?`.
+  Env-var overrides removed: `FLEZHA_RECOVERY_*`, `FLEZHA_DATA_DIR`,
+  `FLEZHA_PREFER_EXPLICIT_RESTORE`.
+- ProcessHub `post_children_start_hook` and `child_unregistered_hook`
+  callbacks into the recovery coordinator.
+- `failure-recovery` capability and its spec.
+- `scripts/recovery_e2e.sh` shell-driven recovery smoke test.
+- `docker/prod/docker-compose.local-test.yml` overlay.
+
+### Plugin installer
+
+- `Flezha.Plugin.Installer.Store` no longer co-locates its DETS file
+  under the (now-removed) `recovery_data_dir`. New config knob:
+  `:flezha, :plugin_installer_data_dir` (defaults to the installer's
+  `:plugin_root`, which itself defaults to `app_data/plugins`).

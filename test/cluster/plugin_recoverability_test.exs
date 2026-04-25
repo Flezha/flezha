@@ -1,8 +1,8 @@
-defmodule Flezha.Recovery.PluginRecoverabilityTest do
+defmodule Flezha.Cluster.Snapshot.PluginRecoverabilityTest do
   use ExUnit.Case, async: true
 
+  alias Flezha.Cluster.Snapshot.PluginRecoverability
   alias Flezha.Plugin
-  alias Flezha.Recovery.PluginRecoverability
 
   test "BeamMsgForward is non-recoverable (caller pid baked in)" do
     plugin = %Plugin{id: "b", provider: Flezha.Plugin.Provider.BeamMsgForward}

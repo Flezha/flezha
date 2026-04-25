@@ -15,9 +15,9 @@ defmodule Flezha.Cluster.Snapshot do
   `Flezha.Cluster.Snapshot.Encoding`'s version.
   """
 
+  alias Flezha.Cluster.Snapshot.PluginRecoverability
   alias Flezha.Plugin
   alias Flezha.Processor.Builder
-  alias Flezha.Recovery.PluginRecoverability
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.ProcessorManager

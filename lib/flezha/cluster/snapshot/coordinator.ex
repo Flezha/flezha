@@ -117,26 +117,11 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
     with {:ok, bytes} <- read_file(path),
          {:ok, payload} <- Encoding.decode(bytes) do
       log_age(payload, warn_age)
-      ref = make_ref()
-      GenServer.cast(Flezha.Recovery.SysMode, {:explicit_restore_in_progress, ref})
 
       try do
-        result = apply_payload(payload, peer_timeout, namespace_filter)
-
-        GenServer.cast(
-          Flezha.Recovery.SysMode,
-          {:explicit_restore_done, ref, classify_result(result)}
-        )
-
-        finalize_restore(result)
+        finalize_restore(apply_payload(payload, peer_timeout, namespace_filter))
       catch
-        kind, reason ->
-          GenServer.cast(
-            Flezha.Recovery.SysMode,
-            {:explicit_restore_done, ref, {:error, {kind, reason}}}
-          )
-
-          {:error, {kind, reason}}
+        kind, reason -> {:error, {kind, reason}}
       end
     end
   end
@@ -417,15 +402,5 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
 
   defp finalize_restore(%{processors: ps, plugins: pls}) do
     {:ok, %{processors: length(ps), plugins: length(pls)}}
-  end
-
-  defp classify_result(%{processors: ps, plugins: pls}) do
-    failures =
-      Enum.count(ps ++ pls, fn
-        {_id, _target, {:error, _}} -> true
-        _ -> false
-      end)
-
-    if failures == 0, do: :ok, else: {:error, {:partial, failures}}
   end
 end

@@ -18,15 +18,6 @@ services:
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
       FLEZHA_LOG_PATH: /flezha/app_data/logs/flezha.log
       FLEZHA_LOG_LEVEL: ${FLEZHA_LOG_LEVEL:-info}
-      # Failure-recovery subsystem. Override FLEZHA_DATA_DIR in your .env
-      # file if you want the DETS file somewhere other than the named volume.
-      FLEZHA_RECOVERY_ENABLED: ${FLEZHA_RECOVERY_ENABLED:-true}
-      FLEZHA_RECOVERY_WINDOW_MS: ${FLEZHA_RECOVERY_WINDOW_MS:-10000}
-      # Kept under /flezha/app_data/ so the non-root `flezha` user (uid 1000)
-      # that the image runs as owns the mountpoint's parent. A path outside
-      # this tree (e.g. /var/lib/flezha) would be root-owned inside the
-      # volume and Store init would fail with EACCES.
-      FLEZHA_DATA_DIR: /flezha/app_data/recovery
     depends_on:
       - kafka
     ulimits:
@@ -38,7 +29,6 @@ services:
       - flezha_data:/flezha/app_data/data
       - flezha_certs:/flezha/app_data/certs
       - flezha_logs:/flezha/app_data/logs
-      - flezha_recovery:/flezha/app_data/recovery
       # Snapshot files written by `flz cluster snapshot` need to survive
       # container restarts so a subsequent `flz cluster restore` can read
       # them. Mount as a named volume here; bind to a host path
@@ -89,8 +79,6 @@ volumes:
   flezha_certs:
     driver: local
   flezha_logs:
-    driver: local
-  flezha_recovery:
     driver: local
   flezha_snapshots:
     driver: local

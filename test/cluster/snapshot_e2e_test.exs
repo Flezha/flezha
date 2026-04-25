@@ -1,15 +1,13 @@
 defmodule Flezha.Cluster.Snapshot.E2ETest do
   @moduledoc """
-  End-to-end snapshot → file → restore flow covered in-BEAM, modelled on
-  `test/recovery/e2e_test.exs`. Exercises the full
-  Snapshot.local_state → Coordinator.snapshot (gather + encode + atomic
-  write) → file → Coordinator.restore (read + decode + SysMode notify +
-  RPC fan-out) → Snapshot.apply_local_state path with `ProcessorManager`,
+  End-to-end snapshot → file → restore flow covered in-BEAM. Exercises the
+  full Snapshot.local_state → Coordinator.snapshot (gather + encode +
+  atomic write) → file → Coordinator.restore (read + decode + RPC fan-out)
+  → Snapshot.apply_local_state path with `ProcessorManager`,
   `PluginManager`, and `HubManager` stubbed via Mimic.
 
-  Multi-peer / `:peer.start_link` cross-node flow is covered by the
-  cluster system test (Phase 5 in the change tasks, currently deferred to
-  a separate change once the CST infrastructure is wired into CI).
+  Multi-peer / `:peer.start_link` cross-node flow is covered by
+  `test/system/cluster_snapshot_restore_test.exs`.
   """
 
   use ExUnit.Case, async: false
@@ -20,8 +18,6 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.StdOut
   alias Flezha.Processor.Builder
-  alias Flezha.Recovery.Store
-  alias Flezha.Recovery.SysMode
 
   setup :set_mimic_global
 
@@ -33,35 +29,12 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
 
     File.mkdir_p!(tmp)
 
-    prev = %{
-      dir: Application.get_env(:flezha, :recovery_data_dir),
-      enabled: Application.get_env(:flezha, :recovery_enabled),
-      window: Application.get_env(:flezha, :recovery_window_ms),
-      prefer: Application.get_env(:flezha, :prefer_explicit_restore?)
-    }
-
-    Application.put_env(:flezha, :recovery_data_dir, tmp)
-    Application.put_env(:flezha, :recovery_enabled, true)
-    # Long window so the bootstrap timer never fires during the test —
-    # the explicit-restore cast is what flips SysMode to :normal.
-    Application.put_env(:flezha, :recovery_window_ms, 60_000)
-    Application.put_env(:flezha, :prefer_explicit_restore?, true)
-
-    stop_if_running([SysMode, Store])
-
-    on_exit(fn ->
-      stop_if_running([SysMode, Store])
-      restore(:recovery_data_dir, prev.dir)
-      restore(:recovery_enabled, prev.enabled)
-      restore(:recovery_window_ms, prev.window)
-      restore(:prefer_explicit_restore?, prev.prefer)
-      File.rm_rf!(tmp)
-    end)
+    on_exit(fn -> File.rm_rf!(tmp) end)
 
     {:ok, tmp: tmp}
   end
 
-  test "snapshot → file → restore primes a processor with captured state and notifies SysMode",
+  test "snapshot → file → restore primes a processor with the captured state binary",
        %{tmp: tmp} do
     path = Path.join(tmp, "e2e.flz")
     captured_binary = <<0xCA, 0xFE, 0xBA, 0xBE>>
@@ -123,29 +96,10 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
     assert plugin_entry.plugin.id == "e2e-stdout"
     assert payload.captured_states["e2e-proc"] == captured_binary
 
-    # Phase 3 — tear down "before" state, restart fresh SysMode in :bootstrap.
+    # Phase 3 — apply mocks see the captured state binary threaded into
+    # builder.opts and the right plugin id.
     Process.exit(fake_overwatch, :kill)
-    {:ok, _} = Store.start_link([])
-    {:ok, _} = SysMode.start_link([])
-    assert SysMode.get() == :bootstrap
-
-    # Phase 4 — restore. Telemetry should fire and the apply mocks should
-    # see the captured state binary threaded into builder.opts.
-    handler_id = "snap-e2e-#{System.unique_integer([:positive])}"
     test_pid = self()
-
-    :telemetry.attach_many(
-      handler_id,
-      [
-        [:flezha, :recovery, :explicit_restore_started],
-        [:flezha, :recovery, :explicit_restore_completed],
-        [:flezha, :recovery, :sysmode_changed]
-      ],
-      fn name, _m, meta, _cfg -> send(test_pid, {:telemetry, name, meta}) end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
 
     Flezha.Service.ProcessorManager
     |> Mimic.expect(:start_processor, fn ns, %Builder{} = b ->
@@ -162,25 +116,6 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
     assert {:ok, %{processors: 1, plugins: 1}} =
              Coordinator.restore(path, warn_if_older_than_ms: :infinity)
 
-    # SysMode telemetry: started → sysmode_changed (bootstrap → normal) → completed.
-    assert_receive {:telemetry, [:flezha, :recovery, :explicit_restore_started], started_meta},
-                   1_000
-
-    assert is_reference(started_meta.ref)
-    assert started_meta.node == node()
-
-    assert_receive {:telemetry, [:flezha, :recovery, :sysmode_changed],
-                    %{from: :bootstrap, to: :normal, reason: :explicit_restore}},
-                   1_000
-
-    assert_receive {:telemetry, [:flezha, :recovery, :explicit_restore_completed],
-                    %{ref: completed_ref, result: :ok}},
-                   1_000
-
-    assert completed_ref == started_meta.ref
-
-    # Apply path: the builder arrives with :initial_state_binary set and
-    # its pre-existing opts preserved.
     assert_receive {:applied_processor, "default", applied_builder}, 1_000
     assert applied_builder.id == "e2e-proc"
     assert applied_builder.factory_id == "e2e-factory"
@@ -190,8 +125,6 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
 
     assert_receive {:applied_plugin, "e2e-stdout", applied_plugin}, 1_000
     assert applied_plugin.processor_id == "e2e-proc"
-
-    assert SysMode.get() == :normal
   end
 
   test "snapshot drops processor state binaries that exceed :state_cap_bytes",
@@ -237,7 +170,7 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
     refute Map.has_key?(payload.captured_states, "huge-proc")
   end
 
-  # Minimal GenServer that mimics the `:get_snapshot_data` handler on
+  # Minimal process that mimics the `:get_snapshot_data` handler on
   # `Flezha.Processor.Overwatch`. Returns the seeded snapshot data on demand.
   defp start_fake_overwatch(snapshot_data) do
     spawn(fn -> receive_loop(snapshot_data) end)
@@ -256,18 +189,4 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
         receive_loop(snapshot_data)
     end
   end
-
-  defp stop_if_running(mods) when is_list(mods), do: Enum.each(mods, &stop_if_running/1)
-
-  defp stop_if_running(mod) do
-    case Process.whereis(mod) do
-      nil -> :ok
-      pid -> if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
-    end
-  catch
-    :exit, _ -> :ok
-  end
-
-  defp restore(key, nil), do: Application.delete_env(:flezha, key)
-  defp restore(key, value), do: Application.put_env(:flezha, key, value)
 end

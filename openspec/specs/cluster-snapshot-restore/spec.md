@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The cluster-snapshot-restore capability provides operator-driven, explicit snapshot and restore of an entire Flezha cluster's processor and plugin state. It defines two CLI commands (`flz cluster snapshot <file>` and `flz cluster restore <file>`), a self-contained ETF snapshot file format, a per-processor state-priming SDK contract (`Apply`), and a SYSMODE suppression handshake that prevents the legacy DETS-driven recovery path from racing with an explicit restore.
+The cluster-snapshot-restore capability provides operator-driven, explicit snapshot and restore of an entire Flezha cluster's processor and plugin state. It defines two CLI commands (`flz cluster snapshot <file>` and `flz cluster restore <file>`), a self-contained ETF snapshot file format, and a per-processor state-priming SDK contract (`Apply`). It is the only restart-survival mechanism in the agent — there is no automatic at-boot replay.
 
 ## Requirements
 
@@ -58,16 +58,14 @@ The coordinator SHALL:
 1. `File.read!(file)`; decompress + `:erlang.binary_to_term/1`.
 2. Validate the outer tuple is `{:flezha_snapshot, 1, payload}`. Any other version is a hard error: exit non-zero with `unsupported snapshot version: got <N>, supports [1]`.
 3. Check `payload.taken_at_ms`; if older than `warn_if_older_than_ms`, log WARN naming the snapshot age and the threshold; otherwise log INFO with the age.
-4. Notify `Flezha.Recovery.SysMode` of an explicit restore in progress so the SYSMODE bootstrap-window timer is suppressed.
-5. For each `processor` entry: determine `target_node` (last_observed_node if reachable, else ProcessHub-placed). RPC `Flezha.Cluster.Snapshot.apply_local_state/1` on the target with `{:processor, builder, captured_state_binary}`. The Overwatch path attaches `:initial_state_binary` to the builder's opts.
-6. For each `plugin` entry: skip if not `recoverable?`; RPC `apply_local_state/1` on the target with `{:plugin, plugin_struct}`. Underlying call: `PluginManager.enable_plugin/2`.
-7. Notify `SysMode` of restore completion (success or partial failure with reason).
-8. Optionally filter by `--namespace`: when set, only entries with matching namespace are applied; the rest are logged at INFO and skipped.
+4. For each `processor` entry: determine `target_node` (last_observed_node if reachable, else ProcessHub-placed). RPC `Flezha.Cluster.Snapshot.apply_local_state/1` on the target with `{:processor, builder, captured_state_binary}`. The Overwatch path attaches `:initial_state_binary` to the builder's opts.
+5. For each `plugin` entry: skip if not `recoverable?`; RPC `apply_local_state/1` on the target with `{:plugin, plugin_struct}`. Underlying call: `PluginManager.enable_plugin/2`.
+6. Optionally filter by `--namespace`: when set, only entries with matching namespace are applied; the rest are logged at INFO and skipped.
 
 #### Scenario: Happy-path restore primes captured state
 - **GIVEN** `/tmp/x.flz` was written 5 minutes ago and contains one processor with a 14 KB captured state binary
 - **WHEN** the operator runs `flz cluster restore /tmp/x.flz`
-- **THEN** SYSMODE logs `[recovery] explicit restore in progress (initiator: <node>) — bootstrap timer suppressed`, the processor is re-spawned on its last_observed_node, the compute engine receives the captured binary as initial state via the new `:initial_state_binary` option, the first input post-restore is processed against the primed state, and the CLI exits 0 with summary `restore: 1 processors, 0 plugins`
+- **THEN** the processor is re-spawned on its last_observed_node, the compute engine receives the captured binary as initial state via the new `:initial_state_binary` option, the first input post-restore is processed against the primed state, and the CLI exits 0 with summary `restore: 1 processors, 0 plugins`
 
 #### Scenario: Stale snapshot logs WARN but still restores
 - **GIVEN** `/tmp/x.flz` was written 30 hours ago
@@ -77,12 +75,12 @@ The coordinator SHALL:
 #### Scenario: Schema-version mismatch is a hard error
 - **GIVEN** `/tmp/x.flz` decodes to `{:flezha_snapshot, 2, _payload}` (a hypothetical future version)
 - **WHEN** the operator runs `flz cluster restore /tmp/x.flz` against a v1-supporting agent
-- **THEN** the CLI exits non-zero with `unsupported snapshot version: got 2, supports [1]`, no SYSMODE notification fires, and no processors are touched
+- **THEN** the CLI exits non-zero with `unsupported snapshot version: got 2, supports [1]` and no processors are touched
 
 #### Scenario: Non-recoverable plugin is skipped with WARN
-- **GIVEN** the shared recoverability check (lifted from `Flezha.Recovery.Coordinator.recoverable?/1`) returns `false` for a plugin captured in the snapshot (e.g. a PID-bound MonitoredIOForward)
+- **GIVEN** `Flezha.Cluster.Snapshot.PluginRecoverability.recoverable?/1` returns `false` for a plugin captured in the snapshot (e.g. a PID-bound MonitoredIOForward)
 - **WHEN** the operator runs `flz cluster restore /tmp/x.flz`
-- **THEN** the plugin is omitted, a WARN line names the plugin id and the reason `not recoverable per shared allowlist — re-enable manually if needed`, and the restore proceeds for the remaining plugins
+- **THEN** the plugin is omitted, a WARN line names the plugin id and the provider, and the restore proceeds for the remaining plugins
 
 #### Scenario: Captured state binary missing primes default state
 - **GIVEN** a processor entry has `captured_state_binary: nil` (per the size-cap clause)
@@ -102,7 +100,7 @@ The coordinator SHALL:
 #### Scenario: Atomic write protects against half-applied restore
 - **GIVEN** restore is mid-flight on a five-processor snapshot, three already applied
 - **WHEN** node A (the initiator) crashes
-- **THEN** the three already-applied processors are running normally on their target nodes; the remaining two are not started; SYSMODE remains in `:bootstrap` (since the explicit-restore-done notification was never sent); the next agent boot or operator-issued restore can resume safely (re-applying the three already-running ones returns `:already_registered`, the remaining two complete the operation)
+- **THEN** the three already-applied processors are running normally on their target nodes; the remaining two are not started; an operator-issued restore can resume safely — re-applying the three already-running ones returns `:already_registered`, the remaining two complete the operation
 
 ### Requirement: `Flezha.Processor.Overwatch` SHALL accept `:initial_state_binary` to prime new processor state
 
@@ -123,25 +121,6 @@ When the SDK responds with `{:error, :apply_state_not_supported}`, the agent log
 - **GIVEN** the SDK build returns `{:error, :apply_state_not_supported}` to `:apply_state`
 - **WHEN** restore primes a processor on this SDK
 - **THEN** spawn proceeds, a one-time WARN names the factory and SDK, and the processor begins with default empty state
-
-### Requirement: SYSMODE SHALL be suppressible by an explicit restore notification
-
-`Flezha.Recovery.SysMode` SHALL accept two cast messages from `Flezha.Cluster.Snapshot.Coordinator`:
-
-1. `{:explicit_restore_in_progress, ref}` — sent before any `apply_local_state` calls. SYSMODE SHALL transition `:bootstrap → :normal` directly, cancel any pending bootstrap-window timer, and emit telemetry `[:flezha, :recovery, :explicit_restore_started]`.
-2. `{:explicit_restore_done, ref, :ok | {:error, reason}}` — sent after all entries are applied (or fatal coordinator error). SYSMODE SHALL emit telemetry `[:flezha, :recovery, :explicit_restore_completed]` with the result.
-
-This suppression is gated by `Application.get_env(:flezha, :prefer_explicit_restore?, true)`. When `false`, SYSMODE ignores the notifications and the bootstrap-window timer fires as before. The default is `true`.
-
-#### Scenario: Explicit restore suppresses the bootstrap timer
-- **GIVEN** an agent has just booted with non-empty DETS, SYSMODE is `:bootstrap`, and the bootstrap window timer is armed
-- **WHEN** the operator runs `flz cluster restore` and the coordinator sends `{:explicit_restore_in_progress, ref}`
-- **THEN** SYSMODE cancels the timer, transitions to `:normal`, the `Flezha.Recovery.Coordinator.run_recovery/0` loop is not invoked, and a single INFO line names the suppression
-
-#### Scenario: Explicit restore disabled by config
-- **GIVEN** `:flezha, :prefer_explicit_restore?` is `false`
-- **WHEN** an explicit restore is attempted
-- **THEN** SYSMODE ignores the notification, the bootstrap timer fires as before, and the explicit restore's RPC calls race against the DETS replay's RPC calls — the duplicate-detection in `start_processor/2` prevents harm but the operator log shows both paths firing
 
 ### Requirement: ETF file format SHALL use the `{:flezha_snapshot, version, payload}` envelope
 
@@ -173,7 +152,7 @@ Reading code SHALL pattern-match on the outer tuple. A file that fails to decode
 
 - The two commands and all flags.
 - The file format envelope at a high level (no need to publish the full term layout — operators don't need it).
-- The relationship with `failure-recovery`: when each path fires, when they overlap, why operators should prefer explicit restore.
+- The restart-survival model: cluster-snapshot/restore is the only mechanism, planned-shutdown vs crash-recovery flows.
 - Operational guidance: how to force a cold start (delete the file), how to inspect a snapshot's contents (`erl -noshell -eval '...binary_to_term...'` one-liner), how to handle staleness.
 
 #### Scenario: Help text includes the new commands

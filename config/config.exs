@@ -10,31 +10,12 @@ config :flezha,
   post_hooks: [],
 
   # ------------------------------------------------------------------------------------------------
-  # Failure-recovery subsystem defaults. See `lib/flezha/recovery/` and
-  # `openspec/changes/add-failure-recovery-mode` for the full design.
-  #
-  # - `recovery_window_ms`: time spent in `:bootstrap`/`:recover` before transitioning to
-  #   `:normal`. During this window the agent exchanges SYSMODE with peers; seeing a peer
-  #   in `:normal` short-circuits local recovery.
-  # - `recovery_data_dir`: directory housing the DETS file (`recovery.dets`) of locally
-  #   hosted processor child specs. Must be a persistent volume in containerized envs.
-  # - `recovery_enabled`: master switch. When `false`, SysMode jumps straight to `:normal`.
-  recovery_window_ms: 10_000,
-  recovery_data_dir: "app_data/recovery",
-  recovery_enabled: true,
-
-  # ------------------------------------------------------------------------------------------------
   # Cluster snapshot/restore subsystem (see docs/cluster-snapshot.md).
   #
-  # - `prefer_explicit_restore?`: when true (default), `flz cluster restore`
-  #   suppresses the SYSMODE bootstrap-window timer for that boot so the
-  #   deprecated DETS-replay loop does not fire. Set to false to keep the
-  #   legacy timer behaviour during migration.
   # - `snapshot_state_cap_bytes`: per-processor cap on captured-state size
   #   in the snapshot file. Processors above the cap are written without
   #   their state binary and a WARN line names them; restore primes them
   #   with empty default state.
-  prefer_explicit_restore?: true,
   snapshot_state_cap_bytes: 8_388_608,
 
   # TODO: we need to dynamically load the plugins from .env.

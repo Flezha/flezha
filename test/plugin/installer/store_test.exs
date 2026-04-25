@@ -20,8 +20,8 @@ defmodule Flezha.Plugin.Installer.StoreTest do
 
     File.mkdir_p!(tmp)
 
-    prev_dir = Application.get_env(:flezha, :recovery_data_dir)
-    Application.put_env(:flezha, :recovery_data_dir, tmp)
+    prev_dir = Application.get_env(:flezha, :plugin_installer_data_dir)
+    Application.put_env(:flezha, :plugin_installer_data_dir, tmp)
 
     stop_if_running(Store)
 
@@ -29,9 +29,9 @@ defmodule Flezha.Plugin.Installer.StoreTest do
       stop_if_running(Store)
 
       if prev_dir do
-        Application.put_env(:flezha, :recovery_data_dir, prev_dir)
+        Application.put_env(:flezha, :plugin_installer_data_dir, prev_dir)
       else
-        Application.delete_env(:flezha, :recovery_data_dir)
+        Application.delete_env(:flezha, :plugin_installer_data_dir)
       end
 
       File.rm_rf!(tmp)

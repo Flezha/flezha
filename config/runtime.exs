@@ -134,29 +134,6 @@ config :flezha,
   external_processes: external_processes,
 
   # ------------------------------------------------------------------------------------------------
-  # Failure-recovery subsystem env vars.
-  recovery_window_ms:
-    (case Integer.parse(System.get_env("FLEZHA_RECOVERY_WINDOW_MS", "10000")) do
-       {n, ""} when n >= 0 -> n
-       _ -> 10_000
-     end),
-  recovery_data_dir: System.get_env("FLEZHA_DATA_DIR", "app_data/recovery"),
-  recovery_enabled:
-    (case System.get_env("FLEZHA_RECOVERY_ENABLED") do
-       nil -> Application.get_env(:flezha, :recovery_enabled, true)
-       val -> String.downcase(val) in ["true", "1", "yes"]
-     end),
-
-  # When set to `false`, the SYSMODE notification path used by
-  # `flz cluster restore` is disabled and the legacy DETS-replay loop fires
-  # on the bootstrap window timer as before. Default `true` — operators on
-  # the new explicit-restore flow get bootstrap-timer suppression for free.
-  prefer_explicit_restore?:
-    (case System.get_env("FLEZHA_PREFER_EXPLICIT_RESTORE") do
-       nil -> Application.get_env(:flezha, :prefer_explicit_restore?, true)
-       val -> String.downcase(val) in ["true", "1", "yes"]
-     end),
-
   # Per-processor cap on captured-state size when writing a cluster snapshot.
   # Processors whose serialised state exceeds the cap are written to the
   # snapshot without their state binary; restore primes them with empty

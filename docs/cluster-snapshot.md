@@ -68,10 +68,6 @@ flz cluster snapshot /var/lib/flezha/snapshots/pre-shutdown.flz
 flz cluster restore  /var/lib/flezha/snapshots/pre-shutdown.flz
 ```
 
-The restore call notifies `Flezha.Recovery.SysMode` of an explicit restore
-in progress; the bootstrap-window timer is suppressed and the deprecated
-DETS-replay loop does not fire for this boot.
-
 ### Backups
 
 ```sh
@@ -86,37 +82,30 @@ file is left untouched.
 Use the default best-effort mode. Peers that are mid-restart are logged at
 WARN; the snapshot is written with what was reachable.
 
-## Relationship with `failure-recovery`
+## Restart-survival model
 
-The `failure-recovery` capability (DETS-driven `Recovery.Coordinator` +
-SYSMODE bootstrap-window timer) remains in place as a fallback for
-unattended restarts where no operator runs `cluster restore`. It is
-**deprecated** and targeted for removal in a future major version.
+`flz cluster snapshot/restore` is the **only** restart-survival
+mechanism. There is no automatic at-boot replay: an agent that comes
+back up after an unattended crash starts with no processors. The
+supported flow is:
 
-When `:flezha, :prefer_explicit_restore?` is `true` (the default):
+- **Planned shutdowns:** snapshot before, restore after.
+- **Crash recovery:** maintain a recent snapshot file (cron, pre-stop
+  hooks, etc.) and run `restore` against it after the agent is back.
+- **Cold start:** delete the snapshot file (or just don't run restore).
+  Processors that subsequently get started come up with their SDK's
+  default empty state.
 
-- `cluster restore` suppresses the SYSMODE bootstrap timer for that boot.
-- If the bootstrap window elapses without an explicit-restore notification
-  having arrived, an INFO line names the deprecation:
-  `[recovery] DETS-based replay is deprecated — prefer 'flz cluster restore'`.
-
-To disable the suppression and let the timer fire as before, set
-`FLEZHA_PREFER_EXPLICIT_RESTORE=false` (or
-`config :flezha, :prefer_explicit_restore?, false`).
+Plugins whose state is bound to a caller pid that died with the previous
+BEAM (`processor_beam_msg`, `monitored_io_forward`) are excluded from
+the snapshot and must be re-enabled by the operator or SDK reconnect
+path after restore.
 
 ## Configuration
 
 | Application env key | Env var | Default | Notes |
 |---------------------|---------|---------|-------|
-| `:prefer_explicit_restore?` | `FLEZHA_PREFER_EXPLICIT_RESTORE` | `true` | Suppresses the DETS-replay timer when an explicit restore is in flight. |
 | `:snapshot_state_cap_bytes` | `FLEZHA_SNAPSHOT_STATE_CAP_BYTES` | `8388608` (8 MB) | Per-processor cap on captured-state size in the snapshot. Processors above the cap are written without state and a WARN names them. |
-
-## Forcing a cold start
-
-Delete the snapshot file before booting (or set
-`:prefer_explicit_restore?` to `false` and let the empty DETS path drop
-through to `:bootstrap → :normal`). A processor primed with no state
-proceeds with its SDK's default empty state.
 
 ## Schema versioning
 

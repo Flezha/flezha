@@ -92,13 +92,12 @@ COPY --from=build /app/_build/prod/rel/flezha /flezha/
 # mounts at runtime — docker initialises an empty named volume from the
 # mountpoint's ownership in the image, so each dir MUST exist here with
 # flezha:flezha ownership or the non-root container process will get
-# EACCES on first write. `recovery/` backs the failure-recovery DETS files;
-# `snapshots/` is the default operator path for `flz cluster snapshot/restore`
-# (override per-invocation by passing an absolute path).
+# EACCES on first write. `snapshots/` is the default operator path for
+# `flz cluster snapshot/restore` (override per-invocation by passing an
+# absolute path).
 RUN mkdir -p /flezha/app_data/sockets \
              /flezha/app_data/certs \
              /flezha/app_data/logs \
-             /flezha/app_data/recovery \
              /flezha/app_data/snapshots && \
     chown -R flezha:flezha /flezha
 

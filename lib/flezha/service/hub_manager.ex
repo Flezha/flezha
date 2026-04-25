@@ -264,22 +264,6 @@ defmodule Flezha.Service.HubManager do
             f: :alter_child_data,
             a: [hub_id, :_]
           }
-        ],
-        Hook.post_children_start() => [
-          %HookManager{
-            id: :flz_recovery_post_children_start,
-            m: Flezha.Recovery.Coordinator,
-            f: :on_post_children_start,
-            a: [:_]
-          }
-        ],
-        Hook.child_unregistered() => [
-          %HookManager{
-            id: :flz_recovery_child_unregistered,
-            m: Flezha.Recovery.Coordinator,
-            f: :on_child_unregistered,
-            a: [:_]
-          }
         ]
       }
     })

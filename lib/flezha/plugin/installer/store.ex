@@ -1,11 +1,12 @@
 defmodule Flezha.Plugin.Installer.Store do
   @moduledoc """
   DETS-backed catalog of installed plugins, keyed by `plugin_id` (binary).
+  Tracks which packages have been installed on this node and which are
+  enabled — orthogonal to which `%Flezha.Plugin{}` subscriptions are
+  live right now (that lives in `Flezha.Service.PluginManager`'s state).
 
-  Parallel to `Flezha.Recovery.PluginStore` but answering a different question:
-  "what packages have been installed on this node and which are enabled?" —
-  not "which `%Flezha.Plugin{}` subscriptions are live right now." Rows live
-  next to the recovery DETS at `<recovery_data_dir>/installed_plugins.dets`.
+  Rows live at `<plugin_root>/installed_plugins.dets`, alongside the
+  installed package trees the installer manages.
 
   Every mutator ends with `:dets.sync/1` so the row is on disk before the
   call returns — installs must survive an immediate crash. Opening a corrupt
@@ -121,7 +122,7 @@ defmodule Flezha.Plugin.Installer.Store do
 
   @impl true
   def init(_opts) do
-    dir = Application.get_env(:flezha, :recovery_data_dir, "app_data/recovery")
+    dir = installer_data_dir()
     :ok = File.mkdir_p!(dir)
     file_path = Path.join(dir, @dets_filename)
 
@@ -234,5 +235,21 @@ defmodule Flezha.Plugin.Installer.Store do
 
   defp table_ready? do
     not is_nil(Process.whereis(__MODULE__))
+  end
+
+  # Resolve the directory where `installed_plugins.dets` lives. Tests
+  # override via `Application.put_env(:flezha, :plugin_installer_data_dir, ...)`
+  # to isolate fixtures; production reads `:plugin_installer.plugin_root`
+  # so the catalog sits next to the installed package trees the installer
+  # manages.
+  defp installer_data_dir do
+    case Application.get_env(:flezha, :plugin_installer_data_dir) do
+      nil ->
+        Application.get_env(:flezha, :plugin_installer, [])
+        |> Keyword.get(:plugin_root, "app_data/plugins")
+
+      dir ->
+        dir
+    end
   end
 end

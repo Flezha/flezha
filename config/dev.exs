@@ -1,8 +1,7 @@
 import Config
 
 config :flezha,
-  testnet_enabled: true,
-  recovery_enabled: false
+  testnet_enabled: true
 
 config :logger, :file_log, level: :debug
 

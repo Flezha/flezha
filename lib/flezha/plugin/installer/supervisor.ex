@@ -7,10 +7,6 @@ defmodule Flezha.Plugin.Installer.Supervisor do
       Flezha.Plugin.Installer.Loader   # in-VM module registry (reads Store)
       Flezha.Plugin.Installer          # public service GenServer (reads Loader)
 
-  Placed before `Flezha.Recovery.Coordinator` in the application tree so
-  every `:enabled` / `:disabled` plugin's modules are present in the VM
-  before recovery re-subscribes persisted `%Flezha.Plugin{}` rows.
-
   Boot-time config validation rejects the inconsistent combination
   `require_signature: true` + `trusted_keys: []` — refusing to start
   rather than silently accepting signatures against an empty trust root.

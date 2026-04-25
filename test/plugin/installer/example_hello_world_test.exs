@@ -23,10 +23,10 @@ defmodule Flezha.Plugin.Installer.ExampleHelloWorldTest do
     tmp = Path.join(System.tmp_dir!(), "flz_hello_example_#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
 
-    prev_data_dir = Application.get_env(:flezha, :recovery_data_dir)
+    prev_data_dir = Application.get_env(:flezha, :plugin_installer_data_dir)
     prev_pi = Application.get_env(:flezha, :plugin_installer)
 
-    Application.put_env(:flezha, :recovery_data_dir, tmp)
+    Application.put_env(:flezha, :plugin_installer_data_dir, tmp)
 
     Application.put_env(:flezha, :plugin_installer,
       plugin_root: Path.join(tmp, "plugins"),
@@ -51,9 +51,9 @@ defmodule Flezha.Plugin.Installer.ExampleHelloWorldTest do
       stop_if_running(Store)
 
       if prev_data_dir do
-        Application.put_env(:flezha, :recovery_data_dir, prev_data_dir)
+        Application.put_env(:flezha, :plugin_installer_data_dir, prev_data_dir)
       else
-        Application.delete_env(:flezha, :recovery_data_dir)
+        Application.delete_env(:flezha, :plugin_installer_data_dir)
       end
 
       if prev_pi do

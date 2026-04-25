@@ -26,10 +26,10 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
     File.mkdir_p!(fixtures_dir)
     File.mkdir_p!(plugin_root)
 
-    prev_data_dir = Application.get_env(:flezha, :recovery_data_dir)
+    prev_data_dir = Application.get_env(:flezha, :plugin_installer_data_dir)
     prev_pi = Application.get_env(:flezha, :plugin_installer)
 
-    Application.put_env(:flezha, :recovery_data_dir, tmp)
+    Application.put_env(:flezha, :plugin_installer_data_dir, tmp)
 
     Application.put_env(:flezha, :plugin_installer,
       plugin_root: plugin_root,
@@ -56,9 +56,9 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
       stop_if_running(Store)
 
       if prev_data_dir do
-        Application.put_env(:flezha, :recovery_data_dir, prev_data_dir)
+        Application.put_env(:flezha, :plugin_installer_data_dir, prev_data_dir)
       else
-        Application.delete_env(:flezha, :recovery_data_dir)
+        Application.delete_env(:flezha, :plugin_installer_data_dir)
       end
 
       if prev_pi do

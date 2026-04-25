@@ -12,10 +12,10 @@ defmodule Flezha.Plugin.Installer.SupervisionTreeTest do
     tmp = Path.join(System.tmp_dir!(), "flz_sup_test_#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
 
-    prev_dir = Application.get_env(:flezha, :recovery_data_dir)
+    prev_dir = Application.get_env(:flezha, :plugin_installer_data_dir)
     prev_pi = Application.get_env(:flezha, :plugin_installer)
 
-    Application.put_env(:flezha, :recovery_data_dir, tmp)
+    Application.put_env(:flezha, :plugin_installer_data_dir, tmp)
 
     on_exit(fn ->
       # Stop the supervisor first so it tears down its children cleanly;
@@ -38,9 +38,9 @@ defmodule Flezha.Plugin.Installer.SupervisionTreeTest do
       end
 
       if prev_dir do
-        Application.put_env(:flezha, :recovery_data_dir, prev_dir)
+        Application.put_env(:flezha, :plugin_installer_data_dir, prev_dir)
       else
-        Application.delete_env(:flezha, :recovery_data_dir)
+        Application.delete_env(:flezha, :plugin_installer_data_dir)
       end
 
       if prev_pi do
