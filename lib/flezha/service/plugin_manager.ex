@@ -13,11 +13,30 @@ defmodule Flezha.Service.PluginManager do
   ## Public API
 
   def enable_plugin(plugin_id, %Plugin{} = plugin) do
-    case GenServer.call(__MODULE__, {:enable_plugin, plugin_id, plugin}) do
-      {:ok, msg} -> {:ok, msg}
-      {:error, reason} -> {:error, reason}
+    cond do
+      has_init_subscription?(plugin) ->
+        {:error, "init-state plugins must be attached at processor start"}
+
+      true ->
+        case GenServer.call(__MODULE__, {:enable_plugin, plugin_id, plugin}) do
+          {:ok, msg} -> {:ok, msg}
+          {:error, reason} -> {:error, reason}
+        end
     end
   end
+
+  # `:on_processor_init` fires exactly once during `Overwatch.init/1`. Late
+  # enable via `flz plugin enable` cannot hook it — returning an explicit
+  # error keeps operators from silently losing init-state wiring.
+  defp has_init_subscription?(%Plugin{subscriptions: subs}) when is_list(subs) do
+    Enum.any?(subs, fn
+      {:on_processor_init, _} -> true
+      :on_processor_init -> true
+      _ -> false
+    end)
+  end
+
+  defp has_init_subscription?(_), do: false
 
   def disable_plugin(plugin_id) do
     case GenServer.call(__MODULE__, {:disable_plugin, plugin_id}) do

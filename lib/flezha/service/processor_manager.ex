@@ -194,7 +194,30 @@ defmodule Flezha.Service.ProcessorManager do
   end
 
   def assign_compute_engine(namespace) do
+    assign_compute_engine(namespace, nil)
+  end
+
+  @doc """
+  Pick an active compute engine for a new processor.
+
+  When `factory_id` is given, restricts the pool to compute engines that
+  actually advertise that factory. Without this filter a mixed-factory
+  namespace (e.g. market-processor owning `crypto_trades` + market-app
+  owning `market-init-state`) would random-pick the wrong node half the
+  time, routing every input frame to a process that doesn't exist on
+  the foreign node. The Java SDK surfaces this as a steady stream of
+  `DefaultProcessorDispatcher.enqueue: processor 'X' not found`
+  warnings.
+  """
+  def assign_compute_engine(namespace, nil) do
     case FleetManager.active_compute_engines(namespace) do
+      [] -> nil
+      compute_engine_ids -> Enum.random(compute_engine_ids)
+    end
+  end
+
+  def assign_compute_engine(namespace, factory_id) when is_binary(factory_id) do
+    case FleetManager.compute_engines_for_factory(namespace, factory_id) do
       [] -> nil
       compute_engine_ids -> Enum.random(compute_engine_ids)
     end

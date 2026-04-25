@@ -27,7 +27,7 @@ pub fn handle_processor_command(args: &[String]) {
 }
 
 fn handle_start(args: &[String]) {
-    let example_usage = "Usage: flz processor start <processor_id> <factory_id> [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>]";
+    let example_usage = "Usage: flz processor start <processor_id> <factory_id> [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>] [--plugins <json-array>]";
 
     if args.len() < 3 {
         eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
@@ -37,6 +37,14 @@ fn handle_start(args: &[String]) {
     let processor_id = &args[1];
     let factory_id = &args[2];
     let init_values = get_json(&args[3..], "--init_values", "-iv");
+    let plugins_raw = get_json(&args[3..], "--plugins", "--plugins");
+    let plugins_json = match parse_plugins_json(&plugins_raw) {
+        Ok(canonical) => canonical,
+        Err(reason) => {
+            eprintln!("Error: invalid --plugins JSON: {}", reason);
+            exit(1);
+        }
+    };
 
     let mut opts: HashMap<String, String> = HashMap::new();
 
@@ -51,10 +59,16 @@ fn handle_start(args: &[String]) {
 
     let escaped_init_values = init_values.replace("\"", "\\\"");
     let escaped_opts_json = opts_json.replace("\"", "\\\"");
+    let escaped_plugins_json = plugins_json.replace("\"", "\\\"");
 
     let rpc_command = format!(
-        "Flezha.Service.CliManager.processor_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
-        namespace, processor_id, factory_id, escaped_init_values, escaped_opts_json,
+        "Flezha.Service.CliManager.processor_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
+        namespace,
+        processor_id,
+        factory_id,
+        escaped_init_values,
+        escaped_opts_json,
+        escaped_plugins_json,
     );
 
     println!("Starting processor...");
@@ -68,6 +82,108 @@ fn handle_start(args: &[String]) {
     if !status.success() {
         eprintln!("Error: Command execution failed.");
         exit(1);
+    }
+}
+
+/// Validate the `--plugins` JSON blob at the CLI layer so parse errors are
+/// surfaced with a local exit code and message, rather than round-tripping
+/// an opaque RPC failure through the agent.
+///
+/// Accepts:
+/// * `"{}"` / empty string — treated as "no plugins attached"; returns `"[]"`.
+/// * A JSON array of plugin objects. Each object MUST have `id`, `provider`
+///   (non-empty strings) and a non-empty `subscriptions` array. Deeper
+///   validation (provider registration lookup, subscription-opts shape)
+///   happens on the Elixir side where the registry is authoritative.
+fn parse_plugins_json(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "{}" {
+        return Ok("[]".to_string());
+    }
+
+    let value: serde_json::Value =
+        serde_json::from_str(trimmed).map_err(|e| format!("not valid JSON — {}", e))?;
+
+    let items = value
+        .as_array()
+        .ok_or_else(|| "expected a JSON array of plugin objects".to_string())?;
+
+    for (idx, item) in items.iter().enumerate() {
+        let obj = item
+            .as_object()
+            .ok_or_else(|| format!("plugin[{}] must be a JSON object", idx))?;
+
+        let id = obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("plugin[{}] missing non-empty string field `id`", idx))?;
+
+        obj.get("provider")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("plugin[{}] ({}) missing `provider`", idx, id))?;
+
+        match obj.get("subscriptions") {
+            Some(serde_json::Value::Array(subs)) if !subs.is_empty() => (),
+            _ => {
+                return Err(format!(
+                    "plugin[{}] ({}) must declare a non-empty `subscriptions` array",
+                    idx, id
+                ));
+            }
+        }
+    }
+
+    Ok(serde_json::to_string(&value).unwrap_or_else(|_| trimmed.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_plugins_json;
+
+    #[test]
+    fn empty_input_becomes_empty_array() {
+        assert_eq!(parse_plugins_json("").unwrap(), "[]");
+        assert_eq!(parse_plugins_json("{}").unwrap(), "[]");
+        assert_eq!(parse_plugins_json("   ").unwrap(), "[]");
+    }
+
+    #[test]
+    fn valid_sibling_spec_round_trips() {
+        let input = r#"[{"id":"init_state_from_java","provider":"init_state_sibling","opts":{"source_processor_id":"market-init-state","handler_key":"fetch_init_state","request_payload":{"symbol":"XBT/USD"}},"subscriptions":[["on_processor_init",{"on_error":"empty"}]]}]"#;
+        let canonical = parse_plugins_json(input).unwrap();
+        assert!(canonical.contains("\"init_state_from_java\""));
+        assert!(canonical.contains("\"init_state_sibling\""));
+    }
+
+    #[test]
+    fn malformed_json_returns_err() {
+        assert!(parse_plugins_json("not json").is_err());
+        assert!(parse_plugins_json("[").is_err());
+    }
+
+    #[test]
+    fn non_array_returns_err() {
+        let err = parse_plugins_json(r#"{"id":"x","provider":"y"}"#).unwrap_err();
+        assert!(err.contains("JSON array"));
+    }
+
+    #[test]
+    fn missing_id_returns_err() {
+        let err =
+            parse_plugins_json(r#"[{"provider":"init_state_sibling","subscriptions":[["x",{}]]}]"#)
+                .unwrap_err();
+        assert!(err.contains("missing non-empty string field `id`"));
+    }
+
+    #[test]
+    fn empty_subscriptions_returns_err() {
+        let err = parse_plugins_json(
+            r#"[{"id":"p","provider":"init_state_sibling","subscriptions":[]}]"#,
+        )
+        .unwrap_err();
+        assert!(err.contains("non-empty `subscriptions`"));
     }
 }
 

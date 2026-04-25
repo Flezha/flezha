@@ -6,6 +6,11 @@ defmodule Flezha.Recovery.PluginStore do
   `plugin_id` and backed by its own DETS file under the same
   `recovery_data_dir`. Rows are the driver struct with transient fields
   (pids, live connection refs) stripped by the caller — see design §D12.
+
+  Opened with `auto_save: :infinity` and sync-on-event: every `put/2` and
+  `delete/1` calls `:dets.sync/1` before returning. Plugin lifecycle events
+  are operator-driven and infrequent, so an auto_save timer would only add
+  a loss window.
   """
 
   use GenServer
@@ -13,7 +18,6 @@ defmodule Flezha.Recovery.PluginStore do
   require Logger
 
   @table :flz_recovery_plugins
-  @auto_save_ms 5_000
   @dets_filename "recovery_plugins.dets"
 
   @type plugin_id() :: binary()
@@ -40,11 +44,30 @@ defmodule Flezha.Recovery.PluginStore do
       row = build_row(plugin_or_row)
 
       case :dets.insert(@table, {plugin_id, row}) do
-        :ok -> :ok
-        {:error, reason} -> {:error, reason}
+        :ok ->
+          sync_after(:put, plugin_id)
+          :ok
+
+        {:error, reason} ->
+          {:error, reason}
       end
     else
       :ok
+    end
+  end
+
+  defp sync_after(op, key) do
+    case :dets.sync(@table) do
+      :ok ->
+        Logger.debug("[recovery] dets sync op=#{op} key=#{inspect(key)} table=#{@table}")
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "[recovery] dets sync FAILED op=#{op} key=#{inspect(key)} reason=#{inspect(reason)}"
+        )
+
+        {:error, reason}
     end
   end
 
@@ -67,6 +90,7 @@ defmodule Flezha.Recovery.PluginStore do
   def delete(plugin_id) when is_binary(plugin_id) do
     if table_ready?() do
       :dets.delete(@table, plugin_id)
+      sync_after(:delete, plugin_id)
     end
 
     :ok
@@ -113,7 +137,7 @@ defmodule Flezha.Recovery.PluginStore do
 
     case :dets.open_file(@table, [
            {:type, :set},
-           {:auto_save, @auto_save_ms},
+           {:auto_save, :infinity},
            {:file, String.to_charlist(file_path)}
          ]) do
       {:ok, @table} ->

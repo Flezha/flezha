@@ -76,7 +76,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     defp do_produce(%Ctx.IO{} = ctx, opts, msg, md) do
       partition =
         case Map.get(md, "kafka_msg_partition") do
-          nil -> Map.get(opts, :partition, 0)
+          nil -> coerce_int(Map.get(opts, :partition, 0))
           string_val -> String.to_integer(string_val)
         end
 
@@ -85,7 +85,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
           %KafkaEx.Protocol.Produce.Request{
             topic: Map.fetch!(opts, :topic),
             partition: partition,
-            required_acks: Map.get(opts, :required_acks, 1),
+            required_acks: coerce_int(Map.get(opts, :required_acks, 1)),
             messages: [
               %KafkaEx.Protocol.Produce.Message{
                 value: msg,
@@ -105,6 +105,9 @@ defmodule Flezha.Plugin.Provider.Kafka do
         any -> {:error, any}
       end
     end
+
+    defp coerce_int(v) when is_integer(v), do: v
+    defp coerce_int(v) when is_binary(v), do: String.to_integer(v)
 
     defp parse_hosts(hosts) when is_binary(hosts) do
       hosts

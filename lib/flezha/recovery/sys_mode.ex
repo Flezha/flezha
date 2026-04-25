@@ -24,10 +24,16 @@ defmodule Flezha.Recovery.SysMode do
 
   require Logger
 
+  alias Flezha.ComputeEngine.FleetManager
   alias Flezha.Recovery.Store
 
   @type mode() :: :bootstrap | :recover | :normal
-  @type reason() :: :init | :disabled | :window_elapsed | :peer_normal
+  @type reason() :: :init | :disabled | :window_elapsed | :peer_normal | :factory_advertised
+
+  # Factory-gate poll cadence. 500ms keeps the startup delay small while the
+  # INFO throttle (see `@wait_log_interval_ms`) keeps the log quiet.
+  @wait_poll_interval_ms 500
+  @wait_log_interval_ms 5_000
 
   ## Public API
 
@@ -76,18 +82,34 @@ defmodule Flezha.Recovery.SysMode do
   def init(_opts) do
     enabled = Application.get_env(:flezha, :recovery_enabled, true)
     window_ms = Application.get_env(:flezha, :recovery_window_ms, 10_000)
+    wait_factory = Application.get_env(:flezha, :recovery_wait_factory, "")
+    wait_namespace = Application.get_env(:flezha, :recovery_wait_namespace, "default")
+
+    wait_timeout_ms = Application.get_env(:flezha, :recovery_wait_timeout_ms, 60_000)
     store_count = safe_store_count()
 
     state = %{
       mode: :bootstrap,
       window_ms: window_ms,
-      timer: nil
+      wait_factory: wait_factory,
+      wait_namespace: wait_namespace,
+      wait_timeout_ms: wait_timeout_ms,
+      timer: nil,
+      wait_poll_ref: nil,
+      last_wait_log_ms: 0
     }
 
     state =
       cond do
         not enabled ->
           transition(state, :normal, :disabled)
+
+        store_count > 0 and wait_factory != "" ->
+          # Factory-gated recovery path (design §D7). Replay fires either on
+          # first matching advertisement or on `wait_timeout_ms`.
+          state
+          |> transition(:recover, :init)
+          |> arm_factory_gate()
 
         store_count > 0 and window_ms > 0 ->
           state
@@ -108,9 +130,15 @@ defmodule Flezha.Recovery.SysMode do
           transition(state, :normal, :window_elapsed)
       end
 
+    gate =
+      if wait_factory == "",
+        do: "disabled",
+        else: "factory=#{wait_factory} namespace=#{wait_namespace} timeout_ms=#{wait_timeout_ms}"
+
     Logger.info(
       "[recovery] data_dir=#{inspect(Application.get_env(:flezha, :recovery_data_dir))} " <>
-        "rows=#{store_count} mode=#{state.mode} window_ms=#{window_ms} enabled=#{enabled}"
+        "rows=#{store_count} mode=#{state.mode} window_ms=#{window_ms} " <>
+        "enabled=#{enabled} wait_gate=#{gate}"
     )
 
     {:ok, state}
@@ -130,6 +158,7 @@ defmodule Flezha.Recovery.SysMode do
 
     new_state =
       state
+      |> cancel_wait_poll()
       |> cancel_timer()
       |> transition(:normal, :peer_normal)
 
@@ -163,8 +192,58 @@ defmodule Flezha.Recovery.SysMode do
     {:noreply, new_state}
   end
 
+  def handle_info(:wait_factory_poll, %{mode: :recover} = state) do
+    case factories_all_advertised?(state.wait_factory, state.wait_namespace) do
+      true ->
+        Logger.info(
+          "[recovery] factories #{state.wait_factory} advertised — triggering replay"
+        )
+
+        new_state =
+          state
+          |> cancel_wait_poll()
+          |> cancel_timer()
+
+        request_recovery()
+        {:noreply, new_state}
+
+      false ->
+        {:noreply, reschedule_wait_poll(state)}
+    end
+  end
+
+  def handle_info(:wait_factory_poll, state) do
+    # Already advanced past :recover (peer_normal, :recovery_done). Drop the
+    # poll tick; any outstanding timeout is still valid and will be ignored
+    # if mode is no longer :recover.
+    {:noreply, %{state | wait_poll_ref: nil}}
+  end
+
+  def handle_info(:wait_factory_timeout, %{mode: :recover} = state) do
+    Logger.warning(
+      "[recovery] factory #{state.wait_factory} not advertised within " <>
+        "#{state.wait_timeout_ms}ms — proceeding with replay; fail-open semantics may yield empty state"
+    )
+
+    new_state =
+      state
+      |> cancel_wait_poll()
+      |> Map.put(:timer, nil)
+
+    request_recovery()
+    {:noreply, new_state}
+  end
+
+  def handle_info(:wait_factory_timeout, state) do
+    {:noreply, %{state | timer: nil}}
+  end
+
   def handle_info({:recovery_done, _result}, %{mode: :recover} = state) do
-    {:noreply, transition(state, :normal, :window_elapsed)}
+    {:noreply,
+     state
+     |> cancel_wait_poll()
+     |> cancel_timer()
+     |> transition(:normal, :window_elapsed)}
   end
 
   def handle_info({:recovery_done, _result}, state) do
@@ -183,12 +262,95 @@ defmodule Flezha.Recovery.SysMode do
 
   defp arm_timer(state), do: state
 
+  defp arm_factory_gate(state) do
+    Logger.info(
+      "[recovery] waiting for factory #{state.wait_factory} in namespace " <>
+        "#{state.wait_namespace} (timeout=#{state.wait_timeout_ms}ms)"
+    )
+
+    timer_ref = Process.send_after(self(), :wait_factory_timeout, state.wait_timeout_ms)
+    # Kick off the first poll on the next message-loop iteration so a
+    # factory already advertised at init/1 time is caught immediately.
+    poll_ref = Process.send_after(self(), :wait_factory_poll, 0)
+
+    %{
+      state
+      | timer: timer_ref,
+        wait_poll_ref: poll_ref,
+        last_wait_log_ms: monotonic_ms()
+    }
+  end
+
+  defp reschedule_wait_poll(state) do
+    state =
+      if throttled_log_due?(state) do
+        Logger.info(
+          "[recovery] waiting for factory #{state.wait_factory} in namespace " <>
+            "#{state.wait_namespace}"
+        )
+
+        %{state | last_wait_log_ms: monotonic_ms()}
+      else
+        state
+      end
+
+    ref = Process.send_after(self(), :wait_factory_poll, @wait_poll_interval_ms)
+    %{state | wait_poll_ref: ref}
+  end
+
+  defp cancel_wait_poll(%{wait_poll_ref: nil} = state), do: state
+
+  defp cancel_wait_poll(%{wait_poll_ref: ref} = state) do
+    _ = Process.cancel_timer(ref)
+    %{state | wait_poll_ref: nil}
+  end
+
   defp cancel_timer(%{timer: nil} = state), do: state
 
   defp cancel_timer(%{timer: ref} = state) do
     _ = Process.cancel_timer(ref)
     %{state | timer: nil}
   end
+
+  defp factory_advertised?(factory_id, namespace) do
+    try do
+      case FleetManager.list_factories(namespace) do
+        {:ok, factories} when is_list(factories) ->
+          Enum.any?(factories, fn entry -> Map.get(entry, :id) == factory_id end)
+
+        _ ->
+          false
+      end
+    catch
+      _kind, _reason -> false
+    end
+  end
+
+  # Multi-factory gate — `wait_factory` may be a single id or a
+  # comma-separated list ("crypto_trades,market-init-state"). All listed
+  # factories must be advertised before replay starts, so processors whose
+  # factory lives on a slower-to-connect compute engine (e.g. market-app,
+  # which Spring Boots up ~10 s after the agent) aren't replayed before
+  # their target node registers.
+  defp factories_all_advertised?(factory_list, namespace) do
+    ids = split_factory_list(factory_list)
+    ids != [] and Enum.all?(ids, &factory_advertised?(&1, namespace))
+  end
+
+  defp split_factory_list(s) when is_binary(s) do
+    s
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp split_factory_list(_), do: []
+
+  defp throttled_log_due?(%{last_wait_log_ms: last}) do
+    monotonic_ms() - last >= @wait_log_interval_ms
+  end
+
+  defp monotonic_ms, do: System.monotonic_time(:millisecond)
 
   defp transition(%{mode: from} = state, to, reason) do
     if from == to do

@@ -143,6 +143,39 @@ config :flezha,
        val -> String.downcase(val) in ["true", "1", "yes"]
      end),
 
+  # When set to a factory id (e.g. "market-init-state"), `SysMode` defers
+  # `Coordinator.start_recovery_async/0` until either a connected node
+  # advertises that factory OR the wait timeout fires. Empty string ("")
+  # reverts to the raw `recovery_window_ms` timer. See design §D7.
+  recovery_wait_factory: System.get_env("FLEZHA_RECOVERY_WAIT_FACTORY", ""),
+  recovery_wait_namespace: System.get_env("FLEZHA_RECOVERY_WAIT_NAMESPACE", "default"),
+  recovery_wait_timeout_ms:
+    (case Integer.parse(System.get_env("FLEZHA_RECOVERY_WAIT_TIMEOUT_MS", "60000")) do
+       {n, ""} when n >= 0 -> n
+       _ -> 60_000
+     end),
+
+  # ------------------------------------------------------------------------------------------------
+  # Overwatch periodic state-snapshot task (design §D8).
+  #
+  # `FLEZHA_OVERWATCH_STATE_SNAPSHOT_INTERVAL_MS` gates the background timer
+  # that asks each running processor for an in-memory state snapshot and
+  # fanouts to `:on_snapshot` subscribers. A value of `"0"` or `"disabled"`
+  # stops the timer from being scheduled — the default, since flezha_market
+  # treats Postgres (populated by Kafka-consumed rows) as the authoritative
+  # store and any second on-disk copy would drift.
+  overwatch_state_snapshot_interval_ms:
+    (case System.get_env("FLEZHA_OVERWATCH_STATE_SNAPSHOT_INTERVAL_MS", "0") do
+       "disabled" ->
+         0
+
+       raw ->
+         case Integer.parse(raw) do
+           {n, ""} when n >= 0 -> n
+           _ -> 0
+         end
+     end),
+
   # ------------------------------------------------------------------------------------------------
   # Installable plugin subsystem — staged rollout lever. See
   # `docs/plugin_installation.md` for the full design.

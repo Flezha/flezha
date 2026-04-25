@@ -7,8 +7,12 @@ defmodule Flezha.Recovery.Store do
   `child_id`. On agent restart, `Flezha.Recovery.SysMode` consults this store to
   decide whether there is recovery work to do.
 
-  Single DETS table named `:flz_recovery`, `:set` type, with
-  `auto_save: 5_000` — crash-safe without paying fsync per insert.
+  Single DETS table named `:flz_recovery`, `:set` type, opened with
+  `auto_save: :infinity`. The timer is explicitly disabled — every `put/3`
+  and `delete/1` calls `:dets.sync/1` before returning, so the caller does
+  not observe `:ok` until the row is on disk. Processor lifecycle events are
+  infrequent and operator-driven; a 5-second batching window adds a loss
+  window without amortising any writes.
   """
 
   use GenServer
@@ -16,7 +20,6 @@ defmodule Flezha.Recovery.Store do
   require Logger
 
   @table :flz_recovery
-  @auto_save_ms 5_000
   @dets_filename "recovery.dets"
 
   @type child_id() :: binary()
@@ -50,8 +53,12 @@ defmodule Flezha.Recovery.Store do
       }
 
       case :dets.insert(@table, {child_id, row}) do
-        :ok -> :ok
-        {:error, reason} -> {:error, reason}
+        :ok ->
+          sync_after(:put, child_id)
+          :ok
+
+        {:error, reason} ->
+          {:error, reason}
       end
     else
       :ok
@@ -63,9 +70,25 @@ defmodule Flezha.Recovery.Store do
   def delete(child_id) when is_binary(child_id) do
     if table_ready?() do
       :dets.delete(@table, child_id)
+      sync_after(:delete, child_id)
     end
 
     :ok
+  end
+
+  defp sync_after(op, key) do
+    case :dets.sync(@table) do
+      :ok ->
+        Logger.debug("[recovery] dets sync op=#{op} key=#{inspect(key)} table=#{@table}")
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "[recovery] dets sync FAILED op=#{op} key=#{inspect(key)} reason=#{inspect(reason)}"
+        )
+
+        {:error, reason}
+    end
   end
 
   @doc "Return all stored rows as `[{child_id, row}]`."
@@ -121,7 +144,7 @@ defmodule Flezha.Recovery.Store do
 
     case :dets.open_file(@table, [
            {:type, :set},
-           {:auto_save, @auto_save_ms},
+           {:auto_save, :infinity},
            {:file, String.to_charlist(file_path)}
          ]) do
       {:ok, @table} ->

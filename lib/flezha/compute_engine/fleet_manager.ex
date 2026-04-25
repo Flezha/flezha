@@ -46,6 +46,19 @@ defmodule Flezha.ComputeEngine.FleetManager do
     GenServer.call(__MODULE__, {:active_compute_engines, namespace})
   end
 
+  @doc """
+  Returns active compute engines in `namespace` that advertise `factory_id`.
+
+  Used by `ProcessorManager.assign_compute_engine/2` so we never route a
+  processor to a node that doesn't own its factory — without this filter
+  every input frame for a misrouted processor hits a dead registry entry
+  on the foreign node and generates a `enqueue: processor X not found`
+  warning on every input.
+  """
+  def compute_engines_for_factory(namespace, factory_id) do
+    GenServer.call(__MODULE__, {:compute_engines_for_factory, namespace, factory_id})
+  end
+
   def disconnect_compute_engine(namespace, compute_engine_id) do
     GenServer.call(__MODULE__, {:disconnect_compute_engine, namespace, compute_engine_id})
   end
@@ -90,6 +103,21 @@ defmodule Flezha.ComputeEngine.FleetManager do
     compute_engine_ids = get_compute_engine_ids(state, namespace, :active)
 
     {:reply, compute_engine_ids, state}
+  end
+
+  @impl true
+  def handle_call({:compute_engines_for_factory, namespace, factory_id}, _from, state) do
+    active_ids = MapSet.new(get_compute_engine_ids(state, namespace, :active))
+
+    ce_ids =
+      state.namespace_factories
+      |> Map.get(namespace, %{})
+      |> Map.get(factory_id, %{ce_ids: MapSet.new()})
+      |> Map.get(:ce_ids)
+      |> MapSet.intersection(active_ids)
+      |> MapSet.to_list()
+
+    {:reply, ce_ids, state}
   end
 
   @impl true

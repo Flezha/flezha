@@ -118,4 +118,67 @@ defmodule FlezhaTest.Processor.SiblingTest do
     assert {:error, {:missing_opt, :source_processor_id}} =
              Sibling.on_processor_init(@base_ctx, opts)
   end
+
+  # Regression guard — these three tests catch the failure modes that
+  # bit flezha_market's init-state wiring during fix-processor-state-
+  # rehydration: (1) CLI-supplied opts arrive with string keys/values, so
+  # handler_key is a string but the `:on_message` subscription lookup
+  # keys by atom; (2) request_payload arrives as a map (JSON-decoded from
+  # the --plugins flag) even though the transport expects bytes; (3) the
+  # source processor may still be booting during a DETS replay iteration
+  # in which the consumer is scheduled before the provider.
+
+  test "string handler_key is atomized so `:on_message` dispatch matches" do
+    fake =
+      spawn(fn ->
+        receive do
+          {:flezha_request, key, _payload, reply_to, ref} ->
+            # Assert Sibling atomized `"fetch_init_state"` → `:fetch_init_state`.
+            assert is_atom(key)
+            assert key == :fetch_init_state
+            send(reply_to, {:flezha_response, ref, {:ok, "{}"}})
+        after
+          2_000 -> :ok
+        end
+      end)
+
+    stub_pid("default", "src", {:ok, fake})
+
+    opts = %{source_processor_id: "src", handler_key: "fetch_init_state"}
+
+    assert {:ok, %Ctx.Init{accumulated: %{}}} = Sibling.on_processor_init(@base_ctx, opts)
+  end
+
+  test "map request_payload is JSON-encoded before dispatch" do
+    fake =
+      spawn(fn ->
+        receive do
+          {:flezha_request, _key, payload, reply_to, ref} ->
+            # The transport expects binary; Sibling must Jason.encode! the
+            # map from opts before sending.
+            assert is_binary(payload)
+            assert Jason.decode!(payload) == %{"symbol" => "BTC/DEMO1", "ohlc_window" => 1000}
+            send(reply_to, {:flezha_response, ref, {:ok, "{}"}})
+        after
+          2_000 -> :ok
+        end
+      end)
+
+    stub_pid("default", "src", {:ok, fake})
+
+    opts = %{
+      source_processor_id: "src",
+      handler_key: :fetch,
+      request_payload: %{"symbol" => "BTC/DEMO1", "ohlc_window" => 1000}
+    }
+
+    assert {:ok, %Ctx.Init{accumulated: %{}}} = Sibling.on_processor_init(@base_ctx, opts)
+  end
+
+  # NOTE: Sibling's resolve_pid retry behaviour is verified at the live
+  # agent-log level ("source_processor_not_found" → "[init-state-sibling]
+  # delivered" within the same request_timeout_ms window during DETS
+  # replay) rather than here, because a Mimic stub doesn't easily model
+  # "first call errors, later calls succeed" at the ~100 ms poll cadence
+  # without racing against the monotonic deadline.
 end

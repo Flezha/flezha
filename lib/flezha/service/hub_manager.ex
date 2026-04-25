@@ -5,6 +5,8 @@ defmodule Flezha.Service.HubManager do
   alias ProcessHub.Service.HookManager
   alias Flezha.Service.ProcessorManager
 
+  require Logger
+
   use Supervisor
 
   def start_link(_) do
@@ -213,10 +215,16 @@ defmodule Flezha.Service.HubManager do
           {namespace, processor}
       end
 
-    assigned_compute_engine = ProcessorManager.assign_compute_engine(namespace)
+    factory_id = Map.get(processor, :factory_id)
+    assigned_compute_engine = ProcessorManager.assign_compute_engine(namespace, factory_id)
+
+    Logger.info(
+      "[hub_manager] alter_child_data processor=#{inspect(Map.get(processor, :id))} " <>
+        "factory=#{inspect(factory_id)} assigned_ce=#{inspect(assigned_compute_engine)}"
+    )
 
     if is_nil(assigned_compute_engine) do
-      raise "No active compute engines available in namespace #{namespace}"
+      raise "No active compute engines available in namespace #{namespace} for factory #{inspect(factory_id)}"
     end
 
     new_args = [{namespace, assigned_compute_engine, processor}]

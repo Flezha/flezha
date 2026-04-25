@@ -32,7 +32,17 @@ config :flezha,
     "processor_beam_msg" => Flezha.Plugin.Provider.BeamMsgForward,
     "processor_stdout" => Flezha.Plugin.Provider.StdOut,
     "processor_io_filter" => Flezha.Plugin.Provider.Filter,
-    "monitored_io_forward" => Flezha.Plugin.Provider.MonitoredIOForward
+    "monitored_io_forward" => Flezha.Plugin.Provider.MonitoredIOForward,
+    # Init-state source for sibling processors (e.g. flezha_market's
+    # `market-init-state` factory on the market-app side). Attached at
+    # processor start via `flz processor start --plugins '[...]'`.
+    "init_state_sibling" => Flezha.Processor.InitState.Providers.Sibling,
+    # `:on_message` provider that forwards a `{:flezha_request, key, payload,
+    # reply_to, ref}` envelope to the SDK-side processor via the
+    # `ProcessorMessage` control command. Attach at processor start with a
+    # subscription keyed on the handler name, e.g. `["on_message",
+    # {"name": "fetch_init_state"}]`.
+    "processor_message_forward" => Flezha.Plugin.Provider.MessageForward
   },
 
   # ------------------------------------------------------------------------------------------------

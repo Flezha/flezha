@@ -48,7 +48,16 @@ defmodule Flezha.Processor.Overwatch do
   def init({namespace, compute_engine_id, processor}) do
     Process.flag(:trap_exit, true)
 
-    snapshot_interval = Keyword.get(processor.opts, :snapshot_interval, @snapshop_interval)
+    # Per-processor override trumps the agent-wide env var. Zero (or the
+    # sentinel `:disabled`) at EITHER layer turns the periodic `:on_snapshot`
+    # task off — design §D8. The flezha_market deployment defaults the env
+    # var to `"0"` since Postgres (populated by Kafka-consumed rows) is the
+    # authoritative store and any secondary snapshot would drift.
+    snapshot_interval =
+      case Keyword.fetch(processor.opts, :snapshot_interval) do
+        {:ok, value} -> normalize_snapshot_interval(value)
+        :error -> overwatch_default_snapshot_interval()
+      end
 
     schedule_snapshot(snapshot_interval)
 
@@ -86,23 +95,26 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   defp resolve_init_state(%__MODULE__{} = state, processor) do
-    if processor.init_values == %{} do
-      ctx = %Ctx.Init{
-        processor_id: processor.id,
-        namespace: state.namespace,
-        factory_id: processor.factory_id,
-        accumulated: %{}
-      }
+    # Always run the init-state fold chain, seeded with whatever the caller
+    # passed in `--init_values`. The fold may be empty (no plugins
+    # subscribed), in which case `accumulated` round-trips unchanged.
+    # Merging lets callers pass config (e.g. `symbols`, `asset_pairs`) and
+    # still receive Sibling-sourced keys like `pending_init_state_b64` on
+    # top of it — without this, supplying any init_values disabled the
+    # init-state rehydration flow entirely.
+    ctx = %Ctx.Init{
+      processor_id: processor.id,
+      namespace: state.namespace,
+      factory_id: processor.factory_id,
+      accumulated: processor.init_values
+    }
 
-      case Extension.run(state.extensions, :on_processor_init, ctx) do
-        {:ok, %Ctx.Init{accumulated: resolved}} ->
-          {:ok, %{state | init_values: resolved}, %{processor | init_values: resolved}}
+    case Extension.run(state.extensions, :on_processor_init, ctx) do
+      {:ok, %Ctx.Init{accumulated: resolved}} ->
+        {:ok, %{state | init_values: resolved}, %{processor | init_values: resolved}}
 
-        {:error, reason} ->
-          {:error, reason}
-      end
-    else
-      {:ok, state, processor}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -440,11 +452,15 @@ defmodule Flezha.Processor.Overwatch do
     GenServer.call(
       Identificator.control_unit(compute_engine_id),
       {:start_processor, processor},
-      8_000
+      # 8s wasn't enough when the SDK is on the Java side — Spring/JPA
+      # warmup plus the AddProcessor control-channel round-trip easily
+      # exceeds that during a cold start. 30s gives Spring time to breathe
+      # without masking genuine stalls.
+      30_000
     )
   end
 
-  defp schedule_snapshot(snapshot_interval) when is_integer(snapshot_interval) do
+  defp schedule_snapshot(snapshot_interval) when is_integer(snapshot_interval) and snapshot_interval > 0 do
     Process.send_after(self(), :schedule_snapshot, snapshot_interval)
   end
 
@@ -475,4 +491,24 @@ defmodule Flezha.Processor.Overwatch do
         nil
     end
   end
+
+  defp overwatch_default_snapshot_interval do
+    :flezha
+    |> Application.get_env(:overwatch_state_snapshot_interval_ms, @snapshop_interval)
+    |> normalize_snapshot_interval()
+  end
+
+  defp normalize_snapshot_interval(:disabled), do: 0
+  defp normalize_snapshot_interval("disabled"), do: 0
+
+  defp normalize_snapshot_interval(n) when is_integer(n) and n >= 0, do: n
+
+  defp normalize_snapshot_interval(n) when is_binary(n) do
+    case Integer.parse(n) do
+      {parsed, ""} when parsed >= 0 -> parsed
+      _ -> @snapshop_interval
+    end
+  end
+
+  defp normalize_snapshot_interval(_), do: @snapshop_interval
 end

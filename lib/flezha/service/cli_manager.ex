@@ -11,17 +11,43 @@ defmodule Flezha.Service.CliManager do
   alias Flezha.Service.ProcessorManager
 
   @doc "Starts a processor."
-  def processor_start(namespace, processor_id, factory_id, init_values, opts \\ []) do
-    opts =
+  def processor_start(
+        namespace,
+        processor_id,
+        factory_id,
+        init_values,
+        opts \\ [],
+        plugins_json \\ "[]"
+      ) do
+    opts_kw =
       Payloader.json_to_map(opts)
       |> atom_converter()
       |> Keyword.new()
 
+    case decode_plugins(plugins_json, normalize_namespace(namespace), processor_id) do
+      {:ok, []} ->
+        start_processor(namespace, processor_id, factory_id, init_values, opts_kw)
+
+      {:ok, plugins} ->
+        start_processor(
+          namespace,
+          processor_id,
+          factory_id,
+          init_values,
+          Keyword.put(opts_kw, :plugins, plugins)
+        )
+
+      {:error, reason} ->
+        IO.puts("Error starting processor: #{inspect(reason)}")
+    end
+  end
+
+  defp start_processor(namespace, processor_id, factory_id, init_values, opts_kw) do
     processor = %Flezha.Processor.Builder{
       id: processor_id,
       factory_id: factory_id,
       init_values: Payloader.json_to_map(init_values),
-      opts: opts
+      opts: opts_kw
     }
 
     case ProcessorManager.start_processor(normalize_namespace(namespace), processor) do
@@ -29,6 +55,165 @@ defmodule Flezha.Service.CliManager do
       {:error, reason} -> IO.puts("Error starting processor: #{inspect(reason)}")
     end
   end
+
+  ## CLI --plugins decoder ----------------------------------------------------
+  ##
+  ## Turns the JSON array shipped by `flz processor start --plugins` into a list
+  ## of `%Flezha.Plugin{}` structs ready for `Builder.opts = [plugins: ...]`.
+  ## Returns errors matching design.md §D2b's vocabulary:
+  ##   * `{:invalid_plugins_json, reason}`
+  ##   * `{:unknown_provider, provider_id}`
+  ##   * `{:invalid_subscription, details}`
+  ##   * `{:invalid_opts, details}`
+
+  defp decode_plugins(plugins_json, namespace, processor_id) do
+    case decode_plugins_json(plugins_json) do
+      {:ok, []} ->
+        {:ok, []}
+
+      {:ok, specs} ->
+        providers = ConfigManager.get_enabled_plugins()
+
+        Enum.reduce_while(specs, {:ok, []}, fn spec, {:ok, acc} ->
+          case build_plugin(spec, providers, namespace, processor_id) do
+            {:ok, plugin} -> {:cont, {:ok, [plugin | acc]}}
+            {:error, _} = err -> {:halt, err}
+          end
+        end)
+        |> case do
+          {:ok, plugins} -> {:ok, Enum.reverse(plugins)}
+          err -> err
+        end
+
+      {:error, reason} ->
+        {:error, {:invalid_plugins_json, reason}}
+    end
+  end
+
+  defp decode_plugins_json(nil), do: {:ok, []}
+  defp decode_plugins_json(""), do: {:ok, []}
+  defp decode_plugins_json("[]"), do: {:ok, []}
+  defp decode_plugins_json("{}"), do: {:ok, []}
+
+  defp decode_plugins_json(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, list} when is_list(list) -> {:ok, list}
+      {:ok, _} -> {:error, :not_a_json_array}
+      {:error, %Jason.DecodeError{} = err} -> {:error, Exception.message(err)}
+    end
+  end
+
+  defp decode_plugins_json(_), do: {:ok, []}
+
+  defp build_plugin(spec, providers, namespace, processor_id) when is_map(spec) do
+    with {:ok, plugin_id} <- fetch_string(spec, "id"),
+         {:ok, provider_id} <- fetch_string(spec, "provider"),
+         {:ok, provider_mod} <- resolve_provider(providers, provider_id),
+         {:ok, raw_opts} <- fetch_map(spec, "opts"),
+         {:ok, subscriptions} <- build_subscriptions(Map.get(spec, "subscriptions", [])) do
+      {:ok,
+       %Plugin{
+         id: plugin_id,
+         provider: provider_mod,
+         opts: atomize_map(raw_opts),
+         subscriptions: subscriptions,
+         namespace: namespace,
+         processor_id: processor_id
+       }}
+    end
+  end
+
+  defp build_plugin(_, _, _, _), do: {:error, {:invalid_opts, :plugin_spec_not_a_map}}
+
+  defp fetch_string(spec, key) do
+    case Map.get(spec, key) do
+      s when is_binary(s) and byte_size(s) > 0 -> {:ok, s}
+      _ -> {:error, {:invalid_opts, {:missing_field, key}}}
+    end
+  end
+
+  defp fetch_map(spec, key) do
+    case Map.get(spec, key, %{}) do
+      m when is_map(m) -> {:ok, m}
+      _ -> {:error, {:invalid_opts, {:not_a_map, key}}}
+    end
+  end
+
+  defp resolve_provider(providers, provider_id) do
+    case Map.get(providers, provider_id) do
+      nil -> {:error, {:unknown_provider, provider_id}}
+      mod -> {:ok, mod}
+    end
+  end
+
+  defp build_subscriptions(subs) when is_list(subs) and subs != [] do
+    Enum.reduce_while(subs, {:ok, []}, fn sub, {:ok, acc} ->
+      case build_subscription(sub) do
+        {:ok, tuple} -> {:cont, {:ok, [tuple | acc]}}
+        err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, acc} -> {:ok, Enum.reverse(acc)}
+      err -> err
+    end
+  end
+
+  defp build_subscriptions([]), do: {:error, {:invalid_subscription, :empty}}
+  defp build_subscriptions(_), do: {:error, {:invalid_subscription, :not_a_list}}
+
+  defp build_subscription([name, opts]) when is_binary(name) and is_map(opts) do
+    {:ok, {String.to_atom(name), atomize_sub_opts(opts)}}
+  end
+
+  defp build_subscription([name]) when is_binary(name) do
+    {:ok, {String.to_atom(name), []}}
+  end
+
+  defp build_subscription(name) when is_binary(name) do
+    {:ok, {String.to_atom(name), []}}
+  end
+
+  defp build_subscription(%{"name" => name} = sub) when is_binary(name) do
+    opts = Map.get(sub, "opts", %{})
+
+    if is_map(opts) do
+      {:ok, {String.to_atom(name), atomize_sub_opts(opts)}}
+    else
+      {:error, {:invalid_subscription, {:opts_not_a_map, name}}}
+    end
+  end
+
+  defp build_subscription(other),
+    do: {:error, {:invalid_subscription, {:unrecognised_shape, other}}}
+
+  # Subscription opts carry both atom-keyed keys and atom-valued flags
+  # (e.g. `on_error: :empty`). The JSON wire format loses both — keys and
+  # values arrive as strings. Atomise both so the downstream
+  # `Table.validate_on_error/1` sees the shape it expects.
+  defp atomize_sub_opts(map) when is_map(map) do
+    Enum.map(map, fn {k, v} ->
+      {atomize_binary(k), atomize_sub_opt_value(v)}
+    end)
+  end
+
+  defp atomize_binary(s) when is_binary(s), do: String.to_atom(s)
+  defp atomize_binary(other), do: other
+
+  defp atomize_sub_opt_value(v) when is_binary(v), do: String.to_atom(v)
+  defp atomize_sub_opt_value(v), do: v
+
+  # Atomise top-level keys of a plugin-opts map. Values (including nested maps
+  # like `request_payload`) stay verbatim — plugins that need atoms in their
+  # nested opts decode them themselves.
+  defp atomize_map(map) when is_map(map) do
+    Map.new(map, fn {k, v} ->
+      key = if is_binary(k), do: String.to_atom(k), else: k
+      {key, v}
+    end)
+  end
+
+  defp atomize_map(other), do: other
 
   @doc "Stops a processor."
   def processor_stop(namespace, processor_id) do

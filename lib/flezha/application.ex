@@ -40,9 +40,25 @@ defmodule Flezha.Application do
     opts = [strategy: :one_for_one, name: Flezha.Supervisor]
     result = Supervisor.start_link(children, opts)
 
+    log_overwatch_state_snapshot_config()
     validate_boot_ready()
 
     result
+  end
+
+  # Boot log for the Overwatch periodic state-snapshot task (design §D8).
+  # Emits exactly once per agent boot.
+  defp log_overwatch_state_snapshot_config do
+    case Application.get_env(:flezha, :overwatch_state_snapshot_interval_ms, 60_000) do
+      0 ->
+        Logger.info("[overwatch] state_snapshot=disabled source_of_truth=postgres")
+
+      n when is_integer(n) and n > 0 ->
+        Logger.info("[overwatch] state_snapshot=interval_ms=#{n}")
+
+      other ->
+        Logger.info("[overwatch] state_snapshot=unrecognised(#{inspect(other)})")
+    end
   end
 
   @impl true
