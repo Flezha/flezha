@@ -11,9 +11,6 @@ defmodule Flezha.Cluster.Snapshot.Encoding do
 
   @version 1
 
-  @spec version() :: pos_integer()
-  def version, do: @version
-
   @spec encode(map()) :: binary()
   def encode(payload) when is_map(payload) do
     :erlang.term_to_binary({:flezha_snapshot, @version, payload}, [:compressed])
@@ -38,8 +35,6 @@ defmodule Flezha.Cluster.Snapshot.Encoding do
       end
     rescue
       e -> {:error, {:decode_failed, Exception.message(e)}}
-    catch
-      kind, reason -> {:error, {:decode_failed, {kind, reason}}}
     end
   end
 end

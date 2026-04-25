@@ -28,7 +28,6 @@ defmodule Flezha.Recovery.Coordinator do
 
   @ets :flz_recovery_abort
   @abort_key :abort
-  @deprecation_key :run_recovery_deprecation_warned
 
   # Bump when the persisted shape of `%Flezha.Plugin{}` changes in a way
   # that requires discarding on-disk rows.
@@ -200,7 +199,11 @@ defmodule Flezha.Recovery.Coordinator do
   defp extract_namespace_and_processor(_, _), do: :skip
 
   defp do_run_recovery do
-    warn_deprecated_once()
+    Logger.warning(
+      "[recovery] DETS-replay is deprecated — use 'flz cluster restore' " <>
+        "(see docs/cluster-snapshot.md)"
+    )
+
     t0 = System.monotonic_time(:millisecond)
 
     {proc_recovered, proc_failed, aborted_after_proc} = run_processor_phase()
@@ -449,21 +452,5 @@ defmodule Flezha.Recovery.Coordinator do
       _ ->
         :ok
     end
-  end
-
-  # Deprecation WARN — fires at most once per BEAM, the first time DETS-replay
-  # actually runs. Gating via the same ETS table the abort flag uses so we
-  # do not spawn a second named table.
-  defp warn_deprecated_once do
-    ensure_ets()
-
-    if :ets.insert_new(@ets, {@deprecation_key, true}) do
-      Logger.warning(
-        "[recovery] DETS-replay is deprecated — use 'flz cluster restore' " <>
-          "(see docs/cluster-snapshot.md)"
-      )
-    end
-
-    :ok
   end
 end

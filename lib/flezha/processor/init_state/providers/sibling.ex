@@ -29,13 +29,9 @@ defmodule Flezha.Processor.InitState.Providers.Sibling do
 
   require Logger
 
-  @deprecation_warn_table :flz_init_state_sibling_warned
-
   @default_timeout_ms 4_000
 
   def on_processor_init(%Ctx.Init{} = ctx, opts) when is_map(opts) do
-    warn_deprecated_once()
-
     result =
       with {:ok, source_processor_id} <- fetch_required(opts, :source_processor_id),
            {:ok, handler_key_raw} <- fetch_required(opts, :handler_key),
@@ -144,28 +140,5 @@ defmodule Flezha.Processor.InitState.Providers.Sibling do
     rescue
       e -> {:error, {:invalid_reply_payload, Exception.message(e)}}
     end
-  end
-
-  # Deprecation WARN — once per BEAM, gated by an ETS sentinel keyed on the
-  # module so concurrent first-invocations only emit a single line.
-  defp warn_deprecated_once do
-    if :ets.whereis(@deprecation_warn_table) == :undefined do
-      try do
-        _ = :ets.new(@deprecation_warn_table, [:named_table, :public, :set])
-      rescue
-        ArgumentError -> :ok
-      end
-    end
-
-    if :ets.insert_new(@deprecation_warn_table, {__MODULE__, true}) do
-      Logger.warning(
-        "[init_state_sibling] this provider is deprecated — use 'flz cluster restore' " <>
-          "for restart-survival init-state; see docs/cluster-snapshot.md"
-      )
-    end
-
-    :ok
-  rescue
-    ArgumentError -> :ok
   end
 end

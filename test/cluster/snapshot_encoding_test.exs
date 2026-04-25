@@ -63,8 +63,4 @@ defmodule Flezha.Cluster.Snapshot.EncodingTest do
       assert {:error, {:decode_failed, _}} = Encoding.decode(<<255, 254, 253>>)
     end
   end
-
-  test "version/0 returns the current schema version" do
-    assert Encoding.version() == 1
-  end
 end

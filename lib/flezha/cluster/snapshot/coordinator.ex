@@ -113,15 +113,24 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
          {:ok, payload} <- Encoding.decode(bytes) do
       log_age(payload, warn_age)
       ref = make_ref()
-      notify_explicit_restore_started(ref)
+      GenServer.cast(Flezha.Recovery.SysMode, {:explicit_restore_in_progress, ref})
 
       try do
         result = apply_payload(payload, peer_timeout, namespace_filter)
-        notify_explicit_restore_done(ref, classify_result(result))
+
+        GenServer.cast(
+          Flezha.Recovery.SysMode,
+          {:explicit_restore_done, ref, classify_result(result)}
+        )
+
         finalize_restore(result)
       catch
         kind, reason ->
-          notify_explicit_restore_done(ref, {:error, {kind, reason}})
+          GenServer.cast(
+            Flezha.Recovery.SysMode,
+            {:explicit_restore_done, ref, {:error, {kind, reason}}}
+          )
+
           {:error, {kind, reason}}
       end
     end
@@ -285,25 +294,20 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   defp log_age(%{taken_at_ms: t}, warn_age) when is_integer(t) do
     age_ms = System.system_time(:millisecond) - t
 
-    cond do
-      warn_age == :infinity ->
-        Logger.info("[cluster] restore: snapshot age #{age_ms}ms")
-
-      is_integer(warn_age) and age_ms > warn_age ->
-        Logger.warning(
-          "[cluster] restore: snapshot is #{age_ms}ms old, exceeds threshold #{warn_age}ms"
-        )
-
-      true ->
-        Logger.info("[cluster] restore: snapshot age #{age_ms}ms (within threshold)")
+    if is_integer(warn_age) and age_ms > warn_age do
+      Logger.warning(
+        "[cluster] restore: snapshot is #{age_ms}ms old, exceeds threshold #{warn_age}ms"
+      )
+    else
+      Logger.info("[cluster] restore: snapshot age #{age_ms}ms")
     end
   end
 
   defp log_age(_, _), do: :ok
 
   defp apply_payload(payload, peer_timeout, namespace_filter) do
-    processors_filtered = filter_namespace(payload.processors, namespace_filter, :processor)
-    plugins_filtered = filter_namespace(payload.plugins, namespace_filter, :plugin)
+    processors_filtered = filter_namespace(payload.processors, namespace_filter)
+    plugins_filtered = filter_namespace(payload.plugins, namespace_filter)
     captured = Map.get(payload, :captured_states, %{})
 
     proc_results =
@@ -319,21 +323,19 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
     %{processors: proc_results, plugins: plugin_results}
   end
 
-  defp filter_namespace(entries, nil, _kind), do: entries
+  defp filter_namespace(entries, nil), do: entries
 
-  defp filter_namespace(entries, ns, kind) when is_binary(ns) do
-    Enum.filter(entries, fn entry ->
-      matches_namespace?(entry, ns, kind)
-    end)
+  defp filter_namespace(entries, ns) when is_binary(ns) do
+    Enum.filter(entries, &matches_namespace?(&1, ns))
   end
 
-  defp matches_namespace?(%{namespace: entry_ns}, ns, _kind), do: entry_ns == ns
+  defp matches_namespace?(%{namespace: entry_ns}, ns), do: entry_ns == ns
 
-  defp matches_namespace?(%{plugin: %Plugin{namespace: entry_ns}}, ns, :plugin) do
+  defp matches_namespace?(%{plugin: %Plugin{namespace: entry_ns}}, ns) do
     to_string(entry_ns) == ns
   end
 
-  defp matches_namespace?(_entry, _ns, _kind), do: false
+  defp matches_namespace?(_entry, _ns), do: false
 
   defp apply_processor_entry(
          %{processor: %Builder{} = builder, namespace: ns} = entry,
@@ -395,27 +397,5 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
       end)
 
     if failures == 0, do: :ok, else: {:error, {:partial, failures}}
-  end
-
-  defp notify_explicit_restore_started(ref) do
-    case Process.whereis(Flezha.Recovery.SysMode) do
-      nil ->
-        :ok
-
-      pid ->
-        GenServer.cast(pid, {:explicit_restore_in_progress, ref})
-        :ok
-    end
-  end
-
-  defp notify_explicit_restore_done(ref, result) do
-    case Process.whereis(Flezha.Recovery.SysMode) do
-      nil ->
-        :ok
-
-      pid ->
-        GenServer.cast(pid, {:explicit_restore_done, ref, result})
-        :ok
-    end
   end
 end

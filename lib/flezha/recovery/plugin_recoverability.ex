@@ -24,7 +24,4 @@ defmodule Flezha.Recovery.PluginRecoverability do
   @spec recoverable?(Plugin.t() | term()) :: boolean()
   def recoverable?(%Plugin{provider: provider}), do: provider not in @non_recoverable
   def recoverable?(_), do: false
-
-  @spec non_recoverable_providers() :: [module()]
-  def non_recoverable_providers, do: @non_recoverable
 end

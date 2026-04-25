@@ -134,10 +134,7 @@ defmodule Flezha.Cluster.Snapshot do
 
   defp local_processor_pids do
     HubManager.get_running_namespaces()
-    |> Enum.flat_map(fn namespace ->
-      HubManager.get_all_processors(namespace)
-      |> Enum.map(fn {processor_id, pid} -> {processor_id, pid} end)
-    end)
+    |> Enum.flat_map(&HubManager.get_all_processors/1)
     |> Enum.filter(fn {_id, pid} -> is_pid(pid) and node(pid) == node() end)
   end
 
@@ -155,21 +152,17 @@ defmodule Flezha.Cluster.Snapshot do
   defp collect_plugins(entries) do
     entries
     |> Enum.flat_map(fn %{plugins: plugins} -> plugins end)
-    |> Enum.flat_map(fn
-      {_plugin_id, %Plugin{} = plugin} ->
-        if PluginRecoverability.recoverable?(plugin) do
-          [%{plugin: plugin, last_observed_node: node()}]
-        else
-          Logger.warning(
-            "[snapshot] skipping non-recoverable plugin #{inspect(plugin.id)} " <>
-              "(provider #{inspect(plugin.provider)})"
-          )
+    |> Enum.flat_map(fn {_plugin_id, %Plugin{} = plugin} ->
+      if PluginRecoverability.recoverable?(plugin) do
+        [%{plugin: plugin, last_observed_node: node()}]
+      else
+        Logger.warning(
+          "[snapshot] skipping non-recoverable plugin #{inspect(plugin.id)} " <>
+            "(provider #{inspect(plugin.provider)})"
+        )
 
-          []
-        end
-
-      _other ->
         []
+      end
     end)
   end
 end
