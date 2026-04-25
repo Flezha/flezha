@@ -71,7 +71,7 @@ jobs:
           node-version: "22"
 
       - name: Cache Elixir deps + build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             deps
@@ -81,7 +81,7 @@ jobs:
             elixir-${{ runner.os }}-otp27-
 
       - name: Cache Cargo registry + workspace target
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -93,7 +93,7 @@ jobs:
             cargo-${{ runner.os }}-
 
       - name: Cache testnet node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: test/apps/testnet/node_modules
           key: testnet-${{ runner.os }}-${{ hashFiles('test/apps/testnet/package-lock.json', 'test/apps/testnet/package.json') }}

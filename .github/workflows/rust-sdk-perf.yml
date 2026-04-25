@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -45,7 +45,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry + target
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -97,7 +97,7 @@ jobs:
       # ---------------------------------------------------------------------
       - name: Download main baseline (PR only)
         if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         id: restore-main
         with:
           path: target/criterion
@@ -139,14 +139,14 @@ jobs:
 
       - name: Save main baseline to cache (push only)
         if: ${{ github.event_name == 'push' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: target/criterion
           key: rust-sdk-perf-main-${{ github.sha }}
 
       - name: Upload Criterion report as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: criterion-report-${{ github.sha }}
           path: target/criterion

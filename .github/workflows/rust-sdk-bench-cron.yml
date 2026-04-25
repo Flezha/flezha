@@ -24,20 +24,20 @@ jobs:
         runtime: [rust, java]
         transport: [uds, quic]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "28"
           elixir-version: "1.19"
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         if: matrix.runtime == 'java'
         with:
           distribution: temurin
           java-version: "21"
 
       - name: Cache cargo + deps
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -70,7 +70,7 @@ jobs:
             -n 100 -m 10000 \
             2>&1 | tee bench-${{ matrix.runtime }}-${{ matrix.transport }}.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: bench-${{ matrix.runtime }}-${{ matrix.transport }}
           path: bench-${{ matrix.runtime }}-${{ matrix.transport }}.txt
@@ -79,9 +79,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -92,7 +92,7 @@ jobs:
         run: |
           cargo bench -p flezha_compute_engine --features bench-internals \
             --bench dispatch -- --save-baseline cron-$(date +%Y%m%d)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: criterion-weekly
           path: target/criterion
@@ -101,7 +101,7 @@ jobs:
     needs: [matrix-bench, criterion]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: bench-reports
       - name: Post summary (GitHub step summary)
