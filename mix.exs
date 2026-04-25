@@ -23,7 +23,7 @@ defmodule Flezha.MixProject do
     [
       "test.java_sdk": [
         "cmd scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native --targets host",
-        "cmd mvn -q -f sdk/java/pom.xml -P host-only -DskipTests package",
+        "cmd mvn -q -f sdk/java/pom.xml -P host-only -DskipTests install",
         "cmd mvn -q -f test/apps/java_compute_engine/pom.xml -DskipTests package",
         "test --only java_sdk"
       ]
