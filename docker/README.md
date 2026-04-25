@@ -1,6 +1,18 @@
 # Docker
 
-Includes files to run the project in a docker container or to build the docker images.
+Three image stacks, one per concern. Don't mix them up.
+
+| Directory  | Purpose                                                              | Used by                                       |
+|------------|----------------------------------------------------------------------|-----------------------------------------------|
+| `dev/`     | Local dev/runtime: agent + Rust compute engine + Kafka UI + testnet  | `docker compose -f docker/dev/docker-compose.yml up` |
+| `prod/`    | Production agent image                                               | `docker compose -f docker/prod/docker-compose.yml up` |
+| `build/`   | Pinned cross-compile toolchain for `scripts/build-dist.sh --docker`  | one-shot artifact refresh; never long-running |
+
+The committed distribution artifacts (5× native binaries + 2 Java fat
+jars) are produced exclusively by `build/Dockerfile.dist` (or the host
+toolchain) — never by `dev/` or `prod/`. See
+[`build/README.md`](build/README.md) for the build flow and
+[`dev/README.md`](dev/README.md) for the runtime flow.
 
 ## Failure recovery volume
 

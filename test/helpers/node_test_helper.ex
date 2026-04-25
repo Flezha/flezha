@@ -168,16 +168,19 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   end
 
   defp build_command(:java, current_path, namespace) do
+    # The test compute-engine fat jar is *committed* under
+    # test/apps/java_compute_engine/dist/ — refresh it locally with
+    # `scripts/build-dist.sh` whenever the SDK or test-app sources
+    # change, then `git add` and commit. CI doesn't build it.
     jar_path =
       Path.join([
         current_path,
-        "test/apps/java_compute_engine/target/java_compute_engine.jar"
+        "test/apps/java_compute_engine/dist/java_compute_engine.jar"
       ])
 
     if not File.exists?(jar_path) do
       raise "Java compute engine jar not found at #{jar_path}. " <>
-              "Build it first with `mvn -f test/apps/java_compute_engine/pom.xml package` " <>
-              "or run the full pipeline via `mix test.java_sdk`."
+              "Refresh it with `scripts/build-dist.sh` and commit."
     end
 
     # Cap slf4j-simple at ERROR — disconnect/reconnect WARN noise from

@@ -92,9 +92,10 @@
             </build>
         </profile>
         <!--
-          native-build: Cross-compile flz_jni for all five supported target triples
-          via cargo-zigbuild. Fails if any of the five resulting binaries is missing
-          from native-output-dir.
+          native-build: Build flz_jni's cdylib for the host triple (linux-x64
+          is the only platform the SDK currently ships) and verify the binary
+          is present before packaging. Use this for single-machine local
+          builds and for the `native-build` GitHub job.
         -->
         <profile>
             <id>native-build</id>
@@ -105,7 +106,7 @@
                         <artifactId>exec-maven-plugin</artifactId>
                         <executions>
                             <execution>
-                                <id>cross-build</id>
+                                <id>host-build</id>
                                 <phase>generate-resources</phase>
                                 <goals>
                                     <goal>exec</goal>
@@ -115,14 +116,55 @@
                                     <arguments>
                                         <argument>--output</argument>
                                         <argument>${native.output.dir}</argument>
-                                        <argument>--targets</argument>
-                                        <argument>all</argument>
                                     </arguments>
                                 </configuration>
                             </execution>
                         </executions>
                     </plugin>
 
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>require-native-binary</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireFilesExist>
+                                            <files>
+                                                <file>${native.output.dir}/linux-x64/libflz_transport.so</file>
+                                                <file>${native.output.dir}/linux-arm64/libflz_transport.so</file>
+                                                <file>${native.output.dir}/macos-x64/libflz_transport.dylib</file>
+                                                <file>${native.output.dir}/macos-arm64/libflz_transport.dylib</file>
+                                                <file>${native.output.dir}/windows-x64/libflz_transport.dll</file>
+                                            </files>
+                                            <message>native-build profile is missing the required linux-x64 libflz_transport.so binary.</message>
+                                        </requireFilesExist>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+          native-verify: ONLY enforce that all five native binaries already exist
+          in native-output-dir; never invoke cargo-zigbuild. Use this when
+          binaries were produced by an upstream job and downloaded as artifacts
+          (`java-build-and-test` follows `native-cross-build`), so re-running
+          the cross-build would require cargo-zigbuild on a runner that
+          doesn't have it.
+        -->
+        <profile>
+            <id>native-verify</id>
+            <build>
+                <plugins>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-enforcer-plugin</artifactId>
@@ -143,7 +185,7 @@
                                                 <file>${native.output.dir}/macos-arm64/libflz_transport.dylib</file>
                                                 <file>${native.output.dir}/windows-x64/libflz_transport.dll</file>
                                             </files>
-                                            <message>native-build profile is missing one of the five required libflz_transport binaries.</message>
+                                            <message>native-verify: one of the five required libflz_transport binaries is missing — the upstream native-cross-build job did not produce a complete set.</message>
                                         </requireFilesExist>
                                     </rules>
                                 </configuration>

@@ -1,16 +1,15 @@
 name: Elixir
 
-# Runs the full `mix test` suite — every ExUnit case under test/, including
-# the cluster-snapshot CST (`test/system/cluster_snapshot_restore_test.exs`)
-# tagged `:cluster_snapshot_cst`, the Java SDK matrix that talks to the
-# pre-built Java compute-engine jar, and the recovery + plugin + transport
-# unit suites. The Rustler NIF (flz_nif) is built fresh because Elixir's
-# rebar is what invokes it; the Java jar is built up-front because plain
-# `mix test` does not rebuild it.
+# Runs `mix test` — every ExUnit case except `:system` and `:java_sdk`,
+# which are excluded in `test/test_helper.exs`. The Java SDK integration
+# matrix (`:java_sdk`) runs in `java-sdk.yml` because it needs the Java
+# compute-engine jar built first; this workflow stays Elixir+Rust only.
 #
-# `mix test.java_sdk` is exercised in `java-sdk.yml`; this workflow only
-# runs plain `mix test` so the agent-side and cluster paths stay covered
-# by CI without duplicating the matrix run.
+# Native Java SDK binaries (libflz_transport.{so,dylib,dll} × 5 platforms)
+# are committed under `sdk/java/flezha-sdk-native/src/main/resources/native/`
+# — neither this workflow nor `java-sdk.yml` builds them. Refresh locally
+# with `scripts/build-dist.sh` (rebuilds natives + SDK + test app jars
+# in one shot) and commit.
 
 on:
   pull_request:
@@ -26,7 +25,6 @@ on:
       - "sdk/rust/**"
       - "cli/**"
       - "test/apps/rust_compute_engine/**"
-      - "test/apps/java_compute_engine/**"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
   push:
@@ -43,7 +41,6 @@ on:
       - "sdk/rust/**"
       - "cli/**"
       - "test/apps/rust_compute_engine/**"
-      - "test/apps/java_compute_engine/**"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
 
@@ -64,13 +61,6 @@ jobs:
         with:
           otp-version: "27"
           elixir-version: "1.17"
-
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -121,21 +111,6 @@ jobs:
           npm ci || npm install
           npm run build
 
-      - name: Build Rust workspace (rust_compute_engine + flz_nif + cli)
-        # `mix test`'s `external_processes` config invokes `cargo run --quiet`
-        # which only re-links if Cargo's index is up to date — building
-        # up-front keeps the first ExUnit case from racing the compile.
-        run: cargo build --workspace
-
-      - name: Build Java test compute-engine jar
-        # The plain `mix test` suite includes `test/java_sdk/matrix_test.exs`
-        # which spawns this jar via `node_test_helper.build_command(:java, …)`.
-        # Skipping it would fail the matrix tests with a "jar not found"
-        # raise per the helper's own check.
-        run: |
-          mvn -B -f sdk/java/pom.xml -P host-only -DskipTests install
-          mvn -B -f test/apps/java_compute_engine/pom.xml -DskipTests package
-
       - name: Fetch Elixir deps
         run: mix deps.get
 
@@ -143,7 +118,8 @@ jobs:
         run: mix compile --warnings-as-errors
 
       - name: Run mix test
-        # Default `mix test` excludes `:system` tag; the cluster-snapshot
-        # CST (`:cluster_snapshot_cst`) is included by default since it is
-        # untagged for `:system`. Adjust here if that policy changes.
+        # Default `mix test` excludes `:system` and `:java_sdk`. The
+        # `:java_sdk` integration matrix runs in `java-sdk.yml` because it
+        # needs the Java compute-engine jar built first; this workflow
+        # stays Elixir+Rust only.
         run: mix test

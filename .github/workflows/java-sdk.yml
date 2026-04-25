@@ -10,10 +10,7 @@ on:
       - "test/apps/java_compute_engine/**"
       - "test/helpers/node_test_helper.ex"
       - "test/java_sdk/**"
-      - "scripts/build-native.sh"
       - ".github/workflows/java-sdk.yml"
-  # Mirror the PR path filters on push so unrelated main commits (e.g. agent-
-  # only changes) don't trigger a 30-45 min native cross-build + Maven run.
   push:
     branches: [main]
     paths:
@@ -24,7 +21,6 @@ on:
       - "test/apps/java_compute_engine/**"
       - "test/helpers/node_test_helper.ex"
       - "test/java_sdk/**"
-      - "scripts/build-native.sh"
       - ".github/workflows/java-sdk.yml"
 
 env:
@@ -32,83 +28,24 @@ env:
   RUSTFLAGS: "-D warnings"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Built artifacts that are *committed*:
+#   - Native binaries (libflz_transport.{so,dylib,dll} × 5 platforms) under
+#       sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/
+#   - SDK fat jar at  sdk/java/flezha-sdk/dist/flezha-sdk.jar
+#   - Test compute-engine fat jar at
+#       test/apps/java_compute_engine/dist/java_compute_engine.jar
+#
+# Refresh all of them locally with one command (`scripts/build-dist.sh`),
+# then `git add` + commit. CI never invokes the build script, never runs
+# cargo-zigbuild, never cross-compiles.
+
 jobs:
-  # ---------------------------------------------------------------------------
-  # 19.2 — Cross-build flz_jni for all five target triples.
-  # Skipped on PRs that touch only sdk/java/** (excluding native resources).
-  # ---------------------------------------------------------------------------
-  native-cross-build:
+  # Java-side unit tests + JaCoCo coverage gate. Maven still runs here
+  # because it has to compile + execute JUnit; the `-P native-verify`
+  # profile asserts the committed natives are present without rebuilding
+  # them, and there's no "package fat jar" step (the fat jar is committed).
+  java-unit-tests:
     runs-on: ubuntu-latest
-    outputs:
-      cache-hit: ${{ steps.cache-native.outputs.cache-hit }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Detect "Java-only" PR
-        id: scope
-        run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            CHANGED=$(git -c core.quotepath=false diff --name-only origin/${{ github.base_ref }}...HEAD)
-            echo "changed-files<<EOF" >> "$GITHUB_OUTPUT"
-            echo "$CHANGED" >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
-
-            JAVA_ONLY=true
-            while IFS= read -r f; do
-              case "$f" in
-                sdk/java/flezha-sdk-native/src/main/resources/native/*) JAVA_ONLY=false ;;
-                sdk/java/*) ;;
-                *) JAVA_ONLY=false ;;
-              esac
-            done <<< "$CHANGED"
-            echo "java-only=$JAVA_ONLY" >> "$GITHUB_OUTPUT"
-          else
-            echo "java-only=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install Rust stable
-        if: steps.scope.outputs.java-only != 'true'
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cargo cache
-        if: steps.scope.outputs.java-only != 'true'
-        id: cache-native
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: flz-jni-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install cargo-zigbuild + Zig
-        if: steps.scope.outputs.java-only != 'true'
-        run: |
-          cargo install cargo-zigbuild --locked
-          pip install ziglang
-
-      - name: Cross-build flz_jni for all five triples
-        if: steps.scope.outputs.java-only != 'true'
-        run: |
-          scripts/build-native.sh \
-            --output sdk/java/flezha-sdk-native/src/main/resources/native \
-            --targets all
-
-      - name: Upload native binaries artifact
-        if: steps.scope.outputs.java-only != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: flz-native-binaries
-          path: sdk/java/flezha-sdk-native/src/main/resources/native/**
-          retention-days: 7
-
-  # ---------------------------------------------------------------------------
-  # 19.3 — Compile + unit + JNI tests + JaCoCo coverage gate.
-  # 19.5 — Attach the built jar as a workflow artifact.
-  # ---------------------------------------------------------------------------
-  java-build-and-test:
-    runs-on: ubuntu-latest
-    needs: native-cross-build
     steps:
       - uses: actions/checkout@v4
 
@@ -119,22 +56,8 @@ jobs:
           java-version: 21
           cache: maven
 
-      - name: Download native binaries from cross-build
-        if: needs.native-cross-build.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: flz-native-binaries
-          path: sdk/java/flezha-sdk-native/src/main/resources/native
-
-      - name: Restore native binaries from main if Java-only PR
-        if: needs.native-cross-build.result == 'skipped'
-        uses: actions/cache/restore@v4
-        with:
-          path: sdk/java/flezha-sdk-native/src/main/resources/native
-          key: flz-native-binaries-main
-
-      - name: Verify (compile + unit + JaCoCo)
-        run: mvn -B -f sdk/java/pom.xml -P coverage verify
+      - name: Verify (compile + unit + JaCoCo) against committed natives
+        run: mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify
 
       - name: Enforce JaCoCo coverage gate
         run: |
@@ -143,24 +66,15 @@ jobs:
             sdk/java/flezha-sdk-api/target/site/jacoco/jacoco.xml \
             0.85 || true
           # Coverage gate is advisory until scenarios 18.2–18.8 pass three
-          # consecutive main runs. See tasks.md §19.7.
+          # consecutive main runs.
 
-      - name: Build fat jar
-        run: mvn -B -f sdk/java/pom.xml -P native-build -DskipTests package
-
-      - name: Upload flezha-sdk jar
-        uses: actions/upload-artifact@v4
-        with:
-          name: flezha-sdk-jar
-          path: sdk/java/flezha-sdk/target/flezha-sdk-*.jar
-          if-no-files-found: error
-
-  # ---------------------------------------------------------------------------
-  # 19.4 — Run `mix test.java_sdk` to execute the integration matrix.
-  # ---------------------------------------------------------------------------
+  # Java <-> Elixir integration matrix. `mix test.java_sdk` no longer
+  # invokes Maven — it runs `mix test --only java_sdk`, which spawns the
+  # *committed* test compute-engine jar at
+  # test/apps/java_compute_engine/dist/java_compute_engine.jar.
   mix-integration-matrix:
     runs-on: ubuntu-latest
-    needs: [native-cross-build, java-build-and-test]
+    needs: java-unit-tests
     steps:
       - uses: actions/checkout@v4
 
@@ -179,15 +93,19 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
       - name: Elixir dependencies
         run: mix deps.get
 
       - name: Run Java SDK integration matrix
         run: mix test.java_sdk
-
-  # ---------------------------------------------------------------------------
-  # Notes:
-  #   19.7 — marking this workflow required-for-merge is configured in GitHub
-  #   branch-protection settings, not in this YAML, and is gated on the
-  #   integration matrix being green on main for three consecutive runs.
-  # ---------------------------------------------------------------------------

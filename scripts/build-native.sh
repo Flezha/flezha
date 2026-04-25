@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 #
-# Cross-build flz_jni's cdylib (libflz_transport.{so,dylib,dll}) for the five
-# target triples supported by the Flezha Java SDK using `cargo-zigbuild`.
+# Build flz_jni's cdylib (libflz_transport.{so,dylib,dll}) for one or more
+# target platforms and stage the result into the Java SDK's resources tree.
+#
+# *This script is operator-driven, not invoked by CI.* When flz_jni or
+# flz_transport changes, run it locally to refresh the bundled binaries
+# under sdk/java/flezha-sdk-native/src/main/resources/native/, then
+# `git add` and commit the updated files. CI only verifies the committed
+# binaries are present (it does not rebuild them).
 #
 # Usage:
-#   scripts/build-native.sh --output <dir> --targets <all|host|csv-of-triples>
+#   scripts/build-native.sh --output <dir>                       # host triple only
+#   scripts/build-native.sh --output <dir> --targets all         # all 5 triples (needs zig)
+#   scripts/build-native.sh --output <dir> --targets a,b,c       # specific triples
 #
-# Output layout mirrors `sdk/java/flezha-sdk-native/src/main/resources/native/`:
+# Output layout (subdirectories created on demand):
 #   <dir>/linux-x64/libflz_transport.so
 #   <dir>/linux-arm64/libflz_transport.so
 #   <dir>/macos-x64/libflz_transport.dylib
@@ -15,7 +23,11 @@
 #
 # Requirements:
 #   - Rust stable
-#   - cargo-zigbuild  (cargo install cargo-zigbuild)
+#   - For the host triple: a C linker (default toolchain on every dev machine)
+#   - For non-host triples: cargo-zigbuild + zig on PATH
+#       cargo install cargo-zigbuild --locked
+#       pip install ziglang   # in a venv if your system Python is PEP 668-locked
+#       (the `python -m ziglang` shim should be on PATH as `zig`)
 
 set -euo pipefail
 
@@ -75,7 +87,6 @@ declare -A TRIPLE_TO_PREFIX=(
   ["x86_64-pc-windows-gnu"]=""
 )
 
-# Resolve the list of targets requested.
 ALL_TRIPLES=(
   "x86_64-unknown-linux-gnu"
   "aarch64-unknown-linux-gnu"
@@ -84,13 +95,14 @@ ALL_TRIPLES=(
   "x86_64-pc-windows-gnu"
 )
 
+HOST_TRIPLE="$(rustc -vV | awk '/^host:/ {print $2}')"
+
 TRIPLES=()
 case "${TARGETS_ARG}" in
   all)
     TRIPLES=("${ALL_TRIPLES[@]}")
     ;;
   host)
-    HOST_TRIPLE="$(rustc -vV | awk '/^host:/ {print $2}')"
     TRIPLES=("${HOST_TRIPLE}")
     ;;
   *)
@@ -98,12 +110,7 @@ case "${TARGETS_ARG}" in
     ;;
 esac
 
-# Choose the builder command. zigbuild is used for anything that isn't the
-# host triple; the host triple can use plain `cargo build` to avoid the zig
-# dependency during local iteration.
-HOST_TRIPLE="$(rustc -vV | awk '/^host:/ {print $2}')"
-
-command -v cargo >/dev/null 2>&1 || { echo "cargo not found on PATH" >&2; exit 1; }
+command -v cargo  >/dev/null 2>&1 || { echo "cargo not found on PATH" >&2; exit 1; }
 command -v rustup >/dev/null 2>&1 || { echo "rustup not found on PATH" >&2; exit 1; }
 
 mkdir -p "${OUTPUT_DIR}"
@@ -126,8 +133,13 @@ for triple in "${TRIPLES[@]}"; do
     (cd "${REPO_ROOT}" && cargo build --release -p flz_jni --target "${triple}")
   else
     command -v cargo-zigbuild >/dev/null 2>&1 || {
-      echo "cargo-zigbuild is required for cross-targets. Install with:" >&2
-      echo "  cargo install cargo-zigbuild" >&2
+      echo "cargo-zigbuild required for non-host triples ('${triple}')." >&2
+      echo "  cargo install cargo-zigbuild --locked" >&2
+      exit 1
+    }
+    command -v zig >/dev/null 2>&1 || {
+      echo "zig required for non-host triples ('${triple}')." >&2
+      echo "  pip install ziglang  (a venv is fine), then ensure 'zig' is on PATH" >&2
       exit 1
     }
     (cd "${REPO_ROOT}" && cargo zigbuild --release -p flz_jni --target "${triple}")
@@ -137,7 +149,7 @@ for triple in "${TRIPLES[@]}"; do
   EXT="${TRIPLE_TO_EXT[${triple}]}"
   PREFIX="${TRIPLE_TO_PREFIX[${triple}]}"
 
-  SRC="${REPO_ROOT}/target/${triple}/release/${PREFIX}flz_transport.${EXT}"
+  SRC="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/${triple}/release/${PREFIX}flz_transport.${EXT}"
   DST_DIR="${OUTPUT_DIR}/${DIR_NAME}"
   DST="${DST_DIR}/libflz_transport.${EXT}"
 
@@ -151,4 +163,5 @@ for triple in "${TRIPLES[@]}"; do
   echo "    -> ${DST}"
 done
 
-echo "Done. Binaries available under: ${OUTPUT_DIR}"
+echo "Done. Binaries staged under: ${OUTPUT_DIR}"
+echo "Remember to 'git add' the updated binaries so CI can package them."

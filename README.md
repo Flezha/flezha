@@ -16,23 +16,62 @@ Distributed stateful processors. Provides static and dynamic creation of process
 - Build the `rust_compute_engine` application.
 - Build the agent `mix compile`
 
-### Test prerequisites
+### Distribution artifacts (committed to git, never built by CI)
 
-`mix test` exercises the Java SDK matrix and the cluster-system suite,
-which spawn the test Java compute engine from
-`test/apps/java_compute_engine/target/java_compute_engine.jar`. That jar
-is no longer committed (the previous convention bloated history with a
-5.8 MB binary on every rebuild). Build it once before the first
-`mix test` run, and again after any change under `sdk/java/` or
-`test/apps/java_compute_engine/`:
+Three classes of artifacts ride along in the repo so CI never rebuilds
+them:
+
+- 5× native binaries — `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/libflz_transport.{so,dylib,dll}`
+- SDK fat jar — `sdk/java/flezha-sdk/dist/flezha-sdk.jar`
+- Test compute-engine fat jar — `test/apps/java_compute_engine/dist/java_compute_engine.jar`
+
+Refresh all three with one command after touching anything under
+`sdk/java/`, `flz_jni/`, `flz_transport/`, or `test/apps/java_compute_engine/`:
 
 ```bash
-mvn -q -f test/apps/java_compute_engine/pom.xml -DskipTests package
+scripts/build-dist.sh             # host toolchain (auto-installs zig if missing)
+scripts/build-dist.sh --docker    # pinned container; needs only docker
 ```
 
-`mix test.java_sdk` does this for you (it also rebuilds the host-target
-JNI cdylib). Skipping the build leaves the jar missing; the Java-SDK
-matrix tests then fail fast with a pointer to this command.
+Then `git add` the updated `dist/` directories and commit. The
+`scripts/install-hooks.sh` pre-commit hook will refuse a commit that
+edits source under those paths without restaging the refreshed jars.
+
+See [`docker/build/README.md`](docker/build/README.md) for the build
+image; [`docker/dev/README.md`](docker/dev/README.md) for the runtime
+dev container.
+
+### Running CI locally before pushing
+
+`scripts/ci-local.sh` runs the **verbatim** command sequence from the
+GitHub Actions workflows, in the same order. A green local run = a
+green CI run; a red local run reproduces the failure on your machine
+in seconds instead of waiting 10+ minutes for GitHub.
+
+```bash
+scripts/ci-local.sh                # both sections (default)
+scripts/ci-local.sh elixir         # only the Elixir CI job
+scripts/ci-local.sh java           # only the Java SDK CI jobs
+scripts/ci-local.sh elixir java    # any combination, any order
+```
+
+What each section runs (each line below is the literal command):
+
+- **`elixir`** — mirrors `.github/workflows/elixir.yml`:
+  - `mix deps.get`
+  - `mix compile --warnings-as-errors`
+  - `mix test` (excludes `:system` and `:java_sdk`)
+- **`java`** — mirrors `.github/workflows/java-sdk.yml` (both jobs):
+  - `mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify` (Java unit tests + JaCoCo)
+  - `mix test.java_sdk` (Elixir↔Java integration matrix against the committed test compute-engine jar)
+
+The `java` section refuses to run if any committed distribution artifact
+is missing — it'll point you at `scripts/build-dist.sh`. The script uses
+an isolated `CARGO_TARGET_DIR=target-ci-local/` so it can't be blocked
+by stale local cargo state.
+
+Exit code is non-zero on the first failing section; otherwise the script
+ends with `ALL CI CHECKS PASSED`.
 
 ## Examples
 

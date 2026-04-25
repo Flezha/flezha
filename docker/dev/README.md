@@ -1,6 +1,29 @@
 # Docker DEV
 
-Run the following commands from the project *root* directory.
+Runtime/dev image for the Flezha agent and Rust compute engine. Build it,
+exec into it, run the agent, attach plugins, etc. Run all commands
+below from the project *root* directory.
+
+> **Not** the image for producing distribution artifacts. The native
+> binaries committed under
+> `sdk/java/flezha-sdk-native/src/main/resources/native/` and the two
+> committed fat jars (`sdk/java/flezha-sdk/dist/flezha-sdk.jar`,
+> `test/apps/java_compute_engine/dist/java_compute_engine.jar`) are
+> produced by a separate, build-only image. See
+> [`../build/README.md`](../build/README.md) — the one-shot wrapper is
+> `scripts/build-dist.sh --docker`. CI never builds those artifacts; it
+> consumes the committed copies, so any change under `sdk/java/`,
+> `flz_jni/`, `flz_transport/`, or `test/apps/java_compute_engine/`
+> needs an artifact refresh + commit before it merges.
+
+## Quick reference
+
+| You want to…                              | Run                              | Image                      |
+|-------------------------------------------|----------------------------------|----------------------------|
+| Run the agent + plugins for dev           | the steps in this file           | `docker/dev/Dockerfile.agent`  |
+| Refresh committed dist artifacts          | `scripts/build-dist.sh --docker` | `docker/build/Dockerfile.dist` |
+| Mirror what GitHub Actions does locally   | `scripts/ci-local.sh`            | (none — runs on host)      |
+| Production agent                          | see `../prod/README.md`          | `docker/prod/Dockerfile.agent` |
 
 # ADD step to copy the .env.example to .env file if you don't have it yet:
 ```bash

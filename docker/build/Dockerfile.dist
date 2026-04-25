@@ -1,0 +1,66 @@
+# Pinned toolchain for `scripts/build-dist.sh --docker`. Produces:
+#   - flz_jni cdylib for all 5 platforms (via cargo-zigbuild)
+#   - SDK fat jar
+#   - test compute-engine fat jar
+#
+# Designed to be runnable as ANY UID (so `docker run --user $(id -u):$(id -g)`
+# bind-mounts produce host-owned files): everything tooling-related lives
+# under /usr/local/ and /opt/ with world-rwx, the only writable state is on
+# the mounted /flezha repo and a /cache volume the caller passes in.
+
+FROM eclipse-temurin:21-jdk-jammy
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── System deps ─────────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        build-essential \
+        pkg-config \
+        libssl-dev \
+        git \
+        python3 \
+        python3-venv \
+        python3-pip \
+        unzip \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Maven ───────────────────────────────────────────────────────────────────
+ENV MAVEN_VERSION=3.9.9
+RUN curl -fsSL "https://downloads.apache.org/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+        -o /tmp/maven.tgz \
+    && tar -xzf /tmp/maven.tgz -C /opt/ \
+    && rm /tmp/maven.tgz \
+    && ln -s "/opt/apache-maven-${MAVEN_VERSION}/bin/mvn" /usr/local/bin/mvn
+
+# ── Rust + cross-compile targets + cargo-zigbuild ──────────────────────────
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable --no-modify-path \
+    && rustup target add \
+        x86_64-unknown-linux-gnu \
+        aarch64-unknown-linux-gnu \
+        x86_64-apple-darwin \
+        aarch64-apple-darwin \
+        x86_64-pc-windows-gnu \
+    && cargo install cargo-zigbuild --locked \
+    && chmod -R a+rwx /usr/local/cargo /usr/local/rustup
+
+# ── Zig (via the ziglang Python wheel, same approach as host fallback) ──────
+RUN python3 -m venv /opt/zig-venv \
+    && /opt/zig-venv/bin/pip install --no-cache-dir ziglang \
+    && printf '#!/bin/bash\nexec /opt/zig-venv/bin/python -m ziglang "$@"\n' \
+        > /usr/local/bin/zig \
+    && chmod +x /usr/local/bin/zig \
+    && chmod -R a+rx /opt/zig-venv
+
+# Repo is bind-mounted here at runtime.
+WORKDIR /flezha
+
+# Default entrypoint runs the dist build script. The caller can override
+# (e.g. `docker run ... bash` for an interactive session).
+CMD ["scripts/build-dist.sh"]

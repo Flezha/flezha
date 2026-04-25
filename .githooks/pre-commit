@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+#
+# pre-commit: refuse a commit that edits sources affecting the committed
+# Java distribution artifacts without also staging refreshed `dist/` jars
+# in the same commit. CI consumes the committed artifacts directly — a
+# stale jar means tests run against old code.
+#
+# Trigger: any staged file matching one of SOURCE_PATTERNS (and not
+# matching EXCLUDE_PATTERNS).
+# Requirement: when triggered, both REQUIRED_ARTIFACTS must also be staged.
+#
+# Bypass:
+#   git commit --no-verify        # one-off
+#   FLEZHA_SKIP_DIST_CHECK=1 ...  # for scripted commits
+#
+# Refresh all distribution artifacts with one command:
+#   scripts/build-dist.sh
+# then:
+#   git add sdk/java/flezha-sdk-native/src/main/resources/native/ \
+#           sdk/java/flezha-sdk/dist/ test/apps/java_compute_engine/dist/
+
+set -euo pipefail
+
+if [[ "${FLEZHA_SKIP_DIST_CHECK:-0}" == "1" ]]; then
+  exit 0
+fi
+
+# Source paths whose changes should force a `dist/` refresh.
+SOURCE_PATTERNS=(
+  '^sdk/java/'
+  '^test/apps/java_compute_engine/'
+  '^flz_jni/'
+  '^flz_transport/'
+)
+
+# Paths that don't affect the fat jars even if they sit under one of the
+# source patterns above.
+EXCLUDE_PATTERNS=(
+  '/dist/'                # the refreshed artifacts themselves
+  '/target/'              # transient Maven/Cargo output
+  '\.md$'                 # docs
+  '/src/test/'            # Java unit tests aren't shaded into the fat jar
+  '^flz_jni/Cargo\.lock$' # workspace lock — covered by transitive checks
+  '^flz_transport/Cargo\.lock$'
+)
+
+REQUIRED_ARTIFACTS=(
+  'sdk/java/flezha-sdk/dist/flezha-sdk.jar'
+  'test/apps/java_compute_engine/dist/java_compute_engine.jar'
+)
+
+mapfile -t STAGED < <(git diff --cached --name-only --diff-filter=ACMR)
+
+trigger=""
+for f in "${STAGED[@]}"; do
+  matched=false
+  for pat in "${SOURCE_PATTERNS[@]}"; do
+    if [[ "$f" =~ $pat ]]; then matched=true; break; fi
+  done
+  if ! $matched; then continue; fi
+
+  excluded=false
+  for pat in "${EXCLUDE_PATTERNS[@]}"; do
+    if [[ "$f" =~ $pat ]]; then excluded=true; break; fi
+  done
+  if $excluded; then continue; fi
+
+  trigger="$f"
+  break
+done
+
+if [[ -z "$trigger" ]]; then
+  exit 0
+fi
+
+missing=()
+for jar in "${REQUIRED_ARTIFACTS[@]}"; do
+  if ! git diff --cached --name-only -- "$jar" | grep -qx "$jar"; then
+    missing+=("$jar")
+  fi
+done
+
+if (( ${#missing[@]} > 0 )); then
+  printf '\033[31mpre-commit: distribution artifacts are stale.\033[0m\n' >&2
+  printf '\n' >&2
+  printf '  triggered by staged source change: \033[1m%s\033[0m\n' "$trigger" >&2
+  printf '  but the following committed jar(s) were NOT updated in this commit:\n' >&2
+  for jar in "${missing[@]}"; do
+    printf '    - %s\n' "$jar" >&2
+  done
+  printf '\n' >&2
+  printf 'Refresh all distribution artifacts:\n' >&2
+  printf '    scripts/build-dist.sh\n' >&2
+  printf '    git add sdk/java/flezha-sdk-native/src/main/resources/native/ \\\n' >&2
+  printf '            sdk/java/flezha-sdk/dist/ \\\n' >&2
+  printf '            test/apps/java_compute_engine/dist/\n' >&2
+  printf '\n' >&2
+  printf 'If the change genuinely cannot affect the fat jars, bypass with:\n' >&2
+  printf '    git commit --no-verify\n' >&2
+  exit 1
+fi
+
+exit 0

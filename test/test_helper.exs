@@ -1,4 +1,8 @@
-ExUnit.start(exclude: [:system])
+# `:java_sdk` is excluded from default `mix test` because it requires the
+# Java compute-engine fat jar to be on disk. Run those tests via the
+# `mix test.java_sdk` alias, which builds the jar first.
+# `:system` is excluded by convention — those tests boot extra OS processes.
+ExUnit.start(exclude: [:system, :java_sdk])
 
 # ProcessHub's `LoggerService.error/3` logs every `StartChildrenRequest`
 # failure at error level — useful in production, but multiple tests
