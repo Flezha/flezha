@@ -133,7 +133,7 @@ jobs:
         # Skipping it would fail the matrix tests with a "jar not found"
         # raise per the helper's own check.
         run: |
-          mvn -B -f sdk/java/pom.xml -P host-only -DskipTests package
+          mvn -B -f sdk/java/pom.xml -P host-only -DskipTests install
           mvn -B -f test/apps/java_compute_engine/pom.xml -DskipTests package
 
       - name: Fetch Elixir deps

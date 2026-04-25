@@ -32,7 +32,10 @@ impl FlezhaStream {
         match self {
             #[cfg(unix)]
             FlezhaStream::Unix(stream) => stream.set_nonblocking(nonblocking),
-            FlezhaStream::Quic(_) => Ok(()), // QUIC manages this internally
+            FlezhaStream::Quic(_) => {
+                let _ = nonblocking;
+                Ok(()) // QUIC manages this internally
+            }
         }
     }
 
