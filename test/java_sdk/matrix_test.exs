@@ -33,11 +33,12 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
     # local environment. The Java cells are only exercised when the jar exists.
     if runtime == :java do
       jar_path =
-        Path.join(File.cwd!(), "test/apps/java_compute_engine/target/java_compute_engine.jar")
+        Path.join(File.cwd!(), "test/apps/java_compute_engine/dist/java_compute_engine.jar")
 
       unless File.exists?(jar_path) do
         ExUnit.Assertions.flunk(
-          "Java compute engine jar missing at #{jar_path}. Run `mix test.java_sdk` to build it."
+          "Java compute engine jar missing at #{jar_path}. " <>
+            "Refresh it with `scripts/build-dist.sh` and commit."
         )
       end
     end

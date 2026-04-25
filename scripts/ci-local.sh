@@ -99,6 +99,8 @@ run_java() {
   require_cmd mvn "install Maven 3.8+"
   require_cmd java "install JDK 21"
   require_cmd mix "install Elixir 1.17+"
+  require_cmd cargo "install Rust stable"
+  require_cmd npm "install Node.js 20+"
 
   if ! all_native_binaries_present || ! test_app_jar_present; then
     red "Distribution artifacts are missing. Build them with one command:"
@@ -114,9 +116,24 @@ run_java() {
   bold ">>> mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify"
   mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify
 
-  # Mirrors java-sdk.yml `mix-integration-matrix` job. The alias is now
-  # just `mix test --only java_sdk` — Maven is not invoked; the suite
-  # runs against the committed test compute-engine jar under dist/.
+  # The remaining steps mirror java-sdk.yml `mix-integration-matrix`.
+  # Flezha.Testnet is a child of Flezha.Application in :test env and runs
+  # `npm start --prefix test/apps/testnet`, which expects dist/index.js
+  # (gitignored, so it must be built).
+  bold ">>> npm ci || npm install + npm run build (testnet)"
+  ( cd test/apps/testnet && (npm ci || npm install) && npm run build )
+
+  bold ">>> mix deps.get"
+  mix deps.get
+
+  # PortPilot launches `cargo run --quiet` for rust_compute_engine at boot;
+  # BootLoader's post_hook only gives it 20s to connect (config/test.exs).
+  # Pre-build the binary so the cargo run is a cache hit.
+  bold ">>> cargo build rust_compute_engine (warms ./target/debug)"
+  cargo build --quiet \
+    --manifest-path=test/apps/rust_compute_engine/Cargo.toml \
+    --target-dir=./target
+
   bold ">>> mix test.java_sdk"
   mix test.java_sdk
 }
