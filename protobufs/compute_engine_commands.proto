@@ -21,6 +21,8 @@ message CommandRequest {
         ComputeEngineDisconnect compute_engine_disconnect = 9;
         ProcessorMessage processor_message = 10;
         ProcessorApplyState processor_apply_state = 11;
+        OperatorShutdownNotification operator_shutdown_notification = 12;
+        OperatorShutdownAck operator_shutdown_ack = 13;
     }
 }
 
@@ -85,4 +87,35 @@ message ProcessorApplyState {
     string processor_id = 1;
     string factory_id = 2;
     bytes state_binary = 3;
+}
+
+// Sent by the SDK to the agent on graceful shutdown (SIGTERM, Drop of the
+// SDK handle, explicit disconnect()) for each currently-running processor.
+// Carries the operator's freshest in-memory state binary so the agent can
+// overwrite Overwatch.state.snapshot before the next AddProcessor reissue
+// (see operator-agent-connection-healing capability).
+//
+// Direction is reversed compared to most CommandRequest variants: SDK -> Agent.
+// Wire format reuses the same CommandRequest envelope and the
+// "control_command" payload_id; the agent's ControlChannel inspects the
+// oneof tag to dispatch.
+//
+// Older agents that do not recognise this opcode skip it via Protox's
+// unknown-field handling; older SDKs that do not emit it fall back to the
+// periodic-snapshot freshness shipped by heal-connections-on-restart.
+message OperatorShutdownNotification {
+    string processor_id = 1;
+    bytes serialized_state = 2;
+}
+
+// Agent's reply to OperatorShutdownNotification. Carries no state — its
+// purpose is purely to unblock the SDK's bounded ack-wait so the SDK can
+// proceed to exit. The agent emits the ack as soon as the snapshot cast is
+// enqueued on the Overwatch GenServer (not after the cast has been applied).
+//
+// Agent -> SDK direction at the wire level — same envelope as the
+// notification. The SDK awaits this with a per-processor 2 s timeout
+// (parallelised across processors) and exits regardless after the timeout.
+message OperatorShutdownAck {
+    string processor_id = 1;
 }

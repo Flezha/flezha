@@ -4,6 +4,24 @@
 
 ### Added
 
+- SDKs ship a final state snapshot to the agent on graceful shutdown so
+  rolling deploys preserve the latest state. Rust and Java SDKs now emit
+  one `OperatorShutdownNotification{processor_id, serialized_state}`
+  per running processor on the control channel when the SDK is dropped,
+  receives SIGTERM (Kubernetes pre-stop), or is closed explicitly via
+  `Flezha.close()` (Java) / handle drop (Rust); the agent's
+  `Flezha.ComputeEngine.ControlChannel` overwrites
+  `Flezha.Processor.Overwatch.state.snapshot` with the supplied binary
+  and emits an `OperatorShutdownAck`. Per-processor ack wait is bounded
+  at 2 s, parallelised across processors. SIGKILL bypasses as expected;
+  agent falls back to the last periodic snapshot. Disabled-snapshot
+  deployments (`overwatch_state_snapshot_interval_ms == 0`, e.g.
+  `flezha_market`) get a one-shot shutdown handoff that survives until
+  the next `AddProcessor` reissue. New protobuf messages
+  `OperatorShutdownNotification` (tag 12) and `OperatorShutdownAck`
+  (tag 13) are additive — older agents/SDKs interoperate by falling
+  back to the periodic-snapshot freshness shipped by
+  `heal-connections-on-restart`.
 - Operator ↔ agent connections now heal automatically across either-side
   restarts; processors resume traffic within 5 s of reconnect without
   operator intervention. Stream rebind is enforced as a hard contract on

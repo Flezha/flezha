@@ -1,0 +1,161 @@
+defmodule FlezhaTest.ComputeEngine.ControlChannelShutdownNotificationTest do
+  @moduledoc """
+  Exercises the SDK -> Agent `OperatorShutdownNotification` dispatch path
+  added by ship-fresh-state-on-sdk-shutdown to
+  `Flezha.ComputeEngine.ControlChannel`.
+
+  The notification reuses the existing `CommandRequest` envelope and the
+  `"control_command"` payload_id, so the agent's dispatcher peeks at the
+  oneof tag to recognise it. Two scenarios:
+
+    * Present Overwatch — `HubManager.get_pid/2` returns `{:ok, pid}`. The
+      ControlChannel SHALL cast `{:apply_external_snapshot, binary}` to
+      that pid and SHALL emit `OperatorShutdownAck` on the stream.
+    * Missing Overwatch — `HubManager.get_pid/2` returns `{:error, _}`
+      (the processor migrated to a peer agent). The ControlChannel SHALL
+      log a warning and SHALL still emit the ack so the SDK never blocks
+      on a non-existent target.
+
+  Because `Flezha.Transport.Native` is a NIF (Mimic can't copy NIF
+  modules — the renamed `@on_load` fails to find the library), the test
+  uses ControlChannel's 4-tuple constructor to inject a capturing
+  `write_fun` instead of mocking `Native.send_data/2`.
+  """
+
+  use ExUnit.Case, async: false
+  use Mimic
+
+  alias Flezha.ComputeEngine.ControlChannel
+  alias Flezha.Service.HubManager
+
+  @namespace "ctrl-chan-shutdown-test"
+
+  setup :set_mimic_global
+
+  setup do
+    # `config/test.exs` pins the global Logger level to `:error`. The
+    # ControlChannel emits the missing-Overwatch path at `:warning`, so
+    # without lowering the per-module level here the message would be
+    # filtered before any backend (including ExUnit.CaptureLog's) saw
+    # it. Restore on exit so other tests are not affected.
+    Logger.put_module_level(Flezha.ComputeEngine.ControlChannel, :warning)
+
+    on_exit(fn ->
+      Logger.delete_module_level(Flezha.ComputeEngine.ControlChannel)
+    end)
+
+    :ok
+  end
+
+  defmodule FakeOverwatch do
+    use GenServer
+
+    def start_link(forward_to), do: GenServer.start_link(__MODULE__, forward_to)
+
+    @impl true
+    def init(forward_to), do: {:ok, %{forward_to: forward_to}}
+
+    @impl true
+    def handle_cast({:apply_external_snapshot, binary}, state) do
+      send(state.forward_to, {:overwatch_received_snapshot, binary})
+      {:noreply, state}
+    end
+  end
+
+  test "present Overwatch: cast is delivered and ack is emitted" do
+    {:ok, fake_pid} = FakeOverwatch.start_link(self())
+
+    HubManager
+    |> stub(:get_pid, fn @namespace, "p1" -> {:ok, fake_pid} end)
+
+    {control_channel, stream_ref} = start_control_channel("ce_present")
+
+    payload = build_notification_payload("p1", "fresh_state_binary", "ref-present")
+    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+    assert_receive {:overwatch_received_snapshot, "fresh_state_binary"}, 500
+
+    assert_receive {:test_writer_called, ^stream_ref, ack_payload}, 500
+    assert_ack_for(ack_payload, "p1", "ref-present")
+  end
+
+  test "missing Overwatch: logs warning, no cast delivered, ack still emitted" do
+    HubManager
+    |> stub(:get_pid, fn @namespace, "p_missing" -> {:error, "no pid found"} end)
+
+    {control_channel, stream_ref} = start_control_channel("ce_missing")
+
+    payload = build_notification_payload("p_missing", "stale_state", "ref-missing")
+
+    # `config/test.exs` pins the global Logger level to `:error`, so a
+    # `Logger.warning/1` call is filtered out by default. Override here
+    # so the capture sees the "Overwatch missing" warning we assert on.
+    log =
+      ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+        send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+        assert_receive {:test_writer_called, ^stream_ref, ack_payload}, 500
+        assert_ack_for(ack_payload, "p_missing", "ref-missing")
+      end)
+
+    assert log =~ "Overwatch missing for shutdown notification"
+    assert log =~ "p_missing"
+
+    refute_receive {:overwatch_received_snapshot, _}, 100
+  end
+
+  defp start_control_channel(suffix) do
+    stream_ref = make_ref()
+    compute_engine_id = "#{@namespace}_#{suffix}_#{System.unique_integer([:positive])}"
+    test_pid = self()
+
+    write_fun = fn ref, payload ->
+      send(test_pid, {:test_writer_called, ref, payload})
+      :ok
+    end
+
+    {:ok, pid} =
+      ControlChannel.start_link({@namespace, compute_engine_id, stream_ref, write_fun})
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+    end)
+
+    {pid, stream_ref}
+  end
+
+  defp build_notification_payload(processor_id, serialized_state, reference_id) do
+    request = %ComputeEngineCommands.CommandRequest{
+      reference_id: reference_id,
+      command:
+        {:operator_shutdown_notification,
+         %ComputeEngineCommands.OperatorShutdownNotification{
+           processor_id: processor_id,
+           serialized_state: serialized_state
+         }}
+    }
+
+    {:ok, iodata, _size} = Protox.encode(request)
+    IO.iodata_to_binary(iodata)
+  end
+
+  defp assert_ack_for(framed_payload, expected_processor_id, expected_reference_id) do
+    # The Payloader frame format defined in lib/flezha/service/payloader.ex
+    # (32-byte padded id, 4-byte payload size, 4-byte message size, message,
+    # 2-byte metadata size, metadata) is what Native.send_data normally
+    # ferries; we peel it open here to decode the inner CommandRequest.
+    <<_payload_id::binary-size(32), _payload_size::32, message_size::32, rest::binary>> =
+      framed_payload
+
+    <<message::binary-size(message_size), _metadata_size::16, _metadata::binary>> = rest
+
+    {:ok, %ComputeEngineCommands.CommandRequest{} = req} =
+      ComputeEngineCommands.CommandRequest.decode(message)
+
+    assert req.reference_id == expected_reference_id
+
+    assert {:operator_shutdown_ack,
+            %ComputeEngineCommands.OperatorShutdownAck{
+              processor_id: ^expected_processor_id
+            }} = req.command
+  end
+end

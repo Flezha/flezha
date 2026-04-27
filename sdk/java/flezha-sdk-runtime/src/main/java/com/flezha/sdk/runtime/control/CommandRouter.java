@@ -63,6 +63,24 @@ public final class CommandRouter {
             return;
         }
 
+        // SDK-initiated CommandRequest variants do not solicit a
+        // CommandResponse — they're agent->SDK acks for the SDK's own
+        // graceful-shutdown notifications, or buggy notifications the
+        // SDK is the sender of. Both short-circuit the response write.
+        switch (request.getCommandCase()) {
+            case OPERATOR_SHUTDOWN_ACK:
+                GracefulShutdown.signalAck(request.getReferenceId());
+                return;
+            case OPERATOR_SHUTDOWN_NOTIFICATION:
+                LOG.warn(
+                        "Received unexpected OperatorShutdownNotification (ref={}); ignoring — "
+                                + "SDK is the SENDER, not the receiver.",
+                        request.getReferenceId());
+                return;
+            default:
+                break;
+        }
+
         CommandHandler handler = handlers.get(request.getCommandCase());
         if (handler == null) {
             LOG.warn("No handler for command case: {}", request.getCommandCase());

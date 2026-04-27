@@ -213,7 +213,7 @@ interval is configured by `overwatch_state_snapshot_interval_ms` (default
 60 s); a value of `0` disables it. The captured snapshot is held in memory in
 the Overwatch struct's `snapshot` field — it is **not persisted to disk**.
 
-The snapshot is consumed in two places:
+The snapshot is consumed in three places:
 
 1. HotSwap's `prepare_handover_state` returns it as part of the migration
    payload, so a graceful migration ships the most recent snapshot in addition
@@ -221,10 +221,34 @@ The snapshot is consumed in two places:
 2. The manual `flz cluster snapshot` CLI captures every running processor's
    snapshot into the snapshot file, so a later `flz cluster restore` can
    re-issue the processor and replay its state.
+3. The reconnect-healing path (introduced by `heal-connections-on-restart`)
+   ships `Overwatch.state.snapshot` to a fresh operator instance via the
+   `AddProcessor` reissue's `initial_state_binary` opt, so the new operator
+   resumes from the most recent periodic capture rather than `init_values`.
+
+In addition to the periodic capture, the SDK can ship a fresh snapshot at
+graceful-shutdown time (introduced by `ship-fresh-state-on-sdk-shutdown`):
+
+4. On graceful shutdown (SIGTERM, `Drop` of the SDK handle, explicit
+   `disconnect()`) the SDK serializes each running processor's state via
+   the same per-driver path used for `MigrationSerialization` and emits
+   one `OperatorShutdownNotification{processor_id, serialized_state}` per
+   processor on the control channel. The agent's `ControlChannel` casts
+   the binary to the corresponding `Overwatch` GenServer
+   (`{:apply_external_snapshot, binary}`) and immediately emits an
+   `OperatorShutdownAck`. This bypasses the periodic-capture cadence so
+   a rolling restart preserves up-to-the-microsecond state regardless
+   of how stale the last `:on_snapshot` was — and works even when
+   periodic snapshots are disabled (item 4 is the only `state.snapshot`
+   source for `snapshot_interval == 0` deployments). SIGKILL bypasses
+   it as expected; the agent falls back to whatever the last periodic
+   capture saw, exactly as today.
 
 For `flezha_market` and similar deployments where Postgres (populated by
 Kafka) is the authoritative store, the env var is set to `0` to disable the
-secondary snapshot and avoid drift.
+secondary periodic snapshot and avoid drift. Item 4 still applies — the
+graceful-shutdown notification primes a one-shot snapshot used only by the
+next `AddProcessor` reissue, then is overwritten on the next shutdown.
 
 ## Operator → agent discovery and connection
 

@@ -224,6 +224,9 @@ message CommandRequest {
         ProcessorState processor_state = 8;
         ComputeEngineDisconnect compute_engine_disconnect = 9;
         ProcessorMessage processor_message = 10;
+        ProcessorApplyState processor_apply_state = 11;
+        OperatorShutdownNotification operator_shutdown_notification = 12;
+        OperatorShutdownAck operator_shutdown_ack = 13;
     }
 }
 
@@ -277,15 +280,35 @@ message ProcessorMessageResponse {
     bytes payload = 1;
     string error = 2;
 }
+
+message ProcessorApplyState {
+    string processor_id = 1;
+    string factory_id = 2;
+    bytes state_binary = 3;
+}
+
+message OperatorShutdownNotification {
+    string processor_id = 1;
+    bytes serialized_state = 2;
+}
+
+message OperatorShutdownAck {
+    string processor_id = 1;
+}
 ```
 
 ### Request/Response Pattern
 
-- **Direction**: The agent sends `CommandRequest` messages to the SDK.
-- **Correlation**: Each `CommandRequest` contains a `reference_id` (an opaque string). The SDK must echo this `reference_id` in the corresponding `CommandResponse`.
+- **Direction**: Most `CommandRequest` variants flow agent -> SDK. The two
+  exceptions — `OperatorShutdownNotification` and its `OperatorShutdownAck`
+  — flow SDK -> agent and agent -> SDK respectively, using the same
+  `CommandRequest` envelope and the same `"control_command"` payload_id; the
+  receiver inspects the oneof tag to dispatch.
+- **Correlation**: Each `CommandRequest` contains a `reference_id` (an opaque string). The SDK must echo this `reference_id` in the corresponding `CommandResponse`. For the SDK -> agent shutdown notification, the agent echoes the same `reference_id` in the `OperatorShutdownAck` it sends back.
 - **Framing**: Both `CommandRequest` and `CommandResponse` are Protobuf-encoded, then wrapped in the binary framing format (Section 3).
   - The agent sends commands with payload_id = `"control_command"`.
   - The SDK sends responses using the **same payload_id** that was received (which is `"control_command"`).
+  - The SDK sends `OperatorShutdownNotification` with payload_id = `"control_command"`; the agent's `OperatorShutdownAck` reuses the same payload_id.
 - **Empty metadata**: Control-plane messages use empty metadata (`metadata_size = 0`).
 
 ### Encoding a Command for Transmission
@@ -607,6 +630,34 @@ is expected to set its own timeout; there is no server-side deadline
 propagation. v1 is open-auth; scoping is the caller's responsibility.
 Payloads are opaque bytes and share the control stream with other
 commands — keep them small to avoid head-of-line contention.
+
+### OperatorShutdownNotification
+
+| Field | Value |
+|-------|-------|
+| Direction | SDK -> Agent (only SDK-initiated CommandRequest variant alongside its ack) |
+| Proto message | `OperatorShutdownNotification { processor_id: string, serialized_state: bytes }` |
+| When emitted | On graceful SDK shutdown only: SIGTERM, `Drop` of the SDK handle, explicit `disconnect()`. Crash paths (SIGKILL, panic) cannot emit and fall back to last periodic snapshot. |
+| Behavior | Per running processor, the SDK serializes via the same per-driver serializer used for `MigrationSerialization` and emits one notification. The agent forwards the binary to the corresponding `Overwatch.state.snapshot` and emits an `OperatorShutdownAck` with the same `reference_id`. |
+| Ack timeout | The SDK SHALL wait at most **2 s per processor** for `OperatorShutdownAck` (parallelised across processors). After the timeout, the SDK SHALL exit unconditionally and SHALL NOT block its container's shutdown grace period. |
+| Per-processor serializer cap | Capped at the agent's `cross_node_request_timeout` (10 s) ceiling; deployments with tighter container grace periods should override the cap via SDK config. |
+| Wire format | CommandRequest envelope, payload_id = `"control_command"`, oneof tag 12. |
+
+### OperatorShutdownAck
+
+| Field | Value |
+|-------|-------|
+| Direction | Agent -> SDK |
+| Proto message | `OperatorShutdownAck { processor_id: string }` |
+| Behavior | Emitted by the agent's `ControlChannel` immediately after the snapshot cast is enqueued on the `Overwatch` GenServer (NOT after the cast has been applied — the cast is in the GenServer mailbox by then and applies in microseconds). The agent emits the ack regardless of whether the Overwatch was found: a missing Overwatch (already migrated to a peer agent) still gets an ack so the SDK can proceed to exit. |
+| Wire format | CommandRequest envelope, payload_id = `"control_command"`, oneof tag 13, `reference_id` matches the originating notification. |
+
+**Forward/back compat.** Both opcodes are additive. Older agents that do
+not recognise tag 12 SHALL log and discard the message via Protox's
+unknown-field handling — no crash, no protocol downgrade. Older SDKs
+that do not emit tag 12 fall back to today's periodic-snapshot freshness
+shipped by `heal-connections-on-restart`. No SDK protocol version bump
+is required.
 
 ---
 

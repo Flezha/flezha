@@ -35,7 +35,15 @@ defmodule Flezha.MixProject do
       # asserts the operator <-> agent link re-establishes within
       # REJOIN_TIMEOUT_S seconds. Not part of `mix test` because it needs
       # Docker on the host. See test/scripts/connection_healing.sh.
-      "test.connection_healing": ["cmd test/scripts/connection_healing.sh"]
+      "test.connection_healing": ["cmd test/scripts/connection_healing.sh"],
+      # Opt-in dev-compose smoke test for `ship-fresh-state-on-sdk-shutdown`.
+      # Boots the agent + rust operator, starts a processor, sends SIGTERM
+      # to the rust container, then asserts the agent's
+      # `Overwatch.state.snapshot` was populated by the SDK's
+      # `OperatorShutdownNotification`. Both periodic-enabled and
+      # disabled-snapshot scenarios. Needs Docker on the host. See
+      # test/scripts/state_freshness.sh.
+      "test.state_freshness": ["cmd test/scripts/state_freshness.sh"]
     ]
   end
 

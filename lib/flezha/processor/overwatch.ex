@@ -303,6 +303,20 @@ defmodule Flezha.Processor.Overwatch do
     {:noreply, state}
   end
 
+  # Replaces `state.snapshot` with a binary supplied out-of-band by the SDK
+  # on graceful shutdown. Bypasses the periodic `:on_snapshot` round-trip so
+  # the next reconnecting operator's `maybe_apply_initial_state` sees the
+  # operator's true final state instead of a snapshot up to
+  # `snapshot_interval` stale. Unconditional — applies even when periodic
+  # snapshots are disabled (`snapshot_interval == 0`) so operators backed
+  # by an external authoritative store (e.g. Postgres) still get a
+  # one-shot shutdown handoff. See ship-fresh-state-on-sdk-shutdown.
+  @impl true
+  def handle_cast({:apply_external_snapshot, binary}, %__MODULE__{} = state)
+      when is_binary(binary) do
+    {:noreply, %__MODULE__{state | snapshot: binary}}
+  end
+
   defp run_io(%__MODULE__{} = state, extension, message, metadata) do
     ctx = %Ctx.IO{
       processor_id: state.id,

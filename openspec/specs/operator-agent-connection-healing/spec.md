@@ -79,6 +79,55 @@ This change SHALL NOT modify any code path used by the manual `flz cluster snaps
 - **WHEN** the operator runs `flz cluster snapshot /tmp/x.flz` then shuts down the agent then starts a fresh agent then runs `flz cluster restore /tmp/x.flz`
 - **THEN** the processors SHALL be restored with their captured state binaries, exactly as before this change
 
+### Requirement: SDK SHALL ship final state to the agent on graceful shutdown so reconnect-resume is loss-free
+
+When the Rust/Java SDK shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call), it SHALL synchronously serialize each local processor's state via the same per-driver serializer used for `MigrationSerialization`, and emit `OperatorShutdownNotification{processor_id, serialized_state}` on the control channel for each processor. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(processor_id)`), which SHALL replace `state.snapshot` with the supplied binary atomically. The agent SHALL respond with `OperatorShutdownAck{processor_id}` once the snapshot is enqueued.
+
+The SDK SHALL wait at most 2 s per processor for the ack (with parallelism across processors) and SHALL exit regardless of ack receipt after the timeout. The SDK MUST NOT block the container's shutdown grace period if the agent has crashed or become unresponsive.
+
+`OperatorShutdownNotification` and `OperatorShutdownAck` are additive opcodes: agents that don't recognise them SHALL log and ignore (existing protobuf-decoder behaviour); SDKs that don't send them fall back to the periodic-snapshot freshness shipped by `heal-connections-on-restart`.
+
+#### Scenario: Graceful operator shutdown ships fresh state to the agent
+- **GIVEN** an operator running processor `p1` with current in-memory state `S_now` and the most recent periodic snapshot at `T - 45s` showing state `S_old`
+- **WHEN** the operator receives SIGTERM and runs its graceful-shutdown handler
+- **THEN** the operator SHALL serialize `p1`'s current state (yielding `S_now`) and emit `OperatorShutdownNotification{processor_id: "p1", serialized_state: S_now}` on the control channel
+- **AND** the agent's `Overwatch` for `p1` SHALL replace `state.snapshot` with `S_now`
+- **AND** the agent SHALL emit `OperatorShutdownAck{processor_id: "p1"}` back to the operator
+- **AND** when a new operator subsequently reconnects and is assigned `p1` via the AddProcessor reissue path (delivered by `heal-connections-on-restart`), the state delivered via `maybe_apply_initial_state` SHALL be `S_now` (not `S_old`)
+
+#### Scenario: SDK exits after ack timeout if agent is unresponsive
+- **GIVEN** an operator running processor `p1` and the agent process is in the middle of crashing
+- **WHEN** the operator receives SIGTERM and emits `OperatorShutdownNotification{processor_id: "p1", ...}`
+- **AND** no `OperatorShutdownAck` arrives within 2 s
+- **THEN** the operator SHALL log "OperatorShutdownAck timeout for p1" and SHALL proceed to exit
+- **AND** the operator SHALL NOT block its container's shutdown grace period waiting for the ack
+
+#### Scenario: Older agent ignores the notification gracefully (forward-compat)
+- **GIVEN** an operator running an SDK build that emits `OperatorShutdownNotification`
+- **AND** the agent is an older build that does not recognise the protobuf opcode
+- **WHEN** the operator emits the notification on shutdown
+- **THEN** the agent SHALL log a "unrecognised control command" warning and discard the message
+- **AND** no agent crash, no SDK crash, no protocol downgrade beyond losing this one feature
+
+#### Scenario: Older SDK with no graceful-shutdown handler still works (back-compat)
+- **GIVEN** an operator running an SDK build that does not implement the graceful-shutdown handler
+- **WHEN** the operator process exits
+- **THEN** the agent's `Overwatch` snapshot for each of the operator's processors SHALL still hold the most recent periodic-snapshot binary (today's behaviour)
+- **AND** the AddProcessor reissue path SHALL still ship that snapshot to a reconnecting operator — just up to `overwatch_state_snapshot_interval_ms` stale, exactly as `heal-connections-on-restart` ships
+
+#### Scenario: Disabled-snapshot operators still benefit from the shutdown notification
+- **GIVEN** an operator's processor is configured with `snapshot_interval: 0` (periodic snapshots disabled — e.g. flezha_market where Postgres is authoritative)
+- **WHEN** the operator shuts down gracefully and emits `OperatorShutdownNotification` for the processor
+- **THEN** the agent's `Overwatch` SHALL still accept the notification and store the binary in `state.snapshot`
+- **AND** the snapshot SHALL be available for the next AddProcessor reissue, even though no periodic snapshots were ever taken
+
+#### Scenario: Notification arrives for a processor whose Overwatch has already migrated away
+- **GIVEN** processor `p1`'s `Overwatch` was on this agent but ProcessHub migrated `p1` to a peer agent moments before the operator's shutdown notification arrives
+- **WHEN** the agent receives `OperatorShutdownNotification{processor_id: "p1", ...}`
+- **AND** `Identificator.overwatch("p1")` resolves to `:undefined`
+- **THEN** the agent SHALL log a warning naming `p1` and SHALL still emit `OperatorShutdownAck{processor_id: "p1"}` so the SDK can proceed to exit
+- **AND** the destination agent's Overwatch already received the latest state via HotSwap handover, so no functional loss
+
 ### Requirement: A dev-compose integration test SHALL exercise both restart paths end to end
 
 The repository SHALL include an integration test that uses `docker/dev/docker-compose.yml` (extended with the `rust` operator service that is currently commented out) to exercise the agent-restart and operator-restart healing paths end-to-end. The test MUST use the existing dev compose stack and SHALL NOT introduce new Docker contexts or `docker run` invocations.
@@ -104,4 +153,3 @@ The repository SHALL include a unit test that loads `kubernetes/flezha-daemonset
 - **WHEN** the manifest sanity test runs
 - **THEN** the test SHALL assert: a `flezha-sockets` volume exists in the daemonset and is mounted at `/flezha/sockets`; the daemonset's container env contains `FLEZHA_SOCKET_FILES_PATH=/flezha/sockets`; the configmap defines `FLEZHA_OPERATOR_KEEPALIVE` with a positive integer (in milliseconds)
 - **AND** the test SHALL fail with a clear message naming the missing field if any assertion fails
-

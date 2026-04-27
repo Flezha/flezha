@@ -1,4 +1,5 @@
 defmodule Flezha.ComputeEngine.ControlChannel do
+  alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
   alias Flezha.ComputeEngine.FleetManager
@@ -9,7 +10,20 @@ defmodule Flezha.ComputeEngine.ControlChannel do
   use GenServer
 
   def start_link({namespace, compute_engine_id, stream_ref}) do
-    GenServer.start_link(__MODULE__, {namespace, compute_engine_id, stream_ref},
+    GenServer.start_link(__MODULE__, {namespace, compute_engine_id, stream_ref, nil},
+      name: Identificator.control_channel(compute_engine_id)
+    )
+  end
+
+  # Test-only constructor: accepts an explicit `write_fun` that the
+  # `OperatorShutdownAck` emit path uses in place of `Native.send_data/2`.
+  # Production callers go through the 3-tuple form; the 4-tuple is here
+  # because `Flezha.Transport.Native` is a NIF and cannot be Mimic-copied
+  # (its `@on_load` triggers under the renamed module name and fails),
+  # so unit tests inject a capturing closure instead.
+  def start_link({namespace, compute_engine_id, stream_ref, write_fun})
+      when is_function(write_fun, 2) do
+    GenServer.start_link(__MODULE__, {namespace, compute_engine_id, stream_ref, write_fun},
       name: Identificator.control_channel(compute_engine_id)
     )
   end
@@ -76,12 +90,13 @@ defmodule Flezha.ComputeEngine.ControlChannel do
   end
 
   @impl true
-  def init({namespace, compute_engine_id, stream_ref}) do
+  def init({namespace, compute_engine_id, stream_ref, write_fun}) do
     {:ok,
      %{
        namespace: namespace,
        compute_engine_id: compute_engine_id,
        stream_ref: stream_ref,
+       write_fun: write_fun || (&Native.send_data/2),
        control_unit: Identificator.control_unit(compute_engine_id)
      }}
   end
@@ -117,11 +132,28 @@ defmodule Flezha.ComputeEngine.ControlChannel do
   end
 
   # Unified NIF transport message — complete parsed frame
+  #
+  # Most inbound traffic on the control channel is `CommandResponse` from
+  # the SDK (replies to agent-initiated `CommandRequest`s) and is forwarded
+  # as-is to the `ControlUnit`. The exception is the SDK-initiated
+  # `OperatorShutdownNotification` introduced by ship-fresh-state-on-sdk-
+  # shutdown: it reuses the `CommandRequest` envelope and the same
+  # `"control_command"` payload_id, so the only way to tell it apart on
+  # the wire is to peek at the oneof tag. We attempt the
+  # `CommandRequest` decode first; if the message has a recognised
+  # SDK-initiated command, dispatch it here and skip the `ControlUnit`
+  # handover.
   @impl true
   def handle_info({:flz_data, _stream_id, _payload_id, message, _metadata}, state) do
-    GenServer.cast(state.control_unit, {:handle_payload, message})
+    case decode_sdk_initiated(message) do
+      {:operator_shutdown_notification, %{} = notif, reference_id} ->
+        handle_operator_shutdown_notification(state, notif, reference_id)
+        {:noreply, state}
 
-    {:noreply, state}
+      :not_sdk_initiated ->
+        GenServer.cast(state.control_unit, {:handle_payload, message})
+        {:noreply, state}
+    end
   end
 
   # NIF transport: connection closed
@@ -155,5 +187,93 @@ defmodule Flezha.ComputeEngine.ControlChannel do
     make_ref()
     |> :erlang.ref_to_list()
     |> List.to_string()
+  end
+
+  # Inspect an inbound control-channel payload for an SDK-initiated
+  # `CommandRequest`. The agent's normal inbound flow is `CommandResponse`,
+  # so a successful `CommandRequest` decode with a recognised SDK-initiated
+  # oneof tag (e.g. `:operator_shutdown_notification`) is the discriminator.
+  # Anything else falls through to the existing `ControlUnit` path.
+  #
+  # Note: a `CommandResponse` will not decode cleanly as a `CommandRequest`
+  # because their field-2 wire types disagree (string vs nested message);
+  # Protox returns `{:error, _}` in that case, which maps to
+  # `:not_sdk_initiated`.
+  defp decode_sdk_initiated(message) do
+    case ComputeEngineCommands.CommandRequest.decode(message) do
+      {:ok,
+       %ComputeEngineCommands.CommandRequest{
+         reference_id: ref,
+         command: {:operator_shutdown_notification, notif}
+       }} ->
+        {:operator_shutdown_notification, notif, ref}
+
+      _ ->
+        :not_sdk_initiated
+    end
+  end
+
+  # Apply the SDK's final state to the per-processor `Overwatch` and emit
+  # an `OperatorShutdownAck` so the SDK's bounded ack-wait can release.
+  # The cast-not-call ordering is deliberate: the snapshot is enqueued on
+  # Overwatch's mailbox before the ack flows back, so even if the agent
+  # crashes between the cast and the write, the snapshot is durable in
+  # the GenServer's state. See ship-fresh-state-on-sdk-shutdown design §D2.
+  #
+  # The ack is emitted unconditionally — including the
+  # `:overwatch_missing` branch (Overwatch already migrated to a peer
+  # agent) — so the SDK never blocks its container's shutdown grace
+  # period waiting for an ack that will never arrive.
+  defp handle_operator_shutdown_notification(state, notif, reference_id) do
+    %ComputeEngineCommands.OperatorShutdownNotification{
+      processor_id: processor_id,
+      serialized_state: serialized_state
+    } = notif
+
+    case HubManager.get_pid(state.namespace, processor_id) do
+      {:ok, pid} when is_pid(pid) ->
+        GenServer.cast(pid, {:apply_external_snapshot, serialized_state})
+
+      _ ->
+        Logger.warning(
+          "[control_channel] Overwatch missing for shutdown notification — assumed migrated. " <>
+            "namespace=#{inspect(state.namespace)} processor_id=#{inspect(processor_id)}"
+        )
+    end
+
+    emit_operator_shutdown_ack(state, processor_id, reference_id)
+  end
+
+  defp emit_operator_shutdown_ack(state, processor_id, reference_id) do
+    ack_request = %ComputeEngineCommands.CommandRequest{
+      reference_id: reference_id,
+      command:
+        {:operator_shutdown_ack,
+         %ComputeEngineCommands.OperatorShutdownAck{processor_id: processor_id}}
+    }
+
+    {:ok, iodata, _size} = Protox.encode(ack_request)
+
+    payload =
+      Payloader.build_from_bin("control_command", IO.iodata_to_binary(iodata))
+
+    case Map.get(state, :stream_ref) do
+      nil ->
+        :ok
+
+      stream_ref ->
+        case state.write_fun.(stream_ref, payload) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "[control_channel] failed to emit OperatorShutdownAck for " <>
+                "processor=#{inspect(processor_id)}: #{inspect(reason)}"
+            )
+
+            :ok
+        end
+    end
   end
 end

@@ -9,6 +9,7 @@ import com.flezha.sdk.native_.NativeTransport;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.CommandRouter;
 import com.flezha.sdk.runtime.control.ControlChannel;
+import com.flezha.sdk.runtime.control.GracefulShutdown;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
@@ -17,6 +18,7 @@ import com.flezha.sdk.runtime.worker.DefaultProcessorDispatcher;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,10 +34,15 @@ public final class FlezhaImpl implements Flezha {
 
     private final ComputeEngineContext ctx;
     private final ReconnectCoordinator reconnectCoordinator;
+    private final AtomicReference<GracefulShutdown> shutdownRef;
 
-    private FlezhaImpl(ComputeEngineContext ctx, ReconnectCoordinator reconnectCoordinator) {
+    private FlezhaImpl(
+            ComputeEngineContext ctx,
+            ReconnectCoordinator reconnectCoordinator,
+            AtomicReference<GracefulShutdown> shutdownRef) {
         this.ctx = ctx;
         this.reconnectCoordinator = reconnectCoordinator;
+        this.shutdownRef = shutdownRef;
     }
 
     /**
@@ -165,6 +172,12 @@ public final class FlezhaImpl implements Flezha {
             Thread.currentThread().interrupt();
         }
 
+        // The shutdown holder is updated on every reconnect because the
+        // control stream id changes; the JVM hook resolves it lazily so
+        // both the initial and the post-reconnect value are honoured.
+        AtomicReference<GracefulShutdown> shutdownRef =
+                new AtomicReference<>(new GracefulShutdown(ctx, controlStreamId));
+
         ReconnectCoordinator coordinator = new ReconnectCoordinator(ctx, () -> {
             // Reconnect hook: attempt to re-open the control stream and
             // re-send the handshake. Returning true means "succeeded".
@@ -172,6 +185,7 @@ public final class FlezhaImpl implements Flezha {
                 long newControl = NativeTransport.openControlStream(nativeHandle);
                 ctx.streamRegistry().setControlStreamId(newControl);
                 new ControlChannel(ctx, newControl).sendHandshake(namespace);
+                shutdownRef.set(new GracefulShutdown(ctx, newControl));
                 return true;
             } catch (Throwable t) {
                 return false;
@@ -180,7 +194,18 @@ public final class FlezhaImpl implements Flezha {
         coordinator.start();
         coordinatorRef[0] = coordinator;
 
-        return new FlezhaImpl(ctx, coordinator);
+        // Register a JVM shutdown hook so SIGTERM (Kubernetes pre-stop)
+        // triggers the graceful-shutdown sequence even when the user
+        // never calls close() explicitly. Idempotent with close() via
+        // the GracefulShutdown's internal AtomicBoolean.
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            GracefulShutdown active = shutdownRef.get();
+            if (active != null) {
+                active.run();
+            }
+        }, "flezha-graceful-shutdown"));
+
+        return new FlezhaImpl(ctx, coordinator, shutdownRef);
     }
 
     @Override
@@ -193,5 +218,13 @@ public final class FlezhaImpl implements Flezha {
     @Nonnull
     public Map<String, ?> getProcessors() {
         return ctx.processorRegistry().snapshot();
+    }
+
+    @Override
+    public void close() {
+        GracefulShutdown active = shutdownRef.get();
+        if (active != null) {
+            active.run();
+        }
     }
 }
