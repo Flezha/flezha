@@ -7,8 +7,11 @@ import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.processor.ProcessorInstance;
 import com.flezha.sdk.runtime.processor.ProcessorRegistry;
 import java.util.List;
+import java.util.logging.Logger;
 
 public final class AddProcessorHandler implements CommandHandler {
+
+    private static final Logger LOG = Logger.getLogger(AddProcessorHandler.class.getName());
 
     @Override
     public byte[] handle(ComputeEngineContext ctx, CommandRequest request, List<String> errors) {
@@ -18,6 +21,17 @@ public final class AddProcessorHandler implements CommandHandler {
         String initValues = cmd.getInitValues();
 
         ProcessorRegistry registry = ctx.processorRegistry();
+
+        // Idempotent on reconnect: the agent re-issues AddProcessor for every
+        // processor ProcessHub still has tagged to this operator's profile
+        // after a restart. If the processor is already in the local registry,
+        // skip without re-registering — keeps the existing processor's state
+        // intact and prevents duplicate-init crashes.
+        if (registry.contains(processorId)) {
+            LOG.info("AddProcessor: processor " + processorId + " already registered, skipping");
+            return new byte[0];
+        }
+
         ProcessorInstance<?, ?, ?> instance;
         try {
             instance = ProcessorInstance.create(factoryId, processorId);

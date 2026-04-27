@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Operator ↔ agent connections now heal automatically across either-side
+  restarts; processors resume traffic within 5 s of reconnect without
+  operator intervention. Stream rebind is enforced as a hard contract on
+  `Flezha.ComputeEngine.StreamChannel`, the UDS/QUIC acceptors atomically
+  bind incoming streams only to nil-ref channels, and
+  `Flezha.ComputeEngine.FleetManager.compute_engine_connect/3` re-issues
+  `AddProcessor` for processors ProcessHub still has tagged to a dead
+  compute_engine_id matching the connecting operator's profile. Rust and
+  Java SDK `AddProcessor` handlers are now idempotent on duplicate
+  `processor_id` (log + skip).
+- `mix test.connection_healing` opt-in alias that runs
+  `test/scripts/connection_healing.sh` against the dev compose stack to
+  exercise both restart paths end-to-end. Requires Docker on the host;
+  not part of the default `mix test` budget.
+- `test/flezha/deployment/k8s_manifest_test.exs` k8s manifest sanity test
+  that asserts the daemonset / configmap fields the connection-healing
+  flow relies on (`flezha-sockets` volume, `FLEZHA_SOCKET_FILES_PATH`,
+  `FLEZHA_OPERATOR_KEEPALIVE`) stay well-formed.
+
 ## 0.2.0 — Cluster snapshot & restore (replaces DETS recovery)
 
 Restart-survival is now operator-driven via `flz cluster snapshot/restore`.

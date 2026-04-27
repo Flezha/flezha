@@ -1,11 +1,15 @@
 services:
   agent:
+    # Default to the published canonical dev image (built from
+    # docker/dev/Dockerfile.agent and pushed by the maintainer). To rebuild
+    # locally without pushing, run:
+    #   docker build -f docker/dev/Dockerfile.agent -t alfetahe/flezha:latest-dev .
+    image: alfetahe/flezha:latest-dev
     # TODO: remove the build section later.
     build:
       context: ../../
       dockerfile: docker/dev/Dockerfile.agent
     container_name: flezha_agent_dev
-    # TODO:   image: flezha:latest
     environment:
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
@@ -86,12 +90,40 @@ services:
     networks:
       - flezha_network
 
-  # rust:
-  #   build:
-  #     context: ../test/apps/rust_compute_engine
-  #     dockerfile: ./Dockerfile.rust
-  #   volumes:
-  #     - socket_data:/socket_data
+  rust:
+    # Reuse the dev image — it ships with the full Rust toolchain, so the
+    # compute-engine app builds in-place from the bind-mounted source. No
+    # extra Dockerfile needed for the test container.
+    image: alfetahe/flezha:latest-dev
+    container_name: flezha_rust_compute_engine
+    depends_on:
+      agent:
+        condition: service_started
+    environment:
+      FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
+      FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
+      # Demo namespace used by the connection-healing integration test in
+      # test/scripts/connection_healing.sh — keep in sync.
+      FLEZHA_DEMO_NAMESPACE: ${FLEZHA_DEMO_NAMESPACE:-default}
+    working_dir: /flezha/test/apps/rust_compute_engine
+    # Wait for the agent's UDS socket to appear, then exec the compute engine.
+    # The wait loop tolerates agent restarts: the SDK's own reconnect loop
+    # takes over once we've handed off to it.
+    command:
+      - sh
+      - -c
+      - |
+        until [ -S /flezha/app_data/sockets/compute_engine_control_channel.sock ]; do
+          echo "[rust] waiting for agent control socket..."
+          sleep 1
+        done
+        exec cargo run --quiet --manifest-path=/flezha/test/apps/rust_compute_engine/Cargo.toml -- "$$FLEZHA_DEMO_NAMESPACE"
+    volumes:
+      - socket_data:/socket_data
+      - ../../:/flezha
+      - flezha_cargo_target:/flezha/target
+    networks:
+      - flezha_network
 
 volumes:
   socket_data:

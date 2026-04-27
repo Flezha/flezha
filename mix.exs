@@ -29,7 +29,13 @@ defmodule Flezha.MixProject do
   # via `scripts/build-dist.sh`; CI never invokes Maven for either.
   defp aliases do
     [
-      "test.java_sdk": ["test --only java_sdk"]
+      "test.java_sdk": ["test --only java_sdk"],
+      # Opt-in dev-compose smoke test for the connection-healing change.
+      # Brings up the agent + rust operator container, restarts each in turn,
+      # asserts the operator <-> agent link re-establishes within
+      # REJOIN_TIMEOUT_S seconds. Not part of `mix test` because it needs
+      # Docker on the host. See test/scripts/connection_healing.sh.
+      "test.connection_healing": ["cmd test/scripts/connection_healing.sh"]
     ]
   end
 

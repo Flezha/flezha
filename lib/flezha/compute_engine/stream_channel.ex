@@ -11,8 +11,8 @@ defmodule Flezha.ComputeEngine.StreamChannel do
 
   @impl true
   def init({_compute_engine_id, _type, name}) do
-    # In NIF mode, streams are attached later via {:attach_stream, stream_ref}.
-    # No per-stream socket listeners or QUIC stream acceptors needed.
+    # Channel starts unbound. Acceptors atomically attach a NIF stream
+    # via the {:bind, ref} call once a connection arrives.
     {
       :ok,
       %{
@@ -25,12 +25,33 @@ defmodule Flezha.ComputeEngine.StreamChannel do
 
   @impl true
   def handle_cast(
+        {:io_in, processor_id, {_message, _metadata}},
+        %{stream_ref: nil} = state
+      ) do
+    Logger.debug(
+      "[StreamChannel #{inspect(state.name)}] dropping outbound cast for " <>
+        "#{processor_id}: stream_ref is nil (awaiting rebind)"
+    )
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast(
         {:io_in, processor_id, {message, metadata}},
         %{stream_ref: stream_ref} = state
       ) do
-    send_channel_payload(stream_ref, processor_id, message, metadata)
-
+    Native.send_frame(stream_ref, processor_id, message, metadata)
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_call(
+        {:io_in, _processor_id, {_message, _metadata}},
+        _from,
+        %{stream_ref: nil} = state
+      ) do
+    {:reply, {:error, :no_stream}, state}
   end
 
   @impl true
@@ -39,8 +60,7 @@ defmodule Flezha.ComputeEngine.StreamChannel do
         _from,
         %{stream_ref: stream_ref} = state
       ) do
-    send_channel_payload(stream_ref, processor_id, message, metadata)
-
+    Native.send_frame(stream_ref, processor_id, message, metadata)
     {:reply, :ok, state}
   end
 
@@ -61,10 +81,25 @@ defmodule Flezha.ComputeEngine.StreamChannel do
     {:reply, :ok, Map.put(state, :processor_mapping, processor_mapping)}
   end
 
-  # Attach a NIF stream ref (replaces both UDS accept and QUIC stream_attached)
+  # Probe used by acceptors to find rebindable channels. Returns the current
+  # stream_ref (or nil if unbound). Snapshot only — the acceptor must then
+  # call {:bind, ref} to atomically claim a nil-ref channel.
   @impl true
-  def handle_call({:attach_stream, stream_ref}, _from, state) do
-    {:reply, :ok, %{state | stream_ref: stream_ref}}
+  def handle_call(:stream_ref_status, _from, state) do
+    {:reply, state.stream_ref, state}
+  end
+
+  # Atomic bind. Succeeds only if stream_ref is currently nil. The acceptor
+  # uses :already_bound as a signal to try the next candidate, avoiding a
+  # snapshot-vs-bind race that could otherwise overwrite a live ref.
+  @impl true
+  def handle_call({:bind, new_ref}, _from, %{stream_ref: nil} = state) do
+    {:reply, :ok, %{state | stream_ref: new_ref}}
+  end
+
+  @impl true
+  def handle_call({:bind, _new_ref}, _from, state) do
+    {:reply, :already_bound, state}
   end
 
   # Unified NIF transport message — complete parsed frame
@@ -79,7 +114,10 @@ defmodule Flezha.ComputeEngine.StreamChannel do
     {:noreply, state}
   end
 
-  # NIF transport: stream closed
+  # NIF transport: stream closed. Synchronous rebindability contract — once
+  # this clause runs, state.stream_ref is nil and no outbound send may use
+  # the dead ref. The acceptor will pick this channel up via :stream_ref_status
+  # on the next incoming data stream for the same compute_engine_id.
   @impl true
   def handle_info({:flz_closed, _stream_id, _reason}, state) do
     Logger.warning("Connection closed for IO socket.")
@@ -92,11 +130,5 @@ defmodule Flezha.ComputeEngine.StreamChannel do
     Logger.warning("Unexpected message at io channel: #{inspect(msg)}")
 
     {:noreply, state}
-  end
-
-  defp send_channel_payload(nil, _processor_id, _message, _metadata), do: :ok
-
-  defp send_channel_payload(stream_ref, processor_id, message, metadata) do
-    Native.send_frame(stream_ref, processor_id, message, metadata)
   end
 end

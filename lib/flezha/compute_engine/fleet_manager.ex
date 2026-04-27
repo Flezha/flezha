@@ -1,6 +1,7 @@
 defmodule Flezha.ComputeEngine.FleetManager do
   alias Flezha.ComputeEngine.ComputeEngineSupervisor
   alias Flezha.ComputeEngine.FleetSupervisor
+  alias Flezha.ComputeEngine.OrphanFinder
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.EventManager
@@ -185,7 +186,16 @@ defmodule Flezha.ComputeEngine.FleetManager do
       )
 
     state = store_factories(state, namespace, compute_engine_id, factories)
-    state = try_migrate_compute_engine(state, namespace, compute_engine_id)
+    {state, claimed_processor_ids} = try_migrate_compute_engine(state, namespace, compute_engine_id)
+    active_ids = MapSet.new(get_compute_engine_ids(state, namespace, :active))
+
+    reissue_local_orphans(
+      namespace,
+      compute_engine_id,
+      factories,
+      claimed_processor_ids,
+      active_ids
+    )
 
     EventManager.dispatch(
       :compute_engine_connected_event,
@@ -288,20 +298,80 @@ defmodule Flezha.ComputeEngine.FleetManager do
   defp try_migrate_compute_engine(state, namespace, compute_engine_id) do
     in_active_compute_engines = get_compute_engine_ids(state, namespace, :inactive)
 
-    namespace_compute_engines =
-      case List.first(in_active_compute_engines) do
-        nil ->
-          state.compute_engine_namespaces[namespace]
-
-        inactive_compute_engine_id ->
-          compute_engine_reroute(state, namespace, inactive_compute_engine_id, [compute_engine_id])
-      end
-
     Logger.info(
       "Attempting to migrate compute_engine #{compute_engine_id} in namespace #{namespace}"
     )
 
-    put_in(state, [:compute_engine_namespaces, namespace], namespace_compute_engines)
+    case List.first(in_active_compute_engines) do
+      nil ->
+        {state, MapSet.new()}
+
+      inactive_compute_engine_id ->
+        # Capture which processor_ids the migrate path is about to claim so the
+        # reissue catch-up can skip them — the migrate already calls
+        # Overwatch.compute_engine_migrate, which fires AddProcessor.
+        claimed_ids =
+          HubManager.compute_engine_processors(namespace, inactive_compute_engine_id)
+          |> Enum.map(fn {processor_id, _node_pids} -> processor_id end)
+          |> MapSet.new()
+
+        namespace_compute_engines =
+          compute_engine_reroute(
+            state,
+            namespace,
+            inactive_compute_engine_id,
+            [compute_engine_id]
+          )
+
+        new_state =
+          put_in(state, [:compute_engine_namespaces, namespace], namespace_compute_engines)
+
+        {new_state, claimed_ids}
+    end
+  end
+
+  @doc false
+  # Public for tests. Re-issues AddProcessor (via Overwatch.compute_engine_migrate)
+  # to the freshly connected operator for every local Overwatch whose registered
+  # compute_engine_id no longer points at an active operator. Without this,
+  # processors ProcessHub keeps assigned to a dead compute_engine_id sit silent
+  # until ProcessHub redistributes them.
+  def reissue_local_orphans(namespace, new_ce_id, factories, claimed_ids, active_ids) do
+    factory_id_set = OrphanFinder.factory_ids_from(factories)
+    curr_node = node()
+
+    case HubManager.get_registry(namespace) do
+      {:error, reason} ->
+        Logger.debug(
+          "[FleetManager] reissue_local_orphans: hub registry unavailable for " <>
+            "#{namespace}: #{inspect(reason)}"
+        )
+
+        :ok
+
+      {:ok, registry} ->
+        registry
+        |> OrphanFinder.collect(curr_node, claimed_ids, active_ids, factory_id_set)
+        |> Enum.each(fn {processor_id, pid} ->
+          Logger.info(
+            "[FleetManager] Reissuing AddProcessor for orphan processor " <>
+              "#{processor_id} → compute_engine #{new_ce_id}"
+          )
+
+          try do
+            GenServer.call(pid, {:compute_engine_migrate, new_ce_id})
+            HubManager.processor_set_compute_engine(namespace, processor_id, new_ce_id)
+          catch
+            :exit, exit_reason ->
+              Logger.warning(
+                "[FleetManager] Failed to reissue processor #{processor_id}: " <>
+                  inspect(exit_reason)
+              )
+          end
+        end)
+
+        :ok
+    end
   end
 
   defp get_compute_engine_ids(state, namespace, status) do

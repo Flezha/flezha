@@ -148,6 +148,37 @@ lives in `FleetManager` (`lib/flezha/compute_engine/fleet_manager.ex`):
   `try_migrate_compute_engine` reroutes the preserved work to the new
   `compute_engine_id`.
 
+## Connection-healing contracts (post 0.2.x)
+
+Two contracts make operator ↔ agent connections heal automatically across
+either-side restarts:
+
+1. **Stream rebind on `{:flz_closed, ...}`.** `StreamChannel` clears its
+   `stream_ref` to `nil` synchronously inside its close-handler clause, and
+   refuses outbound frames while `stream_ref == nil` (returns
+   `{:error, :no_stream}` on the call path; logs and drops on the cast path).
+   On the next incoming data stream for the same `compute_engine_id`,
+   `StreamAcceptor` (UDS) and `Transport.Server` (QUIC) walk the existing
+   `StreamSup` children and bind the new ref to the first nil-ref channel via
+   an atomic `GenServer.call(channel, {:bind, new_ref})`. A channel with a
+   live ref returns `:already_bound`, so the acceptor moves to the next
+   candidate without ever silently overwriting an in-flight binding.
+2. **AddProcessor reissue on reconnect.** After the existing
+   `try_migrate_compute_engine` step, `FleetManager.compute_engine_connect/3`
+   calls `reissue_local_orphans/5`, which queries
+   `HubManager.get_registry/1`, filters to processors hosted on `node()` whose
+   `:tag` metadata names a no-longer-active `compute_engine_id` and whose
+   factory the connecting operator advertises, and re-issues `AddProcessor` to
+   the new operator via `Overwatch.compute_engine_migrate` →
+   `start_processor_sdk`. Processors already handled by the migrate step are
+   skipped via the `claimed_processor_ids` set so no SDK ever receives a
+   duplicate `AddProcessor` it would have to handle as a no-op.
+
+The Rust and Java SDK `AddProcessor` handlers are idempotent on duplicate
+`processor_id`: they log
+`"AddProcessor: processor <id> already registered, skipping"` and return,
+preserving the existing instance's state.
+
 ## HotSwap with handover
 
 The migration strategy is the most subtle piece. `HotSwap{handover: true}`

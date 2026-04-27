@@ -1,0 +1,88 @@
+services:
+  agent:
+    image: alfetahe/flezha:latest-dev
+    container_name: flezha_agent_dev
+    user: "0:0"
+    stdin_open: true
+    # Auto-start the BEAM so the connection_healing test (or any future
+    # automated probe) does not need to exec `mix run` after `docker compose
+    # up`. Run as root to chown the bind-mount edge cases that arise on
+    # systems with userns-remap, then drop to the flezha user.
+    command:
+      - sh
+      - -c
+      - |
+        # Container has Elixir 1.17 but the host may have a newer Elixir
+        # version that already compiled _build/ and deps/ on the bind mount —
+        # mixing those triggers `corrupt atom table` failures inside the
+        # container. Use container-local MIX_BUILD_PATH / MIX_DEPS_PATH so
+        # the in-container compile is independent of whatever the host has
+        # cached.
+        mkdir -p /home/flezha/_build /home/flezha/deps
+        chown -R 1000:1000 /home/flezha/_build /home/flezha/deps 2>/dev/null || true
+        chown -R 1000:1000 /flezha/app_data/sockets 2>/dev/null || true
+        cd /flezha
+        exec su -m -s /bin/sh flezha -c 'cd /flezha && export MIX_ENV=dev MIX_BUILD_PATH=/home/flezha/_build/dev MIX_DEPS_PATH=/home/flezha/deps && mix deps.get --only "$$MIX_ENV" >/dev/null && exec mix run --no-halt'
+    environment:
+      MIX_ENV: dev
+      FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
+      FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
+      HOME: /home/flezha
+      CARGO_HOME: /home/flezha/.cargo
+      RUSTUP_HOME: /home/flezha/.rustup
+      PATH: /home/flezha/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -S /flezha/app_data/sockets/compute_engine_control_channel.sock
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+    # Direct bind mount only — DO NOT pull in the parent compose's named
+    # volumes for /flezha/_build, /flezha/deps, /flezha/target. Those start
+    # empty and root-owned, defeating the host's existing build cache and
+    # forcing every run to recompile from scratch (8+ min). With the bind
+    # mount alone, compile artifacts persist on the host across runs.
+    volumes:
+      - ../../:/flezha
+    networks:
+      - flezha_network
+
+  rust:
+    image: alfetahe/flezha:latest-dev
+    container_name: flezha_rust_compute_engine
+    user: "0:0"
+    stdin_open: true
+    depends_on:
+      agent:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        chown -R 1000:1000 /flezha 2>/dev/null || true
+        until [ -S /flezha/app_data/sockets/compute_engine_control_channel.sock ]; do
+          echo "[rust] waiting for agent control socket..."
+          sleep 1
+        done
+        ns="$$FLEZHA_DEMO_NAMESPACE"
+        : "$${ns:=default}"
+        echo "[rust] starting compute engine for namespace=$$ns"
+        exec su -m -s /bin/sh flezha -c "cd /flezha/test/apps/rust_compute_engine && exec cargo run --quiet --target-dir=/flezha/target -- $$ns"
+    environment:
+      FLEZHA_DEMO_NAMESPACE: ${FLEZHA_DEMO_NAMESPACE:-default}
+      FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
+      FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
+      HOME: /home/flezha
+      CARGO_HOME: /home/flezha/.cargo
+      RUSTUP_HOME: /home/flezha/.rustup
+      PATH: /home/flezha/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - ../../:/flezha
+    networks:
+      - flezha_network
+
+networks:
+  flezha_network:
+    external: true

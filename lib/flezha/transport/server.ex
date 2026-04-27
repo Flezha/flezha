@@ -89,9 +89,7 @@ defmodule Flezha.Transport.Server do
            pending_streams: %{},
            # QUIC routing state: most recently established compute_engine_id.
            # Used to route {:flz_stream, ...} data streams to the right StreamChannels.
-           quic_current_ce_id: nil,
-           # Round-robin counters per compute engine for primary/secondary streams.
-           quic_stream_counters: %{}
+           quic_current_ce_id: nil
          }}
 
       {:error, reason} ->
@@ -210,7 +208,11 @@ defmodule Flezha.Transport.Server do
     end
   end
 
-  # Route a QUIC data stream to the correct StreamChannel process.
+  # Route a QUIC data stream to the correct StreamChannel process. Bind to the
+  # first nil-ref channel in the pool (rebind contract) — overwriting a live
+  # channel would silently drop traffic on its existing stream. The SDK's
+  # index hint is intentionally ignored: any index can map to any channel
+  # since outbound routing is by processor_id, not stream index.
   defp route_quic_data_stream(stream_ref, stream_type, index, compute_engine_id, state) do
     type =
       case stream_type do
@@ -227,28 +229,23 @@ defmodule Flezha.Transport.Server do
 
     if type do
       stream_ids = StreamSup.stream_ids(compute_engine_id, type)
-      count = length(stream_ids)
 
-      if count == 0 do
-        Logger.warning("[Transport.Server] No #{type} stream channels for #{compute_engine_id}")
-      else
-        # Use the index from the SDK to pick the stream channel.
-        stream_name = Enum.at(stream_ids, rem(index, count))
-        stream_pid = GenServer.whereis(stream_name)
-
-        if stream_pid do
+      case StreamSup.bind_stream_to_first_nil(stream_ids, stream_ref) do
+        {:bound, stream_pid, stream_name} ->
           Native.controlling_process(stream_ref, stream_pid)
           Native.set_active(stream_ref)
-          GenServer.call(stream_pid, {:attach_stream, stream_ref})
 
           Logger.debug(
             "[Transport.Server] QUIC #{type} stream ##{index} → #{inspect(stream_name)}"
           )
-        else
+
+        nil ->
           Logger.warning(
-            "[Transport.Server] StreamChannel #{inspect(stream_name)} not found for QUIC #{type} stream"
+            "[Transport.Server] No rebindable #{type} channel for #{compute_engine_id}; " <>
+              "closing QUIC stream ##{index}"
           )
-        end
+
+          Native.close(stream_ref)
       end
     end
 

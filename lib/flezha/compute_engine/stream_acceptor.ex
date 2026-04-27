@@ -34,8 +34,7 @@ defmodule Flezha.ComputeEngine.StreamAcceptor do
            server_ref: server_ref,
            compute_engine_id: compute_engine_id,
            type: type,
-           stream_ids: stream_ids,
-           next_index: 0
+           stream_ids: stream_ids
          }}
 
       {:error, reason} ->
@@ -44,35 +43,30 @@ defmodule Flezha.ComputeEngine.StreamAcceptor do
     end
   end
 
-  # New SDK data stream connection accepted
+  # New SDK data stream connection accepted. Bind to the first nil-ref channel
+  # in the pre-spawned pool (rebind contract) — overwriting a live channel
+  # would silently drop traffic on its existing stream.
   @impl true
   def handle_info({:flz_connection, stream_ref}, state) do
-    idx = state.next_index
-    count = length(state.stream_ids)
-
-    if count == 0 do
-      Logger.warning("[StreamAcceptor] No stream channels available for #{state.type}")
-      {:noreply, state}
-    else
-      stream_name = Enum.at(state.stream_ids, rem(idx, count))
-      stream_pid = GenServer.whereis(stream_name)
-
-      if stream_pid do
+    case StreamSup.bind_stream_to_first_nil(state.stream_ids, stream_ref) do
+      {:bound, stream_pid, stream_name} ->
         Native.controlling_process(stream_ref, stream_pid)
         Native.set_active(stream_ref)
-        GenServer.call(stream_pid, {:attach_stream, stream_ref})
 
         Logger.debug(
-          "[StreamAcceptor] Attached #{state.type} stream ##{idx} to #{inspect(stream_name)}"
+          "[StreamAcceptor] Bound #{state.type} stream to #{inspect(stream_name)}"
         )
-      else
-        Logger.warning(
-          "[StreamAcceptor] StreamChannel #{inspect(stream_name)} not found for #{state.type} stream ##{idx}"
-        )
-      end
 
-      {:noreply, %{state | next_index: idx + 1}}
+      nil ->
+        Logger.warning(
+          "[StreamAcceptor] No rebindable #{state.type} channel for " <>
+            "#{state.compute_engine_id}; closing new stream"
+        )
+
+        Native.close(stream_ref)
     end
+
+    {:noreply, state}
   end
 
   @impl true
