@@ -31,6 +31,8 @@ defmodule Flezha.Application do
         transport_children() ++
         [
           Flezha.Service.PluginManager,
+          Flezha.Plugin.Provider.Kafka.WorkerRegistry,
+          Flezha.Plugin.Provider.Kafka.ProducerSup,
           Flezha.Service.PortPilot,
           Flezha.Cluster.Orchestrator,
           {Task.Supervisor, name: Flezha.Processor.MessageHandlerTaskSup}

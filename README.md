@@ -7,6 +7,7 @@ Distributed stateful processors. Provides static and dynamic creation of process
 - Clustered, hot-swap-migratable processors
 - SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
 - Installable plugin subsystem ([`docs/plugin_installation.md`](docs/plugin_installation.md))
+- First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/kafka-producer.md`](docs/kafka-producer.md))
 - Cluster-wide snapshot & restore via `flz cluster` ([`docs/cluster-snapshot.md`](docs/cluster-snapshot.md))
 
 ## Image size and supported architectures

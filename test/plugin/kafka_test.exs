@@ -1,78 +1,103 @@
 defmodule FlezhaTest.Plugin.KafkaTest do
+  @moduledoc """
+  Facade-level tests for `Flezha.Plugin.Provider.Kafka.Producer`.
+
+  Exercises the full path: `init_provider/1` → ensures a `ProducerWorker`
+  is running, `on_input/2` / `on_output/2` → enqueues and gets back
+  `{:ok, ctx}` once the broker round-trip completes.
+
+  Per-component coverage (idempotence, retry, batching, drop semantics,
+  auto-create, metadata refresh, telemetry, registry) lives in the more
+  focused files under `test/plugin/kafka/`.
+  """
+
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.Kafka
+  alias Flezha.Plugin.Provider.Kafka.{ProducerSup, WorkerRegistry}
 
   use ExUnit.Case, async: false
   use Mimic
 
-  @test_topic "flezha_test_topic"
-  @test_broker {"kafka", 9092}
-  @test_partition 0
+  @topic "flezha_test_topic"
+  @broker {"kafka", 9092}
 
-  test "kafka producer init_provider starts worker" do
-    KafkaEx
-    |> expect(:start_link_worker, fn _x, _y -> {:ok, self()} end)
+  setup :set_mimic_global
 
-    assert {:ok, opts, pid} =
-             Kafka.Producer.init_provider(%{
-               hosts: [@test_broker],
-               topic: @test_topic,
-               partition: @test_partition
-             })
+  setup do
+    test_pid = self()
 
-    assert is_pid(pid)
-    assert Map.get(opts, :conn) == pid
+    fake_worker = fn ->
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+    end
+
+    stub(WorkerRegistry, :acquire, fn _identity ->
+      pid = fake_worker.()
+      send(test_pid, {:registry_acquired, pid})
+      {:ok, pid, make_ref()}
+    end)
+
+    stub(WorkerRegistry, :release, fn _ref -> :ok end)
+
+    :ok
   end
 
-  test "kafka producer on_input produces" do
-    KafkaEx
-    |> expect(:produce, fn _, _ -> {:ok, :success} end)
-
-    opts = %{
-      hosts: [@test_broker],
-      topic: @test_topic,
-      partition: @test_partition,
-      conn: self()
-    }
-
-    ctx = %Ctx.IO{processor_id: "p", namespace: "n", message: "test_data", metadata: %{}}
-
-    assert {:ok, ^ctx} = Kafka.Producer.on_input(ctx, opts)
+  defp build_opts(plugin_id, partition, extras \\ %{}) do
+    Map.merge(
+      %{
+        hosts: [@broker],
+        topic: @topic,
+        partition: partition,
+        plugin_id: plugin_id,
+        idempotent: false
+      },
+      extras
+    )
   end
 
-  test "kafka producer publishes when plugin_group matches message metadata" do
-    KafkaEx
-    |> expect(:produce, fn _, _ -> {:ok, :success} end)
+  test "init_provider starts a producer worker and returns its pid" do
+    plugin_id = "init-test-#{System.unique_integer([:positive])}"
 
-    opts = %{
-      hosts: [@test_broker],
-      topic: @test_topic,
-      partition: @test_partition,
-      conn: self(),
-      plugin_group: "2"
-    }
+    {:ok, opts, producer_pid} =
+      Kafka.Producer.init_provider(build_opts(plugin_id, 0))
 
-    ctx = %Ctx.IO{
-      processor_id: "p",
-      namespace: "n",
-      message: "indicator_payload",
-      metadata: %{"plugin_group" => "2"}
-    }
+    assert is_pid(producer_pid)
+    assert Process.alive?(producer_pid)
+    assert opts[:producer_pid] == producer_pid
+    assert opts[:plugin_id] == plugin_id
 
-    assert {:ok, ^ctx} = Kafka.Producer.on_input(ctx, opts)
+    [{registered_pid, _}] =
+      Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0})
+
+    assert registered_pid == producer_pid
+
+    ProducerSup.stop_worker(plugin_id, @topic, 0)
   end
 
-  test "kafka producer passes through without publishing when plugin_group does not match" do
-    KafkaEx
-    |> reject(:produce, 2)
+  test "stats/1 returns producer counters keyed on plugin_id" do
+    plugin_id = "stats-test-#{System.unique_integer([:positive])}"
 
-    opts = %{
-      hosts: [@test_broker],
-      topic: @test_topic,
-      partition: @test_partition,
-      conn: self(),
-      plugin_group: "2"
-    }
+    {:ok, _opts, _pid} = Kafka.Producer.init_provider(build_opts(plugin_id, 3))
+
+    assert {:ok, stats} = Kafka.Producer.stats(plugin_id)
+    assert stats.dropped_total == 0
+    assert stats.queue_depth == 0
+    assert stats.topic == @topic
+    assert stats.partition == 3
+
+    ProducerSup.stop_worker(plugin_id, @topic, 3)
+
+    assert {:error, :no_producer} = Kafka.Producer.stats(plugin_id)
+  end
+
+  test "plugin_group filter passes through when metadata does not match" do
+    plugin_id = "group-test-#{System.unique_integer([:positive])}"
+
+    {:ok, opts, _pid} =
+      Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{plugin_group: "2"}))
 
     ctx = %Ctx.IO{
       processor_id: "p",
@@ -82,43 +107,209 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     }
 
     assert {:ok, ^ctx} = Kafka.Producer.on_input(ctx, opts)
+
+    ProducerSup.stop_worker(plugin_id, @topic, 0)
   end
 
-  test "kafka producer passes through when plugin_group is configured but missing from metadata" do
-    KafkaEx
-    |> reject(:produce, 2)
+  test "plugin_group filter passes through when metadata is missing" do
+    plugin_id = "group-test-#{System.unique_integer([:positive])}"
 
-    opts = %{
-      hosts: [@test_broker],
-      topic: @test_topic,
-      partition: @test_partition,
-      conn: self(),
-      plugin_group: "2"
-    }
-
-    ctx = %Ctx.IO{processor_id: "p", namespace: "n", message: "untagged", metadata: %{}}
-
-    assert {:ok, ^ctx} = Kafka.Producer.on_input(ctx, opts)
-  end
-
-  test "kafka producer publishes unconditionally when plugin_group is not configured" do
-    KafkaEx
-    |> expect(:produce, fn _, _ -> {:ok, :success} end)
-
-    opts = %{
-      hosts: [@test_broker],
-      topic: @test_topic,
-      partition: @test_partition,
-      conn: self()
-    }
+    {:ok, opts, _pid} =
+      Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{plugin_group: "2"}))
 
     ctx = %Ctx.IO{
       processor_id: "p",
       namespace: "n",
-      message: "payload",
-      metadata: %{"plugin_group" => "anything"}
+      message: "untagged",
+      metadata: %{}
     }
 
     assert {:ok, ^ctx} = Kafka.Producer.on_input(ctx, opts)
+
+    ProducerSup.stop_worker(plugin_id, @topic, 0)
+  end
+
+  describe "build/1 conversion" do
+    test "parses integer params from binary CLI input" do
+      assert {:ok, %Kafka.Producer{queue_max: 20000, retries: 7, linger_ms: 25}} =
+               Kafka.Producer.build(%{
+                 "hosts" => "kafka:9092",
+                 "topic" => "x",
+                 "queue_max" => "20000",
+                 "retries" => "7",
+                 "linger_ms" => "25"
+               })
+    end
+
+    test "parses boolean params" do
+      assert {:ok, %Kafka.Producer{idempotent: false, auto_create_topic: true}} =
+               Kafka.Producer.build(%{
+                 "hosts" => "kafka:9092",
+                 "topic" => "x",
+                 "idempotent" => "false",
+                 "auto_create_topic" => "true"
+               })
+    end
+
+    test "parses queue_overflow atom" do
+      assert {:ok, %Kafka.Producer{queue_overflow: :drop_newest}} =
+               Kafka.Producer.build(%{
+                 "hosts" => "kafka:9092",
+                 "topic" => "x",
+                 "queue_overflow" => "drop_newest"
+               })
+    end
+
+    test "default required_acks is -1 (acks=all) — BREAKING change from previous default of 1" do
+      assert {:ok, %Kafka.Producer{required_acks: -1}} =
+               Kafka.Producer.build(%{
+                 "hosts" => "kafka:9092",
+                 "topic" => "x"
+               })
+    end
+  end
+
+  describe "host parsing" do
+    test "parses comma-separated string hosts" do
+      plugin_id = "host-test-#{System.unique_integer([:positive])}"
+
+      {:ok, opts, _pid} =
+        Kafka.Producer.init_provider(%{
+          hosts: "kafka1:9092,kafka2:9093",
+          topic: @topic,
+          partition: 0,
+          plugin_id: plugin_id,
+          idempotent: false
+        })
+
+      assert opts[:hosts] == [{"kafka1", 9092}, {"kafka2", 9093}]
+      ProducerSup.stop_worker(plugin_id, @topic, 0)
+    end
+
+    test "passes through list-form hosts" do
+      plugin_id = "host-test-#{System.unique_integer([:positive])}"
+
+      {:ok, opts, _pid} =
+        Kafka.Producer.init_provider(%{
+          hosts: [{"k1", 9092}, {"k2", 9093}],
+          topic: @topic,
+          partition: 0,
+          plugin_id: plugin_id,
+          idempotent: false
+        })
+
+      assert opts[:hosts] == [{"k1", 9092}, {"k2", 9093}]
+      ProducerSup.stop_worker(plugin_id, @topic, 0)
+    end
+  end
+
+  describe "on_input / on_output enqueue path" do
+    test "on_input forwards to producer worker and gets back :ok ctx" do
+      # Drive the producer via the facade and rely on the worker to ack.
+      # The worker_pid the registry hands out is a fake that never replies
+      # to send_request — but we never enqueue because we only test the
+      # plugin_group passthrough branch in the facade-level tests above.
+      # Here we exercise the produce attempt with an in-memory ProducerWorker
+      # primed for success via send_fn.
+      plugin_id = "io-test-#{System.unique_integer([:positive])}"
+
+      {:ok, opts, producer_pid} =
+        Kafka.Producer.init_provider(%{
+          hosts: [@broker],
+          topic: @topic,
+          partition: 0,
+          plugin_id: plugin_id,
+          idempotent: false
+        })
+
+      # Replace the producer worker's send_fn with one that returns OK.
+      :sys.replace_state(producer_pid, fn state ->
+        send_fn = fn _w, _r, _ns ->
+          {:ok,
+           %Kayrock.Produce.V5.Response{
+             responses: [
+               %{
+                 topic: @topic,
+                 partition_responses: [
+                   %{partition: 0, error_code: 0, base_offset: 0, log_append_time: -1, log_start_offset: -1}
+                 ]
+               }
+             ],
+             throttle_time_ms: 0
+           }}
+        end
+
+        %{state | send_fn: send_fn}
+      end)
+
+      ctx = %Ctx.IO{processor_id: "p", namespace: "n", message: "hello", metadata: %{}}
+      assert {:ok, ^ctx} = Kafka.Producer.on_input(ctx, opts)
+      assert {:ok, ^ctx} = Kafka.Producer.on_output(ctx, opts)
+
+      ProducerSup.stop_worker(plugin_id, @topic, 0)
+    end
+
+    test "on_output surfaces {:error, _} when delivery_failed" do
+      plugin_id = "io-test-#{System.unique_integer([:positive])}"
+
+      {:ok, opts, producer_pid} =
+        Kafka.Producer.init_provider(%{
+          hosts: [@broker],
+          topic: @topic,
+          partition: 0,
+          plugin_id: plugin_id,
+          idempotent: false,
+          retries: 1,
+          retry_backoff_ms: 1,
+          retry_max_backoff_ms: 5,
+          delivery_timeout_ms: 30
+        })
+
+      :sys.replace_state(producer_pid, fn state ->
+        %{state | send_fn: fn _w, _r, _ns -> {:error, :no_broker} end, jitter_fn: fn _ -> 0 end}
+      end)
+
+      ctx = %Ctx.IO{processor_id: "p", namespace: "n", message: "x", metadata: %{}}
+      assert {:error, {:delivery_failed, :no_broker}} = Kafka.Producer.on_output(ctx, opts)
+
+      ProducerSup.stop_worker(plugin_id, @topic, 0)
+    end
+  end
+
+  describe "registry release coupling" do
+    test "stopping the producer worker releases the WorkerRegistry handle" do
+      released = self()
+
+      stub(WorkerRegistry, :acquire, fn _identity ->
+        pid =
+          spawn(fn ->
+            receive do
+              :stop -> :ok
+            end
+          end)
+
+        {:ok, pid, {:fake_ref, System.unique_integer([:positive])}}
+      end)
+
+      stub(WorkerRegistry, :release, fn ref ->
+        send(released, {:released, ref})
+        :ok
+      end)
+
+      plugin_id = "release-test-#{System.unique_integer([:positive])}"
+
+      {:ok, _opts, _pid} =
+        Kafka.Producer.init_provider(%{
+          hosts: [@broker],
+          topic: @topic,
+          partition: 0,
+          plugin_id: plugin_id,
+          idempotent: false
+        })
+
+      ProducerSup.stop_worker(plugin_id, @topic, 0)
+
+      assert_receive {:released, {:fake_ref, _}}, 1_000
+    end
   end
 end

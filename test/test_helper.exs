@@ -2,7 +2,7 @@
 # Java compute-engine fat jar to be on disk. Run those tests via the
 # `mix test.java_sdk` alias, which builds the jar first.
 # `:system` is excluded by convention — those tests boot extra OS processes.
-ExUnit.start(exclude: [:system, :java_sdk])
+ExUnit.start(exclude: [:system, :java_sdk, :kafka_integration])
 
 # ProcessHub's `LoggerService.error/3` logs every `StartChildrenRequest`
 # failure at error level — useful in production, but multiple tests
@@ -17,3 +17,4 @@ Mimic.copy(KafkaEx)
 Mimic.copy(Flezha.Service.ProcessorManager)
 Mimic.copy(Flezha.Service.PluginManager)
 Mimic.copy(Flezha.Service.HubManager)
+Mimic.copy(Flezha.Plugin.Provider.Kafka.WorkerRegistry)

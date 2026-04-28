@@ -1,0 +1,240 @@
+defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
+  alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
+
+  use ExUnit.Case, async: false
+
+  @hosts_a [{"kafka-a", 9092}]
+  @hosts_b [{"kafka-b", 9092}]
+
+  setup do
+    test_pid = self()
+
+    starter = fn identity ->
+      pid =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      send(test_pid, {:starter_called, identity, pid})
+      {:ok, pid}
+    end
+
+    stopper = fn pid ->
+      send(test_pid, {:stopper_called, pid})
+      send(pid, :stop)
+      :ok
+    end
+
+    {:ok, registry} =
+      start_supervised(
+        {WorkerRegistry,
+         name: :"#{__MODULE__}.#{System.unique_integer([:positive])}",
+         starter: starter,
+         stopper: stopper,
+         linger_ms: 50}
+      )
+
+    {:ok, registry: registry}
+  end
+
+  describe "single shared worker per identity (task 2.3)" do
+    test "five plugins against the same identity share one worker", %{registry: reg} do
+      identity = %{hosts: @hosts_a}
+
+      tokens =
+        for _i <- 1..5 do
+          assert {:ok, pid, ref} = WorkerRegistry.acquire(identity, reg)
+          assert is_pid(pid)
+          {pid, ref}
+        end
+
+      assert_receive {:starter_called, _identity, worker_pid}
+      refute_receive {:starter_called, _, _}
+
+      pids = tokens |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+      assert pids == [worker_pid]
+
+      summary = WorkerRegistry.inspect_state(reg)
+      assert map_size(summary) == 1
+      [{_key, entry}] = Map.to_list(summary)
+      assert entry.refs == 5
+      assert entry.linger? == false
+    end
+
+    test "tearing down N-1 leaves the worker running; tearing down the last triggers linger stop",
+         %{registry: reg} do
+      identity = %{hosts: @hosts_a}
+
+      tokens =
+        for _i <- 1..3 do
+          assert {:ok, _, ref} = WorkerRegistry.acquire(identity, reg)
+          ref
+        end
+
+      assert_receive {:starter_called, _identity, worker_pid}
+
+      [first | rest] = tokens
+
+      Enum.each(rest, fn ref -> :ok = WorkerRegistry.release(ref, reg) end)
+
+      summary = WorkerRegistry.inspect_state(reg)
+      [{_key, entry}] = Map.to_list(summary)
+      assert entry.refs == 1
+      assert entry.linger? == false
+
+      refute_received {:stopper_called, ^worker_pid}
+
+      :ok = WorkerRegistry.release(first, reg)
+
+      summary = WorkerRegistry.inspect_state(reg)
+      [{_key, entry}] = Map.to_list(summary)
+      assert entry.refs == 0
+      assert entry.linger? == true
+
+      assert_receive {:stopper_called, ^worker_pid}, 500
+      assert WorkerRegistry.inspect_state(reg) == %{}
+    end
+
+    test "release within linger window reuses the same worker pid", %{registry: reg} do
+      identity = %{hosts: @hosts_a}
+
+      assert {:ok, pid1, ref1} = WorkerRegistry.acquire(identity, reg)
+      assert_receive {:starter_called, _, _}
+
+      :ok = WorkerRegistry.release(ref1, reg)
+
+      assert {:ok, pid2, _ref2} = WorkerRegistry.acquire(identity, reg)
+      assert pid2 == pid1
+      refute_receive {:starter_called, _, _}, 100
+      refute_receive {:stopper_called, _}, 100
+    end
+
+    test "implicit release when caller dies", %{registry: reg} do
+      identity = %{hosts: @hosts_a}
+      test_pid = self()
+
+      caller =
+        spawn(fn ->
+          assert {:ok, _pid, ref} = WorkerRegistry.acquire(identity, reg)
+          send(test_pid, {:acquired, ref})
+
+          receive do
+            :exit -> :ok
+          end
+        end)
+
+      assert_receive {:acquired, _ref}
+      assert_receive {:starter_called, _, worker_pid}
+
+      summary = WorkerRegistry.inspect_state(reg)
+      [{_key, entry}] = Map.to_list(summary)
+      assert entry.refs == 1
+
+      Process.exit(caller, :kill)
+
+      assert_receive {:stopper_called, ^worker_pid}, 500
+      assert WorkerRegistry.inspect_state(reg) == %{}
+    end
+  end
+
+  describe "distinct identities get distinct workers (task 2.4)" do
+    test "two identities yield two workers", %{registry: reg} do
+      assert {:ok, pid_a, _} = WorkerRegistry.acquire(%{hosts: @hosts_a}, reg)
+      assert {:ok, pid_b, _} = WorkerRegistry.acquire(%{hosts: @hosts_b}, reg)
+
+      assert pid_a != pid_b
+      assert map_size(WorkerRegistry.inspect_state(reg)) == 2
+    end
+
+    test "host order does not affect identity", %{registry: reg} do
+      assert {:ok, pid1, _} =
+               WorkerRegistry.acquire(
+                 %{hosts: [{"k1", 9092}, {"k2", 9092}]},
+                 reg
+               )
+
+      assert {:ok, pid2, _} =
+               WorkerRegistry.acquire(
+                 %{hosts: [{"k2", 9092}, {"k1", 9092}]},
+                 reg
+               )
+
+      assert pid1 == pid2
+      assert map_size(WorkerRegistry.inspect_state(reg)) == 1
+    end
+
+    test "ssl_options difference yields distinct workers", %{registry: reg} do
+      assert {:ok, pid1, _} =
+               WorkerRegistry.acquire(%{hosts: @hosts_a, ssl_options: [verify: :verify_none]}, reg)
+
+      assert {:ok, pid2, _} =
+               WorkerRegistry.acquire(%{hosts: @hosts_a, ssl_options: [verify: :verify_peer]}, reg)
+
+      assert pid1 != pid2
+    end
+  end
+
+  describe "worker death" do
+    test "worker DOWN clears the entry; next acquire starts fresh worker", %{registry: reg} do
+      identity = %{hosts: @hosts_a}
+
+      assert {:ok, pid1, _ref1} = WorkerRegistry.acquire(identity, reg)
+      assert_receive {:starter_called, _, _}
+
+      Process.exit(pid1, :kill)
+
+      assert eventually(fn -> WorkerRegistry.inspect_state(reg) == %{} end, 500)
+
+      assert {:ok, pid2, _ref2} = WorkerRegistry.acquire(identity, reg)
+      assert_receive {:starter_called, _, _}
+      assert pid2 != pid1
+    end
+  end
+
+  describe "starter failure" do
+    test "acquire returns the starter's error", %{registry: _reg} do
+      starter = fn _ -> {:error, :no_brokers_available} end
+
+      {:ok, reg} =
+        start_supervised(
+          {WorkerRegistry,
+           name: :"#{__MODULE__}.starter_fail.#{System.unique_integer([:positive])}",
+           starter: starter,
+           stopper: fn _ -> :ok end,
+           linger_ms: 50},
+          id: :"starter_fail_#{System.unique_integer([:positive])}"
+        )
+
+      assert {:error, :no_brokers_available} = WorkerRegistry.acquire(%{hosts: @hosts_a}, reg)
+      assert WorkerRegistry.inspect_state(reg) == %{}
+    end
+  end
+
+  describe "release of stale ref" do
+    test "release on a unknown ref is a no-op", %{registry: reg} do
+      stale_ref = {{[{"unknown", 9092}], 0, 0}, make_ref()}
+      assert :ok = WorkerRegistry.release(stale_ref, reg)
+    end
+  end
+
+  defp eventually(check_fn, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    do_eventually = fn loop ->
+      if check_fn.() do
+        true
+      else
+        if System.monotonic_time(:millisecond) >= deadline do
+          false
+        else
+          Process.sleep(5)
+          loop.(loop)
+        end
+      end
+    end
+
+    do_eventually.(do_eventually)
+  end
+end

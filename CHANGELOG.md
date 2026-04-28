@@ -4,6 +4,48 @@
 
 ### Added
 
+- Hardened first-party Kafka producer plugin
+  (`Flezha.Plugin.Provider.Kafka.Producer`). The previous thin
+  `KafkaEx.produce`-per-call wrapper is replaced with a per-`(plugin_id,
+  topic, partition)` `ProducerWorker` GenServer that runs linger-based
+  batching, bounded outbound queueing with configurable overflow strategy
+  (`:drop_oldest` / `:drop_newest` / `:block`), automatic retries with
+  exponential backoff for every transient broker error class, active
+  metadata refresh on `:not_leader_for_partition` / `:no_broker` /
+  `:unknown_topic_or_partition`, idempotent producer semantics via Produce
+  v5+ (`InitProducerId` + per-partition sequence numbers), and auto-create
+  on first publish for unknown topics. Underlying `KafkaEx.New.Client`
+  workers are deduplicated across plugin instances by connection identity
+  via the new `Flezha.Plugin.Provider.Kafka.WorkerRegistry`. New plugin
+  parameters: `:retries`, `:retry_backoff_ms`, `:retry_max_backoff_ms`,
+  `:delivery_timeout_ms`, `:linger_ms`, `:max_batch_bytes`, `:queue_max`,
+  `:queue_overflow`, `:queue_block_timeout_ms`, `:idempotent`,
+  `:auto_create_topic`, `:auto_create_partitions`,
+  `:auto_create_replication_factor`, `:topic_configs`,
+  `:metadata_refresh_timeout_ms`. Six new telemetry events under the
+  `[:flezha, :plugin, :kafka, _, _]` prefix surface every state
+  transition. Synchronous counters available via
+  `Flezha.Plugin.Provider.Kafka.Producer.stats/1`. Full operator-facing
+  contract in [`docs/kafka-producer.md`](docs/kafka-producer.md).
+
+### Changed (BREAKING)
+
+- `:required_acks` default for the Kafka producer plugin is now `-1`
+  (acks=all). Was `1`. Combined with the new default `:idempotent =
+  true`, this is the durability-correct default — retries cannot create
+  duplicates on the broker, and acks=all stays equivalent to acks=1 in
+  steady state on clusters with `min.insync.replicas = 1`. Callers that
+  depended on the old fast-but-lossy single-broker-ack latency profile
+  should explicitly set `required_acks: 1, idempotent: false` per the
+  migration table in [`docs/kafka-producer.md`](docs/kafka-producer.md).
+- `Flezha.Plugin.Provider.Kafka.Producer.init_provider/1` now returns
+  `{:ok, opts, producer_pid}` where `producer_pid` is the
+  `ProducerWorker` GenServer (was the kafka_ex worker pid). The
+  underlying kafka_ex worker is shared across plugin instances and is no
+  longer directly addressable from plugin opts. Plugin host code that
+  relied on holding a direct kafka_ex worker pid should use
+  `Producer.stats/1` or attach a `:telemetry` handler instead.
+
 - SDKs ship a final state snapshot to the agent on graceful shutdown so
   rolling deploys preserve the latest state. Rust and Java SDKs now emit
   one `OperatorShutdownNotification{processor_id, serialized_state}`
