@@ -157,5 +157,27 @@ The system SHALL serialize the extension-table subscription list during `Flezha.
 #### Scenario: Subscriber-owned pids are restarted on destination
 - **WHEN** a subscriber with a monitored pid is migrated
 - **THEN** the destination node MUST spawn a new process for that subscriber and establish a fresh monitor; the source node's pid and monitor ref MUST NOT be transported
+
+### Requirement: Built-in Kafka producer extension conforms to the kafka-producer-plugin contract
+
+The first-party `Flezha.Plugin.Provider.Kafka.Producer` SHALL implement the full `kafka-producer-plugin` capability. Specifically: retries with bounded backoff, idempotent producer semantics, batching with `:linger_ms`, bounded queue with `:queue_overflow`, single shared worker per cluster, active metadata refresh on errors, auto-create topic on first publish, and `:telemetry` events for every state transition.
+
+A Produce attempt that ultimately fails after exhausting `:delivery_timeout_ms` SHALL return `{:error, {:delivery_failed, last_reason}}` to the chain. A passthrough of any raw `:no_broker | :not_leader_for_partition | :unknown_topic_or_partition | :network_exception | :request_timed_out | :not_enough_replicas` to the chain SHALL be considered a regression and rejected at code review.
+
+#### Scenario: No raw transient errors surface to the chain
+- **GIVEN** the production-grade Kafka producer extension is loaded
+- **WHEN** any test or integration scenario induces a 60-second window of `:not_leader_for_partition` responses
+- **THEN** the chain caller (`Flezha.Plugin.Extension.Table.compile_chain/3`) SHALL never observe `{:error, :not_leader_for_partition}` for any message that ultimately succeeds
+- **AND** SHALL never observe `{:error, :no_broker}` either
+- **AND** for messages that genuinely fail, the chain SHALL receive `{:error, {:delivery_failed, _}}` only after the configured timeout
+
+#### Scenario: Default behaviour is "just works" for the common case
+- **GIVEN** a downstream consumer enables a `processor_kafka_producer` with no parameter overrides beyond `:hosts` and `:topic`
+- **WHEN** the consumer publishes a stream of messages through `:on_output` to a non-existent topic
+- **THEN** the topic SHALL be auto-created on first publish (default `:auto_create_topic = true`)
+- **AND** messages SHALL be batched with default `:linger_ms = 10` ms
+- **AND** retries SHALL handle transient broker unavailability with default `:retries = 5`
+- **AND** durability defaults SHALL be `acks=-1` with idempotence enabled
+- **AND** no custom configuration is required for the producer to operate correctly under normal cluster conditions including rolling broker restarts and KRaft leader elections
 </content>
 </invoke>
