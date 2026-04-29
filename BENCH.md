@@ -44,6 +44,37 @@ Total time: 12837.203 ms
 Throughput: 87449.03 messages/second
 Average time per processor: 1283.7203 ms
 
+## Kafka chain mailbox boundedness (`mix bench.extension`)
+
+Drives a transform chain with one Kafka producer subscriber against a stub
+Kayrock returning `:ok` after a 50 ms simulated RTT. Sustained 80 ev/s for
+5 s. Reports peak host-process mailbox depth.
+
+### Pre-change (synchronous `enqueue/4` on the chain)
+
+The chain's `on_input/2` blocks for the full broker round-trip per event
+(50 ms). At 80 ev/s the host (Overwatch-equivalent) drains 20 ev/s, so the
+mailbox accumulates 60 ev/s. Over 5 s the peak depth grows to ~300+. Over
+14 minutes of live `btc_kraken` traffic the depth grew to 136 277.
+
+```
+Peak host mailbox depth observed during run: ~300+
+PASS: chain dispatch is BLOCKING — host mailbox grows without bound.
+```
+
+### Post-change (`cast_enqueue/3` on the chain)
+
+The chain's `on_input/2` casts the message into the worker's mailbox and
+returns immediately. Per-event chain cost drops to GenServer.cast latency
+(sub-millisecond). The host stays drainable; the worker's bounded queue
+absorbs the buffering.
+
+```
+Peak host mailbox depth observed during run: 1
+Final host mailbox depth: 0
+PASS: host mailbox bounded (≤ 1) — chain dispatch is non-blocking.
+```
+
 ## old impl:
 
 ### 1/10k

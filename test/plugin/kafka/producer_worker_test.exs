@@ -3,6 +3,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   @topic "p_topic"
   @partition 0
 
@@ -532,6 +534,224 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
     # Worker still alive and responsive.
     assert ProducerWorker.stats(pid).queue_depth == 0
+  end
+
+  describe "cast_enqueue/3" do
+    test "admission below queue_max returns :ok and queue depth increases" do
+      blocking_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+
+      {pid, script_pid} =
+        start_worker(
+          queue_max: 100,
+          linger_ms: 1
+        )
+
+      Agent.update(script_pid, fn _ ->
+        List.duplicate({:return_fn, blocking_send}, 5)
+      end)
+
+      assert :ok = ProducerWorker.cast_enqueue(pid, "first", %{})
+      Process.sleep(20)
+
+      assert :ok = ProducerWorker.cast_enqueue(pid, "msg-1", %{})
+      assert :ok = ProducerWorker.cast_enqueue(pid, "msg-2", %{})
+      assert :ok = ProducerWorker.cast_enqueue(pid, "msg-3", %{})
+      Process.sleep(20)
+
+      stats = ProducerWorker.stats(pid)
+      assert stats.queue_depth == 3
+      assert stats.in_flight == 1
+    end
+
+    test "sustained casts above drain rate trigger drop-oldest telemetry; mailbox stays bounded" do
+      blocking_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+
+      {pid, script_pid} =
+        start_worker(
+          queue_max: 5,
+          queue_overflow: :drop_oldest,
+          linger_ms: 1
+        )
+
+      Agent.update(script_pid, fn _ ->
+        [{:return_fn, blocking_send}]
+      end)
+
+      attach(:dropped)
+
+      :ok = ProducerWorker.cast_enqueue(pid, "first", %{})
+      Process.sleep(20)
+
+      for i <- 1..200 do
+        :ok = ProducerWorker.cast_enqueue(pid, "msg-#{i}", %{})
+      end
+
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
+                      %{overflow_strategy: :drop_oldest}},
+                     500
+
+      Process.sleep(50)
+      {:message_queue_len, qlen} = Process.info(pid, :message_queue_len)
+      assert qlen <= 5
+
+      stats = ProducerWorker.stats(pid)
+      assert stats.queue_depth == 5
+      assert stats.dropped_total >= 195
+    end
+
+    test "drop-newest under cast emits dropped telemetry without replying" do
+      blocking_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+
+      {pid, script_pid} =
+        start_worker(
+          queue_max: 1,
+          queue_overflow: :drop_newest,
+          linger_ms: 1
+        )
+
+      Agent.update(script_pid, fn _ ->
+        [{:return_fn, blocking_send}]
+      end)
+
+      attach(:dropped)
+
+      :ok = ProducerWorker.cast_enqueue(pid, "first", %{})
+      Process.sleep(20)
+      :ok = ProducerWorker.cast_enqueue(pid, "filler", %{})
+      Process.sleep(10)
+      :ok = ProducerWorker.cast_enqueue(pid, "rejected", %{})
+
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
+                      %{overflow_strategy: :drop_newest}}
+
+      assert Process.alive?(pid)
+    end
+
+    test ":block + cast emits one-shot warning and drops via :block_in_cast_unsupported" do
+      previous_level = Logger.level()
+      Logger.configure(level: :warning)
+      on_exit(fn -> Logger.configure(level: previous_level) end)
+
+      blocking_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+
+      {pid, script_pid} =
+        start_worker(
+          queue_max: 1,
+          queue_overflow: :block,
+          linger_ms: 1
+        )
+
+      Agent.update(script_pid, fn _ ->
+        [{:return_fn, blocking_send}]
+      end)
+
+      attach(:dropped)
+
+      :ok = ProducerWorker.cast_enqueue(pid, "first", %{})
+      Process.sleep(20)
+      :ok = ProducerWorker.cast_enqueue(pid, "filler", %{})
+      Process.sleep(10)
+
+      log =
+        capture_log([level: :warning], fn ->
+          :ok = ProducerWorker.cast_enqueue(pid, "drop-1", %{})
+          :ok = ProducerWorker.cast_enqueue(pid, "drop-2", %{})
+          Process.sleep(20)
+        end)
+
+      assert log =~ ":queue_overflow = :block is not honored"
+      # warning fires exactly once across both drops
+      first_match = String.split(log, ":queue_overflow = :block is not honored")
+      assert length(first_match) == 2
+
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
+                      %{overflow_strategy: :block_in_cast_unsupported, reason: :overflow}}
+
+      log2 =
+        capture_log([level: :warning], fn ->
+          :ok = ProducerWorker.cast_enqueue(pid, "drop-3", %{})
+          Process.sleep(20)
+        end)
+
+      refute log2 =~ ":queue_overflow = :block is not honored"
+    end
+
+    test "permanent broker error fires :failed with caller: :async; no GenServer.reply" do
+      {pid, _} =
+        start_worker(
+          script: [{:return, Fakes.err_response(@topic, @partition, 18)}]
+        )
+
+      attach(:produce_failed)
+
+      assert :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
+
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _,
+                      %{last_reason: :record_list_too_large, caller: :async}},
+                     1_000
+
+      Process.sleep(20)
+      assert Process.alive?(pid)
+      stats = ProducerWorker.stats(pid)
+      assert stats.queue_depth == 0
+      assert stats.last_error == :record_list_too_large
+    end
+
+    test "delivery_timeout exhaustion on cast-admitted record fires :failed with caller: :async" do
+      {pid, _} =
+        start_worker(
+          retry_backoff_ms: 1,
+          retry_max_backoff_ms: 5,
+          delivery_timeout_ms: 30,
+          retries: 100,
+          script: List.duplicate({:return, {:error, :no_broker}}, 200)
+        )
+
+      attach(:produce_failed)
+
+      assert :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
+
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _,
+                      %{last_reason: :no_broker, caller: :async}},
+                     1_000
+
+      assert Process.alive?(pid)
+    end
+
+    test "mixed sync + async records: sync gets reply, async gets telemetry" do
+      {pid, _} =
+        start_worker(
+          linger_ms: 50,
+          script: [{:return, Fakes.err_response(@topic, @partition, 18)}]
+        )
+
+      attach(:produce_failed)
+
+      sync_caller =
+        Task.async(fn ->
+          ProducerWorker.enqueue(pid, "sync-msg", %{})
+        end)
+
+      Process.sleep(5)
+      :ok = ProducerWorker.cast_enqueue(pid, "async-msg", %{})
+
+      assert {:error, {:permanent, :record_list_too_large}} = Task.await(sync_caller, 1_000)
+
+      events = collect_failed_events(2, 500)
+      callers = Enum.map(events, fn {_, _, _, md} -> md.caller end) |> Enum.sort()
+      assert callers == [:async, :sync]
+    end
+  end
+
+  defp collect_failed_events(0, _timeout), do: []
+
+  defp collect_failed_events(n, timeout) do
+    receive do
+      {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _, _} = ev ->
+        [ev | collect_failed_events(n - 1, timeout)]
+    after
+      timeout -> []
+    end
   end
 
   defp attach(tag) do

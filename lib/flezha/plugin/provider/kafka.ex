@@ -126,12 +126,8 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     defp do_produce(%Ctx.IO{} = ctx, opts, msg, md) do
       producer_pid = Map.fetch!(opts, :producer_pid)
-      delivery_timeout = Map.get(opts, :delivery_timeout_ms, 30_000)
-
-      case ProducerWorker.enqueue(producer_pid, msg, md, timeout: delivery_timeout + 5_000) do
-        :ok -> {:ok, ctx}
-        {:error, _} = err -> err
-      end
+      :ok = ProducerWorker.cast_enqueue(producer_pid, msg, md)
+      {:ok, ctx}
     end
 
     defp producer_opts(opts, identity, topic, partition, plugin_id) do

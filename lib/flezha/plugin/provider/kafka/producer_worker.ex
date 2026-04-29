@@ -80,10 +80,15 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   @doc """
-  Synchronous enqueue. Blocks the caller until the message is acknowledged,
-  dropped, or the producer's internal `:delivery_timeout_ms` is exhausted.
-  The caller's GenServer.call timeout SHOULD exceed `:delivery_timeout_ms`
-  by a small buffer; pass `:timeout` explicitly to override.
+  Synchronous enqueue intended for tests, ad-hoc tooling, and explicit-flush
+  call sites. Blocks the caller until the message is acknowledged, dropped,
+  or the producer's internal `:delivery_timeout_ms` is exhausted. The
+  caller's GenServer.call timeout SHOULD exceed `:delivery_timeout_ms` by a
+  small buffer; pass `:timeout` explicitly to override.
+
+  Chain plugins MUST use `cast_enqueue/3` instead — `enqueue/4` blocks the
+  caller for the duration of one broker round-trip and will saturate the
+  host process's mailbox under sustained input above the broker drain rate.
   """
   @spec enqueue(GenServer.server(), binary(), map(), keyword()) ::
           :ok | {:error, term()}
@@ -93,6 +98,23 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   catch
     :exit, {:timeout, _} -> {:error, {:delivery_failed, :enqueue_timeout}}
     :exit, {:noproc, _} -> {:error, {:delivery_failed, :no_producer_worker}}
+  end
+
+  @doc """
+  Asynchronous, non-blocking enqueue used by the chain dispatch path.
+  Returns `:ok` immediately after handing the message off to the worker's
+  mailbox. Admission against the bounded queue happens inside the worker;
+  overflow is resolved per the configured `:queue_overflow` strategy with
+  the caveat that `:block` mode is not honored on this path (it is treated
+  as `:drop_newest` with a one-shot deprecation warning).
+
+  Permanent delivery failures of cast-admitted records surface only through
+  `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry tagged with
+  `caller: :async` — there is no caller to reply to.
+  """
+  @spec cast_enqueue(GenServer.server(), binary(), map()) :: :ok
+  def cast_enqueue(server, msg, metadata) do
+    GenServer.cast(server, {:enqueue_async, msg, metadata})
   end
 
   @spec stats(GenServer.server()) :: map()
@@ -151,7 +173,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       retry_timer: nil,
       blocked: :queue.new(),
       dropped_total: 0,
-      last_error: nil
+      last_error: nil,
+      block_in_cast_warned?: false
     }
 
     {:ok, state, {:continue, :maybe_init_producer_id}}
@@ -179,7 +202,9 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   @impl true
   def handle_call({:enqueue, msg, metadata}, from, state) do
-    case admit(state, from, msg, metadata) do
+    record = build_record(msg, metadata, from, state.now_fn.())
+
+    case admit_record(state, record, from) do
       {:admitted, state} ->
         {:noreply, maybe_kick_batch(state)}
 
@@ -199,6 +224,16 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
        in_flight: in_flight_size(state),
        last_error: state.last_error
      }, state}
+  end
+
+  @impl true
+  def handle_cast({:enqueue_async, msg, metadata}, state) do
+    record = build_record(msg, metadata, :async, state.now_fn.())
+
+    case admit_record(state, record, :async) do
+      {:admitted, state} -> {:noreply, maybe_kick_batch(state)}
+      {:dropped_async, state} -> {:noreply, state}
+    end
   end
 
   @impl true
@@ -270,9 +305,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     {:noreply, state}
   end
 
-  defp admit(state, from, msg, metadata) do
-    record = build_record(msg, metadata, from, state.now_fn.())
-
+  defp admit_record(state, record, from_or_async) do
     cond do
       state.queue_size < state.queue_max ->
         {:admitted, push(state, record)}
@@ -287,15 +320,16 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
           reason: :overflow
         })
 
-        {:replied, {:error, {:queue_full, :overflow}},
-         %{state | dropped_total: state.dropped_total + 1}}
+        state = %{state | dropped_total: state.dropped_total + 1}
+
+        case from_or_async do
+          :async -> {:dropped_async, state}
+          _from -> {:replied, {:error, {:queue_full, :overflow}}, state}
+        end
 
       state.queue_overflow == :drop_oldest ->
         {state, evicted} = pop(state)
-
-        if evicted do
-          GenServer.reply(evicted.from, {:error, {:queue_full, :evicted}})
-        end
+        reply_to_record(evicted, {:error, {:queue_full, :evicted}})
 
         Telemetry.dropped(1, %{
           plugin_id: state.plugin_id,
@@ -309,10 +343,43 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
         state = %{state | dropped_total: state.dropped_total + 1}
         {:admitted, push(state, record)}
 
+      state.queue_overflow == :block and from_or_async == :async ->
+        state = warn_block_in_cast_unsupported(state)
+
+        Telemetry.dropped(1, %{
+          plugin_id: state.plugin_id,
+          topic: state.topic,
+          partition: state.partition,
+          queue_depth: state.queue_size,
+          overflow_strategy: :block_in_cast_unsupported,
+          reason: :overflow
+        })
+
+        {:dropped_async, %{state | dropped_total: state.dropped_total + 1}}
+
       state.queue_overflow == :block ->
+        from = from_or_async
         Process.send_after(self(), {:block_timeout, from}, state.queue_block_timeout_ms)
         {:blocked, %{state | blocked: :queue.in({from, record}, state.blocked)}}
     end
+  end
+
+  defp reply_to_record(nil, _reply), do: :ok
+  defp reply_to_record(%{from: :async}, _reply), do: :ok
+  defp reply_to_record(%{from: from}, reply), do: GenServer.reply(from, reply)
+
+  defp warn_block_in_cast_unsupported(%{block_in_cast_warned?: true} = state), do: state
+
+  defp warn_block_in_cast_unsupported(state) do
+    Logger.warning(
+      "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+        ":queue_overflow = :block is not honored on the chain dispatch path " <>
+        "(cast_enqueue/3). Cast-admitted records are treated as :drop_newest " <>
+        "with telemetry. Use :drop_oldest or :drop_newest explicitly to silence " <>
+        "this warning."
+    )
+
+    %{state | block_in_cast_warned?: true}
   end
 
   defp push(state, record) do
@@ -513,13 +580,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
         end
 
       {:permanent, reason} ->
-        Telemetry.failed(attempt + 1, elapsed_ms(state, batch), %{
-          plugin_id: state.plugin_id,
-          topic: state.topic,
-          partition: state.partition,
-          last_reason: reason
-        })
-
+        emit_failed_per_record(state, batch, attempt + 1, reason)
         complete_batch(state, batch, {:error, {:permanent, reason}})
 
       {:already_delivered, reason} ->
@@ -623,18 +684,29 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   defp fail_batch(state, batch, reason) do
-    Telemetry.failed(batch.attempt + 1, elapsed_ms(state, batch), %{
-      plugin_id: state.plugin_id,
-      topic: state.topic,
-      partition: state.partition,
-      last_reason: reason
-    })
-
+    emit_failed_per_record(state, batch, batch.attempt + 1, reason)
     complete_batch(state, batch, {:error, {:delivery_failed, reason}})
   end
 
+  defp emit_failed_per_record(state, batch, attempts, reason) do
+    total_ms = elapsed_ms(state, batch)
+
+    Enum.each(batch.records, fn r ->
+      Telemetry.failed(attempts, total_ms, %{
+        plugin_id: state.plugin_id,
+        topic: state.topic,
+        partition: state.partition,
+        last_reason: reason,
+        caller: caller_tag(r)
+      })
+    end)
+  end
+
+  defp caller_tag(%{from: :async}), do: :async
+  defp caller_tag(_), do: :sync
+
   defp complete_batch(state, batch, reply) do
-    Enum.each(batch.records, fn r -> GenServer.reply(r.from, reply) end)
+    Enum.each(batch.records, fn r -> reply_to_record(r, reply) end)
 
     state = %{
       state

@@ -86,10 +86,89 @@ covers most market-data streams; bump it for higher-volume pairs (e.g.
 * **`:drop_newest`** — preserves *order*. Once full, new arrivals are
   rejected until space frees up. Right for audit-log streams where
   preserving the prefix matters.
-* **`:block`** — synchronous back-pressure to the chain caller. The
-  `on_input`/`on_output` call blocks up to `:queue_block_timeout_ms` until
-  space is available. Right for callers that can absorb back-pressure
-  upstream (e.g. a websocket reader that stops draining its socket).
+* **`:block`** — synchronous back-pressure to a sync `enqueue/4` caller.
+  Honored only for sync admissions; the chain dispatch path
+  (`cast_enqueue/3`) treats `:block` as `:drop_newest` with a one-shot
+  deprecation warning, because a cast has no caller to wait on. Use
+  `:block` only when you also configure a separate sync test/tooling
+  caller that can absorb back-pressure upstream (e.g. a websocket reader
+  that stops draining its socket).
+
+## Chain dispatch is non-blocking
+
+`Flezha.Plugin.Provider.Kafka.Producer.on_input/2` and `on_output/2` SHALL
+return `{:ok, ctx}` to the chain in O(1) wall-clock time relative to
+broker latency. They are implemented as `GenServer.cast` to the per-(
+plugin_id, topic, partition) `ProducerWorker` and return immediately
+after handing the message to the worker's mailbox.
+
+This is the missing piece that makes the bounded-queue + drop-oldest
+contract actually work as the back-pressure boundary. With a synchronous
+chain dispatch, the host process (e.g. `Flezha.Processor.Overwatch`)
+blocks on every event for the full broker round-trip; under sustained
+input above the broker drain rate, the host's mailbox grows without
+bound long before the worker's queue ever sees pressure. With cast-based
+admission the host stays drainable; the worker's bounded queue absorbs
+short outages; `drop_oldest` fires during sustained outages instead of
+the BEAM OOM-killing.
+
+Two API surfaces, two contracts:
+
+| Function | Caller | Return | Failure surfacing |
+|---|---|---|---|
+| `ProducerWorker.cast_enqueue/3` | chain plugins (`on_input` / `on_output`) | `:ok` immediately | telemetry only |
+| `ProducerWorker.enqueue/4` | tests, ad-hoc tooling, explicit-flush call sites | `:ok` after broker ack OR `{:error, _}` after retries exhausted | return value |
+
+Async-admitted records that ultimately fail emit a per-record
+`[:flezha, :plugin, :kafka, :produce, :failed]` event with `caller:
+:async` in metadata. Telemetry is the canonical channel by which
+operators observe permanent delivery failures of chain-admitted records;
+logs are not the channel; the chain return value is not the channel.
+
+### Migration from synchronous error returns
+
+Pre-change, a chain caller could observe `{:error, {:delivery_failed,
+reason}}` from `on_input/2` / `on_output/2` when a message exceeded
+`:delivery_timeout_ms`. After this change, the chain receives `{:ok,
+ctx}` immediately and the failure surfaces only via telemetry.
+
+If you previously inspected the synchronous error reply for
+control-flow, attach a telemetry handler instead:
+
+```elixir
+:telemetry.attach(
+  "my-app-kafka-failures",
+  [:flezha, :plugin, :kafka, :produce, :failed],
+  fn _name, measurements, metadata, _ ->
+    case metadata.caller do
+      :async ->
+        # Chain-admitted record: observe and react (alert, dead-letter, etc.)
+        MyApp.Alerts.kafka_delivery_failed(metadata.topic, metadata.last_reason, measurements)
+
+      :sync ->
+        # Sync caller already received `{:error, _}`; this event is for parity.
+        :ok
+    end
+  end,
+  nil
+)
+```
+
+If you genuinely need the synchronous reply (e.g., a load-test harness
+whose assertions depend on per-message delivery confirmation), call
+`ProducerWorker.enqueue/4` directly against the registered worker pid:
+
+```elixir
+alias Flezha.Plugin.Provider.Kafka.{ProducerSup, ProducerWorker}
+
+[{producer_pid, _}] =
+  Registry.lookup(ProducerSup.registry_name(), {plugin_id, topic, partition})
+
+case ProducerWorker.enqueue(producer_pid, msg, metadata, timeout: 35_000) do
+  :ok -> :ok
+  {:error, {:delivery_failed, reason}} -> handle_failure(reason)
+end
+```
 
 ## Telemetry events
 
@@ -104,7 +183,7 @@ without any code change.
 | `[:flezha, :plugin, :kafka, :produce, :ok]` | `%{batch_size, latency_ms}` | `%{topic, partition, plugin_id, base_offset, attempt}` |
 | `[:flezha, :plugin, :kafka, :produce, :retry]` | `%{attempt, backoff_ms}` | `%{topic, partition, plugin_id, reason}` |
 | `[:flezha, :plugin, :kafka, :produce, :dropped]` | `%{count}` | `%{topic, partition, plugin_id, queue_depth, overflow_strategy, reason}` |
-| `[:flezha, :plugin, :kafka, :produce, :failed]` | `%{attempts, total_ms}` | `%{topic, partition, plugin_id, last_reason}` |
+| `[:flezha, :plugin, :kafka, :produce, :failed]` | `%{attempts, total_ms}` | `%{topic, partition, plugin_id, last_reason, caller}` |
 | `[:flezha, :plugin, :kafka, :metadata, :refresh]` | `%{latency_ms}` | `%{trigger, error, plugin_id, topic, partition}` |
 | `[:flezha, :plugin, :kafka, :topic, :created]` | `%{partitions, replication_factor}` | `%{topic, plugin_id}` |
 

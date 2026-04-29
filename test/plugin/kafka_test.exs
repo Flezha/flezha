@@ -249,8 +249,38 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       ProducerSup.stop_worker(plugin_id, @topic, 0)
     end
 
-    test "on_output surfaces {:error, _} when delivery_failed" do
-      plugin_id = "io-test-#{System.unique_integer([:positive])}"
+    test "on_output returns {:ok, ctx} immediately even when broker would block 30 s" do
+      plugin_id = "nonblock-test-#{System.unique_integer([:positive])}"
+
+      {:ok, opts, producer_pid} =
+        Kafka.Producer.init_provider(%{
+          hosts: [@broker],
+          topic: @topic,
+          partition: 0,
+          plugin_id: plugin_id,
+          idempotent: false
+        })
+
+      # Send simulates a 30 s broker round-trip — pre-change this would block
+      # the chain caller until the GenServer.call timeout. With cast_enqueue
+      # the chain returns immediately.
+      :sys.replace_state(producer_pid, fn state ->
+        %{state | send_fn: fn _w, _r, _ns -> Process.sleep(30_000) end}
+      end)
+
+      ctx = %Ctx.IO{processor_id: "p", namespace: "n", message: "x", metadata: %{}}
+
+      {elapsed_us, result} =
+        :timer.tc(fn -> Kafka.Producer.on_output(ctx, opts) end)
+
+      assert {:ok, ^ctx} = result
+      assert elapsed_us < 1_000, "expected <1ms, got #{elapsed_us}us"
+
+      ProducerSup.stop_worker(plugin_id, @topic, 0)
+    end
+
+    test "on_output surfaces permanent delivery failure via :failed telemetry, not return value" do
+      plugin_id = "telemetry-test-#{System.unique_integer([:positive])}"
 
       {:ok, opts, producer_pid} =
         Kafka.Producer.init_provider(%{
@@ -262,15 +292,39 @@ defmodule FlezhaTest.Plugin.KafkaTest do
           retries: 1,
           retry_backoff_ms: 1,
           retry_max_backoff_ms: 5,
-          delivery_timeout_ms: 30
+          delivery_timeout_ms: 30,
+          metadata_refresh_timeout_ms: 50
         })
 
       :sys.replace_state(producer_pid, fn state ->
-        %{state | send_fn: fn _w, _r, _ns -> {:error, :no_broker} end, jitter_fn: fn _ -> 0 end}
+        %{
+          state
+          | send_fn: fn _w, _r, _ns -> {:error, :network_exception} end,
+            jitter_fn: fn _ -> 0 end
+        }
       end)
 
+      handler_id = "kafka-test-failed-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      :ok =
+        :telemetry.attach(
+          handler_id,
+          [:flezha, :plugin, :kafka, :produce, :failed],
+          fn name, measurements, metadata, _ ->
+            send(test_pid, {:telemetry, name, measurements, metadata})
+          end,
+          nil
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
       ctx = %Ctx.IO{processor_id: "p", namespace: "n", message: "x", metadata: %{}}
-      assert {:error, {:delivery_failed, :no_broker}} = Kafka.Producer.on_output(ctx, opts)
+      assert {:ok, ^ctx} = Kafka.Producer.on_output(ctx, opts)
+
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _,
+                      %{last_reason: :network_exception, caller: :async}},
+                     2_000
 
       ProducerSup.stop_worker(plugin_id, @topic, 0)
     end
