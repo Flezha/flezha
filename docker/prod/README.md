@@ -2,6 +2,14 @@
 
 Run the following commands from the **flezha project root** directory.
 
+## Published tags
+
+| Tag                                | Built from                          | Notes |
+|------------------------------------|-------------------------------------|-------|
+| `alfetahe/flezha:latest`           | `docker/prod/Dockerfile.agent`      | Prod runtime. Default entrypoint = graceful-restart wrapper. |
+| `alfetahe/flezha:latest-dev`       | `docker/dev/Dockerfile.runtime`     | `FROM :latest` + Node.js + pre-built testnet WS server. |
+| `alfetahe/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted). |
+
 ## Image layout
 
 `docker/prod/Dockerfile.agent` is a three-stage build:
@@ -16,6 +24,19 @@ Run the following commands from the **flezha project root** directory.
   `libstdc++6`, `libtinfo6`, `locales`, `ca-certificates`, `tini`. The
   release bundles its own ERTS — there is no system Elixir or Erlang in
   the runtime image, and `:wx` / `:observer` are not packaged.
+
+## Default runtime contract
+
+The image's CMD is `/usr/local/bin/agent-entrypoint.sh` (under tini). The
+script starts `bin/flzvm start`, optionally runs `flz cluster restore` if
+a snapshot file is present, traps SIGTERM/SIGINT to write a snapshot via
+`/usr/local/bin/snapshot-on-stop.sh`, then `wait`s. All behaviour is
+configured via env vars — see `docs/deployment.md` for the contract. To
+run the agent without the snapshot lifecycle, set
+`FLEZHA_SNAPSHOT_ENABLED=false`.
+
+A HEALTHCHECK is declared on the control socket
+(`${FLEZHA_SOCKET_FILES_PATH}/compute_engine_control_channel.sock`).
 
 Attach a shell against a running container via the release's dist-node
 entry points:

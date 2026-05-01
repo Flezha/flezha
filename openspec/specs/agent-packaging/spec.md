@@ -2,7 +2,15 @@
 
 ## Purpose
 
-The agent-packaging capability defines what the Flezha agent ships as: the prod runtime image base, layer composition, supported architectures, exposed binaries, and the explicitly excluded surface (no Node.js, no testnet, no full Elixir installation, no extra arches). It also covers the dev image contract (host-arch only, full dev toolchain bundled) and the build-context discipline (Java SDK natives and fat jars are committed artefacts; CI never cross-compiles them).
+The agent-packaging capability defines what the Flezha agent ships as. Three Docker tags compose the published surface:
+
+| Tag                                | Dockerfile                          | Purpose                                                            |
+|------------------------------------|-------------------------------------|--------------------------------------------------------------------|
+| `alfetahe/flezha:latest`           | `docker/prod/Dockerfile.agent`      | Prod runtime — Mix release + graceful-restart entrypoint           |
+| `alfetahe/flezha:latest-dev`       | `docker/dev/Dockerfile.runtime`     | Runtime + Node.js + pre-built testnet WS server                    |
+| `alfetahe/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir+Rust+Node+protoc, source-mounted)            |
+
+The capability defines the prod runtime image base, layer composition, supported architectures, exposed binaries, and the explicitly excluded surface (no Node.js, no testnet, no full Elixir installation, no extra arches). It also covers the runtime-dev image contract (prod runtime + Node + pre-built testnet, for downstream consumers), the toolchain image contract (host-arch only, full dev toolchain bundled, for hacking on Flezha itself), and the build-context discipline (Java SDK natives and fat jars are committed artefacts; CI never cross-compiles them).
 
 ## Requirements
 
@@ -105,30 +113,106 @@ The TypeScript source under `test/apps/testnet/` SHALL NOT be copied into the pr
 - **WHEN** the operator runs `docker run --rm <image> ls /flezha/test/apps/testnet 2>&1`
 - **THEN** the output indicates the path does not exist (the entire `test/` tree SHALL be absent from the runtime image)
 
-### Requirement: Dev Docker image SHALL bundle the full toolchain
+### Requirement: Toolchain Docker image SHALL bundle the full toolchain
 
-`docker/dev/Dockerfile.agent` SHALL ship as `alfetahe/flezha:latest-dev`
+`docker/dev/Dockerfile.toolchain` SHALL ship as `alfetahe/flezha:latest-toolchain`
 and SHALL include Elixir+OTP, Rust, `protobuf-compiler`, Node.js, npm,
 and a global TypeScript install. The container SHALL be runnable against
 bind-mounted source via `docker compose -f docker/dev/docker-compose.yml
-up` with no further per-host setup.
+up` with no further per-host setup. This image is intended for hacking on
+Flezha itself, not for downstream consumption.
 
 The image SHALL NOT pre-build `test/apps/testnet` at image-build time
 (the bind mount overlays `/flezha` at runtime, so any pre-built artefacts
 under that path are wasted). The build is left to a one-time
 `docker exec ... npm install && npm run build` after first start.
 
-#### Scenario: Dev image ships the dev toolchain
+#### Scenario: Toolchain image ships the dev toolchain
 
-- **GIVEN** a built dev image `alfetahe/flezha:latest-dev`
-- **WHEN** the operator runs `docker run --rm alfetahe/flezha:latest-dev sh -c 'which elixir; which cargo; which node; which npm; which tsc; which protoc'`
+- **GIVEN** a built toolchain image `alfetahe/flezha:latest-toolchain`
+- **WHEN** the operator runs `docker run --rm alfetahe/flezha:latest-toolchain sh -c 'which elixir; which cargo; which node; which npm; which tsc; which protoc'`
 - **THEN** every binary resolves to a path on `$PATH`
 
-#### Scenario: Dev image is built and pushed under the dev tag
+#### Scenario: Toolchain image is built and pushed under the toolchain tag
 
 - **GIVEN** a clean checkout
-- **WHEN** the operator runs `docker build -f docker/dev/Dockerfile.agent -t alfetahe/flezha:latest-dev .`
-- **THEN** the build completes with exit 0 and the resulting tag is `alfetahe/flezha:latest-dev` (NOT `:latest`, which is reserved for the prod image)
+- **WHEN** the operator runs `docker build -f docker/dev/Dockerfile.toolchain -t alfetahe/flezha:latest-toolchain .`
+- **THEN** the build completes with exit 0 and the resulting tag is `alfetahe/flezha:latest-toolchain` (NOT `:latest`, which is the prod runtime, nor `:latest-dev`, which is the runtime + Node + testnet image)
+
+### Requirement: Runtime-dev Docker image SHALL bundle Node.js and a pre-built testnet WS server
+
+`docker/dev/Dockerfile.runtime` SHALL ship as `alfetahe/flezha:latest-dev`.
+It SHALL `FROM alfetahe/flezha:latest` (the prod runtime), then layer:
+
+1. Node.js + npm via apt.
+2. The testnet TypeScript app at `test/apps/testnet/`, COPYed into `/flezha/testnet` and built at image-build time (`npm install --omit=dev && npm run build`) so consumers do NOT rebuild it on container start.
+3. No additional ENTRYPOINT or CMD — both are inherited from `:latest`. The shared agent entrypoint launches the testnet WS server iff `FLEZHA_TESTNET_WS_PORT` is set in the environment.
+
+The image's purpose is to give downstream consumers (e.g. `flezha_market`) a single image they can pull as `:latest-dev` to get the prod runtime plus the testnet driver, without having to maintain their own wrapper Dockerfile.
+
+The image inherits the prod image's HEALTHCHECK (control-socket readiness, see the prod-image entrypoint requirement below).
+
+#### Scenario: Runtime-dev image has Node.js and the pre-built testnet
+
+- **GIVEN** a built runtime-dev image `alfetahe/flezha:latest-dev`
+- **WHEN** the operator runs `docker run --rm alfetahe/flezha:latest-dev sh -c 'which node; ls /flezha/testnet/dist/index.js'`
+- **THEN** `node` resolves to a path on `$PATH` and `/flezha/testnet/dist/index.js` exists
+
+#### Scenario: Testnet auto-starts when FLEZHA_TESTNET_WS_PORT is set
+
+- **GIVEN** the runtime-dev image
+- **WHEN** the operator runs `docker run --rm -e FLEZHA_TESTNET_WS_PORT=4500 alfetahe/flezha:latest-dev` and waits for startup
+- **THEN** the entrypoint launches `node /flezha/testnet/dist/index.js` listening on port 4500 in addition to the agent
+
+#### Scenario: Runtime-dev image inherits prod size budget plus a testnet allowance
+
+- **GIVEN** a built runtime-dev image
+- **WHEN** the operator runs `docker image inspect alfetahe/flezha:latest-dev --format '{{.Size}}'`
+- **THEN** the value SHALL be less than `471859200` (450 MiB) — prod's 300 MiB budget plus an allowance for Node.js and the built testnet bundle
+
+### Requirement: Prod image entrypoint SHALL provide graceful-restart lifecycle
+
+`docker/prod/Dockerfile.agent`'s runtime stage SHALL replace the direct `CMD ["bin/flzvm", "start"]` with `CMD ["/usr/local/bin/agent-entrypoint.sh"]`. Tini SHALL remain the ENTRYPOINT. The entrypoint script SHALL:
+
+1. Background `bin/flzvm start`.
+2. If `FLEZHA_TESTNET_WS_PORT` is set and `/flezha/testnet/dist/index.js` exists, also background the testnet WS server (no-op in `:latest`; consumed by `:latest-dev` via inheritance).
+3. If `FLEZHA_SNAPSHOT_ENABLED` is unset or truthy AND a snapshot file exists at `${FLEZHA_SNAPSHOT_DIR:-/flezha/app_data/snapshots}/latest.flz`, optionally wait up to `${FLEZHA_RESTORE_WAIT_TIMEOUT_S:-60}` seconds for an SDK socket matching `${FLEZHA_RESTORE_WAIT_SOCKET_GLOB}` (empty default = no wait), then run `flz cluster restore` against the snapshot file with `--warn-if-older-than ${FLEZHA_SNAPSHOT_STALENESS_THRESHOLD_S:-86400}s --peer-timeout-ms ${FLEZHA_SNAPSHOT_PEER_TIMEOUT_MS:-5000}`.
+4. Install a SIGTERM/SIGINT trap that runs `/usr/local/bin/snapshot-on-stop.sh` before the agent exits.
+5. `wait` on the agent PID.
+
+`/usr/local/bin/snapshot-on-stop.sh` SHALL be a separate script invoked both by the SIGTERM trap and (in k8s) by `lifecycle.preStop.exec.command`. It atomically writes `${FLEZHA_SNAPSHOT_DIR}/latest.flz.tmp` then renames to `latest.flz`. It SHALL no-op (exit 0) when `FLEZHA_SNAPSHOT_ENABLED` is set to any of `false`, `0`, `no`, `off` (case-insensitive).
+
+The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_SOCKET_FILES_PATH}/compute_engine_control_channel.sock`.
+
+#### Scenario: Cold start with no snapshot file
+
+- **GIVEN** an empty `/flezha/app_data/snapshots` volume
+- **WHEN** the container starts
+- **THEN** the entrypoint logs `graceful-restart: no snapshot file at <path>, cold start`, the agent starts normally, and `flz cluster restore` is NOT invoked
+
+#### Scenario: Warm start restores from existing snapshot
+
+- **GIVEN** `/flezha/app_data/snapshots/latest.flz` written by a prior graceful stop
+- **WHEN** the container starts
+- **THEN** the entrypoint waits for SDK readiness (if `FLEZHA_RESTORE_WAIT_SOCKET_GLOB` is set) then logs `graceful-restart: restoring from <path>` and runs `flz cluster restore`; the CLI exits 0 and the agent serves restored processors
+
+#### Scenario: SIGTERM writes a snapshot before the agent exits
+
+- **GIVEN** a running container with `FLEZHA_SNAPSHOT_ENABLED=true`
+- **WHEN** the orchestrator sends SIGTERM (e.g. `docker stop`)
+- **THEN** the entrypoint logs `graceful-restart: SIGTERM received` and invokes `snapshot-on-stop.sh`, which atomically writes `latest.flz.tmp` then renames to `latest.flz`; the file is preserved across the container teardown
+
+#### Scenario: FLEZHA_SNAPSHOT_ENABLED=false disables both restore and snapshot
+
+- **GIVEN** `FLEZHA_SNAPSHOT_ENABLED=false`
+- **WHEN** the container starts and is later sent SIGTERM
+- **THEN** the entrypoint logs `restore disabled` on start (skipping any restore) and `snapshot disabled` on stop (leaving any existing `latest.flz` untouched)
+
+#### Scenario: Healthcheck reports unhealthy until the control socket appears
+
+- **GIVEN** a container starting up
+- **WHEN** the BEAM has not yet opened its control socket
+- **THEN** the HEALTHCHECK reports unhealthy; once the socket exists at `${FLEZHA_SOCKET_FILES_PATH}/compute_engine_control_channel.sock`, the healthcheck reports healthy
 
 ### Requirement: `.dockerignore` SHALL exclude all non-source artefacts from the build context
 

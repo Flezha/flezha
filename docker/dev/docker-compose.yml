@@ -1,14 +1,16 @@
 services:
   agent:
-    # Default to the published canonical dev image (built from
-    # docker/dev/Dockerfile.agent and pushed by the maintainer). To rebuild
-    # locally without pushing, run:
-    #   docker build -f docker/dev/Dockerfile.agent -t alfetahe/flezha:latest-dev .
-    image: alfetahe/flezha:latest-dev
+    # Toolchain image — bundles Elixir+OTP, Rust, Node.js, protoc, etc. so
+    # `docker compose up` gives a ready-to-go shell against bind-mounted
+    # source. Distinct from `:latest-dev`, which is a runtime image (prod
+    # release + Node.js + pre-built testnet) intended for downstream consumers.
+    # To rebuild locally without pushing:
+    #   docker build -f docker/dev/Dockerfile.toolchain -t alfetahe/flezha:latest-toolchain .
+    image: alfetahe/flezha:latest-toolchain
     # TODO: remove the build section later.
     build:
       context: ../../
-      dockerfile: docker/dev/Dockerfile.agent
+      dockerfile: docker/dev/Dockerfile.toolchain
     container_name: flezha_agent_dev
     environment:
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
@@ -91,10 +93,10 @@ services:
       - flezha_network
 
   rust:
-    # Reuse the dev image — it ships with the full Rust toolchain, so the
-    # compute-engine app builds in-place from the bind-mounted source. No
-    # extra Dockerfile needed for the test container.
-    image: alfetahe/flezha:latest-dev
+    # Reuse the toolchain image — it ships with the full Rust toolchain, so
+    # the compute-engine app builds in-place from the bind-mounted source.
+    # No extra Dockerfile needed for the test container.
+    image: alfetahe/flezha:latest-toolchain
     container_name: flezha_rust_compute_engine
     depends_on:
       agent:

@@ -85,9 +85,10 @@ WARN; the snapshot is written with what was reachable.
 ## Restart-survival model
 
 `flz cluster snapshot/restore` is the **only** restart-survival
-mechanism. There is no automatic at-boot replay: an agent that comes
-back up after an unattended crash starts with no processors. The
-supported flow is:
+mechanism. The BEAM itself does not auto-replay — an agent process that
+comes back up after a crash starts with no processors unless an
+operator (or the image-level entrypoint, see below) runs `flz cluster
+restore`. The supported flow is:
 
 - **Planned shutdowns:** snapshot before, restore after.
 - **Crash recovery:** maintain a recent snapshot file (cron, pre-stop
@@ -95,6 +96,26 @@ supported flow is:
 - **Cold start:** delete the snapshot file (or just don't run restore).
   Processors that subsequently get started come up with their SDK's
   default empty state.
+
+### Image-level entrypoint
+
+The published `:latest` and `:latest-dev` images ship an entrypoint
+(`/usr/local/bin/agent-entrypoint.sh`) and a pre-stop hook
+(`/usr/local/bin/snapshot-on-stop.sh`) that wire the snapshot/restore
+flow into the container lifecycle:
+
+- **On start**: if `${FLEZHA_SNAPSHOT_DIR}/latest.flz` exists, the
+  entrypoint runs `flz cluster restore` after the agent is up. If
+  `FLEZHA_RESTORE_WAIT_SOCKET_GLOB` is set, it first waits up to
+  `FLEZHA_RESTORE_WAIT_TIMEOUT_S` for a matching SDK socket — required
+  when an external compute engine must attach before processors can be
+  re-spawned.
+- **On SIGTERM / Kubernetes preStop**: the pre-stop hook calls
+  `flz cluster snapshot` and atomically writes `latest.flz`.
+- **Disabling**: set `FLEZHA_SNAPSHOT_ENABLED=false` to skip both ends
+  (image runs as if no entrypoint plumbing existed).
+
+See `docs/deployment.md` for the full env-var contract.
 
 Plugins whose state is bound to a caller pid that died with the previous
 BEAM (`processor_beam_msg`, `monitored_io_forward`) are excluded from

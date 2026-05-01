@@ -1,8 +1,18 @@
 # Docker DEV
 
-Runtime/dev image for the Flezha agent and Rust compute engine. Build it,
-exec into it, run the agent, attach plugins, etc. Run all commands
-below from the project *root* directory.
+Toolchain image for hacking on the Flezha agent and Rust compute engine —
+bundles Elixir+OTP, Rust, Node.js, protoc, etc. so `docker compose up`
+gives a ready-to-go shell against bind-mounted source. This is distinct
+from the published runtime images:
+
+| Tag                              | Purpose                                                  | Dockerfile                          |
+|----------------------------------|----------------------------------------------------------|-------------------------------------|
+| `alfetahe/flezha:latest`         | Prod runtime — Mix release + graceful-restart plumbing   | `docker/prod/Dockerfile.agent`      |
+| `alfetahe/flezha:latest-dev`     | Runtime + Node.js + pre-built testnet WS server          | `docker/dev/Dockerfile.runtime`     |
+| `alfetahe/flezha:latest-toolchain` | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted) | `docker/dev/Dockerfile.toolchain` |
+
+Build it, exec into it, run the agent, attach plugins, etc. Run all
+commands below from the project *root* directory.
 
 > **Not** the image for producing distribution artifacts. The native
 > binaries committed under
@@ -20,7 +30,7 @@ below from the project *root* directory.
 
 | You want to…                              | Run                              | Image                      |
 |-------------------------------------------|----------------------------------|----------------------------|
-| Run the agent + plugins for dev           | the steps in this file           | `docker/dev/Dockerfile.agent`  |
+| Run the agent + plugins for dev           | the steps in this file           | `docker/dev/Dockerfile.toolchain`  |
 | Refresh committed dist artifacts          | `scripts/build-dist.sh --docker` | `docker/build/Dockerfile.dist` |
 | Mirror what GitHub Actions does locally   | `scripts/ci-local.sh`            | (none — runs on host)      |
 | Production agent                          | see `../prod/README.md`          | `docker/prod/Dockerfile.agent` |
@@ -33,22 +43,18 @@ cp .env.example .env
 
 # Build, run and manage docker image
 
-The dev image (`alfetahe/flezha:latest-dev`) bundles the full toolchain
-— Elixir+OTP, Rust, Node.js+npm+TypeScript, protoc — so `docker compose
-up` gives a ready-to-go shell against bind-mounted source.
+The toolchain image (`alfetahe/flezha:latest-toolchain`) bundles the full
+toolchain — Elixir+OTP, Rust, Node.js+npm+TypeScript, protoc — so
+`docker compose up` gives a ready-to-go shell against bind-mounted source.
+This is the image used for hacking on Flezha itself; downstream consumers
+should use `:latest` (prod runtime) or `:latest-dev` (runtime + Node + testnet).
 
-## Build and push the dev image
+## Build and push the toolchain image
 
 ```bash
-# Build for the current host arch
-docker build -f docker/dev/Dockerfile.agent -t alfetahe/flezha:latest-dev .
-docker push alfetahe/flezha:latest-dev
-
-# Multi-arch (linux/amd64,linux/arm64)
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/dev/Dockerfile.agent \
-  -t alfetahe/flezha:latest-dev \
-  . --push
+# Build for the current host arch (run natively per arch — no QEMU/buildx)
+docker build -f docker/dev/Dockerfile.toolchain -t alfetahe/flezha:latest-toolchain .
+docker push alfetahe/flezha:latest-toolchain
 ```
 
 ## Run via docker compose

@@ -45,6 +45,28 @@ Key variables:
 | `FLEZHA_MAX_RECONNECTS` | `10` | Max reconnect attempts |
 | `RUSTLER_SKIP_COMPILATION` | — | Set to `true` to skip NIF cargo build (used in prod image Stage 2) |
 
+### Graceful-restart entrypoint (image-level)
+
+The published `:latest` and `:latest-dev` images replace the historical `bin/flzvm start` CMD with `/usr/local/bin/agent-entrypoint.sh`. The script wraps the agent in a snapshot/restore lifecycle. All knobs are configured by env vars; defaults are tuned for the upstream `docker/prod/docker-compose.yml` volume layout.
+
+| Variable | Default | Description |
+|---|---|---|
+| `FLEZHA_SNAPSHOT_ENABLED` | `true` | Master toggle. Set to `false`/`0`/`no`/`off` to disable both pre-stop snapshot and on-boot restore. |
+| `FLEZHA_SNAPSHOT_DIR` | `/flezha/app_data/snapshots` | Directory holding `latest.flz`. |
+| `FLEZHA_SNAPSHOT_PEER_TIMEOUT_MS` | `5000` | Per-peer RPC timeout passed to `flz cluster snapshot/restore`. |
+| `FLEZHA_SNAPSHOT_STALENESS_THRESHOLD_S` | `86400` | Restore logs WARN if the snapshot is older than this. |
+| `FLEZHA_RESTORE_WAIT_TIMEOUT_S` | `60` | Wait window for `FLEZHA_RESTORE_WAIT_SOCKET_GLOB` before giving up. |
+| `FLEZHA_RESTORE_WAIT_SOCKET_GLOB` | (empty) | Glob inside `FLEZHA_SOCKET_FILES_PATH`. When set, the entrypoint waits for at least one matching SDK socket before invoking `flz cluster restore`. Empty = restore immediately. |
+| `FLEZHA_TESTNET_WS_PORT` | (unset) | When set on `:latest-dev`, the entrypoint also launches the pre-built testnet WS server on this port. No-op on `:latest`. |
+
+### Published image taxonomy
+
+| Tag                                | Purpose                                                     |
+|------------------------------------|-------------------------------------------------------------|
+| `alfetahe/flezha:latest`           | Prod runtime — Mix release + graceful-restart entrypoint    |
+| `alfetahe/flezha:latest-dev`       | Runtime + Node.js + pre-built testnet WS server             |
+| `alfetahe/flezha:latest-toolchain` | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted) |
+
 ---
 
 ## 2. Local development (Docker)

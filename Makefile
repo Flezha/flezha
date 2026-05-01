@@ -1,5 +1,6 @@
 .PHONY: build build-release nif nif-release test clean \
         docker-build docker-build-multiarch \
+        docker-build-dev docker-build-toolchain \
         k8s-apply k8s-delete
 
 # ── Local build ──────────────────────────────────────────────────────────────
@@ -52,6 +53,25 @@ docker-build-multiarch:
 	  -t alfetahe/flezha:$(VERSION) \
 	  -f docker/prod/Dockerfile.agent \
 	  --push \
+	  .
+
+# Build the runtime-dev image (`:latest-dev`) for the current host arch.
+# Layers Node.js + a pre-built testnet WS server on top of `:latest`, so
+# `:latest` must already exist in the local image cache (run
+# `make docker-build VERSION=latest` first).
+docker-build-dev:
+	docker build \
+	  -t alfetahe/flezha:latest-dev \
+	  -f docker/dev/Dockerfile.runtime \
+	  .
+
+# Build the toolchain image (`:latest-toolchain`) for the current host arch.
+# Used by `docker/dev/docker-compose.yml` to give a developer a ready-to-go
+# shell against bind-mounted source while hacking on Flezha itself.
+docker-build-toolchain:
+	docker build \
+	  -t alfetahe/flezha:latest-toolchain \
+	  -f docker/dev/Dockerfile.toolchain \
 	  .
 
 # ── Kubernetes ───────────────────────────────────────────────────────────────

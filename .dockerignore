@@ -35,15 +35,25 @@ kubernetes
 openspec
 scripts
 
+# Re-include the agent's runtime entrypoint scripts. These are referenced
+# by `COPY` in docker/prod/Dockerfile.agent and have no other ingestion
+# path, so they MUST stay in the build context.
+!docker/prod/agent-entrypoint.sh
+!docker/prod/snapshot-on-stop.sh
+
 # Java SDK is a separate deliverable — not needed for the agent build.
 sdk/java
 
-# Test tree — kept out of the prod context except for the cargo
-# workspace member, whose Cargo.toml is read during metadata resolution
-# even when only -p flz_nif -p flz is built.
+# Test tree — kept out of the prod context except for cargo workspace
+# members (whose Cargo.toml is read during metadata resolution even when
+# only -p flz_nif -p flz is built) and the testnet TS app (consumed by
+# docker/dev/Dockerfile.runtime to bake the WS server into :latest-dev).
 test/*
 !test/apps
 test/apps/*
 !test/apps/rust_compute_engine
+!test/apps/testnet
 test/apps/rust_compute_engine/target
 test/apps/rust_compute_engine/dist
+test/apps/testnet/node_modules
+test/apps/testnet/dist

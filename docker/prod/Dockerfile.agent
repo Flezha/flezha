@@ -106,6 +106,13 @@ RUN addgroup --system --gid 1000 flezha \
 
 COPY --from=elixir-build /app/_build/prod/rel/flezha /flezha/
 
+# Graceful-restart entrypoint and pre-stop hook. See the agent-packaging
+# spec ("Prod image entrypoint SHALL provide graceful-restart lifecycle")
+# for the full env-var contract.
+COPY docker/prod/agent-entrypoint.sh /usr/local/bin/agent-entrypoint.sh
+COPY docker/prod/snapshot-on-stop.sh /usr/local/bin/snapshot-on-stop.sh
+RUN chmod +x /usr/local/bin/agent-entrypoint.sh /usr/local/bin/snapshot-on-stop.sh
+
 # Named volumes inherit the mount-point's image-time ownership, so each
 # overlaid dir must exist with flezha:flezha or the non-root process
 # hits EACCES on first write.
@@ -117,6 +124,12 @@ RUN mkdir -p /flezha/app_data/sockets \
 
 USER flezha
 
+# Readiness = the BEAM has opened its control socket. The agent does not
+# bind a TCP port we can probe, so we key off the UDS instead. Matches
+# the path used by the entrypoint's restore-wait loop.
+HEALTHCHECK --interval=10s --timeout=5s --retries=10 --start-period=120s \
+    CMD test -S "${FLEZHA_SOCKET_FILES_PATH:-/flezha/app_data/sockets}/compute_engine_control_channel.sock" || exit 1
+
 # tini handles zombie reaping and signal forwarding for the BEAM.
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["bin/flzvm", "start"]
+CMD ["/usr/local/bin/agent-entrypoint.sh"]

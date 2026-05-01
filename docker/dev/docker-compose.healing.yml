@@ -1,6 +1,6 @@
 services:
   agent:
-    image: alfetahe/flezha:latest-dev
+    image: alfetahe/flezha:latest-toolchain
     container_name: flezha_agent_dev
     user: "0:0"
     stdin_open: true
@@ -50,7 +50,7 @@ services:
       - flezha_network
 
   rust:
-    image: alfetahe/flezha:latest-dev
+    image: alfetahe/flezha:latest-toolchain
     container_name: flezha_rust_compute_engine
     user: "0:0"
     stdin_open: true

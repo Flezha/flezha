@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1.7
+#
+# Runtime-dev image: alfetahe/flezha:latest-dev
+#
+# Layered on top of the prod runtime (`alfetahe/flezha:latest`), this image
+# adds Node.js and a pre-built testnet WebSocket server. Intended for
+# downstream consumers that want the prod agent + testnet driver in a
+# single pull, without maintaining their own wrapper Dockerfile.
+#
+# Distinct from `alfetahe/flezha:latest-toolchain`, which is an Elixir +
+# Rust + Node + protoc developer toolchain image meant for hacking on
+# Flezha itself.
+#
+# The agent entrypoint (inherited from :latest) launches the testnet
+# only when FLEZHA_TESTNET_WS_PORT is set in the environment. The
+# pre-built bundle lives at /flezha/testnet/dist/index.js.
+
+FROM alfetahe/flezha:latest
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        nodejs \
+        npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bundle the testnet WS server. typescript is a runtime "dependency" in
+# its package.json so `--omit=dev` keeps it; the local tsc is then used
+# by `npm run build`.
+COPY --chown=flezha:flezha test/apps/testnet /flezha/testnet
+RUN cd /flezha/testnet \
+    && npm install --omit=dev \
+    && npm run build \
+    && chown -R flezha:flezha /flezha/testnet
+
+USER flezha
+WORKDIR /flezha
+
+# ENTRYPOINT, CMD, and HEALTHCHECK are inherited from :latest. The
+# entrypoint conditionally starts the testnet WS server based on
+# FLEZHA_TESTNET_WS_PORT.
