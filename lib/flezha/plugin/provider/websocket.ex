@@ -13,6 +13,18 @@ defmodule Flezha.Plugin.Provider.Websocket do
   the plugin manager observes the abnormal exit and restarts the plugin
   via its standard retry path (`Flezha.Plugin.Extension.Table.handle_down`).
 
+  Some servers (notably Kraken) push a per-second JSON heartbeat frame
+  alongside the actual market-data stream. Those frames count as
+  protocol-level liveness but say nothing about whether the data feed is
+  flowing, so the watchdog accepts an optional `:ignore_pattern` (string)
+  that, when set, suppresses the `last_data_frame_at` refresh for any
+  text data frame whose payload contains the pattern as a substring. The
+  frame is still forwarded to the overwatcher and the `frames_seen`
+  counter still increments, so the heartbeat-vs-data ratio remains
+  visible in the periodic log line. Binary data frames never match the
+  pattern; when no pattern is configured every data frame refreshes the
+  timer (pre-change default).
+
   Each forced reconnect emits a Telemetry event
   `[:flezha, :ws, :idle_reconnect]` with measurements
   `%{silence_ms: integer()}` and metadata `%{plugin_id: binary()}`. Any
@@ -23,6 +35,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   Required opts: `:uri`.
   Optional opts: `:post_connect`, `:ws_opts`, `:payload_metadata`,
   `:idle_timeout_ms` (default 30_000; set to 0 to disable the watchdog),
+  `:ignore_pattern` (string substring, default unset),
   `:plugin_id` (label for telemetry/logs; defaults to `:uri`).
   """
 
@@ -42,6 +55,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
               [
                 :conn,
                 :plugin_id,
+                :ignore_pattern,
                 post_connect: %{},
                 ws_opts: [],
                 payload_metadata: %{},
@@ -86,6 +100,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
     {:ok, max(value, 0)}
   end
 
+  defp convert_value(:ignore_pattern, value) when is_binary(value) and value != "" do
+    {:ok, value}
+  end
+
+  defp convert_value(:ignore_pattern, _), do: {:ok, nil}
+
   # init_provider receives `opts` from Flezha.Plugin, where the value may be
   # a raw JSON string (legacy CLI path), a map (installer/new path), or nil.
   # Coerce all of those to a map so handle_connect/3 can safely index into it.
@@ -103,7 +123,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
   def init_provider(opts) do
     uri = Map.fetch!(opts, :uri)
     idle_timeout_ms = normalize_idle_timeout(Map.get(opts, :idle_timeout_ms))
+    ignore_pattern = normalize_ignore_pattern(Map.get(opts, :ignore_pattern))
     plugin_id = Map.get(opts, :plugin_id) || uri
+
+    Logger.info(
+      "[Plugin.Provider.Websocket] init_provider begin uri=#{inspect(uri)} plugin_id=#{inspect(plugin_id)}"
+    )
 
     case start_link(uri,
            ws_opts: Map.get(opts, :ws_opts, []),
@@ -111,18 +136,28 @@ defmodule Flezha.Plugin.Provider.Websocket do
            overwatcher_pid: self(),
            payload_metadata: Map.get(opts, :payload_metadata, %{}),
            idle_timeout_ms: idle_timeout_ms,
+           ignore_pattern: ignore_pattern,
            plugin_id: plugin_id
          ) do
       {:ok, pid} ->
+        Logger.info(
+          "[Plugin.Provider.Websocket] init_provider success plugin_id=#{inspect(plugin_id)} pid=#{inspect(pid)}"
+        )
+
         opts =
           opts
           |> Map.put(:conn, pid)
           |> Map.put(:idle_timeout_ms, idle_timeout_ms)
+          |> Map.put(:ignore_pattern, ignore_pattern)
           |> Map.put(:plugin_id, plugin_id)
 
         {:ok, opts, pid}
 
       {:error, reason} ->
+        Logger.error(
+          "[Plugin.Provider.Websocket] init_provider failed plugin_id=#{inspect(plugin_id)} reason=#{inspect(reason)}"
+        )
+
         {:error, reason}
     end
   end
@@ -139,6 +174,9 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   defp normalize_idle_timeout(_), do: @default_idle_timeout_ms
 
+  defp normalize_ignore_pattern(value) when is_binary(value) and value != "", do: value
+  defp normalize_ignore_pattern(_), do: nil
+
   # :on_interval tick triggers nothing; connection is driven by the Fresh pid.
   def on_interval(%Ctx.Tick{}, _opts), do: :ok
 
@@ -151,6 +189,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   def start_link(uri, opts) do
     idle_timeout_ms = Keyword.get(opts, :idle_timeout_ms, @default_idle_timeout_ms)
+    ignore_pattern = Keyword.get(opts, :ignore_pattern)
     plugin_id = Keyword.get(opts, :plugin_id) || uri
 
     Fresh.start_link(
@@ -163,6 +202,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
         overwatcher_pid: opts[:overwatcher_pid],
         payload_metadata: Keyword.get(opts, :payload_metadata, %{}),
         idle_timeout_ms: idle_timeout_ms,
+        ignore_pattern: ignore_pattern,
         last_data_frame_at: System.monotonic_time(:millisecond)
       },
       opts[:ws_opts]
@@ -210,12 +250,48 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   @impl Fresh
   def handle_in(
-        {_type, message} = _p,
+        {type, message} = _p,
         %{overwatcher_pid: overwatcher, payload_metadata: metadata} = state
       ) do
     GenServer.cast(overwatcher, {:io_in, message, metadata})
-    {:ok, %{state | last_data_frame_at: System.monotonic_time(:millisecond)}}
+    counter = Map.get(state, :frames_seen, 0) + 1
+
+    if rem(counter, 1000) == 0 do
+      sample = String.slice(message, 0, 120)
+
+      Logger.info(
+        "[Plugin.Provider.Websocket] frames_seen=#{counter} plugin_id=#{inspect(state[:plugin_id])} last_msg_size=#{byte_size(message)} sample=#{inspect(sample)}"
+      )
+    end
+
+    state = Map.put(state, :frames_seen, counter)
+
+    state =
+      if data_frame_resets_watchdog?(type, message, Map.get(state, :ignore_pattern)) do
+        Map.put(state, :last_data_frame_at, System.monotonic_time(:millisecond))
+      else
+        state
+      end
+
+    {:ok, state}
   end
+
+  # Watchdog reset rules:
+  #   * No `ignore_pattern` configured  → every data frame resets the timer
+  #     (pre-change default).
+  #   * Binary frames                   → always reset (the pattern is a text
+  #     substring; treating binaries as a possible match would be a false
+  #     positive on opaque payloads).
+  #   * Text frames containing pattern  → suppressed (heartbeat-shaped data).
+  defp data_frame_resets_watchdog?(_type, _message, nil), do: true
+  defp data_frame_resets_watchdog?(_type, _message, ""), do: true
+
+  defp data_frame_resets_watchdog?(:text, message, pattern)
+       when is_binary(message) and is_binary(pattern) do
+    not String.contains?(message, pattern)
+  end
+
+  defp data_frame_resets_watchdog?(_type, _message, _pattern), do: true
 
   @impl Fresh
   def handle_info(:idle_check, %{idle_timeout_ms: idle} = state) when idle <= 0 do

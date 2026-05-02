@@ -189,6 +189,8 @@ defmodule Flezha.Plugin.Extension.Table do
   """
   @spec retry(t(), binary(), keyword()) :: t()
   def retry(%__MODULE__{} = table, plugin_id, _opts \\ []) do
+    Logger.info("[Extension.Table] retry firing plugin_id=#{plugin_id}")
+
     case Map.get(table.plugins, plugin_id) do
       nil ->
         Logger.warning("[Extension.Table] retry requested for unknown plugin #{plugin_id}")
@@ -830,26 +832,45 @@ defmodule Flezha.Plugin.Extension.Table do
   defp schedule_retry(%__MODULE__{} = table, plugin_id, _plugin) do
     count = Map.get(table.retries, plugin_id, 0)
     delay = retry_delay(count)
+
+    Logger.info(
+      "[Extension.Table] scheduling retry plugin_id=#{plugin_id} delay_ms=#{delay} attempt=#{count + 1}"
+    )
+
     Process.send_after(self(), {:retry_plugin_restart, plugin_id}, delay)
     %{table | retries: Map.put(table.retries, plugin_id, count + 1)}
   end
 
   defp attempt_restart(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin) do
-    # First remove the old entries (without changing plugins map), then resubscribe.
-    subs = plugin.subscriptions
+    Logger.info("[Extension.Table] attempt_restart begin plugin_id=#{plugin_id}")
 
-    table =
-      Enum.reduce(subs, table, fn {name, _}, acc ->
-        remove_subscription(acc, name, plugin_id)
-      end)
+    case run_init_provider(plugin) do
+      {:ok, fresh_plugin, owned_pid} ->
+        table = %{table | plugins: Map.put(table.plugins, plugin_id, fresh_plugin)}
+        table = track_owned_pid(table, plugin_id, owned_pid)
 
-    new_table =
-      Enum.reduce(subs, table, fn {name, sub_opts}, acc ->
-        %{kind: kind} = Map.fetch!(acc.catalog, name)
-        add_subscription(acc, kind, name, plugin_id, plugin, sub_opts)
-      end)
+        subs = fresh_plugin.subscriptions
 
-    %{new_table | retries: Map.delete(new_table.retries, plugin_id)}
+        table =
+          Enum.reduce(subs, table, fn {name, _}, acc ->
+            remove_subscription(acc, name, plugin_id)
+          end)
+
+        new_table =
+          Enum.reduce(subs, table, fn {name, sub_opts}, acc ->
+            %{kind: kind} = Map.fetch!(acc.catalog, name)
+            add_subscription(acc, kind, name, plugin_id, fresh_plugin, sub_opts)
+          end)
+
+        %{new_table | retries: Map.delete(new_table.retries, plugin_id)}
+
+      {:error, reason} ->
+        Logger.error(
+          "[Extension.Table] init_provider failed for plugin_id=#{plugin_id} reason=#{inspect(reason)}"
+        )
+
+        schedule_retry(table, plugin_id, plugin)
+    end
   rescue
     err ->
       Logger.error("[Extension.Table] restart failed for #{plugin_id}: #{inspect(err)}")
