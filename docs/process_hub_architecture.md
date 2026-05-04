@@ -27,6 +27,14 @@ The two levels are decoupled. ProcessHub knows nothing about operators; the
 agent's `alter_child_data` hook handles operator selection at processor start
 time.
 
+> **Note (relay-mvp-rust).** The Rust SDK now ships work as
+> `Relay` / `Shard` / `Partition` (see `docs/relay_architecture.md`).
+> Partitioning is **SDK-internal**: a single Relay instance can have many
+> Shards, each with many Partitions running in parallel inside the
+> operator process. ProcessHub continues per-processor placement at the
+> cluster level — one Relay instance is one ProcessHub child — and is
+> not aware of partitions. The two-level distribution above is unchanged.
+
 ## Per-namespace ProcessHub instances
 
 Each agent runs **one ProcessHub instance per namespace** it serves. The hub

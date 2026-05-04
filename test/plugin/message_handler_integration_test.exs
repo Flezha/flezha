@@ -2,6 +2,15 @@ defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
   @moduledoc """
   End-to-end integration tests for `processor-message-handlers` under
   the unified extension-system.
+
+  RELAY_MESSAGE_HANDLERS_PENDING — these tests exercise the
+  `EchoMessageProcessor` / `ErrorMessageProcessor` / `JsonStateMessageProcessor`
+  factories that `relay-mvp-rust` removed from the Rust test app
+  (per `relay-mvp-rust/design.md` Decision 9). The matching agent path
+  is preserved; the Rust SDK side falls through to the canonical
+  `processor does not support handle_message` error. `relay-message-handlers`
+  re-introduces per-Shard `handle_message` and re-enables this module by
+  removing the `@moduletag :skip` tag below.
   """
 
   alias Flezha.Plugin
@@ -11,6 +20,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerIntegrationTest do
   alias Flezha.Service.ProcessorManager
 
   use ExUnit.Case
+  @moduletag :skip
 
   @namespace "default"
 

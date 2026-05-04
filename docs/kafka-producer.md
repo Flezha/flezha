@@ -52,7 +52,7 @@ transient broker burp.
 | `:hosts` | required | `[{host, port}]` or `"host:port,host:port"` | bootstrap brokers |
 | `:topic` | required | `binary` | destination topic |
 | `:partition` | `0` | `int` | overridden per-message via metadata `"kafka_msg_partition"` |
-| `:plugin_group` | `nil` | `binary` | gate produces by metadata `"plugin_group"` tag |
+| `:channel` | `nil` | `binary` | gate produces by metadata `"channel"` tag |
 | `:required_acks` | **`-1` (was `1`)** | `int` | `-1`/`0`/`1`/`>1`. Idempotence makes `acks=all` safe. |
 | `:retries` | `5` | `int` | per-batch attempt cap |
 | `:retry_backoff_ms` | `100` | `int` | initial backoff; doubles per attempt |

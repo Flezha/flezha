@@ -59,8 +59,16 @@ jobs:
 
   # Java <-> Elixir integration matrix. Runs in parallel with java-unit-tests
   # — both consume committed artefacts, so neither blocks the other.
+  #
+  # RELAY_MVP_JAVA_PENDING — disabled until `relay-mvp-java` ships. The
+  # `relay-mvp-rust` cutover removed `ProcessorHandler` from the Rust SDK
+  # and the agent now speaks the new wire format (`channel` metadata key
+  # instead of `plugin_group`), so the Java SDK can no longer connect.
+  # `relay-mvp-java` ports the Java SDK to `Relay` / `Shard` and
+  # re-enables this matrix by removing the early skip below.
   mix-integration-matrix:
     runs-on: ubuntu-latest
+    if: false  # RELAY_MVP_JAVA_PENDING
     steps:
       - uses: actions/checkout@v5
 

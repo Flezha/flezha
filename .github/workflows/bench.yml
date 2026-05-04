@@ -1,0 +1,246 @@
+name: Bench Regression Gate
+
+# Closes relay-mvp-rust §10 (deferred bench gate). Two jobs:
+# - bench-regression (merge-blocking): mix bench --shape regression must
+#   sustain ≥ 0.9 × BENCH_FLOOR_MSG_PER_SEC. Pre-step: spec/doc sync check.
+# - bench-partitioning-scaling (informational): mix bench --shape
+#   partitioning --pool-sizes 1,8 reports the ratio to the PR check
+#   output but does not gate the merge.
+
+on:
+  pull_request:
+    paths:
+      - "sdk/rust/**"
+      - "flz_transport/**"
+      - "flz_nif/**"
+      - "lib/flezha/**"
+      - "lib/mix/tasks/bench**"
+      - "protobufs/**"
+      - "test/apps/rust_compute_engine/**"
+      - "docs/benchmarking.md"
+      - "openspec/changes/relay-bench-harness/specs/rust-sdk-dispatch/spec.md"
+      - ".github/workflows/bench.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # 10% tolerance band per relay-bench-harness/design.md Decision 6.
+  REGRESSION_TOLERANCE: "0.9"
+
+jobs:
+  bench-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Erlang + Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.17"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + workspace target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            test/apps/rust_compute_engine/target
+          key: cargo-${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-bench-
+
+      - name: Cache Elixir deps + build
+        uses: actions/cache@v5
+        with:
+          path: |
+            deps
+            _build
+          key: elixir-${{ runner.os }}-bench-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            elixir-${{ runner.os }}-bench-
+
+      # Sync check FIRST: refuses to run the bench at all if spec / doc
+      # disagree on the floor value (per design.md Decision 6).
+      - name: Spec/doc floor sync check
+        run: |
+          set -euo pipefail
+          SPEC=openspec/changes/relay-bench-harness/specs/rust-sdk-dispatch/spec.md
+          DOC=docs/benchmarking.md
+          # Spec literal: the first standalone integer (with optional
+          # underscores) in the "at least **N messages/second**" clause.
+          SPEC_FLOOR=$(grep -oE 'at least \*\*[0-9_]+ messages/second\*\*' "$SPEC" \
+            | head -1 \
+            | grep -oE '[0-9_]+' \
+            | tr -d '_')
+          # Doc literal: the BENCH_FLOOR_MSG_PER_SEC = <int> assignment.
+          DOC_FLOOR=$(grep -oE 'BENCH_FLOOR_MSG_PER_SEC = [0-9_]+' "$DOC" \
+            | head -1 \
+            | grep -oE '[0-9_]+$' \
+            | tr -d '_')
+          if [[ -z "$SPEC_FLOOR" || -z "$DOC_FLOOR" ]]; then
+            echo "::error::Could not parse floor from $SPEC or $DOC"
+            echo "  SPEC_FLOOR='$SPEC_FLOOR'"
+            echo "  DOC_FLOOR='$DOC_FLOOR'"
+            exit 1
+          fi
+          if [[ "$SPEC_FLOOR" != "$DOC_FLOOR" ]]; then
+            echo "::error::Spec/doc BENCH_FLOOR_MSG_PER_SEC divergence: \
+              spec=$SPEC_FLOOR doc=$DOC_FLOOR. Update both in the same PR \
+              per relay-bench-harness/design.md Decision 6."
+            exit 1
+          fi
+          echo "Spec/doc floor agree: $SPEC_FLOOR msg/s"
+
+      - name: Build Rust compute engine (release)
+        run: cargo build --release -p rust_compute_engine
+
+      - name: Fetch Elixir deps
+        run: mix deps.get
+
+      - name: Read recorded floor via mix bench.floor
+        id: floor
+        run: |
+          FLOOR=$(MIX_ENV=prod mix bench.floor)
+          echo "floor=$FLOOR" >> "$GITHUB_OUTPUT"
+          echo "Recorded floor: $FLOOR msg/s"
+
+      - name: Run mix bench --shape regression
+        id: bench
+        run: |
+          set -euo pipefail
+          OUT=$(MIX_ENV=prod mix bench --runtime rust --shape regression -n 100 -m 10000 \
+            2>&1 | tee bench-regression.log)
+          # Extract the float on the "Throughput:" line.
+          MEASURED=$(grep -oE 'Throughput: [0-9.]+ messages/second' bench-regression.log \
+            | head -1 \
+            | grep -oE '[0-9.]+')
+          if [[ -z "$MEASURED" ]]; then
+            echo "::error::Could not parse Throughput: line from bench output"
+            tail -50 bench-regression.log
+            exit 1
+          fi
+          echo "measured=$MEASURED" >> "$GITHUB_OUTPUT"
+          echo "Measured throughput: $MEASURED msg/s"
+
+      - name: Compare measured vs recorded floor
+        run: |
+          set -euo pipefail
+          MEASURED="${{ steps.bench.outputs.measured }}"
+          FLOOR="${{ steps.floor.outputs.floor }}"
+          TOL="${REGRESSION_TOLERANCE}"
+          # Compute MEASURED >= TOL * FLOOR using awk (bash has no float math).
+          PASS=$(awk -v m="$MEASURED" -v f="$FLOOR" -v t="$TOL" \
+            'BEGIN { print (m >= t * f) ? "ok" : "bad" }')
+          THRESH=$(awk -v f="$FLOOR" -v t="$TOL" 'BEGIN { print t * f }')
+          PCT=$(awk -v m="$MEASURED" -v f="$FLOOR" \
+            'BEGIN { print (1.0 - m / f) * 100 }')
+          if [[ "$PASS" == "bad" ]]; then
+            echo "::error::Bench regression: measured $MEASURED msg/s < ${THRESH} msg/s (${PCT}% below floor of $FLOOR). See docs/benchmarking.md § Triage when bench-regression fails."
+            exit 1
+          fi
+          # Within-band warning if measured falls below the floor itself.
+          WARN=$(awk -v m="$MEASURED" -v f="$FLOOR" \
+            'BEGIN { print (m < f) ? "warn" : "ok" }')
+          if [[ "$WARN" == "warn" ]]; then
+            echo "::warning::Bench measured $MEASURED msg/s is below the recorded floor $FLOOR msg/s (within ${TOL} tolerance band). Investigate before this becomes a true regression."
+          fi
+          echo "PASS: $MEASURED msg/s >= ${THRESH} msg/s (floor $FLOOR, tolerance $TOL)"
+
+      - name: Upload bench log artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: bench-regression-${{ github.sha }}
+          path: bench-regression.log
+          retention-days: 30
+
+  bench-partitioning-scaling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Informational. GitHub Actions runners are virtualized and the 4×
+    # ratio scenario isn't a reliable signal on shared hosts; checked
+    # manually on real hardware before merging cross-cutting changes.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Erlang + Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.17"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + workspace target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            test/apps/rust_compute_engine/target
+          key: cargo-${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-bench-
+
+      - name: Cache Elixir deps + build
+        uses: actions/cache@v5
+        with:
+          path: |
+            deps
+            _build
+          key: elixir-${{ runner.os }}-bench-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            elixir-${{ runner.os }}-bench-
+
+      - name: Build Rust compute engine (release)
+        run: cargo build --release -p rust_compute_engine
+
+      - name: Fetch Elixir deps
+        run: mix deps.get
+
+      - name: Run mix bench --shape partitioning --pool-sizes 1,8
+        id: scaling
+        run: |
+          set -euo pipefail
+          MIX_ENV=prod mix bench --runtime rust --shape partitioning --pool-sizes 1,8 \
+            2>&1 | tee bench-scaling.log
+          RATIO=$(grep -oE 'ratio \(max/min\): [0-9.]+' bench-scaling.log \
+            | head -1 \
+            | grep -oE '[0-9.]+$' || true)
+          if [[ -z "$RATIO" ]]; then
+            echo "::warning::Could not parse 'ratio (max/min)' from scaling output"
+            echo "ratio=unknown" >> "$GITHUB_OUTPUT"
+          else
+            echo "ratio=$RATIO" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report scaling ratio
+        run: |
+          RATIO="${{ steps.scaling.outputs.ratio }}"
+          {
+            echo "## Partitioning scaling — informational"
+            echo
+            echo "Measured ratio (pool=8 / pool=1): **${RATIO}**"
+            echo
+            echo "Spec target: ≥ 4× on real 8-core hardware. CI ratio is informational"
+            echo "per relay-bench-harness/design.md Decision 9 — GitHub Actions runners"
+            echo "are virtualized and don't reliably expose 8 physical cores."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bench log artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: bench-scaling-${{ github.sha }}
+          path: bench-scaling.log
+          retention-days: 30

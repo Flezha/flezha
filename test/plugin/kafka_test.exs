@@ -93,17 +93,17 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     assert {:error, :no_producer} = Kafka.Producer.stats(plugin_id)
   end
 
-  test "plugin_group filter passes through when metadata does not match" do
+  test "channel filter passes through when metadata does not match" do
     plugin_id = "group-test-#{System.unique_integer([:positive])}"
 
     {:ok, opts, _pid} =
-      Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{plugin_group: "2"}))
+      Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{channel: "2"}))
 
     ctx = %Ctx.IO{
       processor_id: "p",
       namespace: "n",
       message: "trade_payload",
-      metadata: %{"plugin_group" => "4"}
+      metadata: %{"channel" => "4"}
     }
 
     assert {:ok, ^ctx} = Kafka.Producer.on_input(ctx, opts)
@@ -111,11 +111,11 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     ProducerSup.stop_worker(plugin_id, @topic, 0)
   end
 
-  test "plugin_group filter passes through when metadata is missing" do
+  test "channel filter passes through when metadata is missing" do
     plugin_id = "group-test-#{System.unique_integer([:positive])}"
 
     {:ok, opts, _pid} =
-      Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{plugin_group: "2"}))
+      Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{channel: "2"}))
 
     ctx = %Ctx.IO{
       processor_id: "p",
@@ -208,7 +208,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       # Drive the producer via the facade and rely on the worker to ack.
       # The worker_pid the registry hands out is a fake that never replies
       # to send_request — but we never enqueue because we only test the
-      # plugin_group passthrough branch in the facade-level tests above.
+      # channel passthrough branch in the facade-level tests above.
       # Here we exercise the produce attempt with an in-memory ProducerWorker
       # primed for success via send_fn.
       plugin_id = "io-test-#{System.unique_integer([:positive])}"

@@ -23,12 +23,19 @@ defmodule Flezha.Service.PortPilot do
     # Convert 0.0.0.0 to 127.0.0.1 for the SDK (client can't connect to 0.0.0.0)
     client_address = String.replace(quic_address, "0.0.0.0", "127.0.0.1")
 
-    env = [
+    base_env = [
       {~c"FLEZHA_SOCKET_FILES_PATH", String.to_charlist(socket_files_path)},
       {~c"FLEZHA_TRANSPORT", String.to_charlist(transport)},
       {~c"FLEZHA_CA_CERT_PATH", String.to_charlist(ca_cert_path)},
       {~c"FLEZHA_QUIC_ADDRESS", String.to_charlist(client_address)}
     ]
+
+    extra_env =
+      opts
+      |> Keyword.get(:env, [])
+      |> Enum.map(fn {k, v} -> {String.to_charlist(to_string(k)), String.to_charlist(to_string(v))} end)
+
+    env = base_env ++ extra_env
 
     port =
       Port.open(

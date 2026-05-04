@@ -13,6 +13,7 @@ defmodule Mix.Tasks.Bench do
 
       mix bench --num-processors 1000 --messages-per-processor 1000
       mix bench --runtime java -n 100 -m 1000
+      mix bench --runtime rust --shape partitioning --pool-sizes 1,8
 
   ## Options
 
@@ -23,6 +24,16 @@ defmodule Mix.Tasks.Bench do
       `test/apps/java_compute_engine/target/java_compute_engine.jar`. Build it
       with `mix test.java_sdk` (builds host `flz_jni` + Maven) or
       `mvn -f test/apps/java_compute_engine/pom.xml package`.
+    * `--shape` - Bench shape: `regression` (default; the apples-to-apples
+      regression check, factory `do_nothing`, dimensions from `-n` / `-m`) or
+      `partitioning` (the `relay-bench-harness` partitioning-stress shape, factory
+      `partitioning_stress`, dimensions hard-coded at `8 × 20_000` per
+      `relay-bench-harness/design.md` Decision 6, swept across the comma-list in
+      `--pool-sizes`).
+    * `--pool-sizes` - Comma-separated worker-pool sizes (default: `"1,8"`),
+      only honored when `--shape partitioning`. Each value spawns a fresh
+      Rust compute-engine binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
+      reports throughput per-size; the final scaling summary is parsed by CI.
 
   ## Comparing SDKs
 
@@ -37,7 +48,6 @@ defmodule Mix.Tasks.Bench do
 
   @default_namespace "default"
   @bench_namespace "bench"
-  @test_processor_factory "do_nothing"
 
   def run(args) do
     {opts, _, _} =
@@ -45,7 +55,9 @@ defmodule Mix.Tasks.Bench do
         switches: [
           num_processors: :integer,
           messages_per_processor: :integer,
-          runtime: :string
+          runtime: :string,
+          shape: :string,
+          pool_sizes: :string
         ],
         aliases: [
           n: :num_processors,
@@ -54,53 +66,106 @@ defmodule Mix.Tasks.Bench do
         ]
       )
 
-    num_processors = opts[:num_processors] || 100
-    test_messages_per_processor = opts[:messages_per_processor] || 100
     runtime = parse_runtime(opts[:runtime])
+    shape = parse_shape(opts[:shape])
+    pool_sizes = parse_pool_sizes(opts[:pool_sizes])
+
+    {num_processors, messages_per_processor} = dimensions_for_shape(shape, opts)
 
     IO.puts("Starting Flezha performance test...")
     IO.puts("Runtime: #{runtime}")
+    IO.puts("Shape: #{shape}")
     IO.puts("Processors: #{num_processors}")
-    IO.puts("Messages per processor: #{test_messages_per_processor}")
+    IO.puts("Messages per processor: #{messages_per_processor}")
+    if shape == :partitioning, do: IO.puts("Pool sizes: #{Enum.join(pool_sizes, ",")}")
     IO.puts("")
 
     Process.put(:bench_runtime, runtime)
 
-    # Set logging to only show warnings and errors BEFORE starting application
     Logger.configure(level: :warning)
-
-    # Also configure logger through Application environment
     Application.put_env(:logger, :level, :warning)
-
-    # Ensure application is started
     Mix.Task.run("app.start")
-
-    # Re-configure logger after app start to ensure it sticks
     Logger.configure(level: :warning)
 
-    # Default namespace is pre-populated with Rust compute engines by the agent
-    # on boot (see config/runtime.exs). Reuse them for runtime=:rust; for
-    # runtime=:java we must spawn fresh Java engines in the bench namespace.
+    case shape do
+      :regression -> run_regression_shape(runtime, num_processors, messages_per_processor)
+      :partitioning -> run_partitioning_shape(num_processors, messages_per_processor, pool_sizes)
+    end
+  end
+
+  # ----- Shape: regression (today's behaviour, byte-identical default) -----
+
+  defp run_regression_shape(runtime, num_processors, messages_per_processor) do
     namespace =
       cond do
         runtime != :rust ->
-          setup_test_environment()
+          setup_test_environment(2, [])
           @bench_namespace
 
         compute_engines_available?(@default_namespace) ->
           @default_namespace
 
         true ->
-          setup_test_environment()
+          setup_test_environment(2, [])
           @bench_namespace
       end
 
     try do
-      run_performance_test(namespace, num_processors, test_messages_per_processor)
+      run_performance_test(namespace, num_processors, messages_per_processor, :regression)
     after
       if namespace == @bench_namespace do
         cleanup_test_environment(namespace)
       end
+    end
+  end
+
+  # ----- Shape: partitioning (new — sweeps pool sizes, emits scaling summary) -----
+
+  defp run_partitioning_shape(num_processors, messages_per_processor, pool_sizes) do
+    results =
+      Enum.map(pool_sizes, fn pool ->
+        IO.puts("\n=== Partitioning Stress: pool=#{pool} ===")
+        # Always bring up a fresh bench namespace per pool size — the default
+        # namespace's compute engines were started without FLEZHA_WORKER_POOL_SIZE
+        # threaded through, so they can't be reused for the per-pool sweep.
+        setup_test_environment(2, [{"FLEZHA_WORKER_POOL_SIZE", pool}])
+
+        try do
+          throughput =
+            run_performance_test(
+              @bench_namespace,
+              num_processors,
+              messages_per_processor,
+              :partitioning
+            )
+
+          {pool, throughput}
+        after
+          cleanup_test_environment(@bench_namespace)
+        end
+      end)
+
+    print_scaling_summary(results)
+  end
+
+  defp print_scaling_summary(results) do
+    IO.puts("\n=== Scaling Summary ===")
+
+    Enum.each(results, fn {pool, throughput} ->
+      IO.puts("pool=#{pool}: #{Float.round(throughput, 2)} msg/s")
+    end)
+
+    throughputs = Enum.map(results, fn {_pool, t} -> t end)
+
+    case throughputs do
+      [_single] ->
+        IO.puts("ratio (max/min): n/a (single pool size)")
+
+      _ ->
+        max_t = Enum.max(throughputs)
+        min_t = Enum.min(throughputs)
+        ratio = if min_t > 0, do: max_t / min_t, else: 0.0
+        IO.puts("ratio (max/min): #{Float.round(ratio, 2)}")
     end
   end
 
@@ -111,25 +176,21 @@ defmodule Mix.Tasks.Bench do
     end
   end
 
-  defp setup_test_environment() do
+  defp setup_test_environment(count, extra_env) do
     IO.puts("Setting up test environment with compute engines...")
 
-    # Start compute engines using the same approach as the test helper
-    compute_engine_ids = start_compute_engines(@bench_namespace, 2)
+    compute_engine_ids = start_compute_engines(@bench_namespace, count, extra_env)
 
     IO.puts("Started #{length(compute_engine_ids)} compute engines for performance testing")
 
-    # Store compute engine IDs for cleanup
     Process.put(:bench_compute_engines, compute_engine_ids)
   end
 
   defp cleanup_test_environment(namespace) do
     IO.puts("Cleaning up test environment...")
 
-    # Stop all processors in the namespace
     ProcessorManager.stop_all_processors(namespace)
 
-    # Stop compute engines if we started them
     case Process.get(:bench_compute_engines) do
       engines when is_list(engines) ->
         Enum.each(engines, fn engine_id ->
@@ -140,26 +201,23 @@ defmodule Mix.Tasks.Bench do
         :ok
     end
 
-    # Stop the namespace
     FleetManager.stop_namespace(namespace)
+    Process.delete(:bench_compute_engines)
 
     IO.puts("Test environment cleanup completed")
   end
 
-  defp start_compute_engines(namespace, count) do
+  defp start_compute_engines(namespace, count, extra_env) do
     {:ok, current_path} = :file.get_cwd()
     runtime = Process.get(:bench_runtime, :rust)
 
     for i <- 1..count do
       command = build_command(runtime, current_path, namespace)
 
-      # Add event handler to wait for connection
       Flezha.Service.EventManager.add_handler(:compute_engine_connected_event)
 
-      # Start the compute engine process
-      Flezha.Service.PortPilot.open_port(command)
+      Flezha.Service.PortPilot.open_port(command, env: extra_env)
 
-      # Wait for connection
       compute_engine_id =
         receive do
           {:compute_engine_connected_event, {^namespace, id}} -> id
@@ -167,7 +225,6 @@ defmodule Mix.Tasks.Bench do
           5000 -> raise "Performance test compute engine #{i} failed to connect"
         end
 
-      # Remove handler to avoid duplicate events
       Flezha.Service.EventManager.rem_handler(:compute_engine_connected_event)
 
       compute_engine_id
@@ -182,13 +239,47 @@ defmodule Mix.Tasks.Bench do
     raise "Unknown --runtime value: #{inspect(other)}. Expected \"rust\" or \"java\"."
   end
 
+  defp parse_shape(nil), do: :regression
+  defp parse_shape("regression"), do: :regression
+  defp parse_shape("partitioning"), do: :partitioning
+
+  defp parse_shape(other) do
+    raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\" or \"partitioning\"."
+  end
+
+  defp parse_pool_sizes(nil), do: [1, 8]
+
+  defp parse_pool_sizes(value) when is_binary(value) do
+    value
+    |> String.split(",", trim: true)
+    |> Enum.map(fn s ->
+      case Integer.parse(String.trim(s)) do
+        {n, ""} when n > 0 -> n
+        _ -> raise "Invalid --pool-sizes entry: #{inspect(s)}. Expected positive integers, e.g. \"1,8\"."
+      end
+    end)
+  end
+
+  defp factory_for_shape(:regression), do: "do_nothing"
+  defp factory_for_shape(:partitioning), do: "partitioning_stress"
+
+  defp dimensions_for_shape(:regression, opts) do
+    {opts[:num_processors] || 100, opts[:messages_per_processor] || 100}
+  end
+
+  defp dimensions_for_shape(:partitioning, opts) do
+    if opts[:num_processors] || opts[:messages_per_processor] do
+      IO.warn(
+        "--shape partitioning ignores -n/-m; dimensions are hard-coded at 8 × 20_000 " <>
+          "per relay-bench-harness/design.md Decision 6. Use --shape regression for " <>
+          "custom dimensions."
+      )
+    end
+
+    {8, 20_000}
+  end
+
   defp build_command(:rust, current_path, namespace) do
-    # Prefer the optimized release binary (any of the three locations cargo
-    # may produce it, depending on whether the user ran `cargo build
-    # --release` at the workspace root or inside the test app). Falling back
-    # to the debug binary is a ~5× throughput penalty on this workload and
-    # the default-target-dir layout changed during the shared-library split,
-    # so check both paths before dropping to `cargo run`.
     candidates = [
       "#{current_path}/target/release/rust_compute_engine",
       "#{current_path}/test/apps/rust_compute_engine/target/release/rust_compute_engine",
@@ -196,9 +287,6 @@ defmodule Mix.Tasks.Bench do
       "#{current_path}/test/apps/rust_compute_engine/target/debug/rust_compute_engine"
     ]
 
-    # Filter to *regular* files — the workspace-root `target/release/`
-    # may contain a leftover empty `rust_compute_engine/` directory from
-    # a prior `cargo run` that won't exec.
     case Enum.find(candidates, &File.regular?/1) do
       nil ->
         "cargo run --release --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- #{namespace}"
@@ -238,8 +326,9 @@ defmodule Mix.Tasks.Bench do
     "java -jar #{jar_path} #{namespace}"
   end
 
-  defp run_performance_test(namespace, num_processors, test_messages_per_processor) do
-    IO.puts("Starting flow test with #{num_processors} processors...")
+  defp run_performance_test(namespace, num_processors, test_messages_per_processor, shape) do
+    factory = factory_for_shape(shape)
+    IO.puts("Starting flow test with #{num_processors} processors (factory=#{factory})...")
 
     {processor_creation_time, processor_infos} =
       :timer.tc(fn ->
@@ -248,7 +337,7 @@ defmodule Mix.Tasks.Bench do
 
           processor = %Flezha.Processor.Builder{
             id: processor_id,
-            factory_id: @test_processor_factory
+            factory_id: factory
           }
 
           case ProcessorManager.start_processor(namespace, processor) do
@@ -267,11 +356,9 @@ defmodule Mix.Tasks.Bench do
       "Processor creation took: #{processor_creation_time / 1000} ms for #{length(processor_infos)} processors"
     )
 
-    # Step 2: Enable plugins for all processors
     {plugin_setup_time, _} =
       :timer.tc(fn ->
         Enum.each(processor_infos, fn {processor_id, _info} ->
-          # Enable BeamMsgForward plugin
           PluginManager.enable_plugin(
             processor_id <> "_beam_msg_forward",
             %Flezha.Plugin{
@@ -284,11 +371,6 @@ defmodule Mix.Tasks.Bench do
             }
           )
 
-          # Enable StdOut plugin. In the legacy bench this was attached with
-          # `trigger: :proactive` — a silent no-op (proactive was only
-          # registered, never dispatched). Preserve that shape with an
-          # empty subscriptions list: the plugin is enabled (so enable
-          # overhead is measured) but no callback fires on messages.
           PluginManager.enable_plugin(
             processor_id <> "_stdout_plugin",
             %Flezha.Plugin{
@@ -307,7 +389,6 @@ defmodule Mix.Tasks.Bench do
       "Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(processor_infos)} processors"
     )
 
-    # Step 3: Send test messages to all processors
     total_messages = length(processor_infos) * test_messages_per_processor
 
     IO.puts(
@@ -328,26 +409,26 @@ defmodule Mix.Tasks.Bench do
 
     IO.puts("Message sending took: #{message_send_time / 1000} ms")
 
-    # Step 4: Receive and measure response time
+    expected_responses = expected_responses(shape, total_messages)
+
     {message_receive_time, _} =
       :timer.tc(fn ->
-        for x <- 1..total_messages do
+        for x <- 1..expected_responses do
           receive do
             {:message_forward, _msg} ->
               :ok
           after
             10_000 ->
-              IO.puts("Timeout waiting for message #{x}/#{total_messages}")
+              IO.puts("Timeout waiting for message #{x}/#{expected_responses}")
               exit("Timeout waiting for messages")
           end
         end
       end)
 
     IO.puts(
-      "Message processing took: #{message_receive_time / 1000} ms for #{total_messages} messages"
+      "Message processing took: #{message_receive_time / 1000} ms for #{expected_responses} messages"
     )
 
-    # Calculate throughput metrics
     total_time =
       processor_creation_time + plugin_setup_time + message_send_time + message_receive_time
 
@@ -355,7 +436,8 @@ defmodule Mix.Tasks.Bench do
 
     IO.puts("\n=== Performance Summary ===")
     IO.puts("Processors created: #{length(processor_infos)}")
-    IO.puts("Total messages processed: #{total_messages}")
+    IO.puts("Total inputs dispatched: #{total_messages}")
+    IO.puts("Plugin-forwarded responses received: #{expected_responses}")
     IO.puts("Processor creation: #{processor_creation_time / 1000} ms")
     IO.puts("Plugin setup: #{plugin_setup_time / 1000} ms")
     IO.puts("Message sending: #{message_send_time / 1000} ms")
@@ -364,7 +446,6 @@ defmodule Mix.Tasks.Bench do
     IO.puts("Throughput: #{Float.round(throughput_msgs_per_sec, 2)} messages/second")
     IO.puts("Average time per processor: #{total_time / length(processor_infos) / 1000} ms")
 
-    # Cleanup
     ProcessorManager.stop_all_processors(namespace)
 
     if length(processor_infos) == 0 do
@@ -376,5 +457,17 @@ defmodule Mix.Tasks.Bench do
     end
 
     IO.puts("\nPerformance test completed successfully!")
+
+    throughput_msgs_per_sec
   end
+
+  # `do_nothing` echoes once per input (single shard, single partition,
+  # one plugin-bound emit), so each dispatched input produces one
+  # `:on_output` event. `partitioning_stress` chains four shards × 8
+  # partitions; only ShardD emits to a plugin, and only its `p0` partition
+  # is targeted by the pipeline routing so it runs once per ShardC emit.
+  # The entry shard fans 8-wide → ShardA runs 8× → 8 emits to B[p0] →
+  # 8 emits to C[p0] → 8 emits to D[p0] → 8 plugin-bound emits per input.
+  defp expected_responses(:regression, total_messages), do: total_messages
+  defp expected_responses(:partitioning, total_messages), do: total_messages * 8
 end

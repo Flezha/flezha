@@ -19,7 +19,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     Producer-behaviour opts (all optional, defaults below):
       * `:partition`                       — int, default `0`
-      * `:plugin_group`                    — gate produces by metadata "plugin_group" tag
+      * `:channel`                         — gate produces by metadata "channel" tag
       * `:required_acks`                   — int, default `-1` (acks=all). BREAKING: was `1`.
       * `:retries`                         — int, default `5`
       * `:retry_backoff_ms`                — int, default `100`
@@ -52,7 +52,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
                   :registry_ref,
                   :producer_pid,
                   :plugin_id,
-                  :plugin_group,
+                  :channel,
                   :partitioner,
                   partition: 0,
                   required_acks: -1,
@@ -113,12 +113,12 @@ defmodule Flezha.Plugin.Provider.Kafka do
     def on_output(%Ctx.IO{} = ctx, opts), do: produce(ctx, opts)
 
     defp produce(%Ctx.IO{message: msg, metadata: md} = ctx, opts) do
-      case Map.get(opts, :plugin_group) do
+      case Map.get(opts, :channel) do
         nil ->
           do_produce(ctx, opts, msg, md)
 
         group ->
-          if Map.get(md, "plugin_group") == group,
+          if Map.get(md, "channel") == group,
             do: do_produce(ctx, opts, msg, md),
             else: {:ok, ctx}
       end

@@ -183,6 +183,31 @@ For each (key, value) pair:
 - An empty metadata map serializes to 0 bytes (metadata_size = 0).
 - Iteration order of entries is not guaranteed.
 
+#### Reserved metadata keys
+
+| Key | Direction | Description |
+|---|---|---|
+| `input_type` | Agent → SDK | Wire format of the entry-channel payload — `"1"` for binary (default), `"2"` for UTF-8 text. The SDK uses this to convert the payload bytes to the entry channel's `EntryChannelType` (`Vec<u8>` or `String`). |
+| `channel` | Agent → SDK | Names the Relay's entry channel that should receive this input. If absent, the SDK falls back to the Relay's first declared input channel. |
+| `channel` | SDK → Agent | Set by `ShardCtx::emit` on plugin-bound channels. Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka.Producer`) match on this key via their `:channel` opt to gate which channel's outputs they consume. |
+
+The `channel` metadata key replaces the pre-`relay-mvp-rust` `plugin_group: u8` integer key. v1 sends the channel name as a UTF-8 string; an integer fast-path is reserved for a future change.
+
+#### State migration JSON shape
+
+`MigrationSerialization` / `MigrationDeserialization` / `ProcessorState` / `ProcessorApplyState` carry a JSON blob whose shape is:
+
+- Single-mode shards (no `shard_keys()` declared):
+  ```json
+  {"<shard_name>": <state>}
+  ```
+- Static-mode shards (`shard_keys()` non-empty):
+  ```json
+  {"<shard_name>": {"<shard_key>": <state>, ...}}
+  ```
+
+This is a wire-format break vs the pre-`relay-mvp-rust` flat `<state>` shape. State portability across the cutover is out of scope (umbrella Non-Goal 2 / `relay-state-migration`); the hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs.
+
 ### Frame Buffering
 
 Because Unix domain sockets are stream-oriented, frames may be split across multiple `read()` calls. SDK implementations **must** handle:
