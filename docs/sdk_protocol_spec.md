@@ -193,6 +193,10 @@ For each (key, value) pair:
 
 The `channel` metadata key replaces the pre-`relay-mvp-rust` `plugin_group: u8` integer key. v1 sends the channel name as a UTF-8 string; an integer fast-path is reserved for a future change.
 
+#### Per-Partition mailbox is bounded; on full, the channel's `OverflowPolicy` applies
+
+The SDK's per-Partition mailbox is a fixed-capacity `crossbeam::queue::ArrayQueue` allocated at relay startup. When the agent dispatches a frame to a Relay whose targeted Partition's mailbox is full, the SDK applies the channel's declared `OverflowPolicy`: `Block` (producer parks until the consumer drains an item, then retries), `DropNewest` (frame discarded, counter incremented), or `DropOldest` (consumer's mailbox evicts its oldest item and accepts the new one, counter incremented). The default entry-channel policy is `DropNewest` — **the SDK silently drops frames when a Relay's entry mailbox is saturated**, and the wire-reader thread continues servicing sibling Relays sharing the same physical connection. Operators wanting strict end-to-end ordering should opt into `OverflowPolicy::Block` per channel and accept the documented co-tenancy hazard (a parked wire reader stops delivering frames to every Relay sharing this connection until the saturated Relay drains). See `docs/relay_architecture.md` "Backpressure and bounded mailboxes" for the full contract — capacity declaration, default policies by channel kind, the per-Partition counter set, and worker-pool sizing rules under `Block`.
+
 #### State migration JSON shape
 
 `MigrationSerialization` / `MigrationDeserialization` / `ProcessorState` / `ProcessorApplyState` carry a JSON blob whose shape is:

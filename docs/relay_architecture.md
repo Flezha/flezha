@@ -170,19 +170,25 @@ The dispatch path is engineered to keep the per-message cost low:
    - Single-mode: jump straight to partition index 0.
    - Static-mode: one HashMap lookup per partition key returned by
      `S::partition_for(&input)`.
-3. **Mailbox push + inflight CAS** — one SegQueue push and one atomic
-   compare-exchange. If the CAS wins, submit a drain task to the pool;
-   otherwise an in-progress drain will pick up the new item via the
-   missed-wake recovery loop.
+3. **Mailbox push + counter + inflight CAS** — one `ArrayQueue::try_push`,
+   one Relaxed `pushes_total` increment, and one atomic compare-exchange.
+   If the CAS wins, submit a drain task to the pool; otherwise an
+   in-progress drain will pick up the new item via the missed-wake
+   recovery loop. On a full mailbox the channel's declared
+   `OverflowPolicy` (Block / DropNewest / DropOldest) decides what
+   happens — see "Backpressure and bounded mailboxes" below.
 4. **Drain → Shard::run** — the dispatcher downcasts `Arc<dyn Any>` to
    `Arc<S::Input>`, falls back to a value-clone (`Arc::unwrap_or_clone`)
    if the Arc was shared by fan-out, and calls `Shard::run` with the
    typed signature.
 
 The umbrella's "Per-Message Dispatch-Overhead Budget" requirement caps
-this at **3 sync ops per message** on the single-partition fast path
-(registry lookup + mailbox enqueue + inflight CAS); static-mode
-fan-out adds `N × 2` ops where N is the partition fan-out width.
+this at **4 sync ops per message** on the single-partition fast path
+(registry lookup + mailbox enqueue + success counter + inflight CAS);
+static-mode fan-out adds `N × 3` ops where N is the partition fan-out
+width (try_push + counter + inflight CAS per target). The added counter
+op compared with the pre-`relay-bounded-mailbox` baseline is detailed
+in `openspec/changes/relay-bounded-mailbox/design.md` Decision 7.
 
 For the recorded throughput floor and how it's measured, see
 `docs/benchmarking.md` — it documents the regression / partitioning /
@@ -190,6 +196,111 @@ single-partition / static-fanout bench shapes, the recorded
 `BENCH_FLOOR_MSG_PER_SEC` and `SINGLE_PARTITION_FLOOR_MSG_PER_SEC`
 values, the floor-update protocol, and CI triage instructions when the
 `bench-regression` gate fires.
+
+## Backpressure and bounded mailboxes
+
+Each Partition's mailbox is a fixed-size lock-free
+`crossbeam::queue::ArrayQueue` allocated at relay startup. Capacity is
+declared per Shard; the policy applied when the mailbox is full is
+declared per channel. Counters on the consumer-side `PartitionSlot`
+record every push, drop, and block event for future metrics export.
+
+### Capacity declaration (consumer side)
+
+```rust
+impl Shard for OhlcShard {
+    fn mailbox_capacity() -> usize { 4096 }
+    const MAILBOX_CAPACITY_OVERRIDDEN: bool = true;
+    // ... other items ...
+}
+```
+
+Resolution order at `register_relay::<R>()` time:
+
+1. `Shard::mailbox_capacity()` if `MAILBOX_CAPACITY_OVERRIDDEN = true`.
+2. `FLEZHA_MAILBOX_CAPACITY` env var (parsed as `usize`).
+3. Built-in default (1024).
+
+Capacity must be in `1..=1_048_576`; out-of-range values fail
+registration with the offending Shard's name. Static-mode Shards
+allocate one mailbox per declared partition key, all sharing the
+same capacity.
+
+### Policy declaration (producer / wiring side)
+
+```rust
+c.input::<Vec<u8>>("trade.raw")
+    .on_full(OverflowPolicy::DropNewest)
+    .into::<ParseShard>();
+
+c.channel::<Candle>("ohlc.candles")
+    .from::<OhlcShard>()
+    .on_full(OverflowPolicy::Block)
+    .into::<IndicatorShard>();
+```
+
+`OverflowPolicy` is one of:
+
+- **`Block`** — the producer parks on the consumer's `BlockParker` until
+  the drain pops an item, then retries the push. Preserves ordering at
+  the cost of producer-thread stall under sustained pressure.
+- **`DropNewest`** — incoming item discarded; consumer's
+  `drops_newest_total` counter increments by 1.
+- **`DropOldest`** — consumer's mailbox atomically pops its oldest item
+  and accepts the new one (`ArrayQueue::force_push`); consumer's
+  `drops_oldest_total` counter increments by 1. Best-effort under MPMC
+  contention.
+
+Plugin-bound channels (`.to_plugin(...)`) reject `.on_full(...)` at
+compile time — there is no SDK-side mailbox between a plugin-bound emit
+and the wire, so the policy enum has nothing to act on.
+
+### Default policy by channel kind
+
+| Channel kind | Default | Why |
+|---|---|---|
+| Entry        | `DropNewest` | The wire reader services every Relay sharing one physical connection; blocking on one Relay's saturation head-of-line-blocks siblings. |
+| InterShard   | `Block`      | Stateful pipelines need ordering preservation; mid-pipeline drops silently corrupt derived state. |
+| PluginBound  | (n/a)        | No SDK-side mailbox sits between the producer Shard and the wire; backpressure is OS socket buffer + transport flow control. |
+
+An operator who wants strict end-to-end ordering at the entry edge can
+declare `.on_full(OverflowPolicy::Block)` on their entry channel — they
+opt into the documented co-tenancy hazard (the wire reader parks while
+this one Relay's mailbox is full, so sibling Relays sharing the same
+physical connection stop receiving frames until it drains). The default
+`DropNewest` keeps the reader running and records every drop on the
+per-Partition `drops_newest_total` counter.
+
+### Per-Partition counter set
+
+Every `PartitionSlot.mailbox` carries a `PartitionCounters` block with
+four `AtomicU64` counters, all bumped under `Ordering::Relaxed`:
+
+| Counter | Bumped on |
+|---|---|
+| `pushes_total`         | every successful `try_push` |
+| `pushes_blocked_total` | every `Block`-policy park event (one per `wait_one`) |
+| `drops_newest_total`   | every drop under `DropNewest` |
+| `drops_oldest_total`   | every eviction under `DropOldest` |
+
+Counters are read-only from outside the dispatch path (`partition.counters()`
+or `partition.mailbox.counters()`); export to a metrics backend (Prometheus,
+StatsD, log emit) is **out of scope** for `relay-bounded-mailbox` and
+deferred to a separate observability change. Storing the data here keeps
+that change purely additive.
+
+### Worker-pool sizing under `Block`
+
+A Block-policy producer parks the worker thread it ran on. A pipeline
+of depth D under `Block` requires the work-stealing pool to have
+`FLEZHA_WORKER_POOL_SIZE ≥ 2 × D + 1` to avoid a deadlock: D parked
+producers + 1 thread free to drain the deepest consumer + spare for
+upstream drains. The SDK does not enforce this at startup; operators
+running deep pipelines should size the pool accordingly.
+
+Single-stage pipelines (entry → one Shard, no fan-out) are unaffected:
+the wire reader is the only producer, and its park does not consume a
+worker-pool thread.
 
 ## Inter-shard zero-copy
 

@@ -31,6 +31,18 @@ both the spec and this doc; the build fails if they disagree (per
 | Median rounded down to nearest 5K msg/s | 480_000 |
 | Single-partition microbench median | 714_000 elem/s |
 
+#### Re-measurement note (`relay-bounded-mailbox`)
+
+`relay-bounded-mailbox` adds one Relaxed atomic op per successful push
+(the `pushes_total` counter) on the dispatch hot path, raising the
+analytical sync-op budget from 3 to 4 (Decision 7 of that change's
+`design.md`). Per the floor-update protocol below, the floor was
+re-measured against the post-bounded-mailbox SDK on the same reference
+host class; the measured-at-merge values replace the prior `480_000` /
+`700_000` numbers above. The pre-bounded-mailbox values are recorded in
+that change's spec as the historical baseline; they SHALL NOT be carried
+forward as the gate.
+
 The pre-cutover floor (350K msg/s, on the same workload before relay-mvp-rust)
 is intentionally NOT carried forward — it was measured against a different
 SDK architecture (the `Processor` trait), so it isn't apples-to-apples with
@@ -79,8 +91,12 @@ per pool size and the `ratio (max/min)` line that
 SDK-internal: one relay × one shard × one partition × no transport. Drives
 `RelayDispatchHandle::dispatch` directly, bypassing the agent + NIF.
 Reports msg/s for the dispatch hot path (registry lookup + mailbox enqueue
-+ inflight CAS — the 3-sync-op budget from
-`rust-sdk-dispatch::Per-Message Dispatch-Overhead Budget`).
++ `pushes_total` Relaxed counter + inflight CAS — the 4-sync-op budget from
+`rust-sdk-dispatch::Per-Message Dispatch-Overhead Budget`, raised from 3
+to 4 by `relay-bounded-mailbox` Decision 7 to honestly account for the
+success counter the bounded-mailbox observability story requires). The
+bench's entry channel opts into `OverflowPolicy::Block` so the bursty
+producer never trips the default `DropNewest` mid-measurement.
 
 ```sh
 cargo bench --bench correctness -p flezha_compute_engine \
@@ -91,9 +107,10 @@ cargo bench --bench correctness -p flezha_compute_engine \
 
 Same as the single-partition microbench except the shard has 4 partition
 keys and `partition_for` returns all 4 keys per input — exercises the
-fan-out cost (`3 + N × 2` sync ops per input where N is the partition
-count). Informational; characterizes the "static-mode partition fan-out
-cost is proportional to partition count" spec scenario.
+fan-out cost (`4 + N × 3` sync ops per input where N is the partition
+count, per `relay-bounded-mailbox/design.md` Decision 7). Informational;
+characterizes the "static-mode partition fan-out cost is proportional to
+partition count" spec scenario.
 
 ```sh
 cargo bench --bench correctness -p flezha_compute_engine \

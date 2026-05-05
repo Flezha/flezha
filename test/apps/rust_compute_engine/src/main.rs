@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use flezha_compute_engine::shard::{Shard, ShardCtx, ShardError};
-use flezha_compute_engine::{register_relay, ChannelBuilder, Relay};
+use flezha_compute_engine::{register_relay, ChannelBuilder, OverflowPolicy, Relay};
 
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +44,7 @@ fn register_relays() {
     register_relay::<CompareFilterRelay>();
     register_relay::<StaticPartitionRelay>();
     register_relay::<PartitioningStressRelay>();
+    register_relay::<BoundedMailboxRelay>();
     // RELAY_MESSAGE_HANDLERS_PENDING — EchoMessageRelay /
     // ErrorMessageRelay / JsonStateMessageRelay are removed in
     // relay-mvp-rust per design.md Decision 9. They are restored in
@@ -409,5 +410,136 @@ impl Relay for PartitioningStressRelay {
         c.channel::<Vec<u8>>("echo")
             .from::<StressShardD>()
             .to_plugin("partitioning_stress_echo");
+    }
+}
+
+// -- BoundedMailboxRelay ------------------------------------------------------
+//
+// End-to-end coverage for `relay-bounded-mailbox`. Three Shards, each on its
+// own entry channel with a different `OverflowPolicy`:
+//
+//   * `block_input`        → BlockTestShard       (cap=4, `Block`)
+//   * `drop_newest_input`  → DropNewestTestShard  (cap=4, default `DropNewest`)
+//   * `drop_oldest_input`  → DropOldestTestShard  (cap=4, `DropOldest`)
+//
+// Each Shard maintains a per-Partition counter inside its `State` so the
+// agent-side test can read the running totals via `ProcessorState` once
+// state serialization is wired up downstream of `relay-mvp-rust` Section 4.
+// In the meantime the Rust-side coverage in `tests/relay_dispatch.rs`
+// exercises the same dispatch paths.
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct BoundedShardState {
+    /// Number of inputs the Shard has actually processed (= number of
+    /// successful pushes that survived the policy and reached `run`).
+    pub processed: u64,
+}
+
+#[derive(Default)]
+struct BlockTestShard;
+impl Shard for BlockTestShard {
+    type Input = String;
+    type Output = Vec<u8>;
+    type State = BoundedShardState;
+    fn name() -> &'static str {
+        "block_test_shard"
+    }
+    fn init_state(_: Option<&str>) -> BoundedShardState {
+        BoundedShardState::default()
+    }
+    fn mailbox_capacity() -> usize {
+        4
+    }
+    const MAILBOX_CAPACITY_OVERRIDDEN: bool = true;
+    fn run(
+        &mut self,
+        input: String,
+        state: &mut BoundedShardState,
+        ctx: &mut ShardCtx<'_>,
+    ) -> Result<(), ShardError> {
+        state.processed += 1;
+        ctx.emit::<Vec<u8>>(input.into_bytes())
+    }
+}
+
+#[derive(Default)]
+struct DropNewestTestShard;
+impl Shard for DropNewestTestShard {
+    type Input = String;
+    type Output = Vec<u8>;
+    type State = BoundedShardState;
+    fn name() -> &'static str {
+        "drop_newest_test_shard"
+    }
+    fn init_state(_: Option<&str>) -> BoundedShardState {
+        BoundedShardState::default()
+    }
+    fn mailbox_capacity() -> usize {
+        4
+    }
+    const MAILBOX_CAPACITY_OVERRIDDEN: bool = true;
+    fn run(
+        &mut self,
+        input: String,
+        state: &mut BoundedShardState,
+        ctx: &mut ShardCtx<'_>,
+    ) -> Result<(), ShardError> {
+        state.processed += 1;
+        ctx.emit::<Vec<u8>>(input.into_bytes())
+    }
+}
+
+#[derive(Default)]
+struct DropOldestTestShard;
+impl Shard for DropOldestTestShard {
+    type Input = String;
+    type Output = Vec<u8>;
+    type State = BoundedShardState;
+    fn name() -> &'static str {
+        "drop_oldest_test_shard"
+    }
+    fn init_state(_: Option<&str>) -> BoundedShardState {
+        BoundedShardState::default()
+    }
+    fn mailbox_capacity() -> usize {
+        4
+    }
+    const MAILBOX_CAPACITY_OVERRIDDEN: bool = true;
+    fn run(
+        &mut self,
+        input: String,
+        state: &mut BoundedShardState,
+        ctx: &mut ShardCtx<'_>,
+    ) -> Result<(), ShardError> {
+        state.processed += 1;
+        ctx.emit::<Vec<u8>>(input.into_bytes())
+    }
+}
+
+struct BoundedMailboxRelay;
+impl Relay for BoundedMailboxRelay {
+    fn factory_id() -> &'static str {
+        "bounded_mailbox"
+    }
+    fn channels(c: &mut ChannelBuilder) {
+        c.input::<String>("block_input")
+            .on_full(OverflowPolicy::Block)
+            .into::<BlockTestShard>();
+        c.channel::<Vec<u8>>("block_echo")
+            .from::<BlockTestShard>()
+            .to_plugin("bounded_mailbox_echo");
+
+        c.input::<String>("drop_newest_input")
+            .into::<DropNewestTestShard>();
+        c.channel::<Vec<u8>>("drop_newest_echo")
+            .from::<DropNewestTestShard>()
+            .to_plugin("bounded_mailbox_echo");
+
+        c.input::<String>("drop_oldest_input")
+            .on_full(OverflowPolicy::DropOldest)
+            .into::<DropOldestTestShard>();
+        c.channel::<Vec<u8>>("drop_oldest_echo")
+            .from::<DropOldestTestShard>()
+            .to_plugin("bounded_mailbox_echo");
     }
 }
