@@ -5,7 +5,8 @@ import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.OperatorShutdownNotification;
 import com.flezha.sdk.runtime.ComputeEngineContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
-import com.flezha.sdk.runtime.processor.ProcessorInstance;
+import com.flezha.sdk.runtime.relay.RelayInstance;
+import com.flezha.sdk.runtime.relay.RelayStateSerializer;
 import com.google.protobuf.ByteString;
 import java.util.ArrayList;
 import java.util.List;
@@ -102,20 +103,20 @@ public final class GracefulShutdown {
             return;
         }
 
-        Map<String, ProcessorInstance<?, ?, ?>> processors = ctx.processorRegistry().snapshot();
+        Map<String, RelayInstance> processors = ctx.relayInstanceRegistry().snapshot();
         if (processors.isEmpty()) {
             return;
         }
 
         List<CompletableFuture<Void>> waits = new ArrayList<>(processors.size());
 
-        for (Map.Entry<String, ProcessorInstance<?, ?, ?>> entry : processors.entrySet()) {
+        for (Map.Entry<String, RelayInstance> entry : processors.entrySet()) {
             String processorId = entry.getKey();
-            ProcessorInstance<?, ?, ?> instance = entry.getValue();
+            RelayInstance instance = entry.getValue();
 
             byte[] serializedState;
             try {
-                serializedState = instance.serializeState(ctx.objectMapper());
+                serializedState = RelayStateSerializer.serialize(instance);
             } catch (Exception e) {
                 LOG.warn(
                         "Skipping shutdown notification for {} — serializeState failed: {}",

@@ -4,7 +4,12 @@ import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.MigrationDeserialization;
 import com.flezha.sdk.runtime.ComputeEngineContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
-import com.flezha.sdk.runtime.processor.ProcessorInstance;
+import com.flezha.sdk.runtime.relay.InitValuesContext;
+import com.flezha.sdk.runtime.relay.RelayClassRegistry;
+import com.flezha.sdk.runtime.relay.RelayInstance;
+import com.flezha.sdk.runtime.relay.RelayInstanceRegistry;
+import com.flezha.sdk.runtime.relay.RelayStateSerializer;
+import com.flezha.sdk.runtime.relay.RelayTopology;
 import java.util.List;
 
 public final class MigrationDeserializationHandler implements CommandHandler {
@@ -16,19 +21,33 @@ public final class MigrationDeserializationHandler implements CommandHandler {
         String processorId = cmd.getProcessorId();
         byte[] serializedState = cmd.getSerializedState().toByteArray();
 
-        ProcessorInstance<?, ?, ?> instance;
-        try {
-            instance = ProcessorInstance.create(factoryId, processorId);
-        } catch (IllegalArgumentException e) {
+        RelayTopology topology = RelayClassRegistry.getTopology(factoryId);
+        if (topology == null) {
             errors.add("Factory with id " + factoryId + " does not exist");
             return new byte[0];
         }
 
-        if (serializedState.length > 0) {
-            instance.deserializeState(serializedState, ctx.objectMapper());
+        RelayInstance instance;
+        InitValuesContext.set(null);
+        try {
+            instance = RelayInstance.create(topology, processorId, ctx, ctx.workerPool());
+        } catch (RuntimeException e) {
+            errors.add("Failed to spawn relay instance: " + e.getMessage());
+            return new byte[0];
+        } finally {
+            InitValuesContext.clear();
         }
-        instance.postCreate();
-        ctx.processorRegistry().add(instance);
+
+        if (serializedState.length > 0) {
+            try {
+                RelayStateSerializer.deserialize(instance, serializedState);
+            } catch (Exception e) {
+                errors.add("Failed to deserialize relay state: " + e.getMessage());
+                return new byte[0];
+            }
+        }
+
+        ctx.relayInstanceRegistry().add(instance);
         return new byte[0];
     }
 }

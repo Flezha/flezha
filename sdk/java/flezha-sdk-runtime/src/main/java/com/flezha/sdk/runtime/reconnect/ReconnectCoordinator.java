@@ -101,10 +101,7 @@ public final class ReconnectCoordinator {
 
     private void resetState() {
         ctx.streamRegistry().clear();
-        ctx.processorRegistry().clear();
-        if (ctx.processorDispatcher() != null) {
-            ctx.processorDispatcher().shutdown();
-        }
+        ctx.relayInstanceRegistry().clear();
         ctx.setComputeEngineId("undefined");
     }
 

@@ -4,14 +4,30 @@ import com.flezha.sdk.proto.AddProcessor;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.runtime.ComputeEngineContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
-import com.flezha.sdk.runtime.processor.ProcessorInstance;
-import com.flezha.sdk.runtime.processor.ProcessorRegistry;
+import com.flezha.sdk.runtime.relay.InitValuesContext;
+import com.flezha.sdk.runtime.relay.RelayClassRegistry;
+import com.flezha.sdk.runtime.relay.RelayInstance;
+import com.flezha.sdk.runtime.relay.RelayInstanceRegistry;
+import com.flezha.sdk.runtime.relay.RelayTopology;
 import java.util.List;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+/**
+ * Handler for {@code AddProcessor}. Spawns a {@link RelayInstance} keyed by
+ * the wire-supplied {@code processor_id}.
+ *
+ * <p>{@code init_values} (the JSON string from {@code AddProcessor.init_values})
+ * is staged on a thread-local read by
+ * {@link com.flezha.sdk.shard.Shard#initState} for any Shard×Partition that
+ * needs to seed initial state.
+ *
+ * <p>Idempotent on reconnect: the agent re-issues {@code AddProcessor} for
+ * every processor still tagged to this operator's profile after a restart.
+ */
 public final class AddProcessorHandler implements CommandHandler {
 
-    private static final Logger LOG = Logger.getLogger(AddProcessorHandler.class.getName());
+    private static final Logger LOG = LoggerFactory.getLogger(AddProcessorHandler.class);
 
     @Override
     public byte[] handle(ComputeEngineContext ctx, CommandRequest request, List<String> errors) {
@@ -20,38 +36,30 @@ public final class AddProcessorHandler implements CommandHandler {
         String processorId = cmd.getProcessorId();
         String initValues = cmd.getInitValues();
 
-        ProcessorRegistry registry = ctx.processorRegistry();
+        RelayInstanceRegistry registry = ctx.relayInstanceRegistry();
 
-        // Idempotent on reconnect: the agent re-issues AddProcessor for every
-        // processor ProcessHub still has tagged to this operator's profile
-        // after a restart. If the processor is already in the local registry,
-        // skip without re-registering — keeps the existing processor's state
-        // intact and prevents duplicate-init crashes.
         if (registry.contains(processorId)) {
-            LOG.info("AddProcessor: processor " + processorId + " already registered, skipping");
+            LOG.info("AddProcessor: relay instance {} already registered, skipping", processorId);
             return new byte[0];
         }
 
-        ProcessorInstance<?, ?, ?> instance;
-        try {
-            instance = ProcessorInstance.create(factoryId, processorId);
-        } catch (IllegalArgumentException e) {
+        RelayTopology topology = RelayClassRegistry.getTopology(factoryId);
+        if (topology == null) {
             errors.add("Factory with id " + factoryId + " does not exist");
             return new byte[0];
         }
 
-        if (initValues != null && !initValues.isEmpty()) {
-            try {
-                instance.deserializeState(initValues.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                        ctx.objectMapper());
-            } catch (Exception e) {
-                errors.add("Failed to parse init_values as JSON: " + e.getMessage());
-                return new byte[0];
-            }
+        InitValuesContext.set(initValues);
+        try {
+            RelayInstance instance = RelayInstance.create(
+                    topology, processorId, ctx, ctx.workerPool());
+            registry.add(instance);
+        } catch (RuntimeException e) {
+            errors.add("Failed to spawn relay instance: " + e.getMessage());
+            return new byte[0];
+        } finally {
+            InitValuesContext.clear();
         }
-
-        instance.postCreate();
-        registry.add(instance);
         return new byte[0];
     }
 }

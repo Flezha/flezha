@@ -159,6 +159,85 @@ fn main() {
 }
 ```
 
+### Java SDK equivalent
+
+The Java SDK is a port of the same model. Idiomatic differences:
+
+- `Shard<Input, State, Output>` is a parameterized interface (no associated
+  types in Java); implementers expose `Class<Input>` / `Class<Output>`
+  accessors so the runtime can verify wiring at registration time
+  (Java's type erasure means most type bounds the Rust trait system
+  enforces at compile time become runtime-checked
+  `RelayConfigurationException`s thrown by `Flezha.registerRelay(...)`).
+- `partitionForOverridden()` / `shardKeyOverridden()` boolean default
+  methods replace Rust's `const PARTITION_FOR_OVERRIDDEN: bool` /
+  `const SHARD_KEY_OVERRIDDEN: bool` sentinels.
+- `ShardException` is a checked exception subclass of `Exception`;
+  `Shard.run` declares `throws ShardException`.
+- Inter-shard "zero-copy" passes the value by reference (Java has no
+  `Arc<T>`); the user MUST treat emitted values as immutable from the
+  producer side after `ctx.emit` returns. The
+  `Inter-shard zero-copy preserves value identity` capability scenario
+  asserts `==` reference-equality on the value received downstream.
+
+```java
+public record OhlcState(java.util.List<Double> candles) {}
+
+public final class ParseShard implements Shard<String, Object, Double> {
+    @Override public String name() { return "parse_shard"; }
+    @Override public Class<String> inputType() { return String.class; }
+    @Override public Class<Double> outputType() { return Double.class; }
+    @Override public Object initState(Optional<String> shardKey) { return new Object(); }
+
+    @Override public void run(String input, Object state, ShardCtx ctx) throws ShardException {
+        try {
+            ctx.emit(Double.parseDouble(input));
+        } catch (NumberFormatException e) {
+            throw new ShardException("parse failed: " + input, e);
+        }
+    }
+}
+
+public final class OhlcShard implements Shard<Double, OhlcState, byte[]> {
+    @Override public String name() { return "ohlc_shard"; }
+    @Override public Class<Double> inputType() { return Double.class; }
+    @Override public Class<byte[]> outputType() { return byte[].class; }
+    @Override public OhlcState initState(Optional<String> shardKey) {
+        return new OhlcState(new java.util.ArrayList<>());
+    }
+
+    @Override public java.util.List<String> shardKeys() { return java.util.List.of("1m", "1h", "1d", "1w"); }
+    @Override public boolean partitionForOverridden() { return true; }
+    @Override public java.util.List<String> partitionFor(Double price) { return shardKeys(); }
+
+    @Override public void run(Double price, OhlcState state, ShardCtx ctx) throws ShardException {
+        state.candles().add(price);
+        ctx.emit(price.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+}
+
+public final class MarketRelay implements Relay {
+    @Override public String factoryId() { return "market"; }
+    @Override public void channels(ChannelBuilder c) {
+        c.input(String.class, "trade.raw").into(ParseShard.class);
+        c.channel(Double.class, "trade.parsed")
+                .from(ParseShard.class)
+                .into(OhlcShard.class);
+        c.channel(byte[].class, "ohlc.candles")
+                .from(OhlcShard.class)
+                .toPlugin("ohlc_kafka");
+    }
+}
+
+public final class App {
+    public static void main(String[] args) {
+        Flezha.registerRelay(MarketRelay.class);
+        Flezha unused = Flezha.newInstance("market_ns");
+        // Agent's `flz processor start <market>` spawns an instance.
+    }
+}
+```
+
 ## Hot-path lookups
 
 The dispatch path is engineered to keep the per-message cost low:

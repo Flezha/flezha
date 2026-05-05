@@ -2,12 +2,12 @@ package com.flezha.sdk.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
-import com.flezha.sdk.runtime.processor.ProcessorRegistry;
+import com.flezha.sdk.runtime.relay.RelayInstanceRegistry;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
 import com.flezha.sdk.runtime.stream.StreamRegistry;
-import com.flezha.sdk.runtime.worker.ProcessorDispatcher;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nonnull;
 
@@ -22,13 +22,13 @@ public final class ComputeEngineContext {
     private final FlezhaEnv.ResolvedConfig config;
     private final long nativeHandle;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final ProcessorRegistry processorRegistry = new ProcessorRegistry();
+    private final RelayInstanceRegistry relayInstanceRegistry = new RelayInstanceRegistry();
     private final StreamRegistry streamRegistry = new StreamRegistry();
     private final Map<Long, PrimaryStreamReader> primaryReaders = new ConcurrentHashMap<>();
     private final AtomicReference<String> computeEngineId = new AtomicReference<>("undefined");
     private final AtomicReference<ComputeEngineStatus> status =
             new AtomicReference<>(ComputeEngineStatus.STARTING);
-    private ProcessorDispatcher processorDispatcher;
+    private ExecutorService workerPool;
 
     public ComputeEngineContext(
             @Nonnull String namespace,
@@ -59,8 +59,16 @@ public final class ComputeEngineContext {
     }
 
     @Nonnull
-    public ProcessorRegistry processorRegistry() {
-        return processorRegistry;
+    public RelayInstanceRegistry relayInstanceRegistry() {
+        return relayInstanceRegistry;
+    }
+
+    public void setWorkerPool(@Nonnull ExecutorService pool) {
+        this.workerPool = pool;
+    }
+
+    public ExecutorService workerPool() {
+        return workerPool;
     }
 
     @Nonnull
@@ -90,13 +98,5 @@ public final class ComputeEngineContext {
 
     public void setStatus(@Nonnull ComputeEngineStatus newStatus) {
         status.set(newStatus);
-    }
-
-    public void setProcessorDispatcher(@Nonnull ProcessorDispatcher dispatcher) {
-        this.processorDispatcher = dispatcher;
-    }
-
-    public ProcessorDispatcher processorDispatcher() {
-        return processorDispatcher;
     }
 }

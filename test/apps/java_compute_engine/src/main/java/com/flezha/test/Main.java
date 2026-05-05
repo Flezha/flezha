@@ -1,7 +1,5 @@
 package com.flezha.test;
 
-import com.flezha.sdk.FactoryMetadata;
-import com.flezha.sdk.FactoryRegistry;
 import com.flezha.sdk.Flezha;
 
 /**
@@ -16,41 +14,20 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         String namespace = args.length > 0 ? args[0] : "default";
-        defineFactories();
+        registerRelays();
         Flezha unused = Flezha.newInstance(namespace);
         // Intentionally unused — the SDK instance holds the connection open;
         // the JVM stays alive until stdin closes.
         stdKeeper();
     }
 
-    private static void defineFactories() {
-        FactoryRegistry.registerFactory(
-                "do_nothing",
-                DoNothingProcessor.settings(),
-                new DoNothingProcessor.State(),
-                DoNothingProcessor::new,
-                FactoryMetadata.of("Passes input through unchanged"));
-
-        FactoryRegistry.registerFactory(
-                "store_input",
-                StoreInputProcessor.settings(),
-                new StoreInputProcessor.State(),
-                StoreInputProcessor::new,
-                FactoryMetadata.of("Accumulates all inputs in state for later retrieval"));
-
-        FactoryRegistry.registerFactory(
-                "compare_filter",
-                CompareFilterProcessor.settings(),
-                new CompareFilterProcessor.State("default", false),
-                CompareFilterProcessor::new,
-                FactoryMetadata.of("Filters by comparing input against a stored value"));
-
-        FactoryRegistry.registerFactory(
-                "echo_message",
-                EchoMessageProcessor.settings(),
-                new EchoMessageProcessor.State(),
-                EchoMessageProcessor::new,
-                FactoryMetadata.of("Echoes handleMessage payload back verbatim"));
+    private static void registerRelays() {
+        Flezha.registerRelay(DoNothingRelay.class);
+        Flezha.registerRelay(StoreInputRelay.class);
+        Flezha.registerRelay(CompareFilterRelay.class);
+        // RELAY_MESSAGE_HANDLERS_PENDING — `EchoMessageRelay` is removed in
+        // relay-mvp-java per design.md Decision 9. It is restored in
+        // `relay-message-handlers` once per-Shard `handleMessage` ships.
     }
 
     private static void stdKeeper() {

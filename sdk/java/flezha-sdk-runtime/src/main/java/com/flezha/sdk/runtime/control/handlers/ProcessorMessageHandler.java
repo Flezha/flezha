@@ -2,50 +2,30 @@ package com.flezha.sdk.runtime.control.handlers;
 
 import com.google.protobuf.ByteString;
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.proto.ProcessorMessage;
 import com.flezha.sdk.proto.ProcessorMessageResponse;
 import com.flezha.sdk.runtime.ComputeEngineContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
-import com.flezha.sdk.runtime.processor.ProcessorInstance;
 import java.util.List;
 
 /**
- * Handler for {@link ProcessorMessage} control commands. Locates the
- * processor by id and invokes {@code handleMessage}; wraps the return value
- * in a {@link ProcessorMessageResponse}. Factories that do not override
- * {@code handleMessage} throw from the default implementation, and the
- * exception is converted to a non-empty {@code error} field without failing
- * the command.
+ * v1 parking: the new {@code Shard} interface has no {@code handleMessage}
+ * method. Until {@code relay-message-handlers} ships per-Shard
+ * {@code handleMessage}, this handler responds unconditionally with the
+ * canonical "unsupported" error so the agent can throttle to a single WARN
+ * per-relay rather than spamming on every routed message.
+ *
+ * <p>Mirrors the Rust SDK's identical parking shape.
  */
 public final class ProcessorMessageHandler implements CommandHandler {
 
+    private static final String UNSUPPORTED_ERROR = "processor does not support handle_message";
+
     @Override
     public byte[] handle(ComputeEngineContext ctx, CommandRequest request, List<String> errors) {
-        ProcessorMessage cmd = request.getProcessorMessage();
-        String processorId = cmd.getProcessorId();
-
-        ProcessorInstance<?, ?, ?> instance = ctx.processorRegistry().get(processorId);
-        if (instance == null) {
-            errors.add("Processor with id " + processorId + " not found");
-            return new byte[0];
-        }
-
-        byte[] payloadBytes = cmd.getPayload().toByteArray();
-        ProcessorMessageResponse response;
-        try {
-            byte[] reply = instance.handleMessage(payloadBytes);
-            response = ProcessorMessageResponse.newBuilder()
-                    .setPayload(ByteString.copyFrom(reply != null ? reply : new byte[0]))
-                    .setError("")
-                    .build();
-        } catch (Exception e) {
-            String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            response = ProcessorMessageResponse.newBuilder()
-                    .setPayload(ByteString.EMPTY)
-                    .setError(message)
-                    .build();
-        }
-
+        ProcessorMessageResponse response = ProcessorMessageResponse.newBuilder()
+                .setPayload(ByteString.EMPTY)
+                .setError(UNSUPPORTED_ERROR)
+                .build();
         return response.toByteArray();
     }
 }

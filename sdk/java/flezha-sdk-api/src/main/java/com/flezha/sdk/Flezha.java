@@ -1,13 +1,14 @@
 package com.flezha.sdk;
 
+import com.flezha.sdk.relay.Relay;
+import com.flezha.sdk.relay.RelayRegistry;
 import java.util.Map;
 import javax.annotation.Nonnull;
 
 /**
  * SDK entry point. Obtain an instance via {@link #newInstance(String)}
- * after calling
- * {@link FactoryRegistry#registerFactory(String, ProcessorSettings, Object, java.util.function.Supplier)}
- * for every factory the compute engine supports.
+ * after calling {@link #registerRelay(Class)} for every Relay class the
+ * compute engine supports.
  *
  * <p>The concrete implementation lives in {@code flezha-sdk-runtime}; this
  * interface + factory is the public surface user code sees.
@@ -21,11 +22,22 @@ import javax.annotation.Nonnull;
  */
 public interface Flezha extends AutoCloseable {
 
+    /**
+     * Register a Relay class. Pass-through to
+     * {@link RelayRegistry#registerRelay(Class)}.
+     */
+    static void registerRelay(@Nonnull Class<? extends Relay> relayClass) {
+        RelayRegistry.registerRelay(relayClass);
+    }
+
     /** Returns the compute-engine id assigned by the agent during handshake. */
     @Nonnull
     String getId();
 
-    /** Returns a snapshot of currently-registered local processors keyed by id. */
+    /**
+     * Returns a snapshot of currently-spawned Relay instances keyed by what
+     * the wire calls {@code processor_id}.
+     */
     @Nonnull
     Map<String, ?> getProcessors();
 
@@ -48,17 +60,17 @@ public interface Flezha extends AutoCloseable {
      * agent sends {@code AssignComputeEngineId}. Thread-safe; may be called
      * at most once per JVM for a given namespace.
      *
-     * @throws IllegalStateException if no factories have been registered.
+     * @throws IllegalStateException if no Relay classes have been registered.
      */
     @Nonnull
     static Flezha newInstance(@Nonnull String namespace) {
         if (namespace == null || namespace.isEmpty()) {
             throw new IllegalArgumentException("namespace must not be null or empty");
         }
-        if (FactoryRegistry.isEmpty()) {
+        if (RelayRegistry.isEmpty()) {
             throw new IllegalStateException(
-                    "Cannot start Flezha: no factories registered. "
-                            + "Call FactoryRegistry.registerFactory(...) before Flezha.newInstance(...).");
+                    "Cannot start Flezha: no relay classes registered. "
+                            + "Call Flezha.registerRelay(MyRelay.class) before Flezha.newInstance(...).");
         }
 
         // The implementation class lives in flezha-sdk-runtime to avoid a

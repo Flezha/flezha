@@ -1,29 +1,22 @@
-# Java Compute Engine — RELAY_MVP_JAVA_PENDING
+# Java Compute Engine
 
-This Java test app currently does **not** connect to the agent under
-the `relay-mvp-rust` cutover.
+Reference Java test app that mirrors `test/apps/rust_compute_engine/`. Used
+by the Java↔agent integration matrix under `mix test --only java_sdk` and
+by the `mix bench --runtime java` regression bench.
 
-The Rust SDK's wire-format change (`plugin_group: u8` → `channel: String`)
-landed in `relay-mvp-rust`, and the agent ships a single wire — there is
-no dual-stack period. The Java SDK still uses the legacy
-`ProcessorHandler` API and therefore fails to handshake against the new
-agent.
+The app registers three Relay classes via `Flezha.registerRelay(...)`:
 
-`relay-mvp-java` (next-steps row 2 in the relay-architecture umbrella)
-ports the Java SDK to the new `Relay` / `Shard` model and re-enables
-the Java↔agent integration matrix in CI.
+- `do_nothing` — `DoNothingRelay` + `DoNothingShard`
+- `store_input` — `StoreInputRelay` + `StoreInputShard`
+- `compare_filter` — `CompareFilterRelay` + `CompareFilterShard`
 
-Until then:
+The factory id list matches `test/apps/rust_compute_engine/`'s `do_nothing` /
+`store_input` / `compare_filter` set; the `processor-message-handlers`
+factories are absent from both apps until that capability ships.
 
-- `mvn test` against `sdk/java/` continues to pass — Java SDK unit tests
-  do not cross the wire.
-- The Java SDK build still happens (committed natives + jar refresh
-  flow is unchanged).
-- The `mix-integration-matrix` job in
-  `.github/workflows/java-sdk.yml` is gated `if: false` with a
-  `RELAY_MVP_JAVA_PENDING` comment.
-- Every ExUnit test tagged `:java_sdk` (excluded by default in
-  `test/test_helper.exs`) remains parked for the duration.
+## Build
 
-To trace what's left when `relay-mvp-java` lands, grep for
-`RELAY_MVP_JAVA_PENDING` across the repo.
+```sh
+mvn -f test/apps/java_compute_engine/pom.xml package
+java -jar test/apps/java_compute_engine/target/java_compute_engine.jar my_namespace
+```

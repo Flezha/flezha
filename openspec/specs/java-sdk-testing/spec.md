@@ -8,15 +8,19 @@ Defines the testing strategy for the Java SDK: unit test coverage of the protoco
 
 ### Requirement: Unit Test Coverage for Protocol Layer
 
-The Java SDK SHALL include JUnit 5 unit tests that cover every component of the protocol and runtime layer: binary framing (frame build / parse, partial reads, incomplete headers, incomplete payloads, multiple frames per read, oversized payload ids, empty metadata), metadata serialization (round-trip, boundary lengths of 0 and 255, missing metadata), protobuf encode/decode for every `CommandRequest` oneof and `CommandResponse` shape, command dispatch for every command variant (success and error paths), factory registration (duplicate id, missing id lookup, before/after `newInstance` gating), processor lifecycle (add, remove, state serialize, migrate serialize, migrate deserialize), and the reconnect state machine (intentional vs unexpected disconnect, backoff schedule).
+The Java SDK SHALL include JUnit 5 unit tests that cover every component of the protocol and runtime layer: binary framing (frame build / parse, partial reads, incomplete headers, incomplete payloads, multiple frames per read, oversized payload ids, empty metadata), metadata serialization (round-trip, boundary lengths of 0 and 255, missing metadata, the reserved `channel` key), protobuf encode/decode for every `CommandRequest` oneof and `CommandResponse` shape, command dispatch for every command variant (success and error paths, including the `ProcessorMessage` canonical-unsupported response), Relay registration (duplicate factoryId, missing factoryId lookup, before/after `newInstance` gating, wiring-mismatch rejection, entry-channel-type rejection, unwired-channel rejection, static-mode and dynamic-mode default-impl detection), Shard dispatch (single-mode partition allocation, static-mode partition fan-out, sticky per-partition ordering, parallel partition execution, inter-shard reference-equality, plugin-bound serialization + channel-name metadata attachment, `emitWithMeta` rejection on inter-shard channels, reserved-key drop), relay-instance lifecycle (add via `AddProcessor`, remove via `RemProcessor`, state serialize via `ProcessorState`, migrate serialize via `MigrationSerialization`, migrate deserialize via `MigrationDeserialization`), and the reconnect state machine (intentional vs unexpected disconnect, backoff schedule).
 
 #### Scenario: Running mvn test passes the unit suite
 - **WHEN** a developer runs `mvn -f sdk/java/pom.xml test`
 - **THEN** all unit tests SHALL pass and the JaCoCo line coverage report SHALL show ≥ 85% coverage for `flezha-sdk-runtime` and `flezha-sdk-api` modules
 
-#### Scenario: Each SDK protocol requirement has at least one unit test
+#### Scenario: Each java-sdk requirement has at least one unit test
 - **WHEN** the unit test suite is enumerated
-- **THEN** for every requirement under the `java-sdk` spec there SHALL be at least one JUnit test whose `@DisplayName` or class name references the requirement's scenario
+- **THEN** for every requirement under the `java-sdk` spec there SHALL be at least one JUnit test whose `@DisplayName` or class name references the requirement's scenario, including the new `Relay Registration`, `Shard Interface and Per-Partition Dispatch`, and `Sticky Per-Partition Ordering Under ThreadPool Dispatch` requirements
+
+#### Scenario: Old API tests removed
+- **WHEN** the unit test suite is enumerated for tests referencing `ProcessorHandler`, `ProcessorRunner.THREAD_SPAWN`, `FactoryRegistry.registerFactory`, `FactoryMetadata`, `InputTransformer`, or `OutputTransformer`
+- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `Relay` / `Shard` surface
 
 ### Requirement: JNI Bridge Tests
 
@@ -36,15 +40,19 @@ The `flezha-sdk-native` module SHALL include dedicated JNI bridge tests that exe
 
 ### Requirement: Reference Java Compute Engine Test App
 
-The change SHALL introduce `test/apps/java_compute_engine/` — a Maven project that mirrors `test/apps/rust_compute_engine/` and implements the same three reference processors (`DoNothingProcessor`, `StoreInputProcessor`, `CompareFilterProcessor`) using the Java SDK. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_compute_engine`'s behavior.
+The Java reference test app at `test/apps/java_compute_engine/` SHALL implement three reference Relay classes (`DoNothingRelay`, `StoreInputRelay`, `CompareFilterRelay`) using the Java SDK's `Relay` / `Shard` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_compute_engine`'s behavior. The factory ids registered by these Relay classes (via `Relay::factoryId`) SHALL be `"do_nothing"`, `"store_input"`, `"compare_filter"` — exactly the surviving subset that `test/apps/rust_compute_engine/` exposes. The legacy `EchoMessageProcessor` (and any other `processor-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `relay-message-handlers` ships per-Shard `handleMessage`.
 
 #### Scenario: Java test app builds and runs
 - **WHEN** `mvn -f test/apps/java_compute_engine/pom.xml package` produces `target/java_compute_engine.jar` and `java -jar target/java_compute_engine.jar my_namespace` is run while the agent is up
-- **THEN** the process SHALL register its three factories, connect to the agent, and receive an `AssignComputeEngineId` without errors
+- **THEN** the process SHALL register its three Relay classes via `Flezha.registerRelay(...)`, connect to the agent, and receive an `AssignComputeEngineId` without errors
 
-#### Scenario: Java test app mirrors Rust test app processor set
+#### Scenario: Java test app mirrors Rust test app factory set
 - **WHEN** the list of factory ids registered by the Java test app is compared to those registered by `test/apps/rust_compute_engine/`
-- **THEN** the two lists SHALL be identical (same factory ids, same corresponding processor semantics)
+- **THEN** the two lists SHALL be equal sets (`"do_nothing"`, `"store_input"`, `"compare_filter"`); message-handler factories SHALL be absent from both
+
+#### Scenario: Java test app uses the new Shard / ShardCtx API exclusively
+- **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.ProcessorHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.ProcessorSettings`, `com.flezha.sdk.ProcessorResult`, `com.flezha.sdk.ProcessorRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
+- **THEN** zero matches SHALL be found — the test app's classes use only `Relay`, `Shard`, `ShardCtx`, `ChannelBuilder`, and `Flezha.registerRelay`
 
 ### Requirement: Elixir Integration Harness Supports Java Runtime
 
@@ -92,12 +100,20 @@ The repository SHALL expose a single Mix alias `mix test.java_sdk` that (a) buil
 
 ### Requirement: CI Enforces the Full Java SDK Test Suite
 
-The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the full Java-runtime integration matrix on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_compute_engine/**`, or `test/helpers/node_test_helper.ex`. Failures in any of these SHALL block the PR.
+The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the full Java-runtime integration matrix on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_compute_engine/**`, or `test/helpers/node_test_helper.ex`. Failures in any of these SHALL block the PR. After this change merges, every CI matrix entry, integration test, and `mix test --only java_sdk` invocation previously tagged `RELAY_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `relay-mvp-java/design.md` Decision 11). Tests tagged `RELAY_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `relay-message-handlers` ships.
 
 #### Scenario: PR touching flz_transport runs the full Java suite
 - **WHEN** a pull request modifies a file under `flz_transport/src/`
-- **THEN** CI SHALL run both the Rust SDK tests and the full Java SDK test suite (unit + JNI + integration matrix)
+- **THEN** CI SHALL run both the Rust SDK tests and the full Java SDK test suite (unit + JNI + integration matrix) — neither suite SHALL be skipped on the basis of `RELAY_MVP_JAVA_PENDING`
 
 #### Scenario: Failing Java integration test blocks merge
 - **WHEN** any integration scenario under `--only java_sdk` fails
 - **THEN** the CI check for that workflow SHALL report a failure and the PR merge SHALL be blocked until the scenario passes
+
+#### Scenario: No RELAY_MVP_JAVA_PENDING tags remain post-merge
+- **WHEN** the repository is grep-searched for the literal string `RELAY_MVP_JAVA_PENDING` after this change merges
+- **THEN** zero matches SHALL be found across `.github/`, `test/`, `lib/mix/`, `mix.exs`, and `sdk/java/**`
+
+#### Scenario: RELAY_MESSAGE_HANDLERS_PENDING tags persist post-merge
+- **WHEN** the repository is grep-searched for the literal string `RELAY_MESSAGE_HANDLERS_PENDING` after this change merges
+- **THEN** the matches SHALL match the pre-change set — this change does NOT re-enable message-handler tests

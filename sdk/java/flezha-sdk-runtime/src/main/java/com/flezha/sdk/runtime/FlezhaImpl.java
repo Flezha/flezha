@@ -1,11 +1,11 @@
 package com.flezha.sdk.runtime;
 
-import com.flezha.sdk.FactoryRegistry;
 import com.flezha.sdk.Flezha;
 import com.flezha.sdk.native_.FlezhaNativeException;
 import com.flezha.sdk.native_.FlezhaStatus;
 import com.flezha.sdk.native_.NativeEventDispatcher;
 import com.flezha.sdk.native_.NativeTransport;
+import com.flezha.sdk.relay.RelayRegistry;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.CommandRouter;
 import com.flezha.sdk.runtime.control.ControlChannel;
@@ -14,10 +14,13 @@ import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
-import com.flezha.sdk.runtime.worker.DefaultProcessorDispatcher;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
@@ -50,21 +53,21 @@ public final class FlezhaImpl implements Flezha {
      *
      * <p>Steps:
      * <ol>
-     *   <li>Freeze the {@link FactoryRegistry}.</li>
+     *   <li>Freeze the {@link RelayRegistry}.</li>
      *   <li>Resolve config from env vars; log it at INFO.</li>
      *   <li>Create the native context.</li>
-     *   <li>Register the dispatcher (primary stream readers + connection-lost).</li>
+     *   <li>Initialize the worker pool (consumed by every {@code RelayInstance}'s {@code ShardDispatcher}).</li>
      *   <li>Open the control stream and send the handshake init JSON.</li>
      *   <li>Block until the agent replies with {@code AssignComputeEngineId}.</li>
      * </ol>
      */
     @Nonnull
     public static Flezha start(@Nonnull String namespace) {
-        if (FactoryRegistry.isEmpty()) {
+        if (RelayRegistry.isEmpty()) {
             throw new IllegalStateException(
-                    "No factories registered; call FactoryRegistry.registerFactory(...) first.");
+                    "No relay classes registered; call Flezha.registerRelay(MyRelay.class) first.");
         }
-        FactoryRegistry.freeze();
+        RelayRegistry.freeze();
 
         FlezhaEnv.ResolvedConfig resolved = FlezhaEnv.resolveFromEnv();
         FlezhaEnv.logConfig(resolved);
@@ -77,9 +80,9 @@ public final class FlezhaImpl implements Flezha {
 
         ComputeEngineContext ctx = new ComputeEngineContext(namespace, resolved, nativeHandle);
 
-        DefaultProcessorDispatcher dispatcher =
-                new DefaultProcessorDispatcher(ctx, resolved.workerPoolSize());
-        ctx.setProcessorDispatcher(dispatcher);
+        ExecutorService workerPool = Executors.newFixedThreadPool(
+                Math.max(1, resolved.workerPoolSize()), new WorkerThreadFactory("flz-worker"));
+        ctx.setWorkerPool(workerPool);
 
         CountDownLatch assignLatch = new CountDownLatch(1);
         ReconnectCoordinator[] coordinatorRef = new ReconnectCoordinator[1];
@@ -217,7 +220,23 @@ public final class FlezhaImpl implements Flezha {
     @Override
     @Nonnull
     public Map<String, ?> getProcessors() {
-        return ctx.processorRegistry().snapshot();
+        return ctx.relayInstanceRegistry().snapshot();
+    }
+
+    private static final class WorkerThreadFactory implements ThreadFactory {
+        private final String prefix;
+        private final AtomicInteger counter = new AtomicInteger();
+
+        WorkerThreadFactory(String prefix) {
+            this.prefix = prefix;
+        }
+
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, prefix + "-" + counter.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        }
     }
 
     @Override
