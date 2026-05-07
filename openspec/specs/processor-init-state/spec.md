@@ -52,19 +52,41 @@ The system SHALL combine each subscriber's `{:ok, ctx}` return value into the ac
 
 ### Requirement: Cold-start only, snapshot-wins on migration
 
-The system SHALL invoke the init-state plugin chain only when a processor is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot. On migration (`handle_call({:compute_engine_migrate, ...})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated processor.
+The system SHALL invoke the init-state plugin chain only when a processor is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `relay-state-persistence` capability. On migration (`handle_call({:compute_engine_migrate, ...})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated processor. On reconnect of a Partition whose Relay has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}` (per `relay-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for a Partition restored via `RestoreInitState`.
 
-#### Scenario: Cold start with no inline init_values
-- **WHEN** a processor is started and `processor.init_values == %{}`
+For Partitions whose Relay has `persistence_enabled = false`, OR whose agent-side state is empty (no snapshot, no WAL records), the existing init-state capability flow runs unchanged: the init-state plugin chain runs (cold start), or the inline Builder `init_values` is used (cold start with non-empty inline values), or the migration snapshot is used (migrated processor).
+
+`RestoreInitState` and `compute_engine_migrate` SHALL be mutually exclusive per Partition: when `compute_engine_migrate` is invoked for a Partition with persisted state, the migration path's snapshot bytes SHALL be the restoration source AND `RestoreInitState` SHALL NOT be issued for that Partition. The agent's `Overwatch.init/1` SHALL enforce this exclusion.
+
+#### Scenario: Cold start with no inline init_values and no persisted state
+
+- **WHEN** a processor is started and `processor.init_values == %{}` AND no `RestoreInitState` payload is present (either because `persistence_enabled = false` OR no agent-side state exists for any Partition)
 - **THEN** the init-state chain MUST run
 
 #### Scenario: Cold start with inline init_values
+
 - **WHEN** a processor is started with non-empty Builder `init_values`
-- **THEN** the init-state chain MUST NOT run, and the Builder's `init_values` MUST be used as-is
+- **THEN** the init-state chain MUST NOT run, and the Builder's `init_values` MUST be used as-is (regardless of `persistence_enabled`)
 
 #### Scenario: Processor migration
+
 - **WHEN** an existing processor is migrated to a new compute engine via `compute_engine_migrate`
-- **THEN** the init-state chain MUST NOT run, and migration MUST use the existing snapshot-or-inline-`init_values` selection logic
+- **THEN** the init-state chain MUST NOT run, and migration MUST use the existing snapshot-or-inline-`init_values` selection logic; `RestoreInitState` SHALL NOT be issued for any Partition of the migrated processor (even Partitions with persisted state — the migration snapshot is authoritative)
+
+#### Scenario: Partition restart via changelog
+
+- **WHEN** a Partition reconnects AND its Relay has `persistence_enabled = true` AND the agent has a non-empty WAL or snapshot under the `relay-state-persistence` capability
+- **THEN** the agent SHALL deliver state via `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}`; the init-state plugin chain MUST NOT run for that Partition; the SDK SHALL restore via `init_state(shard_key, Some(payload))` + runtime auto-snapshot-decode + change-log fold per `relay-state-persistence`
+
+#### Scenario: Partition restart with persistence disabled at Relay class
+
+- **WHEN** a Partition reconnects AND its Relay has `persistence_enabled = false`
+- **THEN** the agent SHALL NOT issue `RestoreInitState` for that Partition (regardless of any stale agent-side state from a prior `persistence_enabled = true` deploy of the same Relay class); the init-state chain MUST run if `processor.init_values == %{}`
+
+#### Scenario: Partition restart with persistence enabled but no persisted state
+
+- **WHEN** a Partition reconnects AND its Relay has `persistence_enabled = true` AND no WAL or snapshot file exists for this Partition
+- **THEN** the agent SHALL NOT issue `RestoreInitState` (there is nothing to restore); the init-state chain MUST run if `processor.init_values == %{}`
 
 ### Requirement: Per-plugin timeout enforcement
 
@@ -117,5 +139,3 @@ The system SHALL feed the resolved map into the existing `init_values` field of 
 #### Scenario: SDK receives resolved values identically to inline values
 - **WHEN** init-state plugins resolve to a map `M` and `AddProcessor` is sent to the SDK
 - **THEN** the SDK MUST observe the same `init_values == M` as if the caller had baked `M` into the Builder directly
-</content>
-</invoke>

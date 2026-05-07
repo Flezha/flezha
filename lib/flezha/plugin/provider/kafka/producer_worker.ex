@@ -743,7 +743,15 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp in_flight_size(%{in_flight: %{records: r}}), do: length(r)
 
   defp build_record(msg, metadata, from, timestamp_ms) do
-    key = Map.get(metadata, "kafka_msg_key", nil)
+    # `flezha.dedup_key` (set by the SDK runtime for any emit issued
+    # during a `state.apply(...)`-driven `Shard::run`) wins over a
+    # user-supplied `kafka_msg_key`. The contract: the framework owns
+    # the dedup key for stateful relays so retries land on the same
+    # Kafka partition — bypass-able by users only via a different
+    # metadata key (see `relay-state-persistence-agent` §11).
+    key =
+      Map.get(metadata, "flezha.dedup_key") ||
+        Map.get(metadata, "kafka_msg_key", nil)
 
     %{
       from: from,

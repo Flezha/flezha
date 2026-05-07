@@ -891,4 +891,180 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp parse_duration(_), do: :infinity
+
+  # ---------- `flz state` subcommand handlers ----------
+
+  @doc """
+  `flz state list <relay_class>` — print one row per Partition under
+  `<relay_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
+  """
+  def state_list(relay_class, output_format \\ "text") do
+    rows =
+      for {{_ce, rc, sh, pk} = pid, counters} <- Flezha.State.Metrics.snapshot_all(),
+          rc == relay_class do
+        wal_bytes =
+          case :file.read_file_info(Flezha.State.Registry.wal_path(pid)) do
+            {:ok, info} -> elem(info, 1)
+            _ -> 0
+          end
+
+        %{
+          relay_class: rc,
+          shard_id: sh,
+          partition_key: pk,
+          wal_seq: counters.wal_seq,
+          snapshot_seq: counters.snapshot_seq,
+          wal_bytes: wal_bytes,
+          flush_latency_ms_p99: counters.flush_latency_ms_p99,
+          fsync_durability_lag_ms: counters.fsync_durability_lag_ms,
+          dedup_drops_total: counters.dedup_drops_total
+        }
+      end
+
+    case output_format do
+      "json" ->
+        IO.puts(Jason.encode!(%{relay_class: relay_class, partitions: rows}))
+
+      _ ->
+        IO.puts("Partitions under relay #{relay_class}:\n")
+        Enum.each(rows, &print_state_row/1)
+    end
+  end
+
+  defp print_state_row(row) do
+    IO.puts("  #{row.shard_id}/#{row.partition_key}")
+    IO.puts("    wal_seq:                 #{row.wal_seq}")
+    IO.puts("    snapshot_seq:            #{row.snapshot_seq}")
+    IO.puts("    wal_bytes:               #{row.wal_bytes}")
+    IO.puts("    flush_latency_ms_p99:    #{row.flush_latency_ms_p99}")
+    IO.puts("    fsync_durability_lag_ms: #{row.fsync_durability_lag_ms}")
+    IO.puts("    dedup_drops_total:       #{row.dedup_drops_total}")
+    IO.puts("")
+  end
+
+  @doc """
+  `flz state at <relay/shard/partition> <seq | timestamp>` — point-in-time
+  query. Resolves the path string into a `(compute_engine_id, relay,
+  shard, partition_key)` by scanning the on-disk state tree (one match
+  expected; ambiguous paths print all matches and exit non-zero).
+  """
+  def state_at(path_string, target_string, output_format \\ "text") do
+    case parse_state_path(path_string) do
+      {:ok, partition_id} ->
+        target = parse_state_target(target_string)
+
+        case Flezha.State.TimeTravel.query(partition_id, target) do
+          {:ok, result} ->
+            print_state_at(partition_id, target, result, output_format)
+
+          {:error, %{kind: kind, message: msg, earliest_available: earliest}} ->
+            IO.puts(
+              :stderr,
+              "state at: #{kind}: #{msg} (earliest_available=#{inspect(earliest)})"
+            )
+
+            System.halt(1)
+        end
+
+      {:error, reason} ->
+        IO.puts(:stderr, "state at: #{reason}")
+        System.halt(1)
+    end
+  end
+
+  defp print_state_at(_partition_id, _target, result, "json") do
+    IO.puts(
+      Jason.encode!(%{
+        terminal_seq: result.terminal_seq,
+        snapshot_size: byte_size(result.snapshot_bytes),
+        change_log_size: byte_size(result.change_log_bytes)
+      })
+    )
+  end
+
+  defp print_state_at(partition_id, target, result, _) do
+    {_, rc, sh, pk} = partition_id
+
+    IO.puts("state at #{rc}/#{sh}/#{pk} target=#{inspect(target)}:")
+    IO.puts("  terminal_seq:    #{result.terminal_seq}")
+    IO.puts("  snapshot bytes:  #{byte_size(result.snapshot_bytes)}")
+    IO.puts("  change_log bytes:#{byte_size(result.change_log_bytes)}")
+  end
+
+  @doc """
+  `flz state rotate <relay/shard/partition>` — force a compaction by
+  asking Overwatch to dispatch a `CompactPartition` to the SDK.
+  """
+  def state_rotate(path_string) do
+    case parse_state_path(path_string) do
+      {:ok, {ce, rc, sh, pk}} ->
+        case Flezha.Processor.Overwatch.dispatch_compact_partition(ce, {rc, sh, pk}) do
+          {:ok, _ref} -> IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
+          {:error, reason} ->
+            IO.puts(:stderr, "state rotate: #{inspect(reason)}")
+            System.halt(1)
+        end
+
+      {:error, reason} ->
+        IO.puts(:stderr, "state rotate: #{reason}")
+        System.halt(1)
+    end
+  end
+
+  @doc """
+  `flz state retention <relay_class> <hours>` — set runtime retention
+  for `<relay_class>`. Persisted across the next Application boot only
+  if the operator separately writes it to runtime.exs.
+  """
+  def state_retention(relay_class, hours_string) do
+    case Integer.parse(hours_string) do
+      {hours, ""} when hours >= 0 ->
+        current = Application.get_env(:flezha, :time_travel_retention_hours, %{})
+        updated = Map.put(current, relay_class, hours)
+        Application.put_env(:flezha, :time_travel_retention_hours, updated, persistent: true)
+        IO.puts("retention[#{relay_class}] = #{hours} hours (in-memory; persist via runtime.exs)")
+
+      _ ->
+        IO.puts(:stderr, "state retention: hours must be a non-negative integer")
+        System.halt(1)
+    end
+  end
+
+  defp parse_state_path(path_string) do
+    case String.split(path_string, "/", parts: 3) do
+      [rc, sh, pk] ->
+        case find_compute_engine_for(rc, sh, pk) do
+          {:ok, ce} -> {:ok, {ce, rc, sh, pk}}
+          :ambiguous -> {:error, "ambiguous path #{path_string} (multiple compute engines)"}
+          :not_found -> {:error, "no persisted state at #{path_string}"}
+        end
+
+      _ ->
+        {:error, "expected <relay>/<shard>/<partition_key>; got #{path_string}"}
+    end
+  end
+
+  defp find_compute_engine_for(rc, sh, pk) do
+    matches =
+      Flezha.State.Registry.all_partitions()
+      |> Enum.filter(fn {_, r, s, p} -> r == rc and s == sh and p == pk end)
+
+    case matches do
+      [{ce, _, _, _}] -> {:ok, ce}
+      [] -> :not_found
+      _ -> :ambiguous
+    end
+  end
+
+  defp parse_state_target(s) do
+    case Integer.parse(s) do
+      {n, ""} -> {:seq, n}
+      _ ->
+        # Try ISO 8601 timestamp.
+        case DateTime.from_iso8601(s) do
+          {:ok, dt, _} -> {:timestamp, DateTime.to_unix(dt)}
+          _ -> {:seq, 0}
+        end
+    end
+  end
 end

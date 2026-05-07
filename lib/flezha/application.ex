@@ -36,6 +36,11 @@ defmodule Flezha.Application do
           Flezha.Service.PortPilot,
           Flezha.Cluster.Orchestrator,
           {Task.Supervisor, name: Flezha.Processor.MessageHandlerTaskSup}
+        ] ++
+        Flezha.State.Supervisor.application_children() ++
+        [
+          Flezha.State.FsyncBatcher,
+          Flezha.State.Retention
         ]
 
     # Flezha.Testnet only compiles in :test (test/support/); ensure_loaded?

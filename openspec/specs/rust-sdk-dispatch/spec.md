@@ -130,3 +130,159 @@ The Rust SDK crate `flezha_compute_engine` SHALL expose the same public items (f
 - **WHEN** `cargo public-api` (or equivalent) is run comparing the pre- and post-change crate
 - **THEN** the diff SHALL be empty except for items explicitly marked as private / internal in both versions
 
+### Requirement: Per-Partition flusher single-thread linger drain
+
+The Rust SDK SHALL spawn at most one `PartitionFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `register_relay::<R>()` call that registers a Shard with a non-`NoChange` Change type. Programs that register only `NoChange` Shards SHALL NOT spawn a flusher thread.
+
+The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Partitions; (c) for each Partition, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Partition's `send_frame` function pointer (stub in this change; agent-wired in `relay-state-persistence-agent`).
+
+#### Scenario: NoChange-only program does not spawn flusher
+
+- **WHEN** a Rust process registers `register_relay::<R>()` for a Relay whose Shards all have `Change = NoChange`
+- **THEN** no `PartitionFlusher` thread SHALL be spawned, observable via thread-count assertions in the test (`std::thread::available_parallelism` baseline + assertion that no `flezha-flusher` named thread exists)
+
+#### Scenario: First non-NoChange registration starts the flusher
+
+- **WHEN** a Rust process registers `register_relay::<R>()` for a Relay containing a Shard with `Change = MyChange`
+- **THEN** exactly one OS thread named `flezha-flusher` SHALL be spawned for the lifetime of the process
+
+#### Scenario: Flusher drains all non-empty buffers per tick
+
+- **WHEN** four Partitions across two Relays each have non-empty flush buffers and the flusher's linger window elapses
+- **THEN** the flusher SHALL drain all four buffers in a single iteration and the buffers SHALL be empty after the drain
+
+#### Scenario: Flusher honors FLEZHA_FLUSH_LINGER_MS
+
+- **WHEN** `FLEZHA_FLUSH_LINGER_MS=20` is set at process start
+- **THEN** the flusher SHALL sleep 20 ms between iterations; durability lag observed by the test fixture SHALL be at most 20 ms plus the agent fsync window
+
+### Requirement: Toggle-aware drain semantics for persistence_enabled = false
+
+The Rust SDK's `PartitionFlusher` SHALL inspect each registered Partition's `persistence_enabled` flag at drain time. When `false`, the flusher SHALL acquire the buffer's Mutex, invoke `FlushableBuffer::drain_to_frames` (which still applies coalescing), and discard the resulting frames without invoking `send_frame`. The Partition's `change_seq` counter SHALL still advance through the discarded frames.
+
+When `true`, the flusher SHALL invoke `send_frame` for each frame and propagate any `Err(SendError)` by decrementing the seq counter so the next drain re-sends from the right point (no gaps in the agent's WAL view).
+
+#### Scenario: Toggle-off drain discards without wire I/O
+
+- **WHEN** a Relay with `persistence_enabled = false` records 10 Changes via `state.apply(...)` and the flusher's linger elapses
+- **THEN** the Partition's flush buffer SHALL be empty after the tick AND the Partition's `send_frame` function SHALL NOT have been invoked AND the Partition's `change_seq` SHALL have advanced by the post-coalesce record count
+
+#### Scenario: Toggle-on drain invokes send_frame per frame
+
+- **WHEN** a Relay with `persistence_enabled = true` records 10 Changes (no coalescing) via `state.apply(...)` and the flusher's linger elapses
+- **THEN** the Partition's `send_frame` function SHALL have been invoked exactly 10 times with frame bytes built from `[partition_id][seq: u64 BE][header: 16B][change_bytes][crc32: u32 BE]`
+
+#### Scenario: send_frame failure preserves seq monotonicity
+
+- **WHEN** the Partition's `send_frame` returns `Err(SendError::TransportDown)` for the third frame in a 10-frame batch
+- **THEN** the flusher SHALL stop the batch at that frame, decrement `change_seq` to undo the failed-and-following advances (the first two frames' seq advances stay), and SHALL retain the un-sent Changes in the buffer for the next drain (records 3-10 are re-pushed via a side channel that preserves their post-coalesce order)
+
+### Requirement: Hot-path cost is bounded to one Vec::push per state.apply
+
+The Rust SDK's `state.apply(change)` SHALL pay exactly: one `Shard::apply_change(state, &change)` call (user-supplied; cost varies) plus one `Vec::push(change)` operation. The hot path SHALL NOT serialize, fsync, network-send, or acquire any lock beyond the existing per-Partition sticky CAS and the `&mut self` borrow on the buffer (which is already exclusive via the runner thread's ownership of the partition's buffer for the duration of `Shard::run`).
+
+The microbench `state_apply_throughput` (`sdk/rust/benches/state.rs`) SHALL exercise this requirement and report nanoseconds per `state.apply(...)` call across change-payload-size and coalesce-key dimensions; CI SHALL fail the build if any dimension regresses >50% from the recorded baseline.
+
+#### Scenario: No serialization on state.apply
+
+- **WHEN** a Shard's `run` calls `state.apply(MyChange::Foo)` 100 times in a tight loop
+- **THEN** zero serialization calls (`serde::Serialize::serialize`, `postcard::to_allocvec`, `bincode::serialize`, etc.) SHALL be issued from the runner thread during these 100 calls
+
+#### Scenario: No I/O on state.apply
+
+- **WHEN** a Shard's `run` calls `state.apply(MyChange::Foo)` 100 times
+- **THEN** zero `write`, `send`, `fsync`, `fdatasync`, or NIF-call syscalls SHALL be issued from the runner thread during these 100 calls
+
+#### Scenario: state_apply_throughput microbench reports < 200 ns/op for SmallChange + NoCoalesceKey
+
+- **WHEN** the `state_apply_throughput` Criterion bench runs with `change_kind = SmallChange (8B)` and `coalesce_kind = NoCoalesceKey` and the buffer is preallocated to capacity 1024
+- **THEN** the reported median time per `state.apply(...)` SHALL be < 200 ns on the reference host
+
+### Requirement: Coalescing is applied at drain time, not on the hot path
+
+The Rust SDK SHALL apply coalescing inside `FlushableBuffer::drain_to_frames`, AFTER the buffer's Mutex is acquired by the flusher. The hot path of `state.apply(...)` SHALL NOT touch any coalescing data structure.
+
+The drain-time coalescing algorithm SHALL: (a) build a `HashMap<CoalesceKey, usize>` mapping each key to the index of the latest record carrying that key; (b) build a parallel `Vec<bool>` mask marking earlier records with the same key as discarded; (c) emit kept records in their original buffer order. Records with `coalesce_key() == None` SHALL be retained verbatim.
+
+#### Scenario: Same-key records collapse to latest
+
+- **WHEN** a Shard records 50 `BarTick { interval: M1, ts: T }` Changes via `state.apply(...)` within one linger window, all returning `Some(CoalesceKey::from_hash(&(M1, T)))` from `coalesce_key()`
+- **THEN** the flusher's drain SHALL emit exactly one frame whose Change is the 50th `BarTick`
+
+#### Scenario: No-key records are preserved verbatim
+
+- **WHEN** a Shard records 10 Changes whose `coalesce_key() == None` within one linger window
+- **THEN** the flusher's drain SHALL emit 10 frames in the same order they were pushed
+
+#### Scenario: Mixed coalesce-key and no-key records
+
+- **WHEN** a Shard records, in order: A (no key), B (key=K1), C (key=K1), D (no key), E (key=K2)
+- **THEN** the flusher's drain SHALL emit frames in order: A, C, D, E (B is collapsed to C; A and D are preserved verbatim; E is retained)
+
+### Requirement: ShardTestHarness in public API surface (Rust SDK)
+
+The Rust SDK SHALL export `ShardTestHarness::<S: Shard>` under `flezha_compute_engine::testing::ShardTestHarness`, gated by `cfg(any(test, feature = "testing"))`. The harness SHALL support:
+
+- `ShardTestHarness::<S>::new()` (requires `S: Default`) — constructs a harness with `S::init_state(None, None)`.
+- `ShardTestHarness::<S>::with_initial_state(state: S::State)` — explicit initial state.
+- `ShardTestHarness::<S>::with_payload(shard_key, payload)` — replicates the runtime's snapshot+changelog restoration flow.
+- `apply_inputs(iter: impl IntoIterator<Item = S::Input>) -> &mut Self` — invokes `S::run` for each input on the harness's owned state, recording emits and Changes.
+- `expect_changes(self, expected: &[S::Change]) -> Self` (consuming) — asserts equality, requires `S::Change: PartialEq + Debug`.
+- `expect_emits<C>(self, expected: &[C]) -> Self` (consuming) — asserts emits of type `C` equal expected.
+- `expect_state(self, expected: &S::State) -> Self` (consuming) — asserts state equality, requires `S::State: PartialEq + Debug`.
+- `replay(initial: S::State, log: &[S::Change]) -> S::State` — folds the log via `S::apply_change`.
+- `replay_equals(&self) -> Result<(), ReplayMismatch>` — replays self.recorded_changes against a re-constructed initial state and asserts byte-equality (via `serde::Serialize` round-trip) with `self.state`.
+
+#### Scenario: Harness asserts on recorded Changes
+
+- **WHEN** a test runs `ShardTestHarness::<CounterShard>::new().apply_inputs(vec![Input::Add(5), Input::Add(3)]).expect_changes(&[CounterChange { delta: 5 }, CounterChange { delta: 3 }])`
+- **THEN** the chain SHALL succeed and produce a harness whose `recorded_changes` equals the expected slice
+
+#### Scenario: Harness replays for determinism check
+
+- **WHEN** a test runs `ShardTestHarness::<CounterShard>::new().apply_inputs(inputs).replay_equals()`
+- **THEN** the result SHALL be `Ok(())` because `CounterShard::apply_change` is deterministic
+
+#### Scenario: Harness detects non-deterministic apply_change
+
+- **WHEN** a Shard's `apply_change` reads `SystemTime::now()` and uses it to seed a state field, AND the harness runs `replay_equals()`
+- **THEN** the result SHALL be `Err(ReplayMismatch { expected_serialized, actual_serialized })` whose `Display` impl renders a hex-diff identifying the divergent state field
+
+#### Scenario: Harness compiled-out without testing feature
+
+- **WHEN** a downstream crate depends on `flezha_compute_engine` without enabling the `testing` feature flag and does not build under `#[cfg(test)]`
+- **THEN** `flezha_compute_engine::testing` SHALL NOT be visible and references to `ShardTestHarness` SHALL fail to compile
+
+### Requirement: 16-byte version header stamped on persisted Changes
+
+The Rust SDK SHALL stamp a 16-byte header on every Change record emitted to the wire path, per the umbrella's spec:
+
+- bytes 0:1 — `sdk_lang: u8` SHALL equal `1` (Rust).
+- bytes 1:5 — `sdk_version: u32 BE` SHALL be parsed from `env!("CARGO_PKG_VERSION")` at SDK build time as `(major << 16) | (minor << 8) | patch`.
+- bytes 5:9 — `schema_version: u32 BE` SHALL equal `S::SCHEMA_VERSION` for the Shard owning the Change.
+- bytes 9:10 — `format_id: u8` SHALL equal `1` (postcard) in v1.
+- bytes 10:12 — reserved, MUST be zero.
+- bytes 12:16 — `crc32: u32 BE` SHALL be `crc32fast::hash(&change_bytes)`.
+
+The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u8; 16]` and verified in `decode_header` on the restoration path.
+
+#### Scenario: Header bytes match the umbrella spec
+
+- **WHEN** a Rust SDK at `version 0.5.3` and Shard `SCHEMA_VERSION = 1` stamps a header for change_bytes `&[0x01, 0x02, 0x03]`
+- **THEN** the resulting 16-byte header SHALL equal `[0x01, 0x00, 0x00, 0x05, 0x03, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, <crc32 BE bytes of [0x01, 0x02, 0x03]>]`
+
+#### Scenario: Cross-language load fails loud
+
+- **WHEN** the Rust SDK attempts to decode a header whose `sdk_lang` byte is `2` (Java)
+- **THEN** `decode_header` SHALL return `Err(RestoreError::LangMismatch { expected: 1, found: 2 })` and SHALL NOT proceed to deserialization
+
+#### Scenario: schema_version mismatch fails loud
+
+- **WHEN** the Rust SDK at Shard `SCHEMA_VERSION = 2` attempts to decode a record whose header carries `schema_version = 1`
+- **THEN** `decode_header` SHALL return `Err(RestoreError::SchemaMismatch { expected: 2, found: 1 })` and SHALL NOT proceed to deserialization (registered migrators are reserved by the umbrella but not implemented in this change)
+
+#### Scenario: crc32 mismatch fails loud
+
+- **WHEN** the Rust SDK decodes a record whose header crc32 does not match a recomputed crc32 over the change_bytes
+- **THEN** `decode_header` SHALL return `Err(RestoreError::CrcMismatch { partition, seq })` and SHALL NOT proceed to deserialization
+

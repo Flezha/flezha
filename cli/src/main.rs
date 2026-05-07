@@ -4,6 +4,7 @@ mod compute_engine;
 mod namespace;
 mod plugin;
 mod processor;
+mod state;
 mod utils;
 
 use std::env;
@@ -24,6 +25,7 @@ fn main() {
         "compute-engine" => compute_engine::handle_compute_engine_command(&args[2..]),
         "plugin" => plugin::handle_plugin_command(&args[2..]),
         "cluster" => cluster::handle_cluster_command(&args[2..]),
+        "state" => state::handle_state_command(&args[2..]),
         "help" | "--help" | "-h" => print_help(),
         _ => {
             eprintln!("Error: Unknown command '{}'", args[1]);
@@ -46,6 +48,7 @@ fn print_help() {
     println!("    compute-engine Compute engine management commands");
     println!("    plugin         Plugin management commands");
     println!("    cluster        Cluster snapshot/restore (see docs/cluster-snapshot.md)");
+    println!("    state          Per-Partition state queries (time-travel, retention, list)");
     println!("    help           Show this help message");
     println!();
     println!("Use 'flz <COMMAND> help' for more information on a specific command.");

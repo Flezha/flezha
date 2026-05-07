@@ -23,6 +23,11 @@ message CommandRequest {
         ProcessorApplyState processor_apply_state = 11;
         OperatorShutdownNotification operator_shutdown_notification = 12;
         OperatorShutdownAck operator_shutdown_ack = 13;
+        RestoreInitState restore_init_state = 14;
+        RestoreInitStateResponse restore_init_state_response = 15;
+        CompactPartition compact_partition = 16;
+        CompactPartitionResponse compact_partition_response = 17;
+        PartitionMailboxStatus partition_mailbox_status = 18;
     }
 }
 
@@ -118,4 +123,51 @@ message OperatorShutdownNotification {
 // (parallelised across processors) and exits regardless after the timeout.
 message OperatorShutdownAck {
     string processor_id = 1;
+}
+
+// Per-Partition state restore handshake: agent ships latest snapshot
+// bytes plus tail-WAL bytes, SDK applies them to the partition's State
+// before any input is processed. See `relay-state-persistence-agent`
+// design Decision 8.
+//
+// `partition_id` is the structured byte identifier
+// `[relay_class_len: u8][relay_class][shard_id_len: u8][shard_id]
+//  [partition_key_len: u16 BE][partition_key]`. `change_log_bytes` is
+// the tail of the WAL framed `[seq: u64 BE][len: u32 BE]
+// [header: 16B][change_bytes][crc32: u32 BE]` records back-to-back.
+message RestoreInitState {
+    bytes partition_id = 1;
+    bytes snapshot_bytes = 2;
+    bytes change_log_bytes = 3;
+}
+
+// SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`
+// is the highest WAL seq folded into State; the agent expects the next
+// `partition_state_change` to carry `seq = terminal_seq + 1`.
+message RestoreInitStateResponse {
+    bytes partition_id = 1;
+    uint64 terminal_seq = 2;
+}
+
+// Agent-issued compaction request. The SDK clones the partition's
+// `Self::State` under the sticky CAS, serializes it, and replies via
+// `partition_state_snapshot` then `CompactPartitionResponse`.
+message CompactPartition {
+    bytes partition_id = 1;
+}
+
+message CompactPartitionResponse {
+    bytes partition_id = 1;
+    uint64 snapshot_seq = 2;
+    uint64 snapshot_bytes_size = 3;
+}
+
+// Back-pressure signal: the agent's per-Partition WAL outbox is at the
+// high watermark (`status = "full"`) or has drained below the low
+// watermark (`status = "open"`). The SDK's per-Partition mailbox
+// observer translates the signal into the channel's declared
+// `OverflowPolicy`.
+message PartitionMailboxStatus {
+    bytes partition_id = 1;
+    string status = 2;
 }

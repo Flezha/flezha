@@ -313,9 +313,29 @@ These are common assumptions to double-check against the actual code:
 | Rust SDK reconnect loop | `sdk/rust/src/compute_engine/control_unit.rs` |
 | Rust SDK reconnect handler | `sdk/rust/src/compute_engine/{fast,legacy}.rs` `handle_reconnect` |
 
+## RestoreInitState vs compute_engine_migrate
+
+The per-Partition `RestoreInitState` handshake (`relay-state-persistence-agent`)
+and the existing `compute_engine_migrate` flow are **mutually exclusive
+per Partition**. A reconnecting Partition with `persistence_enabled =
+true` and on-disk WAL/snapshot is restored via `RestoreInitState` only.
+A migrating Partition (HotSwap moving the Overwatch to a peer agent
+host) carries its own snapshot bytes through the migration path; the
+new agent does NOT additionally fire `RestoreInitState` for the same
+Partition. Doing both would double-apply state.
+
+The persistence module (`lib/flezha/state/`) is per-Partition and
+ProcessHub-agnostic. ProcessHub picks the agent host; the persistence
+module owns the per-Partition WAL on whichever host the Overwatch is
+currently running on. Migrating an Overwatch to a peer host moves the
+in-memory state via `compute_engine_migrate`; the new host's
+persistence module starts a fresh WAL (no replication is in scope for
+v1).
+
 ## Related docs
 
 - `docs/sdk_protocol_spec.md` — wire-level binary framing and protobuf commands.
+- `docs/agent_state_persistence.md` — per-Partition WAL, snapshot, and time-travel.
 - `docs/cluster-snapshot.md` — manual snapshot/restore CLI semantics.
 - `docs/nif_architecture.md` — transport NIF design (UDS + QUIC drivers).
 - `docs/deployment.md` — k8s DaemonSet layout, env vars, hostPath volumes.

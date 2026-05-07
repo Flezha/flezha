@@ -155,3 +155,166 @@ If an operator opts into `OverflowPolicy::Block` on an entry channel by explicit
 #### Scenario: Opt-in entry Block opts into co-tenancy hazard
 - **WHEN** a Relay declares `c.input::<Vec<u8>>("x").on_full(OverflowPolicy::Block).into::<S>()` and the entry mailbox saturates
 - **THEN** the wire-reader thread SHALL park on the push; Relay B sharing the same connection SHALL NOT receive new frames until the parked push completes (this is documented behavior under explicit opt-in, not a defect)
+
+### Requirement: Shard declares Change associated type and apply_change function (Rust SDK)
+
+The Rust SDK's `Shard` trait SHALL declare an associated `type Change: flezha_compute_engine::state::Change` with default `flezha_compute_engine::state::NoChange`. The `Change` trait SHALL bound on `Serialize + DeserializeOwned + Send + Sync + 'static` and SHALL declare `fn coalesce_key(&self) -> Option<CoalesceKey>` defaulting to `None`.
+
+The `Shard` trait SHALL declare a function `fn apply_change(state: &mut Self::State, change: &Self::Change)` whose default implementation panics with a descriptive error string for any `Change` other than `NoChange`, and is a no-op for `NoChange`. Shards declaring a non-`NoChange` Change SHALL override `apply_change` to make their state mutation deterministic.
+
+`apply_change` SHALL be deterministic: replay equality is required. The Rust SDK SHALL NOT enforce purity in the type system; instead, `flezha_compute_engine::testing::ShardTestHarness::<S>::replay_equals` SHALL be the determinism gate exercised by user tests.
+
+#### Scenario: Default Change is NoChange skips persistence machinery
+
+- **WHEN** a Rust Shard does not declare its `type Change` and the runtime constructs a Partition for it
+- **THEN** `Shard::Change` SHALL resolve to `NoChange`, the runtime SHALL detect this via `TypeId::of::<S::Change>() == TypeId::of::<NoChange>()` at relay-build time and SHALL NOT register a flush buffer or invoke the per-Partition flusher for this Partition
+
+#### Scenario: User-defined Change opts the Shard into persistence
+
+- **WHEN** a Rust Shard declares `type Change = MyChange` (any non-`NoChange` user type implementing the `Change` trait)
+- **THEN** the runtime SHALL register a typed flush buffer (`Vec<MyChange>`) on each Partition of that Shard and SHALL include those Partitions in the per-process flusher's drain rotation
+
+#### Scenario: Default apply_change panics on non-NoChange Change without override
+
+- **WHEN** a Rust Shard declares `type Change = MyChange` but does NOT override `apply_change`
+- **THEN** the relay registration step SHALL succeed (the trait default impl exists) but the first `state.apply(MyChange::Foo)` call SHALL panic with a descriptive error pointing the user at the missing override
+
+#### Scenario: Determinism verified by replay_equals
+
+- **WHEN** a test invokes `ShardTestHarness::<S>::new().apply_inputs(inputs).replay_equals()` against a deterministic `apply_change`
+- **THEN** the returned `Result<(), ReplayMismatch>` SHALL be `Ok(())` and the test SHALL pass; for a non-deterministic `apply_change` (e.g. one that reads `SystemTime::now()`), the result SHALL be `Err(ReplayMismatch { ... })` carrying serialized expected and actual states
+
+### Requirement: Shard declares Clock associated type with default WallClock (Rust SDK)
+
+The Rust SDK's `Shard` trait SHALL declare an associated `type Clock: flezha_compute_engine::state::Clock` with default `WallClock`. `Clock` SHALL be a sealed trait with v1 implementations `WallClock`, `LogicalClock`, and `EventTimeFrom<F>`. v1 of the Rust SDK SHALL fully wire only `WallClock`; Shards declaring a non-default Clock SHALL fail Relay startup with `RelayStartError::ClockNotImplementedYet { clock_type }` until a follow-up change wires `LogicalClock` and `EventTimeFrom`.
+
+#### Scenario: Default Clock is WallClock
+
+- **WHEN** a Rust Shard does not declare its `type Clock`
+- **THEN** `Shard::Clock` SHALL resolve to `WallClock` and Relay startup SHALL succeed
+
+#### Scenario: Non-WallClock fails startup in v1
+
+- **WHEN** a Rust Shard declares `type Clock = LogicalClock`
+- **THEN** `register_relay::<R>()` SHALL fail with `RelayStartError::ClockNotImplementedYet { clock_type: "LogicalClock" }` and the relay SHALL NOT be registered
+
+### Requirement: Shard declares Config associated type with typed constructor (Rust SDK)
+
+The Rust SDK's `Shard` trait SHALL declare an associated `type Config: DeserializeOwned + Send + Sync + 'static` with default `()`, and a constructor `fn from_config(cfg: Self::Config) -> Self`. When `Config = ()` (the default), `from_config(())` SHALL invoke `Self::default()` (requiring `Shard: Default` for unit-Config shards; this is satisfied by the existing `relay-mvp-rust` requirement).
+
+#### Scenario: Default unit Config
+
+- **WHEN** a Rust Shard does not declare `type Config`
+- **THEN** the runtime SHALL invoke `Shard::default()` (via the trait default's `from_config(())`) at Partition init
+
+#### Scenario: User-defined typed Config
+
+- **WHEN** a Rust Shard declares `type Config = MyConfig` and the relay-start metadata carries matching bytes
+- **THEN** the runtime SHALL deserialize the bytes into `MyConfig` (postcard) and SHALL invoke `MyShard::from_config(cfg)` to construct the Shard at Partition init; deserialization failure SHALL produce `RelayStartError::ConfigDeserializeFailed { shard, source }`
+
+### Requirement: Shard declares SCHEMA_VERSION const
+
+The Rust SDK's `Shard` trait SHALL declare `const SCHEMA_VERSION: u32 = 1`. The runtime SHALL stamp this value into the 16-byte header of every persisted Change record for this Shard. Users SHALL bump `SCHEMA_VERSION` when they make a non-additive Change-schema edit (e.g. removing or renaming a Change variant).
+
+#### Scenario: Default SCHEMA_VERSION is 1
+
+- **WHEN** a Rust Shard does not declare `SCHEMA_VERSION`
+- **THEN** the trait default `1` SHALL be inherited and stamped into headers
+
+### Requirement: Shard declares compact_after_bytes per-Partition WAL threshold (Rust SDK)
+
+The Rust SDK's `Shard` trait SHALL declare `fn compact_after_bytes() -> usize { 64 * 1024 * 1024 }` (default 64 MiB). The runtime SHALL report this value to the agent at relay startup in the existing relay-start metadata so the agent's compaction trigger uses the per-Shard value.
+
+#### Scenario: Default 64 MiB threshold reported
+
+- **WHEN** a Rust Shard does not override `compact_after_bytes`
+- **THEN** the relay-start metadata SHALL carry `compact_after_bytes = 67108864` for this Shard
+
+#### Scenario: Per-Shard override propagated to agent
+
+- **WHEN** a Rust Shard declares `fn compact_after_bytes() -> usize { 16 * 1024 * 1024 }`
+- **THEN** the relay-start metadata SHALL carry `compact_after_bytes = 16777216` for this Shard
+
+### Requirement: Shard run receives StateHandle, not direct mutable reference (Rust SDK)
+
+The Rust SDK's `Shard::run` SHALL receive `state: StateHandle<'_, Self>` instead of `state: &mut Self::State`. `StateHandle<'a, S: Shard>` SHALL implement `std::ops::Deref<Target = S::State>` for read access and SHALL expose a single mutation method `apply(&mut self, change: S::Change)` that runs `S::apply_change(state, &change)` and pushes the Change onto the per-Partition flush buffer. `StateHandle` SHALL NOT implement `DerefMut`.
+
+#### Scenario: Direct mutation does not compile
+
+- **WHEN** a Rust Shard's `run` body attempts `state.field = value` directly via `StateHandle`
+- **THEN** the Rust compiler SHALL fail with a "trait bound `DerefMut` not satisfied" error and the program MUST NOT build
+
+#### Scenario: Mutation via apply succeeds, runs apply_change, and records
+
+- **WHEN** a Rust Shard's `run` body calls `state.apply(MyChange::Foo)`
+- **THEN** `S::apply_change(state, &MyChange::Foo)` SHALL run on the underlying state AND `MyChange::Foo` SHALL be appended to the per-Partition flush buffer (as observed by `ShardTestHarness::recorded_changes()` and by the per-process flusher on its next tick)
+
+#### Scenario: Read access via Deref is allocation-free
+
+- **WHEN** a Rust Shard's `run` body reads `state.some_field`
+- **THEN** the read SHALL succeed via `StateHandle`'s `Deref` impl with no Change recording, no buffer mutation, and zero heap allocations
+
+### Requirement: Relay declares PERSISTENCE_ENABLED const, frozen at instance start (Rust SDK)
+
+The Rust SDK's `Relay` trait SHALL declare `const PERSISTENCE_ENABLED: bool = true`. The runtime SHALL resolve a per-Relay-instance `persistence_enabled: bool` at `start_relay(factory_id, instance_id)` time using:
+
+1. If the relay-start metadata from the agent contains `relay_persistence.<RelayClass>` with a boolean value, use that.
+2. Otherwise, use the value of `Relay::PERSISTENCE_ENABLED`.
+3. The default of the trait const is `true`.
+
+The resolved value SHALL be bound to the `RelayInstance` and SHALL be propagated to every `PartitionSlot` constructed for that instance. Subsequent changes to the operator-side metadata or to the `Relay::PERSISTENCE_ENABLED` const (via SDK redeploy) SHALL NOT affect already-running instances; new values take effect on the next `stop_relay` + `start_relay` cycle for that instance.
+
+#### Scenario: Default const value is true
+
+- **WHEN** a Relay does not declare `PERSISTENCE_ENABLED` and no operator override is present in relay-start metadata
+- **THEN** `RelayInstance::persistence_enabled()` SHALL return `true`
+
+#### Scenario: Const-declared opt-out is honored
+
+- **WHEN** `MarketRelay` declares `const PERSISTENCE_ENABLED: bool = false` and no operator override is present
+- **THEN** `RelayInstance::persistence_enabled()` SHALL return `false`; the per-Process flusher SHALL drain-and-discard for this instance's Partitions; `stub_send_frame` (or its real counterpart) SHALL NOT be invoked for this instance
+
+#### Scenario: Operator override takes precedence over const
+
+- **WHEN** `MarketRelay` declares `const PERSISTENCE_ENABLED: bool = true` AND the relay-start metadata carries `relay_persistence.MarketRelay = false`
+- **THEN** `RelayInstance::persistence_enabled()` SHALL return `false`
+
+#### Scenario: Resolved value frozen at instance start
+
+- **WHEN** a `RelayInstance` is constructed with resolved `persistence_enabled = true`, AND the operator subsequently issues a runtime config change setting `relay_persistence.<RelayClass> = false`
+- **THEN** the running `RelayInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_relay(instance_id)` and a subsequent `start_relay(...)` invocation
+
+### Requirement: init_state accepts optional restoration payload (Rust SDK)
+
+The Rust SDK's `Shard::init_state` signature SHALL be `fn init_state(shard_key: Option<&str>, init_payload: Option<RestoreInitPayload<'_>>) -> Self::State`. When `init_payload = None`, `init_state` SHALL behave as a fresh-start constructor. When `init_payload = Some(payload)`, the user MAY inspect or ignore the payload bytes; the runtime SHALL automatically apply the payload (snapshot decode + change-log fold via `Shard::apply_change`) AFTER `init_state` returns, replacing the user-constructed state with the restored state.
+
+#### Scenario: Cold start passes None
+
+- **WHEN** a Rust Partition is constructed for the first time with no prior persisted state on the agent
+- **THEN** the runtime SHALL invoke `init_state(shard_key, None)`
+
+#### Scenario: Restart passes Some payload
+
+- **WHEN** a Rust Partition is reconnected and the agent has snapshot or WAL bytes for it
+- **THEN** the runtime SHALL invoke `init_state(shard_key, Some(payload))` AND, after `init_state` returns, the runtime SHALL decode `payload.snapshot_bytes` into `Self::State` (replacing the user's value) if the snapshot is non-empty, AND the runtime SHALL fold `payload.change_log_bytes` via `Shard::apply_change` in seq order
+
+#### Scenario: User can inspect payload without applying
+
+- **WHEN** a Rust Shard's `init_state` reads `payload.change_log_bytes.len()` for instrumentation purposes
+- **THEN** the read SHALL succeed; the runtime SHALL still apply the payload after `init_state` returns; the user's instrumentation SHALL not affect the restored state
+
+### Requirement: Per-Partition flush buffer registered for non-NoChange Shards
+
+The Rust SDK's `PartitionSlot` SHALL hold a type-erased flush buffer (`Arc<Mutex<Box<dyn FlushableBuffer>>>`) for any Partition whose Shard's `Change` type is not `NoChange`. The buffer SHALL be a `Vec<S::Change>` initially empty; `state.apply(...)` SHALL push onto it. The per-process flusher SHALL acquire the Mutex on each linger tick to drain the buffer.
+
+For Partitions whose Shard's `Change == NoChange`, the runtime SHALL NOT allocate a flush buffer or register the Partition with the flusher.
+
+#### Scenario: NoChange Shard Partitions are not registered with the flusher
+
+- **WHEN** the runtime constructs a Partition for a Shard with `Change = NoChange`
+- **THEN** the `PartitionFlusher`'s registry SHALL NOT contain an entry for this Partition
+
+#### Scenario: Non-NoChange Shard Partitions are registered
+
+- **WHEN** the runtime constructs a Partition for a Shard with `Change = MyChange`
+- **THEN** the `PartitionFlusher`'s registry SHALL contain an entry keyed by `(relay_instance_id, shard_id, partition_key)` with the typed buffer reference, the resolved `persistence_enabled` flag, the `change_seq: AtomicU64`, and the wire-frame send fn pointer

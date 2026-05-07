@@ -3,11 +3,13 @@ defmodule Flezha.Processor.Overwatch do
   alias Flezha.Service.ConfigManager
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
+  alias Flezha.ComputeEngine.ControlChannel
   alias Flezha.ComputeEngine.StreamSup
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.State.{Restore, Wire}
 
   require Logger
 
@@ -579,4 +581,80 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   defp normalize_snapshot_interval(_), do: @snapshop_interval
+
+  # ---------- Per-Partition persistence wiring ----------
+  #
+  # Helpers used by `Flezha.State.*` and tests to ship persistence
+  # control commands to the SDK. Each takes the agent-side
+  # `compute_engine_id` and a structured `partition_id` triple
+  # `{relay_class, shard_id, partition_key}`.
+
+  @doc """
+  Ship a `RestoreInitState` command to the SDK and return the agent's
+  freshly assembled payload. The caller is expected to await the
+  matching `RestoreInitStateResponse` over the control channel before
+  unblocking input streaming for the Partition.
+  """
+  @spec dispatch_restore_init_state(binary(), {binary(), binary(), binary()}) ::
+          {:ok, reference()} | {:error, term()}
+  def dispatch_restore_init_state(compute_engine_id, {rc, sh, pk}) do
+    full_partition_id = {compute_engine_id, rc, sh, pk}
+
+    case Restore.assemble_payload(full_partition_id) do
+      {:ok, payload} ->
+        partition_id_bytes = Wire.encode_partition_id(rc, sh, pk)
+
+        command =
+          {:restore_init_state,
+           %ComputeEngineCommands.RestoreInitState{
+             partition_id: partition_id_bytes,
+             snapshot_bytes: payload.snapshot_bytes,
+             change_log_bytes: payload.change_log_bytes
+           }}
+
+        ControlChannel.send_control(compute_engine_id, command)
+    end
+  end
+
+  @doc """
+  Ship a `CompactPartition` command to the SDK. The SDK responds with a
+  `partition_state_snapshot` data frame (handled by
+  `Flezha.ComputeEngine.StreamChannel`) followed by a
+  `CompactPartitionResponse` control reply.
+  """
+  @spec dispatch_compact_partition(binary(), {binary(), binary(), binary()}) ::
+          {:ok, reference()} | {:error, term()}
+  def dispatch_compact_partition(compute_engine_id, {rc, sh, pk}) do
+    partition_id_bytes = Wire.encode_partition_id(rc, sh, pk)
+
+    command =
+      {:compact_partition,
+       %ComputeEngineCommands.CompactPartition{partition_id: partition_id_bytes}}
+
+    ControlChannel.send_control(compute_engine_id, command)
+  end
+
+  @doc """
+  Ship a `PartitionMailboxStatus` notification to the SDK so the
+  producing Shard's `OverflowPolicy` machinery can park or unpark
+  emits to this Partition. `status` is `:full` or `:open`.
+  """
+  @spec notify_partition_backpressure({binary(), binary(), binary(), binary()}, :full | :open) ::
+          :ok | {:error, term()}
+  def notify_partition_backpressure({compute_engine_id, rc, sh, pk}, status)
+      when status in [:full, :open] do
+    partition_id_bytes = Wire.encode_partition_id(rc, sh, pk)
+
+    command =
+      {:partition_mailbox_status,
+       %ComputeEngineCommands.PartitionMailboxStatus{
+         partition_id: partition_id_bytes,
+         status: Atom.to_string(status)
+       }}
+
+    case ControlChannel.send_control_async(compute_engine_id, command) do
+      :ok -> :ok
+      other -> other
+    end
+  end
 end

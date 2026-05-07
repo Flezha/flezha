@@ -1057,45 +1057,131 @@ The SDK automatically reconnects when the control channel drops unexpectedly. Se
 **Agent-side keepalive:** The agent preserves compute engine state for a configurable window (default 30000ms, via `FLEZHA_OPERATOR_KEEPALIVE`) after detecting a disconnect. If a new SDK process with the same namespace connects within this window, the agent may migrate preserved processors to the new compute engine.
 
 
-## Reserved payload-ids and commands for state persistence
+## Per-Partition State Persistence
 
-The following payload-ids and control commands are reserved by the
-umbrella `relay-state-persistence` and implemented end-to-end in
-`relay-state-persistence-agent`. The Rust SDK emits these from the
-per-Partition flusher once the agent change wires the wire path; until
-then a stub `tracing::trace!` consumer logs the byte count and discards
-the bytes (see `docs/relay_state_persistence.md`).
+The persistence subsystem reserves two data-stream payload-ids and five
+control commands. Both directions and all wire shapes are settled here
+and implemented in `relay-state-persistence-agent`.
 
-### Payload-id `partition_state_change`
+### Data-stream payload-id `partition_state_change`
 
-Per-record framing produced by the per-Partition flusher:
+SDK → agent. Carries one Change record destined for the per-Partition
+WAL. Frame layout (matches `Flezha.State.Wire.decode_frame/1` and
+`flezha_compute_engine::partition::flusher::build_partition_state_change_frame`):
 
 ```
-[partition_id:    u32 BE]
-[seq:             u64 BE]
-[header:          16 B   ]   <- HeaderTemplate::stamp output
-[change_bytes_len:u32 BE]
-[change_bytes        ...]
-[crc32:           u32 BE]
+[partition_id_len: u16 BE]
+[partition_id_bytes]
+[seq:              u64 BE]
+[header:           16 B  ]    <- HeaderTemplate::stamp output
+[body_len:         u32 BE]
+[body]                        <- postcard-encoded Change
+[crc32:            u32 BE]    <- crc32 over body
 ```
 
-The 16-byte header carries `sdk_lang = 1` (Rust) / `2` (Java),
-SDK version (BE u32), Shard `SCHEMA_VERSION` (BE u32),
-`format_id = 1` (postcard), reserved bytes, and a CRC32 over the
-change bytes.
+`partition_id_bytes` is structured so the agent can route the record to
+the right per-Partition WAL file without a side-table mapping:
 
-### Payload-id `partition_state_snapshot`
+```
+[relay_class_len:   u8   ][relay_class]
+[shard_id_len:      u8   ][shard_id]
+[partition_key_len: u16 BE][partition_key]
+```
 
-Reserved for snapshot file framing produced by the agent. Wire-format
-details land in `relay-state-persistence-agent`.
+The 16-byte header carries `sdk_lang = 1` (Rust) / `2` (Java), SDK
+version (BE u32), Shard `SCHEMA_VERSION` (BE u32), `format_id = 1`
+(postcard), reserved bytes, and a CRC32 over the body.
 
-### Control command `RestoreInitState`
+### Data-stream payload-id `partition_state_snapshot`
 
-Reserved for the warm-restart handshake. The agent ships
-`RestoreInitState` with the snapshot + change-log bytes; the SDK
-constructs a `RestoreInitPayload` and threads it into
-`Shard::init_state(shard_key, Some(payload))` — see
-`sdk/rust/src/partition/restore.rs` for the SDK-side decoder. Wire
-format and end-to-end semantics land in
-`relay-state-persistence-agent`.
+SDK → agent. Same wire shape as `partition_state_change`; `body` is the
+postcard-encoded `Self::State` (full snapshot) instead of one Change.
+The agent writes the body to `<partition_key>.snap.<seq>` via the
+`.tmp → fsync → rename → truncate WAL up to seq` sequence.
+
+### Control command `RestoreInitState` (agent → SDK)
+
+```protobuf
+message RestoreInitState {
+    bytes partition_id      = 1;
+    bytes snapshot_bytes    = 2;
+    bytes change_log_bytes  = 3;
+}
+```
+
+Each record inside `change_log_bytes` uses the agent's on-disk WAL
+framing:
+
+```
+[seq:           u64 BE]
+[len:           u32 BE]    <- = 16 + change_bytes.len()
+[header:        16 B  ]
+[change_bytes]
+[crc32:         u32 BE]    <- crc32 over header + change_bytes
+```
+
+The SDK's `Shard::init_state(shard_key, Some(payload))` is invoked with
+the payload borrowed; the runtime decodes `snapshot_bytes` (when
+non-empty) into `Self::State` and folds the change-log records via
+`Shard::apply_change`.
+
+### Control command `RestoreInitStateResponse` (SDK → agent)
+
+```protobuf
+message RestoreInitStateResponse {
+    bytes  partition_id  = 1;
+    uint64 terminal_seq  = 2;
+}
+```
+
+The agent unblocks the Partition's input streaming after the response
+arrives. The next `partition_state_change` is expected to carry
+`seq = terminal_seq + 1`.
+
+### Control command `CompactPartition` (agent → SDK)
+
+```protobuf
+message CompactPartition {
+    bytes partition_id = 1;
+}
+```
+
+Issued when `wal_size_bytes` exceeds `compact_after_bytes` (per-Shard,
+default 64 MiB) or when the operator runs `flz state rotate`. The SDK
+clones `Self::State` under the partition's sticky CAS, postcard-
+serializes it, ships the bytes via `partition_state_snapshot`, then
+replies with:
+
+```protobuf
+message CompactPartitionResponse {
+    bytes  partition_id        = 1;
+    uint64 snapshot_seq        = 2;
+    uint64 snapshot_bytes_size = 3;
+}
+```
+
+### Control command `PartitionMailboxStatus` (agent → SDK)
+
+```protobuf
+message PartitionMailboxStatus {
+    bytes  partition_id = 1;
+    string status       = 2;   // "full" | "open"
+}
+```
+
+One-way notification (no `CommandResponse`). The agent's `WalWriter`
+emits `"full"` when `pending_bytes` exceeds `wal_high_watermark_bytes`
+(default 16 MiB) and `"open"` when it falls below
+`wal_low_watermark_bytes` (default `high / 2`). The SDK's per-Partition
+mailbox observer translates the signal into the channel's declared
+`OverflowPolicy`.
+
+### Plugin metadata: `flezha.dedup_key`
+
+Reserved metadata key on plugin-bound emit frames. The SDK runtime
+stamps `flezha.dedup_key = "<relay_class>/<shard_id>/<partition_key>/<seq>"`
+on every emit issued during a `state.apply(...)`-driven `Shard::run`.
+Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka`) honor it as the
+sink-side dedup key; user-supplied `flezha.dedup_key` is silently
+dropped by the SDK runtime.
 
