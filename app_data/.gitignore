@@ -1,0 +1,4 @@
+# Application data.
+state/*
+sockets/*
+recovery/*

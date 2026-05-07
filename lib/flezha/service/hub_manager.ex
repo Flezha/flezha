@@ -1,4 +1,5 @@
 defmodule Flezha.Service.HubManager do
+  alias Flezha.Plugin
   alias Flezha.Service.Identificator
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Constant.Hook
@@ -8,6 +9,13 @@ defmodule Flezha.Service.HubManager do
   require Logger
 
   use Supervisor
+
+  # Mirrors `Flezha.Service.ProcessorManager.init_processor/3`'s retry
+  # budget so a transient `:no_response` from the local hub's
+  # `dist_sup` (mid-restart, snapshot/restore in flight, parallel-suite
+  # churn) does not surface as a hard failure on plugin enable/disable.
+  @no_response_retry_attempts 8
+  @no_response_retry_initial_ms 150
 
   def start_link(_) do
     Supervisor.start_link(__MODULE__, [], name: __MODULE__)
@@ -201,6 +209,136 @@ defmodule Flezha.Service.HubManager do
 
   def hook_remove_pid(_compute_engine_id, %{child_id: _processor_id}) do
     # TODO: Implement.
+  end
+
+  @doc """
+  Apply `update_fn` to the plugin list embedded in a processor's
+  ProcessHub child-spec start-args and write the rewritten cspec back
+  through `ProcessHub.Service.ProcessRegistry.update/3`.
+
+  `update_fn` receives the current plugin list as `[{plugin_id, %Flezha.Plugin{}}]`
+  tuples (existing cold-start cspec entries stored as bare `%Flezha.Plugin{}`
+  structs are normalised to tuples on read) and returns the new list in
+  the same shape.
+
+  Both child-spec start-args tuple shapes Flezha emits are supported:
+
+    * `{namespace, processor}` — cold-start shape written by
+      `Flezha.Service.ProcessorManager.init_processor/3`.
+    * `{namespace, compute_engine_id, processor}` — post-`alter_child_data/2`
+      shape.
+
+  Wraps the registry update in the `:no_response` retry shape used by
+  `processor_manager.ex:157-167` (8 attempts, exponential backoff capped
+  at 5 s). `:no_response` here surfaces when the hub's registry
+  GenServer is mid-restart alongside `dist_sup`; the dist_sup heals on
+  its own and the next attempt succeeds. Stable-state failure (8
+  attempts, ~14 s of wait) propagates.
+  """
+  @spec update_processor_plugins(
+          String.t(),
+          String.t(),
+          ([{binary(), Plugin.t()}] -> [{binary(), Plugin.t()}])
+        ) :: :ok | {:error, term()}
+  def update_processor_plugins(namespace, processor_id, update_fn)
+      when is_function(update_fn, 1) do
+    do_update_processor_plugins(namespace, processor_id, update_fn, 0)
+  end
+
+  @doc """
+  Read the current plugin list embedded in a processor's child-spec
+  start args. Returns `{:ok, [{plugin_id, %Flezha.Plugin{}}]}` (entries
+  are normalised to tuple form regardless of how they are stored).
+  """
+  @spec processor_plugins(String.t(), String.t()) ::
+          {:ok, [{binary(), Plugin.t()}]} | {:error, term()}
+  def processor_plugins(namespace, processor_id) do
+    hub_id = Identificator.hub(namespace)
+
+    case ProcessHub.is_alive?(hub_id) do
+      false ->
+        {:error, "hub not alive"}
+
+      true ->
+        case ProcessRegistry.lookup(hub_id, processor_id) do
+          nil ->
+            {:error, "processor not found"}
+
+          {%{start: {_m, _f, [arg]}}, _node_pids} ->
+            {:ok, normalize_plugins(extract_plugins(arg))}
+
+          {%{start: {_m, _f, [arg]}}, _node_pids, _metadata} ->
+            {:ok, normalize_plugins(extract_plugins(arg))}
+        end
+    end
+  end
+
+  defp do_update_processor_plugins(namespace, processor_id, update_fn, attempt) do
+    hub_id = Identificator.hub(namespace)
+
+    case ProcessHub.is_alive?(hub_id) do
+      false ->
+        {:error, "hub not alive"}
+
+      true ->
+        result =
+          try do
+            ProcessRegistry.update(hub_id, processor_id, fn cspec, node_pids, metadata ->
+              {update_cspec_plugins(cspec, update_fn), node_pids, metadata}
+            end)
+          catch
+            :exit, _ -> {:error, :no_response}
+          end
+
+        cond do
+          result == :ok ->
+            :ok
+
+          match?({:error, :no_response}, result) and
+              attempt < @no_response_retry_attempts ->
+            backoff =
+              min(@no_response_retry_initial_ms * Bitwise.bsl(1, attempt), 5_000)
+
+            Process.sleep(backoff)
+            do_update_processor_plugins(namespace, processor_id, update_fn, attempt + 1)
+
+          true ->
+            result
+        end
+    end
+  end
+
+  defp update_cspec_plugins(%{start: {m, f, [arg]}} = cspec, update_fn) do
+    new_arg =
+      case arg do
+        {namespace, processor} ->
+          {namespace, rewrite_processor_plugins(processor, update_fn)}
+
+        {namespace, compute_engine_id, processor} ->
+          {namespace, compute_engine_id, rewrite_processor_plugins(processor, update_fn)}
+      end
+
+    Map.put(cspec, :start, {m, f, [new_arg]})
+  end
+
+  defp rewrite_processor_plugins(processor, update_fn) do
+    current = normalize_plugins(extract_plugins({nil, processor}))
+    new_plugins = update_fn.(current)
+    new_opts = Keyword.put(processor.opts, :plugins, new_plugins)
+    %{processor | opts: new_opts}
+  end
+
+  defp extract_plugins({_namespace, processor}),
+    do: Keyword.get(processor.opts, :plugins, [])
+
+  defp extract_plugins({_namespace, _compute_engine_id, processor}),
+    do: Keyword.get(processor.opts, :plugins, [])
+
+  defp normalize_plugins(plugins) when is_list(plugins) do
+    Enum.map(plugins, fn
+      {id, %Plugin{} = plugin} -> {id, plugin}
+      %Plugin{id: id} = plugin -> {id, plugin}
+    end)
   end
 
   def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do

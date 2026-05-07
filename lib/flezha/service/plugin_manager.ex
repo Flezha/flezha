@@ -2,12 +2,23 @@ defmodule Flezha.Service.PluginManager do
   @moduledoc """
   Per-node registry of enabled `%Flezha.Plugin{}` entries. Routes
   `enable_plugin/2` into the owning processor's Overwatch via the unified
-  `{:plugin_subscribe, ...}` / `{:plugin_unsubscribe, ...}` messages.
+  `{:plugin_subscribe, ...}` / `{:plugin_unsubscribe, ...}` messages and
+  persists the subscription into the processor's ProcessHub child-spec
+  so it survives any subsequent Overwatch (re)start.
+
+  The cspec is the source of truth for plugin subscriptions; the
+  runtime `Overwatch.state.extensions` table is rebuilt from the cspec
+  on every `init/1`. See
+  `openspec/specs/plugin-subscription-persistence/spec.md` for the
+  full contract.
   """
 
   use GenServer
 
+  require Logger
+
   alias Flezha.Plugin
+  alias Flezha.Service.HubManager
   alias Flezha.Service.ProcessorManager
 
   ## Public API
@@ -79,6 +90,13 @@ defmodule Flezha.Service.PluginManager do
       with :ok <- plugin_id_unique(state, plugin_id),
            {:ok, pid} <- resolve_processor(plugin),
            :ok <- forward_subscribe(pid, plugin_id, plugin) do
+        # Per design.md Decision 2: subscribe-first, cspec-update-second.
+        # If the cspec write fails after a successful subscribe, the
+        # runtime is correct but the cspec is stale; log at :error so
+        # operators see the divergence and reply :ok (the next plugin op
+        # for this processor will canonicalise the cspec).
+        persist_enable_to_cspec(plugin, plugin_id)
+
         {{:ok, "plugin enabled"},
          Map.put(state, plugin_id, {plugin.namespace, plugin.processor_id})}
       else
@@ -94,14 +112,34 @@ defmodule Flezha.Service.PluginManager do
         {:reply, {:error, "plugin not found"}, state}
 
       {namespace, processor_id} ->
-        case ProcessorManager.get_processor_pid(namespace, processor_id) do
-          {:ok, pid} ->
-            _ = GenServer.call(pid, {:plugin_unsubscribe, plugin_id})
+        # Per design.md Decision 2: cspec-update-first, unsubscribe-second
+        # for the disable path. If the cspec update fails the unsubscribe
+        # SHALL NOT run — surface the error so the caller can retry. If
+        # the unsubscribe fails after the cspec has already been
+        # rewritten, the runtime extensions table is stale-but-correct
+        # (still subscribed); the next Overwatch (re)start re-subscribes
+        # only the cspec-listed plugins, dropping the stale entry.
+        case HubManager.update_processor_plugins(namespace, processor_id, fn plugins ->
+               Enum.reject(plugins, fn {id, _plugin} -> id == plugin_id end)
+             end) do
+          :ok ->
+            case ProcessorManager.get_processor_pid(namespace, processor_id) do
+              {:ok, pid} ->
+                _ = GenServer.call(pid, {:plugin_unsubscribe, plugin_id})
+                {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
+
+              _ ->
+                # Processor gone — treat as disabled locally.
+                {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
+            end
+
+          {:error, "processor not found"} ->
+            # Processor gone — treat as disabled locally; cspec already
+            # absent so there is nothing to canonicalise.
             {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
 
-          _ ->
-            # Processor gone — treat as disabled locally.
-            {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
         end
     end
   end
@@ -146,4 +184,29 @@ defmodule Flezha.Service.PluginManager do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp persist_enable_to_cspec(%Plugin{namespace: ns, processor_id: pid_id} = plugin, plugin_id)
+       when is_binary(ns) and is_binary(pid_id) do
+    stripped = Plugin.strip_transient(plugin)
+
+    case HubManager.update_processor_plugins(ns, pid_id, fn plugins ->
+           plugins
+           |> Enum.reject(fn {id, _} -> id == plugin_id end)
+           |> Kernel.++([{plugin_id, stripped}])
+         end) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "[plugin_manager] plugin #{inspect(plugin_id)} subscribed in runtime " <>
+            "but cspec update failed for processor #{inspect(pid_id)} in " <>
+            "namespace #{inspect(ns)}: #{inspect(reason)}"
+        )
+
+        :ok
+    end
+  end
+
+  defp persist_enable_to_cspec(_plugin, _plugin_id), do: :ok
 end

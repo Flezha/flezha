@@ -5,6 +5,14 @@ time-travel infrastructure on the Elixir agent. Settles details
 deferred from `relay-state-persistence/design.md`; keep this in sync
 with `lib/flezha/state/`.
 
+> Per-Partition WAL persistence (this doc) is independent of and
+> complementary to **plugin-subscription persistence** (cspec-driven;
+> see `docs/process_hub_architecture.md` "Plugin subscriptions
+> persistence" and
+> `openspec/specs/plugin-subscription-persistence/spec.md`). The WAL
+> persists data-plane progress; the cspec persists which plugins are
+> subscribed.
+
 ## On-disk layout
 
 ```

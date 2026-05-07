@@ -31,10 +31,6 @@ flezha-*.tar
 # TODO file.
 /TODO.md
 
-# Application data.
-/app_data/sockets/*
-/app_data/recovery/
-
 # Ignore environment variables file
 .env
 

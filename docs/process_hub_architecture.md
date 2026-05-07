@@ -313,6 +313,31 @@ These are common assumptions to double-check against the actual code:
 | Rust SDK reconnect loop | `sdk/rust/src/compute_engine/control_unit.rs` |
 | Rust SDK reconnect handler | `sdk/rust/src/compute_engine/{fast,legacy}.rs` `handle_reconnect` |
 
+## Plugin subscriptions persistence
+
+The ProcessHub child-spec is the source of truth for a processor's
+plugin subscriptions. `processor.opts[:plugins]` (embedded inside the
+cspec start args) carries the authoritative list; the runtime
+`Overwatch.state.extensions` table is a derived projection rebuilt
+from it on every `init/1`. Every successful
+`Flezha.Service.PluginManager.enable_plugin/2` writes through to the
+cspec via `Flezha.Service.HubManager.update_processor_plugins/3`,
+and `disable_plugin/1` removes from the cspec before issuing the
+unsubscribe. As a result every Overwatch (re)start path — cold
+start, ProcessHub redistribution, in-place restart from
+`alter_child_data` rewriting start args, agent process restart with
+intact ProcessHub state, and HotSwap migration — restores the same
+plugin set without operator intervention. See
+`openspec/specs/plugin-subscription-persistence/spec.md` for the
+full contract.
+
+This persistence layer is independent of the per-Partition WAL +
+snapshot persistence in `lib/flezha/state/` (`docs/agent_state_persistence.md`):
+the cspec persists *which* plugins are subscribed; the per-Partition
+layer persists *how much progress* a Partition has made through its
+input stream. Both layers can be present, absent, or partially
+populated for a given processor without affecting one another.
+
 ## RestoreInitState vs compute_engine_migrate
 
 The per-Partition `RestoreInitState` handshake (`relay-state-persistence-agent`)

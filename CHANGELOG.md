@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Changed
+
+- Plugin subscriptions added via `flz plugin enable` now survive any
+  Overwatch (re)start automatically. The ProcessHub child-spec is the
+  source of truth for a processor's enabled plugins; the runtime
+  `Overwatch.state.extensions` table is rebuilt from it on every
+  `init/1`. Previously, plugins enabled after `flz processor start`
+  were dropped on operator-pod restart, agent restart with intact
+  ProcessHub state, or any in-place restart that ran through
+  `HubManager.alter_child_data/2` (e.g. `kubectl rollout restart
+  daemonset/<sdk-daemonset>`), forcing operators to re-run the enable
+  commands manually before the data plane recovered. See
+  `openspec/specs/plugin-subscription-persistence/spec.md`.
+
+  **Upgrade note for clusters with already-running processors.**
+  Processors whose plugins were enabled dynamically before this
+  upgrade have an empty `opts[:plugins]` in the cspec. They keep
+  working as long as no Overwatch (re)start happens before the next
+  `flz plugin enable` / `flz plugin disable` op, which canonicalises
+  the cspec. Operators who want to canonicalise immediately can run
+  `flz plugin disable <id> && flz plugin enable <id>` for each
+  plugin. No automatic migration job is shipped.
+
 ### Added
 
 - Hardened first-party Kafka producer plugin

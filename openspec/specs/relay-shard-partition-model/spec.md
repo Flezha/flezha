@@ -2,9 +2,7 @@
 
 ## Purpose
 TBD - created during sync of `relay-bounded-mailbox`. The umbrella `relay-architecture` change defines the canonical Relay/Shard/Partition model and is the source of additional requirements once it archives. Update Purpose then.
-
 ## Requirements
-
 ### Requirement: Per-Partition mailbox is bounded with declared capacity
 
 Each PartitionSlot's mailbox SHALL have a fixed capacity declared at relay startup. The mailbox SHALL refuse a push that would exceed this capacity; the SDK then applies the source channel's `OverflowPolicy` (see "Overflow policy declared per channel"). Capacity SHALL NOT change at runtime once the relay is started.
@@ -318,3 +316,199 @@ For Partitions whose Shard's `Change == NoChange`, the runtime SHALL NOT allocat
 
 - **WHEN** the runtime constructs a Partition for a Shard with `Change = MyChange`
 - **THEN** the `PartitionFlusher`'s registry SHALL contain an entry keyed by `(relay_instance_id, shard_id, partition_key)` with the typed buffer reference, the resolved `persistence_enabled` flag, the `change_seq: AtomicU64`, and the wire-frame send fn pointer
+
+### Requirement: Four-layer abstraction with defined responsibilities
+
+The SDK SHALL expose a four-layer abstraction comprising Relay, Shard, Partition, and Runner. Each layer SHALL have the following exclusive responsibilities and no others SHALL be implicitly added:
+
+- **Relay** — a user-defined struct implementing the `Relay` trait. Spawned by the agent once per `flz processor start` invocation. Owns the channel topology declaration and the registered Shards. Holds no domain state of its own.
+- **Shard** — a user-defined struct implementing the `Shard` trait. Defines a stage's typed input, typed output, state type, run logic, and partitioning strategy. Holds no runtime state of its own; acts as the template for Partitions.
+- **Partition** — a runtime instance of a Shard, identified by an optional string key. Holds exactly one State value, exactly one mailbox, and exactly one `inflight` flag. Created by the SDK at relay startup; not user-instantiable.
+- **Runner** — an OS thread in the SDK's worker pool. Drains Partition mailboxes. Not user-visible at the API surface; pool size is configured via the existing `FLEZHA_WORKER_POOL_SIZE` mechanism.
+
+#### Scenario: Each layer has a distinct programmer-visible role
+- **WHEN** a developer reads the public API of the new SDK
+- **THEN** they SHALL find a `Relay` trait, a `Shard` trait, but no `Partition` trait or `Runner` trait — Partitions and Runners are runtime artifacts created by the SDK, not types the user implements
+
+#### Scenario: A Relay holds no domain state
+- **WHEN** a `Relay` impl is examined
+- **THEN** the trait MUST NOT include a state-init or state-handle method; all stateful behavior MUST live on Shards
+
+### Requirement: Static and single partitioning modes are supported in v1
+
+A Shard SHALL run in one of exactly two partitioning modes:
+
+- **Single partition (default)**: when the Shard implements neither `shard_keys()` nor `shard_key()`. The runtime SHALL create exactly one Partition with `shard_key = None` at relay startup, and SHALL call `Shard::init_state(None)` to initialize its state.
+- **Static partitions**: when the Shard implements `fn shard_keys() -> Vec<&'static str>` returning a non-empty list. The runtime SHALL create one Partition per declared key at relay startup, and SHALL call `Shard::init_state(Some(key))` for each.
+
+The runtime SHALL refuse to start a Relay where any Shard:
+- declares both `shard_keys()` and `shard_key()` simultaneously;
+- declares only `shard_key()` without `shard_keys()` (this is the API shape reserved for the future dynamic mode and MUST fail with a clear error message in v1).
+
+#### Scenario: Single partition for a Shard with no partitioning declared
+- **WHEN** a Shard implements neither `shard_keys()` nor `shard_key()` and the Relay is started
+- **THEN** the SDK SHALL create exactly one Partition for that Shard with `shard_key = None`, and `Shard::init_state(None)` SHALL be called exactly once during startup
+
+#### Scenario: Static partitions created at relay startup
+- **WHEN** a Shard declares `shard_keys() = ["1m", "1h", "1d", "1w"]` and the Relay is started
+- **THEN** the SDK SHALL create exactly four Partitions for that Shard, with `shard_key = Some("1m")`, `Some("1h")`, `Some("1d")`, `Some("1w")` respectively; `init_state` SHALL be called exactly once for each
+
+#### Scenario: Dynamic-mode-only declaration is rejected in v1
+- **WHEN** a Shard implements `shard_key(input: &Input) -> Option<String>` without also implementing `shard_keys()`
+- **THEN** the Relay startup SHALL fail with an error referring to the dynamic-mode reservation, and the Relay MUST NOT be partially registered
+
+### Requirement: Sticky per-partition ordering
+
+For any single Partition, two invocations of its Shard's `run(...)` method SHALL NOT execute concurrently, and invocations SHALL observe their inputs in the order those inputs were enqueued onto the Partition's mailbox. This invariant MUST hold across all dispatch modes, all runner pool sizes, and all transport types.
+
+#### Scenario: Same partition is never concurrent
+- **WHEN** 10,000 inputs targeting one Partition arrive on its mailbox while the runner pool has 16 threads
+- **THEN** at any wall-clock instant, at most one runner thread SHALL be inside that Partition's `run(...)` method
+
+#### Scenario: Different partitions of the same shard run in parallel
+- **WHEN** inputs arrive simultaneously for two distinct Partitions of the same Shard (for example `("ohlc","1m")` and `("ohlc","1h")`) and the runner pool has ≥ 2 threads
+- **THEN** the two Partitions' `run(...)` methods MAY execute concurrently on different threads
+
+#### Scenario: Per-partition input order is preserved
+- **WHEN** inputs `a`, `b`, `c` are enqueued onto one Partition's mailbox in that order with an append-to-state Shard
+- **THEN** the Partition's State SHALL end with `[a, b, c]` in exactly that order
+
+### Requirement: Typed channels with compile-time wiring checks
+
+All inter-Shard and Shard-to-plugin routing SHALL go through Channels declared on the Relay. Each Channel SHALL carry a phantom type parameter `Channel<T>`. The Relay's channel-wiring API SHALL refuse to compile in any of these cases:
+
+- A producer Shard whose `Output` associated type is not `T` is connected via `.from::<X>()` to a `Channel<T>`.
+- A consumer Shard whose `Input` associated type is not `T` is connected via `.into::<X>()` to a `Channel<T>`.
+- A Channel is declared with two `.from::<...>()` clauses (multi-producer is forbidden in v1).
+
+#### Scenario: Type-mismatched producer fails to compile
+- **WHEN** a Shard with `type Output = TradeMsg` is wired into a `Channel<Candle>` via `.from::<That>()`
+- **THEN** the Rust compiler SHALL emit a trait-bound error and the program MUST NOT build
+
+#### Scenario: Type-mismatched consumer fails to compile
+- **WHEN** a Shard with `type Input = TradeMsg` is wired as a consumer of a `Channel<Candle>` via `.into::<That>()`
+- **THEN** the Rust compiler SHALL emit a trait-bound error and the program MUST NOT build
+
+#### Scenario: Multi-producer channel fails to compile
+- **WHEN** the Relay's `channels()` declaration contains two `.from::<X>()` calls on the same channel
+- **THEN** the program MUST fail at compile time (or at startup time if compile-time enforcement is impossible for the chosen builder shape)
+
+### Requirement: Per-relay channel namespace
+
+Channel names SHALL be scoped to a single Relay instance. Two Relay instances (for example the BTC Relay and the ETH Relay) SHALL each have their own independent channel namespace; a channel named `"trade.raw"` on one Relay SHALL be a distinct logical channel from a channel of the same name on another Relay.
+
+#### Scenario: Same-named channels on different relays are independent
+- **WHEN** the BTC Relay declares `c.input::<Trade>("trade.raw")` and the ETH Relay also declares `c.input::<Trade>("trade.raw")`
+- **THEN** an input pushed to the BTC Relay's `"trade.raw"` channel SHALL NOT be observable by the ETH Relay's Shards, and vice versa
+
+### Requirement: Hot-path channel dispatch uses interned u32 IDs
+
+At Relay startup, channel names SHALL be interned to `u32` IDs once. Runtime input-routing decisions inside the SDK hot path SHALL use the integer ID, not the string name. Channel-name strings SHALL appear only in: the user-facing API, registration time, and the on-the-wire metadata field crossing the NIF boundary.
+
+#### Scenario: Hot path is allocation-free with respect to channel names
+- **WHEN** an input is dispatched from a Relay's input channel through to a Partition's mailbox during steady-state operation
+- **THEN** no per-message allocation of `String` for the channel name SHALL be observable in profiling
+
+### Requirement: Inter-shard transport is in-process zero-copy
+
+When a Channel connects two Shards inside the same Relay, the SDK SHALL transport values as `Arc<T>` references between Partitions, performing no serialization, no allocation of an output buffer, and no NIF-boundary crossing for that transport.
+
+#### Scenario: Pipeline between two shards does not serialize
+- **WHEN** OhlcShard emits a `Candle` to a channel that IndicatorShard subscribes to (and the channel has no `to_plugin(...)` clause)
+- **THEN** the IndicatorShard's `run(...)` SHALL receive the same `Arc<Candle>` instance OhlcShard emitted (or an `Arc` to byte-identical content with no intermediate serialization step)
+
+### Requirement: Channel-to-plugin output replaces numeric plugin_group
+
+Channels declared with `.to_plugin("name")` SHALL route the channel's output through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field SHALL be removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1 (see `design.md` Decision 15). A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
+
+#### Scenario: Channel name appears on the wire
+- **WHEN** a Shard publishes to a channel declared with `.to_plugin("ohlc_kafka")`
+- **THEN** the message reaching the agent SHALL carry the channel name as a string in its metadata, and SHALL NOT carry a `plugin_group` field
+
+#### Scenario: Plugin subscribes by channel name
+- **WHEN** an agent-side plugin is configured to consume outputs from `"ohlc_kafka"`
+- **THEN** that plugin SHALL receive every message whose channel name matches `"ohlc_kafka"`, regardless of which Shard produced it
+
+### Requirement: ShardCtx emit semantics
+
+A Shard's `run` method SHALL receive a mutable reference to a `ShardCtx`. The Shard SHALL emit zero, one, or more outputs by calling `ctx.emit::<C>(value)` for each output, where `C` is the channel-payload type (which the compiler resolves to the matching channel via the wiring declaration). For outputs that need a string-keyed user metadata bag attached, the Shard SHALL call `ctx.emit_with_meta::<C>(value, HashMap<String, String>)` instead. The `run` method's return type SHALL be `Result<(), ShardError>` for success / hard-error signaling. Producing no output SHALL be expressed by simply not calling `ctx.emit` (or `ctx.emit_with_meta`); there SHALL be no explicit "no-output" return variant.
+
+`ctx.emit_with_meta` SHALL be valid only for channels declared with `.to_plugin("name")`. Calling `emit_with_meta` on a channel that flows to another Shard inside the same Relay SHALL return a `ShardError` and SHALL NOT propagate the value or the metadata. The error message SHALL name the offending channel and instruct the user to either move the metadata into the typed value or add `.to_plugin(...)` to the channel.
+
+When `emit_with_meta` is used on a plugin-bound channel, the supplied `HashMap<String, String>` SHALL be attached to the output as it crosses the NIF boundary using the existing wire-format `[key_len][val_len][key][value]` block. The channel name (or its interned `u32` equivalent) SHALL be one of the keys; the user-supplied keys SHALL be appended without further validation. Reserved key names (e.g. `channel`) SHALL NOT be overridable via the user-supplied map; an attempt to set one SHALL be silently dropped during framing.
+
+#### Scenario: Fan-out via multiple emit calls
+- **WHEN** a ParseShard's `run` calls `ctx.emit::<ParsedTrade>(p)` followed by `ctx.emit::<RawSummary>(s)` and returns `Ok(())`
+- **THEN** both downstream channels SHALL receive their respective values, and the order of emission SHALL match the order of the `emit` calls
+
+#### Scenario: No-output via no-call
+- **WHEN** a Shard's `run` returns `Ok(())` without calling `ctx.emit`
+- **THEN** the SDK SHALL treat the input as fully processed with no downstream propagation, with no error and no special enum variant required
+
+#### Scenario: Hard error via Err return
+- **WHEN** a Shard's `run` returns `Err(e)`
+- **THEN** the SDK SHALL log the error against the (relay, shard, partition) triple and SHALL NOT propagate any partial output that may have been emitted before the error
+
+#### Scenario: emit_with_meta on a plugin-bound channel
+- **WHEN** a Shard's `run` calls `ctx.emit_with_meta::<Candle>(c, {"trace_id": "abc123"})` on a channel declared with `.to_plugin("ohlc_kafka")`
+- **THEN** the message reaching the agent SHALL carry the channel name AND the `trace_id: "abc123"` key in its metadata block, and the agent's plugin SHALL receive both
+
+#### Scenario: emit_with_meta on an inter-shard channel returns error
+- **WHEN** a Shard's `run` calls `ctx.emit_with_meta::<ParsedTrade>(p, {"trace_id": "abc123"})` on a channel that flows to another Shard inside the same Relay (no `.to_plugin(...)` clause)
+- **THEN** the call SHALL return `Err(ShardError::MetadataNotAllowedOnInterShardChannel { channel })`, and the value `p` SHALL NOT be propagated to the downstream Shard
+
+### Requirement: Entry channel value types limited to bytes or string in v1
+
+Channels declared via `c.input::<T>("name")` (entry channels fed by the agent over the wire) SHALL accept only the following payload types in v1:
+
+- `Channel<Vec<u8>>` — bytes are delivered to the consuming Shard unchanged.
+- `Channel<String>` — the SDK SHALL perform UTF-8 decoding at the input edge. An invalid-UTF-8 byte sequence SHALL be logged against the (relay, channel) pair and the input SHALL be dropped without invoking the consuming Shard.
+
+Any other `T` on an entry channel SHALL fail at Relay startup with an error message naming the unsupported type and instructing the user to use `Vec<u8>` or `String` as the entry channel type and add a decoding Shard.
+
+This restriction applies only to entry channels. Inter-shard channels (`c.channel::<T>(...).from::<X>().into::<Y>()`) and plugin-output channels (`.to_plugin(...)`) MAY carry any `T` that satisfies the channel's wiring constraints.
+
+#### Scenario: Entry channel of bytes
+- **WHEN** a Relay declares `c.input::<Vec<u8>>("trade.raw")` and an input arrives over the wire
+- **THEN** the consuming Shard's `run` SHALL receive the bytes unchanged
+
+#### Scenario: Entry channel of string with valid UTF-8
+- **WHEN** a Relay declares `c.input::<String>("trade.raw")` and a UTF-8-valid byte sequence arrives
+- **THEN** the consuming Shard's `run` SHALL receive the decoded `String`
+
+#### Scenario: Entry channel of string with invalid UTF-8
+- **WHEN** a Relay declares `c.input::<String>("trade.raw")` and a byte sequence that is not valid UTF-8 arrives
+- **THEN** the SDK SHALL log the decode failure against the (relay, channel) pair and SHALL NOT invoke the consuming Shard's `run`
+
+#### Scenario: Entry channel of arbitrary type fails at startup
+- **WHEN** a Relay declares `c.input::<RawTrade>("trade.raw")` where `RawTrade` is neither `Vec<u8>` nor `String`
+- **THEN** the Relay startup SHALL fail with an error message naming the unsupported type and instructing the user to use `Vec<u8>` or `String` as the entry channel type and add a decoding Shard
+
+### Requirement: Worker pool reuses existing dispatch infrastructure
+
+The Runner pool SHALL be the existing Chase-Lev work-stealing pool implementation (`sdk/rust/src/compute_engine/work_stealing_pool.rs`). The `FLEZHA_WORKER_POOL_SIZE` environment variable SHALL continue to control pool size, defaulting to `Runtime.availableProcessors()`. The per-Partition `inflight` CAS guard SHALL be the same mechanism the existing per-`ProcessorSlot` guard uses.
+
+#### Scenario: Default pool sizing
+- **WHEN** the SDK is started without `FLEZHA_WORKER_POOL_SIZE` set on a host with 8 cores
+- **THEN** the runner pool SHALL contain 8 OS threads
+
+#### Scenario: Env override honored
+- **WHEN** `FLEZHA_WORKER_POOL_SIZE=4` is set on a host with 8 cores
+- **THEN** the runner pool SHALL contain exactly 4 OS threads
+
+### Requirement: No coexistence with ProcessorHandler API
+
+The `ProcessorHandler` trait, `ProcessorResult` enum, `ProcessorRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `Relay` / `Shard` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.
+
+**Reason**: The library is unpublished, the only known operator-app consumer is in this monorepo and migrates atomically as part of the same change, and the user has an explicit "no legacy / backward-compat shims" policy. Coexistence would also force the new abstraction to retain dispatch-by-processor-id baggage that the new model deliberately leaves behind.
+
+**Migration**: operator apps using `ProcessorHandler` rewrite to `Relay` + one or more `Shard` impls in the same change. Concrete example: `flezha_market/market-processor/src/main.rs` and `market_computation.rs` are rewritten in the `relay-mvp-rust` change. State (formerly `Assets`) is decomposed into per-Shard state types.
+
+#### Scenario: Old API is not importable
+- **WHEN** a Rust file attempts to `use flezha_compute_engine::ProcessorHandler` after the cutover
+- **THEN** the compilation SHALL fail with an unresolved-import error
+
+#### Scenario: Old registration function is removed
+- **WHEN** a Rust file attempts to call `register_factory(...)` after the cutover
+- **THEN** the compilation SHALL fail with an unresolved-name error
+

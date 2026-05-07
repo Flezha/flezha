@@ -35,7 +35,10 @@ defmodule Flezha.MixProject do
       # asserts the operator <-> agent link re-establishes within
       # REJOIN_TIMEOUT_S seconds. Not part of `mix test` because it needs
       # Docker on the host. See test/scripts/connection_healing.sh.
-      "test.connection_healing": ["cmd test/scripts/connection_healing.sh"],
+      "test.connection_healing": [
+        "cmd test/scripts/connection_healing.sh",
+        "cmd test/scripts/plugin_persistence.sh"
+      ],
       # Opt-in dev-compose smoke test for `ship-fresh-state-on-sdk-shutdown`.
       # Boots the agent + rust operator, starts a processor, sends SIGTERM
       # to the rust container, then asserts the agent's

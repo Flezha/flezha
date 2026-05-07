@@ -247,3 +247,72 @@ Events SHALL be emitted via `:telemetry.execute` (asynchronous fire-and-forget) 
 - **WHEN** a produce succeeds
 - **THEN** the produce-completion latency observed by the chain caller SHALL NOT include the handler's 1-second sleep
 - **AND** the slow handler runs asynchronously without blocking the producer
+
+### Requirement: Chain dispatch is non-blocking
+
+The Kafka producer plugin's transform-subscriber callbacks (`on_input/2`, `on_output/2`) SHALL return to their caller in O(1) wall-clock time relative to broker latency, queue depth, and in-flight batch state. "O(1) relative to broker latency" means: the callback's runtime SHALL NOT include any synchronous wait on a broker round-trip, on `KafkaEx` reply timing, or on the producer worker's batch flush schedule.
+
+The callback SHALL be implemented as a `GenServer.cast` to the per-(plugin_id, topic, partition) worker, returning immediately after admission. Admission SHALL apply the configured `:queue_overflow` strategy (per the existing "Bounded outbound queue with configurable overflow strategy" requirement). The synchronous `enqueue/4` API is retained for tests, ad-hoc tooling, and explicit-flush call sites; chain-facing callbacks SHALL NOT use it.
+
+The `:block` overflow strategy is not honored for chain-facing callbacks. When a worker is configured with `:queue_overflow = :block` and a chain admission would block, the worker SHALL log a deprecation warning once per process lifetime and treat the admission as `:drop_newest` (i.e., drop the new message and emit telemetry). Sync `enqueue/4` callers continue to honor `:block` exactly as before.
+
+#### Scenario: Chain dispatch returns within a millisecond regardless of broker latency
+- **GIVEN** a producer plugin attached to a chain with a `KafkaEx.Server` configured to delay 30 seconds on Produce
+- **WHEN** `on_output/2` is invoked with a message
+- **THEN** the callback SHALL return `{:ok, ctx}` within 1 millisecond
+- **AND** the message SHALL be queued in the worker's bounded queue
+- **AND** the broker round-trip SHALL proceed asynchronously per the existing batching, retry, and idempotence requirements
+
+#### Scenario: Sustained input above the broker drain rate triggers queue drops, not mailbox growth
+- **GIVEN** a chain emits 80 events/sec to a producer worker whose broker round-trip takes 50 ms
+- **AND** `:queue_max = 10_000`, `:queue_overflow = :drop_oldest`
+- **WHEN** the chain runs for 10 minutes
+- **THEN** the host process running the chain (the Overwatch GenServer) SHALL have a `:message_queue_len` no greater than 100 at any sample point
+- **AND** the worker's queue depth SHALL trend toward `:queue_max` and trigger `[:flezha, :plugin, :kafka, :produce, :dropped]` events under the configured overflow strategy
+- **AND** zero `OOM` events SHALL occur
+- **AND** the protobuf `timestamp_ms` (or any caller-provided event timestamp) SHALL NOT diverge from the host process's wall-clock by more than the worker's `:linger_ms + :request_timeout_ms` window
+
+#### Scenario: Block-mode admission from chain logs and drop-newest's
+- **GIVEN** a producer worker with `:queue_overflow = :block`
+- **AND** the worker's queue is at `:queue_max`
+- **WHEN** `on_output/2` admits a new message via cast
+- **THEN** the worker SHALL log a `Logger.warning/1` exactly once per worker process lifetime explaining that block-mode is not supported on the chain admission path
+- **AND** SHALL emit `[:flezha, :plugin, :kafka, :produce, :dropped]` with `overflow_strategy: :block_in_cast_unsupported`
+- **AND** the chain caller SHALL still observe `{:ok, ctx}`
+- **AND** the synchronous `enqueue/4` call from a test-mode caller SHALL still apply the documented block-mode semantics (block until space or `:queue_block_timeout_ms`)
+
+### Requirement: Failure surfacing for async-admitted records
+
+Records admitted via `cast_enqueue/3` (the chain dispatch path) SHALL NOT receive a synchronous reply — there is no caller to reply to. The worker SHALL track the record's caller as `:async` in its internal envelope. On permanent failure of a batch containing async-admitted records, the worker SHALL:
+
+- Emit `[:flezha, :plugin, :kafka, :produce, :failed]` for each affected record, with metadata including `caller: :async`, `last_reason`, `attempt_count`, `delivery_elapsed_ms`, `topic`, `partition`, `plugin_id`.
+- Drop the records from the queue without invoking `GenServer.reply/2`.
+- Continue draining subsequent batches.
+
+The telemetry event becomes the canonical channel by which operators observe permanent delivery failures of async-admitted records. Logs are not the channel; the chain's return value is not the channel; only telemetry is.
+
+Sync-admitted records (`enqueue/4`) continue to receive `{:error, {:permanent, reason}}` or `{:error, {:delivery_failed, reason}}` per the existing requirements; the cast vs call dichotomy is observable only from the producer worker's perspective.
+
+#### Scenario: Async-admitted record permanently fails
+- **GIVEN** a chain has admitted a message via `on_output/2` (cast path)
+- **WHEN** `KafkaEx.produce` returns `{:error, :record_list_too_large}` (a permanent error)
+- **THEN** the worker SHALL emit one `[:flezha, :plugin, :kafka, :produce, :failed]` event with `caller: :async, last_reason: :record_list_too_large`
+- **AND** SHALL NOT call `GenServer.reply/2` (there is no `from`)
+- **AND** the chain caller SHALL have ALREADY observed `{:ok, ctx}` (synchronously, at admission time)
+- **AND** the worker SHALL continue draining subsequent batches
+
+#### Scenario: Mixed sync and async records in the same batch
+- **GIVEN** a worker with both an async-admitted record (admitted by the chain via cast) and a sync-admitted record (admitted by a test via `enqueue/4`) in the same outgoing batch
+- **WHEN** the batch fails permanently
+- **THEN** the sync-admitted record's caller SHALL receive `{:error, {:delivery_failed, reason}}`
+- **AND** the async-admitted record's failure SHALL be reported only via the `:failed` telemetry event
+- **AND** both events SHALL be emitted with their respective `caller: :sync | :async` metadata
+
+### Requirement: Admission order is preserved across sync and cast modes
+
+The bounded outbound queue SHALL be FIFO regardless of admission primitive. Records admitted via `cast_enqueue/3` and `enqueue/4` against the same `(plugin_id, topic, partition)` worker SHALL be drained in the order they were admitted, preserving Kafka's per-partition ordering guarantee.
+
+#### Scenario: Interleaved sync + async admissions preserve order
+- **WHEN** a chain admits records `A` (cast), `B` (cast), `C` (cast) and a test admits records `X` (call), `Y` (call) interleaved as `A, X, B, Y, C`
+- **THEN** the worker SHALL drain them to the broker in the order `A, X, B, Y, C`
+- **AND** the broker SHALL receive a single Produce request batch containing the records in that order (subject to `:linger_ms` and `:max_batch_bytes`)

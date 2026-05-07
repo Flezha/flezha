@@ -47,6 +47,8 @@ The system SHALL dispatch `:fold`-kind extensions by invoking each subscriber's 
 
 The system SHALL dispatch `:transform`-kind extensions by invoking each subscriber in position order. A callback returning `{:ok, ctx}` continues the chain; `{:skip, reason}` halts and returns `{:skip, reason}` from `Extension.run/3`; `{:error, reason}` logs the error and continues with the PRIOR ctx (preserving the existing IO-binding behaviour where errors do not corrupt the in-flight payload).
 
+Transform subscribers SHALL be implemented such that their callbacks return in O(1) wall-clock time relative to any external resource (broker round-trips, database queries, downstream HTTP calls, etc.). The chain runner is invoked inline from the host process's message handler — synchronous waits on external resources within a transform subscriber inflate the host's `:message_queue_len` under sustained input above the resource's drain rate. Subscribers that need to perform external I/O SHALL admit work into a dedicated worker (per the `kafka-producer-plugin`'s `cast_enqueue` pattern) and return immediately, surfacing failures through telemetry rather than the chain's return value.
+
 #### Scenario: Transform chain with skip
 - **WHEN** a subscriber at position 1 returns `{:skip, :rate_limited}`
 - **THEN** subsequent subscribers MUST NOT be invoked and `Extension.run/3` MUST return `{:skip, :rate_limited}`
@@ -54,6 +56,20 @@ The system SHALL dispatch `:transform`-kind extensions by invoking each subscrib
 #### Scenario: Transform chain tolerates subscriber errors
 - **WHEN** a subscriber at position 1 returns `{:error, :backend_unavailable}` and another subscriber exists at position 2
 - **THEN** the error MUST be logged at `:error` level, the position-2 subscriber MUST be invoked with the ctx as it was after position 0, and the final result MUST be that of position 2
+
+#### Scenario: Sustained input does not accumulate the host's mailbox when transforms are non-blocking
+- **GIVEN** a host (e.g. `Flezha.Processor.Overwatch`) with a transform chain whose every subscriber is non-blocking per the requirement above
+- **AND** an upstream that emits 80 events/sec for 10 minutes
+- **WHEN** sampled at any time during that window via `:erlang.process_info(host_pid, :message_queue_len)`
+- **THEN** the host's `:message_queue_len` SHALL be at most 100
+- **AND** zero OOM-kill events SHALL occur on the BEAM under the configured cgroup memory limit
+
+#### Scenario: Misbehaving transform inflates host mailbox under sustained input
+- **GIVEN** a transform subscriber whose callback synchronously waits 50 ms on an external resource (regression of the non-blocking contract)
+- **AND** an upstream that emits 80 events/sec
+- **WHEN** the chain runs for 10 minutes
+- **THEN** the host's `:message_queue_len` SHALL grow without bound (this scenario fails the non-blocking-contract assertion above)
+- **AND** this scenario serves as the canonical regression test for any future first-party transform subscriber whose chain-facing callback is tempted to block — its presence in the test suite SHALL fail the build if a producer-style plugin is added without a `cast_enqueue`-equivalent admission path
 
 ### Requirement: Fanout-kind dispatch
 

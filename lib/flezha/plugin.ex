@@ -48,8 +48,24 @@ defmodule Flezha.Plugin do
   end
 
   @doc """
-  Strip transient fields that can't be persisted across a BEAM restart.
-  Used by the recovery subsystem before writing to DETS.
+  Strip transient fields that cannot be persisted across a BEAM
+  restart, returning a value safe to embed in any persistence layer
+  (HotSwap handover state, ProcessHub child-spec, cluster snapshots,
+  DETS, ...).
+
+  Today every field on `%Flezha.Plugin{}` (`:id`, `:provider`, `:opts`,
+  `:subscriptions`, `:namespace`, `:processor_id`) is inert data —
+  there are no live pids, monitor refs, timer refs, or closures held in
+  the struct itself — so this function is the identity. It exists as a
+  contract surface: any future field that holds runtime-only state
+  (e.g. a worker pid or timer ref tracked alongside the plugin) MUST
+  be dropped here, otherwise it will be persisted into the cspec via
+  `Flezha.Service.HubManager.update_processor_plugins/3` and resurface
+  on the next Overwatch (re)start as a stale reference.
+
+  Verified by `test/flezha/plugin_test.exs` — round-tripping the
+  output through `:erlang.term_to_binary/1` plus
+  `:erlang.binary_to_term/1` SHALL be a no-op.
   """
   @spec strip_transient(t()) :: t()
   def strip_transient(%__MODULE__{} = plugin), do: plugin

@@ -78,6 +78,13 @@ defmodule Flezha.Processor.Overwatch do
       builder: processor
     }
 
+    # `processor.opts[:plugins]` is the authoritative list of plugin
+    # subscriptions for this processor. It is populated both at
+    # `flz processor start` time (via the CLI's `--plugins` flag) and
+    # by every subsequent `flz plugin enable` / `flz plugin disable`
+    # call (which writes through to the cspec via
+    # `Flezha.Service.HubManager.update_processor_plugins/3`). See
+    # openspec/specs/plugin-subscription-persistence/spec.md.
     plugins = Keyword.get(processor.opts, :plugins, [])
 
     with {:ok, state} <- subscribe_initial_plugins(state, plugins),
@@ -91,7 +98,18 @@ defmodule Flezha.Processor.Overwatch do
   end
 
   defp subscribe_initial_plugins(%__MODULE__{} = state, plugins) do
-    entries = Enum.map(plugins, fn %Plugin{id: id} = plugin -> {id, plugin} end)
+    # `processor.opts[:plugins]` accepts two shapes: bare `%Plugin{}` (the
+    # cold-start `flz processor start --plugins` path emits this) and
+    # `{plugin_id, %Plugin{}}` tuples (the cspec-persistence path written
+    # by `Flezha.Service.HubManager.update_processor_plugins/3` after a
+    # successful `flz plugin enable` — see
+    # openspec/specs/plugin-subscription-persistence/spec.md). Both
+    # normalise into the tuple form `Table.bulk_subscribe/2` expects.
+    entries =
+      Enum.map(plugins, fn
+        {id, %Plugin{} = plugin} -> {id, plugin}
+        %Plugin{id: id} = plugin -> {id, plugin}
+      end)
 
     case Table.bulk_subscribe(state.extensions, entries) do
       {:ok, table} -> {:ok, %{state | extensions: table}}
@@ -103,8 +121,16 @@ defmodule Flezha.Processor.Overwatch do
   #   - cold start with empty init_values → chain runs
   #   - cold start with non-empty init_values → chain MUST NOT run; inline values used as-is
   #
-  # Migration is handled separately in `alter_handover_state/2` and never
-  # reaches this function.
+  # `init/1` is also the path for in-place restart plugin restoration: the
+  # cspec's `processor.opts[:plugins]` list is read above and re-subscribed
+  # by `subscribe_initial_plugins/2` (see
+  # openspec/specs/plugin-subscription-persistence/spec.md). That path is
+  # independent of the per-Partition state-restore path
+  # (`dispatch_restore_init_state/2`), which rehydrates SDK-side WAL/snapshot
+  # state through the data plane.
+  #
+  # HotSwap migration is handled separately in `alter_handover_state/2`
+  # and never reaches this function.
   defp resolve_init_state(%__MODULE__{} = state, %{init_values: init_values} = processor)
        when init_values == %{} do
     ctx = %Ctx.Init{
