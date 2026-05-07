@@ -1,31 +1,27 @@
 # rust-sdk-dispatch Specification
 
 ## Purpose
-TBD - created by archiving change optimize-rust-sdk-dispatch. Update Purpose after archive.
+This capability covers the Rust SDK's Relay/Shard/Partition dispatch path: sticky per-Partition ordering invariants under ThreadPool dispatch, the dispatch throughput floor on the reference workload, the per-message dispatch-overhead budget, live Relay-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Partition flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the bounded `state.apply` hot-path cost, drain-time coalescing, the public `ShardTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
 ## Requirements
-### Requirement: Sticky Per-Processor Ordering Under ThreadPool Runner
+### Requirement: Sticky Per-Partition Ordering Under ThreadPool Dispatch
 
-Under `ProcessorRunner::ThreadPool`, the Rust SDK SHALL guarantee that for any single processor instance, two invocations of its `process(...)` method never execute concurrently, and invocations observe their inputs in the exact order those inputs were received on the primary stream. This invariant MUST hold regardless of worker-pool size, number of concurrent processors, or transport (UDS/QUIC).
+Under the SDK's ThreadPool dispatch (the only dispatch mode in v1; see the REMOVED requirement below), the Rust SDK SHALL guarantee that for any single `(relay_instance, shard, partition)` triple, two invocations of that Shard's `run(...)` method on that Partition never execute concurrently, and invocations observe their inputs in the exact order those inputs were enqueued onto the Partition's mailbox. This invariant MUST hold regardless of worker-pool size, number of concurrent Relay instances, number of Partitions per Shard, or transport (UDS/QUIC).
 
-#### Scenario: Same processor never runs concurrently under load
-- **WHEN** 10,000 frames targeting the same processor id arrive back-to-back on one or more primary streams while the compute engine uses a 16-thread worker pool
-- **THEN** at any wall-clock instant, at most one thread SHALL be inside that processor's `process(...)` method
+#### Scenario: Same partition never runs concurrently under load
+- **WHEN** 10,000 inputs targeting the same `(relay_instance, shard, partition_key)` triple arrive back-to-back on one or more entry channels while the SDK uses a 16-thread worker pool
+- **THEN** at any wall-clock instant, at most one thread SHALL be inside that Partition's `run(...)` method
 
-#### Scenario: Inputs are delivered in arrival order
-- **WHEN** inputs `"a"`, `"b"`, `"c"` are written to the primary stream in that order, targeting a single processor with an append-to-state handler
-- **THEN** the processor's final state SHALL end with `["a", "b", "c"]` in that order
+#### Scenario: Different partitions of same shard may run concurrently
+- **WHEN** inputs arrive simultaneously for two distinct partitions of the same Shard (for example `("ohlc", "1m")` and `("ohlc", "1h")`) and the worker pool has ≥ 2 threads
+- **THEN** the two Partitions' `run(...)` methods MAY execute concurrently on different threads
 
-#### Scenario: Ordering holds across multiple primary streams
-- **WHEN** the agent opens 4 primary streams and the same processor receives interleaved inputs from all 4
-- **THEN** `process(...)` calls for that processor SHALL still be non-overlapping, though the interleaving order between streams is not constrained by this requirement
+#### Scenario: Per-partition inputs delivered in arrival order
+- **WHEN** inputs `"a"`, `"b"`, `"c"` are enqueued onto one Partition's mailbox in that order with an append-to-state Shard
+- **THEN** the Partition's State SHALL end with `["a", "b", "c"]` in exactly that order
 
-### Requirement: ThreadSpawn Runner Preserves Per-Invocation Isolation
-
-Under `ProcessorRunner::ThreadSpawn`, the Rust SDK SHALL invoke each processor input on a freshly-spawned OS thread (or a dedicated equivalent with identical semantics). Invocations SHALL NOT share any worker-pool state across calls, and MAY run concurrently for the same processor id — ordering is NOT guaranteed for this runner, matching the behavior documented in `docs/sdk_protocol_spec.md` §8.
-
-#### Scenario: Per-invocation thread start
-- **WHEN** a processor configured with `ProcessorRunner::ThreadSpawn` receives N inputs in rapid succession
-- **THEN** up to N distinct threads SHALL be observed executing `process(...)` concurrently
+#### Scenario: Ordering holds across multiple entry streams
+- **WHEN** the agent opens 4 entry connections for a single Relay instance and the same Partition receives interleaved inputs from all 4
+- **THEN** `run(...)` calls for that Partition SHALL still be non-overlapping, though the interleaving order between streams is not constrained by this requirement
 
 ### Requirement: Dispatch Throughput Floor on Reference Workload
 
@@ -82,53 +78,51 @@ The 4-op invariant is an analytical bound enforced by code review, consistent wi
 - **THEN** the per-input sync-op count SHALL be approximately `4 + 4 × 3 = 16` (one registry lookup + 4 partitions × (mailbox enqueue + success counter + inflight CAS)), and SHALL NOT exceed `4 + N × 3` where N is the partition fan-out width
 - **AND** the bench SHALL emit a `Throughput:` line whose value, divided by the single-partition floor, SHALL be approximately `1 / (1 + 4 × 3 / 4) = 0.25` ± 30% (the analytical bound is approximate; the bench reports raw msg/s for sanity checking, not as a strict gate)
 
-### Requirement: Processor Registry Concurrent Access
+### Requirement: Live Registry Concurrent Access
 
-The live processor registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (add / remove / migrate) SHALL NOT block readers for longer than a single shard's critical section. The registry SHALL preserve the existing public API: factories register at startup; `AddProcessor` / `RemProcessor` add and remove instances by processor id; lookup by processor id returns an `Arc<Mutex<ProcessorBox>>` or equivalent handle.
+The live Relay-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Relay instance create / destroy) SHALL NOT block readers for longer than a single shard's critical section. The registry SHALL preserve the existing public API shape: Relay classes register at startup via `register_relay::<R: Relay>()`; `AddProcessor` / `RemProcessor` wire commands add and remove Relay instances by what the wire calls `processor_id` (mapped to the SDK's `relay_instance_id`); lookup by that id returns an `Arc<RelayInstance>` or equivalent handle.
+
+The "registry" name carries forward from the pre-change implementation; what's stored in it changes from `Arc<Mutex<ProcessorBox>>` to `Arc<RelayInstance>`. The concurrency guarantees are unchanged.
 
 #### Scenario: 100 reader threads do not stall on a single writer
-- **WHEN** 100 threads each perform 10,000 registry lookups while a 101st thread registers and removes processors in a loop
+- **WHEN** 100 threads each perform 10,000 registry lookups while a 101st thread registers and removes Relay instances in a loop
 - **THEN** no reader thread observes a latency spike greater than 1 millisecond attributable to the writer
 
-#### Scenario: Registry preserves public trait contract
-- **WHEN** user code calls `register_factory(...)` at startup and later `AddProcessor` triggers the factory
-- **THEN** the resulting processor instance SHALL be looked up by id and be invocable exactly as under the pre-change implementation (the user observes no API change)
+#### Scenario: Registry preserves public registration contract
+- **WHEN** user code calls `register_relay::<R>()` at startup and later `AddProcessor` triggers a Relay instance creation
+- **THEN** the resulting `RelayInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `relay-shard-partition-model` capability's scenarios
 
 ### Requirement: Reconnect Semantics Preserved
 
-On unexpected disconnect (BrokenPipe / UnexpectedEof / ConnectionReset / QUIC connection lost) the Rust SDK SHALL clear `io_streams`, clear the live processor registry, drain in-flight work, reset `compute_engine_id` to `"undefined"`, and reconnect with exponential backoff (200 ms → 30 s cap) per `docs/sdk_protocol_spec.md` §5. On intentional disconnect (`ComputeEngineDisconnect` handled) the SDK SHALL NOT reconnect. These semantics MUST hold identically to the pre-change implementation.
+On unexpected disconnect (BrokenPipe / UnexpectedEof / ConnectionReset / QUIC connection lost) the Rust SDK SHALL clear `io_streams`, clear the live Relay-instance registry, drain in-flight work (per-Partition mailboxes), reset `compute_engine_id` to `"undefined"`, and reconnect with exponential backoff (200 ms → 30 s cap) per `docs/sdk_protocol_spec.md` §5. On intentional disconnect (`ComputeEngineDisconnect` handled) the SDK SHALL NOT reconnect. These semantics MUST hold identically to the pre-change implementation; the only difference is that "live processor registry" is now "live Relay-instance registry" and "drain in-flight work" now means draining all partition mailboxes across all Relay instances.
 
 #### Scenario: Unexpected disconnect triggers full state reset + reconnect
-- **WHEN** the agent process is killed while the SDK has 10 live processors with in-flight work in their mailboxes
+- **WHEN** the agent process is killed while the SDK has 10 live Relay instances with in-flight work in their partition mailboxes
 - **THEN** the SDK SHALL drop all queued work, close mailboxes, reset state, and re-establish a fresh `compute_engine_id` once the agent is available again
 
 #### Scenario: Intentional disconnect halts the reconnect loop
 - **WHEN** the agent sends `ComputeEngineDisconnect{}` and the SDK handles it
 - **THEN** the SDK SHALL close sockets and not attempt any reconnection
 
-### Requirement: Command Dispatch Behavior Preserved Byte-for-Byte
+### Requirement: Command Dispatch Behavior Preserved Byte-for-Byte for Surviving Commands
 
-Every `CommandRequest` variant (`AssignComputeEngineId`, `ConnectSocket`, `AddProcessor`, `RemProcessor`, `ProcessorState`, `MigrationSerialization`, `MigrationDeserialization`, `ComputeEngineDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise command responses MUST NOT change.
+Every `CommandRequest` variant that survives the cutover (`AssignComputeEngineId`, `ConnectSocket`, `AddProcessor`, `RemProcessor`, `ComputeEngineDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise these command responses MUST NOT change.
 
-#### Scenario: AddProcessor with init_values deserializes state identically
-- **WHEN** the agent sends `AddProcessor{processor_id:"p1", factory_id:"echo", init_values:"{\"n\":42}"}` and the identical command is sent to both pre- and post-change SDK builds
-- **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, `errors=[]`, and `raw_data` bytes
+`ProcessorState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `relay-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<shard_name>": <state>}` (or, for static-mode shards, `{"<shard_name>": {"<shard_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `relay-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk_protocol_spec.md`.
 
-#### Scenario: MigrationSerialization returns JSON-serialized state byte-identical
-- **WHEN** a processor with non-trivial state receives `MigrationSerialization{processor_id:"p1"}` under both implementations
-- **THEN** the `raw_data` bytes in the response SHALL be byte-identical between implementations
+`ProcessorMessage` and `ProcessorMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `relay-message-handlers` adds per-Shard `handle_message` (see `relay-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any processor that did not implement the optional `handle_message` callback.
 
-### Requirement: Public Rust API Unchanged
+#### Scenario: AddProcessor with init_values produces same response shape
+- **WHEN** the agent sends `AddProcessor{processor_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_relay::<MarketRelay>()` (post-change) or `register_factory("market", ...)` (pre-change)
+- **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Shard, see the `relay-shard-partition-model` capability)
 
-The Rust SDK crate `flezha_compute_engine` SHALL expose the same public items (functions, traits, types, modules) with the same signatures before and after this change. User code depending on this crate at any pinned version SHALL continue to compile and run without source modification.
+#### Scenario: ComputeEngineDisconnect closes sockets identically
+- **WHEN** `ComputeEngineDisconnect{}` is sent under both implementations
+- **THEN** both SDKs SHALL close their primary control stream and return identical `CommandResponse` bytes
 
-#### Scenario: Consumer code compiles unchanged
-- **WHEN** `test/apps/rust_compute_engine/src/main.rs` is compiled against the post-change crate with zero source modifications
-- **THEN** compilation SHALL succeed and the produced binary SHALL exhibit the same runtime behavior observable via the SDK protocol
-
-#### Scenario: Public API item diff is empty
-- **WHEN** `cargo public-api` (or equivalent) is run comparing the pre- and post-change crate
-- **THEN** the diff SHALL be empty except for items explicitly marked as private / internal in both versions
+#### Scenario: ProcessorMessage returns canonical unsupported error pre-relay-message-handlers
+- **WHEN** an agent sends `ProcessorMessage{processor_id:"p1", payload:<...>}` to a v1 SDK
+- **THEN** the SDK SHALL respond with `ProcessorMessageResponse{ payload: "", error: "processor does not support handle_message" }`
 
 ### Requirement: Per-Partition flusher single-thread linger drain
 
