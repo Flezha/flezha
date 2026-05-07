@@ -3,11 +3,16 @@ package com.flezha.test;
 import com.flezha.sdk.shard.Shard;
 import com.flezha.sdk.shard.ShardCtx;
 import com.flezha.sdk.shard.ShardException;
+import com.flezha.sdk.state.NoChange;
+import com.flezha.sdk.state.RestoreInitPayload;
+import com.flezha.sdk.state.StateHandle;
+import com.flezha.sdk.state.WallClock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-public final class StoreInputShard implements Shard<String, StoreInputShard.State, String> {
+public final class StoreInputShard
+        implements Shard<String, StoreInputShard.State, String, NoChange, WallClock, Void> {
 
     @Override
     public String name() {
@@ -25,13 +30,28 @@ public final class StoreInputShard implements Shard<String, StoreInputShard.Stat
     }
 
     @Override
-    public State initState(Optional<String> shardKey) {
+    public Class<NoChange> changeType() {
+        return NoChange.class;
+    }
+
+    @Override
+    public Class<WallClock> clockType() {
+        return WallClock.class;
+    }
+
+    @Override
+    public Class<Void> configType() {
+        return Void.class;
+    }
+
+    @Override
+    public State initState(Optional<String> shardKey, Optional<RestoreInitPayload> initPayload) {
         return new State(new ArrayList<>(), new ArrayList<>());
     }
 
     @Override
-    public void run(String input, State state, ShardCtx ctx) throws ShardException {
-        state.textInputs().add(input);
+    public void run(String input, StateHandle<State, NoChange> state, ShardCtx ctx) throws ShardException {
+        state.get().textInputs().add(input);
     }
 
     public record State(List<byte[]> binaryInputs, List<String> textInputs) {

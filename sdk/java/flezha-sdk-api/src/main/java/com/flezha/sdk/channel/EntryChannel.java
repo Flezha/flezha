@@ -17,10 +17,10 @@ public interface EntryChannel<T> {
      * {@link com.flezha.sdk.relay.RelayConfigurationException} naming both
      * types and the channel.
      *
-     * <p>The parametric bound {@code Class<? extends Shard<T, ?, ?>>}
+     * <p>The parametric bound {@code Class<? extends Shard<T, ?, ?, ?, ?, ?>>}
      * enforces the basic input-type match at compile time. Java's type
      * erasure means the runtime still has to verify the Shard's reflective
      * {@link Shard#inputType()} accessor agrees.
      */
-    @Nonnull Channel<T> into(@Nonnull Class<? extends Shard<T, ?, ?>> shard);
+    @Nonnull Channel<T> into(@Nonnull Class<? extends Shard<T, ?, ?, ?, ?, ?>> shard);
 }

@@ -492,8 +492,12 @@ toggle, postcard format. The Rust SDK implements all eight; the agent
 side ships durable WAL, fsync batcher, and snapshot lifecycle in the
 follow-up change.
 
-See `docs/relay_state_persistence.md` for the full trait surface and
-worked examples.
+See `docs/relay_state_persistence.md` for the full Rust trait surface and
+worked examples. The Java SDK port lives at
+`docs/java_state_persistence.md` (six-parameter `Shard` generic,
+`StateHandle<State, Change>` chokepoint, Kryo-backed serialization with
+stable registered type IDs; same wire format, `sdk_lang = 2`,
+`format_id = 4`).
 
 ## Mapping back to the umbrella
 

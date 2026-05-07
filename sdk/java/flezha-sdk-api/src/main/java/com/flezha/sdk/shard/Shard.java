@@ -1,29 +1,43 @@
 package com.flezha.sdk.shard;
 
+import com.flezha.sdk.state.Change;
+import com.flezha.sdk.state.CoalesceKey;
+import com.flezha.sdk.state.NoChange;
+import com.flezha.sdk.state.RestoreInitPayload;
+import com.flezha.sdk.state.StateHandle;
+import com.flezha.sdk.state.WallClock;
 import java.util.List;
 import java.util.Optional;
 import javax.annotation.Nonnull;
 
 /**
  * One Shard in a Relay topology. Stateless dispatcher; per-Partition
- * {@code State} is held by the runtime and threaded through {@link #run}.
+ * {@code State} is held by the runtime and threaded through {@link #run} via
+ * a {@link StateHandle}.
  *
  * <p>Implementations MUST provide a public no-arg constructor — the runtime
  * instantiates one Shard per Partition at relay-instance startup.
  *
- * <p>Java's type erasure means {@code Input} / {@code State} / {@code Output}
- * are not reflectively inspectable from {@code Class<? extends Shard<…>>}.
- * Implementations MUST therefore override {@link #inputType()} and
- * {@link #outputType()} to expose the runtime {@link Class} handles the
- * topology builder needs for wiring checks at {@code registerRelay} time.
+ * <p>Java's type erasure means the type parameters are not reflectively
+ * inspectable from {@code Class<? extends Shard<…>>}. Implementations MUST
+ * therefore override {@link #inputType()}, {@link #outputType()},
+ * {@link #changeType()}, {@link #clockType()}, and {@link #configType()} to
+ * expose the runtime {@link Class} handles the topology builder, the Kryo
+ * codec, and the per-Partition flusher need.
  *
- * @param <Input>  per-partition input value (immutable from the producer's
- *     side once emitted across an inter-shard channel — see
- *     {@code design.md} Decision 4).
- * @param <State>  per-partition mutable state.
- * @param <Output> per-partition output value emitted via {@link ShardCtx}.
+ * @param <Input>  per-partition input value
+ * @param <State>  per-partition mutable state (Kryo-serializable)
+ * @param <Output> per-partition output value emitted via {@link ShardCtx}
+ * @param <ChangeT> per-Partition state-change type; default {@link NoChange}
+ *     opts out of state persistence
+ * @param <ClockT>  clock declaration; v1 fully wires {@link WallClock} only
+ * @param <ConfigT> Jackson-deserialized config; {@link Void} for unit-typed
+ *     configs
  */
-public interface Shard<Input, State, Output> {
+public interface Shard<Input, State, Output,
+        ChangeT extends Change,
+        ClockT extends com.flezha.sdk.state.Clock,
+        ConfigT> {
 
     /** Stable identifier within the Relay class. Must be unique per Relay. */
     @Nonnull String name();
@@ -34,13 +48,92 @@ public interface Shard<Input, State, Output> {
     /** Compile-time typed Output class. Used at registerRelay time for wiring checks. */
     @Nonnull Class<Output> outputType();
 
+    /** Compile-time typed Change class. Drives flusher registration and Kryo dispatch. */
+    @Nonnull Class<ChangeT> changeType();
+
+    /** Compile-time typed Clock class. Drives v1 RelayConfigurationException for non-WallClock. */
+    @Nonnull Class<ClockT> clockType();
+
+    /** Compile-time typed Config class. {@code Void.class} for Shards without typed config. */
+    @Nonnull Class<ConfigT> configType();
+
     /**
      * Initialize state for a new Partition. Called once per Partition at Relay
      * startup. {@code shardKey} is empty for single-partition mode; present
-     * for static mode where its value is one of the keys returned by
-     * {@link #shardKeys()}.
+     * for static mode. {@code initPayload} is empty on cold start; present
+     * during a {@code RestoreInitState} round-trip — the user MAY inspect the
+     * byte sizes for instrumentation but the runtime auto-applies the payload
+     * (Kryo-deserialize the snapshot, fold the change log) AFTER {@code initState}
+     * returns, so users typically ignore the parameter.
      */
-    @Nonnull State initState(@Nonnull Optional<String> shardKey);
+    @Nonnull
+    State initState(
+            @Nonnull Optional<String> shardKey,
+            @Nonnull Optional<RestoreInitPayload> initPayload);
+
+    /**
+     * Apply a Change to the current state. Default: no-op for {@link NoChange}
+     * (which is uninhabited and never reaches this method anyway), throws
+     * {@link UnsupportedOperationException} for any other Change type to force
+     * an explicit override.
+     */
+    default void applyChange(@Nonnull State state, @Nonnull ChangeT change) {
+        if (changeType() == NoChange.class) {
+            return;
+        }
+        throw new UnsupportedOperationException(
+                "Shard '" + name() + "' declares Change=" + changeType().getSimpleName()
+                        + " but does not override applyChange. Override Shard.applyChange to implement state mutation.");
+    }
+
+    /** Optional coalesce key. Default: dispatches to the Change's own key. */
+    @Nonnull
+    default Optional<CoalesceKey> coalesceKey(@Nonnull ChangeT change) {
+        return change.coalesceKey();
+    }
+
+    /** WAL size threshold before the agent solicits a snapshot. Default: 64 MiB per Partition. */
+    default long compactAfterBytes() {
+        return 64L * 1024 * 1024;
+    }
+
+    /** Schema version for additive Change evolution. Default: 1. */
+    default int schemaVersion() {
+        return 1;
+    }
+
+    /**
+     * Stable Kryo type IDs for user types. Default: empty. Ordering of returned
+     * classes determines their stable IDs (id N = list[N]). Append-only: adding
+     * a new variant appends a new class to the END of the list, preserving
+     * prior IDs across SDK versions.
+     */
+    @Nonnull
+    default List<Class<?>> kryoTypes() {
+        return List.of();
+    }
+
+    /**
+     * Construct an instance from typed Config. Default for {@code Config = Void}
+     * invokes the no-arg constructor via reflection. Shards with non-Void
+     * Config types must override.
+     */
+    @Nonnull
+    @SuppressWarnings("unchecked")
+    default Shard<Input, State, Output, ChangeT, ClockT, ConfigT> fromConfig(ConfigT cfg) {
+        if (cfg == null && configType() == Void.class) {
+            try {
+                return (Shard<Input, State, Output, ChangeT, ClockT, ConfigT>)
+                        getClass().getDeclaredConstructor().newInstance();
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(
+                        "Shard '" + name() + "' has no public no-arg constructor", e);
+            }
+        }
+        throw new UnsupportedOperationException(
+                "Shard '" + name() + "' has Config=" + configType().getSimpleName()
+                        + " but does not override fromConfig. Override Shard.fromConfig to implement typed config.");
+    }
 
     /**
      * Static partition declaration. Default returns an empty list which the
@@ -86,16 +179,15 @@ public interface Shard<Input, State, Output> {
     }
 
     /**
-     * Per-partition compute. Receives the typed input, the partition's
-     * mutable state, and a context for emitting outputs. Producing zero
-     * outputs == no {@code ctx.emit} call. Multiple {@code ctx.emit} calls
-     * fan out to multiple consumers (fan-out is the channel topology's job).
+     * Per-partition compute. Receives the typed input, the partition's state
+     * via a {@link StateHandle} (read via {@code state.get()}, mutate via
+     * {@code state.apply(change)}), and a context for emitting outputs.
      * Throwing {@link ShardException} (or any other {@link RuntimeException})
-     * is logged against {@code (relayInstance, shard, partition)} and
-     * discards any partial emits made during this invocation.
+     * is logged against {@code (relayInstance, shard, partition)} and discards
+     * any partial emits made during this invocation.
      */
     void run(
             @Nonnull Input input,
-            @Nonnull State state,
+            @Nonnull StateHandle<State, ChangeT> state,
             @Nonnull ShardCtx ctx) throws ShardException;
 }

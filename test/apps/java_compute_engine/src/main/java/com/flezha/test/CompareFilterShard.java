@@ -3,9 +3,14 @@ package com.flezha.test;
 import com.flezha.sdk.shard.Shard;
 import com.flezha.sdk.shard.ShardCtx;
 import com.flezha.sdk.shard.ShardException;
+import com.flezha.sdk.state.NoChange;
+import com.flezha.sdk.state.RestoreInitPayload;
+import com.flezha.sdk.state.StateHandle;
+import com.flezha.sdk.state.WallClock;
 import java.util.Optional;
 
-public final class CompareFilterShard implements Shard<String, CompareFilterShard.State, String> {
+public final class CompareFilterShard
+        implements Shard<String, CompareFilterShard.State, String, NoChange, WallClock, Void> {
 
     @Override
     public String name() {
@@ -23,15 +28,28 @@ public final class CompareFilterShard implements Shard<String, CompareFilterShar
     }
 
     @Override
-    public State initState(Optional<String> shardKey) {
+    public Class<NoChange> changeType() {
+        return NoChange.class;
+    }
+
+    @Override
+    public Class<WallClock> clockType() {
+        return WallClock.class;
+    }
+
+    @Override
+    public Class<Void> configType() {
+        return Void.class;
+    }
+
+    @Override
+    public State initState(Optional<String> shardKey, Optional<RestoreInitPayload> initPayload) {
         return new State("default", false);
     }
 
     @Override
-    public void run(String input, State state, ShardCtx ctx) throws ShardException {
-        // Comparison logic mirrors the Rust shape — no emit; the State carries
-        // the comparison result for tests that read state via ProcessorState.
-        if (state.comparable().equals(input)) {
+    public void run(String input, StateHandle<State, NoChange> state, ShardCtx ctx) throws ShardException {
+        if (state.get().comparable().equals(input)) {
             // matched — equivalent to the legacy pipeToAgent(input) path.
         }
     }

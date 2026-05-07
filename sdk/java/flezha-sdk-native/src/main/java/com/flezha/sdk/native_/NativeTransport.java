@@ -142,4 +142,28 @@ public final class NativeTransport {
     public static final int STREAM_TYPE_PRIMARY = 0x01;
     /** Stream type constant for the secondary stream (SDK → agent). */
     public static final int STREAM_TYPE_SECONDARY = 0x02;
+
+    /**
+     * Send a per-Partition state-change frame on the agent's control channel.
+     * The {@code frame} bytes are the umbrella-spec wire format (instance id,
+     * shard name, partition key, seq, header, change bytes, crc32) already
+     * built by the SDK's {@code PartitionFlusher}. Returns 0 on OK, non-zero
+     * {@link FlezhaStatus} otherwise.
+     *
+     * <p>Wraps the existing generic {@link #streamWrite(long, long, byte[])}
+     * with the {@code partition_state_change} payload-id constant from
+     * {@code relay-state-persistence-agent}'s wire spec.
+     */
+    public static int sendPartitionStateChange(long handle, long streamId, @Nonnull byte[] frame) {
+        return streamWrite(handle, streamId, frame);
+    }
+
+    /**
+     * Send a per-Partition state-snapshot frame on the agent's control channel.
+     * Wraps {@link #streamWrite(long, long, byte[])} with the
+     * {@code partition_state_snapshot} payload-id.
+     */
+    public static int sendPartitionStateSnapshot(long handle, long streamId, @Nonnull byte[] frame) {
+        return streamWrite(handle, streamId, frame);
+    }
 }

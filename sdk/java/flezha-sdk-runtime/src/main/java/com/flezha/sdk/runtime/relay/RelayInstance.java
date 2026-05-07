@@ -4,8 +4,10 @@ import com.flezha.sdk.runtime.ComputeEngineContext;
 import com.flezha.sdk.runtime.partition.PartitionSlot;
 import com.flezha.sdk.runtime.worker.ShardDispatcher;
 import com.flezha.sdk.shard.Shard;
+import com.flezha.sdk.state.NoChange;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -22,7 +24,12 @@ import javax.annotation.Nonnull;
  *   <li>per-Shard partition slots (one inner-list entry per Partition;
  *       single-mode Shards have inner length 1),</li>
  *   <li>per-Shard reverse index from partition key → partition index
- *       (empty for single-mode Shards).</li>
+ *       (empty for single-mode Shards),</li>
+ *   <li>the resolved {@code persistenceEnabled} toggle (operator override
+ *       &gt; Relay default &gt; {@code true}; frozen for the instance's
+ *       lifetime),</li>
+ *   <li>the aggregated Kryo type list across all Shards in this Relay class
+ *       (used by the per-Partition flusher and the Compact handler).</li>
  * </ul>
  */
 public final class RelayInstance {
@@ -32,76 +39,94 @@ public final class RelayInstance {
     private final List<List<PartitionSlot>> partitions;
     private final List<Map<String, Integer>> partitionKeyToIdx;
     private final List<ShardDispatcher> dispatchers;
+    private final boolean persistenceEnabled;
+    private final List<Class<?>> kryoTypes;
 
     private RelayInstance(
             RelayTopology topology,
             String instanceId,
             List<List<PartitionSlot>> partitions,
             List<Map<String, Integer>> partitionKeyToIdx,
-            List<ShardDispatcher> dispatchers) {
+            List<ShardDispatcher> dispatchers,
+            boolean persistenceEnabled,
+            List<Class<?>> kryoTypes) {
         this.topology = topology;
         this.instanceId = instanceId;
         this.partitions = partitions;
         this.partitionKeyToIdx = partitionKeyToIdx;
         this.dispatchers = dispatchers;
+        this.persistenceEnabled = persistenceEnabled;
+        this.kryoTypes = kryoTypes;
     }
 
-    /**
-     * Construct a fresh {@link RelayInstance}. Calls
-     * {@link Shard#initState(Optional)} for each Shard×Partition; instantiates
-     * one {@link Shard} instance per Partition (Open Question 3 in
-     * {@code design.md}: per-Partition Shard instance enables per-partition
-     * scratch space).
-     */
+    /** Construct a fresh {@link RelayInstance} with persistence enabled (legacy entry point). */
     @Nonnull
     public static RelayInstance create(
             @Nonnull RelayTopology topology,
             @Nonnull String instanceId,
             @Nonnull ComputeEngineContext ctx,
             @Nonnull ExecutorService pool) {
+        return create(topology, instanceId, ctx, pool, true);
+    }
+
+    /**
+     * Construct a fresh {@link RelayInstance}, threading the resolved
+     * {@code persistenceEnabled} toggle from {@code AddProcessor} metadata.
+     * Calls {@code Shard.initState} for each Shard×Partition.
+     */
+    @Nonnull
+    public static RelayInstance create(
+            @Nonnull RelayTopology topology,
+            @Nonnull String instanceId,
+            @Nonnull ComputeEngineContext ctx,
+            @Nonnull ExecutorService pool,
+            boolean persistenceEnabled) {
         int shardCount = topology.shards().size();
         List<List<PartitionSlot>> partitions = new ArrayList<>(shardCount);
         List<Map<String, Integer>> partitionKeyToIdx = new ArrayList<>(shardCount);
         List<ShardDispatcher> dispatchers = new ArrayList<>(shardCount);
 
-        // Two-pass init: build the dispatchers once we have an instance
-        // reference. We allocate the empty RelayInstance shell first to
-        // satisfy the WeakReference each ShardDispatcher needs for emit
-        // dispatch.
+        // Aggregate Kryo type registrations across all shards in declaration
+        // order. Duplicate entries (same Class<?>) collapse — registration
+        // order across shards is the order the topology emits them.
+        LinkedHashSet<Class<?>> kryoTypeSet = new LinkedHashSet<>();
+        for (ShardDescriptor desc : topology.shards()) {
+            kryoTypeSet.addAll(desc.kryoTypes());
+        }
+        List<Class<?>> kryoTypes = List.copyOf(kryoTypeSet);
+
         RelayInstance shell = new RelayInstance(
-                topology,
-                instanceId,
-                partitions,
-                partitionKeyToIdx,
-                dispatchers);
+                topology, instanceId, partitions, partitionKeyToIdx, dispatchers,
+                persistenceEnabled, kryoTypes);
 
         for (int shardId = 0; shardId < shardCount; shardId++) {
             ShardDescriptor desc = topology.shards().get(shardId);
             List<PartitionSlot> slots;
             Map<String, Integer> keyMap = new HashMap<>();
+            boolean changeful = desc.changeType() != NoChange.class;
 
             if (desc.partitionKeys().isEmpty()) {
-                Shard<?, ?, ?> shardInstance = instantiate(desc.shardClass());
+                Shard<?, ?, ?, ?, ?, ?> shardInstance = instantiate(desc.shardClass());
                 ShardDispatcher dispatcher = new ShardDispatcher(
                         ctx, pool, shell, topology, shardId, shardInstance);
                 @SuppressWarnings({"unchecked", "rawtypes"})
-                Object initial = ((Shard) shardInstance).initState(Optional.empty());
-                PartitionSlot slot = new PartitionSlot(dispatcher, shardId, Optional.empty());
+                Object initial = ((Shard) shardInstance).initState(Optional.empty(), Optional.empty());
+                PartitionSlot slot = new PartitionSlot(dispatcher, shardId, Optional.empty(), changeful);
                 slot.state().set(initial);
                 slots = List.of(slot);
                 dispatchers.add(dispatcher);
             } else {
                 slots = new ArrayList<>(desc.partitionKeys().size());
-                Shard<?, ?, ?> dispatcherShardInstance = instantiate(desc.shardClass());
+                Shard<?, ?, ?, ?, ?, ?> dispatcherShardInstance = instantiate(desc.shardClass());
                 ShardDispatcher dispatcher = new ShardDispatcher(
                         ctx, pool, shell, topology, shardId, dispatcherShardInstance);
                 dispatchers.add(dispatcher);
                 for (int idx = 0; idx < desc.partitionKeys().size(); idx++) {
                     String key = desc.partitionKeys().get(idx);
-                    Shard<?, ?, ?> shardInstance = instantiate(desc.shardClass());
+                    Shard<?, ?, ?, ?, ?, ?> shardInstance = instantiate(desc.shardClass());
                     @SuppressWarnings({"unchecked", "rawtypes"})
-                    Object initial = ((Shard) shardInstance).initState(Optional.of(key));
-                    PartitionSlot slot = new PartitionSlot(dispatcher, shardId, Optional.of(key));
+                    Object initial = ((Shard) shardInstance).initState(Optional.of(key), Optional.empty());
+                    PartitionSlot slot = new PartitionSlot(dispatcher, shardId, Optional.of(key), changeful);
                     slot.state().set(initial);
                     slots.add(slot);
                     keyMap.put(key, idx);
@@ -114,7 +139,7 @@ public final class RelayInstance {
         return shell;
     }
 
-    private static Shard<?, ?, ?> instantiate(Class<? extends Shard<?, ?, ?>> shardClass) {
+    private static Shard<?, ?, ?, ?, ?, ?> instantiate(Class<? extends Shard<?, ?, ?, ?, ?, ?>> shardClass) {
         try {
             return shardClass.getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
@@ -149,5 +174,16 @@ public final class RelayInstance {
             return null;
         }
         return dispatchers.get(shardId);
+    }
+
+    /** Resolved persistence toggle, frozen at construction time. */
+    public boolean persistenceEnabled() {
+        return persistenceEnabled;
+    }
+
+    /** Aggregated Kryo type list across all Shards in this Relay class. */
+    @Nonnull
+    public List<Class<?>> kryoTypes() {
+        return kryoTypes;
     }
 }

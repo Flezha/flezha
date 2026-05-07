@@ -11,6 +11,8 @@ import com.flezha.sdk.runtime.relay.ShardDescriptor;
 import com.flezha.sdk.shard.Shard;
 import com.flezha.sdk.shard.ShardCtx;
 import com.flezha.sdk.shard.ShardException;
+import com.flezha.sdk.state.Change;
+import com.flezha.sdk.state.StateHandle;
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -21,6 +23,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.concurrent.ExecutorService;
+import java.util.function.BiConsumer;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,7 +50,8 @@ public final class ShardDispatcher {
     private final ShardDescriptor shardDescriptor;
     private final Optional<ChannelDescriptor> outputChannelDescriptor;
     private final OptionalInt outputChannelId;
-    private final Shard<Object, Object, Object> shardInstance;
+    @SuppressWarnings("rawtypes")
+    private final Shard shardInstance;
 
     @SuppressWarnings("unchecked")
     public ShardDispatcher(
@@ -56,7 +60,7 @@ public final class ShardDispatcher {
             @Nonnull RelayInstance instance,
             @Nonnull RelayTopology topology,
             int shardId,
-            @Nonnull Shard<?, ?, ?> shardInstance) {
+            @Nonnull Shard<?, ?, ?, ?, ?, ?> shardInstance) {
         this.ctx = ctx;
         this.pool = pool;
         this.instance = new WeakReference<>(instance);
@@ -67,7 +71,7 @@ public final class ShardDispatcher {
         this.outputChannelDescriptor = outputChannelId.isPresent()
                 ? Optional.ofNullable(topology.channel(outputChannelId.getAsInt()))
                 : Optional.empty();
-        this.shardInstance = (Shard<Object, Object, Object>) shardInstance;
+        this.shardInstance = shardInstance;
     }
 
     public int shardId() {
@@ -138,13 +142,25 @@ public final class ShardDispatcher {
         }
     }
 
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private void runOnce(PartitionSlot slot, Object input, long primaryStreamId) {
         slot.stateLock().lock();
         try {
             Object state = slot.state().get();
             EmitContext ctxImpl = new EmitContext(primaryStreamId, slot);
+            // Build a StateHandle that records Changes onto the Partition's
+            // flush buffer under the bufferLock. The runtime's flusher owns
+            // the buffer's drain cadence; here we just append.
+            BiConsumer<Object, Change> applyChangeFn = (s, c) -> {
+                ((Shard) shardInstance).applyChange(s, c);
+            };
+            List<Change> bufferView;
+            synchronized (slot.changeBufferLock()) {
+                bufferView = slot.changeBuffer();
+            }
+            StateHandle<Object, Change> handle = StateHandle.create(state, bufferView, applyChangeFn);
             try {
-                shardInstance.run(input, state, ctxImpl);
+                shardInstance.run(input, handle, ctxImpl);
             } catch (ShardException e) {
                 LOG.warn("shard `{}` partition `{}` threw ShardException: {}",
                         shardDescriptor.name(), slot.shardKey().orElse("<single>"), e.getMessage());

@@ -7,14 +7,17 @@ import com.flezha.sdk.proto.CommandResponse;
 import com.flezha.sdk.runtime.ComputeEngineContext;
 import com.flezha.sdk.runtime.control.handlers.AddProcessorHandler;
 import com.flezha.sdk.runtime.control.handlers.AssignComputeEngineIdHandler;
+import com.flezha.sdk.runtime.control.handlers.CompactPartitionHandler;
 import com.flezha.sdk.runtime.control.handlers.ComputeEngineDisconnectHandler;
 import com.flezha.sdk.runtime.control.handlers.ConnectSocketHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationDeserializationHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationSerializationHandler;
+import com.flezha.sdk.runtime.control.handlers.PartitionMailboxStatusHandler;
 import com.flezha.sdk.runtime.control.handlers.ProcessorApplyStateHandler;
 import com.flezha.sdk.runtime.control.handlers.ProcessorMessageHandler;
 import com.flezha.sdk.runtime.control.handlers.ProcessorStateHandler;
 import com.flezha.sdk.runtime.control.handlers.RemProcessorHandler;
+import com.flezha.sdk.runtime.control.handlers.RestoreInitStateHandler;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import java.util.ArrayList;
@@ -40,18 +43,39 @@ public final class CommandRouter {
     public CommandRouter(@Nonnull ComputeEngineContext ctx, long controlStreamId) {
         this.ctx = ctx;
         this.controlStreamId = controlStreamId;
-        // Map.of has 10-entry overloads; switch to Map.ofEntries past that.
-        this.handlers = Map.ofEntries(
-                Map.entry(CommandRequest.CommandCase.ASSIGN_COMPUTE_ENGINE_ID, new AssignComputeEngineIdHandler()),
-                Map.entry(CommandRequest.CommandCase.CONNECT_SOCKET, new ConnectSocketHandler()),
-                Map.entry(CommandRequest.CommandCase.ADD_PROCESSOR, new AddProcessorHandler()),
-                Map.entry(CommandRequest.CommandCase.REM_PROCESSOR, new RemProcessorHandler()),
-                Map.entry(CommandRequest.CommandCase.PROCESSOR_STATE, new ProcessorStateHandler()),
-                Map.entry(CommandRequest.CommandCase.MIGRATION_SERIALIZATION, new MigrationSerializationHandler()),
-                Map.entry(CommandRequest.CommandCase.MIGRATION_DESERIALIZATION, new MigrationDeserializationHandler()),
-                Map.entry(CommandRequest.CommandCase.COMPUTE_ENGINE_DISCONNECT, new ComputeEngineDisconnectHandler()),
-                Map.entry(CommandRequest.CommandCase.PROCESSOR_MESSAGE, new ProcessorMessageHandler()),
-                Map.entry(CommandRequest.CommandCase.PROCESSOR_APPLY_STATE, new ProcessorApplyStateHandler()));
+        java.util.Map<CommandRequest.CommandCase, CommandHandler> mut = new java.util.LinkedHashMap<>();
+        mut.put(CommandRequest.CommandCase.ASSIGN_COMPUTE_ENGINE_ID, new AssignComputeEngineIdHandler());
+        mut.put(CommandRequest.CommandCase.CONNECT_SOCKET, new ConnectSocketHandler());
+        mut.put(CommandRequest.CommandCase.ADD_PROCESSOR, new AddProcessorHandler());
+        mut.put(CommandRequest.CommandCase.REM_PROCESSOR, new RemProcessorHandler());
+        mut.put(CommandRequest.CommandCase.PROCESSOR_STATE, new ProcessorStateHandler());
+        mut.put(CommandRequest.CommandCase.MIGRATION_SERIALIZATION, new MigrationSerializationHandler());
+        mut.put(CommandRequest.CommandCase.MIGRATION_DESERIALIZATION, new MigrationDeserializationHandler());
+        mut.put(CommandRequest.CommandCase.COMPUTE_ENGINE_DISCONNECT, new ComputeEngineDisconnectHandler());
+        mut.put(CommandRequest.CommandCase.PROCESSOR_MESSAGE, new ProcessorMessageHandler());
+        mut.put(CommandRequest.CommandCase.PROCESSOR_APPLY_STATE, new ProcessorApplyStateHandler());
+        // State-persistence handlers added by relay-state-persistence-java.
+        // The matching CommandCase enum constants land in the protobuf
+        // codegen once the .proto regenerates; the lookups are resolved
+        // reflectively to keep this file resilient to a stale codegen jar.
+        registerCase(mut, "RESTORE_INIT_STATE", new RestoreInitStateHandler());
+        registerCase(mut, "COMPACT_PARTITION", new CompactPartitionHandler());
+        registerCase(mut, "PARTITION_MAILBOX_STATUS", new PartitionMailboxStatusHandler());
+        this.handlers = java.util.Collections.unmodifiableMap(mut);
+    }
+
+    private static void registerCase(
+            java.util.Map<CommandRequest.CommandCase, CommandHandler> map,
+            String enumName,
+            CommandHandler handler) {
+        try {
+            CommandRequest.CommandCase c = CommandRequest.CommandCase.valueOf(enumName);
+            map.put(c, handler);
+        } catch (IllegalArgumentException ignored) {
+            // protobuf codegen is older than this SDK build — handler will
+            // not register; the agent never sends the variant against an
+            // older codegen anyway.
+        }
     }
 
     public void route(@Nonnull Frame frame) {

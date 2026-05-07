@@ -17,5 +17,5 @@ public interface ChannelDecl<T> {
      * {@link com.flezha.sdk.relay.RelayConfigurationException} naming both
      * types and the channel.
      */
-    @Nonnull ChannelDeclWithProducer<T> from(@Nonnull Class<? extends Shard<?, ?, T>> shard);
+    @Nonnull ChannelDeclWithProducer<T> from(@Nonnull Class<? extends Shard<?, ?, T, ?, ?, ?>> shard);
 }

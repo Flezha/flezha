@@ -23,6 +23,7 @@
         <jackson.version>2.17.2</jackson.version>
         <slf4j.version>2.0.13</slf4j.version>
         <jsr305.version>3.0.2</jsr305.version>
+        <kryo.version>5.6.0</kryo.version>
 
         <!-- Test dependency versions -->
         <junit.version>5.10.3</junit.version>
@@ -46,6 +47,7 @@
         <module>flezha-sdk-protobuf</module>
         <module>flezha-sdk-runtime</module>
         <module>flezha-sdk-native</module>
+        <module>flezha-sdk-testing</module>
         <module>flezha-sdk</module>
     </modules>
 
@@ -76,6 +78,11 @@
                 <artifactId>flezha-sdk</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.flezha</groupId>
+                <artifactId>flezha-sdk-testing</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
             <dependency>
                 <groupId>com.google.protobuf</groupId>
@@ -101,6 +108,11 @@
                 <groupId>com.google.code.findbugs</groupId>
                 <artifactId>jsr305</artifactId>
                 <version>${jsr305.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.esotericsoftware</groupId>
+                <artifactId>kryo</artifactId>
+                <version>${kryo.version}</version>
             </dependency>
 
             <dependency>

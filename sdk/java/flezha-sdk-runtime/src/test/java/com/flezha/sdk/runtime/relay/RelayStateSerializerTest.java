@@ -104,23 +104,27 @@ class RelayStateSerializerTest {
     public record ShardAState(int n) {}
     public record ShardBState(int x) {}
 
-    public static final class ShardA implements Shard<String, ShardAState, String> {
+    public static final class ShardA extends StatelessTestShard<String, ShardAState, String> {
         @Override public String name() { return "a"; }
         @Override public Class<String> inputType() { return String.class; }
         @Override public Class<String> outputType() { return String.class; }
-        @Override public ShardAState initState(Optional<String> shardKey) { return new ShardAState(0); }
-        @Override public void run(String input, ShardAState state, ShardCtx ctx) throws ShardException { }
+        @Override protected ShardAState initState(Optional<String> shardKey) { return new ShardAState(0); }
+        @Override public void run(String input,
+                com.flezha.sdk.state.StateHandle<ShardAState, com.flezha.sdk.state.NoChange> state,
+                ShardCtx ctx) throws ShardException { }
     }
 
-    public static final class ShardB implements Shard<String, ShardBState, String> {
+    public static final class ShardB extends StatelessTestShard<String, ShardBState, String> {
         @Override public String name() { return "b"; }
         @Override public Class<String> inputType() { return String.class; }
         @Override public Class<String> outputType() { return String.class; }
-        @Override public ShardBState initState(Optional<String> shardKey) { return new ShardBState(0); }
+        @Override protected ShardBState initState(Optional<String> shardKey) { return new ShardBState(0); }
         @Override public List<String> shardKeys() { return List.of("1m", "1h"); }
         @Override public boolean partitionForOverridden() { return true; }
         @Override public List<String> partitionFor(String input) { return List.of("1m"); }
-        @Override public void run(String input, ShardBState state, ShardCtx ctx) throws ShardException { }
+        @Override public void run(String input,
+                com.flezha.sdk.state.StateHandle<ShardBState, com.flezha.sdk.state.NoChange> state,
+                ShardCtx ctx) throws ShardException { }
     }
 
     public static final class MixedRelay implements Relay {

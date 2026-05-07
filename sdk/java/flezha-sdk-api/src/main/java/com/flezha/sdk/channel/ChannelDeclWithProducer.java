@@ -17,7 +17,7 @@ public interface ChannelDeclWithProducer<T> {
      * allowed (fan-out). The runtime verifies at {@code registerRelay} time
      * that the consumer Shard's {@link Shard#inputType()} equals {@code T}.
      */
-    @Nonnull ChannelDeclWithProducer<T> into(@Nonnull Class<? extends Shard<T, ?, ?>> shard);
+    @Nonnull ChannelDeclWithProducer<T> into(@Nonnull Class<? extends Shard<T, ?, ?, ?, ?, ?>> shard);
 
     /**
      * Mark this channel as plugin-bound. The agent's plugin layer receives

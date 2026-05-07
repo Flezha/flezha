@@ -147,7 +147,13 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
                     entry.inputChannelId == null ? OptionalInt.empty() : OptionalInt.of(entry.inputChannelId),
                     entry.outputChannelId == null ? OptionalInt.empty() : OptionalInt.of(entry.outputChannelId),
                     entry.inputType,
-                    entry.outputType));
+                    entry.outputType,
+                    entry.changeType,
+                    entry.clockType,
+                    entry.configType,
+                    entry.kryoTypes,
+                    entry.schemaVersion,
+                    entry.compactAfterBytes));
         }
 
         return new RelayTopology(
@@ -174,8 +180,8 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         return id;
     }
 
-    private int registerShard(Class<? extends Shard<?, ?, ?>> shardClass) {
-        Shard<?, ?, ?> probe = instantiate(shardClass);
+    private int registerShard(Class<? extends Shard<?, ?, ?, ?, ?, ?>> shardClass) {
+        Shard<?, ?, ?, ?, ?, ?> probe = instantiate(shardClass);
         String shardName = probe.name();
         Integer existing = shardNameToId.get(shardName);
         if (existing != null) {
@@ -190,12 +196,28 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         entry.shardKeyOverridden = probe.shardKeyOverridden();
         entry.inputType = probe.inputType();
         entry.outputType = probe.outputType();
+        entry.changeType = probe.changeType();
+        entry.clockType = probe.clockType();
+        entry.configType = probe.configType();
+        entry.kryoTypes = List.copyOf(probe.kryoTypes());
+        entry.schemaVersion = probe.schemaVersion();
+        entry.compactAfterBytes = probe.compactAfterBytes();
+        // v1 wires only WallClock; declaring LogicalClock or EventTimeFrom
+        // fails Relay registration loud-and-clear (per design.md Decision 4).
+        if (entry.clockType != null
+                && entry.clockType != com.flezha.sdk.state.WallClock.class
+                && entry.clockType != com.flezha.sdk.state.Clock.class) {
+            errors.add("shard `" + shardName + "`: "
+                    + RelayConfigurationException
+                            .clockNotImplementedYet(entry.clockType.getSimpleName())
+                            .getMessage());
+        }
         shards.add(entry);
         shardNameToId.put(shardName, id);
         return id;
     }
 
-    private Shard<?, ?, ?> instantiate(Class<? extends Shard<?, ?, ?>> shardClass) {
+    private Shard<?, ?, ?, ?, ?, ?> instantiate(Class<? extends Shard<?, ?, ?, ?, ?, ?>> shardClass) {
         try {
             return shardClass.getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
@@ -207,21 +229,32 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         }
     }
 
-    private static final Shard<Object, Object, Object> UNINSTANTIABLE =
+    private static final Shard<Object, Object, Object, com.flezha.sdk.state.NoChange,
+            com.flezha.sdk.state.WallClock, Void> UNINSTANTIABLE =
             new Shard<>() {
                 @Override public String name() { return "<uninstantiable>"; }
                 @Override public Class<Object> inputType() { return Object.class; }
                 @Override public Class<Object> outputType() { return Object.class; }
-                @Override public Object initState(Optional<String> shardKey) {
+                @Override public Class<com.flezha.sdk.state.NoChange> changeType() {
+                    return com.flezha.sdk.state.NoChange.class;
+                }
+                @Override public Class<com.flezha.sdk.state.WallClock> clockType() {
+                    return com.flezha.sdk.state.WallClock.class;
+                }
+                @Override public Class<Void> configType() { return Void.class; }
+                @Override public Object initState(Optional<String> shardKey,
+                        Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
                     throw new UnsupportedOperationException("uninstantiable shard");
                 }
-                @Override public void run(Object input, Object state, com.flezha.sdk.shard.ShardCtx ctx) {
+                @Override public void run(Object input,
+                        com.flezha.sdk.state.StateHandle<Object, com.flezha.sdk.state.NoChange> state,
+                        com.flezha.sdk.shard.ShardCtx ctx) {
                     throw new UnsupportedOperationException("uninstantiable shard");
                 }
             };
 
     private void wireConsumer(int channelId, String channelName, Class<?> channelPayloadType,
-                              Class<? extends Shard<?, ?, ?>> shardClass) {
+                              Class<? extends Shard<?, ?, ?, ?, ?, ?>> shardClass) {
         int shardId = registerShard(shardClass);
         ShardEntry shard = shards.get(shardId);
         if (!channelPayloadType.equals(shard.inputType)) {
@@ -243,7 +276,7 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
     }
 
     private void wireProducer(int channelId, String channelName, Class<?> channelPayloadType,
-                              Class<? extends Shard<?, ?, ?>> shardClass) {
+                              Class<? extends Shard<?, ?, ?, ?, ?, ?>> shardClass) {
         int shardId = registerShard(shardClass);
         ShardEntry shard = shards.get(shardId);
         if (!channelPayloadType.equals(shard.outputType)) {
@@ -284,12 +317,18 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
     /** Mutable internal record for a shard registration. */
     static final class ShardEntry {
         String name;
-        Class<? extends Shard<?, ?, ?>> shardClass;
+        Class<? extends Shard<?, ?, ?, ?, ?, ?>> shardClass;
         List<String> partitionKeys;
         boolean partitionForOverridden;
         boolean shardKeyOverridden;
         Class<?> inputType;
         Class<?> outputType;
+        Class<? extends com.flezha.sdk.state.Change> changeType;
+        Class<? extends com.flezha.sdk.state.Clock> clockType;
+        Class<?> configType;
+        List<Class<?>> kryoTypes;
+        int schemaVersion;
+        long compactAfterBytes;
         Integer inputChannelId;
         Integer outputChannelId;
     }
@@ -309,7 +348,7 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
 
         @Override
         @Nonnull
-        public Channel<T> into(@Nonnull Class<? extends Shard<T, ?, ?>> shardClass) {
+        public Channel<T> into(@Nonnull Class<? extends Shard<T, ?, ?, ?, ?, ?>> shardClass) {
             wireConsumer(channelId, name, payloadType, shardClass);
             return new Channel<>(channelId, payloadType);
         }
@@ -328,7 +367,7 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
 
         @Override
         @Nonnull
-        public ChannelDeclWithProducer<T> from(@Nonnull Class<? extends Shard<?, ?, T>> shardClass) {
+        public ChannelDeclWithProducer<T> from(@Nonnull Class<? extends Shard<?, ?, T, ?, ?, ?>> shardClass) {
             wireProducer(channelId, name, payloadType, shardClass);
             return new ChannelDeclWithProducerImpl<>(channelId, payloadType, name);
         }
@@ -347,7 +386,7 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
 
         @Override
         @Nonnull
-        public ChannelDeclWithProducer<T> into(@Nonnull Class<? extends Shard<T, ?, ?>> shardClass) {
+        public ChannelDeclWithProducer<T> into(@Nonnull Class<? extends Shard<T, ?, ?, ?, ?, ?>> shardClass) {
             wireConsumer(channelId, name, payloadType, shardClass);
             return this;
         }

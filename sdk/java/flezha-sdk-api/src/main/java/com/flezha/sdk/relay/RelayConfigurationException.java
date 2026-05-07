@@ -43,6 +43,16 @@ public class RelayConfigurationException extends RuntimeException {
         this.actual = null;
     }
 
+    /**
+     * Factory for the v1 "this Clock isn't wired yet" rejection. Shards
+     * declaring {@code LogicalClock} or {@code EventTimeFrom} fail Relay
+     * registration with this exception until a follow-up wires them.
+     */
+    public static RelayConfigurationException clockNotImplementedYet(String clockTypeName) {
+        return new RelayConfigurationException(
+                "Clock not implemented yet: " + clockTypeName);
+    }
+
     public String channel() {
         return channel;
     }

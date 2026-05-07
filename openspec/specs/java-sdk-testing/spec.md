@@ -117,3 +117,95 @@ The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests,
 #### Scenario: RELAY_MESSAGE_HANDLERS_PENDING tags persist post-merge
 - **WHEN** the repository is grep-searched for the literal string `RELAY_MESSAGE_HANDLERS_PENDING` after this change merges
 - **THEN** the matches SHALL match the pre-change set — this change does NOT re-enable message-handler tests
+
+### Requirement: ShardTestHarness in flezha-sdk-testing artifact
+
+The `flezha-sdk-testing` Maven artifact SHALL export `com.flezha.sdk.testing.ShardTestHarness<Input, State, Output, Change extends com.flezha.sdk.state.Change>` as a public type. The harness SHALL support:
+
+- `static <I, S, O, C extends Change> ShardTestHarness<I, S, O, C> of(Shard<I, S, O, C, ?, ?> shard)` — constructs a harness with state from `shard.initState(Optional.empty(), Optional.empty())`.
+- `withInitialState(State state)` — explicit initial state.
+- `withPayload(Optional<String> shardKey, RestoreInitPayload payload)` — replicates the runtime's snapshot+changelog restoration flow.
+- `applyInputs(Iterable<Input> inputs)` — invokes `Shard.run` for each input on the harness's owned state, recording emits and Changes; returns `this` for chaining.
+- `expectChanges(List<Change> expected)` — asserts equality, throws `AssertionError` with diagnostic on mismatch, returns `this`.
+- `expectEmits(Class<C> type, List<C> expected)` — asserts emits of type `C` equal expected, returns `this`.
+- `expectState(State expected)` — asserts state equality (via Kryo bytes), returns `this`.
+- `replay(State initial, List<Change> log) -> State` — folds the log via `Shard.applyChange`, returns terminal state.
+- `replayEquals() -> Optional<ReplayMismatch>` — replays self.recordedChanges against a re-constructed initial state and asserts byte-equality (via Kryo round-trip) with self.state. Empty optional = pass; non-empty carries `expectedBytes` and `actualBytes` for the test failure message.
+
+#### Scenario: Harness asserts on recorded Changes
+
+- **WHEN** a JUnit test runs `ShardTestHarness.of(new CounterShard()).applyInputs(List.of(new Input.Add(5), new Input.Add(3))).expectChanges(List.of(new CounterChange(5), new CounterChange(3)))`
+- **THEN** the chain SHALL succeed with no `AssertionError` thrown; the harness's `recordedChanges` SHALL equal the expected list
+
+#### Scenario: Harness replays for determinism check
+
+- **WHEN** a JUnit test runs `ShardTestHarness.of(new CounterShard()).applyInputs(inputs).replayEquals()` against a deterministic `applyChange`
+- **THEN** the result SHALL be `Optional.empty()` and the test SHALL pass
+
+#### Scenario: Harness detects non-deterministic applyChange
+
+- **WHEN** a Shard's `applyChange` reads `System.currentTimeMillis()` and uses it to seed a state field, AND the harness runs `replayEquals()`
+- **THEN** the result SHALL be `Optional.of(new ReplayMismatch(expectedBytes, actualBytes))` whose `toString()` renders a hex-diff identifying the divergent bytes
+
+#### Scenario: Harness compiles only for testing-scope dependencies
+
+- **WHEN** a downstream Java module depends on `flezha-sdk-testing` with `<scope>test</scope>` AND attempts to use `ShardTestHarness` from `src/main/java/`
+- **THEN** Maven SHALL fail the compile with a "package not visible at compile scope" error; the harness SHALL be visible only from `src/test/java/`
+
+### Requirement: ShardTestHarness JUnit assertions are AssertJ-style chainable
+
+The `ShardTestHarness` API SHALL be method-chainable (each `expect*` method returns `this`), matching the AssertJ idiom that JUnit-using Java developers expect. Failures SHALL throw `AssertionError` (or a subclass) with a descriptive message including: the expected value, the actual value, and a per-element diff for collection assertions.
+
+#### Scenario: Chained assertions are evaluated in order
+
+- **WHEN** a test runs `harness.applyInputs(inputs).expectChanges(c).expectEmits(C.class, e).expectState(s)`
+- **THEN** each assertion SHALL evaluate in chain order; the FIRST failing assertion SHALL throw with its own diagnostic; subsequent assertions SHALL NOT run
+
+#### Scenario: Collection-mismatch shows per-element diff
+
+- **WHEN** `expectChanges(List.of(new CounterChange(5), new CounterChange(3)))` is called and the actual recorded Changes are `List.of(new CounterChange(5), new CounterChange(7))`
+- **THEN** the thrown `AssertionError`'s message SHALL include the expected list, the actual list, AND a marker pointing at index 1 (the differing element)
+
+### Requirement: ShardTestHarness uses KryoCodec for byte-equality state comparison
+
+`ShardTestHarness.replayEquals()` and `ShardTestHarness.expectState()` SHALL serialize both the actual and expected `State` values via `KryoCodec` (constructed from the Shard's `kryoTypes()`) and compare the resulting `byte[]` arrays via `Arrays.equals`. This avoids requiring `State` to override `equals` correctly (Java's default `equals` is reference equality; record `equals` works but user POJO `equals` is often broken).
+
+The Shard's `kryoTypes()` SHALL include all classes reachable from `State` for `replayEquals` and `expectState` to work; missing types SHALL throw `StateSerializeException::UnregisteredClass(className)` from the Kryo round-trip, with a diagnostic message naming the missing class.
+
+#### Scenario: Record State works without registration of inner types
+
+- **WHEN** a Shard declares `State = OhlcState` (a record carrying primitives only) AND `kryoTypes() = List.of(OhlcState.class)`
+- **THEN** `replayEquals()` SHALL succeed via Kryo bytes equality
+
+#### Scenario: State referencing un-registered class throws diagnostic
+
+- **WHEN** a Shard declares `State = OrderBookState` containing a `Map<Long, Level>` where `Level` is not in `kryoTypes()`
+- **THEN** `replayEquals()` SHALL throw `StateSerializeException::UnregisteredClass("Level")` with a clear pointer to the missing registration
+
+### Requirement: ShardTestHarness records emits without invoking the wire path
+
+The harness SHALL provide a `TestShardCtx` implementation of `ShardCtx` that records `emit` and `emitWithMeta` calls into a `List<EmitRecord>` accessible via `harness.recordedEmits()`. The test ctx SHALL NOT invoke `NativeTransport.*` or any JNI bridge; the emits exist only in-memory.
+
+#### Scenario: emit calls recorded but not shipped
+
+- **WHEN** a test runs `harness.applyInputs(inputs)` against a Shard that emits a `Candle` per input
+- **THEN** for each input that produced an emit, `harness.recordedEmits()` SHALL contain one `EmitRecord(channel: <name>, value: Candle, metadata: <map>)`; `NativeTransport.*` SHALL NOT be invoked
+
+#### Scenario: emitWithMeta records the metadata
+
+- **WHEN** a Shard calls `ctx.emitWithMeta(value, Map.of("trace_id", "abc"))` on a plugin-bound channel
+- **THEN** the recorded `EmitRecord.metadata` SHALL contain `{"trace_id": "abc"}` (the SDK's auto-attached `flezha.dedup_key` SHALL also be present in the metadata, because the test ctx mirrors the runtime's metadata-stamping behavior)
+
+### Requirement: At least one harness test per java-sdk requirement scenario
+
+The Java SDK test suite (`mvn -f sdk/java test`) SHALL include at least one harness-based test per scenario in the `java-sdk` capability's persistence-related requirements added by `relay-state-persistence-java`. Scenarios SHALL be enumerated from the spec's `#### Scenario:` blocks and verified at the test level.
+
+#### Scenario: Coverage report enumerates per-scenario harness tests
+
+- **WHEN** `mvn -f sdk/java test` runs and produces JaCoCo + JUnit reports
+- **THEN** the JUnit report SHALL include test methods named after each scenario from the persistence requirements (e.g. `testDefaultChangeIsNoChange_skipsPersistence`, `testStateApplyRunsApplyChangeAndRecords`, `testCoalesceCollapsesSameKey`, ...) — at least one test method per scenario
+
+#### Scenario: Coverage gap fails CI pre-merge
+
+- **WHEN** a new persistence-related scenario is added to a `java-sdk` requirement and no corresponding harness test exists
+- **THEN** the spec/test sync check (run as part of `mvn -f sdk/java verify`) SHALL fail and block merge with a message naming the missing scenario; this matches the existing pattern from `java-sdk-testing` "Each java-sdk requirement has at least one unit test"

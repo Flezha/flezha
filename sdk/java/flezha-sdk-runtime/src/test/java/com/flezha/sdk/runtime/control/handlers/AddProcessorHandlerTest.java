@@ -74,13 +74,22 @@ class AddProcessorHandlerTest {
         }
     }
 
-    public static final class IdempotentShard implements Shard<String, IdempotentShard.Empty, String> {
+    public static final class IdempotentShard
+            implements Shard<String, IdempotentShard.Empty, String,
+                    com.flezha.sdk.state.NoChange,
+                    com.flezha.sdk.state.WallClock, Void> {
         public record Empty() {}
 
         @Override public String name() { return "idempotent_shard"; }
         @Override public Class<String> inputType() { return String.class; }
         @Override public Class<String> outputType() { return String.class; }
-        @Override public Empty initState(Optional<String> shardKey) { return new Empty(); }
-        @Override public void run(String input, Empty state, ShardCtx ctx) throws ShardException { }
+        @Override public Class<com.flezha.sdk.state.NoChange> changeType() { return com.flezha.sdk.state.NoChange.class; }
+        @Override public Class<com.flezha.sdk.state.WallClock> clockType() { return com.flezha.sdk.state.WallClock.class; }
+        @Override public Class<Void> configType() { return Void.class; }
+        @Override public Empty initState(Optional<String> shardKey,
+                Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) { return new Empty(); }
+        @Override public void run(String input,
+                com.flezha.sdk.state.StateHandle<Empty, com.flezha.sdk.state.NoChange> state,
+                ShardCtx ctx) throws ShardException { }
     }
 }

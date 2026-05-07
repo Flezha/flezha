@@ -30,4 +30,18 @@ public interface Relay {
      * Relay instance spawned for this class.
      */
     void channels(@Nonnull ChannelBuilder c);
+
+    /**
+     * Whether per-Partition state persistence is enabled for this Relay class.
+     * The agent ships the resolved value (operator override &gt; this default
+     * &gt; {@code true}) in {@code AddProcessor} metadata; the runtime stamps
+     * it onto each {@code RelayInstance} at construction.
+     *
+     * <p>Default: {@code true}. Override to {@code false} to opt-out at the
+     * Relay-class level (the per-Partition flusher drains and discards
+     * Changes without serialization or wire I/O).
+     */
+    default boolean persistenceEnabled() {
+        return true;
+    }
 }

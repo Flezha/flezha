@@ -12,15 +12,23 @@ classes, registers them via `Flezha.registerRelay(MyRelay.class)`, then
 boots the SDK with `Flezha.newInstance(namespace)`.
 
 ```java
-public final class EchoShard implements Shard<String, EchoShard.State, byte[]> {
+public final class EchoShard
+        implements Shard<String, EchoShard.State, byte[], NoChange, WallClock, Void> {
     public record State() {}
 
     @Override public String name() { return "echo_shard"; }
     @Override public Class<String> inputType() { return String.class; }
     @Override public Class<byte[]> outputType() { return byte[].class; }
-    @Override public State initState(Optional<String> shardKey) { return new State(); }
+    @Override public Class<NoChange> changeType() { return NoChange.class; }
+    @Override public Class<WallClock> clockType() { return WallClock.class; }
+    @Override public Class<Void> configType() { return Void.class; }
 
-    @Override public void run(String input, State state, ShardCtx ctx) throws ShardException {
+    @Override public State initState(Optional<String> shardKey, Optional<RestoreInitPayload> p) {
+        return new State();
+    }
+
+    @Override public void run(String input, StateHandle<State, NoChange> state, ShardCtx ctx)
+            throws ShardException {
         ctx.emit(input.getBytes(StandardCharsets.UTF_8));
     }
 }
@@ -75,8 +83,23 @@ mvn -f sdk/java/pom.xml -P host-only package
 | `flezha-sdk-protobuf` | Java classes generated from `protobufs/compute_engine_commands.proto`. Pure generated code; no hand-written sources. |
 | `flezha-sdk-runtime` | Control plane, data plane, framing, worker pool, reconnect, command dispatch. |
 | `flezha-sdk-native` | JNI bindings (`NativeTransport`) + bundled per-OS `libflz_transport` native binaries. |
+| `flezha-sdk-testing` | Test fixtures — `ShardTestHarness` for Shard authors. Add as `<scope>test</scope>`. |
 | `flezha-sdk` | Fat-jar aggregator — the published artifact. |
 | `flezha-sdk-integration-tests` | End-to-end tests against a running agent (typically driven by the Elixir harness via `mix test.java_sdk`). |
+
+## State persistence
+
+The SDK persists per-Partition state via a `Change`-trait machinery
+mirroring the Rust SDK. Shards opt in by declaring a non-`NoChange`
+Change type and recording mutations through
+`StateHandle.apply(change)` instead of direct field writes. The
+per-Partition flusher batches Changes on a 5 ms linger window and ships
+them on the agent's control channel using the umbrella's wire format
+(`sdk_lang = 2`, `format_id = 4` = Kryo).
+
+See `docs/java_state_persistence.md` for the full API surface, code
+examples, and Kryo registration guidance. `flezha-sdk-testing`'s
+`ShardTestHarness` provides the `replayEquals()` determinism gate.
 
 ## Running tests
 

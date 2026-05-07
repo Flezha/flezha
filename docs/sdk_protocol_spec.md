@@ -1089,8 +1089,15 @@ the right per-Partition WAL file without a side-table mapping:
 ```
 
 The 16-byte header carries `sdk_lang = 1` (Rust) / `2` (Java), SDK
-version (BE u32), Shard `SCHEMA_VERSION` (BE u32), `format_id = 1`
-(postcard), reserved bytes, and a CRC32 over the body.
+version (BE u32), Shard `SCHEMA_VERSION` (BE u32), `format_id` (1 =
+postcard for Rust, 4 = Kryo for Java), reserved bytes, and a CRC32
+over the body.
+
+Cross-language load is rejected loud-and-clear per umbrella Decision 9:
+a Java SDK reading a header with `sdk_lang = 1` raises
+`StateLoadException.sdkLangMismatch`; the same applies to the Rust SDK
+in reverse. Both SDKs reject unknown `format_id` values via the
+matching typed error.
 
 ### Data-stream payload-id `partition_state_snapshot`
 

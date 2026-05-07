@@ -8,9 +8,10 @@ import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.relay.Relay;
 import com.flezha.sdk.relay.RelayConfigurationException;
 import com.flezha.sdk.runtime.relay.builder.RelayTopologyBuilder;
-import com.flezha.sdk.shard.Shard;
 import com.flezha.sdk.shard.ShardCtx;
 import com.flezha.sdk.shard.ShardException;
+import com.flezha.sdk.state.NoChange;
+import com.flezha.sdk.state.StateHandle;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
@@ -87,12 +88,12 @@ class RelayTopologyBuilderTest {
 
     // ---- Test relays / shards -----------------------------------------------
 
-    public static final class SingleShard implements Shard<String, Object, String> {
+    public static final class SingleShard extends StatelessTestShard<String, Object, String> {
         @Override public String name() { return "single_shard"; }
         @Override public Class<String> inputType() { return String.class; }
         @Override public Class<String> outputType() { return String.class; }
-        @Override public Object initState(Optional<String> shardKey) { return new Object(); }
-        @Override public void run(String input, Object state, ShardCtx ctx) { }
+        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
+        @Override public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
     }
 
     public static final class SingleModeRelay implements Relay {
@@ -102,15 +103,15 @@ class RelayTopologyBuilderTest {
         }
     }
 
-    public static final class StaticShard implements Shard<String, Object, String> {
+    public static final class StaticShard extends StatelessTestShard<String, Object, String> {
         @Override public String name() { return "static_shard"; }
         @Override public Class<String> inputType() { return String.class; }
         @Override public Class<String> outputType() { return String.class; }
-        @Override public Object initState(Optional<String> shardKey) { return new Object(); }
+        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
         @Override public List<String> shardKeys() { return List.of("a", "b", "c", "d"); }
         @Override public boolean partitionForOverridden() { return true; }
         @Override public List<String> partitionFor(String input) { return List.of(input.substring(0, 1)); }
-        @Override public void run(String input, Object state, ShardCtx ctx) { }
+        @Override public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
     }
 
     public static final class StaticModeRelay implements Relay {
@@ -127,36 +128,34 @@ class RelayTopologyBuilderTest {
         }
     }
 
-    public static final class TradeShard implements Shard<Trade, Object, String> {
+    public static final class TradeShard extends StatelessTestShard<Trade, Object, String> {
         @Override public String name() { return "trade_shard"; }
         @Override public Class<Trade> inputType() { return Trade.class; }
         @Override public Class<String> outputType() { return String.class; }
-        @Override public Object initState(Optional<String> shardKey) { return new Object(); }
-        @Override public void run(Trade input, Object state, ShardCtx ctx) { }
+        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
+        @Override public void run(Trade input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
     }
 
-    public static final class CandleShard implements Shard<Candle, Object, String> {
+    public static final class CandleShard extends StatelessTestShard<Candle, Object, String> {
         @Override public String name() { return "candle_shard"; }
         @Override public Class<Candle> inputType() { return Candle.class; }
         @Override public Class<String> outputType() { return String.class; }
-        @Override public Object initState(Optional<String> shardKey) { return new Object(); }
-        @Override public void run(Candle input, Object state, ShardCtx ctx) { }
+        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
+        @Override public void run(Candle input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
     }
 
-    public static final class TradeProducerShard implements Shard<String, Object, Trade> {
+    public static final class TradeProducerShard extends StatelessTestShard<String, Object, Trade> {
         @Override public String name() { return "trade_producer"; }
         @Override public Class<String> inputType() { return String.class; }
         @Override public Class<Trade> outputType() { return Trade.class; }
-        @Override public Object initState(Optional<String> shardKey) { return new Object(); }
-        @Override public void run(String input, Object state, ShardCtx ctx) throws ShardException { }
+        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
+        @Override public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) throws ShardException { }
     }
 
     public static final class TypeMismatchRelay implements Relay {
         @Override public String factoryId() { return "type_mismatch"; }
         @Override public void channels(ChannelBuilder c) {
             c.input(String.class, "input").into(TradeProducerShard.class);
-            // Channel `trade.parsed` is declared as Trade but has CandleShard
-            // (inputType Candle) wired as a consumer — payload-type mismatch.
             ChannelDeclMismatch.declareTradeIntoCandle(c);
         }
     }
@@ -165,8 +164,6 @@ class RelayTopologyBuilderTest {
     private static final class ChannelDeclMismatch {
         @SuppressWarnings({"unchecked", "rawtypes"})
         static void declareTradeIntoCandle(ChannelBuilder c) {
-            // Use raw types to bypass Java's compile-time type check; the
-            // runtime catches the mismatch at registerRelay time.
             c.channel(Trade.class, "trade.parsed")
                     .from((Class) TradeProducerShard.class)
                     .into((Class) CandleShard.class);
@@ -177,18 +174,18 @@ class RelayTopologyBuilderTest {
         @Override public String factoryId() { return "unwired_channel"; }
         @Override public void channels(ChannelBuilder c) {
             c.input(String.class, "input").into(SingleShard.class);
-            c.channel(Candle.class, "ohlc.candles");  // never wired with .from(...)
+            c.channel(Candle.class, "ohlc.candles");
         }
     }
 
-    public static final class MissingPartitionForOverriddenShard implements Shard<String, Object, String> {
+    public static final class MissingPartitionForOverriddenShard
+            extends StatelessTestShard<String, Object, String> {
         @Override public String name() { return "missing_pfo_shard"; }
         @Override public Class<String> inputType() { return String.class; }
         @Override public Class<String> outputType() { return String.class; }
-        @Override public Object initState(Optional<String> shardKey) { return new Object(); }
+        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
         @Override public List<String> shardKeys() { return List.of("a", "b"); }
-        // partitionForOverridden() defaults to false — registration should reject.
-        @Override public void run(String input, Object state, ShardCtx ctx) { }
+        @Override public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
     }
 
     public static final class MissingPartitionForOverriddenRelay implements Relay {
@@ -198,14 +195,14 @@ class RelayTopologyBuilderTest {
         }
     }
 
-    public static final class DynamicModeOnlyShard implements Shard<String, Object, String> {
+    public static final class DynamicModeOnlyShard extends StatelessTestShard<String, Object, String> {
         @Override public String name() { return "dynamic_only_shard"; }
         @Override public Class<String> inputType() { return String.class; }
         @Override public Class<String> outputType() { return String.class; }
-        @Override public Object initState(Optional<String> shardKey) { return new Object(); }
+        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
         @Override public boolean shardKeyOverridden() { return true; }
         @Override public Optional<String> shardKey(String input) { return Optional.of(input); }
-        @Override public void run(String input, Object state, ShardCtx ctx) { }
+        @Override public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
     }
 
     public static final class DynamicModeOnlyRelay implements Relay {

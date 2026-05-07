@@ -1,0 +1,166 @@
+# Java SDK — Per-Partition State Persistence
+
+Java SDK port of `relay-state-persistence-rust`. Mirrors the Rust trait
+surface one-for-one within Java idioms: six-parameter `Shard` generic,
+`StateHandle<State, Change>` mutation chokepoint, `Relay::persistenceEnabled`
+default-method, per-Partition flusher, Kryo serialization with stable
+registered type IDs.
+
+This doc is the Java-author counterpart to
+`docs/relay_state_persistence.md` (Rust). The wire format is byte-identical
+across SDKs; the header `sdk_lang` byte differs (Rust = 1, Java = 2) and
+the `format_id` byte differs (postcard = 1, Kryo = 4). Cross-language load
+fails loud per umbrella Decision 9.
+
+## Surface
+
+### Shard generic shape
+
+```java
+public final class CounterShard
+        implements Shard<Long, CounterShard.State, Void, CounterChange, WallClock, Void> {
+    public static final class State { public long value; }
+
+    @Override public String name() { return "counter_shard"; }
+    @Override public Class<Long> inputType() { return Long.class; }
+    @Override public Class<Void> outputType() { return Void.class; }
+    @Override public Class<CounterChange> changeType() { return CounterChange.class; }
+    @Override public Class<WallClock> clockType() { return WallClock.class; }
+    @Override public Class<Void> configType() { return Void.class; }
+    @Override public List<Class<?>> kryoTypes() { return List.of(State.class, CounterChange.class); }
+
+    @Override public State initState(Optional<String> shardKey, Optional<RestoreInitPayload> payload) {
+        return new State();
+    }
+
+    @Override public void applyChange(State state, CounterChange change) {
+        state.value += change.delta();
+    }
+
+    @Override public void run(Long input, StateHandle<State, CounterChange> state, ShardCtx ctx) {
+        state.apply(new CounterChange(input));
+    }
+}
+```
+
+Six type parameters are required because Java type erasure does not preserve
+associated-type bounds. The `Class<…>` reflection methods (`changeType()`,
+`clockType()`, `configType()`) recover the erased types at runtime for Kryo
+registration and flusher dispatch.
+
+### StateHandle
+
+`StateHandle<State, Change>` replaces the raw `State` parameter on
+`Shard.run`. Reads go through `state.get()`; mutations go through
+`state.apply(change)`. The handle does not expose a setter — to mutate state
+outside `apply`, the user must declare a Change type. That's the structural
+enforcement of the persistence contract.
+
+### Change and CoalesceKey
+
+```java
+public record CounterChange(long delta) implements Change {}
+
+public record TickChange(int interval, long ts, long delta) implements Change {
+    @Override public Optional<CoalesceKey> coalesceKey() {
+        return Optional.of(CoalesceKey.fromHash(interval, ts));
+    }
+}
+```
+
+Changes with equal coalesce keys collapse to the latest within a flush
+window. Changes without a key are emitted as-is.
+
+### NoChange
+
+`NoChange` is uninhabited. Shards opting out of persistence declare
+`Change = NoChange.class` (the default in the legacy migration); the runtime
+detects `Shard.changeType() == NoChange.class` and skips per-Partition
+flusher registration entirely.
+
+### Clock
+
+`Clock` is a sealed interface permitting `WallClock`, `LogicalClock`, and
+`EventTimeFrom<Input>`. v1 fully wires `WallClock` only; declaring the
+others fails Relay registration with
+`RelayConfigurationException.clockNotImplementedYet`.
+
+### Per-Partition flusher
+
+Single platform thread per JVM, lazy-started on first non-`NoChange` Shard
+registration. Wakes every `linger_ms` (system property
+`flezha.flush.linger.ms` &gt; env var `FLEZHA_FLUSH_LINGER_MS` &gt; default
+5) and drains every registered Partition. Toggle-aware: when
+`persistenceEnabled = false`, drain-and-discard without serialization or
+wire I/O.
+
+### Kryo registration
+
+```java
+@Override public List<Class<?>> kryoTypes() {
+    return List.of(CounterShard.State.class, CounterChange.class);
+}
+```
+
+Stable type IDs are essential for cross-version compatibility under additive
+Change evolution. Append-only: adding a new Change variant appends a new
+class to the END of the list, preserving prior IDs across SDK versions.
+Reordering is fragile; documented contract.
+
+### Wire format
+
+The header is 16 bytes, big-endian:
+
+```
+0:1   sdk_lang        (Java = 2)
+1:5   sdk_version     (u32; from Manifest Implementation-Version)
+5:9   schema_version  (u32; from Shard.schemaVersion())
+9:10  format_id       (Kryo = 4)
+10:12 reserved
+12:16 crc32           (over change_bytes)
+```
+
+A header with `sdk_lang != 2` raises `StateLoadException.sdkLangMismatch`;
+`format_id != 4` raises `StateLoadException.formatNotSupported`. Both fail
+loud per umbrella Decision 9.
+
+## Test harness
+
+`flezha-sdk-testing` exports `ShardTestHarness<I, S, O, C>` for unit-testing
+Shards without standing up the runtime:
+
+```java
+ShardTestHarness.of(new CounterShard())
+    .applyInputs(List.of(1L, 2L, 3L))
+    .expectChanges(List.of(new CounterChange(1), new CounterChange(2), new CounterChange(3)))
+    .expectState(new CounterState(6));
+
+assertThat(ShardTestHarness.of(new CounterShard())
+    .applyInputs(inputs)
+    .replayEquals()).isEmpty();  // determinism gate
+```
+
+`replayEquals()` returns `Optional.empty()` when the Shard's state is a
+deterministic function of the Change log; otherwise returns
+`ReplayMismatch` carrying the diagnostic Kryo bytes.
+
+## Trade-offs
+
+- The six-parameter `Shard` generic is verbose. Documented; users learn
+  the pattern once. The alternative (no generics, runtime type checks) is
+  worse. See `relay-state-persistence-java/design.md` Decision 1.
+- `Kryo.setRegistrationRequired(true)` is intentional: unregistered types
+  fail loud at first serialization. Users add to `Shard.kryoTypes()`.
+- The flusher's single-thread cadence is bounded by JVM GC stop-the-world
+  pauses. Tune G1 / ZGC / Shenandoah for strict durability; the umbrella's
+  durability bound is a guideline, not a hard cap.
+- `Optional<RestoreInitPayload>` adds a per-restart allocation vs Rust's
+  `Option<&RestoreInitPayload>`. Negligible (microseconds per Partition
+  restart).
+
+## Related docs
+
+- `docs/relay_state_persistence.md` — Rust-side per-Partition persistence
+- `docs/agent_state_persistence.md` — agent-side WAL and time-travel
+- `docs/sdk_protocol_spec.md` — wire-format spec
+- `docs/relay_architecture.md` — overall Relay/Shard/Partition model
