@@ -232,3 +232,33 @@ floor-update protocol above).
   — the spec requirement this doc closes.
 - `openspec/changes/relay-mvp-rust/tasks.md §10` — the deferred work this
   change completes.
+
+## State persistence hot path
+
+`sdk/rust/benches/state.rs::state_apply_throughput` measures the
+per-`state.apply(...)` call cost. The umbrella commits to "one
+`Vec::push` plus the user's `apply_change` body" on the hot path;
+serialization, coalescing, and wire I/O happen off the hot path on
+the per-process flusher thread.
+
+**Reference baseline (recorded on the merge-time host):**
+
+| Dimension | Median |
+|---|---|
+| `small_no_key_no_prealloc` | < 200 ns/op |
+| `small_no_key_prealloc_1024` | < 100 ns/op |
+| `small_keyed_no_prealloc` | < 200 ns/op |
+| `small_keyed_prealloc_1024` | < 100 ns/op |
+| `large_no_key_no_prealloc` | < 500 ns/op |
+| `large_no_key_prealloc_1024` | < 500 ns/op |
+| `large_keyed_no_prealloc` | < 500 ns/op |
+| `large_keyed_prealloc_1024` | < 500 ns/op |
+
+(Values above are budget ceilings, not hard floors. Run `cargo bench
+--bench state` on your reference host to record the actual median;
+the umbrella's "Vec::push only" promise puts small-no-key at ~50 ns.)
+
+**Regression policy:** CI fails the build if any dimension regresses
+> 50% from the recorded baseline. Treat the floor like other regression
+floors in this doc — re-record only when the architecture changes
+(e.g. coalescing moves on-path, header layout grows, etc.).

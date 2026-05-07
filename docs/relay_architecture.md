@@ -472,6 +472,29 @@ The umbrella enumerates non-goals (`relay-architecture/proposal.md`
 | Plugin emit framing | `sdk/rust/src/relay/dispatcher.rs::send_plugin_frame` |
 | State migration JSON shape | `sdk/rust/src/command/processor_state.rs` |
 
+## State persistence
+
+Per-Partition state is persisted via the `Change`-trait machinery added
+by `relay-state-persistence-rust` and wired end-to-end by
+`relay-state-persistence-agent`. The hot path is a single
+`Vec::push(change)` per `state.apply(...)` call; serialization,
+coalescing, and the wire send happen on a per-process flusher thread
+on a 5 ms linger cadence (configurable via `FLEZHA_FLUSH_LINGER_MS`).
+
+Shards opt out by inheriting `type Change = NoChange` (the trait's
+uninhabited default). Operator-controlled relay-instance override:
+`relay_persistence.<RelayClass>` in relay-start metadata.
+
+The umbrella commits to eight Tier-1 properties — wire format, header
+layout, `Change` trait shape, deterministic `apply_change`, replay
+equality via `ShardTestHarness`, single-thread flusher, frozen-at-start
+toggle, postcard format. The Rust SDK implements all eight; the agent
+side ships durable WAL, fsync batcher, and snapshot lifecycle in the
+follow-up change.
+
+See `docs/relay_state_persistence.md` for the full trait surface and
+worked examples.
+
 ## Mapping back to the umbrella
 
 Decisions referenced above:

@@ -1055,3 +1055,47 @@ The SDK automatically reconnects when the control channel drops unexpectedly. Se
 **Intentional vs unexpected disconnect:** When the agent sends `ComputeEngineDisconnect`, the SDK sets its status to `Stopped` and does **not** reconnect. When the connection drops without this command (agent crash, network failure), the SDK's status is still `Running`, and it enters the reconnection loop with exponential backoff.
 
 **Agent-side keepalive:** The agent preserves compute engine state for a configurable window (default 30000ms, via `FLEZHA_OPERATOR_KEEPALIVE`) after detecting a disconnect. If a new SDK process with the same namespace connects within this window, the agent may migrate preserved processors to the new compute engine.
+
+
+## Reserved payload-ids and commands for state persistence
+
+The following payload-ids and control commands are reserved by the
+umbrella `relay-state-persistence` and implemented end-to-end in
+`relay-state-persistence-agent`. The Rust SDK emits these from the
+per-Partition flusher once the agent change wires the wire path; until
+then a stub `tracing::trace!` consumer logs the byte count and discards
+the bytes (see `docs/relay_state_persistence.md`).
+
+### Payload-id `partition_state_change`
+
+Per-record framing produced by the per-Partition flusher:
+
+```
+[partition_id:    u32 BE]
+[seq:             u64 BE]
+[header:          16 B   ]   <- HeaderTemplate::stamp output
+[change_bytes_len:u32 BE]
+[change_bytes        ...]
+[crc32:           u32 BE]
+```
+
+The 16-byte header carries `sdk_lang = 1` (Rust) / `2` (Java),
+SDK version (BE u32), Shard `SCHEMA_VERSION` (BE u32),
+`format_id = 1` (postcard), reserved bytes, and a CRC32 over the
+change bytes.
+
+### Payload-id `partition_state_snapshot`
+
+Reserved for snapshot file framing produced by the agent. Wire-format
+details land in `relay-state-persistence-agent`.
+
+### Control command `RestoreInitState`
+
+Reserved for the warm-restart handshake. The agent ships
+`RestoreInitState` with the snapshot + change-log bytes; the SDK
+constructs a `RestoreInitPayload` and threads it into
+`Shard::init_state(shard_key, Some(payload))` — see
+`sdk/rust/src/partition/restore.rs` for the SDK-side decoder. Wire
+format and end-to-end semantics land in
+`relay-state-persistence-agent`.
+
