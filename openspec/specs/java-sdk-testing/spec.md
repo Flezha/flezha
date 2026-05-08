@@ -209,3 +209,23 @@ The Java SDK test suite (`mvn -f sdk/java test`) SHALL include at least one harn
 
 - **WHEN** a new persistence-related scenario is added to a `java-sdk` requirement and no corresponding harness test exists
 - **THEN** the spec/test sync check (run as part of `mvn -f sdk/java verify`) SHALL fail and block merge with a message naming the missing scenario; this matches the existing pattern from `java-sdk-testing` "Each java-sdk requirement has at least one unit test"
+
+### Requirement: Java test app directory uses canonical Executor naming
+
+The Java test compute-engine application SHALL live at `test/apps/java_executor/` (formerly `test/apps/java_compute_engine/`). All CI matrix entries that reference the test app's path SHALL be updated. Maven `pom.xml` artifact ID for the test app SHALL include `executor` (not `compute_engine`).
+
+#### Scenario: CI matrix references new path
+- **WHEN** the project's CI configuration is inspected for the Java SDK integration matrix
+- **THEN** test-app working-directory entries SHALL reference `test/apps/java_executor/`; entries referencing the legacy path MUST NOT exist
+
+#### Scenario: Integration test runs from new path
+- **WHEN** the Java SDK integration matrix is run
+- **THEN** the matrix MUST locate the test app at `test/apps/java_executor/`, build it, and exercise the Controller↔Executor flow including Relay registration, Shard execution, Partition state persistence, and survive-restart behavior
+
+### Requirement: Test naming reflects canonical role vocabulary
+
+Java SDK integration test class names and test descriptions SHALL use canonical vocabulary (Controller, Executor, Relay, Shard, Partition). Existing test classes whose names contain `Processor`, `Operator`, or `ComputeEngine` SHALL be renamed accordingly.
+
+#### Scenario: Test class names compile after rename
+- **WHEN** `mvn -f sdk/java test` is run
+- **THEN** all integration test classes SHALL compile and run; no class name SHALL contain `Processor`, `Operator`, or `ComputeEngine`

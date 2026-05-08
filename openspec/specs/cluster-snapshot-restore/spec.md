@@ -158,3 +158,23 @@ Reading code SHALL pattern-match on the outer tuple. A file that fails to decode
 #### Scenario: Help text includes the new commands
 - **WHEN** an executor runs `flz cluster --help`
 - **THEN** the output lists `snapshot` and `restore` subcommands with their flag summaries, each pointing to `docs/cluster-snapshot.md` for details
+
+### Requirement: Snapshot file paths use executor_id
+
+Cluster-snapshot files SHALL include per-Executor state under directory paths keyed by `executor_id` (replacing the prior `compute_engine_id` path component). All snapshot artifacts produced by the snapshot/restore subsystem SHALL use the new path scheme; restoration SHALL read from the new scheme exclusively.
+
+#### Scenario: Snapshot bundle contains executor_id-keyed directories
+- **WHEN** `flz controller snapshot create` is invoked on a Controller with Executors `exec-1` and `exec-2`
+- **THEN** the produced snapshot bundle SHALL contain top-level directories `exec-1/` and `exec-2/` for the Executor-scoped state, not `compute_engine_*` directories
+
+#### Scenario: Restore reads executor_id-keyed paths
+- **WHEN** `flz controller snapshot restore <bundle>` is invoked
+- **THEN** the restore process SHALL look for state under `executor_id` directories; absence of legacy `compute_engine_id` directories MUST NOT cause restore to fail
+
+### Requirement: Snapshot manifest references Controllers and Executors by canonical role names
+
+The snapshot manifest (the JSON / metadata file inside a cluster-snapshot bundle) SHALL identify the orchestrator role as `controller` and SDK process roles as `executor`. Manifest fields previously named `agent_*` or `compute_engine_*` SHALL be renamed `controller_*` and `executor_*` respectively.
+
+#### Scenario: Manifest fields use canonical names
+- **WHEN** a snapshot manifest is produced
+- **THEN** the manifest SHALL contain a `controller_id` field, an `executors` array (each entry having `executor_id`), and SHALL NOT contain any `agent_id` or `compute_engine_id` fields

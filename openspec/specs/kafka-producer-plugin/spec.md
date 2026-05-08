@@ -316,3 +316,15 @@ The bounded outbound queue SHALL be FIFO regardless of admission primitive. Reco
 - **WHEN** a chain admits records `A` (cast), `B` (cast), `C` (cast) and a test admits records `X` (call), `Y` (call) interleaved as `A, X, B, Y, C`
 - **THEN** the worker SHALL drain them to the broker in the order `A, X, B, Y, C`
 - **AND** the broker SHALL receive a single Produce request batch containing the records in that order (subject to `:linger_ms` and `:max_batch_bytes`)
+
+### Requirement: Dedup key format
+
+The Kafka producer plugin SHALL compute its dedup key as `<relay_class>/<shard_id>/<partition_key>/<seq>`. The plugin SHALL NOT use any value derived from the prior `processor_id` term in the dedup key composition; per-Relay identity in the dedup key is captured by `<relay_class>` (the Relay's module/class name) plus the shard/partition/seq tuple.
+
+#### Scenario: Dedup key uses relay_class
+- **WHEN** the plugin emits a record produced by Partition `k1` of Shard `s1` of Relay class `MarketRelay` at seq `42`
+- **THEN** the message MUST carry a `flezha.dedup_key` metadata header equal to `MarketRelay/s1/k1/42`
+
+#### Scenario: Backward-compat keys are not produced
+- **WHEN** any record is emitted by the plugin
+- **THEN** its `flezha.dedup_key` MUST NOT contain the substring `processor_` or `compute_engine_` (verifiable by a Kafka header inspection in tests)

@@ -95,3 +95,15 @@ CI SHALL include a Java SDK workflow that (a) cross-builds `flz_transport` for t
 #### Scenario: Java-only changes reuse cached native binaries
 - **WHEN** a pull request touches only files under `sdk/java/` (excluding `sdk/java/flezha-sdk-native/src/main/resources/native/`) and not `flz_transport/`
 - **THEN** CI SHALL reuse cached native binaries from the most recent successful main-branch build instead of cross-rebuilding them
+
+### Requirement: Java SDK artifact identifiers use canonical vocabulary
+
+Java SDK Maven artifact IDs and module names SHALL use canonical vocabulary. Modules previously named with `processor`, `operator`, or `compute-engine` segments SHALL use `relay` and `executor` segments respectively. Existing module names that do not carry those terms (e.g., `flezha-sdk-api`, `flezha-sdk-runtime`, `flezha-sdk-native`) keep their names.
+
+#### Scenario: Built artifacts use canonical names
+- **WHEN** `mvn -f sdk/java verify` produces SDK jars
+- **THEN** the produced artifact filenames MUST NOT contain the substrings `processor`, `compute-engine`, or `operator`; canonical module names (`flezha-sdk-api`, `flezha-sdk-runtime`, `flezha-sdk-native`) appear unchanged
+
+#### Scenario: Manifest metadata reflects canonical role names
+- **WHEN** a Java SDK jar's `META-INF/MANIFEST.MF` is inspected
+- **THEN** any role-tag entries SHALL use `Executor` (not `ComputeEngine` or `Operator`); free-text descriptions SHALL use `Relay` rather than `Processor`

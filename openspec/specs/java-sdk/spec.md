@@ -478,3 +478,23 @@ The Java SDK SHALL register command handlers for `RestoreInitState`, `CompactPar
 
 - **WHEN** the agent ships `PartitionMailboxStatus{partition_id, status: :full}` to a Java SDK
 - **THEN** the SDK's `PartitionMailboxStatusHandler` SHALL update the per-Partition observer to "full"; subsequent `ctx.emit(...)` calls on channels feeding this Partition SHALL apply the channel's `OverflowPolicy` (Block parks, DropNewest discards, DropOldest discards-oldest)
+
+### Requirement: Public Java SDK handler classes use canonical Relay vocabulary
+
+The Java SDK SHALL expose handler classes whose names use canonical vocabulary: `AddRelayHandler`, `RemRelayHandler`, `RelayMessageHandler`, `PartitionStateHandler`, `PartitionApplyStateHandler`. Classes previously named `AddProcessorHandler`, `RemProcessorHandler`, `ProcessorMessageHandler`, `ProcessorStateHandler`, `ProcessorApplyStateHandler` SHALL NOT be present in the published API. Java packages SHALL likewise migrate any package-path components that contained `processor`, `operator`, `agent`, or `compute_engine` to the canonical replacements (`relay`, `executor`, `controller`). `FleetManager`-equivalent classes keep their names.
+
+#### Scenario: Old handler classes do not exist
+- **WHEN** a downstream Java consumer imports `com.flezha.sdk.handlers.AddProcessorHandler`
+- **THEN** the import MUST fail to compile (class not found); the consumer MUST migrate to `com.flezha.sdk.handlers.AddRelayHandler`
+
+#### Scenario: New handlers wire into dispatch
+- **WHEN** a Java SDK Executor receives an `AddRelay` protobuf command from the Controller
+- **THEN** dispatch MUST route the message to `AddRelayHandler.handle(...)` with the protobuf `relay_id` field exposed under the same name (`getRelayId()`)
+
+### Requirement: Public Relay / Shard / Partition user-facing API names
+
+The Java SDK SHALL expose user-extensible base classes/interfaces under the canonical names `Relay`, `Shard`, `Partition`, and `Channel`. The Executor process startup hook SHALL be `Executor.start(Config)` (or equivalent factory entry point); class names referring to the SDK process itself SHALL use `Executor` as the role term, not `ComputeEngine` or `Operator`.
+
+#### Scenario: User extends Relay
+- **WHEN** a user-defined Relay class declares `extends Relay`
+- **THEN** the class MUST compile against the published Java SDK; declaring `extends Processor` MUST fail

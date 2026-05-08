@@ -411,3 +411,27 @@ The Installer SHALL publish the set of known installed plugin ids via a queryabl
 #### Scenario: Installed plugin's recovery row re-subscribes normally
 - **WHEN** `Recovery.PluginStore` has a row for plugin id `k` whose provider is loaded (the plugin is `:enabled` in the installer catalog)
 - **THEN** `Recovery.Coordinator` MUST re-subscribe that row exactly as it does today for compiled-in plugins
+
+### Requirement: Hook subscription names use canonical Relay vocabulary
+
+Plugin installation SHALL accept subscription specs that reference extension hooks by their canonical names. The init-state hook is `:on_relay_init` (formerly `:on_processor_init`); other hook names that previously contained "processor" SHALL likewise use "relay". Settings serialization SHALL persist the new names; reading a settings file that contains `:on_processor_init` SHALL produce an explicit error suggesting the user re-author the settings (no silent translation).
+
+#### Scenario: Plugin subscribes to on_relay_init
+- **WHEN** a plugin subscription is installed with `subscriptions: [{:on_relay_init, [position: 0]}]`
+- **THEN** the installation MUST succeed and the persisted settings file SHALL serialize the hook name as `on_relay_init`
+
+#### Scenario: Settings file with legacy hook name fails loud
+- **WHEN** the settings file contains a subscription to `:on_processor_init`
+- **THEN** plugin loading MUST return `{:error, {:unknown_hook, :on_processor_init}}` and SHALL NOT fall back to `:on_relay_init` silently
+
+### Requirement: Settings payload schema uses canonical names
+
+The plugin settings payload (the JSON serialized at `cli_manager.ex` and on disk) SHALL use field names: `relay_id`, `executor_id`, `controller_id`. Fields previously named `processor_id`, `compute_engine_id`, or `agent_id` SHALL be renamed in the schema; reading a settings file with the legacy field names SHALL return an error.
+
+#### Scenario: Modern settings round-trip
+- **WHEN** a plugin is installed with payload referencing `relay_id` and `executor_id`
+- **THEN** the on-disk settings file SHALL contain those exact field names; reloading the Controller MUST produce the same in-memory plugin state
+
+#### Scenario: Legacy field names rejected
+- **WHEN** an on-disk settings file contains a field named `processor_id` or `compute_engine_id`
+- **THEN** the loader MUST return an error identifying the offending field; the operator is expected to re-author the settings

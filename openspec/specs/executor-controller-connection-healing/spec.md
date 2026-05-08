@@ -1,74 +1,65 @@
-# executor-agent-connection-healing Specification
+# executor-controller-connection-healing Specification
 
 ## Purpose
 TBD - created by archiving change heal-connections-on-restart. Update Purpose after archive.
 ## Requirements
-### Requirement: Executor → agent data streams SHALL automatically heal across an agent restart
+### Requirement: Executor → Controller data streams SHALL automatically heal across a Controller restart
 
-When the agent process restarts and an executor's reconnect loop succeeds against the new agent process, every relay that ProcessHub keeps registered against this node + this namespace + this executor's profile SHALL have its data-stream traffic resume within 5 s of the new agent reaching ready, without any executor restart, manual `kubectl rollout restart` cascade, or external `flz relay start` invocation.
+When the Controller process restarts and an Executor's reconnect loop succeeds against the new Controller process, every Relay that ProcessHub keeps registered against this node + this namespace + this Executor's profile SHALL have its data-stream traffic resume within 5 s of the new Controller reaching ready, without any Executor restart, manual `kubectl rollout restart` cascade, or external `flz relay start` invocation.
 
 The mechanism has two halves:
 
-1. **Stream rebind.** `Flezha.Executor.StreamChannel` SHALL clear its `stream_ref` to `nil` synchronously inside its `handle_info({:flz_closed, _stream_ref, _reason}, state)` clause. A `StreamChannel` whose `stream_ref` is `nil` is "rebindable". `Flezha.Socket.StreamAcceptor` (UDS path) and `Flezha.Transport.Server` (QUIC path) SHALL, when accepting a new data stream for a `executor_id`, look up rebindable channels for that `executor_id` BEFORE spawning a fresh channel, and bind the new `stream_ref` via an atomic `GenServer.call(channel, {:bind, new_ref})` that returns `:ok` only if the channel was nil-ref at call time. On `:already_bound` the acceptor SHALL try the next candidate; if none, spawn fresh.
-2. **AddRelay reissue.** `Flezha.Executor.FleetManager.executor_connect/3` SHALL, AFTER the existing `try_migrate_executor` call, enumerate every relay currently registered in ProcessHub for this `node()` + this namespace whose `assigned_executor` matches the connecting executor's profile (declared factories overlap the relay's `factory_id`) AND was NOT already handled by `try_migrate_executor`. For each match, FleetManager SHALL re-issue `AddRelay` to the new executor via the existing `Overwatch.executor_migrate` → `start_relay_sdk` path, so the executor rebuilds its local relay registry and triggers fresh data-stream opens.
+1. **Stream rebind.** `Flezha.Executor.StreamChannel` SHALL clear its `stream_ref` to `nil` synchronously inside its `handle_info({:flz_closed, _stream_ref, _reason}, state)` clause. A `StreamChannel` whose `stream_ref` is `nil` is "rebindable". `Flezha.Socket.StreamAcceptor` (UDS path) and `Flezha.Transport.Server` (QUIC path) SHALL, when accepting a new data stream for an `executor_id`, look up rebindable channels for that `executor_id` BEFORE spawning a fresh channel, and bind the new `stream_ref` via an atomic `GenServer.call(channel, {:bind, new_ref})` that returns `:ok` only if the channel was nil-ref at call time. On `:already_bound` the acceptor SHALL try the next candidate; if none, spawn fresh.
+2. **AddRelay reissue.** `Flezha.Executor.FleetManager.executor_connect/3` SHALL, AFTER the existing `try_migrate_executor` call, enumerate every Relay currently registered in ProcessHub for this `node()` + this namespace whose `assigned_executor` matches the connecting Executor's profile (declared factories overlap the Relay's `factory_id`) AND was NOT already handled by `try_migrate_executor`. For each match, FleetManager SHALL re-issue `AddRelay` to the new Executor via the existing `Overwatch.executor_migrate` → `start_relay_sdk` path, so the Executor rebuilds its local Relay registry and triggers fresh data-stream opens.
 
 The Rust SDK's `command_add_relay` handler SHALL be idempotent: an `AddRelay` for a `relay_id` already in the local registry SHALL be a no-op (logged, not raised).
 
-#### Scenario: Executor's relays resume traffic after a `docker compose restart agent`
-- **GIVEN** the dev compose stack is up with one agent, one Rust executor, and one relay producing data to a Kafka topic
-- **AND** the executor's reconnect loop is running normally
-- **WHEN** the executor runs `docker compose restart agent`
-- **AND** the new agent process reaches ready
-- **AND** the executor's reconnect loop opens a new control channel within its existing backoff window
-- **THEN** within 5 s of the agent reaching ready, the Kafka topic's `LOG-END-OFFSET` SHALL have advanced past its pre-restart value
-- **AND** the test SHALL NOT have called `flz relay start`, restarted the executor container, or issued any other re-assignment operation between the restart and the assertion
+#### Scenario: Executor's Relays resume traffic after a `docker compose restart controller`
+- **GIVEN** the dev compose stack is up with one Controller, one Rust Executor, and one Relay producing data to a Kafka topic
+- **AND** the Executor's reconnect loop is running normally
+- **WHEN** the operator runs `docker compose restart controller`
+- **AND** the new Controller process reaches ready
+- **AND** the Executor's reconnect loop opens a new control channel within its existing backoff window
+- **THEN** within 5 s of the Controller reaching ready, the Kafka topic's `LOG-END-OFFSET` SHALL have advanced past its pre-restart value
+- **AND** the test SHALL NOT have called `flz relay start`, restarted the Executor container, or issued any other re-assignment operation between the restart and the assertion
 
 #### Scenario: StreamChannel rebinds to a fresh stream_ref instead of dropping traffic
-- **GIVEN** a `StreamChannel` for relay `p1` was bound to `stream_ref_old`
-- **AND** the agent process died and restarted, causing `{:flz_closed, stream_ref_old, _reason}` to fire on the channel
-- **WHEN** the executor reconnects and opens a new data stream that the acceptor routes to this `executor_id`'s `StreamSupervisor`
-- **THEN** the acceptor SHALL discover the existing `StreamChannel` is nil-ref (via `:stream_ref_status` call) and call `{:bind, stream_ref_new}` on it
+- **GIVEN** a `StreamChannel` for Relay `r1` was bound to `stream_ref_old`
+- **AND** the Controller process died and restarted, causing `{:flz_closed, stream_ref_old, _reason}` to fire on the channel
+- **WHEN** the Executor reconnects and opens a new data stream that the acceptor routes to this `executor_id`'s `StreamSupervisor`
+- **THEN** the acceptor SHALL discover the existing `StreamChannel` is nil-ref and call `{:bind, stream_ref_new}` on it
 - **AND** the channel's `stream_ref` SHALL update to `stream_ref_new`
 - **AND** subsequent outbound frames from the channel SHALL be sent on `stream_ref_new`, not silently dropped
 
 #### Scenario: Idempotent AddRelay reissue does not crash the SDK
-- **GIVEN** the Rust SDK's local registry already contains relay `p1`
-- **WHEN** the agent issues `AddRelay{relay_id: "p1", ...}` to the SDK as part of the reissue catch-up
+- **GIVEN** the Rust SDK's local registry already contains Relay `r1`
+- **WHEN** the Controller issues `AddRelay{relay_id: "r1", ...}` to the SDK as part of the reissue catch-up
 - **THEN** the SDK SHALL log "AddRelay: relay already registered, skipping" (or similar) and continue without raising
-- **AND** the SDK's local registry SHALL still contain exactly one entry for `p1`
+- **AND** the SDK's local registry SHALL still contain exactly one entry for `r1`
 
-#### Scenario: Two executors with identical factory sets — first reconnect claims local orphans
-- **GIVEN** namespace `ns1` had executor A and executor B both connected to the agent before restart, both declaring factory set `{f1, f2}`, with relays `p1` (assigned to A) and `p2` (assigned to B) at restart time
-- **AND** the agent restarts
-- **WHEN** executor A reconnects first
-- **THEN** FleetManager SHALL match A's factory set against ProcessHub's local relays and re-issue `AddRelay` for both `p1` and `p2` to A
-- **AND** when executor B subsequently reconnects, the orphans are already claimed; B SHALL fall through to today's no-orphan path and receive new `AddRelay` commands only as ProcessHub starts new relays and `child_data_alter` picks B
+### Requirement: Executor restart while the Controller is alive SHALL heal stream binding cleanly
 
-#### Scenario: ProcessHub redistributes a relay mid-reissue (race)
-- **GIVEN** FleetManager has decided to re-issue `AddRelay{relay_id: "p1"}` to a reconnecting executor
-- **AND** ProcessHub redistributes `p1` to a peer agent at the same moment
-- **WHEN** the SDK receives the late `AddRelay` for `p1`
-- **THEN** the SDK SHALL accept it (idempotent — adds to local registry)
-- **AND** the SDK SHALL detect on first I/O attempt that `p1` is no longer hosted locally and SHALL log and remove it (existing path; no new behaviour required) — OR the agent's subsequent `RemRelay` (issued by ProcessHub's redistribution) SHALL remove it
-- **AND** no crash SHALL occur on either side
+When an Executor (Rust/Java SDK) process restarts and its reconnect loop succeeds against the still-alive Controller, the existing `try_migrate_executor` reroute path SHALL continue to issue `AddRelay` for Relays preserved in the `:inactive` peer entry, AND the new data streams the Executor opens SHALL bind cleanly to nil-ref `StreamChannel`s without silent traffic drops.
 
-### Requirement: Executor restart while the agent is alive SHALL heal stream binding cleanly
+#### Scenario: Executor restart with single-replica-in-namespace
+- **GIVEN** Executor A is the only Executor in namespace `ns1` on this Controller, running Relays `r1` and `r2`
+- **WHEN** Executor A's container restarts and reconnects
+- **THEN** `try_migrate_executor` SHALL re-issue `AddRelay` for `r1` and `r2` against A; data streams MUST rebind to the existing `StreamChannel`s without traffic loss
 
-When an executor (Rust/Java SDK) process restarts and its reconnect loop succeeds against the still-alive agent, the existing `try_migrate_executor` reroute path (`fleet_manager.ex:288-305`) SHALL continue to issue `AddRelay` for relays preserved in the `:inactive` peer entry, AND the new data streams the executor opens SHALL bind cleanly to nil-ref `StreamChannel`s without silent traffic drops.
+### Requirement: `FLEZHA_EXECUTOR_KEEPALIVE` controls inactive-Executor retention
 
-#### Scenario: Executor restart with single-replica-in-namespace (Branch C path)
-- **GIVEN** executor A is the only executor in namespace `ns1` on this agent, running relays `p1` and `p2`
-- **WHEN** executor A's process dies and restarts within `executor_keepalive` (default 30 s)
-- **AND** executor A's reconnect loop opens a new control channel
-- **THEN** `try_migrate_executor` SHALL find the `:inactive` peer entry, claim it, and re-issue `AddRelay` for both `p1` and `p2` (today's behaviour, regression-guarded)
-- **AND** when executor A's new data streams attach, they SHALL bind to the existing nil-ref `StreamChannel`s for `p1` and `p2` rather than spawning duplicates
+The Controller SHALL retain a disconnected Executor's peer entry (including its assigned Relays in the `:inactive` set) for the duration specified by the `FLEZHA_EXECUTOR_KEEPALIVE` environment variable (default 30 seconds). After that window elapses without reconnect, the Controller SHALL discard the inactive entry and ProcessHub SHALL redistribute its Relays.
 
-#### Scenario: Executor restart with multiple replicas in namespace (Branch A path)
-- **GIVEN** executors A and B both connected to the agent in namespace `ns1`, A running `p1` and B running `p2`
-- **WHEN** executor A's process dies (B stays alive)
-- **THEN** Branch A (`executor_reroute`) SHALL move `p1` to executor B (today's behaviour)
-- **AND** `p1`'s `StreamChannel` SHALL update its binding to B's stream(s), not to A's dead stream_ref
-- **AND** when executor A subsequently reconnects, `try_migrate_executor` SHALL find no `:inactive` peer (B already took the work) and FleetManager's reissue catch-up SHALL find no ProcessHub-local relays profile-matching A; A SHALL receive new `AddRelay` commands only as ProcessHub places new relays on it via `child_data_alter`
+#### Scenario: Reconnect within keepalive preserves Relays
+- **GIVEN** an Executor with assigned Relays `[r1, r2]` disconnects
+- **AND** `FLEZHA_EXECUTOR_KEEPALIVE=30`
+- **WHEN** the same Executor reconnects 10 seconds later with the same identity
+- **THEN** the Controller SHALL re-issue `AddRelay` for `r1` and `r2` to the reconnected Executor without redistributing them
+
+#### Scenario: Reconnect after keepalive triggers redistribution
+- **GIVEN** an Executor with assigned Relays disconnects and `FLEZHA_EXECUTOR_KEEPALIVE=30`
+- **WHEN** no reconnect occurs within 30 seconds
+- **THEN** the Controller SHALL discard the inactive entry; ProcessHub SHALL redistribute the Relays to other Executors via normal placement
 
 ### Requirement: Existing `cluster-snapshot-restore` capability SHALL be preserved unchanged
 

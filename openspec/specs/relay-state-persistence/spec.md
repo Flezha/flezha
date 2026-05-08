@@ -8,9 +8,13 @@ The relay-state-persistence capability provides agent-side, per-Partition durabi
 
 ### Requirement: Per-Partition append-only WAL on the agent
 
-Each Partition whose Relay has `persistence_enabled = true` and whose Shard's `Change` is not `NoChange` SHALL have a per-Partition write-ahead log on the agent at `app_data/state/{executor_id}/{relay_class}/{shard_id}/{partition_key}.wal`. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the agent's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
+Each Partition whose Relay has `persistence_enabled = true` and whose Shard's `Change` is not `NoChange` SHALL have a per-Partition write-ahead log on the Controller at `app_data/state/{executor_id}/{relay_class}/{shard_id}/{partition_key}.wal`. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
 
-`seq` SHALL be strictly monotonic per Partition and assigned by the SDK. The agent SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Partition; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`; AND SHALL reject as a protocol violation any frame whose `seq > last_persisted_seq + 1` (returning `{:error, {:gap, expected, got}}` to the SDK).
+`seq` SHALL be strictly monotonic per Partition and assigned by the SDK. The Controller SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Partition; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`; AND SHALL reject as a protocol violation any frame whose `seq > last_persisted_seq + 1` (returning `{:error, {:gap, expected, got}}` to the SDK).
+
+#### Scenario: WAL path uses executor_id as the top-level component
+- **WHEN** a Partition `p1` with shard `s1` and partition_key `k1` belonging to Relay class `MarketRelay` is hosted on Executor `exec-9` and persistence is enabled
+- **THEN** the Controller SHALL write its WAL to `app_data/state/exec-9/MarketRelay/s1/k1.wal`
 
 #### Scenario: WAL allocated lazily on first append
 
@@ -367,3 +371,23 @@ The agent SHALL expose a `flz state` CLI subcommand tree:
 
 - **WHEN** the executor runs `flz state retention MarketRelay 12` and the agent is subsequently restarted
 - **THEN** after restart, the resolved `time_travel_retention_hours` for `MarketRelay` SHALL be 12
+
+### Requirement: Snapshot files use executor_id path component
+
+The Controller SHALL store snapshot files at `app_data/state/{executor_id}/{relay_class}/{shard_id}/{partition_key}.snap.{seq}`, replacing the previous `{compute_engine_id}` path component with `{executor_id}`. The on-the-wire payload-id `partition_state_snapshot` is unchanged.
+
+#### Scenario: Snapshot path uses executor_id
+- **WHEN** the Controller compacts the WAL of Partition `p1` (Relay class `MarketRelay`, shard `s1`, partition_key `k1`) hosted on Executor `exec-9` and assigns snapshot seq=42
+- **THEN** the resulting file SHALL be at `app_data/state/exec-9/MarketRelay/s1/k1.snap.42`
+
+### Requirement: ProcessorApplyState renamed to PartitionApplyState
+
+The protobuf message previously named `ProcessorApplyState` SHALL be renamed `PartitionApplyState`. The field `processor_id` SHALL be renamed `relay_id`; new field `partition_id` (string) IS the canonical identifier for the targeted Partition. The on-the-wire payload-id MAY be `partition_apply_state` to align with naming.
+
+#### Scenario: Rust SDK emits PartitionApplyState
+- **WHEN** the Rust SDK applies a state change to Partition `p1` belonging to Relay `r1`
+- **THEN** the SDK SHALL send a `PartitionApplyState { relay_id: "r1", partition_id: "...", change_bytes: ... }` on the control channel; the Controller SHALL accept it and route it to the Partition's WAL writer
+
+#### Scenario: Java SDK emits PartitionApplyState
+- **WHEN** the Java SDK applies a state change to a Partition
+- **THEN** the SDK SHALL send a `PartitionApplyState` message identical in shape to the Rust SDK's; the Controller SHALL handle both identically

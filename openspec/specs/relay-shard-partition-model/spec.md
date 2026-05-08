@@ -3,6 +3,60 @@
 ## Purpose
 TBD - created during sync of `relay-bounded-mailbox`. The umbrella `relay-architecture` change defines the canonical Relay/Shard/Partition model and is the source of additional requirements once it archives. Update Purpose then.
 ## Requirements
+
+### Requirement: Canonical role vocabulary
+
+The system SHALL use exactly these terms for top-level roles, and documentation, code, protobuf, CLI, and on-disk artifacts SHALL NOT introduce synonyms:
+
+- **Controller** — the Elixir/OTP control-plane process. Owns cluster topology, ProcessHub-driven placement of Relays, WAL/snapshot persistence, and the CLI/UI surface.
+- **Executor** — the Rust/Java SDK process. Hosts Relays at the direction of a Controller. One or more Executors connect to a Controller. Replaces the prior terms "Compute Engine" and "Operator" as a process synonym.
+- **Relay** — the top-level user-defined unit of work. One Relay per `flz relay start` invocation. Owned by the Controller, instantiated by an Executor.
+- **Shard** — a typed stage within a Relay (multiple per Relay).
+- **Partition** — a per-key lane within a Shard (one or many per Shard depending on declared keys).
+- **Channel** — a typed I/O port on a Shard.
+- **Operator (ProcessHub-internal)** — a node in ProcessHub's distribution ring. Not user-facing in Flezha; appears only in code that interfaces with the ProcessHub library and in `docs/process_hub_architecture.md`.
+
+#### Scenario: Documentation uses canonical terms
+- **WHEN** any spec, README, doc under `docs/`, or `CLAUDE.md` references the orchestrator process
+- **THEN** it SHALL use the term "Controller" (not "Agent")
+
+#### Scenario: Documentation uses canonical terms for SDK process
+- **WHEN** any spec, README, doc under `docs/`, or `CLAUDE.md` references the SDK process that runs Relays
+- **THEN** it SHALL use the term "Executor" (not "Compute Engine" or "Operator", except where "Operator" is explicitly qualified as ProcessHub-internal)
+
+#### Scenario: Glossary exists at a stable location
+- **WHEN** a contributor needs to look up a Flezha role term
+- **THEN** `docs/glossary.md` SHALL exist at the repo root under `docs/` and SHALL define each of: Controller, Executor, Relay, Shard, Partition, Channel, and Operator (ProcessHub-internal)
+
+### Requirement: Hierarchy and placement
+
+The system SHALL realize the role relationship as follows:
+
+```
+Controller (1 per deployment)
+  ↓ (runs N ProcessHub instances, one per namespace)
+  → Namespace
+    ↓ (ProcessHub picks placement by consistent hash)
+    → Relay instance (1 per `flz relay start`)
+      ↓ (Controller's `alter_child_data` hook picks an `executor_id`)
+      → Executor (SDK process) — may host multiple Relays
+        ↓ (SDK-internal partitioning; not ProcessHub-aware)
+        → Shard (declared per Relay class)
+          ↓
+          → Partition (per declared key, or default 1)
+            ↓
+            → Channel (typed I/O port)
+```
+
+The Controller SHALL hold the authoritative placement table. Executors SHALL register with the Controller via the control channel and SHALL receive `AddRelay` / `RemRelay` commands. Partitioning beneath the Relay level (Shards, Partitions, Channels) is SDK-internal and SHALL NOT be ProcessHub-aware.
+
+#### Scenario: Controller distributes Relays across Executors
+- **WHEN** a Controller has two healthy Executors A and B and `flz relay start` is invoked twice
+- **THEN** ProcessHub SHALL place each Relay on an Executor according to its consistent-hash policy; the Controller SHALL issue `AddRelay` over the corresponding Executor's control channel
+
+#### Scenario: Each Relay runs on exactly one Executor at a time
+- **WHEN** a Relay is placed on Executor A
+- **THEN** ProcessHub SHALL ensure no concurrent `AddRelay` for the same `relay_id` is issued to any other Executor; migrations SHALL go through the documented HotSwap-with-handover path
 ### Requirement: Per-Partition mailbox is bounded with declared capacity
 
 Each PartitionSlot's mailbox SHALL have a fixed capacity declared at relay startup. The mailbox SHALL refuse a push that would exceed this capacity; the SDK then applies the source channel's `OverflowPolicy` (see "Overflow policy declared per channel"). Capacity SHALL NOT change at runtime once the relay is started.

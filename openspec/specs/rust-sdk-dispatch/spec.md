@@ -280,3 +280,23 @@ The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u
 - **WHEN** the Rust SDK decodes a record whose header crc32 does not match a recomputed crc32 over the change_bytes
 - **THEN** `decode_header` SHALL return `Err(RestoreError::CrcMismatch { partition, seq })` and SHALL NOT proceed to deserialization
 
+### Requirement: Public Rust SDK API uses canonical Relay/Executor vocabulary
+
+The Rust SDK SHALL expose its top-level dispatch types under the names `ExecutorNode` (formerly `ComputeEngineNode`) and provide a method `get_relays()` (formerly `get_processors()`) returning the registered Relays on the current Executor. The module path SHALL be `sdk/rust/src/executor/` (formerly `sdk/rust/src/compute_engine/`). Generated protobuf types SHALL reflect the renamed messages: `AssignExecutorId`, `ExecutorDisconnect`, `AddRelay`, `RemRelay`, `PartitionState`, `PartitionApplyState`, `RelayMessage`, `RelayMessageResponse`, plus existing `RestoreInitState`, `CompactPartition`, `PartitionMailboxStatus`.
+
+#### Scenario: Public types compile under new names
+- **WHEN** a downstream Rust crate depends on `flezha-sdk` and writes `use flezha_sdk::executor::ExecutorNode;`
+- **THEN** the import MUST resolve and the compiler MUST accept it; an import via the legacy path `flezha_sdk::compute_engine::ComputeEngineNode` MUST NOT compile
+
+#### Scenario: get_relays returns the local Relay registry
+- **WHEN** a Rust SDK Executor has Relays `r1` and `r2` registered locally
+- **THEN** `executor_node.get_relays()` MUST return a collection containing exactly `r1` and `r2`; the legacy method `get_processors()` MUST NOT be exposed
+
+### Requirement: Generated payload-id constants use canonical names
+
+The Rust SDK's payload-id constants (those that map to the binary framing's `payload_id(32)` byte slot) SHALL be named consistent with the canonical vocabulary: `PARTITION_STATE_CHANGE`, `PARTITION_STATE_SNAPSHOT`, `RESTORE_INIT_STATE`, `COMPACT_PARTITION`, `PARTITION_MAILBOX_STATUS`, `CONNECT_CONTROL_CHANNEL`, `CONTROL_COMMAND`. The previous `PROCESSOR_*` family SHALL be removed.
+
+#### Scenario: Payload-id constants compile and resolve
+- **WHEN** the Rust SDK is built
+- **THEN** the constants `PARTITION_STATE_CHANGE` and `PARTITION_STATE_SNAPSHOT` MUST be defined and exported; references to `PROCESSOR_STATE_CHANGE` MUST not exist
+
