@@ -68,6 +68,14 @@ defmodule Flezha.State.Registry do
     Path.join(state_dir(pid), encode_partition_key(partition_key) <> ".outbox.dedup")
   end
 
+  @spec snapshot_path(partition_id(), non_neg_integer()) :: binary()
+  def snapshot_path({_, _, _, partition_key} = pid, seq) do
+    Path.join(
+      state_dir(pid),
+      encode_partition_key(partition_key) <> ".snap." <> Integer.to_string(seq)
+    )
+  end
+
   @doc """
   Enumerate Partition files under a Relay tree.
 

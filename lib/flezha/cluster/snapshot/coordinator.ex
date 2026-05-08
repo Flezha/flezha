@@ -7,9 +7,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   `apply_local_state/1` RPCs, reconciles results against the pre-gather
   ProcessHub view, and writes / reads the on-disk ETF artefact atomically.
 
-  See `openspec/changes/add-cluster-snapshot-restore/design.md` for the
-  full lifecycle. The snapshot file format is owned by
-  `Flezha.Cluster.Snapshot.Encoding`.
+  The snapshot file format is owned by `Flezha.Cluster.Snapshot.Encoding`.
   """
 
   alias Flezha.Cluster.Snapshot

@@ -67,6 +67,9 @@ public final class RelayStateSerializer {
         if (blob.length == 0) {
             return;
         }
+        // Jackson erases the Map's value type at deserialize; the JSON blob is authored
+        // by the matching serialize() above so the cast is round-trip safe.
+        @SuppressWarnings("unchecked")
         Map<String, Object> root = MAPPER.readValue(blob, Map.class);
         for (int shardId = 0; shardId < instance.topology().shards().size(); shardId++) {
             ShardDescriptor desc = instance.topology().shards().get(shardId);

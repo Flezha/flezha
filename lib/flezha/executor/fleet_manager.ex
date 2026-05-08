@@ -406,17 +406,17 @@ defmodule Flezha.Executor.FleetManager do
       |> get_executor_ids(namespace, :active)
       |> Enum.filter(fn id -> id != executor_id end)
 
-    other_agents = HubManager.get_hub_nodes(namespace)
+    other_nodes = HubManager.get_hub_nodes(namespace)
 
     namespace_executors =
       cond do
         !Enum.empty?(executor_ids) ->
           executor_reroute(state, namespace, executor_id, executor_ids)
 
-        Enum.empty?(executor_ids) && !Enum.empty?(other_agents) ->
+        Enum.empty?(executor_ids) && !Enum.empty?(other_nodes) ->
           hub_migrate(state, namespace, executor_id)
 
-        Enum.empty?(executor_ids) && Enum.empty?(other_agents) ->
+        Enum.empty?(executor_ids) && Enum.empty?(other_nodes) ->
           executor_preserve(state, namespace, executor_id)
       end
 

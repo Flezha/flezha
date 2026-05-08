@@ -9,12 +9,14 @@ use super::types::FlezhaLogLevel;
 /// Created via `flezha_context_new`, destroyed via `flezha_context_destroy`.
 /// All operations on a live context are thread-safe.
 /// Creation and destruction must not be concurrent with other operations on the same context.
+// reason: fields are read across the C-FFI boundary via cbindgen-generated header; rustc can't see those uses
 #[allow(dead_code)]
 pub struct FlezhaContext {
     pub(crate) config: FlezhaConfigOwned,
     pub(crate) log_state: Mutex<LogState>,
 }
 
+// reason: ctor + helpers consumed by the C-FFI surface in flezha_context_new etc.
 #[allow(dead_code)]
 impl FlezhaContext {
     pub(crate) fn new(config: FlezhaConfigOwned) -> Self {

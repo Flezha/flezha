@@ -29,8 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Per-Shard dispatcher (replacement for the legacy
- * {@code DefaultRelayDispatcher}). Caches the producer-edge
+ * Per-Shard dispatcher. Caches the producer-edge
  * {@code outputChannelId} at build time so {@code ctx.emit(...)} pays no
  * channel-name lookup on the hot path.
  *
@@ -88,6 +87,7 @@ public final class ShardDispatcher {
      * and route to partition index 0; static-mode shards call
      * {@code partitionFor} and fan out across the matching partitions.
      */
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void fanoutPartitions(@Nonnull Object value, long primaryStreamId) {
         RelayInstance ri = instance.get();
         if (ri == null) {
@@ -99,6 +99,7 @@ public final class ShardDispatcher {
             enqueue(slot, value, primaryStreamId);
             return;
         }
+        // Shard.Input is erased at this boundary; topology wiring guarantees value's runtime type matches.
         List<String> keys = shardInstance.partitionFor(value);
         Map<String, Integer> keyToIdx = ri.partitionKeyToIdx().get(shardId);
         for (String key : keys) {
@@ -152,7 +153,7 @@ public final class ShardDispatcher {
             // flush buffer under the bufferLock. The runtime's flusher owns
             // the buffer's drain cadence; here we just append.
             BiConsumer<Object, Change> applyChangeFn = (s, c) -> {
-                ((Shard) shardInstance).applyChange(s, c);
+                shardInstance.applyChange(s, c);
             };
             List<Change> bufferView;
             synchronized (slot.changeBufferLock()) {

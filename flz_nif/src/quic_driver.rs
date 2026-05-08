@@ -110,6 +110,8 @@ fn init_and_run(
     )
 }
 
+// reason: each arg is part of the QUIC driver's required wiring (poll, sockets, channels, pid); splitting would invent arbitrary bag-of-state structs
+#[allow(clippy::too_many_arguments)]
 fn driver_loop(
     _bind_address: SocketAddr,
     server_config: ServerConfig,
@@ -814,7 +816,7 @@ pub fn build_quic_server_config(
 
     let quic_server_config =
         quinn_proto::crypto::rustls::QuicServerConfig::try_from(server_crypto)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
 

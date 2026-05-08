@@ -296,6 +296,8 @@ fn flush_write_buffer(
     }
 }
 
+// reason: accept loop needs the listener plus all per-connection bookkeeping (stream/token maps, id counters, acceptor pid, mio waker); splitting would just bundle them into an inline struct
+#[allow(clippy::too_many_arguments)]
 fn accept_connections(
     listener: &UnixListener,
     poll: &mut Poll,

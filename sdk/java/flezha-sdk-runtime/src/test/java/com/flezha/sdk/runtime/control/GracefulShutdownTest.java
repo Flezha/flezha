@@ -78,7 +78,7 @@ class GracefulShutdownTest {
         assertThat(parsed.payloadId()).isEqualTo("control_command");
 
         CommandRequest request = CommandRequest.parseFrom(parsed.message());
-        assertThat(request.getCommandCase()).isEqualTo(CommandRequest.CommandCase.OPERATOR_SHUTDOWN_NOTIFICATION);
+        assertThat(request.getCommandCase()).isEqualTo(CommandRequest.CommandCase.EXECUTOR_SHUTDOWN_NOTIFICATION);
         ExecutorShutdownNotification notif = request.getExecutorShutdownNotification();
         assertThat(notif.getRelayId()).isEqualTo("p1");
         assertThat(notif.getSerializedState().toByteArray())

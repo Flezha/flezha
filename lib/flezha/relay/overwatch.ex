@@ -83,8 +83,7 @@ defmodule Flezha.Relay.Overwatch do
     # `flz relay start` time (via the CLI's `--plugins` flag) and
     # by every subsequent `flz plugin enable` / `flz plugin disable`
     # call (which writes through to the cspec via
-    # `Flezha.Service.HubManager.update_relay_plugins/3`). See
-    # openspec/specs/plugin-subscription-persistence/spec.md.
+    # `Flezha.Service.HubManager.update_relay_plugins/3`).
     plugins = Keyword.get(relay.opts, :plugins, [])
 
     with {:ok, state} <- subscribe_initial_plugins(state, plugins),
@@ -102,9 +101,8 @@ defmodule Flezha.Relay.Overwatch do
     # cold-start `flz relay start --plugins` path emits this) and
     # `{plugin_id, %Plugin{}}` tuples (the cspec-persistence path written
     # by `Flezha.Service.HubManager.update_relay_plugins/3` after a
-    # successful `flz plugin enable` — see
-    # openspec/specs/plugin-subscription-persistence/spec.md). Both
-    # normalise into the tuple form `Table.bulk_subscribe/2` expects.
+    # successful `flz plugin enable`). Both normalise into the tuple
+    # form `Table.bulk_subscribe/2` expects.
     entries =
       Enum.map(plugins, fn
         {id, %Plugin{} = plugin} -> {id, plugin}
@@ -123,11 +121,9 @@ defmodule Flezha.Relay.Overwatch do
   #
   # `init/1` is also the path for in-place restart plugin restoration: the
   # cspec's `relay.opts[:plugins]` list is read above and re-subscribed
-  # by `subscribe_initial_plugins/2` (see
-  # openspec/specs/plugin-subscription-persistence/spec.md). That path is
-  # independent of the per-Partition state-restore path
-  # (`dispatch_restore_init_state/2`), which rehydrates SDK-side WAL/snapshot
-  # state through the data plane.
+  # by `subscribe_initial_plugins/2`. That path is independent of the
+  # per-Partition state-restore path (`dispatch_restore_init_state/2`),
+  # which rehydrates SDK-side WAL/snapshot state through the data plane.
   #
   # HotSwap migration is handled separately in `alter_handover_state/2`
   # and never reaches this function.

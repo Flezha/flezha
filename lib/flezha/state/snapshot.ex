@@ -43,7 +43,7 @@ defmodule Flezha.State.Snapshot do
       dir = Registry.state_dir(partition_id)
       File.mkdir_p!(dir)
 
-      final_path = snapshot_path(partition_id, seq)
+      final_path = Registry.snapshot_path(partition_id, seq)
       tmp_path = final_path <> ".tmp"
 
       crc = :erlang.crc32(<<header::binary, snapshot_bytes::binary>>)
@@ -110,12 +110,7 @@ defmodule Flezha.State.Snapshot do
   """
   @spec delete_snapshot(Registry.partition_id(), non_neg_integer()) :: :ok
   def delete_snapshot(partition_id, seq) do
-    _ = File.rm(snapshot_path(partition_id, seq))
+    _ = File.rm(Registry.snapshot_path(partition_id, seq))
     :ok
-  end
-
-  defp snapshot_path({_, _, _, partition_key} = pid, seq) do
-    encoded = Registry.encode_partition_key(partition_key)
-    Path.join(Registry.state_dir(pid), encoded <> ".snap." <> Integer.to_string(seq))
   end
 end

@@ -246,7 +246,7 @@ flezha/
 The Java SDK binds to `flz_transport` through a thin `flz_jni` crate
 (`crate-type = ["cdylib"]`) that exports `Java_com_flezha_sdk_native_1_NativeTransport_*`
 symbols and delegates to `flz_transport`'s Rust + C FFI APIs. The cdylib is
-named `libflz_transport` so a single shared library lives on the Java
+named `libflz_jni` so a single shared library lives on the Java
 classpath per platform.
 
 ### Layout
@@ -289,6 +289,6 @@ flezha/
 
 The `flezha-sdk-native` module's `native-build` Maven profile drives
 `scripts/build-native.sh` (cargo-zigbuild) to cross-compile
-`libflz_transport.{so,dylib,dll}` for five target triples. The binaries
+`libflz_jni.{so,dylib,dll}` for five target triples. The binaries
 land under `src/main/resources/native/<os>-<arch>/` and are extracted +
 `System.load`-ed at SDK init time by `NativeLibraryLoader`.

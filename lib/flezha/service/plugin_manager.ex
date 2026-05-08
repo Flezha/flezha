@@ -8,9 +8,7 @@ defmodule Flezha.Service.PluginManager do
 
   The cspec is the source of truth for plugin subscriptions; the
   runtime `Overwatch.state.extensions` table is rebuilt from the cspec
-  on every `init/1`. See
-  `openspec/specs/plugin-subscription-persistence/spec.md` for the
-  full contract.
+  on every `init/1`.
   """
 
   use GenServer

@@ -13,7 +13,7 @@
     <artifactId>flezha-sdk-native</artifactId>
     <packaging>jar</packaging>
     <name>Flezha SDK Native</name>
-    <description>JNI bindings + bundled per-OS flz_transport native binaries.</description>
+    <description>JNI bindings + bundled per-OS flz_jni native binaries.</description>
 
     <properties>
         <!-- Directory that contains the build-native.sh helper script. -->
@@ -136,13 +136,13 @@
                                     <rules>
                                         <requireFilesExist>
                                             <files>
-                                                <file>${native.output.dir}/linux-x64/libflz_transport.so</file>
-                                                <file>${native.output.dir}/linux-arm64/libflz_transport.so</file>
-                                                <file>${native.output.dir}/macos-x64/libflz_transport.dylib</file>
-                                                <file>${native.output.dir}/macos-arm64/libflz_transport.dylib</file>
-                                                <file>${native.output.dir}/windows-x64/libflz_transport.dll</file>
+                                                <file>${native.output.dir}/linux-x64/libflz_jni.so</file>
+                                                <file>${native.output.dir}/linux-arm64/libflz_jni.so</file>
+                                                <file>${native.output.dir}/macos-x64/libflz_jni.dylib</file>
+                                                <file>${native.output.dir}/macos-arm64/libflz_jni.dylib</file>
+                                                <file>${native.output.dir}/windows-x64/libflz_jni.dll</file>
                                             </files>
-                                            <message>native-build profile is missing the required linux-x64 libflz_transport.so binary.</message>
+                                            <message>native-build profile is missing the required linux-x64 libflz_jni.so binary.</message>
                                         </requireFilesExist>
                                     </rules>
                                 </configuration>
@@ -176,13 +176,13 @@
                                     <rules>
                                         <requireFilesExist>
                                             <files>
-                                                <file>${native.output.dir}/linux-x64/libflz_transport.so</file>
-                                                <file>${native.output.dir}/linux-arm64/libflz_transport.so</file>
-                                                <file>${native.output.dir}/macos-x64/libflz_transport.dylib</file>
-                                                <file>${native.output.dir}/macos-arm64/libflz_transport.dylib</file>
-                                                <file>${native.output.dir}/windows-x64/libflz_transport.dll</file>
+                                                <file>${native.output.dir}/linux-x64/libflz_jni.so</file>
+                                                <file>${native.output.dir}/linux-arm64/libflz_jni.so</file>
+                                                <file>${native.output.dir}/macos-x64/libflz_jni.dylib</file>
+                                                <file>${native.output.dir}/macos-arm64/libflz_jni.dylib</file>
+                                                <file>${native.output.dir}/windows-x64/libflz_jni.dll</file>
                                             </files>
-                                            <message>native-verify: one or more of the five committed libflz_transport binaries are missing. Refresh them with `scripts/build-dist.sh` and `git add` the result.</message>
+                                            <message>native-verify: one or more of the five committed libflz_jni binaries are missing. Refresh them with `scripts/build-dist.sh` and `git add` the result.</message>
                                         </requireFilesExist>
                                     </rules>
                                 </configuration>

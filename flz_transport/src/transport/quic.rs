@@ -107,7 +107,7 @@ impl QuicClient {
 
         let mut client_config = ClientConfig::new(Arc::new(
             quinn_proto::crypto::rustls::QuicClientConfig::try_from(crypto)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?,
+                .map_err(io::Error::other)?,
         ));
 
         let mut transport = quinn_proto::TransportConfig::default();
@@ -137,7 +137,7 @@ impl QuicClient {
 
         let (conn_handle, mut connection) = endpoint
             .connect(Instant::now(), client_config, addr, "localhost")
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("QUIC connect error: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("QUIC connect error: {}", e)))?;
 
         // --- Blocking handshake ---
         drive_handshake(&mut poll, &udp, &mut endpoint, conn_handle, &mut connection)?;
@@ -151,7 +151,7 @@ impl QuicClient {
             .spawn(move || {
                 driver_loop(poll, udp, endpoint, conn_handle, connection, cmd_rx);
             })
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         Ok(QuicClient {
             cmd_tx,
@@ -171,7 +171,7 @@ impl QuicClient {
                 reply: reply_tx,
             })
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Driver thread gone"))?;
-        self.waker.wake().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        self.waker.wake().map_err(io::Error::other)?;
 
         let stream_id = reply_rx
             .recv()
@@ -227,7 +227,7 @@ impl Read for QuicBidiStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.read_rx
             .lock()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Lock poisoned: {}", e)))?
+            .map_err(|e| io::Error::other(format!("Lock poisoned: {}", e)))?
             .read(buf)
     }
 }
@@ -244,7 +244,7 @@ impl Write for QuicBidiStream {
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "QUIC write channel closed"))?;
         self.waker
             .wake()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         reply_rx
             .recv()
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Driver reply dropped"))?
@@ -260,7 +260,7 @@ impl Read for &QuicBidiStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.read_rx
             .lock()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Lock poisoned: {}", e)))?
+            .map_err(|e| io::Error::other(format!("Lock poisoned: {}", e)))?
             .read(buf)
     }
 }
@@ -277,7 +277,7 @@ impl Write for &QuicBidiStream {
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "QUIC write channel closed"))?;
         self.waker
             .wake()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         reply_rx
             .recv()
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Driver reply dropped"))?
@@ -447,10 +447,7 @@ fn driver_loop(
                             let _ = reply.send(Ok(stream_id));
                         }
                         None => {
-                            let _ = reply.send(Err(io::Error::new(
-                                io::ErrorKind::Other,
-                                "Stream limit reached",
-                            )));
+                            let _ = reply.send(Err(io::Error::other("Stream limit reached")));
                         }
                     }
                 }
@@ -542,23 +539,20 @@ fn drain_readable(
     };
     let read_tx = slot.read_tx.clone();
 
-    match connection.recv_stream(id).read(true) {
-        Ok(mut chunks) => {
-            loop {
-                match chunks.next(usize::MAX) {
-                    Ok(Some(chunk)) => {
-                        if read_tx.send(chunk.bytes).is_err() {
-                            break; // Consumer dropped
-                        }
+    if let Ok(mut chunks) = connection.recv_stream(id).read(true) {
+        loop {
+            match chunks.next(usize::MAX) {
+                Ok(Some(chunk)) => {
+                    if read_tx.send(chunk.bytes).is_err() {
+                        break; // Consumer dropped
                     }
-                    Ok(None) => break, // No more data
-                    Err(quinn_proto::ReadError::Blocked) => break,
-                    Err(_) => break,
                 }
+                Ok(None) => break, // No more data
+                Err(quinn_proto::ReadError::Blocked) => break,
+                Err(_) => break,
             }
-            let _ = chunks.finalize();
         }
-        Err(_) => {}
+        let _ = chunks.finalize();
     }
 }
 

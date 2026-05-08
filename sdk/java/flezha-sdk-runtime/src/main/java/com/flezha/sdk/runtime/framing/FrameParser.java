@@ -56,6 +56,7 @@ public final class FrameParser {
     }
 
     @Nonnull
+    @SuppressWarnings("fallthrough") // INCOMPLETE_HEADER falls through to INCOMPLETE_PAYLOAD by design once the header is parsed
     public List<Frame> feed(@Nonnull byte[] chunk, int offset, int length) {
         if (chunk == null) {
             throw new IllegalArgumentException("chunk must not be null");
@@ -84,7 +85,7 @@ public final class FrameParser {
                     }
                     parseHeader();
                     state = State.INCOMPLETE_PAYLOAD;
-                    // fall through
+                    // $FALL-THROUGH$
                 case INCOMPLETE_PAYLOAD:
                     if (bufferedLen < currentPayloadSize) {
                         return out;

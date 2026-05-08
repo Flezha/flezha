@@ -7,8 +7,7 @@ import javax.annotation.Nonnull;
 /**
  * Per-{@code ExecutorContext} registry of live {@link RelayInstance}
  * objects keyed by {@code instanceId} (= what the wire calls
- * {@code relay_id}). Replaces the legacy
- * {@code Map<String, RelayInstance>}.
+ * {@code relay_id}).
  */
 public final class RelayInstanceRegistry {
 

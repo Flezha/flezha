@@ -16,9 +16,9 @@ pub fn get_flezha_command() -> String {
 
 pub fn get_extension() -> String {
     if cfg!(target_os = "windows") {
-        return ".bat".to_string();
+        ".bat".to_string()
     } else {
-        return "".to_string();
+        String::new()
     }
 }
 
@@ -200,13 +200,13 @@ pub fn extract_extension_flags(args: &[String]) -> Vec<(String, Vec<(String, Str
             let name = strip_quotes(rest);
             if !names.contains(&name) {
                 names.push(name.clone());
-                sub_opts.entry(name).or_insert_with(Vec::new);
+                sub_opts.entry(name).or_default();
             }
         } else if arg == "--extension" && i + 1 < args.len() {
             let name = strip_quotes(&args[i + 1]);
             if !names.contains(&name) {
                 names.push(name.clone());
-                sub_opts.entry(name).or_insert_with(Vec::new);
+                sub_opts.entry(name).or_default();
             }
             i += 1;
         } else if let Some(rest) = arg.strip_prefix("--") {
@@ -218,10 +218,10 @@ pub fn extract_extension_flags(args: &[String]) -> Vec<(String, Vec<(String, Str
                     if let Some(eq_pos) = remainder.find('=') {
                         let key = &remainder[..eq_pos];
                         let value = &remainder[eq_pos + 1..];
-                        let entry = sub_opts.entry(prefix.to_string()).or_insert_with(Vec::new);
+                        let entry = sub_opts.entry(prefix.to_string()).or_default();
                         entry.push((key.to_string(), strip_quotes(value)));
                     } else if i + 1 < args.len() {
-                        let entry = sub_opts.entry(prefix.to_string()).or_insert_with(Vec::new);
+                        let entry = sub_opts.entry(prefix.to_string()).or_default();
                         entry.push((remainder.to_string(), strip_quotes(&args[i + 1])));
                         i += 1;
                     }

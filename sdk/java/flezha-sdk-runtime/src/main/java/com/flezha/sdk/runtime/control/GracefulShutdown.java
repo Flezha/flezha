@@ -181,7 +181,7 @@ public final class GracefulShutdown {
             // is just here to wait for the parallel completions. Add a small
             // slack so a slow thread-spawn doesn't blow past 2 s.
             CompletableFuture
-                    .allOf(waits.toArray(new CompletableFuture[0]))
+                    .allOf(waits.toArray(new CompletableFuture<?>[0]))
                     .get(ACK_TIMEOUT_MS + 500L, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             // Either a timeout (ack never arrived) or an exception inside

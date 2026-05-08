@@ -5,7 +5,7 @@ edition = "2021"
 description = "JNI bindings exposing flz_transport's C FFI to the Flezha Java SDK"
 
 [lib]
-name = "flz_transport"
+name = "flz_jni"
 crate-type = ["cdylib"]
 
 [dependencies]

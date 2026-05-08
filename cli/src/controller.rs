@@ -29,7 +29,7 @@ fn handle_start(args: &[String]) {
         }
     }
 
-    if args.len() < 1 {
+    if args.is_empty() {
         eprintln!("Error: Invalid number of arguments. Usage: flz controller start [--mode {{attached|daemon|attached_iex|daemon_iex}}]");
         exit(1);
     }

@@ -13,7 +13,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Extracts {@code libflz_transport.<ext>} from the classpath resource
+ * Extracts {@code libflz_jni.<ext>} from the classpath resource
  * {@code /native/<os>-<arch>/} into a writable directory and loads it via
  * {@link System#load(String)}. Safe under concurrent JVMs because the
  * target path includes a content hash of the binary.
@@ -21,7 +21,7 @@ import java.util.Set;
 final class NativeLibraryLoader {
 
     static final String RESOURCE_PREFIX = "/native/";
-    static final String LIB_BASE_NAME = "libflz_transport";
+    static final String LIB_BASE_NAME = "libflz_jni";
     static final String NATIVE_LIB_DIR_ENV = "FLEZHA_NATIVE_LIB_DIR";
 
     private static final Set<String> SUPPORTED = Set.of(

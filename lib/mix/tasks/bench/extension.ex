@@ -13,8 +13,8 @@ defmodule Mix.Tasks.Bench.Extension do
   Microbenchmark for `Flezha.Plugin.Extension.run/3` on the hot
   `:on_input` / `:on_output` path. Measures wall-clock throughput at three
   subscriber counts (0, 1, 5) for both the extension system and an
-  equivalent `Enum.reduce_while` over a list of closures — the shape the
-  legacy `exec_bindings/2` had.
+  equivalent `Enum.reduce_while` over a list of closures — the
+  hand-rolled-fold baseline.
 
   Also runs a "Kafka chain mailbox boundedness" scenario that drives a
   transform chain with one Kafka producer subscriber against a stub

@@ -59,7 +59,7 @@ public final class RelayInstance {
         this.kryoTypes = kryoTypes;
     }
 
-    /** Construct a fresh {@link RelayInstance} with persistence enabled (legacy entry point). */
+    /** Construct a fresh {@link RelayInstance} with persistence enabled. */
     @Nonnull
     public static RelayInstance create(
             @Nonnull RelayTopology topology,

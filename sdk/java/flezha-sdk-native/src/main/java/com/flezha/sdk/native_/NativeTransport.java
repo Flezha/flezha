@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
  * {@code byte[]} handed to Java is a fresh JVM allocation; every
  * {@code byte[]} accepted from Java is copied before the method returns.
  *
- * <p>The class extracts and loads {@code libflz_transport} exactly once per
+ * <p>The class extracts and loads {@code libflz_jni} exactly once per
  * JVM via {@link NativeLibraryLoader} in its static initializer. Accessing
  * any static member triggers the load.
  *

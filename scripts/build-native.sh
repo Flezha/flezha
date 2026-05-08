@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build flz_jni's cdylib (libflz_transport.{so,dylib,dll}) for one or more
+# Build flz_jni's cdylib (libflz_jni.{so,dylib,dll}) for one or more
 # target platforms and stage the result into the Java SDK's resources tree.
 #
 # *This script is executor-driven, not invoked by CI.* When flz_jni or
@@ -15,11 +15,11 @@
 #   scripts/build-native.sh --output <dir> --targets a,b,c       # specific triples
 #
 # Output layout (subdirectories created on demand):
-#   <dir>/linux-x64/libflz_transport.so
-#   <dir>/linux-arm64/libflz_transport.so
-#   <dir>/macos-x64/libflz_transport.dylib
-#   <dir>/macos-arm64/libflz_transport.dylib
-#   <dir>/windows-x64/libflz_transport.dll
+#   <dir>/linux-x64/libflz_jni.so
+#   <dir>/linux-arm64/libflz_jni.so
+#   <dir>/macos-x64/libflz_jni.dylib
+#   <dir>/macos-arm64/libflz_jni.dylib
+#   <dir>/windows-x64/libflz_jni.dll
 #
 # Requirements:
 #   - Rust stable
@@ -149,9 +149,9 @@ for triple in "${TRIPLES[@]}"; do
   EXT="${TRIPLE_TO_EXT[${triple}]}"
   PREFIX="${TRIPLE_TO_PREFIX[${triple}]}"
 
-  SRC="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/${triple}/release/${PREFIX}flz_transport.${EXT}"
+  SRC="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/${triple}/release/${PREFIX}flz_jni.${EXT}"
   DST_DIR="${OUTPUT_DIR}/${DIR_NAME}"
-  DST="${DST_DIR}/libflz_transport.${EXT}"
+  DST="${DST_DIR}/libflz_jni.${EXT}"
 
   if [[ ! -f "${SRC}" ]]; then
     echo "Expected build output not found: ${SRC}" >&2

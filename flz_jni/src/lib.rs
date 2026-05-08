@@ -70,6 +70,7 @@ pub(crate) fn throw_native(env: &mut JNIEnv, status_code: i32, message: &str) {
 
 /// Convert a `FlezhaStatus` value returned by the C FFI into an optional
 /// error. Returns `Ok(())` for `FlezhaStatus::Ok`, otherwise `Err((code, msg))`.
+// reason: helper used by JNI exports that bubble C-FFI status; rustc can't see JNI export consumers
 #[allow(dead_code)]
 pub(crate) fn status_to_result(status: i32) -> Result<(), (i32, String)> {
     if status == 0 {

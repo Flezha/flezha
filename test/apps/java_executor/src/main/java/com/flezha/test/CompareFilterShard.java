@@ -50,7 +50,7 @@ public final class CompareFilterShard
     @Override
     public void run(String input, StateHandle<State, NoChange> state, ShardCtx ctx) throws ShardException {
         if (state.get().comparable().equals(input)) {
-            // matched — equivalent to the legacy pipeToAgent(input) path.
+            // matched — filter passes the input through (no-op here).
         }
     }
 

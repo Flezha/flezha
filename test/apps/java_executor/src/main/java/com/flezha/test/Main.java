@@ -28,9 +28,7 @@ public final class Main {
         Flezha.registerRelay(StatefulCounterRelay.class);
         Flezha.registerRelay(CoalescingCounterRelay.class);
         Flezha.registerRelay(PersistenceOffRelay.class);
-        // RELAY_MESSAGE_HANDLERS_PENDING — `EchoMessageRelay` is removed in
-        // relay-mvp-java per design.md Decision 9. It is restored in
-        // `relay-message-handlers` once per-Shard `handleMessage` ships.
+        // EchoMessageRelay is reintroduced once per-Shard `handleMessage` lands.
     }
 
     private static void stdKeeper() {

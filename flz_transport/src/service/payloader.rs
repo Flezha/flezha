@@ -44,6 +44,8 @@ pub fn extract_payload<R: Read>(
     Ok((payload_id, message_buf, metadata))
 }
 
+// reason: tuple shape is the wire-extraction return type; refactoring would change the public signature
+#[allow(clippy::type_complexity)]
 pub fn extract_payload_non_blocking<R: Read>(
     mut reader: R,
 ) -> io::Result<Option<(String, Vec<u8>, HashMap<String, String>)>> {

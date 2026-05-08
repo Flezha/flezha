@@ -3,7 +3,7 @@
 # Build EVERYTHING that needs to live in git for CI to skip rebuilds:
 #
 #   1. flz_jni cdylib for all 5 platforms ->
-#      sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/libflz_transport.<ext>
+#      sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/libflz_jni.<ext>
 #   2. SDK fat jar ->
 #      sdk/java/flezha-sdk/dist/flezha-sdk.jar
 #   3. Test executor fat jar ->
@@ -211,9 +211,9 @@ for t in "${TRIPLES[@]}"; do
     cargo zigbuild --release -p flz_jni --target "${t}"
   fi
 
-  src="${CARGO_TARGET_DIR}/${t}/release/${TRIPLE_TO_PREFIX[${t}]}flz_transport.${TRIPLE_TO_EXT[${t}]}"
+  src="${CARGO_TARGET_DIR}/${t}/release/${TRIPLE_TO_PREFIX[${t}]}flz_jni.${TRIPLE_TO_EXT[${t}]}"
   dst_dir="${NATIVE_OUT}/${TRIPLE_TO_DIR[${t}]}"
-  dst="${dst_dir}/libflz_transport.${TRIPLE_TO_EXT[${t}]}"
+  dst="${dst_dir}/libflz_jni.${TRIPLE_TO_EXT[${t}]}"
 
   if [[ ! -f "${src}" ]]; then
     red "expected build output missing: ${src}"

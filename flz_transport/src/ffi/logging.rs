@@ -11,6 +11,7 @@ pub(crate) struct LogState {
 unsafe impl Send for LogState {}
 unsafe impl Sync for LogState {}
 
+// reason: ctor + log helpers invoked from the C-FFI surface (flezha_set_log_callback)
 #[allow(dead_code)]
 impl LogState {
     pub fn new() -> Self {

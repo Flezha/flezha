@@ -9,9 +9,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Serializes writes onto a secondary stream. The JNI layer already enforces
- * a per-stream write lock (see {@code flz_jni/src/context.rs}), but this
- * class also keeps Java-side write batching + logging. Blocking-write
- * semantics match the Rust SDK's {@code pipe_to_agent} flow.
+ * a per-stream write lock (see {@code flz_jni/src/context.rs}); this class
+ * adds Java-side write batching + logging on top. Writes are blocking.
  */
 public final class SecondaryStreamWriter {
 

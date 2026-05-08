@@ -48,9 +48,8 @@ fn handle_start(args: &[String]) {
 
     let mut opts: HashMap<String, String> = HashMap::new();
 
-    let spt = extract_param(&args[3..], "--snapshot-interval", "-si");
-    if spt.is_some() {
-        opts.insert("snapshot_interval".to_string(), spt.unwrap());
+    if let Some(spt) = extract_param(&args[3..], "--snapshot-interval", "-si") {
+        opts.insert("snapshot_interval".to_string(), spt);
     }
 
     let opts_json = serde_json::to_string(&opts).unwrap();
@@ -136,55 +135,6 @@ fn parse_plugins_json(raw: &str) -> Result<String, String> {
     }
 
     Ok(serde_json::to_string(&value).unwrap_or_else(|_| trimmed.to_string()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_plugins_json;
-
-    #[test]
-    fn empty_input_becomes_empty_array() {
-        assert_eq!(parse_plugins_json("").unwrap(), "[]");
-        assert_eq!(parse_plugins_json("{}").unwrap(), "[]");
-        assert_eq!(parse_plugins_json("   ").unwrap(), "[]");
-    }
-
-    #[test]
-    fn valid_sibling_spec_round_trips() {
-        let input = r#"[{"id":"init_state_from_java","provider":"init_state_sibling","opts":{"source_relay_id":"market-init-state","handler_key":"fetch_init_state","request_payload":{"symbol":"XBT/USD"}},"subscriptions":[["on_relay_init",{"on_error":"empty"}]]}]"#;
-        let canonical = parse_plugins_json(input).unwrap();
-        assert!(canonical.contains("\"init_state_from_java\""));
-        assert!(canonical.contains("\"init_state_sibling\""));
-    }
-
-    #[test]
-    fn malformed_json_returns_err() {
-        assert!(parse_plugins_json("not json").is_err());
-        assert!(parse_plugins_json("[").is_err());
-    }
-
-    #[test]
-    fn non_array_returns_err() {
-        let err = parse_plugins_json(r#"{"id":"x","provider":"y"}"#).unwrap_err();
-        assert!(err.contains("JSON array"));
-    }
-
-    #[test]
-    fn missing_id_returns_err() {
-        let err =
-            parse_plugins_json(r#"[{"provider":"init_state_sibling","subscriptions":[["x",{}]]}]"#)
-                .unwrap_err();
-        assert!(err.contains("missing non-empty string field `id`"));
-    }
-
-    #[test]
-    fn empty_subscriptions_returns_err() {
-        let err = parse_plugins_json(
-            r#"[{"id":"p","provider":"init_state_sibling","subscriptions":[]}]"#,
-        )
-        .unwrap_err();
-        assert!(err.contains("non-empty `subscriptions`"));
-    }
 }
 
 fn handle_stop(args: &[String]) {
@@ -376,4 +326,53 @@ fn print_relay_help() {
     println!("    help        Show this help message");
     println!();
     println!("Use 'flz relay <COMMAND> --help' for more information on a specific command.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_plugins_json;
+
+    #[test]
+    fn empty_input_becomes_empty_array() {
+        assert_eq!(parse_plugins_json("").unwrap(), "[]");
+        assert_eq!(parse_plugins_json("{}").unwrap(), "[]");
+        assert_eq!(parse_plugins_json("   ").unwrap(), "[]");
+    }
+
+    #[test]
+    fn valid_sibling_spec_round_trips() {
+        let input = r#"[{"id":"init_state_from_java","provider":"init_state_sibling","opts":{"source_relay_id":"market-init-state","handler_key":"fetch_init_state","request_payload":{"symbol":"XBT/USD"}},"subscriptions":[["on_relay_init",{"on_error":"empty"}]]}]"#;
+        let canonical = parse_plugins_json(input).unwrap();
+        assert!(canonical.contains("\"init_state_from_java\""));
+        assert!(canonical.contains("\"init_state_sibling\""));
+    }
+
+    #[test]
+    fn malformed_json_returns_err() {
+        assert!(parse_plugins_json("not json").is_err());
+        assert!(parse_plugins_json("[").is_err());
+    }
+
+    #[test]
+    fn non_array_returns_err() {
+        let err = parse_plugins_json(r#"{"id":"x","provider":"y"}"#).unwrap_err();
+        assert!(err.contains("JSON array"));
+    }
+
+    #[test]
+    fn missing_id_returns_err() {
+        let err =
+            parse_plugins_json(r#"[{"provider":"init_state_sibling","subscriptions":[["x",{}]]}]"#)
+                .unwrap_err();
+        assert!(err.contains("missing non-empty string field `id`"));
+    }
+
+    #[test]
+    fn empty_subscriptions_returns_err() {
+        let err = parse_plugins_json(
+            r#"[{"id":"p","provider":"init_state_sibling","subscriptions":[]}]"#,
+        )
+        .unwrap_err();
+        assert!(err.contains("non-empty `subscriptions`"));
+    }
 }

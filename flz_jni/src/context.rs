@@ -28,6 +28,7 @@ use flz_transport::utility::path_helper;
 use crate::callbacks::{dispatch_connection_lost, dispatch_data, dispatch_stream_closed};
 use crate::throw_native;
 
+// reason: STREAM_TYPE_* are documentation constants mirroring flz_transport::protocol; consumed by Java via JNI
 /// Stream type constants — kept in sync with
 /// `flz_transport::transport::protocol::STREAM_TYPE_*`. Exposed for
 /// documentation; the Java side carries its own mirror.
@@ -421,11 +422,11 @@ fn open_control(ctx: &JniContext) -> std::io::Result<Arc<FlezhaStream>> {
         )),
         Transport::Quic => {
             let client = QuicClient::connect(&ctx.config.quic_address, &ctx.config.ca_cert_path)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
             let client = Arc::new(client);
             let control = client
                 .open_bidi_stream()
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
             *ctx.quic_client.lock().unwrap() = Some(client);
             Ok(Arc::new(FlezhaStream::Quic(control)))
         }
@@ -474,7 +475,7 @@ fn open_data_stream(
 
             let mut stream = client
                 .open_bidi_stream()
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
             stream.write_all(&[stream_type, index])?;
             Ok(Arc::new(FlezhaStream::Quic(stream)))
         }
@@ -549,9 +550,7 @@ fn reader_loop(ctx: &JniContext, stream_id: u64, stream: Arc<FlezhaStream>, shut
     }
 }
 
-// Suppress unused warnings for fields retained for extensibility (log_callback
-// is populated by logging.rs; dispatcher is populated by setDispatcher; the
-// compiler can't see these via cross-module usage patterns).
+// reason: log_callback is written by logging.rs; dispatcher by setDispatcher; rustc can't see those cross-module writes as field reads
 #[allow(dead_code)]
 fn _retain_fields(_ctx: &JniContext) {
     let _ = &_ctx.log_callback;

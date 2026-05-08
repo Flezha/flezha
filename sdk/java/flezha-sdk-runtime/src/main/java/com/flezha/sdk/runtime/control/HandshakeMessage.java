@@ -10,10 +10,9 @@ import java.util.stream.Collectors;
  * the Rust SDK's {@code ControlInitMessage} field names exactly —
  * {@code namespace}, {@code factory_ids}, {@code factories}.
  *
- * <p>{@code factories} carries a per-Relay description record. v1's Relay
- * interface has no description hook (the future {@code FactoryMetadata}
- * mechanism is gone with the legacy API), so the per-id description is
- * always empty in v1.
+ * <p>{@code factories} carries a per-Relay description record. The
+ * Relay interface has no description hook today, so the per-id
+ * description is always empty.
  */
 public record HandshakeMessage(
         String namespace,

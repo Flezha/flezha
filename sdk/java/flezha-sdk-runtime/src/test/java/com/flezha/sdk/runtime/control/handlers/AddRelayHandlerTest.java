@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 class AddRelayHandlerTest {
 
     private static final String FACTORY_ID = "idempotent_test_factory";
-    private static final String PROCESSOR_ID = "idempotent_p1";
+    private static final String RELAY_ID = "idempotent_p1";
 
     @BeforeEach
     void reset() {
@@ -43,7 +43,7 @@ class AddRelayHandlerTest {
         CommandRequest request = CommandRequest.newBuilder()
                 .setReferenceId("ref")
                 .setAddRelay(AddRelay.newBuilder()
-                        .setRelayId(PROCESSOR_ID)
+                        .setRelayId(RELAY_ID)
                         .setFactoryId(FACTORY_ID)
                         .build())
                 .build();
@@ -53,7 +53,7 @@ class AddRelayHandlerTest {
         List<String> errorsFirst = new ArrayList<>();
         subject.handle(ctx, request, errorsFirst);
         assertThat(errorsFirst).isEmpty();
-        assertThat(ctx.relayInstanceRegistry().contains(PROCESSOR_ID)).isTrue();
+        assertThat(ctx.relayInstanceRegistry().contains(RELAY_ID)).isTrue();
         assertThat(ctx.relayInstanceRegistry().size()).isEqualTo(1);
 
         List<String> errorsSecond = new ArrayList<>();

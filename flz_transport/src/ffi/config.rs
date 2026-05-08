@@ -29,6 +29,7 @@ pub struct FlezhaConfig {
 }
 
 /// Internal owned representation of the configuration.
+// reason: fields populated from cbindgen-generated C struct; uses are off-Rust
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub(crate) struct FlezhaConfigOwned {
