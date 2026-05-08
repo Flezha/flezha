@@ -17,8 +17,8 @@ import javax.annotation.Nonnull;
 public interface Relay {
 
     /**
-     * Stable name of this Relay class. Used as the agent-facing factory id —
-     * the agent's {@code flz processor start <factory_id>} looks this up.
+     * Stable name of this Relay class. Used as the controller-facing factory id —
+     * the controller's {@code flz relay start <factory_id>} looks this up.
      * One factory_id per Relay class.
      */
     @Nonnull String factoryId();
@@ -33,8 +33,8 @@ public interface Relay {
 
     /**
      * Whether per-Partition state persistence is enabled for this Relay class.
-     * The agent ships the resolved value (operator override &gt; this default
-     * &gt; {@code true}) in {@code AddProcessor} metadata; the runtime stamps
+     * The controller ships the resolved value (executor override &gt; this default
+     * &gt; {@code true}) in {@code AddRelay} metadata; the runtime stamps
      * it onto each {@code RelayInstance} at construction.
      *
      * <p>Default: {@code true}. Override to {@code false} to opt-out at the

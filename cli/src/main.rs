@@ -1,9 +1,9 @@
-mod agent;
 mod cluster;
-mod compute_engine;
+mod controller;
+mod executor;
 mod namespace;
 mod plugin;
-mod processor;
+mod relay;
 mod state;
 mod utils;
 
@@ -19,10 +19,10 @@ fn main() {
     }
 
     match args[1].as_str() {
-        "agent" => agent::handle_agent_command(&args[2..]),
-        "processor" => processor::handle_processor_command(&args[2..]),
+        "controller" => controller::handle_controller_command(&args[2..]),
+        "relay" => relay::handle_relay_command(&args[2..]),
         "namespace" => namespace::handle_namespace_command(&args[2..]),
-        "compute-engine" => compute_engine::handle_compute_engine_command(&args[2..]),
+        "executor" => executor::handle_executor_command(&args[2..]),
         "plugin" => plugin::handle_plugin_command(&args[2..]),
         "cluster" => cluster::handle_cluster_command(&args[2..]),
         "state" => state::handle_state_command(&args[2..]),
@@ -42,10 +42,10 @@ fn print_help() {
     println!("    flz <COMMAND>");
     println!();
     println!("COMMANDS:");
-    println!("    agent          Agent management commands");
-    println!("    processor      Processor management commands");
+    println!("    controller     Controller management commands");
+    println!("    relay          Relay management commands");
     println!("    namespace      Namespace management commands");
-    println!("    compute-engine Compute engine management commands");
+    println!("    executor       Executor management commands");
     println!("    plugin         Plugin management commands");
     println!("    cluster        Cluster snapshot/restore (see docs/cluster-snapshot.md)");
     println!("    state          Per-Partition state queries (time-travel, retention, list)");
@@ -54,8 +54,8 @@ fn print_help() {
     println!("Use 'flz <COMMAND> help' for more information on a specific command.");
     println!();
     println!("EXAMPLES:");
-    println!("    flz agent start");
-    println!("    flz processor start my_comp my_factory --namespace prod");
+    println!("    flz controller start");
+    println!("    flz relay start my_relay my_factory --namespace prod");
     println!("    flz plugin install /path/to/my_plugin-1.0.0.fpz");
     println!("    flz plugin list --installed");
     println!("    flz plugin enable kafka_producer provider1 Xhosts=localhost:9092");

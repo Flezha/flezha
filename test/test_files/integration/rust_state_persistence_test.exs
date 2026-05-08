@@ -5,7 +5,7 @@ defmodule Flezha.Integration.RustStatePersistenceTest do
   These tests delegate to the SDK-side Rust integration tests in
   `sdk/rust/tests/relay_dispatch.rs` and the harness self-test in
   `sdk/rust/src/testing/tests/harness_smoke.rs`. End-to-end coverage
-  with the agent-side WAL ships in `relay-state-persistence-agent`.
+  with the controller-side WAL ships in `relay-state-persistence-controller`.
 
   Scenarios covered Rust-side (verified by `mix test_rust`):
 
@@ -33,7 +33,7 @@ defmodule Flezha.Integration.RustStatePersistenceTest do
     {output, status} =
       System.cmd(
         "cargo",
-        ~w(test --features bench-internals -p flezha_compute_engine --lib),
+        ~w(test --features bench-internals -p flezha_executor --lib),
         cd: Path.expand("../../..", __DIR__),
         stderr_to_stdout: true
       )
@@ -46,7 +46,7 @@ defmodule Flezha.Integration.RustStatePersistenceTest do
     {output, status} =
       System.cmd(
         "cargo",
-        ~w(test --features bench-internals -p flezha_compute_engine --tests),
+        ~w(test --features bench-internals -p flezha_executor --tests),
         cd: Path.expand("../../..", __DIR__),
         stderr_to_stdout: true
       )

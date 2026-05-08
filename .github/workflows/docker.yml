@@ -1,6 +1,6 @@
 name: Docker
 
-# Builds the prod (`:latest`) and runtime-dev (`:latest-dev`) agent images
+# Builds the prod (`:latest`) and runtime-dev (`:latest-dev`) controller images
 # and fails if either exceeds its size budget. On push to main, also
 # pushes both tags to Docker Hub. The toolchain image (`:latest-toolchain`)
 # is build-only for hacking on Flezha itself and is not published from CI;
@@ -41,7 +41,7 @@ env:
   # 300 MiB. Documented in docker/prod/README.md.
   PROD_IMAGE_SIZE_LIMIT_BYTES: 314572800
   # 450 MiB — prod budget plus an allowance for Node.js runtime and the
-  # built testnet bundle. Documented in the agent-packaging spec.
+  # built testnet bundle. Documented in the controller-packaging spec.
   RUNTIME_DEV_IMAGE_SIZE_LIMIT_BYTES: 471859200
 
 jobs:
@@ -54,7 +54,7 @@ jobs:
       - name: Build prod image
         run: |
           docker build \
-            -f docker/prod/Dockerfile.agent \
+            -f docker/prod/Dockerfile.controller \
             -t alfetahe/flezha:latest \
             .
 

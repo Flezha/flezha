@@ -133,7 +133,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
             COMMON OPTIONS:
                 --namespace <namespace>    Namespace (default: default)
-                --processor_id <id>       Target processor ID
+                --relay_id <id>       Target relay ID
                 --trigger <trigger>       Trigger mode (on_input|on_output|proactive|interval)
                 --position <num>          Plugin position
 

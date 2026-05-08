@@ -2,7 +2,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   @moduledoc """
   Initiator-side orchestration for `flz cluster snapshot` / `flz cluster restore`.
 
-  The coordinator runs on the node where the operator invokes the CLI command.
+  The coordinator runs on the node where the executor invokes the CLI command.
   It enumerates reachable peers, fans out per-node `local_state/0` /
   `apply_local_state/1` RPCs, reconciles results against the pre-gather
   ProcessHub view, and writes / reads the on-disk ETF artefact atomically.
@@ -15,7 +15,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   alias Flezha.Cluster.Snapshot
   alias Flezha.Cluster.Snapshot.Encoding
   alias Flezha.Plugin
-  alias Flezha.Processor.Builder
+  alias Flezha.Relay.Builder
 
   require Logger
 
@@ -44,7 +44,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   """
   @spec snapshot(Path.t(), snapshot_opts()) ::
           {:ok,
-           %{processors: non_neg_integer(), plugins: non_neg_integer(), bytes: non_neg_integer()}}
+           %{relays: non_neg_integer(), plugins: non_neg_integer(), bytes: non_neg_integer()}}
           | {:error, term()}
   def snapshot(path, opts \\ []) do
     peer_timeout = Keyword.get(opts, :peer_timeout_ms, @default_peer_timeout_ms)
@@ -80,13 +80,13 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
         case write_atomic(path, Encoding.encode(payload)) do
           {:ok, bytes} ->
             summary = %{
-              processors: length(payload.processors),
+              relays: length(payload.relays),
               plugins: length(payload.plugins),
               bytes: bytes
             }
 
             Logger.info(
-              "[cluster] snapshot written: #{summary.processors} processors, " <>
+              "[cluster] snapshot written: #{summary.relays} relays, " <>
                 "#{summary.plugins} plugins, #{summary.bytes} bytes -> #{path}"
             )
 
@@ -107,7 +107,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   the target nodes. `--namespace` filters the entries that are applied.
   """
   @spec restore(Path.t(), restore_opts()) ::
-          {:ok, %{processors: non_neg_integer(), plugins: non_neg_integer()}}
+          {:ok, %{relays: non_neg_integer(), plugins: non_neg_integer()}}
           | {:error, term()}
   def restore(path, opts \\ []) do
     peer_timeout = Keyword.get(opts, :peer_timeout_ms, @default_peer_timeout_ms)
@@ -160,13 +160,13 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   end
 
   defp build_payload(ok_results, ring, state_cap, strict?) do
-    {processors, captured_states} = process_collected(ok_results, ring, state_cap)
+    {relays, captured_states} = process_collected(ok_results, ring, state_cap)
     plugins = Enum.flat_map(ok_results, fn {_peer, slice} -> slice.plugins end)
 
     %{
       taken_at_ms: System.system_time(:millisecond),
       cluster: %{nodes: Enum.map(ok_results, fn {peer, _} -> peer end)},
-      processors: processors,
+      relays: relays,
       plugins: plugins,
       captured_states: captured_states,
       strict_mode: strict?,
@@ -177,7 +177,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   defp process_collected(ok_results, ring, state_cap) do
     Enum.reduce(ok_results, {[], %{}}, fn {peer, slice}, {procs, states} ->
       slice_procs =
-        Enum.map(slice.processors, fn entry ->
+        Enum.map(slice.relays, fn entry ->
           reconcile_with_ring(entry, peer, ring)
         end)
 
@@ -187,7 +187,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
     end)
   end
 
-  defp reconcile_with_ring(%{processor: %Builder{id: id}} = entry, peer, ring) do
+  defp reconcile_with_ring(%{relay: %Builder{id: id}} = entry, peer, ring) do
     case Map.get(ring, id) do
       nil ->
         Map.put(entry, :last_observed_node, peer)
@@ -197,7 +197,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
 
       expected ->
         Logger.warning(
-          "[cluster] processor #{id} migrated during gather — ring expected " <>
+          "[cluster] relay #{id} migrated during gather — ring expected " <>
             "#{inspect(expected)} but observed on #{inspect(peer)}; trusting observation"
         )
 
@@ -206,46 +206,46 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   end
 
   # Trim a built payload to a single namespace. Mirrors restore's
-  # `filter_namespace/2` so operators see symmetric semantics: pass
+  # `filter_namespace/2` so executors see symmetric semantics: pass
   # `--namespace prod` on either end and the result is restricted to
   # `prod` entries. The kept payload's `captured_states` map is pruned
-  # to just the surviving processor ids so the on-disk file size scales
+  # to just the surviving relay ids so the on-disk file size scales
   # with the filtered set.
   defp apply_namespace_filter(payload, nil), do: payload
 
   defp apply_namespace_filter(payload, namespace) when is_binary(namespace) do
-    kept_processors = filter_namespace(payload.processors, namespace)
+    kept_relays = filter_namespace(payload.relays, namespace)
     kept_plugins = filter_namespace(payload.plugins, namespace)
 
-    kept_ids = MapSet.new(kept_processors, fn entry -> entry.processor.id end)
+    kept_ids = MapSet.new(kept_relays, fn entry -> entry.relay.id end)
 
     pruned_states =
       Map.filter(payload.captured_states, fn {id, _bin} -> MapSet.member?(kept_ids, id) end)
 
     %{
       payload
-      | processors: kept_processors,
+      | relays: kept_relays,
         plugins: kept_plugins,
         captured_states: pruned_states
     }
   end
 
   defp drop_oversized(captured_states, cap) do
-    Enum.reduce(captured_states, %{}, fn {processor_id, bin}, acc ->
+    Enum.reduce(captured_states, %{}, fn {relay_id, bin}, acc ->
       cond do
         not is_binary(bin) ->
           acc
 
         byte_size(bin) > cap ->
           Logger.warning(
-            "[snapshot] dropping captured_state_binary for #{processor_id}: " <>
+            "[snapshot] dropping captured_state_binary for #{relay_id}: " <>
               "#{byte_size(bin)} bytes exceeds cap #{cap}"
           )
 
           acc
 
         true ->
-          Map.put(acc, processor_id, bin)
+          Map.put(acc, relay_id, bin)
       end
     end)
   end
@@ -262,9 +262,9 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
       if ProcessHub.is_alive?(hub_id) do
         ProcessHub.process_list(hub_id, :global)
         |> Enum.map(fn
-          {processor_id, [{node, _pid}]} -> {processor_id, node}
-          {processor_id, [{node, _pid} | _]} -> {processor_id, node}
-          {processor_id, _other} -> {processor_id, nil}
+          {relay_id, [{node, _pid}]} -> {relay_id, node}
+          {relay_id, [{node, _pid} | _]} -> {relay_id, node}
+          {relay_id, _other} -> {relay_id, nil}
         end)
       else
         []
@@ -321,13 +321,13 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
   defp log_age(_, _), do: :ok
 
   defp apply_payload(payload, peer_timeout, namespace_filter) do
-    processors_filtered = filter_namespace(payload.processors, namespace_filter)
+    relays_filtered = filter_namespace(payload.relays, namespace_filter)
     plugins_filtered = filter_namespace(payload.plugins, namespace_filter)
     captured = Map.get(payload, :captured_states, %{})
 
     proc_results =
-      Enum.map(processors_filtered, fn entry ->
-        apply_processor_entry(entry, captured, peer_timeout)
+      Enum.map(relays_filtered, fn entry ->
+        apply_relay_entry(entry, captured, peer_timeout)
       end)
 
     plugin_results =
@@ -335,7 +335,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
         apply_plugin_entry(entry, peer_timeout)
       end)
 
-    %{processors: proc_results, plugins: plugin_results}
+    %{relays: proc_results, plugins: plugin_results}
   end
 
   defp filter_namespace(entries, nil), do: entries
@@ -352,8 +352,8 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
 
   defp matches_namespace?(_entry, _ns), do: false
 
-  defp apply_processor_entry(
-         %{processor: %Builder{} = builder, namespace: ns} = entry,
+  defp apply_relay_entry(
+         %{relay: %Builder{} = builder, namespace: ns} = entry,
          captured,
          peer_timeout
        ) do
@@ -361,7 +361,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
     target = Map.get(entry, :last_observed_node, node())
     target = if target in [node() | Node.list(:visible)], do: target, else: node()
 
-    arg = {:processor, builder, ns, state_binary}
+    arg = {:relay, builder, ns, state_binary}
 
     case rpc_apply(target, arg, peer_timeout) do
       {:ok, _info} = ok ->
@@ -369,7 +369,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
 
       {:error, reason} = err ->
         Logger.warning(
-          "[cluster] restore: processor #{builder.id} on #{target} failed: " <>
+          "[cluster] restore: relay #{builder.id} on #{target} failed: " <>
             inspect(reason)
         )
 
@@ -400,7 +400,7 @@ defmodule Flezha.Cluster.Snapshot.Coordinator do
     end
   end
 
-  defp finalize_restore(%{processors: ps, plugins: pls}) do
-    {:ok, %{processors: length(ps), plugins: length(pls)}}
+  defp finalize_restore(%{relays: ps, plugins: pls}) do
+    {:ok, %{relays: length(ps), plugins: length(pls)}}
   end
 end

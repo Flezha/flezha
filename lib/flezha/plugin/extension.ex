@@ -28,7 +28,7 @@ defmodule Flezha.Plugin.Extension do
 
   @type run_result :: {:ok, struct()} | {:skip, term()} | {:error, term()} | :ok
 
-  @message_handler_task_sup Flezha.Processor.MessageHandlerTaskSup
+  @message_handler_task_sup Flezha.Relay.MessageHandlerTaskSup
 
   @doc """
   Dispatch the extension named `name` with context `ctx`. Returns a

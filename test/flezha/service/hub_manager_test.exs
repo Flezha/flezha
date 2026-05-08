@@ -1,14 +1,14 @@
 defmodule Flezha.Service.HubManagerTest do
   @moduledoc """
   Asserts the cspec-mutation contract for
-  `Flezha.Service.HubManager.update_processor_plugins/3` and
-  `Flezha.Service.HubManager.processor_plugins/2`.
+  `Flezha.Service.HubManager.update_relay_plugins/3` and
+  `Flezha.Service.HubManager.relay_plugins/2`.
 
   These functions back the
   `plugin-subscription-persistence` capability — every
   `flz plugin enable` / `flz plugin disable` writes through to the
   ProcessHub child-spec via this path, and the persisted list is what
-  `Flezha.Processor.Overwatch.init/1` reads on every restart.
+  `Flezha.Relay.Overwatch.init/1` reads on every restart.
 
   Tests run against the running `default`-namespace hub started by the
   application supervisor; we seed cspecs directly through
@@ -19,7 +19,7 @@ defmodule Flezha.Service.HubManagerTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin
-  alias Flezha.Processor.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
   alias ProcessHub.Service.ProcessRegistry
@@ -28,7 +28,7 @@ defmodule Flezha.Service.HubManagerTest do
 
   defp hub_id, do: Identificator.hub(@namespace)
 
-  defp processor_builder(opts) do
+  defp relay_builder(opts) do
     %Builder{
       id: "ignored",
       factory_id: "do_nothing",
@@ -37,17 +37,17 @@ defmodule Flezha.Service.HubManagerTest do
     }
   end
 
-  defp insert_cspec(processor_id, start_arg) do
+  defp insert_cspec(relay_id, start_arg) do
     cspec = %{
-      id: processor_id,
-      start: {Flezha.Processor.Overwatch, :start_link, [start_arg]},
+      id: relay_id,
+      start: {Flezha.Relay.Overwatch, :start_link, [start_arg]},
       restart: :transient
     }
 
     :ok = ProcessRegistry.insert(hub_id(), cspec, [{node(), self()}])
 
     on_exit(fn ->
-      _ = ProcessRegistry.delete(hub_id(), processor_id)
+      _ = ProcessRegistry.delete(hub_id(), relay_id)
     end)
 
     cspec
@@ -60,96 +60,96 @@ defmodule Flezha.Service.HubManagerTest do
       opts: opts,
       subscriptions: [{:on_output, []}],
       namespace: @namespace,
-      processor_id: "ignored"
+      relay_id: "ignored"
     )
   end
 
-  describe "update_processor_plugins/3" do
+  describe "update_relay_plugins/3" do
     test "appends a plugin to a cspec with empty opts[:plugins]" do
-      processor_id = "hm_test_append_empty"
-      builder = processor_builder(plugins: [])
-      insert_cspec(processor_id, {@namespace, "ce_1", builder})
+      relay_id = "hm_test_append_empty"
+      builder = relay_builder(plugins: [])
+      insert_cspec(relay_id, {@namespace, "ce_1", builder})
 
       new_plugin = plugin("plug_x", %{a: 1})
 
       assert :ok =
-               HubManager.update_processor_plugins(@namespace, processor_id, fn current ->
+               HubManager.update_relay_plugins(@namespace, relay_id, fn current ->
                  current ++ [{"plug_x", new_plugin}]
                end)
 
-      assert {:ok, [{"plug_x", got}]} = HubManager.processor_plugins(@namespace, processor_id)
+      assert {:ok, [{"plug_x", got}]} = HubManager.relay_plugins(@namespace, relay_id)
       assert got.id == "plug_x"
       assert got.opts == %{a: 1}
     end
 
     test "removes a plugin from a cspec with multiple opts[:plugins]" do
-      processor_id = "hm_test_remove_one"
+      relay_id = "hm_test_remove_one"
       a = plugin("a")
       b = plugin("b")
       c = plugin("c")
 
-      builder = processor_builder(plugins: [{"a", a}, {"b", b}, {"c", c}])
-      insert_cspec(processor_id, {@namespace, "ce_1", builder})
+      builder = relay_builder(plugins: [{"a", a}, {"b", b}, {"c", c}])
+      insert_cspec(relay_id, {@namespace, "ce_1", builder})
 
       assert :ok =
-               HubManager.update_processor_plugins(@namespace, processor_id, fn current ->
+               HubManager.update_relay_plugins(@namespace, relay_id, fn current ->
                  Enum.reject(current, fn {id, _} -> id == "b" end)
                end)
 
-      assert {:ok, plugins} = HubManager.processor_plugins(@namespace, processor_id)
+      assert {:ok, plugins} = HubManager.relay_plugins(@namespace, relay_id)
       assert Enum.map(plugins, fn {id, _} -> id end) == ["a", "c"]
     end
 
-    test "handles the {namespace, processor} start-args shape" do
-      processor_id = "hm_test_shape_2tuple"
-      builder = processor_builder(plugins: [])
-      insert_cspec(processor_id, {@namespace, builder})
+    test "handles the {namespace, relay} start-args shape" do
+      relay_id = "hm_test_shape_2tuple"
+      builder = relay_builder(plugins: [])
+      insert_cspec(relay_id, {@namespace, builder})
 
       assert :ok =
-               HubManager.update_processor_plugins(@namespace, processor_id, fn _ ->
+               HubManager.update_relay_plugins(@namespace, relay_id, fn _ ->
                  [{"only", plugin("only")}]
                end)
 
-      assert {:ok, [{"only", _}]} = HubManager.processor_plugins(@namespace, processor_id)
+      assert {:ok, [{"only", _}]} = HubManager.relay_plugins(@namespace, relay_id)
     end
 
-    test "handles the {namespace, compute_engine_id, processor} start-args shape" do
-      processor_id = "hm_test_shape_3tuple"
-      builder = processor_builder(plugins: [])
-      insert_cspec(processor_id, {@namespace, "ce_42", builder})
+    test "handles the {namespace, executor_id, relay} start-args shape" do
+      relay_id = "hm_test_shape_3tuple"
+      builder = relay_builder(plugins: [])
+      insert_cspec(relay_id, {@namespace, "ce_42", builder})
 
       assert :ok =
-               HubManager.update_processor_plugins(@namespace, processor_id, fn _ ->
+               HubManager.update_relay_plugins(@namespace, relay_id, fn _ ->
                  [{"only", plugin("only")}]
                end)
 
-      assert {:ok, [{"only", _}]} = HubManager.processor_plugins(@namespace, processor_id)
+      assert {:ok, [{"only", _}]} = HubManager.relay_plugins(@namespace, relay_id)
 
-      # Confirm the compute_engine_id position survives the rewrite — if
+      # Confirm the executor_id position survives the rewrite — if
       # we lost it, alter_child_data's invariants break and the next
       # restart routes to a random compute engine.
       registry = ProcessHub.registry_dump(hub_id())
-      assert {cspec, _, _} = Map.get(registry, processor_id)
-      assert {Flezha.Processor.Overwatch, :start_link, [arg]} = cspec.start
+      assert {cspec, _, _} = Map.get(registry, relay_id)
+      assert {Flezha.Relay.Overwatch, :start_link, [arg]} = cspec.start
       assert {@namespace, "ce_42", %Builder{}} = arg
     end
 
-    test "returns {:error, _} when the processor is not registered" do
+    test "returns {:error, _} when the relay is not registered" do
       assert {:error, _} =
-               HubManager.update_processor_plugins(@namespace, "no_such_processor", fn p -> p end)
+               HubManager.update_relay_plugins(@namespace, "no_such_relay", fn p -> p end)
     end
 
     @tag :bench
     test "1000 sequential cspec-updates stay under the documented latency budget" do
-      processor_id = "hm_bench_seq"
-      builder = processor_builder(plugins: [])
-      insert_cspec(processor_id, {@namespace, "ce_1", builder})
+      relay_id = "hm_bench_seq"
+      builder = relay_builder(plugins: [])
+      insert_cspec(relay_id, {@namespace, "ce_1", builder})
 
       times =
         for _ <- 1..1000 do
           {us, :ok} =
             :timer.tc(fn ->
-              HubManager.update_processor_plugins(@namespace, processor_id, fn p -> p end)
+              HubManager.update_relay_plugins(@namespace, relay_id, fn p -> p end)
             end)
 
           us

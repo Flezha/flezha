@@ -4,7 +4,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   keep the remote receiver alive. The process is owned by the
   `Extension.Table` monitor set — if it dies the plugin is disabled.
 
-  Required opts: `:recv_pid`, `:plugin_id`, `:processor_id`, `:namespace`.
+  Required opts: `:recv_pid`, `:plugin_id`, `:relay_id`, `:namespace`.
   Optional: `:heartbeat_interval` (ms, default 5000).
   """
 
@@ -16,7 +16,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   use GenServer
   use ProviderBehaviour
 
-  @enforce_keys [:recv_pid, :plugin_id, :processor_id, :namespace]
+  @enforce_keys [:recv_pid, :plugin_id, :relay_id, :namespace]
   defstruct @enforce_keys ++ [:binding_pid, heartbeat_interval: 5000]
 
   @impl true

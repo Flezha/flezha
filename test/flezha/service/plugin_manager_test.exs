@@ -5,10 +5,10 @@ defmodule Flezha.Service.PluginManagerTest do
   and removes them on every disable, matching the contract in
   openspec/specs/plugin-subscription-persistence/spec.md.
 
-  These tests stub `Flezha.Service.HubManager.update_processor_plugins/3`
+  These tests stub `Flezha.Service.HubManager.update_relay_plugins/3`
   with an in-memory plugin store so we can observe the cspec mutation
   applied by each call. They do NOT spin up a ProcessHub instance —
-  the `update_processor_plugins/3` cspec-encoding logic is exercised
+  the `update_relay_plugins/3` cspec-encoding logic is exercised
   separately in `Flezha.Service.HubManagerTest`.
   """
 
@@ -18,23 +18,23 @@ defmodule Flezha.Service.PluginManagerTest do
   alias Flezha.Plugin
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.ProcessorManager
+  alias Flezha.Service.RelayManager
 
   setup :verify_on_exit!
   setup :set_mimic_global
 
   @namespace "default"
-  @processor_id "pm_test_p1"
+  @relay_id "pm_test_p1"
 
   setup do
     {:ok, store} = Agent.start_link(fn -> [] end)
     overwatch = spawn_fake_overwatch(self())
 
     HubManager
-    |> Mimic.stub(:update_processor_plugins, fn ns, pid_id, fun ->
+    |> Mimic.stub(:update_relay_plugins, fn ns, pid_id, fun ->
       cond do
-        ns != @namespace or pid_id != @processor_id ->
-          {:error, "processor not found"}
+        ns != @namespace or pid_id != @relay_id ->
+          {:error, "relay not found"}
 
         true ->
           Agent.update(store, fun)
@@ -42,11 +42,11 @@ defmodule Flezha.Service.PluginManagerTest do
       end
     end)
 
-    ProcessorManager
-    |> Mimic.stub(:get_processor_pid, fn ns, pid_id ->
+    RelayManager
+    |> Mimic.stub(:get_relay_pid, fn ns, pid_id ->
       cond do
-        ns != @namespace or pid_id != @processor_id ->
-          {:error, "processor not found"}
+        ns != @namespace or pid_id != @relay_id ->
+          {:error, "relay not found"}
 
         true ->
           {:ok, overwatch}
@@ -65,7 +65,7 @@ defmodule Flezha.Service.PluginManagerTest do
 
   describe "enable_plugin/2 cspec persistence" do
     # If this fails, plugins enabled via `flz plugin enable` after
-    # `flz processor start` will silently disappear on the next
+    # `flz relay start` will silently disappear on the next
     # Overwatch restart, taking the data plane offline until manually
     # re-enabled (the May 3 flezha_market incident).
     test "writes the plugin to the cspec on success", %{store: store} do
@@ -94,11 +94,11 @@ defmodule Flezha.Service.PluginManagerTest do
 
     # If this fails, a transient cspec write error will be surfaced
     # to the caller as a hard failure even though the runtime
-    # subscribe succeeded — operators will believe the enable failed
+    # subscribe succeeded — executors will believe the enable failed
     # and may retry, double-subscribing.
     test "logs at :error and replies :ok when the cspec update fails after a successful subscribe" do
       HubManager
-      |> Mimic.stub(:update_processor_plugins, fn _ns, _pid_id, _fun ->
+      |> Mimic.stub(:update_relay_plugins, fn _ns, _pid_id, _fun ->
         {:error, :no_response}
       end)
 
@@ -116,7 +116,7 @@ defmodule Flezha.Service.PluginManagerTest do
     end
 
     # If this fails, two concurrent enable_plugin calls for distinct
-    # plugin_ids on the same processor will lose one of them on
+    # plugin_ids on the same relay will lose one of them on
     # restart, partially restoring the data plane.
     test "two enable_plugin calls for distinct plugin_ids produce a cspec with both",
          %{store: store} do
@@ -157,7 +157,7 @@ defmodule Flezha.Service.PluginManagerTest do
       assert {:ok, _} = PluginManager.enable_plugin("dis_persist_fail", plugin)
 
       HubManager
-      |> Mimic.stub(:update_processor_plugins, fn _ns, _pid_id, _fun ->
+      |> Mimic.stub(:update_relay_plugins, fn _ns, _pid_id, _fun ->
         {:error, :no_response}
       end)
 
@@ -169,7 +169,7 @@ defmodule Flezha.Service.PluginManagerTest do
 
     # If this fails, disabling a plugin that was never enabled
     # surfaces a confusing error instead of the documented "not found"
-    # response — mostly affects operator UX.
+    # response — mostly affects executor UX.
     test "is a no-op (returns error) when the plugin_id is not in the cspec" do
       assert {:error, "plugin not found"} = PluginManager.disable_plugin("never_enabled")
     end
@@ -182,7 +182,7 @@ defmodule Flezha.Service.PluginManagerTest do
       opts: Map.new(opts),
       subscriptions: [{:on_output, []}],
       namespace: @namespace,
-      processor_id: @processor_id
+      relay_id: @relay_id
     )
   end
 

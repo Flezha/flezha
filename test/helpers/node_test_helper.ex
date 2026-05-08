@@ -3,19 +3,19 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   use ExUnit.Case
 
   # TODO: remove or refactor.
-  # def test_processor(processor_id) do
-  #   processor =
-  #     FlezhaTest.Fixtures.ProcessorFixture.get(
-  #       processor_id,
+  # def test_relay(relay_id) do
+  #   relay =
+  #     FlezhaTest.Fixtures.RelayFixture.get(
+  #       relay_id,
   #       @factory_increment_state
   #     )
-  #     |> FlezhaTest.Fixtures.ProcessorFixture.start()
+  #     |> FlezhaTest.Fixtures.RelayFixture.start()
 
   #   on_exit(fn ->
-  #     FlezhaTest.Fixtures.ProcessorFixture.stop(processor.id)
+  #     FlezhaTest.Fixtures.RelayFixture.stop(relay.id)
   #   end)
 
-  #   processor
+  #   relay
   # end
 
   def node_name() do
@@ -90,45 +90,45 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end
   end
 
-  def start_compute_engine_remote(node, namespace) do
+  def start_executor_remote(node, namespace) do
     self = self()
-    :erpc.call(node, Kernel, :spawn, [__MODULE__, :start_compute_engine_recv, [namespace, self]])
+    :erpc.call(node, Kernel, :spawn, [__MODULE__, :start_executor_recv, [namespace, self]])
 
     receive do
-      {:remote_compute_engine_connected, ^namespace, compute_engine_id} -> compute_engine_id
+      {:remote_executor_connected, ^namespace, executor_id} -> executor_id
     end
   end
 
-  def stop_compute_engine_remote(node, namespace, compute_engine_id) do
+  def stop_executor_remote(node, namespace, executor_id) do
     self = self()
 
     :erpc.call(node, Kernel, :spawn, [
       __MODULE__,
-      :stop_compute_engine_recv,
-      [namespace, compute_engine_id, self]
+      :stop_executor_recv,
+      [namespace, executor_id, self]
     ])
 
     receive do
-      {:remote_compute_engine_disconnected, ^namespace, ^compute_engine_id} -> :ok
+      {:remote_executor_disconnected, ^namespace, ^executor_id} -> :ok
     end
   end
 
-  def start_compute_engine_recv(namespace, recv_pid) do
-    compute_engine_id = start_compute_engine(namespace)
+  def start_executor_recv(namespace, recv_pid) do
+    executor_id = start_executor(namespace)
 
-    Process.send(recv_pid, {:remote_compute_engine_connected, namespace, compute_engine_id}, [])
+    Process.send(recv_pid, {:remote_executor_connected, namespace, executor_id}, [])
 
     receive do
       :any -> :ok
     end
   end
 
-  def stop_compute_engine_recv(namespace, compute_engine_id, recv_pid) do
-    stop_compute_engine(namespace, compute_engine_id)
+  def stop_executor_recv(namespace, executor_id, recv_pid) do
+    stop_executor(namespace, executor_id)
 
     Process.send(
       recv_pid,
-      {:remote_compute_engine_disconnected, namespace, compute_engine_id},
+      {:remote_executor_disconnected, namespace, executor_id},
       []
     )
 
@@ -137,45 +137,45 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end
   end
 
-  def start_compute_engine(namespace \\ "test_temp_namespace", opts \\ []) do
+  def start_executor(namespace \\ "test_temp_namespace", opts \\ []) do
     {:ok, current_path} = :file.get_cwd()
     transport = Keyword.get(opts, :transport, :uds)
     runtime = Keyword.get(opts, :runtime, :rust)
 
     command = build_command(runtime, current_path, namespace)
 
-    Flezha.Service.EventManager.add_handler(:compute_engine_connected_event)
+    Flezha.Service.EventManager.add_handler(:executor_connected_event)
     Flezha.Service.PortPilot.open_port(command, transport: transport)
 
-    compute_engine_id =
+    executor_id =
       receive do
-        {:compute_engine_connected_event, {^namespace, compute_engine_id}} -> compute_engine_id
+        {:executor_connected_event, {^namespace, executor_id}} -> executor_id
       after
-        2000 -> raise "temporary test compute_engine not connected"
+        2000 -> raise "temporary test executor not connected"
       end
 
     # Remove the handler to duplicate events.
-    Flezha.Service.EventManager.rem_handler(:compute_engine_connected_event)
+    Flezha.Service.EventManager.rem_handler(:executor_connected_event)
 
-    compute_engine_id
+    executor_id
   end
 
   # Build the command line used to launch the compute engine for a given runtime.
   # Keep `:rust` as the default so every existing test keeps working unchanged.
   defp build_command(:rust, current_path, namespace) do
-    "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target -- " <>
+    "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_executor/Cargo.toml --target-dir=./target -- " <>
       namespace
   end
 
   defp build_command(:java, current_path, namespace) do
-    # The test compute-engine fat jar is *committed* under
-    # test/apps/java_compute_engine/dist/ — refresh it locally with
+    # The test executor fat jar is *committed* under
+    # test/apps/java_executor/dist/ — refresh it locally with
     # `scripts/build-dist.sh` whenever the SDK or test-app sources
     # change, then `git add` and commit. CI doesn't build it.
     jar_path =
       Path.join([
         current_path,
-        "test/apps/java_compute_engine/dist/java_compute_engine.jar"
+        "test/apps/java_executor/dist/java_executor.jar"
       ])
 
     if not File.exists?(jar_path) do
@@ -192,23 +192,23 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       "-jar #{jar_path} #{namespace}"
   end
 
-  def stop_compute_engine(namespace, compute_engine_id, opts \\ []) do
+  def stop_executor(namespace, executor_id, opts \\ []) do
     # QUIC session teardown runs more cleanup than UDS, so allow a wider
     # default window; callers can tighten it via `timeout: N` when testing
     # UDS-only paths that should disconnect quickly.
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    Flezha.Service.EventManager.add_handler(:compute_engine_disconnected_event)
-    Flezha.ComputeEngine.FleetManager.disconnect_compute_engine(namespace, compute_engine_id)
+    Flezha.Service.EventManager.add_handler(:executor_disconnected_event)
+    Flezha.Executor.FleetManager.disconnect_executor(namespace, executor_id)
 
     receive do
-      {:compute_engine_disconnected_event, {^namespace, ^compute_engine_id}} -> :ok
+      {:executor_disconnected_event, {^namespace, ^executor_id}} -> :ok
     after
-      timeout -> raise "temporary test compute_engine not disconnected"
+      timeout -> raise "temporary test executor not disconnected"
     end
 
     # Remove the handler to duplicate events.
-    Flezha.Service.EventManager.rem_handler(:compute_engine_disconnected_event)
+    Flezha.Service.EventManager.rem_handler(:executor_disconnected_event)
 
     :ok
   end

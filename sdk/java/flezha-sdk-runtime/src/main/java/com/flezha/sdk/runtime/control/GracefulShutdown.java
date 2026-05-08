@@ -2,8 +2,8 @@ package com.flezha.sdk.runtime.control;
 
 import com.flezha.sdk.native_.NativeTransport;
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.proto.OperatorShutdownNotification;
-import com.flezha.sdk.runtime.ComputeEngineContext;
+import com.flezha.sdk.proto.ExecutorShutdownNotification;
+import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.relay.RelayInstance;
 import com.flezha.sdk.runtime.relay.RelayStateSerializer;
@@ -25,22 +25,22 @@ import org.slf4j.LoggerFactory;
  *
  * <p>On graceful shutdown — SIGTERM (Kubernetes pre-stop), explicit
  * {@code Flezha.close()}, or JVM exit via the registered shutdown hook —
- * the SDK serializes each currently-running processor's state via the
+ * the SDK serializes each currently-running relay's state via the
  * same per-driver path used for {@code MigrationSerialization} and
- * emits one {@link OperatorShutdownNotification} per processor on the
- * control channel. The agent overwrites its
+ * emits one {@link ExecutorShutdownNotification} per relay on the
+ * control channel. The controller overwrites its
  * {@code Overwatch.state.snapshot} with the supplied binary so the next
- * reconnecting operator picks up the operator's true final state — see
+ * reconnecting executor picks up the executor's true final state — see
  * ship-fresh-state-on-sdk-shutdown.
  *
  * <h2>Timing contract</h2>
  *
  * <ul>
- *   <li>Per-processor ack wait is bounded at <strong>2 seconds</strong>,
- *       parallelised across processors via {@link CompletableFuture#allOf}
+ *   <li>Per-relay ack wait is bounded at <strong>2 seconds</strong>,
+ *       parallelised across relays via {@link CompletableFuture#allOf}
  *       so total wait is bounded by 2 s (not 2N s).</li>
  *   <li>The serializer step is in-process (Jackson) and effectively
- *       constant-time; no separate cap is enforced. Processors with
+ *       constant-time; no separate cap is enforced. Relays with
  *       multi-second serializers should refactor.</li>
  *   <li>On timeout the SDK proceeds to exit unconditionally and SHALL
  *       NOT block its container's shutdown grace period.</li>
@@ -49,17 +49,17 @@ import org.slf4j.LoggerFactory;
  * <h2>SIGKILL is out of scope</h2>
  *
  * {@code kill -9} bypasses the JVM shutdown hook by definition. The
- * agent's {@code Overwatch.state.snapshot} falls back to the most recent
+ * controller's {@code Overwatch.state.snapshot} falls back to the most recent
  * periodic snapshot, exactly as today.
  */
 public final class GracefulShutdown {
 
     private static final Logger LOG = LoggerFactory.getLogger(GracefulShutdown.class);
 
-    /** Per-processor ack wait. Total wait is bounded at this value via parallelism. */
+    /** Per-relay ack wait. Total wait is bounded at this value via parallelism. */
     private static final long ACK_TIMEOUT_MS = 2_000L;
 
-    /** Wire-level payload_id reused from the existing agent -> SDK CommandRequest flow. */
+    /** Wire-level payload_id reused from the existing controller -> SDK CommandRequest flow. */
     private static final String SHUTDOWN_PAYLOAD_ID = "control_command";
 
     /** Pending acks keyed by reference_id. The router pushes completion via {@link #signalAck}. */
@@ -72,12 +72,12 @@ public final class GracefulShutdown {
         int write(long streamId, byte[] frame);
     }
 
-    private final ComputeEngineContext ctx;
+    private final ExecutorContext ctx;
     private final long controlStreamId;
     private final FrameWriter writer;
     private final AtomicBoolean shutdownStarted = new AtomicBoolean(false);
 
-    public GracefulShutdown(@Nonnull ComputeEngineContext ctx, long controlStreamId) {
+    public GracefulShutdown(@Nonnull ExecutorContext ctx, long controlStreamId) {
         this(ctx, controlStreamId,
                 (streamId, frame) -> NativeTransport.streamWrite(ctx.nativeHandle(), streamId, frame));
     }
@@ -87,7 +87,7 @@ public final class GracefulShutdown {
      * module can inject a capturing writer. Production callers go through
      * the 2-argument form, which forwards to {@link NativeTransport#streamWrite}.
      */
-    GracefulShutdown(@Nonnull ComputeEngineContext ctx, long controlStreamId, @Nonnull FrameWriter writer) {
+    GracefulShutdown(@Nonnull ExecutorContext ctx, long controlStreamId, @Nonnull FrameWriter writer) {
         this.ctx = ctx;
         this.controlStreamId = controlStreamId;
         this.writer = writer;
@@ -103,15 +103,15 @@ public final class GracefulShutdown {
             return;
         }
 
-        Map<String, RelayInstance> processors = ctx.relayInstanceRegistry().snapshot();
-        if (processors.isEmpty()) {
+        Map<String, RelayInstance> relays = ctx.relayInstanceRegistry().snapshot();
+        if (relays.isEmpty()) {
             return;
         }
 
-        List<CompletableFuture<Void>> waits = new ArrayList<>(processors.size());
+        List<CompletableFuture<Void>> waits = new ArrayList<>(relays.size());
 
-        for (Map.Entry<String, RelayInstance> entry : processors.entrySet()) {
-            String processorId = entry.getKey();
+        for (Map.Entry<String, RelayInstance> entry : relays.entrySet()) {
+            String relayId = entry.getKey();
             RelayInstance instance = entry.getValue();
 
             byte[] serializedState;
@@ -120,17 +120,17 @@ public final class GracefulShutdown {
             } catch (Exception e) {
                 LOG.warn(
                         "Skipping shutdown notification for {} — serializeState failed: {}",
-                        processorId,
+                        relayId,
                         e.toString());
                 continue;
             }
 
-            String referenceId = "shutdown-" + processorId + "-" + System.nanoTime();
+            String referenceId = "shutdown-" + relayId + "-" + System.nanoTime();
 
             CommandRequest request = CommandRequest.newBuilder()
                     .setReferenceId(referenceId)
-                    .setOperatorShutdownNotification(OperatorShutdownNotification.newBuilder()
-                            .setProcessorId(processorId)
+                    .setExecutorShutdownNotification(ExecutorShutdownNotification.newBuilder()
+                            .setRelayId(relayId)
                             .setSerializedState(ByteString.copyFrom(serializedState))
                             .build())
                     .build();
@@ -145,23 +145,23 @@ public final class GracefulShutdown {
             int writeStatus = writer.write(controlStreamId, frameBytes);
             if (writeStatus != 0) {
                 LOG.warn(
-                        "Failed to write OperatorShutdownNotification for {} (status={})",
-                        processorId,
+                        "Failed to write ExecutorShutdownNotification for {} (status={})",
+                        relayId,
                         writeStatus);
                 PENDING_ACKS.remove(referenceId);
                 continue;
             }
 
-            String pidForLog = processorId;
+            String pidForLog = relayId;
             CompletableFuture<Void> bounded = ackFuture
                     .orTimeout(ACK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                     .exceptionally(throwable -> {
                         if (throwable instanceof TimeoutException
                                 || throwable.getCause() instanceof TimeoutException) {
-                            LOG.warn("OperatorShutdownAck timeout for {}", pidForLog);
+                            LOG.warn("ExecutorShutdownAck timeout for {}", pidForLog);
                         } else {
                             LOG.warn(
-                                    "OperatorShutdownAck wait failed for {}: {}",
+                                    "ExecutorShutdownAck wait failed for {}: {}",
                                     pidForLog,
                                     throwable.toString());
                         }
@@ -186,15 +186,15 @@ public final class GracefulShutdown {
         } catch (Exception e) {
             // Either a timeout (ack never arrived) or an exception inside
             // a future. Both end with the same outcome — exit anyway, the
-            // agent has the snapshot it could reach in time.
+            // controller has the snapshot it could reach in time.
             LOG.debug("Graceful shutdown allOf finished with: {}", e.toString());
         }
     }
 
     /**
-     * Wakes the per-processor wait registered by {@link #run}. Called
+     * Wakes the per-relay wait registered by {@link #run}. Called
      * from {@code CommandRouter} when an
-     * {@link com.flezha.sdk.proto.OperatorShutdownAck} arrives. Missing
+     * {@link com.flezha.sdk.proto.ExecutorShutdownAck} arrives. Missing
      * entries — i.e. the wait already timed out — are logged and
      * dropped without panic.
      */
@@ -202,7 +202,7 @@ public final class GracefulShutdown {
         CompletableFuture<Void> future = PENDING_ACKS.remove(referenceId);
         if (future == null) {
             LOG.debug(
-                    "OperatorShutdownAck for unknown reference_id {} — either timed out or never registered",
+                    "ExecutorShutdownAck for unknown reference_id {} — either timed out or never registered",
                     referenceId);
             return;
         }

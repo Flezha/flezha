@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.relay.Relay;
 import com.flezha.sdk.relay.RelayRegistry;
-import com.flezha.sdk.runtime.ComputeEngineContext;
+import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.shard.Shard;
 import com.flezha.sdk.shard.ShardCtx;
@@ -91,7 +91,7 @@ class RelayStateSerializerTest {
 
     private static RelayInstance newInstance(String factoryId) {
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
-        ComputeEngineContext ctx = new ComputeEngineContext("ns", cfg, 0L);
+        ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
         RelayTopology topology = RelayClassRegistry.getTopology(factoryId);
         return RelayInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());

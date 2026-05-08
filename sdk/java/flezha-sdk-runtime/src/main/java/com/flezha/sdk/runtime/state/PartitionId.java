@@ -4,8 +4,8 @@ import java.util.Optional;
 import javax.annotation.Nonnull;
 
 /**
- * Wire identity of a Partition. Combines the relay-instance id (= agent's
- * {@code processor_id}), the Shard's name within the Relay, and the partition
+ * Wire identity of a Partition. Combines the relay-instance id (= controller's
+ * {@code relay_id}), the Shard's name within the Relay, and the partition
  * key (empty string for single-partition mode). Encoded on the wire as a
  * length-prefixed UTF-8 string by the per-Partition flusher.
  */

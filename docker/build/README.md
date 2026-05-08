@@ -7,16 +7,16 @@ ride along in the repo (so CI never has to rebuild them):
   — flz_jni cdylib for **all five** target platforms (linux-x64,
   linux-arm64, macos-x64, macos-arm64, windows-x64).
 - `sdk/java/flezha-sdk/dist/flezha-sdk.jar` — SDK fat jar.
-- `test/apps/java_compute_engine/dist/java_compute_engine.jar` —
-  test compute-engine fat jar.
+- `test/apps/java_executor/dist/java_executor.jar` —
+  test executor fat jar.
 
-This image is **only for builds**, not for running the agent. For
+This image is **only for builds**, not for running the controller. For
 runtime/dev see [`../dev/README.md`](../dev/README.md); for production
-see [`../prod/README.md`](../prod/README.md) (image: `Dockerfile.agent`).
+see [`../prod/README.md`](../prod/README.md) (image: `Dockerfile.controller`).
 
 ## Why a separate image?
 
-The agent images don't need cross-compile toolchains, Maven, or the JDK
+The controller images don't need cross-compile toolchains, Maven, or the JDK
 in `PATH`. The build image bundles all of it (Rust + 5 cross targets,
 `cargo-zigbuild`, `zig` via the `ziglang` Python wheel, Maven 3.9, JDK
 21) so the build is hermetic — same input, same output, regardless of

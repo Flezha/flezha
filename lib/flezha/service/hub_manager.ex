@@ -4,13 +4,13 @@ defmodule Flezha.Service.HubManager do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
-  alias Flezha.Service.ProcessorManager
+  alias Flezha.Service.RelayManager
 
   require Logger
 
   use Supervisor
 
-  # Mirrors `Flezha.Service.ProcessorManager.init_processor/3`'s retry
+  # Mirrors `Flezha.Service.RelayManager.init_relay/3`'s retry
   # budget so a transient `:no_response` from the local hub's
   # `dist_sup` (mid-restart, snapshot/restore in flight, parallel-suite
   # churn) does not surface as a hard failure on plugin enable/disable.
@@ -85,10 +85,10 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def get_pid(namespace, processor_id) do
+  def get_pid(namespace, relay_id) do
     hub_id = Identificator.hub(namespace)
 
-    case ProcessHub.get_pids(hub_id, processor_id) do
+    case ProcessHub.get_pids(hub_id, relay_id) do
       [] ->
         {:error, "no pid found"}
 
@@ -97,29 +97,29 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def get_all_processors(namespace) do
+  def get_all_relays(namespace) do
     hub_id = Identificator.hub(namespace)
 
     if ProcessHub.is_alive?(hub_id) do
       ProcessHub.process_list(hub_id, :global)
-      |> Enum.map(fn {processor_id, [{_node, processor_pid}]} ->
-        {processor_id, processor_pid}
+      |> Enum.map(fn {relay_id, [{_node, relay_pid}]} ->
+        {relay_id, relay_pid}
       end)
     else
       []
     end
   end
 
-  def register_handler(namespace, compute_engine_id) do
+  def register_handler(namespace, executor_id) do
     ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
       Hook.child_registered(),
       [
         %HookManager{
-          id: compute_engine_id <> "_hub_pid_insertion",
+          id: executor_id <> "_hub_pid_insertion",
           m: Flezha.Service.HubManager,
           f: :hook_insert_pid,
-          a: [compute_engine_id, :_]
+          a: [executor_id, :_]
         }
       ]
     )
@@ -129,36 +129,36 @@ defmodule Flezha.Service.HubManager do
       Hook.child_registered(),
       [
         %HookManager{
-          id: compute_engine_id <> "_hub_pid_removal",
+          id: executor_id <> "_hub_pid_removal",
           m: Flezha.Service.HubManager,
           f: :hook_remove_pid,
-          a: [compute_engine_id, :_]
+          a: [executor_id, :_]
         }
       ]
     )
   end
 
-  def unregister_handler(namespace, compute_engine_id) do
+  def unregister_handler(namespace, executor_id) do
     ProcessHub.cancel_hook_handlers(
       Identificator.hub(namespace),
       Hook.child_registered(),
-      [compute_engine_id <> "_hub_pid_insertion"]
+      [executor_id <> "_hub_pid_insertion"]
     )
   end
 
-  def compute_engine_processors(namespace, compute_engine_id) do
+  def executor_relays(namespace, executor_id) do
     hub_id = Identificator.hub(namespace)
 
-    ProcessHub.tag_query(hub_id, compute_engine_id)
+    ProcessHub.tag_query(hub_id, executor_id)
   end
 
-  def compute_engine_switch(namespace, old_compute_engine_id, new_compute_engine_id) do
+  def executor_switch(namespace, old_executor_id, new_executor_id) do
     hub_id = Identificator.hub(namespace)
 
-    # Updates the compute_engine id in the registry.
-    compute_engine_processors(namespace, old_compute_engine_id)
-    |> Enum.each(fn {processor_id, [{_node, _processor_pid}]} ->
-      processor_set_compute_engine(namespace, processor_id, new_compute_engine_id)
+    # Updates the executor id in the registry.
+    executor_relays(namespace, old_executor_id)
+    |> Enum.each(fn {relay_id, [{_node, _relay_pid}]} ->
+      relay_set_executor(namespace, relay_id, new_executor_id)
     end)
 
     # Propagate the change to all nodes in the namespace.
@@ -167,13 +167,13 @@ defmodule Flezha.Service.HubManager do
     |> ProcessHub.Service.Synchronizer.trigger_sync()
   end
 
-  def processor_set_compute_engine(namespace, processor_id, compute_engine_id) do
+  def relay_set_executor(namespace, relay_id, executor_id) do
     hub_id = Identificator.hub(namespace)
 
     case ProcessHub.is_alive?(hub_id) do
       true ->
-        ProcessRegistry.update(hub_id, processor_id, fn cspec, node_pids, metadata ->
-          {cspec, node_pids, Map.put(metadata, :tag, compute_engine_id)}
+        ProcessRegistry.update(hub_id, relay_id, fn cspec, node_pids, metadata ->
+          {cspec, node_pids, Map.put(metadata, :tag, executor_id)}
         end)
 
         :ok
@@ -183,7 +183,7 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def hook_insert_pid(compute_engine_id, %{child_id: processor_id, node_pids: node_pids}) do
+  def hook_insert_pid(executor_id, %{child_id: relay_id, node_pids: node_pids}) do
     curr_node = node()
 
     updated_pids =
@@ -198,21 +198,21 @@ defmodule Flezha.Service.HubManager do
 
       _ ->
         stream_channels =
-          Supervisor.which_children(Identificator.stream_sup_primary(compute_engine_id)) ++
-            Supervisor.which_children(Identificator.stream_sup_secondary(compute_engine_id))
+          Supervisor.which_children(Identificator.stream_sup_primary(executor_id)) ++
+            Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
 
         Enum.each(stream_channels, fn {_, pid, _, _} ->
-          GenServer.call(pid, {:processor_pid_update, processor_id, updated_pids})
+          GenServer.call(pid, {:relay_pid_update, relay_id, updated_pids})
         end)
     end
   end
 
-  def hook_remove_pid(_compute_engine_id, %{child_id: _processor_id}) do
+  def hook_remove_pid(_executor_id, %{child_id: _relay_id}) do
     # TODO: Implement.
   end
 
   @doc """
-  Apply `update_fn` to the plugin list embedded in a processor's
+  Apply `update_fn` to the plugin list embedded in a relay's
   ProcessHub child-spec start-args and write the rewritten cspec back
   through `ProcessHub.Service.ProcessRegistry.update/3`.
 
@@ -223,36 +223,36 @@ defmodule Flezha.Service.HubManager do
 
   Both child-spec start-args tuple shapes Flezha emits are supported:
 
-    * `{namespace, processor}` — cold-start shape written by
-      `Flezha.Service.ProcessorManager.init_processor/3`.
-    * `{namespace, compute_engine_id, processor}` — post-`alter_child_data/2`
+    * `{namespace, relay}` — cold-start shape written by
+      `Flezha.Service.RelayManager.init_relay/3`.
+    * `{namespace, executor_id, relay}` — post-`alter_child_data/2`
       shape.
 
   Wraps the registry update in the `:no_response` retry shape used by
-  `processor_manager.ex:157-167` (8 attempts, exponential backoff capped
+  `relay_manager.ex:157-167` (8 attempts, exponential backoff capped
   at 5 s). `:no_response` here surfaces when the hub's registry
   GenServer is mid-restart alongside `dist_sup`; the dist_sup heals on
   its own and the next attempt succeeds. Stable-state failure (8
   attempts, ~14 s of wait) propagates.
   """
-  @spec update_processor_plugins(
+  @spec update_relay_plugins(
           String.t(),
           String.t(),
           ([{binary(), Plugin.t()}] -> [{binary(), Plugin.t()}])
         ) :: :ok | {:error, term()}
-  def update_processor_plugins(namespace, processor_id, update_fn)
+  def update_relay_plugins(namespace, relay_id, update_fn)
       when is_function(update_fn, 1) do
-    do_update_processor_plugins(namespace, processor_id, update_fn, 0)
+    do_update_relay_plugins(namespace, relay_id, update_fn, 0)
   end
 
   @doc """
-  Read the current plugin list embedded in a processor's child-spec
+  Read the current plugin list embedded in a relay's child-spec
   start args. Returns `{:ok, [{plugin_id, %Flezha.Plugin{}}]}` (entries
   are normalised to tuple form regardless of how they are stored).
   """
-  @spec processor_plugins(String.t(), String.t()) ::
+  @spec relay_plugins(String.t(), String.t()) ::
           {:ok, [{binary(), Plugin.t()}]} | {:error, term()}
-  def processor_plugins(namespace, processor_id) do
+  def relay_plugins(namespace, relay_id) do
     hub_id = Identificator.hub(namespace)
 
     case ProcessHub.is_alive?(hub_id) do
@@ -260,9 +260,9 @@ defmodule Flezha.Service.HubManager do
         {:error, "hub not alive"}
 
       true ->
-        case ProcessRegistry.lookup(hub_id, processor_id) do
+        case ProcessRegistry.lookup(hub_id, relay_id) do
           nil ->
-            {:error, "processor not found"}
+            {:error, "relay not found"}
 
           {%{start: {_m, _f, [arg]}}, _node_pids} ->
             {:ok, normalize_plugins(extract_plugins(arg))}
@@ -273,7 +273,7 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  defp do_update_processor_plugins(namespace, processor_id, update_fn, attempt) do
+  defp do_update_relay_plugins(namespace, relay_id, update_fn, attempt) do
     hub_id = Identificator.hub(namespace)
 
     case ProcessHub.is_alive?(hub_id) do
@@ -283,7 +283,7 @@ defmodule Flezha.Service.HubManager do
       true ->
         result =
           try do
-            ProcessRegistry.update(hub_id, processor_id, fn cspec, node_pids, metadata ->
+            ProcessRegistry.update(hub_id, relay_id, fn cspec, node_pids, metadata ->
               {update_cspec_plugins(cspec, update_fn), node_pids, metadata}
             end)
           catch
@@ -300,7 +300,7 @@ defmodule Flezha.Service.HubManager do
               min(@no_response_retry_initial_ms * Bitwise.bsl(1, attempt), 5_000)
 
             Process.sleep(backoff)
-            do_update_processor_plugins(namespace, processor_id, update_fn, attempt + 1)
+            do_update_relay_plugins(namespace, relay_id, update_fn, attempt + 1)
 
           true ->
             result
@@ -311,28 +311,28 @@ defmodule Flezha.Service.HubManager do
   defp update_cspec_plugins(%{start: {m, f, [arg]}} = cspec, update_fn) do
     new_arg =
       case arg do
-        {namespace, processor} ->
-          {namespace, rewrite_processor_plugins(processor, update_fn)}
+        {namespace, relay} ->
+          {namespace, rewrite_relay_plugins(relay, update_fn)}
 
-        {namespace, compute_engine_id, processor} ->
-          {namespace, compute_engine_id, rewrite_processor_plugins(processor, update_fn)}
+        {namespace, executor_id, relay} ->
+          {namespace, executor_id, rewrite_relay_plugins(relay, update_fn)}
       end
 
     Map.put(cspec, :start, {m, f, [new_arg]})
   end
 
-  defp rewrite_processor_plugins(processor, update_fn) do
-    current = normalize_plugins(extract_plugins({nil, processor}))
+  defp rewrite_relay_plugins(relay, update_fn) do
+    current = normalize_plugins(extract_plugins({nil, relay}))
     new_plugins = update_fn.(current)
-    new_opts = Keyword.put(processor.opts, :plugins, new_plugins)
-    %{processor | opts: new_opts}
+    new_opts = Keyword.put(relay.opts, :plugins, new_plugins)
+    %{relay | opts: new_opts}
   end
 
-  defp extract_plugins({_namespace, processor}),
-    do: Keyword.get(processor.opts, :plugins, [])
+  defp extract_plugins({_namespace, relay}),
+    do: Keyword.get(relay.opts, :plugins, [])
 
-  defp extract_plugins({_namespace, _compute_engine_id, processor}),
-    do: Keyword.get(processor.opts, :plugins, [])
+  defp extract_plugins({_namespace, _executor_id, relay}),
+    do: Keyword.get(relay.opts, :plugins, [])
 
   defp normalize_plugins(plugins) when is_list(plugins) do
     Enum.map(plugins, fn
@@ -344,32 +344,32 @@ defmodule Flezha.Service.HubManager do
   def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do
     %{start: {m, f, [arg]}} = cs
 
-    {namespace, processor} =
+    {namespace, relay} =
       case arg do
-        {namespace, processor} ->
-          {namespace, processor}
+        {namespace, relay} ->
+          {namespace, relay}
 
-        {namespace, _existing_compute_engine, processor} ->
-          {namespace, processor}
+        {namespace, _existing_executor, relay} ->
+          {namespace, relay}
       end
 
-    factory_id = Map.get(processor, :factory_id)
-    assigned_compute_engine = ProcessorManager.assign_compute_engine(namespace, factory_id)
+    factory_id = Map.get(relay, :factory_id)
+    assigned_executor = RelayManager.assign_executor(namespace, factory_id)
 
     Logger.info(
-      "[hub_manager] alter_child_data processor=#{inspect(Map.get(processor, :id))} " <>
-        "factory=#{inspect(factory_id)} assigned_ce=#{inspect(assigned_compute_engine)}"
+      "[hub_manager] alter_child_data relay=#{inspect(Map.get(relay, :id))} " <>
+        "factory=#{inspect(factory_id)} assigned_ce=#{inspect(assigned_executor)}"
     )
 
-    if is_nil(assigned_compute_engine) do
+    if is_nil(assigned_executor) do
       raise "No active compute engines available in namespace #{namespace} for factory #{inspect(factory_id)}"
     end
 
-    new_args = [{namespace, assigned_compute_engine, processor}]
+    new_args = [{namespace, assigned_executor, relay}]
 
     child_data
     |> put_in([:child_spec, :start], {m, f, new_args})
-    |> put_in([:metadata, :tag], assigned_compute_engine)
+    |> put_in([:metadata, :tag], assigned_executor)
   end
 
   @impl true
@@ -391,7 +391,7 @@ defmodule Flezha.Service.HubManager do
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
         handover: true
       },
-      # Processor startup involves multiple GenServer hops and socket communication
+      # Relay startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
       cross_node_request_timeout: 10_000,
       hooks: %{

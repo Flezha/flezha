@@ -8,7 +8,7 @@
 #   VERSION=0.2.0 make docker-build
 
 services:
-  agent:
+  controller:
     image: alfetahe/flezha:${VERSION:-latest}
     container_name: flezha_agent_prod
     restart: unless-stopped
@@ -32,7 +32,7 @@ services:
       # Snapshot files written by `flz cluster snapshot` need to survive
       # container restarts so a subsequent `flz cluster restore` can read
       # them. Mount as a named volume here; bind to a host path
-      # (`/var/lib/flezha/snapshots`) in an operator-managed compose
+      # (`/var/lib/flezha/snapshots`) in an executor-managed compose
       # overlay if cross-host portability is required.
       - flezha_snapshots:/flezha/app_data/snapshots
     networks:

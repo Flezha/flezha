@@ -144,7 +144,7 @@ This requirement is in addition to and does not modify the "Sticky per-partition
 
 Under the default entry-channel policy (`DropNewest`), the SDK's wire-reader thread (the per-stream loop in `command/streams_connect.rs`) SHALL NOT block on a full mailbox. The frame's typed payload SHALL be discarded; the loop SHALL immediately attempt to read the next frame from the wire.
 
-If an operator opts into `OverflowPolicy::Block` on an entry channel by explicit `.on_full(OverflowPolicy::Block)` declaration, the wire-reader thread MAY park while pushing to that channel's consumer mailbox. The SDK SHALL document this co-tenancy hazard in `docs/relay_architecture.md` and `docs/sdk_protocol_spec.md`. No runtime mechanism prevents an operator from making this choice.
+If an executor opts into `OverflowPolicy::Block` on an entry channel by explicit `.on_full(OverflowPolicy::Block)` declaration, the wire-reader thread MAY park while pushing to that channel's consumer mailbox. The SDK SHALL document this co-tenancy hazard in `docs/relay_architecture.md` and `docs/sdk_protocol_spec.md`. No runtime mechanism prevents an executor from making this choice.
 
 #### Scenario: Default entry policy keeps wire reader running
 - **WHEN** Relay A's entry mailbox is full under default `DropNewest` policy and Relay B (sharing the physical wire connection) has frames pending
@@ -156,11 +156,11 @@ If an operator opts into `OverflowPolicy::Block` on an entry channel by explicit
 
 ### Requirement: Shard declares Change associated type and apply_change function (Rust SDK)
 
-The Rust SDK's `Shard` trait SHALL declare an associated `type Change: flezha_compute_engine::state::Change` with default `flezha_compute_engine::state::NoChange`. The `Change` trait SHALL bound on `Serialize + DeserializeOwned + Send + Sync + 'static` and SHALL declare `fn coalesce_key(&self) -> Option<CoalesceKey>` defaulting to `None`.
+The Rust SDK's `Shard` trait SHALL declare an associated `type Change: flezha_executor::state::Change` with default `flezha_executor::state::NoChange`. The `Change` trait SHALL bound on `Serialize + DeserializeOwned + Send + Sync + 'static` and SHALL declare `fn coalesce_key(&self) -> Option<CoalesceKey>` defaulting to `None`.
 
 The `Shard` trait SHALL declare a function `fn apply_change(state: &mut Self::State, change: &Self::Change)` whose default implementation panics with a descriptive error string for any `Change` other than `NoChange`, and is a no-op for `NoChange`. Shards declaring a non-`NoChange` Change SHALL override `apply_change` to make their state mutation deterministic.
 
-`apply_change` SHALL be deterministic: replay equality is required. The Rust SDK SHALL NOT enforce purity in the type system; instead, `flezha_compute_engine::testing::ShardTestHarness::<S>::replay_equals` SHALL be the determinism gate exercised by user tests.
+`apply_change` SHALL be deterministic: replay equality is required. The Rust SDK SHALL NOT enforce purity in the type system; instead, `flezha_executor::testing::ShardTestHarness::<S>::replay_equals` SHALL be the determinism gate exercised by user tests.
 
 #### Scenario: Default Change is NoChange skips persistence machinery
 
@@ -184,7 +184,7 @@ The `Shard` trait SHALL declare a function `fn apply_change(state: &mut Self::St
 
 ### Requirement: Shard declares Clock associated type with default WallClock (Rust SDK)
 
-The Rust SDK's `Shard` trait SHALL declare an associated `type Clock: flezha_compute_engine::state::Clock` with default `WallClock`. `Clock` SHALL be a sealed trait with v1 implementations `WallClock`, `LogicalClock`, and `EventTimeFrom<F>`. v1 of the Rust SDK SHALL fully wire only `WallClock`; Shards declaring a non-default Clock SHALL fail Relay startup with `RelayStartError::ClockNotImplementedYet { clock_type }` until a follow-up change wires `LogicalClock` and `EventTimeFrom`.
+The Rust SDK's `Shard` trait SHALL declare an associated `type Clock: flezha_executor::state::Clock` with default `WallClock`. `Clock` SHALL be a sealed trait with v1 implementations `WallClock`, `LogicalClock`, and `EventTimeFrom<F>`. v1 of the Rust SDK SHALL fully wire only `WallClock`; Shards declaring a non-default Clock SHALL fail Relay startup with `RelayStartError::ClockNotImplementedYet { clock_type }` until a follow-up change wires `LogicalClock` and `EventTimeFrom`.
 
 #### Scenario: Default Clock is WallClock
 
@@ -260,26 +260,26 @@ The Rust SDK's `Relay` trait SHALL declare `const PERSISTENCE_ENABLED: bool = tr
 2. Otherwise, use the value of `Relay::PERSISTENCE_ENABLED`.
 3. The default of the trait const is `true`.
 
-The resolved value SHALL be bound to the `RelayInstance` and SHALL be propagated to every `PartitionSlot` constructed for that instance. Subsequent changes to the operator-side metadata or to the `Relay::PERSISTENCE_ENABLED` const (via SDK redeploy) SHALL NOT affect already-running instances; new values take effect on the next `stop_relay` + `start_relay` cycle for that instance.
+The resolved value SHALL be bound to the `RelayInstance` and SHALL be propagated to every `PartitionSlot` constructed for that instance. Subsequent changes to the executor-side metadata or to the `Relay::PERSISTENCE_ENABLED` const (via SDK redeploy) SHALL NOT affect already-running instances; new values take effect on the next `stop_relay` + `start_relay` cycle for that instance.
 
 #### Scenario: Default const value is true
 
-- **WHEN** a Relay does not declare `PERSISTENCE_ENABLED` and no operator override is present in relay-start metadata
+- **WHEN** a Relay does not declare `PERSISTENCE_ENABLED` and no executor override is present in relay-start metadata
 - **THEN** `RelayInstance::persistence_enabled()` SHALL return `true`
 
 #### Scenario: Const-declared opt-out is honored
 
-- **WHEN** `MarketRelay` declares `const PERSISTENCE_ENABLED: bool = false` and no operator override is present
+- **WHEN** `MarketRelay` declares `const PERSISTENCE_ENABLED: bool = false` and no executor override is present
 - **THEN** `RelayInstance::persistence_enabled()` SHALL return `false`; the per-Process flusher SHALL drain-and-discard for this instance's Partitions; `stub_send_frame` (or its real counterpart) SHALL NOT be invoked for this instance
 
-#### Scenario: Operator override takes precedence over const
+#### Scenario: Executor override takes precedence over const
 
 - **WHEN** `MarketRelay` declares `const PERSISTENCE_ENABLED: bool = true` AND the relay-start metadata carries `relay_persistence.MarketRelay = false`
 - **THEN** `RelayInstance::persistence_enabled()` SHALL return `false`
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** a `RelayInstance` is constructed with resolved `persistence_enabled = true`, AND the operator subsequently issues a runtime config change setting `relay_persistence.<RelayClass> = false`
+- **WHEN** a `RelayInstance` is constructed with resolved `persistence_enabled = true`, AND the executor subsequently issues a runtime config change setting `relay_persistence.<RelayClass> = false`
 - **THEN** the running `RelayInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_relay(instance_id)` and a subsequent `start_relay(...)` invocation
 
 ### Requirement: init_state accepts optional restoration payload (Rust SDK)
@@ -321,7 +321,7 @@ For Partitions whose Shard's `Change == NoChange`, the runtime SHALL NOT allocat
 
 The SDK SHALL expose a four-layer abstraction comprising Relay, Shard, Partition, and Runner. Each layer SHALL have the following exclusive responsibilities and no others SHALL be implicitly added:
 
-- **Relay** — a user-defined struct implementing the `Relay` trait. Spawned by the agent once per `flz processor start` invocation. Owns the channel topology declaration and the registered Shards. Holds no domain state of its own.
+- **Relay** — a user-defined struct implementing the `Relay` trait. Spawned by the agent once per `flz relay start` invocation. Owns the channel topology declaration and the registered Shards. Holds no domain state of its own.
 - **Shard** — a user-defined struct implementing the `Shard` trait. Defines a stage's typed input, typed output, state type, run logic, and partitioning strategy. Holds no runtime state of its own; acts as the template for Partitions.
 - **Partition** — a runtime instance of a Shard, identified by an optional string key. Holds exactly one State value, exactly one mailbox, and exactly one `inflight` flag. Created by the SDK at relay startup; not user-instantiable.
 - **Runner** — an OS thread in the SDK's worker pool. Drains Partition mailboxes. Not user-visible at the API surface; pool size is configured via the existing `FLEZHA_WORKER_POOL_SIZE` mechanism.
@@ -486,7 +486,7 @@ This restriction applies only to entry channels. Inter-shard channels (`c.channe
 
 ### Requirement: Worker pool reuses existing dispatch infrastructure
 
-The Runner pool SHALL be the existing Chase-Lev work-stealing pool implementation (`sdk/rust/src/compute_engine/work_stealing_pool.rs`). The `FLEZHA_WORKER_POOL_SIZE` environment variable SHALL continue to control pool size, defaulting to `Runtime.availableProcessors()`. The per-Partition `inflight` CAS guard SHALL be the same mechanism the existing per-`ProcessorSlot` guard uses.
+The Runner pool SHALL be the existing Chase-Lev work-stealing pool implementation (`sdk/rust/src/executor/work_stealing_pool.rs`). The `FLEZHA_WORKER_POOL_SIZE` environment variable SHALL continue to control pool size, defaulting to `Runtime.availableRelays()`. The per-Partition `inflight` CAS guard SHALL be the same mechanism the existing per-`RelaySlot` guard uses.
 
 #### Scenario: Default pool sizing
 - **WHEN** the SDK is started without `FLEZHA_WORKER_POOL_SIZE` set on a host with 8 cores
@@ -496,16 +496,16 @@ The Runner pool SHALL be the existing Chase-Lev work-stealing pool implementatio
 - **WHEN** `FLEZHA_WORKER_POOL_SIZE=4` is set on a host with 8 cores
 - **THEN** the runner pool SHALL contain exactly 4 OS threads
 
-### Requirement: No coexistence with ProcessorHandler API
+### Requirement: No coexistence with RelayHandler API
 
-The `ProcessorHandler` trait, `ProcessorResult` enum, `ProcessorRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `Relay` / `Shard` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.
+The `RelayHandler` trait, `RelayResult` enum, `RelayRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `Relay` / `Shard` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.
 
-**Reason**: The library is unpublished, the only known operator-app consumer is in this monorepo and migrates atomically as part of the same change, and the user has an explicit "no legacy / backward-compat shims" policy. Coexistence would also force the new abstraction to retain dispatch-by-processor-id baggage that the new model deliberately leaves behind.
+**Reason**: The library is unpublished, the only known executor-app consumer is in this monorepo and migrates atomically as part of the same change, and the user has an explicit "no legacy / backward-compat shims" policy. Coexistence would also force the new abstraction to retain dispatch-by-relay-id baggage that the new model deliberately leaves behind.
 
-**Migration**: operator apps using `ProcessorHandler` rewrite to `Relay` + one or more `Shard` impls in the same change. Concrete example: `flezha_market/market-processor/src/main.rs` and `market_computation.rs` are rewritten in the `relay-mvp-rust` change. State (formerly `Assets`) is decomposed into per-Shard state types.
+**Migration**: executor apps using `RelayHandler` rewrite to `Relay` + one or more `Shard` impls in the same change. Concrete example: `flezha_market/market-relay/src/main.rs` and `market_computation.rs` are rewritten in the `relay-mvp-rust` change. State (formerly `Assets`) is decomposed into per-Shard state types.
 
 #### Scenario: Old API is not importable
-- **WHEN** a Rust file attempts to `use flezha_compute_engine::ProcessorHandler` after the cutover
+- **WHEN** a Rust file attempts to `use flezha_executor::RelayHandler` after the cutover
 - **THEN** the compilation SHALL fail with an unresolved-import error
 
 #### Scenario: Old registration function is removed

@@ -2,7 +2,7 @@ defmodule Flezha.State.Restore do
   @moduledoc """
   Assembles the byte payload shipped with `RestoreInitState`.
 
-  The agent reads:
+  The controller reads:
     * The latest snapshot (if any) — supplies `snapshot_bytes`.
     * The tail-WAL records strictly newer than the snapshot's `seq` —
       supplies `change_log_bytes` (records concatenated in their on-disk

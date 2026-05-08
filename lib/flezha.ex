@@ -1,35 +1,35 @@
 defmodule Flezha do
   alias Flezha.Service.HubManager
-  alias Flezha.Service.ProcessorManager
-  alias Flezha.Service.ComputeEngineManager
+  alias Flezha.Service.RelayManager
+  alias Flezha.Service.ExecutorManager
   alias Flezha.Service.PluginManager
 
   @moduledoc """
-  Flezha is a compute engine platform with an Elixir agent and SDK runtimes
-  in Rust, Java, and others. It supports clustered processors with hot-swap
+  Flezha is a compute engine platform with an Elixir controller and SDK runtimes
+  in Rust, Java, and others. It supports clustered relays with hot-swap
   migration and an explicit, CLI-driven cluster snapshot/restore mechanism
   (see `docs/cluster-snapshot.md`).
   """
 
-  defdelegate start_processor(namespace, processor), to: ProcessorManager
+  defdelegate start_relay(namespace, relay), to: RelayManager
 
-  defdelegate stop_processor(namespace, processor), to: ProcessorManager
+  defdelegate stop_relay(namespace, relay), to: RelayManager
 
   defdelegate list_namespaces(), to: HubManager, as: :get_running_namespaces
 
-  defdelegate list_compute_engines(namespace),
-    to: ComputeEngineManager,
-    as: :get_global_compute_engines
+  defdelegate list_executors(namespace),
+    to: ExecutorManager,
+    as: :get_global_executors
 
-  defdelegate list_processors(namespace), to: ProcessorManager, as: :get_processor_ids
+  defdelegate list_relays(namespace), to: RelayManager, as: :get_relay_ids
 
-  defdelegate list_factories(namespace), to: Flezha.ComputeEngine.FleetManager
+  defdelegate list_factories(namespace), to: Flezha.Executor.FleetManager
 
   defdelegate enable_plugin(plugin_id, plugin), to: PluginManager
 
   defdelegate disable_plugin(plugin_id), to: PluginManager
 
-  defdelegate processor_state(namespace, processor),
-    to: ProcessorManager,
-    as: :get_processor_state
+  defdelegate partition_state(namespace, relay),
+    to: RelayManager,
+    as: :get_partition_state
 end

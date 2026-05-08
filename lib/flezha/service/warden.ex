@@ -25,7 +25,7 @@ defmodule Flezha.Service.Warden do
   @impl true
   def init([]) do
     table = :ets.new(@table_name, [:set, :protected, :named_table])
-    :ets.insert(table, {:compute_engines, %{}})
+    :ets.insert(table, {:executors, %{}})
 
     {:ok, %{table: table}}
   end

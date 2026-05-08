@@ -353,7 +353,7 @@ defmodule Flezha.State.WalWriter do
       %{partition_id: partition_id, status: status}
     )
 
-    _ = Flezha.Processor.Overwatch.notify_partition_backpressure(partition_id, status)
+    _ = Flezha.Relay.Overwatch.notify_partition_backpressure(partition_id, status)
     :ok
   end
 

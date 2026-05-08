@@ -4,9 +4,9 @@ defmodule Flezha.Service.Validator do
 
   use Flezha.Constant
 
-  def byte_limit_exceed(value, max_length \\ @processor_id_max_bytes) do
+  def byte_limit_exceed(value, max_length \\ @relay_id_max_bytes) do
     case byte_size(value) > max_length do
-      true -> {:error, "processor id exceeds #{@processor_id_max_bytes} bytes"}
+      true -> {:error, "relay id exceeds #{@relay_id_max_bytes} bytes"}
       false -> :ok
     end
   end
@@ -14,20 +14,20 @@ defmodule Flezha.Service.Validator do
   def valid_namespace(namespace) do
     case HubManager.hub_alive?(namespace) do
       true -> :ok
-      false -> {:error, "no compute_engines in namespace #{namespace}"}
+      false -> {:error, "no executors in namespace #{namespace}"}
     end
   end
 
-  def processor_unique(namespace, processor_id) do
+  def relay_unique(namespace, relay_id) do
     result =
       ProcessHub.child_lookup(
         Identificator.hub(namespace),
-        processor_id
+        relay_id
       )
 
     case result do
       nil -> :ok
-      _ -> {:error, "processor id already in use"}
+      _ -> {:error, "relay id already in use"}
     end
   end
 end

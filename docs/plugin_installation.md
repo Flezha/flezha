@@ -1,7 +1,7 @@
 # Installable Plugins
 
-Flezha supports a Jenkins-style plugin lifecycle: operators install a
-plugin package from a local archive, the agent validates, compiles, and
+Flezha supports a Jenkins-style plugin lifecycle: executors install a
+plugin package from a local archive, the controller validates, compiles, and
 hot-loads the modules, and the plugin persists across restarts. No
 rebuild of the release is required.
 
@@ -33,7 +33,7 @@ plugin_id-version.fpz
 
 Rules:
 
-- No `.beam` files. Compilation happens on the agent at install time.
+- No `.beam` files. Compilation happens on the controller at install time.
 - No symbolic links, no path traversal (`..`), no absolute paths.
 - Only `.ex` and `.erl` files under `src/`.
 - `CHECKSUMS.sha256` MUST list every file under `src/` and `manifest.exs`.
@@ -83,7 +83,7 @@ end
       provider: MyOrg.MyPlugin,
       subscriptions: [{:on_input, []}],
       default_opts: %{},
-      scope: :processor
+      scope: :relay
     }
   ],
   dependencies: []
@@ -123,7 +123,7 @@ Each `:provides` entry:
   provider: MyOrg.MyPlugin,                # MUST appear in :modules
   subscriptions: [{:on_input, []}],        # list of {extension, opts}
   default_opts: %{},                       # overridable at enable time
-  scope: :processor                        # only :processor in this release
+  scope: :relay                        # only :relay in this release
 }
 ```
 
@@ -141,7 +141,7 @@ ignored by the installer's parser.
 
 ## Signing packages
 
-Signing is optional unless the agent is configured with
+Signing is optional unless the controller is configured with
 `require_signature: true`. Generate an Ed25519 keypair:
 
 ```bash
@@ -157,7 +157,7 @@ openssl pkeyutl -sign -inkey plugin_key.pem -rawin \
 ```
 
 Add `signature.sig` to the archive and deliver the public key to the
-agent operator, who installs it in `config.exs`:
+controller executor, who installs it in `config.exs`:
 
 ```elixir
 config :flezha, :plugin_installer,
@@ -229,7 +229,7 @@ directory and returns the error.
 
 ### Uninstall
 
-Refuses while the plugin is `:enabled` (operator must disable first).
+Refuses while the plugin is `:enabled` (executor must disable first).
 Refuses while any other installed plugin declares a dep on this one.
 Purges every owned module, removes the `<plugin_id>/` directory, and
 deletes the catalog row.
@@ -255,7 +255,7 @@ Constraints use a subset of SemVer comparators: `>=`, `>`, `<`, `<=`,
 - Upgrade that would break a dependent: `{:error, {:dependents_block, [...]}}`.
 - Uninstall while dependents exist: same shape.
 
-No transitive install — the operator installs deps in order.
+No transitive install — the executor installs deps in order.
 
 ## Staged rollout / environment overrides
 
@@ -310,10 +310,10 @@ A plugin row is marked `:load_failed` at boot when the Loader cannot
 - The `ebin/<module>.beam` file was deleted out-of-band.
 - Disk corruption; try `sha256sum` against `CHECKSUMS.sha256` under
   `installed/<id>/<version>/`.
-- OTP/Elixir version drift between install time and the current agent.
+- OTP/Elixir version drift between install time and the current controller.
 
 Fix: re-install the package. The original `.fpz` can be rebuilt from
-the `installed/<id>/<version>/src/` tree if the operator has disk
+the `installed/<id>/<version>/src/` tree if the executor has disk
 access.
 
 ### `{:error, {:compile_failed, file, reason}}`
@@ -337,7 +337,7 @@ cycle. Break it by removing one of the edges in a manifest.
 
 ### `{:error, :signature_required}` or `:unsigned_not_allowed`
 
-The agent config requires a signed package. Either sign the package
+The controller config requires a signed package. Either sign the package
 (see [Signing packages](#signing-packages)) or flip the policy in
 `config.exs` during development.
 

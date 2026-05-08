@@ -80,7 +80,7 @@ defmodule Flezha.Plugin.Installer.ExampleHelloWorldTest do
              "regenerate with `sha256sum manifest.exs src/*.ex > CHECKSUMS.sha256`"
 
     # Verify the committed checksums file matches the source on disk. If
-    # this fails the operator's docs workflow in plugin_installation.md
+    # this fails the executor's docs workflow in plugin_installation.md
     # would fail too.
     checksums = File.read!(Path.join(@example_dir, "CHECKSUMS.sha256"))
 

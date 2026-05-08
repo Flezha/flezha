@@ -5,12 +5,12 @@ external_processes =
     {:ok, current_path} = :file.get_cwd()
 
     # `--quiet` suppresses the `Finished dev profile [...] / Running [...]`
-    # banners cargo emits each time the compute_engine is re-spawned for
+    # banners cargo emits each time the executor is re-spawned for
     # an ad-hoc test namespace. Build cache hits still keep these calls
     # essentially free; only the stdout noise is gone.
     [
-      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target",
-      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target"
+      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_executor/Cargo.toml --target-dir=./target",
+      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_executor/Cargo.toml --target-dir=./target"
     ]
   else
     System.get_env("FLEZHA_EXTERNAL_PROCESSES", "") |> String.split(",", trim: true)
@@ -134,10 +134,10 @@ config :flezha,
   external_processes: external_processes,
 
   # ------------------------------------------------------------------------------------------------
-  # Per-processor cap on captured-state size when writing a cluster snapshot.
-  # Processors whose serialised state exceeds the cap are written to the
+  # Per-relay cap on captured-state size when writing a cluster snapshot.
+  # Relays whose serialised state exceeds the cap are written to the
   # snapshot without their state binary; restore primes them with empty
-  # default state and a one-time INFO log names the processor id.
+  # default state and a one-time INFO log names the relay id.
   snapshot_state_cap_bytes:
     (case Integer.parse(System.get_env("FLEZHA_SNAPSHOT_STATE_CAP_BYTES", "8388608")) do
        {n, ""} when n > 0 -> n
@@ -148,7 +148,7 @@ config :flezha,
   # Overwatch periodic state-snapshot task (design §D8).
   #
   # `FLEZHA_OVERWATCH_STATE_SNAPSHOT_INTERVAL_MS` gates the background timer
-  # that asks each running processor for an in-memory state snapshot and
+  # that asks each running relay for an in-memory state snapshot and
   # fanouts to `:on_snapshot` subscribers. A value of `"0"` or `"disabled"`
   # stops the timer from being scheduled — the default, since flezha_market
   # treats Postgres (populated by Kafka-consumed rows) as the authoritative
@@ -184,17 +184,17 @@ config :flezha,
     ),
 
   # ------------------------------------------------------------------------------------------------
-  # The minimum number of milliseconds to wait before removing a disconnected compute_engine.
+  # The minimum number of milliseconds to wait before removing a disconnected executor.
   #
-  # This option can be used to prevent the compute_engine from being removed too quickly
-  # when it is disconnected from the cluster. For example, if the compute_engine is
+  # This option can be used to prevent the executor from being removed too quickly
+  # when it is disconnected from the cluster. For example, if the executor is
   # restarted or updated.
   #
   # Leave 0 to disable this feature.
   #
   # The default is 30 seconds.
-  compute_engine_keepalive:
-    System.get_env("FLEZHA_OPERATOR_KEEPALIVE", "30000") |> String.to_integer()
+  executor_keepalive:
+    System.get_env("FLEZHA_EXECUTOR_KEEPALIVE", "30000") |> String.to_integer()
 
 # ------------------------------------------------------------------------------------------------
 # Installable plugin installer keyword list (env-var driven). Only set when

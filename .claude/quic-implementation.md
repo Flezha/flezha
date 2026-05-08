@@ -22,9 +22,9 @@ Flezha uses a transport abstraction layer to support multiple communication back
 | `lib/flezha/transport/behaviour.ex` | Transport callback definitions |
 | `lib/flezha/transport/resolver.ex` | Runtime transport selection |
 | `lib/flezha/application.ex` | Conditional supervisor children based on transport |
-| `lib/flezha/compute_engine/fleet_manager.ex` | `connect_handler_quic/2` entry point for QUIC connections |
-| `lib/flezha/compute_engine/control_channel.ex` | Handles `{:quic, :data, stream, frame}` messages |
-| `lib/flezha/compute_engine/stream_channel.ex` | Handles QUIC stream data and `{:quic_stream_attached, stream}` |
+| `lib/flezha/executor/fleet_manager.ex` | `connect_handler_quic/2` entry point for QUIC connections |
+| `lib/flezha/executor/control_channel.ex` | Handles `{:quic, :data, stream, frame}` messages |
+| `lib/flezha/executor/stream_channel.ex` | Handles QUIC stream data and `{:quic_stream_attached, stream}` |
 
 ### Rust (SDK-side)
 
@@ -35,14 +35,14 @@ Flezha uses a transport abstraction layer to support multiple communication back
 | `sdk/rust/src/transport/protocol.rs` | Stream type constants (`STREAM_TYPE_PRIMARY=0x01`, `STREAM_TYPE_SECONDARY=0x02`) |
 | `sdk/rust/src/transport/config.rs` | Transport configuration |
 | `sdk/rust/src/command/streams_connect.rs` | `handle_quic()`: opens bidi streams, sends type byte, spawns read threads |
-| `sdk/rust/src/compute_engine/control_unit.rs` | Control channel open/communication |
+| `sdk/rust/src/executor/control_unit.rs` | Control channel open/communication |
 
 ### Config & Tests
 
 | File | Purpose |
 |------|---------|
 | `config/runtime.exs` | Transport env vars, cert paths, QUIC listen address |
-| `test/quic_test.exs` | 5 integration tests (connect, create processor, e2e message, state, sync IO) |
+| `test/quic_test.exs` | 5 integration tests (connect, create relay, e2e message, state, sync IO) |
 | `scripts/bench.sh` | Bench script with `--transport quic` flag |
 
 ## Connection Lifecycle
@@ -52,16 +52,16 @@ Flezha uses a transport abstraction layer to support multiple communication back
 3. First bidi stream becomes the **control channel**
 4. SDK sends init message (namespace + factory_ids) on control stream
 5. Agent's `FleetManager` creates compute engine supervisor
-6. Agent sends `AssignComputeEngineId` command
+6. Agent sends `AssignExecutorId` command
 7. Agent sends `ConnectSocket{sockets_count: N}` command
 8. SDK opens 2×N bidi streams (N primary + N secondary), sends type byte on each
 9. Agent's `QuicStreamAcceptor` reads type byte, routes to `StreamChannel`s
-10. System ready for processor operations
+10. System ready for relay operations
 
 ## Stream Types & Data Flow
 
-- **Primary (0x01):** Agent → SDK (processor input)
-- **Secondary (0x02):** SDK → Agent (processor output)
+- **Primary (0x01):** Agent → SDK (relay input)
+- **Secondary (0x02):** SDK → Agent (relay output)
 - **Control:** Bidirectional protobuf commands
 
 Binary framing (all streams): `[payload_id(32)] [payload_size(4)] [message_size(4)] [message] [metadata_size(2)] [metadata]`

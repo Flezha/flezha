@@ -1,6 +1,6 @@
 package com.flezha.sdk.runtime.relay;
 
-import com.flezha.sdk.runtime.ComputeEngineContext;
+import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.partition.PartitionSlot;
 import com.flezha.sdk.runtime.worker.ShardDispatcher;
 import com.flezha.sdk.shard.Shard;
@@ -15,17 +15,17 @@ import java.util.concurrent.ExecutorService;
 import javax.annotation.Nonnull;
 
 /**
- * Per-{@code AddProcessor} runtime state. Holds:
+ * Per-{@code AddRelay} runtime state. Holds:
  * <ul>
  *   <li>the shared {@link RelayTopology} (shared across all instances of
  *       this Relay class),</li>
- *   <li>the agent-facing {@code instanceId} (= what the wire calls
- *       {@code processor_id}),</li>
+ *   <li>the controller-facing {@code instanceId} (= what the wire calls
+ *       {@code relay_id}),</li>
  *   <li>per-Shard partition slots (one inner-list entry per Partition;
  *       single-mode Shards have inner length 1),</li>
  *   <li>per-Shard reverse index from partition key → partition index
  *       (empty for single-mode Shards),</li>
- *   <li>the resolved {@code persistenceEnabled} toggle (operator override
+ *   <li>the resolved {@code persistenceEnabled} toggle (executor override
  *       &gt; Relay default &gt; {@code true}; frozen for the instance's
  *       lifetime),</li>
  *   <li>the aggregated Kryo type list across all Shards in this Relay class
@@ -64,21 +64,21 @@ public final class RelayInstance {
     public static RelayInstance create(
             @Nonnull RelayTopology topology,
             @Nonnull String instanceId,
-            @Nonnull ComputeEngineContext ctx,
+            @Nonnull ExecutorContext ctx,
             @Nonnull ExecutorService pool) {
         return create(topology, instanceId, ctx, pool, true);
     }
 
     /**
      * Construct a fresh {@link RelayInstance}, threading the resolved
-     * {@code persistenceEnabled} toggle from {@code AddProcessor} metadata.
+     * {@code persistenceEnabled} toggle from {@code AddRelay} metadata.
      * Calls {@code Shard.initState} for each Shard×Partition.
      */
     @Nonnull
     public static RelayInstance create(
             @Nonnull RelayTopology topology,
             @Nonnull String instanceId,
-            @Nonnull ComputeEngineContext ctx,
+            @Nonnull ExecutorContext ctx,
             @Nonnull ExecutorService pool,
             boolean persistenceEnabled) {
         int shardCount = topology.shards().size();

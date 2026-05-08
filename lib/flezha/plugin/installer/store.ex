@@ -11,7 +11,7 @@ defmodule Flezha.Plugin.Installer.Store do
   Every mutator ends with `:dets.sync/1` so the row is on disk before the
   call returns — installs must survive an immediate crash. Opening a corrupt
   file rotates it to `installed_plugins.dets.corrupt-<monotonic>` and starts
-  fresh; the on-disk `app_data/plugins/installed/` trees remain so operators
+  fresh; the on-disk `app_data/plugins/installed/` trees remain so executors
   can rehydrate by re-installing.
   """
 
@@ -205,7 +205,7 @@ defmodule Flezha.Plugin.Installer.Store do
   end
 
   # A corrupt file is a deployment hazard, not a fatal error: rename out of
-  # the way, log both paths so the operator can recover manually, and start
+  # the way, log both paths so the executor can recover manually, and start
   # fresh. The on-disk `installed/<id>/<version>/` trees are unaffected.
   defp rotate_and_retry(file_path, reason) do
     rotated = file_path <> ".corrupt-" <> Integer.to_string(System.monotonic_time())

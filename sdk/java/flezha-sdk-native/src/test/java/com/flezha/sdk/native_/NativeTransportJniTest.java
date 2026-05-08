@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
  * {@code jni} so they only run when the host-triple {@code flz_jni} cdylib
  * has been staged into {@code flezha-sdk-native/src/main/resources/native/}.
  *
- * <p>These tests do NOT require a live agent.
+ * <p>These tests do NOT require a live controller.
  */
 @Tag("jni")
 class NativeTransportJniTest {

@@ -1,7 +1,7 @@
 defmodule Flezha.Application do
   @moduledoc false
 
-  alias Flezha.ComputeEngine.FleetManager
+  alias Flezha.Executor.FleetManager
 
   require Logger
 
@@ -24,7 +24,7 @@ defmodule Flezha.Application do
         Flezha.BootLoader,
         Flezha.Service.Identificator,
         Flezha.Service.HubManager,
-        Flezha.ComputeEngine.FleetSupervisor,
+        Flezha.Executor.FleetSupervisor,
         FleetManager
       ] ++
         installer_children() ++
@@ -35,7 +35,7 @@ defmodule Flezha.Application do
           Flezha.Plugin.Provider.Kafka.ProducerSup,
           Flezha.Service.PortPilot,
           Flezha.Cluster.Orchestrator,
-          {Task.Supervisor, name: Flezha.Processor.MessageHandlerTaskSup}
+          {Task.Supervisor, name: Flezha.Relay.MessageHandlerTaskSup}
         ] ++
         Flezha.State.Supervisor.application_children() ++
         [
@@ -63,7 +63,7 @@ defmodule Flezha.Application do
   end
 
   # Boot log for the Overwatch periodic state-snapshot task (design §D8).
-  # Emits exactly once per agent boot.
+  # Emits exactly once per controller boot.
   defp log_overwatch_state_snapshot_config do
     case Application.get_env(:flezha, :overwatch_state_snapshot_interval_ms, 60_000) do
       0 ->
@@ -79,8 +79,8 @@ defmodule Flezha.Application do
 
   @impl true
   def prep_stop(_state) do
-    # We need to stop the hub manager first to keep the compute_engines
-    # running while processors are stopped.
+    # We need to stop the hub manager first to keep the executors
+    # running while relays are stopped.
     Flezha.Service.HubManager.stop_hub_manager()
   end
 

@@ -5,11 +5,11 @@ defmodule Flezha.Plugin.Extension.Ctx.Terminate do
   """
 
   @type t() :: %__MODULE__{
-          processor_id: String.t(),
+          relay_id: String.t(),
           namespace: atom() | String.t(),
-          compute_engine_id: String.t() | nil,
+          executor_id: String.t() | nil,
           reason: term()
         }
 
-  defstruct [:processor_id, :namespace, :compute_engine_id, :reason]
+  defstruct [:relay_id, :namespace, :executor_id, :reason]
 end

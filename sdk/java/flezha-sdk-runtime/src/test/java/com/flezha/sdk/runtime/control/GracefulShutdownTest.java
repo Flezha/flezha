@@ -3,14 +3,14 @@ package com.flezha.sdk.runtime.control;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.proto.AddProcessor;
+import com.flezha.sdk.proto.AddRelay;
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.proto.OperatorShutdownNotification;
+import com.flezha.sdk.proto.ExecutorShutdownNotification;
 import com.flezha.sdk.relay.Relay;
 import com.flezha.sdk.relay.RelayRegistry;
-import com.flezha.sdk.runtime.ComputeEngineContext;
+import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
-import com.flezha.sdk.runtime.control.handlers.AddProcessorHandler;
+import com.flezha.sdk.runtime.control.handlers.AddRelayHandler;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.shard.Shard;
@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Bridge mechanics for {@link GracefulShutdown}. Drives {@code run()}
  * against a capturing {@link GracefulShutdown.FrameWriter} that stands
- * in for the agent's control channel, then decodes the captured frame
+ * in for the controller's control channel, then decodes the captured frame
  * and asserts protocol shape.
  */
 class GracefulShutdownTest {
@@ -47,9 +47,9 @@ class GracefulShutdownTest {
     }
 
     @Test
-    @DisplayName("run() emits a framed OperatorShutdownNotification per processor")
-    void emitsFramedOperatorShutdownNotification() throws Exception {
-        ComputeEngineContext ctx = newCtxWithProcessor("p1");
+    @DisplayName("run() emits a framed ExecutorShutdownNotification per relay")
+    void emitsFramedExecutorShutdownNotification() throws Exception {
+        ExecutorContext ctx = newCtxWithRelay("p1");
 
         List<byte[]> captured = new ArrayList<>();
         AtomicReference<Long> capturedStreamId = new AtomicReference<>();
@@ -70,7 +70,7 @@ class GracefulShutdownTest {
         }
 
         assertThat(captured)
-                .as("graceful shutdown emits exactly one frame for one processor")
+                .as("graceful shutdown emits exactly one frame for one relay")
                 .hasSize(1);
 
         byte[] frame = captured.get(0);
@@ -79,8 +79,8 @@ class GracefulShutdownTest {
 
         CommandRequest request = CommandRequest.parseFrom(parsed.message());
         assertThat(request.getCommandCase()).isEqualTo(CommandRequest.CommandCase.OPERATOR_SHUTDOWN_NOTIFICATION);
-        OperatorShutdownNotification notif = request.getOperatorShutdownNotification();
-        assertThat(notif.getProcessorId()).isEqualTo("p1");
+        ExecutorShutdownNotification notif = request.getExecutorShutdownNotification();
+        assertThat(notif.getRelayId()).isEqualTo("p1");
         assertThat(notif.getSerializedState().toByteArray())
                 .as("notification carries a non-empty serialized state binary")
                 .isNotEmpty();
@@ -95,7 +95,7 @@ class GracefulShutdownTest {
     @Test
     @DisplayName("run() returns within ~2.5s when no ack arrives")
     void returnsWithin2sWhenAckNeverArrives() {
-        ComputeEngineContext ctx = newCtxWithProcessor("p_timeout");
+        ExecutorContext ctx = newCtxWithRelay("p_timeout");
 
         GracefulShutdown.FrameWriter neverAcking = (streamId, frame) -> 0;
         GracefulShutdown subject = new GracefulShutdown(ctx, CONTROL_STREAM_ID, neverAcking);
@@ -121,7 +121,7 @@ class GracefulShutdownTest {
     @Test
     @DisplayName("run() is idempotent across SIGTERM + close()")
     void runIsIdempotent() throws InterruptedException {
-        ComputeEngineContext ctx = newCtxWithProcessor("p_idem");
+        ExecutorContext ctx = newCtxWithRelay("p_idem");
         CountDownLatch firstWriteSeen = new CountDownLatch(1);
         AtomicReference<String> capturedRef = new AtomicReference<>();
 
@@ -151,22 +151,22 @@ class GracefulShutdownTest {
         assertThat(elapsed).isLessThan(50L);
     }
 
-    private static ComputeEngineContext newCtxWithProcessor(String processorId) {
+    private static ExecutorContext newCtxWithRelay(String relayId) {
         if (RelayRegistry.factoryIds().isEmpty()) {
             RelayRegistry.registerRelay(ShutdownTestRelay.class);
         }
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
-        ComputeEngineContext ctx = new ComputeEngineContext("ns", cfg, 0L);
+        ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
 
         CommandRequest add = CommandRequest.newBuilder()
                 .setReferenceId("ref")
-                .setAddProcessor(AddProcessor.newBuilder()
-                        .setProcessorId(processorId)
+                .setAddRelay(AddRelay.newBuilder()
+                        .setRelayId(relayId)
                         .setFactoryId(FACTORY_ID)
                         .build())
                 .build();
-        new AddProcessorHandler().handle(ctx, add, new ArrayList<>());
+        new AddRelayHandler().handle(ctx, add, new ArrayList<>());
         return ctx;
     }
 

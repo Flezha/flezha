@@ -5,7 +5,7 @@ pub mod utility;
 
 pub mod pb {
     #[cfg(not(rust_analyzer))]
-    include!("generated/compute_engine_commands.rs");
+    include!("generated/executor_commands.rs");
     #[cfg(rust_analyzer)]
-    include!("generated/compute_engine_commands.rs");
+    include!("generated/executor_commands.rs");
 }

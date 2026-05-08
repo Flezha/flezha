@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.control;
 
 import com.flezha.sdk.native_.NativeTransport;
-import com.flezha.sdk.runtime.ComputeEngineContext;
+import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -22,10 +22,10 @@ public final class ControlChannel {
 
     public static final String HANDSHAKE_PAYLOAD_ID = "connect_control_channel";
 
-    private final ComputeEngineContext ctx;
+    private final ExecutorContext ctx;
     private final long controlStreamId;
 
-    public ControlChannel(@Nonnull ComputeEngineContext ctx, long controlStreamId) {
+    public ControlChannel(@Nonnull ExecutorContext ctx, long controlStreamId) {
         this.ctx = ctx;
         this.controlStreamId = controlStreamId;
     }

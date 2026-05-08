@@ -12,7 +12,7 @@ defmodule Flezha.Plugin.Installer.Manifest do
 
   Validation enforces the schema the installer promises: id regex, semver
   version, non-empty modules, provides shape (including provider ∈ modules
-  and scope == :processor), dependency constraint strings parseable by
+  and scope == :relay), dependency constraint strings parseable by
   `Version`.
   """
 
@@ -230,7 +230,7 @@ defmodule Flezha.Plugin.Installer.Manifest do
   defp require_subscriptions(subs),
     do: {:error, {:manifest_invalid, {:invalid_subscriptions, subs}}}
 
-  defp require_scope(:processor), do: :ok
+  defp require_scope(:relay), do: :ok
   defp require_scope(scope), do: {:error, {:manifest_invalid, {:unsupported_scope, scope}}}
 
   defp require_default_opts(opts) when is_map(opts), do: :ok

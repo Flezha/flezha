@@ -9,7 +9,7 @@ defmodule Flezha.Service.Payloader do
   (e.g., control commands) and JSON utility functions.
   """
 
-  alias Flezha.Processor.Builder, as: ProcessorBuilder
+  alias Flezha.Relay.Builder, as: RelayBuilder
 
   def json_to_map(""), do: %{}
 
@@ -53,15 +53,15 @@ defmodule Flezha.Service.Payloader do
     |> :erlang.iolist_to_binary()
   end
 
-  def construct_processor!(input, type) do
+  def construct_relay!(input, type) do
     result =
       case type do
-        :json -> ProcessorBuilder.from_json(input)
-        :map -> ProcessorBuilder.from_map(input)
+        :json -> RelayBuilder.from_json(input)
+        :map -> RelayBuilder.from_map(input)
       end
 
     case result do
-      {:ok, processor} -> processor
+      {:ok, relay} -> relay
       {:error, reason} -> raise reason
     end
   end

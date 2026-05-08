@@ -1,9 +1,9 @@
 # Rust SDK Relay State Persistence
 
 This doc covers the state-persistence trait surface added by the
-`relay-state-persistence-rust` change. The agent-side WAL writer,
+`relay-state-persistence-rust` change. The controller-side WAL writer,
 fsync batcher, snapshot lifecycle, retention sweeper, and time-travel
-CLI ship in `relay-state-persistence-agent`; this doc describes the
+CLI ship in `relay-state-persistence-controller`; this doc describes the
 SDK-side contract and what runs where today.
 
 For the architecture rationale and the eight Tier-1 commitments that
@@ -36,7 +36,7 @@ this change implements, see the umbrella in
   Records returning `None` are retained verbatim.
 
 - **`Relay::PERSISTENCE_ENABLED`** — class-level toggle. Default `true`.
-  Operator override via relay-start metadata key
+  Executor override via relay-start metadata key
   `relay_persistence.<RelayClass>` wins. Frozen at instance start;
   changes only take effect on the next `stop_relay` + `start_relay`
   cycle.
@@ -50,8 +50,8 @@ this change implements, see the umbrella in
 ## Trait surface
 
 ```rust
-use flezha_compute_engine::shard::{Shard, ShardCtx, ShardError};
-use flezha_compute_engine::state::{
+use flezha_executor::shard::{Shard, ShardCtx, ShardError};
+use flezha_executor::state::{
     Change, NoChange, RestoreInitPayload, StateHandle, WallClock,
 };
 use serde::{Deserialize, Serialize};
@@ -105,7 +105,7 @@ recorded for replay.
 ### Coalescing example
 
 ```rust
-use flezha_compute_engine::state::{Change, CoalesceKey};
+use flezha_executor::state::{Change, CoalesceKey};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 struct TickChange { interval: u8, ts: u64, delta: i64 }
@@ -131,7 +131,7 @@ impl Relay for MarketRelay {
 }
 ```
 
-When `PERSISTENCE_ENABLED == false` (or the operator override sets it
+When `PERSISTENCE_ENABLED == false` (or the executor override sets it
 to `false` at start time), the per-Partition flusher still drains the
 buffer on each linger tick — the buffer is cleared, coalescing runs,
 seq counters advance — but `send_frame` is never invoked. Tests can
@@ -140,7 +140,7 @@ assert the wire stub was not called.
 ## ShardTestHarness
 
 ```rust
-use flezha_compute_engine::testing::ShardTestHarness;
+use flezha_executor::testing::ShardTestHarness;
 
 #[test]
 fn counter_replays_deterministically() {
@@ -159,7 +159,7 @@ on divergence; `Display` renders a hex-diff for visual inspection.
 
 `ShardTestHarness` is gated behind `cfg(any(test, feature = "testing"))`.
 Downstream crates that want the harness in their non-test code paths
-add `flezha_compute_engine = { ..., features = ["testing"] }`.
+add `flezha_executor = { ..., features = ["testing"] }`.
 
 ## Restoration flow (warm restart)
 
@@ -176,7 +176,7 @@ returns, the runtime:
    + CRC, deserializes the Change body, and folds via
    `Shard::apply_change`.
 
-The end state is identical to the agent-side state at the time of the
+The end state is identical to the controller-side state at the time of the
 last persisted record (modulo CRC failures, which fail loud).
 
 ## Wire format
@@ -196,33 +196,33 @@ Per record (16-byte header per umbrella spec; full frame per
 The 16-byte header carries `sdk_lang = 1` (Rust), the SDK version, the
 Shard's `SCHEMA_VERSION`, the `format_id = 1` (postcard), and a CRC32
 over the change bytes. The trailing CRC32 is the same value, repeated
-on the wire so the agent's WAL reader can validate framing before
+on the wire so the controller's WAL reader can validate framing before
 decoding the header.
 
 ## What ships where
 
-| Concern | This change | `relay-state-persistence-agent` |
+| Concern | This change | `relay-state-persistence-controller` |
 |---|---|---|
 | `Change` trait, `apply_change`, `StateHandle` | ✅ | — |
 | Per-Partition flusher (single OS thread) | ✅ | — |
 | Wire-frame builder | ✅ (stub `send_frame`) | replaces with NIF |
 | `ShardTestHarness::<S>::replay_equals` | ✅ | — |
 | 16-byte header, CRC32 validation | ✅ | — |
-| `Relay::PERSISTENCE_ENABLED` resolution | ✅ | operator override wired |
-| Per-Shard `compact_after_bytes` reported to agent | ✅ | consumes value |
-| Agent-side WAL writer + fsync batcher | — | ✅ |
+| `Relay::PERSISTENCE_ENABLED` resolution | ✅ | executor override wired |
+| Per-Shard `compact_after_bytes` reported to controller | ✅ | consumes value |
+| Controller-side WAL writer + fsync batcher | — | ✅ |
 | Snapshot lifecycle + retention | — | ✅ |
 | Time-travel CLI | — | ✅ |
 
 Until both changes merge, the SDK is correct in isolation: drained
 frames are tracing-logged and discarded by the stub. End-to-end
-durability lands when the agent change wires the real `send_frame`.
+durability lands when the controller change wires the real `send_frame`.
 
 ## Tunables
 
 - `FLEZHA_FLUSH_LINGER_MS` — flusher linger between drains. Default 5.
 - `Shard::compact_after_bytes()` — per-Partition WAL size threshold
-  reported to the agent at relay start. Default 64 MiB.
+  reported to the controller at relay start. Default 64 MiB.
 - `Shard::SCHEMA_VERSION` — bump on non-additive Change-schema edits;
   the runtime fails loud on mismatch (registered migrators are
   reserved by the umbrella but not implemented in this change).

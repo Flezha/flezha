@@ -1,12 +1,12 @@
 defmodule FlezhaTest do
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
-  alias Flezha.ComputeEngine.FleetManager
-  alias FlezhaTest.Fixtures.ProcessorFixture
+  alias Flezha.Executor.FleetManager
+  alias FlezhaTest.Fixtures.RelayFixture
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.ProcessorManager
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.NodeTestHelper
-  alias FlezhaTest.Helper.ProcessorTestHelper
+  alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Helper.MessageTestHelper
 
   use ExUnit.Case
@@ -20,7 +20,7 @@ defmodule FlezhaTest do
   @testnet_ws_uri "ws://localhost:4500"
 
   @test_store_input_factory "store_input"
-  @test_processor_factory "do_nothing"
+  @test_relay_factory "do_nothing"
   @test_compare_filter_factory "compare_filter"
 
   setup_all do
@@ -29,87 +29,87 @@ defmodule FlezhaTest do
 
   setup _context do
     on_exit(fn ->
-      ProcessorManager.stop_all_processors(@default_namespace)
+      RelayManager.stop_all_relays(@default_namespace)
       FleetManager.stop_namespace(@temp_namespace)
     end)
 
     :ok
   end
 
-  test "compute_engine node connect" do
-    res = Flezha.ComputeEngine.FleetManager.active_compute_engines(@default_namespace)
+  test "executor node connect" do
+    res = Flezha.Executor.FleetManager.active_executors(@default_namespace)
     assert length(res) === 2
     Enum.each(res, &assert(is_binary(&1)))
   end
 
-  @tag :processor_start
-  test "processor adding" do
-    processor = %Flezha.Processor.Builder{
-      id: "default_processor_test",
-      factory_id: @test_processor_factory
+  @tag :relay_start
+  test "relay adding" do
+    relay = %Flezha.Relay.Builder{
+      id: "default_relay_test",
+      factory_id: @test_relay_factory
     }
 
-    {status, info} = ProcessorManager.start_processor(@default_namespace, processor)
+    {status, info} = RelayManager.start_relay(@default_namespace, relay)
 
     assert status === :ok,
-           "start_processor failed: #{inspect(info)}"
+           "start_relay failed: #{inspect(info)}"
 
-    assert info[:processor_id] === "default_processor_test"
+    assert info[:relay_id] === "default_relay_test"
     assert info[:node] === @node_name
     assert is_pid(info[:pid])
-    assert is_binary(info[:compute_engine_id])
+    assert is_binary(info[:executor_id])
   end
 
-  test "processor removing" do
-    processor_id = "default_processor_stop_test"
+  test "relay removing" do
+    relay_id = "default_relay_stop_test"
 
-    {:ok, %{pid: _processor_pid}} =
-      processor_id
-      |> ProcessorFixture.get(@test_store_input_factory)
-      |> ProcessorFixture.start()
+    {:ok, %{pid: _relay_pid}} =
+      relay_id
+      |> RelayFixture.get(@test_store_input_factory)
+      |> RelayFixture.start()
 
-    assert :ok === ProcessorManager.stop_processor(@default_namespace, processor_id)
+    assert :ok === RelayManager.stop_relay(@default_namespace, relay_id)
 
     # TODO: add hook instead to listen to process removal.
     Process.sleep(100)
 
-    assert ProcessorManager.exist?(@default_namespace, processor_id) === false
+    assert RelayManager.exist?(@default_namespace, relay_id) === false
   end
 
-  test "processor adding non existing factory" do
-    processor_id = "non_existing_factory_err"
+  test "relay adding non existing factory" do
+    relay_id = "non_existing_factory_err"
 
-    processor = %Flezha.Processor.Builder{
-      id: processor_id,
+    relay = %Flezha.Relay.Builder{
+      id: relay_id,
       factory_id: "non_existing_factory"
     }
 
-    {status, %{processor_id: pid, node: node, reason: reason}} =
-      ProcessorManager.start_processor(@default_namespace, processor)
+    {status, %{relay_id: pid, node: node, reason: reason}} =
+      RelayManager.start_relay(@default_namespace, relay)
 
     assert status === :error
-    assert pid === processor_id
+    assert pid === relay_id
     assert node === @node_name
     assert reason === "Factory with id non_existing_factory does not exist"
   end
 
   @tag :websocket_plugin
   test "websocket plugin connection start" do
-    processor_id = "websocket_plugin_test"
+    relay_id = "websocket_plugin_test"
 
-    processor = %Flezha.Processor.Builder{
-      id: processor_id,
-      factory_id: @test_processor_factory
+    relay = %Flezha.Relay.Builder{
+      id: relay_id,
+      factory_id: @test_relay_factory
     }
 
-    {:ok, _} = ProcessorManager.start_processor(@default_namespace, processor)
+    {:ok, _} = RelayManager.start_relay(@default_namespace, relay)
 
     # TODO: add failures also.
     res =
       PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin{
         id: "websocket_plugin",
         namespace: @default_namespace,
-        processor_id: processor_id,
+        relay_id: relay_id,
         provider: Flezha.Plugin.Provider.Websocket,
         opts: %{
           uri: @testnet_ws_uri,
@@ -135,20 +135,20 @@ defmodule FlezhaTest do
   end
 
   test "beam msg forward plugin connection start" do
-    processor_id = "beam_msg_forw_plugin_test"
+    relay_id = "beam_msg_forw_plugin_test"
 
-    processor = %Flezha.Processor.Builder{
-      id: processor_id,
-      factory_id: @test_processor_factory
+    relay = %Flezha.Relay.Builder{
+      id: relay_id,
+      factory_id: @test_relay_factory
     }
 
-    {:ok, _} = ProcessorManager.start_processor(@default_namespace, processor)
+    {:ok, _} = RelayManager.start_relay(@default_namespace, relay)
 
     res =
       PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin{
         id: "beam_msg_forward",
         namespace: @default_namespace,
-        processor_id: processor_id,
+        relay_id: relay_id,
         provider: Flezha.Plugin.Provider.BeamMsgForward,
         opts: %{recv_pid: self()},
         subscriptions: [{:on_output, []}]
@@ -157,22 +157,22 @@ defmodule FlezhaTest do
     assert res === {:ok, "plugin enabled"}
   end
 
-  @tag :processor_flow_msg_forward
-  test "processor flow generation -> beam msg forward" do
-    processor_id = "data_flow_test"
+  @tag :relay_flow_msg_forward
+  test "relay flow generation -> beam msg forward" do
+    relay_id = "data_flow_test"
 
-    processor = %Flezha.Processor.Builder{
-      id: processor_id,
+    relay = %Flezha.Relay.Builder{
+      id: relay_id,
       factory_id: @test_compare_filter_factory,
       init_values: %{"comparable" => "hello world", "inverted" => false}
     }
 
-    {:ok, _} = ProcessorManager.start_processor(@default_namespace, processor)
+    {:ok, _} = RelayManager.start_relay(@default_namespace, relay)
 
     PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin{
       id: "beam_msg_forward",
       namespace: @default_namespace,
-      processor_id: processor_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self()},
       subscriptions: [{:on_output, []}]
@@ -181,7 +181,7 @@ defmodule FlezhaTest do
     PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin{
       id: "websocket_plugin",
       namespace: @default_namespace,
-      processor_id: processor_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.Websocket,
       opts: %{
         uri: @testnet_ws_uri,
@@ -213,25 +213,25 @@ defmodule FlezhaTest do
     end
   end
 
-  @tag :get_processor_state
-  test "get processor state" do
-    processor_id = "get_state_test"
+  @tag :get_partition_state
+  test "get relay state" do
+    relay_id = "get_state_test"
 
-    {:ok, %{pid: _processor_pid}} =
-      processor_id
-      |> ProcessorFixture.get(@test_store_input_factory)
-      |> ProcessorFixture.start()
-      |> ProcessorFixture.attach_output_msg()
+    {:ok, %{pid: _relay_pid}} =
+      relay_id
+      |> RelayFixture.get(@test_store_input_factory)
+      |> RelayFixture.start()
+      |> RelayFixture.attach_output_msg()
 
-    ProcessorTestHelper.send_sync_io(processor_id, @default_namespace, "state_1", %{})
-    ProcessorTestHelper.send_sync_io(processor_id, @default_namespace, "state_2", %{})
+    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "state_1", %{})
+    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "state_2", %{})
 
     {:ok, json_state} =
-      ProcessorManager.get_processor_state(@default_namespace, processor_id)
+      RelayManager.get_partition_state(@default_namespace, relay_id)
 
-    processor_state = Flezha.Service.Payloader.json_to_map(json_state)
+    partition_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert processor_state === %{
+    assert partition_state === %{
              "binary_inputs" => [],
              "text_inputs" => ["state_1", "state_2"]
            }
@@ -239,23 +239,23 @@ defmodule FlezhaTest do
 
   # # # # TODO: add test to handle large control requests and stream requests.
 
-  @tag :processor_migration
-  test "processor migration" do
+  @tag :relay_migration
+  test "relay migration" do
     # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
     # then get the state of the new migrated process to see if it matches the state1 string.
 
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
-    processor_id = "processor_migration_test"
+    relay_id = "relay_migration_test"
 
-    {:ok, %{pid: _processor_pid, node: pnode}} =
-      processor_id
-      |> ProcessorFixture.get(@test_store_input_factory)
-      |> ProcessorFixture.start()
-      |> ProcessorFixture.attach_output_msg()
+    {:ok, %{pid: _relay_pid, node: pnode}} =
+      relay_id
+      |> RelayFixture.get(@test_store_input_factory)
+      |> RelayFixture.start()
+      |> RelayFixture.attach_output_msg()
 
-    ProcessorTestHelper.send_sync_io(processor_id, @default_namespace, "test_state_1", %{})
-    ProcessorTestHelper.send_sync_io(processor_id, @default_namespace, "test_state_2", %{})
+    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "test_state_1", %{})
+    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "test_state_2", %{})
 
     test_state = %{
       "binary_inputs" => [],
@@ -265,21 +265,21 @@ defmodule FlezhaTest do
     PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin{
       id: "stdout_plugin",
       namespace: @default_namespace,
-      processor_id: processor_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.StdOut,
       opts: %{},
       subscriptions: [{:on_output, []}]
     })
 
     {:ok, json_state} =
-      ProcessorManager.get_processor_state(@default_namespace, processor_id)
+      RelayManager.get_partition_state(@default_namespace, relay_id)
 
     {:ok, old_overwatch_state} =
-      ProcessorManager.get_overwatch_state(@default_namespace, processor_id)
+      RelayManager.get_overwatch_state(@default_namespace, relay_id)
 
-    processor_state = Flezha.Service.Payloader.json_to_map(json_state)
+    partition_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert processor_state === test_state
+    assert partition_state === test_state
 
     test_pid = self()
 
@@ -313,14 +313,14 @@ defmodule FlezhaTest do
     )
 
     {:ok, json_state} =
-      ProcessorManager.get_processor_state(@default_namespace, processor_id)
+      RelayManager.get_partition_state(@default_namespace, relay_id)
 
     {:ok, new_overwatch_state} =
-      ProcessorManager.get_overwatch_state(@default_namespace, processor_id)
+      RelayManager.get_overwatch_state(@default_namespace, relay_id)
 
-    processor_state = Flezha.Service.Payloader.json_to_map(json_state)
+    partition_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert processor_state === test_state
+    assert partition_state === test_state
 
     old_plugins = Map.keys(old_overwatch_state.extensions.plugins) |> Enum.sort()
     new_plugins = Map.keys(new_overwatch_state.extensions.plugins) |> Enum.sort()
@@ -328,142 +328,142 @@ defmodule FlezhaTest do
     assert new_overwatch_state.init_values === old_overwatch_state.init_values
   end
 
-  @tag :compute_engine_disconnect
-  test "compute_engine disconnect" do
+  @tag :executor_disconnect
+  test "executor disconnect" do
     namespace = @temp_namespace
-    compute_engine_id = NodeTestHelper.start_compute_engine(namespace)
+    executor_id = NodeTestHelper.start_executor(namespace)
 
-    NodeTestHelper.stop_compute_engine(namespace, compute_engine_id)
+    NodeTestHelper.stop_executor(namespace, executor_id)
 
-    assert Flezha.ComputeEngine.FleetManager.active_compute_engines(namespace) === []
+    assert Flezha.Executor.FleetManager.active_executors(namespace) === []
   end
 
-  @tag :compute_engine_disconnect_migrate_op
-  test "compute_engine disconnect migrate op" do
+  @tag :executor_disconnect_migrate_op
+  test "executor disconnect migrate op" do
     namespace = @temp_namespace
-    processor_id_1 = "processor_1"
-    processor_id_2 = "processor_2"
+    relay_id_1 = "relay_1"
+    relay_id_2 = "relay_2"
 
-    # Start 2 compute_engines under the same namespace.
-    compute_engine_id_1 = NodeTestHelper.start_compute_engine(namespace)
-    compute_engine_id_2 = NodeTestHelper.start_compute_engine(namespace)
+    # Start 2 executors under the same namespace.
+    executor_id_1 = NodeTestHelper.start_executor(namespace)
+    executor_id_2 = NodeTestHelper.start_executor(namespace)
 
-    # Start a few processors and store some state on them.
-    {:ok, %{pid: _processor_pid_1, compute_engine_id: pipe1_op}} =
-      processor_id_1
-      |> ProcessorFixture.get(@test_store_input_factory)
-      |> ProcessorFixture.start(namespace)
-      |> ProcessorFixture.attach_output_msg(namespace)
+    # Start a few relays and store some state on them.
+    {:ok, %{pid: _relay_pid_1, executor_id: pipe1_op}} =
+      relay_id_1
+      |> RelayFixture.get(@test_store_input_factory)
+      |> RelayFixture.start(namespace)
+      |> RelayFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _processor_pid_2, compute_engine_id: _pipe2_op}} =
-      processor_id_2
-      |> ProcessorFixture.get(@test_store_input_factory)
-      |> ProcessorFixture.start(namespace)
-      |> ProcessorFixture.attach_output_msg(namespace)
+    {:ok, %{pid: _relay_pid_2, executor_id: _pipe2_op}} =
+      relay_id_2
+      |> RelayFixture.get(@test_store_input_factory)
+      |> RelayFixture.start(namespace)
+      |> RelayFixture.attach_output_msg(namespace)
 
-    ProcessorTestHelper.send_sync_io(processor_id_1, namespace, "state_1", %{})
-    ProcessorTestHelper.send_sync_io(processor_id_2, namespace, "state_2", %{})
+    RelayTestHelper.send_sync_io(relay_id_1, namespace, "state_1", %{})
+    RelayTestHelper.send_sync_io(relay_id_2, namespace, "state_2", %{})
 
-    ProcessorManager.create_snapshot(namespace, processor_id_1)
-    ProcessorManager.create_snapshot(namespace, processor_id_2)
+    RelayManager.create_snapshot(namespace, relay_id_1)
+    RelayManager.create_snapshot(namespace, relay_id_2)
 
-    active_compute_engine =
-      if pipe1_op === compute_engine_id_1, do: compute_engine_id_2, else: compute_engine_id_1
+    active_executor =
+      if pipe1_op === executor_id_1, do: executor_id_2, else: executor_id_1
 
-    # Trigger the compute_engine disconnect.
-    NodeTestHelper.stop_compute_engine(namespace, pipe1_op)
+    # Trigger the executor disconnect.
+    NodeTestHelper.stop_executor(namespace, pipe1_op)
 
-    # Make sure all the processors are migrated to the other compute_engine.
-    ProcessorManager.processor_registry(namespace)
-    |> Enum.each(fn {_processor_id, {_cspec, _cnodes, %{tag: new_compute_engine}}} ->
-      assert new_compute_engine === active_compute_engine
+    # Make sure all the relays are migrated to the other executor.
+    RelayManager.relay_registry(namespace)
+    |> Enum.each(fn {_relay_id, {_cspec, _cnodes, %{tag: new_executor}}} ->
+      assert new_executor === active_executor
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = ProcessorManager.get_processor_state(namespace, processor_id_1)
-    {:ok, json_state_2} = ProcessorManager.get_processor_state(namespace, processor_id_2)
+    {:ok, json_state_1} = RelayManager.get_partition_state(namespace, relay_id_1)
+    {:ok, json_state_2} = RelayManager.get_partition_state(namespace, relay_id_2)
 
     assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
     assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
   end
 
-  @tag :compute_engine_disconnect_preserve
-  test "compute_engine disconnect preserve" do
+  @tag :executor_disconnect_preserve
+  test "executor disconnect preserve" do
     namespace = @temp_namespace
-    num_processors = 15
-    processor_ids = for i <- 1..num_processors, do: "processor_#{i}"
+    num_relays = 15
+    relay_ids = for i <- 1..num_relays, do: "relay_#{i}"
 
-    compute_engine_id_1 = NodeTestHelper.start_compute_engine(namespace)
-    compute_engine_id_2 = NodeTestHelper.start_compute_engine(namespace)
+    executor_id_1 = NodeTestHelper.start_executor(namespace)
+    executor_id_2 = NodeTestHelper.start_executor(namespace)
 
-    # Start processors and store some state on them.
+    # Start relays and store some state on them.
 
-    processor_infos =
-      for processor_id <- processor_ids do
+    relay_infos =
+      for relay_id <- relay_ids do
         {:ok, info} =
-          processor_id
-          |> ProcessorFixture.get(@test_store_input_factory)
-          |> ProcessorFixture.start(namespace)
-          |> ProcessorFixture.attach_output_msg(namespace)
+          relay_id
+          |> RelayFixture.get(@test_store_input_factory)
+          |> RelayFixture.start(namespace)
+          |> RelayFixture.attach_output_msg(namespace)
 
-        {processor_id, info}
+        {relay_id, info}
       end
 
-    # Send state to all processors
-    for {processor_id, _info} <- processor_infos do
-      ProcessorTestHelper.send_sync_io(processor_id, namespace, "state_#{processor_id}", %{})
+    # Send state to all relays
+    for {relay_id, _info} <- relay_infos do
+      RelayTestHelper.send_sync_io(relay_id, namespace, "state_#{relay_id}", %{})
     end
 
-    # Create snapshots for all processors
-    for {processor_id, _info} <- processor_infos do
-      ProcessorManager.create_snapshot(namespace, processor_id)
+    # Create snapshots for all relays
+    for {relay_id, _info} <- relay_infos do
+      RelayManager.create_snapshot(namespace, relay_id)
     end
 
-    # Trigger the compute_engine disconnect.
-    NodeTestHelper.stop_compute_engine(namespace, compute_engine_id_1)
-    NodeTestHelper.stop_compute_engine(namespace, compute_engine_id_2)
+    # Trigger the executor disconnect.
+    NodeTestHelper.stop_executor(namespace, executor_id_1)
+    NodeTestHelper.stop_executor(namespace, executor_id_2)
 
-    # Start a new compute_engine under the same namespace.
-    compute_engine_id_3 = NodeTestHelper.start_compute_engine(namespace)
+    # Start a new executor under the same namespace.
+    executor_id_3 = NodeTestHelper.start_executor(namespace)
 
-    # Make sure all the processors are migrated to the new compute_engine.
-    ProcessorManager.processor_registry(namespace)
-    |> Enum.each(fn {_processor_id, {_cspec, _cnodes, %{tag: new_compute_engine}}} ->
-      assert new_compute_engine === compute_engine_id_3
+    # Make sure all the relays are migrated to the new executor.
+    RelayManager.relay_registry(namespace)
+    |> Enum.each(fn {_relay_id, {_cspec, _cnodes, %{tag: new_executor}}} ->
+      assert new_executor === executor_id_3
     end)
 
     # Make sure the states have been migrated.
-    for {processor_id, _info} <- processor_infos do
-      {:ok, json_state} = ProcessorManager.get_processor_state(namespace, processor_id)
-      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{processor_id}\"]}"
+    for {relay_id, _info} <- relay_infos do
+      {:ok, json_state} = RelayManager.get_partition_state(namespace, relay_id)
+      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}"
     end
 
-    # Stop the new compute_engine.
-    NodeTestHelper.stop_compute_engine(namespace, compute_engine_id_3)
+    # Stop the new executor.
+    NodeTestHelper.stop_executor(namespace, executor_id_3)
 
-    # Adjust the compute_engine cleanup interval and trigger the cleanup.
-    Application.put_env(:flezha, :compute_engine_keepalive, "0")
-    GenServer.call(FleetManager, :compute_engine_cleanup)
+    # Adjust the executor cleanup interval and trigger the cleanup.
+    Application.put_env(:flezha, :executor_keepalive, "0")
+    GenServer.call(FleetManager, :executor_cleanup)
 
-    # Reset the compute_engine keepalive to its default value.
-    Application.put_env(:flezha, :compute_engine_keepalive, "30000")
+    # Reset the executor keepalive to its default value.
+    Application.put_env(:flezha, :executor_keepalive, "30000")
 
     # Make sure the hub is stopped.
     assert HubManager.hub_alive?(namespace) === false
   end
 
-  @tag :compute_engine_disconnect_migrate_hub
-  test "compute_engine disconnect migrate hub" do
+  @tag :executor_disconnect_migrate_hub
+  test "executor disconnect migrate hub" do
     namespace = @temp_namespace
-    num_processors = 15
-    processor_ids = for i <- 1..num_processors, do: "processor_#{i}"
+    num_relays = 15
+    relay_ids = for i <- 1..num_relays, do: "relay_#{i}"
 
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
-    # Start the compute_engines.
-    compute_engine_id_1 = NodeTestHelper.start_compute_engine(namespace)
-    rem_compute_engine_1 = NodeTestHelper.start_compute_engine_remote(peer_node, namespace)
-    rem_compute_engine_2 = NodeTestHelper.start_compute_engine_remote(peer_node, namespace)
+    # Start the executors.
+    executor_id_1 = NodeTestHelper.start_executor(namespace)
+    rem_executor_1 = NodeTestHelper.start_executor_remote(peer_node, namespace)
+    rem_executor_2 = NodeTestHelper.start_executor_remote(peer_node, namespace)
 
     # Wait for peer node to join the ProcessHub hub cluster
     hub_id = Identificator.hub(namespace)
@@ -523,58 +523,58 @@ defmodule FlezhaTest do
       ]
     )
 
-    # Start processors and store some state on them.
-    processor_infos =
-      for processor_id <- processor_ids do
+    # Start relays and store some state on them.
+    relay_infos =
+      for relay_id <- relay_ids do
         {:ok, info} =
-          processor_id
-          |> ProcessorFixture.get(@test_store_input_factory)
-          |> ProcessorFixture.start(namespace)
-          |> ProcessorFixture.attach_output_msg(namespace)
+          relay_id
+          |> RelayFixture.get(@test_store_input_factory)
+          |> RelayFixture.start(namespace)
+          |> RelayFixture.attach_output_msg(namespace)
 
-        {processor_id, info}
+        {relay_id, info}
       end
 
-    compute_engine_ids =
-      Enum.map(processor_infos, fn {_id, %{compute_engine_id: ce_id}} -> ce_id end)
+    executor_ids =
+      Enum.map(relay_infos, fn {_id, %{executor_id: ce_id}} -> ce_id end)
 
-    # Make sure that atleast one of the processors is running on the remote compute_engine.
-    assert Enum.any?(compute_engine_ids, &(&1 !== compute_engine_id_1))
+    # Make sure that atleast one of the relays is running on the remote executor.
+    assert Enum.any?(executor_ids, &(&1 !== executor_id_1))
 
-    # Send state to all processors
-    for {processor_id, _info} <- processor_infos do
-      ProcessorTestHelper.send_sync_io(processor_id, namespace, "state_#{processor_id}", %{})
+    # Send state to all relays
+    for {relay_id, _info} <- relay_infos do
+      RelayTestHelper.send_sync_io(relay_id, namespace, "state_#{relay_id}", %{})
     end
 
-    # Check the states before compute_engine migrations.
-    for {processor_id, _info} <- processor_infos do
-      {:ok, json_state} = ProcessorManager.get_processor_state(namespace, processor_id)
-      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{processor_id}\"]}"
+    # Check the states before executor migrations.
+    for {relay_id, _info} <- relay_infos do
+      {:ok, json_state} = RelayManager.get_partition_state(namespace, relay_id)
+      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}"
     end
 
-    # Create snapshots for all processors
-    for {processor_id, _info} <- processor_infos do
-      ProcessorManager.create_snapshot(namespace, processor_id)
+    # Create snapshots for all relays
+    for {relay_id, _info} <- relay_infos do
+      RelayManager.create_snapshot(namespace, relay_id)
     end
 
-    # Trigger the compute_engine disconnect.
-    NodeTestHelper.stop_compute_engine_remote(peer_node, namespace, rem_compute_engine_1)
-    NodeTestHelper.stop_compute_engine_remote(peer_node, namespace, rem_compute_engine_2)
+    # Trigger the executor disconnect.
+    NodeTestHelper.stop_executor_remote(peer_node, namespace, rem_executor_1)
+    NodeTestHelper.stop_executor_remote(peer_node, namespace, rem_executor_2)
 
     # Wait for cross-node ProcessHub sync via hook messages (pure message passing).
     # Each :hook_insert_recv arrives when the local registry syncs a tag update.
     # We check the condition after each message — no polling, no sleeping.
     MessageTestHelper.recv_until(:hook_insert_recv, fn ->
-      ProcessorManager.processor_registry(namespace)
-      |> Enum.all?(fn {_, {_, _, %{tag: tag}}} -> tag === compute_engine_id_1 end)
+      RelayManager.relay_registry(namespace)
+      |> Enum.all?(fn {_, {_, _, %{tag: tag}}} -> tag === executor_id_1 end)
     end)
 
     MessageTestHelper.flush(:hook_pstartup_recv)
 
     # Make sure the states have been migrated.
-    for {processor_id, _info} <- processor_infos do
-      {:ok, json_state} = ProcessorManager.get_processor_state(namespace, processor_id)
-      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{processor_id}\"]}"
+    for {relay_id, _info} <- relay_infos do
+      {:ok, json_state} = RelayManager.get_partition_state(namespace, relay_id)
+      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}"
     end
 
     assert length(HubManager.get_hub_nodes(namespace, true)) === 1

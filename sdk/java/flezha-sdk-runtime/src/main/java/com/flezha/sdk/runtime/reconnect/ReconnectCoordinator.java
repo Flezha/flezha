@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.reconnect;
 
-import com.flezha.sdk.runtime.ComputeEngineContext;
-import com.flezha.sdk.runtime.ComputeEngineStatus;
+import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.ExecutorStatus;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -13,12 +13,12 @@ import org.slf4j.LoggerFactory;
  * Reconnect state machine. Launched on a dedicated virtual thread; wakes up
  * on every {@code onConnectionLost} dispatch from the JNI layer.
  *
- * <p>On unexpected disconnect (status != {@link ComputeEngineStatus#STOPPED}):
+ * <p>On unexpected disconnect (status != {@link ExecutorStatus#STOPPED}):
  * <ol>
  *   <li>Clear {@code io_streams} registry.</li>
- *   <li>Clear the live processor registry.</li>
- *   <li>Drain worker queues (via {@link com.flezha.sdk.runtime.worker.ProcessorDispatcher#shutdown()}).</li>
- *   <li>Reset {@code compute_engine_id} to {@code "undefined"}.</li>
+ *   <li>Clear the live relay registry.</li>
+ *   <li>Drain worker queues (via {@link com.flezha.sdk.runtime.worker.RelayDispatcher#shutdown()}).</li>
+ *   <li>Reset {@code executor_id} to {@code "undefined"}.</li>
  *   <li>Loop connect attempts with exponential backoff capped at 30 s until
  *       the handshake succeeds again.</li>
  * </ol>
@@ -32,13 +32,13 @@ public final class ReconnectCoordinator {
     /** Backoff delays in ms: 200, 400, 800, 1600, 3200, 6400, 12800, 25600, capped at 30_000. */
     public static final long[] BACKOFF_MS = backoffTable();
 
-    private final ComputeEngineContext ctx;
+    private final ExecutorContext ctx;
     private final Supplier<Boolean> reconnectAttempt;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread thread;
 
     public ReconnectCoordinator(
-            @Nonnull ComputeEngineContext ctx,
+            @Nonnull ExecutorContext ctx,
             @Nonnull Supplier<Boolean> reconnectAttempt) {
         this.ctx = ctx;
         this.reconnectAttempt = reconnectAttempt;
@@ -54,7 +54,7 @@ public final class ReconnectCoordinator {
 
     /** Handle a connection-lost event from the JNI layer. */
     public void onConnectionLost() {
-        if (ctx.status() == ComputeEngineStatus.STOPPED) {
+        if (ctx.status() == ExecutorStatus.STOPPED) {
             return;
         }
         resetState();
@@ -79,7 +79,7 @@ public final class ReconnectCoordinator {
 
     private void attemptReconnectLoop() {
         int attempt = 0;
-        while (running.get() && ctx.status() != ComputeEngineStatus.STOPPED) {
+        while (running.get() && ctx.status() != ExecutorStatus.STOPPED) {
             long backoff = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
             LOG.warn("Reconnecting (attempt {}), sleeping {} ms", attempt + 1, backoff);
             try {
@@ -102,7 +102,7 @@ public final class ReconnectCoordinator {
     private void resetState() {
         ctx.streamRegistry().clear();
         ctx.relayInstanceRegistry().clear();
-        ctx.setComputeEngineId("undefined");
+        ctx.setExecutorId("undefined");
     }
 
     public void shutdown() {

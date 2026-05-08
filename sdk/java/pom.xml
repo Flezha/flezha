@@ -229,9 +229,9 @@
                         <artifactId>jacoco-maven-plugin</artifactId>
                         <executions>
                             <execution>
-                                <id>default-prepare-agent</id>
+                                <id>default-prepare-controller</id>
                                 <goals>
-                                    <goal>prepare-agent</goal>
+                                    <goal>prepare-controller</goal>
                                 </goals>
                             </execution>
                             <execution>

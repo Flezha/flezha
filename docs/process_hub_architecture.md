@@ -1,55 +1,55 @@
 # ProcessHub in Flezha
 
-How the agent uses the [`process_hub`](https://hex.pm/packages/process_hub) library to
-distribute processors across nodes, plus how this layer interacts with the
-operator (Rust/Java SDK) connection model.
+How the controller uses the [`process_hub`](https://hex.pm/packages/process_hub) library to
+distribute relays across nodes, plus how this layer interacts with the
+executor (Rust/Java SDK) connection model.
 
-This document is a reference for anyone designing features that touch processor
-placement, restart, recovery, migration, or the operator/agent connection
+This document is a reference for anyone designing features that touch relay
+placement, restart, recovery, migration, or the executor/controller connection
 lifecycle. Read it before proposing changes in those areas — most of the
 behaviour described here is already automatic, and the most common mistake is
 to assume Flezha owns logic that ProcessHub already provides.
 
 ## Two-level distribution
 
-Flezha distributes processors at two independent levels:
+Flezha distributes relays at two independent levels:
 
-1. **Cluster level — ProcessHub.** ProcessHub picks which agent **node** owns
-   each processor, using a per-namespace consistent hash ring. Agent nodes
+1. **Cluster level — ProcessHub.** ProcessHub picks which controller **node** owns
+   each relay, using a per-namespace consistent hash ring. Controller nodes
    running the same namespace cluster together via Erlang distribution +
    ProcessHub's coordinator.
-2. **Within-agent level — operator selection.** Once an agent owns a processor,
-   it picks one of its locally-connected operators (Rust/Java SDK clients) to
-   spawn the processor on. Today this pick is `Enum.random` filtered by factory
-   support (`lib/flezha/service/processor_manager.ex`).
+2. **Within-controller level — executor selection.** Once an controller owns a relay,
+   it picks one of its locally-connected executors (Rust/Java SDK clients) to
+   spawn the relay on. Today this pick is `Enum.random` filtered by factory
+   support (`lib/flezha/service/relay_manager.ex`).
 
-The two levels are decoupled. ProcessHub knows nothing about operators; the
-agent's `alter_child_data` hook handles operator selection at processor start
+The two levels are decoupled. ProcessHub knows nothing about executors; the
+controller's `alter_child_data` hook handles executor selection at relay start
 time.
 
 > **Note (relay-mvp-rust).** The Rust SDK now ships work as
 > `Relay` / `Shard` / `Partition` (see `docs/relay_architecture.md`).
 > Partitioning is **SDK-internal**: a single Relay instance can have many
 > Shards, each with many Partitions running in parallel inside the
-> operator process. ProcessHub continues per-processor placement at the
+> executor process. ProcessHub continues per-relay placement at the
 > cluster level — one Relay instance is one ProcessHub child — and is
 > not aware of partitions. The two-level distribution above is unchanged.
 
 ## Per-namespace ProcessHub instances
 
-Each agent runs **one ProcessHub instance per namespace** it serves. The hub
-id is derived from the namespace via `Flezha.Identificator.hub/1`. Agents
-serving namespace A and agents serving namespace B are in completely
+Each controller runs **one ProcessHub instance per namespace** it serves. The hub
+id is derived from the namespace via `Flezha.Identificator.hub/1`. Controllers
+serving namespace A and controllers serving namespace B are in completely
 independent ProcessHub clusters — work is never migrated between unrelated
 namespaces.
 
 This means:
 
-- An agent may serve multiple namespaces; it has multiple ProcessHub instances.
-- "Peer agents" in any reasoning about migration / failover always means
-  **other agents serving the same namespace**, not just other agents in the
+- An controller may serve multiple namespaces; it has multiple ProcessHub instances.
+- "Peer controllers" in any reasoning about migration / failover always means
+  **other controllers serving the same namespace**, not just other controllers in the
   Erlang cluster.
-- A namespace dies entirely when the last agent serving it leaves — there is
+- A namespace dies entirely when the last controller serving it leaves — there is
   nowhere to migrate to.
 
 The hub spec lives in `lib/flezha/service/hub_manager.ex`:
@@ -71,24 +71,24 @@ ProcessHub.child_spec(%ProcessHub{
 
 | Concern | Strategy | Effect |
 |---|---|---|
-| Distribution | `ConsistentHashing` | `processor_id` hashes to a node on the ring. Adding/removing a node reshuffles only the affected slice. |
-| Synchronization | `PubSub` | Registry changes (process starts/stops) are broadcast to all nodes. Each node has the same view of "which processor lives where". |
-| Migration | `HotSwap{handover: true}` | On graceful node leave, processor state is captured on the source, shipped to the target, and only then is the source process terminated. See [HotSwap with handover](#hotswap-with-handover) below. |
-| Redundancy | `Singularity` | Each processor runs on exactly one node. No replicas. |
+| Distribution | `ConsistentHashing` | `relay_id` hashes to a node on the ring. Adding/removing a node reshuffles only the affected slice. |
+| Synchronization | `PubSub` | Registry changes (process starts/stops) are broadcast to all nodes. Each node has the same view of "which relay lives where". |
+| Migration | `HotSwap{handover: true}` | On graceful node leave, relay state is captured on the source, shipped to the target, and only then is the source process terminated. See [HotSwap with handover](#hotswap-with-handover) below. |
+| Redundancy | `Singularity` | Each relay runs on exactly one node. No replicas. |
 | Partition tolerance | `Divergence` | Each network partition independently redistributes. On heal, the larger partition's state wins. |
 
 ## Hooks Flezha registers
 
 Flezha plugs into ProcessHub via two hooks (`lib/flezha/service/hub_manager.ex`):
 
-- `child_data_alter` — fires when ProcessHub is about to start a processor on
+- `child_data_alter` — fires when ProcessHub is about to start a relay on
   this node. Flezha rewrites the child_spec to bake in the assigned
-  `compute_engine_id`, picked by `ProcessorManager.assign_compute_engine(namespace,
-  factory_id)`. Raises if no operator declaring that factory is currently
-  connected. **Net effect:** every processor restart re-runs operator selection.
-- `child_registered` → `hook_insert_pid` — fires after a processor has started.
+  `executor_id`, picked by `RelayManager.assign_executor(namespace,
+  factory_id)`. Raises if no executor declaring that factory is currently
+  connected. **Net effect:** every relay restart re-runs executor selection.
+- `child_registered` → `hook_insert_pid` — fires after a relay has started.
   Flezha pushes the new local PID to all stream channels of the assigned
-  `compute_engine_id` so subsequent I/O routes to the right process.
+  `executor_id` so subsequent I/O routes to the right process.
 
 ## Lifecycle scenarios
 
@@ -96,95 +96,95 @@ Flezha plugs into ProcessHub via two hooks (`lib/flezha/service/hub_manager.ex`)
 
 1. ProcessHub's coordinator on the leaving node observes its own departure
    intent.
-2. For each processor on this node, `HotSwap` queries `prepare_handover_state/1`
+2. For each relay on this node, `HotSwap` queries `prepare_handover_state/1`
    (Flezha overrides this in `Overwatch`) — the live process returns its
    current state, including any captured rust/java state binary.
 3. The state is stashed in ETS with a TTL on the source node.
 4. ProcessHub picks a destination node (consistent-hash recompute on the new
    ring without this node) and fires the start request there.
-5. The destination node starts the processor; before it accepts I/O, ETS
+5. The destination node starts the relay; before it accepts I/O, ETS
    handover delivers the saved state via `alter_handover_state/2`.
 6. Only after handover completes does the source process terminate.
-7. The destination's `alter_child_data` hook picks a local operator — possibly
-   different from the one that hosted the processor on the source node.
+7. The destination's `alter_child_data` hook picks a local executor — possibly
+   different from the one that hosted the relay on the source node.
 
-Net effect: graceful failover preserves processor + plugin state. Operators on
-the leaving node lose their work (it moved). Operators on the destination node
+Net effect: graceful failover preserves relay + plugin state. Executors on
+the leaving node lose their work (it moved). Executors on the destination node
 gain the work.
 
 ### Ungraceful node loss (crash, OOM, kill -9, network partition that holds)
 
 1. Other coordinators detect `:nodedown` via Erlang's `:net_kernel.monitor_nodes(true)`.
 2. ProcessHub batches the departure (small window to absorb flaps), then
-   redistributes affected processors across surviving nodes.
+   redistributes affected relays across surviving nodes.
 3. No state handover occurs — the source died before any capture.
-4. Destination nodes start processors fresh; `alter_child_data` picks operators.
-5. Per-processor periodic state snapshots (see [State snapshots](#state-snapshots-for-handover-and-restart))
-   provide a "last-known good" state if the destination's processor restart
+4. Destination nodes start relays fresh; `alter_child_data` picks executors.
+5. Per-relay periodic state snapshots (see [State snapshots](#state-snapshots-for-handover-and-restart))
+   provide a "last-known good" state if the destination's relay restart
    path consults them.
 
 Net effect: state is lost (or rolled back to the last periodic snapshot,
-depending on the processor's logic), but the processors continue to run.
+depending on the relay's logic), but the relays continue to run.
 
 ### Node returns to the cluster
 
 When a previously-down node rejoins, ProcessHub's cluster-join handler
 recalculates the consistent hash. Depending on the resulting ring shape,
-processors **may or may not** move back to the rejoining node. There is no
+relays **may or may not** move back to the rejoining node. There is no
 explicit "snap back" — placement is purely a function of the hash ring.
 
-When ProcessHub does decide to move a processor to the rejoining node, it goes
+When ProcessHub does decide to move a relay to the rejoining node, it goes
 through the standard `child_data_alter` path on that node, which picks a
-locally-connected operator.
+locally-connected executor.
 
-### Operator restart (SDK process dies and comes back)
+### Executor restart (SDK process dies and comes back)
 
 ProcessHub doesn't see this — it's invisible at the cluster layer. Handling
-lives in `FleetManager` (`lib/flezha/compute_engine/fleet_manager.ex`):
+lives in `FleetManager` (`lib/flezha/executor/fleet_manager.ex`):
 
-- Branch A — other operators in this namespace on this agent: reroute the dead
-  operator's processors to a peer operator (via `compute_engine_reroute` →
-  `Overwatch.compute_engine_migrate` → `start_processor_sdk` → `AddProcessor`
-  protobuf to the surviving operator).
-- Branch B — no operators here, but other agents serve this namespace:
+- Branch A — other executors in this namespace on this controller: reroute the dead
+  executor's relays to a peer executor (via `executor_reroute` →
+  `Overwatch.executor_migrate` → `start_relay_sdk` → `AddRelay`
+  protobuf to the surviving executor).
+- Branch B — no executors here, but other controllers serve this namespace:
   `hub_migrate` tears down the local namespace hub. ProcessHub redistributes
-  its slice to peer agents. Returning operator gets new work next time
+  its slice to peer controllers. Returning executor gets new work next time
   ProcessHub places something on it.
-- Branch C — last operator in the namespace cluster: mark `:inactive` with a
-  timestamp. If the operator reconnects within `compute_engine_keepalive`
+- Branch C — last executor in the namespace cluster: mark `:inactive` with a
+  timestamp. If the executor reconnects within `executor_keepalive`
   (default 30 s, env var `FLEZHA_OPERATOR_KEEPALIVE`),
-  `try_migrate_compute_engine` reroutes the preserved work to the new
-  `compute_engine_id`.
+  `try_migrate_executor` reroutes the preserved work to the new
+  `executor_id`.
 
 ## Connection-healing contracts (post 0.2.x)
 
-Two contracts make operator ↔ agent connections heal automatically across
+Two contracts make executor ↔ controller connections heal automatically across
 either-side restarts:
 
 1. **Stream rebind on `{:flz_closed, ...}`.** `StreamChannel` clears its
    `stream_ref` to `nil` synchronously inside its close-handler clause, and
    refuses outbound frames while `stream_ref == nil` (returns
    `{:error, :no_stream}` on the call path; logs and drops on the cast path).
-   On the next incoming data stream for the same `compute_engine_id`,
+   On the next incoming data stream for the same `executor_id`,
    `StreamAcceptor` (UDS) and `Transport.Server` (QUIC) walk the existing
    `StreamSup` children and bind the new ref to the first nil-ref channel via
    an atomic `GenServer.call(channel, {:bind, new_ref})`. A channel with a
    live ref returns `:already_bound`, so the acceptor moves to the next
    candidate without ever silently overwriting an in-flight binding.
-2. **AddProcessor reissue on reconnect.** After the existing
-   `try_migrate_compute_engine` step, `FleetManager.compute_engine_connect/3`
+2. **AddRelay reissue on reconnect.** After the existing
+   `try_migrate_executor` step, `FleetManager.executor_connect/3`
    calls `reissue_local_orphans/5`, which queries
-   `HubManager.get_registry/1`, filters to processors hosted on `node()` whose
-   `:tag` metadata names a no-longer-active `compute_engine_id` and whose
-   factory the connecting operator advertises, and re-issues `AddProcessor` to
-   the new operator via `Overwatch.compute_engine_migrate` →
-   `start_processor_sdk`. Processors already handled by the migrate step are
-   skipped via the `claimed_processor_ids` set so no SDK ever receives a
-   duplicate `AddProcessor` it would have to handle as a no-op.
+   `HubManager.get_registry/1`, filters to relays hosted on `node()` whose
+   `:tag` metadata names a no-longer-active `executor_id` and whose
+   factory the connecting executor advertises, and re-issues `AddRelay` to
+   the new executor via `Overwatch.executor_migrate` →
+   `start_relay_sdk`. Relays already handled by the migrate step are
+   skipped via the `claimed_relay_ids` set so no SDK ever receives a
+   duplicate `AddRelay` it would have to handle as a no-op.
 
-The Rust and Java SDK `AddProcessor` handlers are idempotent on duplicate
-`processor_id`: they log
-`"AddProcessor: processor <id> already registered, skipping"` and return,
+The Rust and Java SDK `AddRelay` handlers are idempotent on duplicate
+`relay_id`: they log
+`"AddRelay: relay <id> already registered, skipping"` and return,
 preserving the existing instance's state.
 
 ## HotSwap with handover
@@ -205,8 +205,8 @@ implements stateful migration in a strict order:
 8. New process consumes the state via `alter_handover_state/2`.
 9. Only now does the source terminate the old process.
 
-Flezha processors `use ProcessHub.Strategy.Migration.HotSwap` in
-`lib/flezha/processor/overwatch.ex` and override the handover callbacks to
+Flezha relays `use ProcessHub.Strategy.Migration.HotSwap` in
+`lib/flezha/relay/overwatch.ex` and override the handover callbacks to
 ship rust/java state binaries alongside the Elixir state.
 
 If handover fails (target unreachable, timeout, callback error), the source
@@ -215,7 +215,7 @@ may be retried later.
 
 ## State snapshots for handover and restart
 
-Independent of HotSwap migration, each processor (`Overwatch` GenServer)
+Independent of HotSwap migration, each relay (`Overwatch` GenServer)
 periodically captures its state via the `:on_snapshot` extension hook. The
 interval is configured by `overwatch_state_snapshot_interval_ms` (default
 60 s); a value of `0` disables it. The captured snapshot is held in memory in
@@ -226,22 +226,22 @@ The snapshot is consumed in three places:
 1. HotSwap's `prepare_handover_state` returns it as part of the migration
    payload, so a graceful migration ships the most recent snapshot in addition
    to the live in-memory state.
-2. The manual `flz cluster snapshot` CLI captures every running processor's
+2. The manual `flz cluster snapshot` CLI captures every running relay's
    snapshot into the snapshot file, so a later `flz cluster restore` can
-   re-issue the processor and replay its state.
+   re-issue the relay and replay its state.
 3. The reconnect-healing path (introduced by `heal-connections-on-restart`)
-   ships `Overwatch.state.snapshot` to a fresh operator instance via the
-   `AddProcessor` reissue's `initial_state_binary` opt, so the new operator
+   ships `Overwatch.state.snapshot` to a fresh executor instance via the
+   `AddRelay` reissue's `initial_state_binary` opt, so the new executor
    resumes from the most recent periodic capture rather than `init_values`.
 
 In addition to the periodic capture, the SDK can ship a fresh snapshot at
 graceful-shutdown time (introduced by `ship-fresh-state-on-sdk-shutdown`):
 
 4. On graceful shutdown (SIGTERM, `Drop` of the SDK handle, explicit
-   `disconnect()`) the SDK serializes each running processor's state via
+   `disconnect()`) the SDK serializes each running relay's state via
    the same per-driver path used for `MigrationSerialization` and emits
-   one `OperatorShutdownNotification{processor_id, serialized_state}` per
-   processor on the control channel. The agent's `ControlChannel` casts
+   one `OperatorShutdownNotification{relay_id, serialized_state}` per
+   relay on the control channel. The controller's `ControlChannel` casts
    the binary to the corresponding `Overwatch` GenServer
    (`{:apply_external_snapshot, binary}`) and immediately emits an
    `OperatorShutdownAck`. This bypasses the periodic-capture cadence so
@@ -249,30 +249,30 @@ graceful-shutdown time (introduced by `ship-fresh-state-on-sdk-shutdown`):
    of how stale the last `:on_snapshot` was — and works even when
    periodic snapshots are disabled (item 4 is the only `state.snapshot`
    source for `snapshot_interval == 0` deployments). SIGKILL bypasses
-   it as expected; the agent falls back to whatever the last periodic
+   it as expected; the controller falls back to whatever the last periodic
    capture saw, exactly as today.
 
 For `flezha_market` and similar deployments where Postgres (populated by
 Kafka) is the authoritative store, the env var is set to `0` to disable the
 secondary periodic snapshot and avoid drift. Item 4 still applies — the
 graceful-shutdown notification primes a one-shot snapshot used only by the
-next `AddProcessor` reissue, then is overwritten on the next shutdown.
+next `AddRelay` reissue, then is overwritten on the next shutdown.
 
-## Operator → agent discovery and connection
+## Executor → controller discovery and connection
 
 (Documented here because it's adjacent to ProcessHub-driven assignment.)
 
-- Each operator (Rust/Java SDK) connects to **exactly one agent**. There is no
-  multi-agent connection.
+- Each executor (Rust/Java SDK) connects to **exactly one controller**. There is no
+  multi-controller connection.
 - Discovery is filesystem co-location, not service discovery. In Kubernetes
-  the `flezha-sockets` hostPath volume is mounted into BOTH the agent pod and
-  the operator pod, so the operator opens the local agent's UDS socket via
+  the `flezha-sockets` hostPath volume is mounted into BOTH the controller pod and
+  the executor pod, so the executor opens the local controller's UDS socket via
   `FLEZHA_SOCKET_FILES_PATH` (default `/flezha/sockets`).
-- For QUIC transport: the operator dials `FLEZHA_QUIC_ADDRESS`.
+- For QUIC transport: the executor dials `FLEZHA_QUIC_ADDRESS`.
 - Reconnect loop: exponential backoff `100ms * 2^n` capped at 30 s; retries
-  forever; never tries a different agent.
+  forever; never tries a different controller.
 - Stream architecture: one bidirectional control channel for handshake +
-  protobuf commands, plus N data streams opened on demand for processor I/O.
+  protobuf commands, plus N data streams opened on demand for relay I/O.
   Data streams are routed by `StreamAcceptor` round-robin to `StreamChannel`
   processes.
 
@@ -282,20 +282,20 @@ These are common assumptions to double-check against the actual code:
 
 - **No automatic snapshot-on-shutdown.** `Application.prep_stop/1` only stops
   `HubManager`. There is no SIGTERM handler that snapshots state. Snapshots
-  are operator-initiated via `flz cluster snapshot`.
+  are executor-initiated via `flz cluster snapshot`.
 - **No automatic restore-on-boot.** `Application.start/2` does not read any
-  snapshot file. Restoration is operator-initiated via `flz cluster restore`.
-- **No persistent FleetManager state.** `compute_engine_namespaces` and
+  snapshot file. Restoration is executor-initiated via `flz cluster restore`.
+- **No persistent FleetManager state.** `executor_namespaces` and
   `namespace_factories` live only in the FleetManager GenServer. Restarting
-  the agent process loses them entirely.
-- **No persistent operator → processor assignment.** Assignment is recomputed
+  the controller process loses them entirely.
+- **No persistent executor → relay assignment.** Assignment is recomputed
   every time `child_data_alter` fires; nothing is stored.
 - **No DETS recovery subsystem.** It was designed and archived under
   `openspec/changes/archive/2026-04-21-add-failure-recovery-mode/` but never
   built. The `FLEZHA_RECOVERY_*` env vars and the `flezha-recovery` k8s
   hostPath volume are vestigial — config is parsed, no module reads it.
-- **No multi-agent discovery in the SDK.** An operator does not failover to
-  another agent if its local one is gone — it waits forever for the local one
+- **No multi-controller discovery in the SDK.** An executor does not failover to
+  another controller if its local one is gone — it waits forever for the local one
   to return.
 
 ## Where the code lives
@@ -303,64 +303,64 @@ These are common assumptions to double-check against the actual code:
 | Concern | File |
 |---|---|
 | Hub spec, hooks, alter_child_data | `lib/flezha/service/hub_manager.ex` |
-| Operator selection (random within namespace+factory) | `lib/flezha/service/processor_manager.ex` |
-| FleetManager (tracks operators, factories, disconnect branches) | `lib/flezha/compute_engine/fleet_manager.ex` |
-| Processor wrapper, HotSwap callbacks, periodic snapshot | `lib/flezha/processor/overwatch.ex` |
-| Control channel (operator handshake, EOF detection) | `lib/flezha/compute_engine/control_channel.ex` |
-| Stream channels, attach/detach, frame routing | `lib/flezha/compute_engine/stream_channel.ex` |
+| Executor selection (random within namespace+factory) | `lib/flezha/service/relay_manager.ex` |
+| FleetManager (tracks executors, factories, disconnect branches) | `lib/flezha/executor/fleet_manager.ex` |
+| Relay wrapper, HotSwap callbacks, periodic snapshot | `lib/flezha/relay/overwatch.ex` |
+| Control channel (executor handshake, EOF detection) | `lib/flezha/executor/control_channel.ex` |
+| Stream channels, attach/detach, frame routing | `lib/flezha/executor/stream_channel.ex` |
 | UDS stream acceptance and round-robin | `lib/flezha/socket/stream_acceptor.ex` |
 | Manual cluster snapshot / restore | `lib/flezha/cluster/snapshot.ex` and `lib/flezha/cluster/snapshot/coordinator.ex` |
-| Rust SDK reconnect loop | `sdk/rust/src/compute_engine/control_unit.rs` |
-| Rust SDK reconnect handler | `sdk/rust/src/compute_engine/{fast,legacy}.rs` `handle_reconnect` |
+| Rust SDK reconnect loop | `sdk/rust/src/executor/control_unit.rs` |
+| Rust SDK reconnect handler | `sdk/rust/src/executor/{fast,legacy}.rs` `handle_reconnect` |
 
 ## Plugin subscriptions persistence
 
-The ProcessHub child-spec is the source of truth for a processor's
-plugin subscriptions. `processor.opts[:plugins]` (embedded inside the
+The ProcessHub child-spec is the source of truth for a relay's
+plugin subscriptions. `relay.opts[:plugins]` (embedded inside the
 cspec start args) carries the authoritative list; the runtime
 `Overwatch.state.extensions` table is a derived projection rebuilt
 from it on every `init/1`. Every successful
 `Flezha.Service.PluginManager.enable_plugin/2` writes through to the
-cspec via `Flezha.Service.HubManager.update_processor_plugins/3`,
+cspec via `Flezha.Service.HubManager.update_relay_plugins/3`,
 and `disable_plugin/1` removes from the cspec before issuing the
 unsubscribe. As a result every Overwatch (re)start path — cold
 start, ProcessHub redistribution, in-place restart from
-`alter_child_data` rewriting start args, agent process restart with
+`alter_child_data` rewriting start args, controller process restart with
 intact ProcessHub state, and HotSwap migration — restores the same
-plugin set without operator intervention. See
+plugin set without executor intervention. See
 `openspec/specs/plugin-subscription-persistence/spec.md` for the
 full contract.
 
 This persistence layer is independent of the per-Partition WAL +
-snapshot persistence in `lib/flezha/state/` (`docs/agent_state_persistence.md`):
+snapshot persistence in `lib/flezha/state/` (`docs/controller_state_persistence.md`):
 the cspec persists *which* plugins are subscribed; the per-Partition
 layer persists *how much progress* a Partition has made through its
 input stream. Both layers can be present, absent, or partially
-populated for a given processor without affecting one another.
+populated for a given relay without affecting one another.
 
-## RestoreInitState vs compute_engine_migrate
+## RestoreInitState vs executor_migrate
 
-The per-Partition `RestoreInitState` handshake (`relay-state-persistence-agent`)
-and the existing `compute_engine_migrate` flow are **mutually exclusive
+The per-Partition `RestoreInitState` handshake (`relay-state-persistence-controller`)
+and the existing `executor_migrate` flow are **mutually exclusive
 per Partition**. A reconnecting Partition with `persistence_enabled =
 true` and on-disk WAL/snapshot is restored via `RestoreInitState` only.
-A migrating Partition (HotSwap moving the Overwatch to a peer agent
+A migrating Partition (HotSwap moving the Overwatch to a peer controller
 host) carries its own snapshot bytes through the migration path; the
-new agent does NOT additionally fire `RestoreInitState` for the same
+new controller does NOT additionally fire `RestoreInitState` for the same
 Partition. Doing both would double-apply state.
 
 The persistence module (`lib/flezha/state/`) is per-Partition and
-ProcessHub-agnostic. ProcessHub picks the agent host; the persistence
+ProcessHub-agnostic. ProcessHub picks the controller host; the persistence
 module owns the per-Partition WAL on whichever host the Overwatch is
 currently running on. Migrating an Overwatch to a peer host moves the
-in-memory state via `compute_engine_migrate`; the new host's
+in-memory state via `executor_migrate`; the new host's
 persistence module starts a fresh WAL (no replication is in scope for
 v1).
 
 ## Related docs
 
 - `docs/sdk_protocol_spec.md` — wire-level binary framing and protobuf commands.
-- `docs/agent_state_persistence.md` — per-Partition WAL, snapshot, and time-travel.
+- `docs/controller_state_persistence.md` — per-Partition WAL, snapshot, and time-travel.
 - `docs/cluster-snapshot.md` — manual snapshot/restore CLI semantics.
 - `docs/nif_architecture.md` — transport NIF design (UDS + QUIC drivers).
 - `docs/deployment.md` — k8s DaemonSet layout, env vars, hostPath volumes.

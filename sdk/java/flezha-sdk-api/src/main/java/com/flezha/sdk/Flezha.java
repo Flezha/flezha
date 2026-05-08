@@ -15,8 +15,8 @@ import javax.annotation.Nonnull;
  *
  * <p>{@link Flezha} is {@link AutoCloseable}: the {@link #close()}
  * method runs the graceful-shutdown sequence introduced by
- * ship-fresh-state-on-sdk-shutdown, shipping each running processor's
- * final state to the agent before tearing down. The same sequence is
+ * ship-fresh-state-on-sdk-shutdown, shipping each running relay's
+ * final state to the controller before tearing down. The same sequence is
  * registered as a JVM shutdown hook so SIGTERM (Kubernetes pre-stop)
  * triggers it without an explicit {@code close()} call.
  */
@@ -30,24 +30,24 @@ public interface Flezha extends AutoCloseable {
         RelayRegistry.registerRelay(relayClass);
     }
 
-    /** Returns the compute-engine id assigned by the agent during handshake. */
+    /** Returns the executor id assigned by the controller during handshake. */
     @Nonnull
     String getId();
 
     /**
      * Returns a snapshot of currently-spawned Relay instances keyed by what
-     * the wire calls {@code processor_id}.
+     * the wire calls {@code relay_id}.
      */
     @Nonnull
-    Map<String, ?> getProcessors();
+    Map<String, ?> getRelays();
 
     /**
      * Run the graceful-shutdown sequence: serialize each running
-     * processor's state and ship it to the agent so the next
-     * reconnecting operator picks up the operator's true final state
+     * relay's state and ship it to the controller so the next
+     * reconnecting executor picks up the executor's true final state
      * (instead of the up-to-{@code overwatch_state_snapshot_interval_ms}
-     * stale periodic snapshot). Per-processor ack wait is bounded at
-     * 2 seconds, parallelised across processors.
+     * stale periodic snapshot). Per-relay ack wait is bounded at
+     * 2 seconds, parallelised across relays.
      *
      * <p>Idempotent across SIGTERM + explicit close — the second caller
      * observes that shutdown has already started and returns immediately.
@@ -56,8 +56,8 @@ public interface Flezha extends AutoCloseable {
     void close();
 
     /**
-     * Start the compute engine, connect to the agent, and block until the
-     * agent sends {@code AssignComputeEngineId}. Thread-safe; may be called
+     * Start the compute engine, connect to the controller, and block until the
+     * controller sends {@code AssignExecutorId}. Thread-safe; may be called
      * at most once per JVM for a given namespace.
      *
      * @throws IllegalStateException if no Relay classes have been registered.

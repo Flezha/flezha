@@ -46,7 +46,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIgnorePatternTest do
                })
     end
 
-    test "treats empty string as no pattern (operator unsetting via env override)" do
+    test "treats empty string as no pattern (executor unsetting via env override)" do
       assert {:ok, %Websocket{ignore_pattern: nil}} =
                Websocket.build(%{"uri" => "wss://example.com", "ignore_pattern" => ""})
     end

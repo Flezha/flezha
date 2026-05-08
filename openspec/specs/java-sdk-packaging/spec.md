@@ -78,7 +78,7 @@ The `flezha-sdk-protobuf` module SHALL generate Java classes from the existing `
 
 #### Scenario: Build regenerates protobuf classes
 - **WHEN** `mvn -f sdk/java/flezha-sdk-protobuf/pom.xml generate-sources` is run
-- **THEN** Java classes for `CommandRequest`, `CommandResponse`, `AssignComputeEngineId`, `ConnectSocket`, `AddProcessor`, `RemProcessor`, `ProcessorState`, `MigrationSerialization`, `MigrationDeserialization`, `ComputeEngineDisconnect` SHALL be produced under `target/generated-sources/protobuf/`
+- **THEN** Java classes for `CommandRequest`, `CommandResponse`, `AssignExecutorId`, `ConnectSocket`, `AddRelay`, `RemRelay`, `PartitionState`, `MigrationSerialization`, `MigrationDeserialization`, `ExecutorDisconnect` SHALL be produced under `target/generated-sources/protobuf/`
 
 #### Scenario: Proto changes are picked up without manual regeneration
 - **WHEN** a field is added to a `.proto` file in `flz_transport/protobufs/` and the Java SDK is rebuilt

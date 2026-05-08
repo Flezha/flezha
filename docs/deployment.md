@@ -47,7 +47,7 @@ Key variables:
 
 ### Graceful-restart entrypoint (image-level)
 
-The published `:latest` and `:latest-dev` images replace the historical `bin/flzvm start` CMD with `/usr/local/bin/agent-entrypoint.sh`. The script wraps the agent in a snapshot/restore lifecycle. All knobs are configured by env vars; defaults are tuned for the upstream `docker/prod/docker-compose.yml` volume layout.
+The published `:latest` and `:latest-dev` images replace the historical `bin/flzvm start` CMD with `/usr/local/bin/controller-entrypoint.sh`. The script wraps the controller in a snapshot/restore lifecycle. All knobs are configured by env vars; defaults are tuned for the upstream `docker/prod/docker-compose.yml` volume layout.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -80,7 +80,7 @@ The dev environment mounts the source tree into the container so source changes 
 ./scripts/dev.sh build
 ./scripts/dev.sh up
 
-# Open an IEX session (agent starts, Transport.Server comes up)
+# Open an IEX session (controller starts, Transport.Server comes up)
 ./scripts/dev.sh iex
 
 # Or open a plain shell
@@ -99,7 +99,7 @@ cargo build --workspace
 mix deps.get && mix compile
 ```
 
-### Running the agent
+### Running the controller
 
 ```bash
 # Option A — IEX (no CLI commands)
@@ -117,7 +117,7 @@ _build/dev/rel/flezha/bin/flzvm start
 
 ```bash
 ./scripts/dev.sh shell   # second terminal
-cd test/apps/rust_compute_engine
+cd test/apps/rust_executor
 cargo run --target-dir=./target
 ```
 
@@ -127,9 +127,9 @@ cargo run --target-dir=./target
 ./scripts/dev.sh build          # build image
 ./scripts/dev.sh up             # start containers
 ./scripts/dev.sh down           # stop containers
-./scripts/dev.sh shell          # bash inside agent container
+./scripts/dev.sh shell          # bash inside controller container
 ./scripts/dev.sh iex            # IEX session inside container
-./scripts/dev.sh logs           # follow agent logs
+./scripts/dev.sh logs           # follow controller logs
 ./scripts/dev.sh status         # show container status
 ./scripts/dev.sh rebuild        # full clean rebuild (down + clear volumes + build + up)
 ./scripts/dev.sh release        # run mix release inside container
@@ -145,7 +145,7 @@ Available at `http://localhost:8080/` while the dev environment is running.
 
 ## 3. Production image build
 
-The prod Dockerfile (`docker/prod/Dockerfile.agent`) uses three stages:
+The prod Dockerfile (`docker/prod/Dockerfile.controller`) uses three stages:
 
 ```
 Stage 1  rust:1.87.0        — cargo build --release → libflz_nif.so + flz (CLI)
@@ -160,7 +160,7 @@ The NIF `.so` is compiled once in Stage 1 and copied directly into Stage 2's `pr
 ```bash
 VERSION=0.2.0 make docker-build
 # equivalent to:
-docker build -t alfetahe/flezha:0.2.0 -f docker/prod/Dockerfile.agent .
+docker build -t alfetahe/flezha:0.2.0 -f docker/prod/Dockerfile.controller .
 ```
 
 ### Build multi-arch and push to Docker Hub
@@ -178,7 +178,7 @@ VERSION=0.2.0 make docker-build-multiarch
 # Or manually with extra tags
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -f docker/prod/Dockerfile.agent \
+  -f docker/prod/Dockerfile.controller \
   -t alfetahe/flezha:0.2.0 \
   -t alfetahe/flezha:latest \
   --push .
@@ -200,17 +200,17 @@ Use the prod docker-compose to test the built image locally without K8s:
 # Build the image first
 VERSION=0.2.0 make docker-build
 
-# Start prod stack (agent + kafka + zookeeper)
+# Start prod stack (controller + kafka + zookeeper)
 VERSION=0.2.0 docker compose -f docker/prod/docker-compose.yml up -d
 
-# Check agent logs
+# Check controller logs
 docker logs -f flezha_agent_prod
 
 # Stop
 docker compose -f docker/prod/docker-compose.yml down
 ```
 
-The agent writes to `/flezha/app_data/logs/flezha.log` inside the container, which maps to the `flezha_logs` named volume.
+The controller writes to `/flezha/app_data/logs/flezha.log` inside the container, which maps to the `flezha_logs` named volume.
 
 ### Run with QUIC transport
 
@@ -223,7 +223,7 @@ FLEZHA_TRANSPORT=quic VERSION=0.2.0 \
 
 ## 5. Kubernetes deployment
 
-All manifests live in `kubernetes/`. The DaemonSet runs one agent pod per node.
+All manifests live in `kubernetes/`. The DaemonSet runs one controller pod per node.
 
 ### Prerequisites
 
@@ -295,7 +295,7 @@ Key ConfigMap values:
 | Volume | Host path | Mount path | Purpose |
 |---|---|---|---|
 | `flezha-sockets` | `/opt/flezha-sockets` | `/flezha/sockets` | UDS socket files |
-| `flezha-data` | `/opt/flezha-data` | `/flezha/data` | Agent state |
+| `flezha-data` | `/opt/flezha-data` | `/flezha/data` | Controller state |
 | `flezha-certs` | `/opt/flezha-certs` | `/flezha/app_data/certs` | TLS certs (auto-generated, persisted) |
 | `flezha-logs` | `/opt/flezha-logs` | `/var/log/flezha` | Log files |
 
@@ -303,7 +303,7 @@ Certs are generated automatically on first startup and persist on the host node.
 
 ### QUIC port
 
-When QUIC is enabled (via `FLEZHA_TRANSPORT=quic` or `FLEZHA_TRANSPORTS=uds,quic`), the agent listens on UDP port 4433. The DaemonSet exposes this port:
+When QUIC is enabled (via `FLEZHA_TRANSPORT=quic` or `FLEZHA_TRANSPORTS=uds,quic`), the controller listens on UDP port 4433. The DaemonSet exposes this port:
 
 ```yaml
 ports:
@@ -324,7 +324,7 @@ kubectl describe pod -n flezha <pod-name>
 ### Logs
 
 ```bash
-# Stream logs from all agent pods
+# Stream logs from all controller pods
 kubectl logs -f -n flezha -l app=flezha --all-containers=true
 
 # Stream logs from a specific pod

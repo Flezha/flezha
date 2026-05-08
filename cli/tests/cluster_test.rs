@@ -2,15 +2,15 @@
 //!
 //! These tests exercise the actual `flz` binary's dispatch and arg-handling
 //! paths — the help text, the missing-arg error paths, and the subcommand
-//! routing. They deliberately do not require a running Flezha agent: the
-//! agent-side cluster-snapshot/restore flow is covered by
+//! routing. They deliberately do not require a running Flezha controller: the
+//! controller-side cluster-snapshot/restore flow is covered by
 //! `test/cluster/snapshot_e2e_test.exs` (in-BEAM) and
 //! `test/system/cluster_snapshot_restore_test.exs` (two-node CST).
 //!
 //! Together: the CLI tests verify dispatch + error UX from the binary's
 //! argv → the Elixir RPC string is built correctly. The Elixir tests
 //! verify the RPC entry point and the snapshot/restore mechanics. Full
-//! binary-against-real-agent end-to-end is operational and out of scope
+//! binary-against-real-controller end-to-end is operational and out of scope
 //! for unit/integration tests.
 
 use std::process::{Command, Output};

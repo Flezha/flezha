@@ -3,11 +3,11 @@ defmodule Flezha.Cluster.Snapshot do
   Per-node API for the cluster snapshot/restore protocol.
 
   `local_state/0` is invoked by the snapshot coordinator on every reachable
-  peer (including the initiator) and returns this node's hosted processors,
+  peer (including the initiator) and returns this node's hosted relays,
   their plugins, and the most-recent captured state binaries.
 
   `apply_local_state/1` is invoked by the restore coordinator on each target
-  node with the slice of state belonging to it; it spawns processors with
+  node with the slice of state belonging to it; it spawns relays with
   `:initial_state_binary` set in opts and re-enables plugins.
 
   The two functions form the public RPC surface — keep their argument shapes
@@ -17,15 +17,15 @@ defmodule Flezha.Cluster.Snapshot do
 
   alias Flezha.Cluster.Snapshot.PluginRecoverability
   alias Flezha.Plugin
-  alias Flezha.Processor.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.ProcessorManager
+  alias Flezha.Service.RelayManager
 
   require Logger
 
-  @type processor_entry :: %{
-          processor: Builder.t(),
+  @type relay_entry :: %{
+          relay: Builder.t(),
           namespace: binary(),
           last_observed_node: node()
         }
@@ -37,13 +37,13 @@ defmodule Flezha.Cluster.Snapshot do
 
   @type local_state :: %{
           node: node(),
-          processors: [processor_entry()],
+          relays: [relay_entry()],
           plugins: [plugin_entry()],
           captured_states: %{binary() => binary()}
         }
 
   @doc """
-  Collects this node's locally-hosted processors, their currently-subscribed
+  Collects this node's locally-hosted relays, their currently-subscribed
   plugins, and the most recent state-snapshot binary for each.
 
   Built from ProcessHub's authoritative `process_list` per running namespace
@@ -52,13 +52,13 @@ defmodule Flezha.Cluster.Snapshot do
   """
   @spec local_state() :: local_state()
   def local_state do
-    pid_pairs = local_processor_pids()
+    pid_pairs = local_relay_pids()
     entries = Enum.map(pid_pairs, &fetch_snapshot_data/1)
     valid = Enum.reject(entries, &is_nil/1)
 
-    processors =
+    relays =
       Enum.map(valid, fn %{namespace: ns, builder: builder} ->
-        %{processor: builder, namespace: to_string(ns), last_observed_node: node()}
+        %{relay: builder, namespace: to_string(ns), last_observed_node: node()}
       end)
 
     plugins = collect_plugins(valid)
@@ -70,7 +70,7 @@ defmodule Flezha.Cluster.Snapshot do
 
     %{
       node: node(),
-      processors: processors,
+      relays: relays,
       plugins: plugins,
       captured_states: captured_states
     }
@@ -79,18 +79,18 @@ defmodule Flezha.Cluster.Snapshot do
   @doc """
   Apply a slice of snapshot state on this node.
 
-  For `{:processor, builder, namespace, captured_state_binary}`, starts the
-  processor via `Flezha.Service.ProcessorManager.start_processor/2`, threading
+  For `{:relay, builder, namespace, captured_state_binary}`, starts the
+  relay via `Flezha.Service.RelayManager.start_relay/2`, threading
   the state binary into `opts[:initial_state_binary]` when present so
   `Overwatch` can prime the SDK before the first input.
 
   For `{:plugin, plugin}`, calls `Flezha.Service.PluginManager.enable_plugin/2`.
   """
   @spec apply_local_state(
-          {:processor, Builder.t(), binary(), binary() | nil}
+          {:relay, Builder.t(), binary(), binary() | nil}
           | {:plugin, Plugin.t()}
         ) :: {:ok, term()} | {:error, term()}
-  def apply_local_state({:processor, %Builder{} = builder, namespace, state_binary})
+  def apply_local_state({:relay, %Builder{} = builder, namespace, state_binary})
       when is_binary(namespace) do
     new_opts =
       if is_binary(state_binary) do
@@ -101,13 +101,13 @@ defmodule Flezha.Cluster.Snapshot do
 
     new_builder = %Builder{builder | opts: new_opts}
 
-    case ProcessorManager.start_processor(namespace, new_builder) do
+    case RelayManager.start_relay(namespace, new_builder) do
       {:ok, info} ->
         {:ok, info}
 
       {:error, %{reason: "child already started"}} ->
         Logger.info(
-          "[snapshot] processor #{builder.id} already running on #{node()} — skipping apply"
+          "[snapshot] relay #{builder.id} already running on #{node()} — skipping apply"
         )
 
         {:ok, :already_registered}
@@ -132,13 +132,13 @@ defmodule Flezha.Cluster.Snapshot do
 
   ## Helpers
 
-  defp local_processor_pids do
+  defp local_relay_pids do
     HubManager.get_running_namespaces()
-    |> Enum.flat_map(&HubManager.get_all_processors/1)
+    |> Enum.flat_map(&HubManager.get_all_relays/1)
     |> Enum.filter(fn {_id, pid} -> is_pid(pid) and node(pid) == node() end)
   end
 
-  defp fetch_snapshot_data({_processor_id, pid}) do
+  defp fetch_snapshot_data({_relay_id, pid}) do
     GenServer.call(pid, :get_snapshot_data, 5_000)
   catch
     kind, reason ->

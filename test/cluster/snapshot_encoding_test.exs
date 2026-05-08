@@ -3,21 +3,21 @@ defmodule Flezha.Cluster.Snapshot.EncodingTest do
 
   alias Flezha.Cluster.Snapshot.Encoding
   alias Flezha.Plugin
-  alias Flezha.Processor.Builder
+  alias Flezha.Relay.Builder
 
   describe "encode/1 + decode/1 round-trip" do
-    test "two processors and three plugins survive encode/decode" do
+    test "two relays and three plugins survive encode/decode" do
       payload = %{
         taken_at_ms: 1_700_000_000_000,
         cluster: %{nodes: [:"a@127.0.0.1", :"b@127.0.0.1"]},
-        processors: [
+        relays: [
           %{
-            processor: %Builder{id: "p1", factory_id: "f1", init_values: %{}, opts: []},
+            relay: %Builder{id: "p1", factory_id: "f1", init_values: %{}, opts: []},
             namespace: "default",
             last_observed_node: :"a@127.0.0.1"
           },
           %{
-            processor: %Builder{id: "p2", factory_id: "f2", init_values: %{x: 1}, opts: []},
+            relay: %Builder{id: "p2", factory_id: "f2", init_values: %{x: 1}, opts: []},
             namespace: "default",
             last_observed_node: :"b@127.0.0.1"
           }

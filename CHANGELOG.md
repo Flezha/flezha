@@ -6,22 +6,22 @@
 
 - Plugin subscriptions added via `flz plugin enable` now survive any
   Overwatch (re)start automatically. The ProcessHub child-spec is the
-  source of truth for a processor's enabled plugins; the runtime
+  source of truth for a relay's enabled plugins; the runtime
   `Overwatch.state.extensions` table is rebuilt from it on every
-  `init/1`. Previously, plugins enabled after `flz processor start`
-  were dropped on operator-pod restart, agent restart with intact
+  `init/1`. Previously, plugins enabled after `flz relay start`
+  were dropped on executor-pod restart, agent restart with intact
   ProcessHub state, or any in-place restart that ran through
   `HubManager.alter_child_data/2` (e.g. `kubectl rollout restart
-  daemonset/<sdk-daemonset>`), forcing operators to re-run the enable
+  daemonset/<sdk-daemonset>`), forcing executors to re-run the enable
   commands manually before the data plane recovered. See
   `openspec/specs/plugin-subscription-persistence/spec.md`.
 
-  **Upgrade note for clusters with already-running processors.**
-  Processors whose plugins were enabled dynamically before this
+  **Upgrade note for clusters with already-running relays.**
+  Relays whose plugins were enabled dynamically before this
   upgrade have an empty `opts[:plugins]` in the cspec. They keep
   working as long as no Overwatch (re)start happens before the next
   `flz plugin enable` / `flz plugin disable` op, which canonicalises
-  the cspec. Operators who want to canonicalise immediately can run
+  the cspec. Executors who want to canonicalise immediately can run
   `flz plugin disable <id> && flz plugin enable <id>` for each
   plugin. No automatic migration job is shipped.
 
@@ -48,7 +48,7 @@
   `:metadata_refresh_timeout_ms`. Six new telemetry events under the
   `[:flezha, :plugin, :kafka, _, _]` prefix surface every state
   transition. Synchronous counters available via
-  `Flezha.Plugin.Provider.Kafka.Producer.stats/1`. Full operator-facing
+  `Flezha.Plugin.Provider.Kafka.Producer.stats/1`. Full executor-facing
   contract in [`docs/kafka-producer.md`](docs/kafka-producer.md).
 
 ### Changed (BREAKING)
@@ -71,32 +71,32 @@
 
 - SDKs ship a final state snapshot to the agent on graceful shutdown so
   rolling deploys preserve the latest state. Rust and Java SDKs now emit
-  one `OperatorShutdownNotification{processor_id, serialized_state}`
-  per running processor on the control channel when the SDK is dropped,
+  one `ExecutorShutdownNotification{relay_id, serialized_state}`
+  per running relay on the control channel when the SDK is dropped,
   receives SIGTERM (Kubernetes pre-stop), or is closed explicitly via
   `Flezha.close()` (Java) / handle drop (Rust); the agent's
-  `Flezha.ComputeEngine.ControlChannel` overwrites
-  `Flezha.Processor.Overwatch.state.snapshot` with the supplied binary
-  and emits an `OperatorShutdownAck`. Per-processor ack wait is bounded
-  at 2 s, parallelised across processors. SIGKILL bypasses as expected;
+  `Flezha.Executor.ControlChannel` overwrites
+  `Flezha.Relay.Overwatch.state.snapshot` with the supplied binary
+  and emits an `ExecutorShutdownAck`. Per-relay ack wait is bounded
+  at 2 s, parallelised across relays. SIGKILL bypasses as expected;
   agent falls back to the last periodic snapshot. Disabled-snapshot
   deployments (`overwatch_state_snapshot_interval_ms == 0`, e.g.
   `flezha_market`) get a one-shot shutdown handoff that survives until
-  the next `AddProcessor` reissue. New protobuf messages
-  `OperatorShutdownNotification` (tag 12) and `OperatorShutdownAck`
+  the next `AddRelay` reissue. New protobuf messages
+  `ExecutorShutdownNotification` (tag 12) and `ExecutorShutdownAck`
   (tag 13) are additive — older agents/SDKs interoperate by falling
   back to the periodic-snapshot freshness shipped by
   `heal-connections-on-restart`.
-- Operator ↔ agent connections now heal automatically across either-side
-  restarts; processors resume traffic within 5 s of reconnect without
-  operator intervention. Stream rebind is enforced as a hard contract on
-  `Flezha.ComputeEngine.StreamChannel`, the UDS/QUIC acceptors atomically
+- Executor ↔ agent connections now heal automatically across either-side
+  restarts; relays resume traffic within 5 s of reconnect without
+  executor intervention. Stream rebind is enforced as a hard contract on
+  `Flezha.Executor.StreamChannel`, the UDS/QUIC acceptors atomically
   bind incoming streams only to nil-ref channels, and
-  `Flezha.ComputeEngine.FleetManager.compute_engine_connect/3` re-issues
-  `AddProcessor` for processors ProcessHub still has tagged to a dead
-  compute_engine_id matching the connecting operator's profile. Rust and
-  Java SDK `AddProcessor` handlers are now idempotent on duplicate
-  `processor_id` (log + skip).
+  `Flezha.Executor.FleetManager.executor_connect/3` re-issues
+  `AddRelay` for relays ProcessHub still has tagged to a dead
+  executor_id matching the connecting executor's profile. Rust and
+  Java SDK `AddRelay` handlers are now idempotent on duplicate
+  `relay_id` (log + skip).
 - `mix test.connection_healing` opt-in alias that runs
   `test/scripts/connection_healing.sh` against the dev compose stack to
   exercise both restart paths end-to-end. Requires Docker on the host;
@@ -104,18 +104,18 @@
 - `test/flezha/deployment/k8s_manifest_test.exs` k8s manifest sanity test
   that asserts the daemonset / configmap fields the connection-healing
   flow relies on (`flezha-sockets` volume, `FLEZHA_SOCKET_FILES_PATH`,
-  `FLEZHA_OPERATOR_KEEPALIVE`) stay well-formed.
+  `FLEZHA_EXECUTOR_KEEPALIVE`) stay well-formed.
 
 ## 0.2.0 — Cluster snapshot & restore (replaces DETS recovery)
 
-Restart-survival is now operator-driven via `flz cluster snapshot/restore`.
+Restart-survival is now executor-driven via `flz cluster snapshot/restore`.
 The previous DETS-based automatic recovery subsystem has been removed
 along with the SYSMODE coordinator GenServer that drove it.
 
 ### Added
 
 - New top-level CLI commands `flz cluster snapshot <file>` and
-  `flz cluster restore <file>` for explicit, operator-driven cluster-wide
+  `flz cluster restore <file>` for explicit, executor-driven cluster-wide
   state capture and restore. Both commands accept `--namespace NS` for
   per-namespace operations; default behaviour without the flag is
   cluster-wide. See [`docs/cluster-snapshot.md`](docs/cluster-snapshot.md).
@@ -124,14 +124,14 @@ along with the SYSMODE coordinator GenServer that drove it.
   atomic ETF file write.
 - `Flezha.Cluster.Snapshot.PluginRecoverability` predicate that decides
   which plugins survive a snapshot/restore cycle.
-- `Flezha.Processor.Builder` now recognises `:initial_state_binary` in
-  opts; `Flezha.Processor.Overwatch` sends a new `ProcessorApplyState`
+- `Flezha.Relay.Builder` now recognises `:initial_state_binary` in
+  opts; `Flezha.Relay.Overwatch` sends a new `PartitionApplyState`
   control command to the compute engine before the first input is
-  forwarded so a re-spawned processor begins with primed state.
-- New protobuf message `ProcessorApplyState` and corresponding handler
+  forwarded so a re-spawned relay begins with primed state.
+- New protobuf message `PartitionApplyState` and corresponding handler
   in the Rust and Java SDKs. Default impl returns the canonical
   `apply_state_not_supported` error so older SDK builds are detectable;
-  the agent logs once per processor on apply failure.
+  the agent logs once per relay on apply failure.
 - `:flezha, :snapshot_state_cap_bytes` configuration key (default 8 MB),
   with `FLEZHA_SNAPSHOT_STATE_CAP_BYTES` env-var override.
 
@@ -140,19 +140,19 @@ along with the SYSMODE coordinator GenServer that drove it.
 - The entire DETS-based recovery subsystem:
   `Flezha.Recovery.Store`, `Flezha.Recovery.PluginStore`,
   `Flezha.Recovery.Coordinator`, `Flezha.Recovery.SysMode`. The agent no
-  longer writes child specs to a DETS file on processor start, no longer
+  longer writes child specs to a DETS file on relay start, no longer
   reads DETS at boot, no longer maintains a SYSMODE state machine, and
   no longer exchanges SYSMODE with peers. Recovery from an unattended
-  crash now requires the operator to run `flz cluster restore` against
+  crash now requires the executor to run `flz cluster restore` against
   a previously-captured snapshot file.
-- `Flezha.Processor.InitState.Providers.Sibling` along with its
+- `Flezha.Relay.InitState.Providers.Sibling` along with its
   registration in `:enabled_plugins`, its capability spec
-  (`processor-init-state-sibling`), and the `lib/flezha/processor/init_state/`
+  (`relay-init-state-sibling`), and the `lib/flezha/relay/init_state/`
   tree. Restart-survival init-state seeding is now handled by
   `flz cluster restore` priming `:initial_state_binary` directly. The
-  generic `processor-init-state` provider chain remains for non-snapshot
+  generic `relay-init-state` provider chain remains for non-snapshot
   sources (HTTP, S3, computed defaults, custom modules implementing
-  `on_processor_init/2`).
+  `on_relay_init/2`).
 - Application env keys: `:flezha, :recovery_window_ms`,
   `:flezha, :recovery_data_dir`, `:flezha, :recovery_enabled`,
   `:flezha, :recovery_autostart`, `:flezha, :prefer_explicit_restore?`.

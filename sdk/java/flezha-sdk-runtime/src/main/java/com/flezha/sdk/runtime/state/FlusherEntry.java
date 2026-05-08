@@ -12,7 +12,7 @@ import javax.annotation.Nonnull;
  * builds frames via the {@code headerTemplate}, and (when
  * {@code persistenceEnabled}) sends them via {@code sendFrame}.
  *
- * <p>{@code persistenceEnabled} is the resolved toggle (operator override
+ * <p>{@code persistenceEnabled} is the resolved toggle (executor override
  * &gt; Relay default &gt; {@code true}; frozen at {@code RelayInstance}
  * construction). When {@code false}, the drain still runs (releasing the
  * buffer's memory) but no frame is built or sent.

@@ -9,7 +9,7 @@ defmodule Flezha.Plugin.Provider.Metrics do
   Consumers fetch the snapshot via `gather/0`. A future Prometheus /
   StatsD bridge can subscribe to a `:telemetry` poll loop calling
   `gather/0`; for v1 the exporter is pull-only and is read by
-  `flz state list` and ad-hoc operator inspection.
+  `flz state list` and ad-hoc executor inspection.
   """
 
   alias Flezha.State.{Metrics, Registry}
@@ -27,7 +27,7 @@ defmodule Flezha.Plugin.Provider.Metrics do
   @doc """
   Build the per-Partition metrics list — keyed structurally rather than
   flattened to a metric name. Useful for the CLI (`flz state list`) and
-  the `flz processor info` extension.
+  the `flz relay info` extension.
   """
   @spec by_partition() :: [{Registry.partition_id(), %{atom() => integer()}}]
   def by_partition(), do: Metrics.snapshot_all()

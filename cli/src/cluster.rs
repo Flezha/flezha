@@ -174,7 +174,7 @@ fn print_cluster_help() {
     println!("    --namespace <NS>        Restore only entries in NS (default all)");
     println!("    --peer-timeout-ms <N>   Per-peer apply RPC timeout in ms (default 5000)");
     println!();
-    println!("See docs/cluster-snapshot.md for the operator flow.");
+    println!("See docs/cluster-snapshot.md for the executor flow.");
 }
 
 #[cfg(test)]

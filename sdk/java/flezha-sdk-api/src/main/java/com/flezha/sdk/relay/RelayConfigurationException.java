@@ -9,7 +9,7 @@ import java.util.Objects;
  * type-equality between channel payload and producer/consumer Shard,
  * unwired channel, multi-producer, static-mode default-impl detection).
  *
- * <p>Carries channel name and expected/actual type info so the operator
+ * <p>Carries channel name and expected/actual type info so the executor
  * can diagnose the misconfiguration without re-running with a debugger.
  */
 public class RelayConfigurationException extends RuntimeException {

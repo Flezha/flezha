@@ -13,7 +13,7 @@ defmodule FlezhaTest.Plugin.FilterTest do
     opts = init_filter(%{regex_pattern: "^{\"event\": \"heartbeat\"}$", inverted: false})
 
     ctx = %Ctx.IO{
-      processor_id: "p",
+      relay_id: "p",
       namespace: "n",
       message: "{\"event\": \"heartbeat\"}",
       metadata: %{}
@@ -26,7 +26,7 @@ defmodule FlezhaTest.Plugin.FilterTest do
     opts = init_filter(%{regex_pattern: "^{\"event\": \"heartbeat\"}$", inverted: false})
 
     ctx = %Ctx.IO{
-      processor_id: "p",
+      relay_id: "p",
       namespace: "n",
       message: "{\"event\": \"heartbeat2\"}",
       metadata: %{}
@@ -39,7 +39,7 @@ defmodule FlezhaTest.Plugin.FilterTest do
     opts = init_filter(%{regex_pattern: "^{\"event\": \"heartbeat\"}$", inverted: true})
 
     ctx = %Ctx.IO{
-      processor_id: "p",
+      relay_id: "p",
       namespace: "n",
       message: "{\"event\": \"heartbeat\"}",
       metadata: %{}
@@ -52,7 +52,7 @@ defmodule FlezhaTest.Plugin.FilterTest do
     opts = init_filter(%{regex_pattern: "^{\"event\": \"heartbeat\"}$", inverted: true})
 
     ctx = %Ctx.IO{
-      processor_id: "p",
+      relay_id: "p",
       namespace: "n",
       message: "{\"event\": \"heartbeat2\"}",
       metadata: %{}

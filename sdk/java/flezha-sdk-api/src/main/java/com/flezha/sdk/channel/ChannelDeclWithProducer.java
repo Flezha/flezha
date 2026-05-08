@@ -20,7 +20,7 @@ public interface ChannelDeclWithProducer<T> {
     @Nonnull ChannelDeclWithProducer<T> into(@Nonnull Class<? extends Shard<T, ?, ?, ?, ?, ?>> shard);
 
     /**
-     * Mark this channel as plugin-bound. The agent's plugin layer receives
+     * Mark this channel as plugin-bound. The controller's plugin layer receives
      * the values. {@code byte[]} and {@code String} payloads use a
      * passthrough/UTF-8 serializer; other payload types are serialized with
      * Jackson JSON by default.

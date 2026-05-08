@@ -80,55 +80,55 @@ The 4-op invariant is an analytical bound enforced by code review, consistent wi
 
 ### Requirement: Live Registry Concurrent Access
 
-The live Relay-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Relay instance create / destroy) SHALL NOT block readers for longer than a single shard's critical section. The registry SHALL preserve the existing public API shape: Relay classes register at startup via `register_relay::<R: Relay>()`; `AddProcessor` / `RemProcessor` wire commands add and remove Relay instances by what the wire calls `processor_id` (mapped to the SDK's `relay_instance_id`); lookup by that id returns an `Arc<RelayInstance>` or equivalent handle.
+The live Relay-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Relay instance create / destroy) SHALL NOT block readers for longer than a single shard's critical section. The registry SHALL preserve the existing public API shape: Relay classes register at startup via `register_relay::<R: Relay>()`; `AddRelay` / `RemRelay` wire commands add and remove Relay instances by what the wire calls `relay_id` (mapped to the SDK's `relay_instance_id`); lookup by that id returns an `Arc<RelayInstance>` or equivalent handle.
 
-The "registry" name carries forward from the pre-change implementation; what's stored in it changes from `Arc<Mutex<ProcessorBox>>` to `Arc<RelayInstance>`. The concurrency guarantees are unchanged.
+The "registry" name carries forward from the pre-change implementation; what's stored in it changes from `Arc<Mutex<RelayBox>>` to `Arc<RelayInstance>`. The concurrency guarantees are unchanged.
 
 #### Scenario: 100 reader threads do not stall on a single writer
 - **WHEN** 100 threads each perform 10,000 registry lookups while a 101st thread registers and removes Relay instances in a loop
 - **THEN** no reader thread observes a latency spike greater than 1 millisecond attributable to the writer
 
 #### Scenario: Registry preserves public registration contract
-- **WHEN** user code calls `register_relay::<R>()` at startup and later `AddProcessor` triggers a Relay instance creation
+- **WHEN** user code calls `register_relay::<R>()` at startup and later `AddRelay` triggers a Relay instance creation
 - **THEN** the resulting `RelayInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `relay-shard-partition-model` capability's scenarios
 
 ### Requirement: Reconnect Semantics Preserved
 
-On unexpected disconnect (BrokenPipe / UnexpectedEof / ConnectionReset / QUIC connection lost) the Rust SDK SHALL clear `io_streams`, clear the live Relay-instance registry, drain in-flight work (per-Partition mailboxes), reset `compute_engine_id` to `"undefined"`, and reconnect with exponential backoff (200 ms → 30 s cap) per `docs/sdk_protocol_spec.md` §5. On intentional disconnect (`ComputeEngineDisconnect` handled) the SDK SHALL NOT reconnect. These semantics MUST hold identically to the pre-change implementation; the only difference is that "live processor registry" is now "live Relay-instance registry" and "drain in-flight work" now means draining all partition mailboxes across all Relay instances.
+On unexpected disconnect (BrokenPipe / UnexpectedEof / ConnectionReset / QUIC connection lost) the Rust SDK SHALL clear `io_streams`, clear the live Relay-instance registry, drain in-flight work (per-Partition mailboxes), reset `executor_id` to `"undefined"`, and reconnect with exponential backoff (200 ms → 30 s cap) per `docs/sdk_protocol_spec.md` §5. On intentional disconnect (`ExecutorDisconnect` handled) the SDK SHALL NOT reconnect. These semantics MUST hold identically to the pre-change implementation; the only difference is that "live relay registry" is now "live Relay-instance registry" and "drain in-flight work" now means draining all partition mailboxes across all Relay instances.
 
 #### Scenario: Unexpected disconnect triggers full state reset + reconnect
 - **WHEN** the agent process is killed while the SDK has 10 live Relay instances with in-flight work in their partition mailboxes
-- **THEN** the SDK SHALL drop all queued work, close mailboxes, reset state, and re-establish a fresh `compute_engine_id` once the agent is available again
+- **THEN** the SDK SHALL drop all queued work, close mailboxes, reset state, and re-establish a fresh `executor_id` once the agent is available again
 
 #### Scenario: Intentional disconnect halts the reconnect loop
-- **WHEN** the agent sends `ComputeEngineDisconnect{}` and the SDK handles it
+- **WHEN** the agent sends `ExecutorDisconnect{}` and the SDK handles it
 - **THEN** the SDK SHALL close sockets and not attempt any reconnection
 
 ### Requirement: Command Dispatch Behavior Preserved Byte-for-Byte for Surviving Commands
 
-Every `CommandRequest` variant that survives the cutover (`AssignComputeEngineId`, `ConnectSocket`, `AddProcessor`, `RemProcessor`, `ComputeEngineDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise these command responses MUST NOT change.
+Every `CommandRequest` variant that survives the cutover (`AssignExecutorId`, `ConnectSocket`, `AddRelay`, `RemRelay`, `ExecutorDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise these command responses MUST NOT change.
 
-`ProcessorState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `relay-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<shard_name>": <state>}` (or, for static-mode shards, `{"<shard_name>": {"<shard_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `relay-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk_protocol_spec.md`.
+`PartitionState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `relay-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<shard_name>": <state>}` (or, for static-mode shards, `{"<shard_name>": {"<shard_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `relay-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk_protocol_spec.md`.
 
-`ProcessorMessage` and `ProcessorMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `relay-message-handlers` adds per-Shard `handle_message` (see `relay-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any processor that did not implement the optional `handle_message` callback.
+`RelayMessage` and `RelayMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `relay-message-handlers` adds per-Shard `handle_message` (see `relay-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any relay that did not implement the optional `handle_message` callback.
 
-#### Scenario: AddProcessor with init_values produces same response shape
-- **WHEN** the agent sends `AddProcessor{processor_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_relay::<MarketRelay>()` (post-change) or `register_factory("market", ...)` (pre-change)
+#### Scenario: AddRelay with init_values produces same response shape
+- **WHEN** the agent sends `AddRelay{relay_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_relay::<MarketRelay>()` (post-change) or `register_factory("market", ...)` (pre-change)
 - **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Shard, see the `relay-shard-partition-model` capability)
 
-#### Scenario: ComputeEngineDisconnect closes sockets identically
-- **WHEN** `ComputeEngineDisconnect{}` is sent under both implementations
+#### Scenario: ExecutorDisconnect closes sockets identically
+- **WHEN** `ExecutorDisconnect{}` is sent under both implementations
 - **THEN** both SDKs SHALL close their primary control stream and return identical `CommandResponse` bytes
 
-#### Scenario: ProcessorMessage returns canonical unsupported error pre-relay-message-handlers
-- **WHEN** an agent sends `ProcessorMessage{processor_id:"p1", payload:<...>}` to a v1 SDK
-- **THEN** the SDK SHALL respond with `ProcessorMessageResponse{ payload: "", error: "processor does not support handle_message" }`
+#### Scenario: RelayMessage returns canonical unsupported error pre-relay-message-handlers
+- **WHEN** an agent sends `RelayMessage{relay_id:"p1", payload:<...>}` to a v1 SDK
+- **THEN** the SDK SHALL respond with `RelayMessageResponse{ payload: "", error: "relay does not support handle_message" }`
 
 ### Requirement: Per-Partition flusher single-thread linger drain
 
 The Rust SDK SHALL spawn at most one `PartitionFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `register_relay::<R>()` call that registers a Shard with a non-`NoChange` Change type. Programs that register only `NoChange` Shards SHALL NOT spawn a flusher thread.
 
-The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Partitions; (c) for each Partition, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Partition's `send_frame` function pointer (stub in this change; agent-wired in `relay-state-persistence-agent`).
+The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Partitions; (c) for each Partition, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Partition's `send_frame` function pointer (stub in this change; agent-wired in `relay-state-persistence`).
 
 #### Scenario: NoChange-only program does not spawn flusher
 
@@ -215,7 +215,7 @@ The drain-time coalescing algorithm SHALL: (a) build a `HashMap<CoalesceKey, usi
 
 ### Requirement: ShardTestHarness in public API surface (Rust SDK)
 
-The Rust SDK SHALL export `ShardTestHarness::<S: Shard>` under `flezha_compute_engine::testing::ShardTestHarness`, gated by `cfg(any(test, feature = "testing"))`. The harness SHALL support:
+The Rust SDK SHALL export `ShardTestHarness::<S: Shard>` under `flezha_executor::testing::ShardTestHarness`, gated by `cfg(any(test, feature = "testing"))`. The harness SHALL support:
 
 - `ShardTestHarness::<S>::new()` (requires `S: Default`) — constructs a harness with `S::init_state(None, None)`.
 - `ShardTestHarness::<S>::with_initial_state(state: S::State)` — explicit initial state.
@@ -244,8 +244,8 @@ The Rust SDK SHALL export `ShardTestHarness::<S: Shard>` under `flezha_compute_e
 
 #### Scenario: Harness compiled-out without testing feature
 
-- **WHEN** a downstream crate depends on `flezha_compute_engine` without enabling the `testing` feature flag and does not build under `#[cfg(test)]`
-- **THEN** `flezha_compute_engine::testing` SHALL NOT be visible and references to `ShardTestHarness` SHALL fail to compile
+- **WHEN** a downstream crate depends on `flezha_executor` without enabling the `testing` feature flag and does not build under `#[cfg(test)]`
+- **THEN** `flezha_executor::testing` SHALL NOT be visible and references to `ShardTestHarness` SHALL fail to compile
 
 ### Requirement: 16-byte version header stamped on persisted Changes
 

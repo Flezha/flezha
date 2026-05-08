@@ -1,7 +1,7 @@
 package com.flezha.sdk.state;
 
 /**
- * Restore payload threaded into {@code Shard.initState} when the agent ships a
+ * Restore payload threaded into {@code Shard.initState} when the controller ships a
  * {@code RestoreInitState} command. Carries the latest snapshot bytes (or
  * empty array for "no snapshot") and the trailing change-log bytes since that
  * snapshot.

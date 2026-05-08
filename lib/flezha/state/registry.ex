@@ -3,7 +3,7 @@ defmodule Flezha.State.Registry do
   Path resolution for per-Partition WAL, snapshot, and outbox-dedup files.
 
   All persistence files live under
-  `<state_root>/<compute_engine_id>/<relay_class>/<shard_id>/` where
+  `<state_root>/<executor_id>/<relay_class>/<shard_id>/` where
   `<state_root>` is configured via `:flezha, :state_root` (default `app_data/state`).
 
   `partition_key` is URL-safe-base64-encoded when it contains characters
@@ -12,7 +12,7 @@ defmodule Flezha.State.Registry do
   """
 
   @type partition_id ::
-          {compute_engine_id :: binary(), relay_class :: binary(), shard_id :: binary(),
+          {executor_id :: binary(), relay_class :: binary(), shard_id :: binary(),
            partition_key :: binary()}
 
   @type scan_result :: %{
@@ -29,8 +29,8 @@ defmodule Flezha.State.Registry do
   end
 
   @spec state_dir(partition_id()) :: binary()
-  def state_dir({compute_engine_id, relay_class, shard_id, _partition_key}) do
-    Path.join([state_root(), compute_engine_id, relay_class, shard_id])
+  def state_dir({executor_id, relay_class, shard_id, _partition_key}) do
+    Path.join([state_root(), executor_id, relay_class, shard_id])
   end
 
   @spec wal_path(partition_id()) :: binary()
@@ -69,7 +69,7 @@ defmodule Flezha.State.Registry do
   @doc """
   Enumerate Partition files under a Relay tree.
 
-  Pass `{compute_engine_id, relay_class, shard_id, ""}` to scan the whole
+  Pass `{executor_id, relay_class, shard_id, ""}` to scan the whole
   Shard. Returns lists of `{partition_key, ...}` tuples grouped by file type.
   Files matching `.tmp` / `.rewriting` suffixes are intentionally skipped —
   they represent crash-residue from atomic-rename workflows.
@@ -113,7 +113,7 @@ defmodule Flezha.State.Registry do
   @doc """
   Enumerate every Partition that has any persistence file on disk under
   `state_root()`. Walks the three-level directory tree
-  `<state_root>/<compute_engine_id>/<relay_class>/<shard_id>/`.
+  `<state_root>/<executor_id>/<relay_class>/<shard_id>/`.
   """
   @spec all_partitions() :: [partition_id()]
   def all_partitions() do

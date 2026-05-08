@@ -35,12 +35,12 @@ public final class FlezhaImpl implements Flezha {
 
     private static final Logger LOG = LoggerFactory.getLogger(FlezhaImpl.class);
 
-    private final ComputeEngineContext ctx;
+    private final ExecutorContext ctx;
     private final ReconnectCoordinator reconnectCoordinator;
     private final AtomicReference<GracefulShutdown> shutdownRef;
 
     private FlezhaImpl(
-            ComputeEngineContext ctx,
+            ExecutorContext ctx,
             ReconnectCoordinator reconnectCoordinator,
             AtomicReference<GracefulShutdown> shutdownRef) {
         this.ctx = ctx;
@@ -58,7 +58,7 @@ public final class FlezhaImpl implements Flezha {
      *   <li>Create the native context.</li>
      *   <li>Initialize the worker pool (consumed by every {@code RelayInstance}'s {@code ShardDispatcher}).</li>
      *   <li>Open the control stream and send the handshake init JSON.</li>
-     *   <li>Block until the agent replies with {@code AssignComputeEngineId}.</li>
+     *   <li>Block until the controller replies with {@code AssignExecutorId}.</li>
      * </ol>
      */
     @Nonnull
@@ -78,7 +78,7 @@ public final class FlezhaImpl implements Flezha {
         }
         NativeTransport.installDefaultLogCallback(nativeHandle);
 
-        ComputeEngineContext ctx = new ComputeEngineContext(namespace, resolved, nativeHandle);
+        ExecutorContext ctx = new ExecutorContext(namespace, resolved, nativeHandle);
 
         ExecutorService workerPool = Executors.newFixedThreadPool(
                 Math.max(1, resolved.workerPoolSize()), new WorkerThreadFactory("flz-worker"));
@@ -134,7 +134,7 @@ public final class FlezhaImpl implements Flezha {
                     try {
                         controlRouter.route(frame);
                     } catch (FlezhaNativeException e) {
-                        // Agent closed the control socket (shutdown / disconnect)
+                        // Controller closed the control socket (shutdown / disconnect)
                         // before the response write completed. Benign at teardown.
                         if (e.getStatus() == FlezhaStatus.IO_ERROR) {
                             LOG.debug("control stream closed before response: {}", e.getMessage());
@@ -146,8 +146,8 @@ public final class FlezhaImpl implements Flezha {
                         LOG.error("control stream route failed: {}", t.toString());
                         return;
                     }
-                    if (ctx.computeEngineId() != null
-                            && !ctx.computeEngineId().equals("undefined")
+                    if (ctx.executorId() != null
+                            && !ctx.executorId().equals("undefined")
                             && assignLatch.getCount() > 0) {
                         assignLatch.countDown();
                     }
@@ -166,10 +166,10 @@ public final class FlezhaImpl implements Flezha {
             throw new IllegalStateException("Failed to send handshake: " + e.getMessage(), e);
         }
 
-        // Block until AssignComputeEngineId arrives.
+        // Block until AssignExecutorId arrives.
         try {
             if (!assignLatch.await(30, TimeUnit.SECONDS)) {
-                LOG.warn("Timed out waiting for AssignComputeEngineId from agent");
+                LOG.warn("Timed out waiting for AssignExecutorId from controller");
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -214,12 +214,12 @@ public final class FlezhaImpl implements Flezha {
     @Override
     @Nonnull
     public String getId() {
-        return ctx.computeEngineId();
+        return ctx.executorId();
     }
 
     @Override
     @Nonnull
-    public Map<String, ?> getProcessors() {
+    public Map<String, ?> getRelays() {
         return ctx.relayInstanceRegistry().snapshot();
     }
 

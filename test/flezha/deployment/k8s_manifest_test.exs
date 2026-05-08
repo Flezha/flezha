@@ -22,7 +22,7 @@ defmodule FlezhaTest.Deployment.K8sManifestTest do
              "missing `flezha-sockets` volume entry in daemonset"
     end
 
-    test "mounts flezha-sockets at /flezha/sockets in the agent container",
+    test "mounts flezha-sockets at /flezha/sockets in the controller container",
          %{contents: contents} do
       mount_block_pattern =
         ~r/-\s+name:\s+flezha-sockets\s*\n\s+mountPath:\s+\/flezha\/sockets/
@@ -31,13 +31,13 @@ defmodule FlezhaTest.Deployment.K8sManifestTest do
              "expected `- name: flezha-sockets` followed by `mountPath: /flezha/sockets`"
     end
 
-    test "the agent container exposes FLEZHA_SOCKET_FILES_PATH=/flezha/sockets",
+    test "the controller container exposes FLEZHA_SOCKET_FILES_PATH=/flezha/sockets",
          %{contents: contents} do
       env_pair_pattern =
         ~r/-\s+name:\s+FLEZHA_SOCKET_FILES_PATH\s*\n\s+value:\s+"\/flezha\/sockets"/
 
       assert contents =~ env_pair_pattern,
-             "expected env var FLEZHA_SOCKET_FILES_PATH set to \"/flezha/sockets\" in the agent container"
+             "expected env var FLEZHA_SOCKET_FILES_PATH set to \"/flezha/sockets\" in the controller container"
     end
   end
 
@@ -49,20 +49,20 @@ defmodule FlezhaTest.Deployment.K8sManifestTest do
       %{contents: File.read!(@configmap_path)}
     end
 
-    test "defines FLEZHA_OPERATOR_KEEPALIVE as a positive integer string in milliseconds",
+    test "defines FLEZHA_EXECUTOR_KEEPALIVE as a positive integer string in milliseconds",
          %{contents: contents} do
-      keepalive_pattern = ~r/FLEZHA_OPERATOR_KEEPALIVE:\s+"(\d+)"/
+      keepalive_pattern = ~r/FLEZHA_EXECUTOR_KEEPALIVE:\s+"(\d+)"/
 
       case Regex.run(keepalive_pattern, contents) do
         [_match, value_str] ->
           {value, ""} = Integer.parse(value_str)
 
           assert value > 0,
-                 "FLEZHA_OPERATOR_KEEPALIVE must be a positive integer (got #{value_str})"
+                 "FLEZHA_EXECUTOR_KEEPALIVE must be a positive integer (got #{value_str})"
 
         nil ->
           flunk(
-            "missing FLEZHA_OPERATOR_KEEPALIVE entry in configmap or value not quoted as a string"
+            "missing FLEZHA_EXECUTOR_KEEPALIVE entry in configmap or value not quoted as a string"
           )
       end
     end

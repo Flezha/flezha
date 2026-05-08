@@ -2,7 +2,7 @@ defmodule Flezha.State.Metrics do
   @moduledoc """
   Per-Partition `:counters` references for the persistence subsystem.
 
-  Six counter slots per Partition (see `relay-state-persistence-agent`
+  Six counter slots per Partition (see `relay-state-persistence-controller`
   `design.md` Decision 9):
 
     1. `:persisted_changes_total` — monotonic

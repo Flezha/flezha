@@ -23,16 +23,16 @@ defmodule Flezha.MixProject do
   end
 
   # Aliases are invoked via `mix <alias>`. `test.java_sdk` runs the Java
-  # integration matrix against the *committed* test compute-engine fat jar
-  # at `test/apps/java_compute_engine/dist/java_compute_engine.jar`. The
+  # integration matrix against the *committed* test executor fat jar
+  # at `test/apps/java_executor/dist/java_executor.jar`. The
   # jar — and the five native binaries it bundles — are refreshed locally
   # via `scripts/build-dist.sh`; CI never invokes Maven for either.
   defp aliases do
     [
       "test.java_sdk": ["test --only java_sdk"],
       # Opt-in dev-compose smoke test for the connection-healing change.
-      # Brings up the agent + rust operator container, restarts each in turn,
-      # asserts the operator <-> agent link re-establishes within
+      # Brings up the controller + rust executor container, restarts each in turn,
+      # asserts the executor <-> controller link re-establishes within
       # REJOIN_TIMEOUT_S seconds. Not part of `mix test` because it needs
       # Docker on the host. See test/scripts/connection_healing.sh.
       "test.connection_healing": [
@@ -40,10 +40,10 @@ defmodule Flezha.MixProject do
         "cmd test/scripts/plugin_persistence.sh"
       ],
       # Opt-in dev-compose smoke test for `ship-fresh-state-on-sdk-shutdown`.
-      # Boots the agent + rust operator, starts a processor, sends SIGTERM
-      # to the rust container, then asserts the agent's
+      # Boots the controller + rust executor, starts a relay, sends SIGTERM
+      # to the rust container, then asserts the controller's
       # `Overwatch.state.snapshot` was populated by the SDK's
-      # `OperatorShutdownNotification`. Both periodic-enabled and
+      # `ExecutorShutdownNotification`. Both periodic-enabled and
       # disabled-snapshot scenarios. Needs Docker on the host. See
       # test/scripts/state_freshness.sh.
       "test.state_freshness": ["cmd test/scripts/state_freshness.sh"]

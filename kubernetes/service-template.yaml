@@ -1,17 +1,17 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: compute-engine-service-x
+  name: executor-service-x
   namespace: flezha
 spec:
   replicas: 3 # X replicas - will distribute across available nodes
   selector:
     matchLabels:
-      app: compute-engine-service-x
+      app: executor-service-x
   template:
     metadata:
       labels:
-        app: compute-engine-service-x
+        app: executor-service-x
     spec:
       imagePullSecrets:
         - name: dockerhub-secret
@@ -23,17 +23,17 @@ spec:
                 labelSelector:
                   matchExpressions:
                     - key: app
-                      compute_engine: In
+                      executor: In
                       values:
-                        - compute-engine-service-x
+                        - executor-service-x
                 topologyKey: kubernetes.io/hostname
       containers:
-        - name: compute-engine-service-x
-          image: your-compute-engine-service-x:latest
+        - name: executor-service-x
+          image: your-executor-service-x:latest
           volumeMounts:
             - name: flezha-sockets
               mountPath: /shared/sockets # Access to Flezha's Unix sockets
-            - name: compute-engine-service-x-data
+            - name: executor-service-x-data
               mountPath: /app/data
           env:
             - name: FLEZHA_SOCKET_FILES_PATH
@@ -43,7 +43,7 @@ spec:
           hostPath:
             path: /opt/flezha-sockets # Same path as Flezha DaemonSet
             type: Directory
-        - name: compute-engine-service-x-data
+        - name: executor-service-x-data
           hostPath:
-            path: /opt/compute-engine-service-x-data
+            path: /opt/executor-service-x-data
             type: DirectoryOrCreate

@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.control;
 
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.runtime.ComputeEngineContext;
+import com.flezha.sdk.runtime.ExecutorContext;
 import java.util.List;
 import javax.annotation.Nonnull;
 
@@ -15,7 +15,7 @@ public interface CommandHandler {
 
     @Nonnull
     byte[] handle(
-            @Nonnull ComputeEngineContext ctx,
+            @Nonnull ExecutorContext ctx,
             @Nonnull CommandRequest request,
             @Nonnull List<String> errors) throws Exception;
 

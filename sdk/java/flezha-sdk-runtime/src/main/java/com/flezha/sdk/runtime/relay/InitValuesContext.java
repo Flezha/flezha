@@ -4,7 +4,7 @@ import java.util.Optional;
 
 /**
  * Per-thread {@code init_values} JSON string staged by
- * {@link com.flezha.sdk.runtime.control.handlers.AddProcessorHandler} before
+ * {@link com.flezha.sdk.runtime.control.handlers.AddRelayHandler} before
  * a {@link RelayInstance} is constructed; readable from
  * {@link com.flezha.sdk.shard.Shard#initState(java.util.Optional)} via
  * {@link #get()}.
@@ -35,7 +35,7 @@ public final class InitValuesContext {
 
     /**
      * Read the current thread's staged {@code init_values}. Returns empty
-     * outside of an {@code AddProcessor} window.
+     * outside of an {@code AddRelay} window.
      */
     public static Optional<String> get() {
         return Optional.ofNullable(CURRENT.get());

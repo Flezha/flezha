@@ -2,7 +2,7 @@
 name = "flz_nif"
 version = "0.1.0"
 edition = "2021"
-description = "Rustler NIF wrapping flz_transport for the Elixir agent"
+description = "Rustler NIF wrapping flz_transport for the Elixir controller"
 
 [lib]
 name = "flz_nif"

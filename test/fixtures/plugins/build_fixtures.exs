@@ -223,7 +223,7 @@ defmodule BuildFixtures do
           provider: #{hd(mods)},
           subscriptions: [{:on_input, []}],
           default_opts: %{},
-          scope: :processor
+          scope: :relay
         }
       ],
       dependencies: #{inspect(deps)}

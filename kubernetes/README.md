@@ -1,11 +1,11 @@
 # Kubernetes Resource Files
 
-These files can be used as a reference for deploying the Flezha agent to a Kubernetes cluster.
+These files can be used as a reference for deploying the Flezha controller to a Kubernetes cluster.
 They create a namespace, role, service account, role binding, and a daemonset.
 
 ## Docker Images
 
-The Flezha agent is available as a multi-architecture Docker image on Docker Hub:
+The Flezha controller is available as a multi-architecture Docker image on Docker Hub:
 
 - **Image**: `alfetahe/flezha:latest` (or `alfetahe/flezha:0.0.1` for specific version)
 - **Platforms**: `linux/amd64`, `linux/arm64`
@@ -32,12 +32,12 @@ To build your own multi-arch image:
 ```bash
 # From flezha root directory
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/prod/Dockerfile.agent \
+  -f docker/prod/Dockerfile.controller \
   -t alfetahe/flezha:latest \
   . --push
 
 # Build for same arhitecture
-docker build -f docker/prod/Dockerfile.agent -t alfetahe/flezha:latest . && docker push alfetahe/flezha:latest
+docker build -f docker/prod/Dockerfile.controller -t alfetahe/flezha:latest . && docker push alfetahe/flezha:latest
 ```
 
 See `docker/prod/README.md` for detailed build instructions.
@@ -49,8 +49,8 @@ See `docker/prod/README.md` for detailed build instructions.
 - Apply the role binding: `kubectl apply -f flezha-rolebinding.yaml`
 
 ## Deploy
-- Apply the daemonset for the flezha agents: `kubectl apply -f kubernetes/flezha-daemonset.yaml`
-- Apply the deployments for X(compute_engines) services: `kubectl apply -f kubernetes/service-template.yaml`
+- Apply the daemonset for the flezha controllers: `kubectl apply -f kubernetes/flezha-daemonset.yaml`
+- Apply the deployments for X(executors) services: `kubectl apply -f kubernetes/service-template.yaml`
 
 ## Failure recovery volume
 
@@ -58,7 +58,7 @@ The DaemonSet mounts a node-local `hostPath` at `/opt/flezha-recovery` into
 the container at `/var/lib/flezha`. This directory holds both of the
 recovery DETS files:
 
-- `recovery.dets` — processor child specs.
+- `recovery.dets` — relay child specs.
 - `recovery_plugins.dets` — recoverable plugin bindings.
 
 A single volume carries both. `FLEZHA_DATA_DIR`, `FLEZHA_RECOVERY_ENABLED`,
@@ -69,7 +69,7 @@ window.
 
 ## Logs
 
-Agent logs are persisted on the host machine at `/opt/flezha-logs/`.
+Controller logs are persisted on the host machine at `/opt/flezha-logs/`.
 
 ### Accessing Logs
 
@@ -81,7 +81,7 @@ kubectl get pods -n flezha -l app=flezha
 # Follow logs from specific pod
 kubectl logs -f -n flezha flezha-daemonset-XXXXX
 
-# Follow logs from all agent pods
+# Follow logs from all controller pods
 kubectl logs -f -n flezha -l app=flezha --all-containers=true
 ```
 
@@ -94,7 +94,7 @@ kubectl exec -it -n flezha flezha-daemonset-XXXXX -- tail -f /var/log/flezha/fle
 sudo tail -f /opt/flezha-logs/flezha.log
 
 # Copy logs to local machine
-kubectl cp -n flezha flezha-daemonset-XXXXX:/var/log/flezha/flezha.log ./agent-logs.log
+kubectl cp -n flezha flezha-daemonset-XXXXX:/var/log/flezha/flezha.log ./controller-logs.log
 ```
 
 ### Log Configuration
@@ -103,4 +103,4 @@ Logs are configured via environment variables:
 - `FLEZHA_LOG_PATH`: `/var/log/flezha/flezha.log` (file path)
 - `FLEZHA_LOG_LEVEL`: `info` (default, can be: debug, info, warning, error)
 
-The agent logs to both stdout (for `kubectl logs`) and file (for persistence).
+The controller logs to both stdout (for `kubectl logs`) and file (for persistence).

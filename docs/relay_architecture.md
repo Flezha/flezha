@@ -1,7 +1,7 @@
 # Rust SDK Relay Architecture
 
 The Rust SDK exposes a small set of traits for declaring how compute
-work is structured inside one logical operator instance. This doc
+work is structured inside one logical executor instance. This doc
 walks the concepts (Relay, Shard, Partition, Runner), the data flow
 end-to-end, and the public API. For the rationale, design decisions,
 and capability spec deltas, see
@@ -22,7 +22,7 @@ and capability spec deltas, see
                                 ▼
             ┌─────────────────────────────────────────┐
             │              RelayInstance              │
-            │   (one per `flz processor start`)       │
+            │   (one per `flz relay start`)       │
             │                                         │
             │   ┌───────────┐    ┌──────────────┐     │
             │   │ Shard A   │ -> │ Shard B      │ -> ... -> Plugin
@@ -37,10 +37,10 @@ and capability spec deltas, see
   per process via `register_relay::<R>()`. The topology is frozen at
   registration and shared (`Arc`) by every instance of that class.
 
-- **Relay instance** — the live runtime object spawned on `AddProcessor`.
+- **Relay instance** — the live runtime object spawned on `AddRelay`.
   Each instance has its own per-Partition state (per-Shard) and its
   own mailboxes; instances are independent of each other and routed by
-  `processor_id` (the wire calls it that; the SDK calls it
+  `relay_id` (the wire calls it that; the SDK calls it
   `instance_id`).
 
 - **Shard** — the unit of compute. Has typed `Input` / `Output` / `State`
@@ -54,10 +54,10 @@ and capability spec deltas, see
   ordering).
 
 - **Channel** — the typed wire between producers/consumers. Three kinds:
-  `Entry` (agent → SDK, restricted to `Vec<u8>` / `String`),
+  `Entry` (controller → SDK, restricted to `Vec<u8>` / `String`),
   `InterShard` (`Arc<T>` zero-copy between Shards), and `PluginBound`
   (typed value serialized to bytes; sent to a named plugin via the
-  agent).
+  controller).
 
 - **Runner** — the work-stealing pool that drains mailboxes. One pool
   per `Flezha::new()`; size controlled by `FLEZHA_WORKER_POOL_SIZE`.
@@ -67,19 +67,19 @@ and capability spec deltas, see
 The full surface is small:
 
 ```rust
-use flezha_compute_engine::{
+use flezha_executor::{
     register_relay, ChannelBuilder, Relay, Shard, ShardCtx, ShardError,
 };
 ```
 
 `register_relay::<R: Relay>()` is called once per Relay class at
-process startup. `Flezha::new(namespace)` boots the SDK; the agent
-later spawns instances by calling `flz processor start <factory_id>`.
+process startup. `Flezha::new(namespace)` boots the SDK; the controller
+later spawns instances by calling `flz relay start <factory_id>`.
 
 ## Worked example
 
 ```rust
-use flezha_compute_engine::{
+use flezha_executor::{
     register_relay, ChannelBuilder, Relay, Shard, ShardCtx, ShardError,
 };
 use serde::{Deserialize, Serialize};
@@ -154,8 +154,8 @@ impl Relay for MarketRelay {
 
 fn main() {
     register_relay::<MarketRelay>();
-    let _ = flezha_compute_engine::new("market_ns".to_string());
-    // The agent's `flz processor start <market>` spawns an instance.
+    let _ = flezha_executor::new("market_ns".to_string());
+    // The controller's `flz relay start <market>` spawns an instance.
 }
 ```
 
@@ -233,7 +233,7 @@ public final class App {
     public static void main(String[] args) {
         Flezha.registerRelay(MarketRelay.class);
         Flezha unused = Flezha.newInstance("market_ns");
-        // Agent's `flz processor start <market>` spawns an instance.
+        // Controller's `flz relay start <market>` spawns an instance.
     }
 }
 ```
@@ -342,7 +342,7 @@ and the wire, so the policy enum has nothing to act on.
 | InterShard   | `Block`      | Stateful pipelines need ordering preservation; mid-pipeline drops silently corrupt derived state. |
 | PluginBound  | (n/a)        | No SDK-side mailbox sits between the producer Shard and the wire; backpressure is OS socket buffer + transport flow control. |
 
-An operator who wants strict end-to-end ordering at the entry edge can
+An executor who wants strict end-to-end ordering at the entry edge can
 declare `.on_full(OverflowPolicy::Block)` on their entry channel — they
 opt into the documented co-tenancy hazard (the wire reader parks while
 this one Relay's mailbox is full, so sibling Relays sharing the same
@@ -374,7 +374,7 @@ A Block-policy producer parks the worker thread it ran on. A pipeline
 of depth D under `Block` requires the work-stealing pool to have
 `FLEZHA_WORKER_POOL_SIZE ≥ 2 × D + 1` to avoid a deadlock: D parked
 producers + 1 thread free to drain the deepest consumer + spare for
-upstream drains. The SDK does not enforce this at startup; operators
+upstream drains. The SDK does not enforce this at startup; executors
 running deep pipelines should size the pool accordingly.
 
 Single-stage pipelines (entry → one Shard, no fan-out) are unaffected:
@@ -409,7 +409,7 @@ clone (the cost of multi-consumer parallelism).
    FlezhaStream for the connection that the originating wire input
    arrived on).
 
-The agent's plugin layer (e.g.
+The controller's plugin layer (e.g.
 `Flezha.Plugin.Provider.Kafka.Producer`) matches on
 `metadata["channel"]` to gate which channel's outputs it consumes.
 
@@ -428,7 +428,7 @@ that the inflight CAS keeps uncontended in practice:
 - `S::State` is the user's domain state. `init_state(shard_key)` is
   called once per partition; subsequent runs mutate in place.
 - State migration (`MigrationSerialization` /
-  `ProcessorState`) walks the partitions per-Shard and produces a
+  `PartitionState`) walks the partitions per-Shard and produces a
   per-Shard / per-Partition JSON shape (see
   `docs/sdk_protocol_spec.md` § Metadata Serialization → State
   migration JSON shape). v1 ships the wiring; the
@@ -450,9 +450,9 @@ The umbrella enumerates non-goals (`relay-architecture/proposal.md`
   `relay-message-handlers` ships. Tests that exercise the round-trip
   are tagged `RELAY_MESSAGE_HANDLERS_PENDING`.
 - **Java SDK** — the Java SDK is not yet ported to the new model;
-  `relay-mvp-java` does that work. Java↔agent integration tests are
+  `relay-mvp-java` does that work. Java↔controller integration tests are
   tagged `RELAY_MVP_JAVA_PENDING`.
-- **flezha_market migration** — downstream operator app migrates in its
+- **flezha_market migration** — downstream executor app migrates in its
   own repo (umbrella Decision 17).
 
 ## Where to look in the code
@@ -465,30 +465,30 @@ The umbrella enumerates non-goals (`relay-architecture/proposal.md`
 | Topology builder | `sdk/rust/src/relay/builder.rs` |
 | RelayInstance + partition layout | `sdk/rust/src/relay/instance.rs` |
 | Per-Shard typed dispatcher | `sdk/rust/src/relay/dispatcher.rs` |
-| PartitionSlot + mailbox | `sdk/rust/src/partition/mod.rs`, `compute_engine/mailbox.rs` |
+| PartitionSlot + mailbox | `sdk/rust/src/partition/mod.rs`, `executor/mailbox.rs` |
 | Class + instance registries | `sdk/rust/src/relay/registry.rs` |
-| Wire dispatch | `sdk/rust/src/compute_engine/fast.rs::RelayDispatchHandle` |
+| Wire dispatch | `sdk/rust/src/executor/fast.rs::RelayDispatchHandle` |
 | Wire input routing | `sdk/rust/src/command/streams_connect.rs` |
 | Plugin emit framing | `sdk/rust/src/relay/dispatcher.rs::send_plugin_frame` |
-| State migration JSON shape | `sdk/rust/src/command/processor_state.rs` |
+| State migration JSON shape | `sdk/rust/src/command/partition_state.rs` |
 
 ## State persistence
 
 Per-Partition state is persisted via the `Change`-trait machinery added
 by `relay-state-persistence-rust` and wired end-to-end by
-`relay-state-persistence-agent`. The hot path is a single
+`relay-state-persistence-controller`. The hot path is a single
 `Vec::push(change)` per `state.apply(...)` call; serialization,
 coalescing, and the wire send happen on a per-process flusher thread
 on a 5 ms linger cadence (configurable via `FLEZHA_FLUSH_LINGER_MS`).
 
 Shards opt out by inheriting `type Change = NoChange` (the trait's
-uninhabited default). Operator-controlled relay-instance override:
+uninhabited default). Executor-controlled relay-instance override:
 `relay_persistence.<RelayClass>` in relay-start metadata.
 
 The umbrella commits to eight Tier-1 properties — wire format, header
 layout, `Change` trait shape, deterministic `apply_change`, replay
 equality via `ShardTestHarness`, single-thread flusher, frozen-at-start
-toggle, postcard format. The Rust SDK implements all eight; the agent
+toggle, postcard format. The Rust SDK implements all eight; the controller
 side ships durable WAL, fsync batcher, and snapshot lifecycle in the
 follow-up change.
 

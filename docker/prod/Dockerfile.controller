@@ -1,0 +1,135 @@
+# syntax=docker/dockerfile:1.7
+
+# Stage 1 — Rust builder. Builds flz_nif.so and the flz CLI binary with
+# --release. protoc lives here because prost-build needs it; the Elixir
+# stage uses pure-Elixir protox.
+FROM rust:1.87.0-slim-bookworm AS rust-build
+
+WORKDIR /workspace
+
+ENV PROTOC_VERSION=23.4
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        unzip \
+        pkg-config \
+        libssl-dev \
+    && ARCH=$(uname -m) \
+    && case "$ARCH" in \
+         x86_64)   PROTOC_ARCH="x86_64" ;; \
+         aarch64)  PROTOC_ARCH="aarch_64" ;; \
+         *)        echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+       esac \
+    && curl -L -o /tmp/protoc.zip \
+        "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip" \
+    && unzip -q /tmp/protoc.zip -d /usr/local \
+    && rm /tmp/protoc.zip \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY . .
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/workspace/target \
+    cargo build --release -p flz_nif -p flz \
+    && mkdir -p /artifacts \
+    && cp target/release/libflz_nif.so /artifacts/flz_nif.so \
+    && cp target/release/flz /artifacts/flz
+
+# Stage 2 — Elixir builder. Assembles the Mix release using the
+# pre-built NIF + CLI from Stage 1; cargo is not invoked here.
+FROM hexpm/elixir:1.17.3-erlang-27.2-debian-bookworm-20241202-slim AS elixir-build
+
+WORKDIR /app
+
+# protobuf-compiler is needed by `use Protox` in lib/flezha/executor/
+# commands_proto.ex, which shells out to protoc at compile time.
+# git is needed by mix.exs's kafka_ex github: dep.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        build-essential \
+        git \
+        protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV MIX_ENV=prod \
+    LANG=C.UTF-8
+
+# Copy mix metadata first to maximise layer-cache hits when only source changes.
+COPY mix.exs mix.lock ./
+
+RUN --mount=type=cache,target=/root/.hex \
+    --mount=type=cache,target=/root/.mix \
+    mix local.hex --force \
+    && mix local.rebar --force \
+    && mix deps.get --only prod
+
+# RUSTLER_SKIP_COMPILATION makes rustler pick up the .so dropped into
+# priv/native/ below instead of invoking cargo again.
+ENV RUSTLER_SKIP_COMPILATION=true
+
+COPY config ./config
+COPY rel ./rel
+COPY protobufs ./protobufs
+COPY lib ./lib
+
+RUN mkdir -p priv/native cli/target/release
+COPY --from=rust-build /artifacts/flz_nif.so ./priv/native/flz_nif.so
+COPY --from=rust-build /artifacts/flz         ./cli/target/release/flz
+
+RUN --mount=type=cache,target=/root/.hex \
+    --mount=type=cache,target=/root/.mix \
+    ERL_FLAGS="+JMsingle true" mix compile \
+    && mix release --overwrite
+
+# Stage 3 — runtime image. The Mix release bundles ERTS, so the runtime
+# only needs basic shared libs and tini. Executors attach via
+# `bin/flzvm remote` (the dist-node rsh shipped inside the release).
+FROM debian:bookworm-slim AS runtime
+
+WORKDIR /flezha
+
+ENV LANG=C.UTF-8 \
+    MIX_ENV=prod
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libssl3 \
+        libstdc++6 \
+        libtinfo6 \
+        locales \
+        ca-certificates \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN addgroup --system --gid 1000 flezha \
+    && adduser --system --uid 1000 --ingroup flezha flezha
+
+COPY --from=elixir-build /app/_build/prod/rel/flezha /flezha/
+
+# Graceful-restart entrypoint and pre-stop hook. See the controller-packaging
+# spec ("Prod image entrypoint SHALL provide graceful-restart lifecycle")
+# for the full env-var contract.
+COPY docker/prod/controller-entrypoint.sh /usr/local/bin/controller-entrypoint.sh
+COPY docker/prod/snapshot-on-stop.sh /usr/local/bin/snapshot-on-stop.sh
+RUN chmod +x /usr/local/bin/controller-entrypoint.sh /usr/local/bin/snapshot-on-stop.sh
+
+# Named volumes inherit the mount-point's image-time ownership, so each
+# overlaid dir must exist with flezha:flezha or the non-root process
+# hits EACCES on first write.
+RUN mkdir -p /flezha/app_data/sockets \
+             /flezha/app_data/certs \
+             /flezha/app_data/logs \
+             /flezha/app_data/snapshots \
+    && chown -R flezha:flezha /flezha
+
+USER flezha
+
+# Readiness = the BEAM has opened its control socket. The controller does not
+# bind a TCP port we can probe, so we key off the UDS instead. Matches
+# the path used by the entrypoint's restore-wait loop.
+HEALTHCHECK --interval=10s --timeout=5s --retries=10 --start-period=120s \
+    CMD test -S "${FLEZHA_SOCKET_FILES_PATH:-/flezha/app_data/sockets}/executor_control_channel.sock" || exit 1
+
+# tini handles zombie reaping and signal forwarding for the BEAM.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/local/bin/controller-entrypoint.sh"]

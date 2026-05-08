@@ -1,7 +1,7 @@
 # Flezha Java SDK
 
 Java 21 SDK for authoring Flezha compute engines. Feature parity with the
-Rust SDK (`sdk/rust/`), talks to the existing Elixir agent through JNI
+Rust SDK (`sdk/rust/`), talks to the existing Elixir controller through JNI
 bindings over `flz_transport`. Supports both UDS and QUIC transports.
 
 ## Quickstart
@@ -80,12 +80,12 @@ mvn -f sdk/java/pom.xml -P host-only package
 | Module | Purpose |
 |---|---|
 | `flezha-sdk-api` | Public API: `Flezha`, `Relay`, `RelayRegistry`, `Shard`, `ShardCtx`, `ShardException`, channel builder types. No native dependency. |
-| `flezha-sdk-protobuf` | Java classes generated from `protobufs/compute_engine_commands.proto`. Pure generated code; no hand-written sources. |
+| `flezha-sdk-protobuf` | Java classes generated from `protobufs/executor_commands.proto`. Pure generated code; no hand-written sources. |
 | `flezha-sdk-runtime` | Control plane, data plane, framing, worker pool, reconnect, command dispatch. |
 | `flezha-sdk-native` | JNI bindings (`NativeTransport`) + bundled per-OS `libflz_transport` native binaries. |
 | `flezha-sdk-testing` | Test fixtures — `ShardTestHarness` for Shard authors. Add as `<scope>test</scope>`. |
 | `flezha-sdk` | Fat-jar aggregator — the published artifact. |
-| `flezha-sdk-integration-tests` | End-to-end tests against a running agent (typically driven by the Elixir harness via `mix test.java_sdk`). |
+| `flezha-sdk-integration-tests` | End-to-end tests against a running controller (typically driven by the Elixir harness via `mix test.java_sdk`). |
 
 ## State persistence
 
@@ -94,7 +94,7 @@ mirroring the Rust SDK. Shards opt in by declaring a non-`NoChange`
 Change type and recording mutations through
 `StateHandle.apply(change)` instead of direct field writes. The
 per-Partition flusher batches Changes on a 5 ms linger window and ships
-them on the agent's control channel using the umbrella's wire format
+them on the controller's control channel using the umbrella's wire format
 (`sdk_lang = 2`, `format_id = 4` = Kryo).
 
 See `docs/java_state_persistence.md` for the full API surface, code
@@ -103,7 +103,7 @@ examples, and Kryo registration guidance. `flezha-sdk-testing`'s
 
 ## Running tests
 
-Unit tests (no agent required):
+Unit tests (no controller required):
 
 ```
 mvn -f sdk/java/pom.xml test
@@ -115,7 +115,7 @@ With coverage report (JaCoCo):
 mvn -f sdk/java/pom.xml -P coverage verify
 ```
 
-Integration tests (against a live agent):
+Integration tests (against a live controller):
 
 ```
 mix test.java_sdk  # from the repo root; runs the full Java-runtime matrix
@@ -134,5 +134,5 @@ Rust SDK and documented in `docs/sdk_protocol_spec.md` §2:
 | `FLEZHA_SERVER_CERT_PATH` | `app_data/certs/cert.pem` | Server mode only. |
 | `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/key.pem` | Server mode only. |
 | `FLEZHA_SOCKET_FILES_PATH` | `app_data/sockets` | UDS only. |
-| `FLEZHA_WORKER_POOL_SIZE` | `Runtime.availableProcessors()` | Size of the shared executor that drains every `PartitionSlot` mailbox work-steal-style. |
+| `FLEZHA_WORKER_POOL_SIZE` | `Runtime.availableRelays()` | Size of the shared executor that drains every `PartitionSlot` mailbox work-steal-style. |
 | `FLEZHA_NATIVE_LIB_DIR` | `$TMPDIR` | Override the directory the SDK extracts `libflz_transport` into. Use this on hardened containers where `/tmp` is noexec. |

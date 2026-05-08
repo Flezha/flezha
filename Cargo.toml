@@ -5,6 +5,6 @@ members = [
     "flz_jni",
     "sdk/rust",
     "cli",
-    "test/apps/rust_compute_engine",
+    "test/apps/rust_executor",
 ]
 resolver = "2"

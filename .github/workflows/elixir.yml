@@ -3,7 +3,7 @@ name: Elixir
 # Runs `mix test` — every ExUnit case except `:system` and `:java_sdk`,
 # which are excluded in `test/test_helper.exs`. The Java SDK integration
 # matrix (`:java_sdk`) runs in `java-sdk.yml` because it needs the Java
-# compute-engine jar built first; this workflow stays Elixir+Rust only.
+# executor jar built first; this workflow stays Elixir+Rust only.
 #
 # Native Java SDK binaries (libflz_transport.{so,dylib,dll} × 5 platforms)
 # are committed under `sdk/java/flezha-sdk-native/src/main/resources/native/`
@@ -24,7 +24,7 @@ on:
       - "flz_nif/**"
       - "sdk/rust/**"
       - "cli/**"
-      - "test/apps/rust_compute_engine/**"
+      - "test/apps/rust_executor/**"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
   push:
@@ -40,7 +40,7 @@ on:
       - "flz_nif/**"
       - "sdk/rust/**"
       - "cli/**"
-      - "test/apps/rust_compute_engine/**"
+      - "test/apps/rust_executor/**"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
 
@@ -87,7 +87,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-            test/apps/rust_compute_engine/target
+            test/apps/rust_executor/target
           key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             cargo-${{ runner.os }}-
@@ -120,6 +120,6 @@ jobs:
       - name: Run mix test
         # Default `mix test` excludes `:system` and `:java_sdk`. The
         # `:java_sdk` integration matrix runs in `java-sdk.yml` because it
-        # needs the Java compute-engine jar built first; this workflow
+        # needs the Java executor jar built first; this workflow
         # stays Elixir+Rust only.
         run: mix test

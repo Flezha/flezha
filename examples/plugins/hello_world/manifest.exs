@@ -10,7 +10,7 @@
       provider: Flezha.Examples.HelloWorld,
       subscriptions: [{:on_input, []}],
       default_opts: %{greeting: "hello"},
-      scope: :processor
+      scope: :relay
     }
   ],
   dependencies: []

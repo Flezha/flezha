@@ -1,7 +1,7 @@
 services:
-  agent:
+  controller:
     image: alfetahe/flezha:latest-toolchain
-    container_name: flezha_agent_dev
+    container_name: flezha_controller_dev
     user: "0:0"
     stdin_open: true
     # Auto-start the BEAM so the connection_healing test (or any future
@@ -34,7 +34,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - test -S /flezha/app_data/sockets/compute_engine_control_channel.sock
+        - test -S /flezha/app_data/sockets/executor_control_channel.sock
       interval: 5s
       timeout: 3s
       retries: 60
@@ -51,25 +51,25 @@ services:
 
   rust:
     image: alfetahe/flezha:latest-toolchain
-    container_name: flezha_rust_compute_engine
+    container_name: flezha_rust_executor
     user: "0:0"
     stdin_open: true
     depends_on:
-      agent:
+      controller:
         condition: service_healthy
     command:
       - sh
       - -c
       - |
         chown -R 1000:1000 /flezha 2>/dev/null || true
-        until [ -S /flezha/app_data/sockets/compute_engine_control_channel.sock ]; do
-          echo "[rust] waiting for agent control socket..."
+        until [ -S /flezha/app_data/sockets/executor_control_channel.sock ]; do
+          echo "[rust] waiting for controller control socket..."
           sleep 1
         done
         ns="$$FLEZHA_DEMO_NAMESPACE"
         : "$${ns:=default}"
         echo "[rust] starting compute engine for namespace=$$ns"
-        exec su -m -s /bin/sh flezha -c "cd /flezha/test/apps/rust_compute_engine && exec cargo run --quiet --target-dir=/flezha/target -- $$ns"
+        exec su -m -s /bin/sh flezha -c "cd /flezha/test/apps/rust_executor && exec cargo run --quiet --target-dir=/flezha/target -- $$ns"
     environment:
       FLEZHA_DEMO_NAMESPACE: ${FLEZHA_DEMO_NAMESPACE:-default}
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/

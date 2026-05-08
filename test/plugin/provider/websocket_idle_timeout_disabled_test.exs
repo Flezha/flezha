@@ -1,11 +1,11 @@
 defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
   @moduledoc """
-  Verifies that operators can fully disable the idle watchdog by passing
+  Verifies that executors can fully disable the idle watchdog by passing
   `--Xidle_timeout_ms=0`. Without this opt-out, low-volume streams that
   legitimately go quiet for hours would reconnect every 30 s.
 
   Failure mode this protects against: the idle watchdog interfering with
-  intentionally low-frequency WS subscriptions when an operator has
+  intentionally low-frequency WS subscriptions when an executor has
   declared the stream may stay quiet.
   """
 

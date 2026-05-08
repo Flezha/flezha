@@ -5,7 +5,7 @@ import javax.annotation.Nonnull;
 
 /**
  * Entry-channel declaration. Only exposes {@link #into(Class)} to wire a
- * consumer Shard; entry channels are fed by the agent, so there is no
+ * consumer Shard; entry channels are fed by the controller, so there is no
  * {@code .from(...)} on this type.
  */
 public interface EntryChannel<T> {

@@ -43,7 +43,7 @@ pub type FlezhaLogFn = Option<
     unsafe extern "C" fn(level: FlezhaLogLevel, message: *const c_char, user_data: *mut std::ffi::c_void),
 >;
 
-/// Callbacks for server mode (agent/Elixir NIF).
+/// Callbacks for server mode (controller/Elixir NIF).
 #[repr(C)]
 pub struct FlezhaServerCallbacks {
     /// Called when a new connection is established.

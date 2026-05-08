@@ -42,7 +42,7 @@ clean:
 docker-build:
 	docker build \
 	  -t alfetahe/flezha:$(VERSION) \
-	  -f docker/prod/Dockerfile.agent \
+	  -f docker/prod/Dockerfile.controller \
 	  .
 
 # Build and push multi-arch image (amd64 + arm64) via buildx.
@@ -51,7 +51,7 @@ docker-build-multiarch:
 	docker buildx build \
 	  --platform linux/amd64,linux/arm64 \
 	  -t alfetahe/flezha:$(VERSION) \
-	  -f docker/prod/Dockerfile.agent \
+	  -f docker/prod/Dockerfile.controller \
 	  --push \
 	  .
 

@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.control.handlers;
 
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.runtime.ComputeEngineContext;
+import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import java.util.List;
 import javax.annotation.Nonnull;
@@ -9,11 +9,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Handles the agent's {@code PartitionMailboxStatus} command. Updates the
+ * Handles the controller's {@code PartitionMailboxStatus} command. Updates the
  * per-Partition mailbox observer state used by the existing
  * {@code OverflowPolicy} machinery from {@code relay-bounded-mailbox}.
  *
- * <p>The agent ships {@code PartitionMailboxStatus} as an advisory: when a
+ * <p>The controller ships {@code PartitionMailboxStatus} as an advisory: when a
  * Partition's mailbox depth or admission state changes, the SDK adjusts its
  * client-side admission throttling accordingly. The handler is a sink — no
  * payload is returned in the response.
@@ -25,7 +25,7 @@ public final class PartitionMailboxStatusHandler implements CommandHandler {
     @Override
     @Nonnull
     public byte[] handle(
-            @Nonnull ComputeEngineContext ctx,
+            @Nonnull ExecutorContext ctx,
             @Nonnull CommandRequest request,
             @Nonnull List<String> errors) {
         try {

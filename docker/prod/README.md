@@ -1,4 +1,4 @@
-# Flezha Agent - Production Docker Build
+# Flezha Controller - Production Docker Build
 
 Run the following commands from the **flezha project root** directory.
 
@@ -6,13 +6,13 @@ Run the following commands from the **flezha project root** directory.
 
 | Tag                                | Built from                          | Notes |
 |------------------------------------|-------------------------------------|-------|
-| `alfetahe/flezha:latest`           | `docker/prod/Dockerfile.agent`      | Prod runtime. Default entrypoint = graceful-restart wrapper. |
+| `alfetahe/flezha:latest`           | `docker/prod/Dockerfile.controller`      | Prod runtime. Default entrypoint = graceful-restart wrapper. |
 | `alfetahe/flezha:latest-dev`       | `docker/dev/Dockerfile.runtime`     | `FROM :latest` + Node.js + pre-built testnet WS server. |
 | `alfetahe/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted). |
 
 ## Image layout
 
-`docker/prod/Dockerfile.agent` is a three-stage build:
+`docker/prod/Dockerfile.controller` is a three-stage build:
 
 - **Stage 1** — `rust:1.87.0-slim-bookworm`: builds `flz_nif.so` and the
   `flz` CLI binary with `--release`. `protoc` lives here because
@@ -27,16 +27,16 @@ Run the following commands from the **flezha project root** directory.
 
 ## Default runtime contract
 
-The image's CMD is `/usr/local/bin/agent-entrypoint.sh` (under tini). The
+The image's CMD is `/usr/local/bin/controller-entrypoint.sh` (under tini). The
 script starts `bin/flzvm start`, optionally runs `flz cluster restore` if
 a snapshot file is present, traps SIGTERM/SIGINT to write a snapshot via
 `/usr/local/bin/snapshot-on-stop.sh`, then `wait`s. All behaviour is
 configured via env vars — see `docs/deployment.md` for the contract. To
-run the agent without the snapshot lifecycle, set
+run the controller without the snapshot lifecycle, set
 `FLEZHA_SNAPSHOT_ENABLED=false`.
 
 A HEALTHCHECK is declared on the control socket
-(`${FLEZHA_SOCKET_FILES_PATH}/compute_engine_control_channel.sock`).
+(`${FLEZHA_SOCKET_FILES_PATH}/executor_control_channel.sock`).
 
 Attach a shell against a running container via the release's dist-node
 entry points:
@@ -61,11 +61,11 @@ one-line edit if a legitimate size change ships in the same PR.
 
 ```bash
 # Build and push on amd64
-docker build -f docker/prod/Dockerfile.agent -t alfetahe/flezha:latest-amd64 .
+docker build -f docker/prod/Dockerfile.controller -t alfetahe/flezha:latest-amd64 .
 docker push alfetahe/flezha:latest-amd64
 
 # Build and push on arm64
-docker build -f docker/prod/Dockerfile.agent -t alfetahe/flezha:latest-arm64 .
+docker build -f docker/prod/Dockerfile.controller -t alfetahe/flezha:latest-arm64 .
 docker push alfetahe/flezha:latest-arm64
 
 # Push to the latest
@@ -73,7 +73,7 @@ docker buildx imagetools create -t alfetahe/flezha:latest \
   alfetahe/flezha:latest-amd64 alfetahe/flezha:latest-arm64
 
 # Build and push for current architecture.
-docker build -f docker/prod/Dockerfile.agent -t alfetahe/flezha:latest .
+docker build -f docker/prod/Dockerfile.controller -t alfetahe/flezha:latest .
 docker push alfetahe/flezha:latest
 ```
 
@@ -93,7 +93,7 @@ docker buildx inspect --bootstrap
 
 # Build and push with both version and latest tags
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/prod/Dockerfile.agent \
+  -f docker/prod/Dockerfile.controller \
   -t alfetahe/flezha:0.2.0 \
   -t alfetahe/flezha:latest \
   . --push
@@ -107,7 +107,7 @@ them into one manifest list. All commands use standard `docker` — no SSH magic
 **On your amd64 machine:**
 
 ```bash
-docker build -f docker/prod/Dockerfile.agent \
+docker build -f docker/prod/Dockerfile.controller \
   -t alfetahe/flezha:amd64 .
 docker push alfetahe/flezha:amd64
 ```
@@ -115,7 +115,7 @@ docker push alfetahe/flezha:amd64
 **On your arm64 machine (SSH in normally, then run):**
 
 ```bash
-docker build -f docker/prod/Dockerfile.agent \
+docker build -f docker/prod/Dockerfile.controller \
   -t alfetahe/flezha:arm64 .
 docker push alfetahe/flezha:arm64
 ```

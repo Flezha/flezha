@@ -18,8 +18,8 @@ defmodule Flezha.Transport.Server do
 
   ## Transport modes
 
-  - **UDS**: One control channel socket. Per-compute-engine stream sockets
-    are created by StreamAcceptors inside ComputeEngineSupervisor.
+  - **UDS**: One control channel socket. Per-executor stream sockets
+    are created by StreamAcceptors inside ExecutorSupervisor.
   - **QUIC**: Single UDP socket handles everything. Control channels arrive
     as `{:flz_connection, stream_ref}`. Data streams arrive as
     `{:flz_stream, stream_ref, type, index}` after the 2-byte type prefix
@@ -28,8 +28,8 @@ defmodule Flezha.Transport.Server do
   """
 
   alias Flezha.Transport.Native
-  alias Flezha.ComputeEngine.FleetManager
-  alias Flezha.ComputeEngine.StreamSup
+  alias Flezha.Executor.FleetManager
+  alias Flezha.Executor.StreamSup
   alias Flezha.Socket.Support, as: SocketSupport
 
   require Logger
@@ -87,7 +87,7 @@ defmodule Flezha.Transport.Server do
            server_ref: server_ref,
            transport: :quic,
            pending_streams: %{},
-           # QUIC routing state: most recently established compute_engine_id.
+           # QUIC routing state: most recently established executor_id.
            # Used to route {:flz_stream, ...} data streams to the right StreamChannels.
            quic_current_ce_id: nil
          }}
@@ -149,7 +149,7 @@ defmodule Flezha.Transport.Server do
       [stream_ref | _rest] ->
         pending = Map.delete(state.pending_streams, stream_ref)
         state = %{state | pending_streams: pending}
-        handle_new_compute_engine(stream_ref, message, state)
+        handle_new_executor(stream_ref, message, state)
 
       [] ->
         Logger.warning("[Transport.Server] connect_control_channel with no pending connection")
@@ -185,17 +185,17 @@ defmodule Flezha.Transport.Server do
     :ok
   end
 
-  defp handle_new_compute_engine(stream_ref, init_message, state) do
+  defp handle_new_executor(stream_ref, init_message, state) do
     init_payload = Flezha.Service.Payloader.json_to_map(init_message)
     namespace = Map.get(init_payload, "namespace")
 
-    # Dispatch to FleetManager — this creates the ComputeEngineSupervisor.
+    # Dispatch to FleetManager — this creates the ExecutorSupervisor.
     case FleetManager.connect_handler(stream_ref, namespace, init_payload, state.transport) do
-      {:ok, compute_engine_id} ->
-        # For QUIC, track the current compute_engine_id for data stream routing.
+      {:ok, executor_id} ->
+        # For QUIC, track the current executor_id for data stream routing.
         state =
           if state.transport == :quic do
-            %{state | quic_current_ce_id: compute_engine_id}
+            %{state | quic_current_ce_id: executor_id}
           else
             state
           end
@@ -212,8 +212,8 @@ defmodule Flezha.Transport.Server do
   # first nil-ref channel in the pool (rebind contract) — overwriting a live
   # channel would silently drop traffic on its existing stream. The SDK's
   # index hint is intentionally ignored: any index can map to any channel
-  # since outbound routing is by processor_id, not stream index.
-  defp route_quic_data_stream(stream_ref, stream_type, index, compute_engine_id, state) do
+  # since outbound routing is by relay_id, not stream index.
+  defp route_quic_data_stream(stream_ref, stream_type, index, executor_id, state) do
     type =
       case stream_type do
         @stream_type_primary ->
@@ -228,7 +228,7 @@ defmodule Flezha.Transport.Server do
       end
 
     if type do
-      stream_ids = StreamSup.stream_ids(compute_engine_id, type)
+      stream_ids = StreamSup.stream_ids(executor_id, type)
 
       case StreamSup.bind_stream_to_first_nil(stream_ids, stream_ref) do
         {:bound, stream_pid, stream_name} ->
@@ -241,7 +241,7 @@ defmodule Flezha.Transport.Server do
 
         nil ->
           Logger.warning(
-            "[Transport.Server] No rebindable #{type} channel for #{compute_engine_id}; " <>
+            "[Transport.Server] No rebindable #{type} channel for #{executor_id}; " <>
               "closing QUIC stream ##{index}"
           )
 

@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.control.handlers;
 
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.runtime.ComputeEngineContext;
+import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import java.util.List;
 import javax.annotation.Nonnull;
@@ -9,7 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Handles the agent's {@code CompactPartition} command. Acquires the
+ * Handles the controller's {@code CompactPartition} command. Acquires the
  * partition's sticky CAS (existing {@code stateLock} primitive on
  * {@code PartitionSlot}), clones the state via Kryo deep-copy, releases the
  * CAS, serializes the clone with header stamping via
@@ -24,7 +24,7 @@ public final class CompactPartitionHandler implements CommandHandler {
     @Override
     @Nonnull
     public byte[] handle(
-            @Nonnull ComputeEngineContext ctx,
+            @Nonnull ExecutorContext ctx,
             @Nonnull CommandRequest request,
             @Nonnull List<String> errors) {
         try {

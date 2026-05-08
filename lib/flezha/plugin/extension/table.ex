@@ -133,9 +133,9 @@ defmodule Flezha.Plugin.Extension.Table do
 
       entry ->
         ctx = %Ctx.Tick{
-          processor_id: Map.get(table.plugins, plugin_id).processor_id,
+          relay_id: Map.get(table.plugins, plugin_id).relay_id,
           namespace: Map.get(table.plugins, plugin_id).namespace,
-          compute_engine_id: nil,
+          executor_id: nil,
           plugin_id: plugin_id
         }
 

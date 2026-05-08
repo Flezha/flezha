@@ -4,10 +4,10 @@ defmodule Flezha.State.Wire do
 
   Two new payload-id strings are reserved on the data stream:
 
-    * `"partition_state_change"` — SDK → agent. Carries one Change record
+    * `"partition_state_change"` — SDK → controller. Carries one Change record
       destined for the per-Partition WAL.
-    * `"partition_state_snapshot"` — SDK → agent. Carries a serialized
-      `Self::State` snapshot produced by an agent-initiated `CompactPartition`.
+    * `"partition_state_snapshot"` — SDK → controller. Carries a serialized
+      `Self::State` snapshot produced by an controller-initiated `CompactPartition`.
 
   ## Frame layout
 
@@ -32,9 +32,9 @@ defmodule Flezha.State.Wire do
   [partition_key_len: u16 BE][partition_key]
   ```
 
-  This is structured (not opaque) so the agent can route to the right
-  per-Partition `WalWriter` without a side-table mapping. The agent's
-  `compute_engine_id` is implicit — the agent knows which compute_engine
+  This is structured (not opaque) so the controller can route to the right
+  per-Partition `WalWriter` without a side-table mapping. The controller's
+  `executor_id` is implicit — the controller knows which executor
   sent the frame from the connection.
   """
 

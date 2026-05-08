@@ -1,12 +1,12 @@
 # Flezha repo notes
 
-## Per-Partition state persistence (`relay-state-persistence-agent`)
+## Per-Partition state persistence (`relay-state-persistence`)
 
 - **Modules**: `lib/flezha/state/` — `Registry`, `Wire`, `Metrics`,
   `Outbox`, `PersistenceResolver`, `Supervisor`, `WalWriter`,
   `FsyncBatcher`, `Snapshot`, `Retention`, `Restore`, `TimeTravel`,
   `TestHelpers`.
-- **On-disk layout**: `app_data/state/{compute_engine_id}/{relay_class}/{shard_id}/{partition_key}.{wal,snap.{seq},outbox.dedup}`.
+- **On-disk layout**: `app_data/state/{executor_id}/{relay_class}/{shard_id}/{partition_key}.{wal,snap.{seq},outbox.dedup}`.
 - **Wire payload-ids**: `partition_state_change`, `partition_state_snapshot`
   (data stream); `RestoreInitState`, `RestoreInitStateResponse`,
   `CompactPartition`, `CompactPartitionResponse`, `PartitionMailboxStatus`
@@ -22,4 +22,4 @@
   `flz state rotate <relay/shard/key>`, `flz state retention <relay> <hours>`.
   Implemented in `cli/src/state.rs`; RPCs into
   `Flezha.Service.CliManager.state_*/N`.
-- **Detailed notes**: `docs/agent_state_persistence.md`.
+- **Detailed notes**: `docs/controller_state_persistence.md`.

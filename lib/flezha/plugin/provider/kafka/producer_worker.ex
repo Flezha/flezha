@@ -748,7 +748,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     # user-supplied `kafka_msg_key`. The contract: the framework owns
     # the dedup key for stateful relays so retries land on the same
     # Kafka partition — bypass-able by users only via a different
-    # metadata key (see `relay-state-persistence-agent` §11).
+    # metadata key (see `relay-state-persistence-controller` §11).
     key =
       Map.get(metadata, "flezha.dedup_key") ||
         Map.get(metadata, "kafka_msg_key", nil)

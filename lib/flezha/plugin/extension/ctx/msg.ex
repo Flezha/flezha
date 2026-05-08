@@ -10,9 +10,9 @@ defmodule Flezha.Plugin.Extension.Ctx.Msg do
           payload: binary(),
           reply_to: pid(),
           ref: reference(),
-          processor_id: String.t(),
+          relay_id: String.t(),
           namespace: atom() | String.t(),
-          compute_engine_id: String.t() | nil
+          executor_id: String.t() | nil
         }
 
   defstruct [
@@ -20,8 +20,8 @@ defmodule Flezha.Plugin.Extension.Ctx.Msg do
     :payload,
     :reply_to,
     :ref,
-    :processor_id,
+    :relay_id,
     :namespace,
-    :compute_engine_id
+    :executor_id
   ]
 end

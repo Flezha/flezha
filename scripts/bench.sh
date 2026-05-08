@@ -6,12 +6,12 @@ set -e
 # Wrapper for `mix bench` with configurable parameters.
 #
 # Usage:
-#   ./scripts/bench.sh [--num-processors N] [--messages-per-processor N] \
+#   ./scripts/bench.sh [--num-relays N] [--messages-per-relay N] \
 #                      [--transport uds|quic] [--runtime rust|java]
 #
 # Defaults:
-#   --num-processors 100
-#   --messages-per-processor 100
+#   --num-relays 100
+#   --messages-per-relay 100
 #   --transport uds
 #   --runtime rust
 
@@ -22,11 +22,11 @@ RUNTIME="rust"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --num-processors|-n)
+        --num-relays|-n)
             NUM_PROCESSORS="$2"
             shift 2
             ;;
-        --messages-per-processor|-m)
+        --messages-per-relay|-m)
             MESSAGES_PER_PROCESSOR="$2"
             shift 2
             ;;
@@ -50,8 +50,8 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: ./scripts/bench.sh [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  -n, --num-processors N          Number of processors (default: 100)"
-            echo "  -m, --messages-per-processor N  Messages per processor (default: 100)"
+            echo "  -n, --num-relays N          Number of relays (default: 100)"
+            echo "  -m, --messages-per-relay N  Messages per relay (default: 100)"
             echo "  -t, --transport uds|quic        Transport to use (default: uds)"
             echo "  -r, --runtime rust|java         SDK runtime to benchmark (default: rust)"
             echo "  -h, --help                      Show this help message"
@@ -70,9 +70,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo "Running benchmark: runtime=$RUNTIME, transport=$TRANSPORT, $NUM_PROCESSORS processors, $MESSAGES_PER_PROCESSOR messages each"
+echo "Running benchmark: runtime=$RUNTIME, transport=$TRANSPORT, $NUM_PROCESSORS relays, $MESSAGES_PER_PROCESSOR messages each"
 export FLEZHA_TRANSPORT="$TRANSPORT"
 mix bench \
-    --num-processors "$NUM_PROCESSORS" \
-    --messages-per-processor "$MESSAGES_PER_PROCESSOR" \
+    --num-relays "$NUM_PROCESSORS" \
+    --messages-per-relay "$MESSAGES_PER_PROCESSOR" \
     --runtime "$RUNTIME"

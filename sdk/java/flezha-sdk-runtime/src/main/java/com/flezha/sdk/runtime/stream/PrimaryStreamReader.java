@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.stream;
 
 import com.flezha.sdk.channel.ChannelKind;
-import com.flezha.sdk.runtime.ComputeEngineContext;
+import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.relay.ChannelDescriptor;
@@ -30,11 +30,11 @@ public final class PrimaryStreamReader {
     private static final Logger LOG = LoggerFactory.getLogger(PrimaryStreamReader.class);
     private static final String CHANNEL_META_KEY = "channel";
 
-    private final ComputeEngineContext ctx;
+    private final ExecutorContext ctx;
     private final long streamId;
     private final FrameParser parser = new FrameParser();
 
-    public PrimaryStreamReader(@Nonnull ComputeEngineContext ctx, long streamId) {
+    public PrimaryStreamReader(@Nonnull ExecutorContext ctx, long streamId) {
         this.ctx = ctx;
         this.streamId = streamId;
     }

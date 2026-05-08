@@ -11,7 +11,7 @@ defmodule Flezha.State.TestHelpers do
 
   @doc """
   Allocates a per-test temporary directory under `System.tmp_dir!/0` and
-  registers it as the agent's `:state_root`. Callers should
+  registers it as the controller's `:state_root`. Callers should
   `on_exit(fn -> Application.delete_env(:flezha, :state_root) end)` to
   reset the value between tests.
   """
@@ -29,7 +29,7 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
-  Build a 16-byte WAL header. The agent treats the header as opaque
+  Build a 16-byte WAL header. The controller treats the header as opaque
   bytes; tests only need a stable shape to round-trip records through
   `WalWriter.encode_record/3` and back.
   """

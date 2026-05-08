@@ -21,7 +21,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
           provider: MyOrg.KafkaIngest,
           subscriptions: [{:on_input, [position: 0]}],
           default_opts: %{},
-          scope: :processor
+          scope: :relay
         }
       ],
       dependencies: []
@@ -104,7 +104,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
           provider: Other.NotInList,
           subscriptions: [{:on_input, []}],
           default_opts: %{},
-          scope: :processor
+          scope: :relay
         }
       ])
 
@@ -155,7 +155,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
       provider: mod,
       subscriptions: [{:on_input, []}],
       default_opts: %{},
-      scope: :processor
+      scope: :relay
     }
   end
 end

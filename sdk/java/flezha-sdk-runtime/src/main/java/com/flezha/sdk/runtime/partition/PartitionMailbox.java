@@ -6,7 +6,7 @@ import javax.annotation.Nonnull;
 
 /**
  * Per-Partition unbounded mailbox + drain-inflight CAS gate. Generalized
- * from the legacy per-processor pattern: a producer's {@link #push(Object)}
+ * from the legacy per-relay pattern: a producer's {@link #push(Object)}
  * returns {@code true} when the caller should submit a drain task (because
  * the inflight CAS won), {@code false} when an existing drainer will pick
  * up the new item.

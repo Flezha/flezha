@@ -5,7 +5,7 @@ defmodule Flezha.Cluster.Snapshot.Encoding do
   `encode/1` wraps a payload term in the current schema version and produces a
   compressed ETF binary. `decode/1` is the only place that pattern-matches the
   version tag and is the single source of truth for "is this file readable by
-  this agent." A version mismatch is a hard error — see `cluster-snapshot-restore`'s
+  this controller." A version mismatch is a hard error — see `cluster-snapshot-restore`'s
   spec on schema-version handling.
   """
 

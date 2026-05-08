@@ -2,11 +2,11 @@ defmodule Flezha.Cluster.SnapshotRestoreSystemTest do
   @moduledoc """
   Two-node cluster system test for `flz cluster snapshot` / `flz cluster restore`.
 
-  Boots a peer BEAM via `:peer.start_link`, distributes processors across
+  Boots a peer BEAM via `:peer.start_link`, distributes relays across
   the two nodes via ProcessHub's hash ring, drives the snapshot path
   through real cross-node `:rpc.call` fan-out (the local-node arm is
   covered in `test/cluster/snapshot_e2e_test.exs`), and asserts the
-  restore path re-spawns processors with primed state.
+  restore path re-spawns relays with primed state.
 
   Tagged `:cluster_snapshot_cst` for selective running with
   `mix test --only cluster_snapshot_cst`. Heavy but matches the existing
@@ -17,17 +17,17 @@ defmodule Flezha.Cluster.SnapshotRestoreSystemTest do
 
   alias Flezha.Cluster.Snapshot.Coordinator
   alias Flezha.Cluster.Snapshot.Encoding
-  alias Flezha.Processor.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
-  alias Flezha.Service.ProcessorManager
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "default"
   @factory "store_input"
 
   setup do
-    on_exit(fn -> ProcessorManager.stop_all_processors(@namespace) end)
+    on_exit(fn -> RelayManager.stop_all_relays(@namespace) end)
     :ok
   end
 
@@ -45,15 +45,15 @@ defmodule Flezha.Cluster.SnapshotRestoreSystemTest do
 
     wait_for_hub_join(peer_node)
 
-    # Two processors so ProcessHub's hash ring has at least a chance of
+    # Two relays so ProcessHub's hash ring has at least a chance of
     # distributing across both nodes. The exact placement is ring-decided
     # and not what the test pins on — we only require that whatever
-    # nodes end up hosting the processors before snapshot, the same set
+    # nodes end up hosting the relays before snapshot, the same set
     # is hosting them after restore.
-    processor_ids = ["cs-snap-proc-a", "cs-snap-proc-b"]
+    relay_ids = ["cs-snap-proc-a", "cs-snap-proc-b"]
 
     placements_before =
-      for id <- processor_ids, into: %{} do
+      for id <- relay_ids, into: %{} do
         builder = %Builder{
           id: id,
           factory_id: @factory,
@@ -61,19 +61,19 @@ defmodule Flezha.Cluster.SnapshotRestoreSystemTest do
           opts: [snapshot_interval: :disabled]
         }
 
-        {:ok, info} = ProcessorManager.start_processor(@namespace, builder)
+        {:ok, info} = RelayManager.start_relay(@namespace, builder)
         {id, info.node}
       end
 
     # ProcessHub's distributed registry settles asynchronously; let both
     # nodes catch up to the new placements before driving snapshots.
-    wait_for_processors_visible(processor_ids)
+    wait_for_relays_visible(relay_ids)
 
-    # Trigger one synchronous snapshot per processor so each Overwatch
+    # Trigger one synchronous snapshot per relay so each Overwatch
     # has a non-nil cached state binary at gather time.
     captured =
-      for id <- processor_ids, into: %{} do
-        {:ok, bin} = ProcessorManager.create_snapshot(@namespace, id)
+      for id <- relay_ids, into: %{} do
+        {:ok, bin} = RelayManager.create_snapshot(@namespace, id)
         assert is_binary(bin)
         {id, bin}
       end
@@ -83,7 +83,7 @@ defmodule Flezha.Cluster.SnapshotRestoreSystemTest do
 
     # Phase A — snapshot. Cross-node :rpc.call fan-out runs against the
     # peer's `Flezha.Cluster.Snapshot.local_state/0`. Other tests in the
-    # suite may have leaked processors into the default namespace, so
+    # suite may have leaked relays into the default namespace, so
     # we assert on the *subset* belonging to this test rather than the
     # exact total.
     assert {:ok, _summary} = Coordinator.snapshot(tmp_path, peer_timeout_ms: 5_000)
@@ -96,57 +96,57 @@ defmodule Flezha.Cluster.SnapshotRestoreSystemTest do
     assert node() in payload.cluster.nodes
     assert peer_node in payload.cluster.nodes
 
-    # Our two processors landed in the file with the right
+    # Our two relays landed in the file with the right
     # `last_observed_node` tagging (gather→reconcile path).
     decoded_placements =
-      for entry <- payload.processors,
-          entry.processor.id in processor_ids,
+      for entry <- payload.relays,
+          entry.relay.id in relay_ids,
           into: %{} do
-        {entry.processor.id, entry.last_observed_node}
+        {entry.relay.id, entry.last_observed_node}
       end
 
     assert decoded_placements == placements_before
 
     # Captured state binaries round-trip from each Overwatch through
     # the gather RPC into the file.
-    for id <- processor_ids do
+    for id <- relay_ids do
       assert payload.captured_states[id] == captured[id]
     end
 
-    # Phase B — restore the file. Other tests' processors may still be
+    # Phase B — restore the file. Other tests' relays may still be
     # running in the namespace; restoring our snapshot must re-spawn ours
     # without killing theirs.
-    for id <- processor_ids do
-      :ok = ProcessorManager.stop_processor(@namespace, id)
+    for id <- relay_ids do
+      :ok = RelayManager.stop_relay(@namespace, id)
     end
 
     Process.sleep(300)
 
-    for id <- processor_ids do
-      assert {:error, _} = ProcessorManager.get_processor_pid(@namespace, id)
+    for id <- relay_ids do
+      assert {:error, _} = RelayManager.get_relay_pid(@namespace, id)
     end
 
-    assert {:ok, %{processors: snapshot_count}} =
+    assert {:ok, %{relays: snapshot_count}} =
              Coordinator.restore(tmp_path, warn_if_older_than_ms: :infinity)
 
     assert snapshot_count >= 2
 
-    # Wait for ProcessHub to re-register our two processors.
-    wait_for_processors_visible(processor_ids)
+    # Wait for ProcessHub to re-register our two relays.
+    wait_for_relays_visible(relay_ids)
 
     after_restore_ids =
-      HubManager.get_all_processors(@namespace)
+      HubManager.get_all_relays(@namespace)
       |> Enum.map(fn {id, _pid} -> id end)
 
-    for id <- processor_ids do
+    for id <- relay_ids do
       assert id in after_restore_ids
     end
 
-    # State priming: a fresh snapshot per processor must yield the same
+    # State priming: a fresh snapshot per relay must yield the same
     # binary as before — proving `:initial_state_binary` was applied
     # before the first input.
-    for id <- processor_ids do
-      {:ok, bin_after} = ProcessorManager.create_snapshot(@namespace, id)
+    for id <- relay_ids do
+      {:ok, bin_after} = RelayManager.create_snapshot(@namespace, id)
 
       assert bin_after == captured[id],
              "post-restore snapshot for #{id} differs from pre-restore — state was not primed"
@@ -192,11 +192,11 @@ defmodule Flezha.Cluster.SnapshotRestoreSystemTest do
     refute File.exists?(tmp_path <> ".tmp")
   end
 
-  defp wait_for_processors_visible(processor_ids, attempts \\ 20) do
+  defp wait_for_relays_visible(relay_ids, attempts \\ 20) do
     visible =
-      processor_ids
+      relay_ids
       |> Enum.all?(fn id ->
-        case ProcessorManager.get_processor_pid(@namespace, id) do
+        case RelayManager.get_relay_pid(@namespace, id) do
           {:ok, pid} when is_pid(pid) -> true
           _ -> false
         end
@@ -207,11 +207,11 @@ defmodule Flezha.Cluster.SnapshotRestoreSystemTest do
         :ok
 
       attempts <= 0 ->
-        flunk("Processors #{inspect(processor_ids)} never became visible across the cluster")
+        flunk("Relays #{inspect(relay_ids)} never became visible across the cluster")
 
       true ->
         Process.sleep(100)
-        wait_for_processors_visible(processor_ids, attempts - 1)
+        wait_for_relays_visible(relay_ids, attempts - 1)
     end
   end
 

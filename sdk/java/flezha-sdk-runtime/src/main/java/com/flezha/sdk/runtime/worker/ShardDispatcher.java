@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.worker;
 
 import com.flezha.sdk.channel.ChannelKind;
-import com.flezha.sdk.runtime.ComputeEngineContext;
+import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.partition.PartitionSlot;
 import com.flezha.sdk.runtime.relay.ChannelDescriptor;
@@ -30,7 +30,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Per-Shard dispatcher (replacement for the legacy
- * {@code DefaultProcessorDispatcher}). Caches the producer-edge
+ * {@code DefaultRelayDispatcher}). Caches the producer-edge
  * {@code outputChannelId} at build time so {@code ctx.emit(...)} pays no
  * channel-name lookup on the hot path.
  *
@@ -42,7 +42,7 @@ public final class ShardDispatcher {
 
     private static final Logger LOG = LoggerFactory.getLogger(ShardDispatcher.class);
 
-    private final ComputeEngineContext ctx;
+    private final ExecutorContext ctx;
     private final ExecutorService pool;
     private final WeakReference<RelayInstance> instance;
     private final RelayTopology topology;
@@ -55,7 +55,7 @@ public final class ShardDispatcher {
 
     @SuppressWarnings("unchecked")
     public ShardDispatcher(
-            @Nonnull ComputeEngineContext ctx,
+            @Nonnull ExecutorContext ctx,
             @Nonnull ExecutorService pool,
             @Nonnull RelayInstance instance,
             @Nonnull RelayTopology topology,

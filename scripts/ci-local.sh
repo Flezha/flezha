@@ -17,7 +17,7 @@
 #           (matches java-sdk.yml's two jobs)
 #
 # Distribution artifacts (5× native binaries + SDK fat jar + test
-# compute-engine fat jar) are *committed* to git. Refresh them with one
+# executor fat jar) are *committed* to git. Refresh them with one
 # command — `scripts/build-dist.sh` — and `git add` the updated dist/
 # directories. CI never rebuilds them.
 #
@@ -69,9 +69,9 @@ all_native_binaries_present() {
   [[ -f "${nd}/windows-x64/libflz_transport.dll"   ]]
 }
 
-# Returns 0 (true) if the test compute-engine jar is committed.
+# Returns 0 (true) if the test executor jar is committed.
 test_app_jar_present() {
-  [[ -f "${REPO_ROOT}/test/apps/java_compute_engine/dist/java_compute_engine.jar" ]]
+  [[ -f "${REPO_ROOT}/test/apps/java_executor/dist/java_executor.jar" ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ run_java() {
     red "then 'git add' the updated files under:"
     red "  sdk/java/flezha-sdk-native/src/main/resources/native/"
     red "  sdk/java/flezha-sdk/dist/"
-    red "  test/apps/java_compute_engine/dist/"
+    red "  test/apps/java_executor/dist/"
     return 1
   fi
 
@@ -126,12 +126,12 @@ run_java() {
   bold ">>> mix deps.get"
   mix deps.get
 
-  # PortPilot launches `cargo run --quiet` for rust_compute_engine at boot;
+  # PortPilot launches `cargo run --quiet` for rust_executor at boot;
   # BootLoader's post_hook only gives it 20s to connect (config/test.exs).
   # Pre-build the binary so the cargo run is a cache hit.
-  bold ">>> cargo build rust_compute_engine (warms ./target/debug)"
+  bold ">>> cargo build rust_executor (warms ./target/debug)"
   cargo build --quiet \
-    --manifest-path=test/apps/rust_compute_engine/Cargo.toml \
+    --manifest-path=test/apps/rust_executor/Cargo.toml \
     --target-dir=./target
 
   bold ">>> mix test.java_sdk"

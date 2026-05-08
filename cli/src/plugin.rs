@@ -157,7 +157,7 @@ fn is_installed_plugin(plugin_id: &str) -> bool {
 }
 
 fn handle_enable(args: &[String]) {
-    let example_usage = "Usage: flz plugin enable <plugin_id> [<provider_id>] [Xkey=value] [--option value]\nExample: flz plugin enable processor_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic --namespace mynamespace";
+    let example_usage = "Usage: flz plugin enable <plugin_id> [<provider_id>] [Xkey=value] [--option value]\nExample: flz plugin enable relay_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic --namespace mynamespace";
 
     if args.len() < 2 {
         eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
@@ -372,7 +372,7 @@ fn print_plugin_help() {
     println!("    flz plugin upgrade kafka_ingest /path/to/kafka_ingest-1.1.0.fpz");
     println!("    flz plugin uninstall kafka_ingest");
     println!("    # Legacy provider enable (compile-time providers):");
-    println!("    flz plugin enable ws_id processor_websocket --Xuri=ws://localhost:4500 \\");
+    println!("    flz plugin enable ws_id relay_websocket --Xuri=ws://localhost:4500 \\");
     println!("        --extension=on_input --on_input.position=0");
     println!("    flz plugin disable ws_id");
 }

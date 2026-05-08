@@ -112,15 +112,15 @@ public final class NativeTransport {
     public static native void setLogCallback(long handle, FlezhaLogCallback callback);
 
     /** Update the native-side compute engine id used to build UDS stream socket paths. */
-    public static native void setComputeEngineId(long handle, String id);
+    public static native void setExecutorId(long handle, String id);
 
     /** Open the control channel. Returns a stream id. */
     public static native long openControlStream(long handle);
 
     /**
      * Open a data stream. {@code streamType} is {@code 0x01} for primary
-     * (read-side, agent → SDK) and {@code 0x02} for secondary
-     * (write-side, SDK → agent). {@code index} is the socket slot index.
+     * (read-side, controller → SDK) and {@code 0x02} for secondary
+     * (write-side, SDK → controller). {@code index} is the socket slot index.
      */
     public static native long openStream(long handle, int streamType, int index);
 
@@ -138,13 +138,13 @@ public final class NativeTransport {
     @Nonnull
     public static native byte[] buildFrame(String payloadId, byte[] message, String metadataJson);
 
-    /** Stream type constant for the primary stream (agent → SDK). */
+    /** Stream type constant for the primary stream (controller → SDK). */
     public static final int STREAM_TYPE_PRIMARY = 0x01;
-    /** Stream type constant for the secondary stream (SDK → agent). */
+    /** Stream type constant for the secondary stream (SDK → controller). */
     public static final int STREAM_TYPE_SECONDARY = 0x02;
 
     /**
-     * Send a per-Partition state-change frame on the agent's control channel.
+     * Send a per-Partition state-change frame on the controller's control channel.
      * The {@code frame} bytes are the umbrella-spec wire format (instance id,
      * shard name, partition key, seq, header, change bytes, crc32) already
      * built by the SDK's {@code PartitionFlusher}. Returns 0 on OK, non-zero
@@ -152,14 +152,14 @@ public final class NativeTransport {
      *
      * <p>Wraps the existing generic {@link #streamWrite(long, long, byte[])}
      * with the {@code partition_state_change} payload-id constant from
-     * {@code relay-state-persistence-agent}'s wire spec.
+     * {@code relay-state-persistence-controller}'s wire spec.
      */
     public static int sendPartitionStateChange(long handle, long streamId, @Nonnull byte[] frame) {
         return streamWrite(handle, streamId, frame);
     }
 
     /**
-     * Send a per-Partition state-snapshot frame on the agent's control channel.
+     * Send a per-Partition state-snapshot frame on the controller's control channel.
      * Wraps {@link #streamWrite(long, long, byte[])} with the
      * {@code partition_state_snapshot} payload-id.
      */

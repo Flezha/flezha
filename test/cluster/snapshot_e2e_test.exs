@@ -3,7 +3,7 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
   End-to-end snapshot → file → restore flow covered in-BEAM. Exercises the
   full Snapshot.local_state → Coordinator.snapshot (gather + encode +
   atomic write) → file → Coordinator.restore (read + decode + RPC fan-out)
-  → Snapshot.apply_local_state path with `ProcessorManager`,
+  → Snapshot.apply_local_state path with `RelayManager`,
   `PluginManager`, and `HubManager` stubbed via Mimic.
 
   Multi-peer / `:peer.start_link` cross-node flow is covered by
@@ -17,7 +17,7 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
   alias Flezha.Cluster.Snapshot.Encoding
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.StdOut
-  alias Flezha.Processor.Builder
+  alias Flezha.Relay.Builder
 
   setup :set_mimic_global
 
@@ -34,7 +34,7 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
     {:ok, tmp: tmp}
   end
 
-  test "snapshot → file → restore primes a processor with the captured state binary",
+  test "snapshot → file → restore primes a relay with the captured state binary",
        %{tmp: tmp} do
     path = Path.join(tmp, "e2e.flz")
     captured_binary = <<0xCA, 0xFE, 0xBA, 0xBE>>
@@ -52,7 +52,7 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
       id: "e2e-stdout",
       provider: StdOut,
       namespace: "default",
-      processor_id: "e2e-proc",
+      relay_id: "e2e-proc",
       opts: %{},
       subscriptions: [{:on_output, []}]
     }
@@ -68,14 +68,14 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
 
     Flezha.Service.HubManager
     |> Mimic.stub(:get_running_namespaces, fn -> ["default"] end)
-    |> Mimic.stub(:get_all_processors, fn "default" ->
+    |> Mimic.stub(:get_all_relays, fn "default" ->
       [{"e2e-proc", fake_overwatch}]
     end)
 
     # Phase 2 — snapshot. Coordinator.snapshot runs gather → reconcile →
     # encode → atomic write.
     assert {:ok, summary} = Coordinator.snapshot(path, peer_timeout_ms: 1_000)
-    assert summary.processors == 1
+    assert summary.relays == 1
     assert summary.plugins == 1
     assert summary.bytes > 0
     assert File.exists?(path)
@@ -86,9 +86,9 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
     assert payload.initiator_node == node()
     assert node() in payload.cluster.nodes
 
-    [proc_entry] = payload.processors
-    assert proc_entry.processor.id == "e2e-proc"
-    assert proc_entry.processor.factory_id == "e2e-factory"
+    [proc_entry] = payload.relays
+    assert proc_entry.relay.id == "e2e-proc"
+    assert proc_entry.relay.factory_id == "e2e-factory"
     assert proc_entry.namespace == "default"
     assert proc_entry.last_observed_node == node()
 
@@ -101,10 +101,10 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
     Process.exit(fake_overwatch, :kill)
     test_pid = self()
 
-    Flezha.Service.ProcessorManager
-    |> Mimic.expect(:start_processor, fn ns, %Builder{} = b ->
-      send(test_pid, {:applied_processor, ns, b})
-      {:ok, %{processor_id: b.id, compute_engine_id: "ce", node: node(), pid: test_pid}}
+    Flezha.Service.RelayManager
+    |> Mimic.expect(:start_relay, fn ns, %Builder{} = b ->
+      send(test_pid, {:applied_relay, ns, b})
+      {:ok, %{relay_id: b.id, executor_id: "ce", node: node(), pid: test_pid}}
     end)
 
     Flezha.Service.PluginManager
@@ -113,10 +113,10 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
       {:ok, "plugin enabled"}
     end)
 
-    assert {:ok, %{processors: 1, plugins: 1}} =
+    assert {:ok, %{relays: 1, plugins: 1}} =
              Coordinator.restore(path, warn_if_older_than_ms: :infinity)
 
-    assert_receive {:applied_processor, "default", applied_builder}, 1_000
+    assert_receive {:applied_relay, "default", applied_builder}, 1_000
     assert applied_builder.id == "e2e-proc"
     assert applied_builder.factory_id == "e2e-factory"
     assert applied_builder.init_values == %{symbol: "BTC"}
@@ -124,15 +124,15 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
     assert Keyword.get(applied_builder.opts, :snapshot_interval) == 30_000
 
     assert_receive {:applied_plugin, "e2e-stdout", applied_plugin}, 1_000
-    assert applied_plugin.processor_id == "e2e-proc"
+    assert applied_plugin.relay_id == "e2e-proc"
   end
 
-  test "snapshot drops processor state binaries that exceed :state_cap_bytes",
+  test "snapshot drops relay state binaries that exceed :state_cap_bytes",
        %{tmp: tmp} do
     path = Path.join(tmp, "size-cap.flz")
 
     # 200-byte cap + 1KB state binary → the binary must be dropped from
-    # the snapshot's captured_states map. The processor entry itself stays.
+    # the snapshot's captured_states map. The relay entry itself stays.
     cap = 200
     oversized = :crypto.strong_rand_bytes(1024)
 
@@ -154,7 +154,7 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
 
     Flezha.Service.HubManager
     |> Mimic.stub(:get_running_namespaces, fn -> ["default"] end)
-    |> Mimic.stub(:get_all_processors, fn "default" ->
+    |> Mimic.stub(:get_all_relays, fn "default" ->
       [{"huge-proc", fake_overwatch}]
     end)
 
@@ -162,16 +162,16 @@ defmodule Flezha.Cluster.Snapshot.E2ETest do
              Coordinator.snapshot(path, peer_timeout_ms: 1_000, state_cap_bytes: cap)
 
     assert {:ok, payload} = Encoding.decode(File.read!(path))
-    [proc_entry] = payload.processors
-    assert proc_entry.processor.id == "huge-proc"
+    [proc_entry] = payload.relays
+    assert proc_entry.relay.id == "huge-proc"
 
-    # The processor entry survives, but its state binary was dropped because
+    # The relay entry survives, but its state binary was dropped because
     # 1024 > cap=200. captured_states must not include the oversized entry.
     refute Map.has_key?(payload.captured_states, "huge-proc")
   end
 
   # Minimal process that mimics the `:get_snapshot_data` handler on
-  # `Flezha.Processor.Overwatch`. Returns the seeded snapshot data on demand.
+  # `Flezha.Relay.Overwatch`. Returns the seeded snapshot data on demand.
   defp start_fake_overwatch(snapshot_data) do
     spawn(fn -> receive_loop(snapshot_data) end)
   end

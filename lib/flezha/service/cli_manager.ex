@@ -8,12 +8,12 @@ defmodule Flezha.Service.CliManager do
   alias Flezha.Service.ConfigManager
   alias Flezha.Service.Payloader
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.ProcessorManager
+  alias Flezha.Service.RelayManager
 
-  @doc "Starts a processor."
-  def processor_start(
+  @doc "Starts a relay."
+  def relay_start(
         namespace,
-        processor_id,
+        relay_id,
         factory_id,
         init_values,
         opts \\ [],
@@ -24,41 +24,41 @@ defmodule Flezha.Service.CliManager do
       |> atom_converter()
       |> Keyword.new()
 
-    case decode_plugins(plugins_json, normalize_namespace(namespace), processor_id) do
+    case decode_plugins(plugins_json, normalize_namespace(namespace), relay_id) do
       {:ok, []} ->
-        start_processor(namespace, processor_id, factory_id, init_values, opts_kw)
+        start_relay(namespace, relay_id, factory_id, init_values, opts_kw)
 
       {:ok, plugins} ->
-        start_processor(
+        start_relay(
           namespace,
-          processor_id,
+          relay_id,
           factory_id,
           init_values,
           Keyword.put(opts_kw, :plugins, plugins)
         )
 
       {:error, reason} ->
-        IO.puts("Error starting processor: #{inspect(reason)}")
+        IO.puts("Error starting relay: #{inspect(reason)}")
     end
   end
 
-  defp start_processor(namespace, processor_id, factory_id, init_values, opts_kw) do
-    processor = %Flezha.Processor.Builder{
-      id: processor_id,
+  defp start_relay(namespace, relay_id, factory_id, init_values, opts_kw) do
+    relay = %Flezha.Relay.Builder{
+      id: relay_id,
       factory_id: factory_id,
       init_values: Payloader.json_to_map(init_values),
       opts: opts_kw
     }
 
-    case ProcessorManager.start_processor(normalize_namespace(namespace), processor) do
-      {:ok, _} -> IO.puts("Processor has been started")
-      {:error, reason} -> IO.puts("Error starting processor: #{inspect(reason)}")
+    case RelayManager.start_relay(normalize_namespace(namespace), relay) do
+      {:ok, _} -> IO.puts("Relay has been started")
+      {:error, reason} -> IO.puts("Error starting relay: #{inspect(reason)}")
     end
   end
 
   ## CLI --plugins decoder ----------------------------------------------------
   ##
-  ## Turns the JSON array shipped by `flz processor start --plugins` into a list
+  ## Turns the JSON array shipped by `flz relay start --plugins` into a list
   ## of `%Flezha.Plugin{}` structs ready for `Builder.opts = [plugins: ...]`.
   ## Returns errors matching design.md §D2b's vocabulary:
   ##   * `{:invalid_plugins_json, reason}`
@@ -66,7 +66,7 @@ defmodule Flezha.Service.CliManager do
   ##   * `{:invalid_subscription, details}`
   ##   * `{:invalid_opts, details}`
 
-  defp decode_plugins(plugins_json, namespace, processor_id) do
+  defp decode_plugins(plugins_json, namespace, relay_id) do
     case decode_plugins_json(plugins_json) do
       {:ok, []} ->
         {:ok, []}
@@ -75,7 +75,7 @@ defmodule Flezha.Service.CliManager do
         providers = ConfigManager.get_enabled_plugins()
 
         Enum.reduce_while(specs, {:ok, []}, fn spec, {:ok, acc} ->
-          case build_plugin(spec, providers, namespace, processor_id) do
+          case build_plugin(spec, providers, namespace, relay_id) do
             {:ok, plugin} -> {:cont, {:ok, [plugin | acc]}}
             {:error, _} = err -> {:halt, err}
           end
@@ -105,7 +105,7 @@ defmodule Flezha.Service.CliManager do
 
   defp decode_plugins_json(_), do: {:ok, []}
 
-  defp build_plugin(spec, providers, namespace, processor_id) when is_map(spec) do
+  defp build_plugin(spec, providers, namespace, relay_id) when is_map(spec) do
     with {:ok, plugin_id} <- fetch_string(spec, "id"),
          {:ok, provider_id} <- fetch_string(spec, "provider"),
          {:ok, provider_mod} <- resolve_provider(providers, provider_id),
@@ -118,7 +118,7 @@ defmodule Flezha.Service.CliManager do
          opts: atomize_map(raw_opts),
          subscriptions: subscriptions,
          namespace: namespace,
-         processor_id: processor_id
+         relay_id: relay_id
        }}
     end
   end
@@ -215,46 +215,46 @@ defmodule Flezha.Service.CliManager do
 
   defp atomize_map(other), do: other
 
-  @doc "Stops a processor."
-  def processor_stop(namespace, processor_id) do
-    case ProcessorManager.stop_processor(normalize_namespace(namespace), processor_id) do
-      :ok -> IO.puts("Processor has been stopped")
-      {:error, reason} -> IO.puts("Error stopping processor: #{inspect(reason)}")
+  @doc "Stops a relay."
+  def relay_stop(namespace, relay_id) do
+    case RelayManager.stop_relay(normalize_namespace(namespace), relay_id) do
+      :ok -> IO.puts("Relay has been stopped")
+      {:error, reason} -> IO.puts("Error stopping relay: #{inspect(reason)}")
     end
   end
 
-  @doc "Get processor state."
-  def processor_state(namespace, processor_id) do
+  @doc "Get relay state."
+  def partition_state(namespace, relay_id) do
     namespace_display = normalize_namespace(namespace)
 
-    case ProcessorManager.get_processor_state(
+    case RelayManager.get_partition_state(
            normalize_namespace(namespace),
-           processor_id
+           relay_id
          ) do
       {:ok, json_state} when is_binary(json_state) ->
-        IO.puts("State for processor '#{processor_id}' in namespace '#{namespace_display}':")
+        IO.puts("State for relay '#{relay_id}' in namespace '#{namespace_display}':")
         IO.puts(json_state)
 
       {:ok, state} ->
-        IO.puts("State for processor '#{processor_id}' in namespace '#{namespace_display}':")
+        IO.puts("State for relay '#{relay_id}' in namespace '#{namespace_display}':")
         IO.puts(inspect(state))
 
       {:error, :not_found} ->
-        IO.puts("Processor '#{processor_id}' not found in namespace '#{namespace_display}'.")
+        IO.puts("Relay '#{relay_id}' not found in namespace '#{namespace_display}'.")
 
       {:error, reason} when is_binary(reason) ->
-        IO.puts("Error getting processor state: #{reason}")
+        IO.puts("Error getting relay state: #{reason}")
 
       {:error, reason} ->
-        IO.puts("Error getting processor state: #{inspect(reason)}")
+        IO.puts("Error getting relay state: #{inspect(reason)}")
 
       other ->
         IO.puts("Unexpected result: #{inspect(other)}")
     end
   end
 
-  @doc "Listens to a processor IO."
-  def processor_listen(namespace, processor_id, io_type) do
+  @doc "Listens to a relay IO."
+  def relay_listen(namespace, relay_id, io_type) do
     namespace_display = normalize_namespace(namespace)
 
     extension =
@@ -271,11 +271,11 @@ defmodule Flezha.Service.CliManager do
       id: plugin_id,
       provider: MonitoredIOForward,
       namespace: namespace_display,
-      processor_id: processor_id,
+      relay_id: relay_id,
       opts: %{
         recv_pid: self(),
         plugin_id: plugin_id,
-        processor_id: processor_id,
+        relay_id: relay_id,
         namespace: namespace_display
       },
       subscriptions: [{extension, []}]
@@ -295,13 +295,13 @@ defmodule Flezha.Service.CliManager do
          {:ok, opts} <- Jason.decode(opts_json) do
       subscriptions = extract_subscriptions(plugin_flags, opts)
       namespace = Map.get(opts, "namespace", "default")
-      processor_id = Map.get(plugin_flags, "processor_id") || Map.get(opts, "processor_id")
+      relay_id = Map.get(plugin_flags, "relay_id") || Map.get(opts, "relay_id")
 
       plugin = %Plugin{
         id: plugin_id,
         provider: provider_mod,
         namespace: namespace,
-        processor_id: processor_id,
+        relay_id: relay_id,
         opts: atomize_keys(plugin_flags),
         subscriptions: subscriptions
       }
@@ -394,7 +394,7 @@ defmodule Flezha.Service.CliManager do
       "on_input" => :on_input,
       "on_output" => :on_output,
       "on_interval" => :on_interval,
-      "on_processor_init" => :on_processor_init,
+      "on_relay_init" => :on_relay_init,
       "on_message" => :on_message,
       "on_snapshot" => :on_snapshot,
       "on_terminate" => :on_terminate,
@@ -452,89 +452,89 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  @doc "Lists compute_engines for a specific namespace."
-  def list_compute_engines(namespace, output_format \\ "text") do
+  @doc "Lists executors for a specific namespace."
+  def list_executors(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_compute_engines(namespace_display) do
-      {:ok, compute_engines} when is_list(compute_engines) ->
+    case Flezha.list_executors(namespace_display) do
+      {:ok, executors} when is_list(executors) ->
         context = %{key: :namespace, value: namespace_display, display: "namespace"}
-        handle_list_output(compute_engines, "compute_engines", output_format, context)
+        handle_list_output(executors, "executors", output_format, context)
     end
   end
 
-  @doc "Lists processors for a specific namespace."
-  def list_processors(namespace, output_format \\ "text") do
+  @doc "Lists relays for a specific namespace."
+  def list_relays(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_processors(namespace_display) do
-      {:ok, processors} ->
+    case Flezha.list_relays(namespace_display) do
+      {:ok, relays} ->
         context = %{key: :namespace, value: namespace_display, display: "namespace"}
-        handle_list_output(processors, "processors", output_format, context)
+        handle_list_output(relays, "relays", output_format, context)
     end
   end
 
-  @doc "Shows detailed information about processors and their enabled plugins."
-  def processor_info(namespace, output_format \\ "text") do
+  @doc "Shows detailed information about relays and their enabled plugins."
+  def relay_info(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_processors(namespace_display) do
-      {:ok, processors} ->
-        if Enum.empty?(processors) do
-          handle_empty_processors(namespace_display, output_format)
+    case Flezha.list_relays(namespace_display) do
+      {:ok, relays} ->
+        if Enum.empty?(relays) do
+          handle_empty_relays(namespace_display, output_format)
         else
-          handle_processor_info_output(processors, namespace_display, output_format)
+          handle_relay_info_output(relays, namespace_display, output_format)
         end
     end
   end
 
-  defp handle_empty_processors(namespace_display, "json") do
+  defp handle_empty_relays(namespace_display, "json") do
     result = %{
       namespace: namespace_display,
-      processors: [],
-      message: "No processors found"
+      relays: [],
+      message: "No relays found"
     }
 
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_empty_processors(namespace_display, _) do
-    IO.puts("No processors found for namespace '#{namespace_display}'.")
+  defp handle_empty_relays(namespace_display, _) do
+    IO.puts("No relays found for namespace '#{namespace_display}'.")
   end
 
-  defp handle_processor_info_output(processors, namespace_display, "json") do
-    processor_data =
-      Enum.map(processors, fn processor_id ->
-        case ProcessorManager.get_overwatch_state(namespace_display, processor_id) do
+  defp handle_relay_info_output(relays, namespace_display, "json") do
+    relay_data =
+      Enum.map(relays, fn relay_id ->
+        case RelayManager.get_overwatch_state(namespace_display, relay_id) do
           {:ok, state} ->
             %{
-              id: processor_id,
-              compute_engine_id: state.compute_engine_id,
+              id: relay_id,
+              executor_id: state.executor_id,
               namespace: state.namespace,
               default_input_type: state.default_input_type,
               plugins: format_plugins_json(state.extensions)
             }
 
           {:error, reason} ->
-            %{id: processor_id, error: inspect(reason)}
+            %{id: relay_id, error: inspect(reason)}
         end
       end)
 
-    result = %{namespace: namespace_display, processors: processor_data}
+    result = %{namespace: namespace_display, relays: relay_data}
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_processor_info_output(processors, namespace_display, _) do
-    IO.puts("Processor information for namespace '#{namespace_display}':")
+  defp handle_relay_info_output(relays, namespace_display, _) do
+    IO.puts("Relay information for namespace '#{namespace_display}':")
     IO.puts("")
 
-    Enum.each(processors, fn processor_id ->
-      case ProcessorManager.get_overwatch_state(namespace_display, processor_id) do
+    Enum.each(relays, fn relay_id ->
+      case RelayManager.get_overwatch_state(namespace_display, relay_id) do
         {:ok, state} ->
-          display_processor_info(processor_id, state)
+          display_relay_info(relay_id, state)
 
         {:error, reason} ->
-          IO.puts("Processor: #{processor_id}")
+          IO.puts("Relay: #{relay_id}")
           IO.puts("  Error getting overwatch state: #{inspect(reason)}")
           IO.puts("")
       end
@@ -556,9 +556,9 @@ defmodule Flezha.Service.CliManager do
 
   defp format_plugins_json(_), do: []
 
-  defp display_processor_info(processor_id, state) do
-    IO.puts("Processor: #{processor_id}")
-    IO.puts("  ComputeEngine ID: #{state.compute_engine_id}")
+  defp display_relay_info(relay_id, state) do
+    IO.puts("Relay: #{relay_id}")
+    IO.puts("  Executor ID: #{state.executor_id}")
     IO.puts("  Group ID: #{state.namespace}")
     IO.puts("  Default Input Type: #{state.default_input_type}")
     IO.puts("  Plugins:")
@@ -742,7 +742,7 @@ defmodule Flezha.Service.CliManager do
   defp print_supported_extensions(provider_mod) do
     extensions =
       for ext <- [
-            :on_processor_init,
+            :on_relay_init,
             :on_input,
             :on_output,
             :on_interval,
@@ -788,7 +788,7 @@ defmodule Flezha.Service.CliManager do
 
   @doc """
   Capture a cluster snapshot to `path`. Wired by `flz cluster snapshot`.
-  Prints a one-line operator summary and exits with a non-zero status when
+  Prints a one-line executor summary and exits with a non-zero status when
   the coordinator returns `{:error, _}`.
   """
   def cluster_snapshot(path, opts_json \\ "{}") do
@@ -796,8 +796,8 @@ defmodule Flezha.Service.CliManager do
     coord_opts = build_snapshot_opts(opts)
 
     case Flezha.Cluster.Snapshot.Coordinator.snapshot(path, coord_opts) do
-      {:ok, %{processors: p, plugins: pl, bytes: b}} ->
-        IO.puts("snapshot: #{p} processors, #{pl} plugins, #{b} bytes written to #{path}")
+      {:ok, %{relays: p, plugins: pl, bytes: b}} ->
+        IO.puts("snapshot: #{p} relays, #{pl} plugins, #{b} bytes written to #{path}")
 
       {:error, reason} ->
         IO.puts(:stderr, "snapshot failed: #{inspect(reason)}")
@@ -807,7 +807,7 @@ defmodule Flezha.Service.CliManager do
 
   @doc """
   Restore a cluster snapshot from `path`. Wired by `flz cluster restore`.
-  Prints a one-line operator summary and exits with a non-zero status when
+  Prints a one-line executor summary and exits with a non-zero status when
   the coordinator returns `{:error, _}`.
   """
   def cluster_restore(path, opts_json \\ "{}") do
@@ -815,8 +815,8 @@ defmodule Flezha.Service.CliManager do
     coord_opts = build_restore_opts(opts)
 
     case Flezha.Cluster.Snapshot.Coordinator.restore(path, coord_opts) do
-      {:ok, %{processors: p, plugins: pl}} ->
-        IO.puts("restore: #{p} processors, #{pl} plugins applied from #{path}")
+      {:ok, %{relays: p, plugins: pl}} ->
+        IO.puts("restore: #{p} relays, #{pl} plugins applied from #{path}")
 
       {:error, reason} ->
         IO.puts(:stderr, "restore failed: #{inspect(reason)}")
@@ -944,7 +944,7 @@ defmodule Flezha.Service.CliManager do
 
   @doc """
   `flz state at <relay/shard/partition> <seq | timestamp>` — point-in-time
-  query. Resolves the path string into a `(compute_engine_id, relay,
+  query. Resolves the path string into a `(executor_id, relay,
   shard, partition_key)` by scanning the on-disk state tree (one match
   expected; ambiguous paths print all matches and exit non-zero).
   """
@@ -998,7 +998,7 @@ defmodule Flezha.Service.CliManager do
   def state_rotate(path_string) do
     case parse_state_path(path_string) do
       {:ok, {ce, rc, sh, pk}} ->
-        case Flezha.Processor.Overwatch.dispatch_compact_partition(ce, {rc, sh, pk}) do
+        case Flezha.Relay.Overwatch.dispatch_compact_partition(ce, {rc, sh, pk}) do
           {:ok, _ref} -> IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
           {:error, reason} ->
             IO.puts(:stderr, "state rotate: #{inspect(reason)}")
@@ -1014,7 +1014,7 @@ defmodule Flezha.Service.CliManager do
   @doc """
   `flz state retention <relay_class> <hours>` — set runtime retention
   for `<relay_class>`. Persisted across the next Application boot only
-  if the operator separately writes it to runtime.exs.
+  if the executor separately writes it to runtime.exs.
   """
   def state_retention(relay_class, hours_string) do
     case Integer.parse(hours_string) do
@@ -1033,7 +1033,7 @@ defmodule Flezha.Service.CliManager do
   defp parse_state_path(path_string) do
     case String.split(path_string, "/", parts: 3) do
       [rc, sh, pk] ->
-        case find_compute_engine_for(rc, sh, pk) do
+        case find_executor_for(rc, sh, pk) do
           {:ok, ce} -> {:ok, {ce, rc, sh, pk}}
           :ambiguous -> {:error, "ambiguous path #{path_string} (multiple compute engines)"}
           :not_found -> {:error, "no persisted state at #{path_string}"}
@@ -1044,7 +1044,7 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp find_compute_engine_for(rc, sh, pk) do
+  defp find_executor_for(rc, sh, pk) do
     matches =
       Flezha.State.Registry.all_partitions()
       |> Enum.filter(fn {_, r, s, p} -> r == rc and s == sh and p == pk end)

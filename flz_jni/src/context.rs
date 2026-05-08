@@ -63,7 +63,7 @@ pub(crate) struct Config {
     pub(crate) ca_cert_path: String,
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) socket_base_path: String,
-    pub(crate) compute_engine_id: Mutex<String>,
+    pub(crate) executor_id: Mutex<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,7 +124,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_contextNew<'
             quic_address,
             ca_cert_path,
             socket_base_path,
-            compute_engine_id: Mutex::new(String::from("undefined")),
+            executor_id: Mutex::new(String::from("undefined")),
         },
         jvm,
         dispatcher: Mutex::new(None),
@@ -214,13 +214,13 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_setDispatche
     *ctx.dispatcher.lock().unwrap() = Some(global);
 }
 
-/// `void setComputeEngineId(long handle, String id)`
+/// `void setExecutorId(long handle, String id)`
 ///
-/// Called by the Java SDK after receiving `AssignComputeEngineId`. The JNI
+/// Called by the Java SDK after receiving `AssignExecutorId`. The JNI
 /// side needs the id to build per-stream UDS socket paths during
 /// `openStream(PRIMARY/SECONDARY, ...)`.
 #[no_mangle]
-pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_setComputeEngineId<'local>(
+pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_setExecutorId<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,
@@ -234,7 +234,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_setComputeEn
         }
     };
     let id = jstring_to_string(&mut env, &id_jstr).unwrap_or_default();
-    *ctx.config.compute_engine_id.lock().unwrap() = id;
+    *ctx.config.executor_id.lock().unwrap() = id;
 }
 
 /// `long openControlStream(long handle)`
@@ -389,7 +389,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_streamClose<
         let _ = entry.stream.shutdown(std::net::Shutdown::Both);
         if let Some(handle) = entry.reader.lock().unwrap().take() {
             // Never block-join the current thread (e.g., when a
-            // ComputeEngineDisconnect handler on the control reader thread
+            // ExecutorDisconnect handler on the control reader thread
             // closes the control stream in-line).
             if handle.thread().id() != thread::current().id() {
                 let _ = handle.join();
@@ -407,7 +407,7 @@ fn open_control(ctx: &JniContext) -> std::io::Result<Arc<FlezhaStream>> {
         #[cfg(unix)]
         Transport::Uds => {
             let path = format!(
-                "{}/compute_engine_control_channel.sock",
+                "{}/executor_control_channel.sock",
                 ctx.config.socket_base_path.trim_end_matches('/')
             );
             let _ = path_helper::control_socket_path(); // reserved for future use
@@ -445,7 +445,7 @@ fn open_data_stream(
                 protocol::STREAM_TYPE_SECONDARY => "secondary",
                 _ => unreachable!(),
             };
-            let id = ctx.config.compute_engine_id.lock().unwrap().clone();
+            let id = ctx.config.executor_id.lock().unwrap().clone();
             let path = format!(
                 "{}/{}_stream_{}.sock",
                 ctx.config.socket_base_path.trim_end_matches('/'),

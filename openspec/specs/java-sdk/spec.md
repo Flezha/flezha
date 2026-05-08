@@ -8,11 +8,11 @@ Defines the Java SDK for Flezha compute engines: the public API, protocol layer,
 
 ### Requirement: Java SDK Entry Point
 
-The Java SDK SHALL provide `com.flezha.sdk.Flezha.newInstance(String namespace)` as the single entry point for starting a Flezha compute engine. The call MUST connect to the agent's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2, wait for `AssignComputeEngineId`, and return a handle exposing `getId()` and `getProcessors()` (where `getProcessors()` returns a snapshot of currently-spawned Relay instances keyed by what the wire calls `processor_id` — see the `Relay Registration` requirement below for naming).
+The Java SDK SHALL provide `com.flezha.sdk.Flezha.newInstance(String namespace)` as the single entry point for starting a Flezha compute engine. The call MUST connect to the agent's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2, wait for `AssignExecutorId`, and return a handle exposing `getId()` and `getRelays()` (where `getRelays()` returns a snapshot of currently-spawned Relay instances keyed by what the wire calls `relay_id` — see the `Relay Registration` requirement below for naming).
 
 #### Scenario: Successful connection returns an assigned id
 - **WHEN** an SDK user calls `Flezha.newInstance("my_app")` with the agent running and at least one Relay class registered
-- **THEN** the call blocks until the agent responds with `AssignComputeEngineId`, and the returned handle's `getId()` returns the assigned id (non-null, non-empty)
+- **THEN** the call blocks until the agent responds with `AssignExecutorId`, and the returned handle's `getId()` returns the assigned id (non-null, non-empty)
 
 #### Scenario: Agent unavailable triggers exponential backoff retries
 - **WHEN** an SDK user calls `Flezha.newInstance("my_app")` and the agent's control socket is not yet listening
@@ -24,11 +24,11 @@ The Java SDK SHALL provide `com.flezha.sdk.Flezha.newInstance(String namespace)`
 
 ### Requirement: Relay Registration
 
-The Java SDK SHALL provide `RelayRegistry.registerRelay(Class<? extends Relay>)` (and a thin static `Flezha.registerRelay(Class<? extends Relay>)` pass-through) that MUST be called **before** `Flezha.newInstance`. For each registered Relay class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the agent-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once and freeze the resulting `RelayTopology`; (d) verify wiring constraints (entry-channel-type, type-equality between channel payload and producer/consumer Shard I/O, no unwired channels, no multi-producer, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry MUST be frozen at `Flezha.newInstance(...)` time. There SHALL be no `ProcessorHandler`-style factory registration in the public surface.
+The Java SDK SHALL provide `RelayRegistry.registerRelay(Class<? extends Relay>)` (and a thin static `Flezha.registerRelay(Class<? extends Relay>)` pass-through) that MUST be called **before** `Flezha.newInstance`. For each registered Relay class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the agent-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once and freeze the resulting `RelayTopology`; (d) verify wiring constraints (entry-channel-type, type-equality between channel payload and producer/consumer Shard I/O, no unwired channels, no multi-producer, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry MUST be frozen at `Flezha.newInstance(...)` time. There SHALL be no `RelayHandler`-style factory registration in the public surface.
 
 #### Scenario: Registering a relay class before newInstance succeeds
 - **WHEN** user code calls `Flezha.registerRelay(MarketRelay.class)` and then `Flezha.newInstance("my_app")`
-- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketRelay::factoryId` returns) in `factory_ids`, and subsequent `AddProcessor{factory_id:"market"}` commands SHALL succeed by spawning a `RelayInstance`
+- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketRelay::factoryId` returns) in `factory_ids`, and subsequent `AddRelay{factory_id:"market"}` commands SHALL succeed by spawning a `RelayInstance`
 
 #### Scenario: Registering a relay class after newInstance is rejected
 - **WHEN** user code calls `RelayRegistry.registerRelay(...)` after `Flezha.newInstance(...)` has returned
@@ -106,7 +106,7 @@ The `ShardCtx` parameter SHALL provide `emit(value)` for inter-shard or plugin-b
 
 ### Requirement: Sticky Per-Partition Ordering Under ThreadPool Dispatch
 
-The Java SDK's worker pool (sized by `FLEZHA_WORKER_POOL_SIZE`, default = `Runtime.availableProcessors()`) SHALL guarantee that for any single `(relayInstance, shard, partition)` triple, two invocations of that Shard's `run(...)` method on that Partition never execute concurrently, and invocations observe their inputs in the exact order those inputs were enqueued onto the Partition's mailbox. This invariant MUST hold regardless of worker-pool size, number of concurrent Relay instances, number of Partitions per Shard, or transport (UDS/QUIC).
+The Java SDK's worker pool (sized by `FLEZHA_WORKER_POOL_SIZE`, default = `Runtime.availableRelays()`) SHALL guarantee that for any single `(relayInstance, shard, partition)` triple, two invocations of that Shard's `run(...)` method on that Partition never execute concurrently, and invocations observe their inputs in the exact order those inputs were enqueued onto the Partition's mailbox. This invariant MUST hold regardless of worker-pool size, number of concurrent Relay instances, number of Partitions per Shard, or transport (UDS/QUIC).
 
 #### Scenario: Same partition never runs concurrently under load
 - **WHEN** 10,000 inputs targeting the same `(relayInstance, shard, partitionKey)` triple arrive back-to-back on one or more entry channels while the SDK uses a 16-thread worker pool
@@ -122,34 +122,34 @@ The Java SDK's worker pool (sized by `FLEZHA_WORKER_POOL_SIZE`, default = `Runti
 
 ### Requirement: Command Dispatch
 
-The Java SDK SHALL implement handlers for every `CommandRequest` variant defined in `compute_engine_commands.proto`: `AssignComputeEngineId`, `ConnectSocket`, `AddProcessor`, `RemProcessor`, `ProcessorState`, `MigrationSerialization`, `MigrationDeserialization`, `ProcessorMessage`, `ComputeEngineDisconnect`. Each handler MUST produce a `CommandResponse` that echoes the original `reference_id` and sets `status = "success"` or `status = "error"` with populated `errors` per `docs/sdk_protocol_spec.md` §6. `AddProcessor` and `RemProcessor` SHALL spawn and tear down `RelayInstance` objects respectively (the wire field is named `processor_id` for backward continuity; the SDK maps it to `relayInstanceId`). `ProcessorMessage` SHALL respond with the canonical "unsupported" error until `relay-message-handlers` ships per-Shard `handleMessage`.
+The Java SDK SHALL implement handlers for every `CommandRequest` variant defined in `executor_commands.proto`: `AssignExecutorId`, `ConnectSocket`, `AddRelay`, `RemRelay`, `PartitionState`, `MigrationSerialization`, `MigrationDeserialization`, `RelayMessage`, `ExecutorDisconnect`. Each handler MUST produce a `CommandResponse` that echoes the original `reference_id` and sets `status = "success"` or `status = "error"` with populated `errors` per `docs/sdk_protocol_spec.md` §6. `AddRelay` and `RemRelay` SHALL spawn and tear down `RelayInstance` objects respectively (the wire field is named `relay_id` for backward continuity; the SDK maps it to `relayInstanceId`). `RelayMessage` SHALL respond with the canonical "unsupported" error until `relay-message-handlers` ships per-Shard `handleMessage`.
 
-#### Scenario: AddProcessor spawns a relay instance
-- **WHEN** the agent sends `AddProcessor{processor_id:"p1", factory_id:"market"}` and Relay class `MarketRelay` is registered with `factoryId() == "market"`
+#### Scenario: AddRelay spawns a relay instance
+- **WHEN** the agent sends `AddRelay{relay_id:"p1", factory_id:"market"}` and Relay class `MarketRelay` is registered with `factoryId() == "market"`
 - **THEN** the SDK SHALL allocate a `RelayInstance` keyed by `"p1"`, call `initState(...)` for every Shard×Partition declared by `MarketRelay`, and respond with `status = "success"`
 
-#### Scenario: AddProcessor with init_values seeds initial-state for each partition
-- **WHEN** the agent sends `AddProcessor{processor_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and `MarketRelay` declares one Shard with single-partition mode
+#### Scenario: AddRelay with init_values seeds initial-state for each partition
+- **WHEN** the agent sends `AddRelay{relay_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and `MarketRelay` declares one Shard with single-partition mode
 - **THEN** the SDK SHALL pass the JSON string into the Shard's `initState(Optional.empty())` (the runtime makes the JSON available via a per-relay context), invoke `run` only after `initState` returns, and respond with `status = "success"`
 
-#### Scenario: AddProcessor with unknown factory_id returns error
-- **WHEN** the agent sends `AddProcessor{factory_id:"missing"}`
+#### Scenario: AddRelay with unknown factory_id returns error
+- **WHEN** the agent sends `AddRelay{factory_id:"missing"}`
 - **THEN** the SDK SHALL respond with `status = "error"` and `errors` containing a string naming the missing factory id
 
-#### Scenario: ProcessorState returns the per-Shard / per-Partition JSON shape
-- **WHEN** the agent sends `ProcessorState{processor_id:"p1"}` and `p1` exists with two Shards (`shardA` single-mode, `shardB` static-mode with keys `["1m", "1h"]`)
+#### Scenario: PartitionState returns the per-Shard / per-Partition JSON shape
+- **WHEN** the agent sends `PartitionState{relay_id:"p1"}` and `p1` exists with two Shards (`shardA` single-mode, `shardB` static-mode with keys `["1m", "1h"]`)
 - **THEN** the SDK SHALL respond with `status = "success"` and `raw_data` containing JSON of shape `{"shardA": {<state>}, "shardB": {"1m": {<state>}, "1h": {<state>}}}` (whichever exact shape the Rust SDK emits per `relay-mvp-rust/design.md` Decision 10 — the Java SDK SHALL match byte-for-byte)
 
 #### Scenario: MigrationSerialization removes the relay instance
-- **WHEN** the agent sends `MigrationSerialization{processor_id:"p1"}` and `p1` exists
-- **THEN** the SDK SHALL respond with `status = "success"` and `raw_data` containing the per-Shard / per-Partition JSON (same shape as `ProcessorState`), AND `p1` SHALL be removed from the relay instance registry
+- **WHEN** the agent sends `MigrationSerialization{relay_id:"p1"}` and `p1` exists
+- **THEN** the SDK SHALL respond with `status = "success"` and `raw_data` containing the per-Shard / per-Partition JSON (same shape as `PartitionState`), AND `p1` SHALL be removed from the relay instance registry
 
-#### Scenario: ProcessorMessage returns canonical unsupported error pre-relay-message-handlers
-- **WHEN** the agent sends `ProcessorMessage{processor_id:"p1", payload:<...>}` to a v1 SDK
-- **THEN** the SDK SHALL respond with `ProcessorMessageResponse{ payload: "", error: "processor does not support handle_message" }`
+#### Scenario: RelayMessage returns canonical unsupported error pre-relay-message-handlers
+- **WHEN** the agent sends `RelayMessage{relay_id:"p1", payload:<...>}` to a v1 SDK
+- **THEN** the SDK SHALL respond with `RelayMessageResponse{ payload: "", error: "relay does not support handle_message" }`
 
-#### Scenario: ComputeEngineDisconnect halts the reconnect loop
-- **WHEN** the agent sends `ComputeEngineDisconnect{}`
+#### Scenario: ExecutorDisconnect halts the reconnect loop
+- **WHEN** the agent sends `ExecutorDisconnect{}`
 - **THEN** the SDK SHALL set status to `Stopped`, respond with `status = "success"`, close all sockets, and NOT attempt to reconnect
 
 ### Requirement: Binary Framing and Metadata Codec
@@ -170,15 +170,15 @@ The Java SDK SHALL implement a frame codec that produces and parses the binary f
 
 ### Requirement: Protobuf Codec
 
-The Java SDK SHALL use `protobuf-java` to encode `CommandResponse` and decode `CommandRequest` messages generated from the existing `compute_engine_commands.proto` (no new proto definitions, no hand-written wire-format code).
+The Java SDK SHALL use `protobuf-java` to encode `CommandResponse` and decode `CommandRequest` messages generated from the existing `executor_commands.proto` (no new proto definitions, no hand-written wire-format code).
 
-#### Scenario: Encoding AssignComputeEngineId response matches protocol
+#### Scenario: Encoding AssignExecutorId response matches protocol
 - **WHEN** the SDK encodes `CommandResponse{reference_id:"#Ref<0.1.2.3>", status:"success"}`
 - **THEN** the produced bytes SHALL be valid protobuf decodable by the Elixir agent's `CommandResponse` parser
 
-#### Scenario: Decoding AddProcessor request extracts all fields
-- **WHEN** the SDK receives a protobuf-encoded `CommandRequest` with an `AddProcessor` oneof case
-- **THEN** the decoder SHALL expose `processor_id`, `factory_id`, and `init_values` as Java strings
+#### Scenario: Decoding AddRelay request extracts all fields
+- **WHEN** the SDK receives a protobuf-encoded `CommandRequest` with an `AddRelay` oneof case
+- **THEN** the decoder SHALL expose `relay_id`, `factory_id`, and `init_values` as Java strings
 
 ### Requirement: Transport Selection
 
@@ -186,7 +186,7 @@ The Java SDK SHALL honor the `FLEZHA_TRANSPORT` environment variable (`uds` or `
 
 #### Scenario: Default transport is UDS
 - **WHEN** `FLEZHA_TRANSPORT` is unset and `Flezha.newInstance(...)` is called
-- **THEN** the SDK SHALL connect to `{FLEZHA_SOCKET_FILES_PATH or app_data/sockets}/compute_engine_control_channel.sock`
+- **THEN** the SDK SHALL connect to `{FLEZHA_SOCKET_FILES_PATH or app_data/sockets}/executor_control_channel.sock`
 
 #### Scenario: QUIC transport uses configured address and cert paths
 - **WHEN** `FLEZHA_TRANSPORT=quic` and `FLEZHA_QUIC_ADDRESS=127.0.0.1:4433`
@@ -194,27 +194,27 @@ The Java SDK SHALL honor the `FLEZHA_TRANSPORT` environment variable (`uds` or `
 
 ### Requirement: Auto-Reconnect on Unexpected Disconnect
 
-The Java SDK SHALL distinguish intentional disconnects (`ComputeEngineDisconnect` command handled → status `Stopped`) from unexpected ones (BrokenPipe / UnexpectedEof / ConnectionReset / QUIC connection lost). On an unexpected disconnect the SDK MUST clear `io_streams`, the live processor registry, and work queues; reset `compute_engine_id` to `undefined`; and reconnect with exponential backoff (200 ms, 400 ms, 800 ms, …, capped at 30 s) per `docs/sdk_protocol_spec.md` §5 "Auto-Reconnection".
+The Java SDK SHALL distinguish intentional disconnects (`ExecutorDisconnect` command handled → status `Stopped`) from unexpected ones (BrokenPipe / UnexpectedEof / ConnectionReset / QUIC connection lost). On an unexpected disconnect the SDK MUST clear `io_streams`, the live relay registry, and work queues; reset `executor_id` to `undefined`; and reconnect with exponential backoff (200 ms, 400 ms, 800 ms, …, capped at 30 s) per `docs/sdk_protocol_spec.md` §5 "Auto-Reconnection".
 
 #### Scenario: Agent crash triggers reconnect
 - **WHEN** the agent process is killed while the SDK has status `Running`
-- **THEN** the SDK SHALL detect the disconnect via the native layer, clear local state, and reconnect once the agent is available again, receiving a fresh `compute_engine_id`
+- **THEN** the SDK SHALL detect the disconnect via the native layer, clear local state, and reconnect once the agent is available again, receiving a fresh `executor_id`
 
 #### Scenario: Intentional disconnect does not reconnect
-- **WHEN** the SDK receives `ComputeEngineDisconnect{}` and responds successfully
+- **WHEN** the SDK receives `ExecutorDisconnect{}` and responds successfully
 - **THEN** the SDK SHALL close its sockets and NOT attempt any reconnection
 
 ### Requirement: Worker Pool and Dispatch Throughput Floor
 
-The Java SDK SHALL operate on a single shared bounded executor sized by `FLEZHA_WORKER_POOL_SIZE` (default = `Runtime.availableProcessors()`), draining all `PartitionSlot` mailboxes work-steal-style. The SDK SHALL sustain at least the throughput floor (in messages/second) measured against the v1 implementation at merge time on the regression bench (`100 relays × 1 shard × 1 partition × 10K msg`, no-op Shard, UDS transport, default worker-pool size; see `relay-mvp-java/design.md` Decision 7) invoked via `mix bench --runtime java --shape regression -n 100 -m 10000`. The bench-regression-java CI job is informational in v1; the literal floor value is recorded in this requirement once `mix bench --runtime java` has been measured 3× on the reference host (median, rounded down to a clean number) — until then the recorded floor is "TBD pending v1 measurement".
+The Java SDK SHALL operate on a single shared bounded executor sized by `FLEZHA_WORKER_POOL_SIZE` (default = `Runtime.availableRelays()`), draining all `PartitionSlot` mailboxes work-steal-style. The SDK SHALL sustain at least the throughput floor (in messages/second) measured against the v1 implementation at merge time on the regression bench (`100 relays × 1 shard × 1 partition × 10K msg`, no-op Shard, UDS transport, default worker-pool size; see `relay-mvp-java/design.md` Decision 7) invoked via `mix bench --runtime java --shape regression -n 100 -m 10000`. The bench-regression-java CI job is informational in v1; the literal floor value is recorded in this requirement once `mix bench --runtime java` has been measured 3× on the reference host (median, rounded down to a clean number) — until then the recorded floor is "TBD pending v1 measurement".
 
 #### Scenario: Reference bench meets the Java throughput floor
 - **WHEN** a developer runs `MIX_ENV=prod mix bench --runtime java --shape regression -n 100 -m 10000` on a modern 8-core x86_64 laptop with a warm JVM (≥ 30 s warmup)
 - **THEN** the reported `Throughput:` line SHALL be ≥ the recorded Java floor value
 
-#### Scenario: Default worker pool size matches available processors
+#### Scenario: Default worker pool size matches available relays
 - **WHEN** the SDK starts with `FLEZHA_WORKER_POOL_SIZE` unset
-- **THEN** the worker pool SHALL be sized to `Runtime.availableProcessors()`
+- **THEN** the worker pool SHALL be sized to `Runtime.availableRelays()`
 
 ### Requirement: JNI Bridge to flz_transport
 
@@ -304,32 +304,32 @@ The Java SDK's `Shard` interface SHALL declare `Clock extends com.flezha.sdk.sta
 
 ### Requirement: Relay declares persistenceEnabled default-method, frozen at instance start
 
-The Java SDK's `Relay` interface SHALL declare `default boolean persistenceEnabled() { return true; }`. The runtime SHALL resolve a per-Relay-instance `persistenceEnabled: boolean` at the moment `AddProcessor` is processed using:
+The Java SDK's `Relay` interface SHALL declare `default boolean persistenceEnabled() { return true; }`. The runtime SHALL resolve a per-Relay-instance `persistenceEnabled: boolean` at the moment `AddRelay` is processed using:
 
-1. If the `AddProcessor` metadata carries `relay_persistence.<RelayClass>` with a boolean value (operator override), use that.
+1. If the `AddRelay` metadata carries `relay_persistence.<RelayClass>` with a boolean value (executor override), use that.
 2. Otherwise, use the value of `Relay.persistenceEnabled()` (the Relay-class default).
 3. If neither is overridden, the result is `true`.
 
-The resolved value SHALL be bound to the `RelayInstance` and SHALL be propagated to every `PartitionSlot` constructed for that instance. Subsequent changes to the operator-side metadata or to the SDK's `Relay.persistenceEnabled()` impl (via SDK redeploy) SHALL NOT affect already-running instances.
+The resolved value SHALL be bound to the `RelayInstance` and SHALL be propagated to every `PartitionSlot` constructed for that instance. Subsequent changes to the executor-side metadata or to the SDK's `Relay.persistenceEnabled()` impl (via SDK redeploy) SHALL NOT affect already-running instances.
 
 #### Scenario: Default-on with no override
 
-- **WHEN** a Relay's `persistenceEnabled()` is the default (returns `true`) AND no operator override is present
+- **WHEN** a Relay's `persistenceEnabled()` is the default (returns `true`) AND no executor override is present
 - **THEN** `RelayInstance.persistenceEnabled()` SHALL return `true`
 
 #### Scenario: Code-declared opt-out is honored
 
-- **WHEN** `MarketRelay.persistenceEnabled()` returns `false` (user override) AND no operator override is present
+- **WHEN** `MarketRelay.persistenceEnabled()` returns `false` (user override) AND no executor override is present
 - **THEN** `RelayInstance.persistenceEnabled()` SHALL return `false`; the `PartitionFlusher` SHALL drain-and-discard for this instance's Partitions; `NativeTransport.sendPartitionStateChange` SHALL NOT be invoked
 
-#### Scenario: Operator override takes precedence
+#### Scenario: Executor override takes precedence
 
-- **WHEN** `MarketRelay.persistenceEnabled()` returns `true` AND `AddProcessor` metadata sets `relay_persistence.MarketRelay = false`
+- **WHEN** `MarketRelay.persistenceEnabled()` returns `true` AND `AddRelay` metadata sets `relay_persistence.MarketRelay = false`
 - **THEN** `RelayInstance.persistenceEnabled()` SHALL return `false`
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** a `RelayInstance` is constructed with resolved `persistenceEnabled = true`, AND a subsequent operator config change sets `relay_persistence.<RelayClass> = false`
+- **WHEN** a `RelayInstance` is constructed with resolved `persistenceEnabled = true`, AND a subsequent executor config change sets `relay_persistence.<RelayClass> = false`
 - **THEN** the running `RelayInstance` SHALL continue with `persistenceEnabled = true`; the new value SHALL take effect only on the next `stop_relay` + `start_relay` cycle for that instance
 
 ### Requirement: initState accepts optional restoration payload
@@ -337,7 +337,7 @@ The resolved value SHALL be bound to the `RelayInstance` and SHALL be propagated
 The Java SDK's `Shard.initState` signature SHALL be `State initState(Optional<String> shardKey, Optional<RestoreInitPayload> initPayload)`. When `initPayload.isEmpty()`, `initState` SHALL behave as a fresh-start constructor. When `initPayload.isPresent()`, the user MAY inspect or ignore the payload bytes; the runtime SHALL automatically apply the payload AFTER `initState` returns:
 
 1. If `payload.snapshotBytes().length > 0`, deserialize via `KryoCodec` (after header validation) and replace the user-constructed state.
-2. If `payload.changeLogBytes().length > 0`, decode each WAL record (frame format from `relay-state-persistence-agent`), validate header, deserialize Change via `KryoCodec`, and invoke `Shard.applyChange(state, change)` in seq order.
+2. If `payload.changeLogBytes().length > 0`, decode each WAL record (frame format from `relay-state-persistence`), validate header, deserialize Change via `KryoCodec`, and invoke `Shard.applyChange(state, change)` in seq order.
 
 #### Scenario: Cold start passes Optional.empty()
 
@@ -458,7 +458,7 @@ Reordering of `Shard.kryoTypes()` between SDK versions SHALL be an unsupported b
 
 ### Requirement: Wire-protocol command handlers (Java)
 
-The Java SDK SHALL register command handlers for `RestoreInitState`, `CompactPartition`, and `PartitionMailboxStatus` per `relay-state-persistence-agent`'s wire-protocol additions:
+The Java SDK SHALL register command handlers for `RestoreInitState`, `CompactPartition`, and `PartitionMailboxStatus` per `relay-state-persistence`'s wire-protocol additions:
 
 - `RestoreInitStateHandler`: receives the request, decodes payload, invokes `Shard.initState(shardKey, Optional.of(payload))`, runs the runtime auto-restore (snapshot deserialize + change-log fold), sets the partition state, replies `RestoreInitStateResponse{partition_id, terminal_seq}`.
 - `CompactPartitionHandler`: receives the request, acquires the partition's sticky CAS, deep-copies state via Kryo, releases CAS, serializes with header stamping, ships via `NativeTransport.sendPartitionStateSnapshot`, replies `CompactPartitionResponse{partition_id, snapshot_seq, snapshot_bytes_size}`.

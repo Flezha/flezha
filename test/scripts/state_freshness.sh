@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # SDK -> agent graceful-shutdown state-freshness smoke test (dev compose).
 #
-# Exercises the `OperatorShutdownNotification` path from
+# Exercises the `ExecutorShutdownNotification` path from
 # `ship-fresh-state-on-sdk-shutdown` against the same dev compose stack
 # the connection-healing test uses, sending SIGTERM via
 # `docker compose stop` and asserting the agent's
-# `Overwatch.state.snapshot` is populated for every running processor.
+# `Overwatch.state.snapshot` is populated for every running relay.
 #
 # Two scenarios:
 #
-#   A. periodic-enabled: processor uses the agent's default
+#   A. periodic-enabled: relay uses the agent's default
 #      `overwatch_state_snapshot_interval_ms`. After SIGTERM the
-#      snapshot reflects the operator's true final state (not the
+#      snapshot reflects the executor's true final state (not the
 #      up-to-interval stale periodic value).
-#   B. disabled-snapshot: processor is started with
+#   B. disabled-snapshot: relay is started with
 #      `--snapshot-interval 0`. Without the shutdown notification the
 #      agent would have no snapshot at all (nil); this scenario asserts
 #      the notification populated it anyway.
@@ -101,7 +101,7 @@ wait_for_ce_id() {
     fi
     sleep 2
   done
-  echo "[state_freshness] timed out waiting for compute_engine_id" >&2
+  echo "[state_freshness] timed out waiting for executor_id" >&2
   return 1
 }
 
@@ -120,33 +120,33 @@ agent_eval() {
      || mix run --no-start -e '${snippet}'"
 }
 
-start_processor() {
-  local processor_id="$1"
+start_relay() {
+  local relay_id="$1"
   local snapshot_interval="$2"
 
-  note "starting processor ${processor_id} (snapshot_interval=${snapshot_interval})"
+  note "starting relay ${relay_id} (snapshot_interval=${snapshot_interval})"
 
   local snippet
   snippet=$(cat <<EOF
-builder = %Flezha.Processor.Builder{
-  id: "${processor_id}",
+builder = %Flezha.Relay.Builder{
+  id: "${relay_id}",
   factory_id: "store_input",
   init_values: %{},
   opts: [snapshot_interval: ${snapshot_interval}]
 }
-{:ok, info} = Flezha.Service.ProcessorManager.start_processor("${DEMO_NAMESPACE}", builder)
+{:ok, info} = Flezha.Service.RelayManager.start_relay("${DEMO_NAMESPACE}", builder)
 IO.inspect(info, label: "started")
 EOF
 )
   agent_eval "${snippet}"
 }
 
-read_snapshot_for_processor() {
-  local processor_id="$1"
+read_snapshot_for_relay() {
+  local relay_id="$1"
 
   local snippet
   snippet=$(cat <<EOF
-{:ok, state} = Flezha.Service.ProcessorManager.get_overwatch_state("${DEMO_NAMESPACE}", "${processor_id}")
+{:ok, state} = Flezha.Service.RelayManager.get_overwatch_state("${DEMO_NAMESPACE}", "${relay_id}")
 IO.puts("SNAPSHOT_BINARY_PRESENT=" <> if state.snapshot != nil and byte_size(state.snapshot) > 0, do: "yes", else: "no")
 case state.snapshot do
   bin when is_binary(bin) -> IO.puts("SNAPSHOT_BYTES=" <> Base.encode64(bin))
@@ -158,35 +158,35 @@ EOF
 }
 
 assert_snapshot_present() {
-  local processor_id="$1"
+  local relay_id="$1"
   local label="$2"
 
   local output
-  output="$(read_snapshot_for_processor "${processor_id}" 2>&1)"
+  output="$(read_snapshot_for_relay "${relay_id}" 2>&1)"
   echo "${output}"
 
   if ! echo "${output}" | grep -q "SNAPSHOT_BINARY_PRESENT=yes"; then
-    echo "[state_freshness] FAIL (${label}): processor ${processor_id} has no agent-side snapshot after SIGTERM" >&2
+    echo "[state_freshness] FAIL (${label}): relay ${relay_id} has no agent-side snapshot after SIGTERM" >&2
     "${COMPOSE[@]}" logs --tail=200 agent rust >&2 || true
     exit 1
   fi
 
-  note "PASS (${label}): processor ${processor_id} agent snapshot is populated"
+  note "PASS (${label}): relay ${relay_id} agent snapshot is populated"
 }
 
-# --- Scenario A: periodic-enabled processor ----------------------------------
+# --- Scenario A: periodic-enabled relay ----------------------------------
 
 note "bringing up dev compose stack (project=${PROJECT}, transport=${FLEZHA_TRANSPORT:-uds})"
 "${COMPOSE[@]}" up -d agent rust
 
 note "waiting for initial handshake"
 INITIAL_CE_ID="$(wait_for_ce_id)"
-note "initial compute_engine_id: ${INITIAL_CE_ID}"
+note "initial executor_id: ${INITIAL_CE_ID}"
 
 PROC_A="state_freshness_a_$$"
-start_processor "${PROC_A}" "60_000"
+start_relay "${PROC_A}" "60_000"
 
-# Brief settle so the processor's `start_processor_sdk` round-trip
+# Brief settle so the relay's `start_relay_sdk` round-trip
 # completes before we yank the rust container.
 sleep 2
 
@@ -204,10 +204,10 @@ assert_snapshot_present "${PROC_A}" "scenario A (periodic-enabled)"
 note "waiting for rust restart handshake"
 wait_for_ce_id >/dev/null
 
-# --- Scenario B: disabled-snapshot processor ---------------------------------
+# --- Scenario B: disabled-snapshot relay ---------------------------------
 
 PROC_B="state_freshness_b_$$"
-start_processor "${PROC_B}" "0"
+start_relay "${PROC_B}" "0"
 sleep 2
 
 note "stopping rust container with SIGTERM (scenario B)"
@@ -216,4 +216,4 @@ sleep 1
 
 assert_snapshot_present "${PROC_B}" "scenario B (disabled-snapshot)"
 
-note "PASS: both state-freshness scenarios populated agent.Overwatch.state.snapshot via OperatorShutdownNotification"
+note "PASS: both state-freshness scenarios populated agent.Overwatch.state.snapshot via ExecutorShutdownNotification"

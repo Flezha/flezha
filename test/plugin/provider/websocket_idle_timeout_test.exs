@@ -64,7 +64,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
                Websocket.build(%{"uri" => "wss://example.com", "idle_timeout_ms" => "-5"})
     end
 
-    test "falls back to default for non-integer idle_timeout_ms strings (operator typo)" do
+    test "falls back to default for non-integer idle_timeout_ms strings (executor typo)" do
       # An invalid value coerces to the safe default rather than crashing
       # the plugin manager mid-restart. A warning log is emitted; we don't
       # assert on it here because the value is what protects the user.

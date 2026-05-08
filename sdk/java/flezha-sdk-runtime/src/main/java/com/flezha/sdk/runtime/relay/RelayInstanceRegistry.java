@@ -5,10 +5,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import javax.annotation.Nonnull;
 
 /**
- * Per-{@code ComputeEngineContext} registry of live {@link RelayInstance}
+ * Per-{@code ExecutorContext} registry of live {@link RelayInstance}
  * objects keyed by {@code instanceId} (= what the wire calls
- * {@code processor_id}). Replaces the legacy
- * {@code Map<String, ProcessorInstance>}.
+ * {@code relay_id}). Replaces the legacy
+ * {@code Map<String, RelayInstance>}.
  */
 public final class RelayInstanceRegistry {
 

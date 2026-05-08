@@ -2,13 +2,13 @@
 
 ## Purpose
 
-The relay-state-persistence capability provides agent-side, per-Partition durability for Relay state. The agent maintains an append-only write-ahead log (WAL) per Partition under `app_data/state/`, fsynced on a configurable cadence, with asynchronous size-triggered compaction into snapshot files. On Partition reconnect, the agent assembles a `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}` payload and ships it to the SDK over the control channel; the SDK applies the snapshot and folds the WAL tail to recover terminal state. Persistence is per-Relay-class opt-in via runtime config or a Relay-class const, defaulting on. The agent retains pre-compaction WAL records for a configurable window to support time-travel queries via `flz state at`. The capability is additive to the existing `Overwatch` GenServer: persistence frames (`partition_state_change`, `partition_state_snapshot`) flow alongside the existing protocol; no SDK or operator code outside this capability is required.
+The relay-state-persistence capability provides agent-side, per-Partition durability for Relay state. The agent maintains an append-only write-ahead log (WAL) per Partition under `app_data/state/`, fsynced on a configurable cadence, with asynchronous size-triggered compaction into snapshot files. On Partition reconnect, the agent assembles a `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}` payload and ships it to the SDK over the control channel; the SDK applies the snapshot and folds the WAL tail to recover terminal state. Persistence is per-Relay-class opt-in via runtime config or a Relay-class const, defaulting on. The agent retains pre-compaction WAL records for a configurable window to support time-travel queries via `flz state at`. The capability is additive to the existing `Overwatch` GenServer: persistence frames (`partition_state_change`, `partition_state_snapshot`) flow alongside the existing protocol; no SDK or executor code outside this capability is required.
 
 ## Requirements
 
 ### Requirement: Per-Partition append-only WAL on the agent
 
-Each Partition whose Relay has `persistence_enabled = true` and whose Shard's `Change` is not `NoChange` SHALL have a per-Partition write-ahead log on the agent at `app_data/state/{compute_engine_id}/{relay_class}/{shard_id}/{partition_key}.wal`. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the agent's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
+Each Partition whose Relay has `persistence_enabled = true` and whose Shard's `Change` is not `NoChange` SHALL have a per-Partition write-ahead log on the agent at `app_data/state/{executor_id}/{relay_class}/{shard_id}/{partition_key}.wal`. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the agent's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
 
 `seq` SHALL be strictly monotonic per Partition and assigned by the SDK. The agent SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Partition; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`; AND SHALL reject as a protocol violation any frame whose `seq > last_persisted_seq + 1` (returning `{:error, {:gap, expected, got}}` to the SDK).
 
@@ -60,7 +60,7 @@ If the agent crashes between steps 3 and 4, the next boot SHALL find both the ne
 
 ### Requirement: Asynchronous compaction triggered by per-Partition WAL size
 
-When a Partition's WAL exceeds `compact_after_bytes` (per-Shard, default 64 MiB; the SDK ships the per-Shard value to the agent in the `AddProcessor` metadata), the agent SHALL trigger asynchronous compaction by enqueuing `Overwatch.handle_continue(:compact_partition, partition_id)`. The continuation SHALL ship `CompactPartition{partition_id}` to the SDK over the control channel.
+When a Partition's WAL exceeds `compact_after_bytes` (per-Shard, default 64 MiB; the SDK ships the per-Shard value to the agent in the `AddRelay` metadata), the agent SHALL trigger asynchronous compaction by enqueuing `Overwatch.handle_continue(:compact_partition, partition_id)`. The continuation SHALL ship `CompactPartition{partition_id}` to the SDK over the control channel.
 
 The SDK SHALL acquire the Partition's sticky CAS, clone `Self::State`, release the CAS, serialize the clone (postcard), and ship `partition_state_snapshot{partition_id, seq, header, snapshot_bytes, crc32}` back to the agent. The agent SHALL handle the snapshot per the snapshot-lifecycle requirement above. The agent SHALL reply `CompactPartitionResponse{partition_id, snapshot_seq, snapshot_bytes_size}` to confirm.
 
@@ -74,7 +74,7 @@ The hot path SHALL pay only the brief sticky-CAS hold during the state clone —
 #### Scenario: Per-Shard override propagated and honored
 
 - **WHEN** a Shard declares `compact_after_bytes() -> usize { 16 * 1024 * 1024 }` in the SDK
-- **THEN** the SDK SHALL ship `compact_after_bytes = 16777216` for this Shard in `AddProcessor` metadata; the agent SHALL trigger compaction for this Shard's Partitions when WAL grows past 16 MiB
+- **THEN** the SDK SHALL ship `compact_after_bytes = 16777216` for this Shard in `AddRelay` metadata; the agent SHALL trigger compaction for this Shard's Partitions when WAL grows past 16 MiB
 
 #### Scenario: Hot path holds CAS only for state clone
 
@@ -85,14 +85,14 @@ The hot path SHALL pay only the brief sticky-CAS hold during the state clone —
 
 On reconnect, for each Partition whose Relay has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL: (1) call `Restore.assemble_payload(partition_id)` to read the latest snapshot bytes plus the tail-WAL bytes; (2) ship `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}` to the SDK over the control channel; (3) BLOCK the Partition's input streaming (entry channel and inter-shard inputs targeting this Partition queue at the agent-side outbox); (4) await `RestoreInitStateResponse{partition_id, terminal_seq}` from the SDK; (5) UNBLOCK the Partition's input streaming; subsequent Changes from the SDK carry `seq = terminal_seq + 1`.
 
-For Partitions whose Relay has `persistence_enabled = false` OR whose agent-side state is empty (no snapshot, no WAL records), the agent SHALL fall through to the existing `processor-init-state` capability flow.
+For Partitions whose Relay has `persistence_enabled = false` OR whose agent-side state is empty (no snapshot, no WAL records), the agent SHALL fall through to the existing `relay-init-state` capability flow.
 
-`RestoreInitState` and `compute_engine_migrate` SHALL be mutually exclusive per Partition: when `compute_engine_migrate` is invoked for a Partition with persisted state, the migration path's snapshot bytes SHALL be the restoration source and `RestoreInitState` SHALL NOT be issued. The agent SHALL never issue both for the same Partition reconnect.
+`RestoreInitState` and `executor_migrate` SHALL be mutually exclusive per Partition: when `executor_migrate` is invoked for a Partition with persisted state, the migration path's snapshot bytes SHALL be the restoration source and `RestoreInitState` SHALL NOT be issued. The agent SHALL never issue both for the same Partition reconnect.
 
 #### Scenario: Cold start with no persisted state
 
 - **WHEN** a Partition reconnects and the agent has no WAL or snapshot for it AND `persistence_enabled = true`
-- **THEN** `RestoreInitState` SHALL NOT be issued; the agent SHALL invoke the existing `processor-init-state` capability flow (init-state plugin chain or inline init_values)
+- **THEN** `RestoreInitState` SHALL NOT be issued; the agent SHALL invoke the existing `relay-init-state` capability flow (init-state plugin chain or inline init_values)
 
 #### Scenario: Restart with snapshot only
 
@@ -112,11 +112,11 @@ For Partitions whose Relay has `persistence_enabled = false` OR whose agent-side
 #### Scenario: Persistence-disabled Relay skips RestoreInitState
 
 - **WHEN** a Partition reconnects under a Relay with `persistence_enabled = false`
-- **THEN** the agent SHALL NOT call `Restore.assemble_payload` AND SHALL NOT ship `RestoreInitState`; the existing `processor-init-state` capability flow runs instead
+- **THEN** the agent SHALL NOT call `Restore.assemble_payload` AND SHALL NOT ship `RestoreInitState`; the existing `relay-init-state` capability flow runs instead
 
 #### Scenario: Migration takes precedence over RestoreInitState
 
-- **WHEN** `compute_engine_migrate` is invoked for a Partition with persisted state
+- **WHEN** `executor_migrate` is invoked for a Partition with persisted state
 - **THEN** the migration path's snapshot bytes SHALL be used as the restoration source; `RestoreInitState` SHALL NOT be issued for this Partition; the SDK observes a single restoration handshake (the migration one)
 
 #### Scenario: Input streaming blocked during restoration
@@ -128,13 +128,13 @@ For Partitions whose Relay has `persistence_enabled = false` OR whose agent-side
 
 The agent SHALL retain pre-compaction WAL records for `time_travel_retention_hours` beyond the latest snapshot, configurable per-Relay-class via runtime config `time_travel_retention_hours.<RelayClass>` (default `6` hours globally; setting to `0` disables time travel for that Relay class). The retention sweeper (`Flezha.State.Retention`) SHALL run on `time_travel_retention_check_interval_ms` (default 60_000), iterate Partitions, and rewrite each Partition's WAL dropping records older than the cutoff.
 
-The agent SHALL expose a query interface `Flezha.State.TimeTravel.query(partition_id, target)` where `target = {:seq, u64} | {:timestamp, datetime}`. The query SHALL: (1) locate the latest snapshot at-or-before the target; (2) read the tail-WAL records up to the target; (3) ship `RestoreInitState` to a transient SDK-side replay processor; (4) receive a `partition_state_snapshot` carrying JSON-encoded terminal state; (5) return the JSON to the caller.
+The agent SHALL expose a query interface `Flezha.State.TimeTravel.query(partition_id, target)` where `target = {:seq, u64} | {:timestamp, datetime}`. The query SHALL: (1) locate the latest snapshot at-or-before the target; (2) read the tail-WAL records up to the target; (3) ship `RestoreInitState` to a transient SDK-side replay relay; (4) receive a `partition_state_snapshot` carrying JSON-encoded terminal state; (5) return the JSON to the caller.
 
 The query SHALL be exposed via the `flz state at <relay/shard/partition> <seq | timestamp>` CLI subcommand.
 
 #### Scenario: Default 6-hour retention
 
-- **WHEN** an operator does not configure `time_travel_retention_hours`
+- **WHEN** an executor does not configure `time_travel_retention_hours`
 - **THEN** the agent SHALL retain WAL records for 6 hours beyond the latest snapshot
 
 #### Scenario: Time-travel disabled (`retention_hours = 0`)
@@ -144,22 +144,22 @@ The query SHALL be exposed via the `flz state at <relay/shard/partition> <seq | 
 
 #### Scenario: Query within retention window returns state
 
-- **WHEN** the operator runs `flz state at MarketRelay/btc/OhlcShard/M1 "2026-05-07T10:30:00Z"` AND that timestamp falls within the retention window
+- **WHEN** the executor runs `flz state at MarketRelay/btc/OhlcShard/M1 "2026-05-07T10:30:00Z"` AND that timestamp falls within the retention window
 - **THEN** the agent SHALL load the latest snapshot at-or-before the timestamp and fold WAL records up to it; the CLI SHALL print the JSON-encoded state
 
 #### Scenario: Query outside retention returns error
 
-- **WHEN** the operator queries a timestamp older than the earliest available WAL record's record-time
+- **WHEN** the executor queries a timestamp older than the earliest available WAL record's record-time
 - **THEN** the agent SHALL return `TimeTravelError{kind: :outside_retention, earliest_available: <ts>}`; the CLI SHALL print a clear error pointing at the earliest queryable point
 
 #### Scenario: Query against persistence-off Relay errors
 
-- **WHEN** the operator runs `flz state at <relay/shard/partition> <target>` for a Partition whose Relay has `persistence_enabled = false`
+- **WHEN** the executor runs `flz state at <relay/shard/partition> <target>` for a Partition whose Relay has `persistence_enabled = false`
 - **THEN** the agent SHALL return `TimeTravelError{kind: :partition_not_persistent, relay, shard, partition}`
 
 #### Scenario: Live retention update applies on next sweep
 
-- **WHEN** the operator runs `flz state retention MarketRelay 12` and the prior value was `6`
+- **WHEN** the executor runs `flz state retention MarketRelay 12` and the prior value was `6`
 - **THEN** the runtime config SHALL be updated to 12 hours; the next retention-sweeper tick SHALL apply the new value (records older than 12 hours are deleted; records younger SHALL be retained going forward)
 
 ### Requirement: Fsync batching at configurable cadence
@@ -170,7 +170,7 @@ The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BE
 
 #### Scenario: Default 5 ms tick = 200 Hz fsync rate
 
-- **WHEN** an operator does not configure `agent_fsync_interval_ms`
+- **WHEN** an executor does not configure `agent_fsync_interval_ms`
 - **THEN** the batcher SHALL tick every 5 ms (200 Hz) AND each dirty `WalWriter` SHALL fsync at most once per tick
 
 #### Scenario: 5 ms + 5 ms = 10 ms total durability bound
@@ -178,37 +178,37 @@ The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BE
 - **WHEN** a Shard records a Change at time `t` under default flusher and fsync settings (`linger_ms = 5` SDK-side; `agent_fsync_interval_ms = 5` agent-side)
 - **THEN** the Change SHALL be durably fsynced to disk on the agent by `t + 10 ms` modulo network round-trip and OS scheduling; `fsync_durability_lag_ms` SHALL stabilize below 10 ms under steady-state load
 
-#### Scenario: Operator-tightened bound
+#### Scenario: Executor-tightened bound
 
-- **WHEN** an operator sets `agent_fsync_interval_ms = 1`
+- **WHEN** an executor sets `agent_fsync_interval_ms = 1`
 - **THEN** the batcher SHALL tick every 1 ms (1000 Hz); the durability bound SHALL be ~2 ms total at the cost of more frequent fsyncs
 
 ### Requirement: Per-Relay persistence toggle resolution at relay startup
 
-The agent SHALL resolve a per-Relay-class boolean `persistence_enabled` at the moment a Relay instance is added (`AddProcessor` command processed in `Overwatch.init/1`) using the following ordered rule:
+The agent SHALL resolve a per-Relay-class boolean `persistence_enabled` at the moment a Relay instance is added (`AddRelay` command processed in `Overwatch.init/1`) using the following ordered rule:
 
 1. If the agent's runtime config defines `relay_persistence.<RelayClass>` for this Relay class, use that value.
-2. Otherwise, if the `AddProcessor` metadata carries a Relay-class const value (`Relay::PERSISTENCE_ENABLED`), use that value.
+2. Otherwise, if the `AddRelay` metadata carries a Relay-class const value (`Relay::PERSISTENCE_ENABLED`), use that value.
 3. Otherwise, use the built-in default of `true`.
 
-The resolved value SHALL be bound to the Relay instance for its entire lifetime. Subsequent changes to the operator-side config or to the SDK's Relay-class const (via SDK redeploy) SHALL NOT affect already-running instances.
+The resolved value SHALL be bound to the Relay instance for its entire lifetime. Subsequent changes to the executor-side config or to the SDK's Relay-class const (via SDK redeploy) SHALL NOT affect already-running instances.
 
 When `persistence_enabled = false`, the agent SHALL NOT allocate WAL or snapshot files for any of that Relay's Partitions, SHALL ignore (drop with a counter increment) any incoming `partition_state_change` or `partition_state_snapshot` frames for those Partitions, and SHALL NOT issue `RestoreInitState` on reconnect.
 
 #### Scenario: Default-on with no override
 
-- **WHEN** an operator does not configure `relay_persistence.MarketRelay` AND `MarketRelay`'s `AddProcessor` metadata does not declare `PERSISTENCE_ENABLED`
+- **WHEN** an executor does not configure `relay_persistence.MarketRelay` AND `MarketRelay`'s `AddRelay` metadata does not declare `PERSISTENCE_ENABLED`
 - **THEN** the agent SHALL resolve `persistence_enabled = true` for `MarketRelay`
 
-#### Scenario: Operator override takes precedence
+#### Scenario: Executor override takes precedence
 
-- **WHEN** `MarketRelay`'s `AddProcessor` metadata declares `PERSISTENCE_ENABLED = true` AND the operator sets `relay_persistence.MarketRelay = false`
+- **WHEN** `MarketRelay`'s `AddRelay` metadata declares `PERSISTENCE_ENABLED = true` AND the executor sets `relay_persistence.MarketRelay = false`
 - **THEN** the agent SHALL resolve `persistence_enabled = false` for `MarketRelay`
 
 #### Scenario: Mid-life config change does not affect running instance
 
-- **WHEN** a Relay instance is running with resolved `persistence_enabled = true` AND the operator subsequently runs `flz config set relay_persistence.MarketRelay false`
-- **THEN** the running instance SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after the SDK pod hosting the instance is restarted (the new instance's `AddProcessor` re-runs the resolution)
+- **WHEN** a Relay instance is running with resolved `persistence_enabled = true` AND the executor subsequently runs `flz config set relay_persistence.MarketRelay false`
+- **THEN** the running instance SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after the SDK pod hosting the instance is restarted (the new instance's `AddRelay` re-runs the resolution)
 
 ### Requirement: 16-byte version header on persisted blobs
 
@@ -355,15 +355,15 @@ The agent SHALL expose a `flz state` CLI subcommand tree:
 
 #### Scenario: flz state list enumerates Partitions
 
-- **WHEN** the operator runs `flz state list MarketRelay`
+- **WHEN** the executor runs `flz state list MarketRelay`
 - **THEN** the CLI SHALL print one line per Partition with the listed fields; output SHALL be tabular (column-aligned)
 
 #### Scenario: flz state rotate triggers async compaction
 
-- **WHEN** the operator runs `flz state rotate MarketRelay/btc/OhlcShard/M1`
+- **WHEN** the executor runs `flz state rotate MarketRelay/btc/OhlcShard/M1`
 - **THEN** the CLI SHALL print "compaction queued" and exit 0; the agent SHALL ship `CompactPartition` to the SDK; the resulting snapshot SHALL appear on disk within seconds
 
 #### Scenario: flz state retention persists across agent restart
 
-- **WHEN** the operator runs `flz state retention MarketRelay 12` and the agent is subsequently restarted
+- **WHEN** the executor runs `flz state retention MarketRelay 12` and the agent is subsequently restarted
 - **THEN** after restart, the resolved `time_travel_retention_hours` for `MarketRelay` SHALL be 12

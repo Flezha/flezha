@@ -29,7 +29,7 @@ public final class StreamRegistry {
         return byIndex.get(index);
     }
 
-    /** Returns a secondary stream id suitable for SDK→agent writes. Round-robin over indices. */
+    /** Returns a secondary stream id suitable for SDK→controller writes. Round-robin over indices. */
     public long anySecondary() {
         for (StreamPair pair : byIndex.values()) {
             return pair.secondary();

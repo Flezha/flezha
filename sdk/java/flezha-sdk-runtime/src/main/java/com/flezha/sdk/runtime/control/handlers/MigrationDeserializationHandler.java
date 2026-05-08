@@ -2,7 +2,7 @@ package com.flezha.sdk.runtime.control.handlers;
 
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.MigrationDeserialization;
-import com.flezha.sdk.runtime.ComputeEngineContext;
+import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.relay.InitValuesContext;
 import com.flezha.sdk.runtime.relay.RelayClassRegistry;
@@ -15,10 +15,10 @@ import java.util.List;
 public final class MigrationDeserializationHandler implements CommandHandler {
 
     @Override
-    public byte[] handle(ComputeEngineContext ctx, CommandRequest request, List<String> errors) throws Exception {
+    public byte[] handle(ExecutorContext ctx, CommandRequest request, List<String> errors) throws Exception {
         MigrationDeserialization cmd = request.getMigrationDeserialization();
         String factoryId = cmd.getFactoryId();
-        String processorId = cmd.getProcessorId();
+        String relayId = cmd.getRelayId();
         byte[] serializedState = cmd.getSerializedState().toByteArray();
 
         RelayTopology topology = RelayClassRegistry.getTopology(factoryId);
@@ -30,7 +30,7 @@ public final class MigrationDeserializationHandler implements CommandHandler {
         RelayInstance instance;
         InitValuesContext.set(null);
         try {
-            instance = RelayInstance.create(topology, processorId, ctx, ctx.workerPool());
+            instance = RelayInstance.create(topology, relayId, ctx, ctx.workerPool());
         } catch (RuntimeException e) {
             errors.add("Failed to spawn relay instance: " + e.getMessage());
             return new byte[0];

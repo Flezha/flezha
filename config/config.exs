@@ -12,8 +12,8 @@ config :flezha,
   # ------------------------------------------------------------------------------------------------
   # Cluster snapshot/restore subsystem (see docs/cluster-snapshot.md).
   #
-  # - `snapshot_state_cap_bytes`: per-processor cap on captured-state size
-  #   in the snapshot file. Processors above the cap are written without
+  # - `snapshot_state_cap_bytes`: per-relay cap on captured-state size
+  #   in the snapshot file. Relays above the cap are written without
   #   their state binary and a WARN line names them; restore primes them
   #   with empty default state.
   snapshot_state_cap_bytes: 8_388_608,
@@ -22,18 +22,18 @@ config :flezha,
   # ------------------------------------------------------------------------------------------------
   # Enabled plugins.
   enabled_plugins: %{
-    "processor_kafka_producer" => Flezha.Plugin.Provider.Kafka.Producer,
-    "processor_websocket" => Flezha.Plugin.Provider.Websocket,
-    "processor_beam_msg" => Flezha.Plugin.Provider.BeamMsgForward,
-    "processor_stdout" => Flezha.Plugin.Provider.StdOut,
-    "processor_io_filter" => Flezha.Plugin.Provider.Filter,
+    "relay_kafka_producer" => Flezha.Plugin.Provider.Kafka.Producer,
+    "relay_websocket" => Flezha.Plugin.Provider.Websocket,
+    "relay_beam_msg" => Flezha.Plugin.Provider.BeamMsgForward,
+    "relay_stdout" => Flezha.Plugin.Provider.StdOut,
+    "relay_io_filter" => Flezha.Plugin.Provider.Filter,
     "monitored_io_forward" => Flezha.Plugin.Provider.MonitoredIOForward,
     # `:on_message` provider that forwards a `{:flezha_request, key, payload,
-    # reply_to, ref}` envelope to the SDK-side processor via the
-    # `ProcessorMessage` control command. Attach at processor start with a
+    # reply_to, ref}` envelope to the SDK-side relay via the
+    # `RelayMessage` control command. Attach at relay start with a
     # subscription keyed on the handler name, e.g. `["on_message",
     # {"name": "fetch_init_state"}]`.
-    "processor_message_forward" => Flezha.Plugin.Provider.MessageForward
+    "relay_message_forward" => Flezha.Plugin.Provider.MessageForward
   },
 
   # ------------------------------------------------------------------------------------------------

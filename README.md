@@ -1,10 +1,10 @@
 # Flezha
 
 ## Description
-Distributed stateful processors. Provides static and dynamic creation of processors.
+Distributed stateful relays. Provides static and dynamic creation of relays.
 
 ## Features
-- Clustered, hot-swap-migratable processors
+- Clustered, hot-swap-migratable relays
 - SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
 - Installable plugin subsystem ([`docs/plugin_installation.md`](docs/plugin_installation.md))
 - First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/kafka-producer.md`](docs/kafka-producer.md))
@@ -12,7 +12,7 @@ Distributed stateful processors. Provides static and dynamic creation of process
 
 ## Image size and supported architectures
 
-The prod agent image runs on `debian:bookworm-slim` with a bundled-ERTS
+The prod controller image runs on `debian:bookworm-slim` with a bundled-ERTS
 Mix release (see [`docker/prod/README.md`](docker/prod/README.md)) under
 a **300 MiB** budget enforced by the `docker-size-gate` job in
 [`.github/workflows/docker.yml`](.github/workflows/docker.yml). Supported
@@ -24,8 +24,8 @@ The `protoc` install layer rejects any other `uname -m` with
 - Copy `.env.example` and rename to `.env`
 - Install testnet dependencies: `cd test/apps/testnet && npm install`
 - Build the testnet: `npm run build` (from `test/apps/testnet`)
-- Build the `rust_compute_engine` application.
-- Build the agent `mix compile`
+- Build the `rust_executor` application.
+- Build the controller `mix compile`
 
 ### Distribution artifacts (committed to git, never built by CI)
 
@@ -34,10 +34,10 @@ them:
 
 - 5× native binaries — `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/libflz_transport.{so,dylib,dll}`
 - SDK fat jar — `sdk/java/flezha-sdk/dist/flezha-sdk.jar`
-- Test compute-engine fat jar — `test/apps/java_compute_engine/dist/java_compute_engine.jar`
+- Test executor fat jar — `test/apps/java_executor/dist/java_executor.jar`
 
 Refresh all three with one command after touching anything under
-`sdk/java/`, `flz_jni/`, `flz_transport/`, or `test/apps/java_compute_engine/`:
+`sdk/java/`, `flz_jni/`, `flz_transport/`, or `test/apps/java_executor/`:
 
 ```bash
 scripts/build-dist.sh             # host toolchain (auto-installs zig if missing)
@@ -74,7 +74,7 @@ What each section runs (each line below is the literal command):
   - `mix test` (excludes `:system` and `:java_sdk`)
 - **`java`** — mirrors `.github/workflows/java-sdk.yml` (both jobs):
   - `mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify` (Java unit tests + JaCoCo)
-  - `mix test.java_sdk` (Elixir↔Java integration matrix against the committed test compute-engine jar)
+  - `mix test.java_sdk` (Elixir↔Java integration matrix against the committed test executor jar)
 
 The `java` section refuses to run if any committed distribution artifact
 is missing — it'll point you at `scripts/build-dist.sh`. The script uses
@@ -86,39 +86,39 @@ ends with `ALL CI CHECKS PASSED`.
 
 ## Examples
 
-### Start agent (started automatically for dev mode)
+### Start controller (started automatically for dev mode)
 Starting the node and specifying the external processes to be used by the node mynode.
 PROD:
 ```bash
-RELEASE_NODE=mynode FLEZHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/flezha/test/apps/rust_compute_engine/Cargo.toml --target-dir=./target" _build/prod/rel/flezha/bin/flz agent start --mode=attached_iex
+RELEASE_NODE=mynode FLEZHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/flezha/test/apps/rust_executor/Cargo.toml --target-dir=./target" _build/prod/rel/flezha/bin/flz controller start --mode=attached_iex
 ```
 
 DEV:
 ```bash
-RELEASE_NODE=mynode _build/dev/rel/flezha/bin/flz agent start --mode=attached_iex
+RELEASE_NODE=mynode _build/dev/rel/flezha/bin/flz controller start --mode=attached_iex
 ```
 
-### Stop agent
+### Stop controller
 Stopping the node.
 ```bash
-_build/dev/rel/flezha/bin/flz agent stop
+_build/dev/rel/flezha/bin/flz controller stop
 ```
 
-### Starting a processor.
+### Starting a relay.
 ```bash
-_build/dev/rel/flezha/bin/flz processor start my_processor compare_filter --init_values='{
+_build/dev/rel/flezha/bin/flz relay start my_relay compare_filter --init_values='{
   "comparable": "hello world", 
   "inverted": false
 }'
 ```
 
 ```bash
-_build/dev/rel/flezha/bin/flzprocessor start my_processor do_nothing
+_build/dev/rel/flezha/bin/flzrelay start my_relay do_nothing
 ```
 
-### Stop a processor.
+### Stop a relay.
 ```bash
-_build/dev/rel/flezha/bin/flz processor stop my_processor
+_build/dev/rel/flezha/bin/flz relay stop my_relay
 ```
 
 ### Installable plugins
@@ -134,10 +134,10 @@ See [`docs/plugin_installation.md`](docs/plugin_installation.md) for the
 full authoring guide and [`examples/plugins/hello_world/`](examples/plugins/hello_world/)
 for a minimal copy-paste starting point.
 
-### Enabling websocket plugin for processor. 
+### Enabling websocket plugin for relay. 
 ```bash
-_build/dev/rel/flezha/bin/flz plugin enable processor_websocket  --settings='{
-  "processor_id": "my_processor",
+_build/dev/rel/flezha/bin/flz plugin enable relay_websocket  --settings='{
+  "relay_id": "my_relay",
   "trigger": "proactive",
   "uri": "ws://localhost:4500",
   "post_connect": {
@@ -150,32 +150,32 @@ _build/dev/rel/flezha/bin/flz plugin enable processor_websocket  --settings='{
 ```
 
 ```bash
-_build/dev/rel/flezha/bin/flz plugin enable processor_stdout  --settings='{
-  "processor_id": "my_processor",
+_build/dev/rel/flezha/bin/flz plugin enable relay_stdout  --settings='{
+  "relay_id": "my_relay",
   "trigger": "on_out",
 }'
 ```
 
-### Get processor state.
+### Get relay state.
 ```bash
-_build/dev/rel/flezha/bin/flz processor state my_processor
+_build/dev/rel/flezha/bin/flz relay state my_relay
 ```
 
 
 ### Performance Testing
-Run performance tests to measure processor throughput and message processing capabilities:
+Run performance tests to measure relay throughput and message processing capabilities:
 
 ```bash
-# Run with default settings (100 processors, 100 messages per processor)
+# Run with default settings (100 relays, 100 messages per relay)
 MIX_ENV=prod mix bench
 
 # Run with custom settings
-MIX_ENV=prod mix bench --num-processors 100 --messages-per-processor 100
+MIX_ENV=prod mix bench --num-relays 100 --messages-per-relay 100
 
 # Short form aliases
 MIX_ENV=prod mix bench -n 100 -m 50
 
-# Bench the Rust SDK (default) vs the Java SDK — same agent, same protocol,
+# Bench the Rust SDK (default) vs the Java SDK — same controller, same protocol,
 # same measurement code, so the Throughput numbers are directly comparable.
 MIX_ENV=prod mix bench --runtime rust -n 100 -m 1000 | tee bench-rust.txt
 MIX_ENV=prod mix bench --runtime java -n 100 -m 1000 | tee bench-java.txt
@@ -185,7 +185,7 @@ diff bench-rust.txt bench-java.txt
 ./scripts/bench.sh --runtime java --transport quic -n 100 -m 1000
 ```
 
-The Rust SDK's dispatch core was rewritten to use per-processor mailboxes
+The Rust SDK's dispatch core was rewritten to use per-relay mailboxes
 and a work-stealing pool — see
 [`openspec/changes/optimize-rust-sdk-dispatch/`](openspec/changes/optimize-rust-sdk-dispatch/)
 and [`docs/shared_library_architecture.md`](docs/shared_library_architecture.md)
@@ -196,20 +196,20 @@ meaningful speedup. Criterion dispatch micro-benches live at
 `sdk/rust/benches/` and run via:
 
 ```bash
-cargo bench -p flezha_compute_engine --features bench-internals --bench dispatch
+cargo bench -p flezha_executor --features bench-internals --bench dispatch
 ```
 
 
 **Options:**
-- `--num-processors` / `-n`: Number of processors to create (default: 100)
-- `--messages-per-processor` / `-m`: Number of messages to send per processor (default: 100)
+- `--num-relays` / `-n`: Number of relays to create (default: 100)
+- `--messages-per-relay` / `-m`: Number of messages to send per relay (default: 100)
 - `--runtime` / `-r`: Which SDK to benchmark — `rust` (default) or `java`. The
   `java` runtime requires the test jar at
-  `test/apps/java_compute_engine/target/java_compute_engine.jar` (build with
-  `mix test.java_sdk` or `mvn -f test/apps/java_compute_engine/pom.xml package`).
+  `test/apps/java_executor/target/java_executor.jar` (build with
+  `mix test.java_sdk` or `mvn -f test/apps/java_executor/pom.xml package`).
 
-The performance test creates multiple processors, enables plugins, sends messages, and measures:
-- Processor creation time
+The performance test creates multiple relays, enables plugins, sends messages, and measures:
+- Relay creation time
 - Plugin setup time  
 - Message sending time
 - Message processing time
@@ -217,11 +217,11 @@ The performance test creates multiple processors, enables plugins, sends message
 
 ### Restart survival
 
-Restart-survival is operator-driven via `flz cluster snapshot` and
+Restart-survival is executor-driven via `flz cluster snapshot` and
 `flz cluster restore` — see
 [`docs/cluster-snapshot.md`](docs/cluster-snapshot.md). There is no
-automatic at-boot replay: an agent that comes back up after an
-unattended crash starts with no processors. The supported flow for both
+automatic at-boot replay: an controller that comes back up after an
+unattended crash starts with no relays. The supported flow for both
 planned shutdowns and crash-recovery is:
 
 ```bash
@@ -234,8 +234,8 @@ flz cluster restore  /flezha/app_data/snapshots/latest.flz
 ```
 
 Plugins whose state is bound to a caller pid that died with the previous
-BEAM (`processor_beam_msg`, `monitored_io_forward`) are excluded from
-the snapshot and must be re-enabled by the operator or SDK reconnect
+BEAM (`relay_beam_msg`, `monitored_io_forward`) are excluded from
+the snapshot and must be re-enabled by the executor or SDK reconnect
 path after restore.
 
 ### Development
@@ -245,7 +245,7 @@ See `docker/dev/README.md` for more information.
 ### Running Java SDK tests
 
 Flezha ships a Java 21 SDK under `sdk/java/`. Its integration matrix runs
-against the unchanged Elixir agent over both UDS and QUIC transports, and
+against the unchanged Elixir controller over both UDS and QUIC transports, and
 covers both the Rust and Java runtimes. The single entry point is:
 
 ```bash
@@ -258,7 +258,7 @@ This alias (defined in `mix.exs`):
    `sdk/java/flezha-sdk-native/src/main/resources/native/<os>-<arch>/libflz_transport.<ext>`.
 2. Builds the Java SDK fat jar (`mvn -f sdk/java/pom.xml -P host-only package`).
 3. Builds the Java test compute engine
-   (`mvn -f test/apps/java_compute_engine/pom.xml package`).
+   (`mvn -f test/apps/java_executor/pom.xml package`).
 4. Runs `mix test --only java_sdk`.
 
 Prerequisites: Java 21, Rust stable, `cargo-zigbuild`

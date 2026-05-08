@@ -11,7 +11,7 @@ import javax.annotation.Nonnull;
 public interface ChannelBuilder {
 
     /**
-     * Declare an entry channel fed by the agent. {@code T} must be
+     * Declare an entry channel fed by the controller. {@code T} must be
      * {@code byte[]} or {@code String}; other types throw
      * {@link com.flezha.sdk.relay.RelayConfigurationException} at
      * {@code registerRelay} time (umbrella Decision 12).

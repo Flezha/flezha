@@ -30,7 +30,7 @@ public final class RelayClassRegistry {
      * Reflective entry point invoked from
      * {@link com.flezha.sdk.relay.RelayRegistry}. Instantiates the Relay
      * class via its no-arg ctor, builds the topology, and records
-     * {@code (factoryId → topology + class)}. Returns the agent-facing
+     * {@code (factoryId → topology + class)}. Returns the controller-facing
      * factory id so the caller can de-duplicate on its side.
      *
      * @throws RelayConfigurationException if topology validation fails.

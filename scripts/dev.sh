@@ -4,7 +4,7 @@ set -e
 # Flezha Dev Environment Setup Script
 # ====================================
 # This script builds and starts the dev Docker environment,
-# then opens a shell inside the agent container with the project
+# then opens a shell inside the controller container with the project
 # compiled and ready to use.
 #
 # Prerequisites:
@@ -18,9 +18,9 @@ set -e
 #   build    - Build images and start containers
 #   up       - Start containers (without rebuilding)
 #   down     - Stop and remove containers
-#   shell    - Open a shell in the running agent container
-#   iex      - Open an IEX session inside the running agent container
-#   logs     - Follow agent container logs
+#   shell    - Open a shell in the running controller container
+#   iex      - Open an IEX session inside the running controller container
+#   logs     - Follow controller container logs
 #   clean    - Remove build cache volumes and stop containers
 #   rebuild  - Full clean rebuild: down + remove volumes + build + up
 #   status   - Show container status
@@ -31,10 +31,10 @@ set -e
 #
 # After the environment is running, you can:
 #
-#   Start the agent (with IEX):
+#   Start the controller (with IEX):
 #     ./scripts/dev.sh iex
 #
-#   Or start the agent via release:
+#   Or start the controller via release:
 #     ./scripts/dev.sh release
 #     _build/dev/rel/flezha/bin/flzvm start
 #
@@ -42,15 +42,15 @@ set -e
 #     ./scripts/dev.sh cargo build --workspace
 #
 #   Start a compute engine (in a separate terminal/shell):
-#     cargo run -p rust_compute_engine
+#     cargo run -p rust_executor
 #
 #   Run the benchmark:
-#     mix bench --num-processors 1000 --messages-per-processor 1000
+#     mix bench --num-relays 1000 --messages-per-relay 1000
 #
 #   Kafka UI is available at: http://localhost:8080/
 
 COMPOSE_FILE="docker/dev/docker-compose.yml"
-CONTAINER_NAME="flezha_agent_dev"
+CONTAINER_NAME="flezha_controller_dev"
 NETWORK_NAME="flezha_network"
 
 ensure_env_file() {
@@ -81,7 +81,7 @@ cmd_up() {
     docker compose -f "$COMPOSE_FILE" up -d
     echo ""
     echo "Dev environment is running."
-    echo "Run './scripts/dev.sh shell' to open a shell in the agent container."
+    echo "Run './scripts/dev.sh shell' to open a shell in the controller container."
 }
 
 cmd_down() {
@@ -101,7 +101,7 @@ cmd_iex() {
 }
 
 cmd_logs() {
-    docker compose -f "$COMPOSE_FILE" logs -f agent
+    docker compose -f "$COMPOSE_FILE" logs -f controller
 }
 
 cmd_clean() {

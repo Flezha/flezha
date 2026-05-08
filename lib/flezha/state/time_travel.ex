@@ -6,7 +6,7 @@ defmodule Flezha.State.TimeTravel do
   `{:seq, u64}` or `{:timestamp, datetime}`. It locates the latest
   snapshot at-or-before the target, then folds the WAL records up to
   the target on the SDK side via a transient `RestoreInitState`-style
-  replay (forwarded by the agent; the SDK runs the fold and ships
+  replay (forwarded by the controller; the SDK runs the fold and ships
   back JSON-encoded terminal state).
 
   v1 `query/2` returns the assembled bytes payload + the resolved

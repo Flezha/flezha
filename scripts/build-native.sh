@@ -3,7 +3,7 @@
 # Build flz_jni's cdylib (libflz_transport.{so,dylib,dll}) for one or more
 # target platforms and stage the result into the Java SDK's resources tree.
 #
-# *This script is operator-driven, not invoked by CI.* When flz_jni or
+# *This script is executor-driven, not invoked by CI.* When flz_jni or
 # flz_transport changes, run it locally to refresh the bundled binaries
 # under sdk/java/flezha-sdk-native/src/main/resources/native/, then
 # `git add` and commit the updated files. CI only verifies the committed

@@ -3,9 +3,9 @@ defmodule Flezha.State.PersistenceResolver do
   Resolves per-Relay persistence configuration from three sources, in
   order of precedence:
 
-    1. Operator runtime override:
+    1. Executor runtime override:
        `Application.get_env(:flezha, <key>) :: %{<RelayClass> => value}`
-    2. Per-instance metadata shipped with `AddProcessor`
+    2. Per-instance metadata shipped with `AddRelay`
        (passed in as the `metadata` argument).
     3. Hard-coded global default.
 

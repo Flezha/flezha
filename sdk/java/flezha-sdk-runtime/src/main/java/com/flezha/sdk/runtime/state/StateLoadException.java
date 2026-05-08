@@ -28,13 +28,13 @@ public class StateLoadException extends RuntimeException {
         TRUNCATED,
     }
 
-    /** Cross-format detection: agent shipped postcard bytes to a Java SDK. */
+    /** Cross-format detection: controller shipped postcard bytes to a Java SDK. */
     public static StateLoadException formatNotSupported(int formatId) {
         return new StateLoadException(Reason.FORMAT_NOT_SUPPORTED,
                 "format_id=" + formatId + " is not supported by the Java SDK; expected Kryo (4)");
     }
 
-    /** Cross-language detection: agent shipped Rust-written bytes to Java. */
+    /** Cross-language detection: controller shipped Rust-written bytes to Java. */
     public static StateLoadException sdkLangMismatch(int sdkLang) {
         return new StateLoadException(Reason.SDK_LANG_MISMATCH,
                 "sdk_lang=" + sdkLang + " mismatches this consumer; cross-language load is not supported");

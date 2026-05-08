@@ -8,8 +8,8 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
-  alias Flezha.Processor.Builder
-  alias Flezha.Service.ProcessorManager
+  alias Flezha.Relay.Builder
+  alias Flezha.Service.RelayManager
 
   use ExUnit.Case
 
@@ -36,13 +36,13 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   end
 
   setup do
-    on_exit(fn -> ProcessorManager.stop_all_processors(@namespace) end)
+    on_exit(fn -> RelayManager.stop_all_relays(@namespace) end)
     :ok
   end
 
-  defp start_processor(id) do
-    processor = %Builder{id: id, factory_id: @factory}
-    assert {:ok, %{pid: pid}} = ProcessorManager.start_processor(@namespace, processor)
+  defp start_relay(id) do
+    relay = %Builder{id: id, factory_id: @factory}
+    assert {:ok, %{pid: pid}} = RelayManager.start_relay(@namespace, relay)
     pid
   end
 
@@ -50,7 +50,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
     plugin = %Plugin{
       id: plugin_id,
       namespace: @namespace,
-      processor_id: "ignored-by-direct-enable",
+      relay_id: "ignored-by-direct-enable",
       provider: provider,
       opts: opts,
       subscriptions: [{:on_message, [key: key]}]
@@ -71,20 +71,20 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   end
 
   test "valid key routes to plugin and replies {:ok, bytes}" do
-    pid = start_processor("mh_dispatch_ok")
+    pid = start_relay("mh_dispatch_ok")
     :ok = enable_handler(pid, "plugin-ok", :echo, OkProvider)
 
     assert {:ok, "ok:hi"} = request(pid, :echo, "hi")
   end
 
   test "unknown key replies {:error, {:unknown_key, :on_message, key}}" do
-    pid = start_processor("mh_dispatch_unknown")
+    pid = start_relay("mh_dispatch_unknown")
 
     assert {:error, {:unknown_key, :on_message, :nope}} = request(pid, :nope, <<>>)
   end
 
   test "long-running handler runs off-Overwatch and does not block IO casts" do
-    pid = start_processor("mh_dispatch_nonblocking")
+    pid = start_relay("mh_dispatch_nonblocking")
     :ok = enable_handler(pid, "plugin-slow", :slow, SlowProvider)
 
     ref = make_ref()
@@ -97,7 +97,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   end
 
   test "duplicate key returns conflict and keeps existing handler" do
-    pid = start_processor("mh_dispatch_conflict")
+    pid = start_relay("mh_dispatch_conflict")
     :ok = enable_handler(pid, "plugin-a", :shared, OkProvider)
 
     assert {:error, {:key_conflict, :on_message, :shared}} =
@@ -107,7 +107,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   end
 
   test "handler that raises surfaces as {:error, {:exception, _, _}} and Overwatch stays up" do
-    pid = start_processor("mh_dispatch_raise")
+    pid = start_relay("mh_dispatch_raise")
     :ok = enable_handler(pid, "plugin-raise", :boom, RaisingProvider)
     :ok = enable_handler(pid, "plugin-ok", :ok, OkProvider)
 
@@ -118,17 +118,17 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   end
 
   test "handler returning {:error, reason} is propagated verbatim" do
-    pid = start_processor("mh_dispatch_error")
+    pid = start_relay("mh_dispatch_error")
     :ok = enable_handler(pid, "plugin-err", :err, ErrorProvider)
 
     assert {:error, :deliberate} = request(pid, :err, <<>>)
   end
 
   test "sending after the old Overwatch pid dies surfaces as caller timeout" do
-    pid = start_processor("mh_dispatch_dead_pid")
+    pid = start_relay("mh_dispatch_dead_pid")
     :ok = enable_handler(pid, "plugin-ok", :echo, OkProvider)
 
-    :ok = ProcessorManager.stop_processor(@namespace, "mh_dispatch_dead_pid")
+    :ok = RelayManager.stop_relay(@namespace, "mh_dispatch_dead_pid")
     refute Process.alive?(pid)
 
     assert {:error, :test_timeout} = request(pid, :echo, "x", 100)

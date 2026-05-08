@@ -46,7 +46,7 @@ public final class RelayRegistry {
                                 + "' — the SDK is already initialized");
             }
             // Delegate to the runtime side (which validates the topology and
-            // returns the agent-facing factory id) before we record it here.
+            // returns the controller-facing factory id) before we record it here.
             String factoryId = registerInRuntime(relayClass);
             if (ENTRIES.containsKey(factoryId)) {
                 throw new IllegalArgumentException(

@@ -92,7 +92,7 @@ public interface Shard<Input, State, Output,
         return change.coalesceKey();
     }
 
-    /** WAL size threshold before the agent solicits a snapshot. Default: 64 MiB per Partition. */
+    /** WAL size threshold before the controller solicits a snapshot. Default: 64 MiB per Partition. */
     default long compactAfterBytes() {
         return 64L * 1024 * 1024;
     }

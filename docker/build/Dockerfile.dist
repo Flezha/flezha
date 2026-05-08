@@ -1,7 +1,7 @@
 # Pinned toolchain for `scripts/build-dist.sh --docker`. Produces:
 #   - flz_jni cdylib for all 5 platforms (via cargo-zigbuild)
 #   - SDK fat jar
-#   - test compute-engine fat jar
+#   - test executor fat jar
 #
 # Designed to be runnable as ANY UID (so `docker run --user $(id -u):$(id -g)`
 # bind-mounts produce host-owned files): everything tooling-related lives

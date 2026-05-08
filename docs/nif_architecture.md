@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `flz_nif` crate is a Rustler NIF that wraps the `flz_transport` shared library, providing server-side transport to the Elixir agent. It replaces both `:quicer` (MsQuic NIF for QUIC) and `:gen_tcp` (for UDS), unifying all transport behind a single NIF boundary.
+The `flz_nif` crate is a Rustler NIF that wraps the `flz_transport` shared library, providing server-side transport to the Elixir controller. It replaces both `:quicer` (MsQuic NIF for QUIC) and `:gen_tcp` (for UDS), unifying all transport behind a single NIF boundary.
 
 **NIF boundary**: Rust handles transport I/O + binary frame parsing. The NIF delivers complete `{payload_id, message, metadata}` tuples to Elixir. Elixir handles protobuf decoding and command dispatch.
 
@@ -10,7 +10,7 @@ The `flz_nif` crate is a Rustler NIF that wraps the `flz_transport` shared libra
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Elixir Agent (BEAM)                        │
+│              Elixir Controller (BEAM)                        │
 │                                                         │
 │  Transport.Server ← {:flz_connection, stream_ref}      │
 │       │            ← {:flz_data, id, pid, msg, meta}   │
@@ -19,7 +19,7 @@ The `flz_nif` crate is a Rustler NIF that wraps the `flz_transport` shared libra
 │  FleetManager.connect_handler/4                         │
 │       │                                                 │
 │       ▼                                                 │
-│  ComputeEngineSupervisor                                │
+│  ExecutorSupervisor                                │
 │    ├── ControlChannel ← {:flz_data, ...}               │
 │    ├── StreamSup :primary                               │
 │    │     └── StreamChannel(s) ← {:flz_data, ...}       │
@@ -319,7 +319,7 @@ when a compute engine connects.
 - Data streams arrive as `{:flz_stream, stream_ref, type, index}` (subsequent bidi streams)
 - Routes data streams to StreamChannels using stream type + index
 
-### ComputeEngineSupervisor
+### ExecutorSupervisor
 
 Receives the transport type from FleetManager (which gets it from Transport.Server).
 
@@ -328,14 +328,14 @@ Receives the transport type from FleetManager (which gets it from Transport.Serv
 
 ### StreamAcceptor (UDS only)
 
-Starts a NIF UDS server on per-compute-engine stream socket paths and routes incoming SDK connections to StreamChannel processes in round-robin order.
+Starts a NIF UDS server on per-executor stream socket paths and routes incoming SDK connections to StreamChannel processes in round-robin order.
 
 ## Connection Lifecycle
 
 ### UDS
 
 ```
-SDK Process                    NIF UDS Driver                 Elixir Agent
+SDK Process                    NIF UDS Driver                 Elixir Controller
     │                               │                              │
     │── connect(control.sock) ─────▶│                              │
     │                               │── {:flz_connection, ref} ──▶│ Transport.Server
@@ -344,8 +344,8 @@ SDK Process                    NIF UDS Driver                 Elixir Agent
     │                               │   "connect_control_channel") │
     │                               │                         ────▶│ Transport.Server
     │                               │                              │── FleetManager
-    │                               │                              │   └── start ComputeEngineSup
-    │◀─ AssignComputeEngineId ──────│◀─ send_frame ────────────────│ ControlChannel
+    │                               │                              │   └── start ExecutorSup
+    │◀─ AssignExecutorId ──────│◀─ send_frame ────────────────│ ControlChannel
     │◀─ ConnectSocket ──────────────│◀─ send_frame ────────────────│ ControlChannel
     │                               │                              │
     │── connect(primary.sock) ─────▶│ StreamAcceptor UDS driver    │
@@ -355,7 +355,7 @@ SDK Process                    NIF UDS Driver                 Elixir Agent
 ### QUIC
 
 ```
-SDK Process                    NIF QUIC Driver                Elixir Agent
+SDK Process                    NIF QUIC Driver                Elixir Controller
     │                               │                              │
     │── QUIC connect ──────────────▶│                              │
     │   (UDP handshake via          │                              │
@@ -368,7 +368,7 @@ SDK Process                    NIF QUIC Driver                Elixir Agent
     │                               │   "connect_control_channel") │
     │                               │                         ────▶│ Transport.Server
     │                               │                              │── FleetManager
-    │◀─ AssignComputeEngineId ──────│◀─ send_frame ────────────────│ ControlChannel
+    │◀─ AssignExecutorId ──────│◀─ send_frame ────────────────│ ControlChannel
     │◀─ ConnectSocket ──────────────│◀─ send_frame ────────────────│ ControlChannel
     │                               │                              │
     │── open bidi stream (primary)─▶│                              │
@@ -467,7 +467,7 @@ sdk/rust (Compute Engine)
         ├── payloader
         └── transport (FlezhaStream enum)
 
-Elixir Agent
+Elixir Controller
   └── flz_nif (via Rustler)
         └── Transport.Native (NIF stubs)
               └── Transport.Server (GenServer)

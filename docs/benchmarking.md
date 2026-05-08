@@ -9,7 +9,7 @@ floor value and the matching tooling/CI gates.
 
 | Name | Value | What it gates | Where |
 |---|---|---|---|
-| `BENCH_FLOOR_MSG_PER_SEC` | **480000** msg/s | `mix bench --shape regression` end-to-end (agent + NIF + SDK round-trip). Merge-blocking via the `bench-regression` GitHub Actions job. | `rust-sdk-dispatch` requirement "Dispatch Throughput Floor on Reference Workload"; this doc |
+| `BENCH_FLOOR_MSG_PER_SEC` | **480000** msg/s | `mix bench --shape regression` end-to-end (controller + NIF + SDK round-trip). Merge-blocking via the `bench-regression` GitHub Actions job. | `rust-sdk-dispatch` requirement "Dispatch Throughput Floor on Reference Workload"; this doc |
 | `SINGLE_PARTITION_FLOOR_MSG_PER_SEC` | 700000 msg/s | `cargo bench --bench correctness -- throughput_single_partition` (SDK-internal microbench). Informational only — used for triaging where a regression sits when the gate fires. | `rust-sdk-dispatch` requirement "Per-Message Dispatch-Overhead Budget"; this doc |
 
 `BENCH_FLOOR_MSG_PER_SEC = 480_000`
@@ -45,7 +45,7 @@ forward as the gate.
 
 The pre-cutover floor (350K msg/s, on the same workload before relay-mvp-rust)
 is intentionally NOT carried forward — it was measured against a different
-SDK architecture (the `Processor` trait), so it isn't apples-to-apples with
+SDK architecture (the `Relay` trait), so it isn't apples-to-apples with
 the post-cutover Relay/Shard/Partition model.
 
 ## Bench shapes
@@ -57,7 +57,7 @@ is rarely necessary day-to-day.
 
 The merge-blocking gate. Mirrors today's `mix bench --runtime rust -n 100 -m
 10000` invocation: 100 relay instances × 1 shard × 1 partition × 10K msg
-each, factory `do_nothing`, end-to-end through the agent's Overwatch
+each, factory `do_nothing`, end-to-end through the controller's Overwatch
 GenServer + UDS NIF + SDK + plugin layer. Reports a single `Throughput:`
 line as input messages/second; `BeamMsgForward(:on_output)` echoes one
 plugin response per dispatched input.
@@ -89,7 +89,7 @@ per pool size and the `ratio (max/min)` line that
 ### Single-partition microbench — `cargo bench --bench correctness -- throughput_single_partition`
 
 SDK-internal: one relay × one shard × one partition × no transport. Drives
-`RelayDispatchHandle::dispatch` directly, bypassing the agent + NIF.
+`RelayDispatchHandle::dispatch` directly, bypassing the controller + NIF.
 Reports msg/s for the dispatch hot path (registry lookup + mailbox enqueue
 + `pushes_total` Relaxed counter + inflight CAS — the 4-sync-op budget from
 `rust-sdk-dispatch::Per-Message Dispatch-Overhead Budget`, raised from 3
@@ -99,7 +99,7 @@ bench's entry channel opts into `OverflowPolicy::Block` so the bursty
 producer never trips the default `DropNewest` mid-measurement.
 
 ```sh
-cargo bench --bench correctness -p flezha_compute_engine \
+cargo bench --bench correctness -p flezha_executor \
   --features bench-internals -- throughput_single_partition
 ```
 
@@ -113,13 +113,13 @@ characterizes the "static-mode partition fan-out cost is proportional to
 partition count" spec scenario.
 
 ```sh
-cargo bench --bench correctness -p flezha_compute_engine \
+cargo bench --bench correctness -p flezha_executor \
   --features bench-internals -- throughput_static_fanout
 ```
 
 ### Criterion dispatch benches — `cargo bench --bench dispatch`
 
-Mirror the `mix bench` shapes but bypass the agent. `regression_100x1x1x10k`
+Mirror the `mix bench` shapes but bypass the controller. `regression_100x1x1x10k`
 is the SDK-internal counterpart to `mix bench --shape regression`;
 `partitioning_stress_8x4x8x20k/<pool>` is the SDK-internal counterpart to
 `mix bench --shape partitioning`. Both use `RelayDispatchHandle::dispatch`
@@ -129,12 +129,12 @@ directly. The `partitioning_stress_*` group reads
 
 ```sh
 # Default pool size (host-detected).
-cargo bench --bench dispatch -p flezha_compute_engine \
+cargo bench --bench dispatch -p flezha_executor \
   --features bench-internals
 
 # Sweep pool sizes 1 and 8 (matches CI's bench-partitioning-scaling job).
 FLEZHA_BENCH_POOL_SIZES=1,8 cargo bench --bench dispatch \
-  -p flezha_compute_engine --features bench-internals
+  -p flezha_executor --features bench-internals
 ```
 
 ## CI gates
@@ -201,9 +201,9 @@ When the gate fires, work down the list. Most regressions are in step 2 or
    Compare `cargo bench --bench dispatch -- regression_100x1x1x10k`
    (SDK-internal) to the failing `mix bench` number — if Criterion is
    green but `mix bench` is red, the regression is in the transport
-   layer or agent dispatch path, not the SDK.
+   layer or controller dispatch path, not the SDK.
 3. **Check the diff for SDK dispatch changes.** If the PR touches
-   `sdk/rust/src/relay/dispatcher.rs`, `compute_engine/fast.rs`, or
+   `sdk/rust/src/relay/dispatcher.rs`, `executor/fast.rs`, or
    `partition/mod.rs`, run the Criterion `throughput_single_partition`
    bench and compare to `SINGLE_PARTITION_FLOOR_MSG_PER_SEC`. A regression
    there is the dispatch hot path itself.

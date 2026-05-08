@@ -88,7 +88,7 @@ spec:
               mountPath: /var/log/flezha
             - name: flezha-recovery
               # Must match FLEZHA_DATA_DIR in the ConfigMap. The DETS file lives
-              # here; losing this volume reverts agents to today's behaviour of
+              # here; losing this volume reverts controllers to today's behaviour of
               # empty recovery on restart.
               mountPath: /var/lib/flezha
       volumes:
