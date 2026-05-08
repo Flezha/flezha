@@ -128,14 +128,16 @@ defmodule Flezha.Transport.CertGenerator do
     der = :public_key.der_encode(:RSAPublicKey, public_key)
 
     algorithm =
-      {:AlgorithmIdentifier, {1, 2, 840, 113_549, 1, 1, 1}, <<5, 0>>}
+      {:AlgorithmIdentifier, {1, 2, 840, 113_549, 1, 1, 1}, :asn1_NOVALUE}
 
     {:SubjectPublicKeyInfo, algorithm, der}
   end
 
   defp signature_algorithm do
-    # SHA256 with RSA
-    {:AlgorithmIdentifier, {1, 2, 840, 113_549, 1, 1, 11}, <<5, 0>>}
+    # SHA256 with RSA. Parameters absent (NULL); OTP 28's PKIX1Explicit
+    # encoder rejects pre-encoded NULL bytes here, so emit `:asn1_NOVALUE`
+    # and let the ASN.1 codec encode the absent-parameter form itself.
+    {:AlgorithmIdentifier, {1, 2, 840, 113_549, 1, 1, 11}, :asn1_NOVALUE}
   end
 
   defp validity_record do
@@ -167,8 +169,10 @@ defmodule Flezha.Transport.CertGenerator do
   end
 
   defp attribute_record(:commonName, value) do
-    encoded_value = :public_key.der_encode(:X520CommonName, {:utf8String, value})
-    {:AttributeTypeAndValue, {2, 5, 4, 3}, encoded_value}
+    # AttributeTypeAndValue's `value` field is an OPEN TYPE. OTP 28's
+    # PKIX1Explicit-2009 encoder rejects pre-encoded DER bytes here; pass
+    # the typed value and let the codec encode it.
+    {:AttributeTypeAndValue, {2, 5, 4, 3}, {:utf8String, value}}
   end
 
   defp basic_constraints_extension(is_ca) do

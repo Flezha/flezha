@@ -1,0 +1,5 @@
+# App data — locally generated, never tracked.
+state/*
+sockets/*
+recovery/*
+certs/*
