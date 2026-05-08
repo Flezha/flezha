@@ -24,7 +24,13 @@ defmodule Flezha.Executor.OrphanFinder do
           String.t() => {map(), [{node(), pid()}], %{optional(atom()) => any()}}
         }
 
-  @spec collect(registry, node(), MapSet.t(String.t()), MapSet.t(String.t()), MapSet.t(String.t())) ::
+  @spec collect(
+          registry,
+          node(),
+          MapSet.t(String.t()),
+          MapSet.t(String.t()),
+          MapSet.t(String.t())
+        ) ::
           [{String.t(), pid()}]
   def collect(registry, curr_node, claimed_ids, active_ce_ids, factory_id_set) do
     Enum.reduce(registry, [], fn {relay_id, {cspec, node_pids, metadata}}, acc ->

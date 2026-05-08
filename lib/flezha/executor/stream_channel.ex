@@ -177,7 +177,9 @@ defmodule Flezha.Executor.StreamChannel do
         partition_id = {executor_id, rc, sh, pk}
 
         case Flezha.State.Snapshot.write_snapshot(partition_id, seq, header, body) do
-          {:ok, _path} -> :ok
+          {:ok, _path} ->
+            :ok
+
           {:error, reason} ->
             Logger.error(
               "[stream] partition_state_snapshot write failed " <>
@@ -189,5 +191,4 @@ defmodule Flezha.Executor.StreamChannel do
         Logger.warning("[stream] partition_state_snapshot decode failed: #{inspect(reason)}")
     end
   end
-
 end

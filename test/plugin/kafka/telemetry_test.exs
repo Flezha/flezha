@@ -22,8 +22,8 @@ defmodule FlezhaTest.Plugin.Kafka.TelemetryTest do
     listen([[:flezha, :plugin, :kafka, :produce, :ok]])
     Telemetry.produce_ok(7, 12, %{topic: "t", partition: 0, plugin_id: "p"})
 
-    assert_receive {:tel, [:flezha, :plugin, :kafka, :produce, :ok], %{batch_size: 7, latency_ms: 12},
-                    %{topic: "t", partition: 0}}
+    assert_receive {:tel, [:flezha, :plugin, :kafka, :produce, :ok],
+                    %{batch_size: 7, latency_ms: 12}, %{topic: "t", partition: 0}}
   end
 
   test "retry emits attempt + backoff_ms with reason metadata" do
@@ -36,8 +36,7 @@ defmodule FlezhaTest.Plugin.Kafka.TelemetryTest do
       reason: :not_leader_for_partition
     })
 
-    assert_receive {:tel, _, %{attempt: 3, backoff_ms: 200},
-                    %{reason: :not_leader_for_partition}}
+    assert_receive {:tel, _, %{attempt: 3, backoff_ms: 200}, %{reason: :not_leader_for_partition}}
   end
 
   test "dropped emits count + queue/strategy metadata" do

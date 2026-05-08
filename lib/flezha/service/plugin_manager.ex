@@ -56,6 +56,32 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
+  @doc """
+  Disable every plugin whose `(namespace, relay_id)` tuple matches the
+  given pair. Used by `RelayManager.stop_relay/2` and
+  `RelayManager.stop_all_relays/1` to drop registry entries that would
+  otherwise survive into the next test or relay restart and surface as
+  `{:error, "plugin already registered"}` on re-enable.
+
+  Returns `:ok` after attempting to disable each matching plugin
+  individually; a single failure does not block subsequent plugins.
+  """
+  def disable_relay_plugins(namespace, relay_id)
+      when is_binary(namespace) and is_binary(relay_id) do
+    GenServer.call(__MODULE__, {:disable_relay_plugins, namespace, relay_id})
+  end
+
+  @doc """
+  Disable every plugin registered against the given namespace, regardless
+  of `relay_id`. Used by `Flezha.Executor.FleetManager.stop_namespace/1`
+  for namespace teardown — once the namespace is being dropped, every
+  plugin keyed against it must drop too or the next test re-using a
+  same-named relay collides on `{:error, "plugin already registered"}`.
+  """
+  def disable_namespace_plugins(namespace) when is_binary(namespace) do
+    GenServer.call(__MODULE__, {:disable_namespace_plugins, namespace})
+  end
+
   def register_plugin(plugin_id, info) do
     GenServer.cast(__MODULE__, {:register_plugin, plugin_id, info})
   end
@@ -97,8 +123,7 @@ defmodule Flezha.Service.PluginManager do
         # for this relay will canonicalise the cspec).
         persist_enable_to_cspec(plugin, plugin_id)
 
-        {{:ok, "plugin enabled"},
-         Map.put(state, plugin_id, {plugin.namespace, plugin.relay_id})}
+        {{:ok, "plugin enabled"}, Map.put(state, plugin_id, {plugin.namespace, plugin.relay_id})}
       else
         err -> {err, state}
       end
@@ -142,6 +167,61 @@ defmodule Flezha.Service.PluginManager do
             {:reply, {:error, reason}, state}
         end
     end
+  end
+
+  def handle_call({:disable_namespace_plugins, namespace}, _from, state) do
+    matching =
+      state
+      |> Enum.filter(fn
+        {_id, {ns, _rid}} -> ns == namespace
+        _ -> false
+      end)
+      |> Enum.map(fn {id, _} -> id end)
+
+    new_state =
+      Enum.reduce(matching, state, fn plugin_id, acc -> Map.delete(acc, plugin_id) end)
+
+    {:reply, :ok, new_state}
+  end
+
+  def handle_call({:disable_relay_plugins, namespace, relay_id}, _from, state) do
+    matching =
+      state
+      |> Enum.filter(fn
+        {_id, {ns, rid}} -> ns == namespace and rid == relay_id
+        _ -> false
+      end)
+      |> Enum.map(fn {id, _} -> id end)
+
+    new_state =
+      Enum.reduce(matching, state, fn plugin_id, acc ->
+        case Map.get(acc, plugin_id) do
+          nil ->
+            acc
+
+          {ns, rid} ->
+            # Best-effort cleanup: rewrite the cspec, then unsubscribe
+            # the runtime extension. We tolerate failures from both —
+            # `stop_relay` is the caller's last hook before the relay
+            # process exits, so the runtime is about to disappear anyway.
+            case HubManager.update_relay_plugins(ns, rid, fn plugins ->
+                   Enum.reject(plugins, fn {id, _plugin} -> id == plugin_id end)
+                 end) do
+              :ok ->
+                case RelayManager.get_relay_pid(ns, rid) do
+                  {:ok, pid} -> _ = GenServer.call(pid, {:plugin_unsubscribe, plugin_id})
+                  _ -> :ok
+                end
+
+              _other ->
+                :ok
+            end
+
+            Map.delete(acc, plugin_id)
+        end
+      end)
+
+    {:reply, :ok, new_state}
   end
 
   @impl true

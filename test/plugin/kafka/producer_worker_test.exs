@@ -35,6 +35,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       fn worker, request, node_selector ->
         send(test_pid, {:send_called, request, node_selector})
         n = Agent.get_and_update(script_pid, fn [head | tail] -> {head, tail} end)
+
         case n do
           {:return, value} -> value
           {:return_fn, fun} -> fun.(worker, request, node_selector)
@@ -108,10 +109,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       auto_create_topic: Keyword.get(opts, :auto_create_topic, true),
       metadata_refresh_timeout_ms: 100,
       send_fn: Fakes.script_send_fn(test_pid, script_pid),
-      init_producer_id_fn:
-        Keyword.get(opts, :init_producer_id_fn, Fakes.init_producer_id_ok()),
-      metadata_refresh_fn:
-        Keyword.get(opts, :metadata_refresh_fn, Fakes.metadata_refresh_ok()),
+      init_producer_id_fn: Keyword.get(opts, :init_producer_id_fn, Fakes.init_producer_id_ok()),
+      metadata_refresh_fn: Keyword.get(opts, :metadata_refresh_fn, Fakes.metadata_refresh_ok()),
       create_topic_fn: Keyword.get(opts, :create_topic_fn, Fakes.create_topic_ok()),
       jitter_fn: fn _ -> 0 end,
       now_fn: Keyword.get(opts, :now_fn, fn -> System.monotonic_time(:millisecond) end),
@@ -192,7 +191,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     [%{data: [%{record_set: rb2}]}] = req2.topic_data
     assert rb1.base_sequence == rb2.base_sequence
 
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :retry], _, %{reason: :not_leader_for_partition}}
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :retry], _,
+                    %{reason: :not_leader_for_partition}}
   end
 
   test "permanent error returns {:error, {:permanent, _}}" do
@@ -202,7 +202,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     attach(:produce_failed)
     assert {:error, {:permanent, :record_list_too_large}} = ProducerWorker.enqueue(pid, "x", %{})
 
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _, %{last_reason: :record_list_too_large}}
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _,
+                    %{last_reason: :record_list_too_large}}
   end
 
   test "delivery_timeout exhaustion returns {:error, {:delivery_failed, _}}" do
@@ -232,7 +233,10 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       )
 
     Agent.update(script_pid, fn _ ->
-      [{:return_fn, blocking_send} | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)]
+      [
+        {:return_fn, blocking_send}
+        | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
+      ]
     end)
 
     attach(:dropped)
@@ -249,7 +253,9 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     # This one will trigger drop_oldest
     spawn(fn -> ProducerWorker.enqueue(pid, "filler-3", %{}) end)
 
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1}, %{overflow_strategy: :drop_oldest}}, 1000
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
+                    %{overflow_strategy: :drop_oldest}},
+                   1000
 
     Process.exit(first_caller, :kill)
   end
@@ -268,7 +274,10 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       )
 
     Agent.update(script_pid, fn _ ->
-      [{:return_fn, blocking_send} | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)]
+      [
+        {:return_fn, blocking_send}
+        | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
+      ]
     end)
 
     spawn(fn -> ProducerWorker.enqueue(pid, "first", %{}) end)
@@ -338,7 +347,9 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     assert :ok = ProducerWorker.enqueue(pid, "x", %{})
 
     assert_receive :refresh_called
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :metadata, :refresh], _, %{trigger: :error_recovery, error: nil}}
+
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :metadata, :refresh], _,
+                    %{trigger: :error_recovery, error: nil}}
   end
 
   test "stats/1 reports counters and last_error" do
@@ -441,6 +452,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     assert :ok = ProducerWorker.enqueue(pid, "x", %{})
 
     assert_receive :refresh_called
+
     assert_receive {:telemetry, [:flezha, :plugin, :kafka, :metadata, :refresh], _,
                     %{trigger: :error_recovery}}
   end
@@ -522,9 +534,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
   test "stale batch_result is ignored after batch completes" do
     {pid, _} =
-      start_worker(
-        script: [{:return, Fakes.ok_response(@topic, @partition)}]
-      )
+      start_worker(script: [{:return, Fakes.ok_response(@topic, @partition)}])
 
     assert :ok = ProducerWorker.enqueue(pid, "x", %{})
 
@@ -678,9 +688,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
     test "permanent broker error fires :failed with caller: :async; no GenServer.reply" do
       {pid, _} =
-        start_worker(
-          script: [{:return, Fakes.err_response(@topic, @partition, 18)}]
-        )
+        start_worker(script: [{:return, Fakes.err_response(@topic, @partition, 18)}])
 
       attach(:produce_failed)
 

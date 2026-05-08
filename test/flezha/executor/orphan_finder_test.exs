@@ -136,8 +136,7 @@ defmodule FlezhaTest.Executor.OrphanFinderTest do
     test "skips entries with no :tag in metadata (conservative)", ctx do
       registry =
         Map.new([
-          {"p1",
-           {cspec("p1", "f1"), [{ctx.curr, ctx.pid_a}], %{}}}
+          {"p1", {cspec("p1", "f1"), [{ctx.curr, ctx.pid_a}], %{}}}
         ])
 
       result =

@@ -34,7 +34,12 @@ defmodule Flezha.State.TimeTravel do
     def exception(opts) do
       kind = Keyword.fetch!(opts, :kind)
       msg = Keyword.get(opts, :message, Atom.to_string(kind))
-      %__MODULE__{kind: kind, message: msg, earliest_available: Keyword.get(opts, :earliest_available)}
+
+      %__MODULE__{
+        kind: kind,
+        message: msg,
+        earliest_available: Keyword.get(opts, :earliest_available)
+      }
     end
   end
 

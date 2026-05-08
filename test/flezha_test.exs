@@ -23,6 +23,18 @@ defmodule FlezhaTest do
   @test_relay_factory "do_nothing"
   @test_compare_filter_factory "compare_filter"
 
+  # `test/apps/testnet/dist/index.js` is the compiled WebSocket testnet
+  # bundle that the WS-dependent tests below connect to via
+  # `@testnet_ws_uri`. It is not committed to git; run `mix test.setup`
+  # (or `npm --prefix test/apps/testnet run build`) to produce it.
+  # When the bundle is missing, the WS tests are tagged `:skip` at
+  # compile time so the suite still runs to completion.
+  @testnet_bundle_path Path.expand("apps/testnet/dist/index.js", __DIR__)
+  @testnet_bundle_missing_reason unless File.exists?(@testnet_bundle_path),
+                                   do:
+                                     "testnet bundle missing at #{@testnet_bundle_path} " <>
+                                       "— run `mix test.setup` to build it"
+
   setup_all do
     %{}
   end
@@ -94,6 +106,7 @@ defmodule FlezhaTest do
   end
 
   @tag :websocket_plugin
+  @tag skip: @testnet_bundle_missing_reason
   test "websocket plugin connection start" do
     relay_id = "websocket_plugin_test"
 
@@ -134,6 +147,7 @@ defmodule FlezhaTest do
     assert res === {:ok, "plugin enabled"}
   end
 
+  @tag skip: @testnet_bundle_missing_reason
   test "beam msg forward plugin connection start" do
     relay_id = "beam_msg_forw_plugin_test"
 
@@ -158,13 +172,16 @@ defmodule FlezhaTest do
   end
 
   @tag :relay_flow_msg_forward
+  @tag skip: @testnet_bundle_missing_reason
   test "relay flow generation -> beam msg forward" do
     relay_id = "data_flow_test"
 
     relay = %Flezha.Relay.Builder{
       id: relay_id,
       factory_id: @test_compare_filter_factory,
-      init_values: %{"comparable" => "hello world", "inverted" => false}
+      init_values: %{
+        "compare_filter_shard" => %{"comparable" => "hello world", "inverted" => false}
+      }
     }
 
     {:ok, _} = RelayManager.start_relay(@default_namespace, relay)
@@ -232,8 +249,10 @@ defmodule FlezhaTest do
     partition_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert partition_state === %{
-             "binary_inputs" => [],
-             "text_inputs" => ["state_1", "state_2"]
+             "store_input_shard" => %{
+               "binary_inputs" => [],
+               "text_inputs" => ["state_1", "state_2"]
+             }
            }
   end
 
@@ -258,8 +277,10 @@ defmodule FlezhaTest do
     RelayTestHelper.send_sync_io(relay_id, @default_namespace, "test_state_2", %{})
 
     test_state = %{
-      "binary_inputs" => [],
-      "text_inputs" => ["test_state_1", "test_state_2"]
+      "store_input_shard" => %{
+        "binary_inputs" => [],
+        "text_inputs" => ["test_state_1", "test_state_2"]
+      }
     }
 
     PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin{
@@ -383,8 +404,11 @@ defmodule FlezhaTest do
     {:ok, json_state_1} = RelayManager.get_partition_state(namespace, relay_id_1)
     {:ok, json_state_2} = RelayManager.get_partition_state(namespace, relay_id_2)
 
-    assert json_state_1 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}"
-    assert json_state_2 === "{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}"
+    assert json_state_1 ===
+             "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}}"
+
+    assert json_state_2 ===
+             "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}}"
   end
 
   @tag :executor_disconnect_preserve
@@ -435,7 +459,9 @@ defmodule FlezhaTest do
     # Make sure the states have been migrated.
     for {relay_id, _info} <- relay_infos do
       {:ok, json_state} = RelayManager.get_partition_state(namespace, relay_id)
-      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}"
+
+      assert json_state ===
+               "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}}"
     end
 
     # Stop the new executor.
@@ -549,7 +575,9 @@ defmodule FlezhaTest do
     # Check the states before executor migrations.
     for {relay_id, _info} <- relay_infos do
       {:ok, json_state} = RelayManager.get_partition_state(namespace, relay_id)
-      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}"
+
+      assert json_state ===
+               "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}}"
     end
 
     # Create snapshots for all relays
@@ -574,7 +602,9 @@ defmodule FlezhaTest do
     # Make sure the states have been migrated.
     for {relay_id, _info} <- relay_infos do
       {:ok, json_state} = RelayManager.get_partition_state(namespace, relay_id)
-      assert json_state === "{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}"
+
+      assert json_state ===
+               "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}}"
     end
 
     assert length(HubManager.get_hub_nodes(namespace, true)) === 1

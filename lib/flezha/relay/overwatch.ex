@@ -654,8 +654,7 @@ defmodule Flezha.Relay.Overwatch do
     partition_id_bytes = Wire.encode_partition_id(rc, sh, pk)
 
     command =
-      {:compact_partition,
-       %ExecutorCommands.CompactPartition{partition_id: partition_id_bytes}}
+      {:compact_partition, %ExecutorCommands.CompactPartition{partition_id: partition_id_bytes}}
 
     ControlChannel.send_control(executor_id, command)
   end

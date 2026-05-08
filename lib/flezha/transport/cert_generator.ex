@@ -127,8 +127,17 @@ defmodule Flezha.Transport.CertGenerator do
   defp public_key_info(public_key) do
     der = :public_key.der_encode(:RSAPublicKey, public_key)
 
+    # PKIX (RFC 3279) requires `rsaEncryption`'s `parameters` field in
+    # SubjectPublicKeyInfo's AlgorithmIdentifier to be encoded as ASN.1
+    # NULL — not absent. OTP's `:asn1_NOVALUE` produces *absent* for the
+    # ANY-typed parameters field, which is technically a valid ASN.1
+    # encoding but rustls' `with_single_cert` derives the cert's expected
+    # SPKI from the private key with NULL parameters and compares DER
+    # bytes; the mismatch surfaces as `KeyMismatch`. Pass `<<5, 0>>` —
+    # the DER bytes of ASN.1 NULL — as the open-typed parameters value
+    # so OTP's PKIX1Explicit-2009 codec emits it verbatim.
     algorithm =
-      {:AlgorithmIdentifier, {1, 2, 840, 113_549, 1, 1, 1}, :asn1_NOVALUE}
+      {:AlgorithmIdentifier, {1, 2, 840, 113_549, 1, 1, 1}, <<5, 0>>}
 
     {:SubjectPublicKeyInfo, algorithm, der}
   end
@@ -200,7 +209,42 @@ defmodule Flezha.Transport.CertGenerator do
   end
 
   defp pem_encode_key(key) do
-    der = :public_key.der_encode(:RSAPrivateKey, key)
-    :public_key.pem_encode([{:RSAPrivateKey, der, :not_encrypted}])
+    # PKCS#8 PrivateKeyInfo wrapping. rustls' `with_single_cert` (with the
+    # `ring` provider) needs PKCS#8 with explicit NULL `parameters` on the
+    # `rsaEncryption` algorithm; OTP's `der_encode/2` of `:PrivateKeyInfo`
+    # emits parameters as *absent* when given `:asn1_NOVALUE` (and rejects
+    # the atom `:NULL` and pre-encoded `<<5, 0>>` forms), which ring then
+    # rejects with "failed to parse private key as RSA, ECDSA, or EdDSA".
+    # Hand-encode the PKCS#8 wrapper as raw DER around OTP's PKCS#1 DER:
+    # the wrapper is small and avoids the codec's missing
+    # parameter-defaulting rule for `OneAsymmetricKey`.
+    rsa_der = :public_key.der_encode(:RSAPrivateKey, key)
+    der = encode_pkcs8_rsa(rsa_der)
+    :public_key.pem_encode([{:PrivateKeyInfo, der, :not_encrypted}])
   end
+
+  # PKCS#8 PrivateKeyInfo (RFC 5208) for an RSA key. Hand-rolled so we
+  # can emit the algorithm's `parameters` as ASN.1 NULL (`05 00`), which
+  # OTP's `:PrivateKeyInfo` codec does not on its own.
+  defp encode_pkcs8_rsa(rsa_der) do
+    # AlgorithmIdentifier ::= SEQUENCE { algorithm OID, parameters NULL }
+    rsa_oid_der = <<6, 9, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01>>
+    null_der = <<5, 0>>
+    alg_inner = rsa_oid_der <> null_der
+    alg_seq = <<0x30>> <> der_length(byte_size(alg_inner)) <> alg_inner
+
+    version_der = <<2, 1, 0>>
+    octet_string_der = <<4>> <> der_length(byte_size(rsa_der)) <> rsa_der
+
+    inner = version_der <> alg_seq <> octet_string_der
+    <<0x30>> <> der_length(byte_size(inner)) <> inner
+  end
+
+  defp der_length(n) when n < 0x80, do: <<n>>
+
+  defp der_length(n) when n < 0x100, do: <<0x81, n>>
+
+  defp der_length(n) when n < 0x10000, do: <<0x82, n::16>>
+
+  defp der_length(n) when n < 0x1000000, do: <<0x83, n::24>>
 end

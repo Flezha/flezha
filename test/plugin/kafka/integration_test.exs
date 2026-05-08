@@ -84,7 +84,9 @@ defmodule FlezhaTest.Plugin.Kafka.IntegrationTest do
     results = Task.await_many(first_half ++ second_half, 60_000)
 
     failures = Enum.reject(results, &(&1 == :ok))
-    assert failures == [], "expected all 100 messages to deliver, got failures: #{inspect(failures)}"
+
+    assert failures == [],
+           "expected all 100 messages to deliver, got failures: #{inspect(failures)}"
 
     stats = ProducerWorker.stats(pid)
     assert stats.dropped_total == 0
@@ -96,9 +98,7 @@ defmodule FlezhaTest.Plugin.Kafka.IntegrationTest do
   defp produce_in_parallel(pid, range) do
     for i <- range do
       Task.async(fn ->
-        ProducerWorker.enqueue(pid, "msg-#{i}", %{"kafka_msg_key" => "k-#{i}"},
-          timeout: 65_000
-        )
+        ProducerWorker.enqueue(pid, "msg-#{i}", %{"kafka_msg_key" => "k-#{i}"}, timeout: 65_000)
       end)
     end
   end

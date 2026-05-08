@@ -83,8 +83,17 @@ defmodule Flezha.Service.RelayManager do
     case get_relay_pid(namespace, relay_id) do
       {:ok, relay_pid} ->
         case GenServer.call(relay_pid, :stop_relay) do
-          :ok -> :ok
-          {:error, reason} -> {:error, reason}
+          :ok ->
+            # Drop any plugins keyed against `(namespace, relay_id)` from
+            # the global PluginManager registry now that the relay is
+            # gone. Without this, a plugin enabled in one test bleeds
+            # into the next as `{:error, "plugin already registered"}`
+            # on re-enable.
+            _ = Flezha.Service.PluginManager.disable_relay_plugins(namespace, relay_id)
+            :ok
+
+          {:error, reason} ->
+            {:error, reason}
         end
 
       err ->
@@ -96,6 +105,12 @@ defmodule Flezha.Service.RelayManager do
     hub_id = Identificator.hub(namespace)
     relays = HubManager.get_all_relays(namespace)
     relay_ids = Enum.map(relays, fn {id, _pid} -> id end)
+
+    # Disable plugins per-relay before the namespace is torn down so the
+    # PluginManager registry stays in sync with the runtime.
+    Enum.each(relay_ids, fn relay_id ->
+      _ = Flezha.Service.PluginManager.disable_relay_plugins(namespace, relay_id)
+    end)
 
     if relay_ids != [] do
       try do

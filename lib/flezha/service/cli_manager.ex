@@ -999,7 +999,9 @@ defmodule Flezha.Service.CliManager do
     case parse_state_path(path_string) do
       {:ok, {ce, rc, sh, pk}} ->
         case Flezha.Relay.Overwatch.dispatch_compact_partition(ce, {rc, sh, pk}) do
-          {:ok, _ref} -> IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
+          {:ok, _ref} ->
+            IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
+
           {:error, reason} ->
             IO.puts(:stderr, "state rotate: #{inspect(reason)}")
             System.halt(1)
@@ -1058,7 +1060,9 @@ defmodule Flezha.Service.CliManager do
 
   defp parse_state_target(s) do
     case Integer.parse(s) do
-      {n, ""} -> {:seq, n}
+      {n, ""} ->
+        {:seq, n}
+
       _ ->
         # Try ISO 8601 timestamp.
         case DateTime.from_iso8601(s) do

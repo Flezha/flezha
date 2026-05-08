@@ -1,7 +1,8 @@
 .PHONY: build build-release nif nif-release test clean \
         docker-build docker-build-multiarch \
         docker-build-dev docker-build-toolchain \
-        k8s-apply k8s-delete
+        k8s-apply k8s-delete \
+        stabilize-test-check
 
 # ── Local build ──────────────────────────────────────────────────────────────
 
@@ -28,6 +29,22 @@ nif-release:
 # Run Elixir test suite
 test:
 	mix test
+
+# Archive criterion for the `stabilize-test-suite` OpenSpec change. Runs
+# the four invocations the proposal calls out — `mix test`, then a re-run
+# (verifies test ordering does not flip pass/fail), the cargo workspace
+# with bench-internals, and `mvn -f sdk/java verify` — and exits 0 only
+# if every step does. Local Java users without the toolchain can skip
+# the `mvn` step with `SKIP_JAVA=1 make stabilize-test-check`.
+stabilize-test-check:
+	mix test
+	mix test
+	cargo test --workspace --features flezha_executor/bench-internals
+	@if [ "$(SKIP_JAVA)" = "1" ]; then \
+	  echo "skipping mvn -f sdk/java verify (SKIP_JAVA=1)"; \
+	else \
+	  mvn -f sdk/java verify; \
+	fi
 
 # Remove all build artifacts
 clean:

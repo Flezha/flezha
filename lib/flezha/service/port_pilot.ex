@@ -33,7 +33,9 @@ defmodule Flezha.Service.PortPilot do
     extra_env =
       opts
       |> Keyword.get(:env, [])
-      |> Enum.map(fn {k, v} -> {String.to_charlist(to_string(k)), String.to_charlist(to_string(v))} end)
+      |> Enum.map(fn {k, v} ->
+        {String.to_charlist(to_string(k)), String.to_charlist(to_string(v))}
+      end)
 
     env = base_env ++ extra_env
 

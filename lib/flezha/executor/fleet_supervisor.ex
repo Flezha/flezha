@@ -19,8 +19,7 @@ defmodule Flezha.Executor.FleetSupervisor do
   def start_executor_sup(namespace, executor_id, sock, transport) do
     Supervisor.start_child(__MODULE__, %{
       id: executor_id,
-      start:
-        {ExecutorSupervisor, :start_link, [{namespace, executor_id, sock, transport}]}
+      start: {ExecutorSupervisor, :start_link, [{namespace, executor_id, sock, transport}]}
     })
   end
 

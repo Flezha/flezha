@@ -231,7 +231,13 @@ defmodule FlezhaTest.Plugin.KafkaTest do
                %{
                  topic: @topic,
                  partition_responses: [
-                   %{partition: 0, error_code: 0, base_offset: 0, log_append_time: -1, log_start_offset: -1}
+                   %{
+                     partition: 0,
+                     error_code: 0,
+                     base_offset: 0,
+                     log_append_time: -1,
+                     log_start_offset: -1
+                   }
                  ]
                }
              ],

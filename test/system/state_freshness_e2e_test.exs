@@ -89,6 +89,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     # would not catch a regression where the notification fires before
     # processing in-flight inputs.
     inputs_sent = ["alpha-#{relay_id}", "beta-#{relay_id}", "gamma-#{relay_id}"]
+
     Enum.each(inputs_sent, fn line ->
       RelayManager.send_io(relay_id, @namespace, line, %{"input_type" => "2"})
     end)
@@ -99,9 +100,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     Process.sleep(200)
 
     {_, 0} =
-      System.cmd("kill", ["-TERM", Integer.to_string(os_pid)],
-        stderr_to_stdout: true
-      )
+      System.cmd("kill", ["-TERM", Integer.to_string(os_pid)], stderr_to_stdout: true)
 
     snapshot = wait_for_snapshot(overwatch_pid, 5_000)
 

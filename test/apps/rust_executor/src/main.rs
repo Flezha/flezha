@@ -132,10 +132,10 @@ impl Shard for StoreInputShard {
         &mut self,
         input: String,
         mut state: StateHandle<'_, Self>,
-        _: &mut ShardCtx<'_>,
+        ctx: &mut ShardCtx<'_>,
     ) -> Result<(), ShardError> {
-        state.apply(StoreInputChange::PushText(input));
-        Ok(())
+        state.apply(StoreInputChange::PushText(input.clone()));
+        ctx.emit::<String>(input)
     }
 }
 
@@ -146,6 +146,9 @@ impl Relay for StoreInputRelay {
     }
     fn channels(c: &mut ChannelBuilder) {
         c.input::<String>("input").into::<StoreInputShard>();
+        c.channel::<String>("sink")
+            .from::<StoreInputShard>()
+            .to_plugin("store_input_sink");
     }
 }
 
@@ -185,12 +188,10 @@ impl Shard for CompareFilterShard {
         &mut self,
         input: String,
         state: StateHandle<'_, Self>,
-        _: &mut ShardCtx<'_>,
+        ctx: &mut ShardCtx<'_>,
     ) -> Result<(), ShardError> {
         if state.comparable == input {
-            // matched
-        } else {
-            // not matched
+            ctx.emit::<String>(input)?;
         }
         Ok(())
     }
@@ -203,6 +204,9 @@ impl Relay for CompareFilterRelay {
     }
     fn channels(c: &mut ChannelBuilder) {
         c.input::<String>("input").into::<CompareFilterShard>();
+        c.channel::<String>("sink")
+            .from::<CompareFilterShard>()
+            .to_plugin("compare_filter_sink");
     }
 }
 

@@ -134,8 +134,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
   def handle_call(:inspect_state, _from, state) do
     summary =
       Map.new(state.entries, fn {key, entry} ->
-        {key,
-         %{pid: entry.pid, refs: entry.refs, linger?: not is_nil(entry.linger)}}
+        {key, %{pid: entry.pid, refs: entry.refs, linger?: not is_nil(entry.linger)}}
       end)
 
     {:reply, summary, state}

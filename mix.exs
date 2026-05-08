@@ -30,6 +30,17 @@ defmodule Flezha.MixProject do
   defp aliases do
     [
       "test.java_sdk": ["test --only java_sdk"],
+      # Build the WebSocket testnet bundle that several `mix test` cases
+      # reach for over WS (`flezha_test.exs` "websocket plugin connection
+      # start", "beam msg forward plugin connection start", "relay flow
+      # generation -> beam msg forward"). The bundle output at
+      # `test/apps/testnet/dist/index.js` is not in git; without this
+      # alias those cases skip with a clear message rather than crash
+      # inside the WS plugin connect path.
+      "test.setup": [
+        "cmd npm --prefix test/apps/testnet install",
+        "cmd npm --prefix test/apps/testnet run build"
+      ],
       # Opt-in dev-compose smoke test for the connection-healing change.
       # Brings up the controller + rust executor container, restarts each in turn,
       # asserts the executor <-> controller link re-establishes within

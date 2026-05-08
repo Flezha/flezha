@@ -106,6 +106,7 @@ defmodule Flezha.State.WalWriter do
          true <- len >= @header_size or {:error, :bad_len},
          {:ok, payload_and_crc} <- pread(device, position + 12, len + 4) do
       payload_size = len
+
       <<header::binary-size(@header_size), change_bytes::binary-size(payload_size - @header_size),
         crc::32-big>> = payload_and_crc
 

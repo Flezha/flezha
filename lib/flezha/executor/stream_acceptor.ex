@@ -23,9 +23,7 @@ defmodule Flezha.Executor.StreamAcceptor do
 
     case Native.start_uds_server(path, self()) do
       {:ok, server_ref} ->
-        Logger.info(
-          "[StreamAcceptor] Listening on #{path} for #{type} streams (#{executor_id})"
-        )
+        Logger.info("[StreamAcceptor] Listening on #{path} for #{type} streams (#{executor_id})")
 
         stream_ids = StreamSup.stream_ids(executor_id, type)
 
@@ -53,9 +51,7 @@ defmodule Flezha.Executor.StreamAcceptor do
         Native.controlling_process(stream_ref, stream_pid)
         Native.set_active(stream_ref)
 
-        Logger.debug(
-          "[StreamAcceptor] Bound #{state.type} stream to #{inspect(stream_name)}"
-        )
+        Logger.debug("[StreamAcceptor] Bound #{state.type} stream to #{inspect(stream_name)}")
 
       nil ->
         Logger.warning(

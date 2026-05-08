@@ -35,7 +35,12 @@ defmodule FlezhaTest.Relay.OverwatchInitStateTest do
       provider: ProbeProvider,
       opts: %{
         report_to: self(),
-        return: %{"binary_inputs" => [], "text_inputs" => ["seeded_by_plugin"]}
+        return: %{
+          "store_input_shard" => %{
+            "binary_inputs" => [],
+            "text_inputs" => ["seeded_by_plugin"]
+          }
+        }
       },
       subscriptions: [{:on_relay_init, []}]
     }
@@ -53,8 +58,10 @@ defmodule FlezhaTest.Relay.OverwatchInitStateTest do
       RelayManager.get_partition_state(@namespace, relay_id)
 
     assert Flezha.Service.Payloader.json_to_map(json_state) == %{
-             "binary_inputs" => [],
-             "text_inputs" => ["seeded_by_plugin"]
+             "store_input_shard" => %{
+               "binary_inputs" => [],
+               "text_inputs" => ["seeded_by_plugin"]
+             }
            }
   end
 
@@ -74,7 +81,9 @@ defmodule FlezhaTest.Relay.OverwatchInitStateTest do
     relay = %Builder{
       id: relay_id,
       factory_id: @factory,
-      init_values: %{"binary_inputs" => [], "text_inputs" => ["FROM_INLINE"]},
+      init_values: %{
+        "store_input_shard" => %{"binary_inputs" => [], "text_inputs" => ["FROM_INLINE"]}
+      },
       opts: [plugins: [plugin]]
     }
 
@@ -85,8 +94,10 @@ defmodule FlezhaTest.Relay.OverwatchInitStateTest do
       RelayManager.get_partition_state(@namespace, relay_id)
 
     assert Flezha.Service.Payloader.json_to_map(json_state) == %{
-             "binary_inputs" => [],
-             "text_inputs" => ["FROM_INLINE"]
+             "store_input_shard" => %{
+               "binary_inputs" => [],
+               "text_inputs" => ["FROM_INLINE"]
+             }
            }
   end
 

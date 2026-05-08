@@ -53,8 +53,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   @spec via(binary(), binary(), non_neg_integer()) :: {:via, Registry, term()}
   def via(plugin_id, topic, partition) do
-    {:via, Registry,
-     {ProducerSup.registry_name(), {plugin_id, topic, partition}}}
+    {:via, Registry, {ProducerSup.registry_name(), {plugin_id, topic, partition}}}
   end
 
   def start_link(opts) when is_list(opts) do
@@ -155,11 +154,9 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       topic_configs: Keyword.get(opts, :topic_configs, []),
       metadata_refresh_timeout_ms: Keyword.get(opts, :metadata_refresh_timeout_ms, 5_000),
       send_fn: Keyword.get(opts, :send_fn, &default_send/3),
-      init_producer_id_fn:
-        Keyword.get(opts, :init_producer_id_fn, &default_init_producer_id/2),
+      init_producer_id_fn: Keyword.get(opts, :init_producer_id_fn, &default_init_producer_id/2),
       create_topic_fn: Keyword.get(opts, :create_topic_fn, &default_create_topic/4),
-      metadata_refresh_fn:
-        Keyword.get(opts, :metadata_refresh_fn, &default_metadata_refresh/2),
+      metadata_refresh_fn: Keyword.get(opts, :metadata_refresh_fn, &default_metadata_refresh/2),
       now_fn: Keyword.get(opts, :now_fn, fn -> System.monotonic_time(:millisecond) end),
       jitter_fn: Keyword.get(opts, :jitter_fn, fn max -> :rand.uniform(max + 1) - 1 end),
       producer_id: nil,
@@ -604,10 +601,14 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp handle_topic_create_result(state, batch, result) do
     case result do
       :ok ->
-        Telemetry.topic_created(state.auto_create_partitions, state.auto_create_replication_factor, %{
-          plugin_id: state.plugin_id,
-          topic: state.topic
-        })
+        Telemetry.topic_created(
+          state.auto_create_partitions,
+          state.auto_create_replication_factor,
+          %{
+            plugin_id: state.plugin_id,
+            topic: state.topic
+          }
+        )
 
         schedule_retry(state, batch)
 
@@ -711,10 +712,11 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     state = %{
       state
       | in_flight: nil,
-        last_error: case reply do
-          :ok -> nil
-          {:error, {_, reason}} -> reason
-        end
+        last_error:
+          case reply do
+            :ok -> nil
+            {:error, {_, reason}} -> reason
+          end
     }
 
     state = process_blocked(state)

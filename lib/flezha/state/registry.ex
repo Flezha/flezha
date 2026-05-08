@@ -17,7 +17,9 @@ defmodule Flezha.State.Registry do
 
   @type scan_result :: %{
           wal_files: [{partition_key :: binary(), path :: binary()}],
-          snapshot_files: [{partition_key :: binary(), seq :: non_neg_integer(), path :: binary()}],
+          snapshot_files: [
+            {partition_key :: binary(), seq :: non_neg_integer(), path :: binary()}
+          ],
           outbox_files: [{partition_key :: binary(), path :: binary()}]
         }
 

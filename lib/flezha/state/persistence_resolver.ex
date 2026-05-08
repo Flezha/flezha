@@ -29,7 +29,11 @@ defmodule Flezha.State.PersistenceResolver do
         value
 
       _ ->
-        case Map.get(metadata, "relay_persistence_enabled", Map.get(metadata, :relay_persistence_enabled)) do
+        case Map.get(
+               metadata,
+               "relay_persistence_enabled",
+               Map.get(metadata, :relay_persistence_enabled)
+             ) do
           v when is_boolean(v) -> v
           _ -> @default_persistence_enabled
         end
@@ -43,10 +47,20 @@ defmodule Flezha.State.PersistenceResolver do
         value
 
       _ ->
-        case Map.get(metadata, "time_travel_retention_hours",
-               Map.get(metadata, :time_travel_retention_hours)) do
-          v when is_integer(v) and v >= 0 -> v
-          _ -> Application.get_env(:flezha, :default_time_travel_retention_hours, @default_retention_hours)
+        case Map.get(
+               metadata,
+               "time_travel_retention_hours",
+               Map.get(metadata, :time_travel_retention_hours)
+             ) do
+          v when is_integer(v) and v >= 0 ->
+            v
+
+          _ ->
+            Application.get_env(
+              :flezha,
+              :default_time_travel_retention_hours,
+              @default_retention_hours
+            )
         end
     end
   end

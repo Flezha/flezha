@@ -213,8 +213,12 @@ defmodule Flezha.Plugin.Provider.Kafka do
     defp convert_value(:linger_ms, value), do: parse_int(value, "linger_ms")
     defp convert_value(:max_batch_bytes, value), do: parse_int(value, "max_batch_bytes")
     defp convert_value(:queue_max, value), do: parse_int(value, "queue_max")
-    defp convert_value(:queue_block_timeout_ms, value), do: parse_int(value, "queue_block_timeout_ms")
-    defp convert_value(:auto_create_partitions, value), do: parse_int(value, "auto_create_partitions")
+
+    defp convert_value(:queue_block_timeout_ms, value),
+      do: parse_int(value, "queue_block_timeout_ms")
+
+    defp convert_value(:auto_create_partitions, value),
+      do: parse_int(value, "auto_create_partitions")
 
     defp convert_value(:auto_create_replication_factor, value),
       do: parse_int(value, "auto_create_replication_factor")

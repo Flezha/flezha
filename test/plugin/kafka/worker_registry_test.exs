@@ -167,10 +167,16 @@ defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
 
     test "ssl_options difference yields distinct workers", %{registry: reg} do
       assert {:ok, pid1, _} =
-               WorkerRegistry.acquire(%{hosts: @hosts_a, ssl_options: [verify: :verify_none]}, reg)
+               WorkerRegistry.acquire(
+                 %{hosts: @hosts_a, ssl_options: [verify: :verify_none]},
+                 reg
+               )
 
       assert {:ok, pid2, _} =
-               WorkerRegistry.acquire(%{hosts: @hosts_a, ssl_options: [verify: :verify_peer]}, reg)
+               WorkerRegistry.acquire(
+                 %{hosts: @hosts_a, ssl_options: [verify: :verify_peer]},
+                 reg
+               )
 
       assert pid1 != pid2
     end

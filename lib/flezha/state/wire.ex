@@ -79,9 +79,8 @@ defmodule Flezha.State.Wire do
   """
   @spec decode_partition_id(binary()) :: {:ok, {binary(), binary(), binary()}} | {:error, term()}
   def decode_partition_id(
-        <<rc_len::8, relay_class::binary-size(rc_len), sh_len::8,
-          shard_id::binary-size(sh_len), pk_len::16-big,
-          partition_key::binary-size(pk_len)>>
+        <<rc_len::8, relay_class::binary-size(rc_len), sh_len::8, shard_id::binary-size(sh_len),
+          pk_len::16-big, partition_key::binary-size(pk_len)>>
       ) do
     {:ok, {relay_class, shard_id, partition_key}}
   end
@@ -108,8 +107,8 @@ defmodule Flezha.State.Wire do
   def decode_frame(<<partition_id_len::16-big, rest::binary>>) do
     case rest do
       <<partition_id_bytes::binary-size(partition_id_len), seq::64-big,
-        header::binary-size(@header_size), body_len::32-big,
-        body::binary-size(body_len), crc::32-big>> ->
+        header::binary-size(@header_size), body_len::32-big, body::binary-size(body_len),
+        crc::32-big>> ->
         if :erlang.crc32(body) == crc do
           case decode_partition_id(partition_id_bytes) do
             {:ok, identity} ->

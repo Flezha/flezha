@@ -334,7 +334,8 @@ defmodule Flezha.Plugin.Provider.Websocket do
     Fresh.send(server, {type, msg})
   end
 
-  defp schedule_idle_check(idle_timeout_ms) when is_integer(idle_timeout_ms) and idle_timeout_ms > 0 do
+  defp schedule_idle_check(idle_timeout_ms)
+       when is_integer(idle_timeout_ms) and idle_timeout_ms > 0 do
     tick = max(@min_tick_interval_ms, div(idle_timeout_ms, 2))
     Process.send_after(self(), :idle_check, tick)
     :ok

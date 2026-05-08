@@ -1,7 +1,15 @@
 defmodule Flezha.State.RetentionTest do
   use ExUnit.Case, async: false
 
-  alias Flezha.State.{FsyncBatcher, Registry, Retention, Snapshot, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{
+    FsyncBatcher,
+    Registry,
+    Retention,
+    Snapshot,
+    Supervisor,
+    TestHelpers,
+    WalWriter
+  }
 
   setup do
     base = TestHelpers.tmp_app_data_dir()

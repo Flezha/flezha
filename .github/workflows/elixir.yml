@@ -106,6 +106,10 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build testnet
+        # Equivalent to `mix test.setup` (mix.exs alias) but with `npm ci`
+        # for reproducible CI installs. Without the bundle the WS-dependent
+        # ExUnit cases are auto-skipped at compile time; the inline build
+        # keeps them in scope for CI.
         working-directory: test/apps/testnet
         run: |
           npm ci || npm install

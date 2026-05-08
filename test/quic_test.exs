@@ -85,8 +85,8 @@ defmodule FlezhaQuicTest do
       |> RelayFixture.start(@quic_namespace)
       |> RelayFixture.attach_output_msg(@quic_namespace)
 
-    RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_state_1", %{})
-    RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_state_2", %{})
+    RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_state_1", %{}, timeout: :quic)
+    RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_state_2", %{}, timeout: :quic)
 
     {:ok, json_state} =
       RelayManager.get_partition_state(@quic_namespace, relay_id)
@@ -94,8 +94,10 @@ defmodule FlezhaQuicTest do
     partition_state = Flezha.Service.Payloader.json_to_map(json_state)
 
     assert partition_state === %{
-             "binary_inputs" => [],
-             "text_inputs" => ["quic_state_1", "quic_state_2"]
+             "store_input_shard" => %{
+               "binary_inputs" => [],
+               "text_inputs" => ["quic_state_1", "quic_state_2"]
+             }
            }
   end
 
@@ -108,7 +110,8 @@ defmodule FlezhaQuicTest do
       |> RelayFixture.start(@quic_namespace)
       |> RelayFixture.attach_output_msg(@quic_namespace)
 
-    result = RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_echo", %{})
+    result =
+      RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_echo", %{}, timeout: :quic)
 
     assert result === "quic_echo"
   end

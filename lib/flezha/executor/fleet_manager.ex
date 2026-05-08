@@ -82,9 +82,7 @@ defmodule Flezha.Executor.FleetManager do
         {:reply, {:error, "executor not found"}, state}
 
       _ ->
-        Logger.info(
-          "Disconnecting executor #{executor_id} from namespace #{namespace}"
-        )
+        Logger.info("Disconnecting executor #{executor_id} from namespace #{namespace}")
 
         GenServer.call(Identificator.control_unit(executor_id), :disconnect_executor)
 
@@ -134,6 +132,14 @@ defmodule Flezha.Executor.FleetManager do
           Enum.each(executor_ids, fn executor_id ->
             FleetSupervisor.stop_executor_sup(executor_id)
           end)
+
+          # Drop every plugin registered for this namespace so a follow-up
+          # test re-using the same namespace does not collide on
+          # `{:error, "plugin already registered"}`. The runtime relay
+          # processes are about to disappear with the namespace's hub —
+          # the registry is the only thing that survives without explicit
+          # cleanup.
+          _ = Flezha.Service.PluginManager.disable_namespace_plugins(namespace)
 
           HubManager.stop_hub(namespace)
 
@@ -269,9 +275,7 @@ defmodule Flezha.Executor.FleetManager do
       end)
 
     executor_namespaces =
-      Enum.reduce(removal, state.executor_namespaces, fn {namespace,
-                                                                removal_executors},
-                                                               acc ->
+      Enum.reduce(removal, state.executor_namespaces, fn {namespace, removal_executors}, acc ->
         namespace_executors =
           Enum.reduce(removal_executors, acc[namespace], fn executor_id, acc ->
             if executor_id == nil do
@@ -298,9 +302,7 @@ defmodule Flezha.Executor.FleetManager do
   defp try_migrate_executor(state, namespace, executor_id) do
     in_active_executors = get_executor_ids(state, namespace, :inactive)
 
-    Logger.info(
-      "Attempting to migrate executor #{executor_id} in namespace #{namespace}"
-    )
+    Logger.info("Attempting to migrate executor #{executor_id} in namespace #{namespace}")
 
     case List.first(in_active_executors) do
       nil ->

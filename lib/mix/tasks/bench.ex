@@ -254,8 +254,11 @@ defmodule Mix.Tasks.Bench do
     |> String.split(",", trim: true)
     |> Enum.map(fn s ->
       case Integer.parse(String.trim(s)) do
-        {n, ""} when n > 0 -> n
-        _ -> raise "Invalid --pool-sizes entry: #{inspect(s)}. Expected positive integers, e.g. \"1,8\"."
+        {n, ""} when n > 0 ->
+          n
+
+        _ ->
+          raise "Invalid --pool-sizes entry: #{inspect(s)}. Expected positive integers, e.g. \"1,8\"."
       end
     end)
   end
@@ -385,15 +388,11 @@ defmodule Mix.Tasks.Bench do
         end)
       end)
 
-    IO.puts(
-      "Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(relay_infos)} relays"
-    )
+    IO.puts("Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(relay_infos)} relays")
 
     total_messages = length(relay_infos) * test_messages_per_relay
 
-    IO.puts(
-      "Sending #{total_messages} total messages (#{test_messages_per_relay} per relay)..."
-    )
+    IO.puts("Sending #{total_messages} total messages (#{test_messages_per_relay} per relay)...")
 
     {message_send_time, _} =
       :timer.tc(fn ->
