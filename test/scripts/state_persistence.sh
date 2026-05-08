@@ -43,6 +43,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEV_COMPOSE="${REPO_ROOT}/docker/dev/docker-compose.yml"
+TESTING_OVERLAY="${REPO_ROOT}/docker/dev/docker-compose.testing.yml"
 
 REJOIN_TIMEOUT_S="${REJOIN_TIMEOUT_S:-300}"
 DEMO_NAMESPACE="${FLEZHA_DEMO_NAMESPACE:-default}"
@@ -59,6 +60,7 @@ COMPOSE=(
   docker compose
     --project-name "${PROJECT}"
     -f "${DEV_COMPOSE}"
+    -f "${TESTING_OVERLAY}"
 )
 
 cd "${REPO_ROOT}/docker/dev"
@@ -197,10 +199,48 @@ CONTROL_SOCKET="${SOCKETS_DIR}/executor_control_channel.sock"
 start_beam() {
   note "fixing volume ownership (named volumes are root-owned on creation)"
   fix_volume_permissions
+
+  # `flz` is a release artifact at `_build/dev/rel/flezha/bin/flz`.
+  # `mix release` does NOT build it — see `copy_cli_commands` in
+  # `mix.exs`, which only copies a pre-built `cli/target/debug/flz`
+  # into the release. The host's copy of that file is the one
+  # exposed inside the container via the `../../:/flezha` bind mount,
+  # and on a host with a newer GLIBC than the toolchain image (e.g.
+  # Ubuntu 25.10 GLIBC 2.39 vs Debian 12 GLIBC 2.36) the copied
+  # binary will run with `version GLIBC_2.39 not found`.
+  #
+  # Workaround: build `flz` *inside the container* so it links against
+  # the container's GLIBC, then overwrite the copy mix release just
+  # made. Cargo writes to the workspace target dir at /flezha/target,
+  # which the dev compose mounts as the named volume
+  # `flezha_cargo_target` — so this never touches the host's
+  # `cli/target/`.
+  note "ensuring 'flz' release is built"
+  if ! "${COMPOSE[@]}" exec -T controller sh -c \
+    'cd /flezha && export MIX_ENV=dev && \
+     mix deps.get --only "$MIX_ENV" && \
+     mix release --overwrite' >/tmp/state_persistence_release.log 2>&1; then
+    echo "[state_persistence] FAIL: mix release failed; tail of log:" >&2
+    tail -40 /tmp/state_persistence_release.log >&2
+    exit 1
+  fi
+  note "rebuilding flz CLI inside container (matches container GLIBC)"
+  if ! "${COMPOSE[@]}" exec -T controller sh -c \
+    'cd /flezha && cargo build -p flz --quiet 2>&1' >/tmp/state_persistence_cargo.log 2>&1; then
+    echo "[state_persistence] FAIL: cargo build -p flz failed; tail of log:" >&2
+    tail -40 /tmp/state_persistence_cargo.log >&2
+    exit 1
+  fi
+  if ! "${COMPOSE[@]}" exec -T controller sh -c \
+    'cp /flezha/target/debug/flz /flezha/_build/dev/rel/flezha/bin/flz'; then
+    echo "[state_persistence] FAIL: could not patch release flz binary" >&2
+    exit 1
+  fi
+  note "release built; flz patched with container-linked binary"
+
   note "starting BEAM inside controller container ('mix run --no-halt')"
   "${COMPOSE[@]}" exec -d -T controller sh -c \
     'cd /flezha && export MIX_ENV=dev && \
-     mix deps.get --only "$MIX_ENV" >/dev/null 2>&1 || true; \
      exec mix run --no-halt'
 
   local deadline=$(( $(date +%s) + REJOIN_TIMEOUT_S ))
@@ -226,12 +266,20 @@ fetch_active_ce_id() {
 wait_for_any_ce_id() {
   local deadline=$(( $(date +%s) + REJOIN_TIMEOUT_S ))
   local current=""
+  local last_diag=0
   while [ "$(date +%s)" -lt "${deadline}" ]; do
     assert_rust_running
     current="$(fetch_active_ce_id)"
     if [ -n "${current}" ]; then
       echo "${current}"
       return 0
+    fi
+    # Periodic stderr diagnostic so cold cargo compiles aren't a black box.
+    local now
+    now="$(date +%s)"
+    if [ $(( now - last_diag )) -ge 30 ]; then
+      echo "[state_persistence] still waiting for handshake (rust last log line: $(docker logs --tail=1 flezha_rust_executor 2>&1 | tr -d '\r' | tail -1))" >&2
+      last_diag="${now}"
     fi
     sleep 5
   done
