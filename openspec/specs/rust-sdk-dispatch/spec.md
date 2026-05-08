@@ -300,3 +300,22 @@ The Rust SDK's payload-id constants (those that map to the binary framing's `pay
 - **WHEN** the Rust SDK is built
 - **THEN** the constants `PARTITION_STATE_CHANGE` and `PARTITION_STATE_SNAPSHOT` MUST be defined and exported; references to `PROCESSOR_STATE_CHANGE` MUST not exist
 
+### Requirement: Test fixtures' Shards exercise the output channel path
+
+The test fixtures under `test/apps/rust_executor/src/main.rs` SHALL emit at least one output frame per input received, via `ShardCtx::output(channel, value, metadata)`, on Relays exercised by the controller's `:on_output`-subscribed plugin tests. Specifically:
+
+- `StoreInputRelay::StoreInputShard::run` SHALL emit the input string on a sink Channel (named `"output"`) after applying the `PushText` change.
+- `CompareFilterRelay::CompareFilterShard::run` SHALL emit the input string on a sink Channel when `state.comparable == input` (matching the existing test's expectation of `"hello world"` round-tripping through the filter).
+
+This requirement covers fixture behavior only; it does not change the SDK's `Shard` trait, the dispatch contract, or any wire format. A future production Relay may emit no outputs and remain conformant to the SDK's other requirements.
+
+#### Scenario: StoreInputRelay round-trips input via :on_output
+
+- **WHEN** the controller's `BeamMsgForward` plugin is enabled with `subscriptions: [{:on_output, []}]` against a `StoreInputRelay` instance and the test sends `"state_1"` to the relay
+- **THEN** the test SHALL receive `{:message_forward, "state_1"}` within 2 seconds (UDS) or 5 seconds (QUIC)
+
+#### Scenario: CompareFilterRelay round-trips matching input via :on_output
+
+- **WHEN** a `CompareFilterRelay` instance is initialized with `comparable = "hello world"` and the test sends `"hello world"` to the relay
+- **THEN** the test SHALL receive `{:message_forward, "hello world"}` within 2 seconds
+

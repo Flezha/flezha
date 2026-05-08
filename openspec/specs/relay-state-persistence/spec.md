@@ -3,9 +3,7 @@
 ## Purpose
 
 The relay-state-persistence capability provides agent-side, per-Partition durability for Relay state. The agent maintains an append-only write-ahead log (WAL) per Partition under `app_data/state/`, fsynced on a configurable cadence, with asynchronous size-triggered compaction into snapshot files. On Partition reconnect, the agent assembles a `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}` payload and ships it to the SDK over the control channel; the SDK applies the snapshot and folds the WAL tail to recover terminal state. Persistence is per-Relay-class opt-in via runtime config or a Relay-class const, defaulting on. The agent retains pre-compaction WAL records for a configurable window to support time-travel queries via `flz state at`. The capability is additive to the existing `Overwatch` GenServer: persistence frames (`partition_state_change`, `partition_state_snapshot`) flow alongside the existing protocol; no SDK or executor code outside this capability is required.
-
 ## Requirements
-
 ### Requirement: Per-Partition append-only WAL on the agent
 
 Each Partition whose Relay has `persistence_enabled = true` and whose Shard's `Change` is not `NoChange` SHALL have a per-Partition write-ahead log on the Controller at `app_data/state/{executor_id}/{relay_class}/{shard_id}/{partition_key}.wal`. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
@@ -391,3 +389,58 @@ The protobuf message previously named `ProcessorApplyState` SHALL be renamed `Pa
 #### Scenario: Java SDK emits PartitionApplyState
 - **WHEN** the Java SDK applies a state change to a Partition
 - **THEN** the SDK SHALL send a `PartitionApplyState` message identical in shape to the Rust SDK's; the Controller SHALL handle both identically
+
+### Requirement: SDK serializes Relay state on `PartitionState` request via the Decision-10 JSON shape
+
+When the SDK receives a `PartitionState{relay_id}` command, it SHALL respond with a JSON object whose top-level keys are the Relay's Shard names and whose values are:
+
+- For single-mode Shards (one Partition per Shard): the serialized `Self::State` of that Partition.
+- For static-mode Shards (`shard_keys() = [...]`): an inner JSON object whose keys are the Shard's `shard_key` values and whose values are each Partition's serialized `Self::State`.
+
+The wire payload SHALL be `partition_state` payload-id with the JSON object as the message bytes. Empty Relays (no live Partitions) SHALL produce `{}`.
+
+State serialization SHALL go through a per-Shard fn pointer captured at `register_relay::<R>()` time. The fn pointer downcasts the type-erased state held in `PartitionSlot::state` to its statically-known `PartitionState<S>` and emits `serde_json::Value` via the `S::State: Serialize` bound on the trait. No additional user-facing trait machinery is required beyond the existing `Serialize + DeserializeOwned` bounds on `Shard::State`.
+
+#### Scenario: Single-mode Shard returns its state at the shard-name key
+
+- **WHEN** the SDK receives `PartitionState{relay_id}` for a Relay whose only Shard is `"counter"` (single-mode) with state `{"value": 42}`
+- **THEN** the wire reply payload SHALL be `{"counter": {"value": 42}}`
+
+#### Scenario: Static-mode Shard returns a key-keyed object
+
+- **WHEN** the SDK receives `PartitionState{relay_id}` for a Relay whose only Shard is `"ohlc"` (static-mode, keys `["1m", "1h"]`) with `1m` state `{"high": 10}` and `1h` state `{"high": 20}`
+- **THEN** the wire reply payload SHALL be `{"ohlc": {"1m": {"high": 10}, "1h": {"high": 20}}}`
+
+### Requirement: SDK applies `AddRelay.init_values` JSON to per-Partition state
+
+When the SDK receives an `AddRelay{relay_id, factory_id, init_values}` command and `init_values` is a non-empty JSON object, the SDK SHALL parse the JSON, walk its top-level keys, and for each key that matches a registered Shard name on the Relay's class:
+
+- For single-mode Shards: deserialize the JSON value directly into `S::State` via the per-Shard `deserialize_state` fn pointer (captured at registration time and bounded on `S::State: DeserializeOwned`), then overwrite the freshly-`init_state`d Partition's state with the deserialized value.
+- For static-mode Shards: walk the inner object's keys; for each `(key, value)` pair where `key` is a declared `shard_key`, deserialize the inner value into `S::State` and overwrite that Partition's state.
+
+Top-level keys that do not match any Shard name SHALL be ignored (with an `eprintln!` log line at the SDK boundary). Inner-object keys that do not match a declared `shard_key` SHALL also be ignored.
+
+If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Partition's state untouched after the cold-start `Shard::init_state(shard_key, None)` returned by the build path.
+
+`MigrationDeserialization{factory_id, relay_id, serialized_state}` SHALL reuse the same `apply_init_values` path: the `serialized_state` payload is the UTF-8 JSON blob produced by `serialize_relay_state` on the source executor; applying it to a freshly-started instance restores byte-identical state.
+
+#### Scenario: Cold start with init_values seeds single-mode Shard
+
+- **WHEN** the SDK receives `AddRelay{relay_id, factory_id, init_values: "{\"counter\":{\"value\":7}}"}` for a Relay with one single-mode Shard `"counter"`
+- **THEN** the SDK SHALL deserialize `{"value":7}` directly into `CounterState` and overwrite the Partition's state with `CounterState { value: 7 }`
+
+#### Scenario: Cold start with init_values seeds static-mode Shard per key
+
+- **WHEN** the SDK receives `AddRelay{...init_values: "{\"ohlc\":{\"1m\":{\"high\":5},\"1h\":{\"high\":10}}}"}` for a Relay with `shard_keys = ["1m", "1h"]`
+- **THEN** the SDK SHALL deserialize `{"high":5}` into the `"1m"` Partition's state AND deserialize `{"high":10}` into the `"1h"` Partition's state
+
+#### Scenario: Empty init_values uses the default path
+
+- **WHEN** the SDK receives `AddRelay{...init_values: ""}`
+- **THEN** the SDK SHALL leave each Partition's state at the value `Shard::init_state(shard_key, None)` returned at build time
+
+#### Scenario: Round-trip via MigrationSerialization / MigrationDeserialization
+
+- **WHEN** the SDK on the source executor responds to `MigrationSerialization{relay_id}` with payload bytes `B = serialize_relay_state(instance)`, and a second SDK on the destination executor receives `MigrationDeserialization{factory_id, relay_id, serialized_state: B}`
+- **THEN** the destination's freshly-started instance SHALL have Partition state byte-identical to the source's at the moment of serialization, as observed by `serialize_relay_state` re-issued against the destination
+
