@@ -1,6 +1,8 @@
 defmodule Flezha.State.FsyncBatcherTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Flezha.State.{FsyncBatcher, Supervisor, TestHelpers, WalWriter}
 
   setup do
@@ -28,16 +30,23 @@ defmodule Flezha.State.FsyncBatcherTest do
     test "rejects out-of-range tick interval" do
       Process.flag(:trap_exit, true)
 
-      assert {:error, {:interval_out_of_range, 0, [1, 1000]}} =
-               start_unnamed_init(interval_ms: 0)
+      # capture_log suppresses the proc_lib crash report emitted when init/1
+      # returns {:stop, ...} — these tests assert that exact path.
+      capture_log(fn ->
+        assert {:error, {:interval_out_of_range, 0, [1, 1000]}} =
+                 start_unnamed_init(interval_ms: 0)
 
-      assert {:error, {:interval_out_of_range, 1001, [1, 1000]}} =
-               start_unnamed_init(interval_ms: 1001)
+        assert {:error, {:interval_out_of_range, 1001, [1, 1000]}} =
+                 start_unnamed_init(interval_ms: 1001)
+      end)
     end
 
     test "rejects non-integer interval" do
       Process.flag(:trap_exit, true)
-      assert {:error, {:invalid_interval, "5"}} = start_unnamed_init(interval_ms: "5")
+
+      capture_log(fn ->
+        assert {:error, {:invalid_interval, "5"}} = start_unnamed_init(interval_ms: "5")
+      end)
     end
   end
 

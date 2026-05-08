@@ -13,6 +13,8 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
@@ -66,8 +68,12 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
     Process.exit(original_pid, {:shutdown, :idle_timeout})
     assert_receive {:DOWN, ^original_ref, :process, ^original_pid, _}, 1_000
 
-    {:ok, table} =
-      Table.handle_down(table, original_ref, original_pid, {:shutdown, :idle_timeout})
+    # with_log silences the expected [Extension.Table] subscriber-crashed
+    # error log emitted by handle_down for the deliberately-killed provider.
+    {{:ok, table}, _log} =
+      with_log(fn ->
+        Table.handle_down(table, original_ref, original_pid, {:shutdown, :idle_timeout})
+      end)
 
     # After handle_down, the dead pid is evicted and a retry was scheduled.
     refute Map.has_key?(table.owned_pids, plugin_id)
@@ -111,7 +117,9 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
       Table.new(@catalog)
       |> Map.update!(:plugins, &Map.put(&1, plugin_id, plugin))
 
-    table = Table.retry(table, plugin_id)
+    # with_log silences the expected [Extension.Table] init_provider-failed
+    # error log; FailingProvider intentionally returns :error.
+    {table, _log} = with_log(fn -> Table.retry(table, plugin_id) end)
 
     # No owned pid was spawned (init_provider returned :error) but the
     # retry counter incremented so the next backoff applies.

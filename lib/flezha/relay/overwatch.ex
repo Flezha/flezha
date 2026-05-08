@@ -673,9 +673,6 @@ defmodule Flezha.Relay.Overwatch do
          status: Atom.to_string(status)
        }}
 
-    case ControlChannel.send_control_async(executor_id, command) do
-      :ok -> :ok
-      other -> other
-    end
+    ControlChannel.send_control_async(executor_id, command)
   end
 end

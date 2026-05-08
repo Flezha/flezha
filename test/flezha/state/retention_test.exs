@@ -1,6 +1,8 @@
 defmodule Flezha.State.RetentionTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Flezha.State.{
     FsyncBatcher,
     Registry,
@@ -44,9 +46,12 @@ defmodule Flezha.State.RetentionTest do
 
       # Use GenServer.start directly so init/1 returns its validation error
       # without contending for the named registration that the application's
-      # supervisor already holds.
-      assert {:error, {:interval_out_of_range, 0, _}} =
-               GenServer.start(Retention, interval_ms: 0)
+      # supervisor already holds. Wrap in capture_log so the proc_lib crash
+      # report on init/1's :stop tuple does not pollute test output.
+      capture_log(fn ->
+        assert {:error, {:interval_out_of_range, 0, _}} =
+                 GenServer.start(Retention, interval_ms: 0)
+      end)
     end
   end
 
