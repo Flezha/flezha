@@ -55,6 +55,5 @@ public final class StreamRegistry {
         byIndex.clear();
     }
 
-    public record StreamPair(long primary, long secondary) {
-    }
+    public record StreamPair(long primary, long secondary) {}
 }

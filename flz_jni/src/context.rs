@@ -15,15 +15,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
+use flz_transport::transport::quic::QuicClient;
+use flz_transport::transport::{protocol, FlezhaStream};
+#[cfg(unix)]
+use flz_transport::utility::path_helper;
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::{jint, jlong};
 use jni::{JNIEnv, JavaVM};
-
-use flz_transport::transport::protocol;
-use flz_transport::transport::quic::QuicClient;
-use flz_transport::transport::FlezhaStream;
-#[cfg(unix)]
-use flz_transport::utility::path_helper;
 
 use crate::callbacks::{dispatch_connection_lost, dispatch_data, dispatch_stream_closed};
 use crate::throw_native;
@@ -424,9 +422,7 @@ fn open_control(ctx: &JniContext) -> std::io::Result<Arc<FlezhaStream>> {
             let client = QuicClient::connect(&ctx.config.quic_address, &ctx.config.ca_cert_path)
                 .map_err(std::io::Error::other)?;
             let client = Arc::new(client);
-            let control = client
-                .open_bidi_stream()
-                .map_err(std::io::Error::other)?;
+            let control = client.open_bidi_stream().map_err(std::io::Error::other)?;
             *ctx.quic_client.lock().unwrap() = Some(client);
             Ok(Arc::new(FlezhaStream::Quic(control)))
         }
@@ -470,12 +466,13 @@ fn open_data_stream(
                 guard.clone()
             }
             .ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotConnected, "QUIC client not connected")
+                std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "QUIC client not connected",
+                )
             })?;
 
-            let mut stream = client
-                .open_bidi_stream()
-                .map_err(std::io::Error::other)?;
+            let mut stream = client.open_bidi_stream().map_err(std::io::Error::other)?;
             stream.write_all(&[stream_type, index])?;
             Ok(Arc::new(FlezhaStream::Quic(stream)))
         }
@@ -525,7 +522,12 @@ fn register_and_spawn_reader(ctx: &JniContext, stream: Arc<FlezhaStream>) -> jlo
     id as jlong
 }
 
-fn reader_loop(ctx: &JniContext, stream_id: u64, stream: Arc<FlezhaStream>, shutdown: Arc<AtomicBool>) {
+fn reader_loop(
+    ctx: &JniContext,
+    stream_id: u64,
+    stream: Arc<FlezhaStream>,
+    shutdown: Arc<AtomicBool>,
+) {
     let mut buf = [0u8; 8192];
     loop {
         if shutdown.load(Ordering::SeqCst) {

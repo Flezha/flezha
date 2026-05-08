@@ -1,5 +1,6 @@
-use crate::utils::{get_flezha_command, get_output_format};
 use std::process::{exit, Command};
+
+use crate::utils::{get_flezha_command, get_output_format};
 
 pub fn handle_state_command(args: &[String]) {
     if args.is_empty() {
@@ -85,10 +86,7 @@ fn handle_rotate(args: &[String]) {
     let path = &args[1];
     let command = get_flezha_command();
 
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.state_rotate(\"{}\")",
-        path,
-    );
+    let rpc_command = format!("Flezha.Service.CliManager.state_rotate(\"{}\")", path,);
 
     let status = Command::new(command)
         .arg("rpc")

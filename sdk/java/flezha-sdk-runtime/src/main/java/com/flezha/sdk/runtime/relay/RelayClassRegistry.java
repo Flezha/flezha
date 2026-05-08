@@ -23,8 +23,7 @@ public final class RelayClassRegistry {
 
     private static final Map<String, Entry> ENTRIES = new ConcurrentHashMap<>();
 
-    private RelayClassRegistry() {
-    }
+    private RelayClassRegistry() {}
 
     /**
      * Reflective entry point invoked from
@@ -44,25 +43,23 @@ public final class RelayClassRegistry {
             relay = relayClass.getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
             throw new IllegalArgumentException(
-                    "Relay class `" + relayClass.getName()
-                            + "` must have a public no-arg constructor: " + e.toString(), e);
+                    "Relay class `" + relayClass.getName() + "` must have a public no-arg constructor: " + e.toString(),
+                    e);
         }
 
         String factoryId = relay.factoryId();
         if (factoryId == null || factoryId.isEmpty()) {
             throw new IllegalArgumentException(
-                    "Relay class `" + relayClass.getName()
-                            + "` returned null/empty from factoryId()");
+                    "Relay class `" + relayClass.getName() + "` returned null/empty from factoryId()");
         }
 
         RelayTopology topology = RelayTopologyBuilder.build(relay);
 
         Entry existing = ENTRIES.putIfAbsent(factoryId, new Entry(relayClass, topology));
         if (existing != null) {
-            throw new IllegalArgumentException(
-                    "Duplicate factory id `" + factoryId + "` for Relay class `"
-                            + relayClass.getName() + "` (already registered as `"
-                            + existing.relayClass().getName() + "`)");
+            throw new IllegalArgumentException("Duplicate factory id `" + factoryId + "` for Relay class `"
+                    + relayClass.getName() + "` (already registered as `"
+                    + existing.relayClass().getName() + "`)");
         }
         return factoryId;
     }
@@ -100,6 +97,5 @@ public final class RelayClassRegistry {
         ENTRIES.clear();
     }
 
-    private record Entry(Class<? extends Relay> relayClass, RelayTopology topology) {
-    }
+    private record Entry(Class<? extends Relay> relayClass, RelayTopology topology) {}
 }

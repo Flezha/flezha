@@ -58,7 +58,8 @@ public final class HeaderTemplate {
     @Nonnull
     public Header decodeHeader(@Nonnull byte[] header) {
         if (header.length != HEADER_SIZE) {
-            throw new StateLoadException(StateLoadException.Reason.TRUNCATED,
+            throw new StateLoadException(
+                    StateLoadException.Reason.TRUNCATED,
                     "header is " + header.length + " bytes; expected " + HEADER_SIZE);
         }
         ByteBuffer buf = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN);
@@ -83,9 +84,10 @@ public final class HeaderTemplate {
     public void verifyCrc(@Nonnull Header header, @Nonnull byte[] payload) {
         int actual = crc32(payload);
         if (actual != header.crc32()) {
-            throw new StateLoadException(StateLoadException.Reason.CRC_MISMATCH,
-                    "crc32 mismatch: expected " + Integer.toHexString(header.crc32())
-                            + " got " + Integer.toHexString(actual));
+            throw new StateLoadException(
+                    StateLoadException.Reason.CRC_MISMATCH,
+                    "crc32 mismatch: expected " + Integer.toHexString(header.crc32()) + " got "
+                            + Integer.toHexString(actual));
         }
     }
 
@@ -103,8 +105,7 @@ public final class HeaderTemplate {
      */
     static int parseVersion() {
         try {
-            Enumeration<URL> manifests = HeaderTemplate.class.getClassLoader()
-                    .getResources("META-INF/MANIFEST.MF");
+            Enumeration<URL> manifests = HeaderTemplate.class.getClassLoader().getResources("META-INF/MANIFEST.MF");
             while (manifests.hasMoreElements()) {
                 URL url = manifests.nextElement();
                 try (InputStream in = url.openStream()) {
@@ -142,6 +143,5 @@ public final class HeaderTemplate {
     }
 
     /** Decoded header record. */
-    public record Header(byte sdkLang, int sdkVersion, int schemaVersion, byte formatId, int crc32) {
-    }
+    public record Header(byte sdkLang, int sdkVersion, int schemaVersion, byte formatId, int crc32) {}
 }

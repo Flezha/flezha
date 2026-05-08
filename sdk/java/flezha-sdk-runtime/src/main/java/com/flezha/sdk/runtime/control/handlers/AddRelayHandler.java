@@ -51,8 +51,7 @@ public final class AddRelayHandler implements CommandHandler {
 
         InitValuesContext.set(initValues);
         try {
-            RelayInstance instance = RelayInstance.create(
-                    topology, relayId, ctx, ctx.workerPool());
+            RelayInstance instance = RelayInstance.create(topology, relayId, ctx, ctx.workerPool());
             registry.add(instance);
         } catch (RuntimeException e) {
             errors.add("Failed to spawn relay instance: " + e.getMessage());

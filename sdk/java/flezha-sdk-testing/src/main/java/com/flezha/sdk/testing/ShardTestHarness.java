@@ -46,8 +46,7 @@ public final class ShardTestHarness<Input, State, Output, ChangeT extends Change
      * {@link #withInitialState(Object)} or {@link #withPayload(Optional, RestoreInitPayload)}.
      */
     @Nonnull
-    public static <I, S, O, C extends Change> ShardTestHarness<I, S, O, C> of(
-            @Nonnull Shard<I, S, O, C, ?, ?> shard) {
+    public static <I, S, O, C extends Change> ShardTestHarness<I, S, O, C> of(@Nonnull Shard<I, S, O, C, ?, ?> shard) {
         S init = shard.initState(Optional.empty(), Optional.empty());
         return new ShardTestHarness<>(shard, init);
     }
@@ -69,8 +68,7 @@ public final class ShardTestHarness<Input, State, Output, ChangeT extends Change
     @Nonnull
     public ShardTestHarness<Input, State, Output, ChangeT> applyInputs(@Nonnull Iterable<Input> inputs) {
         for (Input input : inputs) {
-            StateHandle<State, ChangeT> handle = StateHandle.create(
-                    state, recordedChanges, shard::applyChange);
+            StateHandle<State, ChangeT> handle = StateHandle.create(state, recordedChanges, shard::applyChange);
             TestShardCtx ctx = new TestShardCtx(recordedEmits);
             try {
                 shard.run(input, handle, ctx);
@@ -85,8 +83,7 @@ public final class ShardTestHarness<Input, State, Output, ChangeT extends Change
     @Nonnull
     public ShardTestHarness<Input, State, Output, ChangeT> expectChanges(@Nonnull List<ChangeT> expected) {
         if (!recordedChanges.equals(expected)) {
-            throw new AssertionError("changes mismatch:\n  expected: " + expected
-                    + "\n  actual:   " + recordedChanges);
+            throw new AssertionError("changes mismatch:\n  expected: " + expected + "\n  actual:   " + recordedChanges);
         }
         return this;
     }
@@ -107,8 +104,8 @@ public final class ShardTestHarness<Input, State, Output, ChangeT extends Change
             }
         }
         if (!actual.equals(expected)) {
-            throw new AssertionError("emits mismatch (" + type.getSimpleName() + "):\n"
-                    + "  expected: " + expected + "\n  actual:   " + actual);
+            throw new AssertionError("emits mismatch (" + type.getSimpleName() + "):\n" + "  expected: " + expected
+                    + "\n  actual:   " + actual);
         }
         return this;
     }
@@ -117,8 +114,7 @@ public final class ShardTestHarness<Input, State, Output, ChangeT extends Change
     @Nonnull
     public ShardTestHarness<Input, State, Output, ChangeT> expectState(@Nonnull State expected) {
         if (!expected.equals(state)) {
-            throw new AssertionError("state mismatch:\n  expected: " + expected
-                    + "\n  actual:   " + state);
+            throw new AssertionError("state mismatch:\n  expected: " + expected + "\n  actual:   " + state);
         }
         return this;
     }
@@ -203,8 +199,7 @@ public final class ShardTestHarness<Input, State, Output, ChangeT extends Change
         }
 
         @Override
-        public <C> void emitWithMeta(@Nonnull String channel, @Nonnull C value,
-                @Nonnull Map<String, String> meta) {
+        public <C> void emitWithMeta(@Nonnull String channel, @Nonnull C value, @Nonnull Map<String, String> meta) {
             recorded.add(value);
         }
     }

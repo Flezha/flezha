@@ -42,8 +42,13 @@ public record FlezhaConfig(
         private FlezhaTransport transport = FlezhaTransport.UDS;
         private String quicAddress = DEFAULT_QUIC_ADDRESS;
         private String caCertPath = DEFAULT_CA_CERT_PATH;
-        @Nullable private String serverCertPath = DEFAULT_SERVER_CERT_PATH;
-        @Nullable private String serverKeyPath = DEFAULT_SERVER_KEY_PATH;
+
+        @Nullable
+        private String serverCertPath = DEFAULT_SERVER_CERT_PATH;
+
+        @Nullable
+        private String serverKeyPath = DEFAULT_SERVER_KEY_PATH;
+
         private String socketFilesPath = DEFAULT_SOCKET_FILES_PATH;
         private int workerPoolSize = 0;
 
@@ -84,13 +89,7 @@ public record FlezhaConfig(
 
         public FlezhaConfig build() {
             return new FlezhaConfig(
-                    transport,
-                    quicAddress,
-                    caCertPath,
-                    serverCertPath,
-                    serverKeyPath,
-                    socketFilesPath,
-                    workerPoolSize);
+                    transport, quicAddress, caCertPath, serverCertPath, serverKeyPath, socketFilesPath, workerPoolSize);
         }
     }
 }

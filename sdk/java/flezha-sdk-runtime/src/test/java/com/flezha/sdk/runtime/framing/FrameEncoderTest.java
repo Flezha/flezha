@@ -15,8 +15,7 @@ class FrameEncoderTest {
     @DisplayName("spec §9.1 — handshake init frame has the correct byte layout")
     void handshakeInitFrameLayout() {
         String payloadId = "connect_control_channel";
-        byte[] message = "{\"factory_ids\":[\"echo\"],\"namespace\":\"my_app\"}"
-                .getBytes(StandardCharsets.UTF_8);
+        byte[] message = "{\"factory_ids\":[\"echo\"],\"namespace\":\"my_app\"}".getBytes(StandardCharsets.UTF_8);
 
         byte[] frame = FrameEncoder.build(payloadId, message, Map.of());
 
@@ -48,8 +47,7 @@ class FrameEncoderTest {
         assertThat(frames).hasSize(1);
         Frame decoded = frames.get(0);
         assertThat(decoded.payloadId()).isEqualTo("p1");
-        assertThat(decoded.metadata()).containsEntry("input_type", "2")
-                .containsEntry("trace_id", "abc123");
+        assertThat(decoded.metadata()).containsEntry("input_type", "2").containsEntry("trace_id", "abc123");
     }
 
     @Test

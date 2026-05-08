@@ -1,6 +1,5 @@
 package com.flezha.sdk.runtime.worker;
 
-import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.partition.PartitionSlot;
@@ -14,9 +13,6 @@ import com.flezha.sdk.shard.ShardException;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.StateHandle;
 import java.lang.ref.WeakReference;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +45,7 @@ public final class ShardDispatcher {
     private final ShardDescriptor shardDescriptor;
     private final Optional<ChannelDescriptor> outputChannelDescriptor;
     private final OptionalInt outputChannelId;
+
     @SuppressWarnings("rawtypes")
     private final Shard shardInstance;
 
@@ -138,8 +135,7 @@ public final class ShardDispatcher {
             // Defense-in-depth: drain loop must release inflight even on
             // unexpected failure so subsequent pushes can resubmit.
             slot.mailbox().releaseInflight();
-            LOG.error("dispatcher drain failed for shard `{}`: {}",
-                    shardDescriptor.name(), t.toString());
+            LOG.error("dispatcher drain failed for shard `{}`: {}", shardDescriptor.name(), t.toString());
         }
     }
 
@@ -163,11 +159,17 @@ public final class ShardDispatcher {
             try {
                 shardInstance.run(input, handle, ctxImpl);
             } catch (ShardException e) {
-                LOG.warn("shard `{}` partition `{}` threw ShardException: {}",
-                        shardDescriptor.name(), slot.shardKey().orElse("<single>"), e.getMessage());
+                LOG.warn(
+                        "shard `{}` partition `{}` threw ShardException: {}",
+                        shardDescriptor.name(),
+                        slot.shardKey().orElse("<single>"),
+                        e.getMessage());
             } catch (RuntimeException e) {
-                LOG.error("shard `{}` partition `{}` threw RuntimeException: {}",
-                        shardDescriptor.name(), slot.shardKey().orElse("<single>"), e.toString());
+                LOG.error(
+                        "shard `{}` partition `{}` threw RuntimeException: {}",
+                        shardDescriptor.name(),
+                        slot.shardKey().orElse("<single>"),
+                        e.toString());
             }
         } finally {
             slot.stateLock().unlock();
@@ -206,10 +208,8 @@ public final class ShardDispatcher {
         }
 
         @Override
-        public <C> void emitWithMeta(
-                @Nonnull String channelName,
-                @Nonnull C value,
-                @Nonnull Map<String, String> meta) throws ShardException {
+        public <C> void emitWithMeta(@Nonnull String channelName, @Nonnull C value, @Nonnull Map<String, String> meta)
+                throws ShardException {
             doEmit(resolveChannel(channelName), value, meta);
         }
 
@@ -254,10 +254,7 @@ public final class ShardDispatcher {
     }
 
     private void emitPlugin(
-            ChannelDescriptor descriptor,
-            Object value,
-            Map<String, String> userMeta,
-            long primaryStreamId) {
+            ChannelDescriptor descriptor, Object value, Map<String, String> userMeta, long primaryStreamId) {
         RelayInstance ri = instance.get();
         if (ri == null) {
             return;
@@ -291,17 +288,18 @@ public final class ShardDispatcher {
 
         long secondaryStreamId = ctx.streamRegistry().secondaryFor(primaryStreamId);
         if (secondaryStreamId == 0L) {
-            LOG.warn("plugin emit on `{}`: no secondary stream paired with primary {}",
-                    descriptor.name(), primaryStreamId);
+            LOG.warn(
+                    "plugin emit on `{}`: no secondary stream paired with primary {}",
+                    descriptor.name(),
+                    primaryStreamId);
             return;
         }
 
         byte[] frame = FrameEncoder.build(ri.instanceId(), bytes, metadata);
-        int writeStatus = com.flezha.sdk.native_.NativeTransport.streamWrite(
-                ctx.nativeHandle(), secondaryStreamId, frame);
+        int writeStatus =
+                com.flezha.sdk.native_.NativeTransport.streamWrite(ctx.nativeHandle(), secondaryStreamId, frame);
         if (writeStatus != 0) {
-            LOG.error("plugin emit on `{}`: stream write failed (status {})",
-                    descriptor.name(), writeStatus);
+            LOG.error("plugin emit on `{}`: stream write failed (status {})", descriptor.name(), writeStatus);
         }
     }
 }

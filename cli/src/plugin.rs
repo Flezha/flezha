@@ -1,8 +1,9 @@
+use std::process::{exit, Command};
+
 use crate::utils::{
     extract_extension_flags, extract_opts_with_default_namespace, extract_x_flags,
     filter_out_extension_entries, get_flezha_command, serialize_flags,
 };
-use std::process::{exit, Command};
 
 pub fn handle_plugin_command(args: &[String]) {
     if args.is_empty() {
@@ -291,10 +292,7 @@ fn handle_help(args: &[String]) {
     let provider_id = &args[1];
     let command = get_flezha_command();
 
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.plugin_help(\"{}\")",
-        provider_id
-    );
+    let rpc_command = format!("Flezha.Service.CliManager.plugin_help(\"{}\")", provider_id);
 
     println!("Getting help for plugin '{}'...", provider_id);
 
@@ -313,7 +311,9 @@ fn handle_help(args: &[String]) {
 fn handle_list(args: &[String]) {
     let command = get_flezha_command();
     let want_json = args.iter().any(|a| a == "--json");
-    let scope = args.iter().find(|a| a.as_str() == "--installed" || a.as_str() == "--providers");
+    let scope = args
+        .iter()
+        .find(|a| a.as_str() == "--installed" || a.as_str() == "--providers");
 
     let rpc_command = match scope.map(|s| s.as_str()) {
         Some("--installed") => {
@@ -412,12 +412,12 @@ mod tests {
 
     #[test]
     fn embed_extensions_into_empty_base() {
-        let got = embed_extensions_into_json(
-            "{}",
-            &[("on_input".to_string(), vec![])],
-        );
+        let got = embed_extensions_into_json("{}", &[("on_input".to_string(), vec![])]);
 
-        assert_eq!(got, "{\"extensions\":[{\"name\":\"on_input\",\"opts\":{}}]}");
+        assert_eq!(
+            got,
+            "{\"extensions\":[{\"name\":\"on_input\",\"opts\":{}}]}"
+        );
     }
 
     #[test]
@@ -431,7 +431,9 @@ mod tests {
         );
 
         assert!(got.starts_with("{\"uri\": \"ws://x\""));
-        assert!(got.contains("\"extensions\":[{\"name\":\"on_interval\",\"opts\":{\"interval_ms\": \"5000\"}}]"));
+        assert!(got.contains(
+            "\"extensions\":[{\"name\":\"on_interval\",\"opts\":{\"interval_ms\": \"5000\"}}]"
+        ));
         assert!(got.ends_with('}'));
     }
 
@@ -440,13 +442,19 @@ mod tests {
         let got = embed_extensions_into_json(
             "{}",
             &[
-                ("on_input".to_string(), vec![("position".to_string(), "0".to_string())]),
+                (
+                    "on_input".to_string(),
+                    vec![("position".to_string(), "0".to_string())],
+                ),
                 ("on_terminate".to_string(), vec![]),
             ],
         );
 
         let input_pos = got.find("on_input").expect("has on_input");
         let term_pos = got.find("on_terminate").expect("has on_terminate");
-        assert!(input_pos < term_pos, "on_input must precede on_terminate in serialized output");
+        assert!(
+            input_pos < term_pos,
+            "on_input must precede on_terminate in serialized output"
+        );
     }
 }

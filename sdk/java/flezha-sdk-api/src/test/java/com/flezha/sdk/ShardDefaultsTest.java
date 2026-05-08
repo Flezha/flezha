@@ -59,34 +59,86 @@ class ShardDefaultsTest {
                 .hasMessageContaining("does not override applyChange");
     }
 
-    public static final class StatelessShard
-            implements Shard<String, String, String, NoChange, WallClock, Void> {
-        @Override public String name() { return "stateless"; }
-        @Override public Class<String> inputType() { return String.class; }
-        @Override public Class<String> outputType() { return String.class; }
-        @Override public Class<NoChange> changeType() { return NoChange.class; }
-        @Override public Class<WallClock> clockType() { return WallClock.class; }
-        @Override public Class<Void> configType() { return Void.class; }
-        @Override public String initState(Optional<String> shardKey, Optional<RestoreInitPayload> initPayload) {
+    public static final class StatelessShard implements Shard<String, String, String, NoChange, WallClock, Void> {
+        @Override
+        public String name() {
+            return "stateless";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<NoChange> changeType() {
+            return NoChange.class;
+        }
+
+        @Override
+        public Class<WallClock> clockType() {
+            return WallClock.class;
+        }
+
+        @Override
+        public Class<Void> configType() {
+            return Void.class;
+        }
+
+        @Override
+        public String initState(Optional<String> shardKey, Optional<RestoreInitPayload> initPayload) {
             return "init";
         }
-        @Override public void run(String input, StateHandle<String, NoChange> state, ShardCtx ctx) { }
+
+        @Override
+        public void run(String input, StateHandle<String, NoChange> state, ShardCtx ctx) {}
     }
 
-    public record SampleChange(long delta) implements com.flezha.sdk.state.Change {
-    }
+    public record SampleChange(long delta) implements com.flezha.sdk.state.Change {}
 
     public static final class ChangeyShardWithoutOverride
             implements Shard<String, String, String, SampleChange, WallClock, Void> {
-        @Override public String name() { return "changey"; }
-        @Override public Class<String> inputType() { return String.class; }
-        @Override public Class<String> outputType() { return String.class; }
-        @Override public Class<SampleChange> changeType() { return SampleChange.class; }
-        @Override public Class<WallClock> clockType() { return WallClock.class; }
-        @Override public Class<Void> configType() { return Void.class; }
-        @Override public String initState(Optional<String> shardKey, Optional<RestoreInitPayload> initPayload) {
+        @Override
+        public String name() {
+            return "changey";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<SampleChange> changeType() {
+            return SampleChange.class;
+        }
+
+        @Override
+        public Class<WallClock> clockType() {
+            return WallClock.class;
+        }
+
+        @Override
+        public Class<Void> configType() {
+            return Void.class;
+        }
+
+        @Override
+        public String initState(Optional<String> shardKey, Optional<RestoreInitPayload> initPayload) {
             return "init";
         }
-        @Override public void run(String input, StateHandle<String, SampleChange> state, ShardCtx ctx) { }
+
+        @Override
+        public void run(String input, StateHandle<String, SampleChange> state, ShardCtx ctx) {}
     }
 }

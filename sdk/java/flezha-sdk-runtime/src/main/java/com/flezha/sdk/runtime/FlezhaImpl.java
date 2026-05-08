@@ -201,12 +201,15 @@ public final class FlezhaImpl implements Flezha {
         // triggers the graceful-shutdown sequence even when the user
         // never calls close() explicitly. Idempotent with close() via
         // the GracefulShutdown's internal AtomicBoolean.
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            GracefulShutdown active = shutdownRef.get();
-            if (active != null) {
-                active.run();
-            }
-        }, "flezha-graceful-shutdown"));
+        Runtime.getRuntime()
+                .addShutdownHook(new Thread(
+                        () -> {
+                            GracefulShutdown active = shutdownRef.get();
+                            if (active != null) {
+                                active.run();
+                            }
+                        },
+                        "flezha-graceful-shutdown"));
 
         return new FlezhaImpl(ctx, coordinator, shutdownRef);
     }

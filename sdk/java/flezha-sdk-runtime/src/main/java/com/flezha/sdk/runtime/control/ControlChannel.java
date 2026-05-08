@@ -37,10 +37,7 @@ public final class ControlChannel {
     public void sendHandshake(@Nonnull String namespace) throws Exception {
         HandshakeMessage msg = HandshakeMessage.from(namespace);
         String json = ctx.objectMapper().writeValueAsString(msg);
-        byte[] frame = FrameEncoder.build(
-                HANDSHAKE_PAYLOAD_ID,
-                json.getBytes(StandardCharsets.UTF_8),
-                Map.of());
+        byte[] frame = FrameEncoder.build(HANDSHAKE_PAYLOAD_ID, json.getBytes(StandardCharsets.UTF_8), Map.of());
         int status = NativeTransport.streamWrite(ctx.nativeHandle(), controlStreamId, frame);
         if (status != 0) {
             throw new IllegalStateException("Failed to send handshake (status=" + status + ")");

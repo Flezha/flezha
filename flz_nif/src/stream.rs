@@ -8,7 +8,11 @@ use crate::uds_driver::ServerCommand;
 
 /// Send raw binary data on a stream.
 #[rustler::nif]
-fn send_data<'a>(env: Env<'a>, stream: StreamHandleArc, data: rustler::Binary<'a>) -> NifResult<Term<'a>> {
+fn send_data<'a>(
+    env: Env<'a>,
+    stream: StreamHandleArc,
+    data: rustler::Binary<'a>,
+) -> NifResult<Term<'a>> {
     let _ = stream.cmd_tx.send(ServerCommand::SendData {
         stream_id: stream.stream_id,
         data: data.as_slice().to_vec(),

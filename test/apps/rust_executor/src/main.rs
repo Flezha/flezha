@@ -1,14 +1,12 @@
-use std::env;
 use std::io::{self, Read};
-use std::thread;
 use std::time::Duration;
+use std::{env, thread};
 
 use flezha_executor::shard::{Shard, ShardCtx, ShardError};
 use flezha_executor::state::{
     Change, CoalesceKey, NoChange, RestoreInitPayload, StateHandle, WallClock,
 };
 use flezha_executor::{register_relay, ChannelBuilder, OverflowPolicy, Relay};
-
 use serde::{Deserialize, Serialize};
 
 fn main() {
@@ -120,7 +118,10 @@ impl Shard for StoreInputShard {
     fn name() -> &'static str {
         "store_input_shard"
     }
-    fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> StoreInputState {
+    fn init_state(
+        _: Option<&str>,
+        _init_payload: Option<RestoreInitPayload<'_>>,
+    ) -> StoreInputState {
         StoreInputState::default()
     }
     fn apply_change(state: &mut StoreInputState, change: &StoreInputChange) {
@@ -181,7 +182,10 @@ impl Shard for CompareFilterShard {
     fn name() -> &'static str {
         "compare_filter_shard"
     }
-    fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> CompareFilterState {
+    fn init_state(
+        _: Option<&str>,
+        _init_payload: Option<RestoreInitPayload<'_>>,
+    ) -> CompareFilterState {
         CompareFilterState::default()
     }
     fn run(
@@ -235,7 +239,10 @@ impl Shard for StaticEntryShard {
     fn name() -> &'static str {
         "static_entry_shard"
     }
-    fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> StaticEntryState {
+    fn init_state(
+        _: Option<&str>,
+        _init_payload: Option<RestoreInitPayload<'_>>,
+    ) -> StaticEntryState {
         StaticEntryState::default()
     }
     fn apply_change(state: &mut StaticEntryState, change: &StaticEntryChange) {
@@ -480,7 +487,10 @@ impl Shard for BlockTestShard {
     fn name() -> &'static str {
         "block_test_shard"
     }
-    fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> BoundedShardState {
+    fn init_state(
+        _: Option<&str>,
+        _init_payload: Option<RestoreInitPayload<'_>>,
+    ) -> BoundedShardState {
         BoundedShardState::default()
     }
     fn apply_change(state: &mut BoundedShardState, change: &BoundedChange) {
@@ -513,7 +523,10 @@ impl Shard for DropNewestTestShard {
     fn name() -> &'static str {
         "drop_newest_test_shard"
     }
-    fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> BoundedShardState {
+    fn init_state(
+        _: Option<&str>,
+        _init_payload: Option<RestoreInitPayload<'_>>,
+    ) -> BoundedShardState {
         BoundedShardState::default()
     }
     fn apply_change(state: &mut BoundedShardState, change: &BoundedChange) {
@@ -546,7 +559,10 @@ impl Shard for DropOldestTestShard {
     fn name() -> &'static str {
         "drop_oldest_test_shard"
     }
-    fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> BoundedShardState {
+    fn init_state(
+        _: Option<&str>,
+        _init_payload: Option<RestoreInitPayload<'_>>,
+    ) -> BoundedShardState {
         BoundedShardState::default()
     }
     fn apply_change(state: &mut BoundedShardState, change: &BoundedChange) {
@@ -762,9 +778,19 @@ impl Shard for TickEntryShard {
         // Wire format: `<interval>:<ts>:<delta>`.
         let mut parts = input.splitn(3, ':');
         let interval = parts.next().and_then(|s| s.parse::<u8>().ok()).unwrap_or(0);
-        let ts = parts.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-        let delta = parts.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-        ctx.emit::<TickInput>(TickInput { interval, ts, delta })
+        let ts = parts
+            .next()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+        let delta = parts
+            .next()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
+        ctx.emit::<TickInput>(TickInput {
+            interval,
+            ts,
+            delta,
+        })
     }
 }
 
@@ -793,7 +819,8 @@ impl Relay for PersistenceOffRelay {
         "persistence_off_counter"
     }
     fn channels(c: &mut ChannelBuilder) {
-        c.input::<String>("input").into::<PersistenceOffEntryShard>();
+        c.input::<String>("input")
+            .into::<PersistenceOffEntryShard>();
         c.channel::<i64>("ticks")
             .from::<PersistenceOffEntryShard>()
             .into::<PersistenceOffCounterShard>();

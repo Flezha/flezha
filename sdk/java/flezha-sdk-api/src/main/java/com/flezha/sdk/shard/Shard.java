@@ -34,28 +34,32 @@ import javax.annotation.Nonnull;
  * @param <ConfigT> Jackson-deserialized config; {@link Void} for unit-typed
  *     configs
  */
-public interface Shard<Input, State, Output,
-        ChangeT extends Change,
-        ClockT extends com.flezha.sdk.state.Clock,
-        ConfigT> {
+public interface Shard<
+        Input, State, Output, ChangeT extends Change, ClockT extends com.flezha.sdk.state.Clock, ConfigT> {
 
     /** Stable identifier within the Relay class. Must be unique per Relay. */
-    @Nonnull String name();
+    @Nonnull
+    String name();
 
     /** Compile-time typed Input class. Used at registerRelay time for wiring checks. */
-    @Nonnull Class<Input> inputType();
+    @Nonnull
+    Class<Input> inputType();
 
     /** Compile-time typed Output class. Used at registerRelay time for wiring checks. */
-    @Nonnull Class<Output> outputType();
+    @Nonnull
+    Class<Output> outputType();
 
     /** Compile-time typed Change class. Drives flusher registration and Kryo dispatch. */
-    @Nonnull Class<ChangeT> changeType();
+    @Nonnull
+    Class<ChangeT> changeType();
 
     /** Compile-time typed Clock class. Drives v1 RelayConfigurationException for non-WallClock. */
-    @Nonnull Class<ClockT> clockType();
+    @Nonnull
+    Class<ClockT> clockType();
 
     /** Compile-time typed Config class. {@code Void.class} for Shards without typed config. */
-    @Nonnull Class<ConfigT> configType();
+    @Nonnull
+    Class<ConfigT> configType();
 
     /**
      * Initialize state for a new Partition. Called once per Partition at Relay
@@ -67,9 +71,7 @@ public interface Shard<Input, State, Output,
      * returns, so users typically ignore the parameter.
      */
     @Nonnull
-    State initState(
-            @Nonnull Optional<String> shardKey,
-            @Nonnull Optional<RestoreInitPayload> initPayload);
+    State initState(@Nonnull Optional<String> shardKey, @Nonnull Optional<RestoreInitPayload> initPayload);
 
     /**
      * Apply a Change to the current state. Default: no-op for {@link NoChange}
@@ -126,8 +128,7 @@ public interface Shard<Input, State, Output,
                 return (Shard<Input, State, Output, ChangeT, ClockT, ConfigT>)
                         getClass().getDeclaredConstructor().newInstance();
             } catch (ReflectiveOperationException e) {
-                throw new IllegalStateException(
-                        "Shard '" + name() + "' has no public no-arg constructor", e);
+                throw new IllegalStateException("Shard '" + name() + "' has no public no-arg constructor", e);
             }
         }
         throw new UnsupportedOperationException(
@@ -186,8 +187,6 @@ public interface Shard<Input, State, Output,
      * is logged against {@code (relayInstance, shard, partition)} and discards
      * any partial emits made during this invocation.
      */
-    void run(
-            @Nonnull Input input,
-            @Nonnull StateHandle<State, ChangeT> state,
-            @Nonnull ShardCtx ctx) throws ShardException;
+    void run(@Nonnull Input input, @Nonnull StateHandle<State, ChangeT> state, @Nonnull ShardCtx ctx)
+            throws ShardException;
 }

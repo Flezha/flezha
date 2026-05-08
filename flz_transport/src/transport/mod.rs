@@ -4,14 +4,12 @@ pub mod quic;
 
 use std::io::{self, Read, Write};
 use std::net::Shutdown;
-
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
 use quic::QuicBidiStream;
-
-#[cfg(unix)]
-use std::os::unix::io::AsRawFd;
 
 pub enum FlezhaStream {
     #[cfg(unix)]

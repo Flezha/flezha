@@ -84,7 +84,9 @@ public final class PartitionFlusher {
      * registration landed; {@code false} if the entry already existed or was
      * skipped.
      */
-    public boolean register(@Nonnull PartitionId partitionId, @Nonnull FlusherEntry entry,
+    public boolean register(
+            @Nonnull PartitionId partitionId,
+            @Nonnull FlusherEntry entry,
             @Nonnull Class<? extends Change> changeType) {
         if (changeType == NoChange.class) {
             return false;
@@ -119,8 +121,10 @@ public final class PartitionFlusher {
                 try {
                     drain(entry);
                 } catch (RuntimeException e) {
-                    LOG.error("flusher drain failed for partition `{}`: {}",
-                            entry.partitionId().encoded(), e.toString());
+                    LOG.error(
+                            "flusher drain failed for partition `{}`: {}",
+                            entry.partitionId().encoded(),
+                            e.toString());
                 }
             }
         }
@@ -154,8 +158,10 @@ public final class PartitionFlusher {
             try {
                 entry.sendFrame().apply(frame);
             } catch (RuntimeException e) {
-                LOG.error("flusher sendFrame failed for partition `{}`: {}",
-                        entry.partitionId().encoded(), e.toString());
+                LOG.error(
+                        "flusher sendFrame failed for partition `{}`: {}",
+                        entry.partitionId().encoded(),
+                        e.toString());
             }
         }
     }
@@ -211,8 +217,7 @@ public final class PartitionFlusher {
      *   [crc32: u32 BE]   // over the entire preceding frame
      * </pre>
      */
-    public static byte[] buildPartitionStateChangeFrame(
-            PartitionId pid, long seq, byte[] header, byte[] changeBytes) {
+    public static byte[] buildPartitionStateChangeFrame(PartitionId pid, long seq, byte[] header, byte[] changeBytes) {
         byte[] idBytes = pid.encoded().getBytes(StandardCharsets.UTF_8);
         try (ByteArrayOutputStream bos = new ByteArrayOutputStream();
                 DataOutputStream out = new DataOutputStream(bos)) {

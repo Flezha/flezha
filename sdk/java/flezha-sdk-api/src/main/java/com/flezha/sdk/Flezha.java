@@ -68,9 +68,8 @@ public interface Flezha extends AutoCloseable {
             throw new IllegalArgumentException("namespace must not be null or empty");
         }
         if (RelayRegistry.isEmpty()) {
-            throw new IllegalStateException(
-                    "Cannot start Flezha: no relay classes registered. "
-                            + "Call Flezha.registerRelay(MyRelay.class) before Flezha.newInstance(...).");
+            throw new IllegalStateException("Cannot start Flezha: no relay classes registered. "
+                    + "Call Flezha.registerRelay(MyRelay.class) before Flezha.newInstance(...).");
         }
 
         // The implementation class lives in flezha-sdk-runtime to avoid a
@@ -84,7 +83,8 @@ public interface Flezha extends AutoCloseable {
         } catch (ClassNotFoundException e) {
             throw new IllegalStateException(
                     "com.flezha.sdk.runtime.FlezhaImpl not on the classpath. "
-                            + "Make sure flezha-sdk-runtime is on the runtime classpath.", e);
+                            + "Make sure flezha-sdk-runtime is on the runtime classpath.",
+                    e);
         } catch (ReflectiveOperationException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             if (cause instanceof RuntimeException re) {

@@ -38,8 +38,8 @@ public final class PartitionSlot {
         this(dispatcher, shardId, shardKey, false);
     }
 
-    public PartitionSlot(@Nonnull ShardDispatcher dispatcher, int shardId,
-                         @Nonnull Optional<String> shardKey, boolean changeful) {
+    public PartitionSlot(
+            @Nonnull ShardDispatcher dispatcher, int shardId, @Nonnull Optional<String> shardKey, boolean changeful) {
         this.dispatcher = dispatcher;
         this.shardId = shardId;
         this.shardKey = shardKey;

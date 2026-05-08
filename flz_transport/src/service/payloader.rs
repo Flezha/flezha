@@ -1,7 +1,8 @@
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::str;
+
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 /// Metadata key-value pairs attached to a payload frame.
 pub type PayloadMetadata = HashMap<String, String>;
@@ -151,12 +152,7 @@ pub fn build_from_str_into(
     append_payload(out, payload_id, message.as_bytes(), metadata);
 }
 
-fn append_payload(
-    out: &mut Vec<u8>,
-    payload_id: &str,
-    message: &[u8],
-    metadata: &PayloadMetadata,
-) {
+fn append_payload(out: &mut Vec<u8>, payload_id: &str, message: &[u8], metadata: &PayloadMetadata) {
     // Serialize metadata directly into the metadata region after we write
     // the metadata_size. We can't do that cleanly because metadata_size
     // precedes the bytes, so serialize to a scratch Vec first.

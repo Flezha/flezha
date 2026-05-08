@@ -26,5 +26,4 @@ public record FlusherEntry(
         @Nonnull HeaderTemplate headerTemplate,
         @Nonnull PartitionId partitionId,
         int schemaVersion,
-        @Nonnull KryoCodec codec) {
-}
+        @Nonnull KryoCodec codec) {}

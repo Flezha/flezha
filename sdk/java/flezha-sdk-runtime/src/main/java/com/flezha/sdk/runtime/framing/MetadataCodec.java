@@ -17,8 +17,7 @@ import javax.annotation.Nonnull;
  */
 public final class MetadataCodec {
 
-    private MetadataCodec() {
-    }
+    private MetadataCodec() {}
 
     @Nonnull
     public static byte[] serialize(@Nonnull Map<String, String> metadata) {
@@ -29,17 +28,13 @@ public final class MetadataCodec {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         for (Map.Entry<String, String> e : metadata.entrySet()) {
             byte[] key = e.getKey().getBytes(StandardCharsets.UTF_8);
-            byte[] value = e.getValue() == null
-                    ? new byte[0]
-                    : e.getValue().getBytes(StandardCharsets.UTF_8);
+            byte[] value = e.getValue() == null ? new byte[0] : e.getValue().getBytes(StandardCharsets.UTF_8);
 
             if (key.length > 255) {
-                throw new IllegalArgumentException(
-                        "Metadata key exceeds 255 bytes: " + e.getKey());
+                throw new IllegalArgumentException("Metadata key exceeds 255 bytes: " + e.getKey());
             }
             if (value.length > 255) {
-                throw new IllegalArgumentException(
-                        "Metadata value exceeds 255 bytes for key: " + e.getKey());
+                throw new IllegalArgumentException("Metadata value exceeds 255 bytes for key: " + e.getKey());
             }
 
             out.write(key.length & 0xFF);
@@ -60,8 +55,7 @@ public final class MetadataCodec {
             offset += 2;
 
             if (offset + keyLen + valLen > bytes.length) {
-                throw new IllegalStateException(
-                        "Invalid metadata frame: truncated key/value at offset " + offset);
+                throw new IllegalStateException("Invalid metadata frame: truncated key/value at offset " + offset);
             }
 
             String key = new String(bytes, offset, keyLen, StandardCharsets.UTF_8);

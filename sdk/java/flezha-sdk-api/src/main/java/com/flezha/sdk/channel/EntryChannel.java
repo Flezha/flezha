@@ -22,5 +22,6 @@ public interface EntryChannel<T> {
      * erasure means the runtime still has to verify the Shard's reflective
      * {@link Shard#inputType()} accessor agrees.
      */
-    @Nonnull Channel<T> into(@Nonnull Class<? extends Shard<T, ?, ?, ?, ?, ?>> shard);
+    @Nonnull
+    Channel<T> into(@Nonnull Class<? extends Shard<T, ?, ?, ?, ?, ?>> shard);
 }

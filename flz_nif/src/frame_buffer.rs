@@ -156,7 +156,8 @@ fn parse_header(header: &[u8]) -> (String, usize) {
     let payload_id = String::from_utf8_lossy(&header[..32])
         .trim_end()
         .to_string();
-    let payload_size = u32::from_be_bytes([header[32], header[33], header[34], header[35]]) as usize;
+    let payload_size =
+        u32::from_be_bytes([header[32], header[33], header[34], header[35]]) as usize;
     (payload_id, payload_size)
 }
 
@@ -166,8 +167,7 @@ fn parse_payload(payload_id: &str, data: &[u8]) -> Option<ParsedFrame> {
         return None; // Need at least message_size(4) + metadata_size(2)
     }
 
-    let message_size =
-        u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let message_size = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
 
     if data.len() < 4 + message_size + 2 {
         return None;
@@ -176,8 +176,7 @@ fn parse_payload(payload_id: &str, data: &[u8]) -> Option<ParsedFrame> {
     let message = data[4..4 + message_size].to_vec();
 
     let meta_offset = 4 + message_size;
-    let metadata_size =
-        u16::from_be_bytes([data[meta_offset], data[meta_offset + 1]]) as usize;
+    let metadata_size = u16::from_be_bytes([data[meta_offset], data[meta_offset + 1]]) as usize;
 
     let meta_start = meta_offset + 2;
     if data.len() < meta_start + metadata_size {
@@ -220,8 +219,9 @@ fn deserialize_metadata(data: &[u8]) -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use flz_transport::service::payloader;
+
+    use super::*;
 
     #[test]
     fn test_single_complete_frame() {
@@ -242,8 +242,7 @@ mod tests {
 
     #[test]
     fn test_partial_header() {
-        let frame_bytes =
-            payloader::build_from_binary("my_id", b"data", HashMap::new());
+        let frame_bytes = payloader::build_from_binary("my_id", b"data", HashMap::new());
 
         let mut fb = FrameBuffer::new();
 

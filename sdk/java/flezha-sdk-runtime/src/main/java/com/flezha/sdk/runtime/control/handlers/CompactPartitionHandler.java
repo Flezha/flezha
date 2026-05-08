@@ -23,14 +23,9 @@ public final class CompactPartitionHandler implements CommandHandler {
 
     @Override
     @Nonnull
-    public byte[] handle(
-            @Nonnull ExecutorContext ctx,
-            @Nonnull CommandRequest request,
-            @Nonnull List<String> errors) {
+    public byte[] handle(@Nonnull ExecutorContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors) {
         try {
-            Object req = CommandRequest.class
-                    .getMethod("getCompactPartition")
-                    .invoke(request);
+            Object req = CommandRequest.class.getMethod("getCompactPartition").invoke(request);
             if (req == null) {
                 errors.add("CompactPartitionHandler: payload missing");
                 return new byte[0];

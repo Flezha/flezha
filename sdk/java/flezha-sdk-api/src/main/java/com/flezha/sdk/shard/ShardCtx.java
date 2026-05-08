@@ -47,8 +47,6 @@ public interface ShardCtx {
     <C> void emitWithMeta(@Nonnull C value, @Nonnull Map<String, String> meta) throws ShardException;
 
     /** Same as {@link #emitWithMeta(Object, Map)} but pinned to a specific channel name. */
-    <C> void emitWithMeta(
-            @Nonnull String channel,
-            @Nonnull C value,
-            @Nonnull Map<String, String> meta) throws ShardException;
+    <C> void emitWithMeta(@Nonnull String channel, @Nonnull C value, @Nonnull Map<String, String> meta)
+            throws ShardException;
 }

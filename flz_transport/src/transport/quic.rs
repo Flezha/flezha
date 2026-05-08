@@ -118,9 +118,12 @@ impl QuicClient {
         client_config.transport_config(Arc::new(transport));
 
         // --- UDP socket + mio Poll ---
-        let addr: SocketAddr = address
-            .parse()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid address: {}", e)))?;
+        let addr: SocketAddr = address.parse().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Invalid address: {}", e),
+            )
+        })?;
 
         let std_udp = std::net::UdpSocket::bind("0.0.0.0:0")?;
         std_udp.set_nonblocking(true)?;
@@ -242,9 +245,7 @@ impl Write for QuicBidiStream {
                 reply: reply_tx,
             })
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "QUIC write channel closed"))?;
-        self.waker
-            .wake()
-            .map_err(io::Error::other)?;
+        self.waker.wake().map_err(io::Error::other)?;
         reply_rx
             .recv()
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Driver reply dropped"))?
@@ -275,9 +276,7 @@ impl Write for &QuicBidiStream {
                 reply: reply_tx,
             })
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "QUIC write channel closed"))?;
-        self.waker
-            .wake()
-            .map_err(io::Error::other)?;
+        self.waker.wake().map_err(io::Error::other)?;
         reply_rx
             .recv()
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Driver reply dropped"))?
@@ -307,9 +306,9 @@ fn drive_handshake(
     flush_transmits(connection, udp, &mut transmit_buf)?;
 
     loop {
-        let timeout = connection.poll_timeout().map(|deadline| {
-            deadline.saturating_duration_since(Instant::now())
-        });
+        let timeout = connection
+            .poll_timeout()
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
         let poll_timeout = timeout.unwrap_or(Duration::from_millis(100));
         poll.poll(&mut events, Some(poll_timeout))?;
 
@@ -328,7 +327,9 @@ fn drive_handshake(
                 Ok((n, remote)) => {
                     let data = BytesMut::from(&udp_buf[..n]);
                     let mut resp_buf = Vec::new();
-                    if let Some(event) = endpoint.handle(now, remote, None, None, data, &mut resp_buf) {
+                    if let Some(event) =
+                        endpoint.handle(now, remote, None, None, data, &mut resp_buf)
+                    {
                         match event {
                             DatagramEvent::ConnectionEvent(ch, event) => {
                                 if ch == conn_handle {

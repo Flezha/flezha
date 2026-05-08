@@ -11,8 +11,8 @@ import javax.annotation.Nonnull;
  */
 public record PartitionId(String instanceId, String shardName, String partitionKey) {
 
-    public static PartitionId of(@Nonnull String instanceId, @Nonnull String shardName,
-            @Nonnull Optional<String> partitionKey) {
+    public static PartitionId of(
+            @Nonnull String instanceId, @Nonnull String shardName, @Nonnull Optional<String> partitionKey) {
         return new PartitionId(instanceId, shardName, partitionKey.orElse(""));
     }
 

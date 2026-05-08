@@ -13,7 +13,4 @@ fn load(env: rustler::Env, _info: rustler::Term) -> bool {
     true
 }
 
-rustler::init!(
-    "Elixir.Flezha.Transport.Native",
-    load = load
-);
+rustler::init!("Elixir.Flezha.Transport.Native", load = load);

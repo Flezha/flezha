@@ -12,5 +12,4 @@ package com.flezha.sdk.state;
  * may inspect the byte sizes for instrumentation but should not generally
  * consume the bytes themselves.
  */
-public record RestoreInitPayload(byte[] snapshotBytes, byte[] changeLogBytes) {
-}
+public record RestoreInitPayload(byte[] snapshotBytes, byte[] changeLogBytes) {}

@@ -1,6 +1,5 @@
 package com.flezha.sdk.channel;
 
-import com.flezha.sdk.shard.Shard;
 import javax.annotation.Nonnull;
 
 /**
@@ -19,7 +18,8 @@ public interface ChannelBuilder {
      * <p>The returned {@link EntryChannel} only exposes {@code .into(...)}
      * for wiring an entry-shard consumer.
      */
-    @Nonnull <T> EntryChannel<T> input(@Nonnull Class<T> type, @Nonnull String name);
+    @Nonnull
+    <T> EntryChannel<T> input(@Nonnull Class<T> type, @Nonnull String name);
 
     /**
      * Declare an inter-shard or plugin-bound channel. The returned
@@ -29,5 +29,6 @@ public interface ChannelBuilder {
      * with neither is rejected at build-topology time with
      * {@link com.flezha.sdk.relay.RelayConfigurationException}.
      */
-    @Nonnull <T> ChannelDecl<T> channel(@Nonnull Class<T> type, @Nonnull String name);
+    @Nonnull
+    <T> ChannelDecl<T> channel(@Nonnull Class<T> type, @Nonnull String name);
 }

@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use crossbeam::channel::{Receiver, Sender};
 use mio::net::UnixListener;
 use mio::{Events, Interest, Poll, Token, Waker};
 use rustler::{Encoder, LocalPid, OwnedEnv, Term};
-use std::sync::{Arc, Mutex};
 
 use crate::atoms;
 use crate::frame_buffer::{FrameBuffer, ParsedFrame};
@@ -18,17 +18,29 @@ const STREAM_TOKEN_BASE: usize = 2;
 
 /// Commands sent from NIF functions to the driver thread.
 pub enum ServerCommand {
-    SendData { stream_id: u64, data: Vec<u8> },
+    SendData {
+        stream_id: u64,
+        data: Vec<u8>,
+    },
     SendFrame {
         stream_id: u64,
         payload_id: String,
         message: Vec<u8>,
         metadata: HashMap<String, String>,
     },
-    SetActive { stream_id: u64 },
-    SetPassive { stream_id: u64 },
-    CloseStream { stream_id: u64 },
-    UpdateOwner { stream_id: u64, new_owner: LocalPid },
+    SetActive {
+        stream_id: u64,
+    },
+    SetPassive {
+        stream_id: u64,
+    },
+    CloseStream {
+        stream_id: u64,
+    },
+    UpdateOwner {
+        stream_id: u64,
+        new_owner: LocalPid,
+    },
     Shutdown,
 }
 
@@ -94,7 +106,15 @@ fn init_and_run(
         waker: Arc::clone(&waker),
     }));
 
-    driver_loop(socket_path, acceptor_pid, cmd_rx, cmd_tx, &waker, poll, listener)
+    driver_loop(
+        socket_path,
+        acceptor_pid,
+        cmd_rx,
+        cmd_tx,
+        &waker,
+        poll,
+        listener,
+    )
 }
 
 fn driver_loop(
@@ -183,7 +203,9 @@ fn driver_loop(
                     metadata,
                 } => {
                     let frame = flz_transport::service::payloader::build_from_binary(
-                        &payload_id, &message, metadata,
+                        &payload_id,
+                        &message,
+                        metadata,
                     );
                     enqueue_write(stream_id, frame, &mut streams, &mut poll);
                 }
@@ -277,20 +299,14 @@ fn try_flush(state: &mut StreamState, poll: &mut Poll) {
 
     // Buffer fully flushed — only need READABLE events now
     if state.write_buffer.is_empty() {
-        let _ = poll.registry().reregister(
-            &mut state.stream,
-            state.token,
-            Interest::READABLE,
-        );
+        let _ = poll
+            .registry()
+            .reregister(&mut state.stream, state.token, Interest::READABLE);
     }
 }
 
 /// Flush write buffer for a specific stream by ID.
-fn flush_write_buffer(
-    stream_id: u64,
-    streams: &mut HashMap<u64, StreamState>,
-    poll: &mut Poll,
-) {
+fn flush_write_buffer(stream_id: u64, streams: &mut HashMap<u64, StreamState>, poll: &mut Poll) {
     if let Some(state) = streams.get_mut(&stream_id) {
         try_flush(state, poll);
     }
@@ -460,10 +476,7 @@ fn send_closed_msg(owner: LocalPid, stream_id: u64, reason: &str) {
 }
 
 /// Send {:flz_connection, stream_handle} to the acceptor.
-fn send_connection_msg(
-    acceptor: LocalPid,
-    stream_handle: rustler::ResourceArc<StreamHandle>,
-) {
+fn send_connection_msg(acceptor: LocalPid, stream_handle: rustler::ResourceArc<StreamHandle>) {
     let mut env = OwnedEnv::new();
     let _ = env.send_and_clear(&acceptor, |env| {
         rustler::types::tuple::make_tuple(

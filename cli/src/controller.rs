@@ -1,5 +1,6 @@
-use crate::utils::{get_flezha_command, get_parameter};
 use std::process::{exit, Command};
+
+use crate::utils::{get_flezha_command, get_parameter};
 
 pub fn handle_controller_command(args: &[String]) {
     if args.is_empty() {

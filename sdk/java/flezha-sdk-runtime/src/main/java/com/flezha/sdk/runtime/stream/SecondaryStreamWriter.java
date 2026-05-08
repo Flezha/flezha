@@ -28,10 +28,7 @@ public final class SecondaryStreamWriter {
         return streamId;
     }
 
-    public void writeFrame(
-            @Nonnull String payloadId,
-            @Nonnull byte[] message,
-            @Nonnull Map<String, String> metadata) {
+    public void writeFrame(@Nonnull String payloadId, @Nonnull byte[] message, @Nonnull Map<String, String> metadata) {
         byte[] frame = FrameEncoder.build(payloadId, message, metadata);
         int status = NativeTransport.streamWrite(nativeHandle, streamId, frame);
         if (status != 0) {

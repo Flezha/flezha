@@ -9,7 +9,8 @@ thread_local! {
 /// Set the thread-local last error message.
 pub(crate) fn set_last_error(msg: impl Into<String>) {
     let msg = msg.into();
-    let c_string = CString::new(msg).unwrap_or_else(|_| CString::new("(error contained null byte)").unwrap());
+    let c_string =
+        CString::new(msg).unwrap_or_else(|_| CString::new("(error contained null byte)").unwrap());
     LAST_ERROR.with(|cell| {
         *cell.borrow_mut() = Some(c_string);
     });
@@ -22,10 +23,8 @@ pub(crate) fn set_last_error(msg: impl Into<String>) {
 /// has been recorded.
 #[no_mangle]
 pub extern "C" fn flezha_last_error() -> *const c_char {
-    LAST_ERROR.with(|cell| {
-        match cell.borrow().as_ref() {
-            Some(c_string) => c_string.as_ptr(),
-            None => std::ptr::null(),
-        }
+    LAST_ERROR.with(|cell| match cell.borrow().as_ref() {
+        Some(c_string) => c_string.as_ptr(),
+        None => std::ptr::null(),
     })
 }

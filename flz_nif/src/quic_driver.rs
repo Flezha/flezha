@@ -70,7 +70,14 @@ pub fn run_quic_driver(
     cmd_tx: Sender<ServerCommand>,
     ready_tx: Sender<io::Result<QuicDriverReady>>,
 ) {
-    match init_and_run(bind_address, server_config, acceptor_pid, cmd_rx, cmd_tx, ready_tx) {
+    match init_and_run(
+        bind_address,
+        server_config,
+        acceptor_pid,
+        cmd_rx,
+        cmd_tx,
+        ready_tx,
+    ) {
         Ok(()) => {}
         Err(e) => eprintln!("[flz_nif] QUIC driver fatal error: {}", e),
     }
@@ -140,8 +147,7 @@ fn driver_loop(
 
     // Data streams pending type-byte identification (QUIC only).
     // Keyed by NIF stream_id.
-    let mut pending_data_streams: HashMap<u64, rustler::ResourceArc<StreamHandle>> =
-        HashMap::new();
+    let mut pending_data_streams: HashMap<u64, rustler::ResourceArc<StreamHandle>> = HashMap::new();
 
     loop {
         // Compute poll timeout from all active connections.
@@ -190,12 +196,7 @@ fn driver_loop(
                                 // New QUIC connection incoming.
                                 // Accept new QUIC connection via the endpoint.
                                 let mut accept_buf = Vec::new();
-                                match endpoint.accept(
-                                    incoming,
-                                    now,
-                                    &mut accept_buf,
-                                    None,
-                                ) {
+                                match endpoint.accept(incoming, now, &mut accept_buf, None) {
                                     Ok((ch, mut connection)) => {
                                         // Connection accepted.
                                         // Flush initial handshake packets.
@@ -215,10 +216,7 @@ fn driver_loop(
                                         );
                                     }
                                     Err(e) => {
-                                        eprintln!(
-                                            "[flz_nif] QUIC accept error: {:?}",
-                                            e
-                                        );
+                                        eprintln!("[flz_nif] QUIC accept error: {:?}", e);
                                     }
                                 }
                             }
@@ -263,8 +261,7 @@ fn driver_loop(
                         // Accept new bidi streams on this connection.
                         let conn_state = connections.get_mut(ch).unwrap();
                         let mut accepted_streams: Vec<StreamId> = Vec::new();
-                        while let Some(stream_id) =
-                            conn_state.connection.streams().accept(Dir::Bi)
+                        while let Some(stream_id) = conn_state.connection.streams().accept(Dir::Bi)
                         {
                             let nif_id = next_nif_stream_id;
                             next_nif_stream_id += 1;
@@ -353,11 +350,7 @@ fn driver_loop(
                         if let Some(stream_state) = conn_state.streams.remove(&id) {
                             nif_stream_map.remove(&stream_state.nif_stream_id);
                             let owner = *stream_state.owner.lock().unwrap();
-                            send_closed_msg(
-                                owner,
-                                stream_state.nif_stream_id,
-                                "stream_finished",
-                            );
+                            send_closed_msg(owner, stream_state.nif_stream_id, "stream_finished");
                         }
                     }
                     Event::ConnectionLost { reason } => {
@@ -419,7 +412,9 @@ fn driver_loop(
                     metadata,
                 } => {
                     let frame = flz_transport::service::payloader::build_from_binary(
-                        &payload_id, &message, metadata,
+                        &payload_id,
+                        &message,
+                        metadata,
                     );
                     if let Some(&(ch, qstream_id)) = nif_stream_map.get(&nif_id) {
                         if let Some(conn_state) = connections.get_mut(&ch) {
@@ -434,16 +429,13 @@ fn driver_loop(
                         }
                     }
                 }
-                ServerCommand::SetActive {
-                    stream_id: nif_id,
-                } => {
+                ServerCommand::SetActive { stream_id: nif_id } => {
                     if let Some(&(ch, qstream_id)) = nif_stream_map.get(&nif_id) {
                         if let Some(conn_state) = connections.get_mut(&ch) {
                             if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
                                 stream_state.active = true;
                                 let owner = *stream_state.owner.lock().unwrap();
-                                let queued: Vec<_> =
-                                    stream_state.passive_queue.drain(..).collect();
+                                let queued: Vec<_> = stream_state.passive_queue.drain(..).collect();
                                 for frame in queued {
                                     send_data_msg(owner, nif_id, frame);
                                 }
@@ -451,9 +443,7 @@ fn driver_loop(
                         }
                     }
                 }
-                ServerCommand::SetPassive {
-                    stream_id: nif_id,
-                } => {
+                ServerCommand::SetPassive { stream_id: nif_id } => {
                     if let Some(&(ch, qstream_id)) = nif_stream_map.get(&nif_id) {
                         if let Some(conn_state) = connections.get_mut(&ch) {
                             if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
@@ -462,9 +452,7 @@ fn driver_loop(
                         }
                     }
                 }
-                ServerCommand::CloseStream {
-                    stream_id: nif_id,
-                } => {
+                ServerCommand::CloseStream { stream_id: nif_id } => {
                     if let Some((ch, qstream_id)) = nif_stream_map.remove(&nif_id) {
                         if let Some(conn_state) = connections.get_mut(&ch) {
                             conn_state.streams.remove(&qstream_id);
@@ -472,10 +460,7 @@ fn driver_loop(
                                 .connection
                                 .recv_stream(qstream_id)
                                 .stop(quinn_proto::VarInt::from_u32(0));
-                            let _ = conn_state
-                                .connection
-                                .send_stream(qstream_id)
-                                .finish();
+                            let _ = conn_state.connection.send_stream(qstream_id).finish();
                         }
                     }
                 }
@@ -522,11 +507,7 @@ fn driver_loop(
                     .collect();
                 for qstream_id in stream_ids {
                     if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
-                        flush_quic_write(
-                            &mut conn_state.connection,
-                            qstream_id,
-                            stream_state,
-                        );
+                        flush_quic_write(&mut conn_state.connection, qstream_id, stream_state);
                     }
                 }
                 let _ =
@@ -600,8 +581,10 @@ fn drain_readable(
                     if buf.len() >= 2 {
                         let stream_type = buf[0];
                         let index = buf[1];
-                        stream_state.type_byte_state =
-                            TypeByteState::DataStream { _stream_type: stream_type, _index: index };
+                        stream_state.type_byte_state = TypeByteState::DataStream {
+                            _stream_type: stream_type,
+                            _index: index,
+                        };
 
                         // Type prefix consumed — deliver stream notification.
                         // Deliver the {:flz_stream, stream_ref, type, index} message.
@@ -656,7 +639,10 @@ fn flush_quic_write(
         return;
     }
 
-    match connection.send_stream(qstream_id).write(&stream_state.write_buffer) {
+    match connection
+        .send_stream(qstream_id)
+        .write(&stream_state.write_buffer)
+    {
         Ok(written) => {
             stream_state.write_buffer.drain(..written);
         }
@@ -741,10 +727,7 @@ fn send_closed_msg(owner: LocalPid, stream_id: u64, reason: &str) {
     });
 }
 
-fn send_connection_msg(
-    acceptor: LocalPid,
-    stream_handle: rustler::ResourceArc<StreamHandle>,
-) {
+fn send_connection_msg(acceptor: LocalPid, stream_handle: rustler::ResourceArc<StreamHandle>) {
     let mut env = OwnedEnv::new();
     let _ = env.send_and_clear(&acceptor, |env| {
         rustler::types::tuple::make_tuple(
@@ -779,16 +762,14 @@ fn send_stream_msg(
 }
 
 /// Build a rustls ServerConfig and wrap it into a quinn-proto ServerConfig.
-pub fn build_quic_server_config(
-    cert_path: &str,
-    key_path: &str,
-) -> io::Result<ServerConfig> {
+pub fn build_quic_server_config(cert_path: &str, key_path: &str) -> io::Result<ServerConfig> {
     // Read certificate chain.
     let cert_pem = std::fs::read(cert_path)?;
     let mut cert_reader = io::BufReader::new(&cert_pem[..]);
-    let certs: Vec<rustls::pki_types::CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let certs: Vec<rustls::pki_types::CertificateDer<'static>> =
+        rustls_pemfile::certs(&mut cert_reader)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     if certs.is_empty() {
         return Err(io::Error::new(
@@ -803,7 +784,10 @@ pub fn build_quic_server_config(
     let key = rustls_pemfile::private_key(&mut key_reader)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
         .ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "No private key found in key file")
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "No private key found in key file",
+            )
         })?;
 
     // Build rustls server config.
@@ -814,9 +798,8 @@ pub fn build_quic_server_config(
 
     server_crypto.alpn_protocols = vec![b"flezha".to_vec()];
 
-    let quic_server_config =
-        quinn_proto::crypto::rustls::QuicServerConfig::try_from(server_crypto)
-            .map_err(io::Error::other)?;
+    let quic_server_config = quinn_proto::crypto::rustls::QuicServerConfig::try_from(server_crypto)
+        .map_err(io::Error::other)?;
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
 

@@ -45,7 +45,11 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_buildFrame<'
     let message_bytes = match env.convert_byte_array(&message_arr) {
         Ok(v) => v,
         Err(e) => {
-            throw_native(&mut env, 1, &format!("message byte[] conversion failed: {}", e));
+            throw_native(
+                &mut env,
+                1,
+                &format!("message byte[] conversion failed: {}", e),
+            );
             return JByteArray::default().into_raw();
         }
     };
@@ -125,7 +129,10 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_buildFrame<'
         if free_status as i32 != 0 {
             // Logged only — the Java array is already populated, so we return
             // success but record that the native buffer leaked a little.
-            eprintln!("[flz_jni] frame_free returned non-zero status: {}", free_status as i32);
+            eprintln!(
+                "[flz_jni] frame_free returned non-zero status: {}",
+                free_status as i32
+            );
         }
     }
 

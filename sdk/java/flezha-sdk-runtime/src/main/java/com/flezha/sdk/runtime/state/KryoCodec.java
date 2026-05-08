@@ -127,8 +127,7 @@ public final class KryoCodec {
     @Nonnull
     public DecodedFrame deserializeWithHeader(@Nonnull byte[] bytes) {
         if (bytes.length < 16) {
-            throw new IllegalArgumentException(
-                    "frame is shorter than 16 bytes; cannot extract header");
+            throw new IllegalArgumentException("frame is shorter than 16 bytes; cannot extract header");
         }
         byte[] header = Arrays.copyOfRange(bytes, 0, 16);
         byte[] payload = Arrays.copyOfRange(bytes, 16, bytes.length);
@@ -146,6 +145,5 @@ public final class KryoCodec {
     }
 
     /** Pair returned by {@link #deserializeWithHeader(byte[])}. */
-    public record DecodedFrame(byte[] header, Object value) {
-    }
+    public record DecodedFrame(byte[] header, Object value) {}
 }

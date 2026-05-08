@@ -180,27 +180,61 @@ class GracefulShutdownTest {
     }
 
     public static final class ShutdownTestRelay implements Relay {
-        @Override public String factoryId() { return FACTORY_ID; }
+        @Override
+        public String factoryId() {
+            return FACTORY_ID;
+        }
 
-        @Override public void channels(ChannelBuilder c) {
+        @Override
+        public void channels(ChannelBuilder c) {
             c.input(String.class, "input").into(ShutdownTestShard.class);
         }
     }
 
     public static final class ShutdownTestShard
-            implements Shard<String, String, String,
-                    com.flezha.sdk.state.NoChange,
-                    com.flezha.sdk.state.WallClock, Void> {
-        @Override public String name() { return "shutdown_test_shard"; }
-        @Override public Class<String> inputType() { return String.class; }
-        @Override public Class<String> outputType() { return String.class; }
-        @Override public Class<com.flezha.sdk.state.NoChange> changeType() { return com.flezha.sdk.state.NoChange.class; }
-        @Override public Class<com.flezha.sdk.state.WallClock> clockType() { return com.flezha.sdk.state.WallClock.class; }
-        @Override public Class<Void> configType() { return Void.class; }
-        @Override public String initState(Optional<String> shardKey,
-                Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) { return "initial-state"; }
-        @Override public void run(String input,
+            implements Shard<
+                    String, String, String, com.flezha.sdk.state.NoChange, com.flezha.sdk.state.WallClock, Void> {
+        @Override
+        public String name() {
+            return "shutdown_test_shard";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<com.flezha.sdk.state.NoChange> changeType() {
+            return com.flezha.sdk.state.NoChange.class;
+        }
+
+        @Override
+        public Class<com.flezha.sdk.state.WallClock> clockType() {
+            return com.flezha.sdk.state.WallClock.class;
+        }
+
+        @Override
+        public Class<Void> configType() {
+            return Void.class;
+        }
+
+        @Override
+        public String initState(
+                Optional<String> shardKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
+            return "initial-state";
+        }
+
+        @Override
+        public void run(
+                String input,
                 com.flezha.sdk.state.StateHandle<String, com.flezha.sdk.state.NoChange> state,
-                ShardCtx ctx) throws ShardException { }
+                ShardCtx ctx)
+                throws ShardException {}
     }
 }

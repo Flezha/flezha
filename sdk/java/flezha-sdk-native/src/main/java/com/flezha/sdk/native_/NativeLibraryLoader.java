@@ -24,15 +24,12 @@ final class NativeLibraryLoader {
     static final String LIB_BASE_NAME = "libflz_jni";
     static final String NATIVE_LIB_DIR_ENV = "FLEZHA_NATIVE_LIB_DIR";
 
-    private static final Set<String> SUPPORTED = Set.of(
-            "linux-x64", "linux-arm64",
-            "macos-x64", "macos-arm64",
-            "windows-x64");
+    private static final Set<String> SUPPORTED =
+            Set.of("linux-x64", "linux-arm64", "macos-x64", "macos-arm64", "windows-x64");
 
     private static volatile boolean loaded = false;
 
-    private NativeLibraryLoader() {
-    }
+    private NativeLibraryLoader() {}
 
     static synchronized void loadNativeLibrary() {
         if (loaded) {
@@ -46,15 +43,14 @@ final class NativeLibraryLoader {
         byte[] libraryBytes;
         try (InputStream in = NativeLibraryLoader.class.getResourceAsStream(resourcePath)) {
             if (in == null) {
-                throw new UnsatisfiedLinkError(
-                        "Missing bundled native library for " + platform
-                                + " (resource " + resourcePath + " not on classpath). "
-                                + "Supported platforms: " + SUPPORTED);
+                throw new UnsatisfiedLinkError("Missing bundled native library for " + platform
+                        + " (resource " + resourcePath + " not on classpath). "
+                        + "Supported platforms: " + SUPPORTED);
             }
             libraryBytes = in.readAllBytes();
         } catch (IOException e) {
-            UnsatisfiedLinkError err = new UnsatisfiedLinkError(
-                    "Failed to read bundled native library from classpath: " + resourcePath);
+            UnsatisfiedLinkError err =
+                    new UnsatisfiedLinkError("Failed to read bundled native library from classpath: " + resourcePath);
             err.initCause(e);
             throw err;
         }
@@ -62,28 +58,23 @@ final class NativeLibraryLoader {
         String hash = sha256(libraryBytes);
         String version = VersionInfo.VERSION;
 
-        Path extractionDir = resolveExtractionDir()
-                .resolve("flezha-" + version + "-" + hash);
+        Path extractionDir = resolveExtractionDir().resolve("flezha-" + version + "-" + hash);
         Path target = extractionDir.resolve(LIB_BASE_NAME + "." + extension);
 
         try {
             Files.createDirectories(extractionDir);
 
             if (!Files.exists(target) || Files.size(target) != libraryBytes.length) {
-                Path tmp = Files.createTempFile(extractionDir,
-                        LIB_BASE_NAME + "-", "." + extension + ".tmp");
+                Path tmp = Files.createTempFile(extractionDir, LIB_BASE_NAME + "-", "." + extension + ".tmp");
                 Files.write(tmp, libraryBytes);
                 try {
-                    Files.move(tmp, target,
-                            StandardCopyOption.ATOMIC_MOVE,
-                            StandardCopyOption.REPLACE_EXISTING);
+                    Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
                 } catch (AtomicMoveNotSupportedException atomicFallback) {
                     Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
                 }
             }
         } catch (IOException e) {
-            UnsatisfiedLinkError err = new UnsatisfiedLinkError(
-                    "Failed to extract native library to " + extractionDir);
+            UnsatisfiedLinkError err = new UnsatisfiedLinkError("Failed to extract native library to " + extractionDir);
             err.initCause(e);
             throw err;
         }
@@ -91,8 +82,7 @@ final class NativeLibraryLoader {
         try {
             System.load(target.toAbsolutePath().toString());
         } catch (UnsatisfiedLinkError e) {
-            throw new UnsatisfiedLinkError(
-                    "System.load failed for " + target + ": " + e.getMessage());
+            throw new UnsatisfiedLinkError("System.load failed for " + target + ": " + e.getMessage());
         }
 
         loaded = true;
@@ -111,8 +101,7 @@ final class NativeLibraryLoader {
             osKey = "windows";
         } else {
             throw new UnsatisfiedLinkError(
-                    "Unsupported OS: " + osName + " (arch=" + osArch + "). "
-                            + "Supported: " + SUPPORTED);
+                    "Unsupported OS: " + osName + " (arch=" + osArch + "). " + "Supported: " + SUPPORTED);
         }
 
         String archKey;
@@ -122,15 +111,13 @@ final class NativeLibraryLoader {
             archKey = "arm64";
         } else {
             throw new UnsatisfiedLinkError(
-                    "Unsupported CPU arch: " + osArch + " (os=" + osName + "). "
-                            + "Supported: " + SUPPORTED);
+                    "Unsupported CPU arch: " + osArch + " (os=" + osName + "). " + "Supported: " + SUPPORTED);
         }
 
         String platform = osKey + "-" + archKey;
         if (!SUPPORTED.contains(platform)) {
             throw new UnsatisfiedLinkError(
-                    "Unsupported os/arch combination: " + platform + ". "
-                            + "Supported: " + SUPPORTED);
+                    "Unsupported os/arch combination: " + platform + ". " + "Supported: " + SUPPORTED);
         }
         return platform;
     }

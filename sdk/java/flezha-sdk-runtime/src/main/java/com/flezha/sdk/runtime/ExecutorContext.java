@@ -26,14 +26,10 @@ public final class ExecutorContext {
     private final StreamRegistry streamRegistry = new StreamRegistry();
     private final Map<Long, PrimaryStreamReader> primaryReaders = new ConcurrentHashMap<>();
     private final AtomicReference<String> executorId = new AtomicReference<>("undefined");
-    private final AtomicReference<ExecutorStatus> status =
-            new AtomicReference<>(ExecutorStatus.STARTING);
+    private final AtomicReference<ExecutorStatus> status = new AtomicReference<>(ExecutorStatus.STARTING);
     private ExecutorService workerPool;
 
-    public ExecutorContext(
-            @Nonnull String namespace,
-            @Nonnull FlezhaEnv.ResolvedConfig config,
-            long nativeHandle) {
+    public ExecutorContext(@Nonnull String namespace, @Nonnull FlezhaEnv.ResolvedConfig config, long nativeHandle) {
         this.namespace = namespace;
         this.config = config;
         this.nativeHandle = nativeHandle;

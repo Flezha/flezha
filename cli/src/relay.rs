@@ -1,6 +1,7 @@
-use crate::utils::{extract_param, get_flezha_command, get_json, get_namespace, get_output_format};
 use std::collections::HashMap;
 use std::process::{exit, Command};
+
+use crate::utils::{extract_param, get_flezha_command, get_json, get_namespace, get_output_format};
 
 pub fn handle_relay_command(args: &[String]) {
     if args.is_empty() {
@@ -207,10 +208,7 @@ fn handle_list(args: &[String]) {
         } else {
             &namespace
         };
-        println!(
-            "Fetching relays for namespace '{}'...",
-            display_namespace
-        );
+        println!("Fetching relays for namespace '{}'...", display_namespace);
     }
 
     let status = Command::new(command)
@@ -300,7 +298,7 @@ fn handle_io_listen(args: &[String]) {
         .arg(rpc_command)
         .spawn()
         .expect("Failed to execute command");
-    
+
     // Wait for the child process and handle signals
     let status = child.wait().expect("Failed to wait for command");
 

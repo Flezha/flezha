@@ -31,8 +31,8 @@ class FrameParserTest {
     @Test
     @DisplayName("multiple frames in one read are all emitted")
     void multipleFramesInOneChunk() {
-        byte[] f1 = FrameEncoder.build("a", new byte[]{1, 2, 3}, Map.of());
-        byte[] f2 = FrameEncoder.build("b", new byte[]{4, 5, 6, 7}, Map.of());
+        byte[] f1 = FrameEncoder.build("a", new byte[] {1, 2, 3}, Map.of());
+        byte[] f2 = FrameEncoder.build("b", new byte[] {4, 5, 6, 7}, Map.of());
         byte[] joined = new byte[f1.length + f2.length];
         System.arraycopy(f1, 0, joined, 0, f1.length);
         System.arraycopy(f2, 0, joined, f1.length, f2.length);
@@ -51,7 +51,7 @@ class FrameParserTest {
         FrameParser parser = new FrameParser();
         Frame decoded = null;
         for (int i = 0; i < frame.length; i++) {
-            List<Frame> emitted = parser.feed(new byte[]{frame[i]});
+            List<Frame> emitted = parser.feed(new byte[] {frame[i]});
             if (!emitted.isEmpty()) {
                 decoded = emitted.get(0);
             }

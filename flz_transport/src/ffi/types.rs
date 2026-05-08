@@ -40,16 +40,18 @@ pub enum FlezhaLogLevel {
 /// - `message` is valid only for the duration of the call.
 /// - `user_data` is the pointer provided at registration time.
 pub type FlezhaLogFn = Option<
-    unsafe extern "C" fn(level: FlezhaLogLevel, message: *const c_char, user_data: *mut std::ffi::c_void),
+    unsafe extern "C" fn(
+        level: FlezhaLogLevel,
+        message: *const c_char,
+        user_data: *mut std::ffi::c_void,
+    ),
 >;
 
 /// Callbacks for server mode (controller/Elixir NIF).
 #[repr(C)]
 pub struct FlezhaServerCallbacks {
     /// Called when a new connection is established.
-    pub on_connection: Option<
-        unsafe extern "C" fn(conn_id: u64, user_data: *mut std::ffi::c_void),
-    >,
+    pub on_connection: Option<unsafe extern "C" fn(conn_id: u64, user_data: *mut std::ffi::c_void)>,
     /// Called when data arrives on a stream.
     pub on_data: Option<
         unsafe extern "C" fn(
@@ -65,9 +67,8 @@ pub struct FlezhaServerCallbacks {
         unsafe extern "C" fn(conn_id: u64, stream_id: u64, user_data: *mut std::ffi::c_void),
     >,
     /// Called when a connection is lost.
-    pub on_connection_lost: Option<
-        unsafe extern "C" fn(conn_id: u64, user_data: *mut std::ffi::c_void),
-    >,
+    pub on_connection_lost:
+        Option<unsafe extern "C" fn(conn_id: u64, user_data: *mut std::ffi::c_void)>,
     pub user_data: *mut std::ffi::c_void,
 }
 

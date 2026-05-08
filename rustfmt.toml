@@ -1,0 +1,20 @@
+# Project-wide Rust style. See openspec/changes/enforce-code-formatting for
+# the rationale behind each option.
+#
+# Layout: stable-supported options come first. Nightly-only options live
+# below the `# nightly only:` marker. Stable rustfmt ignores those with a
+# warning; CI's `.github/workflows/format.yml` runs nightly rustfmt so they
+# are enforced on every PR.
+
+edition = "2021"
+max_width = 100
+use_field_init_shorthand = true
+use_try_shorthand = true
+
+# nightly only:
+imports_granularity = "Module"
+group_imports = "StdExternalCrate"
+ignore = [
+    "flz_transport/src/generated",
+    "sdk/rust/src/generated",
+]

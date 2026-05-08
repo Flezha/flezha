@@ -24,7 +24,8 @@ class OldApiNotImportableTest {
     @Test
     @DisplayName("user code importing RelayHandler fails to compile")
     void importingRelayHandlerFails() {
-        String src = """
+        String src =
+                """
                 package nowhere;
                 import com.flezha.sdk.RelayHandler;
                 public final class UsesLegacyApi {
@@ -35,24 +36,25 @@ class OldApiNotImportableTest {
         ByteArrayOutputStream err = new ByteArrayOutputStream();
 
         boolean ok = compiler.getTask(
-                new PrintWriter(err),
-                null,
-                null,
-                List.of("-proc:none"),
-                null,
-                List.of(new SourceFile("UsesLegacyApi.java", src))).call();
+                        new PrintWriter(err),
+                        null,
+                        null,
+                        List.of("-proc:none"),
+                        null,
+                        List.of(new SourceFile("UsesLegacyApi.java", src)))
+                .call();
 
         assertThat(ok)
                 .as("import com.flezha.sdk.RelayHandler should not resolve after relay-mvp-java")
                 .isFalse();
-        assertThat(err.toString())
-                .contains("com.flezha.sdk.RelayHandler");
+        assertThat(err.toString()).contains("com.flezha.sdk.RelayHandler");
     }
 
     @Test
     @DisplayName("user code importing FactoryRegistry fails to compile")
     void importingFactoryRegistryFails() {
-        String src = """
+        String src =
+                """
                 package nowhere;
                 import com.flezha.sdk.FactoryRegistry;
                 public final class UsesLegacyApi {
@@ -63,12 +65,13 @@ class OldApiNotImportableTest {
         ByteArrayOutputStream err = new ByteArrayOutputStream();
 
         boolean ok = compiler.getTask(
-                new PrintWriter(err),
-                null,
-                null,
-                List.of("-proc:none"),
-                null,
-                List.of(new SourceFile("UsesLegacyApi.java", src))).call();
+                        new PrintWriter(err),
+                        null,
+                        null,
+                        List.of("-proc:none"),
+                        null,
+                        List.of(new SourceFile("UsesLegacyApi.java", src)))
+                .call();
 
         assertThat(ok)
                 .as("import com.flezha.sdk.FactoryRegistry should not resolve after relay-mvp-java")

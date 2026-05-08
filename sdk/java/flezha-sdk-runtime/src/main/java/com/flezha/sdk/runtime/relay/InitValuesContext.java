@@ -18,8 +18,7 @@ public final class InitValuesContext {
 
     private static final ThreadLocal<String> CURRENT = new ThreadLocal<>();
 
-    private InitValuesContext() {
-    }
+    private InitValuesContext() {}
 
     public static void set(String initValuesJson) {
         if (initValuesJson == null || initValuesJson.isEmpty()) {

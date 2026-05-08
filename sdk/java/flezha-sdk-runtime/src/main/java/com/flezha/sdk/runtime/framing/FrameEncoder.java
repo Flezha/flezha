@@ -30,14 +30,11 @@ public final class FrameEncoder {
     /** Fixed payload-id field width per the spec. */
     public static final int PAYLOAD_ID_WIDTH = 32;
 
-    private FrameEncoder() {
-    }
+    private FrameEncoder() {}
 
     @Nonnull
     public static byte[] build(
-            @Nonnull String payloadId,
-            @Nonnull byte[] message,
-            @Nonnull Map<String, String> metadata) {
+            @Nonnull String payloadId, @Nonnull byte[] message, @Nonnull Map<String, String> metadata) {
         if (payloadId == null) {
             throw new IllegalArgumentException("payloadId must not be null");
         }
@@ -64,9 +61,7 @@ public final class FrameEncoder {
 
     @Nonnull
     public static byte[] buildText(
-            @Nonnull String payloadId,
-            @Nonnull String message,
-            @Nonnull Map<String, String> metadata) {
+            @Nonnull String payloadId, @Nonnull String message, @Nonnull Map<String, String> metadata) {
         return build(payloadId, message.getBytes(StandardCharsets.UTF_8), metadata);
     }
 

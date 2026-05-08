@@ -3,24 +3,18 @@ use std::sync::Mutex;
 use std::thread;
 
 use crossbeam::channel;
-use rustler::ResourceArc;
-use rustler::{Encoder, Env, LocalPid, NifResult, Term};
+use rustler::{Encoder, Env, LocalPid, NifResult, ResourceArc, Term};
 
-use crate::atoms;
-use crate::quic_driver;
 use crate::resources::{TransportServer, TransportServerArc};
 use crate::uds_driver::{self, ServerCommand};
+use crate::{atoms, quic_driver};
 
 /// Start a UDS server listening on `socket_path`.
 /// Returns `{:ok, server_ref}` or `{:error, reason}`.
 ///
 /// The acceptor_pid receives `{:flz_connection, stream_ref}` for each new connection.
 #[rustler::nif]
-fn start_uds_server(
-    env: Env,
-    socket_path: String,
-    acceptor_pid: LocalPid,
-) -> NifResult<Term> {
+fn start_uds_server(env: Env, socket_path: String, acceptor_pid: LocalPid) -> NifResult<Term> {
     let path = PathBuf::from(&socket_path);
     let (cmd_tx, cmd_rx) = channel::unbounded::<ServerCommand>();
     let (ready_tx, ready_rx) = channel::bounded(1);

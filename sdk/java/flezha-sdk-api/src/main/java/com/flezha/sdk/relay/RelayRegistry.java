@@ -22,8 +22,7 @@ public final class RelayRegistry {
     private static final Map<String, Class<? extends Relay>> ENTRIES = new LinkedHashMap<>();
     private static final AtomicBoolean FROZEN = new AtomicBoolean(false);
 
-    private RelayRegistry() {
-    }
+    private RelayRegistry() {}
 
     /**
      * Register a Relay class. Must be called before {@code Flezha.newInstance}.
@@ -42,15 +41,13 @@ public final class RelayRegistry {
         synchronized (LOCK) {
             if (FROZEN.get()) {
                 throw new IllegalStateException(
-                        "Cannot register relay '" + relayClass.getName()
-                                + "' — the SDK is already initialized");
+                        "Cannot register relay '" + relayClass.getName() + "' — the SDK is already initialized");
             }
             // Delegate to the runtime side (which validates the topology and
             // returns the controller-facing factory id) before we record it here.
             String factoryId = registerInRuntime(relayClass);
             if (ENTRIES.containsKey(factoryId)) {
-                throw new IllegalArgumentException(
-                        "Duplicate factory id: '" + factoryId + "'");
+                throw new IllegalArgumentException("Duplicate factory id: '" + factoryId + "'");
             }
             ENTRIES.put(factoryId, relayClass);
         }
@@ -101,15 +98,15 @@ public final class RelayRegistry {
         } catch (ClassNotFoundException e) {
             throw new IllegalStateException(
                     "com.flezha.sdk.runtime.relay.RelayClassRegistry not on the classpath. "
-                            + "Make sure flezha-sdk-runtime is on the runtime classpath.", e);
+                            + "Make sure flezha-sdk-runtime is on the runtime classpath.",
+                    e);
         } catch (ReflectiveOperationException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             if (cause instanceof RuntimeException re) {
                 throw re;
             }
             throw new IllegalStateException(
-                    "Failed to register relay '" + relayClass.getName() + "': " + cause.getMessage(),
-                    cause);
+                    "Failed to register relay '" + relayClass.getName() + "': " + cause.getMessage(), cause);
         }
     }
 

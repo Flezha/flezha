@@ -37,9 +37,7 @@ public final class ReconnectCoordinator {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread thread;
 
-    public ReconnectCoordinator(
-            @Nonnull ExecutorContext ctx,
-            @Nonnull Supplier<Boolean> reconnectAttempt) {
+    public ReconnectCoordinator(@Nonnull ExecutorContext ctx, @Nonnull Supplier<Boolean> reconnectAttempt) {
         this.ctx = ctx;
         this.reconnectAttempt = reconnectAttempt;
     }

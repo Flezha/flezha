@@ -14,10 +14,8 @@ import javax.annotation.Nonnull;
 public interface CommandHandler {
 
     @Nonnull
-    byte[] handle(
-            @Nonnull ExecutorContext ctx,
-            @Nonnull CommandRequest request,
-            @Nonnull List<String> errors) throws Exception;
+    byte[] handle(@Nonnull ExecutorContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors)
+            throws Exception;
 
     /** Whether the SDK should close the control socket after responding (disconnect command). */
     default boolean closeAfterResponse() {

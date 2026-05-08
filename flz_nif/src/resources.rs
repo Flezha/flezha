@@ -1,9 +1,9 @@
-use crossbeam::channel::Sender;
-use mio::Waker;
-use rustler::ResourceArc;
-use rustler::LocalPid;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+
+use crossbeam::channel::Sender;
+use mio::Waker;
+use rustler::{LocalPid, ResourceArc};
 
 use crate::uds_driver::ServerCommand;
 

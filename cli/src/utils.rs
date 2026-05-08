@@ -161,7 +161,7 @@ pub fn extract_x_flags(args: &[String]) -> Vec<(String, String)> {
 
     while i < args.len() {
         let arg = &args[i];
-        
+
         // Handle --X prefixed arguments
         if let Some(rest) = arg.strip_prefix("--X") {
             // Handle --Xkey=value format
@@ -177,7 +177,7 @@ pub fn extract_x_flags(args: &[String]) -> Vec<(String, String)> {
                 i += 1; // Skip the next argument as it's the value
             }
         }
-        
+
         i += 1;
     }
 
@@ -243,9 +243,7 @@ pub fn extract_extension_flags(args: &[String]) -> Vec<(String, Vec<(String, Str
 
 // Strip the `extensions` entries from a list of key=value flags so the
 // legacy opts parser does not interpret them as plain CLI options.
-pub fn filter_out_extension_entries(
-    args: &[String],
-) -> Vec<String> {
+pub fn filter_out_extension_entries(args: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     let mut i = 0;
 
@@ -415,10 +413,7 @@ mod tests {
 
     #[test]
     fn extract_extension_flags_space_separated_form() {
-        let args = v(&[
-            "--extension", "on_input",
-            "--extension", "on_terminate",
-        ]);
+        let args = v(&["--extension", "on_input", "--extension", "on_terminate"]);
 
         let got = extract_extension_flags(&args);
 

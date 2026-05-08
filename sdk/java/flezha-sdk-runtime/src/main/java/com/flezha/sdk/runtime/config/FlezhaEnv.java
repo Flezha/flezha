@@ -25,8 +25,7 @@ public final class FlezhaEnv {
     public static final String FLEZHA_SOCKET_FILES_PATH = "FLEZHA_SOCKET_FILES_PATH";
     public static final String FLEZHA_WORKER_POOL_SIZE = "FLEZHA_WORKER_POOL_SIZE";
 
-    private FlezhaEnv() {
-    }
+    private FlezhaEnv() {}
 
     /** Build a config from the real process environment. */
     @Nonnull
@@ -43,16 +42,14 @@ public final class FlezhaEnv {
     @Nonnull
     static ResolvedConfig resolve(@Nonnull Function<String, String> lookup) {
         FlezhaTransport transport = FlezhaTransport.parse(lookup.apply(FLEZHA_TRANSPORT));
-        String quicAddress = valueOrDefault(
-                lookup.apply(FLEZHA_QUIC_ADDRESS), FlezhaConfig.DEFAULT_QUIC_ADDRESS);
-        String caCertPath = valueOrDefault(
-                lookup.apply(FLEZHA_CA_CERT_PATH), FlezhaConfig.DEFAULT_CA_CERT_PATH);
-        String serverCertPath = valueOrDefault(
-                lookup.apply(FLEZHA_SERVER_CERT_PATH), FlezhaConfig.DEFAULT_SERVER_CERT_PATH);
-        String serverKeyPath = valueOrDefault(
-                lookup.apply(FLEZHA_SERVER_KEY_PATH), FlezhaConfig.DEFAULT_SERVER_KEY_PATH);
-        String socketFilesPath = valueOrDefault(
-                lookup.apply(FLEZHA_SOCKET_FILES_PATH), FlezhaConfig.DEFAULT_SOCKET_FILES_PATH);
+        String quicAddress = valueOrDefault(lookup.apply(FLEZHA_QUIC_ADDRESS), FlezhaConfig.DEFAULT_QUIC_ADDRESS);
+        String caCertPath = valueOrDefault(lookup.apply(FLEZHA_CA_CERT_PATH), FlezhaConfig.DEFAULT_CA_CERT_PATH);
+        String serverCertPath =
+                valueOrDefault(lookup.apply(FLEZHA_SERVER_CERT_PATH), FlezhaConfig.DEFAULT_SERVER_CERT_PATH);
+        String serverKeyPath =
+                valueOrDefault(lookup.apply(FLEZHA_SERVER_KEY_PATH), FlezhaConfig.DEFAULT_SERVER_KEY_PATH);
+        String socketFilesPath =
+                valueOrDefault(lookup.apply(FLEZHA_SOCKET_FILES_PATH), FlezhaConfig.DEFAULT_SOCKET_FILES_PATH);
         int workerPoolSize = parseWorkerPoolSize(lookup.apply(FLEZHA_WORKER_POOL_SIZE));
 
         FlezhaConfig cfg = FlezhaConfig.builder()
@@ -80,8 +77,7 @@ public final class FlezhaEnv {
             int parsed = Integer.parseInt(raw.trim());
             return parsed <= 0 ? Runtime.getRuntime().availableProcessors() : parsed;
         } catch (NumberFormatException e) {
-            LOG.warn("Invalid {}={}; falling back to Runtime.availableProcessors()",
-                    FLEZHA_WORKER_POOL_SIZE, raw);
+            LOG.warn("Invalid {}={}; falling back to Runtime.availableProcessors()", FLEZHA_WORKER_POOL_SIZE, raw);
             return Runtime.getRuntime().availableProcessors();
         }
     }
@@ -112,6 +108,5 @@ public final class FlezhaEnv {
         return path;
     }
 
-    public record ResolvedConfig(@Nonnull FlezhaConfig config, int workerPoolSize) {
-    }
+    public record ResolvedConfig(@Nonnull FlezhaConfig config, int workerPoolSize) {}
 }

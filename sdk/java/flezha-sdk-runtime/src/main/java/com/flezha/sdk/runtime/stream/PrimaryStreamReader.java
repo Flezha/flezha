@@ -53,8 +53,7 @@ public final class PrimaryStreamReader {
         String relayInstanceId = frame.payloadId();
         RelayInstance instance = ctx.relayInstanceRegistry().get(relayInstanceId);
         if (instance == null) {
-            LOG.warn("dispatch: relay instance `{}` not found on stream {}",
-                    relayInstanceId, streamId);
+            LOG.warn("dispatch: relay instance `{}` not found on stream {}", relayInstanceId, streamId);
             return;
         }
         RelayTopology topology = instance.topology();
@@ -62,8 +61,10 @@ public final class PrimaryStreamReader {
         String channelName = frame.metadata().get(CHANNEL_META_KEY);
         ChannelDescriptor channel = resolveEntryChannel(topology, channelName);
         if (channel == null) {
-            LOG.warn("dispatch: no entry channel resolvable for relay `{}` (channel meta = `{}`)",
-                    relayInstanceId, channelName);
+            LOG.warn(
+                    "dispatch: no entry channel resolvable for relay `{}` (channel meta = `{}`)",
+                    relayInstanceId,
+                    channelName);
             return;
         }
 

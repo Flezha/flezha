@@ -14,7 +14,6 @@ import com.flezha.sdk.runtime.relay.RelayTopology;
 import com.flezha.sdk.runtime.relay.ShardDescriptor;
 import com.flezha.sdk.shard.Shard;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -94,8 +93,7 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         // INTER_SHARD with no producer).
         for (ChannelEntry entry : channels) {
             if (entry.kind != ChannelKind.ENTRY && entry.producer == null) {
-                errors.add("channel `" + entry.name
-                        + "` was declared but never wired with .from(...)");
+                errors.add("channel `" + entry.name + "` was declared but never wired with .from(...)");
             }
         }
 
@@ -157,11 +155,7 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         }
 
         return new RelayTopology(
-                factoryId,
-                channelDescriptors,
-                Map.copyOf(nameToId),
-                shardDescriptors,
-                Map.copyOf(shardNameToId));
+                factoryId, channelDescriptors, Map.copyOf(nameToId), shardDescriptors, Map.copyOf(shardNameToId));
     }
 
     // ---- Internals ----------------------------------------------------------
@@ -208,8 +202,7 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
                 && entry.clockType != com.flezha.sdk.state.WallClock.class
                 && entry.clockType != com.flezha.sdk.state.Clock.class) {
             errors.add("shard `" + shardName + "`: "
-                    + RelayConfigurationException
-                            .clockNotImplementedYet(entry.clockType.getSimpleName())
+                    + RelayConfigurationException.clockNotImplementedYet(entry.clockType.getSimpleName())
                             .getMessage());
         }
         shards.add(entry);
@@ -221,40 +214,67 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         try {
             return shardClass.getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
-            errors.add("shard class `" + shardClass.getName()
-                    + "` must have a public no-arg constructor: " + e.toString());
+            errors.add("shard class `" + shardClass.getName() + "` must have a public no-arg constructor: "
+                    + e.toString());
             // Return a placeholder so the rest of the build can collect more
             // errors before failing; the exception throws at build() time.
             return UNINSTANTIABLE;
         }
     }
 
-    private static final Shard<Object, Object, Object, com.flezha.sdk.state.NoChange,
-            com.flezha.sdk.state.WallClock, Void> UNINSTANTIABLE =
-            new Shard<>() {
-                @Override public String name() { return "<uninstantiable>"; }
-                @Override public Class<Object> inputType() { return Object.class; }
-                @Override public Class<Object> outputType() { return Object.class; }
-                @Override public Class<com.flezha.sdk.state.NoChange> changeType() {
+    private static final Shard<
+                    Object, Object, Object, com.flezha.sdk.state.NoChange, com.flezha.sdk.state.WallClock, Void>
+            UNINSTANTIABLE = new Shard<>() {
+                @Override
+                public String name() {
+                    return "<uninstantiable>";
+                }
+
+                @Override
+                public Class<Object> inputType() {
+                    return Object.class;
+                }
+
+                @Override
+                public Class<Object> outputType() {
+                    return Object.class;
+                }
+
+                @Override
+                public Class<com.flezha.sdk.state.NoChange> changeType() {
                     return com.flezha.sdk.state.NoChange.class;
                 }
-                @Override public Class<com.flezha.sdk.state.WallClock> clockType() {
+
+                @Override
+                public Class<com.flezha.sdk.state.WallClock> clockType() {
                     return com.flezha.sdk.state.WallClock.class;
                 }
-                @Override public Class<Void> configType() { return Void.class; }
-                @Override public Object initState(Optional<String> shardKey,
-                        Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
+
+                @Override
+                public Class<Void> configType() {
+                    return Void.class;
+                }
+
+                @Override
+                public Object initState(
+                        Optional<String> shardKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
                     throw new UnsupportedOperationException("uninstantiable shard");
                 }
-                @Override public void run(Object input,
+
+                @Override
+                public void run(
+                        Object input,
                         com.flezha.sdk.state.StateHandle<Object, com.flezha.sdk.state.NoChange> state,
                         com.flezha.sdk.shard.ShardCtx ctx) {
                     throw new UnsupportedOperationException("uninstantiable shard");
                 }
             };
 
-    private void wireConsumer(int channelId, String channelName, Class<?> channelPayloadType,
-                              Class<? extends Shard<?, ?, ?, ?, ?, ?>> shardClass) {
+    private void wireConsumer(
+            int channelId,
+            String channelName,
+            Class<?> channelPayloadType,
+            Class<? extends Shard<?, ?, ?, ?, ?, ?>> shardClass) {
         int shardId = registerShard(shardClass);
         ShardEntry shard = shards.get(shardId);
         if (!channelPayloadType.equals(shard.inputType)) {
@@ -275,8 +295,11 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         }
     }
 
-    private void wireProducer(int channelId, String channelName, Class<?> channelPayloadType,
-                              Class<? extends Shard<?, ?, ?, ?, ?, ?>> shardClass) {
+    private void wireProducer(
+            int channelId,
+            String channelName,
+            Class<?> channelPayloadType,
+            Class<? extends Shard<?, ?, ?, ?, ?, ?>> shardClass) {
         int shardId = registerShard(shardClass);
         ShardEntry shard = shards.get(shardId);
         if (!channelPayloadType.equals(shard.outputType)) {
@@ -287,8 +310,7 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         }
         ChannelEntry channel = channels.get(channelId);
         if (channel.producer != null) {
-            errors.add("channel `" + channelName
-                    + "` already has a producer; multi-producer is not allowed");
+            errors.add("channel `" + channelName + "` already has a producer; multi-producer is not allowed");
         } else {
             channel.producer = shardId;
         }

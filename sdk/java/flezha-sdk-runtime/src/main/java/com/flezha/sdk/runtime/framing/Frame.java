@@ -13,10 +13,7 @@ import javax.annotation.Nonnull;
  *   [metadata_size (u16, BE)] [metadata ...]
  * </pre>
  */
-public record Frame(
-        @Nonnull String payloadId,
-        @Nonnull byte[] message,
-        @Nonnull Map<String, String> metadata) {
+public record Frame(@Nonnull String payloadId, @Nonnull byte[] message, @Nonnull Map<String, String> metadata) {
 
     public Frame {
         if (payloadId == null) {

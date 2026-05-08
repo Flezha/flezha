@@ -25,8 +25,7 @@ public class ShardException extends Exception {
         private final String channel;
 
         public MetadataNotAllowedOnInterShardChannel(String channel) {
-            super("metadata is only valid on plugin-bound channels; channel `"
-                    + channel + "` is inter-shard");
+            super("metadata is only valid on plugin-bound channels; channel `" + channel + "` is inter-shard");
             this.channel = channel;
         }
 

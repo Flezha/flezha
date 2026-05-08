@@ -28,8 +28,7 @@ public final class RelayStateSerializer {
             .configure(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
             .build();
 
-    private RelayStateSerializer() {
-    }
+    private RelayStateSerializer() {}
 
     /**
      * Build the per-Shard / per-Partition JSON blob. Returns an empty
@@ -91,7 +90,8 @@ public final class RelayStateSerializer {
                     if (encoded == null) {
                         continue;
                     }
-                    Object state = decodeState(encoded, partitions.get(idx).state().get());
+                    Object state =
+                            decodeState(encoded, partitions.get(idx).state().get());
                     partitions.get(idx).state().set(state);
                 }
             }

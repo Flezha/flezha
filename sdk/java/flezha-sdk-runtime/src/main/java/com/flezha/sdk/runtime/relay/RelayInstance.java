@@ -96,8 +96,7 @@ public final class RelayInstance {
         List<Class<?>> kryoTypes = List.copyOf(kryoTypeSet);
 
         RelayInstance shell = new RelayInstance(
-                topology, instanceId, partitions, partitionKeyToIdx, dispatchers,
-                persistenceEnabled, kryoTypes);
+                topology, instanceId, partitions, partitionKeyToIdx, dispatchers, persistenceEnabled, kryoTypes);
 
         for (int shardId = 0; shardId < shardCount; shardId++) {
             ShardDescriptor desc = topology.shards().get(shardId);
@@ -107,8 +106,7 @@ public final class RelayInstance {
 
             if (desc.partitionKeys().isEmpty()) {
                 Shard<?, ?, ?, ?, ?, ?> shardInstance = instantiate(desc.shardClass());
-                ShardDispatcher dispatcher = new ShardDispatcher(
-                        ctx, pool, shell, topology, shardId, shardInstance);
+                ShardDispatcher dispatcher = new ShardDispatcher(ctx, pool, shell, topology, shardId, shardInstance);
                 @SuppressWarnings({"unchecked", "rawtypes"})
                 Object initial = ((Shard) shardInstance).initState(Optional.empty(), Optional.empty());
                 PartitionSlot slot = new PartitionSlot(dispatcher, shardId, Optional.empty(), changeful);
@@ -118,8 +116,8 @@ public final class RelayInstance {
             } else {
                 slots = new ArrayList<>(desc.partitionKeys().size());
                 Shard<?, ?, ?, ?, ?, ?> dispatcherShardInstance = instantiate(desc.shardClass());
-                ShardDispatcher dispatcher = new ShardDispatcher(
-                        ctx, pool, shell, topology, shardId, dispatcherShardInstance);
+                ShardDispatcher dispatcher =
+                        new ShardDispatcher(ctx, pool, shell, topology, shardId, dispatcherShardInstance);
                 dispatchers.add(dispatcher);
                 for (int idx = 0; idx < desc.partitionKeys().size(); idx++) {
                     String key = desc.partitionKeys().get(idx);
@@ -144,8 +142,8 @@ public final class RelayInstance {
             return shardClass.getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(
-                    "shard class `" + shardClass.getName()
-                            + "` must have a public no-arg constructor: " + e.toString(), e);
+                    "shard class `" + shardClass.getName() + "` must have a public no-arg constructor: " + e.toString(),
+                    e);
         }
     }
 

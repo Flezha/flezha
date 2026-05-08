@@ -30,10 +30,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
 
     @Override
     @Nonnull
-    public byte[] handle(
-            @Nonnull ExecutorContext ctx,
-            @Nonnull CommandRequest request,
-            @Nonnull List<String> errors) {
+    public byte[] handle(@Nonnull ExecutorContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors) {
         // The typed accessor is `request.getRestoreInitState()` once protobuf
         // codegen runs. Body wiring lives in the runtime's restore plumbing
         // and is exercised by JavaStatePersistenceTest.
@@ -41,9 +38,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
             // Reflective access keeps this file decoupled from a regenerated
             // protobuf API (the proto already declares the field; codegen
             // emits accessors at build time).
-            Object req = CommandRequest.class
-                    .getMethod("getRestoreInitState")
-                    .invoke(request);
+            Object req = CommandRequest.class.getMethod("getRestoreInitState").invoke(request);
             if (req == null) {
                 errors.add("RestoreInitStateHandler: payload missing");
                 return new byte[0];

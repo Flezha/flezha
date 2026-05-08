@@ -28,8 +28,7 @@ public final class NativeTransport {
         verifyVersionCompatibility();
     }
 
-    private NativeTransport() {
-    }
+    private NativeTransport() {}
 
     // ------------------------------------------------------------------
     // Public convenience wrappers
@@ -41,10 +40,7 @@ public final class NativeTransport {
      */
     public static long contextNew(@Nonnull FlezhaConfig config) {
         return contextNew(
-                config.transport().nativeName(),
-                config.quicAddress(),
-                config.caCertPath(),
-                config.socketFilesPath());
+                config.transport().nativeName(), config.quicAddress(), config.caCertPath(), config.socketFilesPath());
     }
 
     /**
@@ -73,8 +69,10 @@ public final class NativeTransport {
             return;
         }
         if (!VersionInfo.VERSION.equals(nativeVersion)) {
-            LOG.warn("Flezha SDK version mismatch: Java SDK is {} but bundled flz_transport is {}",
-                    VersionInfo.VERSION, nativeVersion);
+            LOG.warn(
+                    "Flezha SDK version mismatch: Java SDK is {} but bundled flz_transport is {}",
+                    VersionInfo.VERSION,
+                    nativeVersion);
         }
     }
 
@@ -93,10 +91,7 @@ public final class NativeTransport {
      * @return opaque context handle (non-zero on success).
      */
     public static native long contextNew(
-            String transport,
-            String quicAddress,
-            String caCertPath,
-            String socketBasePath);
+            String transport, String quicAddress, String caCertPath, String socketBasePath);
 
     /** Destroys a context. Double-destroy returns {@link FlezhaStatus#INVALID_STATE} without crashing. */
     public static native int contextDestroy(long handle);

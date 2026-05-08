@@ -1,5 +1,6 @@
-use crate::utils::{extract_param, get_flezha_command, get_namespace};
 use std::process::{exit, Command};
+
+use crate::utils::{extract_param, get_flezha_command, get_namespace};
 
 pub fn handle_cluster_command(args: &[String]) {
     if args.is_empty() {

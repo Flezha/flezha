@@ -56,15 +56,15 @@ public final class FrameParser {
     }
 
     @Nonnull
-    @SuppressWarnings("fallthrough") // INCOMPLETE_HEADER falls through to INCOMPLETE_PAYLOAD by design once the header is parsed
+    @SuppressWarnings(
+            "fallthrough") // INCOMPLETE_HEADER falls through to INCOMPLETE_PAYLOAD by design once the header is parsed
     public List<Frame> feed(@Nonnull byte[] chunk, int offset, int length) {
         if (chunk == null) {
             throw new IllegalArgumentException("chunk must not be null");
         }
         if (offset < 0 || length < 0 || offset + length > chunk.length) {
-            throw new IllegalArgumentException(
-                    "chunk offset/length out of bounds: offset=" + offset
-                            + " length=" + length + " array=" + chunk.length);
+            throw new IllegalArgumentException("chunk offset/length out of bounds: offset=" + offset + " length="
+                    + length + " array=" + chunk.length);
         }
 
         if (length > 0) {
@@ -109,12 +109,12 @@ public final class FrameParser {
     private void parseHeader() {
         byte[] header = takeBytes(HEADER_SIZE);
         currentPayloadId = new String(header, 0, FrameEncoder.PAYLOAD_ID_WIDTH, StandardCharsets.UTF_8).trim();
-        ByteBuffer bb = ByteBuffer.wrap(header, FrameEncoder.PAYLOAD_ID_WIDTH, 4).order(ByteOrder.BIG_ENDIAN);
+        ByteBuffer bb =
+                ByteBuffer.wrap(header, FrameEncoder.PAYLOAD_ID_WIDTH, 4).order(ByteOrder.BIG_ENDIAN);
         currentPayloadSize = bb.getInt();
         if (currentPayloadSize < 6) {
-            throw new IllegalStateException(
-                    "Invalid frame: payload size " + currentPayloadSize
-                            + " is less than the minimum 6 (message_size u32 + metadata_size u16)");
+            throw new IllegalStateException("Invalid frame: payload size " + currentPayloadSize
+                    + " is less than the minimum 6 (message_size u32 + metadata_size u16)");
         }
     }
 
@@ -125,18 +125,14 @@ public final class FrameParser {
         ByteBuffer bb = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
         int messageSize = bb.getInt();
         if (messageSize < 0 || messageSize > currentPayloadSize - 6) {
-            throw new IllegalStateException(
-                    "Invalid frame: message size " + messageSize
-                            + " exceeds payload bounds");
+            throw new IllegalStateException("Invalid frame: message size " + messageSize + " exceeds payload bounds");
         }
         byte[] message = new byte[messageSize];
         bb.get(message);
 
         int metadataSize = bb.getShort() & 0xFFFF;
         if (metadataSize > currentPayloadSize - 6 - messageSize) {
-            throw new IllegalStateException(
-                    "Invalid frame: metadata size " + metadataSize
-                            + " exceeds payload bounds");
+            throw new IllegalStateException("Invalid frame: metadata size " + metadataSize + " exceeds payload bounds");
         }
         byte[] metadataBytes = new byte[metadataSize];
         bb.get(metadataBytes);

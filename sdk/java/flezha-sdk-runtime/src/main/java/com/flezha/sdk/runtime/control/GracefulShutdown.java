@@ -78,7 +78,9 @@ public final class GracefulShutdown {
     private final AtomicBoolean shutdownStarted = new AtomicBoolean(false);
 
     public GracefulShutdown(@Nonnull ExecutorContext ctx, long controlStreamId) {
-        this(ctx, controlStreamId,
+        this(
+                ctx,
+                controlStreamId,
                 (streamId, frame) -> NativeTransport.streamWrite(ctx.nativeHandle(), streamId, frame));
     }
 
@@ -118,10 +120,7 @@ public final class GracefulShutdown {
             try {
                 serializedState = RelayStateSerializer.serialize(instance);
             } catch (Exception e) {
-                LOG.warn(
-                        "Skipping shutdown notification for {} — serializeState failed: {}",
-                        relayId,
-                        e.toString());
+                LOG.warn("Skipping shutdown notification for {} — serializeState failed: {}", relayId, e.toString());
                 continue;
             }
 
@@ -135,19 +134,13 @@ public final class GracefulShutdown {
                             .build())
                     .build();
 
-            byte[] frameBytes = FrameEncoder.build(
-                    SHUTDOWN_PAYLOAD_ID,
-                    request.toByteArray(),
-                    Map.of());
+            byte[] frameBytes = FrameEncoder.build(SHUTDOWN_PAYLOAD_ID, request.toByteArray(), Map.of());
 
             CompletableFuture<Void> ackFuture = registerPendingAck(referenceId);
 
             int writeStatus = writer.write(controlStreamId, frameBytes);
             if (writeStatus != 0) {
-                LOG.warn(
-                        "Failed to write ExecutorShutdownNotification for {} (status={})",
-                        relayId,
-                        writeStatus);
+                LOG.warn("Failed to write ExecutorShutdownNotification for {} (status={})", relayId, writeStatus);
                 PENDING_ACKS.remove(referenceId);
                 continue;
             }
@@ -156,14 +149,10 @@ public final class GracefulShutdown {
             CompletableFuture<Void> bounded = ackFuture
                     .orTimeout(ACK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                     .exceptionally(throwable -> {
-                        if (throwable instanceof TimeoutException
-                                || throwable.getCause() instanceof TimeoutException) {
+                        if (throwable instanceof TimeoutException || throwable.getCause() instanceof TimeoutException) {
                             LOG.warn("ExecutorShutdownAck timeout for {}", pidForLog);
                         } else {
-                            LOG.warn(
-                                    "ExecutorShutdownAck wait failed for {}: {}",
-                                    pidForLog,
-                                    throwable.toString());
+                            LOG.warn("ExecutorShutdownAck wait failed for {}: {}", pidForLog, throwable.toString());
                         }
                         PENDING_ACKS.remove(referenceId);
                         return null;
@@ -180,8 +169,7 @@ public final class GracefulShutdown {
             // The per-future timeouts already bound this; the outer get()
             // is just here to wait for the parallel completions. Add a small
             // slack so a slow thread-spawn doesn't blow past 2 s.
-            CompletableFuture
-                    .allOf(waits.toArray(new CompletableFuture<?>[0]))
+            CompletableFuture.allOf(waits.toArray(new CompletableFuture<?>[0]))
                     .get(ACK_TIMEOUT_MS + 500L, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             // Either a timeout (ack never arrived) or an exception inside

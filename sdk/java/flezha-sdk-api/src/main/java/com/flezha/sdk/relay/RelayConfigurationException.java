@@ -25,11 +25,7 @@ public class RelayConfigurationException extends RuntimeException {
         this.actual = null;
     }
 
-    public RelayConfigurationException(
-            String channel,
-            Class<?> expected,
-            Class<?> actual,
-            String message) {
+    public RelayConfigurationException(String channel, Class<?> expected, Class<?> actual, String message) {
         super(message);
         this.channel = channel;
         this.expected = expected;
@@ -49,8 +45,7 @@ public class RelayConfigurationException extends RuntimeException {
      * registration with this exception until a follow-up wires them.
      */
     public static RelayConfigurationException clockNotImplementedYet(String clockTypeName) {
-        return new RelayConfigurationException(
-                "Clock not implemented yet: " + clockTypeName);
+        return new RelayConfigurationException("Clock not implemented yet: " + clockTypeName);
     }
 
     public String channel() {

@@ -21,7 +21,8 @@ public interface Relay {
      * the controller's {@code flz relay start <factory_id>} looks this up.
      * One factory_id per Relay class.
      */
-    @Nonnull String factoryId();
+    @Nonnull
+    String factoryId();
 
     /**
      * One-shot topology declaration. Called exactly once per Relay class at

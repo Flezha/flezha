@@ -1,6 +1,5 @@
 package com.flezha.sdk.runtime.control;
 
-import com.google.protobuf.ByteString;
 import com.flezha.sdk.native_.NativeTransport;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.CommandResponse;
@@ -8,18 +7,19 @@ import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.control.handlers.AddRelayHandler;
 import com.flezha.sdk.runtime.control.handlers.AssignExecutorIdHandler;
 import com.flezha.sdk.runtime.control.handlers.CompactPartitionHandler;
-import com.flezha.sdk.runtime.control.handlers.ExecutorDisconnectHandler;
 import com.flezha.sdk.runtime.control.handlers.ConnectSocketHandler;
+import com.flezha.sdk.runtime.control.handlers.ExecutorDisconnectHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationDeserializationHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationSerializationHandler;
-import com.flezha.sdk.runtime.control.handlers.PartitionMailboxStatusHandler;
 import com.flezha.sdk.runtime.control.handlers.PartitionApplyStateHandler;
-import com.flezha.sdk.runtime.control.handlers.RelayMessageHandler;
+import com.flezha.sdk.runtime.control.handlers.PartitionMailboxStatusHandler;
 import com.flezha.sdk.runtime.control.handlers.PartitionStateHandler;
+import com.flezha.sdk.runtime.control.handlers.RelayMessageHandler;
 import com.flezha.sdk.runtime.control.handlers.RemRelayHandler;
 import com.flezha.sdk.runtime.control.handlers.RestoreInitStateHandler;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
+import com.google.protobuf.ByteString;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -65,9 +65,7 @@ public final class CommandRouter {
     }
 
     private static void registerCase(
-            java.util.Map<CommandRequest.CommandCase, CommandHandler> map,
-            String enumName,
-            CommandHandler handler) {
+            java.util.Map<CommandRequest.CommandCase, CommandHandler> map, String enumName, CommandHandler handler) {
         try {
             CommandRequest.CommandCase c = CommandRequest.CommandCase.valueOf(enumName);
             map.put(c, handler);
@@ -128,13 +126,9 @@ public final class CommandRouter {
                 .setRawData(ByteString.copyFrom(rawData))
                 .build();
 
-        byte[] frameBytes = FrameEncoder.build(
-                frame.payloadId(),
-                response.toByteArray(),
-                Map.of());
+        byte[] frameBytes = FrameEncoder.build(frame.payloadId(), response.toByteArray(), Map.of());
 
-        int writeStatus = NativeTransport.streamWrite(
-                ctx.nativeHandle(), controlStreamId, frameBytes);
+        int writeStatus = NativeTransport.streamWrite(ctx.nativeHandle(), controlStreamId, frameBytes);
         if (writeStatus != 0) {
             LOG.error("Failed to write CommandResponse (status={})", writeStatus);
         }

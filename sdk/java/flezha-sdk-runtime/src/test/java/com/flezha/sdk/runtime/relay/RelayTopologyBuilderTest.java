@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 class RelayTopologyBuilderTest {
 
     public record Trade(String symbol, double price) {}
+
     public record Candle(String symbol, double open, double close) {}
 
     @Nested
@@ -89,72 +90,189 @@ class RelayTopologyBuilderTest {
     // ---- Test relays / shards -----------------------------------------------
 
     public static final class SingleShard extends StatelessTestShard<String, Object, String> {
-        @Override public String name() { return "single_shard"; }
-        @Override public Class<String> inputType() { return String.class; }
-        @Override public Class<String> outputType() { return String.class; }
-        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
-        @Override public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
+        @Override
+        public String name() {
+            return "single_shard";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        protected Object initState(Optional<String> shardKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) {}
     }
 
     public static final class SingleModeRelay implements Relay {
-        @Override public String factoryId() { return "single_mode"; }
-        @Override public void channels(ChannelBuilder c) {
+        @Override
+        public String factoryId() {
+            return "single_mode";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
             c.input(String.class, "input").into(SingleShard.class);
         }
     }
 
     public static final class StaticShard extends StatelessTestShard<String, Object, String> {
-        @Override public String name() { return "static_shard"; }
-        @Override public Class<String> inputType() { return String.class; }
-        @Override public Class<String> outputType() { return String.class; }
-        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
-        @Override public List<String> shardKeys() { return List.of("a", "b", "c", "d"); }
-        @Override public boolean partitionForOverridden() { return true; }
-        @Override public List<String> partitionFor(String input) { return List.of(input.substring(0, 1)); }
-        @Override public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
+        @Override
+        public String name() {
+            return "static_shard";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        protected Object initState(Optional<String> shardKey) {
+            return new Object();
+        }
+
+        @Override
+        public List<String> shardKeys() {
+            return List.of("a", "b", "c", "d");
+        }
+
+        @Override
+        public boolean partitionForOverridden() {
+            return true;
+        }
+
+        @Override
+        public List<String> partitionFor(String input) {
+            return List.of(input.substring(0, 1));
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) {}
     }
 
     public static final class StaticModeRelay implements Relay {
-        @Override public String factoryId() { return "static_mode"; }
-        @Override public void channels(ChannelBuilder c) {
+        @Override
+        public String factoryId() {
+            return "static_mode";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
             c.input(String.class, "input").into(StaticShard.class);
         }
     }
 
     public static final class BadEntryTypeRelay implements Relay {
-        @Override public String factoryId() { return "bad_entry"; }
-        @Override public void channels(ChannelBuilder c) {
+        @Override
+        public String factoryId() {
+            return "bad_entry";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
             c.input(Trade.class, "trade.raw").into(TradeShard.class);
         }
     }
 
     public static final class TradeShard extends StatelessTestShard<Trade, Object, String> {
-        @Override public String name() { return "trade_shard"; }
-        @Override public Class<Trade> inputType() { return Trade.class; }
-        @Override public Class<String> outputType() { return String.class; }
-        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
-        @Override public void run(Trade input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
+        @Override
+        public String name() {
+            return "trade_shard";
+        }
+
+        @Override
+        public Class<Trade> inputType() {
+            return Trade.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        protected Object initState(Optional<String> shardKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(Trade input, StateHandle<Object, NoChange> state, ShardCtx ctx) {}
     }
 
     public static final class CandleShard extends StatelessTestShard<Candle, Object, String> {
-        @Override public String name() { return "candle_shard"; }
-        @Override public Class<Candle> inputType() { return Candle.class; }
-        @Override public Class<String> outputType() { return String.class; }
-        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
-        @Override public void run(Candle input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
+        @Override
+        public String name() {
+            return "candle_shard";
+        }
+
+        @Override
+        public Class<Candle> inputType() {
+            return Candle.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        protected Object initState(Optional<String> shardKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(Candle input, StateHandle<Object, NoChange> state, ShardCtx ctx) {}
     }
 
     public static final class TradeProducerShard extends StatelessTestShard<String, Object, Trade> {
-        @Override public String name() { return "trade_producer"; }
-        @Override public Class<String> inputType() { return String.class; }
-        @Override public Class<Trade> outputType() { return Trade.class; }
-        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
-        @Override public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) throws ShardException { }
+        @Override
+        public String name() {
+            return "trade_producer";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<Trade> outputType() {
+            return Trade.class;
+        }
+
+        @Override
+        protected Object initState(Optional<String> shardKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) throws ShardException {}
     }
 
     public static final class TypeMismatchRelay implements Relay {
-        @Override public String factoryId() { return "type_mismatch"; }
-        @Override public void channels(ChannelBuilder c) {
+        @Override
+        public String factoryId() {
+            return "type_mismatch";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
             c.input(String.class, "input").into(TradeProducerShard.class);
             ChannelDeclMismatch.declareTradeIntoCandle(c);
         }
@@ -171,43 +289,103 @@ class RelayTopologyBuilderTest {
     }
 
     public static final class UnwiredChannelRelay implements Relay {
-        @Override public String factoryId() { return "unwired_channel"; }
-        @Override public void channels(ChannelBuilder c) {
+        @Override
+        public String factoryId() {
+            return "unwired_channel";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
             c.input(String.class, "input").into(SingleShard.class);
             c.channel(Candle.class, "ohlc.candles");
         }
     }
 
-    public static final class MissingPartitionForOverriddenShard
-            extends StatelessTestShard<String, Object, String> {
-        @Override public String name() { return "missing_pfo_shard"; }
-        @Override public Class<String> inputType() { return String.class; }
-        @Override public Class<String> outputType() { return String.class; }
-        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
-        @Override public List<String> shardKeys() { return List.of("a", "b"); }
-        @Override public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
+    public static final class MissingPartitionForOverriddenShard extends StatelessTestShard<String, Object, String> {
+        @Override
+        public String name() {
+            return "missing_pfo_shard";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        protected Object initState(Optional<String> shardKey) {
+            return new Object();
+        }
+
+        @Override
+        public List<String> shardKeys() {
+            return List.of("a", "b");
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) {}
     }
 
     public static final class MissingPartitionForOverriddenRelay implements Relay {
-        @Override public String factoryId() { return "missing_pfo_relay"; }
-        @Override public void channels(ChannelBuilder c) {
+        @Override
+        public String factoryId() {
+            return "missing_pfo_relay";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
             c.input(String.class, "input").into(MissingPartitionForOverriddenShard.class);
         }
     }
 
     public static final class DynamicModeOnlyShard extends StatelessTestShard<String, Object, String> {
-        @Override public String name() { return "dynamic_only_shard"; }
-        @Override public Class<String> inputType() { return String.class; }
-        @Override public Class<String> outputType() { return String.class; }
-        @Override protected Object initState(Optional<String> shardKey) { return new Object(); }
-        @Override public boolean shardKeyOverridden() { return true; }
-        @Override public Optional<String> shardKey(String input) { return Optional.of(input); }
-        @Override public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) { }
+        @Override
+        public String name() {
+            return "dynamic_only_shard";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        protected Object initState(Optional<String> shardKey) {
+            return new Object();
+        }
+
+        @Override
+        public boolean shardKeyOverridden() {
+            return true;
+        }
+
+        @Override
+        public Optional<String> shardKey(String input) {
+            return Optional.of(input);
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) {}
     }
 
     public static final class DynamicModeOnlyRelay implements Relay {
-        @Override public String factoryId() { return "dynamic_only_relay"; }
-        @Override public void channels(ChannelBuilder c) {
+        @Override
+        public String factoryId() {
+            return "dynamic_only_relay";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
             c.input(String.class, "input").into(DynamicModeOnlyShard.class);
         }
     }

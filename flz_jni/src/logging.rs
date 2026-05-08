@@ -18,11 +18,10 @@
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+use flz_transport::ffi::types::FlezhaLogLevel;
 use jni::objects::{GlobalRef, JClass, JObject, JValue};
 use jni::sys::jint;
 use jni::{JNIEnv, JavaVM};
-
-use flz_transport::ffi::types::FlezhaLogLevel;
 
 use crate::context::JniContext;
 use crate::throw_native;
@@ -120,8 +119,11 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_setLogCallba
             let _ = Box::from_raw(bridge_ptr as *mut LogBridge);
             return;
         }
-        let status =
-            flz_transport::ffi::api::flezha_set_log_callback(ffi_ctx, Some(log_trampoline), bridge_ptr);
+        let status = flz_transport::ffi::api::flezha_set_log_callback(
+            ffi_ctx,
+            Some(log_trampoline),
+            bridge_ptr,
+        );
         if status as i32 != 0 {
             throw_native(&mut env, status as i32, "flezha_set_log_callback failed");
             let _ = Box::from_raw(bridge_ptr as *mut LogBridge);

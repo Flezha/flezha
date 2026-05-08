@@ -17,7 +17,8 @@ public interface ChannelDeclWithProducer<T> {
      * allowed (fan-out). The runtime verifies at {@code registerRelay} time
      * that the consumer Shard's {@link Shard#inputType()} equals {@code T}.
      */
-    @Nonnull ChannelDeclWithProducer<T> into(@Nonnull Class<? extends Shard<T, ?, ?, ?, ?, ?>> shard);
+    @Nonnull
+    ChannelDeclWithProducer<T> into(@Nonnull Class<? extends Shard<T, ?, ?, ?, ?, ?>> shard);
 
     /**
      * Mark this channel as plugin-bound. The controller's plugin layer receives
@@ -25,8 +26,10 @@ public interface ChannelDeclWithProducer<T> {
      * passthrough/UTF-8 serializer; other payload types are serialized with
      * Jackson JSON by default.
      */
-    @Nonnull Channel<T> toPlugin(@Nonnull String pluginName);
+    @Nonnull
+    Channel<T> toPlugin(@Nonnull String pluginName);
 
     /** Plugin-bound destination with an explicit serializer override. */
-    @Nonnull Channel<T> toPlugin(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer);
+    @Nonnull
+    Channel<T> toPlugin(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer);
 }
