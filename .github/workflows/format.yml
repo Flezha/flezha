@@ -1,0 +1,106 @@
+name: Format
+
+# Source-shape gate. Runs `cargo fmt --check`, `mix format --check-formatted`,
+# and `mvn spotless:check` against every PR and `push: main`. Failure blocks
+# merge. The matching local script is `scripts/format-check.sh`; auto-fix
+# with `scripts/format-apply.sh`.
+
+on:
+  pull_request:
+    paths:
+      - "cli/**"
+      - "flz_jni/**"
+      - "flz_nif/**"
+      - "flz_transport/**"
+      - "sdk/rust/**"
+      - "test/apps/rust_executor/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "lib/**"
+      - "test/**"
+      - "config/**"
+      - "mix.exs"
+      - "mix.lock"
+      - "sdk/java/**"
+      - "test/apps/java_executor/**"
+      - "rustfmt.toml"
+      - "rust-toolchain.toml"
+      - ".formatter.exs"
+      - ".github/workflows/format.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cli/**"
+      - "flz_jni/**"
+      - "flz_nif/**"
+      - "flz_transport/**"
+      - "sdk/rust/**"
+      - "test/apps/rust_executor/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "lib/**"
+      - "test/**"
+      - "config/**"
+      - "mix.exs"
+      - "mix.lock"
+      - "sdk/java/**"
+      - "test/apps/java_executor/**"
+      - "rustfmt.toml"
+      - "rust-toolchain.toml"
+      - ".formatter.exs"
+      - ".github/workflows/format.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      # Nightly rustfmt is required because rustfmt.toml uses
+      # `imports_granularity`, `group_imports`, and `ignore` — all
+      # nightly-only. Pin the date so style decisions don't drift with
+      # nightly bumps; bump intentionally alongside rustfmt.toml.
+      - name: Install Rust nightly (rustfmt)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-05-07
+          components: rustfmt
+
+      - name: Set up Erlang + Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.17"
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Cache Elixir deps + build
+        uses: actions/cache@v5
+        with:
+          path: |
+            deps
+            _build
+          key: format-elixir-${{ runner.os }}-otp27-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            format-elixir-${{ runner.os }}-otp27-
+
+      - name: Fetch Elixir deps
+        run: mix deps.get
+
+      - name: cargo fmt --check
+        run: cargo +nightly-2026-05-07 fmt --all -- --check
+
+      - name: mix format --check-formatted
+        run: mix format --check-formatted
+
+      - name: mvn spotless:check
+        run: mvn -B -f sdk/java/pom.xml -DskipTests spotless:check

@@ -84,6 +84,24 @@ by stale local cargo state.
 Exit code is non-zero on the first failing section; otherwise the script
 ends with `ALL CI CHECKS PASSED`.
 
+## Code style
+
+The repo enforces three formatters via the
+[`format`](.github/workflows/format.yml) workflow on every PR — drift
+blocks merge. Run them locally before pushing:
+
+```bash
+scripts/format-check.sh   # cargo fmt --check, mix format --check-formatted, mvn spotless:check
+scripts/format-apply.sh   # auto-fix the same three
+```
+
+Style sources of truth: [`rustfmt.toml`](rustfmt.toml) for Rust (nightly
+rustfmt — pinned date in `format.yml`), [`.formatter.exs`](.formatter.exs)
+for Elixir, the Spotless block in [`sdk/java/pom.xml`](sdk/java/pom.xml)
+(palantir-java-format) for Java. The format-pass commits are listed in
+[`.git-blame-ignore-revs`](.git-blame-ignore-revs) so `git blame` skips
+them.
+
 ## Examples
 
 ### Start controller (started automatically for dev mode)

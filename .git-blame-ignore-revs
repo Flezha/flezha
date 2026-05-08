@@ -1,0 +1,12 @@
+# Commits listed here are skipped by `git blame --ignore-revs-file`.
+# GitHub honors this file automatically. Use for bulk mechanical
+# reformats whose blame would otherwise mask original authorship.
+#
+# Run locally:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Append future format-pass SHAs below, each preceded by a one-line
+# comment naming the change.
+
+# enforce-code-formatting: bulk cargo fmt + mvn spotless:apply across the workspace.
+704d9c91de4ccc6cb91a829e64bc7f01c69f2956

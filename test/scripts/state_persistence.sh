@@ -63,6 +63,101 @@ COMPOSE=(
 
 cd "${REPO_ROOT}/docker/dev"
 
+# `docker/dev/docker-compose.yml` pins hardcoded container_name values
+# (flezha_controller_dev, flezha_zookeeper, flezha_kafka, flezha_kafka_ui,
+# flezha_rust_executor). Those names are global on the Docker daemon —
+# `docker compose down` only removes containers labelled with this
+# script's project name, so a leftover from a previous interrupted run
+# (or from a parallel project name) collides on `up` with
+#   "container name "/flezha_zookeeper" is already in use".
+# Force-remove by name before bringing the stack up, and on exit.
+KNOWN_CONTAINER_NAMES=(
+  flezha_controller_dev
+  flezha_zookeeper
+  flezha_kafka
+  flezha_kafka_ui
+  flezha_rust_executor
+)
+
+force_remove_known_containers() {
+  for name in "${KNOWN_CONTAINER_NAMES[@]}"; do
+    docker rm -f "${name}" >/dev/null 2>&1 || true
+  done
+}
+
+# Stale UDS socket files from a previous interrupted run linger on
+# the host bind-mount (`app_data/sockets/`). The rust container's
+# wait-loop watches for `executor_control_channel.sock` to exist and
+# would race straight past it on next boot — exiting wait-loop before
+# our `fix_volume_permissions` runs, then crashing on cargo
+# permission errors. Wipe sockets pre-flight (per CLAUDE.md memory:
+# never `rm -rf app_data`, only its subdirs).
+clean_stale_sockets() {
+  rm -f "${REPO_ROOT}"/app_data/sockets/*.sock 2>/dev/null || true
+}
+
+# Wipe persisted state at the START of a fresh run so we don't replay
+# data from a previous test. Mid-cycle (between down and up) we MUST
+# leave it alone — that's the contract under test.
+clean_persisted_state() {
+  rm -rf "${REPO_ROOT}"/app_data/state/* 2>/dev/null || true
+}
+
+# The dev compose's named volumes (flezha_build, flezha_deps,
+# flezha_cargo_target, socket_data) are root-owned on first mount,
+# but the toolchain image runs services as `flezha` (uid 1000, see
+# `docker/dev/Dockerfile.toolchain`). Without chown'ing them, both
+# `mix run` and `cargo run` fail with `Permission denied` inside
+# their respective containers — symptom: rust executor hangs the
+# script at "waiting for initial executor handshake" while logging
+#   error: failed to create directory `/flezha/target/debug`
+#   Caused by: Permission denied (os error 13)
+# The healing compose handles this implicitly in its `command:` block;
+# the regular dev compose does not, so we do it via `docker exec -u 0`.
+fix_volume_permissions() {
+  # Wait briefly for both containers to be exec-ready (they may have
+  # only just been created by `up -d`).
+  local deadline=$(( $(date +%s) + 30 ))
+  while [ "$(date +%s)" -lt "${deadline}" ]; do
+    [ "$(docker inspect -f '{{.State.Status}}' flezha_controller_dev 2>/dev/null)" = "running" ] \
+      && [ "$(docker inspect -f '{{.State.Status}}' flezha_rust_executor 2>/dev/null)" = "running" ] \
+      && break
+    sleep 1
+  done
+
+  # `docker exec` (note: NOT `docker compose exec`) has no `-T`/`-i`
+  # tty flag — it never allocates a TTY by default. -u 0 runs as root
+  # inside the container regardless of the image's USER directive.
+  docker exec -u 0 flezha_controller_dev sh -c '
+    chown -R 1000:1000 /flezha/_build /flezha/deps 2>/dev/null
+    chown -R 1000:1000 /flezha/target 2>/dev/null
+    chown -R 1000:1000 /flezha/app_data 2>/dev/null
+    chown -R 1000:1000 /socket_data 2>/dev/null
+    true
+  ' || {
+    echo "[state_persistence] WARN: chown via controller failed (state=$(docker inspect -f '{{.State.Status}}' flezha_controller_dev 2>/dev/null))" >&2
+  }
+  docker exec -u 0 flezha_rust_executor sh -c '
+    chown -R 1000:1000 /flezha/target 2>/dev/null
+    chown -R 1000:1000 /socket_data 2>/dev/null
+    true
+  ' || {
+    echo "[state_persistence] WARN: chown via rust failed (state=$(docker inspect -f '{{.State.Status}}' flezha_rust_executor 2>/dev/null))" >&2
+  }
+}
+
+# Fail fast if the rust container has already exited (e.g. cargo
+# permission error). Keeps the script from sitting on a 300s timeout.
+assert_rust_running() {
+  local state
+  state="$(docker inspect -f '{{.State.Status}}' flezha_rust_executor 2>/dev/null || echo missing)"
+  if [ "${state}" != "running" ]; then
+    echo "[state_persistence] FAIL: rust container is not running (state=${state})" >&2
+    docker logs --tail=80 flezha_rust_executor 2>&1 | sed 's/^/  rust> /' >&2 || true
+    exit 1
+  fi
+}
+
 cleanup() {
   if [ "${FLEZHA_KEEP_STACK:-0}" = "1" ]; then
     echo "[state_persistence] FLEZHA_KEEP_STACK=1, leaving stack up"
@@ -70,6 +165,10 @@ cleanup() {
   fi
   echo "[state_persistence] tearing down compose stack (project=${PROJECT})"
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  # Compose 'down' is project-scoped; sweep stragglers by name too so
+  # the next run starts clean even if an earlier run was interrupted
+  # before the trap fired.
+  force_remove_known_containers
 }
 trap cleanup EXIT
 
@@ -96,6 +195,8 @@ CONTROL_SOCKET="${SOCKETS_DIR}/executor_control_channel.sock"
 # in detached mode and poll on the host filesystem for the controller's
 # UDS control socket to confirm the BEAM is ready and listening.
 start_beam() {
+  note "fixing volume ownership (named volumes are root-owned on creation)"
+  fix_volume_permissions
   note "starting BEAM inside controller container ('mix run --no-halt')"
   "${COMPOSE[@]}" exec -d -T controller sh -c \
     'cd /flezha && export MIX_ENV=dev && \
@@ -126,14 +227,16 @@ wait_for_any_ce_id() {
   local deadline=$(( $(date +%s) + REJOIN_TIMEOUT_S ))
   local current=""
   while [ "$(date +%s)" -lt "${deadline}" ]; do
+    assert_rust_running
     current="$(fetch_active_ce_id)"
     if [ -n "${current}" ]; then
       echo "${current}"
       return 0
     fi
-    sleep 2
+    sleep 5
   done
   echo "[state_persistence] timed out waiting for executor_id" >&2
+  docker logs --tail=80 flezha_rust_executor 2>&1 | sed 's/^/  rust> /' >&2 || true
   return 1
 }
 
@@ -142,14 +245,16 @@ wait_for_new_ce_id() {
   local deadline=$(( $(date +%s) + REJOIN_TIMEOUT_S ))
   local current=""
   while [ "$(date +%s)" -lt "${deadline}" ]; do
+    assert_rust_running
     current="$(fetch_active_ce_id)"
     if [ -n "${current}" ] && [ "${current}" != "${previous_ce_id}" ]; then
       echo "${current}"
       return 0
     fi
-    sleep 2
+    sleep 5
   done
   echo "[state_persistence] timed out waiting for fresh executor_id (last: '${current}')" >&2
+  docker logs --tail=80 flezha_rust_executor 2>&1 | sed 's/^/  rust> /' >&2 || true
   return 1
 }
 
@@ -228,6 +333,11 @@ assert_time_travel_replay() {
 # --- Phase 0: bring stack up ----------------------------------------------
 
 note "bringing up dev stack (project=${PROJECT}, transport=${FLEZHA_TRANSPORT:-uds})"
+note "sweeping any leftover containers with hardcoded names from a prior run"
+force_remove_known_containers
+note "clearing stale sockets and persisted state from prior runs"
+clean_stale_sockets
+clean_persisted_state
 docker network inspect flezha_network >/dev/null 2>&1 \
   || docker network create flezha_network >/dev/null
 "${COMPOSE[@]}" up -d controller kafka rust
@@ -315,6 +425,9 @@ echo "${PRE_STATE}" | sed 's/^/  pre> /'
 
 note "stopping ALL containers (controller + kafka + rust + zookeeper)"
 "${COMPOSE[@]}" down --remove-orphans
+# Belt-and-braces: ensure none of the hardcoded-named containers
+# survived (e.g. a sibling project owning the name).
+force_remove_known_containers
 # IMPORTANT: do NOT pass -v on this `down`, otherwise we'd nuke the
 # socket_data named volume; bind-mounted app_data/ survives because
 # it lives on the host filesystem.
@@ -327,6 +440,10 @@ fi
 note "app_data/state intact: $(find "${STATE_DIR}" -type f | wc -l) on-disk files"
 
 note "bringing stack back up"
+force_remove_known_containers
+# Wipe stale sockets ONLY (state persistence is what we're verifying,
+# leave app_data/state alone here).
+clean_stale_sockets
 docker network inspect flezha_network >/dev/null 2>&1 \
   || docker network create flezha_network >/dev/null
 "${COMPOSE[@]}" up -d controller kafka rust
