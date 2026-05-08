@@ -35,10 +35,11 @@ kubernetes
 openspec
 scripts
 
-# Re-include the agent's runtime entrypoint scripts. These are referenced
-# by `COPY` in docker/prod/Dockerfile.agent and have no other ingestion
+# Re-include the runtime entrypoint scripts. These are referenced by `COPY`
+# in docker/prod/Dockerfile.{agent,controller} and have no other ingestion
 # path, so they MUST stay in the build context.
 !docker/prod/agent-entrypoint.sh
+!docker/prod/controller-entrypoint.sh
 !docker/prod/snapshot-on-stop.sh
 
 # Java SDK is a separate deliverable — not needed for the agent build.
@@ -51,9 +52,9 @@ sdk/java
 test/*
 !test/apps
 test/apps/*
-!test/apps/rust_compute_engine
+!test/apps/rust_executor
 !test/apps/testnet
-test/apps/rust_compute_engine/target
-test/apps/rust_compute_engine/dist
+test/apps/rust_executor/target
+test/apps/rust_executor/dist
 test/apps/testnet/node_modules
 test/apps/testnet/dist

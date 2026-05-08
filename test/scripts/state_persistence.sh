@@ -183,8 +183,10 @@ flz() {
 }
 
 # Run an arbitrary command inside the running controller container.
+# Uses `bash` (not the default `/bin/sh`, which is dash on Debian and
+# lacks /dev/tcp support — our port-readiness probes need bash).
 controller_sh() {
-  "${COMPOSE[@]}" exec -T controller sh -c "$1"
+  "${COMPOSE[@]}" exec -T controller bash -c "$1"
 }
 
 SOCKETS_DIR="${REPO_ROOT}/app_data/sockets"
@@ -238,9 +240,24 @@ start_beam() {
   fi
   note "release built; flz patched with container-linked binary"
 
-  note "starting BEAM inside controller container ('mix run --no-halt')"
+  # We can't use `flzvm daemon` (the release entrypoint) because the
+  # default release pulls in `wx`, whose NIF needs libGL — absent on
+  # the Debian 12 toolchain image — and the BEAM crashes on boot:
+  #   Failed to load NIF library: '.../wx-2.4.3/priv/erl_gl.so:
+  #   cannot open shared object file: No such file or directory'
+  # Excluding wx would mean editing mix.exs releases config, which
+  # is out-of-scope for this script.
+  #
+  # Instead: start BEAM via `mix run --no-halt` (the same way the
+  # other Docker test scripts do), but layer in the same node name +
+  # cookie the release would use, so `flz` -> `flzvm rpc` (via Erlang
+  # distribution) can still reach it. RELEASE_COOKIE / node name
+  # come from `rel/env.sh.eex`.
+  note "starting BEAM inside controller container ('mix run --no-halt' + distribution)"
   "${COMPOSE[@]}" exec -d -T controller sh -c \
-    'cd /flezha && export MIX_ENV=dev && \
+    'cd /flezha && export MIX_ENV=dev \
+       RELEASE_COOKIE=flezha_cluster_cookie \
+       ERL_FLAGS="-name flezha@127.0.0.1 -setcookie flezha_cluster_cookie" && \
      exec mix run --no-halt'
 
   local deadline=$(( $(date +%s) + REJOIN_TIMEOUT_S ))
@@ -416,7 +433,11 @@ controller_sh '
   if [ ! -d dist ]; then
     npm run build --silent >/dev/null 2>&1 || true
   fi
-  pkill -f "node .*testnet" 2>/dev/null || true
+  # Avoid `pkill -f`: with `bash -c` running the wrapper script, the
+  # pattern string lives in the bash argv, so `pkill -f "..."` would
+  # kill the parent bash (exit 137 silently). The port-check loop
+  # below tolerates a prior listener; if 4500 is already bound, we
+  # treat it as healthy and proceed.
   nohup node dist/index.js > /tmp/testnet.log 2>&1 &
   # Wait for the listener to bind so the plugin connect succeeds.
   for _ in $(seq 1 30); do
@@ -520,7 +541,11 @@ assert_time_travel_replay "post-restart"
 note "re-starting testnet WS server post-restart"
 controller_sh '
   cd /flezha/test/apps/testnet
-  pkill -f "node .*testnet" 2>/dev/null || true
+  # Avoid `pkill -f`: with `bash -c` running the wrapper script, the
+  # pattern string lives in the bash argv, so `pkill -f "..."` would
+  # kill the parent bash (exit 137 silently). The port-check loop
+  # below tolerates a prior listener; if 4500 is already bound, we
+  # treat it as healthy and proceed.
   nohup node dist/index.js > /tmp/testnet.log 2>&1 &
   for _ in $(seq 1 30); do
     (echo > /dev/tcp/127.0.0.1/4500) >/dev/null 2>&1 && exit 0
