@@ -27,8 +27,6 @@ defmodule Flezha.Relay.Overwatch do
       {:on_terminate, :fanout, Flezha.Plugin.Extension.Ctx.Terminate}
     ]
 
-  @snapshop_interval 60_000
-
   defstruct [
     :id,
     :namespace,
@@ -37,10 +35,10 @@ defmodule Flezha.Relay.Overwatch do
     :channel,
     :extensions,
     :builder,
-    snapshot_interval: @snapshop_interval,
     snapshot: nil,
     init_values: %{},
-    default_input_type: "2"
+    default_input_type: "2",
+    arrived_via_hotswap?: false
   ]
 
   def start_link(args) do
@@ -51,19 +49,6 @@ defmodule Flezha.Relay.Overwatch do
   def init({namespace, executor_id, relay}) do
     Process.flag(:trap_exit, true)
 
-    # Per-relay override trumps the controller-wide env var. Zero (or the
-    # sentinel `:disabled`) at EITHER layer turns the periodic `:on_snapshot`
-    # task off — design §D8. The flezha_market deployment defaults the env
-    # var to `"0"` since Postgres (populated by Kafka-consumed rows) is the
-    # authoritative store and any secondary snapshot would drift.
-    snapshot_interval =
-      case Keyword.fetch(relay.opts, :snapshot_interval) do
-        {:ok, value} -> normalize_snapshot_interval(value)
-        :error -> overwatch_default_snapshot_interval()
-      end
-
-    schedule_snapshot(snapshot_interval)
-
     state = %__MODULE__{
       id: relay.id,
       namespace: namespace,
@@ -71,7 +56,6 @@ defmodule Flezha.Relay.Overwatch do
       init_values: relay.init_values,
       executor_id: executor_id,
       channel: attach_channel(relay.id, executor_id),
-      snapshot_interval: snapshot_interval,
       snapshot: nil,
       default_input_type: Keyword.get(relay.opts, :default_input_type, "2"),
       extensions: Table.new(__extensions_catalog__()),
@@ -79,21 +63,54 @@ defmodule Flezha.Relay.Overwatch do
     }
 
     # `relay.opts[:plugins]` is the authoritative list of plugin
-    # subscriptions for this relay. It is populated both at
-    # `flz relay start` time (via the CLI's `--plugins` flag) and
-    # by every subsequent `flz plugin enable` / `flz plugin disable`
-    # call (which writes through to the cspec via
-    # `Flezha.Service.HubManager.update_relay_plugins/3`).
+    # subscriptions for this relay. It is populated at `flz relay start`
+    # time (via the CLI's `--plugins` flag) and by every subsequent
+    # `flz plugin enable` / `flz plugin disable` call, which writes
+    # through to the cspec via `ProcessHub.Service.ProcessRegistry.update/3`
+    # (durably backed by ProcessHub's persistent registry under
+    # `app_data/process_hub/<hub_id>/registry.dets`).
     plugins = Keyword.get(relay.opts, :plugins, [])
 
     with {:ok, state} <- subscribe_initial_plugins(state, plugins),
          {:ok, state, relay} <- resolve_init_state(state, relay),
-         {:ok, _} <- start_relay_sdk(executor_id, relay),
-         :ok <- maybe_apply_initial_state(state, relay) do
+         {:ok, _} <- start_relay_sdk(executor_id, relay) do
+      _ = maybe_dispatch_restore_init_state(state, relay)
       {:ok, state}
     else
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  # Walk the on-disk Partition state for this relay (using `relay.id` as
+  # the relay_class) and dispatch `RestoreInitState` to the SDK for each
+  # Partition that has a non-empty payload. Skipped when the relay
+  # arrived via HotSwap — handover already delivers the state in-band.
+  # Skipped when persistence is disabled for this relay class.
+  defp maybe_dispatch_restore_init_state(%__MODULE__{arrived_via_hotswap?: true}, _relay), do: :ok
+
+  defp maybe_dispatch_restore_init_state(%__MODULE__{} = state, relay) do
+    relay_class = Keyword.get(relay.opts, :relay_class, relay.id)
+
+    if Flezha.State.PersistenceResolver.persistence_enabled?(relay_class) do
+      partitions = enumerate_persisted_partitions(relay_class)
+
+      Enum.each(partitions, fn {rc, sh, pk} ->
+        case Flezha.State.Restore.has_persisted_state?({rc, sh, pk}) do
+          true ->
+            _ = dispatch_restore_init_state(state.executor_id, {rc, sh, pk})
+
+          false ->
+            :ok
+        end
+      end)
+    end
+
+    :ok
+  end
+
+  defp enumerate_persisted_partitions(relay_class) do
+    Flezha.State.Registry.all_partitions()
+    |> Enum.filter(fn {rc, _, _} -> rc == relay_class end)
   end
 
   defp subscribe_initial_plugins(%__MODULE__{} = state, plugins) do
@@ -328,13 +345,10 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   # Replaces `state.snapshot` with a binary supplied out-of-band by the SDK
-  # on graceful shutdown. Bypasses the periodic `:on_snapshot` round-trip so
-  # the next reconnecting executor's `maybe_apply_initial_state` sees the
-  # executor's true final state instead of a snapshot up to
-  # `snapshot_interval` stale. Unconditional — applies even when periodic
-  # snapshots are disabled (`snapshot_interval == 0`) so executors backed
-  # by an external authoritative store (e.g. Postgres) still get a
-  # one-shot shutdown handoff. See ship-fresh-state-on-sdk-shutdown.
+  # on graceful shutdown. The snapshot is consumed by HotSwap's
+  # `prepare_handover_state` so a subsequent migration ships the
+  # executor's final state. Cold-boot restart is covered by the
+  # per-Partition WAL files instead.
   @impl true
   def handle_cast({:apply_external_snapshot, binary}, %__MODULE__{} = state)
       when is_binary(binary) do
@@ -384,26 +398,6 @@ defmodule Flezha.Relay.Overwatch do
     end
 
     {:noreply, state}
-  end
-
-  @impl true
-  def handle_info(:schedule_snapshot, %__MODULE__{} = state) do
-    snapshot = create_snapshot(state.id, state.executor_id)
-
-    ctx = %Ctx.Snapshot{
-      relay_id: state.id,
-      namespace: state.namespace,
-      executor_id: state.executor_id,
-      snapshot: snapshot
-    }
-
-    Extension.run(state.extensions, :on_snapshot, ctx)
-
-    if state.snapshot_interval > 0 do
-      schedule_snapshot(state.snapshot_interval)
-    end
-
-    {:noreply, %__MODULE__{state | snapshot: snapshot}}
   end
 
   @impl true
@@ -482,7 +476,8 @@ defmodule Flezha.Relay.Overwatch do
     %__MODULE__{
       state
       | extensions: rehydrated,
-        init_values: handover_state.init_values
+        init_values: handover_state.init_values,
+        arrived_via_hotswap?: true
     }
   end
 
@@ -516,48 +511,6 @@ defmodule Flezha.Relay.Overwatch do
     )
   end
 
-  # When `:initial_state_binary` is present in the builder's opts, send a
-  # `PartitionApplyState` control command before the GenServer accepts any
-  # `:io_in` messages. The synchronous round-trip in `init/1` enforces the
-  # ordering: `:io_in` casts queue behind `init/1` and only fire after this
-  # returns. On failure (typically `apply_state_not_supported` from an SDK
-  # build that pre-dates the Apply command), log and proceed with default
-  # empty state — restore is best-effort across SDK versions.
-  defp maybe_apply_initial_state(%__MODULE__{executor_id: ce_id}, relay) do
-    case Keyword.get(relay.opts, :initial_state_binary) do
-      nil ->
-        :ok
-
-      bin when is_binary(bin) ->
-        command = %ExecutorCommands.PartitionApplyState{
-          relay_id: relay.id,
-          factory_id: relay.factory_id,
-          state_binary: bin
-        }
-
-        case send_control(ce_id, {:partition_apply_state, command}) do
-          {:ok, _} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning(
-              "[overwatch] apply_state failed for relay #{inspect(relay.id)} " <>
-                "factory #{inspect(relay.factory_id)}: #{inspect(reason)} — " <>
-                "starting with empty default state"
-            )
-
-            :ok
-        end
-    end
-  end
-
-  defp schedule_snapshot(snapshot_interval)
-       when is_integer(snapshot_interval) and snapshot_interval > 0 do
-    Process.send_after(self(), :schedule_snapshot, snapshot_interval)
-  end
-
-  defp schedule_snapshot(_snapshot_interval), do: nil
-
   defp attach_channel(relay_id, executor_id) do
     relay_int = String.to_charlist(relay_id) |> Enum.sum()
     count = ConfigManager.concurrent_channel_count()
@@ -584,26 +537,6 @@ defmodule Flezha.Relay.Overwatch do
     end
   end
 
-  defp overwatch_default_snapshot_interval do
-    :flezha
-    |> Application.get_env(:overwatch_state_snapshot_interval_ms, @snapshop_interval)
-    |> normalize_snapshot_interval()
-  end
-
-  defp normalize_snapshot_interval(:disabled), do: 0
-  defp normalize_snapshot_interval("disabled"), do: 0
-
-  defp normalize_snapshot_interval(n) when is_integer(n) and n >= 0, do: n
-
-  defp normalize_snapshot_interval(n) when is_binary(n) do
-    case Integer.parse(n) do
-      {parsed, ""} when parsed >= 0 -> parsed
-      _ -> @snapshop_interval
-    end
-  end
-
-  defp normalize_snapshot_interval(_), do: @snapshop_interval
-
   # ---------- Per-Partition persistence wiring ----------
   #
   # Helpers used by `Flezha.State.*` and tests to ship persistence
@@ -620,9 +553,7 @@ defmodule Flezha.Relay.Overwatch do
   @spec dispatch_restore_init_state(binary(), {binary(), binary(), binary()}) ::
           {:ok, reference()} | {:error, term()}
   def dispatch_restore_init_state(executor_id, {rc, sh, pk}) do
-    full_partition_id = {executor_id, rc, sh, pk}
-
-    case Restore.assemble_payload(full_partition_id) do
+    case Restore.assemble_payload({rc, sh, pk}) do
       {:ok, payload} ->
         partition_id_bytes = Wire.encode_partition_id(rc, sh, pk)
 

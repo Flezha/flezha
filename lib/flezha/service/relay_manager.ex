@@ -84,12 +84,8 @@ defmodule Flezha.Service.RelayManager do
       {:ok, relay_pid} ->
         case GenServer.call(relay_pid, :stop_relay) do
           :ok ->
-            # Drop any plugins keyed against `(namespace, relay_id)` from
-            # the global PluginManager registry now that the relay is
-            # gone. Without this, a plugin enabled in one test bleeds
-            # into the next as `{:error, "plugin already registered"}`
-            # on re-enable.
             _ = Flezha.Service.PluginManager.disable_relay_plugins(namespace, relay_id)
+            _ = delete_relay_state_dir(relay_id)
             :ok
 
           {:error, reason} ->
@@ -106,8 +102,6 @@ defmodule Flezha.Service.RelayManager do
     relays = HubManager.get_all_relays(namespace)
     relay_ids = Enum.map(relays, fn {id, _pid} -> id end)
 
-    # Disable plugins per-relay before the namespace is torn down so the
-    # PluginManager registry stays in sync with the runtime.
     Enum.each(relay_ids, fn relay_id ->
       _ = Flezha.Service.PluginManager.disable_relay_plugins(namespace, relay_id)
     end)
@@ -120,9 +114,63 @@ defmodule Flezha.Service.RelayManager do
       catch
         :exit, _ -> :ok
       end
+
+      Enum.each(relay_ids, &delete_relay_state_dir/1)
     end
 
     :ok
+  end
+
+  # On explicit stop, delete the on-disk state directories owned by the
+  # relay. The relay_id is used as the relay_class identifier — the SDK
+  # convention is that each relay's partition frames carry the relay_id
+  # as relay_class. State files written under `app_data/state/<relay_id>/`
+  # are removed; any shard directory containing a `.tmp` or `.rewriting`
+  # marker is skipped (with WARN) because a write is in flight and
+  # truncating it would corrupt the rename ceremony.
+  #
+  # `child_unregistered_hook` deliberately does NOT call this — HotSwap
+  # source-side and redistribution-away preserve files so the
+  # destination (or next host) can pull them via WAL-follows-relay.
+  defp delete_relay_state_dir(relay_id) do
+    root = Flezha.State.Registry.state_root()
+    class_dir = Path.join(root, relay_id)
+
+    case File.ls(class_dir) do
+      {:ok, shard_names} ->
+        Enum.each(shard_names, fn shard ->
+          shard_dir = Path.join(class_dir, shard)
+          maybe_delete_shard(shard_dir)
+        end)
+
+        _ = File.rmdir(class_dir)
+        :ok
+
+      {:error, :enoent} ->
+        :ok
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  defp maybe_delete_shard(shard_dir) do
+    case File.ls(shard_dir) do
+      {:ok, names} ->
+        if Enum.any?(names, fn n ->
+             String.ends_with?(n, ".tmp") or String.ends_with?(n, ".rewriting")
+           end) do
+          Logger.warning(
+            "[relay_manager] skipping state dir #{shard_dir}: write in flight " <>
+              "(.tmp / .rewriting present)"
+          )
+        else
+          _ = File.rm_rf(shard_dir)
+        end
+
+      {:error, _} ->
+        :ok
+    end
   end
 
   def send_io(relay_id, namespace, message, metadata) do

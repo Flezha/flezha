@@ -7,8 +7,10 @@ defmodule Flezha do
   @moduledoc """
   Flezha is a compute engine platform with an Elixir controller and SDK runtimes
   in Rust, Java, and others. It supports clustered relays with hot-swap
-  migration and an explicit, CLI-driven cluster snapshot/restore mechanism
-  (see `docs/cluster-snapshot.md`).
+  migration and a single auto-restore-on-boot mechanism — ProcessHub's
+  durable registry persists relay specs, and per-Partition WAL/snapshot
+  files persist progress (see `docs/auto_restore_on_boot.md` and
+  `docs/controller_state_persistence.md`).
   """
 
   defdelegate start_relay(namespace, relay), to: RelayManager

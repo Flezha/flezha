@@ -18,13 +18,21 @@ with `lib/flezha/state/`.
 ```
 app_data/
   state/
-    {executor_id}/
-      {relay_class}/
-        {shard_id}/
-          {partition_key}.wal
-          {partition_key}.snap.{seq}
-          {partition_key}.outbox.dedup
+    {relay_class}/
+      {shard_id}/
+        {partition_key}.wal
+        {partition_key}.snap.{seq}
+        {partition_key}.outbox.dedup
 ```
+
+The path triple `(relay_class, shard_id, partition_key)` uniquely
+identifies a Partition's state. Persistence does not include the
+`executor_id` — that is an addressing concern at the SDK boundary. When
+an executor pod restarts and rotates its `executor_id`, state under the
+flat layout is preserved and shipped to the new executor on Partition
+attach via `RestoreInitState`. The one-time
+`Flezha.Boot.StatePathMigrator` runs at `Application.start/2` to migrate
+an older executor-keyed layout into the flat one.
 
 `partition_key` is URL-safe-base64-encoded with a leading `_` when it
 contains characters outside `[A-Za-z0-9_.-]`. Round-trippable via
@@ -134,10 +142,11 @@ flz state retention <relay_class> <hours>
 ```
 
 Implemented in `cli/src/state.rs` (Rust binary) which RPCs into
-`Flezha.Service.CliManager.state_*/N` on the running controller. Path strings
-like `MarketRelay/OhlcShard/M1` are resolved against
-`Flezha.State.Registry.all_partitions/0` to pick the matching
-`executor_id`; ambiguity exits non-zero.
+`Flezha.Service.CliManager.state_*/N` on the running controller. Path
+strings like `MarketRelay/OhlcShard/M1` are resolved against
+`Flezha.State.Registry.all_partitions/0` to confirm a Partition exists
+on disk; the live executor binding (when needed for `state rotate`) is
+looked up from the runtime ProcessHub registry.
 
 `flz state at` returns the assembled snapshot + change-log bytes plus
 the resolved terminal seq. The full SDK-side replay (folding bytes into

@@ -29,12 +29,11 @@ services:
       - flezha_data:/flezha/app_data/data
       - flezha_certs:/flezha/app_data/certs
       - flezha_logs:/flezha/app_data/logs
-      # Snapshot files written by `flz cluster snapshot` need to survive
-      # container restarts so a subsequent `flz cluster restore` can read
-      # them. Mount as a named volume here; bind to a host path
-      # (`/var/lib/flezha/snapshots`) in an executor-managed compose
-      # overlay if cross-host portability is required.
-      - flezha_snapshots:/flezha/app_data/snapshots
+      # ProcessHub's persistent registry (auto-restore-on-boot) and
+      # per-Partition WAL files. Must survive container restarts.
+      - flezha_state:/flezha/app_data/state
+      - flezha_process_hub:/flezha/app_data/process_hub
+      - flezha_plugins:/flezha/app_data/plugins
     networks:
       - flezha_network
 
@@ -80,7 +79,11 @@ volumes:
     driver: local
   flezha_logs:
     driver: local
-  flezha_snapshots:
+  flezha_state:
+    driver: local
+  flezha_process_hub:
+    driver: local
+  flezha_plugins:
     driver: local
 
 networks:

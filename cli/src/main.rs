@@ -1,4 +1,4 @@
-mod cluster;
+mod boot;
 mod controller;
 mod executor;
 mod namespace;
@@ -24,7 +24,7 @@ fn main() {
         "namespace" => namespace::handle_namespace_command(&args[2..]),
         "executor" => executor::handle_executor_command(&args[2..]),
         "plugin" => plugin::handle_plugin_command(&args[2..]),
-        "cluster" => cluster::handle_cluster_command(&args[2..]),
+        "boot" => boot::handle_boot_command(&args[2..]),
         "state" => state::handle_state_command(&args[2..]),
         "help" | "--help" | "-h" => print_help(),
         _ => {
@@ -47,7 +47,7 @@ fn print_help() {
     println!("    namespace      Namespace management commands");
     println!("    executor       Executor management commands");
     println!("    plugin         Plugin management commands");
-    println!("    cluster        Cluster snapshot/restore (see docs/cluster-snapshot.md)");
+    println!("    boot           Boot/recovery status, await, and legacy snapshot import");
     println!("    state          Per-Partition state queries (time-travel, retention, list)");
     println!("    help           Show this help message");
     println!();
@@ -60,6 +60,6 @@ fn print_help() {
     println!("    flz plugin list --installed");
     println!("    flz plugin enable kafka_producer provider1 Xhosts=localhost:9092");
     println!("    flz namespace list --output json");
-    println!("    flz cluster snapshot /var/lib/flezha/snap.flz");
-    println!("    flz cluster restore /var/lib/flezha/snap.flz --warn-if-older-than 24h");
+    println!("    flz boot status");
+    println!("    flz boot await --timeout 60");
 }

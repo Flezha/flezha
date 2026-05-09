@@ -78,7 +78,7 @@ defmodule Flezha.State.Retention do
   # ---------- Sweep ----------
 
   defp sweep_all() do
-    Enum.each(Registry.all_partitions(), fn {_, relay_class, _, _} = pid ->
+    Enum.each(Registry.all_partitions(), fn {relay_class, _, _} = pid ->
       hours = PersistenceResolver.retention_hours(relay_class)
       sweep_partition(pid, hours)
     end)

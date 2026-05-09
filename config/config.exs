@@ -9,15 +9,6 @@ config :flezha,
   pre_hooks: [],
   post_hooks: [],
 
-  # ------------------------------------------------------------------------------------------------
-  # Cluster snapshot/restore subsystem (see docs/cluster-snapshot.md).
-  #
-  # - `snapshot_state_cap_bytes`: per-relay cap on captured-state size
-  #   in the snapshot file. Relays above the cap are written without
-  #   their state binary and a WARN line names them; restore primes them
-  #   with empty default state.
-  snapshot_state_cap_bytes: 8_388_608,
-
   # TODO: we need to dynamically load the plugins from .env.
   # ------------------------------------------------------------------------------------------------
   # Enabled plugins.

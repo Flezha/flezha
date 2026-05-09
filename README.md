@@ -235,26 +235,41 @@ The performance test creates multiple relays, enables plugins, sends messages, a
 
 ### Restart survival
 
-Restart-survival is executor-driven via `flz cluster snapshot` and
-`flz cluster restore` — see
-[`docs/cluster-snapshot.md`](docs/cluster-snapshot.md). There is no
-automatic at-boot replay: an controller that comes back up after an
-unattended crash starts with no relays. The supported flow for both
-planned shutdowns and crash-recovery is:
+Flezha auto-restores after any restart — single-controller crash,
+rolling deploy, or full cluster cold boot. Two persistence layers
+back this:
+
+1. **ProcessHub durable registry** (`app_data/process_hub/<hub_id>/registry.dets`)
+   — every relay child-spec, including `opts[:plugins]`, is persisted
+   to disk through ProcessHub's `registry_backend: {:dets, ...}`. On
+   boot, ProcessHub's coordinator runs the `:recovery_pending →
+   :recovering | :normal` state machine: it exchanges modes with peers,
+   skips replay if any peer is already `:normal` (avoiding stale-trample),
+   otherwise replays the persisted registry under
+   `:flezha, :recovery_window_ms` (default 10 s).
+2. **Per-Partition WAL/snapshot** (`app_data/state/<relay_class>/<shard_id>/`)
+   — change-by-change progress for every Partition. When a relay's
+   first Partition stream reattaches after restart, the controller
+   ships the assembled WAL+snapshot via `RestoreInitState` so the SDK
+   resumes at the exact pre-shutdown sequence.
+
+The path layout drops `executor_id`, so executor pod restarts that
+rotate `executor_id` do not orphan state.
+
+Operator surface:
 
 ```bash
-# Before a planned restart (or on a routine cadence):
-flz cluster snapshot /flezha/app_data/snapshots/latest.flz
-
-# After the restart (or to recover from a crash, against the most recent
-# snapshot file you have):
-flz cluster restore  /flezha/app_data/snapshots/latest.flz
+flz boot status                              # per-namespace recovery_state + registry rows
+flz boot await --timeout 60                  # block until every hub reports :normal
+flz boot import-legacy-snapshot snap.flz     # one-shot migration from the removed `flz cluster snapshot` format
 ```
 
-Plugins whose state is bound to a caller pid that died with the previous
-BEAM (`relay_beam_msg`, `monitored_io_forward`) are excluded from
-the snapshot and must be re-enabled by the executor or SDK reconnect
-path after restore.
+Disable the auto-replay state machine (registry mutations still
+persist) with `FLEZHA_AUTO_RESTORE_ENABLED=false`. The single tolerated
+data-loss case: cluster shut down, then only a strict subset of nodes
+returns — rows held only on the missing nodes are lost. See
+[`docs/auto_restore_on_boot.md`](docs/auto_restore_on_boot.md) for the
+full safety table.
 
 ### Development
 Run the application inside the docker containers.

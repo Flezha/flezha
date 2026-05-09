@@ -10,13 +10,6 @@ defmodule Flezha.Service.HubManager do
 
   use Supervisor
 
-  # Mirrors `Flezha.Service.RelayManager.init_relay/3`'s retry
-  # budget so a transient `:no_response` from the local hub's
-  # `dist_sup` (mid-restart, snapshot/restore in flight, parallel-suite
-  # churn) does not surface as a hard failure on plugin enable/disable.
-  @no_response_retry_attempts 8
-  @no_response_retry_initial_ms 150
-
   def start_link(_) do
     Supervisor.start_link(__MODULE__, [], name: __MODULE__)
   end
@@ -26,7 +19,18 @@ defmodule Flezha.Service.HubManager do
   end
 
   def start_hub(namespace) do
-    Supervisor.start_child(__MODULE__, process_hub(namespace))
+    case Supervisor.start_child(__MODULE__, process_hub(namespace)) do
+      {:ok, _pid} = ok ->
+        _ = Flezha.Boot.RecoveryHooks.register(Identificator.hub(namespace))
+        ok
+
+      {:ok, _pid, _info} = ok ->
+        _ = Flezha.Boot.RecoveryHooks.register(Identificator.hub(namespace))
+        ok
+
+      other ->
+        other
+    end
   end
 
   def stop_hub(namespace) do
@@ -212,40 +216,6 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
-  Apply `update_fn` to the plugin list embedded in a relay's
-  ProcessHub child-spec start-args and write the rewritten cspec back
-  through `ProcessHub.Service.ProcessRegistry.update/3`.
-
-  `update_fn` receives the current plugin list as `[{plugin_id, %Flezha.Plugin{}}]`
-  tuples (existing cold-start cspec entries stored as bare `%Flezha.Plugin{}`
-  structs are normalised to tuples on read) and returns the new list in
-  the same shape.
-
-  Both child-spec start-args tuple shapes Flezha emits are supported:
-
-    * `{namespace, relay}` — cold-start shape written by
-      `Flezha.Service.RelayManager.init_relay/3`.
-    * `{namespace, executor_id, relay}` — post-`alter_child_data/2`
-      shape.
-
-  Wraps the registry update in the `:no_response` retry shape used by
-  `relay_manager.ex:157-167` (8 attempts, exponential backoff capped
-  at 5 s). `:no_response` here surfaces when the hub's registry
-  GenServer is mid-restart alongside `dist_sup`; the dist_sup heals on
-  its own and the next attempt succeeds. Stable-state failure (8
-  attempts, ~14 s of wait) propagates.
-  """
-  @spec update_relay_plugins(
-          String.t(),
-          String.t(),
-          ([{binary(), Plugin.t()}] -> [{binary(), Plugin.t()}])
-        ) :: :ok | {:error, term()}
-  def update_relay_plugins(namespace, relay_id, update_fn)
-      when is_function(update_fn, 1) do
-    do_update_relay_plugins(namespace, relay_id, update_fn, 0)
-  end
-
-  @doc """
   Read the current plugin list embedded in a relay's child-spec
   start args. Returns `{:ok, [{plugin_id, %Flezha.Plugin{}}]}` (entries
   are normalised to tuple form regardless of how they are stored).
@@ -273,42 +243,15 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  defp do_update_relay_plugins(namespace, relay_id, update_fn, attempt) do
-    hub_id = Identificator.hub(namespace)
-
-    case ProcessHub.is_alive?(hub_id) do
-      false ->
-        {:error, "hub not alive"}
-
-      true ->
-        result =
-          try do
-            ProcessRegistry.update(hub_id, relay_id, fn cspec, node_pids, metadata ->
-              {update_cspec_plugins(cspec, update_fn), node_pids, metadata}
-            end)
-          catch
-            :exit, _ -> {:error, :no_response}
-          end
-
-        cond do
-          result == :ok ->
-            :ok
-
-          match?({:error, :no_response}, result) and
-              attempt < @no_response_retry_attempts ->
-            backoff =
-              min(@no_response_retry_initial_ms * Bitwise.bsl(1, attempt), 5_000)
-
-            Process.sleep(backoff)
-            do_update_relay_plugins(namespace, relay_id, update_fn, attempt + 1)
-
-          true ->
-            result
-        end
-    end
-  end
-
-  defp update_cspec_plugins(%{start: {m, f, [arg]}} = cspec, update_fn) do
+  @doc """
+  Apply `update_fn` to the plugin list embedded in a child-spec's
+  start-args and return the rewritten cspec. Used by
+  `Flezha.Service.PluginManager` when it issues a registry-write-first
+  cspec update through `ProcessHub.Service.ProcessRegistry.update/3`.
+  """
+  @spec rewrite_cspec_plugins(map(), ([{binary(), Plugin.t()}] -> [{binary(), Plugin.t()}])) ::
+          map()
+  def rewrite_cspec_plugins(%{start: {m, f, [arg]}} = cspec, update_fn) do
     new_arg =
       case arg do
         {namespace, relay} ->
@@ -380,17 +323,17 @@ defmodule Flezha.Service.HubManager do
   defp process_hub(namespace) do
     hub_id = Identificator.hub(namespace)
 
-    # TODO: The hub settings should be configurable.
     ProcessHub.child_spec(%ProcessHub{
       hub_id: hub_id,
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
       redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
-      # TODO: we may want to provide options for the partition tolerance strategy.
       partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
       distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
         handover: true
       },
+      registry_backend: {:dets, [path: registry_path(hub_id)]},
+      auto_recovery: auto_recovery_config(),
       # Relay startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
       cross_node_request_timeout: 10_000,
@@ -405,5 +348,25 @@ defmodule Flezha.Service.HubManager do
         ]
       }
     })
+  end
+
+  defp registry_path(hub_id) do
+    root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
+    dir = Path.join(root, Atom.to_string(hub_id))
+    File.mkdir_p!(dir)
+    Path.join(dir, "registry.dets")
+  end
+
+  defp auto_recovery_config() do
+    case Application.get_env(:flezha, :auto_restore_enabled, true) do
+      false ->
+        false
+
+      _ ->
+        [
+          recovery_window_ms: Application.get_env(:flezha, :recovery_window_ms, 10_000),
+          replay_timeout_ms: Application.get_env(:flezha, :boot_replay_timeout_ms, 60_000)
+        ]
+    end
   end
 end

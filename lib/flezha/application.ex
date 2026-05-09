@@ -3,8 +3,6 @@ defmodule Flezha.Application do
 
   alias Flezha.Executor.FleetManager
 
-  require Logger
-
   use Application
 
   @impl true
@@ -17,6 +15,8 @@ defmodule Flezha.Application do
          function_exported?(LoggerBackends, :add, 1) do
       _ = LoggerBackends.add({LoggerFileBackend, :file_log})
     end
+
+    _ = Flezha.Boot.StatePathMigrator.migrate()
 
     children =
       [
@@ -56,25 +56,9 @@ defmodule Flezha.Application do
     opts = [strategy: :one_for_one, name: Flezha.Supervisor]
     result = Supervisor.start_link(children, opts)
 
-    log_overwatch_state_snapshot_config()
     validate_boot_ready()
 
     result
-  end
-
-  # Boot log for the Overwatch periodic state-snapshot task (design §D8).
-  # Emits exactly once per controller boot.
-  defp log_overwatch_state_snapshot_config do
-    case Application.get_env(:flezha, :overwatch_state_snapshot_interval_ms, 60_000) do
-      0 ->
-        Logger.info("[overwatch] state_snapshot=disabled source_of_truth=postgres")
-
-      n when is_integer(n) and n > 0 ->
-        Logger.info("[overwatch] state_snapshot=interval_ms=#{n}")
-
-      other ->
-        Logger.info("[overwatch] state_snapshot=unrecognised(#{inspect(other)})")
-    end
   end
 
   @impl true

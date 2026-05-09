@@ -215,48 +215,20 @@ may be retried later.
 
 ## State snapshots for handover and restart
 
-Independent of HotSwap migration, each relay (`Overwatch` GenServer)
-periodically captures its state via the `:on_snapshot` extension hook. The
-interval is configured by `overwatch_state_snapshot_interval_ms` (default
-60 s); a value of `0` disables it. The captured snapshot is held in memory in
-the Overwatch struct's `snapshot` field — it is **not persisted to disk**.
+State persistence is split between two layers:
 
-The snapshot is consumed in three places:
-
-1. HotSwap's `prepare_handover_state` returns it as part of the migration
-   payload, so a graceful migration ships the most recent snapshot in addition
-   to the live in-memory state.
-2. The manual `flz cluster snapshot` CLI captures every running relay's
-   snapshot into the snapshot file, so a later `flz cluster restore` can
-   re-issue the relay and replay its state.
-3. The reconnect-healing path (introduced by `heal-connections-on-restart`)
-   ships `Overwatch.state.snapshot` to a fresh executor instance via the
-   `AddRelay` reissue's `initial_state_binary` opt, so the new executor
-   resumes from the most recent periodic capture rather than `init_values`.
-
-In addition to the periodic capture, the SDK can ship a fresh snapshot at
-graceful-shutdown time (introduced by `ship-fresh-state-on-sdk-shutdown`):
-
-4. On graceful shutdown (SIGTERM, `Drop` of the SDK handle, explicit
-   `disconnect()`) the SDK serializes each running relay's state via
-   the same per-driver path used for `MigrationSerialization` and emits
-   one `OperatorShutdownNotification{relay_id, serialized_state}` per
-   relay on the control channel. The controller's `ControlChannel` casts
-   the binary to the corresponding `Overwatch` GenServer
-   (`{:apply_external_snapshot, binary}`) and immediately emits an
-   `OperatorShutdownAck`. This bypasses the periodic-capture cadence so
-   a rolling restart preserves up-to-the-microsecond state regardless
-   of how stale the last `:on_snapshot` was — and works even when
-   periodic snapshots are disabled (item 4 is the only `state.snapshot`
-   source for `snapshot_interval == 0` deployments). SIGKILL bypasses
-   it as expected; the controller falls back to whatever the last periodic
-   capture saw, exactly as today.
-
-For `flezha_market` and similar deployments where Postgres (populated by
-Kafka) is the authoritative store, the env var is set to `0` to disable the
-secondary periodic snapshot and avoid drift. Item 4 still applies — the
-graceful-shutdown notification primes a one-shot snapshot used only by the
-next `AddRelay` reissue, then is overwritten on the next shutdown.
+* **HotSwap migration** uses an in-memory snapshot captured by
+  `prepare_handover_state` and consumed by `alter_handover_state/2` on
+  the destination — see `lib/flezha/relay/overwatch.ex`. The destination
+  also pulls the source's WAL/snapshot files via
+  `Flezha.Boot.WalTransfer.stream/2` so the per-Partition log follows
+  the relay (the WAL-follows-relay rule from `auto-restore-on-boot`).
+* **Cold-boot restart** is covered by the per-Partition WAL/snapshot
+  files in `app_data/state/{relay_class}/{shard_id}/...`
+  (`docs/controller_state_persistence.md`) plus ProcessHub's persistent
+  registry under `app_data/process_hub/{hub_id}/registry.dets`. There is
+  no periodic in-memory snapshot loop and no `flz cluster snapshot`
+  CLI — those were removed by the `auto-restore-on-boot` change.
 
 ## Executor → controller discovery and connection
 
@@ -280,20 +252,18 @@ next `AddRelay` reissue, then is overwritten on the next shutdown.
 
 These are common assumptions to double-check against the actual code:
 
-- **No automatic snapshot-on-shutdown.** `Application.prep_stop/1` only stops
-  `HubManager`. There is no SIGTERM handler that snapshots state. Snapshots
-  are executor-initiated via `flz cluster snapshot`.
-- **No automatic restore-on-boot.** `Application.start/2` does not read any
-  snapshot file. Restoration is executor-initiated via `flz cluster restore`.
+- **Auto-restore-on-boot exists** via ProcessHub's durable registry +
+  per-Partition WAL/snapshot files. See `docs/auto_restore_on_boot.md`
+  for the full safety analysis. Anything beyond that boundary
+  (out-of-cluster portable backups, point-in-time-to-arbitrary-past)
+  is out of scope.
 - **No persistent FleetManager state.** `executor_namespaces` and
   `namespace_factories` live only in the FleetManager GenServer. Restarting
-  the controller process loses them entirely.
+  the controller process loses them entirely; ProcessHub's
+  `pre_recovery_replay` hook waits for FleetManager to repopulate
+  before replay dispatches `start_children`.
 - **No persistent executor → relay assignment.** Assignment is recomputed
   every time `child_data_alter` fires; nothing is stored.
-- **No DETS recovery subsystem.** It was designed and archived under
-  `openspec/changes/archive/2026-04-21-add-failure-recovery-mode/` but never
-  built. The `FLEZHA_RECOVERY_*` env vars and the `flezha-recovery` k8s
-  hostPath volume are vestigial — config is parsed, no module reads it.
 - **No multi-controller discovery in the SDK.** An executor does not failover to
   another controller if its local one is gone — it waits forever for the local one
   to return.
@@ -305,31 +275,36 @@ These are common assumptions to double-check against the actual code:
 | Hub spec, hooks, alter_child_data | `lib/flezha/service/hub_manager.ex` |
 | Executor selection (random within namespace+factory) | `lib/flezha/service/relay_manager.ex` |
 | FleetManager (tracks executors, factories, disconnect branches) | `lib/flezha/executor/fleet_manager.ex` |
-| Relay wrapper, HotSwap callbacks, periodic snapshot | `lib/flezha/relay/overwatch.ex` |
+| Relay wrapper, HotSwap callbacks | `lib/flezha/relay/overwatch.ex` |
 | Control channel (executor handshake, EOF detection) | `lib/flezha/executor/control_channel.ex` |
 | Stream channels, attach/detach, frame routing | `lib/flezha/executor/stream_channel.ex` |
 | UDS stream acceptance and round-robin | `lib/flezha/socket/stream_acceptor.ex` |
-| Manual cluster snapshot / restore | `lib/flezha/cluster/snapshot.ex` and `lib/flezha/cluster/snapshot/coordinator.ex` |
 | Rust SDK reconnect loop | `sdk/rust/src/executor/control_unit.rs` |
 | Rust SDK reconnect handler | `sdk/rust/src/executor/{fast,legacy}.rs` `handle_reconnect` |
 
 ## Plugin subscriptions persistence
 
 The ProcessHub child-spec is the source of truth for a relay's
-plugin subscriptions. `relay.opts[:plugins]` (embedded inside the
-cspec start args) carries the authoritative list; the runtime
-`Overwatch.state.extensions` table is a derived projection rebuilt
-from it on every `init/1`. Every successful
-`Flezha.Service.PluginManager.enable_plugin/2` writes through to the
-cspec via `Flezha.Service.HubManager.update_relay_plugins/3`,
-and `disable_plugin/1` removes from the cspec before issuing the
-unsubscribe. As a result every Overwatch (re)start path — cold
+plugin subscriptions, and ProcessHub's **persistent registry** (the
+`durable-registry` capability with `registry_backend: {:dets, ...}`)
+makes that source of truth survive any controller restart.
+`relay.opts[:plugins]` (embedded inside the cspec start args) carries
+the authoritative list; the runtime `Overwatch.state.extensions`
+table is a derived projection rebuilt from it on every `init/1`.
+
+`Flezha.Service.PluginManager.enable_plugin/2` and `disable_plugin/1`
+follow a registry-write-first ordering: the cspec is rewritten via
+`ProcessHub.Service.ProcessRegistry.update/3` (durably persisted to
+DETS), and only after that succeeds is the runtime
+`:plugin_subscribe` / `:plugin_unsubscribe` message dispatched to the
+Overwatch. If the registry write fails, the call returns
+`{:error, :registry_unavailable}` without mutating the runtime — the
+caller can retry. As a result every Overwatch (re)start path — cold
 start, ProcessHub redistribution, in-place restart from
-`alter_child_data` rewriting start args, controller process restart with
-intact ProcessHub state, and HotSwap migration — restores the same
-plugin set without executor intervention. See
-`openspec/specs/plugin-subscription-persistence/spec.md` for the
-full contract.
+`alter_child_data` rewriting start args, controller process restart
+(or full cluster cold boot, since the persistent registry survives),
+and HotSwap migration — restores the same plugin set without executor
+intervention.
 
 This persistence layer is independent of the per-Partition WAL +
 snapshot persistence in `lib/flezha/state/` (`docs/controller_state_persistence.md`):
@@ -361,6 +336,6 @@ v1).
 
 - `docs/sdk_protocol_spec.md` — wire-level binary framing and protobuf commands.
 - `docs/controller_state_persistence.md` — per-Partition WAL, snapshot, and time-travel.
-- `docs/cluster-snapshot.md` — manual snapshot/restore CLI semantics.
+- `docs/auto_restore_on_boot.md` — the single auto-restore mechanism (ProcessHub durable registry + per-Partition WAL).
 - `docs/nif_architecture.md` — transport NIF design (UDS + QUIC drivers).
 - `docs/deployment.md` — k8s DaemonSet layout, env vars, hostPath volumes.

@@ -134,36 +134,24 @@ config :flezha,
   external_processes: external_processes,
 
   # ------------------------------------------------------------------------------------------------
-  # Per-relay cap on captured-state size when writing a cluster snapshot.
-  # Relays whose serialised state exceeds the cap are written to the
-  # snapshot without their state binary; restore primes them with empty
-  # default state and a one-time INFO log names the relay id.
-  snapshot_state_cap_bytes:
-    (case Integer.parse(System.get_env("FLEZHA_SNAPSHOT_STATE_CAP_BYTES", "8388608")) do
-       {n, ""} when n > 0 -> n
-       _ -> 8_388_608
-     end),
-
-  # ------------------------------------------------------------------------------------------------
-  # Overwatch periodic state-snapshot task (design §D8).
+  # ProcessHub durable-registry + auto-recovery (auto-restore-on-boot).
   #
-  # `FLEZHA_OVERWATCH_STATE_SNAPSHOT_INTERVAL_MS` gates the background timer
-  # that asks each running relay for an in-memory state snapshot and
-  # fanouts to `:on_snapshot` subscribers. A value of `"0"` or `"disabled"`
-  # stops the timer from being scheduled — the default, since flezha_market
-  # treats Postgres (populated by Kafka-consumed rows) as the authoritative
-  # store and any second on-disk copy would drift.
-  overwatch_state_snapshot_interval_ms:
-    (case System.get_env("FLEZHA_OVERWATCH_STATE_SNAPSHOT_INTERVAL_MS", "0") do
-       "disabled" ->
-         0
-
-       raw ->
-         case Integer.parse(raw) do
-           {n, ""} when n >= 0 -> n
-           _ -> 0
-         end
-     end),
+  # `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` is the parent directory under which
+  # each per-namespace hub stores `<root>/<hub_id>/registry.dets`.
+  # `FLEZHA_AUTO_RESTORE_ENABLED=false` disables the auto-recovery state
+  # machine without losing the durable registry record.
+  process_hub_registry_root:
+    System.get_env("FLEZHA_PROCESS_HUB_REGISTRY_ROOT", "app_data/process_hub"),
+  recovery_window_ms:
+    System.get_env("FLEZHA_RECOVERY_WINDOW_MS", "10000") |> String.to_integer(),
+  boot_replay_timeout_ms:
+    System.get_env("FLEZHA_BOOT_REPLAY_TIMEOUT_MS", "60000") |> String.to_integer(),
+  auto_restore_enabled:
+    System.get_env("FLEZHA_AUTO_RESTORE_ENABLED", "true") in ["true", "1"],
+  pre_replay_fleet_wait_ms:
+    System.get_env("FLEZHA_PRE_REPLAY_FLEET_WAIT_MS", "30000") |> String.to_integer(),
+  wal_transfer_query_timeout_ms:
+    System.get_env("FLEZHA_WAL_TRANSFER_QUERY_TIMEOUT_MS", "5000") |> String.to_integer(),
 
   # ------------------------------------------------------------------------------------------------
   # Installable plugin subsystem — staged rollout lever. See

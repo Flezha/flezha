@@ -9,16 +9,10 @@ defmodule Flezha.Relay.Builder do
 
     * `:default_input_type` — string tag for the relay's default input
       type (used by the Overwatch's `:io_in` handler when metadata omits it).
-    * `:snapshot_interval` — overrides the controller-wide
-      `FLEZHA_OVERWATCH_STATE_SNAPSHOT_INTERVAL_MS` for this relay.
-      Accepts a non-negative integer (ms), the string `"disabled"`, or `:disabled`.
     * `:plugins` — list of `%Flezha.Plugin{}` to subscribe at relay start.
-    * `:initial_state_binary` — opaque SDK-serialised state binary handed to
-      the compute engine via the `PartitionApplyState` control command before
-      the first input is forwarded. Used by `Flezha.Cluster.Snapshot` on
-      restore so a re-spawned relay begins with primed state. SDKs that
-      do not implement Apply respond with `apply_state_not_supported` and
-      the relay proceeds with empty default state.
+    * `:relay_class` — optional string overriding the relay class identifier
+      used as the on-disk persistence key under
+      `app_data/state/{relay_class}/`. Defaults to `relay.id` when absent.
   """
 
   alias Flezha.Service.Validator

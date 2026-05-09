@@ -60,6 +60,6 @@ defmodule Flezha.State.TestHelpers do
   """
   @spec sample_partition_id(binary()) :: Registry.partition_id()
   def sample_partition_id(suffix \\ "p1") do
-    {"ce-test", "TestRelay", "TestShard", suffix}
+    {"TestRelay", "TestShard", suffix}
   end
 end

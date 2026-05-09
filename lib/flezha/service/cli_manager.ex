@@ -784,113 +784,150 @@ defmodule Flezha.Service.CliManager do
   defp normalize_namespace(""), do: "default"
   defp normalize_namespace(namespace), do: namespace
 
-  ## Cluster snapshot/restore -------------------------------------------------
+  ## Boot status / await / legacy snapshot import ----------------------------
 
   @doc """
-  Capture a cluster snapshot to `path`. Wired by `flz cluster snapshot`.
-  Prints a one-line executor summary and exits with a non-zero status when
-  the coordinator returns `{:error, _}`.
+  `flz boot status` — per-namespace recovery state and persistent-registry
+  row count. Returns immediately; for blocking semantics use `boot_await/1`.
   """
-  def cluster_snapshot(path, opts_json \\ "{}") do
-    opts = decode_cluster_opts(opts_json)
-    coord_opts = build_snapshot_opts(opts)
+  def boot_status() do
+    rows =
+      Flezha.Service.HubManager.get_running_namespaces()
+      |> Enum.map(fn namespace ->
+        hub_id = Flezha.Service.Identificator.hub(namespace)
+        recovery_state = safe_recovery_state(hub_id)
+        registry_count = safe_registry_count(hub_id)
 
-    case Flezha.Cluster.Snapshot.Coordinator.snapshot(path, coord_opts) do
-      {:ok, %{relays: p, plugins: pl, bytes: b}} ->
-        IO.puts("snapshot: #{p} relays, #{pl} plugins, #{b} bytes written to #{path}")
+        %{namespace: namespace, recovery_state: recovery_state, registry_rows: registry_count}
+      end)
 
-      {:error, reason} ->
-        IO.puts(:stderr, "snapshot failed: #{inspect(reason)}")
+    IO.puts("namespace                          recovery_state    registry_rows")
+    IO.puts("----------------------------------------------------------------")
+
+    Enum.each(rows, fn row ->
+      IO.puts(
+        String.pad_trailing(row.namespace, 35) <>
+          String.pad_trailing(Atom.to_string(row.recovery_state), 17) <>
+          Integer.to_string(row.registry_rows)
+      )
+    end)
+
+    :ok
+  end
+
+  defp safe_recovery_state(hub_id) do
+    try do
+      ProcessHub.recovery_state(hub_id)
+    catch
+      _, _ -> :unknown
+    end
+  end
+
+  defp safe_registry_count(hub_id) do
+    try do
+      hub_id |> ProcessHub.registry_dump() |> Enum.count()
+    catch
+      _, _ -> 0
+    end
+  end
+
+  @doc """
+  `flz boot await --timeout SECS` — block until every namespace hub
+  reports `:normal`, or the per-hub timeout elapses.
+  """
+  def boot_await(timeout_ms \\ 60_000) when is_integer(timeout_ms) do
+    namespaces = Flezha.Service.HubManager.get_running_namespaces()
+
+    failures =
+      Enum.flat_map(namespaces, fn namespace ->
+        hub_id = Flezha.Service.Identificator.hub(namespace)
+
+        try do
+          case ProcessHub.await_normal(hub_id, timeout_ms) do
+            :ok -> []
+            {:error, reason} -> [{namespace, reason}]
+            other -> [{namespace, other}]
+          end
+        catch
+          kind, reason -> [{namespace, {kind, reason}}]
+        end
+      end)
+
+    case failures do
+      [] ->
+        IO.puts("boot await: all namespaces reached :normal")
+        :ok
+
+      _ ->
+        Enum.each(failures, fn {ns, reason} ->
+          IO.puts(:stderr, "boot await: #{ns}: #{inspect(reason)}")
+        end)
+
         System.halt(1)
     end
   end
 
   @doc """
-  Restore a cluster snapshot from `path`. Wired by `flz cluster restore`.
-  Prints a one-line executor summary and exits with a non-zero status when
-  the coordinator returns `{:error, _}`.
+  `flz boot import-legacy-snapshot <file> [--force]` — read a legacy `.flz`
+  ETF snapshot and write each relay's child spec into ProcessHub's
+  persistent registry via `start_children/3`. Refuses to import on a
+  non-empty hub unless `force?` is `true`.
   """
-  def cluster_restore(path, opts_json \\ "{}") do
-    opts = decode_cluster_opts(opts_json)
-    coord_opts = build_restore_opts(opts)
-
-    case Flezha.Cluster.Snapshot.Coordinator.restore(path, coord_opts) do
-      {:ok, %{relays: p, plugins: pl}} ->
-        IO.puts("restore: #{p} relays, #{pl} plugins applied from #{path}")
-
+  def boot_import_legacy_snapshot(path, force? \\ false) do
+    with {:ok, blob} <- File.read(path),
+         {:ok, decoded} <- safe_binary_to_term(blob),
+         {:ok, payload} <- validate_legacy_payload(decoded),
+         :ok <- ensure_force_or_empty(payload, force?) do
+      run_legacy_import(payload)
+    else
       {:error, reason} ->
-        IO.puts(:stderr, "restore failed: #{inspect(reason)}")
+        IO.puts(:stderr, "boot import-legacy-snapshot: #{inspect(reason)}")
         System.halt(1)
     end
   end
 
-  defp decode_cluster_opts(""), do: %{}
-  defp decode_cluster_opts("{}"), do: %{}
-
-  defp decode_cluster_opts(json) when is_binary(json) do
-    case Jason.decode(json) do
-      {:ok, map} when is_map(map) -> map
-      _ -> %{}
+  defp safe_binary_to_term(blob) do
+    try do
+      {:ok, :erlang.binary_to_term(blob, [:safe])}
+    rescue
+      _ -> {:error, :corrupt_snapshot}
     end
   end
 
-  defp build_snapshot_opts(map) do
-    namespace = Map.get(map, "namespace")
-    namespace = if is_binary(namespace) and namespace != "", do: namespace, else: nil
+  defp validate_legacy_payload({:flezha_snapshot, 1, payload}) when is_map(payload),
+    do: {:ok, payload}
 
-    [
-      peer_timeout_ms: parse_pos_int(Map.get(map, "peer_timeout_ms"), 5_000),
-      strict?: parse_bool(Map.get(map, "strict"), false),
-      namespace: namespace
-    ]
+  defp validate_legacy_payload(_), do: {:error, :unsupported_snapshot_format}
+
+  defp ensure_force_or_empty(_payload, true), do: :ok
+
+  defp ensure_force_or_empty(payload, false) do
+    namespaces = Map.get(payload, :namespaces, [])
+
+    Enum.find_value(namespaces, :ok, fn ns ->
+      hub_id = Flezha.Service.Identificator.hub(ns)
+
+      if safe_registry_count(hub_id) > 0 do
+        {:error, {:hub_not_empty, ns}}
+      else
+        nil
+      end
+    end)
   end
 
-  defp build_restore_opts(map) do
-    namespace = Map.get(map, "namespace")
-    namespace = if is_binary(namespace) and namespace != "", do: namespace, else: nil
+  defp run_legacy_import(payload) do
+    relays = Map.get(payload, :relays, [])
 
-    [
-      peer_timeout_ms: parse_pos_int(Map.get(map, "peer_timeout_ms"), 5_000),
-      warn_if_older_than_ms: parse_duration(Map.get(map, "warn_if_older_than")),
-      namespace: namespace
-    ]
+    Enum.each(relays, fn entry ->
+      namespace = Map.fetch!(entry, :namespace)
+      cspec = Map.fetch!(entry, :cspec)
+      hub_id = Flezha.Service.Identificator.hub(namespace)
+      _ = ProcessHub.start_children(hub_id, [cspec], async_wait: false)
+    end)
+
+    IO.puts("boot import-legacy-snapshot: imported #{length(relays)} relays")
+    :ok
   end
-
-  defp parse_pos_int(nil, default), do: default
-  defp parse_pos_int(n, _default) when is_integer(n) and n > 0, do: n
-
-  defp parse_pos_int(n, default) when is_binary(n) do
-    case Integer.parse(n) do
-      {parsed, ""} when parsed > 0 -> parsed
-      _ -> default
-    end
-  end
-
-  defp parse_pos_int(_, default), do: default
-
-  defp parse_bool(true, _), do: true
-  defp parse_bool("true", _), do: true
-  defp parse_bool(_, default), do: default
-
-  # Accepts integers (raw ms), binary durations like "30s", "10m", "12h", "7d",
-  # or `nil`/empty (treated as `:infinity`).
-  defp parse_duration(nil), do: :infinity
-  defp parse_duration(""), do: :infinity
-  defp parse_duration("infinity"), do: :infinity
-  defp parse_duration(n) when is_integer(n) and n > 0, do: n
-
-  defp parse_duration(s) when is_binary(s) do
-    case Regex.run(~r/^(\d+)([smhd]?)$/, s) do
-      [_, num, ""] -> String.to_integer(num)
-      [_, num, "s"] -> String.to_integer(num) * 1_000
-      [_, num, "m"] -> String.to_integer(num) * 60 * 1_000
-      [_, num, "h"] -> String.to_integer(num) * 60 * 60 * 1_000
-      [_, num, "d"] -> String.to_integer(num) * 24 * 60 * 60 * 1_000
-      _ -> :infinity
-    end
-  end
-
-  defp parse_duration(_), do: :infinity
 
   # ---------- `flz state` subcommand handlers ----------
 
@@ -900,7 +937,7 @@ defmodule Flezha.Service.CliManager do
   """
   def state_list(relay_class, output_format \\ "text") do
     rows =
-      for {{_ce, rc, sh, pk} = pid, counters} <- Flezha.State.Metrics.snapshot_all(),
+      for {{rc, sh, pk} = pid, counters} <- Flezha.State.Metrics.snapshot_all(),
           rc == relay_class do
         wal_bytes =
           case :file.read_file_info(Flezha.State.Registry.wal_path(pid)) do
@@ -983,7 +1020,7 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp print_state_at(partition_id, target, result, _) do
-    {_, rc, sh, pk} = partition_id
+    {rc, sh, pk} = partition_id
 
     IO.puts("state at #{rc}/#{sh}/#{pk} target=#{inspect(target)}:")
     IO.puts("  terminal_seq:    #{result.terminal_seq}")
@@ -997,19 +1034,50 @@ defmodule Flezha.Service.CliManager do
   """
   def state_rotate(path_string) do
     case parse_state_path(path_string) do
-      {:ok, {ce, rc, sh, pk}} ->
-        case Flezha.Relay.Overwatch.dispatch_compact_partition(ce, {rc, sh, pk}) do
-          {:ok, _ref} ->
-            IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
+      {:ok, {rc, sh, pk}} ->
+        case lookup_executor_for_partition(rc, sh, pk) do
+          {:ok, executor_id} ->
+            case Flezha.Relay.Overwatch.dispatch_compact_partition(executor_id, {rc, sh, pk}) do
+              {:ok, _ref} ->
+                IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
+
+              {:error, reason} ->
+                IO.puts(:stderr, "state rotate: #{inspect(reason)}")
+                System.halt(1)
+            end
 
           {:error, reason} ->
-            IO.puts(:stderr, "state rotate: #{inspect(reason)}")
+            IO.puts(:stderr, "state rotate: #{reason}")
             System.halt(1)
         end
 
       {:error, reason} ->
         IO.puts(:stderr, "state rotate: #{reason}")
         System.halt(1)
+    end
+  end
+
+  defp lookup_executor_for_partition(rc, _sh, _pk) do
+    namespace = "default"
+
+    case Flezha.Service.HubManager.get_registry(namespace) do
+      {:ok, registry} ->
+        match =
+          Enum.find_value(registry, fn
+            {_relay_id, %{metadata: %{tag: tag, relay: %{relay_class: ^rc}}}} when is_binary(tag) ->
+              tag
+
+            _ ->
+              nil
+          end)
+
+        case match do
+          nil -> {:error, "no active executor owns relay_class=#{rc}"}
+          eid -> {:ok, eid}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -1035,10 +1103,10 @@ defmodule Flezha.Service.CliManager do
   defp parse_state_path(path_string) do
     case String.split(path_string, "/", parts: 3) do
       [rc, sh, pk] ->
-        case find_executor_for(rc, sh, pk) do
-          {:ok, ce} -> {:ok, {ce, rc, sh, pk}}
-          :ambiguous -> {:error, "ambiguous path #{path_string} (multiple compute engines)"}
-          :not_found -> {:error, "no persisted state at #{path_string}"}
+        if has_persisted_state?(rc, sh, pk) do
+          {:ok, {rc, sh, pk}}
+        else
+          {:error, "no persisted state at #{path_string}"}
         end
 
       _ ->
@@ -1046,16 +1114,10 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp find_executor_for(rc, sh, pk) do
-    matches =
-      Flezha.State.Registry.all_partitions()
-      |> Enum.filter(fn {_, r, s, p} -> r == rc and s == sh and p == pk end)
-
-    case matches do
-      [{ce, _, _, _}] -> {:ok, ce}
-      [] -> :not_found
-      _ -> :ambiguous
-    end
+  defp has_persisted_state?(rc, sh, pk) do
+    Enum.any?(Flezha.State.Registry.all_partitions(), fn {r, s, p} ->
+      r == rc and s == sh and p == pk
+    end)
   end
 
   defp parse_state_target(s) do

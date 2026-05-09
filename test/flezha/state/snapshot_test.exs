@@ -69,7 +69,7 @@ defmodule Flezha.State.SnapshotTest do
 
     # Hand-craft a leftover .tmp like a crash mid-write would leave.
     dir = Registry.state_dir(pid)
-    {_, _, _, key} = pid
+    {_, _, key} = pid
     tmp = Path.join(dir, Registry.encode_partition_key(key) <> ".snap.99.tmp")
     File.write!(tmp, "garbage-not-a-snapshot")
 

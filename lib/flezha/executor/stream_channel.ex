@@ -148,10 +148,10 @@ defmodule Flezha.Executor.StreamChannel do
     {:noreply, state}
   end
 
-  defp handle_partition_state_change(executor_id, frame) do
+  defp handle_partition_state_change(_executor_id, frame) do
     case StateWire.decode_frame(frame) do
       {:ok, %{partition_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
-        partition_id = {executor_id, rc, sh, pk}
+        partition_id = {rc, sh, pk}
 
         case Flezha.State.Supervisor.find_or_start(partition_id) do
           {:ok, pid} ->
@@ -171,10 +171,10 @@ defmodule Flezha.Executor.StreamChannel do
     end
   end
 
-  defp handle_partition_state_snapshot(executor_id, frame) do
+  defp handle_partition_state_snapshot(_executor_id, frame) do
     case StateWire.decode_frame(frame) do
       {:ok, %{partition_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
-        partition_id = {executor_id, rc, sh, pk}
+        partition_id = {rc, sh, pk}
 
         case Flezha.State.Snapshot.write_snapshot(partition_id, seq, header, body) do
           {:ok, _path} ->

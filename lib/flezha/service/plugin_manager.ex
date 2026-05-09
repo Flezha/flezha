@@ -4,11 +4,16 @@ defmodule Flezha.Service.PluginManager do
   `enable_plugin/2` into the owning relay's Overwatch via the unified
   `{:plugin_subscribe, ...}` / `{:plugin_unsubscribe, ...}` messages and
   persists the subscription into the relay's ProcessHub child-spec
-  so it survives any subsequent Overwatch (re)start.
+  (now backed by ProcessHub's durable registry) so it survives any
+  subsequent Overwatch (re)start, controller restart, or full cluster
+  cold boot.
 
-  The cspec is the source of truth for plugin subscriptions; the
-  runtime `Overwatch.state.extensions` table is rebuilt from the cspec
-  on every `init/1`.
+  Ordering: cspec-write-first, then runtime mutation. A successful
+  subscribe is always preceded by a durable record. Failure to write
+  the cspec returns `{:error, :registry_unavailable}` without touching
+  the runtime — the caller can retry. Failure of the subsequent runtime
+  call returns the error directly; the durable record is still in
+  place, and the next `Overwatch.init/1` will reconcile.
   """
 
   use GenServer
@@ -17,7 +22,12 @@ defmodule Flezha.Service.PluginManager do
 
   alias Flezha.Plugin
   alias Flezha.Service.HubManager
+  alias Flezha.Service.Identificator
   alias Flezha.Service.RelayManager
+  alias ProcessHub.Service.ProcessRegistry
+
+  @no_response_retry_attempts 8
+  @no_response_retry_initial_ms 150
 
   ## Public API
 
@@ -34,9 +44,6 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  # `:on_relay_init` fires exactly once during `Overwatch.init/1`. Late
-  # enable via `flz plugin enable` cannot hook it — returning an explicit
-  # error keeps executors from silently losing init-state wiring.
   defp has_init_subscription?(%Plugin{subscriptions: subs}) when is_list(subs) do
     Enum.any?(subs, fn
       {:on_relay_init, _} -> true
@@ -54,28 +61,11 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  @doc """
-  Disable every plugin whose `(namespace, relay_id)` tuple matches the
-  given pair. Used by `RelayManager.stop_relay/2` and
-  `RelayManager.stop_all_relays/1` to drop registry entries that would
-  otherwise survive into the next test or relay restart and surface as
-  `{:error, "plugin already registered"}` on re-enable.
-
-  Returns `:ok` after attempting to disable each matching plugin
-  individually; a single failure does not block subsequent plugins.
-  """
   def disable_relay_plugins(namespace, relay_id)
       when is_binary(namespace) and is_binary(relay_id) do
     GenServer.call(__MODULE__, {:disable_relay_plugins, namespace, relay_id})
   end
 
-  @doc """
-  Disable every plugin registered against the given namespace, regardless
-  of `relay_id`. Used by `Flezha.Executor.FleetManager.stop_namespace/1`
-  for namespace teardown — once the namespace is being dropped, every
-  plugin keyed against it must drop too or the next test re-using a
-  same-named relay collides on `{:error, "plugin already registered"}`.
-  """
   def disable_namespace_plugins(namespace) when is_binary(namespace) do
     GenServer.call(__MODULE__, {:disable_namespace_plugins, namespace})
   end
@@ -112,15 +102,10 @@ defmodule Flezha.Service.PluginManager do
   def handle_call({:enable_plugin, plugin_id, %Plugin{} = plugin}, _from, state) do
     {reply, new_state} =
       with :ok <- plugin_id_unique(state, plugin_id),
+           :ok <- check_relay_target(plugin),
+           :ok <- write_enable_to_cspec(plugin, plugin_id),
            {:ok, pid} <- resolve_relay(plugin),
            :ok <- forward_subscribe(pid, plugin_id, plugin) do
-        # Per design.md Decision 2: subscribe-first, cspec-update-second.
-        # If the cspec write fails after a successful subscribe, the
-        # runtime is correct but the cspec is stale; log at :error so
-        # executors see the divergence and reply :ok (the next plugin op
-        # for this relay will canonicalise the cspec).
-        persist_enable_to_cspec(plugin, plugin_id)
-
         {{:ok, "plugin enabled"}, Map.put(state, plugin_id, {plugin.namespace, plugin.relay_id})}
       else
         err -> {err, state}
@@ -135,16 +120,7 @@ defmodule Flezha.Service.PluginManager do
         {:reply, {:error, "plugin not found"}, state}
 
       {namespace, relay_id} ->
-        # Per design.md Decision 2: cspec-update-first, unsubscribe-second
-        # for the disable path. If the cspec update fails the unsubscribe
-        # SHALL NOT run — surface the error so the caller can retry. If
-        # the unsubscribe fails after the cspec has already been
-        # rewritten, the runtime extensions table is stale-but-correct
-        # (still subscribed); the next Overwatch (re)start re-subscribes
-        # only the cspec-listed plugins, dropping the stale entry.
-        case HubManager.update_relay_plugins(namespace, relay_id, fn plugins ->
-               Enum.reject(plugins, fn {id, _plugin} -> id == plugin_id end)
-             end) do
+        case write_disable_to_cspec(namespace, relay_id, plugin_id) do
           :ok ->
             case RelayManager.get_relay_pid(namespace, relay_id) do
               {:ok, pid} ->
@@ -152,13 +128,10 @@ defmodule Flezha.Service.PluginManager do
                 {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
 
               _ ->
-                # Relay gone — treat as disabled locally.
                 {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
             end
 
-          {:error, "relay not found"} ->
-            # Relay gone — treat as disabled locally; cspec already
-            # absent so there is nothing to canonicalise.
+          {:error, :relay_not_found} ->
             {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
 
           {:error, reason} ->
@@ -198,21 +171,11 @@ defmodule Flezha.Service.PluginManager do
             acc
 
           {ns, rid} ->
-            # Best-effort cleanup: rewrite the cspec, then unsubscribe
-            # the runtime extension. We tolerate failures from both —
-            # `stop_relay` is the caller's last hook before the relay
-            # process exits, so the runtime is about to disappear anyway.
-            case HubManager.update_relay_plugins(ns, rid, fn plugins ->
-                   Enum.reject(plugins, fn {id, _plugin} -> id == plugin_id end)
-                 end) do
-              :ok ->
-                case RelayManager.get_relay_pid(ns, rid) do
-                  {:ok, pid} -> _ = GenServer.call(pid, {:plugin_unsubscribe, plugin_id})
-                  _ -> :ok
-                end
+            _ = write_disable_to_cspec(ns, rid, plugin_id)
 
-              _other ->
-                :ok
+            case RelayManager.get_relay_pid(ns, rid) do
+              {:ok, pid} -> _ = GenServer.call(pid, {:plugin_unsubscribe, plugin_id})
+              _ -> :ok
             end
 
             Map.delete(acc, plugin_id)
@@ -241,19 +204,18 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
+  defp check_relay_target(%Plugin{namespace: ns, relay_id: rid})
+       when is_binary(ns) and is_binary(rid),
+       do: :ok
+
+  defp check_relay_target(%Plugin{namespace: ns, relay_id: rid}) do
+    {:error,
+     "plugin missing namespace or relay_id (got namespace=#{inspect(ns)}, relay_id=#{inspect(rid)})"}
+  end
+
   defp resolve_relay(%Plugin{namespace: ns, relay_id: pid_id})
        when is_binary(ns) and is_binary(pid_id) do
     RelayManager.get_relay_pid(ns, pid_id)
-  end
-
-  # Plugins with nil namespace/relay_id can reach this path when an
-  # executor enables a plugin via the installer CLI without first
-  # binding it to a target — surface a structured error instead of
-  # letting the call cascade into ProcessHub's storage layer where a
-  # nil hub_id raises an ETS lookup ArgumentError.
-  defp resolve_relay(%Plugin{namespace: ns, relay_id: pid_id}) do
-    {:error,
-     "plugin missing namespace or relay_id (got namespace=#{inspect(ns)}, relay_id=#{inspect(pid_id)})"}
   end
 
   defp forward_subscribe(pid, plugin_id, plugin) do
@@ -263,28 +225,58 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  defp persist_enable_to_cspec(%Plugin{namespace: ns, relay_id: pid_id} = plugin, plugin_id)
-       when is_binary(ns) and is_binary(pid_id) do
+  defp write_enable_to_cspec(%Plugin{namespace: ns, relay_id: relay_id} = plugin, plugin_id) do
     stripped = Plugin.strip_transient(plugin)
 
-    case HubManager.update_relay_plugins(ns, pid_id, fn plugins ->
-           plugins
-           |> Enum.reject(fn {id, _} -> id == plugin_id end)
-           |> Kernel.++([{plugin_id, stripped}])
-         end) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.error(
-          "[plugin_manager] plugin #{inspect(plugin_id)} subscribed in runtime " <>
-            "but cspec update failed for relay #{inspect(pid_id)} in " <>
-            "namespace #{inspect(ns)}: #{inspect(reason)}"
-        )
-
-        :ok
-    end
+    update_cspec_plugins(ns, relay_id, fn plugins ->
+      plugins
+      |> Enum.reject(fn {id, _} -> id == plugin_id end)
+      |> Kernel.++([{plugin_id, stripped}])
+    end)
   end
 
-  defp persist_enable_to_cspec(_plugin, _plugin_id), do: :ok
+  defp write_disable_to_cspec(namespace, relay_id, plugin_id) do
+    update_cspec_plugins(namespace, relay_id, fn plugins ->
+      Enum.reject(plugins, fn {id, _plugin} -> id == plugin_id end)
+    end)
+  end
+
+  defp update_cspec_plugins(namespace, relay_id, update_fn) do
+    do_update_cspec_plugins(namespace, relay_id, update_fn, 0)
+  end
+
+  defp do_update_cspec_plugins(namespace, relay_id, update_fn, attempt) do
+    hub_id = Identificator.hub(namespace)
+
+    cond do
+      not ProcessHub.is_alive?(hub_id) ->
+        {:error, :registry_unavailable}
+
+      true ->
+        result =
+          try do
+            ProcessRegistry.update(hub_id, relay_id, fn cspec, node_pids, metadata ->
+              {HubManager.rewrite_cspec_plugins(cspec, update_fn), node_pids, metadata}
+            end)
+          catch
+            :exit, _ -> {:error, :no_response}
+          end
+
+        case result do
+          :ok ->
+            :ok
+
+          {:error, :no_response} when attempt < @no_response_retry_attempts ->
+            backoff = min(@no_response_retry_initial_ms * Bitwise.bsl(1, attempt), 5_000)
+            Process.sleep(backoff)
+            do_update_cspec_plugins(namespace, relay_id, update_fn, attempt + 1)
+
+          {:error, :not_found} ->
+            {:error, :relay_not_found}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+    end
+  end
 end

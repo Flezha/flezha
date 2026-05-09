@@ -3,8 +3,8 @@ defmodule Flezha.State.Registry do
   Path resolution for per-Partition WAL, snapshot, and outbox-dedup files.
 
   All persistence files live under
-  `<state_root>/<executor_id>/<relay_class>/<shard_id>/` where
-  `<state_root>` is configured via `:flezha, :state_root` (default `app_data/state`).
+  `<state_root>/<relay_class>/<shard_id>/` where `<state_root>` is
+  configured via `:flezha, :state_root` (default `app_data/state`).
 
   `partition_key` is URL-safe-base64-encoded when it contains characters
   that would be unsafe on POSIX filesystems (anything outside `[A-Za-z0-9_.-]`).
@@ -12,8 +12,7 @@ defmodule Flezha.State.Registry do
   """
 
   @type partition_id ::
-          {executor_id :: binary(), relay_class :: binary(), shard_id :: binary(),
-           partition_key :: binary()}
+          {relay_class :: binary(), shard_id :: binary(), partition_key :: binary()}
 
   @type scan_result :: %{
           wal_files: [{partition_key :: binary(), path :: binary()}],
@@ -31,17 +30,17 @@ defmodule Flezha.State.Registry do
   end
 
   @spec state_dir(partition_id()) :: binary()
-  def state_dir({executor_id, relay_class, shard_id, _partition_key}) do
-    Path.join([state_root(), executor_id, relay_class, shard_id])
+  def state_dir({relay_class, shard_id, _partition_key}) do
+    Path.join([state_root(), relay_class, shard_id])
   end
 
   @spec wal_path(partition_id()) :: binary()
-  def wal_path({_, _, _, partition_key} = pid) do
+  def wal_path({_, _, partition_key} = pid) do
     Path.join(state_dir(pid), encode_partition_key(partition_key) <> ".wal")
   end
 
   @spec snapshot_paths(partition_id()) :: [{non_neg_integer(), binary()}]
-  def snapshot_paths({_, _, _, partition_key} = pid) do
+  def snapshot_paths({_, _, partition_key} = pid) do
     encoded = encode_partition_key(partition_key)
     prefix = encoded <> ".snap."
 
@@ -64,12 +63,12 @@ defmodule Flezha.State.Registry do
   end
 
   @spec outbox_dedup_path(partition_id()) :: binary()
-  def outbox_dedup_path({_, _, _, partition_key} = pid) do
+  def outbox_dedup_path({_, _, partition_key} = pid) do
     Path.join(state_dir(pid), encode_partition_key(partition_key) <> ".outbox.dedup")
   end
 
   @spec snapshot_path(partition_id(), non_neg_integer()) :: binary()
-  def snapshot_path({_, _, _, partition_key} = pid, seq) do
+  def snapshot_path({_, _, partition_key} = pid, seq) do
     Path.join(
       state_dir(pid),
       encode_partition_key(partition_key) <> ".snap." <> Integer.to_string(seq)
@@ -79,13 +78,13 @@ defmodule Flezha.State.Registry do
   @doc """
   Enumerate Partition files under a Relay tree.
 
-  Pass `{executor_id, relay_class, shard_id, ""}` to scan the whole
-  Shard. Returns lists of `{partition_key, ...}` tuples grouped by file type.
-  Files matching `.tmp` / `.rewriting` suffixes are intentionally skipped —
-  they represent crash-residue from atomic-rename workflows.
+  Pass `{relay_class, shard_id, ""}` to scan the whole Shard. Returns lists
+  of `{partition_key, ...}` tuples grouped by file type. Files matching
+  `.tmp` / `.rewriting` suffixes are intentionally skipped — they
+  represent crash-residue from atomic-rename workflows.
   """
   @spec scan_dir(partition_id()) :: scan_result()
-  def scan_dir({_, _, _, _} = pid) do
+  def scan_dir({_, _, _} = pid) do
     dir = state_dir(pid)
 
     dir
@@ -122,19 +121,18 @@ defmodule Flezha.State.Registry do
 
   @doc """
   Enumerate every Partition that has any persistence file on disk under
-  `state_root()`. Walks the three-level directory tree
-  `<state_root>/<executor_id>/<relay_class>/<shard_id>/`.
+  `state_root()`. Walks the two-level directory tree
+  `<state_root>/<relay_class>/<shard_id>/`.
   """
   @spec all_partitions() :: [partition_id()]
   def all_partitions() do
     root = state_root()
 
-    for ce <- list_dir(root),
-        rc <- list_dir(Path.join(root, ce)),
-        sh <- list_dir(Path.join([root, ce, rc])),
-        partition_key <- partition_keys_under({ce, rc, sh, ""}),
+    for rc <- list_dir(root),
+        sh <- list_dir(Path.join(root, rc)),
+        partition_key <- partition_keys_under({rc, sh, ""}),
         uniq: true,
-        do: {ce, rc, sh, partition_key}
+        do: {rc, sh, partition_key}
   end
 
   @doc """
@@ -175,7 +173,7 @@ defmodule Flezha.State.Registry do
     end
   end
 
-  defp partition_keys_under({_, _, _, _} = pid) do
+  defp partition_keys_under({_, _, _} = pid) do
     %{wal_files: w, snapshot_files: s, outbox_files: o} = scan_dir(pid)
     keys = Enum.map(w, &elem(&1, 0)) ++ Enum.map(s, &elem(&1, 0)) ++ Enum.map(o, &elem(&1, 0))
     Enum.uniq(keys)
