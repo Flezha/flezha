@@ -403,7 +403,7 @@ defmodule Flezha.Service.HubManager do
     # gives us identical in-memory semantics with no on-disk residue.
     case Application.get_env(:flezha, :auto_restore_enabled, true) do
       false -> :ets
-      _ -> {:dets, [path: registry_path(hub_id)]}
+      _ -> {:durable_ets, [path: registry_path(hub_id)]}
     end
   end
 
