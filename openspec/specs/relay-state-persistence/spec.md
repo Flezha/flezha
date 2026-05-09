@@ -6,18 +6,22 @@ The relay-state-persistence capability provides agent-side, per-Partition durabi
 ## Requirements
 ### Requirement: Per-Partition append-only WAL on the agent
 
-Each Partition whose Relay has `persistence_enabled = true` and whose Shard's `Change` is not `NoChange` SHALL have a per-Partition write-ahead log on the Controller at `app_data/state/{executor_id}/{relay_class}/{shard_id}/{partition_key}.wal`. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
+Each Partition whose Relay has `persistence_enabled = true` and whose Shard's `Change` is not `NoChange` SHALL have a per-Partition write-ahead log on the Controller at `app_data/state/{relay_class}/{shard_id}/{partition_key}.wal`. The on-disk path SHALL NOT include `executor_id` as a path component. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
 
 `seq` SHALL be strictly monotonic per Partition and assigned by the SDK. The Controller SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Partition; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`; AND SHALL reject as a protocol violation any frame whose `seq > last_persisted_seq + 1` (returning `{:error, {:gap, expected, got}}` to the SDK).
 
-#### Scenario: WAL path uses executor_id as the top-level component
-- **WHEN** a Partition `p1` with shard `s1` and partition_key `k1` belonging to Relay class `MarketRelay` is hosted on Executor `exec-9` and persistence is enabled
-- **THEN** the Controller SHALL write its WAL to `app_data/state/exec-9/MarketRelay/s1/k1.wal`
+A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run at controller boot before `Flezha.State.Supervisor` starts any per-Partition `WalWriter`. The migrator SHALL walk every directory under `app_data/state/` of the form `{executor_id}/{relay_class}/{shard_id}/` and atomically move its contents into `{relay_class}/{shard_id}/`. The migration is idempotent (skips silently if the flat layout already exists) and logs each rename. After all old `{executor_id}/` directories are emptied, they are removed.
+
+#### Scenario: WAL path uses flat layout
+
+- **WHEN** a Partition `p1` with shard `s1` and partition_key `k1` belonging to Relay class `MarketRelay` is running and persistence is enabled
+- **THEN** the Controller SHALL write its WAL to `app_data/state/MarketRelay/s1/k1.wal`
+- **AND** the path SHALL NOT contain any `executor_id` component regardless of which executor currently hosts the Relay
 
 #### Scenario: WAL allocated lazily on first append
 
 - **WHEN** the agent receives the first `partition_state_change` frame for a Partition that does not yet have a WAL file
-- **THEN** the persistence module SHALL create the directory `app_data/state/{ce_id}/{relay}/{shard}/`, open the WAL file at `{partition_key}.wal` with `[:raw, :read, :write, :binary, :append]`, and start a `WalWriter` GenServer for the Partition
+- **THEN** the persistence module SHALL create the directory `app_data/state/{relay}/{shard}/`, open the WAL file at `{partition_key}.wal` with `[:raw, :read, :write, :binary, :append]`, and start a `WalWriter` GenServer for the Partition
 
 #### Scenario: Strictly monotonic seq accepted in order
 
@@ -32,12 +36,26 @@ Each Partition whose Relay has `persistence_enabled = true` and whose Shard's `C
 #### Scenario: Out-of-order seq is rejected
 
 - **WHEN** the SDK ships a frame with `seq = 10` for a Partition whose `last_persisted_seq = 7`
-- **THEN** the agent SHALL refuse the append and reply `{:error, {:gap, expected: 8, got: 10}}`; the SDK SHALL treat this as a protocol violation and disconnect (matching the existing reconnect semantics)
+- **THEN** the agent SHALL refuse the append and reply `{:error, {:gap, expected: 8, got: 10}}`; the SDK SHALL treat this as a protocol violation and disconnect
 
 #### Scenario: Crash-safe append via crc
 
 - **WHEN** the agent process crashes mid-record-write, leaving a partial record at the file tail
 - **THEN** on next agent boot, `WalWriter::scan_for_last_valid_seq/1` SHALL detect the partial record (crc32 mismatch on the trailing bytes), truncate the file to the last valid record, and resume normal operation; `last_persisted_seq` SHALL equal the seq of the last valid record
+
+#### Scenario: One-time migration from executor_id-keyed layout
+
+- **GIVEN** a controller running pre-change code wrote files under `app_data/state/exec-9/MarketRelay/btc/M1.wal` and `app_data/state/exec-12/PriceRelay/eth/M5.wal`
+- **WHEN** the controller is upgraded and `Flezha.Boot.StatePathMigrator.migrate/0` runs at boot
+- **THEN** the files SHALL be moved to `app_data/state/MarketRelay/btc/M1.wal` and `app_data/state/PriceRelay/eth/M5.wal`
+- **AND** the now-empty `exec-9/` and `exec-12/` directories SHALL be removed
+- **AND** if the migrator runs again on a subsequent boot, it SHALL skip silently because the flat layout already exists
+
+#### Scenario: Migration handles executor_id rotation across restarts
+
+- **GIVEN** an executor restart between WAL writes — first write under `exec-9`, restart yields `exec-12` for the same Relay
+- **WHEN** the migrator runs (one-time, on first boot under new code)
+- **THEN** files from BOTH `exec-9/MarketRelay/btc/` and `exec-12/MarketRelay/btc/` SHALL be merged into the flat path; on collision (same partition_key.wal in both), the migrator SHALL prefer the file with the higher last-record `seq` (read by scanning) and preserve the other as `<key>.wal.preserved-<exec-9>` for forensics
 
 ### Requirement: Snapshot lifecycle with atomic rename and WAL truncation
 
@@ -85,41 +103,58 @@ The hot path SHALL pay only the brief sticky-CAS hold during the state clone —
 
 ### Requirement: Restart restores state via RestoreInitState handshake
 
-On reconnect, for each Partition whose Relay has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL: (1) call `Restore.assemble_payload(partition_id)` to read the latest snapshot bytes plus the tail-WAL bytes; (2) ship `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}` to the SDK over the control channel; (3) BLOCK the Partition's input streaming (entry channel and inter-shard inputs targeting this Partition queue at the agent-side outbox); (4) await `RestoreInitStateResponse{partition_id, terminal_seq}` from the SDK; (5) UNBLOCK the Partition's input streaming; subsequent Changes from the SDK carry `seq = terminal_seq + 1`.
+On Partition data-stream attach (handled by `Flezha.Executor.StreamChannel`'s `{:attach_stream, stream_ref}` callback for a Partition stream), for each Partition whose Relay has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL: (1) call `Restore.assemble_payload(partition_id)` to read the latest snapshot bytes plus the tail-WAL bytes; (2) ship `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}` to the SDK over the control channel; (3) BLOCK the Partition's input streaming (entry channel and inter-shard inputs targeting this Partition queue at the agent-side outbox); (4) await `RestoreInitStateResponse{partition_id, terminal_seq}` from the SDK; (5) UNBLOCK the Partition's input streaming; subsequent Changes from the SDK carry `seq = terminal_seq + 1`.
+
+The dispatch SHALL fire exactly once per Partition per Relay-startup, before any input frame is forwarded to the SDK. This is the canonical state-restoration trigger; it works identically across boot replay, ProcessHub redistribution, AddRelay reissue after executor restart, and any other Relay-startup path.
 
 For Partitions whose Relay has `persistence_enabled = false` OR whose agent-side state is empty (no snapshot, no WAL records), the agent SHALL fall through to the existing `relay-init-state` capability flow.
 
-`RestoreInitState` and `executor_migrate` SHALL be mutually exclusive per Partition: when `executor_migrate` is invoked for a Partition with persisted state, the migration path's snapshot bytes SHALL be the restoration source and `RestoreInitState` SHALL NOT be issued. The agent SHALL never issue both for the same Partition reconnect.
+**Note on HotSwap migration**: when a Relay arrives on this controller via HotSwap (the destination side of a `HotSwap{handover: true}` migration), the Partition's state is delivered in-band via the existing `alter_handover_state/2` callback path — `dispatch_restore_init_state/2` SHALL NOT additionally fire for HotSwap-migrated Partitions. The `Overwatch` GenServer SHALL track an `arrived_via_hotswap?` flag set during `alter_handover_state/2` and consulted by the per-Partition stream-attach handler.
+
+The previous mutual-exclusivity rule with `executor_migrate` is removed: `executor_migrate` no longer carries state (the `:overwatch_state_snapshot_interval_ms` periodic capture is removed in this change), so it is no longer a competing state-delivery path. `dispatch_restore_init_state/2` is the single state-restoration mechanism for non-HotSwap Relay starts.
 
 #### Scenario: Cold start with no persisted state
 
 - **WHEN** a Partition reconnects and the agent has no WAL or snapshot for it AND `persistence_enabled = true`
-- **THEN** `RestoreInitState` SHALL NOT be issued; the agent SHALL invoke the existing `relay-init-state` capability flow (init-state plugin chain or inline init_values)
+- **THEN** `RestoreInitState` SHALL NOT be issued; the agent SHALL invoke the existing `relay-init-state` capability flow
 
 #### Scenario: Restart with snapshot only
 
 - **WHEN** a Partition reconnects with a snapshot at `seq = 100` and an empty WAL (post-compaction)
-- **THEN** the agent SHALL ship `RestoreInitState` with the snapshot bytes and empty change_log_bytes; the SDK SHALL apply the snapshot via the runtime auto-restore; `RestoreInitStateResponse` SHALL carry `terminal_seq = 100`
+- **THEN** the agent SHALL ship `RestoreInitState` with the snapshot bytes and empty change_log_bytes; `RestoreInitStateResponse` SHALL carry `terminal_seq = 100`
 
 #### Scenario: Restart with snapshot and tail WAL
 
 - **WHEN** a Partition reconnects with a snapshot at `seq = 100` and WAL records seqs 101-150
-- **THEN** the agent SHALL ship `RestoreInitState` with the snapshot bytes and the WAL bytes (records 101-150 framed with `[seq][len][header][bytes][crc32]`); the SDK SHALL apply the snapshot then fold records 101-150 in seq order; `RestoreInitStateResponse` SHALL carry `terminal_seq = 150`
+- **THEN** the agent SHALL ship `RestoreInitState` with the snapshot bytes and the WAL bytes (records 101-150 framed); `RestoreInitStateResponse` SHALL carry `terminal_seq = 150`
 
 #### Scenario: Restart with WAL only (no snapshot)
 
 - **WHEN** a Partition reconnects with WAL records seqs 1-50 and no snapshot
-- **THEN** the agent SHALL ship `RestoreInitState` with empty snapshot_bytes and WAL bytes for seqs 1-50; the SDK SHALL fold all 50 records via apply_change; `RestoreInitStateResponse` SHALL carry `terminal_seq = 50`
+- **THEN** the agent SHALL ship `RestoreInitState` with empty snapshot_bytes and WAL bytes for seqs 1-50; `RestoreInitStateResponse` SHALL carry `terminal_seq = 50`
 
 #### Scenario: Persistence-disabled Relay skips RestoreInitState
 
 - **WHEN** a Partition reconnects under a Relay with `persistence_enabled = false`
 - **THEN** the agent SHALL NOT call `Restore.assemble_payload` AND SHALL NOT ship `RestoreInitState`; the existing `relay-init-state` capability flow runs instead
 
-#### Scenario: Migration takes precedence over RestoreInitState
+#### Scenario: HotSwap-migrated Partition skips dispatch (state delivered in-band)
 
-- **WHEN** `executor_migrate` is invoked for a Partition with persisted state
-- **THEN** the migration path's snapshot bytes SHALL be used as the restoration source; `RestoreInitState` SHALL NOT be issued for this Partition; the SDK observes a single restoration handshake (the migration one)
+- **GIVEN** a Relay arrives on this controller via HotSwap from a peer; `Overwatch` consumed the state via `alter_handover_state/2` and set `arrived_via_hotswap? = true`
+- **WHEN** the Partition's data stream attaches to `StreamChannel`
+- **THEN** `dispatch_restore_init_state/2` SHALL NOT fire for any of the Relay's Partitions; the in-band handover state stands
+
+#### Scenario: Boot replay + Partition reconnect ships RestoreInitState
+
+- **GIVEN** the controller cold-boots, ClusterMode resolves to `:recovering`, Coordinator replays the registry, an executor connects and is assigned to a re-registered Relay
+- **WHEN** the SDK opens a data stream for a Partition that has on-disk WAL records under `app_data/state/{relay_class}/{shard_id}/{partition_key}.wal`
+- **THEN** the controller SHALL ship `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}` over the control channel BEFORE forwarding any input frames
+
+#### Scenario: Executor pod restart preserves state via flat path + dispatch
+
+- **GIVEN** a Relay running on a controller; the executor pod restarts and connects with a new `executor_id`
+- **WHEN** the connection-healing path reissues `AddRelay` and the new executor opens Partition data streams
+- **THEN** for each Partition with on-disk state, `dispatch_restore_init_state/2` SHALL fire (the flat WAL path means the same files are found regardless of `executor_id`); the new executor SHALL receive snapshot+WAL via the existing handshake; SDK applies snapshot, folds WAL; zero data loss
 
 #### Scenario: Input streaming blocked during restoration
 
@@ -316,7 +351,7 @@ The agent SHALL NOT issue `:full` more than once per Partition while the waterma
 
 ### Requirement: Crash-safe persistence on agent reboot
 
-On agent boot, `Flezha.State.Supervisor` SHALL call `Registry.scan_dir/1` for each `app_data/state/{ce_id}/{relay}/{shard}/` directory and reconstruct the in-memory persistence state:
+On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.State.Supervisor` SHALL call `Registry.scan_dir/1` for each `app_data/state/{relay}/{shard}/` directory and reconstruct the in-memory persistence state:
 
 - For each `partition_key.wal` file: start a `WalWriter` GenServer; `WalWriter::scan_for_last_valid_seq/1` runs at `init/1` to recover `last_persisted_seq` and truncate any partial-write tail.
 - For each `partition_key.snap.{seq}` file (latest): record the `snapshot_seq` counter.
@@ -370,13 +405,14 @@ The agent SHALL expose a `flz state` CLI subcommand tree:
 - **WHEN** the executor runs `flz state retention MarketRelay 12` and the agent is subsequently restarted
 - **THEN** after restart, the resolved `time_travel_retention_hours` for `MarketRelay` SHALL be 12
 
-### Requirement: Snapshot files use executor_id path component
+### Requirement: Snapshot files use flat path
 
-The Controller SHALL store snapshot files at `app_data/state/{executor_id}/{relay_class}/{shard_id}/{partition_key}.snap.{seq}`, replacing the previous `{compute_engine_id}` path component with `{executor_id}`. The on-the-wire payload-id `partition_state_snapshot` is unchanged.
+The Controller SHALL store snapshot files at `app_data/state/{relay_class}/{shard_id}/{partition_key}.snap.{seq}`. The on-disk path SHALL NOT include `executor_id`. The on-the-wire payload-id `partition_state_snapshot` is unchanged.
 
-#### Scenario: Snapshot path uses executor_id
-- **WHEN** the Controller compacts the WAL of Partition `p1` (Relay class `MarketRelay`, shard `s1`, partition_key `k1`) hosted on Executor `exec-9` and assigns snapshot seq=42
-- **THEN** the resulting file SHALL be at `app_data/state/exec-9/MarketRelay/s1/k1.snap.42`
+#### Scenario: Snapshot path is flat
+
+- **WHEN** the Controller compacts the WAL of Partition `p1` (Relay class `MarketRelay`, shard `s1`, partition_key `k1`) and assigns snapshot seq=42
+- **THEN** the resulting file SHALL be at `app_data/state/MarketRelay/s1/k1.snap.42`
 
 ### Requirement: ProcessorApplyState renamed to PartitionApplyState
 
