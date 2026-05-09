@@ -49,6 +49,7 @@ fn register_relays() {
     register_relay::<StatefulCounterRelay>();
     register_relay::<CoalescingCounterRelay>();
     register_relay::<PersistenceOffRelay>();
+    register_relay::<HybridChannelRelay>();
 }
 
 // -- DoNothingRelay -----------------------------------------------------------
@@ -878,5 +879,87 @@ impl Shard for PersistenceOffCounterShard {
     ) -> Result<(), ShardError> {
         state.apply(CounterChange { delta: input });
         Ok(())
+    }
+}
+
+// -- HybridChannelRelay -------------------------------------------------------
+//
+// Demonstrates `also_to_plugin_with(...)`: the producer Shard emits a
+// `u32` value that fans out to an inter-shard consumer and is also
+// serialized to bytes for the `hybrid_indicators` plugin. The
+// serializer panics on the sentinel `0xDEADBEEF` so an operator can
+// observe the panic-isolation guarantee end-to-end.
+
+#[derive(Default)]
+struct HybridProducerShard;
+impl Shard for HybridProducerShard {
+    type Input = String;
+    type Output = u32;
+    type State = ();
+    type Change = NoChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "hybrid_producer_shard"
+    }
+    fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
+    fn run(
+        &mut self,
+        input: String,
+        _: StateHandle<'_, Self>,
+        ctx: &mut ShardCtx<'_>,
+    ) -> Result<(), ShardError> {
+        let n: u32 = input.parse().unwrap_or(0);
+        match ctx.emit::<u32>(n) {
+            Ok(()) => Ok(()),
+            Err(ShardError::PluginSerializerPanic { channel, message }) => {
+                eprintln!("hybrid_producer_shard: serializer panic on `{channel}`: {message}");
+                Ok(())
+            }
+            Err(other) => Err(other),
+        }
+    }
+}
+
+#[derive(Default)]
+struct HybridConsumerShard;
+impl Shard for HybridConsumerShard {
+    type Input = u32;
+    type Output = ();
+    type State = ();
+    type Change = NoChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "hybrid_consumer_shard"
+    }
+    fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
+    fn run(
+        &mut self,
+        input: u32,
+        _: StateHandle<'_, Self>,
+        _: &mut ShardCtx<'_>,
+    ) -> Result<(), ShardError> {
+        println!("hybrid_consumer_shard: received {input}");
+        Ok(())
+    }
+}
+
+struct HybridChannelRelay;
+impl Relay for HybridChannelRelay {
+    fn factory_id() -> &'static str {
+        "hybrid_channel"
+    }
+    fn channels(c: &mut ChannelBuilder) {
+        c.input::<String>("input").into::<HybridProducerShard>();
+        c.channel::<u32>("hybrid_indicator")
+            .from::<HybridProducerShard>()
+            .also_to_plugin_with("hybrid_indicators", |v: &u32| {
+                if *v == 0xDEAD_BEEF {
+                    panic!("hybrid_indicators: serializer rejected sentinel 0xDEADBEEF");
+                }
+                v.to_be_bytes().to_vec()
+            })
+            .into::<HybridConsumerShard>();
     }
 }

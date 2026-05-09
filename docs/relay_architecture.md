@@ -416,7 +416,68 @@ The controller's plugin layer (e.g.
 `ctx.emit_with_meta::<C>(value, map)` is the same with user-attached
 metadata appended after the reserved `channel` key. It returns
 `ShardError::MetadataNotAllowedOnInterShardChannel` if called on an
-inter-shard channel.
+inter-shard channel that does not also have a plugin sink (see the
+hybrid-channel section below).
+
+## Hybrid channels: inter-shard fan-out + plugin sink
+
+A hybrid channel publishes a single typed value to both inter-shard
+consumers (typed, zero-copy) and a named plugin (serialized to bytes)
+without forcing the producer Shard to declare two output channels. The
+builder method is `also_to_plugin_with(plugin_name, serializer)` on
+`ChannelDeclWithProducer<T>`:
+
+```rust
+c.channel::<SmaValue>("sma_out")
+    .from::<SmaShard>()
+    .also_to_plugin_with("indicators", sma_to_pb_bytes)
+    .into::<BollingerShard>();
+```
+
+The channel's `kind` stays `InterShard`. The plugin sink lives on a
+parallel `plugin_sink: Option<PluginSink>` field. Order of
+`also_to_plugin_with` and `.into::<S>()` is irrelevant — the
+descriptor accumulates both regardless. Calling `also_to_plugin_with`
+twice on the same channel is rejected at registration with
+`BuildTopologyError::DuplicatePluginSink`. The type system already
+forbids `also_to_plugin_with` after `to_plugin` (the latter returns a
+finalized `Channel<T>`); a trybuild test pins this.
+
+### Per-emit semantics
+
+`ctx.emit::<T>(value)` on a hybrid channel:
+
+1. Fan out the typed `Arc<T>` value to every consumer mailbox, per the
+   channel's `OverflowPolicy`. This step completes (modulo
+   `OverflowPolicy::Block` parking) before step 2.
+2. If `plugin_sink` is `Some(sink)`, invoke `sink.serializer(&value)`
+   exactly once inside `std::panic::catch_unwind`, then send the
+   resulting bytes through the existing plugin-wire framing path
+   (`channel = <channel name>` in the metadata, identical to a
+   pure-`PluginBound` frame).
+
+The serializer runs **once per emit** regardless of consumer count.
+Consumer fan-out completes **before** the serializer runs, so a
+panicking serializer never prevents inter-shard delivery — the
+`ShardError::PluginSerializerPanic { channel, message }` returned to
+the producing Shard is purely a plugin-side signal. The dispatcher
+thread stays alive across the panic; subsequent emits proceed
+normally.
+
+`ctx.emit_with_meta::<T>(value, meta)` on a hybrid channel attaches
+`meta` to the plugin-side wire frame only — inter-shard consumers
+receive the typed value with no metadata visible. The reserved
+`channel` key is always replaced with the real channel name; any
+user-supplied `channel` entry is dropped.
+
+### Wire format and agent fan-in
+
+Hybrid frames are byte-indistinguishable from `to_plugin(...)` frames
+for the same plugin name and bytes. Two channels sharing a
+`plugin_name` (typically `also_to_plugin_with("indicators", ...)`
+across several Shards) fan in cleanly at the agent's plugin layer; the
+plugin distinguishes them by the `channel: String` metadata key. No
+new wire payload-id, no new agent code.
 
 ## Per-Partition state
 
