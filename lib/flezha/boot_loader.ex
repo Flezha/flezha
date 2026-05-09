@@ -40,8 +40,17 @@ defmodule Flezha.BootLoader do
   defp await_namespace_hubs() do
     timeout_ms = Application.get_env(:flezha, :boot_replay_timeout_ms, 60_000)
 
-    Flezha.Service.HubManager.get_running_namespaces()
-    |> Enum.each(fn namespace ->
+    namespaces =
+      try do
+        Flezha.Service.HubManager.get_running_namespaces()
+      catch
+        # `BootLoader` is started before `HubManager` in the supervision
+        # tree, so on the very first boot the lookup may :exit. There
+        # are no hubs running yet anyway, so an empty list is correct.
+        :exit, _ -> []
+      end
+
+    Enum.each(namespaces, fn namespace ->
       hub_id = Flezha.Service.Identificator.hub(namespace)
 
       try do
