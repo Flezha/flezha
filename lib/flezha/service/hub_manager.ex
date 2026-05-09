@@ -19,13 +19,17 @@ defmodule Flezha.Service.HubManager do
   end
 
   def start_hub(namespace) do
+    hub_id = Identificator.hub(namespace)
+
     case Supervisor.start_child(__MODULE__, process_hub(namespace)) do
       {:ok, _pid} = ok ->
-        _ = Flezha.Boot.RecoveryHooks.register(Identificator.hub(namespace))
+        wait_until_hub_alive(hub_id)
+        _ = Flezha.Boot.RecoveryHooks.register(hub_id)
         ok
 
       {:ok, _pid, _info} = ok ->
-        _ = Flezha.Boot.RecoveryHooks.register(Identificator.hub(namespace))
+        wait_until_hub_alive(hub_id)
+        _ = Flezha.Boot.RecoveryHooks.register(hub_id)
         ok
 
       other ->
@@ -33,9 +37,51 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
+  # Supervisor.start_child returns once the hub's top supervisor is up,
+  # but ProcessHub registers its named coordinator GenServer asynchronously
+  # afterwards. Anything calling into the named hub_id (register_handler,
+  # register_hook_handlers, alter_child_data callbacks) before that
+  # registration completes raises :noproc and cascades the FleetManager
+  # crash. Spin briefly until ProcessHub.is_alive? confirms the name is
+  # claimed.
+  defp wait_until_hub_alive(hub_id, deadline_ms \\ 5_000) do
+    deadline = System.monotonic_time(:millisecond) + deadline_ms
+    do_wait_until_hub_alive(hub_id, deadline)
+  end
+
+  defp do_wait_until_hub_alive(hub_id, deadline) do
+    cond do
+      ProcessHub.is_alive?(hub_id) ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        :timeout
+
+      true ->
+        Process.sleep(10)
+        do_wait_until_hub_alive(hub_id, deadline)
+    end
+  end
+
   def stop_hub(namespace) do
-    Supervisor.terminate_child(__MODULE__, Identificator.hub(namespace))
-    Supervisor.delete_child(__MODULE__, Identificator.hub(namespace))
+    hub_id = Identificator.hub(namespace)
+    Supervisor.terminate_child(__MODULE__, hub_id)
+    Supervisor.delete_child(__MODULE__, hub_id)
+
+    # `stop_hub/1` is the explicit "tear this namespace down" path
+    # (operator-initiated, or last-executor cleanup deciding the
+    # namespace has gone away). Clean the persistent registry so a
+    # later `start_hub/1` for the same namespace starts empty rather
+    # than resurrecting children that were intentionally torn down.
+    # Cold-boot recovery is unaffected — that path never calls
+    # `stop_hub/1`.
+    _ = wipe_registry_dir(hub_id)
+    :ok
+  end
+
+  defp wipe_registry_dir(hub_id) do
+    root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
+    File.rm_rf(Path.join(root, Atom.to_string(hub_id)))
   end
 
   def hub_alive?(namespace) do
@@ -332,7 +378,7 @@ defmodule Flezha.Service.HubManager do
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
         handover: true
       },
-      registry_backend: {:dets, [path: registry_path(hub_id)]},
+      registry_backend: registry_backend_config(hub_id),
       auto_recovery: auto_recovery_config(),
       # Relay startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
@@ -348,6 +394,17 @@ defmodule Flezha.Service.HubManager do
         ]
       }
     })
+  end
+
+  defp registry_backend_config(hub_id) do
+    # When auto-restore is disabled (test mode + any operator who flips
+    # the kill-switch), there is no point persisting the registry to
+    # disk — the DETS file would only become test-isolation noise. ETS
+    # gives us identical in-memory semantics with no on-disk residue.
+    case Application.get_env(:flezha, :auto_restore_enabled, true) do
+      false -> :ets
+      _ -> {:dets, [path: registry_path(hub_id)]}
+    end
   end
 
   defp registry_path(hub_id) do

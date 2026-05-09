@@ -2,23 +2,25 @@ defmodule Flezha.Service.PluginManagerTest do
   @moduledoc """
   Asserts that `Flezha.Service.PluginManager` writes plugin
   subscriptions through to the ProcessHub child-spec on every enable
-  and removes them on every disable, matching the contract in
-  openspec/specs/plugin-subscription-persistence/spec.md.
+  and removes them on every disable.
 
-  These tests stub `Flezha.Service.HubManager.update_relay_plugins/3`
-  with an in-memory plugin store so we can observe the cspec mutation
-  applied by each call. They do NOT spin up a ProcessHub instance —
-  the `update_relay_plugins/3` cspec-encoding logic is exercised
-  separately in `Flezha.Service.HubManagerTest`.
+  The post-`auto-restore-on-boot` ordering is **cspec-first**: the
+  durable registry update happens before the runtime subscribe. If the
+  cspec write fails, no subscribe is attempted; if the subscribe
+  fails, the cspec already records the intent and the next
+  `Overwatch.init/1` reconciles. These tests stub
+  `ProcessHub.Service.ProcessRegistry.update/3` and
+  `ProcessHub.is_alive?/1` to simulate the durable registry without
+  spinning up a real hub.
   """
 
   use ExUnit.Case, async: false
   use Mimic
 
   alias Flezha.Plugin
-  alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.RelayManager
+  alias ProcessHub.Service.ProcessRegistry
 
   setup :verify_on_exit!
   setup :set_mimic_global
@@ -27,17 +29,24 @@ defmodule Flezha.Service.PluginManagerTest do
   @relay_id "pm_test_p1"
 
   setup do
-    {:ok, store} = Agent.start_link(fn -> [] end)
+    {:ok, store} = Agent.start_link(fn -> base_cspec([]) end)
     overwatch = spawn_fake_overwatch(self())
 
-    HubManager
-    |> Mimic.stub(:update_relay_plugins, fn ns, pid_id, fun ->
+    ProcessHub
+    |> Mimic.stub(:is_alive?, fn _hub_id -> true end)
+
+    ProcessRegistry
+    |> Mimic.stub(:update, fn _hub_id, relay_id, fun ->
       cond do
-        ns != @namespace or pid_id != @relay_id ->
-          {:error, "relay not found"}
+        relay_id != @relay_id ->
+          {:error, :not_found}
 
         true ->
-          Agent.update(store, fun)
+          Agent.update(store, fn cspec ->
+            {new_cspec, _, _} = fun.(cspec, [], %{})
+            new_cspec
+          end)
+
           :ok
       end
     end)
@@ -54,8 +63,6 @@ defmodule Flezha.Service.PluginManagerTest do
     end)
 
     on_exit(fn ->
-      # Drain any plugin_id residue from the singleton PluginManager so
-      # tests stay isolated despite sharing a registered process.
       Map.keys(PluginManager.get_plugins())
       |> Enum.each(&PluginManager.unregister_plugin/1)
     end)
@@ -63,61 +70,38 @@ defmodule Flezha.Service.PluginManagerTest do
     {:ok, store: store, overwatch: overwatch}
   end
 
-  describe "enable_plugin/2 cspec persistence" do
-    # If this fails, plugins enabled via `flz plugin enable` after
-    # `flz relay start` will silently disappear on the next
-    # Overwatch restart, taking the data plane offline until manually
-    # re-enabled (the May 3 flezha_market incident).
+  describe "enable_plugin/2 cspec persistence (cspec-first ordering)" do
     test "writes the plugin to the cspec on success", %{store: store} do
       plugin = build_plugin("kafka_p1_trades", topic: "p1.trades.v1")
 
       assert {:ok, "plugin enabled"} =
                PluginManager.enable_plugin("kafka_p1_trades", plugin)
 
-      assert [{"kafka_p1_trades", %Plugin{} = persisted}] = Agent.get(store, & &1)
+      assert [{"kafka_p1_trades", %Plugin{} = persisted}] = read_plugins(store)
       assert persisted.id == "kafka_p1_trades"
       assert persisted.opts == %{topic: "p1.trades.v1"}
     end
 
-    # If this fails, an Overwatch that rejects the subscribe (e.g.
-    # duplicate plugin_id, bad subscription) will still have its cspec
-    # rewritten — restart will resurrect the rejected plugin.
-    test "does not write to cspec when the Overwatch returns {:error, _}",
+    test "subscribe failure leaves the cspec entry in place (durability precedes runtime)",
          %{store: store, overwatch: overwatch} do
       send(overwatch, {:reject_next, {:error, "boom"}})
 
-      plugin = build_plugin("rejected", topic: "x")
+      plugin = build_plugin("eager_durable", topic: "x")
 
-      assert {:error, "boom"} = PluginManager.enable_plugin("rejected", plugin)
-      assert [] = Agent.get(store, & &1)
+      assert {:error, "boom"} = PluginManager.enable_plugin("eager_durable", plugin)
+      assert [{"eager_durable", _}] = read_plugins(store)
     end
 
-    # If this fails, a transient cspec write error will be surfaced
-    # to the caller as a hard failure even though the runtime
-    # subscribe succeeded — executors will believe the enable failed
-    # and may retry, double-subscribing.
-    test "logs at :error and replies :ok when the cspec update fails after a successful subscribe" do
-      HubManager
-      |> Mimic.stub(:update_relay_plugins, fn _ns, _pid_id, _fun ->
-        {:error, :no_response}
-      end)
+    test "cspec write failure surfaces :registry_unavailable without touching runtime" do
+      ProcessHub
+      |> Mimic.stub(:is_alive?, fn _hub_id -> false end)
 
-      plugin = build_plugin("transient_fail", topic: "y")
+      plugin = build_plugin("hub_down", topic: "y")
 
-      log =
-        ExUnit.CaptureLog.capture_log(fn ->
-          assert {:ok, "plugin enabled"} =
-                   PluginManager.enable_plugin("transient_fail", plugin)
-        end)
-
-      assert log =~ "plugin"
-      assert log =~ "transient_fail"
-      assert log =~ "cspec update failed"
+      assert {:error, :registry_unavailable} =
+               PluginManager.enable_plugin("hub_down", plugin)
     end
 
-    # If this fails, two concurrent enable_plugin calls for distinct
-    # plugin_ids on the same relay will lose one of them on
-    # restart, partially restoring the data plane.
     test "two enable_plugin calls for distinct plugin_ids produce a cspec with both",
          %{store: store} do
       plugin_a = build_plugin("plug_a", topic: "a")
@@ -128,7 +112,7 @@ defmodule Flezha.Service.PluginManagerTest do
 
       ids =
         store
-        |> Agent.get(& &1)
+        |> read_plugins()
         |> Enum.map(fn {id, _} -> id end)
         |> Enum.sort()
 
@@ -137,39 +121,32 @@ defmodule Flezha.Service.PluginManagerTest do
   end
 
   describe "disable_plugin/1 cspec persistence" do
-    # If this fails, a disabled plugin will be re-subscribed on the
-    # next Overwatch restart, leaking back into the data plane.
     test "removes the plugin from the cspec on success", %{store: store} do
       plugin = build_plugin("dis_a", topic: "a")
       assert {:ok, _} = PluginManager.enable_plugin("dis_a", plugin)
-      assert [_] = Agent.get(store, & &1)
+      assert [_] = read_plugins(store)
 
       assert {:ok, "plugin disabled"} = PluginManager.disable_plugin("dis_a")
-      assert [] = Agent.get(store, & &1)
+      assert [] = read_plugins(store)
     end
 
-    # If this fails, a cspec-write failure on disable could leave the
-    # cspec stale (still listing the plugin) while the runtime
-    # unsubscribes — the next restart resurrects the disabled plugin.
     test "does not unsubscribe from the Overwatch if the cspec update fails",
          %{overwatch: overwatch} do
       plugin = build_plugin("dis_persist_fail", topic: "z")
       assert {:ok, _} = PluginManager.enable_plugin("dis_persist_fail", plugin)
 
-      HubManager
-      |> Mimic.stub(:update_relay_plugins, fn _ns, _pid_id, _fun ->
-        {:error, :no_response}
-      end)
+      ProcessHub
+      |> Mimic.stub(:is_alive?, fn _hub_id -> false end)
 
       send(overwatch, :record_unsubscribes)
-      assert {:error, :no_response} = PluginManager.disable_plugin("dis_persist_fail")
+
+      assert {:error, :registry_unavailable} =
+               PluginManager.disable_plugin("dis_persist_fail")
+
       send(overwatch, {:dump_unsubscribes, self()})
       assert_receive {:unsubscribes, []}, 500
     end
 
-    # If this fails, disabling a plugin that was never enabled
-    # surfaces a confusing error instead of the documented "not found"
-    # response — mostly affects executor UX.
     test "is a no-op (returns error) when the plugin_id is not in the cspec" do
       assert {:error, "plugin not found"} = PluginManager.disable_plugin("never_enabled")
     end
@@ -184,6 +161,31 @@ defmodule Flezha.Service.PluginManagerTest do
       namespace: @namespace,
       relay_id: @relay_id
     )
+  end
+
+  # The cspec shape PluginManager rewrites: %{start: {m, f, [{namespace, %Builder{opts: [plugins: [...]]}}]}}
+  defp base_cspec(plugins) do
+    %{
+      id: @relay_id,
+      start:
+        {Flezha.Relay.Overwatch, :start_link,
+         [
+           {@namespace,
+            %Flezha.Relay.Builder{
+              id: @relay_id,
+              factory_id: "do_nothing",
+              init_values: %{},
+              opts: [plugins: plugins]
+            }}
+         ]}
+    }
+  end
+
+  defp read_plugins(store) do
+    %{start: {_m, _f, [{_ns, %Flezha.Relay.Builder{opts: opts}}]}} =
+      Agent.get(store, & &1)
+
+    Keyword.get(opts, :plugins, [])
   end
 
   defp spawn_fake_overwatch(_test_pid) do

@@ -271,7 +271,18 @@ defmodule Flezha.Service.PluginManager do
             Process.sleep(backoff)
             do_update_cspec_plugins(namespace, relay_id, update_fn, attempt + 1)
 
+          # The relay row may live on a peer node whose pubsub-based
+          # synchronization hasn't fanned out to us yet — retry briefly
+          # before surfacing the error.
+          {:error, "No child found"} when attempt < @no_response_retry_attempts ->
+            backoff = min(@no_response_retry_initial_ms * Bitwise.bsl(1, attempt), 5_000)
+            Process.sleep(backoff)
+            do_update_cspec_plugins(namespace, relay_id, update_fn, attempt + 1)
+
           {:error, :not_found} ->
+            {:error, :relay_not_found}
+
+          {:error, "No child found"} ->
             {:error, :relay_not_found}
 
           {:error, reason} ->

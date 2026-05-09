@@ -134,26 +134,6 @@ config :flezha,
   external_processes: external_processes,
 
   # ------------------------------------------------------------------------------------------------
-  # ProcessHub durable-registry + auto-recovery (auto-restore-on-boot).
-  #
-  # `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` is the parent directory under which
-  # each per-namespace hub stores `<root>/<hub_id>/registry.dets`.
-  # `FLEZHA_AUTO_RESTORE_ENABLED=false` disables the auto-recovery state
-  # machine without losing the durable registry record.
-  process_hub_registry_root:
-    System.get_env("FLEZHA_PROCESS_HUB_REGISTRY_ROOT", "app_data/process_hub"),
-  recovery_window_ms:
-    System.get_env("FLEZHA_RECOVERY_WINDOW_MS", "10000") |> String.to_integer(),
-  boot_replay_timeout_ms:
-    System.get_env("FLEZHA_BOOT_REPLAY_TIMEOUT_MS", "60000") |> String.to_integer(),
-  auto_restore_enabled:
-    System.get_env("FLEZHA_AUTO_RESTORE_ENABLED", "true") in ["true", "1"],
-  pre_replay_fleet_wait_ms:
-    System.get_env("FLEZHA_PRE_REPLAY_FLEET_WAIT_MS", "30000") |> String.to_integer(),
-  wal_transfer_query_timeout_ms:
-    System.get_env("FLEZHA_WAL_TRANSFER_QUERY_TIMEOUT_MS", "5000") |> String.to_integer(),
-
-  # ------------------------------------------------------------------------------------------------
   # Installable plugin subsystem — staged rollout lever. See
   # `docs/plugin_installation.md` for the full design.
   #
@@ -196,6 +176,27 @@ if Flezha.Plugin.Installer.RuntimeConfig.any_env_var_present?(plugin_env_map) do
   config :flezha,
          :plugin_installer,
          Flezha.Plugin.Installer.RuntimeConfig.resolve_plugin_installer(plugin_env_map, base)
+end
+
+# ------------------------------------------------------------------------------------------------
+# ProcessHub durable-registry + auto-recovery (auto-restore-on-boot).
+#
+# Skipped in :test so test fixtures can disable auto-recovery without
+# being clobbered. The config compiled into config/test.exs wins instead.
+if config_env() != :test do
+  config :flezha,
+    process_hub_registry_root:
+      System.get_env("FLEZHA_PROCESS_HUB_REGISTRY_ROOT", "app_data/process_hub"),
+    recovery_window_ms:
+      System.get_env("FLEZHA_RECOVERY_WINDOW_MS", "10000") |> String.to_integer(),
+    boot_replay_timeout_ms:
+      System.get_env("FLEZHA_BOOT_REPLAY_TIMEOUT_MS", "60000") |> String.to_integer(),
+    auto_restore_enabled:
+      System.get_env("FLEZHA_AUTO_RESTORE_ENABLED", "true") in ["true", "1"],
+    pre_replay_fleet_wait_ms:
+      System.get_env("FLEZHA_PRE_REPLAY_FLEET_WAIT_MS", "30000") |> String.to_integer(),
+    wal_transfer_query_timeout_ms:
+      System.get_env("FLEZHA_WAL_TRANSFER_QUERY_TIMEOUT_MS", "5000") |> String.to_integer()
 end
 
 # ------------------------------------------------------------------------------------------------
