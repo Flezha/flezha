@@ -471,13 +471,25 @@ When a Channel connects two Shards inside the same Relay, the SDK SHALL transpor
 - **WHEN** OhlcShard emits a `Candle` to a channel that IndicatorShard subscribes to (and the channel has no `to_plugin(...)` clause)
 - **THEN** the IndicatorShard's `run(...)` SHALL receive the same `Arc<Candle>` instance OhlcShard emitted (or an `Arc` to byte-identical content with no intermediate serialization step)
 
-### Requirement: Channel-to-plugin output replaces numeric plugin_group
+### Requirement: Plugin emission semantics
 
-Channels declared with `.to_plugin("name")` SHALL route the channel's output through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field SHALL be removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1 (see `design.md` Decision 15). A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
+Channels declared with `.to_plugin("name")` (pure-plugin) and channels declared with `.also_to_plugin_with("name", serializer)` (hybrid) SHALL both route a value through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field is removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1 (see `design.md` Decision 15). A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
 
-#### Scenario: Channel name appears on the wire
+For pure-plugin channels, the wire bytes are produced by the channel's `plugin_serializer` (set by `to_plugin(...)`). For hybrid channels, the wire bytes are produced by the channel's `plugin_sink.serializer` (set by `also_to_plugin_with(...)`). In both cases the byte buffer SHALL be sent through the same wire framing path (`channel: String` metadata + payload bytes) so the agent's plugin layer SHALL NOT distinguish between pure and hybrid channels at the wire — both arrive identically and route by channel name.
+
+#### Scenario: Pure-plugin emit reaches the agent's plugin layer
 - **WHEN** a Shard publishes to a channel declared with `.to_plugin("ohlc_kafka")`
-- **THEN** the message reaching the agent SHALL carry the channel name as a string in its metadata, and SHALL NOT carry a `plugin_group` field
+- **THEN** the agent's `ohlc_kafka` plugin SHALL receive the bytes with `channel = <channel name>` in the metadata
+
+#### Scenario: Hybrid emit reaches the agent's plugin layer with identical framing
+- **WHEN** a Shard publishes to a channel declared with `.also_to_plugin_with("indicators", sma_to_pb_bytes)` on a channel that also has inter-shard consumers
+- **THEN** the agent's `indicators` plugin SHALL receive the serializer-output bytes with `channel = <channel name>` in the metadata
+- **AND** the wire frame SHALL be byte-indistinguishable from a pure-plugin channel's frame for the same plugin name and bytes
+
+#### Scenario: Two channels sharing a plugin name fan in at the agent
+- **WHEN** a Relay declares two hybrid channels (e.g. `sma_out` with `also_to_plugin_with("indicators", sma_serde)` and `ema_out` with `also_to_plugin_with("indicators", ema_serde)`)
+- **THEN** the agent's `indicators` plugin SHALL receive frames from both channels, distinguishable only by the `channel: String` metadata key
+- **AND** the SDK's topology builder SHALL NOT reject this declaration as a `MultiProducer` error, because each channel still has exactly one producer Shard
 
 #### Scenario: Plugin subscribes by channel name
 - **WHEN** an agent-side plugin is configured to consume outputs from `"ohlc_kafka"`
@@ -510,6 +522,111 @@ When `emit_with_meta` is used on a plugin-bound channel, the supplied `HashMap<S
 #### Scenario: emit_with_meta on an inter-shard channel returns error
 - **WHEN** a Shard's `run` calls `ctx.emit_with_meta::<ParsedTrade>(p, {"trace_id": "abc123"})` on a channel that flows to another Shard inside the same Relay (no `.to_plugin(...)` clause)
 - **THEN** the call SHALL return `Err(ShardError::MetadataNotAllowedOnInterShardChannel { channel })`, and the value `p` SHALL NOT be propagated to the downstream Shard
+
+### Requirement: Hybrid channel builder method
+
+The Rust SDK SHALL expose a method `also_to_plugin_with<F>(plugin_name: &'static str, serializer: F) -> Self` on `ChannelDeclWithProducer<T>` (in `sdk/rust/src/channel/builder.rs`) where `F: Fn(&T) -> Vec<u8> + Send + Sync + 'static`. Calling this method SHALL leave the channel's `kind = ChannelKind::InterShard` and SHALL attach a plugin sink (the named plugin and the user-supplied serializer, type-erased to `PluginSerializeFn`) alongside the channel's existing consumer fan-out. After the call, further `.into::<S>()` consumer wiring SHALL chain naturally — the method's return type is `Self`.
+
+The plugin sink SHALL be stored on the channel descriptor as a `plugin_sink: Option<PluginSink>` field where `PluginSink { name: &'static str, serializer: PluginSerializeFn }`. Pure-`PluginBound` channels (produced by `to_plugin(...)`) SHALL continue to populate the existing `plugin_name` and `plugin_serializer` fields and SHALL NOT populate `plugin_sink`. Hybrid channels (`InterShard` + `also_to_plugin_with`) SHALL populate `plugin_sink` and SHALL NOT populate `plugin_name`/`plugin_serializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
+
+#### Scenario: Hybrid wiring is accepted at registration
+- **WHEN** a Relay declares `c.channel::<SmaValue>("sma_out").from::<SmaShard>().also_to_plugin_with("indicators", sma_to_pb_bytes).into::<BollingerShard>()`
+- **THEN** `register_relay::<MarketRelay>()` SHALL succeed
+- **AND** the resulting `ChannelDescriptor` for `"sma_out"` SHALL have `kind = InterShard`, exactly one entry in `consumers` (the `BollingerShard` shard id), and `plugin_sink = Some(PluginSink { name: "indicators", serializer: <fn-ptr> })`
+
+#### Scenario: also_to_plugin_with chains in either order with into::<S>()
+- **WHEN** a Relay declares `c.channel::<EmaValue>("ema_out").from::<EmaShard>().into::<MacdShard>().also_to_plugin_with("indicators", ema_to_pb_bytes)`
+- **THEN** `register_relay::<MarketRelay>()` SHALL succeed
+- **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped (`.also_to_plugin_with(...).into::<MacdShard>()`)
+
+#### Scenario: Calling also_to_plugin_with twice on the same channel is a topology error
+- **WHEN** a Relay calls `c.channel::<T>("foo").from::<S>().also_to_plugin_with("p1", f1).also_to_plugin_with("p2", f2)`
+- **THEN** `register_relay::<R>()` SHALL panic with `BuildTopologyError::DuplicatePluginSink { channel: "foo" }`
+- **AND** the offending channel name SHALL appear verbatim in the error message
+
+#### Scenario: also_to_plugin_with is unreachable after to_plugin
+- **WHEN** a Relay attempts `c.channel::<Vec<u8>>("foo").from::<S>().to_plugin("p").also_to_plugin_with(...)`
+- **THEN** the code SHALL fail to compile because `to_plugin` returns `Channel<T>` (a finalized handle with no further methods)
+- **AND** a trybuild test under `sdk/rust/tests/build_failures/` SHALL pin this as a stable compile error
+
+### Requirement: Hybrid channel emission — consumer fan-out then single serializer call
+
+When a Shard's `Shard::run` calls `ctx.emit(value)` on a hybrid channel (`kind = InterShard, plugin_sink = Some(_)`), the dispatcher SHALL execute the following sequence on the producer thread:
+
+1. Fan out the typed `Arc<dyn Any + Send + Sync>` value to every consumer mailbox listed in the channel's `consumers` per the channel's `OverflowPolicy`. This step SHALL complete (modulo `OverflowPolicy::Block` parking) before step 2 begins.
+2. If `plugin_sink` is `Some(sink)`, invoke `sink.serializer(value.as_ref())` exactly once inside `std::panic::catch_unwind(AssertUnwindSafe(...))`. On `Ok(bytes)`, send the bytes through the existing plugin-wire framing path (`channel: String` wire-metadata key set to the channel name; `[key_len][val_len][key][value]` block format). On `Err(panic)`, return `ShardError::PluginSerializerPanic { channel: <channel name>, message: <formatted panic payload> }` to the producing Shard's `ctx.emit` call without emitting any plugin bytes.
+
+The dispatcher thread SHALL remain alive across a serializer panic. Subsequent emits SHALL proceed normally; only the producing Shard sees the per-emit error.
+
+The serializer SHALL run exactly once per `ctx.emit` invocation regardless of consumer count. The byte buffer produced by the serializer SHALL NOT be cached or reused across emits.
+
+#### Scenario: Hybrid emit fans out typed value to all consumers and bytes to plugin
+- **WHEN** a producer Shard's `run` calls `ctx.emit(value)` on a channel wired to `[ConsumerA, ConsumerB]` and with `plugin_sink = Some(("indicators", serializer))`
+- **THEN** `ConsumerA::run` and `ConsumerB::run` SHALL each be invoked with the typed `value` (cloned per the existing inter-shard delivery semantics)
+- **AND** the agent-side plugin "indicators" SHALL receive a single wire frame with bytes equal to `serializer(&value)` and `channel = <channel name>` in the metadata
+
+#### Scenario: Single serializer call regardless of consumer count
+- **WHEN** a hybrid channel has N inter-shard consumers and the producer emits one value
+- **THEN** the serializer SHALL be invoked exactly once for that emit
+- **AND** N is unconstrained (1, 3, 100 — same single-call guarantee)
+
+#### Scenario: Panicking serializer surfaces as ShardError without crashing the dispatcher
+- **WHEN** the serializer panics on a particular input
+- **THEN** the inter-shard consumers SHALL still receive the typed value (consumer fan-out completed before serialization)
+- **AND** `ctx.emit(...)` SHALL return `Err(ShardError::PluginSerializerPanic { channel, message })`
+- **AND** the dispatcher thread SHALL remain alive — a subsequent `ctx.emit` call SHALL execute normally
+
+#### Scenario: Serializer runs after consumer fan-out, not before
+- **WHEN** an `OverflowPolicy::Block` consumer mailbox is full and the producer emits on a hybrid channel
+- **THEN** the producer SHALL park on the consumer mailbox
+- **AND** the plugin sink SHALL NOT receive any bytes until the consumer drains and the producer unparks
+- **AND** when the producer unparks, the serializer SHALL be invoked exactly once and the plugin sink SHALL receive the corresponding bytes
+
+### Requirement: emit_with_meta is valid on hybrid channels
+
+`ShardCtx::emit_with_meta(value, meta)` SHALL accept the call when either:
+
+- the channel is `kind = PluginBound` (existing rule), OR
+- the channel has `plugin_sink = Some(_)` (new rule for hybrid channels).
+
+On a hybrid channel, the inter-shard consumers SHALL receive the typed value with no metadata (metadata is plugin-framing only and has no place in the typed delivery model). The plugin sink SHALL receive bytes (via the channel's serializer) with the supplied `HashMap<String, String>` attached to the wire frame using the existing `[key_len][val_len][key][value]` block format. The reserved `channel: String` key SHALL be set automatically and SHALL NOT be overridable by user-supplied keys; an attempt to set a reserved key SHALL be silently dropped during framing (matches the existing rule for `PluginBound` channels).
+
+On a pure-`InterShard` channel with no plugin sink, `emit_with_meta` SHALL continue to return `ShardError::MetadataNotAllowedOnInterShardChannel { channel }` without delivering the value or the metadata.
+
+#### Scenario: emit_with_meta on a hybrid channel forwards metadata to plugin only
+- **WHEN** a producer Shard's `run` calls `ctx.emit_with_meta(value, {"trace_id": "abc123"})` on a hybrid channel wired to one consumer and one plugin sink
+- **THEN** the consumer SHALL receive the typed `value` with no `trace_id` visible
+- **AND** the plugin wire frame SHALL contain `trace_id = "abc123"` plus the implicit `channel = <channel name>` key
+
+#### Scenario: emit_with_meta on a pure inter-shard channel still rejects metadata
+- **WHEN** a producer Shard's `run` calls `ctx.emit_with_meta(value, {"trace_id": "abc123"})` on a channel that has consumers but no `plugin_sink`
+- **THEN** `ctx.emit_with_meta` SHALL return `ShardError::MetadataNotAllowedOnInterShardChannel { channel }`
+- **AND** neither the consumers nor any plugin SHALL receive the value or the metadata
+
+#### Scenario: Reserved metadata keys are stripped on hybrid channels
+- **WHEN** a producer calls `ctx.emit_with_meta(value, {"channel": "spoof", "trace_id": "abc"})` on a hybrid channel
+- **THEN** the wire frame SHALL contain `channel = <real channel name>` (the reserved value, not "spoof") and `trace_id = "abc"`
+
+### Requirement: New BuildTopologyError variant — `DuplicatePluginSink`
+
+`BuildTopologyError` (in `sdk/rust/src/channel/builder.rs`) SHALL gain a `DuplicatePluginSink { channel: &'static str }` variant. The variant SHALL be raised at `register_relay::<R>()` time when `also_to_plugin_with` is called more than once on the same channel. The first call registers the sink; the second SHALL push the error onto the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `register_relay::<R>()` validation SHALL fail with the standard "topology rejected" message that lists every accumulated `BuildTopologyError`.
+
+#### Scenario: Second also_to_plugin_with call is rejected at registration
+- **WHEN** a Relay's `channels(c)` method calls `also_to_plugin_with("p1", f1)` followed by `also_to_plugin_with("p2", f2)` on the same channel
+- **THEN** `register_relay::<R>()` SHALL panic with the topology error including `DuplicatePluginSink { channel: "<name>" }`
+- **AND** the registered topology SHALL be discarded
+
+### Requirement: New ShardError variant — `PluginSerializerPanic`
+
+`ShardError` (in `sdk/rust/src/shard/error.rs`) SHALL gain a `PluginSerializerPanic { channel: String, message: String }` variant. The variant SHALL be returned from `ctx.emit(...)` (and `ctx.emit_with_meta(...)`) on a hybrid channel when the user-supplied serializer panics. `channel` SHALL be the channel name as declared in `ChannelBuilder`; `message` SHALL be the panic payload formatted via the existing panic-message helper (a string description, not the raw `Box<dyn Any>` payload).
+
+The producing Shard's `Shard::run` SHALL receive the error via the normal `Result<(), ShardError>` return path of `ctx.emit`. Returning `Err` from `Shard::run` continues to discard partial emits per the existing trait contract; ignoring the error is also valid and SHALL leave the inter-shard consumers' delivery intact.
+
+#### Scenario: Producer Shard sees PluginSerializerPanic and chooses how to handle it
+- **WHEN** a hybrid channel's serializer panics during `ctx.emit(value)`
+- **THEN** `ctx.emit(value)` SHALL return `Err(ShardError::PluginSerializerPanic { channel, message })`
+- **AND** the producing Shard MAY ignore, log, or `return Err(...)` — all three are valid handlers
+- **AND** the inter-shard consumer fan-out SHALL have already completed before the panic was caught
 
 ### Requirement: Entry channel value types limited to bytes or string in v1
 
