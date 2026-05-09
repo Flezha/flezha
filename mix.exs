@@ -89,9 +89,11 @@ defmodule Flezha.MixProject do
     [
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
-      # {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
+      # ProcessHub is pinned to the github master branch until durable-registry +
+      # coordinator-bootstrap-recovery are stabilised and a new hex version is cut.
+      {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
       # {:process_hub, path: "../process-hub"},
-      {:process_hub, "~> 0.5.0-beta"},
+      # {:process_hub, "~> 0.5.0-beta"},
       {:blockade, "~> 0.2.2"},
       {:fresh, "~> 0.4.4"},
       {:kafka_ex, github: "alfetahe/kafka_ex", branch: "fix/setopts-invalid-socket-crash"},
