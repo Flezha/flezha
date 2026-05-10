@@ -53,9 +53,29 @@ should use `:latest` (prod runtime) or `:latest-dev` (runtime + Node + testnet).
 
 ```bash
 # Build for the current host arch (run natively per arch — no QEMU/buildx)
-docker build -f docker/dev/Dockerfile.toolchain -t alfetahe/flezha:latest-toolchain .
+make docker-build-toolchain        # or: docker build -f docker/dev/Dockerfile.toolchain -t alfetahe/flezha:latest-toolchain .
 docker push alfetahe/flezha:latest-toolchain
 ```
+
+## Build and push the runtime-dev image (`:latest-dev`)
+
+`Dockerfile.runtime` is `FROM alfetahe/flezha:latest`, so the prod runtime
+must be available locally (built per `../prod/README.md`, or pulled with
+`docker pull alfetahe/flezha:latest`) before this step.
+
+```bash
+# Ensure :latest exists locally first (skip if you already pulled it)
+make docker-build VERSION=latest
+
+# Build for the current host arch (run natively per arch — no QEMU/buildx)
+make docker-build-dev              # or: docker build -f docker/dev/Dockerfile.runtime -t alfetahe/flezha:latest-dev .
+docker push alfetahe/flezha:latest-dev
+```
+
+For a multi-arch manifest, mirror the two-native-machines flow in
+`../prod/README.md` — build `:latest-dev-amd64` / `:latest-dev-arm64` on
+each host, then `docker manifest create alfetahe/flezha:latest-dev …` and
+`docker manifest push`.
 
 ## Run via docker compose
 
