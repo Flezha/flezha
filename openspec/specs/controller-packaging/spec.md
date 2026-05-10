@@ -177,10 +177,12 @@ The image inherits the prod image's HEALTHCHECK (control-socket readiness, see t
 1. Background `bin/flzvm start`.
 2. If `FLEZHA_TESTNET_WS_PORT` is set and `/flezha/testnet/dist/index.js` exists, also background the testnet WS server (no-op in `:latest`; consumed by `:latest-dev` via inheritance).
 3. If `FLEZHA_SNAPSHOT_ENABLED` is unset or truthy AND a snapshot file exists at `${FLEZHA_SNAPSHOT_DIR:-/flezha/app_data/snapshots}/latest.flz`, optionally wait up to `${FLEZHA_RESTORE_WAIT_TIMEOUT_S:-60}` seconds for an SDK socket matching `${FLEZHA_RESTORE_WAIT_SOCKET_GLOB}` (empty default = no wait), then run `flz cluster restore` against the snapshot file with `--warn-if-older-than ${FLEZHA_SNAPSHOT_STALENESS_THRESHOLD_S:-86400}s --peer-timeout-ms ${FLEZHA_SNAPSHOT_PEER_TIMEOUT_MS:-5000}`.
-4. Install a SIGTERM/SIGINT trap that runs `/usr/local/bin/snapshot-on-stop.sh` before the agent exits.
+4. Install a SIGTERM/SIGINT trap whose behaviour depends on `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` (default `true`):
+   - **Enabled** (default): the trap SHALL `exec /flezha/bin/flz controller stop --timeout-ms "${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}"`. The CLI's RPC drives `Flezha.Shutdown.Coordinator` inside the BEAM (quiesce → drain via HotSwap → finalise). `snapshot-on-stop.sh` is NOT invoked on this branch — HotSwap migration replaces snapshot-driven restart-survival for steady-state Relays.
+   - **Disabled** (`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` set to `false`/`0`/`no`/`off` case-insensitive): the trap SHALL run `/usr/local/bin/snapshot-on-stop.sh` then `kill -TERM` the agent — today's behaviour. This branch exists as the kill-switch fall-through and is removed once `auto-restore-on-boot` lands and `cluster-snapshot-restore` is deleted.
 5. `wait` on the agent PID.
 
-`/usr/local/bin/snapshot-on-stop.sh` SHALL be a separate script invoked both by the SIGTERM trap and (in k8s) by `lifecycle.preStop.exec.command`. It atomically writes `${FLEZHA_SNAPSHOT_DIR}/latest.flz.tmp` then renames to `latest.flz`. It SHALL no-op (exit 0) when `FLEZHA_SNAPSHOT_ENABLED` is set to any of `false`, `0`, `no`, `off` (case-insensitive).
+`/usr/local/bin/snapshot-on-stop.sh` SHALL remain a separate script invoked both by the (disabled-branch) SIGTERM trap and (in k8s with snapshot-mode) by `lifecycle.preStop.exec.command`. It atomically writes `${FLEZHA_SNAPSHOT_DIR}/latest.flz.tmp` then renames to `latest.flz`. It SHALL no-op (exit 0) when `FLEZHA_SNAPSHOT_ENABLED` is set to any of `false`, `0`, `no`, `off` (case-insensitive).
 
 The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_SOCKET_FILES_PATH}/executor_control_channel.sock`.
 
@@ -192,19 +194,25 @@ The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_
 
 #### Scenario: Warm start restores from existing snapshot
 
-- **GIVEN** `/flezha/app_data/snapshots/latest.flz` written by a prior graceful stop
+- **GIVEN** `/flezha/app_data/snapshots/latest.flz` written by a prior graceful stop with snapshot mode
 - **WHEN** the container starts
 - **THEN** the entrypoint waits for SDK readiness (if `FLEZHA_RESTORE_WAIT_SOCKET_GLOB` is set) then logs `graceful-restart: restoring from <path>` and runs `flz cluster restore`; the CLI exits 0 and the agent serves restored relays
 
-#### Scenario: SIGTERM writes a snapshot before the agent exits
+#### Scenario: SIGTERM with graceful shutdown enabled drives the BEAM coordinator
 
-- **GIVEN** a running container with `FLEZHA_SNAPSHOT_ENABLED=true`
+- **GIVEN** a running container with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=true` (default), one Relay locally hosted, and a peer container reachable
 - **WHEN** the orchestrator sends SIGTERM (e.g. `docker stop`)
-- **THEN** the entrypoint logs `graceful-restart: SIGTERM received` and invokes `snapshot-on-stop.sh`, which atomically writes `latest.flz.tmp` then renames to `latest.flz`; the file is preserved across the container teardown
+- **THEN** the entrypoint trap execs `/flezha/bin/flz controller stop --timeout-ms <timeout>`; the CLI streams drain progress; the BEAM exits cleanly within `stop_grace_period`; the Relay is alive on the peer; `snapshot-on-stop.sh` is NOT invoked
+
+#### Scenario: SIGTERM with graceful shutdown disabled writes a snapshot before exit
+
+- **GIVEN** a running container with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false` and `FLEZHA_SNAPSHOT_ENABLED=true`
+- **WHEN** the orchestrator sends SIGTERM
+- **THEN** the entrypoint logs `graceful-restart: SIGTERM received` and invokes `snapshot-on-stop.sh`, which atomically writes `latest.flz.tmp` then renames to `latest.flz`; the file is preserved across the container teardown — equivalent to today's behaviour
 
 #### Scenario: FLEZHA_SNAPSHOT_ENABLED=false disables both restore and snapshot
 
-- **GIVEN** `FLEZHA_SNAPSHOT_ENABLED=false`
+- **GIVEN** `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false` and `FLEZHA_SNAPSHOT_ENABLED=false`
 - **WHEN** the container starts and is later sent SIGTERM
 - **THEN** the entrypoint logs `restore disabled` on start (skipping any restore) and `snapshot disabled` on stop (leaving any existing `latest.flz` untouched)
 
@@ -213,6 +221,42 @@ The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_
 - **GIVEN** a container starting up
 - **WHEN** the BEAM has not yet opened its control socket
 - **THEN** the HEALTHCHECK reports unhealthy; once the socket exists at `${FLEZHA_SOCKET_FILES_PATH}/executor_control_channel.sock`, the healthcheck reports healthy
+
+### Requirement: docker-compose controller services SHALL declare an explicit stop signal and grace period
+
+Every controller service in `docker/prod/docker-compose.yml`, `docker/dev/docker-compose.yml`, `docker/dev/docker-compose.healing.yml`, and `docker/dev/docker-compose.testing.yml` SHALL declare:
+
+- `stop_signal: SIGTERM` — explicit; matches docker's default but documents intent.
+- `stop_grace_period: 75s` — long enough for `Flezha.Shutdown.Coordinator`'s 60 s drain budget plus 15 s headroom for finalise and BEAM exit.
+
+Operators changing `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` MUST update `stop_grace_period` to `(timeout_ms / 1000) + 15s` in lockstep. The pairing is documented in `docs/operations/graceful_shutdown.md`.
+
+#### Scenario: `docker compose stop` lets the BEAM drain without SIGKILL
+
+- **GIVEN** a `docker compose up` of `docker/prod/docker-compose.yml` with a controller hosting one Relay and a peer service running
+- **WHEN** the operator runs `docker compose stop`
+- **THEN** docker sends SIGTERM (per `stop_signal`); the controller drains within 60 s; the 75 s `stop_grace_period` elapses without docker escalating to SIGKILL; the controller exits cleanly; the Relay is running on the peer
+
+### Requirement: K8s DaemonSet SHALL declare a preStop hook and a tuned termination grace period
+
+`kubernetes/flezha-daemonset.yaml`'s controller container SHALL declare:
+
+- `lifecycle.preStop.exec.command: ["/flezha/bin/flz", "controller", "stop", "--timeout-ms", "$(FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS)"]` — the **primary** path for k8s pod termination; runs synchronously before k8s issues SIGTERM.
+- `terminationGracePeriodSeconds: 75` — `(FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS / 1000) + 15` headroom; default value matches the configmap default of `60000`.
+
+`kubernetes/flezha-configmap.yaml` SHALL declare `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` (default `60000`). The DaemonSet SHALL `envFrom` the configmap so the BEAM and the preStop command read the same value. Operators tuning the value MUST also bump `terminationGracePeriodSeconds` to maintain the 15 s headroom.
+
+#### Scenario: K8s pod deletion runs preStop, then SIGTERM, exits within grace
+
+- **GIVEN** a controller pod hosting one Relay with a peer pod available
+- **WHEN** the operator runs `kubectl delete pod <pod>`
+- **THEN** k8s runs `flz controller stop --timeout-ms 60000` via preStop (which drives `Flezha.Shutdown.Coordinator` to drain the Relay to the peer), then sends SIGTERM (the SignalHandler observes it as a second-signal during shutdown and ignores), then waits up to 75 s; the pod exits cleanly with the Relay running on the peer
+
+#### Scenario: Operator-tuned timeout takes effect via configmap
+
+- **GIVEN** an operator updates `kubernetes/flezha-configmap.yaml` to set `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS=120000` AND updates the DaemonSet's `terminationGracePeriodSeconds` to `135`
+- **WHEN** the DaemonSet is reapplied
+- **THEN** preStop resolves to `flz controller stop --timeout-ms 120000` and pods get a 135 s grace window — the BEAM's coordinator and k8s's wall-clock budget agree
 
 ### Requirement: `.dockerignore` SHALL exclude all non-source artefacts from the build context
 

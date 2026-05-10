@@ -1,0 +1,173 @@
+defmodule Flezha.Shutdown.CoordinatorTest do
+  # async: false — exercises the singleton Coordinator GenServer and the
+  # named ETS table. Tests reset state between cases.
+  use ExUnit.Case, async: false
+
+  use Mimic
+
+  alias Flezha.Service.HubManager
+  alias Flezha.Shutdown.Coordinator
+  alias Flezha.State.FsyncBatcher
+  alias Flezha.Transport.Server, as: TransportServer
+
+  setup :set_mimic_global
+  setup :verify_on_exit!
+
+  setup do
+    # The application boots a Coordinator under `Flezha.Supervisor`.
+    # Each test resets it to `:idle` by killing the process — the
+    # supervisor restarts it via :one_for_one.
+    reset_coordinator!()
+    :ok
+  end
+
+  describe "status/0" do
+    test "reports idle phase and configured knobs" do
+      Application.put_env(:flezha, :graceful_shutdown_timeout_ms, 4_321)
+      on_exit(fn -> Application.delete_env(:flezha, :graceful_shutdown_timeout_ms) end)
+
+      status = Coordinator.status()
+
+      assert status.shutdown_in_progress == false
+      assert status.shutdown_phase == nil
+      assert status.signal_handler_status in [:ok, :degraded]
+      assert status.graceful_shutdown_timeout_ms == 4_321
+    end
+  end
+
+  describe "shutting_down?/0" do
+    test "false at idle" do
+      refute Coordinator.shutting_down?()
+    end
+  end
+
+  describe "shutdown/2 with force: true" do
+    test "skips quiesce + drain, runs only finalise, returns :ok" do
+      stub(HubManager, :get_running_namespaces, fn -> [] end)
+      stub(HubManager, :stop_hub_manager, fn -> :ok end)
+      stub(HubManager, :get_hub_nodes, fn _ns, _ -> [] end)
+      stub(FsyncBatcher, :flush_all, fn -> :ok end)
+      stub(TransportServer, :stop_all, fn -> :ok end)
+
+      events = attach_telemetry()
+
+      assert :ok = Coordinator.shutdown(:cli, force: true, timeout_ms: 5_000)
+
+      detach_telemetry(events)
+      received = drain_telemetry()
+
+      # Quiesce + drain are skipped on force; finalise + complete fire.
+      assert Enum.any?(received, fn {ev, _, meta} ->
+               ev == [:flezha, :shutdown, :phase_started] and meta.phase == :finalise
+             end)
+
+      assert Enum.any?(received, fn {ev, _, meta} ->
+               ev == [:flezha, :shutdown, :complete] and meta.outcome == :forced
+             end)
+    end
+  end
+
+  describe "shutdown/2 with no peers and no running namespaces" do
+    test "runs through all phases cleanly" do
+      stub(HubManager, :get_running_namespaces, fn -> [] end)
+      stub(HubManager, :stop_hub_manager, fn -> :ok end)
+      stub(HubManager, :get_hub_nodes, fn _ns, _ -> [] end)
+      stub(FsyncBatcher, :flush_all, fn -> :ok end)
+      stub(TransportServer, :stop_all, fn -> :ok end)
+
+      events = attach_telemetry()
+
+      assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000)
+
+      detach_telemetry(events)
+      received = drain_telemetry()
+
+      phases =
+        received
+        |> Enum.filter(fn {ev, _, _} -> ev == [:flezha, :shutdown, :phase_started] end)
+        |> Enum.map(fn {_, _, meta} -> meta.phase end)
+
+      assert phases == [:quiesce, :drain, :finalise]
+
+      assert Enum.any?(received, fn {ev, _, meta} ->
+               ev == [:flezha, :shutdown, :complete] and meta.outcome == :clean
+             end)
+    end
+  end
+
+  describe "idempotent re-entry" do
+    test "second call during in-flight shutdown joins and receives same outcome" do
+      # Make drain take long enough that two callers race into it.
+      test_pid = self()
+
+      stub(HubManager, :get_running_namespaces, fn ->
+        send(test_pid, :hub_called)
+        # Simulate slow stop so the second caller arrives during drain.
+        Process.sleep(100)
+        []
+      end)
+
+      stub(HubManager, :stop_hub_manager, fn -> :ok end)
+      stub(HubManager, :get_hub_nodes, fn _ns, _ -> [] end)
+      stub(FsyncBatcher, :flush_all, fn -> :ok end)
+      stub(TransportServer, :stop_all, fn -> :ok end)
+
+      caller_a =
+        Task.async(fn ->
+          Coordinator.shutdown(:cli, timeout_ms: 5_000)
+        end)
+
+      # Wait until the first caller has entered drain, then issue
+      # a second shutdown — it should join.
+      assert_receive :hub_called, 1_000
+
+      caller_b =
+        Task.async(fn ->
+          Coordinator.shutdown(:cli, timeout_ms: 5_000)
+        end)
+
+      assert :ok = Task.await(caller_a, 5_000)
+      assert :ok = Task.await(caller_b, 5_000)
+    end
+  end
+
+  # ---------- helpers ----------
+
+  defp reset_coordinator!() do
+    Coordinator.__reset_for_tests__()
+  end
+
+  defp attach_telemetry() do
+    handler_id = {__MODULE__, make_ref()}
+    test_pid = self()
+
+    :ok =
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:flezha, :shutdown, :requested],
+          [:flezha, :shutdown, :phase_started],
+          [:flezha, :shutdown, :phase_completed],
+          [:flezha, :shutdown, :drain_progress],
+          [:flezha, :shutdown, :timeout],
+          [:flezha, :shutdown, :complete]
+        ],
+        fn event, measurements, metadata, _ ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+    handler_id
+  end
+
+  defp detach_telemetry(handler_id), do: :telemetry.detach(handler_id)
+
+  defp drain_telemetry(acc \\ []) do
+    receive do
+      {:telemetry, ev, m, md} -> drain_telemetry([{ev, m, md} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+end

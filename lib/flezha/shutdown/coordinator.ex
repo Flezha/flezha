@@ -99,6 +99,11 @@ defmodule Flezha.Shutdown.Coordinator do
     GenServer.call(__MODULE__, :status)
   end
 
+  @doc false
+  def __reset_for_tests__() do
+    GenServer.call(__MODULE__, :__reset_for_tests__)
+  end
+
   @doc """
   Hot-path read: returns `true` while the coordinator is in
   `:quiescing | :draining | :finalising`. Backed by an ETS table so
@@ -157,8 +162,9 @@ defmodule Flezha.Shutdown.Coordinator do
 
     cond do
       Keyword.get(opts, :force, false) ->
-        Logger.info("[shutdown] forced (skipping drain)")
+        Logger.info("[shutdown] forced (skipping drain); phase=finalise")
         state = transition(state, :finalising, now)
+        emit_telemetry(:phase_started, %{}, %{phase: :finalise})
         send(self(), :do_finalise)
         {:noreply, state}
 
@@ -178,6 +184,12 @@ defmodule Flezha.Shutdown.Coordinator do
   def handle_call({:shutdown, _reason, _opts}, from, %__MODULE__{} = state) do
     Logger.info("[shutdown] already in progress (phase=#{state.phase}), joining")
     {:noreply, %{state | waiters: [from | state.waiters]}}
+  end
+
+  def handle_call(:__reset_for_tests__, _from, state) do
+    if is_reference(state.timeout_timer), do: Process.cancel_timer(state.timeout_timer)
+    :ets.insert(@ets_table, {:phase, :idle})
+    {:reply, :ok, %__MODULE__{signal_handler_status: state.signal_handler_status}}
   end
 
   def handle_call(:status, _from, state) do
