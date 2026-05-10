@@ -144,6 +144,11 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
     command = build_command(runtime, current_path, namespace)
 
+    # `cargo run` does a freshness check on every invocation (1–3 s warm,
+    # tens of seconds cold) before the executor binary even starts, so 2 s
+    # was racy on a cold target dir and tanked QUIC's setup_all.
+    connect_timeout = Keyword.get(opts, :connect_timeout, 30_000)
+
     Flezha.Service.EventManager.add_handler(:executor_connected_event)
     Flezha.Service.PortPilot.open_port(command, transport: transport)
 
@@ -151,7 +156,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       receive do
         {:executor_connected_event, {^namespace, executor_id}} -> executor_id
       after
-        2000 -> raise "temporary test executor not connected"
+        connect_timeout -> raise "temporary test executor not connected"
       end
 
     # Remove the handler to duplicate events.

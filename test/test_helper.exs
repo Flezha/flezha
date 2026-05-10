@@ -2,7 +2,10 @@
 # Java executor fat jar to be on disk. Run those tests via the
 # `mix test.java_sdk` alias, which builds the jar first.
 # `:system` is excluded by convention — those tests boot extra OS processes.
-ExUnit.start(exclude: [:system, :java_sdk, :kafka_integration])
+# `:testnet` is excluded because the WS testnet daemon must be running on
+# port 4500 — run `npm --prefix test/apps/testnet start` first, then
+# `mix test --include testnet`.
+ExUnit.start(exclude: [:system, :java_sdk, :kafka_integration, :testnet])
 
 # ProcessHub's `LoggerService.error/3` logs every `StartChildrenRequest`
 # failure at error level — useful in production, but multiple tests

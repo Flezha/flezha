@@ -68,7 +68,8 @@ must be available locally (built per `../prod/README.md`, or pulled with
 make docker-build VERSION=latest
 
 # Build for the current host arch (run natively per arch — no QEMU/buildx)
-make docker-build-dev              # or: docker build -f docker/dev/Dockerfile.runtime -t alfetahe/flezha:latest-dev .
+# or: docker build -f docker/dev/Dockerfile.runtime -t alfetahe/flezha:latest-dev .
+make docker-build-dev              
 docker push alfetahe/flezha:latest-dev
 ```
 

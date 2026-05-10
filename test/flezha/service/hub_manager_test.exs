@@ -14,7 +14,7 @@ defmodule Flezha.Service.HubManagerTest do
   path is covered in `Flezha.Service.PluginManagerTest`.
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Flezha.Plugin
   alias Flezha.Relay.Builder
@@ -60,6 +60,47 @@ defmodule Flezha.Service.HubManagerTest do
       end
 
     Keyword.get(builder.opts, :plugins, [])
+  end
+
+  describe "registry_backend_config/1" do
+    @tag :tmp_dir
+    test "regression_ensures_registry_backend_atom_routes_to_real_backend", %{tmp_dir: tmp_dir} do
+      # A regression test for the `:durable_ets` typo: ProcessHub's
+      # `resolve_registry_backend/1` only recognises `:dets` and `:ets`
+      # as backend identifiers — anything else is treated as a module
+      # name and crashes `setup_storage/2` on first use. Pinning the
+      # atom here means the next typo fails fast in CI instead of at
+      # the first executor connect.
+      previous_enabled = Application.get_env(:flezha, :auto_restore_enabled)
+      previous_root = Application.get_env(:flezha, :process_hub_registry_root)
+      Application.put_env(:flezha, :auto_restore_enabled, true)
+      Application.put_env(:flezha, :process_hub_registry_root, tmp_dir)
+
+      try do
+        assert {:dets, opts} = HubManager.registry_backend_config(:any_hub_id_for_test)
+        assert is_list(opts)
+        assert Keyword.has_key?(opts, :path)
+      after
+        Application.put_env(:flezha, :auto_restore_enabled, previous_enabled)
+
+        if previous_root do
+          Application.put_env(:flezha, :process_hub_registry_root, previous_root)
+        else
+          Application.delete_env(:flezha, :process_hub_registry_root)
+        end
+      end
+    end
+
+    test "returns :ets when auto_restore is disabled" do
+      previous = Application.get_env(:flezha, :auto_restore_enabled)
+      Application.put_env(:flezha, :auto_restore_enabled, false)
+
+      try do
+        assert :ets = HubManager.registry_backend_config(:any_hub_id_for_test)
+      after
+        Application.put_env(:flezha, :auto_restore_enabled, previous)
+      end
+    end
   end
 
   describe "rewrite_cspec_plugins/2" do

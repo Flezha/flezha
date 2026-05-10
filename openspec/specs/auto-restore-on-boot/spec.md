@@ -16,6 +16,8 @@ The recovery configuration SHALL be `[recovery_window_ms: <flezha_recovery_windo
 
 The kill-switch `:flezha, :auto_restore_enabled` (env var `FLEZHA_AUTO_RESTORE_ENABLED`, default `true`) SHALL gate the `auto_recovery` field: when `false`, pass `auto_recovery: false` to `ProcessHub.child_spec` so ProcessHub transitions immediately to `:normal` without replay or peer handshake.
 
+The atom in the registry-backend tuple MUST resolve to a real backend module via `ProcessHub.Initializer.resolve_registry_backend/1` — currently exactly `:dets` (→ `ProcessHub.Service.Storage.Dets`) or `:ets` (→ `ProcessHub.Service.Storage.Ets`). Backend identifiers that route to non-existent modules SHALL NOT appear in `lib/flezha/service/hub_manager.ex`'s `registry_backend_config/1`. In particular, `:durable_ets` was observed as a regression in the commit immediately following `b0a00e7 Implement auto-restore-on-boot`: `ProcessHub.Initializer.resolve_registry_backend/1`'s `{module, opts}` fall-through clause treated `:durable_ets` as a module name and crashed `setup_storage/2` on first executor connect with `(UndefinedFunctionError) function :durable_ets.open/2 is undefined (module :durable_ets is not available)`, killing every fresh controller boot. If a future upstream `process_hub` ships an actual `Storage.DurableEts` backend (DETS-on-disk + ETS-fast-reads), this requirement MUST be amended to allow `:durable_ets` only AFTER `deps/process_hub/lib/process_hub/service/storage/durable_ets.ex` exists AND `ProcessHub.Initializer.resolve_registry_backend/1` carries an explicit `{:durable_ets, opts}` clause.
+
 #### Scenario: Default config opts in to durable + auto-recovery
 
 - **GIVEN** an application boots with default Flezha config
@@ -27,6 +29,22 @@ The kill-switch `:flezha, :auto_restore_enabled` (env var `FLEZHA_AUTO_RESTORE_E
 - **GIVEN** `FLEZHA_AUTO_RESTORE_ENABLED=false`
 - **WHEN** the spec is constructed
 - **THEN** the spec contains `auto_recovery: false`; the persistent registry is still configured (mutations still durably written) but no recovery state machine engages — ProcessHub jumps to `:normal` immediately
+
+#### Scenario: Registry-backend atom resolves to a real backend
+
+- **WHEN** `Flezha.Service.HubManager.registry_backend_config/1` is called for any `hub_id` with `:auto_restore_enabled` at its `true` default
+- **THEN** the returned tuple's first element is `:dets`
+- **AND** `ProcessHub.Initializer.resolve_registry_backend/1` routes that atom to `ProcessHub.Service.Storage.Dets`
+- **AND** the matching backend module file exists at `deps/process_hub/lib/process_hub/service/storage/dets.ex`
+
+#### Scenario: Boot succeeds end-to-end against a fresh image
+
+- **GIVEN** the controller is started from a freshly-built `alfetahe/flezha:latest-dev` image with an empty `app_data/process_hub/` directory
+- **WHEN** an SDK opens its first UDS `connect_control_channel` frame
+- **THEN** `ProcessHub.Initializer.setup_storage/2` returns successfully for `:default_hub`
+- **AND** `Flezha.Service.HubManager.register_handler/2` completes with `:ok`
+- **AND** the controller does not crash, the BEAM does not exit, and the agent stays Ready
+- **AND** a subsequent `bin/flz relay list` returns exit 0 (empty list on first boot)
 
 ### Requirement: `pre_recovery_replay` hook handler waits for FleetManager readiness
 

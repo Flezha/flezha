@@ -23,17 +23,15 @@ defmodule FlezhaTest do
   @test_relay_factory "do_nothing"
   @test_compare_filter_factory "compare_filter"
 
-  # `test/apps/testnet/dist/index.js` is the compiled WebSocket testnet
-  # bundle that the WS-dependent tests below connect to via
-  # `@testnet_ws_uri`. It is not committed to git; run `mix test.setup`
-  # (or `npm --prefix test/apps/testnet run build`) to produce it.
-  # When the bundle is missing, the WS tests are tagged `:skip` at
-  # compile time so the suite still runs to completion.
-  @testnet_bundle_path Path.expand("apps/testnet/dist/index.js", __DIR__)
-  @testnet_bundle_missing_reason unless File.exists?(@testnet_bundle_path),
-                                   do:
-                                     "testnet bundle missing at #{@testnet_bundle_path} " <>
-                                       "— run `mix test.setup` to build it"
+  # WS-dependent tests below connect to a Node.js testnet daemon at
+  # `@testnet_ws_uri` (the bundle lives at `test/apps/testnet/dist/index.js`,
+  # built by `mix test.setup`; the daemon is started by
+  # `npm --prefix test/apps/testnet start`). The daemon is not always
+  # running, so these tests are tagged `:testnet` and excluded from the
+  # default `mix test` run via `test/test_helper.exs`. Run them with:
+  #     mix test.setup
+  #     npm --prefix test/apps/testnet start &
+  #     mix test --include testnet
 
   setup_all do
     %{}
@@ -106,7 +104,7 @@ defmodule FlezhaTest do
   end
 
   @tag :websocket_plugin
-  @tag skip: @testnet_bundle_missing_reason
+  @tag :testnet
   test "websocket plugin connection start" do
     relay_id = "websocket_plugin_test"
 
@@ -147,7 +145,7 @@ defmodule FlezhaTest do
     assert res === {:ok, "plugin enabled"}
   end
 
-  @tag skip: @testnet_bundle_missing_reason
+  @tag :testnet
   test "beam msg forward plugin connection start" do
     relay_id = "beam_msg_forw_plugin_test"
 
@@ -172,7 +170,7 @@ defmodule FlezhaTest do
   end
 
   @tag :relay_flow_msg_forward
-  @tag skip: @testnet_bundle_missing_reason
+  @tag :testnet
   test "relay flow generation -> beam msg forward" do
     relay_id = "data_flow_test"
 
