@@ -20,10 +20,16 @@ defmodule Flezha.Application do
 
     children =
       [
+        # SignalHandler is started FIRST so OS signal handlers are
+        # installed before any other service can observe a delivered
+        # SIGTERM. The Coordinator is inserted right after HubManager
+        # because drain queries the hub.
+        Flezha.Shutdown.SignalHandler,
         Flezha.Service.EventManager,
         Flezha.BootLoader,
         Flezha.Service.Identificator,
         Flezha.Service.HubManager,
+        Flezha.Shutdown.Coordinator,
         Flezha.Executor.FleetSupervisor,
         FleetManager
       ] ++
@@ -62,10 +68,36 @@ defmodule Flezha.Application do
   end
 
   @impl true
-  def prep_stop(_state) do
-    # We need to stop the hub manager first to keep the executors
-    # running while relays are stopped.
-    Flezha.Service.HubManager.stop_hub_manager()
+  def prep_stop(state) do
+    if Application.get_env(:flezha, :graceful_shutdown_enabled, true) do
+      # The Coordinator owns the drain — it dispatches ProcessHub
+      # `cluster_leave` (via HubManager.stop_hub_manager/0) inside its
+      # drain phase and waits for peers to claim our Relays before
+      # finalising. Bounded by `:flezha, :graceful_shutdown_timeout_ms`.
+      try do
+        _ = Flezha.Shutdown.Coordinator.shutdown(:prep_stop)
+      catch
+        :exit, reason ->
+          require Logger
+          Logger.warning("[shutdown] coordinator unavailable in prep_stop: #{inspect(reason)}")
+          # Coordinator isn't running (e.g. early-boot crash) — fall
+          # back to the legacy direct call so the BEAM still tears
+          # the hub down before halting.
+          safe_legacy_stop()
+      end
+    else
+      safe_legacy_stop()
+    end
+
+    state
+  end
+
+  defp safe_legacy_stop() do
+    try do
+      Flezha.Service.HubManager.stop_hub_manager()
+    catch
+      :exit, _ -> :ok
+    end
   end
 
   defp installer_children do

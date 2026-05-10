@@ -84,6 +84,26 @@ by stale local cargo state.
 Exit code is non-zero on the first failing section; otherwise the script
 ends with `ALL CI CHECKS PASSED`.
 
+## Graceful shutdown
+
+The controller runs a three-phase orderly shutdown (quiesce → drain →
+finalise) on SIGTERM, SIGINT, `Application.prep_stop/1`, and
+`flz controller stop` — works in release, `mix run --no-halt`, and
+`iex -S mix` modes. Bounded by `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`
+(default 60 s); pair the orchestrator's grace period
+(`terminationGracePeriodSeconds` / `stop_grace_period`) at
+`timeout_ms / 1000 + 15s`. Default-on; set
+`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false` to fall back to today's
+direct-stop behaviour.
+
+| Env var                                | Default | Description                           |
+| -------------------------------------- | ------- | ------------------------------------- |
+| `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED`     | `true`  | Kill-switch (truthy: 1/true/yes/on)   |
+| `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`  | `60000` | Coordinator drain timeout             |
+
+Full operator playbook (run modes, telemetry, exit-code semantics,
+the third-SIGTERM escape hatch): [`docs/operations/graceful_shutdown.md`](docs/operations/graceful_shutdown.md).
+
 ## Code style
 
 The repo enforces three formatters via the

@@ -115,17 +115,40 @@ case "${FLEZHA_SNAPSHOT_ENABLED:-true}" in
 esac
 
 # 4) SIGTERM/SIGINT trap.
+#
+# Default branch (FLEZHA_GRACEFUL_SHUTDOWN_ENABLED unset/truthy):
+#   delegate to `flz controller stop`, which drives Flezha.Shutdown.Coordinator
+#   inside the BEAM (quiesce → drain via HotSwap → finalise).
+#   `snapshot-on-stop.sh` is NOT invoked — HotSwap migration replaces
+#   snapshot-driven restart-survival for steady-state Relays.
+#
+# Disabled branch (FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false/0/no/off):
+#   keep today's behaviour — write a snapshot, then SIGTERM the agent.
+GRACEFUL_TIMEOUT_MS="${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}"
+
 on_term() {
-  log "SIGTERM received; running snapshot-on-stop.sh"
-  if [ -x /usr/local/bin/snapshot-on-stop.sh ]; then
-    /usr/local/bin/snapshot-on-stop.sh || log "snapshot-on-stop.sh exited non-zero"
-  fi
-  if [ -n "$TESTNET_PID" ] && kill -0 "$TESTNET_PID" 2>/dev/null; then
-    kill -TERM "$TESTNET_PID" 2>/dev/null || true
-  fi
-  if kill -0 "$AGENT_PID" 2>/dev/null; then
-    kill -TERM "$AGENT_PID" 2>/dev/null || true
-  fi
+  case "${FLEZHA_GRACEFUL_SHUTDOWN_ENABLED:-true}" in
+    false|0|no|off|FALSE|NO|OFF)
+      log "SIGTERM received; graceful shutdown disabled, running snapshot-on-stop.sh"
+      if [ -x /usr/local/bin/snapshot-on-stop.sh ]; then
+        /usr/local/bin/snapshot-on-stop.sh || log "snapshot-on-stop.sh exited non-zero"
+      fi
+      if [ -n "$TESTNET_PID" ] && kill -0 "$TESTNET_PID" 2>/dev/null; then
+        kill -TERM "$TESTNET_PID" 2>/dev/null || true
+      fi
+      if kill -0 "$AGENT_PID" 2>/dev/null; then
+        kill -TERM "$AGENT_PID" 2>/dev/null || true
+      fi
+      ;;
+    *)
+      log "SIGTERM received; delegating to flz controller stop --timeout-ms ${GRACEFUL_TIMEOUT_MS}"
+      "$FLZ" controller stop --timeout-ms "$GRACEFUL_TIMEOUT_MS" || \
+        log "flz controller stop exited non-zero; BEAM will be forcibly terminated"
+      if [ -n "$TESTNET_PID" ] && kill -0 "$TESTNET_PID" 2>/dev/null; then
+        kill -TERM "$TESTNET_PID" 2>/dev/null || true
+      fi
+      ;;
+  esac
 }
 trap on_term TERM INT
 

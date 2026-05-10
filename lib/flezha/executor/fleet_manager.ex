@@ -5,6 +5,7 @@ defmodule Flezha.Executor.FleetManager do
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.EventManager
+  alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
   alias Flezha.Transport.Native
 
   require Logger
@@ -28,18 +29,23 @@ defmodule Flezha.Executor.FleetManager do
   end
 
   def connect_handler(stream_ref, namespace, init_payload, transport) do
-    factories = parse_factories(init_payload)
+    if ShutdownCoordinator.shutting_down?() do
+      Logger.info("[shutdown] rejecting executor connect attempt for namespace=#{namespace}")
+      {:error, :shutting_down}
+    else
+      factories = parse_factories(init_payload)
 
-    case GenServer.call(
-           __MODULE__,
-           {:executor_connect, stream_ref, namespace, factories, transport}
-         ) do
-      {:error, reason} ->
-        Logger.error("Failed to connect executor: #{inspect(reason)}")
-        {:error, reason}
+      case GenServer.call(
+             __MODULE__,
+             {:executor_connect, stream_ref, namespace, factories, transport}
+           ) do
+        {:error, reason} ->
+          Logger.error("Failed to connect executor: #{inspect(reason)}")
+          {:error, reason}
 
-      {:ok, {_namespace, executor_id}} ->
-        {:ok, executor_id}
+        {:ok, {_namespace, executor_id}} ->
+          {:ok, executor_id}
+      end
     end
   end
 

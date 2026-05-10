@@ -12,9 +12,14 @@ services:
       context: ../../
       dockerfile: docker/dev/Dockerfile.toolchain
     container_name: flezha_controller_dev
+    # Graceful shutdown — see docs/operations/graceful_shutdown.md.
+    stop_signal: SIGTERM
+    stop_grace_period: 75s
     environment:
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
+      FLEZHA_GRACEFUL_SHUTDOWN_ENABLED: ${FLEZHA_GRACEFUL_SHUTDOWN_ENABLED:-true}
+      FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS: ${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}
     depends_on:
       - kafka
     ulimits:

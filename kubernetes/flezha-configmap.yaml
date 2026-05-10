@@ -27,3 +27,8 @@ data:
   FLEZHA_WAL_TRANSFER_QUERY_TIMEOUT_MS: "5000"
   FLEZHA_PROCESS_HUB_REGISTRY_ROOT: "/var/lib/flezha/process_hub"
   FLEZHA_DATA_DIR: "/var/lib/flezha"
+  # Graceful shutdown (controller-graceful-shutdown).
+  # MUST stay paired with `terminationGracePeriodSeconds` in the
+  # DaemonSet (timeout_ms / 1000 + 15s headroom). Bumping this value
+  # without bumping the grace period will cause SIGKILLs mid-drain.
+  FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS: "60000"

@@ -161,7 +161,23 @@ config :flezha,
   # Leave 0 to disable this feature.
   #
   # The default is 30 seconds.
-  executor_keepalive: System.get_env("FLEZHA_EXECUTOR_KEEPALIVE", "30000") |> String.to_integer()
+  executor_keepalive: System.get_env("FLEZHA_EXECUTOR_KEEPALIVE", "30000") |> String.to_integer(),
+
+  # ------------------------------------------------------------------------------------------------
+  # Graceful shutdown (controller-graceful-shutdown).
+  #
+  # When enabled, the controller installs SIGTERM/SIGINT handlers and runs
+  # a three-phase shutdown (quiesce → drain → finalise) bounded by
+  # `graceful_shutdown_timeout_ms`. See `docs/operations/graceful_shutdown.md`.
+  #
+  # Truthy: 1, true, yes, on (case-insensitive). Falsy: 0, false, no, off.
+  graceful_shutdown_enabled:
+    (case System.get_env("FLEZHA_GRACEFUL_SHUTDOWN_ENABLED") do
+       nil -> true
+       val -> String.downcase(val) in ["1", "true", "yes", "on"]
+     end),
+  graceful_shutdown_timeout_ms:
+    System.get_env("FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS", "60000") |> String.to_integer()
 
 # ------------------------------------------------------------------------------------------------
 # Installable plugin installer keyword list (env-var driven). Only set when

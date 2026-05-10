@@ -12,12 +12,20 @@ services:
     image: alfetahe/flezha:${VERSION:-latest}
     container_name: flezha_agent_prod
     restart: unless-stopped
+    # Graceful shutdown: docker sends SIGTERM (default), then waits the
+    # grace period before SIGKILL. The 75s budget = coordinator's 60s
+    # drain timeout + 15s headroom for finalise + BEAM exit.
+    # Bump in lockstep with FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS.
+    stop_signal: SIGTERM
+    stop_grace_period: 75s
     environment:
       MIX_ENV: prod
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
       FLEZHA_LOG_PATH: /flezha/app_data/logs/flezha.log
       FLEZHA_LOG_LEVEL: ${FLEZHA_LOG_LEVEL:-info}
+      FLEZHA_GRACEFUL_SHUTDOWN_ENABLED: ${FLEZHA_GRACEFUL_SHUTDOWN_ENABLED:-true}
+      FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS: ${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}
     depends_on:
       - kafka
     ulimits:

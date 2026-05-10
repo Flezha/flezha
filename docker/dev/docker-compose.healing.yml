@@ -4,6 +4,9 @@ services:
     container_name: flezha_controller_dev
     user: "0:0"
     stdin_open: true
+    # Graceful shutdown — see docs/operations/graceful_shutdown.md.
+    stop_signal: SIGTERM
+    stop_grace_period: 75s
     # Auto-start the BEAM so the connection_healing test (or any future
     # automated probe) does not need to exec `mix run` after `docker compose
     # up`. Run as root to chown the bind-mount edge cases that arise on
@@ -27,6 +30,8 @@ services:
       MIX_ENV: dev
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
+      FLEZHA_GRACEFUL_SHUTDOWN_ENABLED: ${FLEZHA_GRACEFUL_SHUTDOWN_ENABLED:-true}
+      FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS: ${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}
       HOME: /home/flezha
       CARGO_HOME: /home/flezha/.cargo
       RUSTUP_HOME: /home/flezha/.rustup

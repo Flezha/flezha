@@ -1,6 +1,7 @@
-use std::process::{exit, Command};
+use std::io::{BufRead, BufReader, Write};
+use std::process::{exit, Command, Stdio};
 
-use crate::utils::{get_flezha_command, get_parameter};
+use crate::utils::{extract_param, get_flezha_command, get_parameter};
 
 pub fn handle_controller_command(args: &[String]) {
     if args.is_empty() {
@@ -11,10 +12,11 @@ pub fn handle_controller_command(args: &[String]) {
     match args[0].as_str() {
         "start" => handle_start(args),
         "stop" => handle_stop(args),
+        "status" => handle_status(args),
         "help" | "--help" | "-h" => print_controller_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'start', 'stop', or 'help'.",
+                "Error: Invalid argument '{}'. Use 'start', 'stop', 'status', or 'help'.",
                 args[0]
             );
             exit(1);
@@ -62,6 +64,11 @@ fn handle_start(args: &[String]) {
     }
 }
 
+// Exit codes (per controller-graceful-shutdown spec):
+//   0 — clean shutdown
+//   1 — partial drain (timeout elapsed, some Relays still local)
+//   2 — already shutting down (or coordinator not addressable)
+//   3 — controller socket unreachable
 fn handle_stop(args: &[String]) {
     for arg in &args[1..] {
         if arg == "--help" || arg == "-h" || arg == "help" {
@@ -70,16 +77,132 @@ fn handle_stop(args: &[String]) {
         }
     }
 
+    let timeout_ms = extract_param(&args[1..], "--timeout-ms", "--timeout-ms");
+    let no_wait = args.iter().any(|a| a == "--no-wait");
+    let force = args.iter().any(|a| a == "--force");
+
+    let mut opts: Vec<String> = Vec::new();
+    if let Some(t) = timeout_ms {
+        match t.parse::<u64>() {
+            Ok(n) => opts.push(format!("timeout_ms: {}", n)),
+            Err(_) => {
+                eprintln!("Error: --timeout-ms requires an integer (milliseconds)");
+                exit(1);
+            }
+        }
+    }
+    if no_wait {
+        opts.push("no_wait: true".to_string());
+    }
+    if force {
+        opts.push("force: true".to_string());
+    }
+
+    let opts_kw = if opts.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[{}]", opts.join(", "))
+    };
+
+    let rpc_command = format!("Flezha.Service.CliManager.controller_stop({})", opts_kw);
+
+    eprintln!("Stopping flezha controller...");
+
     let command = get_flezha_command();
+    let mut child = match Command::new(&command)
+        .arg("rpc")
+        .arg(&rpc_command)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: failed to spawn `{} rpc`: {}", command, e);
+            exit(3);
+        }
+    };
 
-    println!("Stopping flezha controller...");
+    let mut outcome: Option<String> = None;
+    let mut saw_any_output = false;
 
-    let status = Command::new(command).arg("stop").status();
+    if let Some(stdout) = child.stdout.take() {
+        let reader = BufReader::new(stdout);
+        let stdout_handle = std::io::stdout();
 
-    match status {
-        Ok(status) if status.success() => println!("Program stopped successfully."),
-        Ok(status) => eprintln!("Unknown code returned: {}", status),
-        Err(e) => eprintln!("Failed to stop program: {}", e),
+        for line in reader.lines().flatten() {
+            saw_any_output = true;
+            if let Some(rest) = line.strip_prefix("flz-controller-stop-result: ") {
+                outcome = Some(rest.trim().to_string());
+            } else {
+                let mut h = stdout_handle.lock();
+                let _ = writeln!(h, "{}", line);
+            }
+        }
+    }
+
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: failed to wait on `{} rpc`: {}", command, e);
+            exit(3);
+        }
+    };
+
+    // `flzvm rpc` exits non-zero when it cannot reach the controller
+    // node (the most common cause being an unstarted controller —
+    // the control socket is also the readiness signal).
+    if !status.success() && outcome.is_none() {
+        if !saw_any_output {
+            eprintln!("error: controller not reachable (rpc exit {:?})", status.code());
+        }
+        exit(3);
+    }
+
+    match outcome.as_deref() {
+        Some("clean") | Some("forced") => exit(0),
+        Some("partial") => exit(1),
+        Some("already_in_progress") => exit(2),
+        Some(other) => {
+            eprintln!("error: unrecognised result marker '{}'", other);
+            exit(1);
+        }
+        None => {
+            // RPC returned 0 but no marker — treat as partial/unknown.
+            eprintln!("error: no shutdown result marker in RPC output");
+            exit(1);
+        }
+    }
+}
+
+fn handle_status(args: &[String]) {
+    for arg in &args[1..] {
+        if arg == "--help" || arg == "-h" || arg == "help" {
+            print_status_help();
+            return;
+        }
+    }
+
+    let format = if args.iter().any(|a| a == "--json" || a == "-o=json") {
+        "json"
+    } else {
+        "text"
+    };
+
+    let command = get_flezha_command();
+    let rpc_command = format!(
+        "Flezha.Service.CliManager.controller_status(\"{}\")",
+        format
+    );
+
+    let status = Command::new(command)
+        .arg("rpc")
+        .arg(rpc_command)
+        .status()
+        .expect("Failed to execute command");
+
+    if !status.success() {
+        exit(3);
     }
 }
 
@@ -91,7 +214,8 @@ fn print_controller_help() {
     println!();
     println!("COMMANDS:");
     println!("    start    Start the flezha controller");
-    println!("    stop     Stop the flezha controller");
+    println!("    stop     Stop the flezha controller (graceful)");
+    println!("    status   Print controller status (incl. graceful-shutdown state)");
     println!("    help     Show this help message");
     println!();
     println!("Use 'flz controller <COMMAND> --help' for more information on a specific command.");
@@ -120,11 +244,38 @@ fn print_start_help() {
 }
 
 fn print_stop_help() {
-    println!("flz controller stop - Stop the flezha controller");
+    println!("flz controller stop - Stop the flezha controller gracefully");
     println!();
     println!("USAGE:");
-    println!("    flz controller stop");
+    println!("    flz controller stop [OPTIONS]");
     println!();
     println!("DESCRIPTION:");
-    println!("    Stops the currently running flezha controller.");
+    println!("    Drives Flezha.Shutdown.Coordinator over the running controller's");
+    println!("    CLI socket (works for release, mix, and iex run modes). Streams");
+    println!("    drain progress to stderr and prints a final outcome line on stdout.");
+    println!();
+    println!("OPTIONS:");
+    println!("    --timeout-ms <N>  Override the configured drain timeout (ms)");
+    println!("    --no-wait         Issue the shutdown and exit without waiting");
+    println!("    --force           Skip drain — finalise (flush WAL + close transports) only");
+    println!();
+    println!("EXIT CODES:");
+    println!("    0   Clean shutdown (or `--force` finalised cleanly)");
+    println!("    1   Partial drain (timeout elapsed; some Relays still local)");
+    println!("    2   Already shutting down (the in-flight outcome is reported)");
+    println!("    3   Controller not reachable on the CLI socket");
+}
+
+fn print_status_help() {
+    println!("flz controller status - Print controller status");
+    println!();
+    println!("USAGE:");
+    println!("    flz controller status [--json]");
+    println!();
+    println!("OUTPUT FIELDS:");
+    println!("    shutdown_in_progress       True while quiesce/drain/finalise is running");
+    println!("    shutdown_phase             :quiesce | :drain | :finalise | nil");
+    println!("    signal_handler_status      :ok | :degraded (degraded if :os.set_signal/2 unavailable)");
+    println!("    graceful_shutdown_enabled  Configured kill-switch state");
+    println!("    graceful_shutdown_timeout_ms  Configured drain timeout");
 }

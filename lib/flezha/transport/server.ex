@@ -48,6 +48,29 @@ defmodule Flezha.Transport.Server do
   def name(:uds), do: :"#{__MODULE__}.Uds"
   def name(:quic), do: :"#{__MODULE__}.Quic"
 
+  @doc """
+  Stop every configured transport server. Used by
+  `Flezha.Shutdown.Coordinator` during the finalise phase so transport
+  sockets/QUIC endpoints are closed before the application supervision
+  tree's normal shutdown takes over.
+  """
+  @spec stop_all() :: :ok
+  def stop_all() do
+    transports = Application.get_env(:flezha, :transports, [:uds])
+
+    Enum.each(transports, fn t ->
+      pid = Process.whereis(name(t))
+
+      if is_pid(pid) and Process.alive?(pid) do
+        try do
+          GenServer.stop(pid, :normal, 5_000)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+    end)
+  end
+
   @impl true
   def init(:uds), do: init_uds()
   def init(:quic), do: init_quic()

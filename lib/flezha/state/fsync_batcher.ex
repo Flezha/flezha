@@ -49,6 +49,16 @@ defmodule Flezha.State.FsyncBatcher do
     GenServer.call(__MODULE__, :flush_now)
   end
 
+  @doc """
+  Synchronously flush every dirty `WalWriter`. Equivalent to
+  `flush_now/0`; named separately so the graceful-shutdown
+  coordinator's intent is unambiguous at the call site.
+  """
+  @spec flush_all() :: :ok
+  def flush_all() do
+    GenServer.call(__MODULE__, :flush_all)
+  end
+
   @spec dirty_set() :: MapSet.t()
   def dirty_set(), do: GenServer.call(__MODULE__, :dirty_set)
 
@@ -84,6 +94,11 @@ defmodule Flezha.State.FsyncBatcher do
 
   @impl true
   def handle_call(:flush_now, _from, state) do
+    new_state = drain(state)
+    {:reply, :ok, new_state}
+  end
+
+  def handle_call(:flush_all, _from, state) do
     new_state = drain(state)
     {:reply, :ok, new_state}
   end

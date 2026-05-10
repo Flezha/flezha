@@ -1133,4 +1133,201 @@ defmodule Flezha.Service.CliManager do
         end
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Controller management RPCs (graceful shutdown / status)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  `flz controller stop` RPC. Drives `Flezha.Shutdown.Coordinator.shutdown/2`
+  and prints structured progress lines. The final line is a
+  machine-readable marker the Rust CLI scans to derive its exit code:
+
+      flz-controller-stop-result: clean | partial | forced | already_in_progress
+
+  Options (keys may be atoms or binaries):
+    * `:timeout_ms` — overrides the configured timeout
+    * `:no_wait` — fire-and-forget; print marker `clean` and return immediately
+    * `:force` — skip quiesce + drain, finalise only
+  """
+  def controller_stop(opts \\ []) do
+    opts_map = normalize_controller_stop_opts(opts)
+
+    timeout_ms = Map.get(opts_map, :timeout_ms)
+    no_wait = Map.get(opts_map, :no_wait, false)
+    force = Map.get(opts_map, :force, false)
+
+    shutdown_opts =
+      []
+      |> maybe_put(:timeout_ms, timeout_ms)
+      |> maybe_put(:force, force || nil)
+
+    if no_wait do
+      _ = Task.start(fn -> Flezha.Shutdown.Coordinator.shutdown(:cli, shutdown_opts) end)
+      IO.puts("[shutdown] dispatched (no-wait)")
+      IO.puts("flz-controller-stop-result: clean")
+      :ok
+    else
+      handler_id = {__MODULE__, :controller_stop_progress, make_ref()}
+
+      :ok =
+        :telemetry.attach_many(
+          handler_id,
+          [
+            [:flezha, :shutdown, :phase_started],
+            [:flezha, :shutdown, :phase_completed],
+            [:flezha, :shutdown, :drain_progress],
+            [:flezha, :shutdown, :timeout]
+          ],
+          &__MODULE__.controller_stop_progress_handler/4,
+          %{caller: self()}
+        )
+
+      start_ms = System.monotonic_time(:millisecond)
+
+      try do
+        case Flezha.Shutdown.Coordinator.shutdown(:cli, shutdown_opts) do
+          :ok ->
+            duration = System.monotonic_time(:millisecond) - start_ms
+            outcome = if force, do: :forced, else: :clean
+
+            IO.puts(
+              "[shutdown] complete duration_ms=#{duration} outcome=#{outcome}"
+            )
+
+            IO.puts("flz-controller-stop-result: #{outcome}")
+            :ok
+
+          {:partial, still_local} ->
+            duration = System.monotonic_time(:millisecond) - start_ms
+
+            IO.puts(
+              "[shutdown] complete duration_ms=#{duration} outcome=partial still_local=#{length(still_local)}"
+            )
+
+            IO.puts("flz-controller-stop-result: partial")
+            :ok
+
+          other ->
+            IO.puts("[shutdown] unexpected coordinator return: #{inspect(other)}")
+            IO.puts("flz-controller-stop-result: partial")
+            :ok
+        end
+      catch
+        :exit, {:noproc, _} ->
+          IO.puts("[shutdown] coordinator not running")
+          IO.puts("flz-controller-stop-result: already_in_progress")
+          :ok
+
+        :exit, reason ->
+          IO.puts("[shutdown] coordinator exit: #{inspect(reason)}")
+          IO.puts("flz-controller-stop-result: already_in_progress")
+          :ok
+      after
+        :telemetry.detach(handler_id)
+      end
+    end
+  end
+
+  @doc false
+  def controller_stop_progress_handler(event, measurements, metadata, _config) do
+    case event do
+      [:flezha, :shutdown, :phase_started] ->
+        IO.puts(:stderr, "[shutdown] phase=#{metadata.phase} started")
+
+      [:flezha, :shutdown, :phase_completed] ->
+        IO.puts(
+          :stderr,
+          "[shutdown] phase=#{metadata.phase} completed duration_ms=#{measurements[:duration_ms] || 0}"
+        )
+
+      [:flezha, :shutdown, :drain_progress] ->
+        IO.puts(
+          :stderr,
+          "drain: migrated=#{measurements.migrated} remaining=#{measurements.remaining} elapsed_ms=#{measurements.elapsed_ms}"
+        )
+
+      [:flezha, :shutdown, :timeout] ->
+        IO.puts(
+          :stderr,
+          "[shutdown] timeout phase=#{metadata.phase} still_local=#{length(metadata.still_local)}"
+        )
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp normalize_controller_stop_opts(opts) when is_list(opts) do
+    Enum.into(opts, %{}, fn
+      {k, v} when is_atom(k) -> {k, v}
+      {k, v} when is_binary(k) -> {String.to_atom(k), v}
+    end)
+  end
+
+  defp normalize_controller_stop_opts(opts) when is_map(opts) do
+    Enum.into(opts, %{}, fn
+      {k, v} when is_atom(k) -> {k, v}
+      {k, v} when is_binary(k) -> {String.to_atom(k), v}
+    end)
+  end
+
+  defp maybe_put(list, _k, nil), do: list
+  defp maybe_put(list, _k, false), do: list
+  defp maybe_put(list, k, v), do: Keyword.put(list, k, v)
+
+  @doc """
+  `flz controller status` RPC. Prints a human-readable status block
+  including graceful-shutdown state and configuration knobs.
+  """
+  def controller_status(output_format \\ "text") do
+    status = safe_shutdown_status()
+
+    case output_format do
+      "json" ->
+        json =
+          status
+          |> Map.put(:node, Atom.to_string(node()))
+          |> jsonable()
+          |> Jason.encode!(pretty: true)
+
+        IO.puts(json)
+
+      _ ->
+        IO.puts("node:                          #{node()}")
+        IO.puts("shutdown_in_progress:          #{status.shutdown_in_progress}")
+        IO.puts("shutdown_phase:                #{inspect(status.shutdown_phase)}")
+        IO.puts("signal_handler_status:         #{status.signal_handler_status}")
+        IO.puts("graceful_shutdown_enabled:     #{status.graceful_shutdown_enabled}")
+        IO.puts("graceful_shutdown_timeout_ms:  #{status.graceful_shutdown_timeout_ms}")
+    end
+
+    :ok
+  end
+
+  defp safe_shutdown_status() do
+    try do
+      Flezha.Shutdown.Coordinator.status()
+    catch
+      :exit, _ ->
+        %{
+          shutdown_in_progress: false,
+          shutdown_phase: nil,
+          signal_handler_status: :unknown,
+          graceful_shutdown_enabled:
+            Application.get_env(:flezha, :graceful_shutdown_enabled, true),
+          graceful_shutdown_timeout_ms:
+            Application.get_env(:flezha, :graceful_shutdown_timeout_ms, 60_000)
+        }
+    end
+  end
+
+  defp jsonable(map) when is_map(map) do
+    Enum.into(map, %{}, fn
+      {k, v} when is_atom(v) and not is_boolean(v) and not is_nil(v) -> {k, Atom.to_string(v)}
+      {k, v} -> {k, v}
+    end)
+  end
 end

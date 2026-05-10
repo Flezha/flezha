@@ -9,6 +9,7 @@ defmodule Flezha.Service.RelayManager do
   alias Flezha.Service.Identificator
   alias Flezha.Executor.FleetManager
   alias Flezha.Relay.Builder, as: RelayBuilder
+  alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
 
   def relay_registry(namespace) do
     case HubManager.get_registry(namespace) do
@@ -53,17 +54,25 @@ defmodule Flezha.Service.RelayManager do
   @spec start_relay(String.t(), RelayBuilder.t()) ::
           {:ok, map()} | {:error, String.t()}
   def start_relay(namespace, relay) do
-    with :ok <- RelayBuilder.validate_relay(namespace, relay),
+    with :ok <- check_not_shutting_down(),
+         :ok <- RelayBuilder.validate_relay(namespace, relay),
          :ok <- validate_factory(namespace, relay.factory_id) do
       # TODO: we should validate the namespace also.
       init_relay(namespace, relay)
     else
+      {:error, :shutting_down} ->
+        {:error, :shutting_down}
+
       {:error, reason} when is_binary(reason) ->
         {:error, %{relay_id: relay.id, node: node(), reason: reason}}
 
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp check_not_shutting_down() do
+    if ShutdownCoordinator.shutting_down?(), do: {:error, :shutting_down}, else: :ok
   end
 
   defp validate_factory(namespace, factory_id) when is_binary(factory_id) do

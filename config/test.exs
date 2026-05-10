@@ -3,6 +3,11 @@ import Config
 config :flezha,
   testnet_enabled: true,
   concurrent_channel_count: 1,
+  # Graceful shutdown is off in tests so `Application.stop/1` calls
+  # at teardown remain fast. Dedicated integration tests under
+  # `test/integration/shutdown/` exercise it explicitly.
+  graceful_shutdown_enabled: false,
+  graceful_shutdown_timeout_ms: 5_000,
   # Tests bring up their own executors and relays — auto-recovery would
   # trigger replay against a not-yet-connected executor, cascading the
   # ProcessHub coordinator into shutdown. The persistent registry still

@@ -19,6 +19,12 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      # Graceful shutdown: preStop runs `flz controller stop` (drives
+      # Flezha.Shutdown.Coordinator) BEFORE k8s sends SIGTERM. The
+      # grace period is the configmap timeout (60s) + 15s headroom for
+      # finalise + BEAM exit. Bump in lockstep with
+      # FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS.
+      terminationGracePeriodSeconds: 75
       initContainers:
         - name: fix-permissions
           image: busybox:1.35
@@ -77,6 +83,15 @@ spec:
               value: "app=flezha"
             - name: FLEZHA_SOCKET_FILES_PATH
               value: "/flezha/sockets"
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /flezha/bin/flz
+                  - controller
+                  - stop
+                  - --timeout-ms
+                  - $(FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS)
           volumeMounts:
             - name: flezha-sockets
               mountPath: /flezha/sockets
