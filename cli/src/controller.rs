@@ -130,7 +130,7 @@ fn handle_stop(args: &[String]) {
         let reader = BufReader::new(stdout);
         let stdout_handle = std::io::stdout();
 
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             saw_any_output = true;
             if let Some(rest) = line.strip_prefix("flz-controller-stop-result: ") {
                 outcome = Some(rest.trim().to_string());

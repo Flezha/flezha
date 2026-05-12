@@ -267,27 +267,27 @@ defmodule Flezha.Service.RelayManager do
 
         case our_started do
           {_cid, [{relay_node, pid}]} ->
-            # ProcessHub reports `started` as soon as `start_link/1` returns,
-            # but the relay's `handle_continue(:bind_executor, …)` runs
-            # AFTER that. If `complete_init/3` there returns `{:error, _}`
-            # (e.g. `on_relay_init` plugin chain produced `{:error, _}`),
-            # the GenServer issues `{:stop, reason, state}` and the
-            # registry_executor_set call below races against it. Catching
-            # `:exit` here turns that into the typed error shape callers
-            # expect for any init-time failure. We also stop the child
-            # in ProcessHub so a `restart: :transient` spec does not
-            # bounce the relay through a tight restart loop while the
-            # caller decides what to do.
+            # ProcessHub reports `started` as soon as `start_link/1`
+            # returns; the relay's `handle_continue(:bind_executor, …)`
+            # surfaces a plugin-chain failure via the `init_error` field
+            # on Overwatch state — `:registry_executor_set` returns
+            # `{:error, _}` instead of crashing the GenServer. The
+            # `:exit` catch covers older failure modes (timeout, kill).
             try do
-              {:ok, executor_id} = GenServer.call(pid, :registry_executor_set)
+              case GenServer.call(pid, :registry_executor_set) do
+                {:ok, executor_id} ->
+                  {:ok,
+                   %{
+                     relay_id: relay.id,
+                     executor_id: executor_id,
+                     node: relay_node,
+                     pid: pid
+                   }}
 
-              {:ok,
-               %{
-                 relay_id: relay.id,
-                 executor_id: executor_id,
-                 node: relay_node,
-                 pid: pid
-               }}
+                {:error, reason} ->
+                  _ = stop_child_quietly(namespace, relay.id)
+                  {:error, %{relay_id: relay.id, node: node(), reason: reason}}
+              end
             catch
               :exit, {reason, _} ->
                 Logger.warning(

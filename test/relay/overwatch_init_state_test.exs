@@ -107,7 +107,12 @@ defmodule FlezhaTest.Relay.OverwatchInitStateTest do
     plugin = %Plugin{
       id: "probe",
       provider: ProbeProvider,
-      opts: %{report_to: self(), return: %{"binary_inputs" => [], "text_inputs" => ["x"]}},
+      opts: %{
+        report_to: self(),
+        return: %{
+          "store_input_shard" => %{"binary_inputs" => [], "text_inputs" => ["x"]}
+        }
+      },
       subscriptions: [{:on_relay_init, []}]
     }
 

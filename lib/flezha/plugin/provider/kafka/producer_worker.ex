@@ -1066,6 +1066,13 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp swap_last_reason(%{last_error: {:swap_failed, reason}}), do: reason
   defp swap_last_reason(_), do: :unknown
 
+  # On swap exhaustion we stay alive: every queued record is replied to
+  # with `{:error, {:delivery_failed, :worker_swap_exhausted}}` and a
+  # `[:produce, :failed]` event fires per record (per task 2.4). The
+  # producer's `last_error` carries the terminal reason so callers can
+  # surface it. Subsequent enqueues fail through the standard send-path
+  # `delivery_timeout_ms` retry against the dead `worker_pid`, so no
+  # tight restart loop and no `:swap_exhausted` crash report.
   defp fail_all_during_swap(state, swap_reason) do
     queued = :queue.to_list(state.queue)
 
@@ -1081,7 +1088,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       })
     end)
 
-    {:stop, {:swap_exhausted, swap_reason},
+    {:noreply,
      %{
        state
        | queue: :queue.new(),
@@ -1090,7 +1097,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
          in_flight: nil,
          swap_started_at: nil,
          swap_attempt: 0,
-         last_error: {:swap_exhausted, swap_reason}
+         last_error: {:swap_exhausted, swap_reason},
+         pending_swap_telemetry: nil
      }}
   end
 

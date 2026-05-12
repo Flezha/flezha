@@ -3,6 +3,7 @@ defmodule Flezha.Relay.Overwatch do
   alias Flezha.Service.ConfigManager
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
+  alias Flezha.Service.RelayManager
   alias Flezha.Executor.ControlChannel
   alias Flezha.Executor.StreamSup
   alias Flezha.Plugin
@@ -38,7 +39,8 @@ defmodule Flezha.Relay.Overwatch do
     snapshot: nil,
     init_values: %{},
     default_input_type: "2",
-    arrived_via_hotswap?: false
+    arrived_via_hotswap?: false,
+    init_error: nil
   ]
 
   def start_link(args) do
@@ -46,29 +48,81 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
-  def init({namespace, executor_id, relay}) do
+  def init({namespace, stale_executor_id, relay}) do
     Process.flag(:trap_exit, true)
 
+    # IMPORTANT: init/1 must return quickly so the `dist_sup` supervisor
+    # tree (which calls us synchronously from `DistributedSupervisor.init/1`
+    # during the DETS replay) can unblock. Any GenServer.call to
+    # FleetManager / RelayManager from inside init/1 deadlocks because
+    # FleetManager is itself waiting on :default_hub, which is waiting
+    # for dist_sup.init to complete.
+    #
+    # Defer all blocking work (executor wait, plugin subscribe, SDK
+    # start) to handle_continue — by then init has returned, dist_sup
+    # has unblocked, the hub has finished initialization, and
+    # FleetManager can answer our calls.
     state = %__MODULE__{
       id: relay.id,
       namespace: namespace,
       factory_id: relay.factory_id,
       init_values: relay.init_values,
-      executor_id: executor_id,
-      channel: attach_channel(relay.id, executor_id),
+      executor_id: stale_executor_id,
+      channel: nil,
       snapshot: nil,
       default_input_type: Keyword.get(relay.opts, :default_input_type, "2"),
       extensions: Table.new(__extensions_catalog__()),
       builder: relay
     }
 
-    # `relay.opts[:plugins]` is the authoritative list of plugin
-    # subscriptions for this relay. It is populated at `flz relay start`
-    # time (via the CLI's `--plugins` flag) and by every subsequent
-    # `flz plugin enable` / `flz plugin disable` call, which writes
-    # through to the cspec via `ProcessHub.Service.ProcessRegistry.update/3`
-    # (durably backed by ProcessHub's persistent registry under
-    # `app_data/process_hub/<hub_id>/registry.dets`).
+    {:ok, state, {:continue, {:bind_executor, stale_executor_id, relay}}}
+  end
+
+  @impl true
+  def handle_continue({:bind_executor, stale_executor_id, relay}, %__MODULE__{} = state) do
+    # Wait for an active executor in this namespace advertising
+    # `relay.factory_id`. The DETS-baked executor_id is usually stale
+    # after a restart (Identificator.unique_id/1 generates a fresh id
+    # per connect), so we re-resolve via RelayManager.assign_executor/2
+    # — the same lookup HubManager.alter_child_data/2 performs.
+    case await_active_executor(state.namespace, relay.factory_id, executor_wait_ms()) do
+      {:ok, executor_id} ->
+        if executor_id != stale_executor_id do
+          Logger.info(
+            "[Overwatch] relay #{relay.id} rebound from stale executor #{inspect(stale_executor_id)} to live #{inspect(executor_id)}"
+          )
+        end
+
+        case complete_init(state, executor_id, relay) do
+          {:ok, new_state} ->
+            {:noreply, new_state}
+
+          {:error, reason} ->
+            # Surface the init failure to the caller via state instead of
+            # crashing the GenServer. A `:stop` here would emit a SASL
+            # crash report AND trigger the `:transient` supervisor's
+            # restart loop. `:registry_executor_set` reads `init_error`
+            # and returns `{:error, reason}` so `RelayManager` can stop
+            # the child cleanly with no log noise.
+            {:noreply, %__MODULE__{state | executor_id: executor_id, init_error: reason}}
+        end
+
+      {:error, :timeout} ->
+        Logger.warning(
+          "[Overwatch] no active executor in namespace #{inspect(state.namespace)} for factory #{inspect(relay.factory_id)} within #{executor_wait_ms()} ms; deferring relay #{relay.id} startup"
+        )
+
+        {:stop, :executor_not_ready, state}
+    end
+  end
+
+  defp complete_init(%__MODULE__{} = state, executor_id, relay) do
+    state = %__MODULE__{
+      state
+      | executor_id: executor_id,
+        channel: attach_channel(relay.id, executor_id)
+    }
+
     plugins = Keyword.get(relay.opts, :plugins, [])
 
     with {:ok, state} <- subscribe_initial_plugins(state, plugins),
@@ -76,8 +130,56 @@ defmodule Flezha.Relay.Overwatch do
          {:ok, _} <- start_relay_sdk(executor_id, relay) do
       _ = maybe_dispatch_restore_init_state(state, relay)
       {:ok, state}
-    else
-      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp executor_wait_ms,
+    do: Application.get_env(:flezha, :overwatch_executor_wait_ms, 30_000)
+
+  # Poll `RelayManager.assign_executor/2` until it returns a live
+  # executor id whose CU is registered in Flezha.Service.Identificator,
+  # or the deadline elapses. Returns `{:ok, executor_id}` or
+  # `{:error, :timeout}`.
+  defp await_active_executor(namespace, factory_id, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_await_active_executor(namespace, factory_id, deadline)
+  end
+
+  defp do_await_active_executor(namespace, factory_id, deadline) do
+    case RelayManager.assign_executor(namespace, factory_id) do
+      executor_id when is_binary(executor_id) ->
+        if executor_ready?(executor_id) do
+          {:ok, executor_id}
+        else
+          retry_or_timeout(namespace, factory_id, deadline)
+        end
+
+      _ ->
+        retry_or_timeout(namespace, factory_id, deadline)
+    end
+  end
+
+  defp retry_or_timeout(namespace, factory_id, deadline) do
+    now = System.monotonic_time(:millisecond)
+
+    cond do
+      now >= deadline -> {:error, :timeout}
+      true ->
+        Process.sleep(50)
+        do_await_active_executor(namespace, factory_id, deadline)
+    end
+  end
+
+  # The executor's control unit GenServer registers itself in
+  # `Flezha.Service.Identificator` as the LAST step of its supervision
+  # tree (`ExecutorSupervisor.init/1` → `ControlUnit.start_link/1`),
+  # so its presence is a sufficient signal that the executor's CU,
+  # StreamSup, and StreamAcceptor are all live. Note: `StreamSup.stream_ids/2`
+  # alone is NOT a liveness check — it derives names from config.
+  defp executor_ready?(executor_id) do
+    case Registry.lookup(Identificator, "#{executor_id}_cu") do
+      [{_pid, _}] -> true
+      _ -> false
     end
   end
 
@@ -200,10 +302,14 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
-  def handle_call(:registry_executor_set, _from, state) do
+  def handle_call(:registry_executor_set, _from, %__MODULE__{init_error: nil} = state) do
     HubManager.relay_set_executor(state.namespace, state.id, state.executor_id)
 
     {:reply, {:ok, state.executor_id}, state}
+  end
+
+  def handle_call(:registry_executor_set, _from, %__MODULE__{init_error: reason} = state) do
+    {:reply, {:error, reason}, state}
   end
 
   @impl true

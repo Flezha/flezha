@@ -1058,9 +1058,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       assert post.swap_started_at == nil
     end
 
-    test "swap exhaustion fails queued records and stops the producer (2.4 exhaustion)" do
-      Process.flag(:trap_exit, true)
-
+    test "swap exhaustion empties the queue, marks :swap_exhausted, keeps the producer alive (2.4 exhaustion)" do
       forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
 
       {pid, script_pid} =
@@ -1095,10 +1093,20 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       send(pid, {:kafka_worker_dead, registry_ref, :killed})
 
-      # The producer SHOULD stop after exhausting the retry budget.
-      assert_receive {:EXIT, ^pid, {:swap_exhausted, :no_broker}}, 500
+      # Wait for the producer to finish the exhaustion bookkeeping.
+      Process.sleep(50)
 
-      # And every queued record SHOULD have produced a :failed telemetry event.
+      assert Process.alive?(pid),
+             "producer must stay alive after exhaustion (no supervisor crash loop)"
+
+      state = :sys.get_state(pid)
+      assert state.queue_size == 0
+      assert state.in_flight == nil
+      assert state.swap_attempt == 0
+      assert state.swap_started_at == nil
+      assert state.last_error == {:swap_exhausted, :no_broker}
+
+      # Every queued record SHOULD have produced a :failed telemetry event.
       events = collect_failed_events(2, 200)
       assert length(events) == 2
     end
