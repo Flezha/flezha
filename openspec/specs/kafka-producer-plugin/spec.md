@@ -178,29 +178,98 @@ The `dropped_total` counter SHALL be exposed via:
 - **AND** if the queue drains within 1 second, the call SHALL succeed normally
 - **AND** if 1 second elapses without space, the call SHALL return `{:error, {:queue_full, :timeout}}`
 
-### Requirement: Single shared worker per cluster identity
+### Requirement: Producer holds at most one shared `KafkaEx.New.Client` worker pid per canonical connection identity
 
-The producer SHALL share a single `KafkaEx.Server` worker process across all plugin instances configured against the same `:hosts` (and `:ssl_options`, if any). The worker registry SHALL key on the canonical-form connection identity, not on plugin-instance ID.
+The producer plugin SHALL acquire its `KafkaEx.New.Client` worker pid through `Flezha.Plugin.Provider.Kafka.WorkerRegistry` (the shared, refcounted, per-cluster registry). The registry SHALL key entries on the canonical tuple `{sorted_hosts, phash2(ssl_options), phash2(auth)}` so two plugin instances with the same broker target reuse the same worker. The registry SHALL monitor the worker process; on DOWN it SHALL clear the entry AND proactively deliver a typed `{:kafka_worker_dead, {key, token}, reason}` message to every caller pid that still holds a live token against the dead entry. The next `acquire/2` for the same identity SHALL start a fresh worker. The registry SHALL expose a `swap(ref, server \\ __MODULE__) :: {:ok, pid(), ref()} | {:error, term()}` API that performs an in-place re-acquire for an existing caller without double-counting refcount or triggering the linger-stop machinery, intended for callers handling the death-notification message.
 
-The worker SHALL refcount its plugin owners. When the last owning plugin terminates (`:terminate` callback), the worker SHALL stop. New plugins arriving with the same connection identity reuse the same worker.
+Linger: a worker with refs = 0 SHALL be stopped after a configurable `:linger_ms` (default 5000 ms) to absorb plugin-restart churn. The linger timer SHALL be cancelled on the next `acquire/2`.
 
-#### Scenario: 5 producer plugins share one worker
-- **GIVEN** five `Flezha.Plugin.Provider.Kafka.Producer` plugin instances configured with `hosts: "kafka:9092"` and different topics
-- **WHEN** all five complete `init_provider`
-- **THEN** exactly ONE `KafkaEx.Server` worker SHALL be running
-- **AND** all five plugins SHALL hold a reference to that worker
-- **AND** Process.list() SHALL show one worker, not five
+The `release/2` token returned by `acquire/2` SHALL be opaque to callers — they pass it back unchanged. A token issued against a now-dead entry SHALL no-op on `release/2`.
 
-#### Scenario: Two clusters get two workers
-- **GIVEN** plugin A configured with `hosts: "kafka-a:9092"` and plugin B with `hosts: "kafka-b:9092"`
-- **WHEN** both initialize
-- **THEN** exactly TWO workers SHALL be running (one per distinct cluster identity)
+#### Scenario: Two plugins same identity share a worker
+- **GIVEN** plugin A and plugin B configured with the same `:hosts`, `:ssl_options`, `:auth`
+- **WHEN** both call `WorkerRegistry.acquire/2` at boot
+- **THEN** both SHALL receive the same `worker_pid`
+- **AND** the registry entry SHALL show `refs: 2`
 
-#### Scenario: Last plugin termination stops the worker
-- **GIVEN** the only owner of a worker terminates
-- **WHEN** the plugin's `:terminate` callback fires
-- **THEN** the worker process SHALL stop within 5 seconds
-- **AND** the registry entry SHALL be removed
+#### Scenario: Worker death notifies every active token holder
+- **GIVEN** plugins A, B, and C have each acquired tokens against the same canonical identity
+- **WHEN** the underlying `KafkaEx.New.Client` worker exits (any reason — `:shutdown`, `:normal`, `:killed`, an upstream `Kayrock` parse error crash, etc.)
+- **THEN** the registry's `handle_info({:DOWN, _, :process, worker_pid, reason}, …)` clause SHALL deliver `{:kafka_worker_dead, {key, token_a}, reason}` to A, `{:kafka_worker_dead, {key, token_b}, reason}` to B, and `{:kafka_worker_dead, {key, token_c}, reason}` to C BEFORE deleting the entry from `state.entries`
+- **AND** each producer SHALL be able to call `swap/2` and continue draining its queue without losing records
+- **AND** stale `release/2` calls with the dead token SHALL be silently accepted (return `:ok`)
+
+#### Scenario: `swap/2` acquires without inflating refcount
+- **GIVEN** an entry with `refs: 3` whose worker has just died
+- **WHEN** caller A calls `WorkerRegistry.swap(old_ref)` to replace its dead token
+- **THEN** the entry is recreated with a new worker pid and `refs: 3` (the swap reuses A's existing seat — it does not become `refs: 4`)
+- **AND** A receives `{:ok, new_pid, new_ref}` where `new_ref` is a fresh token bound to A's existing caller monitor
+- **AND** the old `new_ref → token` mapping for A's stale token is dropped from `state.caller_monitors`
+
+#### Scenario: Linger absorbs plugin restart
+- **GIVEN** plugin A has the only token against worker W with `:linger_ms = 5000`
+- **WHEN** plugin A calls `release/2`
+- **AND** within 1 second a new instance of plugin A (same canonical identity) calls `acquire/2`
+- **THEN** the new instance SHALL receive the same `worker_pid` W
+- **AND** the linger timer SHALL be cancelled
+- **AND** the entry's `refs` SHALL be back to 1
+
+### Requirement: Producer survives upstream Kafka worker crashes with zero queued-record loss
+
+When the `KafkaEx.New.Client` worker pid referenced by `state.worker_pid` terminates for any reason (including upstream `Kayrock` parse errors, broker connection loss returning `:einval`, OS-suspend/wake leaving the socket half-dead, or an explicit `KafkaEx.stop_worker/1`), the producer SHALL continue to drain `state.queue`, `state.in_flight`, and `state.blocked` against a freshly-acquired worker for the same canonical connection identity, **without losing any record that was already admitted to those structures** and **without emitting any `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry for records the new worker has not yet positively rejected**.
+
+The producer SHALL learn of the worker's death through a typed `{:kafka_worker_dead, ref, reason}` message delivered by `Flezha.Plugin.Provider.Kafka.WorkerRegistry` to every caller pid that holds a live token against the dying entry (see the `Modified` requirement on the registry below). The producer SHALL NOT rely on the linked-process `:EXIT` signal to drive recovery, although it SHALL match a defensive `handle_info({:EXIT, _pid, _reason}, state)` clause that logs at `:debug` and returns `{:noreply, state}` so any future linked-process addition cannot regress the producer with `FunctionClauseError`.
+
+On receiving `{:kafka_worker_dead, registry_ref, reason}` whose `registry_ref` matches `state.registry_ref`, the producer SHALL:
+
+1. Cancel `state.linger_timer` and `state.retry_timer` if either is set (`Process.cancel_timer/1`), so no stale `:flush_batch` or `:retry_batch` fires between the swap and the next `maybe_kick_batch/1`.
+2. If `state.in_flight` is not `nil`, move it back to the head of `state.queue` with its `attempt` field incremented by 1 and `last_error` set to `{:worker_died, reason}`. The records of an in-flight batch SHALL NOT be replied to or marked failed.
+3. Call `WorkerRegistry.swap(state.registry_ref)` to obtain a fresh `{:ok, new_pid, new_ref}` for the same identity. On `{:error, reason}` (the broker is genuinely unreachable), schedule a retry of the swap using the existing `retry_backoff_ms(state, attempt)` curve and leave the queue untouched.
+4. On successful swap, set `state.worker_pid = new_pid`, `state.registry_ref = new_ref`, `state.producer_id = nil`, `state.producer_epoch = nil`, `state.sequence = 0`, `state.in_flight = nil`, and re-enter `handle_continue(:maybe_init_producer_id, state)` so the next batch acquires a fresh idempotent producer-id against the new worker.
+5. Emit exactly one `[:flezha, :plugin, :kafka, :worker, :swapped]` telemetry event with measurements `%{queue_depth: state.queue_size, in_flight_records: prior_in_flight_size, queue_bytes: state.queue_bytes}` and metadata `%{plugin_id, topic, partition, reason, producer_id_before, producer_id_after, old_worker_pid, new_worker_pid}`.
+
+`state.blocked` callers SHALL remain blocked across the swap. Their existing `:block_timeout` timers continue to fire normally; a swap is not a `:queue_full` condition.
+
+The producer-id rotation introduced by step 4 SHALL be bounded by the existing `kafka-producer-plugin` "Producer-id rotation on worker restart" requirement — i.e. the in-flight batch (now back at the head of the queue) may produce up to `length(in_flight.records)` duplicate writes against the broker, exactly as on supervisor-driven restart.
+
+#### Scenario: KafkaEx worker crashes mid-batch and queued records continue flowing
+- **GIVEN** a `ProducerWorker` is steadily delivering `btc_demo.ohlc.v1` records at 50 msg/sec and has 200 records in `state.queue`, 50 in `state.in_flight`, and 0 in `state.blocked`
+- **AND** the operator runs `docker compose -f /home/moon/Code/flezha_market/docker/dev/docker-compose.yml exec -T flezha-controller /flezha/bin/iex --remsh flezha@... -e ':sys.terminate(pid, :forced)'` against the live KafkaEx worker pid for the relay's canonical identity
+- **WHEN** `WorkerRegistry` observes the worker's DOWN
+- **THEN** within 1 second the producer SHALL receive `{:kafka_worker_dead, registry_ref, _reason}`, acquire a new worker via `swap/2`, re-run `InitProducerId`, and resume sending
+- **AND** the topic end-offset of `btc_demo.ohlc.v1` (read via `docker compose ... exec kafka /opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server kafka:9092 --topic btc_demo.ohlc.v1`) SHALL advance by at least 200 records within the next 10 seconds
+- **AND** zero `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry events SHALL fire for those records (verified via a `:telemetry` handler attached for the duration of the test)
+- **AND** exactly one `[:flezha, :plugin, :kafka, :worker, :swapped]` event SHALL fire with `queue_depth ≥ 200` and `in_flight_records: 50`
+
+#### Scenario: Upstream Kayrock parse error does not crash the producer
+- **GIVEN** the same producer setup as above
+- **WHEN** the KafkaEx worker crashes with `(RuntimeError) Parse error during %Kayrock.Metadata.V5.Request{...} response deserializer` (the exact upstream failure observed in production at 05:25:15) and is restarted by its supervisor
+- **THEN** the producer SHALL NOT crash with `FunctionClauseError no function clause matching in Flezha.Plugin.Provider.Kafka.ProducerWorker.handle_info/2`
+- **AND** the producer's `state.queue`, `state.in_flight`, and `state.blocked` SHALL be observably preserved across the swap (verified via `:sys.get_state/1` snapshots taken before the crash injection and after the swap completes)
+- **AND** no records SHALL be silently dropped between the crash and the swap (verified by comparing the topic end-offset delta to the number of records admitted during the window)
+
+#### Scenario: Swap fails because the broker is unreachable, queue stays admitted
+- **GIVEN** a producer with 100 records in `state.queue` and 0 in `state.in_flight`
+- **WHEN** the KafkaEx worker dies AND the registry's `:starter` callback returns `{:error, :no_broker}` for the swap attempt
+- **THEN** the producer SHALL schedule a retry of the swap using the existing exponential backoff (`retry_backoff_ms(state, attempt)`)
+- **AND** all 100 records SHALL remain in `state.queue` with their `from`, `metadata`, `timestamp`, `bytes`, and `key` fields unchanged
+- **AND** no `[:produce, :failed]` event SHALL fire for any of them during the outage
+- **AND** when the broker recovers within the next `:delivery_timeout_ms` window, the swap SHALL succeed and the 100 records SHALL be delivered
+
+#### Scenario: Defensive EXIT clause does not regress on an unrelated linked-process death
+- **GIVEN** a `ProducerWorker` with `trap_exit: true` (the default — required for `terminate/2` cleanliness)
+- **WHEN** any linked process other than `state.worker_pid` dies and sends `{:EXIT, pid, reason}` to the producer (today no such linked process exists; this scenario defends against a future code change that adds one)
+- **THEN** the producer SHALL log at `:debug` level and continue running
+- **AND** SHALL NOT crash with `FunctionClauseError`
+- **AND** SHALL NOT initiate a worker swap (the swap is driven only by the typed `{:kafka_worker_dead, …}` message from `WorkerRegistry`)
+
+#### Scenario: Worker swap re-issues InitProducerId and resets sequence
+- **GIVEN** an idempotent producer with `state.producer_id = 42`, `state.producer_epoch = 0`, `state.sequence = 1234`
+- **WHEN** the worker dies and the swap acquires a fresh worker pid
+- **THEN** the producer SHALL re-enter `handle_continue(:maybe_init_producer_id, …)` against the new worker
+- **AND** the next outgoing Produce request's `record_batch.producer_id` SHALL be the new `producer_id` returned by `InitProducerId` on the new worker (NOT 42)
+- **AND** `state.sequence` SHALL reset to 0 (the broker treats the new producer-id as a fresh idempotent producer)
+- **AND** the `[:worker, :swapped]` telemetry event's `producer_id_before` SHALL be 42 and its `producer_id_after` SHALL be the new value
 
 ### Requirement: Active metadata refresh on error classes
 
