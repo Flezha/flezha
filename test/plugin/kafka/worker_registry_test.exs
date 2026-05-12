@@ -225,6 +225,211 @@ defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
     end
   end
 
+  describe "caller tracking on entries (task 1.2 / 1.3)" do
+    test "entry.callers grows on acquire and shrinks on release", %{registry: reg} do
+      identity = %{hosts: @hosts_a}
+
+      assert {:ok, _pid_a, ref_a} = WorkerRegistry.acquire(identity, reg)
+      assert {:ok, _pid_b, ref_b} = WorkerRegistry.acquire(identity, reg)
+      assert {:ok, _pid_c, ref_c} = WorkerRegistry.acquire(identity, reg)
+
+      summary = WorkerRegistry.inspect_state(reg)
+      [{_key, entry}] = Map.to_list(summary)
+      assert entry.callers == 3
+      assert entry.refs == 3
+
+      :ok = WorkerRegistry.release(ref_b, reg)
+
+      summary = WorkerRegistry.inspect_state(reg)
+      [{_key, entry}] = Map.to_list(summary)
+      assert entry.callers == 2
+      assert entry.refs == 2
+
+      :ok = WorkerRegistry.release(ref_a, reg)
+      :ok = WorkerRegistry.release(ref_c, reg)
+    end
+  end
+
+  describe "proactive death notification (task 1.4)" do
+    test "every active caller receives {:kafka_worker_dead, ref, reason} on DOWN", %{
+      registry: reg
+    } do
+      identity = %{hosts: @hosts_a}
+
+      test_pid = self()
+
+      caller_a =
+        spawn(fn ->
+          {:ok, _pid, ref} = WorkerRegistry.acquire(identity, reg)
+          send(test_pid, {:caller_a_ref, ref})
+
+          receive do
+            msg -> send(test_pid, {:caller_a_msg, msg})
+          end
+        end)
+
+      caller_b =
+        spawn(fn ->
+          {:ok, _pid, ref} = WorkerRegistry.acquire(identity, reg)
+          send(test_pid, {:caller_b_ref, ref})
+
+          receive do
+            msg -> send(test_pid, {:caller_b_msg, msg})
+          end
+        end)
+
+      assert_receive {:caller_a_ref, ref_a}
+      assert_receive {:caller_b_ref, ref_b}
+      assert_receive {:starter_called, _, worker_pid}
+
+      summary = WorkerRegistry.inspect_state(reg)
+      [{_key, entry}] = Map.to_list(summary)
+      assert entry.callers == 2
+
+      Process.exit(worker_pid, :kill)
+
+      assert_receive {:caller_a_msg, {:kafka_worker_dead, ^ref_a, :killed}}, 500
+      assert_receive {:caller_b_msg, {:kafka_worker_dead, ^ref_b, :killed}}, 500
+
+      _ = caller_a
+      _ = caller_b
+      :ok
+    end
+  end
+
+  describe "swap/2 and pending_refs (tasks 1.5 / 1.6 / 1.7)" do
+    test "three callers swap after worker death; entry refs is preserved (1.7 / path A)" do
+      identity = %{hosts: @hosts_a}
+      test_pid = self()
+
+      starter = fn _identity ->
+        pid =
+          spawn(fn ->
+            receive do
+              :stop -> :ok
+            end
+          end)
+
+        send(test_pid, {:starter_called, pid})
+        {:ok, pid}
+      end
+
+      stopper = fn pid ->
+        send(pid, :stop)
+        send(test_pid, {:stopper_called, pid})
+        :ok
+      end
+
+      {:ok, reg} =
+        start_supervised(
+          {WorkerRegistry,
+           name: :"#{__MODULE__}.swap_path_a.#{System.unique_integer([:positive])}",
+           starter: starter,
+           stopper: stopper,
+           linger_ms: 1_000},
+          id: :"swap_path_a_#{System.unique_integer([:positive])}"
+        )
+
+      # Three concurrent acquires from three carriers; each holds its own caller monitor.
+      caller_pids =
+        for _i <- 1..3 do
+          parent = self()
+
+          spawn(fn ->
+            {:ok, _, ref} = WorkerRegistry.acquire(identity, reg)
+            send(parent, {:acquired, ref})
+
+            receive do
+              :swap ->
+                {:ok, _, new_ref} = WorkerRegistry.swap(ref, reg)
+                send(parent, {:swapped, new_ref})
+
+                receive do
+                  :stop -> :ok
+                end
+            end
+          end)
+        end
+
+      refs =
+        for _ <- 1..3 do
+          assert_receive {:acquired, ref}
+          ref
+        end
+
+      assert_receive {:starter_called, worker_pid}
+
+      Process.exit(worker_pid, :kill)
+
+      # The first swap triggers a new worker; the next two attach to that worker.
+      Enum.each(caller_pids, fn pid -> send(pid, :swap) end)
+
+      for _ <- 1..3 do
+        assert_receive {:swapped, _new_ref}, 1_000
+      end
+
+      assert_receive {:starter_called, _new_worker_pid}, 100
+
+      summary = WorkerRegistry.inspect_state(reg)
+      [{_key, entry}] = Map.to_list(summary)
+      assert entry.refs == 3
+      assert entry.callers == 3
+
+      _ = refs
+      Enum.each(caller_pids, fn pid -> send(pid, :stop) end)
+    end
+
+    test "swap arrives after linger expires: error :no_pending_swap (1.6 path B)" do
+      identity = %{hosts: @hosts_a}
+      test_pid = self()
+
+      starter = fn _identity ->
+        pid =
+          spawn(fn ->
+            receive do
+              :stop -> :ok
+            end
+          end)
+
+        send(test_pid, {:starter_called, pid})
+        {:ok, pid}
+      end
+
+      {:ok, reg} =
+        start_supervised(
+          {WorkerRegistry,
+           name: :"#{__MODULE__}.swap_path_b.#{System.unique_integer([:positive])}",
+           starter: starter,
+           stopper: fn _ -> :ok end,
+           linger_ms: 30},
+          id: :"swap_path_b_#{System.unique_integer([:positive])}"
+        )
+
+      parent = self()
+
+      caller =
+        spawn(fn ->
+          {:ok, _, ref} = WorkerRegistry.acquire(identity, reg)
+          send(parent, {:acquired, ref})
+
+          receive do
+            :swap_now ->
+              send(parent, {:swap_result, WorkerRegistry.swap(ref, reg)})
+          end
+        end)
+
+      assert_receive {:acquired, _}
+      assert_receive {:starter_called, worker_pid}
+
+      Process.exit(worker_pid, :kill)
+      # Wait past linger so pending_refs is dropped.
+      Process.sleep(100)
+
+      send(caller, :swap_now)
+      assert_receive {:swap_result, {:error, :no_pending_swap}}
+    end
+  end
+
   defp eventually(check_fn, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
 

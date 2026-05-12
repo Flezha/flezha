@@ -133,6 +133,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       worker_pid: worker_pid,
       registry_ref: registry_ref,
       registry_owned?: registry_owned?,
+      connection_identity: Keyword.get(opts, :connection_identity),
       topic: Keyword.fetch!(opts, :topic),
       partition: Keyword.fetch!(opts, :partition),
       plugin_id: Keyword.fetch!(opts, :plugin_id),
@@ -171,7 +172,10 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       blocked: :queue.new(),
       dropped_total: 0,
       last_error: nil,
-      block_in_cast_warned?: false
+      block_in_cast_warned?: false,
+      swap_started_at: nil,
+      swap_attempt: 0,
+      pending_swap_telemetry: nil
     }
 
     {:ok, state, {:continue, :maybe_init_producer_id}}
@@ -179,13 +183,14 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   @impl true
   def handle_continue(:maybe_init_producer_id, %{idempotent: false} = state) do
-    {:noreply, state}
+    {:noreply, emit_pending_swap_telemetry(state) |> maybe_kick_batch()}
   end
 
   def handle_continue(:maybe_init_producer_id, state) do
     case state.init_producer_id_fn.(state.worker_pid, state.metadata_refresh_timeout_ms) do
       {:ok, %{producer_id: pid, producer_epoch: epoch}} ->
-        {:noreply, %{state | producer_id: pid, producer_epoch: epoch}}
+        state = %{state | producer_id: pid, producer_epoch: epoch}
+        {:noreply, emit_pending_swap_telemetry(state) |> maybe_kick_batch()}
 
       {:error, reason} ->
         Logger.warning(
@@ -193,7 +198,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
             "InitProducerId failed: #{inspect(reason)} — running in non-idempotent mode"
         )
 
-        {:noreply, %{state | idempotent: false, last_error: reason}}
+        state = %{state | idempotent: false, last_error: reason}
+        {:noreply, emit_pending_swap_telemetry(state) |> maybe_kick_batch()}
     end
   end
 
@@ -286,6 +292,71 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       _ ->
         {:noreply, state}
     end
+  end
+
+  def handle_info({:kafka_worker_dead, ref, reason}, %{registry_ref: ref} = state) do
+    Logger.warning(
+      "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+        "worker pid #{inspect(state.worker_pid)} died (reason=#{inspect(reason)}); initiating swap"
+    )
+
+    in_flight_count = in_flight_size(state)
+
+    state =
+      state
+      |> cancel_timers()
+      |> rewind_in_flight(reason)
+
+    state = %{
+      state
+      | swap_started_at: state.swap_started_at || state.now_fn.(),
+        swap_attempt: 0,
+        last_error: {:worker_died, reason},
+        pending_swap_telemetry:
+          state.pending_swap_telemetry ||
+            %{
+              measurements: %{
+                queue_depth: state.queue_size,
+                in_flight_records: in_flight_count,
+                queue_bytes: state.queue_bytes
+              },
+              metadata: %{
+                plugin_id: state.plugin_id,
+                topic: state.topic,
+                partition: state.partition,
+                reason: reason,
+                producer_id_before: state.producer_id,
+                old_worker_pid: state.worker_pid
+              }
+            }
+    }
+
+    attempt_swap(state, reason)
+  end
+
+  def handle_info({:kafka_worker_dead, _ref, _reason}, state) do
+    Logger.debug(
+      "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+        "stale {:kafka_worker_dead, ...} for old registry_ref; ignoring"
+    )
+
+    {:noreply, state}
+  end
+
+  def handle_info({:retry_swap, ref, attempt}, %{registry_ref: ref} = state) do
+    state = %{state | swap_attempt: attempt}
+    attempt_swap(state, swap_last_reason(state))
+  end
+
+  def handle_info({:retry_swap, _ref, _attempt}, state), do: {:noreply, state}
+
+  def handle_info({:EXIT, _pid, _reason}, state) do
+    Logger.debug(
+      "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+        "received unhandled :EXIT; swap is driven by {:kafka_worker_dead, ...} — ignoring"
+    )
+
+    {:noreply, state}
   end
 
   def handle_info({:block_timeout, from}, state) do
@@ -913,6 +984,122 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
         raise ArgumentError,
               "ProducerWorker requires either :worker_pid or :connection_identity"
     end
+  end
+
+  defp cancel_timers(state) do
+    if is_reference(state.linger_timer), do: Process.cancel_timer(state.linger_timer)
+    if is_reference(state.retry_timer), do: Process.cancel_timer(state.retry_timer)
+    %{state | linger_timer: nil, retry_timer: nil}
+  end
+
+  defp rewind_in_flight(%{in_flight: nil} = state, _reason), do: state
+
+  defp rewind_in_flight(%{in_flight: batch} = state, reason) do
+    requeued = :queue.join(:queue.from_list(batch.records), state.queue)
+    bytes_back = Enum.reduce(batch.records, 0, fn r, n -> n + r.bytes end)
+
+    %{
+      state
+      | queue: requeued,
+        queue_size: state.queue_size + length(batch.records),
+        queue_bytes: state.queue_bytes + bytes_back,
+        in_flight: nil,
+        last_error: {:worker_died, reason}
+    }
+  end
+
+  defp attempt_swap(state, _reason) do
+    case do_swap_or_acquire(state) do
+      {:ok, new_pid, new_ref} ->
+        pending =
+          case state.pending_swap_telemetry do
+            nil -> nil
+            payload -> %{payload | metadata: Map.put(payload.metadata, :new_worker_pid, new_pid)}
+          end
+
+        state = %{
+          state
+          | worker_pid: new_pid,
+            registry_ref: new_ref,
+            producer_id: nil,
+            producer_epoch: nil,
+            sequence: 0,
+            in_flight: nil,
+            swap_started_at: nil,
+            swap_attempt: 0,
+            pending_swap_telemetry: pending
+        }
+
+        {:noreply, state, {:continue, :maybe_init_producer_id}}
+
+      {:error, swap_reason} ->
+        now = state.now_fn.()
+        elapsed = now - (state.swap_started_at || now)
+
+        cond do
+          elapsed >= state.delivery_timeout_ms ->
+            fail_all_during_swap(state, swap_reason)
+
+          true ->
+            attempt = (state.swap_attempt || 0) + 1
+            backoff = retry_backoff_ms(state, attempt)
+            Process.send_after(self(), {:retry_swap, state.registry_ref, attempt}, backoff)
+            {:noreply, %{state | swap_attempt: attempt, last_error: {:swap_failed, swap_reason}}}
+        end
+    end
+  end
+
+  defp do_swap_or_acquire(state) do
+    case WorkerRegistry.swap(state.registry_ref) do
+      {:ok, _pid, _ref} = ok ->
+        ok
+
+      {:error, :no_pending_swap} when not is_nil(state.connection_identity) ->
+        WorkerRegistry.acquire(state.connection_identity)
+
+      {:error, _reason} = err ->
+        err
+    end
+  end
+
+  defp swap_last_reason(%{last_error: {:worker_died, reason}}), do: reason
+  defp swap_last_reason(%{last_error: {:swap_failed, reason}}), do: reason
+  defp swap_last_reason(_), do: :unknown
+
+  defp fail_all_during_swap(state, swap_reason) do
+    queued = :queue.to_list(state.queue)
+
+    Enum.each(queued, fn record ->
+      reply_to_record(record, {:error, {:delivery_failed, :worker_swap_exhausted}})
+
+      Telemetry.failed(state.swap_attempt + 1, state.delivery_timeout_ms, %{
+        plugin_id: state.plugin_id,
+        topic: state.topic,
+        partition: state.partition,
+        last_reason: {:worker_swap_exhausted, swap_reason},
+        caller: caller_tag(record)
+      })
+    end)
+
+    {:stop, {:swap_exhausted, swap_reason},
+     %{
+       state
+       | queue: :queue.new(),
+         queue_size: 0,
+         queue_bytes: 0,
+         in_flight: nil,
+         swap_started_at: nil,
+         swap_attempt: 0,
+         last_error: {:swap_exhausted, swap_reason}
+     }}
+  end
+
+  defp emit_pending_swap_telemetry(%{pending_swap_telemetry: nil} = state), do: state
+
+  defp emit_pending_swap_telemetry(%{pending_swap_telemetry: payload} = state) do
+    metadata = Map.put(payload.metadata, :producer_id_after, state.producer_id)
+    Telemetry.worker_swapped(payload.measurements, metadata)
+    %{state | pending_swap_telemetry: nil}
   end
 
   @impl true

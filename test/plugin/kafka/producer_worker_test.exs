@@ -1,9 +1,13 @@
 defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
+  alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
 
   use ExUnit.Case, async: false
+  use Mimic
 
   import ExUnit.CaptureLog
+
+  setup :set_mimic_global
 
   @topic "p_topic"
   @partition 0
@@ -771,6 +775,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
         :dropped -> [:flezha, :plugin, :kafka, :produce, :dropped]
         :metadata_refresh -> [:flezha, :plugin, :kafka, :metadata, :refresh]
         :topic_created -> [:flezha, :plugin, :kafka, :topic, :created]
+        :worker_swapped -> [:flezha, :plugin, :kafka, :worker, :swapped]
       end
 
     handler_id = "test-#{System.unique_integer([:positive])}"
@@ -787,5 +792,349 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
+  end
+
+  describe "worker swap on {:kafka_worker_dead, ...} (task 2.7)" do
+    defp seed_registry_ref(pid, ref) do
+      :sys.replace_state(pid, fn state -> %{state | registry_ref: ref} end)
+    end
+
+    test "swap preserves queue and re-issues InitProducerId on the new worker (2.7.1 / 2.7.3)" do
+      call_count = :counters.new(1, [])
+
+      init_producer_id_fn = fn _w, _t ->
+        :counters.add(call_count, 1, 1)
+
+        case :counters.get(call_count, 1) do
+          1 -> {:ok, %{producer_id: 4242, producer_epoch: 5}}
+          _ -> {:ok, %{producer_id: 9999, producer_epoch: 7}}
+        end
+      end
+
+      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+
+      {pid, script_pid} =
+        start_worker(
+          init_producer_id_fn: init_producer_id_fn,
+          queue_max: 100,
+          linger_ms: 5
+        )
+
+      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 10) end)
+
+      :ok = ProducerWorker.cast_enqueue(pid, "a", %{})
+      :ok = ProducerWorker.cast_enqueue(pid, "b", %{})
+      :ok = ProducerWorker.cast_enqueue(pid, "c", %{})
+      Process.sleep(30)
+
+      pre = :sys.get_state(pid)
+      assert pre.producer_id == 4242
+      assert pre.producer_epoch == 5
+
+      registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+      seed_registry_ref(pid, registry_ref)
+
+      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
+        {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
+      end)
+
+      send(pid, {:kafka_worker_dead, registry_ref, :killed})
+      Process.sleep(50)
+
+      post = :sys.get_state(pid)
+      assert post.worker_pid == new_worker_pid
+      assert post.producer_id == 9999
+      assert post.producer_epoch == 7
+      assert post.pending_swap_telemetry == nil
+
+      # All three records still in-system (queue + in_flight).
+      in_flight_records =
+        case post.in_flight do
+          nil -> 0
+          %{records: r} -> length(r)
+        end
+
+      assert post.queue_size + in_flight_records == 3
+    end
+
+    test "re-admitted in_flight records retain from/metadata/timestamp/bytes/key (2.7.2)" do
+      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+
+      {pid, script_pid} =
+        start_worker(
+          init_producer_id_fn: Fakes.init_producer_id_ok(),
+          linger_ms: 1
+        )
+
+      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+
+      :ok = ProducerWorker.cast_enqueue(pid, "payload-1", %{"k" => "v"})
+      :ok = ProducerWorker.cast_enqueue(pid, "payload-2", %{"flezha.dedup_key" => "abc"})
+      Process.sleep(30)
+
+      pre = :sys.get_state(pid)
+      in_flight_records = pre.in_flight.records
+      assert length(in_flight_records) >= 1
+
+      registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+      seed_registry_ref(pid, registry_ref)
+      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
+        {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
+      end)
+
+      send(pid, {:kafka_worker_dead, registry_ref, :killed})
+      Process.sleep(30)
+
+      post = :sys.get_state(pid)
+
+      # After the swap, the rewound records may still be in queue OR have
+      # been kicked into the new in_flight batch — assert they remain in
+      # the producer's bookkeeping with their original fields intact.
+      in_post =
+        :queue.to_list(post.queue) ++
+          (case post.in_flight do
+             nil -> []
+             %{records: r} -> r
+           end)
+
+      preserved = Enum.take(in_post, length(in_flight_records))
+
+      assert Enum.map(preserved, & &1.value) == Enum.map(in_flight_records, & &1.value)
+      assert Enum.map(preserved, & &1.metadata) == Enum.map(in_flight_records, & &1.metadata)
+      assert Enum.map(preserved, & &1.timestamp) == Enum.map(in_flight_records, & &1.timestamp)
+      assert Enum.map(preserved, & &1.bytes) == Enum.map(in_flight_records, & &1.bytes)
+      assert Enum.map(preserved, & &1.key) == Enum.map(in_flight_records, & &1.key)
+    end
+
+    test "telemetry [:worker, :swapped] fires once with measurements + metadata (2.7.4)" do
+      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+
+      {pid, script_pid} =
+        start_worker(
+          init_producer_id_fn: Fakes.init_producer_id_ok(1234, 0),
+          linger_ms: 1
+        )
+
+      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+
+      :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
+      :ok = ProducerWorker.cast_enqueue(pid, "y", %{})
+      Process.sleep(20)
+
+      registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+      seed_registry_ref(pid, registry_ref)
+      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
+        {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
+      end)
+
+      attach(:worker_swapped)
+      send(pid, {:kafka_worker_dead, registry_ref, :killed})
+
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :worker, :swapped], measurements,
+                      metadata},
+                     500
+
+      assert Map.has_key?(measurements, :queue_depth)
+      assert Map.has_key?(measurements, :in_flight_records)
+      assert Map.has_key?(measurements, :queue_bytes)
+      assert metadata.topic == @topic
+      assert metadata.partition == @partition
+      assert metadata.reason == :killed
+      assert metadata.producer_id_before == 1234
+      assert metadata.new_worker_pid == new_worker_pid
+      assert is_pid(metadata.old_worker_pid)
+      assert is_integer(metadata.producer_id_after) or is_nil(metadata.producer_id_after)
+
+      refute_receive {:telemetry, [:flezha, :plugin, :kafka, :worker, :swapped], _, _}, 100
+    end
+
+    test "no :produce :failed events fire for queued records during the swap window (2.7.5)" do
+      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+
+      {pid, script_pid} =
+        start_worker(
+          init_producer_id_fn: Fakes.init_producer_id_ok(),
+          linger_ms: 5
+        )
+
+      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+
+      :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
+      :ok = ProducerWorker.cast_enqueue(pid, "y", %{})
+      Process.sleep(20)
+
+      registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+      seed_registry_ref(pid, registry_ref)
+      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
+        {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
+      end)
+
+      attach(:produce_failed)
+      send(pid, {:kafka_worker_dead, registry_ref, :killed})
+
+      refute_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _, _}, 100
+    end
+
+    test "defensive :EXIT from unrelated pid does not crash the producer (2.7.6)" do
+      {pid, _script} =
+        start_worker(script: [{:return, Fakes.ok_response(@topic, @partition)}])
+
+      assert Process.alive?(pid)
+
+      # NOTE: send from a non-parent pid — gen_server.erl turns
+      # `{:EXIT, parent_pid, :normal}` into a real terminate call.
+      other = spawn(fn -> Process.sleep(:infinity) end)
+      send(pid, {:EXIT, other, :killed})
+      Process.sleep(20)
+
+      assert Process.alive?(pid),
+             ":EXIT from unrelated pid must not crash the producer"
+    end
+
+    test "stale {:kafka_worker_dead, old_ref, _} is dropped without altering queue (2.7.7)" do
+      {pid, _script} =
+        start_worker(script: [{:return, Fakes.ok_response(@topic, @partition)}])
+
+      registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+      seed_registry_ref(pid, registry_ref)
+
+      pre = :sys.get_state(pid)
+
+      send(pid, {:kafka_worker_dead, {{[{"k", 9092}], 0, 0}, make_ref()}, :killed})
+      Process.sleep(20)
+
+      post = :sys.get_state(pid)
+      assert post.queue == pre.queue
+      assert post.registry_ref == registry_ref
+      assert Process.alive?(pid)
+    end
+
+    test "swap failure schedules retry within delivery_timeout_ms (2.4 happy retry)" do
+      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+
+      {pid, script_pid} =
+        start_worker(
+          init_producer_id_fn: Fakes.init_producer_id_ok(),
+          linger_ms: 1,
+          retry_backoff_ms: 1,
+          delivery_timeout_ms: 10_000
+        )
+
+      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+
+      :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
+      Process.sleep(20)
+
+      registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+      seed_registry_ref(pid, registry_ref)
+      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      counter = :counters.new(1, [])
+
+      Mimic.stub(WorkerRegistry, :swap, fn ^registry_ref ->
+        :counters.add(counter, 1, 1)
+
+        if :counters.get(counter, 1) < 3 do
+          {:error, :no_broker}
+        else
+          {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
+        end
+      end)
+
+      send(pid, {:kafka_worker_dead, registry_ref, :killed})
+      Process.sleep(200)
+
+      post = :sys.get_state(pid)
+      assert post.worker_pid == new_worker_pid
+      assert post.swap_attempt == 0
+      assert post.swap_started_at == nil
+    end
+
+    test "swap exhaustion fails queued records and stops the producer (2.4 exhaustion)" do
+      Process.flag(:trap_exit, true)
+
+      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+
+      {pid, script_pid} =
+        start_worker(
+          init_producer_id_fn: Fakes.init_producer_id_ok(),
+          linger_ms: 1,
+          retry_backoff_ms: 1,
+          retry_max_backoff_ms: 3,
+          delivery_timeout_ms: 50
+        )
+
+      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+
+      :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
+      :ok = ProducerWorker.cast_enqueue(pid, "y", %{})
+      Process.sleep(20)
+
+      registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+      seed_registry_ref(pid, registry_ref)
+
+      # Backdate swap_started_at so the first swap-attempt is already past
+      # delivery_timeout_ms; the first {:error, _} should exhaust immediately.
+      now = System.monotonic_time(:millisecond)
+
+      :sys.replace_state(pid, fn state ->
+        %{state | swap_started_at: now - 1_000}
+      end)
+
+      Mimic.stub(WorkerRegistry, :swap, fn ^registry_ref -> {:error, :no_broker} end)
+
+      attach(:produce_failed)
+
+      send(pid, {:kafka_worker_dead, registry_ref, :killed})
+
+      # The producer SHOULD stop after exhausting the retry budget.
+      assert_receive {:EXIT, ^pid, {:swap_exhausted, :no_broker}}, 500
+
+      # And every queued record SHOULD have produced a :failed telemetry event.
+      events = collect_failed_events(2, 200)
+      assert length(events) == 2
+    end
+
+    test "swap falls back to acquire/2 when registry returns :no_pending_swap" do
+      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+
+      identity = %{hosts: [{"k", 9092}]}
+
+      {pid, script_pid} =
+        start_worker(
+          init_producer_id_fn: Fakes.init_producer_id_ok(),
+          linger_ms: 1,
+          extra: [connection_identity: identity]
+        )
+
+      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+
+      :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
+      Process.sleep(20)
+
+      registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+      seed_registry_ref(pid, registry_ref)
+      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref -> {:error, :no_pending_swap} end)
+
+      Mimic.expect(WorkerRegistry, :acquire, fn ^identity ->
+        {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
+      end)
+
+      send(pid, {:kafka_worker_dead, registry_ref, :killed})
+      Process.sleep(50)
+
+      post = :sys.get_state(pid)
+      assert post.worker_pid == new_worker_pid
+    end
   end
 end

@@ -13,9 +13,19 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
     * The caller process is monitored. If the owner dies without calling
       `release/2`, the registry treats the DOWN as an implicit release.
     * Workers are monitored too. If a worker dies (broker partition restart,
-      kafka_ex internal crash), the entry is dropped; the next `acquire/2`
-      starts a fresh worker. Outstanding tokens for the dead worker no-op on
-      release.
+      kafka_ex internal crash, OS suspend leaving the socket half-dead), the
+      registry sends `{:kafka_worker_dead, ref, reason}` to every caller that
+      still holds a live token BEFORE clearing the entry, then snapshots the
+      entry's `refs` count into `state.pending_refs` so the upcoming swap can
+      restore the same number of seats.
+    * `swap/2` is the recovery API consumed by `ProducerWorker`. It drops
+      the dead token, then either re-attaches to an entry another swap
+      already recreated (no refs change — the seat is inherited) or starts
+      a fresh worker and inherits `entry.refs` from the snapshot. The
+      snapshot is dropped after `:linger_ms` (`:linger_expired_pending_refs`)
+      to bound memory across genuinely-down brokers; callers whose swap
+      arrives after expiry receive `{:error, :no_pending_swap}` and SHOULD
+      fall back to `acquire/2` with their stored identity.
     * Linger guards against churn during plugin restart (acquire -> release ->
       acquire within milliseconds reuses the same pid).
   """
@@ -62,6 +72,23 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
     GenServer.call(server, {:release, ref})
   end
 
+  @doc """
+  In-place re-acquire after a `{:kafka_worker_dead, ref, reason}` notification.
+
+  Drops the dead `old_ref`'s token bookkeeping and either attaches to the
+  entry another caller's swap already recreated (refcount unchanged — the
+  caller is filling a seat inherited from the snapshot) or starts a fresh
+  worker for the same canonical identity and seeds its `refs` from
+  `state.pending_refs[key]`.
+
+  Returns `{:error, :no_pending_swap}` if the snapshot has already expired
+  (the caller SHOULD then fall back to `acquire/2` with its stored identity).
+  """
+  @spec swap(ref(), GenServer.server()) :: {:ok, pid(), ref()} | {:error, term()}
+  def swap(old_ref, server \\ __MODULE__) do
+    GenServer.call(server, {:swap, old_ref, self()}, 30_000)
+  end
+
   @doc false
   @spec inspect_state(GenServer.server()) :: map()
   def inspect_state(server \\ __MODULE__) do
@@ -78,7 +105,8 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
        entries: %{},
        tokens: %{},
        caller_monitors: %{},
-       worker_monitors: %{}
+       worker_monitors: %{},
+       pending_refs: %{}
      }}
   end
 
@@ -96,16 +124,18 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
               pid: pid,
               refs: 1,
               linger: nil,
-              monitor: wmref
+              monitor: wmref,
+              callers: MapSet.new(),
+              identity: identity
             }
-
-            {token, state} = register_owner(state, key, caller)
 
             state = %{
               state
               | entries: Map.put(state.entries, key, entry),
                 worker_monitors: Map.put(state.worker_monitors, wmref, key)
             }
+
+            {token, state} = register_owner(state, key, caller)
 
             {:reply, {:ok, pid, {key, token}}, state}
 
@@ -119,22 +149,78 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
       %{linger: linger_timer} = entry ->
         if linger_timer, do: Process.cancel_timer(linger_timer)
         entry = %{entry | refs: entry.refs + 1, linger: nil}
-        {token, state} = register_owner(state, key, caller)
         state = %{state | entries: Map.put(state.entries, key, entry)}
+        {token, state} = register_owner(state, key, caller)
         {:reply, {:ok, entry.pid, {key, token}}, state}
     end
   end
 
-  def handle_call({:release, {key, token}}, _from, state) do
-    {state, _key} = drop_token(state, token, key)
-    state = decrement_refs(state, key)
+  def handle_call({:release, {_key, token}}, _from, state) do
+    {state, key} = drop_token(state, token, nil)
+    state = if key, do: decrement_refs(state, key), else: state
     {:reply, :ok, state}
+  end
+
+  def handle_call({:swap, {key, old_token}, caller}, _from, state) do
+    {state, _} = drop_token(state, old_token, key)
+
+    case Map.get(state.entries, key) do
+      %{pid: pid} ->
+        {token, state} = register_owner(state, key, caller)
+        {:reply, {:ok, pid, {key, token}}, state}
+
+      nil ->
+        case Map.pop(state.pending_refs, key) do
+          {{identity, count}, pending_refs} ->
+            state = %{state | pending_refs: pending_refs}
+
+            case state.starter.(identity) do
+              {:ok, pid} when is_pid(pid) ->
+                wmref = Process.monitor(pid)
+
+                entry = %{
+                  pid: pid,
+                  refs: count,
+                  linger: nil,
+                  monitor: wmref,
+                  callers: MapSet.new(),
+                  identity: identity
+                }
+
+                state = %{
+                  state
+                  | entries: Map.put(state.entries, key, entry),
+                    worker_monitors: Map.put(state.worker_monitors, wmref, key)
+                }
+
+                {token, state} = register_owner(state, key, caller)
+                {:reply, {:ok, pid, {key, token}}, state}
+
+              {:error, reason} ->
+                state = restore_pending(state, key, identity, count)
+                {:reply, {:error, reason}, state}
+
+              other ->
+                state = restore_pending(state, key, identity, count)
+                {:reply, {:error, {:unexpected_start_result, other}}, state}
+            end
+
+          {nil, _} ->
+            {:reply, {:error, :no_pending_swap}, state}
+        end
+    end
   end
 
   def handle_call(:inspect_state, _from, state) do
     summary =
       Map.new(state.entries, fn {key, entry} ->
-        {key, %{pid: entry.pid, refs: entry.refs, linger?: not is_nil(entry.linger)}}
+        {key,
+         %{
+           pid: entry.pid,
+           refs: entry.refs,
+           linger?: not is_nil(entry.linger),
+           callers: MapSet.size(entry.callers)
+         }}
       end)
 
     {:reply, summary, state}
@@ -159,7 +245,11 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
     end
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+  def handle_info({:linger_expired_pending_refs, key}, state) do
+    {:noreply, %{state | pending_refs: Map.delete(state.pending_refs, key)}}
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     cond do
       Map.has_key?(state.caller_monitors, ref) ->
         token = Map.fetch!(state.caller_monitors, ref)
@@ -169,16 +259,34 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
       Map.has_key?(state.worker_monitors, ref) ->
         key = Map.fetch!(state.worker_monitors, ref)
+        entry = Map.fetch!(state.entries, key)
 
         Logger.warning(
-          "[Kafka.WorkerRegistry] worker for #{inspect(key)} went DOWN; clearing entry"
+          "[Kafka.WorkerRegistry] worker for #{inspect(key)} went DOWN " <>
+            "(reason=#{inspect(reason)}); notifying #{MapSet.size(entry.callers)} " <>
+            "active token holder(s) and clearing entry"
         )
+
+        Enum.each(entry.callers, fn {caller_pid, token} ->
+          send(caller_pid, {:kafka_worker_dead, {key, token}, reason})
+        end)
+
+        if is_reference(entry.linger), do: Process.cancel_timer(entry.linger)
+
+        pending_refs =
+          if MapSet.size(entry.callers) > 0 do
+            Process.send_after(self(), {:linger_expired_pending_refs, key}, state.linger_ms)
+            Map.put(state.pending_refs, key, {entry.identity, entry.refs})
+          else
+            state.pending_refs
+          end
 
         {:noreply,
          %{
            state
            | entries: Map.delete(state.entries, key),
-             worker_monitors: Map.delete(state.worker_monitors, ref)
+             worker_monitors: Map.delete(state.worker_monitors, ref),
+             pending_refs: pending_refs
          }}
 
       true ->
@@ -199,12 +307,17 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
     token = make_ref()
     cmref = Process.monitor(caller)
 
-    {token,
-     %{
-       state
-       | tokens: Map.put(state.tokens, token, {key, cmref}),
-         caller_monitors: Map.put(state.caller_monitors, cmref, token)
-     }}
+    state = %{
+      state
+      | tokens: Map.put(state.tokens, token, {key, cmref}),
+        caller_monitors: Map.put(state.caller_monitors, cmref, token),
+        entries:
+          Map.update!(state.entries, key, fn entry ->
+            %{entry | callers: MapSet.put(entry.callers, {caller, token})}
+          end)
+    }
+
+    {token, state}
   end
 
   defp drop_token(state, token, expected_key) do
@@ -215,11 +328,27 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
       {{key, cmref}, tokens} ->
         Process.demonitor(cmref, [:flush])
 
-        {%{
-           state
-           | tokens: tokens,
-             caller_monitors: Map.delete(state.caller_monitors, cmref)
-         }, key}
+        state = %{
+          state
+          | tokens: tokens,
+            caller_monitors: Map.delete(state.caller_monitors, cmref)
+        }
+
+        state =
+          case Map.get(state.entries, key) do
+            nil ->
+              state
+
+            entry ->
+              new_callers =
+                entry.callers
+                |> Enum.reject(fn {_pid, tok} -> tok == token end)
+                |> MapSet.new()
+
+              %{state | entries: Map.put(state.entries, key, %{entry | callers: new_callers})}
+          end
+
+        {state, key}
     end
   end
 
@@ -247,6 +376,11 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
         %{state | entries: Map.put(state.entries, key, entry)}
     end
+  end
+
+  defp restore_pending(state, key, identity, count) do
+    Process.send_after(self(), {:linger_expired_pending_refs, key}, state.linger_ms)
+    %{state | pending_refs: Map.put(state.pending_refs, key, {identity, count})}
   end
 
   defp canonical_key(identity) do

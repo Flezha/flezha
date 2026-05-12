@@ -68,4 +68,13 @@ defmodule Flezha.Plugin.Provider.Kafka.Telemetry do
       Map.new(metadata)
     )
   end
+
+  @spec worker_swapped(map(), map()) :: :ok
+  def worker_swapped(measurements, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:worker, :swapped],
+      measurements,
+      metadata
+    )
+  end
 end
