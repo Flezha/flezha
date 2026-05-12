@@ -6,6 +6,9 @@ edition = "2021"
 [dependencies]
 serde_json = "1.0"
 
+[dev-dependencies]
+tempfile = "3"
+
 [[bin]]
 name = "flz"
 path = "src/main.rs"

@@ -1,4 +1,5 @@
 use std::env;
+use std::path::PathBuf;
 
 pub fn get_flezha_command() -> String {
     let extension = get_extension();
@@ -24,6 +25,29 @@ pub fn get_extension() -> String {
 
 pub fn get_namespace(slice: &[String]) -> String {
     get_parameter(slice, "--namespace", "-n")
+}
+
+// Resolve the `app_data/` root that the running Controller would use:
+//   1. `--app-data-root <PATH>` if given (longest precedence)
+//   2. `FLEZHA_APP_DATA_ROOT` env var if non-empty
+//   3. `./app_data` relative to the current working directory
+pub fn app_data_root(args: &[String]) -> PathBuf {
+    let env_value = env::var("FLEZHA_APP_DATA_ROOT").ok();
+    resolve_app_data_root(args, env_value)
+}
+
+pub fn resolve_app_data_root(args: &[String], env_value: Option<String>) -> PathBuf {
+    if let Some(flag) = extract_param(args, "--app-data-root", "--app-data-root") {
+        if !flag.is_empty() {
+            return PathBuf::from(flag);
+        }
+    }
+    if let Some(v) = env_value {
+        if !v.is_empty() {
+            return PathBuf::from(v);
+        }
+    }
+    PathBuf::from("./app_data")
 }
 
 pub fn get_parameter(slice: &[String], long_key: &str, short_key: &str) -> String {
@@ -424,6 +448,40 @@ mod tests {
                 ("on_terminate".to_string(), vec![]),
             ]
         );
+    }
+
+    #[test]
+    fn resolve_app_data_root_prefers_flag_over_env_and_default() {
+        let args = v(&["--app-data-root", "/tmp/flag-root"]);
+        let got = resolve_app_data_root(&args, Some("/var/lib/env-root".to_string()));
+        assert_eq!(got, PathBuf::from("/tmp/flag-root"));
+    }
+
+    #[test]
+    fn resolve_app_data_root_uses_env_when_flag_absent() {
+        let args: Vec<String> = v(&[]);
+        let got = resolve_app_data_root(&args, Some("/var/lib/env-root".to_string()));
+        assert_eq!(got, PathBuf::from("/var/lib/env-root"));
+    }
+
+    #[test]
+    fn resolve_app_data_root_falls_back_to_default() {
+        let args: Vec<String> = v(&[]);
+        assert_eq!(
+            resolve_app_data_root(&args, None),
+            PathBuf::from("./app_data")
+        );
+        assert_eq!(
+            resolve_app_data_root(&args, Some(String::new())),
+            PathBuf::from("./app_data")
+        );
+    }
+
+    #[test]
+    fn resolve_app_data_root_equals_form() {
+        let args = v(&["--app-data-root=/srv/flezha"]);
+        let got = resolve_app_data_root(&args, None);
+        assert_eq!(got, PathBuf::from("/srv/flezha"));
     }
 
     #[test]

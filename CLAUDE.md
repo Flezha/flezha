@@ -42,6 +42,10 @@
 - **Boot CLI**: `flz boot status`, `flz boot await`,
   `flz boot import-legacy-snapshot` — implemented in `cli/src/boot.rs`
   / `Flezha.Service.CliManager.boot_*`.
+- **Start-fresh workflow**: `flz controller stop && flz reset --yes`
+  wipes durable runtime data (`app_data/state/*`, `app_data/process_hub/*`).
+  Implemented in `cli/src/reset.rs`; refuses to run while the Controller
+  is up. See `docs/operations/reset.md`.
 - **Persistence layers**: ProcessHub durable registry at
   `app_data/process_hub/<hub_id>/registry.dets` (cspec + `opts[:plugins]`)
   + per-Partition WAL at `app_data/state/<relay_class>/<shard_id>/...`

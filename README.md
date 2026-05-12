@@ -104,6 +104,26 @@ direct-stop behaviour.
 Full operator playbook (run modes, telemetry, exit-code semantics,
 the third-SIGTERM escape hatch): [`docs/operations/graceful_shutdown.md`](docs/operations/graceful_shutdown.md).
 
+## Wiping runtime data
+
+`flz reset` clears the Controller's durable on-disk state
+(`app_data/state/`, `app_data/process_hub/`; optionally
+`app_data/certs/` and `app_data/sockets/`) so the next boot starts
+from a clean slate. It refuses to run while the Controller is up —
+pair with `flz controller stop` first:
+
+```bash
+flz controller stop
+flz reset --yes
+```
+
+`--yes` is required for any destructive action; bare `flz reset`
+prints the plan and exits non-zero, `flz reset --dry-run` prints the
+plan and exits 0. `--include-certs` / `--include-sockets` / `--all`
+extend the default scope; `--json` produces machine-readable output.
+Full reference and operator recipes (docker-compose, k8s, CI):
+[`docs/operations/reset.md`](docs/operations/reset.md).
+
 ## Code style
 
 The repo enforces three formatters via the
