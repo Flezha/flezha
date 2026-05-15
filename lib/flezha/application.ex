@@ -47,7 +47,8 @@ defmodule Flezha.Application do
         [
           Flezha.State.FsyncBatcher,
           Flezha.State.Retention
-        ]
+        ] ++
+        memory_reporter_children()
 
     # Flezha.Testnet only compiles in :test (test/support/); ensure_loaded?
     # gates the child spec so prod boots without the module.
@@ -105,6 +106,13 @@ defmodule Flezha.Application do
       [Flezha.Plugin.Installer.Supervisor]
     else
       []
+    end
+  end
+
+  defp memory_reporter_children do
+    case Flezha.Diagnostics.MemoryReporter.configured_interval_ms() do
+      {:ok, _ms} -> [Flezha.Diagnostics.MemoryReporter]
+      :disabled -> []
     end
   end
 

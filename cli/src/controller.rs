@@ -13,14 +13,49 @@ pub fn handle_controller_command(args: &[String]) {
         "start" => handle_start(args),
         "stop" => handle_stop(args),
         "status" => handle_status(args),
+        "mem-top" => handle_mem_top(args),
         "help" | "--help" | "-h" => print_controller_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'start', 'stop', 'status', or 'help'.",
+                "Error: Invalid argument '{}'. Use 'start', 'stop', 'status', 'mem-top', or 'help'.",
                 args[0]
             );
             exit(1);
         }
+    }
+}
+
+// Exit codes match `flz controller status` / `stop`:
+//   0 — snapshot printed
+//   3 — controller socket unreachable
+fn handle_mem_top(args: &[String]) {
+    for arg in &args[1..] {
+        if arg == "--help" || arg == "-h" || arg == "help" {
+            print_mem_top_help();
+            return;
+        }
+    }
+
+    let format = if args.iter().any(|a| a == "--json" || a == "-o=json") {
+        "json"
+    } else {
+        "text"
+    };
+
+    let command = get_flezha_command();
+    let rpc_command = format!(
+        "Flezha.Service.CliManager.controller_mem_top(\"{}\")",
+        format
+    );
+
+    let status = Command::new(command)
+        .arg("rpc")
+        .arg(rpc_command)
+        .status()
+        .expect("Failed to execute command");
+
+    if !status.success() {
+        exit(3);
     }
 }
 
@@ -216,9 +251,29 @@ fn print_controller_help() {
     println!("    start    Start the flezha controller");
     println!("    stop     Stop the flezha controller (graceful)");
     println!("    status   Print controller status (incl. graceful-shutdown state)");
+    println!("    mem-top  Snapshot top-memory processes / ETS / DETS / allocators");
     println!("    help     Show this help message");
     println!();
     println!("Use 'flz controller <COMMAND> --help' for more information on a specific command.");
+}
+
+fn print_mem_top_help() {
+    println!("flz controller mem-top - Snapshot Controller memory hot spots");
+    println!();
+    println!("USAGE:");
+    println!("    flz controller mem-top [--json]");
+    println!();
+    println!("OUTPUT (default text format):");
+    println!("    Top-20 processes by :erlang.process_info(self, :memory),");
+    println!("    sorted descending. Each row carries name / registered name /");
+    println!("    initial call / :message_queue_len / :heap_size / :total_heap_size.");
+    println!();
+    println!("    ETS tables sorted by :ets.info(tab, :memory) (bytes).");
+    println!("    DETS files under app_data/process_hub/ sorted by file size.");
+    println!("    :recon_alloc.memory(:allocated_types) allocator breakdown.");
+    println!();
+    println!("FLAGS:");
+    println!("    --json    Emit a single JSON document for machine consumption.");
 }
 
 fn print_start_help() {

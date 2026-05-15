@@ -5,7 +5,10 @@
 # `:testnet` is excluded because the WS testnet daemon must be running on
 # port 4500 — run `npm --prefix test/apps/testnet start` first, then
 # `mix test --include testnet`.
-ExUnit.start(exclude: [:system, :java_sdk, :kafka_integration, :testnet])
+# `:memory_drift` is the long-running load harness in
+# `test/load/memory_drift_test.exs`; it also requires
+# `MIX_RUN_MEMORY_DRIFT=1`.
+ExUnit.start(exclude: [:system, :java_sdk, :kafka_integration, :testnet, :memory_drift])
 
 # ProcessHub's `LoggerService.error/3` logs every `StartChildrenRequest`
 # failure at error level — useful in production, but multiple tests

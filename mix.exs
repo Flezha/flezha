@@ -101,7 +101,8 @@ defmodule Flezha.MixProject do
       {:mimic, "~> 1.11"},
       {:logger_file_backend, "~> 0.0.13"},
       {:logger_backends, "~> 1.0"},
-      {:rustler, "~> 0.35"}
+      {:rustler, "~> 0.35"},
+      {:recon, "~> 2.5"}
     ]
   end
 

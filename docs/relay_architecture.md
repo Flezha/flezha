@@ -672,6 +672,11 @@ from plugins, and the controller's process memory holds steady at the
 idle baseline. This is the structural fix for the memory cascade
 observed in the 2026-05-15 live incident.
 
+For investigating sustained BEAM memory growth under steady load, see
+[`docs/operator/memory-drift.md`](operator/memory-drift.md) — the
+sampler + `flz controller mem-top` surface and the load harness
+operators use to localize and verify memory-leak fixes.
+
 ### Runtime config
 
 | Key | Default | Purpose |
