@@ -4,6 +4,7 @@ import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.partition.PartitionSlot;
 import com.flezha.sdk.runtime.relay.ChannelDescriptor;
+import com.flezha.sdk.runtime.relay.PluginSink;
 import com.flezha.sdk.runtime.relay.RelayInstance;
 import com.flezha.sdk.runtime.relay.RelayTopology;
 import com.flezha.sdk.runtime.relay.ShardDescriptor;
@@ -36,6 +37,29 @@ import org.slf4j.LoggerFactory;
 public final class ShardDispatcher {
 
     private static final Logger LOG = LoggerFactory.getLogger(ShardDispatcher.class);
+
+    /**
+     * Indirection over {@link com.flezha.sdk.native_.NativeTransport#streamWrite(long, long, byte[])}
+     * so dispatcher integration tests can observe plugin-wire emissions
+     * without mocking the {@code native} static (mockito-inline cannot
+     * intercept native methods).
+     */
+    @FunctionalInterface
+    public interface WireWriter {
+        int write(long handle, long streamId, byte[] frame);
+    }
+
+    private static volatile WireWriter WIRE_WRITER = com.flezha.sdk.native_.NativeTransport::streamWrite;
+
+    /** Replace the wire-writer hook. Tests only; production code does not call this. */
+    public static void setWireWriter(@Nonnull WireWriter writer) {
+        WIRE_WRITER = writer;
+    }
+
+    /** Restore the default {@link com.flezha.sdk.native_.NativeTransport#streamWrite} writer. */
+    public static void resetWireWriter() {
+        WIRE_WRITER = com.flezha.sdk.native_.NativeTransport::streamWrite;
+    }
 
     private final ExecutorContext ctx;
     private final ExecutorService pool;
@@ -228,10 +252,14 @@ public final class ShardDispatcher {
             }
             switch (descriptor.kind()) {
                 case INTER_SHARD -> {
-                    if (meta != null) {
+                    Optional<PluginSink> sink = descriptor.pluginSink();
+                    if (meta != null && sink.isEmpty()) {
                         throw new ShardException.MetadataNotAllowedOnInterShardChannel(descriptor.name());
                     }
                     fanoutInterShard(descriptor, value, primaryStreamId);
+                    if (sink.isPresent()) {
+                        emitPluginSink(descriptor, sink.get(), value, meta, primaryStreamId);
+                    }
                 }
                 case PLUGIN_BOUND -> emitPlugin(descriptor, value, meta, primaryStreamId);
                 case ENTRY -> throw new ShardException(
@@ -276,6 +304,35 @@ public final class ShardDispatcher {
             return;
         }
 
+        writePluginFrame(ri, descriptor, bytes, userMeta, primaryStreamId);
+    }
+
+    private void emitPluginSink(
+            ChannelDescriptor descriptor,
+            PluginSink sink,
+            Object value,
+            Map<String, String> userMeta,
+            long primaryStreamId)
+            throws ShardException {
+        RelayInstance ri = instance.get();
+        if (ri == null) {
+            return;
+        }
+        byte[] bytes;
+        try {
+            bytes = sink.serializer().apply(value);
+        } catch (RuntimeException | Error e) {
+            throw new ShardException.PluginSerializerFailure(descriptor.name(), e.toString(), e);
+        }
+        writePluginFrame(ri, descriptor, bytes, userMeta, primaryStreamId);
+    }
+
+    private void writePluginFrame(
+            RelayInstance ri,
+            ChannelDescriptor descriptor,
+            byte[] bytes,
+            Map<String, String> userMeta,
+            long primaryStreamId) {
         Map<String, String> metadata = new LinkedHashMap<>();
         if (userMeta != null) {
             for (Map.Entry<String, String> e : userMeta.entrySet()) {
@@ -296,8 +353,7 @@ public final class ShardDispatcher {
         }
 
         byte[] frame = FrameEncoder.build(ri.instanceId(), bytes, metadata);
-        int writeStatus =
-                com.flezha.sdk.native_.NativeTransport.streamWrite(ctx.nativeHandle(), secondaryStreamId, frame);
+        int writeStatus = WIRE_WRITER.write(ctx.nativeHandle(), secondaryStreamId, frame);
         if (writeStatus != 0) {
             LOG.error("plugin emit on `{}`: stream write failed (status {})", descriptor.name(), writeStatus);
         }

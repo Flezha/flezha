@@ -50,4 +50,23 @@ public class ShardException extends Exception {
             return channel;
         }
     }
+
+    /**
+     * Thrown when a hybrid channel's user-supplied plugin serializer throws.
+     * Consumer fan-out has already completed by the time this surfaces — the
+     * inter-shard consumers received the typed value; only the plugin-wire
+     * emission was skipped. The dispatcher thread stays alive.
+     */
+    public static final class PluginSerializerFailure extends ShardException {
+        private final String channel;
+
+        public PluginSerializerFailure(String channel, String message, Throwable cause) {
+            super("plugin serializer for channel `" + channel + "` failed: " + message, cause);
+            this.channel = channel;
+        }
+
+        public String channel() {
+            return channel;
+        }
+    }
 }

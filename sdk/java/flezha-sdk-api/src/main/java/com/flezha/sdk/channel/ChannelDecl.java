@@ -19,4 +19,14 @@ public interface ChannelDecl<T> {
      */
     @Nonnull
     ChannelDeclWithProducer<T> from(@Nonnull Class<? extends Shard<?, ?, T, ?, ?, ?>> shard);
+
+    /**
+     * Override the per-kind default {@link OverflowPolicy} before wiring
+     * the producer. Inter-shard channels default to
+     * {@link OverflowPolicy#BLOCK}; switch to {@link OverflowPolicy#DROP_NEWEST}
+     * or {@link OverflowPolicy#DROP_OLDEST} on a per-channel basis when
+     * ordering can be sacrificed for liveness.
+     */
+    @Nonnull
+    ChannelDecl<T> onFull(@Nonnull OverflowPolicy policy);
 }

@@ -180,6 +180,42 @@ public interface Shard<
     }
 
     /**
+     * Per-Partition mailbox capacity. The consumer Partition allocates one
+     * bounded ring buffer of this size at relay startup. Static-mode Shards
+     * allocate one mailbox per declared partition key, all sharing the same
+     * capacity.
+     *
+     * <p>Override precedence at registration time:
+     * <ol>
+     *   <li>This method's value, if {@link #mailboxCapacityOverridden()}
+     *       returns {@code true}.</li>
+     *   <li>{@code FLEZHA_MAILBOX_CAPACITY} env var (parsed as a positive
+     *       integer).</li>
+     *   <li>The built-in default ({@code 1024}).</li>
+     * </ol>
+     *
+     * <p>Implementors overriding the default MUST also override
+     * {@link #mailboxCapacityOverridden()} to return {@code true} so the
+     * runtime applies the Shard value over any {@code FLEZHA_MAILBOX_CAPACITY}
+     * env value. Capacity must be in {@code 1..=1_048_576}; out-of-range
+     * values fail {@code RelayRegistry.registerRelay(...)} with the
+     * offending Shard's name.
+     */
+    default int mailboxCapacity() {
+        return 1024;
+    }
+
+    /**
+     * Override-detection sentinel for {@link #mailboxCapacity()}. Default
+     * {@code false}; implementors that override {@code mailboxCapacity()}
+     * MUST also override this to return {@code true} so the runtime applies
+     * the Shard value over any {@code FLEZHA_MAILBOX_CAPACITY} env override.
+     */
+    default boolean mailboxCapacityOverridden() {
+        return false;
+    }
+
+    /**
      * Per-partition compute. Receives the typed input, the partition's state
      * via a {@link StateHandle} (read via {@code state.get()}, mutate via
      * {@code state.apply(change)}), and a context for emitting outputs.

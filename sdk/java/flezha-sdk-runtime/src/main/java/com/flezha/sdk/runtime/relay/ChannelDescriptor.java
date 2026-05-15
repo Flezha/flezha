@@ -1,6 +1,7 @@
 package com.flezha.sdk.runtime.relay;
 
 import com.flezha.sdk.channel.ChannelKind;
+import com.flezha.sdk.channel.OverflowPolicy;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -20,6 +21,8 @@ public final class ChannelDescriptor {
     private final Optional<String> pluginName;
     private final Class<?> payloadType;
     private final Optional<Function<Object, byte[]>> pluginSerializer;
+    private final Optional<PluginSink> pluginSink;
+    private final OverflowPolicy overflowPolicy;
 
     public ChannelDescriptor(
             @Nonnull String name,
@@ -28,7 +31,9 @@ public final class ChannelDescriptor {
             @Nonnull List<Integer> consumers,
             @Nonnull Optional<String> pluginName,
             @Nonnull Class<?> payloadType,
-            @Nonnull Optional<Function<Object, byte[]>> pluginSerializer) {
+            @Nonnull Optional<Function<Object, byte[]>> pluginSerializer,
+            @Nonnull Optional<PluginSink> pluginSink,
+            @Nonnull OverflowPolicy overflowPolicy) {
         this.name = name;
         this.kind = kind;
         this.producer = producer;
@@ -36,6 +41,8 @@ public final class ChannelDescriptor {
         this.pluginName = pluginName;
         this.payloadType = payloadType;
         this.pluginSerializer = pluginSerializer;
+        this.pluginSink = pluginSink;
+        this.overflowPolicy = overflowPolicy;
     }
 
     @Nonnull
@@ -71,5 +78,25 @@ public final class ChannelDescriptor {
     @Nonnull
     public Optional<Function<Object, byte[]>> pluginSerializer() {
         return pluginSerializer;
+    }
+
+    /**
+     * The parallel plugin sink, if this channel was declared with
+     * {@code alsoToPluginWith(...)}. Pure {@link ChannelKind#PLUGIN_BOUND}
+     * channels (the closed-form {@code toPlugin(...)} path) leave this
+     * empty and use {@link #pluginName()} / {@link #pluginSerializer()} instead.
+     */
+    @Nonnull
+    public Optional<PluginSink> pluginSink() {
+        return pluginSink;
+    }
+
+    /**
+     * Per-channel backpressure policy applied at the producer-side push
+     * site when a consumer Partition's bounded mailbox is full.
+     */
+    @Nonnull
+    public OverflowPolicy overflowPolicy() {
+        return overflowPolicy;
     }
 }

@@ -24,4 +24,13 @@ public interface EntryChannel<T> {
      */
     @Nonnull
     Channel<T> into(@Nonnull Class<? extends Shard<T, ?, ?, ?, ?, ?>> shard);
+
+    /**
+     * Override the per-kind default {@link OverflowPolicy}. Entry channels
+     * default to {@link OverflowPolicy#DROP_NEWEST}; declare
+     * {@link OverflowPolicy#BLOCK} here only if you accept stalling the
+     * shared wire reader on this Relay's saturation.
+     */
+    @Nonnull
+    EntryChannel<T> onFull(@Nonnull OverflowPolicy policy);
 }

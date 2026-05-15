@@ -434,6 +434,24 @@ c.channel::<SmaValue>("sma_out")
     .into::<BollingerShard>();
 ```
 
+Java equivalent (same shape via the `alsoToPluginWith` method on
+`ChannelDeclWithProducer<T>`):
+
+```java
+c.channel(SmaValue.class, "sma_out")
+    .from(SmaShard.class)
+    .alsoToPluginWith("indicators", SmaCodec::toBytes)
+    .into(BollingerShard.class);
+```
+
+The Java surface mirrors Rust: `kind` stays `INTER_SHARD`, the channel
+descriptor carries `Optional<PluginSink> pluginSink`, duplicates raise
+`RelayConfigurationException.duplicatePluginSink(channel)` at
+`RelayRegistry.registerRelay(...)` time, and a serializer that throws
+surfaces as `ShardException.PluginSerializerFailure` (Java's structured-throw
+analog of Rust's `ShardError::PluginSerializerPanic`). Wire frames produced
+by either SDK are byte-indistinguishable at the agent's plugin layer.
+
 The channel's `kind` stays `InterShard`. The plugin sink lives on a
 parallel `plugin_sink: Option<PluginSink>` field. Order of
 `also_to_plugin_with` and `.into::<S>()` is irrelevant — the

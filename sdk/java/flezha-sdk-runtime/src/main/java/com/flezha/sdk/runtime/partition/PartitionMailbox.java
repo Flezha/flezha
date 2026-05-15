@@ -1,31 +1,93 @@
 package com.flezha.sdk.runtime.partition;
 
-import java.util.concurrent.ConcurrentLinkedQueue;
+import com.flezha.sdk.channel.OverflowPolicy;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.annotation.Nonnull;
 
 /**
- * Per-Partition unbounded mailbox + drain-inflight CAS gate. A producer's
- * {@link #push(Object)} returns {@code true} when the caller should submit
- * a drain task (because the inflight CAS won), {@code false} when an
- * existing drainer will pick up the new item.
+ * Per-Partition bounded mailbox + drain-inflight CAS gate. Push behaviour
+ * on a full mailbox is governed by the channel's {@link OverflowPolicy}:
  *
- * <p>Sticky per-Partition ordering invariant: at most one drainer per slot
- * is active at any time, so {@link Object#wait()}-free serialization on the
- * partition state holds without further locking on the consumer side.
+ * <ul>
+ *   <li>{@link OverflowPolicy#BLOCK} — producer parks until space is
+ *       available (preserves ordering).</li>
+ *   <li>{@link OverflowPolicy#DROP_NEWEST} — incoming item is discarded;
+ *       {@link #dropsNewestTotal()} increments.</li>
+ *   <li>{@link OverflowPolicy#DROP_OLDEST} — atomically pop the oldest
+ *       item and accept the new one; {@link #dropsOldestTotal()}
+ *       increments. Best-effort under contention.</li>
+ * </ul>
+ *
+ * <p>Sticky per-Partition ordering invariant: at most one drainer per
+ * slot is active at any time, so partition-state mutation in the consumer
+ * serializes without further locking. {@link #push(Object)} returns
+ * {@code true} only when the inflight CAS won — that's the caller's signal
+ * to submit a drain task.
  */
 public final class PartitionMailbox<T> {
 
-    private final ConcurrentLinkedQueue<T> queue = new ConcurrentLinkedQueue<>();
+    private final BlockingQueue<T> queue;
+    private final OverflowPolicy policy;
     private final AtomicBoolean inflight = new AtomicBoolean(false);
+    private final AtomicLong dropsNewest = new AtomicLong(0);
+    private final AtomicLong dropsOldest = new AtomicLong(0);
+
+    public PartitionMailbox(int capacity, @Nonnull OverflowPolicy policy) {
+        if (capacity <= 0) {
+            throw new IllegalArgumentException("PartitionMailbox capacity must be > 0, got " + capacity);
+        }
+        this.queue = new ArrayBlockingQueue<>(capacity);
+        this.policy = policy;
+    }
 
     /**
-     * Push an item. Returns {@code true} if the caller won the inflight CAS
-     * and SHOULD submit a drain task; {@code false} if an existing drainer
-     * will pick up the new item from its drain loop.
+     * Push an item. Returns {@code true} if the caller won the inflight
+     * CAS and SHOULD submit a drain task; {@code false} otherwise (either
+     * an existing drainer will pick it up, or the item was dropped).
+     *
+     * <p>For {@link OverflowPolicy#BLOCK}, the producer thread parks until
+     * the consumer drains space. If interrupted while parked the method
+     * re-asserts the interrupt flag and returns {@code false}.
      */
     public boolean push(@Nonnull T item) {
-        queue.offer(item);
+        boolean accepted;
+        switch (policy) {
+            case BLOCK -> {
+                try {
+                    queue.put(item);
+                    accepted = true;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+            case DROP_NEWEST -> {
+                accepted = queue.offer(item);
+                if (!accepted) {
+                    dropsNewest.incrementAndGet();
+                    return false;
+                }
+            }
+            case DROP_OLDEST -> {
+                if (!queue.offer(item)) {
+                    // Best-effort: pop one old item and retry. Under MPMC
+                    // contention the second offer might still fail; we
+                    // count the drop and give up rather than spin.
+                    queue.poll();
+                    accepted = queue.offer(item);
+                    dropsOldest.incrementAndGet();
+                    if (!accepted) {
+                        return false;
+                    }
+                } else {
+                    accepted = true;
+                }
+            }
+            default -> throw new IllegalStateException("unknown OverflowPolicy " + policy);
+        }
         return tryMarkInflight();
     }
 
@@ -36,6 +98,31 @@ public final class PartitionMailbox<T> {
 
     public boolean isEmpty() {
         return queue.isEmpty();
+    }
+
+    public int size() {
+        return queue.size();
+    }
+
+    /** Bounded capacity declared at construction. */
+    public int capacity() {
+        return queue.remainingCapacity() + queue.size();
+    }
+
+    /** Per-channel backpressure policy applied when full. */
+    @Nonnull
+    public OverflowPolicy policy() {
+        return policy;
+    }
+
+    /** Count of pushes rejected under {@link OverflowPolicy#DROP_NEWEST}. */
+    public long dropsNewestTotal() {
+        return dropsNewest.get();
+    }
+
+    /** Count of evictions under {@link OverflowPolicy#DROP_OLDEST}. */
+    public long dropsOldestTotal() {
+        return dropsOldest.get();
     }
 
     /**
@@ -49,9 +136,5 @@ public final class PartitionMailbox<T> {
     /** Release the inflight gate. */
     public void releaseInflight() {
         inflight.set(false);
-    }
-
-    public int size() {
-        return queue.size();
     }
 }

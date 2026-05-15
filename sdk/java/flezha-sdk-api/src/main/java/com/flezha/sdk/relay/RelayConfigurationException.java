@@ -48,6 +48,35 @@ public class RelayConfigurationException extends RuntimeException {
         return new RelayConfigurationException("Clock not implemented yet: " + clockTypeName);
     }
 
+    /**
+     * Factory raised at {@code registerRelay} time when a channel is declared
+     * with {@code alsoToPluginWith(...)} more than once. Only one plugin sink
+     * per channel is allowed; the first call registers it, the second fails.
+     */
+    public static RelayConfigurationException duplicatePluginSink(String channel) {
+        return new RelayConfigurationException("channel `" + channel + "` was declared with `alsoToPluginWith(...)` "
+                + "more than once; only one plugin sink per channel is allowed");
+    }
+
+    /**
+     * Factory raised when a Shard's resolved {@code mailboxCapacity()} (after
+     * applying the {@code FLEZHA_MAILBOX_CAPACITY} env fallback) is zero.
+     * Capacity must be in {@code 1..=1_048_576}.
+     */
+    public static RelayConfigurationException mailboxCapacityZero(String shard) {
+        return new RelayConfigurationException(
+                "shard `" + shard + "` declared mailboxCapacity = 0; capacity must be in 1..=1_048_576");
+    }
+
+    /**
+     * Factory raised when a Shard's resolved {@code mailboxCapacity()} is
+     * above {@code 1_048_576}. Capacity must be in {@code 1..=1_048_576}.
+     */
+    public static RelayConfigurationException mailboxCapacityTooLarge(String shard, long value) {
+        return new RelayConfigurationException(
+                "shard `" + shard + "` declared mailboxCapacity = " + value + "; capacity must be in 1..=1_048_576");
+    }
+
     public String channel() {
         return channel;
     }

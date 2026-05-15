@@ -28,6 +28,7 @@ public final class Main {
         Flezha.registerRelay(StatefulCounterRelay.class);
         Flezha.registerRelay(CoalescingCounterRelay.class);
         Flezha.registerRelay(PersistenceOffRelay.class);
+        Flezha.registerRelay(HybridChannelRelay.class);
         // EchoMessageRelay is reintroduced once per-Shard `handleMessage` lands.
     }
 

@@ -1,5 +1,6 @@
 package com.flezha.sdk.runtime.partition;
 
+import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.runtime.worker.ShardDispatcher;
 import com.flezha.sdk.state.Change;
 import java.util.ArrayList;
@@ -25,7 +26,7 @@ public final class PartitionSlot {
 
     private final ReentrantLock stateLock = new ReentrantLock();
     private final AtomicReference<Object> state = new AtomicReference<>();
-    private final PartitionMailbox<Object> mailbox = new PartitionMailbox<>();
+    private final PartitionMailbox<Object> mailbox;
     private final ShardDispatcher dispatcher;
     private final int shardId;
     private final Optional<String> shardKey;
@@ -35,15 +36,26 @@ public final class PartitionSlot {
     private final AtomicLong changeSeq = new AtomicLong(0L);
 
     public PartitionSlot(@Nonnull ShardDispatcher dispatcher, int shardId, @Nonnull Optional<String> shardKey) {
-        this(dispatcher, shardId, shardKey, false);
+        this(dispatcher, shardId, shardKey, false, 1024, OverflowPolicy.BLOCK);
     }
 
     public PartitionSlot(
             @Nonnull ShardDispatcher dispatcher, int shardId, @Nonnull Optional<String> shardKey, boolean changeful) {
+        this(dispatcher, shardId, shardKey, changeful, 1024, OverflowPolicy.BLOCK);
+    }
+
+    public PartitionSlot(
+            @Nonnull ShardDispatcher dispatcher,
+            int shardId,
+            @Nonnull Optional<String> shardKey,
+            boolean changeful,
+            int mailboxCapacity,
+            @Nonnull OverflowPolicy overflowPolicy) {
         this.dispatcher = dispatcher;
         this.shardId = shardId;
         this.shardKey = shardKey;
         this.changeful = changeful;
+        this.mailbox = new PartitionMailbox<>(mailboxCapacity, overflowPolicy);
     }
 
     @Nonnull

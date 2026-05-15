@@ -7,9 +7,11 @@ import com.flezha.sdk.channel.ChannelDecl;
 import com.flezha.sdk.channel.ChannelDeclWithProducer;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.channel.EntryChannel;
+import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.relay.Relay;
 import com.flezha.sdk.relay.RelayConfigurationException;
 import com.flezha.sdk.runtime.relay.ChannelDescriptor;
+import com.flezha.sdk.runtime.relay.PluginSink;
 import com.flezha.sdk.runtime.relay.RelayTopology;
 import com.flezha.sdk.runtime.relay.ShardDescriptor;
 import com.flezha.sdk.shard.Shard;
@@ -116,6 +118,20 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
             }
         }
 
+        // Resolve mailbox capacity for each Shard (Shard override → env var →
+        // default), accumulating any range errors into the errors list.
+        int[] resolvedCapacities = new int[shards.size()];
+        for (int i = 0; i < shards.size(); i++) {
+            ShardEntry shard = shards.get(i);
+            try {
+                resolvedCapacities[i] = MailboxCapacityResolver.resolve(
+                        shard.name, shard.mailboxCapacityDeclared, shard.mailboxCapacityOverridden);
+            } catch (RelayConfigurationException e) {
+                errors.add(e.getMessage());
+                resolvedCapacities[i] = MailboxCapacityResolver.DEFAULT_MAILBOX_CAPACITY;
+            }
+        }
+
         if (!errors.isEmpty()) {
             throw new RelayConfigurationException(List.copyOf(errors));
         }
@@ -123,6 +139,9 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         // Materialize ChannelDescriptors.
         List<ChannelDescriptor> channelDescriptors = new ArrayList<>(channels.size());
         for (ChannelEntry entry : channels) {
+            Optional<PluginSink> pluginSink = entry.pluginSinkName == null
+                    ? Optional.empty()
+                    : Optional.of(new PluginSink(entry.pluginSinkName, entry.pluginSinkSerializer));
             channelDescriptors.add(new ChannelDescriptor(
                     entry.name,
                     entry.kind,
@@ -130,12 +149,15 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
                     List.copyOf(entry.consumers),
                     Optional.ofNullable(entry.pluginName),
                     entry.payloadType,
-                    Optional.ofNullable(entry.pluginSerializer)));
+                    Optional.ofNullable(entry.pluginSerializer),
+                    pluginSink,
+                    entry.overflowPolicy));
         }
 
         // Materialize ShardDescriptors.
         List<ShardDescriptor> shardDescriptors = new ArrayList<>(shards.size());
-        for (ShardEntry entry : shards) {
+        for (int i = 0; i < shards.size(); i++) {
+            ShardEntry entry = shards.get(i);
             shardDescriptors.add(new ShardDescriptor(
                     entry.name,
                     entry.shardClass,
@@ -151,7 +173,9 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
                     entry.configType,
                     entry.kryoTypes,
                     entry.schemaVersion,
-                    entry.compactAfterBytes));
+                    entry.compactAfterBytes,
+                    resolvedCapacities[i],
+                    entry.mailboxCapacityOverridden));
         }
 
         return new RelayTopology(
@@ -169,6 +193,7 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         entry.name = name;
         entry.kind = kind;
         entry.payloadType = payloadType;
+        entry.overflowPolicy = defaultPolicyForKind(kind);
         channels.add(entry);
         nameToId.put(name, id);
         return id;
@@ -196,6 +221,8 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         entry.kryoTypes = List.copyOf(probe.kryoTypes());
         entry.schemaVersion = probe.schemaVersion();
         entry.compactAfterBytes = probe.compactAfterBytes();
+        entry.mailboxCapacityDeclared = probe.mailboxCapacity();
+        entry.mailboxCapacityOverridden = probe.mailboxCapacityOverridden();
         // v1 wires only WallClock; declaring LogicalClock or EventTimeFrom
         // fails Relay registration loud-and-clear (per design.md Decision 4).
         if (entry.clockType != null
@@ -334,6 +361,13 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         final List<Integer> consumers = new ArrayList<>();
         String pluginName;
         Function<Object, byte[]> pluginSerializer;
+        String pluginSinkName;
+        Function<Object, byte[]> pluginSinkSerializer;
+        OverflowPolicy overflowPolicy;
+    }
+
+    private static OverflowPolicy defaultPolicyForKind(ChannelKind kind) {
+        return kind == ChannelKind.ENTRY ? OverflowPolicy.DROP_NEWEST : OverflowPolicy.BLOCK;
     }
 
     /** Mutable internal record for a shard registration. */
@@ -353,6 +387,8 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         long compactAfterBytes;
         Integer inputChannelId;
         Integer outputChannelId;
+        int mailboxCapacityDeclared;
+        boolean mailboxCapacityOverridden;
     }
 
     // ---- Builder phantom types ---------------------------------------------
@@ -374,6 +410,13 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
             wireConsumer(channelId, name, payloadType, shardClass);
             return new Channel<>(channelId, payloadType);
         }
+
+        @Override
+        @Nonnull
+        public EntryChannel<T> onFull(@Nonnull OverflowPolicy policy) {
+            channels.get(channelId).overflowPolicy = policy;
+            return this;
+        }
     }
 
     private final class ChannelDeclImpl<T> implements ChannelDecl<T> {
@@ -392,6 +435,13 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
         public ChannelDeclWithProducer<T> from(@Nonnull Class<? extends Shard<?, ?, T, ?, ?, ?>> shardClass) {
             wireProducer(channelId, name, payloadType, shardClass);
             return new ChannelDeclWithProducerImpl<>(channelId, payloadType, name);
+        }
+
+        @Override
+        @Nonnull
+        public ChannelDecl<T> onFull(@Nonnull OverflowPolicy policy) {
+            channels.get(channelId).overflowPolicy = policy;
+            return this;
         }
     }
 
@@ -429,6 +479,30 @@ public final class RelayTopologyBuilder implements ChannelBuilder {
             Function<Object, byte[]> erased = (Function<Object, byte[]>) (Function<?, byte[]>) serializer;
             entry.pluginSerializer = erased;
             return new Channel<>(channelId, payloadType);
+        }
+
+        @Override
+        @Nonnull
+        public ChannelDeclWithProducer<T> alsoToPluginWith(
+                @Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
+            ChannelEntry entry = channels.get(channelId);
+            if (entry.pluginSinkName != null) {
+                errors.add(RelayConfigurationException.duplicatePluginSink(entry.name)
+                        .getMessage());
+                return this;
+            }
+            entry.pluginSinkName = pluginName;
+            @SuppressWarnings("unchecked")
+            Function<Object, byte[]> erased = (Function<Object, byte[]>) (Function<?, byte[]>) serializer;
+            entry.pluginSinkSerializer = erased;
+            return this;
+        }
+
+        @Override
+        @Nonnull
+        public ChannelDeclWithProducer<T> onFull(@Nonnull OverflowPolicy policy) {
+            channels.get(channelId).overflowPolicy = policy;
+            return this;
         }
     }
 

@@ -32,6 +32,8 @@ public final class ShardDescriptor {
     private final List<Class<?>> kryoTypes;
     private final int schemaVersion;
     private final long compactAfterBytes;
+    private final int mailboxCapacity;
+    private final boolean mailboxCapacityOverridden;
 
     public ShardDescriptor(
             @Nonnull String name,
@@ -48,7 +50,9 @@ public final class ShardDescriptor {
             @Nonnull Class<?> configType,
             @Nonnull List<Class<?>> kryoTypes,
             int schemaVersion,
-            long compactAfterBytes) {
+            long compactAfterBytes,
+            int mailboxCapacity,
+            boolean mailboxCapacityOverridden) {
         this.name = name;
         this.shardClass = shardClass;
         this.partitionKeys = List.copyOf(partitionKeys);
@@ -64,6 +68,8 @@ public final class ShardDescriptor {
         this.kryoTypes = List.copyOf(kryoTypes);
         this.schemaVersion = schemaVersion;
         this.compactAfterBytes = compactAfterBytes;
+        this.mailboxCapacity = mailboxCapacity;
+        this.mailboxCapacityOverridden = mailboxCapacityOverridden;
     }
 
     @Nonnull
@@ -135,5 +141,15 @@ public final class ShardDescriptor {
     @Nonnull
     public Class<?> outputType() {
         return outputType;
+    }
+
+    /** Resolved per-Partition mailbox capacity (Shard override → env var → default). */
+    public int mailboxCapacity() {
+        return mailboxCapacity;
+    }
+
+    /** Whether the Shard explicitly overrode {@code mailboxCapacity()}. */
+    public boolean mailboxCapacityOverridden() {
+        return mailboxCapacityOverridden;
     }
 }

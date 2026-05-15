@@ -1,5 +1,6 @@
 package com.flezha.sdk.runtime.relay;
 
+import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.partition.PartitionSlot;
 import com.flezha.sdk.runtime.worker.ShardDispatcher;
@@ -103,13 +104,18 @@ public final class RelayInstance {
             List<PartitionSlot> slots;
             Map<String, Integer> keyMap = new HashMap<>();
             boolean changeful = desc.changeType() != NoChange.class;
+            int mailboxCapacity = desc.mailboxCapacity();
+            OverflowPolicy policy = desc.inputChannelId().isPresent()
+                    ? topology.channel(desc.inputChannelId().getAsInt()).overflowPolicy()
+                    : OverflowPolicy.BLOCK;
 
             if (desc.partitionKeys().isEmpty()) {
                 Shard<?, ?, ?, ?, ?, ?> shardInstance = instantiate(desc.shardClass());
                 ShardDispatcher dispatcher = new ShardDispatcher(ctx, pool, shell, topology, shardId, shardInstance);
                 @SuppressWarnings({"unchecked", "rawtypes"})
                 Object initial = ((Shard) shardInstance).initState(Optional.empty(), Optional.empty());
-                PartitionSlot slot = new PartitionSlot(dispatcher, shardId, Optional.empty(), changeful);
+                PartitionSlot slot =
+                        new PartitionSlot(dispatcher, shardId, Optional.empty(), changeful, mailboxCapacity, policy);
                 slot.state().set(initial);
                 slots = List.of(slot);
                 dispatchers.add(dispatcher);
@@ -124,7 +130,8 @@ public final class RelayInstance {
                     Shard<?, ?, ?, ?, ?, ?> shardInstance = instantiate(desc.shardClass());
                     @SuppressWarnings({"unchecked", "rawtypes"})
                     Object initial = ((Shard) shardInstance).initState(Optional.of(key), Optional.empty());
-                    PartitionSlot slot = new PartitionSlot(dispatcher, shardId, Optional.of(key), changeful);
+                    PartitionSlot slot = new PartitionSlot(
+                            dispatcher, shardId, Optional.of(key), changeful, mailboxCapacity, policy);
                     slot.state().set(initial);
                     slots.add(slot);
                     keyMap.put(key, idx);
