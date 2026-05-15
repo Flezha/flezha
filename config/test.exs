@@ -13,6 +13,17 @@ config :flezha,
   # ProcessHub coordinator into shutdown. The persistent registry still
   # records mutations; only the at-boot replay state machine is off.
   auto_restore_enabled: false,
+  # Bounded retry on top of `:start_relay` keeps test wall-clock down —
+  # one short attempt is enough, and the parked-retry timer is disabled
+  # so a failed startup does not periodically re-fire during a test.
+  overwatch_retry_backoff_ms: [10, 10, 10],
+  overwatch_retry_park_interval_ms: 0,
+  overwatch_ping_timeout_ms: 500,
+  # Tests that hit the real test executors leave ping enabled and rely on
+  # the SDK's `Ping` handler. Tests that drive the retry/parked-state
+  # paths in isolation use `Application.put_env(:flezha,
+  # :overwatch_ping_fn, ...)` to inject a fake.
+  overwatch_ping_enabled: true,
   process_hub_registry_root: Path.join([System.tmp_dir!(), "flezha_test_process_hub"]),
   pre_hooks: [
     fn ->

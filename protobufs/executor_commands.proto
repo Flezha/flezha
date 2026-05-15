@@ -28,6 +28,7 @@ message CommandRequest {
         CompactPartition compact_partition = 16;
         CompactPartitionResponse compact_partition_response = 17;
         PartitionMailboxStatus partition_mailbox_status = 18;
+        Ping ping = 19;
     }
 }
 
@@ -169,4 +170,18 @@ message CompactPartitionResponse {
 message PartitionMailboxStatus {
     bytes partition_id = 1;
     string status = 2;
+}
+
+// End-to-end control-channel health probe issued by the Controller before
+// `AddRelay`. The SDK responds immediately with a `CommandResponse{status:
+// "success", raw_data: PingResponse}`; the round-trip proves the
+// control channel is bound, the SDK is listening, and the reply path is
+// intact. SDKs without the handler MUST log and ignore the unknown variant
+// (existing protobuf-decoder behaviour).
+message Ping {
+    string nonce = 1;
+}
+
+message PingResponse {
+    string nonce = 1;
 }

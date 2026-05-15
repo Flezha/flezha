@@ -17,6 +17,41 @@ defmodule Flezha.Executor.ControlUnit do
   end
 
   @doc """
+  Issues an end-to-end `Ping` round-trip to the executor's SDK. Returns
+  `{:ok, :pong}` on a clean reply, `{:error, :timeout}` if the SDK does not
+  reply within `timeout_ms` (default 2 s), or `{:error, reason}` for any
+  transport or decode failure.
+
+  Used by `Flezha.Relay.Overwatch.complete_init/3` before `:start_relay` to
+  prove the control channel is end-to-end healthy. A timeout here signals a
+  stale `stream_ref` that the bound `ControlChannel` cannot detect on its
+  own (writes succeed against a closed transport with no failure signal).
+  """
+  @spec ping_executor(binary(), keyword()) ::
+          {:ok, :pong} | {:error, term()}
+  def ping_executor(executor_id, opts \\ []) when is_binary(executor_id) do
+    timeout_ms = Keyword.get(opts, :timeout_ms, default_ping_timeout_ms())
+
+    control_unit = Identificator.control_unit(executor_id)
+
+    case GenServer.whereis(control_unit) do
+      nil ->
+        {:error, :no_control_unit}
+
+      _ ->
+        try do
+          GenServer.call(control_unit, {:ping_executor, timeout_ms}, timeout_ms + 500)
+        catch
+          :exit, {:timeout, _} -> {:error, :timeout}
+          :exit, reason -> {:error, {:control_unit_exit, reason}}
+        end
+    end
+  end
+
+  defp default_ping_timeout_ms,
+    do: Application.get_env(:flezha, :overwatch_ping_timeout_ms, 2_000)
+
+  @doc """
   Sends a `RelayMessage` to the SDK-side relay via the control
   channel and returns the decoded `RelayMessageResponse`.
 
@@ -131,6 +166,26 @@ defmodule Flezha.Executor.ControlUnit do
   end
 
   @impl true
+  def handle_call({:ping_executor, timeout_ms}, from, state) do
+    nonce = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+    command = {:ping, %ExecutorCommands.Ping{nonce: nonce}}
+
+    case ControlChannel.send_control(state.executor_id, command) do
+      {:ok, ref} ->
+        timer =
+          Process.send_after(self(), {:ping_timeout, ref}, timeout_ms)
+
+        refs =
+          Map.put(state.response_refs, ref, {:ping, from, timer, nonce})
+
+        {:noreply, Map.put(state, :response_refs, refs)}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
   def handle_call({:start_relay, relay}, from, state) do
     # TODO: Not sure if we should convert to map from the beginning.
     init_values =
@@ -229,9 +284,34 @@ defmodule Flezha.Executor.ControlUnit do
       nil ->
         refs
 
+      {:ping, from, timer, _nonce} ->
+        _ = Process.cancel_timer(timer)
+
+        case reply do
+          {:ok, _raw_data} -> GenServer.reply(from, {:ok, :pong})
+          {:error, _} = err -> GenServer.reply(from, err)
+        end
+
+        Map.delete(refs, ref)
+
       from ->
         GenServer.reply(from, reply)
         Map.delete(refs, ref)
     end
   end
+
+  @impl true
+  def handle_info({:ping_timeout, ref}, state) do
+    case Map.get(state.response_refs, ref) do
+      {:ping, from, _timer, _nonce} ->
+        GenServer.reply(from, {:error, :timeout})
+        {:noreply, Map.put(state, :response_refs, Map.delete(state.response_refs, ref))}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info(_msg, state), do: {:noreply, state}
 end

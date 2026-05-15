@@ -70,6 +70,22 @@ defmodule Flezha.Executor.FleetManager do
     GenServer.call(__MODULE__, {:disconnect_executor, namespace, executor_id})
   end
 
+  @doc """
+  Clear the `stream_ref` on this executor's `ControlChannel` so the existing
+  rebind machinery (see `executor-controller-connection-healing`) picks up
+  the next data stream the SDK opens. Called by
+  `Flezha.Relay.Overwatch` after an end-to-end ping fails, indicating the
+  controller-side `ControlChannel` is alive but its underlying transport
+  handle is stale.
+
+  Returns `:ok` on success, `{:error, :no_control_channel}` if the channel
+  GenServer is not registered for `executor_id`.
+  """
+  @spec reset_control_channel(binary()) :: :ok | {:error, term()}
+  def reset_control_channel(executor_id) when is_binary(executor_id) do
+    Flezha.Executor.ControlChannel.reset_stream_ref(executor_id)
+  end
+
   def stop_namespace(namespace) do
     GenServer.call(__MODULE__, {:stop_namespace, namespace})
   end

@@ -198,3 +198,59 @@ The repository SHALL include a unit test that loads `kubernetes/flezha-daemonset
 - **WHEN** the manifest sanity test runs
 - **THEN** the test SHALL assert: a `flezha-sockets` volume exists in the daemonset and is mounted at `/flezha/sockets`; the daemonset's container env contains `FLEZHA_SOCKET_FILES_PATH=/flezha/sockets`; the configmap defines `FLEZHA_EXECUTOR_KEEPALIVE` with a positive integer (in milliseconds)
 - **AND** the test SHALL fail with a clear message naming the missing field if any assertion fails
+
+
+
+### Requirement: Controller-side cold-restart relay startup SHALL self-heal via an end-to-end ping before `:start_relay`
+
+When the Controller restarts and `Flezha.Relay.Overwatch` GenServers come up from durable registry replay, each Overwatch SHALL probe the resolved Executor's end-to-end control-channel health via a `:ping_executor` round-trip BEFORE issuing `{:start_relay, …}` to the Executor's `ControlUnit`. The ping SHALL traverse the same `ControlChannel → SDK → ControlChannel` path that `AddRelay` uses, so a successful round-trip proves the channel is bound, the SDK is listening, and the reply path is intact.
+
+The ping SHALL use a default 2 s timeout (configurable via `:overwatch_ping_timeout_ms`, env `FLEZHA_OVERWATCH_PING_TIMEOUT_MS`). On `:pong` the Overwatch SHALL proceed to `start_relay_sdk/2`. On timeout or `{:error, _}` the Overwatch SHALL invoke `Flezha.Executor.FleetManager.reset_control_channel/1` (clearing the `ControlChannel`'s `stream_ref` so the SDK's next data stream can claim it via the existing rebind path) and SHALL retry the whole sequence under the bounded-retry governor (see "Overwatch bounded retry + parked-error state").
+
+The new `:ping_executor` command and its `PingResponse` SHALL be carried by the existing `CommandRequest` / `CommandResponse` envelopes on the `"control_command"` payload_id; SDKs without the handler SHALL log and ignore (existing Protox unknown-field behaviour).
+
+#### Scenario: Healthy executor responds to ping and `:start_relay` proceeds
+- **GIVEN** a relay `r1` whose Overwatch has just resolved live executor `e1`
+- **AND** `e1`'s control channel is bound and its SDK is listening
+- **WHEN** the Overwatch issues `Flezha.Executor.ControlUnit.ping_executor("e1", timeout_ms: 2_000)`
+- **THEN** the call SHALL return `{:ok, :pong}` within 2 s
+- **AND** the Overwatch SHALL invoke `start_relay_sdk("e1", r1)` immediately afterwards
+- **AND** `reset_control_channel/1` SHALL NOT be invoked
+
+#### Scenario: Stale control channel causes ping timeout, channel reset, retry
+- **GIVEN** a relay `r1` whose Overwatch has just resolved executor `e1`
+- **AND** `e1`'s `ControlChannel` GenServer is registered but its `stream_ref` points to a closed/stale transport (the SDK has reconnected since the last `AddRelay`)
+- **WHEN** the Overwatch issues `ping_executor("e1", timeout_ms: 2_000)`
+- **THEN** the call SHALL return `{:error, :timeout}`
+- **AND** the Overwatch SHALL call `FleetManager.reset_control_channel("e1")` which sets the channel's `stream_ref` to `nil`
+- **AND** the Overwatch SHALL NOT issue `start_relay_sdk/2` on the failed attempt
+- **AND** the Overwatch SHALL re-resolve the live executor and retry the ping under the bounded-retry governor's next backoff delay
+
+### Requirement: Overwatch bounded retry + parked-error state
+
+`Flezha.Relay.Overwatch.complete_init/3` SHALL wrap its `ping → resolve_init_state → start_relay_sdk` sequence in a bounded retry loop with exponential backoff and full jitter. The default schedule SHALL be 6 attempts at `200ms, 500ms, 1s, 2s, 5s, 10s` (configurable via `:overwatch_retry_attempts` and `:overwatch_retry_backoff_ms`). On every retry the Overwatch SHALL re-resolve the live executor via `RelayManager.assign_executor/2` so a fresh executor that came online during the backoff is picked up.
+
+On exhaustion the Overwatch SHALL park in `init_error` state — the GenServer SHALL remain alive, the error reason SHALL be stored in `state.init_error`, and the supervisor SHALL NOT see a crash. The parked Overwatch SHALL respond:
+
+- `{:error, reason}` to `:registry_executor_set` calls (existing behaviour at `lib/flezha/relay/overwatch.ex:311`),
+- `{:reply, {:error, :startup_failed}, state}` to `{:io_in, _, _}` calls (refuse external `io_in` while parked),
+- silent no-op + log on `{:io_in, _, _}` casts (drop and increment counter).
+
+A periodic `:retry_startup` timer SHALL fire every 60 s (configurable via `:overwatch_retry_park_interval_ms`) in the parked state and SHALL re-attempt the full sequence so a transient outage recovers without operator intervention. The timer SHALL be cleared once `init_error` is `nil`.
+
+#### Scenario: Bounded retry exits to parked state after N attempts
+- **GIVEN** a relay `r1` whose ping or `:start_relay` repeatedly times out (the executor's SDK is gone)
+- **WHEN** the Overwatch exhausts its 6 attempts (~19 s aggregate with the default schedule)
+- **THEN** the Overwatch SHALL NOT crash
+- **AND** `state.init_error` SHALL be set to the last error reason (e.g. `{:start_relay_failed, :timeout}`)
+- **AND** the supervisor SHALL NOT receive an `:EXIT` from the Overwatch
+- **AND** subsequent `:io_in` calls SHALL receive `{:error, :startup_failed}`
+
+#### Scenario: Periodic background retry recovers from transient outage
+- **GIVEN** a relay `r1` parked with `state.init_error == {:start_relay_failed, :timeout}`
+- **AND** a fresh executor `e2` comes online in the same namespace + factory after the initial retry burst ends
+- **WHEN** the parked-retry timer fires (default 60 s)
+- **THEN** the Overwatch SHALL re-resolve the live executor via `RelayManager.assign_executor/2`
+- **AND** the ping + `start_relay_sdk` round-trip SHALL succeed
+- **AND** `state.init_error` SHALL be cleared to `nil`
+- **AND** the parked-retry timer SHALL NOT re-arm

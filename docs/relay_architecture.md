@@ -599,3 +599,84 @@ Decisions referenced above:
   `String` in v1 (sealed `EntryChannelType`).
 - **Decision 15 (umbrella)** — Channel name on the wire as a UTF-8
   string; integer fast-path reserved for a future change.
+
+## Controller-side Overwatch lifecycle (cold-restart, retry, two-phase plugins)
+
+Each Relay has a controller-side `Flezha.Relay.Overwatch` GenServer
+owning startup, plugin lifecycle, ingress, and teardown. Its boot
+sequence:
+
+1. **`init/1`** returns quickly with `{:ok, state, {:continue, …}}` so
+   `dist_sup`'s synchronous DETS replay unblocks (FleetManager /
+   HubManager are not yet answering calls at this point).
+2. **`handle_continue({:bind_executor, …}, _)`** waits for an active
+   executor advertising the relay's `factory_id` via
+   `RelayManager.assign_executor/2`. The persisted `executor_id` is
+   advisory only — see the `relay-state-persistence` capability.
+3. **`complete_init/3`** runs three phases:
+   - **prepare** — `prepare_initial_plugins/2` calls each provider's
+     `init_provider/1`. Providers register their GenServer and validate
+     config; they MUST NOT open upstream connections, issue subscribe
+     handshakes, or otherwise depend on the SDK being bound. Plugins
+     enter the `:prepared` phase in `Flezha.Plugin.Extension.Table`.
+   - **resolve init values** — the `:on_relay_init` fold chain runs
+     unless inline `init_values` are non-empty.
+   - **start SDK with retry** — `start_relay_sdk_with_retry/3` repeats
+     `ping → start_relay_sdk` under a bounded retry governor. The
+     default schedule is `200ms, 500ms, 1s, 2s, 5s, 10s` with full
+     jitter (~19 s aggregate). On every retry the live executor is
+     re-resolved so a fresh executor that came online during a backoff
+     is picked up; the channel handle is re-attached to the final
+     executor on success.
+4. **activate** — on `{:ok, _}` from `start_relay_sdk`, the Overwatch
+   calls `Table.bulk_activate/1` which transitions each plugin to
+   `:running`. Providers implementing the optional `activate/1`
+   callback run it now (`Plugin.Provider.Websocket` opens its TLS
+   connection and issues the subscribe handshake here, NOT during
+   `init_provider/1`).
+
+### End-to-end ping before `:start_relay`
+
+Each retry attempt issues a `Ping` control-channel round-trip via
+`Flezha.Executor.ControlUnit.ping_executor/2` before `AddRelay`. The
+ping traverses the same `ControlChannel → SDK → ControlChannel` path
+`AddRelay` uses, so a successful round-trip proves the channel is
+bound and the SDK reply path is intact. On timeout the Overwatch
+invokes `Flezha.Executor.FleetManager.reset_control_channel/1` to
+clear the `ControlChannel`'s `stream_ref` — the SDK's next data
+stream then claims it via the existing rebind path in
+`executor-controller-connection-healing`.
+
+The ping is gated by `:overwatch_ping_enabled` (default `true`); SDKs
+that haven't picked up the `Ping` handler can be accommodated by
+setting it `false` during a rolling deploy.
+
+### Parked-error state
+
+When the bounded-retry budget exhausts, the Overwatch parks rather
+than crashing the supervisor:
+
+- `state.init_error` holds the last failure reason
+  (e.g. `{:ping_failed, :timeout}`, `{:start_relay_failed, _}`).
+- `:registry_executor_set` replies `{:error, reason}` so callers learn
+  the relay is degraded.
+- `:io_in` calls reply `{:error, :startup_failed}`.
+- `:io_in` casts are silently dropped.
+- A periodic `:retry_startup` timer (default 60 s) re-attempts the
+  full cold-start sequence; on success `init_error` clears and the
+  timer is not re-armed.
+
+Plugins remain in `:prepared` for the entire parked duration:
+providers never open upstream connections, no `:io_in` casts arrive
+from plugins, and the controller's process memory holds steady at the
+idle baseline. This is the structural fix for the memory cascade
+observed in the 2026-05-15 live incident.
+
+### Runtime config
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `:overwatch_retry_backoff_ms` | `[200, 500, 1_000, 2_000, 5_000, 10_000]` | Per-attempt delay schedule with full jitter |
+| `:overwatch_retry_park_interval_ms` | `60_000` | Periodic re-attempt while parked |
+| `:overwatch_ping_timeout_ms` | `2_000` | Per-ping deadline |
+| `:overwatch_ping_enabled` | `true` | Master switch for the ping pre-check |

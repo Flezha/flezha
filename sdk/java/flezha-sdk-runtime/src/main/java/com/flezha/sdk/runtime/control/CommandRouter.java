@@ -14,6 +14,7 @@ import com.flezha.sdk.runtime.control.handlers.MigrationSerializationHandler;
 import com.flezha.sdk.runtime.control.handlers.PartitionApplyStateHandler;
 import com.flezha.sdk.runtime.control.handlers.PartitionMailboxStatusHandler;
 import com.flezha.sdk.runtime.control.handlers.PartitionStateHandler;
+import com.flezha.sdk.runtime.control.handlers.PingHandler;
 import com.flezha.sdk.runtime.control.handlers.RelayMessageHandler;
 import com.flezha.sdk.runtime.control.handlers.RemRelayHandler;
 import com.flezha.sdk.runtime.control.handlers.RestoreInitStateHandler;
@@ -61,6 +62,10 @@ public final class CommandRouter {
         registerCase(mut, "RESTORE_INIT_STATE", new RestoreInitStateHandler());
         registerCase(mut, "COMPACT_PARTITION", new CompactPartitionHandler());
         registerCase(mut, "PARTITION_MAILBOX_STATUS", new PartitionMailboxStatusHandler());
+        // Cold-restart end-to-end health probe (fix-overwatch-restart-storm).
+        // Resolved reflectively because the protobuf codegen jar may lag the
+        // .proto file in a partial-deploy window.
+        registerCase(mut, "PING", new PingHandler());
         this.handlers = java.util.Collections.unmodifiableMap(mut);
     }
 

@@ -120,6 +120,11 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   defp normalize_post_connect(_), do: %{}
 
+  # `init_provider/1` validates and normalises config; it does NOT open the
+  # upstream WebSocket. The TLS handshake + subscribe round-trip moves to
+  # `activate/1`, called by `Flezha.Plugin.Extension.Table.bulk_activate/1`
+  # after the relay's SDK side has confirmed bound. See `relay-extensions`
+  # "Two-phase plugin lifecycle gated on SDK readiness".
   def init_provider(opts) do
     uri = Map.fetch!(opts, :uri)
     idle_timeout_ms = normalize_idle_timeout(Map.get(opts, :idle_timeout_ms))
@@ -127,38 +132,53 @@ defmodule Flezha.Plugin.Provider.Websocket do
     plugin_id = Map.get(opts, :plugin_id) || uri
 
     Logger.info(
-      "[Plugin.Provider.Websocket] init_provider begin uri=#{inspect(uri)} plugin_id=#{inspect(plugin_id)}"
+      "[Plugin.Provider.Websocket] init_provider prepared uri=#{inspect(uri)} plugin_id=#{inspect(plugin_id)}"
+    )
+
+    opts =
+      opts
+      |> Map.put(:overwatcher_pid, self())
+      |> Map.put(:post_connect, normalize_post_connect(Map.get(opts, :post_connect)))
+      |> Map.put(:payload_metadata, Map.get(opts, :payload_metadata, %{}))
+      |> Map.put(:ws_opts, Map.get(opts, :ws_opts, []))
+      |> Map.put(:idle_timeout_ms, idle_timeout_ms)
+      |> Map.put(:ignore_pattern, ignore_pattern)
+      |> Map.put(:plugin_id, plugin_id)
+
+    {:ok, opts}
+  end
+
+  def activate(opts) when is_map(opts) do
+    uri = Map.fetch!(opts, :uri)
+    plugin_id = Map.fetch!(opts, :plugin_id)
+    overwatcher_pid = Map.fetch!(opts, :overwatcher_pid)
+
+    Logger.info(
+      "[Plugin.Provider.Websocket] activate begin uri=#{inspect(uri)} plugin_id=#{inspect(plugin_id)}"
     )
 
     case start_link(uri,
            ws_opts: Map.get(opts, :ws_opts, []),
-           post_connect: normalize_post_connect(Map.get(opts, :post_connect)),
-           overwatcher_pid: self(),
+           post_connect: Map.get(opts, :post_connect, %{}),
+           overwatcher_pid: overwatcher_pid,
            payload_metadata: Map.get(opts, :payload_metadata, %{}),
-           idle_timeout_ms: idle_timeout_ms,
-           ignore_pattern: ignore_pattern,
+           idle_timeout_ms: Map.get(opts, :idle_timeout_ms, @default_idle_timeout_ms),
+           ignore_pattern: Map.get(opts, :ignore_pattern),
            plugin_id: plugin_id
          ) do
       {:ok, pid} ->
         Logger.info(
-          "[Plugin.Provider.Websocket] init_provider success plugin_id=#{inspect(plugin_id)} pid=#{inspect(pid)}"
+          "[Plugin.Provider.Websocket] activate success plugin_id=#{inspect(plugin_id)} pid=#{inspect(pid)}"
         )
 
-        opts =
-          opts
-          |> Map.put(:conn, pid)
-          |> Map.put(:idle_timeout_ms, idle_timeout_ms)
-          |> Map.put(:ignore_pattern, ignore_pattern)
-          |> Map.put(:plugin_id, plugin_id)
+        {:ok, pid}
 
-        {:ok, opts, pid}
-
-      {:error, reason} ->
+      {:error, reason} = err ->
         Logger.error(
-          "[Plugin.Provider.Websocket] init_provider failed plugin_id=#{inspect(plugin_id)} reason=#{inspect(reason)}"
+          "[Plugin.Provider.Websocket] activate failed plugin_id=#{inspect(plugin_id)} reason=#{inspect(reason)}"
         )
 
-        {:error, reason}
+        err
     end
   end
 

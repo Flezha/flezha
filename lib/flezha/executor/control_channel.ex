@@ -101,6 +101,30 @@ defmodule Flezha.Executor.ControlChannel do
      }}
   end
 
+  @doc """
+  Synchronously clear this channel's `stream_ref` to `nil` so the existing
+  rebind machinery (see `executor-controller-connection-healing`) can claim
+  the next data stream the SDK opens. Used by
+  `Flezha.Executor.FleetManager.reset_control_channel/1` after an end-to-end
+  ping fails — the controller-side `ControlChannel` GenServer is alive but
+  its underlying transport handle is stale, so subsequent `send_control` calls
+  enqueue into a closed transport with no failure signal.
+  """
+  @spec reset_stream_ref(binary()) :: :ok | {:error, :no_control_channel}
+  def reset_stream_ref(executor_id) when is_binary(executor_id) do
+    control_channel = Identificator.control_channel(executor_id)
+
+    case GenServer.whereis(control_channel) do
+      nil -> {:error, :no_control_channel}
+      pid -> GenServer.call(pid, :reset_stream_ref)
+    end
+  end
+
+  @impl true
+  def handle_call(:reset_stream_ref, _from, state) do
+    {:reply, :ok, %{state | stream_ref: nil}}
+  end
+
   @impl true
   def handle_call({:send_control, payload}, _from, state) do
     res =

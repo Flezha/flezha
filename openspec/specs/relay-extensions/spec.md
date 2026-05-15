@@ -197,3 +197,59 @@ A Produce attempt that ultimately fails after exhausting `:delivery_timeout_ms` 
 - **AND** no custom configuration is required for the producer to operate correctly under normal cluster conditions including rolling broker restarts and KRaft leader elections
 </content>
 </invoke>
+
+
+### Requirement: Two-phase plugin lifecycle gated on SDK readiness
+
+The system SHALL support a two-phase plugin lifecycle for relay-host plugins: `prepared` (the GenServer/struct is registered, config is validated, no upstream resources are acquired) and `running` (upstream connections opened, subscribe handshakes issued, input emission permitted). The transition from `prepared` to `running` SHALL be driven by `Flezha.Plugin.Extension.Table.bulk_activate/1`, invoked by the relay host ONLY after `start_relay_sdk/2` returns `{:ok, _}` (i.e. the SDK-side relay is bound and ready to accept input).
+
+The `Flezha.Plugin.Host` behaviour SHALL declare `activate/1` as an `@optional_callback`. A plugin provider that implements `activate/1` SHALL use it for upstream I/O acquisition (TLS connect, subscribe send, downstream consumer attach). A provider without `activate/1` SHALL be transitioned to `running` with a no-op (its meaningful work happens on `:on_input` / `:on_output` and is naturally quiescent until input arrives).
+
+Plugins in the `prepared` state SHALL NOT emit `:io_in` to the relay host. The `Extension.Table` SHALL record each plugin's lifecycle phase per binding, and `Table.teardown_all/1` SHALL handle both `prepared` and `running` plugins uniformly (no preconditions on phase for cleanup).
+
+#### Scenario: Plugin lifecycle progresses prepared → running on SDK ready
+- **GIVEN** a relay `r1` with one `Plugin.Provider.Websocket` plugin in its initial plugin list
+- **WHEN** `Flezha.Relay.Overwatch.handle_continue({:bind_executor, …}, _)` runs `prepare_initial_plugins/2`
+- **THEN** the plugin's `init_provider/1` SHALL run (registers state, validates config) but SHALL NOT open a TLS connection or issue a subscribe frame
+- **AND** the plugin's lifecycle phase in `Extension.Table` SHALL be `:prepared`
+- **WHEN** the Overwatch's `start_relay_sdk(executor_id, relay)` returns `{:ok, _}`
+- **AND** the Overwatch invokes `Extension.Table.bulk_activate(table)`
+- **THEN** the plugin's `activate/1` callback SHALL fire exactly once
+- **AND** the plugin's lifecycle phase SHALL transition to `:running`
+- **AND** the upstream TLS connection SHALL open at this point and the subscribe handshake SHALL issue
+
+#### Scenario: Plugins stay in prepared state when SDK never starts
+- **GIVEN** a relay `r1` whose Overwatch enters the parked-error state because `:start_relay` exhausts its bounded-retry budget
+- **WHEN** the Overwatch parks with `state.init_error != nil`
+- **THEN** every plugin in `state.extensions` SHALL be in the `:prepared` phase
+- **AND** no plugin SHALL have invoked `activate/1`
+- **AND** no plugin SHALL have opened an upstream connection or issued a subscribe handshake
+- **AND** no `:io_in` cast SHALL have arrived from any plugin
+- **AND** the controller process memory SHALL hold steady at the idle baseline (no per-frame amplification)
+
+#### Scenario: Teardown handles prepared and running plugins uniformly
+- **GIVEN** a relay whose extension table contains one plugin in `:prepared` and one plugin in `:running`
+- **WHEN** the Overwatch terminates (parked, manual stop, or HotSwap source-side)
+- **AND** `Extension.Table.teardown_all/1` runs
+- **THEN** both plugins SHALL have their owned pids killed, timers cancelled, monitors demonitored, and `PluginManager` registrations released
+- **AND** no error SHALL be logged about either plugin's phase
+- **AND** the cleanup SHALL NOT distinguish phase at the call site
+
+### Requirement: Plugin providers SHALL NOT perform upstream I/O in `init_provider/1`
+
+A plugin provider's `init_provider/1` callback SHALL be restricted to local, fast, deterministic work: config validation, GenServer registration, struct construction, supervisor wiring. The callback SHALL NOT:
+
+- open a TLS or plain TCP connection to an upstream broker or websocket endpoint,
+- issue a protocol-level handshake (websocket subscribe, Kafka API version negotiate, HTTP TLS handshake against a remote host),
+- block on the SDK's data plane being bound,
+- acquire any resource whose health depends on the relay's SDK side being ready.
+
+Providers that need to do any of the above SHALL implement the optional `activate/1` callback and perform the work there. `Plugin.Provider.Websocket` is the in-tree exemplar.
+
+Providers whose meaningful work is triggered by `:on_input` / `:on_output` (`Filter`, `Kafka.Producer`, indicator plugins, `BeamMsgForward`, `MessageForward`, `MonitoredIoForward`, `StdOut`, `Metrics`) MAY keep their existing `init_provider/1` and SHALL NOT need an `activate/1` implementation — their work is naturally quiescent until input arrives at the relay host, which only happens after the running phase.
+
+#### Scenario: Websocket provider defers TLS connect to activate/1
+- **WHEN** `Plugin.Provider.Websocket.init_provider/1` is called with valid opts
+- **THEN** the call SHALL return `{:ok, opts}` (or `{:ok, opts, nil}` for the owned-pid arity) without opening a TLS connection to the configured `:uri`
+- **AND** no `Fresh.start_link` call SHALL have occurred during `init_provider/1`
+- **AND** the eventual TLS handshake SHALL only happen when `Plugin.Provider.Websocket.activate/1` is invoked

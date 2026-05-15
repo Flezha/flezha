@@ -480,3 +480,30 @@ If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Partition
 - **WHEN** the SDK on the source executor responds to `MigrationSerialization{relay_id}` with payload bytes `B = serialize_relay_state(instance)`, and a second SDK on the destination executor receives `MigrationDeserialization{factory_id, relay_id, serialized_state: B}`
 - **THEN** the destination's freshly-started instance SHALL have Partition state byte-identical to the source's at the moment of serialization, as observed by `serialize_relay_state` re-issued against the destination
 
+
+
+
+### Requirement: The persisted `executor_id` in a relay-binding record is advisory across a controller restart
+
+`Flezha.Relay.Overwatch.init/1` accepts a `stale_executor_id` argument that originates from the durable relay-binding record replayed at boot. This value SHALL be treated as advisory only — it identifies the executor the relay was bound to BEFORE the current controller process started. The Overwatch SHALL re-resolve the live `executor_id` via `RelayManager.assign_executor/2` inside `handle_continue({:bind_executor, …}, _)` and SHALL NOT issue any control-plane calls (`AddRelay`, `:ping_executor`, `start_relay_sdk`) against the persisted value directly.
+
+When the re-resolved `executor_id` differs from `stale_executor_id`, the Overwatch SHALL log an `info`-level rebind line naming both ids and proceed. When the re-resolved `executor_id` equals `stale_executor_id`, the Overwatch SHALL still proceed via the normal startup path — equality with the persisted value does NOT bypass the end-to-end ping (see `executor-controller-connection-healing`).
+
+No on-disk format change accompanies this requirement; the binding record's `executor_id` field SHALL continue to be written and read with the same wire layout. The clarification is purely about the runtime semantics of the field.
+
+#### Scenario: Stale executor_id is re-resolved at boot
+- **GIVEN** a durable relay-binding record for relay `r1` with `executor_id = "default_stale"`
+- **AND** the controller restarts and replays the record
+- **AND** the only live executor in the namespace is `default_fresh`
+- **WHEN** `Flezha.Relay.Overwatch` is started by `dist_sup` with `stale_executor_id = "default_stale"`
+- **THEN** `handle_continue({:bind_executor, "default_stale", relay}, _)` SHALL invoke `RelayManager.assign_executor(namespace, relay.factory_id)` and resolve to `"default_fresh"`
+- **AND** no control-plane call SHALL be issued against `"default_stale"`
+- **AND** an `info`-level line SHALL log `relay r1 rebound from stale executor "default_stale" to live "default_fresh"`
+
+#### Scenario: Re-resolved executor_id equal to stale value still runs the full ping path
+- **GIVEN** a durable relay-binding record for relay `r1` with `executor_id = "e1"`
+- **AND** the controller restarts and `e1` is still the live executor (e.g. the executor outlived the controller)
+- **WHEN** the Overwatch resolves `executor_id == stale_executor_id == "e1"`
+- **THEN** the Overwatch SHALL still issue `:ping_executor` before `:start_relay`
+- **AND** the rebind-log line SHALL NOT fire (the ids are equal)
+- **AND** the bounded-retry governor SHALL still apply on ping/start failure

@@ -5,12 +5,21 @@ defmodule Flezha.Relay.Overwatch do
   alias Flezha.Service.Payloader
   alias Flezha.Service.RelayManager
   alias Flezha.Executor.ControlChannel
+  alias Flezha.Executor.ControlUnit
+  alias Flezha.Executor.FleetManager
   alias Flezha.Executor.StreamSup
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
   alias Flezha.State.{Restore, Wire}
+
+  # Defaults for the bounded-retry governor introduced by
+  # `fix-overwatch-restart-storm`. Tuned to ~19 s aggregate so a transient
+  # control-channel rebind (raspberrypi5 cold-start hits ~5–10 s) recovers
+  # within one burst without spinning the supervisor.
+  @default_retry_backoff_ms [200, 500, 1_000, 2_000, 5_000, 10_000]
+  @default_park_retry_interval_ms 60_000
 
   require Logger
 
@@ -40,7 +49,8 @@ defmodule Flezha.Relay.Overwatch do
     init_values: %{},
     default_input_type: "2",
     arrived_via_hotswap?: false,
-    init_error: nil
+    init_error: nil,
+    park_timer: nil
   ]
 
   def start_link(args) do
@@ -94,17 +104,8 @@ defmodule Flezha.Relay.Overwatch do
         end
 
         case complete_init(state, executor_id, relay) do
-          {:ok, new_state} ->
-            {:noreply, new_state}
-
-          {:error, reason} ->
-            # Surface the init failure to the caller via state instead of
-            # crashing the GenServer. A `:stop` here would emit a SASL
-            # crash report AND trigger the `:transient` supervisor's
-            # restart loop. `:registry_executor_set` reads `init_error`
-            # and returns `{:error, reason}` so `RelayManager` can stop
-            # the child cleanly with no log noise.
-            {:noreply, %__MODULE__{state | executor_id: executor_id, init_error: reason}}
+          {:ok, new_state} -> {:noreply, new_state}
+          {:error, reason, parked} -> {:noreply, park(parked, reason)}
         end
 
       {:error, :timeout} ->
@@ -117,20 +118,170 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   defp complete_init(%__MODULE__{} = state, executor_id, relay) do
-    state = %__MODULE__{
-      state
-      | executor_id: executor_id,
-        channel: attach_channel(relay.id, executor_id)
-    }
-
+    state = bind_to_executor(state, relay.id, executor_id)
     plugins = Keyword.get(relay.opts, :plugins, [])
 
-    with {:ok, state} <- subscribe_initial_plugins(state, plugins),
+    with {:ok, state} <- prepare_initial_plugins(state, plugins),
          {:ok, state, relay} <- resolve_init_state(state, relay),
-         {:ok, _} <- start_relay_sdk(executor_id, relay) do
+         {:ok, final_executor_id, state} <- start_relay_sdk_with_retry(state, relay) do
+      state =
+        state
+        |> bind_to_executor(relay.id, final_executor_id)
+        |> Map.put(:init_error, nil)
+        |> activate_initial_plugins()
+
       _ = maybe_dispatch_restore_init_state(state, relay)
       {:ok, state}
+    else
+      {:error, reason, %__MODULE__{} = parked} -> {:error, reason, parked}
+      {:error, reason} -> {:error, reason, state}
     end
+  end
+
+  defp bind_to_executor(%__MODULE__{} = state, relay_id, executor_id) do
+    %__MODULE__{
+      state
+      | executor_id: executor_id,
+        channel: attach_channel(relay_id, executor_id)
+    }
+  end
+
+  # Returns `{:ok, executor_id, state}` on success or `{:error, reason,
+  # state}` on exhaustion. On every attempt the executor is re-resolved
+  # so a fresh executor that came online during a backoff window is
+  # picked up.
+  defp start_relay_sdk_with_retry(%__MODULE__{} = state, relay) do
+    do_start_with_retry(state, relay, retry_backoff_ms(), 1)
+  end
+
+  defp do_start_with_retry(state, _relay, [], _attempt) do
+    {:error, :exhausted, state}
+  end
+
+  defp do_start_with_retry(%__MODULE__{} = state, relay, [delay | rest], attempt) do
+    executor_id = resolve_executor(state.namespace, relay.factory_id, state.executor_id)
+    state = %__MODULE__{state | executor_id: executor_id}
+
+    case attempt_ping_and_start(relay, executor_id) do
+      {:ok, _} ->
+        {:ok, executor_id, state}
+
+      {:error, reason} when rest == [] ->
+        {:error, reason, state}
+
+      {:error, reason} ->
+        Logger.warning(
+          "[Overwatch] relay #{relay.id} startup attempt #{attempt} failed: " <>
+            "#{inspect(reason)} — retrying within #{delay} ms"
+        )
+
+        wait_with_jitter(delay)
+        do_start_with_retry(state, relay, rest, attempt + 1)
+    end
+  end
+
+  # On ping failure, reset the underlying `ControlChannel`'s `stream_ref`
+  # so the SDK's next data stream can claim it via the existing rebind
+  # path (`executor-controller-connection-healing`). `:start_relay` is
+  # only issued AFTER the ping confirms the round-trip works.
+  defp attempt_ping_and_start(relay, executor_id) do
+    case ping_executor(executor_id) do
+      :ok ->
+        case start_relay_sdk(executor_id, relay) do
+          {:ok, _} = ok -> ok
+          {:error, reason} -> {:error, {:start_relay_failed, reason}}
+        end
+
+      {:error, reason} ->
+        _ = reset_control_channel(executor_id)
+        {:error, {:ping_failed, reason}}
+    end
+  end
+
+  # `:overwatch_ping_fn` / `:overwatch_reset_channel_fn` are test-only
+  # function-injection hooks (Mimic cannot stub across the dist_sup-spawned
+  # Overwatch process boundary from a test pid).
+  defp ping_executor(executor_id) do
+    cond do
+      not Application.get_env(:flezha, :overwatch_ping_enabled, true) ->
+        :ok
+
+      fun = test_hook(:overwatch_ping_fn) ->
+        normalize_ping(fun.(executor_id))
+
+      true ->
+        normalize_ping(ControlUnit.ping_executor(executor_id))
+    end
+  end
+
+  defp normalize_ping({:ok, :pong}), do: :ok
+  defp normalize_ping({:error, _} = err), do: err
+
+  defp reset_control_channel(executor_id) do
+    case test_hook(:overwatch_reset_channel_fn) do
+      nil -> FleetManager.reset_control_channel(executor_id)
+      fun -> fun.(executor_id)
+    end
+  end
+
+  defp test_hook(key) do
+    case Application.get_env(:flezha, key) do
+      fun when is_function(fun, 1) -> fun
+      _ -> nil
+    end
+  end
+
+  defp resolve_executor(namespace, factory_id, fallback) do
+    case RelayManager.assign_executor(namespace, factory_id) do
+      id when is_binary(id) and byte_size(id) > 0 -> id
+      _ -> fallback
+    end
+  end
+
+  defp retry_backoff_ms,
+    do: Application.get_env(:flezha, :overwatch_retry_backoff_ms, @default_retry_backoff_ms)
+
+  defp park_retry_interval_ms,
+    do:
+      Application.get_env(
+        :flezha,
+        :overwatch_retry_park_interval_ms,
+        @default_park_retry_interval_ms
+      )
+
+  # Idle the GenServer for `1..delay` ms. The empty receive consumes no
+  # mailbox messages — it only fires the `after` branch on timeout, so
+  # casts and infos arriving during the wait stay queued for the next
+  # dispatch. Equivalent to `Process.sleep/1` minus the dedicated
+  # sleep primitive.
+  defp wait_with_jitter(0), do: :ok
+
+  defp wait_with_jitter(delay) when is_integer(delay) and delay > 0 do
+    receive do
+    after
+      :rand.uniform(delay) -> :ok
+    end
+  end
+
+  defp schedule_park_retry(%__MODULE__{} = state) do
+    interval = park_retry_interval_ms()
+
+    if interval > 0 do
+      ref = Process.send_after(self(), :retry_startup, interval)
+      %__MODULE__{state | park_timer: ref}
+    else
+      state
+    end
+  end
+
+  # Transition the Overwatch into the parked-error state: store the
+  # failure reason, schedule the next periodic retry. The GenServer
+  # stays alive (no `:stop`, no supervisor restart). Plugins remain in
+  # `:prepared` so no upstream I/O fires while parked.
+  defp park(%__MODULE__{} = state, reason) do
+    state
+    |> Map.put(:init_error, reason)
+    |> schedule_park_retry()
   end
 
   defp executor_wait_ms,
@@ -215,23 +366,45 @@ defmodule Flezha.Relay.Overwatch do
     |> Enum.filter(fn {rc, _, _} -> rc == relay_class end)
   end
 
-  defp subscribe_initial_plugins(%__MODULE__{} = state, plugins) do
+  # Phase 1 of the two-phase plugin lifecycle: register each plugin's
+  # GenServer + struct (`init_provider/1` runs), but do NOT activate
+  # upstream resources. Plugins enter the `:prepared` phase. Idempotent on
+  # repeat — Table.bulk_subscribe/2 rejects duplicate plugin_ids, so on a
+  # retry-driven re-entry we skip without re-init.
+  defp prepare_initial_plugins(%__MODULE__{} = state, plugins) do
     # `relay.opts[:plugins]` accepts two shapes: bare `%Plugin{}` (the
     # cold-start `flz relay start --plugins` path emits this) and
     # `{plugin_id, %Plugin{}}` tuples (the cspec-persistence path written
     # by `Flezha.Service.HubManager.update_relay_plugins/3` after a
     # successful `flz plugin enable`). Both normalise into the tuple
     # form `Table.bulk_subscribe/2` expects.
-    entries =
-      Enum.map(plugins, fn
-        {id, %Plugin{} = plugin} -> {id, plugin}
-        %Plugin{id: id} = plugin -> {id, plugin}
-      end)
+    already_prepared? =
+      state.extensions.plugins != %{} and Enum.count(state.extensions.plugins) > 0
 
-    case Table.bulk_subscribe(state.extensions, entries) do
-      {:ok, table} -> {:ok, %{state | extensions: table}}
-      {:error, {_plugin_id, reason}} -> {:error, reason}
+    if already_prepared? do
+      {:ok, state}
+    else
+      entries =
+        Enum.map(plugins, fn
+          {id, %Plugin{} = plugin} -> {id, plugin}
+          %Plugin{id: id} = plugin -> {id, plugin}
+        end)
+
+      case Table.bulk_subscribe(state.extensions, entries) do
+        {:ok, table} -> {:ok, %{state | extensions: table}}
+        {:error, {_plugin_id, reason}} -> {:error, reason}
+      end
     end
+  end
+
+  # Phase 2 of the two-phase plugin lifecycle: transition every prepared
+  # plugin to `:running` by invoking its provider's optional `activate/1`
+  # callback (which is where upstream TLS connects, subscribe handshakes,
+  # and other resource-acquisition I/O happens — see
+  # `Plugin.Provider.Websocket`). Called exactly once per successful
+  # startup, immediately after `start_relay_sdk/2` returns `{:ok, _}`.
+  defp activate_initial_plugins(%__MODULE__{} = state) do
+    %__MODULE__{state | extensions: Table.bulk_activate(state.extensions)}
   end
 
   # Per the `relay-init-state` capability spec:
@@ -400,6 +573,12 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
+  def handle_call({:io_in, _message, _metadata}, _from, %__MODULE__{init_error: reason} = state)
+      when reason != nil do
+    {:reply, {:error, :startup_failed}, state}
+  end
+
+  @impl true
   def handle_call({:io_in, message, metadata}, _from, state) do
     metadata = Map.put_new(metadata, "input_type", state.default_input_type)
     payload = run_io(state, :on_input, message, metadata)
@@ -429,6 +608,14 @@ defmodule Flezha.Relay.Overwatch do
     }
 
     {:reply, data, state}
+  end
+
+  @impl true
+  def handle_cast({:io_in, _message, _metadata}, %__MODULE__{init_error: reason} = state)
+      when reason != nil do
+    # Parked: silently drop ingress casts. Prepared plugins do not emit
+    # `:io_in`, so the only sources are upstream relays in a chain.
+    {:noreply, state}
   end
 
   @impl true
@@ -510,6 +697,30 @@ defmodule Flezha.Relay.Overwatch do
   def handle_info({:retry_plugin_restart, plugin_id}, state) do
     table = Table.retry(state.extensions, plugin_id)
     {:noreply, %{state | extensions: table}}
+  end
+
+  @impl true
+  def handle_info(:retry_startup, %__MODULE__{init_error: nil} = state) do
+    # Race: timer fired after init_error cleared — no-op.
+    {:noreply, %__MODULE__{state | park_timer: nil}}
+  end
+
+  def handle_info(:retry_startup, %__MODULE__{builder: relay} = state) do
+    Logger.info("[Overwatch] park-retry firing for relay #{state.id}")
+    state = %__MODULE__{state | park_timer: nil}
+
+    case complete_init(state, state.executor_id, relay) do
+      {:ok, recovered} ->
+        Logger.info("[Overwatch] relay #{state.id} recovered from parked state")
+        {:noreply, recovered}
+
+      {:error, reason, parked} ->
+        Logger.warning(
+          "[Overwatch] relay #{state.id} park-retry failed: #{inspect(reason)}; re-arming"
+        )
+
+        {:noreply, park(parked, reason)}
+    end
   end
 
   @impl true

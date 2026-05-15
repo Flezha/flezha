@@ -180,3 +180,29 @@ Application boot requires writing it to `runtime.exs`.
 | `:flezha, :default_time_travel_retention_hours` | `6` | Global default when no override. |
 | `:flezha, :default_compact_after_bytes` | `64 * 1024 * 1024` | Per-Shard compaction threshold. |
 | `:flezha, :relay_persistence` | `%{}` | Per-Relay-class executor override (`true` / `false`). |
+
+## Persisted `executor_id` is advisory across controller restarts
+
+The `executor_id` field carried in a relay-binding record (replayed
+into `Flezha.Relay.Overwatch.init/1` from ProcessHub's durable
+registry at boot) is **advisory only**. It identifies the executor the
+relay was bound to BEFORE the current controller process started.
+
+On every cold start the Overwatch calls
+`RelayManager.assign_executor/2` inside
+`handle_continue({:bind_executor, …}, _)` to re-resolve a live
+executor for the relay's `factory_id`. The persisted value is used
+for diagnostic logging only (a `rebound from stale executor X to live
+Y` line fires when the live executor differs).
+
+Control-plane calls (`AddRelay`, `:ping_executor`, `start_relay_sdk`)
+are issued against the re-resolved live executor, never against the
+persisted value directly. The bounded-retry governor (see
+`docs/relay_architecture.md` "Overwatch lifecycle") re-resolves on
+every retry attempt so a fresh executor that comes online during a
+backoff window is picked up automatically.
+
+No on-disk format change accompanies this — the field is still
+written and read with the same layout. The clarification covers only
+the runtime semantics; the source of truth for the live binding is
+ProcessHub's registry, not the persisted record.

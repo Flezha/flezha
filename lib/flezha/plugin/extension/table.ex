@@ -12,12 +12,21 @@ defmodule Flezha.Plugin.Extension.Table do
         request_subs:   %{name => %{key => {plugin_id, entry}}},
         chains:         %{name => (ctx -> result)},
         plugins:        %{plugin_id => %Flezha.Plugin{}},
+        phases:         %{plugin_id => :prepared | :running},
         monitors:       %{ref => plugin_id},
         owned_pids:     %{plugin_id => {pid, ref}},
         timers:         %{timer_ref => {plugin_id, name}},
         retries:        %{plugin_id => non_neg_integer()},
         host_pid:       pid()
       }
+
+  Plugins enter the table in the `:prepared` phase: their
+  `init_provider/1` has run, the GenServer is registered, but the provider
+  has not been instructed to acquire upstream resources. The host transitions
+  every plugin to `:running` via `bulk_activate/1` once the relay's SDK side
+  has confirmed bound — the provider's optional `activate/1` callback fires
+  exactly once per binding at that point. See the `relay-extensions`
+  capability "Two-phase plugin lifecycle gated on SDK readiness".
   """
 
   alias Flezha.Plugin
@@ -31,6 +40,7 @@ defmodule Flezha.Plugin.Extension.Table do
             request_subs: %{},
             chains: %{},
             plugins: %{},
+            phases: %{},
             monitors: %{},
             owned_pids: %{},
             timers: %{},
@@ -107,6 +117,99 @@ defmodule Flezha.Plugin.Extension.Table do
         {:error, reason} -> {:halt, {:error, {plugin_id, reason}}}
       end
     end)
+  end
+
+  @doc """
+  Transition every `:prepared` plugin in the table to `:running` by invoking
+  its provider's optional `activate/1` callback. A provider without an
+  `activate/1` export transitions silently (its meaningful work is triggered
+  by `:on_input` / `:on_output` and is naturally quiescent until input
+  arrives). Already-running plugins are skipped.
+
+  Invoked by relay hosts after `start_relay_sdk/2` returns `{:ok, _}` — see
+  `relay-extensions` "Two-phase plugin lifecycle gated on SDK readiness".
+
+  An `activate/1` callback that raises is logged at `:error` level; the
+  plugin remains in `:prepared` and the host SHOULD treat the binding as
+  unhealthy on its next teardown cycle.
+  """
+  @spec bulk_activate(t()) :: t()
+  def bulk_activate(%__MODULE__{} = table) do
+    Enum.reduce(table.plugins, table, fn {plugin_id, plugin}, acc ->
+      case Map.get(acc.phases, plugin_id, :prepared) do
+        :running ->
+          acc
+
+        :prepared ->
+          activate_plugin(acc, plugin_id, plugin)
+      end
+    end)
+  end
+
+  defp activate_plugin(table, plugin_id, %Plugin{provider: provider, opts: opts}) do
+    cond do
+      not Code.ensure_loaded?(provider) ->
+        Logger.warning(
+          "[Extension.Table] activate skipped — provider not loaded plugin_id=#{plugin_id}"
+        )
+
+        put_phase(table, plugin_id, :running)
+
+      not function_exported?(provider, :activate, 1) ->
+        put_phase(table, plugin_id, :running)
+
+      true ->
+        invoke_activate(table, plugin_id, provider, opts || %{})
+    end
+  end
+
+  defp invoke_activate(table, plugin_id, provider, opts) do
+    try do
+      case provider.activate(opts) do
+        {:ok, pid} when is_pid(pid) ->
+          table
+          |> track_owned_pid(plugin_id, pid)
+          |> put_phase(plugin_id, :running)
+
+        ok when ok == :ok or (is_tuple(ok) and elem(ok, 0) == :ok) ->
+          put_phase(table, plugin_id, :running)
+
+        {:error, reason} ->
+          Logger.error(
+            "[Extension.Table] activate failed for plugin_id=#{plugin_id}: #{inspect(reason)}"
+          )
+
+          table
+
+        other ->
+          Logger.error(
+            "[Extension.Table] activate invalid return for plugin_id=#{plugin_id}: " <>
+              inspect(other)
+          )
+
+          table
+      end
+    catch
+      kind, reason ->
+        Logger.error(
+          "[Extension.Table] activate raised for plugin_id=#{plugin_id}: " <>
+            "#{inspect(kind)}/#{inspect(reason)}"
+        )
+
+        table
+    end
+  end
+
+  defp put_phase(table, plugin_id, phase),
+    do: %{table | phases: Map.put(table.phases, plugin_id, phase)}
+
+  @doc """
+  Return the lifecycle phase of `plugin_id`: `:prepared`, `:running`, or
+  `:unknown` if the plugin is not registered on this table.
+  """
+  @spec phase(t(), binary()) :: :prepared | :running | :unknown
+  def phase(%__MODULE__{phases: phases}, plugin_id) when is_binary(plugin_id) do
+    Map.get(phases, plugin_id, :unknown)
   end
 
   @doc """
@@ -393,6 +496,7 @@ defmodule Flezha.Plugin.Extension.Table do
     case run_init_provider(plugin) do
       {:ok, plugin, owned_pid} ->
         table = %{table | plugins: Map.put(table.plugins, plugin_id, plugin)}
+        table = %{table | phases: Map.put(table.phases, plugin_id, :prepared)}
         table = track_owned_pid(table, plugin_id, owned_pid)
 
         table =
@@ -556,6 +660,7 @@ defmodule Flezha.Plugin.Extension.Table do
     %{
       table
       | plugins: Map.delete(table.plugins, plugin_id),
+        phases: Map.delete(table.phases, plugin_id),
         retries: Map.delete(table.retries, plugin_id)
     }
   end
@@ -844,9 +949,14 @@ defmodule Flezha.Plugin.Extension.Table do
   defp attempt_restart(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin) do
     Logger.info("[Extension.Table] attempt_restart begin plugin_id=#{plugin_id}")
 
+    prior_phase = Map.get(table.phases, plugin_id, :prepared)
+
     case run_init_provider(plugin) do
       {:ok, fresh_plugin, owned_pid} ->
         table = %{table | plugins: Map.put(table.plugins, plugin_id, fresh_plugin)}
+        # Restart drops back to :prepared so a downstream re-activate fires
+        # the provider's `activate/1` to reopen upstream resources.
+        table = %{table | phases: Map.put(table.phases, plugin_id, :prepared)}
         table = track_owned_pid(table, plugin_id, owned_pid)
 
         subs = fresh_plugin.subscriptions
@@ -862,7 +972,13 @@ defmodule Flezha.Plugin.Extension.Table do
             add_subscription(acc, kind, name, plugin_id, fresh_plugin, sub_opts)
           end)
 
-        %{new_table | retries: Map.delete(new_table.retries, plugin_id)}
+        new_table = %{new_table | retries: Map.delete(new_table.retries, plugin_id)}
+
+        if prior_phase == :running do
+          activate_plugin(new_table, plugin_id, fresh_plugin)
+        else
+          new_table
+        end
 
       {:error, reason} ->
         Logger.error(
