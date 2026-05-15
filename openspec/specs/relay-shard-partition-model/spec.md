@@ -473,9 +473,9 @@ When a Channel connects two Shards inside the same Relay, the SDK SHALL transpor
 
 ### Requirement: Plugin emission semantics
 
-Channels declared with `.to_plugin("name")` (pure-plugin) and channels declared with `.also_to_plugin_with("name", serializer)` (hybrid) SHALL both route a value through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field is removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1 (see `design.md` Decision 15). A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
+Channels declared with `.toPlugin("name")` (pure-plugin) and channels declared with `.alsoToPluginWith("name", serializer)` (hybrid) — in **either** the Rust SDK (`.to_plugin(...)` / `.also_to_plugin_with(...)`) or the Java SDK (`.toPlugin(...)` / `.alsoToPluginWith(...)`) — SHALL both route a value through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field is removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1 (see `design.md` Decision 15). A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
 
-For pure-plugin channels, the wire bytes are produced by the channel's `plugin_serializer` (set by `to_plugin(...)`). For hybrid channels, the wire bytes are produced by the channel's `plugin_sink.serializer` (set by `also_to_plugin_with(...)`). In both cases the byte buffer SHALL be sent through the same wire framing path (`channel: String` metadata + payload bytes) so the agent's plugin layer SHALL NOT distinguish between pure and hybrid channels at the wire — both arrive identically and route by channel name.
+For pure-plugin channels, the wire bytes are produced by the channel's `pluginSerializer`/`plugin_serializer` (set by `toPlugin(...)` / `to_plugin(...)`). For hybrid channels, the wire bytes are produced by the channel's `pluginSink.serializer` / `plugin_sink.serializer` (set by `alsoToPluginWith(...)` / `also_to_plugin_with(...)`). In both cases the byte buffer SHALL be sent through the same wire framing path (`channel: String` metadata + payload bytes) so the agent's plugin layer SHALL NOT distinguish between pure and hybrid channels at the wire — both arrive identically and route by channel name. **Furthermore, the agent's plugin layer SHALL NOT distinguish between Rust-SDK and Java-SDK frames** — hybrid frames produced by either SDK are byte-indistinguishable for the same plugin name and serializer-output bytes.
 
 #### Scenario: Pure-plugin emit reaches the agent's plugin layer
 - **WHEN** a Shard publishes to a channel declared with `.to_plugin("ohlc_kafka")`
@@ -494,6 +494,11 @@ For pure-plugin channels, the wire bytes are produced by the channel's `plugin_s
 #### Scenario: Plugin subscribes by channel name
 - **WHEN** an agent-side plugin is configured to consume outputs from `"ohlc_kafka"`
 - **THEN** that plugin SHALL receive every message whose channel name matches `"ohlc_kafka"`, regardless of which Shard produced it
+
+#### Scenario: Hybrid emit reaches the agent's plugin layer with identical framing across SDKs
+- **WHEN** a Rust Shard publishes via `.also_to_plugin_with("indicators", sma_to_pb_bytes)` and a Java Shard publishes via `.alsoToPluginWith("indicators", SmaCodec::toBytes)` with identical serializer output for an identical input value
+- **THEN** the agent's `indicators` plugin SHALL receive byte-equal wire frames from both SDKs (the only on-wire difference being TCP/UDS interleaving — the framed payload bytes are identical)
+- **AND** the SDK's topology builder on either side SHALL NOT reject either declaration as a `MultiProducer` / multi-producer error, because each channel still has exactly one producer Shard within its own SDK
 
 ### Requirement: ShardCtx emit semantics
 
@@ -627,6 +632,104 @@ The producing Shard's `Shard::run` SHALL receive the error via the normal `Resul
 - **THEN** `ctx.emit(value)` SHALL return `Err(ShardError::PluginSerializerPanic { channel, message })`
 - **AND** the producing Shard MAY ignore, log, or `return Err(...)` — all three are valid handlers
 - **AND** the inter-shard consumer fan-out SHALL have already completed before the panic was caught
+
+### Requirement: Hybrid channel builder method (Java SDK)
+
+The Java SDK SHALL expose a method `alsoToPluginWith(String pluginName, Function<T, byte[]> serializer) -> ChannelDeclWithProducer<T>` on `ChannelDeclWithProducer<T>` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/channel/ChannelDeclWithProducer.java`). Calling this method SHALL leave the channel's `kind = ChannelKind.INTER_SHARD` and SHALL attach a plugin sink (the named plugin and the user-supplied serializer, type-erased to `Function<Object, byte[]>`) alongside the channel's existing consumer fan-out. After the call, further `.into(...)` consumer wiring SHALL chain naturally — the method's return type is `ChannelDeclWithProducer<T>`.
+
+The plugin sink SHALL be stored on the channel descriptor as `Optional<PluginSink> pluginSink` where `PluginSink` is a public record `(String name, Function<Object, byte[]> serializer)`. Pure-`PLUGIN_BOUND` channels (produced by `toPlugin(...)`) SHALL continue to populate the existing `pluginName` and `pluginSerializer` fields and SHALL NOT populate `pluginSink`. Hybrid channels (`INTER_SHARD` + `alsoToPluginWith`) SHALL populate `pluginSink` and SHALL NOT populate `pluginName`/`pluginSerializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
+
+#### Scenario: Hybrid wiring is accepted at registration (Java)
+- **WHEN** a Relay declares `c.channel(SmaValue.class, "sma_out").from(SmaShard.class).alsoToPluginWith("indicators", SmaCodec::toBytes).into(BollingerShard.class)`
+- **THEN** `RelayRegistry.registerRelay(MarketRelay.class)` SHALL succeed
+- **AND** the resulting `ChannelDescriptor` for `"sma_out"` SHALL have `kind() == INTER_SHARD`, exactly one entry in `consumers()` (the `BollingerShard` shard id), and `pluginSink() == Optional.of(new PluginSink("indicators", <fn>))`
+
+#### Scenario: alsoToPluginWith chains in either order with into(...) (Java)
+- **WHEN** a Relay declares `c.channel(EmaValue.class, "ema_out").from(EmaShard.class).into(MacdShard.class).alsoToPluginWith("indicators", EmaCodec::toBytes)`
+- **THEN** `RelayRegistry.registerRelay(MarketRelay.class)` SHALL succeed
+- **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped (`.alsoToPluginWith(...).into(MacdShard.class)`)
+
+#### Scenario: alsoToPluginWith is unreachable after toPlugin (Java)
+- **WHEN** a Relay attempts `c.channel(byte[].class, "foo").from(S.class).toPlugin("p").alsoToPluginWith(...)`
+- **THEN** the code SHALL fail to compile because `toPlugin` returns `Channel<T>` (a finalized handle that exposes no further methods)
+
+### Requirement: Hybrid channel emission — consumer fan-out then single serializer call (Java SDK)
+
+When a Shard's `Shard.run` calls `ctx.emit(value)` on a hybrid channel (`kind == INTER_SHARD`, `pluginSink.isPresent()`), the dispatcher SHALL execute the following sequence on the producer thread:
+
+1. Fan out the typed value to every consumer mailbox listed in `descriptor.consumers()`. This step SHALL complete before step 2 begins.
+2. If `pluginSink.isPresent()`, invoke `pluginSink.get().serializer().apply(value)` exactly once inside `try { ... } catch (RuntimeException | Error e) { ... }`. On normal return, send the bytes through the existing plugin-wire framing path (`channel: String` wire-metadata key set to `descriptor.name()`; `[key_len][val_len][key][value]` block format; via `FrameEncoder.build(...)` and `NativeTransport.streamWrite(...)`). On caught throw, throw `ShardException.PluginSerializerFailure(channel, message, cause)` to the producing Shard's `ctx.emit` call without emitting any plugin bytes. `Throwable` is intentionally NOT caught — `OutOfMemoryError` and similar JVM-level signals propagate.
+
+The dispatcher thread SHALL remain alive across a serializer-thrown exception. Subsequent emits SHALL proceed normally; only the producing Shard sees the per-emit error.
+
+The serializer SHALL run exactly once per `ctx.emit` invocation regardless of consumer count. The byte buffer produced by the serializer SHALL NOT be cached or reused across emits.
+
+#### Scenario: Hybrid emit fans out typed value to all consumers and bytes to plugin (Java)
+- **WHEN** a producer Shard's `run` calls `ctx.emit(value)` on a channel wired to `[ConsumerA.class, ConsumerB.class]` with `pluginSink = Optional.of(new PluginSink("indicators", serializer))`
+- **THEN** `ConsumerA.run` and `ConsumerB.run` SHALL each be invoked with `value` (passed by reference per existing inter-shard delivery semantics)
+- **AND** the agent-side plugin "indicators" SHALL receive a single wire frame whose body bytes equal `serializer.apply(value)` and whose metadata contains `channel = <channel name>`
+
+#### Scenario: Single serializer call regardless of consumer count (Java)
+- **WHEN** a hybrid channel has N inter-shard consumers and the producer emits one value
+- **THEN** the serializer SHALL be invoked exactly once for that emit
+- **AND** N is unconstrained (1, 3, 100 — same single-call guarantee)
+
+#### Scenario: Throwing serializer surfaces as ShardException without crashing the dispatcher (Java)
+- **WHEN** the serializer throws `RuntimeException` on a particular input
+- **THEN** the inter-shard consumers SHALL still receive the typed value (consumer fan-out completed before serialization)
+- **AND** `ctx.emit(...)` SHALL throw `ShardException.PluginSerializerFailure { channel(), getMessage(), getCause() }`
+- **AND** the dispatcher thread SHALL remain alive — a subsequent `ctx.emit` call SHALL execute normally
+
+### Requirement: emitWithMeta is valid on hybrid channels (Java SDK)
+
+`ShardCtx.emitWithMeta(value, meta)` SHALL accept the call when either:
+
+- the channel is `kind == PLUGIN_BOUND` (existing rule), OR
+- the channel has `pluginSink.isPresent()` (new rule for hybrid channels).
+
+On a hybrid channel, the inter-shard consumers SHALL receive the typed value with no metadata (metadata is plugin-framing only). The plugin sink SHALL receive bytes (via the channel's serializer) with the supplied `Map<String, String>` attached to the wire frame using the existing `[key_len][val_len][key][value]` block format. The reserved `channel` key SHALL be set automatically and SHALL NOT be overridable by user-supplied keys; an attempt to set it SHALL be silently dropped during framing (matches the existing rule for `PLUGIN_BOUND` channels).
+
+On a pure-`INTER_SHARD` channel with no plugin sink, `emitWithMeta` SHALL continue to throw `ShardException.MetadataNotAllowedOnInterShardChannel` without delivering the value or the metadata.
+
+#### Scenario: emitWithMeta on a hybrid channel forwards metadata to plugin only (Java)
+- **WHEN** a producer Shard's `run` calls `ctx.emitWithMeta(value, Map.of("trace_id", "abc123"))` on a hybrid channel wired to one consumer and one plugin sink
+- **THEN** the consumer SHALL receive `value` with no `trace_id` visible
+- **AND** the plugin wire frame SHALL contain `trace_id = "abc123"` plus the implicit `channel = <channel name>` key
+
+#### Scenario: emitWithMeta on a pure inter-shard channel still throws (Java)
+- **WHEN** a producer Shard's `run` calls `ctx.emitWithMeta(value, Map.of("trace_id", "abc123"))` on a channel that has consumers but no `pluginSink`
+- **THEN** `ctx.emitWithMeta` SHALL throw `ShardException.MetadataNotAllowedOnInterShardChannel` carrying the channel name
+- **AND** neither the consumers nor any plugin SHALL receive the value or the metadata
+
+#### Scenario: Reserved metadata keys are stripped on hybrid channels (Java)
+- **WHEN** a producer calls `ctx.emitWithMeta(value, Map.of("channel", "spoof", "trace_id", "abc"))` on a hybrid channel
+- **THEN** the wire frame SHALL contain `channel = <real channel name>` (the reserved value, not "spoof") and `trace_id = "abc"`
+
+### Requirement: New RelayConfigurationException factory — `duplicatePluginSink` (Java SDK)
+
+`RelayConfigurationException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/relay/RelayConfigurationException.java`) SHALL gain a static factory `duplicatePluginSink(String channel)` that produces an exception whose message names the offending channel. The factory SHALL be raised at `RelayRegistry.registerRelay(...)` time when `alsoToPluginWith` is called more than once on the same channel. The first call registers the sink; the second SHALL accumulate the exception into the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `RelayRegistry.registerRelay(...)` validation SHALL throw a `RelayConfigurationException` listing every accumulated error with the standard "relay topology validation failed" prefix.
+
+#### Scenario: Second alsoToPluginWith call is rejected at registration (Java)
+- **WHEN** a Relay's `channels(c)` method calls `c.channel(T.class, "foo").from(S.class).alsoToPluginWith("p1", f1).alsoToPluginWith("p2", f2)`
+- **THEN** `RelayRegistry.registerRelay(R.class)` SHALL throw `RelayConfigurationException` whose message contains both the verb `duplicatePluginSink` (or equivalent diagnostic phrasing) and the channel name `"foo"`
+- **AND** the registered topology SHALL be discarded
+
+### Requirement: New ShardException subclass — `PluginSerializerFailure` (Java SDK)
+
+`ShardException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/shard/ShardException.java`) SHALL gain a nested `final class PluginSerializerFailure extends ShardException`. Constructor: `(String channel, String message, Throwable cause)`. The class SHALL be thrown from `ctx.emit(...)` (and `ctx.emitWithMeta(...)`) on a hybrid channel when the user-supplied serializer throws `RuntimeException` or `Error`. `channel()` accessor SHALL return the channel name as declared in `ChannelBuilder`; `getMessage()` SHALL include the underlying exception's `toString()` and the channel name; `getCause()` SHALL be the original throwable.
+
+The producing Shard's `Shard.run` SHALL receive the exception via the normal `throws ShardException` declaration on `ctx.emit`. Catching the exception and continuing is valid; rethrowing from `Shard.run` continues to discard partial emits per the existing trait contract.
+
+#### Scenario: Producer Shard sees PluginSerializerFailure and chooses how to handle it (Java)
+- **WHEN** a hybrid channel's serializer throws during `ctx.emit(value)`
+- **THEN** `ctx.emit(value)` SHALL throw `ShardException.PluginSerializerFailure` carrying the channel name and the underlying cause
+- **AND** the producing Shard MAY catch (logging or swallowing) or rethrow — both are valid handlers
+- **AND** the inter-shard consumer fan-out SHALL have already completed before the exception was thrown
+
+#### Scenario: Throwable causes other than RuntimeException/Error are not caught (Java)
+- **WHEN** the serializer throws `OutOfMemoryError`
+- **THEN** the dispatcher SHALL NOT catch it — the JVM's normal escalation path applies (the worker thread terminates, the executor's uncaught-exception handler runs)
+- **AND** the consumer fan-out for that emit SHALL have already completed
 
 ### Requirement: Entry channel value types limited to bytes or string in v1
 
