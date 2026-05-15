@@ -221,57 +221,19 @@ _build/dev/rel/flezha/bin/flz relay state my_relay
 
 
 ### Performance Testing
-Run performance tests to measure relay throughput and message processing capabilities:
+
+Use `./scripts/bench.sh` to measure throughput. Switching axes are independent:
+runtime (`rust`/`java`), transport (`uds`/`quic`), shape (`regression`/`partitioning`).
 
 ```bash
-# Run with default settings (100 relays, 100 messages per relay)
-MIX_ENV=prod mix bench
-
-# Run with custom settings
-MIX_ENV=prod mix bench --num-relays 100 --messages-per-relay 100
-
-# Short form aliases
-MIX_ENV=prod mix bench -n 100 -m 50
-
-# Bench the Rust SDK (default) vs the Java SDK — same controller, same protocol,
-# same measurement code, so the Throughput numbers are directly comparable.
-MIX_ENV=prod mix bench --runtime rust -n 100 -m 1000 | tee bench-rust.txt
-MIX_ENV=prod mix bench --runtime java -n 100 -m 1000 | tee bench-java.txt
-diff bench-rust.txt bench-java.txt
-
-# scripts/bench.sh is a thin wrapper that also passes FLEZHA_TRANSPORT:
-./scripts/bench.sh --runtime java --transport quic -n 100 -m 1000
+./scripts/bench.sh                                # rust + uds, defaults
+./scripts/bench.sh -r java -t quic -n 100 -m 1000 # any combination
+./scripts/bench.sh --shape partitioning --pool-sizes 1,8
+./scripts/bench.sh --help
 ```
 
-The Rust SDK's dispatch core was rewritten to use per-relay mailboxes
-and a work-stealing pool — see
-[`openspec/changes/optimize-rust-sdk-dispatch/`](openspec/changes/optimize-rust-sdk-dispatch/)
-and [`docs/shared_library_architecture.md`](docs/shared_library_architecture.md)
-for the design, and [`sdk/rust/CHANGELOG.md`](sdk/rust/CHANGELOG.md) for
-the summary. The `--runtime rust` bench is now competitive with Java on
-modern x86_64 hardware; lower-spec laptops will see a smaller but still
-meaningful speedup. Criterion dispatch micro-benches live at
-`sdk/rust/benches/` and run via:
-
-```bash
-cargo bench -p flezha_executor --features bench-internals --bench dispatch
-```
-
-
-**Options:**
-- `--num-relays` / `-n`: Number of relays to create (default: 100)
-- `--messages-per-relay` / `-m`: Number of messages to send per relay (default: 100)
-- `--runtime` / `-r`: Which SDK to benchmark — `rust` (default) or `java`. The
-  `java` runtime requires the test jar at
-  `test/apps/java_executor/target/java_executor.jar` (build with
-  `mix test.java_sdk` or `mvn -f test/apps/java_executor/pom.xml package`).
-
-The performance test creates multiple relays, enables plugins, sends messages, and measures:
-- Relay creation time
-- Plugin setup time  
-- Message sending time
-- Message processing time
-- Overall throughput (messages/second)
+Full reference (flags, shapes, CI gates, floors, triage):
+[`docs/benchmarking.md`](docs/benchmarking.md).
 
 ### Restart survival
 

@@ -1,78 +1,99 @@
 #!/bin/bash
+# Flezha benchmark runner — wrapper for `mix bench`.
+#
+# Picks the SDK runtime, transport, workload shape, and dimensions.
+# Everything is optional; defaults match the merge-blocking CI gate
+# (rust + uds + regression shape, 100 relays x 100 msg).
+#
+# Quick examples:
+#   ./scripts/bench.sh                                # rust + uds, default dims
+#   ./scripts/bench.sh -r java                        # java SDK over uds
+#   ./scripts/bench.sh -t quic                        # rust SDK over quic
+#   ./scripts/bench.sh -r java -t quic -n 100 -m 1000 # java + quic, bigger run
+#   ./scripts/bench.sh --shape partitioning --pool-sizes 1,8
+#
+# Compare two runs:
+#   ./scripts/bench.sh -r rust -n 100 -m 1000 | tee bench-rust.txt
+#   ./scripts/bench.sh -r java -n 100 -m 1000 | tee bench-java.txt
+#   diff bench-rust.txt bench-java.txt
+#
+# Prerequisites:
+#   - rust runtime: nothing extra (test/apps/rust_executor is built on demand)
+#   - java runtime: run `mix test.java_sdk` once to build the test jar
+#   - quic transport: certs auto-generated at app_data/certs/ on first run
+#
+# Full reference: docs/benchmarking.md
 set -e
 
-# Flezha Benchmark Script
-# =======================
-# Wrapper for `mix bench` with configurable parameters.
-#
-# Usage:
-#   ./scripts/bench.sh [--num-relays N] [--messages-per-relay N] \
-#                      [--transport uds|quic] [--runtime rust|java]
-#
-# Defaults:
-#   --num-relays 100
-#   --messages-per-relay 100
-#   --transport uds
-#   --runtime rust
-
-NUM_PROCESSORS=100
-MESSAGES_PER_PROCESSOR=100
-TRANSPORT="uds"
 RUNTIME="rust"
+TRANSPORT="uds"
+SHAPE=""
+POOL_SIZES=""
+NUM_RELAYS=100
+MESSAGES_PER_RELAY=100
+MIX_ENV_OVERRIDE="${MIX_ENV:-prod}"
+
+usage() {
+    cat <<'EOF'
+Usage: ./scripts/bench.sh [OPTIONS]
+
+Options:
+  -r, --runtime <rust|java>          SDK runtime (default: rust)
+  -t, --transport <uds|quic>         Wire transport (default: uds)
+  -s, --shape <regression|partitioning>
+                                     Bench shape (default: regression).
+                                     `partitioning` ignores -n/-m and uses the
+                                     8x4x8x20k stress workload.
+      --pool-sizes <list>            Comma-separated worker-pool sizes for
+                                     --shape partitioning (default: 1,8)
+  -n, --num-relays <N>               Relay count for regression shape (default: 100)
+  -m, --messages-per-relay <N>       Messages per relay for regression shape
+                                     (default: 100)
+  -h, --help                         Show this help
+
+Switching combinations are independent:
+  -r picks the SDK (rust or java)
+  -t picks the wire (uds or quic)
+  -s picks the workload (regression or partitioning)
+EOF
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --num-relays|-n)
-            NUM_PROCESSORS="$2"
-            shift 2
-            ;;
-        --messages-per-relay|-m)
-            MESSAGES_PER_PROCESSOR="$2"
-            shift 2
-            ;;
-        --transport|-t)
-            TRANSPORT="$2"
-            if [[ "$TRANSPORT" != "uds" && "$TRANSPORT" != "quic" ]]; then
-                echo "Error: --transport must be 'uds' or 'quic', got '$TRANSPORT'"
-                exit 1
-            fi
-            shift 2
-            ;;
-        --runtime|-r)
-            RUNTIME="$2"
-            if [[ "$RUNTIME" != "rust" && "$RUNTIME" != "java" ]]; then
-                echo "Error: --runtime must be 'rust' or 'java', got '$RUNTIME'"
-                exit 1
-            fi
-            shift 2
-            ;;
-        --help|-h)
-            echo "Usage: ./scripts/bench.sh [OPTIONS]"
-            echo ""
-            echo "Options:"
-            echo "  -n, --num-relays N          Number of relays (default: 100)"
-            echo "  -m, --messages-per-relay N  Messages per relay (default: 100)"
-            echo "  -t, --transport uds|quic        Transport to use (default: uds)"
-            echo "  -r, --runtime rust|java         SDK runtime to benchmark (default: rust)"
-            echo "  -h, --help                      Show this help message"
-            echo ""
-            echo "Examples:"
-            echo "  ./scripts/bench.sh --runtime rust -n 100 -m 1000 | tee bench-rust.txt"
-            echo "  ./scripts/bench.sh --runtime java -n 100 -m 1000 | tee bench-java.txt"
-            echo "  diff bench-rust.txt bench-java.txt"
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            echo "Run './scripts/bench.sh --help' for usage."
-            exit 1
-            ;;
+        -r|--runtime)         RUNTIME="$2"; shift 2 ;;
+        -t|--transport)       TRANSPORT="$2"; shift 2 ;;
+        -s|--shape)           SHAPE="$2"; shift 2 ;;
+        --pool-sizes)         POOL_SIZES="$2"; shift 2 ;;
+        -n|--num-relays)      NUM_RELAYS="$2"; shift 2 ;;
+        -m|--messages-per-relay) MESSAGES_PER_RELAY="$2"; shift 2 ;;
+        -h|--help)            usage; exit 0 ;;
+        *) echo "Unknown option: $1"; usage; exit 1 ;;
     esac
 done
 
-echo "Running benchmark: runtime=$RUNTIME, transport=$TRANSPORT, $NUM_PROCESSORS relays, $MESSAGES_PER_PROCESSOR messages each"
+case "$RUNTIME" in rust|java) ;; *)
+    echo "Error: --runtime must be 'rust' or 'java', got '$RUNTIME'"; exit 1 ;;
+esac
+case "$TRANSPORT" in uds|quic) ;; *)
+    echo "Error: --transport must be 'uds' or 'quic', got '$TRANSPORT'"; exit 1 ;;
+esac
+if [[ -n "$SHAPE" ]]; then
+    case "$SHAPE" in regression|partitioning) ;; *)
+        echo "Error: --shape must be 'regression' or 'partitioning', got '$SHAPE'"; exit 1 ;;
+    esac
+fi
+
+ARGS=(--runtime "$RUNTIME")
+[[ -n "$SHAPE" ]] && ARGS+=(--shape "$SHAPE")
+
+if [[ "$SHAPE" == "partitioning" ]]; then
+    [[ -n "$POOL_SIZES" ]] && ARGS+=(--pool-sizes "$POOL_SIZES")
+    echo "Running bench: runtime=$RUNTIME transport=$TRANSPORT shape=partitioning pool-sizes=${POOL_SIZES:-1,8}"
+else
+    ARGS+=(--num-relays "$NUM_RELAYS" --messages-per-relay "$MESSAGES_PER_RELAY")
+    echo "Running bench: runtime=$RUNTIME transport=$TRANSPORT relays=$NUM_RELAYS msg/relay=$MESSAGES_PER_RELAY"
+fi
+
 export FLEZHA_TRANSPORT="$TRANSPORT"
-mix bench \
-    --num-relays "$NUM_PROCESSORS" \
-    --messages-per-relay "$MESSAGES_PER_PROCESSOR" \
-    --runtime "$RUNTIME"
+export MIX_ENV="$MIX_ENV_OVERRIDE"
+exec mix bench "${ARGS[@]}"
