@@ -159,6 +159,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       create_topic_fn: Keyword.get(opts, :create_topic_fn, &default_create_topic/4),
       metadata_refresh_fn: Keyword.get(opts, :metadata_refresh_fn, &default_metadata_refresh/2),
       now_fn: Keyword.get(opts, :now_fn, fn -> System.monotonic_time(:millisecond) end),
+      wall_now_fn: Keyword.get(opts, :wall_now_fn, fn -> System.system_time(:millisecond) end),
       jitter_fn: Keyword.get(opts, :jitter_fn, fn max -> :rand.uniform(max + 1) - 1 end),
       producer_id: nil,
       producer_epoch: nil,
@@ -205,7 +206,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   @impl true
   def handle_call({:enqueue, msg, metadata}, from, state) do
-    record = build_record(msg, metadata, from, state.now_fn.())
+    record = build_record(msg, metadata, from, state.wall_now_fn.())
 
     case admit_record(state, record, from) do
       {:admitted, state} ->
@@ -231,7 +232,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   @impl true
   def handle_cast({:enqueue_async, msg, metadata}, state) do
-    record = build_record(msg, metadata, :async, state.now_fn.())
+    record = build_record(msg, metadata, :async, state.wall_now_fn.())
 
     case admit_record(state, record, :async) do
       {:admitted, state} -> {:noreply, maybe_kick_batch(state)}
