@@ -507,8 +507,13 @@ defmodule Flezha.Relay.Overwatch do
         %__MODULE__{} = state
       ) do
     case Table.subscribe(state.extensions, plugin_id, plugin) do
-      {:ok, table} -> {:reply, :ok, %{state | extensions: table}}
-      {:error, reason} -> {:reply, {:error, reason}, state}
+      {:ok, table} ->
+        # Runtime adds: SDK is already up, so activate immediately.
+        # Boot path goes through activate_initial_plugins/1 instead.
+        {:reply, :ok, %{state | extensions: Table.bulk_activate(table)}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -786,13 +791,13 @@ defmodule Flezha.Relay.Overwatch do
       _else -> :ok
     end
 
-    # Tear down existing, then rehydrate.
+    # Tear down existing, then rehydrate; activate so providers reconnect.
     table = Table.teardown_all(state.extensions)
     rehydrated = Table.rehydrate(table, Map.get(handover_state, :plugins, []))
 
     %__MODULE__{
       state
-      | extensions: rehydrated,
+      | extensions: Table.bulk_activate(rehydrated),
         init_values: handover_state.init_values,
         arrived_via_hotswap?: true
     }
