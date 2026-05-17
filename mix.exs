@@ -102,7 +102,8 @@ defmodule Flezha.MixProject do
       {:logger_file_backend, "~> 0.0.13"},
       {:logger_backends, "~> 1.0"},
       {:rustler, "~> 0.35"},
-      {:recon, "~> 2.5"}
+      {:recon, "~> 2.5"},
+      {:phoenix_pubsub, "~> 2.1"}
     ]
   end
 

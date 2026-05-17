@@ -177,7 +177,27 @@ config :flezha,
        val -> String.downcase(val) in ["1", "true", "yes", "on"]
      end),
   graceful_shutdown_timeout_ms:
-    System.get_env("FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS", "60000") |> String.to_integer()
+    System.get_env("FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS", "60000") |> String.to_integer(),
+
+  # ------------------------------------------------------------------------------------------------
+  # Observability foundation (platform-observability-foundation).
+  #
+  # `enabled` is the master flag — when false the supervisor starts no
+  # children (no sinks, no logger handler, no telemetry bridge). The
+  # service API returns `{:error, :observability_disabled}` in that
+  # mode. See `docs/observability_foundation.md`.
+  observability: [
+    enabled:
+      case System.get_env("FLEZHA_OBSERVABILITY_ENABLED") do
+        nil -> true
+        val -> String.downcase(val) in ["1", "true", "yes", "on"]
+      end,
+    ring_buffer_retention_ms: 900_000,
+    ring_buffer_max_entries_per_source: 10_000,
+    overflow_policy: :drop,
+    cardinality_budget_per_source: 1_000,
+    pubsub_sink_enabled: true
+  ]
 
 # ------------------------------------------------------------------------------------------------
 # Installable plugin installer keyword list (env-var driven). Only set when
@@ -207,8 +227,7 @@ if config_env() != :test do
       System.get_env("FLEZHA_RECOVERY_WINDOW_MS", "10000") |> String.to_integer(),
     boot_replay_timeout_ms:
       System.get_env("FLEZHA_BOOT_REPLAY_TIMEOUT_MS", "60000") |> String.to_integer(),
-    auto_restore_enabled:
-      System.get_env("FLEZHA_AUTO_RESTORE_ENABLED", "true") in ["true", "1"],
+    auto_restore_enabled: System.get_env("FLEZHA_AUTO_RESTORE_ENABLED", "true") in ["true", "1"],
     pre_replay_fleet_wait_ms:
       System.get_env("FLEZHA_PRE_REPLAY_FLEET_WAIT_MS", "30000") |> String.to_integer(),
     wal_transfer_query_timeout_ms:

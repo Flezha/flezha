@@ -29,6 +29,7 @@ defmodule Flezha.Application do
         Flezha.BootLoader,
         Flezha.Service.Identificator,
         Flezha.Service.HubManager,
+        Flezha.Observability.Supervisor,
         Flezha.Shutdown.Coordinator,
         Flezha.Executor.FleetSupervisor,
         FleetManager

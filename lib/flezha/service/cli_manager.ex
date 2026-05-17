@@ -1064,7 +1064,8 @@ defmodule Flezha.Service.CliManager do
       {:ok, registry} ->
         match =
           Enum.find_value(registry, fn
-            {_relay_id, %{metadata: %{tag: tag, relay: %{relay_class: ^rc}}}} when is_binary(tag) ->
+            {_relay_id, %{metadata: %{tag: tag, relay: %{relay_class: ^rc}}}}
+            when is_binary(tag) ->
               tag
 
             _ ->
@@ -1191,9 +1192,7 @@ defmodule Flezha.Service.CliManager do
             duration = System.monotonic_time(:millisecond) - start_ms
             outcome = if force, do: :forced, else: :clean
 
-            IO.puts(
-              "[shutdown] complete duration_ms=#{duration} outcome=#{outcome}"
-            )
+            IO.puts("[shutdown] complete duration_ms=#{duration} outcome=#{outcome}")
 
             IO.puts("flz-controller-stop-result: #{outcome}")
             :ok
@@ -1551,5 +1550,48 @@ defmodule Flezha.Service.CliManager do
     |> Enum.each(fn {k, v} ->
       IO.puts("  #{String.pad_trailing(k, 24)} #{v}")
     end)
+  end
+
+  # ============================================================================
+  # Observability service wrappers
+  # ============================================================================
+  #
+  # Thin shims that build a `caller_context` with `source: :cli` and
+  # forward to `Flezha.Service.Observability`. Future `flz observe ...`
+  # subcommands call these.
+
+  alias Flezha.Service.Observability, as: ObsSvc
+
+  def observability_list_sources(opts \\ []) do
+    ObsSvc.list_sources(cli_context(opts))
+  end
+
+  def observability_list_sinks(opts \\ []) do
+    ObsSvc.list_sinks(cli_context(opts))
+  end
+
+  def observability_query(params, opts \\ []) when is_map(params) do
+    ObsSvc.query(params, cli_context(opts))
+  end
+
+  def observability_subscribe(source, opts \\ []) when is_atom(source) do
+    ObsSvc.subscribe(source, cli_context(opts))
+  end
+
+  def observability_enable_source(source, opts \\ []) when is_atom(source) do
+    ObsSvc.enable_source(source, cli_context(opts))
+  end
+
+  def observability_disable_source(source, opts \\ []) when is_atom(source) do
+    ObsSvc.disable_source(source, cli_context(opts))
+  end
+
+  defp cli_context(opts) do
+    base = %{source: :cli}
+
+    case Keyword.get(opts, :request_id) do
+      nil -> base
+      id when is_binary(id) -> Map.put(base, :request_id, id)
+    end
   end
 end

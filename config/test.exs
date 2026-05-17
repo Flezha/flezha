@@ -8,6 +8,18 @@ config :flezha,
   # `test/integration/shutdown/` exercise it explicitly.
   graceful_shutdown_enabled: false,
   graceful_shutdown_timeout_ms: 5_000,
+  # Observability foundation: PubSub sink is off by default in tests so
+  # subscribers in unrelated test modules don't accidentally receive
+  # cross-test signal traffic. Tests that exercise the PubSub sink flip
+  # this on explicitly via `Application.put_env/3`.
+  observability: [
+    enabled: true,
+    ring_buffer_retention_ms: 900_000,
+    ring_buffer_max_entries_per_source: 10_000,
+    overflow_policy: :drop,
+    cardinality_budget_per_source: 1_000,
+    pubsub_sink_enabled: false
+  ],
   # Tests bring up their own executors and relays — auto-recovery would
   # trigger replay against a not-yet-connected executor, cascading the
   # ProcessHub coordinator into shutdown. The persistent registry still
