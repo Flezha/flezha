@@ -141,3 +141,71 @@
   just the observability supervisor (no Controller / executors) and
   reports nanoseconds per emit against zero sinks.
 - **Detailed notes**: `docs/observability_foundation.md`.
+
+## OTP backend sources (`platform-observability-otp-backend`)
+
+- **Modules**: `lib/flezha/observability/otp_backend/` —
+  `Supervisor`, `BeamVmSource`, `HostSource`, `ProcParser`,
+  `ProcessHubSource`, `TransportSource`, `BoundedMailboxSource`.
+- **Supervision tree**: `Flezha.Observability.OtpBackend.Supervisor`
+  is inserted in `Flezha.Observability.Supervisor` AFTER
+  `DefaultSinks` and BEFORE `Export.Supervisor`. `:one_for_one` so a
+  per-source crash leaves peers running.
+- **Shipped sources** — `:beam_vm` (memory / schedulers / GC /
+  process+port counts, 1s default), `:host` (Linux `/proc` RSS /
+  CPU / FD / loadavg, 5s default; one-shot `:host_source_degraded`
+  event on non-Linux), `:processhub` (per-hub registered processes +
+  pending recoveries, 1s), `:flezha_transport` (per-transport
+  pending-stream count via `Flezha.Transport.Server.get_stats/1`,
+  1s), `:flezha_bounded_mailbox` (registered, one-shot
+  `:bounded_mailbox_unavailable` event until the Rust→Elixir mailbox
+  surface lands).
+- **Runtime config knobs**: `:observability, :otp_backend_enabled`
+  (default `true` in prod, `false` in test); `:observability,
+  :otp_backend, :poll_intervals` map per-source override.
+- **CLI**: `flz observe sources`, `flz observe sinks`,
+  `flz observe tail <source>`, `flz observe enable <source>`,
+  `flz observe disable <source>` — implemented in
+  `cli/src/observe.rs` and
+  `Flezha.Service.CliManager.observability_render_*`.
+- **Detailed notes**: `docs/observability_otp_backend.md`.
+
+## Observability export (`platform-observability-export`)
+
+- **Modules**: `lib/flezha/observability/export/` — `Supervisor`,
+  `PrometheusRegistry`, `PrometheusSink`, `PrometheusHttp`,
+  `OtlpCodec`, `OtlpClient`, `OtlpSink`.
+- **Supervision tree**: `Flezha.Observability.Export.Supervisor` is
+  the last child of `Flezha.Observability.Supervisor`, started AFTER
+  the OTP backend. Registers the declarative
+  `:observability_export` source on init so the exporters'
+  operational events participate in bus fan-out.
+- **Prometheus**: hand-rolled `:gen_tcp` HTTP/1.1 listener (~250
+  LOC, no Cowboy/Plug) at default `127.0.0.1:9568/metrics`. Accepts
+  only `GET /metrics` and `GET /`; everything else returns 404 / 405
+  / 400. Type inferred from `Signal.measurements` keys (`:count` →
+  counter, `:value`/`:gauge` → gauge, `:duration_us`/`:bytes` →
+  histogram); `metadata.prometheus_type` overrides. Cardinality
+  enforcement aggregates over-budget label values into a synthetic
+  `{__truncated__="true"}` series and emits
+  `:prometheus_label_truncated` events.
+- **OTLP**: OTLP/HTTP via `:mint` (top-level dep, was transitive
+  via `:mint_web_socket`). Hand-rolled protobuf encoder in
+  `OtlpCodec` matches OpenTelemetry v1 schema for metrics / logs /
+  traces. Batched with size + time triggers (`:otlp_batch_max` 512,
+  `:otlp_flush_interval_ms` 10s). Overflow policy `:block` —
+  producer back-pressure during OTLP outages, bounded by
+  `mailbox_watermark × sum-of-backoffs`. Backoff: 250/500/1000/2000/4000
+  ms, max 5 attempts.
+- **Runtime config knobs**: `:observability_export` map with
+  `:prometheus_enabled` (default `false`), `:prometheus_port`
+  (`9568`), `:prometheus_bind` (`"127.0.0.1"`), `:otlp_enabled`
+  (`false`), `:otlp_endpoint`, `:otlp_headers` (map for bearer
+  tokens), `:otlp_flush_interval_ms`, `:otlp_batch_max`. Env-var
+  overrides: `FLEZHA_PROMETHEUS_ENABLED`, `FLEZHA_PROMETHEUS_PORT`,
+  `FLEZHA_OTLP_ENABLED`, `FLEZHA_OTLP_ENDPOINT`.
+- **Registry extension**: `Flezha.Observability.Registry.register_external_sink/1`
+  lets exporters register a sink whose pid is owned by a different
+  supervisor — required because `Export.Supervisor` owns the
+  Prometheus and OTLP sinks, not the foundation `SinkSupervisor`.
+- **Detailed notes**: `docs/observability_export.md`.

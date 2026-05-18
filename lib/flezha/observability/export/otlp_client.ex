@@ -1,0 +1,263 @@
+defmodule Flezha.Observability.Export.OtlpClient do
+  @moduledoc """
+  HTTP/1.1 client wrapping `:mint` for OTLP/HTTP POSTs.
+
+  Maintains a single connection to the configured `:otlp_endpoint`;
+  reconnects on disconnect. Supports plain HTTP and TLS (verified
+  against the system CA store).
+
+  Applies bounded exponential backoff on transient failures
+  (`5xx`, `:econnrefused`, `:timeout`) per proposal D8: 250 ms, 500,
+  1_000, 2_000, 4_000 (cap), max 5 attempts. Sets
+  `Content-Type: application/x-protobuf` on every request and
+  injects any configured `:otlp_headers`.
+  """
+
+  use GenServer
+
+  require Logger
+
+  @backoffs_ms [250, 500, 1_000, 2_000, 4_000]
+  @max_attempts 5
+
+  # ---------- Public API ----------
+
+  def child_spec(opts) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker,
+      restart: :permanent
+    }
+  end
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  @doc """
+  POST an OTLP/HTTP request to the configured endpoint's signal path.
+  `kind` is `:metrics | :logs | :traces`. Returns `{:ok, status}` or
+  `{:error, reason}` after exhausting the backoff schedule.
+  """
+  @spec post(:metrics | :logs | :traces, iodata()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def post(kind, body) do
+    case Process.whereis(__MODULE__) do
+      pid when is_pid(pid) ->
+        GenServer.call(pid, {:post, kind, IO.iodata_to_binary(body)}, 60_000)
+
+      _ ->
+        {:error, :client_not_running}
+    end
+  end
+
+  @doc false
+  @spec backoff_schedule() :: [pos_integer()]
+  def backoff_schedule(), do: @backoffs_ms
+
+  # ---------- GenServer ----------
+
+  @impl true
+  def init(_opts) do
+    {:ok,
+     %{
+       conn: nil,
+       endpoint: load_endpoint(),
+       headers: load_headers()
+     }}
+  end
+
+  @impl true
+  def handle_call({:post, kind, body}, _from, state) do
+    {result, state} = do_post_with_retry(state, kind, body, 0)
+    {:reply, result, state}
+  end
+
+  defp do_post_with_retry(state, kind, body, attempts) when attempts < @max_attempts do
+    case attempt_post(state, kind, body) do
+      {{:ok, status}, state} when status < 500 ->
+        {{:ok, status}, state}
+
+      {{:ok, _status}, state} ->
+        backoff(attempts)
+        do_post_with_retry(close_conn(state), kind, body, attempts + 1)
+
+      {{:error, reason}, state} when reason in [:closed, :timeout, :econnrefused] ->
+        backoff(attempts)
+        do_post_with_retry(close_conn(state), kind, body, attempts + 1)
+
+      {{:error, _} = err, state} ->
+        # Non-transient error — give up early.
+        {err, state}
+    end
+  end
+
+  defp do_post_with_retry(state, _kind, _body, _attempts),
+    do: {{:error, :retries_exhausted}, state}
+
+  defp attempt_post(state, kind, body) do
+    case state.endpoint do
+      nil ->
+        {{:error, :no_endpoint_configured}, state}
+
+      endpoint ->
+        {scheme, host, port, base_path} = endpoint
+
+        path = signal_path(base_path, kind)
+
+        with {:ok, state} <- ensure_conn(state, scheme, host, port),
+             {:ok, state, status} <- send_request(state, path, body) do
+          {{:ok, status}, state}
+        else
+          {:error, reason} -> {{:error, reason}, state}
+          {:error, reason, state2} -> {{:error, reason}, state2}
+        end
+    end
+  end
+
+  defp signal_path(base, :metrics), do: ensure_suffix(base, "/v1/metrics")
+  defp signal_path(base, :logs), do: ensure_suffix(base, "/v1/logs")
+  defp signal_path(base, :traces), do: ensure_suffix(base, "/v1/traces")
+
+  defp ensure_suffix("", suffix), do: suffix
+  defp ensure_suffix("/", suffix), do: suffix
+
+  defp ensure_suffix(base, suffix) do
+    if String.ends_with?(base, suffix), do: base, else: base <> suffix
+  end
+
+  defp ensure_conn(%{conn: conn} = state, scheme, host, port) when not is_nil(conn) do
+    case Mint.HTTP.open?(conn) do
+      true -> {:ok, state}
+      false -> open_new(state, scheme, host, port)
+    end
+  end
+
+  defp ensure_conn(state, scheme, host, port), do: open_new(state, scheme, host, port)
+
+  defp open_new(state, scheme, host, port) do
+    case Mint.HTTP.connect(scheme, host, port) do
+      {:ok, conn} -> {:ok, %{state | conn: conn}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp send_request(%{conn: conn, headers: extra} = state, path, body) do
+    headers =
+      [{"content-type", "application/x-protobuf"}] ++
+        Enum.map(extra, fn {k, v} -> {to_string(k), to_string(v)} end)
+
+    case Mint.HTTP.request(conn, "POST", path, headers, body) do
+      {:ok, conn, ref} ->
+        case recv_response(conn, ref, 10_000) do
+          {:ok, conn, status} -> {:ok, %{state | conn: conn}, status}
+          {:error, reason, conn} -> {:error, reason, %{state | conn: conn}}
+        end
+
+      {:error, conn, reason} ->
+        {:error, reason, %{state | conn: conn}}
+    end
+  end
+
+  defp recv_response(conn, ref, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    recv_loop(conn, ref, deadline, nil)
+  end
+
+  defp recv_loop(conn, ref, deadline, status_acc) do
+    timeout = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      message ->
+        case Mint.HTTP.stream(conn, message) do
+          {:ok, conn, responses} ->
+            {status_acc, done?} = drain_responses(responses, ref, status_acc, false)
+
+            if done? do
+              {:ok, conn, status_acc || 0}
+            else
+              recv_loop(conn, ref, deadline, status_acc)
+            end
+
+          {:error, conn, reason, _responses} ->
+            {:error, reason, conn}
+
+          :unknown ->
+            recv_loop(conn, ref, deadline, status_acc)
+        end
+    after
+      timeout ->
+        {:error, :timeout, conn}
+    end
+  end
+
+  defp drain_responses([], _ref, status, done?), do: {status, done?}
+
+  defp drain_responses([{:status, ref, code} | rest], ref, _status, _done) do
+    drain_responses(rest, ref, code, false)
+  end
+
+  defp drain_responses([{:headers, ref, _h} | rest], ref, status, done) do
+    drain_responses(rest, ref, status, done)
+  end
+
+  defp drain_responses([{:data, ref, _body} | rest], ref, status, done) do
+    drain_responses(rest, ref, status, done)
+  end
+
+  defp drain_responses([{:done, ref} | rest], ref, status, _done) do
+    drain_responses(rest, ref, status, true)
+  end
+
+  defp drain_responses([_other | rest], ref, status, done) do
+    drain_responses(rest, ref, status, done)
+  end
+
+  defp close_conn(%{conn: nil} = state), do: state
+
+  defp close_conn(%{conn: conn} = state) do
+    _ = Mint.HTTP.close(conn)
+    %{state | conn: nil}
+  end
+
+  defp backoff(attempt) do
+    Enum.at(@backoffs_ms, attempt, 4_000)
+    |> Process.sleep()
+  end
+
+  defp load_endpoint() do
+    case Application.get_env(:flezha, :observability_export, []) |> Keyword.get(:otlp_endpoint) do
+      nil ->
+        nil
+
+      "" ->
+        nil
+
+      url ->
+        parse_url(url)
+    end
+  end
+
+  defp load_headers() do
+    Application.get_env(:flezha, :observability_export, [])
+    |> Keyword.get(:otlp_headers, %{})
+    |> Map.to_list()
+  end
+
+  defp parse_url(url) do
+    uri = URI.parse(url)
+    scheme = if uri.scheme in ["https", "https://"], do: :https, else: :http
+
+    port =
+      cond do
+        is_integer(uri.port) -> uri.port
+        scheme == :https -> 443
+        true -> 80
+      end
+
+    host = uri.host || "127.0.0.1"
+    path = uri.path || ""
+    {scheme, host, port, path}
+  end
+end

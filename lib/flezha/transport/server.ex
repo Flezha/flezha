@@ -49,6 +49,41 @@ defmodule Flezha.Transport.Server do
   def name(:quic), do: :"#{__MODULE__}.Quic"
 
   @doc """
+  List configured transports that are currently up.
+  """
+  @spec list_active_transports() :: [:uds | :quic]
+  def list_active_transports() do
+    Application.get_env(:flezha, :transports, [:uds])
+    |> Enum.filter(fn t ->
+      case Process.whereis(name(t)) do
+        pid when is_pid(pid) -> Process.alive?(pid)
+        _ -> false
+      end
+    end)
+  end
+
+  @doc """
+  Snapshot stats for a single transport. Returns a map carrying
+  `:pending_streams` (count of accepted-but-not-yet-bound streams)
+  and `:status` (`:up | :down`). Returns `{:error, :not_running}` if
+  the server is not alive.
+  """
+  @spec get_stats(:uds | :quic) :: {:ok, map()} | {:error, :not_running}
+  def get_stats(transport) when transport in [:uds, :quic] do
+    case Process.whereis(name(transport)) do
+      pid when is_pid(pid) ->
+        try do
+          GenServer.call(pid, :get_stats, 1_000)
+        catch
+          :exit, _ -> {:error, :not_running}
+        end
+
+      _ ->
+        {:error, :not_running}
+    end
+  end
+
+  @doc """
   Stop every configured transport server. Used by
   `Flezha.Shutdown.Coordinator` during the finalise phase so transport
   sockets/QUIC endpoints are closed before the application supervision
@@ -69,6 +104,17 @@ defmodule Flezha.Transport.Server do
         end
       end
     end)
+  end
+
+  @impl true
+  def handle_call(:get_stats, _from, state) do
+    stats = %{
+      transport: state.transport,
+      status: :up,
+      pending_streams: map_size(state.pending_streams || %{})
+    }
+
+    {:reply, {:ok, stats}, state}
   end
 
   @impl true

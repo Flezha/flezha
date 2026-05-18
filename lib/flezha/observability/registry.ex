@@ -129,6 +129,20 @@ defmodule Flezha.Observability.Registry do
     GenServer.call(__MODULE__, {:register_sink, entry})
   end
 
+  @doc """
+  Register a sink whose GenServer is owned by a different supervisor
+  (e.g. the export subtree). The caller passes its own `pid`; the
+  registry inserts the ETS row and the Bus then routes signals to
+  that pid. Used by exporters that need to live under
+  `Flezha.Observability.Export.Supervisor` rather than the foundation's
+  generic `SinkSupervisor`.
+  """
+  @spec register_external_sink(map()) :: :ok
+  def register_external_sink(%{name: name, module: _module, pid: pid} = entry)
+      when is_atom(name) and is_pid(pid) do
+    GenServer.call(__MODULE__, {:register_external_sink, entry})
+  end
+
   @spec unregister_sink(atom()) :: :ok
   def unregister_sink(name) when is_atom(name) do
     GenServer.call(__MODULE__, {:unregister_sink, name})
@@ -314,6 +328,25 @@ defmodule Flezha.Observability.Registry do
 
   def handle_call({:register_sink, entry}, _from, state) do
     {:reply, do_register_sink(entry), state}
+  end
+
+  def handle_call({:register_external_sink, entry}, _from, state) do
+    counters_ref = :counters.new(sink_counter_slots(), [:atomics])
+
+    row = %{
+      name: entry.name,
+      module: entry.module,
+      config: Map.get(entry, :config, %{}),
+      filter: Map.get(entry, :filter, %{kinds: :any, sources: :any}),
+      overflow: Map.get(entry, :overflow, :drop),
+      mailbox_high_watermark: Map.get(entry, :mailbox_high_watermark, 10_000),
+      block_timeout_ms: Map.get(entry, :block_timeout_ms, 5_000),
+      pid: entry.pid,
+      counters: counters_ref
+    }
+
+    :ets.insert(@sinks, {entry.name, row})
+    {:reply, :ok, state}
   end
 
   def handle_call({:unregister_sink, name}, _from, state) do

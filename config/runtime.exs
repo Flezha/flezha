@@ -200,6 +200,51 @@ config :flezha,
   ]
 
 # ------------------------------------------------------------------------------------------------
+# OTP backend + export config (platform-observability-otp-and-export).
+#
+# Skipped in :test so test fixtures can disable the built-in pollers
+# and exporters from `config/test.exs`. Both exporters are OFF by
+# default in prod; turning OTLP on adopts the :block overflow policy
+# (producer back-pressure during OTLP outages, bounded by the
+# configured retry window). See `docs/observability_export.md`.
+if config_env() != :test do
+  config :flezha, :observability,
+    otp_backend_enabled: true,
+    otp_backend: [
+      poll_intervals: %{
+        beam_vm: 1_000,
+        host: 5_000,
+        processhub: 1_000,
+        flezha_transport: 1_000,
+        flezha_bounded_mailbox: 1_000
+      }
+    ]
+
+  prometheus_enabled? =
+    case System.get_env("FLEZHA_PROMETHEUS_ENABLED") do
+      nil -> false
+      val -> String.downcase(val) in ["1", "true", "yes", "on"]
+    end
+
+  otlp_enabled? =
+    case System.get_env("FLEZHA_OTLP_ENABLED") do
+      nil -> false
+      val -> String.downcase(val) in ["1", "true", "yes", "on"]
+    end
+
+  config :flezha,
+         :observability_export,
+         prometheus_enabled: prometheus_enabled?,
+         prometheus_port: System.get_env("FLEZHA_PROMETHEUS_PORT", "9568") |> String.to_integer(),
+         prometheus_bind: System.get_env("FLEZHA_PROMETHEUS_BIND", "127.0.0.1"),
+         otlp_enabled: otlp_enabled?,
+         otlp_endpoint: System.get_env("FLEZHA_OTLP_ENDPOINT"),
+         otlp_headers: %{},
+         otlp_flush_interval_ms: 10_000,
+         otlp_batch_max: 512
+end
+
+# ------------------------------------------------------------------------------------------------
 # Installable plugin installer keyword list (env-var driven). Only set when
 # any of the FLEZHA_PLUGIN_* vars are present so the compile-time defaults
 # from `config/config.exs` win otherwise. The parse logic lives in

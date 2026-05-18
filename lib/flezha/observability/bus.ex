@@ -130,8 +130,16 @@ defmodule Flezha.Observability.Bus do
          %{pid: pid, overflow: :block, block_timeout_ms: timeout},
          signal
        ) do
-    _ = GenServer.call(pid, {:signal, signal}, timeout)
-    :ok
+    # A sink that emits a signal of its own (e.g. OTLP exporter
+    # publishing its `:otlp_batch_dropped` event) must not block on
+    # itself — that would deadlock. Fall back to an async cast.
+    if pid == self() do
+      send(pid, {:signal, signal})
+      :ok
+    else
+      _ = GenServer.call(pid, {:signal, signal}, timeout)
+      :ok
+    end
   end
 
   defp mailbox_full?(pid, watermark) do

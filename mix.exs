@@ -103,7 +103,10 @@ defmodule Flezha.MixProject do
       {:logger_backends, "~> 1.0"},
       {:rustler, "~> 0.35"},
       {:recon, "~> 2.5"},
-      {:phoenix_pubsub, "~> 2.1"}
+      {:phoenix_pubsub, "~> 2.1"},
+      # Hoisted to a top-level dep (already transitively present via
+      # :mint_web_socket) so the OTLP exporter calls Mint directly.
+      {:mint, "~> 1.7"}
     ]
   end
 

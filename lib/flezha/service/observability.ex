@@ -47,6 +47,38 @@ defmodule Flezha.Service.Observability do
     end
   end
 
+  @doc """
+  Stream live signals for a single source to the caller process.
+
+  Subscribes to the foundation's `PubSubSink` topic for `source` and
+  forwards `{:flezha_signal, signal}` messages to the caller. The
+  caller is responsible for receiving and unsubscribing on shutdown.
+
+  Returns `{:error, :pubsub_sink_disabled}` if the PubSub sink is
+  not enabled (it cannot stream without the underlying broadcast).
+  """
+  @spec tail(atom(), caller_context()) :: :ok | {:error, term()}
+  def tail(source, caller_context) when is_atom(source) do
+    with :ok <- check_enabled(),
+         :ok <- validate_caller(caller_context),
+         :ok <- check_pubsub_sink() do
+      emit_audit(:tail, caller_context, %{source: source})
+      Observability.subscribe(source)
+    end
+  end
+
+  defp check_pubsub_sink() do
+    enabled? =
+      Application.get_env(:flezha, :observability, [])
+      |> Keyword.get(:pubsub_sink_enabled, true)
+
+    if enabled? do
+      :ok
+    else
+      {:error, :pubsub_sink_disabled}
+    end
+  end
+
   # ---------- Reads ----------
 
   @spec query(query_params(), caller_context()) ::

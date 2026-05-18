@@ -2,6 +2,7 @@ mod boot;
 mod controller;
 mod executor;
 mod namespace;
+mod observe;
 mod plugin;
 mod relay;
 mod reset;
@@ -28,6 +29,7 @@ fn main() {
         "boot" => boot::handle_boot_command(&args[2..]),
         "state" => state::handle_state_command(&args[2..]),
         "reset" => reset::handle_reset_command(&args[2..]),
+        "observe" => observe::handle_observe_command(&args[2..]),
         "help" | "--help" | "-h" => print_help(),
         _ => {
             eprintln!("Error: Unknown command '{}'", args[1]);
@@ -52,6 +54,7 @@ fn print_help() {
     println!("    boot           Boot/recovery status, await, and legacy snapshot import");
     println!("    state          Per-Partition state queries (time-travel, retention, list)");
     println!("    reset          Clear Controller durable runtime data on disk (controller must be stopped)");
+    println!("    observe        Observability foundation inspection (sources, sinks, tail)");
     println!("    help           Show this help message");
     println!();
     println!("Use 'flz <COMMAND> help' for more information on a specific command.");

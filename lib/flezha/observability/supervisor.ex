@@ -38,6 +38,9 @@ defmodule Flezha.Observability.Supervisor do
     TelemetryBridge
   }
 
+  alias Flezha.Observability.Export.Supervisor, as: ExportSupervisor
+  alias Flezha.Observability.OtpBackend.Supervisor, as: OtpBackendSupervisor
+
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -55,7 +58,9 @@ defmodule Flezha.Observability.Supervisor do
           SourceSupervisor,
           LoggerHandler,
           TelemetryBridge,
-          DefaultSinks
+          DefaultSinks,
+          OtpBackendSupervisor,
+          ExportSupervisor
         ]
       else
         []

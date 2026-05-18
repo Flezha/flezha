@@ -18,7 +18,30 @@ config :flezha,
     ring_buffer_max_entries_per_source: 10_000,
     overflow_policy: :drop,
     cardinality_budget_per_source: 1_000,
-    pubsub_sink_enabled: false
+    pubsub_sink_enabled: false,
+    # Built-in pollers are off by default in tests so unrelated test
+    # modules don't pick up cross-test BEAM/host samples. Tests that
+    # exercise the OTP backend opt in via Application.put_env/3.
+    otp_backend_enabled: false,
+    otp_backend: [
+      poll_intervals: %{
+        beam_vm: 1_000,
+        host: 5_000,
+        processhub: 1_000,
+        flezha_transport: 1_000,
+        flezha_bounded_mailbox: 1_000
+      }
+    ]
+  ],
+  observability_export: [
+    prometheus_enabled: false,
+    prometheus_port: 9568,
+    prometheus_bind: "127.0.0.1",
+    otlp_enabled: false,
+    otlp_endpoint: nil,
+    otlp_headers: %{},
+    otlp_flush_interval_ms: 10_000,
+    otlp_batch_max: 512
   ],
   # Tests bring up their own executors and relays — auto-recovery would
   # trigger replay against a not-yet-connected executor, cascading the
