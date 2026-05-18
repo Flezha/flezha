@@ -28,6 +28,10 @@ defmodule Flezha.Integration.RustStatePersistenceTest do
 
   @moduletag :integration
   @moduletag :rust_state_persistence
+  # Each test shells out to `cargo test`. On a cold CI runner the
+  # compile of the test binaries alone can exceed ExUnit's 60s
+  # default timeout even when the workflow pre-builds with --no-run.
+  @moduletag timeout: 300_000
 
   test "rust state-persistence library tests pass" do
     {output, status} =

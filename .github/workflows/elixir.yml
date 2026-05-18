@@ -133,6 +133,18 @@ jobs:
             --manifest-path=test/apps/rust_executor/Cargo.toml \
             --target-dir=./target
 
+      - name: Pre-build flezha_executor test binaries
+        # `test/test_files/integration/rust_state_persistence_test.exs`
+        # shells out to `cargo test --features bench-internals -p
+        # flezha_executor --lib|--tests` from the repo root. ExUnit's
+        # default 60s per-test timeout is shorter than a cold
+        # integration-test compile, so build the test binaries up front
+        # with `--no-run`.
+        run: |
+          cargo test --no-run --quiet \
+            -p flezha_executor --features bench-internals \
+            --lib --tests
+
       - name: Run mix test
         # Default `mix test` excludes `:system` and `:java_sdk`. The
         # `:java_sdk` integration matrix runs in `java-sdk.yml` because it
