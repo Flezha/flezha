@@ -171,13 +171,21 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
       case Registry.select(ProducerSup.registry_name(), [{pattern, [], [:"$$"]}]) do
         [[topic, partition, pid] | _] ->
-          stats =
-            pid
-            |> ProducerWorker.stats()
-            |> Map.put(:topic, topic)
-            |> Map.put(:partition, partition)
+          # The Registry entry is unregistered asynchronously when the
+          # worker exits, so we may see a stale pid here for a brief
+          # window after `ProducerSup.stop_worker/3`.
+          try do
+            stats =
+              pid
+              |> ProducerWorker.stats()
+              |> Map.put(:topic, topic)
+              |> Map.put(:partition, partition)
 
-          {:ok, stats}
+            {:ok, stats}
+          catch
+            :exit, {:noproc, _} -> {:error, :no_producer}
+            :exit, {:normal, _} -> {:error, :no_producer}
+          end
 
         [] ->
           {:error, :no_producer}
@@ -193,11 +201,16 @@ defmodule Flezha.Plugin.Provider.Kafka do
     def stats(plugin_id, topic, partition) do
       case Registry.lookup(ProducerSup.registry_name(), {plugin_id, topic, partition}) do
         [{pid, _}] ->
-          {:ok,
-           pid
-           |> ProducerWorker.stats()
-           |> Map.put(:topic, topic)
-           |> Map.put(:partition, partition)}
+          try do
+            {:ok,
+             pid
+             |> ProducerWorker.stats()
+             |> Map.put(:topic, topic)
+             |> Map.put(:partition, partition)}
+          catch
+            :exit, {:noproc, _} -> {:error, :no_producer}
+            :exit, {:normal, _} -> {:error, :no_producer}
+          end
 
         [] ->
           {:error, :no_producer}
