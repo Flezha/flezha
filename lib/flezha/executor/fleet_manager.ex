@@ -383,7 +383,11 @@ defmodule Flezha.Executor.FleetManager do
           )
 
           try do
-            GenServer.call(pid, {:executor_migrate, new_ce_id})
+            # Bounded timeout (< 5s default of the outer Transport.Server
+            # call into FleetManager.connect_handler) so a relay that is
+            # itself calling back into FleetManager cannot deadlock the
+            # new-executor path.
+            GenServer.call(pid, {:executor_migrate, new_ce_id}, 2_000)
             HubManager.relay_set_executor(namespace, relay_id, new_ce_id)
           catch
             :exit, exit_reason ->
@@ -467,8 +471,21 @@ defmodule Flezha.Executor.FleetManager do
     new_executor = Enum.random(available_executors)
 
     HubManager.executor_relays(namespace, old_executor)
-    |> Enum.each(fn {_relay_id, [{_node, relay_pid}]} ->
-      GenServer.call(relay_pid, {:executor_migrate, new_executor})
+    |> Enum.each(fn {relay_id, [{_node, relay_pid}]} ->
+      # Bounded timeout (< 5s default of the outer Transport.Server /
+      # ControlChannel call into FleetManager) so a relay that is
+      # itself calling back into FleetManager cannot deadlock the
+      # disconnect path. The relay will be migrated on its next
+      # bind/rebind attempt.
+      try do
+        GenServer.call(relay_pid, {:executor_migrate, new_executor}, 2_000)
+      catch
+        :exit, reason ->
+          Logger.warning(
+            "[FleetManager] executor_migrate timed out for relay #{relay_id} " <>
+              "(old=#{old_executor} → new=#{new_executor}): #{inspect(reason)}"
+          )
+      end
     end)
 
     HubManager.executor_switch(namespace, old_executor, new_executor)
