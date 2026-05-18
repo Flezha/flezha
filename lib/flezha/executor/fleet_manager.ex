@@ -466,9 +466,22 @@ defmodule Flezha.Executor.FleetManager do
   defp executor_reroute(state, namespace, old_executor, available_executors) do
     new_executor = Enum.random(available_executors)
 
+    # Issue per-relay executor_migrate from short-lived Tasks. A relay
+    # that is itself calling back into FleetManager (e.g. a freshly
+    # started `Overwatch` blocked in `handle_continue :bind_executor`
+    # on `:executors_for_factory`) would otherwise deadlock with the
+    # disconnect path: FleetManager waits on the relay, the relay
+    # waits on FleetManager, both die at the 5s timeout. The reply is
+    # discarded — Overwatch updates its own state inside the call.
     HubManager.executor_relays(namespace, old_executor)
     |> Enum.each(fn {_relay_id, [{_node, relay_pid}]} ->
-      GenServer.call(relay_pid, {:executor_migrate, new_executor})
+      Task.start(fn ->
+        try do
+          GenServer.call(relay_pid, {:executor_migrate, new_executor})
+        catch
+          :exit, _ -> :ok
+        end
+      end)
     end)
 
     HubManager.executor_switch(namespace, old_executor, new_executor)
