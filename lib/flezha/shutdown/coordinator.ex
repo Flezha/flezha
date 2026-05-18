@@ -147,7 +147,10 @@ defmodule Flezha.Shutdown.Coordinator do
     timeout_ms = Keyword.get(opts, :timeout_ms, configured_timeout_ms())
     now = monotonic_ms()
 
-    emit_telemetry(:requested, %{}, %{reason: reason, timestamp_ms: System.system_time(:millisecond)})
+    emit_telemetry(:requested, %{}, %{
+      reason: reason,
+      timestamp_ms: System.system_time(:millisecond)
+    })
 
     state = %{
       state
@@ -313,6 +316,7 @@ defmodule Flezha.Shutdown.Coordinator do
 
   def handle_info(:do_finalise, %__MODULE__{phase: :finalising} = state) do
     now = monotonic_ms()
+    safe_close_audit_writer()
     safe_flush_fsync_batcher()
     safe_stop_transports()
     duration_ms = monotonic_ms() - now
@@ -327,9 +331,7 @@ defmodule Flezha.Shutdown.Coordinator do
       when phase in [:quiescing, :draining] do
     still_local = Enum.flat_map(state.captured_local, fn {_ns, ids} -> ids end)
 
-    Logger.error(
-      "[shutdown] timeout phase=#{phase} still_local=#{length(still_local)}"
-    )
+    Logger.error("[shutdown] timeout phase=#{phase} still_local=#{length(still_local)}")
 
     emit_telemetry(:timeout, %{}, %{phase: external_phase(phase), still_local: still_local})
 
@@ -372,9 +374,7 @@ defmodule Flezha.Shutdown.Coordinator do
     duration_ms = monotonic_ms() - state.start_ms
     outcome_tag = outcome_tag(outcome, state)
 
-    Logger.info(
-      "[shutdown] complete duration_ms=#{duration_ms} outcome=#{outcome_tag}"
-    )
+    Logger.info("[shutdown] complete duration_ms=#{duration_ms} outcome=#{outcome_tag}")
 
     emit_telemetry(
       :complete,
@@ -489,6 +489,20 @@ defmodule Flezha.Shutdown.Coordinator do
       :exit, reason ->
         Logger.warning("[shutdown] stop_hub_manager exit: #{inspect(reason)}")
         :ok
+    end
+  end
+
+  defp safe_close_audit_writer() do
+    if Process.whereis(Flezha.Observability.AuditLog.Writer) do
+      try do
+        Flezha.Observability.AuditLog.Writer.close(@finalise_call_timeout_ms)
+      catch
+        :exit, reason ->
+          Logger.warning("[shutdown] audit_log writer close exit: #{inspect(reason)}")
+          :ok
+      end
+    else
+      :ok
     end
   end
 

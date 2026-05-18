@@ -197,6 +197,36 @@ config :flezha,
     overflow_policy: :drop,
     cardinality_budget_per_source: 1_000,
     pubsub_sink_enabled: true
+  ],
+  # ------------------------------------------------------------------------------------------------
+  # Durable audit log (platform-audit-log).
+  #
+  # Operator opt-in: default OFF. When enabled the audit-log subsystem
+  # subscribes to a configurable allow-list of `(source, name)` pairs
+  # on the foundation bus and writes one JSON Lines record per
+  # accepted signal to `:dir/audit-current.jsonl`. See
+  # `docs/audit_log.md` for the on-disk layout, rotation/retention
+  # policies, and CLI verbs.
+  audit_log: [
+    enabled:
+      case System.get_env("FLEZHA_AUDIT_ENABLED") do
+        nil -> false
+        val -> String.downcase(val) in ["1", "true", "yes", "on"]
+      end,
+    dir: System.get_env("FLEZHA_AUDIT_DIR", "app_data/audit"),
+    max_file_bytes: 67_108_864,
+    max_file_age_seconds: 86_400,
+    retention_seconds:
+      case System.get_env("FLEZHA_AUDIT_RETENTION_DAYS") do
+        nil -> 30 * 86_400
+        val -> String.to_integer(val) * 86_400
+      end,
+    max_total_bytes: 4_294_967_296,
+    fsync_mode: :per_record,
+    fsync_interval_ms: 100,
+    rotation_check_interval_ms: 60_000,
+    retention_check_interval_ms: 3_600_000,
+    extra_subscriptions: []
   ]
 
 # ------------------------------------------------------------------------------------------------

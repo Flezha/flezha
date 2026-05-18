@@ -1,0 +1,129 @@
+defmodule Flezha.Observability.AuditLog.Codec do
+  @moduledoc """
+  Encode / decode an audit log record.
+
+  Each record is a single UTF-8 JSON object on its own line, terminated
+  by `\\n`. Top-level field order is stable:
+  `ts_us, ts_iso, source, name, measurements, metadata, caller`.
+
+  `caller` is denormalised from `metadata.caller_source`,
+  `metadata.principal`, and `metadata.request_id` so a reader does not
+  need to know the metadata convention to identify the actor. A
+  missing `:principal` renders as JSON `null`, not absent.
+
+  `:ts` on a `Flezha.Observability.Signal` is `System.monotonic_time(:microsecond)`;
+  the `:ts_iso` field is computed via a process-wide cached
+  `System.time_offset/0` so wall-clock derivation is fast and does
+  not drift mid-run.
+  """
+
+  alias Flezha.Observability.Signal
+
+  @offset_key {__MODULE__, :time_offset_native}
+
+  @doc """
+  Encode a `Signal.t()` to a binary line ending in `\\n`.
+  """
+  @spec encode(Signal.t()) :: binary()
+  def encode(%Signal{} = signal) do
+    ts_us = signal.ts
+    ts_iso = iso_from_monotonic(ts_us)
+    caller = build_caller(signal.metadata)
+
+    ordered = [
+      {"ts_us", ts_us},
+      {"ts_iso", ts_iso},
+      {"source", Atom.to_string(signal.source)},
+      {"name", Atom.to_string(signal.name)},
+      {"measurements", stringify_map(signal.measurements)},
+      {"metadata", stringify_map(signal.metadata)},
+      {"caller", caller}
+    ]
+
+    inner =
+      ordered
+      |> Enum.map_join(",", fn {k, v} ->
+        Jason.encode!(k) <> ":" <> Jason.encode!(v)
+      end)
+
+    "{" <> inner <> "}\n"
+  end
+
+  @doc """
+  Decode a binary line (with or without trailing `\\n`) into a map
+  with string keys. Returns `{:ok, map}` or `{:error, reason}`.
+  """
+  @spec decode(binary()) :: {:ok, map()} | {:error, term()}
+  def decode(line) when is_binary(line) do
+    trimmed = String.trim_trailing(line, "\n")
+
+    case Jason.decode(trimmed) do
+      {:ok, %{} = map} -> {:ok, map}
+      {:ok, _} -> {:error, :not_an_object}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Map a monotonic microsecond timestamp to ISO-8601 UTC with
+  millisecond precision. The monotonic→system offset is cached in the
+  process dictionary on first call to avoid mid-run drift.
+  """
+  @spec iso_from_monotonic(integer()) :: String.t()
+  def iso_from_monotonic(ts_us) when is_integer(ts_us) do
+    offset_us = cached_offset_us()
+    system_us = ts_us + offset_us
+    {:ok, dt} = DateTime.from_unix(system_us, :microsecond)
+
+    ms = div(elem(dt.microsecond, 0), 1_000)
+    dt = %{dt | microsecond: {ms * 1_000, 3}}
+    iso = DateTime.to_iso8601(dt)
+
+    # DateTime.to_iso8601/1 emits `+00:00` for UTC; the spec requires `Z`.
+    String.replace(iso, "+00:00", "Z")
+  end
+
+  defp cached_offset_us() do
+    case Process.get(@offset_key) do
+      nil ->
+        offset_native = System.time_offset()
+        offset_us = System.convert_time_unit(offset_native, :native, :microsecond)
+        Process.put(@offset_key, offset_us)
+        offset_us
+
+      cached ->
+        cached
+    end
+  end
+
+  defp build_caller(metadata) when is_map(metadata) do
+    %{
+      "source" => atom_or_string(Map.get(metadata, :caller_source)),
+      "principal" => Map.get(metadata, :principal),
+      "request_id" => Map.get(metadata, :request_id)
+    }
+  end
+
+  defp atom_or_string(nil), do: nil
+  defp atom_or_string(a) when is_atom(a), do: Atom.to_string(a)
+  defp atom_or_string(other), do: other
+
+  defp stringify_map(map) when is_map(map) do
+    Enum.into(map, %{}, fn {k, v} ->
+      {stringify_key(k), stringify_value(v)}
+    end)
+  end
+
+  defp stringify_key(k) when is_atom(k), do: Atom.to_string(k)
+  defp stringify_key(k) when is_binary(k), do: k
+  defp stringify_key(k), do: inspect(k)
+
+  defp stringify_value(v)
+       when is_binary(v) or is_number(v) or is_boolean(v) or is_nil(v),
+       do: v
+
+  defp stringify_value(v) when is_atom(v), do: Atom.to_string(v)
+  defp stringify_value(v) when is_list(v), do: Enum.map(v, &stringify_value/1)
+  defp stringify_value(%{} = v) when not is_struct(v), do: stringify_map(v)
+  defp stringify_value(v), do: inspect(v)
+end

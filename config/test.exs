@@ -33,6 +33,22 @@ config :flezha,
       }
     ]
   ],
+  # Audit log: OFF by default in tests so no app_data/audit/ directory
+  # is created. Tests that exercise the audit subsystem flip
+  # `:audit_log, :enabled: true` and point `:dir` at a tmp directory.
+  audit_log: [
+    enabled: false,
+    dir: "app_data/audit",
+    max_file_bytes: 67_108_864,
+    max_file_age_seconds: 86_400,
+    retention_seconds: 30 * 86_400,
+    max_total_bytes: 4_294_967_296,
+    fsync_mode: :per_record,
+    fsync_interval_ms: 100,
+    rotation_check_interval_ms: 60_000,
+    retention_check_interval_ms: 3_600_000,
+    extra_subscriptions: []
+  ],
   observability_export: [
     prometheus_enabled: false,
     prometheus_port: 9568,

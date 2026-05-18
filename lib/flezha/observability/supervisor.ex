@@ -38,6 +38,7 @@ defmodule Flezha.Observability.Supervisor do
     TelemetryBridge
   }
 
+  alias Flezha.Observability.AuditLog.Supervisor, as: AuditLogSupervisor
   alias Flezha.Observability.Export.Supervisor, as: ExportSupervisor
   alias Flezha.Observability.OtpBackend.Supervisor, as: OtpBackendSupervisor
 
@@ -60,7 +61,8 @@ defmodule Flezha.Observability.Supervisor do
           TelemetryBridge,
           DefaultSinks,
           OtpBackendSupervisor,
-          ExportSupervisor
+          ExportSupervisor,
+          AuditLogSupervisor
         ]
       else
         []

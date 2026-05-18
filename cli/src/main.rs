@@ -1,3 +1,4 @@
+mod audit;
 mod boot;
 mod controller;
 mod executor;
@@ -30,6 +31,7 @@ fn main() {
         "state" => state::handle_state_command(&args[2..]),
         "reset" => reset::handle_reset_command(&args[2..]),
         "observe" => observe::handle_observe_command(&args[2..]),
+        "audit" => audit::handle_audit_command(&args[2..]),
         "help" | "--help" | "-h" => print_help(),
         _ => {
             eprintln!("Error: Unknown command '{}'", args[1]);
@@ -55,6 +57,7 @@ fn print_help() {
     println!("    state          Per-Partition state queries (time-travel, retention, list)");
     println!("    reset          Clear Controller durable runtime data on disk (controller must be stopped)");
     println!("    observe        Observability foundation inspection (sources, sinks, tail)");
+    println!("    audit          Durable audit log inspection (list, read, tail, stats, rotate)");
     println!("    help           Show this help message");
     println!();
     println!("Use 'flz <COMMAND> help' for more information on a specific command.");
