@@ -51,7 +51,8 @@ defmodule FlezhaTest.Relay.OverwatchPluginSubscribeTest do
     {:reply, :ok, new_state} =
       Overwatch.handle_call({:plugin_subscribe, plugin_id, plugin}, {self(), make_ref()}, state)
 
-    assert_receive {:activate_called, :runtime_subscribe}, 500,
+    assert_receive {:activate_called, :runtime_subscribe},
+                   500,
                    "ProbeProvider.activate/1 was never invoked — runtime plugin enable is " <>
                      "leaving the plugin stuck in :prepared (see Table.bulk_activate doc)"
 
@@ -90,7 +91,8 @@ defmodule FlezhaTest.Relay.OverwatchPluginSubscribeTest do
 
     new_state = Overwatch.alter_handover_state(state, {handover_state, <<>>})
 
-    assert_receive {:activate_called, :handover_rehydrate}, 500,
+    assert_receive {:activate_called, :handover_rehydrate},
+                   500,
                    "ProbeProvider.activate/1 was never invoked after HotSwap handover — " <>
                      "alter_handover_state is leaving rehydrated plugins stuck in :prepared"
 

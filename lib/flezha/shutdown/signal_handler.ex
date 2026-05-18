@@ -56,9 +56,7 @@ defmodule Flezha.Shutdown.SignalHandler do
 
   @impl true
   def handle_continue(:install_signal_handler, %__MODULE__{enabled: false} = state) do
-    Logger.info(
-      "[shutdown] graceful_shutdown_enabled=false; OS signal handlers NOT installed"
-    )
+    Logger.info("[shutdown] graceful_shutdown_enabled=false; OS signal handlers NOT installed")
 
     {:noreply, state}
   end

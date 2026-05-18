@@ -178,9 +178,9 @@ defmodule Flezha.Transport.CertGenerator do
   end
 
   defp attribute_record(:commonName, value) do
-    # AttributeTypeAndValue's `value` field is an OPEN TYPE. OTP 28's
-    # PKIX1Explicit-2009 encoder rejects pre-encoded DER bytes here; pass
-    # the typed value and let the codec encode it.
+    # AttributeTypeAndValue.value is an OPEN TYPE; OTP's PKIX1Explicit
+    # codec dispatches on the type OID and expects the typed value
+    # (X520CommonName CHOICE).
     {:AttributeTypeAndValue, {2, 5, 4, 3}, {:utf8String, value}}
   end
 

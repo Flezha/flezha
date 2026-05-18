@@ -139,9 +139,7 @@ defmodule Flezha.Observability.AuditLog.Writer do
 
         {:error, reason} ->
           if File.exists?(Index.path(dir)) do
-            Logger.warning(
-              "[audit_log.writer] INDEX unreadable (#{inspect(reason)}); rebuilding"
-            )
+            Logger.warning("[audit_log.writer] INDEX unreadable (#{inspect(reason)}); rebuilding")
           end
 
           case Index.rebuild(dir) do
@@ -246,7 +244,9 @@ defmodule Flezha.Observability.AuditLog.Writer do
 
   def handle_call({:unsubscribe_tail, ref}, _from, state) do
     case Map.pop(state.subscribers, ref) do
-      {nil, _} -> {:reply, :ok, state}
+      {nil, _} ->
+        {:reply, :ok, state}
+
       {_pid, rest} ->
         Process.demonitor(ref, [:flush])
         {:reply, :ok, %{state | subscribers: rest}}

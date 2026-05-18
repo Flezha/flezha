@@ -14,7 +14,9 @@ defmodule Flezha.Observability.RegistryTest do
 
   describe "register_source/1" do
     test "registers and lists the source", %{name: name} do
-      assert :ok = Registry.register_source(%{name: name, kinds: [:metric], flavour: :declarative})
+      assert :ok =
+               Registry.register_source(%{name: name, kinds: [:metric], flavour: :declarative})
+
       sources = Registry.list_sources() |> Enum.map(& &1.name)
       assert name in sources
     end

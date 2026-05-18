@@ -68,7 +68,11 @@ fn handle_tail(args: &[String]) {
     }
 
     let source = &args[0];
-    let format = if want_json(&args[1..]) { "json" } else { "text" };
+    let format = if want_json(&args[1..]) {
+        "json"
+    } else {
+        "text"
+    };
 
     let duration_ms = extract_duration_ms(&args[1..]).unwrap_or(30_000);
 
@@ -132,10 +136,7 @@ fn handle_disable(args: &[String]) {
 
 fn run_rpc(rpc: &str) {
     let command = get_flezha_command();
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc)
-        .status();
+    let status = Command::new(command).arg("rpc").arg(rpc).status();
 
     match status {
         Ok(s) if s.success() => {}

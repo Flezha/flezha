@@ -73,8 +73,8 @@ jobs:
       - name: Set up Erlang + Elixir
         uses: erlef/setup-beam@v1
         with:
-          otp-version: "27"
-          elixir-version: "1.17"
+          otp-version: "28"
+          elixir-version: "1.19"
 
       - name: Set up Java 21
         uses: actions/setup-java@v5
@@ -89,9 +89,9 @@ jobs:
           path: |
             deps
             _build
-          key: format-elixir-${{ runner.os }}-otp27-${{ hashFiles('**/mix.lock') }}
+          key: format-elixir-${{ runner.os }}-otp28-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
-            format-elixir-${{ runner.os }}-otp27-
+            format-elixir-${{ runner.os }}-otp28-
 
       - name: Fetch Elixir deps
         run: mix deps.get

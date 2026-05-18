@@ -76,7 +76,11 @@ fn handle_read(args: &[String]) {
     }
 
     let file = &args[0];
-    let format = if want_json(&args[1..]) { "json" } else { "text" };
+    let format = if want_json(&args[1..]) {
+        "json"
+    } else {
+        "text"
+    };
 
     let mut opts = String::new();
 

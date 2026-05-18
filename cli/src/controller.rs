@@ -189,7 +189,10 @@ fn handle_stop(args: &[String]) {
     // the control socket is also the readiness signal).
     if !status.success() && outcome.is_none() {
         if !saw_any_output {
-            eprintln!("error: controller not reachable (rpc exit {:?})", status.code());
+            eprintln!(
+                "error: controller not reachable (rpc exit {:?})",
+                status.code()
+            );
         }
         exit(3);
     }
@@ -330,7 +333,9 @@ fn print_status_help() {
     println!("OUTPUT FIELDS:");
     println!("    shutdown_in_progress       True while quiesce/drain/finalise is running");
     println!("    shutdown_phase             :quiesce | :drain | :finalise | nil");
-    println!("    signal_handler_status      :ok | :degraded (degraded if :os.set_signal/2 unavailable)");
+    println!(
+        "    signal_handler_status      :ok | :degraded (degraded if :os.set_signal/2 unavailable)"
+    );
     println!("    graceful_shutdown_enabled  Configured kill-switch state");
     println!("    graceful_shutdown_timeout_ms  Configured drain timeout");
 }

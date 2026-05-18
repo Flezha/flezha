@@ -34,7 +34,10 @@ defmodule Flezha.Observability.LoggerHandlerTest do
     Logger.warning("hello-observability")
 
     log_signal =
-      receive_until(fn s -> s.kind == :log and s.metadata.message == "hello-observability" end, 500)
+      receive_until(
+        fn s -> s.kind == :log and s.metadata.message == "hello-observability" end,
+        500
+      )
 
     assert log_signal
     assert log_signal.name == :warning

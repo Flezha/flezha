@@ -61,7 +61,9 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTimestampTest do
 
   defp start_worker do
     test_pid = self()
-    {:ok, script_pid} = Agent.start_link(fn -> [{:return, Fakes.ok_response(@topic, @partition)}] end)
+
+    {:ok, script_pid} =
+      Agent.start_link(fn -> [{:return, Fakes.ok_response(@topic, @partition)}] end)
 
     {:ok, pid} =
       GenServer.start_link(ProducerWorker,

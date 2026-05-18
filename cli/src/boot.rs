@@ -110,7 +110,9 @@ fn print_boot_help() {
     println!("    flz boot <COMMAND>");
     println!();
     println!("COMMANDS:");
-    println!("    status                    Print per-namespace recovery state and registry counts");
+    println!(
+        "    status                    Print per-namespace recovery state and registry counts"
+    );
     println!("    await [--timeout SECS]    Block until every namespace hub reports :normal");
     println!("    import-legacy-snapshot <file> [--force]");
     println!("                              Import a legacy `.flz` snapshot into ProcessHub's persistent registry");

@@ -171,6 +171,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
 
     # 5.6: phase transitions :prepared → :running exactly once.
     state = GenServer.call(pid, :get_overwatch_state)
+
     assert Flezha.Plugin.Extension.Table.phase(state.extensions, "transient_plugin") ==
              :running
 

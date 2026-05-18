@@ -20,7 +20,11 @@ defmodule Flezha.Boot.WalTransferTest do
   end
 
   test "query returns last_persisted_seq when WAL exists" do
-    pid = TestHelpers.sample_partition_id("wal_q_" <> Integer.to_string(System.unique_integer([:positive])))
+    pid =
+      TestHelpers.sample_partition_id(
+        "wal_q_" <> Integer.to_string(System.unique_integer([:positive]))
+      )
+
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, srv} = Supervisor.find_or_start(pid)
 

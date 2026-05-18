@@ -60,8 +60,7 @@ defmodule Flezha.Boot.WalTransfer do
             _ -> 0
           end
 
-        {:ok,
-         %{last_persisted_seq: last_seq, wal_path: wal_path, snapshot_paths: snapshot_paths}}
+        {:ok, %{last_persisted_seq: last_seq, wal_path: wal_path, snapshot_paths: snapshot_paths}}
     end
   end
 

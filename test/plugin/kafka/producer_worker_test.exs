@@ -896,10 +896,10 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       # the producer's bookkeeping with their original fields intact.
       in_post =
         :queue.to_list(post.queue) ++
-          (case post.in_flight do
-             nil -> []
-             %{records: r} -> r
-           end)
+          case post.in_flight do
+            nil -> []
+            %{records: r} -> r
+          end
 
       preserved = Enum.take(in_post, length(in_flight_records))
 

@@ -314,7 +314,9 @@ defmodule Flezha.Relay.Overwatch do
     now = System.monotonic_time(:millisecond)
 
     cond do
-      now >= deadline -> {:error, :timeout}
+      now >= deadline ->
+        {:error, :timeout}
+
       true ->
         Process.sleep(50)
         do_await_active_executor(namespace, factory_id, deadline)

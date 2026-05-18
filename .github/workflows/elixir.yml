@@ -59,8 +59,8 @@ jobs:
       - name: Set up Erlang + Elixir
         uses: erlef/setup-beam@v1
         with:
-          otp-version: "27"
-          elixir-version: "1.17"
+          otp-version: "28"
+          elixir-version: "1.19"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -76,9 +76,9 @@ jobs:
           path: |
             deps
             _build
-          key: elixir-${{ runner.os }}-otp27-${{ hashFiles('**/mix.lock') }}
+          key: elixir-${{ runner.os }}-otp28-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
-            elixir-${{ runner.os }}-otp27-
+            elixir-${{ runner.os }}-otp28-
 
       - name: Cache Cargo registry + workspace target
         uses: actions/cache@v5

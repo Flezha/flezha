@@ -168,7 +168,12 @@ defmodule Flezha.Boot.StatePathMigrator do
         case File.rename(from, preserved) do
           :ok ->
             Logger.info("[state_path_migrator] collision: preserved #{from} as #{preserved}")
-            %{acc | collisions: acc.collisions + 1, preserved_files: [preserved | acc.preserved_files]}
+
+            %{
+              acc
+              | collisions: acc.collisions + 1,
+                preserved_files: [preserved | acc.preserved_files]
+            }
 
           {:error, reason} ->
             Logger.warning(
