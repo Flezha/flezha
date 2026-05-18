@@ -121,6 +121,18 @@ jobs:
       - name: Compile Elixir (warnings as errors)
         run: mix compile --warnings-as-errors
 
+      - name: Pre-build rust_executor
+        # PortPilot launches two `cargo run --quiet` processes for
+        # rust_executor at boot; BootLoader's post_hook gives
+        # them 20s to connect (config/test.exs). A cold debug build
+        # of the binary + workspace deps doesn't fit in that window,
+        # so build it ahead of time into the same ./target dir the
+        # cargo-run command uses.
+        run: |
+          cargo build --quiet \
+            --manifest-path=test/apps/rust_executor/Cargo.toml \
+            --target-dir=./target
+
       - name: Run mix test
         # Default `mix test` excludes `:system` and `:java_sdk`. The
         # `:java_sdk` integration matrix runs in `java-sdk.yml` because it

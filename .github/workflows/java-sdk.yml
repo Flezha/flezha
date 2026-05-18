@@ -141,5 +141,14 @@ jobs:
             --manifest-path=test/apps/rust_executor/Cargo.toml \
             --target-dir=./target
 
+      - name: Install Flezha Java SDK into local Maven repo
+        # The test java executor (test/apps/java_executor) depends on
+        # `com.flezha:flezha-sdk` + `flezha-sdk-testing` as Maven
+        # artifacts. Its Maven build runs from inside `mix test.java_sdk`
+        # and resolves dependencies against the runner's `~/.m2`, which
+        # is per-job. `-DskipTests` skips unit tests + jacoco; the
+        # parallel `java-unit-tests` job covers those.
+        run: mvn -B -DskipTests -f sdk/java/pom.xml install
+
       - name: Run Java SDK integration matrix
         run: mix test.java_sdk

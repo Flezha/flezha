@@ -10,7 +10,6 @@ defmodule Flezha.Observability.AuditLogTest do
     Retention,
     Rotation,
     Sink,
-    Supervisor,
     Writer
   }
 
