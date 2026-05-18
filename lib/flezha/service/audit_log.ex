@@ -19,6 +19,7 @@ defmodule Flezha.Service.AuditLog do
   themselves auditable.
   """
 
+  alias Flezha.AuthZ
   alias Flezha.Observability
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.AuditLog.{Reader, Sink, Writer}
@@ -37,7 +38,9 @@ defmodule Flezha.Service.AuditLog do
   @spec list_files(caller_context()) :: {:ok, [map()]} | {:error, term()}
   def list_files(caller_context) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context) do
+         :ok <- validate_caller(caller_context),
+         :ok <- AuthZ.require_bound_principal(caller_context),
+         :ok <- AuthZ.authorize(caller_context, :"audit.read", scope_for(caller_context)) do
       emit_audit(:list_files, caller_context, %{})
       {:ok, Writer.catalog()}
     end
@@ -55,7 +58,9 @@ defmodule Flezha.Service.AuditLog do
   @spec read(read_params(), caller_context()) :: {:ok, [map()]} | {:error, term()}
   def read(%{} = params, caller_context) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context) do
+         :ok <- validate_caller(caller_context),
+         :ok <- AuthZ.require_bound_principal(caller_context),
+         :ok <- AuthZ.authorize(caller_context, :"audit.read", scope_for(caller_context)) do
       emit_audit(:read, caller_context, %{file: Map.get(params, :file)})
 
       dir = audit_dir()
@@ -74,7 +79,7 @@ defmodule Flezha.Service.AuditLog do
         ]
 
         records = Reader.stream(path, opts) |> Enum.take(limit)
-        {:ok, records}
+        {:ok, filter_by_namespace(records, caller_context)}
       else
         {:error, :file_not_found}
       end
@@ -84,7 +89,9 @@ defmodule Flezha.Service.AuditLog do
   @spec tail(map(), caller_context()) :: {:ok, reference()} | {:error, term()}
   def tail(_params, caller_context) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context) do
+         :ok <- validate_caller(caller_context),
+         :ok <- AuthZ.require_bound_principal(caller_context),
+         :ok <- AuthZ.authorize(caller_context, :"audit.read", scope_for(caller_context)) do
       emit_audit(:tail, caller_context, %{})
       Writer.subscribe_tail()
     end
@@ -93,7 +100,8 @@ defmodule Flezha.Service.AuditLog do
   @spec unsubscribe(reference(), caller_context()) :: :ok | {:error, term()}
   def unsubscribe(ref, caller_context) when is_reference(ref) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context) do
+         :ok <- validate_caller(caller_context),
+         :ok <- AuthZ.require_bound_principal(caller_context) do
       Writer.unsubscribe_tail(ref)
     end
   end
@@ -101,7 +109,9 @@ defmodule Flezha.Service.AuditLog do
   @spec stats(caller_context()) :: {:ok, map()} | {:error, term()}
   def stats(caller_context) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context) do
+         :ok <- validate_caller(caller_context),
+         :ok <- AuthZ.require_bound_principal(caller_context),
+         :ok <- AuthZ.authorize(caller_context, :"audit.read", scope_for(caller_context)) do
       emit_audit(:stats, caller_context, %{})
 
       snapshot = Writer.stats()
@@ -121,13 +131,48 @@ defmodule Flezha.Service.AuditLog do
   @spec rotate(caller_context()) :: {:ok, map()} | {:error, term()}
   def rotate(caller_context) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context) do
+         :ok <- validate_caller(caller_context),
+         :ok <- AuthZ.require_bound_principal(caller_context),
+         :ok <- AuthZ.authorize(caller_context, :"audit.rotate", scope_for(caller_context)) do
       emit_audit(:rotate, caller_context, %{})
 
       case Flezha.Observability.AuditLog.Rotation.rotate_now() do
         {:ok, info} -> {:ok, info}
         {:error, _} = err -> err
       end
+    end
+  end
+
+  # ---------- AuthZ helpers ----------
+
+  defp scope_for(caller_context) do
+    %{namespace: Map.get(caller_context, :namespace) || "_system"}
+  end
+
+  # Filter JSONL records to the caller's namespace except for
+  # `admin@_system` and internal callers. Records that pre-date the
+  # namespace field (or whose `namespace` is null) are treated as
+  # `_system` for compatibility.
+  defp filter_by_namespace(records, %{role: :admin, namespace: "_system"}), do: records
+  defp filter_by_namespace(records, %{source: :internal}), do: records
+
+  defp filter_by_namespace(records, caller_context) do
+    bound_ns = Map.get(caller_context, :namespace)
+
+    cond do
+      not AuthZ.enabled?() ->
+        records
+
+      is_nil(bound_ns) ->
+        records
+
+      true ->
+        Enum.filter(records, fn rec ->
+          case Map.get(rec, "namespace") || get_in(rec, ["metadata", "namespace"]) do
+            nil -> bound_ns == "_system"
+            ns -> ns == bound_ns
+          end
+        end)
     end
   end
 

@@ -34,6 +34,7 @@ defmodule Flezha.Application do
         Flezha.Executor.FleetSupervisor,
         FleetManager
       ] ++
+        authz_children() ++
         installer_children() ++
         transport_children() ++
         [
@@ -105,6 +106,21 @@ defmodule Flezha.Application do
   defp installer_children do
     if Application.get_env(:flezha, :plugin_installer_enabled, false) do
       [Flezha.Plugin.Installer.Supervisor]
+    else
+      []
+    end
+  end
+
+  # Authn/authz supervisor is omitted from the global application
+  # tree when `:authn_authz, :application_managed` is `false` so
+  # unit tests can bring up isolated AuthState/RoleStore/etc.
+  # against a per-test tmp `auth_dir`. The flag defaults `true` so
+  # production and dev boot the subsystem unconditionally.
+  defp authz_children do
+    cfg = Application.get_env(:flezha, :authn_authz, [])
+
+    if Keyword.get(cfg, :application_managed, true) do
+      [Flezha.AuthZ.Supervisor]
     else
       []
     end

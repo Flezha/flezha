@@ -49,6 +49,22 @@ config :flezha,
     retention_check_interval_ms: 3_600_000,
     extra_subscriptions: []
   ],
+  # Authn/authz is OFF by default in tests so unit-test isolation is
+  # preserved. Tests that exercise the auth surface flip `:enabled` to
+  # `true` and point `:auth_dir` at a tmp directory.
+  authn_authz: [
+    enabled: false,
+    # Tests bring up their own AuthState/RoleStore/etc. against a
+    # per-test tmp auth_dir; the global application tree must NOT
+    # start a default Flezha.AuthZ.Supervisor or it would race with
+    # the per-test stores on the singleton named GenServers.
+    application_managed: false,
+    auth_dir: "app_data/auth",
+    bootstrap_token_path: "app_data/auth/bootstrap.token",
+    token_ttl_default_seconds: 86_400,
+    sdk_token_ttl_seconds: 2_592_000,
+    namespaces: %{}
+  ],
   observability_export: [
     prometheus_enabled: false,
     prometheus_port: 9568,

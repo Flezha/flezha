@@ -51,7 +51,7 @@ defmodule Flezha.Observability.AuditLogTest do
       line = Codec.encode(signal)
       assert String.ends_with?(line, "\n")
       keys = field_order(line)
-      assert keys == ~w[ts_us ts_iso source name measurements metadata caller]
+      assert keys == ~w[ts_us ts_iso source name measurements metadata caller namespace]
 
       {:ok, decoded} = Codec.decode(line)
       assert decoded["source"] == "observability_service"
@@ -59,7 +59,11 @@ defmodule Flezha.Observability.AuditLogTest do
       caller = decoded["caller"]
       assert caller["source"] == "cli"
       assert caller["request_id"] == "req-1"
-      assert caller["principal"] == nil
+      # platform-authn-authz delta: while `:authn_authz, :enabled` is
+      # `false` (the test default), the audit log writes the caller's
+      # `source` atom into the `principal` column so existing rows
+      # remain attributable.
+      assert caller["principal"] == "cli"
     end
 
     test "ts_iso matches the documented regex" do

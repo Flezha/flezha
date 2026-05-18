@@ -1794,10 +1794,278 @@ defmodule Flezha.Service.CliManager do
   defp cli_context(opts) do
     base = %{source: :cli}
 
-    case Keyword.get(opts, :request_id) do
-      nil -> base
-      id when is_binary(id) -> Map.put(base, :request_id, id)
+    base =
+      case Keyword.get(opts, :request_id) do
+        nil -> base
+        id when is_binary(id) -> Map.put(base, :request_id, id)
+      end
+
+    # AuthN-bound fields from the CLI socket handshake. When the
+    # handshake hasn't run (auth disabled or pre-Section 10 path)
+    # they remain absent; downstream `Flezha.AuthZ` returns `:ok`
+    # while `:enabled` is `false`.
+    base
+    |> maybe_put_field(:principal, Keyword.get(opts, :principal))
+    |> maybe_put_field(:namespace, Keyword.get(opts, :namespace))
+    |> maybe_put_field(:role, Keyword.get(opts, :role))
+  end
+
+  defp maybe_put_field(map, _key, nil), do: map
+  defp maybe_put_field(map, key, value), do: Map.put(map, key, value)
+
+  # ============================================================================
+  # AuthN / AuthZ service wrappers
+  # ============================================================================
+  #
+  # Thin shims for the new `flz auth`, `flz ns`, `flz role` verb
+  # families. Every wrapper builds a `caller_context` via
+  # `cli_context/1` and routes through `Flezha.AuthZ.*`.
+
+  alias Flezha.AuthZ
+  alias Flezha.AuthZ.{Bootstrap, NamespaceStore, RoleStore, Scope, TokenStore}
+
+  @authz_source :platform_authz
+
+  def authz_bootstrap(token, opts \\ []) when is_binary(token) do
+    case Bootstrap.claim(token, opts) do
+      {:ok, %{principal: principal, minted_token: minted}} ->
+        emit_cli_audit(:bootstrap_completed, principal, %{
+          namespace: "_system",
+          minted_token?: not is_nil(minted)
+        })
+
+        {:ok, %{principal: principal, minted_token: minted}}
+
+      {:error, _} = err ->
+        err
     end
+  end
+
+  def authz_issue(principal, namespace, role, ttl_seconds, opts \\ []) do
+    cli_ctx = cli_context(opts)
+
+    with :ok <- AuthZ.require_bound_principal(cli_ctx),
+         :ok <- AuthZ.authorize(cli_ctx, :"authz.token_issue", Scope.build(namespace)) do
+      TokenStore.issue(principal, namespace, role, ttl_seconds,
+        created_by_principal: Map.get(cli_ctx, :principal),
+        label: Keyword.get(opts, :label)
+      )
+    end
+  end
+
+  def authz_revoke(token_id, opts \\ []) when is_binary(token_id) do
+    cli_ctx = cli_context(opts)
+
+    # We must check the token's namespace to authorize cross-namespace
+    # revocations. For simplicity we look it up first.
+    case find_token_by_id(token_id) do
+      {:ok, entry} ->
+        with :ok <- AuthZ.require_bound_principal(cli_ctx),
+             :ok <-
+               AuthZ.authorize(
+                 cli_ctx,
+                 :"authz.token_revoke",
+                 Scope.build(entry.namespace)
+               ) do
+          TokenStore.revoke(token_id, revoked_by_principal: Map.get(cli_ctx, :principal))
+        end
+
+      :error ->
+        {:error, :not_found}
+    end
+  end
+
+  def authz_list(opts \\ []) do
+    cli_ctx = cli_context(opts)
+
+    with :ok <- AuthZ.require_bound_principal(cli_ctx),
+         :ok <- AuthZ.authorize(cli_ctx, :"authz.token_list", Scope.build(scope_namespace(cli_ctx))) do
+      ns = filter_namespace_for_list(cli_ctx)
+      {:ok, TokenStore.list(ns)}
+    end
+  end
+
+  def authz_whoami(opts \\ []) do
+    cli_ctx = cli_context(opts)
+
+    {:ok,
+     %{
+       principal: Map.get(cli_ctx, :principal),
+       namespace: Map.get(cli_ctx, :namespace),
+       role: Map.get(cli_ctx, :role)
+     }}
+  end
+
+  def namespace_create(name, quotas, opts \\ []) when is_binary(name) and is_map(quotas) do
+    cli_ctx = cli_context(opts)
+
+    with :ok <- AuthZ.require_bound_principal(cli_ctx),
+         :ok <- AuthZ.authorize(cli_ctx, :"authz.namespace_create", Scope.build(name)) do
+      result =
+        NamespaceStore.create(name,
+          quotas: quotas,
+          created_by_principal: Map.get(cli_ctx, :principal)
+        )
+
+      case result do
+        {:ok, entry} ->
+          emit_cli_audit(:namespace_created, Map.get(cli_ctx, :principal), %{namespace: name})
+          {:ok, entry}
+
+        other ->
+          other
+      end
+    end
+  end
+
+  def namespace_delete(name, opts \\ []) when is_binary(name) do
+    cli_ctx = cli_context(opts)
+
+    with :ok <- AuthZ.require_bound_principal(cli_ctx),
+         :ok <- AuthZ.authorize(cli_ctx, :"authz.namespace_delete", Scope.build(name)) do
+      case NamespaceStore.delete(name) do
+        :ok ->
+          _ = Flezha.AuthZ.QuotaCounters.drop_namespace(name)
+          emit_cli_audit(:namespace_deleted, Map.get(cli_ctx, :principal), %{namespace: name})
+          :ok
+
+        other ->
+          other
+      end
+    end
+  end
+
+  def namespace_list(opts \\ []) do
+    cli_ctx = cli_context(opts)
+
+    with :ok <- AuthZ.require_bound_principal(cli_ctx),
+         :ok <-
+           AuthZ.authorize(
+             cli_ctx,
+             :"authz.namespace_list",
+             Scope.build(scope_namespace(cli_ctx))
+           ) do
+      {:ok, NamespaceStore.list()}
+    end
+  end
+
+  def namespace_show(name, opts \\ []) when is_binary(name) do
+    cli_ctx = cli_context(opts)
+
+    with :ok <- AuthZ.require_bound_principal(cli_ctx),
+         :ok <- AuthZ.authorize(cli_ctx, :"authz.namespace_show", Scope.build(name)) do
+      case NamespaceStore.get(name) do
+        {:ok, entry} -> {:ok, entry}
+        :error -> {:error, :not_found}
+      end
+    end
+  end
+
+  def namespace_set_quota(name, overrides, opts \\ [])
+      when is_binary(name) and is_map(overrides) do
+    cli_ctx = cli_context(opts)
+
+    with :ok <- AuthZ.require_bound_principal(cli_ctx),
+         :ok <- AuthZ.authorize(cli_ctx, :"authz.namespace_set_quota", Scope.build(name)) do
+      case NamespaceStore.set_quotas(name, overrides) do
+        {:ok, entry} ->
+          emit_cli_audit(:namespace_quota_updated, Map.get(cli_ctx, :principal), %{
+            namespace: name,
+            quotas: overrides
+          })
+
+          {:ok, entry}
+
+        other ->
+          other
+      end
+    end
+  end
+
+  def role_bind(principal, namespace, role, opts \\ [])
+      when is_binary(principal) and is_binary(namespace) and is_atom(role) do
+    cli_ctx = cli_context(opts)
+
+    with :ok <- AuthZ.require_bound_principal(cli_ctx),
+         :ok <- AuthZ.authorize(cli_ctx, :"authz.role_bind", Scope.build(namespace)) do
+      case RoleStore.bind(principal, namespace, role, bound_by: Map.get(cli_ctx, :principal)) do
+        :ok ->
+          emit_cli_audit(:role_bound, Map.get(cli_ctx, :principal), %{
+            principal: principal,
+            namespace: namespace,
+            role: role
+          })
+
+          :ok
+
+        other ->
+          other
+      end
+    end
+  end
+
+  def role_unbind(principal, opts \\ []) when is_binary(principal) do
+    cli_ctx = cli_context(opts)
+
+    bound_ns =
+      case RoleStore.lookup(principal) do
+        {:ok, %{namespace: ns}} -> ns
+        :error -> "_system"
+      end
+
+    with :ok <- AuthZ.require_bound_principal(cli_ctx),
+         :ok <- AuthZ.authorize(cli_ctx, :"authz.role_unbind", Scope.build(bound_ns)) do
+      :ok = RoleStore.unbind(principal)
+      emit_cli_audit(:role_unbound, Map.get(cli_ctx, :principal), %{principal: principal})
+      :ok
+    end
+  end
+
+  def role_list(opts \\ []) do
+    cli_ctx = cli_context(opts)
+
+    with :ok <- AuthZ.require_bound_principal(cli_ctx),
+         :ok <-
+           AuthZ.authorize(
+             cli_ctx,
+             :"authz.role_list",
+             Scope.build(scope_namespace(cli_ctx))
+           ) do
+      {:ok, RoleStore.list()}
+    end
+  end
+
+  # ----- private helpers for the authz wrappers -----
+
+  defp scope_namespace(ctx), do: Map.get(ctx, :namespace) || "_system"
+
+  defp filter_namespace_for_list(%{role: :admin, namespace: "_system"}), do: :all
+  defp filter_namespace_for_list(ctx), do: scope_namespace(ctx)
+
+  defp find_token_by_id(id) do
+    TokenStore.list(:all)
+    |> Enum.find(fn entry -> String.starts_with?(entry.token_hash, id) end)
+    |> case do
+      nil -> :error
+      entry -> {:ok, entry}
+    end
+  end
+
+  defp emit_cli_audit(name, principal, extra) do
+    metadata = Map.merge(extra, %{principal: principal})
+
+    Flezha.Observability.Bus.emit(
+      Flezha.Observability.Signal.new(%{
+        kind: :event,
+        source: @authz_source,
+        name: name,
+        metadata: metadata
+      })
+    )
+
+    :ok
+  rescue
+    _ -> :ok
   end
 
   # ============================================================================

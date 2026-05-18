@@ -56,18 +56,68 @@ defmodule Flezha.Service.RelayManager do
   def start_relay(namespace, relay) do
     with :ok <- check_not_shutting_down(),
          :ok <- RelayBuilder.validate_relay(namespace, relay),
-         :ok <- validate_factory(namespace, relay.factory_id) do
-      # TODO: we should validate the namespace also.
-      init_relay(namespace, relay)
+         :ok <- validate_factory(namespace, relay.factory_id),
+         :ok <- check_relay_quota(namespace),
+         :ok <- check_partition_quota(namespace, relay) do
+      case init_relay(namespace, relay) do
+        {:ok, _} = ok ->
+          _ = Flezha.AuthZ.Quotas.record_allocation(namespace, :max_relays, 1)
+
+          partition_count =
+            case Map.get(relay, :partitions) do
+              ps when is_list(ps) -> length(ps)
+              n when is_integer(n) -> n
+              _ -> 0
+            end
+
+          if partition_count > 0 do
+            _ = Flezha.AuthZ.Quotas.record_allocation(namespace, :max_partitions_per_relay, partition_count)
+          end
+
+          ok
+
+        other ->
+          other
+      end
     else
       {:error, :shutting_down} ->
         {:error, :shutting_down}
+
+      {:error, {:quota_exceeded, _, _} = qerr} ->
+        {:error, qerr}
 
       {:error, reason} when is_binary(reason) ->
         {:error, %{relay_id: relay.id, node: node(), reason: reason}}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp check_relay_quota(namespace) do
+    case Flezha.AuthZ.Quotas.check_allocation(namespace, :max_relays, 1) do
+      :ok -> :ok
+      {:error, :namespace_unknown} -> :ok
+      {:error, _} = err -> err
+    end
+  end
+
+  defp check_partition_quota(namespace, relay) do
+    requested =
+      case Map.get(relay, :partitions) do
+        ps when is_list(ps) -> length(ps)
+        n when is_integer(n) -> n
+        _ -> 0
+      end
+
+    if requested > 0 do
+      case Flezha.AuthZ.Quotas.check_allocation(namespace, :max_partitions_per_relay, requested) do
+        :ok -> :ok
+        {:error, :namespace_unknown} -> :ok
+        {:error, _} = err -> err
+      end
+    else
+      :ok
     end
   end
 
@@ -95,6 +145,7 @@ defmodule Flezha.Service.RelayManager do
           :ok ->
             _ = Flezha.Service.PluginManager.disable_relay_plugins(namespace, relay_id)
             _ = delete_relay_state_dir(relay_id)
+            _ = Flezha.AuthZ.Quotas.record_deallocation(namespace, :max_relays, 1)
             :ok
 
           {:error, reason} ->

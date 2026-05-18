@@ -1,0 +1,134 @@
+defmodule Flezha.AuthZ.Policy do
+  @moduledoc """
+  Compile-time role→action mapping.
+
+  Roles inherit upward: `admin` ⊇ `operator` ⊇ `viewer`. The
+  `executor` role is intentionally outside this hierarchy and grants
+  only the three data-plane verbs.
+
+  Cross-namespace auth-state mutations are additionally gated in
+  `Flezha.AuthZ.authorize/3` by requiring the bound namespace to be
+  `_system`; the role table alone does not express that constraint.
+  """
+
+  alias Flezha.AuthZ.Action
+
+  # Read-only actions usable by viewers on the bound namespace.
+  @viewer_actions [
+    :"relay.list",
+    :"plugin.list",
+    :"plugin.info",
+    :"audit.read",
+    :"observability.query",
+    :"observability.subscribe",
+    :"authz.whoami",
+    :"authz.token_list",
+    :"authz.namespace_list",
+    :"authz.namespace_show",
+    :"authz.role_list",
+    :"controller.status",
+    :"boot.status",
+    :"boot.await",
+    :"state.list",
+    :"state.at"
+  ]
+
+  # Operator adds relay/plugin lifecycle, audit rotation, observability mutate.
+  @operator_extra [
+    :"relay.start",
+    :"relay.stop",
+    :"plugin.enable",
+    :"plugin.disable",
+    :"audit.rotate",
+    :"observability.enable_source",
+    :"observability.disable_source",
+    :"state.rotate"
+  ]
+
+  # Admin adds everything that touches auth state, plus reset / shutdown.
+  @admin_extra [
+    :"plugin.install",
+    :"plugin.uninstall",
+    :"plugin.upgrade",
+    :"reset.run",
+    :"controller.stop",
+    :"boot.import_legacy_snapshot",
+    :"state.retention",
+    :"authz.bootstrap",
+    :"authz.token_issue",
+    :"authz.token_revoke",
+    :"authz.namespace_create",
+    :"authz.namespace_delete",
+    :"authz.namespace_set_quota",
+    :"authz.role_bind",
+    :"authz.role_unbind"
+  ]
+
+  @executor_actions [
+    :"executor.connect",
+    :"executor.checkpoint",
+    :"executor.report"
+  ]
+
+  @viewer MapSet.new(@viewer_actions)
+  @operator MapSet.union(@viewer, MapSet.new(@operator_extra))
+  @admin MapSet.union(@operator, MapSet.new(@admin_extra))
+  @executor MapSet.new(@executor_actions)
+
+  @grants %{
+    viewer: @viewer,
+    operator: @operator,
+    admin: @admin,
+    executor: @executor
+  }
+
+  @doc """
+  True when `role` grants `action`.
+  """
+  @spec grants?(atom(), atom()) :: boolean()
+  def grants?(role, action) when is_atom(role) and is_atom(action) do
+    case Map.fetch(@grants, role) do
+      {:ok, set} -> MapSet.member?(set, action)
+      :error -> false
+    end
+  end
+
+  @doc """
+  Returns the full action set granted to `role` as a list.
+
+  Useful for tests, documentation, and the `flz role list --verbose`
+  output.
+  """
+  @spec actions_for(atom()) :: [atom()]
+  def actions_for(role) when is_atom(role) do
+    case Map.fetch(@grants, role) do
+      {:ok, set} -> MapSet.to_list(set)
+      :error -> []
+    end
+  end
+
+  @doc """
+  Returns the complete action enumeration shared with
+  `Flezha.AuthZ.Action`.
+  """
+  @spec known_actions() :: [atom()]
+  def known_actions, do: Action.all()
+
+  @doc """
+  Actions that imply auth-state mutation; these are additionally
+  gated by `admin@_system` in `Flezha.AuthZ.authorize/3` rather than
+  the bound role's own namespace.
+  """
+  @spec cross_namespace_admin_action?(atom()) :: boolean()
+  def cross_namespace_admin_action?(action) do
+    action in [
+      :"authz.namespace_create",
+      :"authz.namespace_delete",
+      :"authz.namespace_set_quota",
+      :"authz.role_bind",
+      :"authz.role_unbind",
+      :"authz.token_issue",
+      :"authz.token_revoke"
+    ]
+  end
+end

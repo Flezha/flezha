@@ -32,9 +32,119 @@ defmodule Flezha.Boot.StatePathMigrator do
     root = Registry.state_root()
 
     if File.dir?(root) do
-      do_migrate(root)
+      result = do_migrate(root)
+      _ = migrate_to_namespaced_layout(root)
+      result
     else
       empty_result()
+    end
+  end
+
+  @doc """
+  One-shot pass that moves any top-level `{relay_class}/` subtree
+  under `app_data/state/` into `app_data/state/_system/{relay_class}/`
+  to satisfy the namespace prefix the platform-authn-authz change
+  introduces.
+
+  Idempotent: a second run on an already-migrated tree is a no-op
+  and emits no warning. Safe to interrupt — each top-level
+  `{relay_class}` tree is renamed atomically (single `rename(2)`
+  call), so the post-condition is either entirely pre-namespace or
+  entirely under `_system/`, never half-moved.
+  """
+  @spec migrate_to_namespaced_layout(binary()) :: :ok
+  def migrate_to_namespaced_layout(root) do
+    if File.dir?(root) do
+      do_migrate_namespace(root)
+    end
+
+    :ok
+  end
+
+  defp do_migrate_namespace(root) do
+    candidates =
+      File.ls!(root)
+      |> Enum.filter(&legacy_relay_class_dir?(root, &1))
+
+    case candidates do
+      [] ->
+        :ok
+
+      dirs ->
+        system_dir = Path.join(root, "_system")
+        File.mkdir_p!(system_dir)
+
+        Logger.info(
+          "[state_path_migrator] namespace migration: " <>
+            "#{length(dirs)} top-level dir(s) → _system/"
+        )
+
+        Enum.each(dirs, fn relay_class ->
+          from = Path.join(root, relay_class)
+          to = Path.join(system_dir, relay_class)
+
+          cond do
+            File.exists?(to) ->
+              Logger.warning(
+                "[state_path_migrator] namespace migration skip: " <>
+                  "#{to} already exists alongside legacy #{from}"
+              )
+
+            true ->
+              case File.rename(from, to) do
+                :ok ->
+                  :ok
+
+                {:error, reason} ->
+                  Logger.warning(
+                    "[state_path_migrator] namespace migration rename " <>
+                      "#{from} -> #{to} failed: #{inspect(reason)}"
+                  )
+              end
+          end
+        end)
+
+        :ok
+    end
+  end
+
+  # A top-level entry is a "legacy relay-class dir" when it:
+  #   * is a directory
+  #   * is NOT one of the known namespace names (currently just _system,
+  #     extended by `Flezha.AuthZ.NamespaceStore.list/0` once that
+  #     subsystem is up, but at boot time we conservatively treat any
+  #     non-`_system` dir that contains shard subdirs as legacy)
+  #   * looks like a relay-class dir (contains at least one shard
+  #     subdirectory).
+  defp legacy_relay_class_dir?(root, name) do
+    name != "_system" and File.dir?(Path.join(root, name)) and
+      looks_like_relay_class?(Path.join(root, name)) and not known_namespace?(name)
+  end
+
+  defp looks_like_relay_class?(dir) do
+    case File.ls(dir) do
+      {:ok, entries} ->
+        Enum.any?(entries, fn n -> File.dir?(Path.join(dir, n)) end)
+
+      _ ->
+        false
+    end
+  end
+
+  defp known_namespace?(name) do
+    # During boot, the NamespaceStore may not be available yet.
+    # Default to "not a known namespace" so we err on the side of
+    # treating a directory as legacy. The _system check above is
+    # the only one we need at first-boot time.
+    try do
+      case Flezha.AuthZ.NamespaceStore.get(name) do
+        {:ok, _} -> true
+        :error -> false
+      end
+    rescue
+      _ -> false
+    catch
+      _, _ -> false
     end
   end
 

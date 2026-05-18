@@ -227,6 +227,31 @@ config :flezha,
     rotation_check_interval_ms: 60_000,
     retention_check_interval_ms: 3_600_000,
     extra_subscriptions: []
+  ],
+  # ------------------------------------------------------------------------------------------------
+  # Authentication and authorization (platform-authn-authz).
+  #
+  # `enabled` defaults `false` so upgrades do not brick existing
+  # deployments. The flag flips durably to `true` on successful
+  # `flz auth bootstrap`; once flipped it remains `true` across
+  # restarts. The env-var `FLEZHA_AUTHZ_ENABLED=false` is an
+  # explicit opt-out and emits a `warn` on every boot.
+  # See `docs/platform_authn_authz.md`.
+  authn_authz: [
+    enabled:
+      case System.get_env("FLEZHA_AUTHZ_ENABLED") do
+        nil -> false
+        val -> String.downcase(val) in ["1", "true", "yes", "on"]
+      end,
+    auth_dir: System.get_env("FLEZHA_AUTHZ_DIR", "app_data/auth"),
+    bootstrap_token_path:
+      System.get_env(
+        "FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH",
+        Path.join(System.get_env("FLEZHA_AUTHZ_DIR", "app_data/auth"), "bootstrap.token")
+      ),
+    token_ttl_default_seconds: 86_400,
+    sdk_token_ttl_seconds: 2_592_000,
+    namespaces: %{}
   ]
 
 # ------------------------------------------------------------------------------------------------

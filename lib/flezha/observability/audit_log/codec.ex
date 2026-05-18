@@ -30,6 +30,8 @@ defmodule Flezha.Observability.AuditLog.Codec do
     ts_iso = iso_from_monotonic(ts_us)
     caller = build_caller(signal.metadata)
 
+    namespace = Map.get(signal.metadata, :namespace) || "_system"
+
     ordered = [
       {"ts_us", ts_us},
       {"ts_iso", ts_iso},
@@ -37,7 +39,8 @@ defmodule Flezha.Observability.AuditLog.Codec do
       {"name", Atom.to_string(signal.name)},
       {"measurements", stringify_map(signal.measurements)},
       {"metadata", stringify_map(signal.metadata)},
-      {"caller", caller}
+      {"caller", caller},
+      {"namespace", namespace}
     ]
 
     inner =
@@ -97,9 +100,19 @@ defmodule Flezha.Observability.AuditLog.Codec do
   end
 
   defp build_caller(metadata) when is_map(metadata) do
+    # When `:authn_authz, :enabled` is false the audit log records
+    # the caller_source atom in the principal column (preserving
+    # pre-change behaviour). Once enabled, the verified principal
+    # bound by the authentication layer wins.
+    principal =
+      cond do
+        Flezha.AuthZ.enabled?() -> Map.get(metadata, :principal)
+        true -> Map.get(metadata, :principal) || Map.get(metadata, :caller_source)
+      end
+
     %{
       "source" => atom_or_string(Map.get(metadata, :caller_source)),
-      "principal" => Map.get(metadata, :principal),
+      "principal" => atom_or_string(principal),
       "request_id" => Map.get(metadata, :request_id)
     }
   end
