@@ -24,7 +24,7 @@ The system SHALL provide a Sink `Flezha.Observability.AuditLog.Sink` that implem
 
 ### Requirement: Configurable subscription allow-list
 
-The sink SHALL apply a configured `(source, name | :any)` allow-list inside its handler. Signals not matching the allow-list SHALL be discarded without being written. The default allow-list SHALL include at minimum `{:observability_service, :any}`, `{:flezha_shutdown, :any}`, and `{:flezha_plugin_installer, :any}`. Operators SHALL be able to extend it via `:audit_log, :extra_subscriptions` runtime config.
+The sink SHALL apply a configured `(source, name | :any)` allow-list inside its handler. Signals not matching the allow-list SHALL be discarded without being written. The default allow-list SHALL include at minimum `{:observability_service, :any}`, `{:flezha_shutdown, :any}`, `{:flezha_plugin_installer, :any}`, AND `{:platform_authz, :any}`. Operators SHALL be able to extend it via `:audit_log, :extra_subscriptions` runtime config.
 
 #### Scenario: Default allow-list captures observability-service audit events
 - **WHEN** the audit subsystem is enabled and a caller invokes `Flezha.Service.Observability.disable_source/2`
@@ -33,6 +33,10 @@ The sink SHALL apply a configured `(source, name | :any)` allow-list inside its 
 #### Scenario: Default allow-list captures shutdown phase events
 - **WHEN** the graceful shutdown coordinator emits a `:phase_completed` `:event` on `:flezha_shutdown`
 - **THEN** a record SHALL appear in `audit-current.jsonl` with `source: "flezha_shutdown"` and `name: "phase_completed"`
+
+#### Scenario: Default allow-list captures auth-state mutations
+- **WHEN** the platform-authz subsystem emits any `:event` on `:platform_authz` (token issue, role bind, namespace create, bootstrap completion, authorization denial)
+- **THEN** within one second a JSON Lines record SHALL appear in `audit-current.jsonl` with `source: "platform_authz"` carrying the verified `caller.principal`
 
 #### Scenario: Non-allow-listed signal is discarded
 - **WHEN** a signal arrives at the sink whose `(source, name)` pair is not in the allow-list AND does not match an `:any` wildcard for that source
@@ -44,15 +48,23 @@ The sink SHALL apply a configured `(source, name | :any)` allow-list inside its 
 
 ### Requirement: JSON Lines record format with stable field order
 
-Each record SHALL be a single UTF-8 JSON object on its own line, terminated by `\n`. The top-level fields SHALL appear in this exact order: `ts_us`, `ts_iso`, `source`, `name`, `measurements`, `metadata`, `caller`. The `caller` field SHALL be denormalised from `metadata.caller_source`, `metadata.principal`, and `metadata.request_id` so a reader does not need to know the metadata convention to identify the actor.
+Each record SHALL be a single UTF-8 JSON object on its own line, terminated by `\n`. The top-level fields SHALL appear in this exact order: `ts_us`, `ts_iso`, `source`, `name`, `measurements`, `metadata`, `caller`, `namespace`. The `caller` field SHALL be denormalised from `metadata.caller_source`, `metadata.principal`, and `metadata.request_id` so a reader does not need to know the metadata convention to identify the actor. When `:authn_authz, :enabled` is `true` the `caller.principal` value SHALL be the verified principal bound by the authentication layer; when `false` the `caller.principal` value SHALL be `null` and SHALL NOT carry any caller-supplied placeholder. The `namespace` field SHALL be the resolved namespace from `caller_context.namespace`; for pre-`platform-authn-authz` records or signals without a namespace context the field SHALL be `"_system"`.
 
 #### Scenario: Single-line record for a signal
 - **WHEN** the sink writes a signal with `source: :observability_service`, `name: :enable_source`, `metadata: %{caller_source: :cli, request_id: "req-1"}`
-- **THEN** the written line SHALL be valid JSON, SHALL end with `\n`, SHALL contain top-level fields in the order `ts_us, ts_iso, source, name, measurements, metadata, caller`, AND `caller.source` SHALL equal `"cli"` AND `caller.request_id` SHALL equal `"req-1"`
+- **THEN** the written line SHALL be valid JSON, SHALL end with `\n`, SHALL contain top-level fields in the order `ts_us, ts_iso, source, name, measurements, metadata, caller, namespace`, AND `caller.source` SHALL equal `"cli"` AND `caller.request_id` SHALL equal `"req-1"`
 
-#### Scenario: Missing principal renders as null
-- **WHEN** the signal's metadata does not contain a `:principal` field
-- **THEN** the written record's `caller.principal` SHALL be JSON `null`, not absent
+#### Scenario: Verified principal lands in caller.principal
+- **WHEN** `:authn_authz, :enabled` is `true` AND a signal is written whose `metadata.principal` was bound by the authentication layer
+- **THEN** the written record's `caller.principal` SHALL equal that verified principal as a JSON string
+
+#### Scenario: Authn-disabled principal renders as the caller-source atom
+- **WHEN** `:authn_authz, :enabled` is `false` AND the signal's metadata contains no verified `:principal`
+- **THEN** the written record's `caller.principal` SHALL be the caller-source atom (`"cli"`, `"ui"`, `"sdk"`, or `"internal"`) so existing records remain attributable (preserving pre-change behaviour, per the platform-authn-authz compatibility-mode requirement)
+
+#### Scenario: Namespace defaults to _system
+- **WHEN** a signal is written whose `caller_context.namespace` is unset
+- **THEN** the written record's `namespace` field SHALL equal `"_system"`
 
 #### Scenario: ts_iso is UTC ISO-8601 with millisecond precision
 - **WHEN** any record is written
@@ -120,15 +132,27 @@ The system SHALL maintain a small binary catalog `app_data/audit/INDEX` containi
 
 ### Requirement: Service-API surface
 
-The system SHALL provide a service module `Flezha.Service.AuditLog` callable from both the CLI (via thin wrappers on `Flezha.Service.CliManager`) and the planned Phoenix UI directly, without routing through CliManager. The module SHALL expose at minimum `list_files/1`, `read/2`, `tail/2`, `stats/1`, `rotate/1`. Every public function SHALL accept a `caller_context` argument with the same shape and validation as `Flezha.Service.Observability` (`source` in `[:cli, :ui, :sdk, :internal]`).
+The system SHALL provide a service module `Flezha.Service.AuditLog` callable from both the CLI (via thin wrappers on `Flezha.Service.CliManager`) and the planned Phoenix UI directly, without routing through CliManager. The module SHALL expose at minimum `list_files/1`, `read/2`, `tail/2`, `stats/1`, `rotate/1`. Every public function SHALL accept a `caller_context` argument with the same shape and validation as `Flezha.Service.Observability` (`source` in `[:cli, :ui, :sdk, :internal]`). When `:authn_authz, :enabled` is `true` every public function SHALL call `Flezha.AuthZ.authorize/3` before any side effect. Read operations (`list_files`, `read`, `tail`, `stats`) SHALL require at least `viewer`; `rotate` SHALL require at least `operator`. Read operations SHALL filter returned records to those whose `namespace` field matches the caller's bound namespace, except that `admin@_system` SHALL see all records across all namespaces.
 
 #### Scenario: list_files returns catalog entries
-- **WHEN** the caller invokes `Flezha.Service.AuditLog.list_files(%{source: :cli})` and three rotated files exist
+- **WHEN** the caller invokes `Flezha.Service.AuditLog.list_files(%{source: :cli, principal: "alice", namespace: "_system", role: :viewer})` and three rotated files exist
 - **THEN** the call SHALL return `{:ok, [...]}` with three entries each carrying `filename`, `first_ts_us`, `last_ts_us`, `record_count`, `size_bytes`, and `sha256`
 
 #### Scenario: read returns records with filter pushdown
 - **WHEN** the caller invokes `read(%{file: "audit-...jsonl", source: "observability_service", since_us: T0, limit: 100}, ctx)`
 - **THEN** the call SHALL return up to `100` records from the named file whose `source` equals `"observability_service"` AND whose `ts_us >= T0`
+
+#### Scenario: Viewer in team-orders sees only team-orders records
+- **WHEN** `:authn_authz, :enabled` is `true` AND a viewer bound to `team-orders` invokes `read/2` against a file containing records from both `team-orders` and `team-payments`
+- **THEN** the returned list SHALL contain only records whose `namespace` field is `"team-orders"`
+
+#### Scenario: admin@_system sees all namespaces
+- **WHEN** `admin@_system` invokes `read/2` against a file containing records from multiple namespaces
+- **THEN** the returned list SHALL contain records from every namespace
+
+#### Scenario: Viewer cannot rotate
+- **WHEN** `:authn_authz, :enabled` is `true` AND a viewer invokes `rotate/1`
+- **THEN** the call SHALL return `{:error, {:forbidden, :role_insufficient}}` AND no rotation SHALL occur
 
 #### Scenario: tail streams live records
 - **WHEN** the caller invokes `tail(%{source: nil}, ctx)` and a record is subsequently written
@@ -139,7 +163,7 @@ The system SHALL provide a service module `Flezha.Service.AuditLog` callable fro
 - **THEN** the call SHALL return `{:ok, %{...}}` with at minimum `current_file`, `current_file_bytes`, `total_bytes`, `total_files`, `oldest_ts_us`, `record_count`, `drop_count`
 
 #### Scenario: rotate forces immediate rotation
-- **WHEN** the caller invokes `rotate(ctx)`
+- **WHEN** an `operator` caller invokes `rotate(ctx)`
 - **THEN** the active file SHALL be rotated immediately AND the call SHALL return `{:ok, %{rotated_to: filename}}` AND a fresh empty active file SHALL be opened
 
 #### Scenario: Missing caller_context source is rejected

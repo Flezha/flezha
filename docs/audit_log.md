@@ -22,9 +22,15 @@ matches the allow-list. The compiled-in defaults are:
   {:observability_service, :any},      # service-API audit events
   {:flezha_shutdown, :any},             # graceful-shutdown phases
   {:flezha_plugin_installer, :any},     # plugin install / load activity
+  {:platform_authz, :any},              # authn/authz mutations and denials
   {:audit_log, :any}                    # audit-of-audit (reads, rotations)
 ]
 ```
+
+The `:platform_authz` entry ships with the
+[`platform-authn-authz`](platform_authn_authz.md) foundation — every
+bootstrap / token / namespace / role mutation, plus every
+authorization denial, lands here.
 
 Extend it via `:audit_log, :extra_subscriptions` in
 `config/runtime.exs`:
@@ -67,10 +73,10 @@ by streaming every `audit-*.jsonl[.gz]` file in the directory.
 ## JSON Lines record schema
 
 Each line is one UTF-8 JSON object terminated by `\n`. Field order
-is stable: `ts_us, ts_iso, source, name, measurements, metadata,
-caller`. `caller` is denormalised from the metadata convention so
-filters like `jq 'select(.caller.source == "cli")'` work without
-knowing the underlying field names.
+is stable: `ts_us, ts_iso, source, name, namespace, measurements,
+metadata, caller`. `caller` is denormalised from the metadata
+convention so filters like `jq 'select(.caller.source == "cli")'`
+work without knowing the underlying field names.
 
 ```json
 {
@@ -78,15 +84,21 @@ knowing the underlying field names.
   "ts_iso": "2026-05-18T07:14:55.451Z",
   "source": "observability_service",
   "name": "disable_source",
+  "namespace": "_system",
   "measurements": {"count": 1},
   "metadata": {"source":"flezha_state","caller_source":"cli","request_id":"req-abc"},
-  "caller": {"source":"cli","principal":null,"request_id":"req-abc"}
+  "caller": {"source":"cli","principal":"alice@example.com","request_id":"req-abc"}
 }
 ```
 
-Missing `:principal` renders as JSON `null`, not absent — once
-`platform-authn-authz` lands, every record will carry the
-authenticated principal in this slot.
+`caller.principal` is the verified principal whenever
+`:authn_authz, :enabled` is `true` (resolved from the CLI / SDK
+handshake or the bound client cert); it falls back to the calling
+source atom (`"cli"`, `"internal"`, …) while auth is disabled,
+preserving pre-`platform-authn-authz` behaviour. The top-level
+`namespace` field is set from the caller context; the reader
+tolerates absent fields on pre-upgrade records and defaults them
+to `"_system"`.
 
 ## Fsync modes
 
@@ -198,10 +210,10 @@ securityContext:
   umask: 0027
 ```
 
-`platform-authn-authz` will add a policy gate at the
-`Flezha.Service.AuditLog` boundary so the read path checks the
-caller principal — for now anyone with `app_data/audit/` read
-access can read the audit log.
+[`platform-authn-authz`](platform_authn_authz.md) adds a policy
+gate at the `Flezha.Service.AuditLog` boundary: `read/2` / `tail/2`
+results are filtered to the caller's namespace, except for
+`admin@_system` and internal callers, who see every namespace.
 
 ## Relationship to remote shipping
 
@@ -220,8 +232,9 @@ loses a batch.
   * **No tamper-evident chain across files.** The per-file SHA-256
     in the INDEX defeats casual editing but not a privileged
     attacker with disk access.
-  * **No read authentication today.** Comes with
-    `platform-authn-authz`.
+  * **No tamper-evident chain across the audit subsystem and the
+    auth subsystem.** Auth mutations land here as ordinary records;
+    a privileged attacker with disk access can rewrite both.
   * **No compression of rotated files by the writer.** Operators can
     `gzip` rotated files out-of-band; the Reader transparently
     handles `.jsonl.gz` files via streaming `:zlib` decompression.
