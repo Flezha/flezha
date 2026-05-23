@@ -199,6 +199,26 @@ The repository SHALL include a unit test that loads `kubernetes/flezha-daemonset
 - **THEN** the test SHALL assert: a `flezha-sockets` volume exists in the daemonset and is mounted at `/flezha/sockets`; the daemonset's container env contains `FLEZHA_SOCKET_FILES_PATH=/flezha/sockets`; the configmap defines `FLEZHA_EXECUTOR_KEEPALIVE` with a positive integer (in milliseconds)
 - **AND** the test SHALL fail with a clear message naming the missing field if any assertion fails
 
+### Requirement: Rust SDK SHALL bound the wait for the controller's registration ack and reconnect on timeout
+
+After the Rust SDK opens a control channel and writes its `connect_control_channel` init frame, it SHALL require the controller to send at least one frame (the assign-executor-id command issued by `FleetManager.executor_connect/3`) within a bounded window. The window SHALL default to 10 s and be overridable via `FLEZHA_CONTROL_ACK_TIMEOUT_MS`. If no frame arrives within the window, the SDK SHALL treat the connection as a non-servicing controller, post `ExecutorMessage::Reconnect`, and drive the existing reconnect loop. Once the first frame arrives the SDK SHALL clear the read deadline and read indefinitely (steady state is unchanged).
+
+This closes the warm-restart hang where the SDK connects to a Controller that accepts the socket but never completes registration — a Controller mid-shutdown (quiesce rejects the connect via `{:error, :shutting_down}` without closing the stream) or a Controller process being replaced during a rolling restart. Without the bound the control reader blocks forever, the executor never reaches the live Controller, and no relay is re-registered (`start_hub` is never called).
+
+The SDK's `connect_control_channel` init write SHALL NOT panic the reader thread on failure: a write error (peer vanished between connect and write) SHALL post `ExecutorMessage::Reconnect` and return, not `.unwrap()`.
+
+#### Scenario: Controller accepts the socket but never acknowledges → SDK reconnects
+- **GIVEN** a control channel whose peer reads the `connect_control_channel` frame and then stays silent (a Controller mid-shutdown or being replaced)
+- **WHEN** `FLEZHA_CONTROL_ACK_TIMEOUT_MS` elapses with no controller frame
+- **THEN** the SDK SHALL post `ExecutorMessage::Reconnect` and SHALL NOT block the reader thread indefinitely
+- **AND** the executor SHALL reconnect (backoff loop) until it lands on a Controller that completes registration
+
+#### Scenario: First controller frame clears the ack deadline
+- **GIVEN** a freshly opened control channel under the ack deadline
+- **WHEN** the controller sends its assign-executor-id command within the window
+- **THEN** the SDK SHALL clear the read timeout and read subsequent frames with no deadline
+- **AND** steady-state disconnect detection (EOF → reconnect) SHALL be unchanged
+
 
 
 ### Requirement: Controller-side cold-restart relay startup SHALL self-heal via an end-to-end ping before `:start_relay`

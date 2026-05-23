@@ -3,8 +3,10 @@ defmodule Flezha.State.Registry do
   Path resolution for per-Partition WAL, snapshot, and outbox-dedup files.
 
   All persistence files live under
-  `<state_root>/<relay_class>/<shard_id>/` where `<state_root>` is
-  configured via `:flezha, :state_root` (default `app_data/state`).
+  `<state_root>/<relay_class>/<shard_id>/` where `<state_root>` is the
+  `:flezha, :state_root` application env (set by tests for isolation), else
+  the `FLEZHA_STATE_DIR` OS env (the operator-facing deployment knob), else
+  `app_data/state`.
 
   `partition_key` is URL-safe-base64-encoded when it contains characters
   that would be unsafe on POSIX filesystems (anything outside `[A-Za-z0-9_.-]`).
@@ -26,7 +28,10 @@ defmodule Flezha.State.Registry do
 
   @spec state_root() :: binary()
   def state_root() do
-    Application.get_env(:flezha, :state_root, "app_data/state")
+    case Application.fetch_env(:flezha, :state_root) do
+      {:ok, root} -> root
+      :error -> System.get_env("FLEZHA_STATE_DIR") || "app_data/state"
+    end
   end
 
   @spec state_dir(partition_id()) :: binary()

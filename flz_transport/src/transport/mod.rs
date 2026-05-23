@@ -37,6 +37,17 @@ impl FlezhaStream {
         }
     }
 
+    pub fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> io::Result<()> {
+        match self {
+            #[cfg(unix)]
+            FlezhaStream::Unix(stream) => stream.set_read_timeout(timeout),
+            FlezhaStream::Quic(_) => {
+                let _ = timeout;
+                Ok(()) // QUIC manages stream deadlines internally
+            }
+        }
+    }
+
     pub fn shutdown(&self, how: Shutdown) -> io::Result<()> {
         match self {
             #[cfg(unix)]
