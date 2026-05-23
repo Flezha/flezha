@@ -152,11 +152,20 @@ The foundation SHALL install a `:logger` handler at supervisor start that conver
 
 ### Requirement: Telemetry bridge lifts existing `:telemetry` events onto the bus
 
-The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping table SHALL be defined inside the bridge module and SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_installer, :load_failed]`, `[:flezha, :plugin_installer, :store_opened]`, `[:flezha, :plugin_installer, :unsigned_install]`, and `[:flezha, :ws, :idle_reconnect]`. Existing call-sites SHALL NOT be modified.
+The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping table SHALL be defined inside the bridge module and SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_installer, :load_failed]`, `[:flezha, :plugin_installer, :store_opened]`, `[:flezha, :plugin_installer, :unsigned_install]`, `[:flezha, :ws, :idle_reconnect]`, `[:flezha, :ws, :resubscribe]`, `[:flezha, :state, :seq_gap]`, `[:flezha, :state, :output_stall]`, and `[:flezha, :state, :compaction_timeout]`. Existing call-sites SHALL NOT be modified.
 
 #### Scenario: Bridged event becomes a signal
 - **WHEN** code calls `:telemetry.execute([:flezha, :state, :wal, :backpressure], %{bytes: 1024}, %{relay: "r1"})`
 - **THEN** a signal with `kind: :event`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements.bytes: 1024`, `metadata.relay: "r1"` SHALL appear on the bus
+
+#### Scenario: Websocket re-subscribe event is bridged
+- **WHEN** code calls `:telemetry.execute([:flezha, :ws, :resubscribe], %{data_silence_ms: 120_000}, %{plugin_id: "wss://ws.kraken.com"})`
+- **THEN** a signal sourced from the websocket provider carrying `measurements.data_silence_ms: 120_000` and `metadata.plugin_id: "wss://ws.kraken.com"` SHALL appear on the bus
+
+#### Scenario: Persistence stall/gap events are bridged
+- **WHEN** code calls `:telemetry.execute([:flezha, :state, :output_stall], %{stalled_ms: 60_000, last_seq: 100}, %{relay: "btc_kraken", shard: "ohlc", key: "1m"})`
+- **THEN** a signal sourced from the state subsystem carrying the stalled duration, last seq, and Partition metadata SHALL appear on the bus
+- **AND** the same bridging SHALL hold for `[:flezha, :state, :seq_gap]` and `[:flezha, :state, :compaction_timeout]`
 
 #### Scenario: Bridge failure does not crash producer
 - **WHEN** the bridge's mapping function raises for a specific event

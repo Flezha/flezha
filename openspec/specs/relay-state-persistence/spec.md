@@ -507,3 +507,52 @@ No on-disk format change accompanies this requirement; the binding record's `exe
 - **THEN** the Overwatch SHALL still issue `:ping_executor` before `:start_relay`
 - **AND** the rebind-log line SHALL NOT fire (the ids are equal)
 - **AND** the bounded-retry governor SHALL still apply on ping/start failure
+
+### Requirement: A persistence seq gap triggers resync, not permanent rejection
+
+When the Controller receives a `partition_state_change` frame whose `seq > last_persisted_seq + 1`, it SHALL treat the gap as a recoverable desync rather than a terminal protocol error. The Controller SHALL emit `[:flezha, :state, :seq_gap]` telemetry with measurements `%{expected: integer(), got: integer()}` and metadata identifying the Partition, and SHALL initiate the `RestoreInitState` resync handshake for that Partition (assemble snapshot + WAL tail per the existing "Restart restores state via RestoreInitState handshake" flow, ship it to the SDK, await `RestoreInitStateResponse{terminal_seq}`, and resume accepting Changes at `terminal_seq + 1`). After a successful resync the Partition's WAL SHALL advance again and its outbox SHALL drain to the output plugins.
+
+The Controller SHALL NOT leave a Partition indefinitely rejecting Changes with `{:error, {:gap, expected, got}}`. The strict acceptance rule for the contiguous case (`seq == last_persisted_seq + 1`) and the silent-dedup rule for the stale case (`seq <= last_persisted_seq`) are unchanged.
+
+#### Scenario: Gap resynchronises the partition instead of wedging it
+- **GIVEN** a Partition with `last_persisted_seq = 100`
+- **WHEN** the Controller receives a Change with `seq = 137` (a gap)
+- **THEN** the Controller SHALL emit `[:flezha, :state, :seq_gap]` with `expected: 101, got: 137`
+- **AND** the Controller SHALL ship `RestoreInitState` for the Partition and await `RestoreInitStateResponse`
+- **AND** after the handshake the Partition SHALL accept subsequent Changes and its WAL SHALL advance past `last_persisted_seq`
+- **AND** the Partition SHALL NOT remain in a permanent gap-rejection state
+
+#### Scenario: Contiguous and stale frames are unaffected
+- **WHEN** a Change arrives with `seq == last_persisted_seq + 1`
+- **THEN** it SHALL be appended as today (no resync, no telemetry)
+- **AND WHEN** a Change arrives with `seq <= last_persisted_seq`
+- **THEN** it SHALL be silently deduped with a `dedup_drops_total` increment as today
+
+### Requirement: Per-Partition output-staleness watchdog with self-heal
+
+The Controller SHALL track, per persistence-enabled Partition, the wall-clock time at which `last_persisted_seq` last advanced. A periodic sweep SHALL run on a configurable interval and, for any Partition whose data stream is attached (the SDK is live and applying inputs) but whose `last_persisted_seq` has not advanced within `output_stall_timeout_ms` (configurable per Relay class; default 60_000), SHALL emit `[:flezha, :state, :output_stall]` telemetry (measurements `%{stalled_ms: integer(), last_seq: integer()}`, Partition metadata) and SHALL trigger the `RestoreInitState` resync recovery for that Partition.
+
+This bounds the duration of any silent persistence/output freeze to at most one `output_stall_timeout_ms` window. Because WAL persistence and output-plugin delivery share the per-Partition outbox, recovering WAL advance SHALL also resume output (e.g. Kafka production) for that Partition.
+
+#### Scenario: A live partition whose WAL stops advancing is detected and recovered
+- **GIVEN** a persistence-enabled Partition whose data stream is attached and whose SDK continues to apply inputs (in-memory state advancing)
+- **WHEN** `last_persisted_seq` does not advance for longer than `output_stall_timeout_ms`
+- **THEN** the staleness sweep SHALL emit `[:flezha, :state, :output_stall]` with the stalled duration and last seq
+- **AND** the Controller SHALL trigger resync recovery for the Partition
+- **AND** after recovery the Partition's WAL SHALL advance and its outbox SHALL drain
+
+#### Scenario: An idle partition is not falsely flagged
+- **GIVEN** a persistence-enabled Partition whose SDK is applying no inputs (genuinely idle, no Changes to persist)
+- **WHEN** the staleness sweep runs
+- **THEN** the Partition SHALL NOT be flagged as stalled and SHALL NOT be resynced (no Change is expected, so a non-advancing `last_persisted_seq` is correct)
+
+### Requirement: Compaction handshake is bounded and cannot wedge persistence
+
+When the Controller ships `CompactPartition{partition_id}` to the SDK, it SHALL bound the wait for the corresponding `partition_state_snapshot` response with a timeout. If the snapshot does not arrive within the bound, the Controller SHALL emit `[:flezha, :state, :compaction_timeout]` telemetry, SHALL NOT leave the Partition's WAL append blocked, and SHALL recover via resync. Compaction SHALL be retriable on a later trigger; a single failed/slow compaction SHALL NOT permanently stop WAL growth or output for the Partition.
+
+#### Scenario: A stalled compaction times out instead of freezing the WAL
+- **GIVEN** a Partition for which the Controller has shipped `CompactPartition`
+- **WHEN** no `partition_state_snapshot` response arrives within the compaction timeout
+- **THEN** the Controller SHALL emit `[:flezha, :state, :compaction_timeout]`
+- **AND** WAL append for the Partition SHALL NOT remain blocked (no "large WAL, no snapshot, frozen" state)
+- **AND** persistence SHALL recover via resync and compaction SHALL be eligible to retry later

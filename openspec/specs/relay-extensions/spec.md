@@ -253,3 +253,77 @@ Providers whose meaningful work is triggered by `:on_input` / `:on_output` (`Fil
 - **THEN** the call SHALL return `{:ok, opts}` (or `{:ok, opts, nil}` for the owned-pid arity) without opening a TLS connection to the configured `:uri`
 - **AND** no `Fresh.start_link` call SHALL have occurred during `init_provider/1`
 - **AND** the eventual TLS handshake SHALL only happen when `Plugin.Provider.Websocket.activate/1` is invoked
+
+### Requirement: Websocket connection-liveness watchdog reconnects only on a dead socket
+
+`Plugin.Provider.Websocket` SHALL maintain a connection-liveness timestamp `last_frame_at` that is refreshed by **every** inbound frame regardless of kind: data frames delivered to `handle_in/2`, frames matching `ignore_pattern` (e.g. heartbeats), and control frames delivered to `handle_control/2` (ping/pong). The idle watchdog SHALL compare `now - last_frame_at` against `idle_timeout_ms`; when the threshold is met or exceeded the connection SHALL be treated as dead and the provider process SHALL exit with `{:shutdown, :idle_timeout}`, driving the existing `Extension.Table.handle_down/5` reconnect path and emitting `[:flezha, :ws, :idle_reconnect]`.
+
+`idle_timeout_ms` SHALL retain its name, its `30_000` default, and its `0`-disables-the-watchdog semantics. Because any inbound frame refreshes `last_frame_at`, a connection that carries a periodic heartbeat (or any control traffic) SHALL NOT be reconnected merely because no market-data frame has arrived.
+
+#### Scenario: Heartbeat-only traffic keeps the connection open past the data-silence window
+- **GIVEN** a websocket plugin with `idle_timeout_ms: 30_000` and `ignore_pattern: "heartbeat"`
+- **WHEN** the upstream sends only heartbeat frames (matching `ignore_pattern`) for 5 minutes and no data frame
+- **THEN** `last_frame_at` SHALL be refreshed by each heartbeat
+- **AND** the watchdog SHALL NOT fire and the provider process SHALL NOT exit with `{:shutdown, :idle_timeout}`
+
+#### Scenario: A truly silent socket still reconnects
+- **WHEN** no inbound frame of any kind (data, heartbeat, or control) arrives for `idle_timeout_ms`
+- **THEN** the watchdog SHALL exit the process with `{:shutdown, :idle_timeout}` and emit `[:flezha, :ws, :idle_reconnect]` with `silence_ms` measured from `last_frame_at`
+
+#### Scenario: Control frames count as liveness
+- **WHEN** the only inbound traffic for a period is websocket control frames (ping/pong) handled by `handle_control/2`
+- **THEN** each control frame SHALL refresh `last_frame_at`
+- **AND** the watchdog SHALL NOT reconnect
+
+### Requirement: Websocket data-liveness watchdog re-subscribes in place on a live socket
+
+`Plugin.Provider.Websocket` SHALL maintain a data-liveness timestamp `last_data_frame_at` refreshed only by data frames that do NOT match `ignore_pattern` (the existing classification). The provider SHALL accept an optional `resubscribe_after_ms` opt (default `0`, meaning disabled), normalised from string or integer identically to `idle_timeout_ms`. When `resubscribe_after_ms > 0`, the connection is alive (the connection-liveness watchdog has not fired), and `now - last_data_frame_at >= resubscribe_after_ms`, the provider SHALL resend its `post_connect` payload on the **existing** connection — without exiting the process, tearing down the socket, or reconnecting — and SHALL emit `[:flezha, :ws, :resubscribe]` with measurements `%{data_silence_ms: integer()}` and metadata `%{plugin_id: binary()}`.
+
+The re-subscribe SHALL be rate-limited by a `last_resubscribe_at` guard so that no more than one re-subscribe is issued per `resubscribe_after_ms` window while data remains stale. When `resubscribe_after_ms` is `0`, `last_data_frame_at` SHALL NOT trigger any action and the provider SHALL behave as connection-liveness-only.
+
+#### Scenario: Live connection with stale data re-subscribes without reconnecting
+- **GIVEN** a websocket plugin with `idle_timeout_ms: 30_000`, `ignore_pattern: "heartbeat"`, and `resubscribe_after_ms: 120_000`
+- **WHEN** heartbeats keep arriving (connection alive) but no non-heartbeat data frame arrives for 120 s
+- **THEN** the provider SHALL resend the `post_connect` payload on the existing connection
+- **AND** the provider process SHALL NOT exit and the socket SHALL NOT be reconnected
+- **AND** a `[:flezha, :ws, :resubscribe]` event SHALL be emitted
+
+#### Scenario: Re-subscribe is rate-limited while data stays stale
+- **GIVEN** the conditions above with `resubscribe_after_ms: 120_000`
+- **WHEN** data remains stale for 10 minutes while heartbeats continue
+- **THEN** the provider SHALL resend the subscribe at most once per 120 s window (not on every idle-check tick)
+
+#### Scenario: Re-subscribe disabled by default
+- **GIVEN** a websocket plugin started without `resubscribe_after_ms` (or with `resubscribe_after_ms: 0`)
+- **WHEN** data goes stale on an otherwise-alive connection
+- **THEN** the provider SHALL NOT resend the subscribe and SHALL NOT emit `[:flezha, :ws, :resubscribe]`
+- **AND** only the connection-liveness watchdog SHALL govern reconnect
+
+### Requirement: Websocket subscribe handshake is issued without a re-entrant send
+
+`Plugin.Provider.Websocket.handle_connect/3` SHALL issue the `post_connect` subscribe frame by returning it through Fresh's reply form (`{:reply, [{type, message}], state}`) so the frame is sent after the connection's websocket is established. The provider SHALL NOT issue the subscribe by calling `Fresh.send/2` re-entrantly from within `handle_connect/3`. Any send issued outside a Fresh callback (the data-liveness re-subscribe) SHALL be guarded so that sending while the underlying websocket is `nil`/unestablished logs at `:warning` and is skipped rather than raising; the subscribe is re-issued on the next successful `handle_connect/3`. Under no inbound condition SHALL the provider terminate with `{:badkey, :extensions, nil}`.
+
+#### Scenario: Subscribe on connect does not crash on the upgrade race
+- **WHEN** `handle_connect/3` runs and a `post_connect` payload is configured
+- **THEN** the subscribe frame SHALL be returned via `{:reply, [{type, message}], state}`
+- **AND** no `Fresh.send/2` SHALL be invoked from within `handle_connect/3`
+- **AND** the provider SHALL NOT raise `{:badkey, :extensions, nil}` regardless of upgrade timing
+
+#### Scenario: Re-subscribe against a momentarily-unestablished socket is non-fatal
+- **WHEN** the data-liveness re-subscribe attempts to send while the underlying websocket is transiently `nil`
+- **THEN** the send SHALL be skipped with a `:warning` log and the provider process SHALL stay alive
+
+### Requirement: Websocket liveness tracking is O(1) and allocation-free per frame
+
+The per-frame work added for liveness tracking SHALL be O(1) in the frame size beyond the unavoidable payload handoff, and SHALL NOT allocate per frame or spawn per-frame processes. Each inbound frame SHALL be classified as data-versus-ignored at most once, with both `last_frame_at` and (for data frames) `last_data_frame_at` derived from that single classification and a single monotonic-clock read. The `ignore_pattern` SHALL be compiled once at provider start (not per frame), and matched with a binary-search primitive. No code path SHALL scan a frame payload more than once per frame.
+
+#### Scenario: Each frame is classified and timestamped once
+- **WHEN** a data frame is processed by `handle_in/2`
+- **THEN** the payload SHALL be tested against `ignore_pattern` at most once
+- **AND** the monotonic clock SHALL be read at most once for that frame
+- **AND** no per-frame heap allocation SHALL be required to update the liveness timestamps
+
+#### Scenario: ignore_pattern is compiled once
+- **WHEN** a websocket plugin is started with a non-empty `ignore_pattern`
+- **THEN** the pattern SHALL be compiled to a reusable matcher at start and reused for every frame
+- **AND** the pattern SHALL NOT be recompiled on the per-frame path
