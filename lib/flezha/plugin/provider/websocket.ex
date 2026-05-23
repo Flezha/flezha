@@ -5,36 +5,45 @@ defmodule Flezha.Plugin.Provider.Websocket do
   to the overwatcher pid. The plugin subscribes to `:on_terminate` so the
   connection is closed cleanly when the plugin is disabled.
 
-  The plugin runs an application-level idle watchdog that forces a
-  reconnect when no data frame has arrived within `idle_timeout_ms`
-  (default 30 s). Control frames (ping/pong) do NOT count as activity —
-  only `handle_in/2` data frames refresh the watchdog. When the threshold
-  is exceeded, the Fresh process exits with `{:shutdown, :idle_timeout}`,
-  the plugin manager observes the abnormal exit and restarts the plugin
-  via its standard retry path (`Flezha.Plugin.Extension.Table.handle_down`).
+  The plugin runs a two-tier application-level watchdog that separates
+  *connection liveness* from *data liveness*:
 
-  Some servers (notably Kraken) push a per-second JSON heartbeat frame
-  alongside the actual market-data stream. Those frames count as
-  protocol-level liveness but say nothing about whether the data feed is
-  flowing, so the watchdog accepts an optional `:ignore_pattern` (string)
-  that, when set, suppresses the `last_data_frame_at` refresh for any
-  text data frame whose payload contains the pattern as a substring. The
-  frame is still forwarded to the overwatcher and the `frames_seen`
-  counter still increments, so the heartbeat-vs-data ratio remains
-  visible in the periodic log line. Binary data frames never match the
-  pattern; when no pattern is configured every data frame refreshes the
-  timer (pre-change default).
+    * `last_frame_at` is refreshed by **every** inbound frame — data
+      frames (`handle_in/2`), `ignore_pattern`-matching heartbeats, and
+      control frames (`handle_control/2` ping/pong). When
+      `now - last_frame_at >= idle_timeout_ms` the connection is treated
+      as dead: the Fresh process exits with `{:shutdown, :idle_timeout}`,
+      the plugin manager observes the abnormal exit and restarts the
+      plugin via its retry path (`Flezha.Plugin.Extension.Table.handle_down`).
+    * `last_data_frame_at` is refreshed only by non-`ignore_pattern` data
+      frames. When `resubscribe_after_ms > 0`, the connection is alive,
+      and `now - last_data_frame_at >= resubscribe_after_ms`, the plugin
+      resends its `post_connect` payload on the existing connection
+      (no teardown, no reconnect), rate-limited to once per window by
+      `last_resubscribe_at`.
 
-  Each forced reconnect emits a Telemetry event
-  `[:flezha, :ws, :idle_reconnect]` with measurements
-  `%{silence_ms: integer()}` and metadata `%{plugin_id: binary()}`. Any
-  downstream Telemetry → Prometheus bridge (e.g., the one
-  `self-heal-asset-pipeline` will wire) automatically harvests these
-  events with no further change to this module.
+  A heartbeat — or any inbound frame — therefore holds the socket open
+  even when no market data is flowing. `ignore_pattern` (string) still
+  classifies a text data frame as heartbeat-shaped when its payload
+  contains the pattern as a substring; such frames refresh only
+  `last_frame_at`. Binary frames never match the pattern; when no pattern
+  is configured every data frame counts as data.
+
+  Per-frame liveness tracking is O(1) and allocation-free: each frame is
+  classified exactly once against a `:binary.compile_pattern/1` matcher
+  built at start, the monotonic clock is read once and reused for both
+  timestamps, and every hot-path field is pre-initialised so updates use
+  the known-key `%{state | …}` form.
+
+  Each forced reconnect emits `[:flezha, :ws, :idle_reconnect]`
+  (`%{silence_ms: integer()}`, `%{plugin_id: binary()}`); each in-place
+  re-subscribe emits `[:flezha, :ws, :resubscribe]`
+  (`%{data_silence_ms: integer()}`, `%{plugin_id: binary()}`).
 
   Required opts: `:uri`.
   Optional opts: `:post_connect`, `:ws_opts`, `:payload_metadata`,
-  `:idle_timeout_ms` (default 30_000; set to 0 to disable the watchdog),
+  `:idle_timeout_ms` (default 30_000; set to 0 to disable the connection
+  watchdog), `:resubscribe_after_ms` (default 0 = disabled),
   `:ignore_pattern` (string substring, default unset),
   `:plugin_id` (label for telemetry/logs; defaults to `:uri`).
   """
@@ -48,6 +57,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   use ProviderBehaviour
 
   @default_idle_timeout_ms 30_000
+  @default_resubscribe_after_ms 0
   @min_tick_interval_ms 1_000
 
   @enforce_keys [:uri]
@@ -59,7 +69,8 @@ defmodule Flezha.Plugin.Provider.Websocket do
                 post_connect: %{},
                 ws_opts: [],
                 payload_metadata: %{},
-                idle_timeout_ms: @default_idle_timeout_ms
+                idle_timeout_ms: @default_idle_timeout_ms,
+                resubscribe_after_ms: @default_resubscribe_after_ms
               ]
 
   @impl true
@@ -100,6 +111,25 @@ defmodule Flezha.Plugin.Provider.Websocket do
     {:ok, max(value, 0)}
   end
 
+  defp convert_value(:resubscribe_after_ms, value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} ->
+        {:ok, max(n, 0)}
+
+      _ ->
+        Logger.warning(
+          "[Plugin.Provider.Websocket] invalid resubscribe_after_ms=#{inspect(value)} — " <>
+            "falling back to default #{@default_resubscribe_after_ms}"
+        )
+
+        {:ok, @default_resubscribe_after_ms}
+    end
+  end
+
+  defp convert_value(:resubscribe_after_ms, value) when is_integer(value) do
+    {:ok, max(value, 0)}
+  end
+
   defp convert_value(:ignore_pattern, value) when is_binary(value) and value != "" do
     {:ok, value}
   end
@@ -128,6 +158,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   def init_provider(opts) do
     uri = Map.fetch!(opts, :uri)
     idle_timeout_ms = normalize_idle_timeout(Map.get(opts, :idle_timeout_ms))
+    resubscribe_after_ms = normalize_resubscribe_after(Map.get(opts, :resubscribe_after_ms))
     ignore_pattern = normalize_ignore_pattern(Map.get(opts, :ignore_pattern))
     plugin_id = Map.get(opts, :plugin_id) || uri
 
@@ -142,6 +173,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
       |> Map.put(:payload_metadata, Map.get(opts, :payload_metadata, %{}))
       |> Map.put(:ws_opts, Map.get(opts, :ws_opts, []))
       |> Map.put(:idle_timeout_ms, idle_timeout_ms)
+      |> Map.put(:resubscribe_after_ms, resubscribe_after_ms)
       |> Map.put(:ignore_pattern, ignore_pattern)
       |> Map.put(:plugin_id, plugin_id)
 
@@ -163,6 +195,8 @@ defmodule Flezha.Plugin.Provider.Websocket do
            overwatcher_pid: overwatcher_pid,
            payload_metadata: Map.get(opts, :payload_metadata, %{}),
            idle_timeout_ms: Map.get(opts, :idle_timeout_ms, @default_idle_timeout_ms),
+           resubscribe_after_ms:
+             Map.get(opts, :resubscribe_after_ms, @default_resubscribe_after_ms),
            ignore_pattern: Map.get(opts, :ignore_pattern),
            plugin_id: plugin_id
          ) do
@@ -194,6 +228,18 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   defp normalize_idle_timeout(_), do: @default_idle_timeout_ms
 
+  defp normalize_resubscribe_after(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_resubscribe_after(value) when is_integer(value), do: 0
+
+  defp normalize_resubscribe_after(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} -> max(n, 0)
+      _ -> @default_resubscribe_after_ms
+    end
+  end
+
+  defp normalize_resubscribe_after(_), do: @default_resubscribe_after_ms
+
   defp normalize_ignore_pattern(value) when is_binary(value) and value != "", do: value
   defp normalize_ignore_pattern(_), do: nil
 
@@ -209,8 +255,11 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   def start_link(uri, opts) do
     idle_timeout_ms = Keyword.get(opts, :idle_timeout_ms, @default_idle_timeout_ms)
+    resubscribe_after_ms = Keyword.get(opts, :resubscribe_after_ms, @default_resubscribe_after_ms)
     ignore_pattern = Keyword.get(opts, :ignore_pattern)
     plugin_id = Keyword.get(opts, :plugin_id) || uri
+
+    now = :erlang.monotonic_time(:millisecond)
 
     Fresh.start_link(
       uri,
@@ -222,12 +271,27 @@ defmodule Flezha.Plugin.Provider.Websocket do
         overwatcher_pid: opts[:overwatcher_pid],
         payload_metadata: Keyword.get(opts, :payload_metadata, %{}),
         idle_timeout_ms: idle_timeout_ms,
-        ignore_pattern: ignore_pattern,
-        last_data_frame_at: System.monotonic_time(:millisecond)
+        resubscribe_after_ms: resubscribe_after_ms,
+        ignore_pattern: compile_ignore_pattern(ignore_pattern),
+        websocket_established?: false,
+        frames_seen: 0,
+        last_frame_at: now,
+        last_data_frame_at: now,
+        last_resubscribe_at: now
       },
       opts[:ws_opts]
     )
   end
+
+  # Compile the substring matcher once at start so the per-frame path
+  # runs `:binary.match/2` over a precompiled pattern rather than
+  # recompiling on every frame. `nil` means "no pattern" — every data
+  # frame counts as data with no scan at all.
+  defp compile_ignore_pattern(pattern) when is_binary(pattern) and pattern != "" do
+    :binary.compile_pattern(pattern)
+  end
+
+  defp compile_ignore_pattern(_), do: nil
 
   @impl Fresh
   def handle_terminate(reason, _state) do
@@ -239,33 +303,44 @@ defmodule Flezha.Plugin.Provider.Websocket do
   def handle_connect(_status, _headers, state) do
     Logger.info("Connected to websocket!")
 
-    pcp = state.post_connect["payload"]
+    now = :erlang.monotonic_time(:millisecond)
 
-    if is_map(pcp) && Map.has_key?(pcp, "type") && Map.has_key?(pcp, "message") do
-      type =
-        case pcp["type"] do
-          "text" -> :text
-          "binary" -> :binary
-          _ -> :text
-        end
+    state = %{
+      state
+      | websocket_established?: true,
+        last_frame_at: now,
+        last_data_frame_at: now,
+        last_resubscribe_at: now
+    }
 
-      message = pcp["message"]
+    schedule_idle_check(state)
 
-      send_payload(self(), {type, message})
+    # Issue the subscribe via Fresh's reply form so the frame is sent
+    # after the upgrade lands. A re-entrant `Fresh.send/2` here races the
+    # upgrade and crashes with `{:badkey, :extensions, nil}`.
+    case subscribe_frame(state) do
+      {:ok, frame} -> {:reply, [frame], state}
+      :none -> {:ok, state}
     end
-
-    state = %{state | last_data_frame_at: System.monotonic_time(:millisecond)}
-    schedule_idle_check(state.idle_timeout_ms)
-    {:ok, state}
   end
 
   @impl Fresh
-  def handle_control({:pong, _}, state), do: {:ok, state}
+  def handle_disconnect(_code, _reason, state) do
+    {:reconnect, %{state | websocket_established?: false}}
+  end
+
+  # Any control frame (ping/pong) proves the socket is alive, so it
+  # refreshes the connection-liveness timer without touching data
+  # liveness. Fresh auto-replies to pings before this callback runs.
+  @impl Fresh
+  def handle_control({:pong, _}, state) do
+    {:ok, %{state | last_frame_at: :erlang.monotonic_time(:millisecond)}}
+  end
 
   @impl Fresh
   def handle_control(control_frame, state) do
     Logger.warning("Received unexpected control frame: #{inspect(control_frame)}")
-    {:ok, state}
+    {:ok, %{state | last_frame_at: :erlang.monotonic_time(:millisecond)}}
   end
 
   @impl Fresh
@@ -274,74 +349,62 @@ defmodule Flezha.Plugin.Provider.Websocket do
         %{overwatcher_pid: overwatcher, payload_metadata: metadata} = state
       ) do
     GenServer.cast(overwatcher, {:io_in, message, metadata})
-    counter = Map.get(state, :frames_seen, 0) + 1
+
+    # One clock read and one classification per frame; `last_frame_at`
+    # is set unconditionally (connection liveness) and `last_data_frame_at`
+    # only when the frame is real data (subscription liveness).
+    now = :erlang.monotonic_time(:millisecond)
+    counter = state.frames_seen + 1
+    is_data? = data_frame?(type, message, state.ignore_pattern)
 
     if rem(counter, 1000) == 0 do
       sample = String.slice(message, 0, 120)
 
       Logger.info(
-        "[Plugin.Provider.Websocket] frames_seen=#{counter} plugin_id=#{inspect(state[:plugin_id])} last_msg_size=#{byte_size(message)} sample=#{inspect(sample)}"
+        "[Plugin.Provider.Websocket] frames_seen=#{counter} plugin_id=#{inspect(state.plugin_id)} last_msg_size=#{byte_size(message)} sample=#{inspect(sample)}"
       )
     end
 
-    state = Map.put(state, :frames_seen, counter)
-
-    state =
-      if data_frame_resets_watchdog?(type, message, Map.get(state, :ignore_pattern)) do
-        Map.put(state, :last_data_frame_at, System.monotonic_time(:millisecond))
-      else
-        state
-      end
+    state = %{state | frames_seen: counter, last_frame_at: now}
+    state = if is_data?, do: %{state | last_data_frame_at: now}, else: state
 
     {:ok, state}
   end
 
-  # Watchdog reset rules:
-  #   * No `ignore_pattern` configured  → every data frame resets the timer
-  #     (pre-change default).
-  #   * Binary frames                   → always reset (the pattern is a text
-  #     substring; treating binaries as a possible match would be a false
-  #     positive on opaque payloads).
-  #   * Text frames containing pattern  → suppressed (heartbeat-shaped data).
-  defp data_frame_resets_watchdog?(_type, _message, nil), do: true
-  defp data_frame_resets_watchdog?(_type, _message, ""), do: true
+  # Data-vs-heartbeat classification (drives `last_data_frame_at`):
+  #   * No `ignore_pattern` configured → every frame counts as data
+  #     (no scan at all).
+  #   * Binary frames → always data (the pattern is a text substring;
+  #     scanning opaque payloads would be a false positive).
+  #   * Text frames containing the pattern → heartbeat-shaped, not data.
+  defp data_frame?(_type, _message, nil), do: true
 
-  defp data_frame_resets_watchdog?(:text, message, pattern)
-       when is_binary(message) and is_binary(pattern) do
-    not String.contains?(message, pattern)
+  defp data_frame?(:text, message, pattern) when is_binary(message) do
+    :binary.match(message, pattern) == :nomatch
   end
 
-  defp data_frame_resets_watchdog?(_type, _message, _pattern), do: true
+  defp data_frame?(_type, _message, _pattern), do: true
 
+  # Two-tier watchdog tick:
+  #   1. connection dead (`now - last_frame_at >= idle_timeout_ms`) → reconnect
+  #   2. live but data stale (`resubscribe_after_ms` window elapsed) → re-subscribe
+  #   3. otherwise → reschedule
   @impl Fresh
-  def handle_info(:idle_check, %{idle_timeout_ms: idle} = state) when idle <= 0 do
-    {:ok, state}
-  end
-
   def handle_info(:idle_check, state) do
-    silence_ms = System.monotonic_time(:millisecond) - state.last_data_frame_at
+    now = :erlang.monotonic_time(:millisecond)
 
-    if silence_ms >= state.idle_timeout_ms do
-      Logger.warning(
-        "[Plugin.Provider.Websocket] idle watchdog firing for plugin_id=" <>
-          "#{inspect(state.plugin_id)} silence_ms=#{silence_ms} reason=idle_timeout"
-      )
+    cond do
+      state.idle_timeout_ms > 0 and now - state.last_frame_at >= state.idle_timeout_ms ->
+        reconnect_dead_connection(state, now - state.last_frame_at)
 
-      :telemetry.execute(
-        [:flezha, :ws, :idle_reconnect],
-        %{silence_ms: silence_ms},
-        %{plugin_id: state.plugin_id}
-      )
+      state.resubscribe_after_ms > 0 and
+        now - state.last_data_frame_at >= state.resubscribe_after_ms and
+          now - state.last_resubscribe_at >= state.resubscribe_after_ms ->
+        resubscribe_stale_data(state, now, now - state.last_data_frame_at)
 
-      # The plugin manager monitors this pid; an abnormal-reason exit is
-      # handled by `Flezha.Plugin.Extension.Table.handle_down/5`, which
-      # calls `attempt_restart` and re-runs `init_provider/1` to spin up
-      # a fresh Fresh.Connection with the post_connect payload re-sent.
-      Process.exit(self(), {:shutdown, :idle_timeout})
-      {:ok, state}
-    else
-      schedule_idle_check(state.idle_timeout_ms)
-      {:ok, state}
+      true ->
+        schedule_idle_check(state)
+        {:ok, state}
     end
   end
 
@@ -350,16 +413,79 @@ defmodule Flezha.Plugin.Provider.Websocket do
     {:ok, state}
   end
 
-  def send_payload(server, {type, msg}) do
-    Fresh.send(server, {type, msg})
+  defp reconnect_dead_connection(state, silence_ms) do
+    Logger.warning(
+      "[Plugin.Provider.Websocket] idle watchdog firing for plugin_id=" <>
+        "#{inspect(state.plugin_id)} silence_ms=#{silence_ms} reason=idle_timeout"
+    )
+
+    :telemetry.execute(
+      [:flezha, :ws, :idle_reconnect],
+      %{silence_ms: silence_ms},
+      %{plugin_id: state.plugin_id}
+    )
+
+    # The plugin manager monitors this pid; an abnormal-reason exit is
+    # handled by `Flezha.Plugin.Extension.Table.handle_down/5`, which
+    # calls `attempt_restart` and re-runs `init_provider/1` to spin up
+    # a fresh Fresh.Connection with the post_connect payload re-sent.
+    Process.exit(self(), {:shutdown, :idle_timeout})
+    {:ok, state}
   end
 
-  defp schedule_idle_check(idle_timeout_ms)
-       when is_integer(idle_timeout_ms) and idle_timeout_ms > 0 do
-    tick = max(@min_tick_interval_ms, div(idle_timeout_ms, 2))
-    Process.send_after(self(), :idle_check, tick)
-    :ok
+  defp resubscribe_stale_data(state, now, data_silence_ms) do
+    # Rate-limit guard advances even when the send is skipped, so a
+    # transiently-unestablished socket re-tries at most once per window.
+    state = %{state | last_resubscribe_at: now}
+    schedule_idle_check(state)
+
+    with true <- state.websocket_established?,
+         {:ok, frame} <- subscribe_frame(state) do
+      :telemetry.execute(
+        [:flezha, :ws, :resubscribe],
+        %{data_silence_ms: data_silence_ms},
+        %{plugin_id: state.plugin_id}
+      )
+
+      {:reply, [frame], state}
+    else
+      false ->
+        Logger.warning(
+          "[Plugin.Provider.Websocket] skipping re-subscribe; websocket not established " <>
+            "plugin_id=#{inspect(state.plugin_id)}"
+        )
+
+        {:ok, state}
+
+      :none ->
+        {:ok, state}
+    end
   end
 
-  defp schedule_idle_check(_), do: :ok
+  # Build the `post_connect` subscribe frame, or `:none` when no payload
+  # is configured.
+  defp subscribe_frame(state) do
+    pcp = state.post_connect["payload"]
+
+    if is_map(pcp) and Map.has_key?(pcp, "type") and Map.has_key?(pcp, "message") do
+      type = if pcp["type"] == "binary", do: :binary, else: :text
+      {:ok, {type, pcp["message"]}}
+    else
+      :none
+    end
+  end
+
+  # Tick at half the nearest enabled deadline so neither tier is observed
+  # late; no tick is scheduled when both tiers are disabled.
+  defp schedule_idle_check(state) do
+    case Enum.filter([state.idle_timeout_ms, state.resubscribe_after_ms], &(&1 > 0)) do
+      [] ->
+        :ok
+
+      enabled ->
+        tick = max(@min_tick_interval_ms, div(Enum.min(enabled), 2))
+        Process.send_after(self(), :idle_check, tick)
+        :ok
+    end
+  end
 end

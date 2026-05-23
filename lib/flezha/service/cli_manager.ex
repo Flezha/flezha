@@ -1057,29 +1057,8 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp lookup_executor_for_partition(rc, _sh, _pk) do
-    namespace = "default"
-
-    case Flezha.Service.HubManager.get_registry(namespace) do
-      {:ok, registry} ->
-        match =
-          Enum.find_value(registry, fn
-            {_relay_id, %{metadata: %{tag: tag, relay: %{relay_class: ^rc}}}}
-            when is_binary(tag) ->
-              tag
-
-            _ ->
-              nil
-          end)
-
-        case match do
-          nil -> {:error, "no active executor owns relay_class=#{rc}"}
-          eid -> {:ok, eid}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+  defp lookup_executor_for_partition(rc, sh, pk) do
+    Flezha.State.Recovery.resolve_executor({rc, sh, pk})
   end
 
   @doc """
@@ -1879,7 +1858,8 @@ defmodule Flezha.Service.CliManager do
     cli_ctx = cli_context(opts)
 
     with :ok <- AuthZ.require_bound_principal(cli_ctx),
-         :ok <- AuthZ.authorize(cli_ctx, :"authz.token_list", Scope.build(scope_namespace(cli_ctx))) do
+         :ok <-
+           AuthZ.authorize(cli_ctx, :"authz.token_list", Scope.build(scope_namespace(cli_ctx))) do
       ns = filter_namespace_for_list(cli_ctx)
       {:ok, TokenStore.list(ns)}
     end

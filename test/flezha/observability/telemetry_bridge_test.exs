@@ -43,6 +43,66 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert signal.metadata[:relay] == "r1"
   end
 
+  test "websocket re-subscribe event is bridged" do
+    ws_sink = :"obs_tbridge_ws_sink_#{:erlang.unique_integer([:positive])}"
+    ref = :counters.new(1, [:atomics])
+
+    {:ok, _pid} =
+      Registry.register_sink(%{
+        name: ws_sink,
+        module: Counting,
+        config: %{counter_ref: ref, parent: self(), sources: [:flezha_ws]}
+      })
+
+    on_exit(fn -> Registry.unregister_sink(ws_sink) end)
+    drain_mailbox()
+
+    :telemetry.execute(
+      [:flezha, :ws, :resubscribe],
+      %{data_silence_ms: 120_000},
+      %{plugin_id: "wss://ws.kraken.com"}
+    )
+
+    signal =
+      receive_until(fn s -> s.source == :flezha_ws and s.name == :resubscribe end, 500)
+
+    assert signal
+    assert signal.measurements[:data_silence_ms] == 120_000
+    assert signal.metadata[:plugin_id] == "wss://ws.kraken.com"
+  end
+
+  test "persistence stall/gap/compaction events are bridged" do
+    drain_mailbox()
+
+    :telemetry.execute(
+      [:flezha, :state, :output_stall],
+      %{stalled_ms: 60_000, last_seq: 100},
+      %{relay: "btc_kraken", shard: "ohlc", key: "1m"}
+    )
+
+    stall =
+      receive_until(fn s -> s.source == :flezha_state and s.name == :output_stall end, 500)
+
+    assert stall
+    assert stall.measurements[:stalled_ms] == 60_000
+    assert stall.measurements[:last_seq] == 100
+    assert stall.metadata[:relay] == "btc_kraken"
+
+    :telemetry.execute([:flezha, :state, :seq_gap], %{expected: 101, got: 137}, %{relay: "r"})
+    gap = receive_until(fn s -> s.source == :flezha_state and s.name == :seq_gap end, 500)
+    assert gap
+    assert gap.measurements[:expected] == 101
+    assert gap.measurements[:got] == 137
+
+    :telemetry.execute([:flezha, :state, :compaction_timeout], %{waited_ms: 5_000}, %{relay: "r"})
+
+    compaction =
+      receive_until(fn s -> s.source == :flezha_state and s.name == :compaction_timeout end, 500)
+
+    assert compaction
+    assert compaction.measurements[:waited_ms] == 5_000
+  end
+
   test "all bridged events have a mapping" do
     # Sanity check — every event in mapping/0 maps to {source, name, kind}.
     Enum.each(TelemetryBridge.mapping(), fn {event, {source, name, kind}} ->

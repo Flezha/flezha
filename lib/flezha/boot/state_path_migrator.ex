@@ -32,9 +32,13 @@ defmodule Flezha.Boot.StatePathMigrator do
     root = Registry.state_root()
 
     if File.dir?(root) do
-      result = do_migrate(root)
-      _ = migrate_to_namespaced_layout(root)
-      result
+      # The namespace migration (`migrate_to_namespaced_layout/1`) is NOT
+      # run here: the State subsystem readers (`Flezha.State.Registry`)
+      # resolve the flat `{relay_class}/{shard}` layout and are not yet
+      # namespace-aware, so moving state under `_system/` at boot would
+      # orphan it. The namespace-state work wires it in once the readers
+      # understand the prefix.
+      do_migrate(root)
     else
       empty_result()
     end

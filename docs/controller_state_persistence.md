@@ -180,6 +180,31 @@ Application boot requires writing it to `runtime.exs`.
 | `:flezha, :default_time_travel_retention_hours` | `6` | Global default when no override. |
 | `:flezha, :default_compact_after_bytes` | `64 * 1024 * 1024` | Per-Shard compaction threshold. |
 | `:flezha, :relay_persistence` | `%{}` | Per-Relay-class executor override (`true` / `false`). |
+| `:flezha, :output_watchdog_interval_ms` | `10_000` | `Watchdog` sweep cadence. Min 100 ms. |
+| `:flezha, :output_stall_timeout_ms` | `%{}` (default 60 000) | Per-Relay-class output-staleness window; `0` disables. |
+| `:flezha, :default_output_stall_timeout_ms` | `60_000` | Global default when no per-class override. |
+| `:flezha, :compaction_timeout_ms` | `30_000` | `CompactPartition` → snapshot handshake bound; `0` disables. |
+
+### Self-healing recovery (`Flezha.State.Watchdog` + `Flezha.State.Recovery`)
+
+A live Partition's persistence/output path must not be able to stall
+silently and permanently. Three failure edges now recover via the shared
+`RestoreInitState` resync (`Flezha.State.Recovery.resync/2`) and emit
+telemetry:
+
+* **Seq gap** — a Change with `seq > last_persisted_seq + 1` is no longer
+  a terminal `{:error, {:gap}}`; `Flezha.Executor.StreamChannel` emits
+  `[:flezha, :state, :seq_gap]` and resyncs so the SDK rewinds and
+  resends from `terminal_seq + 1`.
+* **Output staleness** — `Watchdog` flags a Partition that is still
+  receiving Changes but whose persisted seq froze past
+  `output_stall_timeout_ms`, emits `[:flezha, :state, :output_stall]`,
+  and resyncs. A genuinely idle Partition (no Changes arriving) is not
+  flagged.
+* **Compaction timeout** — a `CompactPartition` whose snapshot does not
+  return within `compaction_timeout_ms` emits
+  `[:flezha, :state, :compaction_timeout]` and resyncs; compaction stays
+  retriable.
 
 ## Persisted `executor_id` is advisory across controller restarts
 

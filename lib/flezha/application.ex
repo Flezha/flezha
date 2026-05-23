@@ -48,7 +48,8 @@ defmodule Flezha.Application do
         Flezha.State.Supervisor.application_children() ++
         [
           Flezha.State.FsyncBatcher,
-          Flezha.State.Retention
+          Flezha.State.Retention,
+          Flezha.State.Watchdog
         ] ++
         memory_reporter_children()
 

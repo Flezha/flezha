@@ -16,11 +16,19 @@ defmodule Flezha.State.PersistenceResolver do
        Global default `6`. `0` disables time-travel for that Relay class.
     * `:compact_after_bytes` — per-Shard threshold, sourced from SDK
        metadata first; global default `64 * 1024 * 1024`.
+    * `:output_stall_timeout_ms` — `%{<RelayClass> => non_neg_integer}`.
+       Global default `60_000`. `0` disables the output-staleness
+       watchdog for that Relay class.
+    * `:compaction_timeout_ms` — global; the bound on the
+       `CompactPartition` → `partition_state_snapshot` handshake.
+       Default `30_000`. `0` disables the compaction-timeout sweep.
   """
 
   @default_persistence_enabled true
   @default_retention_hours 6
   @default_compact_after_bytes 64 * 1024 * 1024
+  @default_output_stall_timeout_ms 60_000
+  @default_compaction_timeout_ms 30_000
 
   @spec persistence_enabled?(binary(), map()) :: boolean()
   def persistence_enabled?(relay_class, metadata \\ %{}) when is_binary(relay_class) do
@@ -73,6 +81,39 @@ defmodule Flezha.State.PersistenceResolver do
 
       _ ->
         Application.get_env(:flezha, :default_compact_after_bytes, @default_compact_after_bytes)
+    end
+  end
+
+  @spec output_stall_timeout_ms(binary(), map()) :: non_neg_integer()
+  def output_stall_timeout_ms(relay_class, metadata \\ %{}) when is_binary(relay_class) do
+    case operator_override(:output_stall_timeout_ms, relay_class) do
+      {:ok, value} when is_integer(value) and value >= 0 ->
+        value
+
+      _ ->
+        case Map.get(
+               metadata,
+               "output_stall_timeout_ms",
+               Map.get(metadata, :output_stall_timeout_ms)
+             ) do
+          v when is_integer(v) and v >= 0 ->
+            v
+
+          _ ->
+            Application.get_env(
+              :flezha,
+              :default_output_stall_timeout_ms,
+              @default_output_stall_timeout_ms
+            )
+        end
+    end
+  end
+
+  @spec compaction_timeout_ms() :: non_neg_integer()
+  def compaction_timeout_ms() do
+    case Application.get_env(:flezha, :compaction_timeout_ms, @default_compaction_timeout_ms) do
+      v when is_integer(v) and v >= 0 -> v
+      _ -> @default_compaction_timeout_ms
     end
   end
 

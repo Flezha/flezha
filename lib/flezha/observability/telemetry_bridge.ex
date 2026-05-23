@@ -37,7 +37,11 @@ defmodule Flezha.Observability.TelemetryBridge do
       {:flezha_plugin_installer, :store_opened, :event},
     [:flezha, :plugin_installer, :unsigned_install] =>
       {:flezha_plugin_installer, :unsigned_install, :event},
-    [:flezha, :ws, :idle_reconnect] => {:flezha_ws, :idle_reconnect, :event}
+    [:flezha, :ws, :idle_reconnect] => {:flezha_ws, :idle_reconnect, :event},
+    [:flezha, :ws, :resubscribe] => {:flezha_ws, :resubscribe, :event},
+    [:flezha, :state, :seq_gap] => {:flezha_state, :seq_gap, :event},
+    [:flezha, :state, :output_stall] => {:flezha_state, :output_stall, :event},
+    [:flezha, :state, :compaction_timeout] => {:flezha_state, :compaction_timeout, :event}
   }
 
   # ---------- Public API ----------

@@ -17,6 +17,8 @@ defmodule Flezha.Plugin.Provider.WebsocketIgnorePatternTest do
   alias Flezha.Plugin.Provider.Websocket
 
   defp base_state(overrides) do
+    now = :erlang.monotonic_time(:millisecond)
+
     Map.merge(
       %{
         uri: "wss://test.local",
@@ -25,8 +27,13 @@ defmodule Flezha.Plugin.Provider.WebsocketIgnorePatternTest do
         overwatcher_pid: spawn_dummy_overwatcher(),
         payload_metadata: %{},
         idle_timeout_ms: 100,
+        resubscribe_after_ms: 0,
         ignore_pattern: nil,
-        last_data_frame_at: System.monotonic_time(:millisecond)
+        websocket_established?: true,
+        frames_seen: 0,
+        last_frame_at: now,
+        last_data_frame_at: now,
+        last_resubscribe_at: now
       },
       Map.new(overrides)
     )
@@ -119,86 +126,25 @@ defmodule Flezha.Plugin.Provider.WebsocketIgnorePatternTest do
     end
   end
 
-  describe "watchdog drives reconnect on heartbeat-only stream" do
-    test "heartbeat-only frames over (idle_timeout_ms + tick_interval) trigger {:shutdown, :idle_timeout}" do
-      Process.flag(:trap_exit, true)
-      parent = self()
+  describe "handle_in/2 — connection-liveness refresh (regression guard)" do
+    test "a heartbeat frame refreshes last_frame_at even though it is not data" do
+      stale = :erlang.monotonic_time(:millisecond) - 60_000
 
-      {pid, ref} =
-        spawn_monitor(fn ->
-          state =
-            base_state(
-              idle_timeout_ms: 100,
-              ignore_pattern: "\"event\":\"heartbeat\"",
-              overwatcher_pid: parent
-            )
+      state =
+        base_state(
+          ignore_pattern: "\"event\":\"heartbeat\"",
+          last_frame_at: stale,
+          last_data_frame_at: stale
+        )
 
-          # Drive 5 heartbeats over ~250 ms — none should bump the timer.
-          state =
-            Enum.reduce(1..5, state, fn _, acc ->
-              Process.sleep(50)
-              {:ok, new_state} = Websocket.handle_in({:text, "{\"event\":\"heartbeat\"}"}, acc)
-              new_state
-            end)
+      assert {:ok, new_state} =
+               Websocket.handle_in({:text, "{\"event\":\"heartbeat\"}"}, state)
 
-          # Now silence_ms (since `last_data_frame_at`) is well past
-          # idle_timeout_ms — handle_info(:idle_check) MUST exit.
-          Websocket.handle_info(:idle_check, state)
-          Process.sleep(500)
-        end)
-
-      assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 1_500
-    end
-
-    test "non-heartbeat frame in middle of heartbeat stream KEEPS connection alive" do
-      Process.flag(:trap_exit, true)
-      parent = self()
-
-      {pid, ref} =
-        spawn_monitor(fn ->
-          state =
-            base_state(
-              idle_timeout_ms: 200,
-              ignore_pattern: "\"event\":\"heartbeat\"",
-              overwatcher_pid: parent
-            )
-
-          # Heartbeat → heartbeat → real data → heartbeat. The real data
-          # frame mid-stream resets the timer; subsequent heartbeats can't
-          # re-stale it within idle_timeout_ms.
-          state =
-            [
-              "{\"event\":\"heartbeat\"}",
-              "{\"event\":\"heartbeat\"}",
-              "[{\"price\":\"42000.00\"}]",
-              "{\"event\":\"heartbeat\"}"
-            ]
-            |> Enum.reduce(state, fn frame, acc ->
-              Process.sleep(40)
-              {:ok, new_state} = Websocket.handle_in({:text, frame}, acc)
-              new_state
-            end)
-
-          # silence_ms ≈ 40 ms (one tick after the real data frame), which
-          # is well below idle_timeout_ms — handle_info(:idle_check) must
-          # NOT exit.
-          {:ok, _} = Websocket.handle_info(:idle_check, state)
-
-          # Live to tell the tale.
-          send(parent, :survived)
-
-          receive do
-            :stop -> :ok
-          after
-            1_000 -> :ok
-          end
-        end)
-
-      assert_receive :survived, 1_500
-      refute_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 200
-
-      Process.exit(pid, :kill)
-      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
+      # Connection liveness advances on any frame; data liveness does not
+      # advance on a heartbeat. This split is the core fix that stops the
+      # watchdog false-killing a quiet-but-alive feed.
+      assert new_state.last_frame_at > stale
+      assert new_state.last_data_frame_at == stale
     end
   end
 

@@ -25,6 +25,8 @@ defmodule Flezha.State.WalWriter do
     :file_handle,
     :wal_path,
     :last_persisted_seq,
+    :last_advance_at,
+    :last_change_seen_at,
     :pending_bytes,
     :pending_since_us,
     :high_watermark,
@@ -39,6 +41,8 @@ defmodule Flezha.State.WalWriter do
           file_handle: :file.io_device(),
           wal_path: binary(),
           last_persisted_seq: non_neg_integer(),
+          last_advance_at: integer(),
+          last_change_seen_at: integer(),
           pending_bytes: non_neg_integer(),
           pending_since_us: non_neg_integer() | nil,
           high_watermark: pos_integer(),
@@ -46,6 +50,19 @@ defmodule Flezha.State.WalWriter do
           metrics: :counters.counters_ref(),
           latency_reservoir: :queue.queue(),
           backpressured?: boolean()
+        }
+
+  @typedoc """
+  Liveness view consumed by `Flezha.State.Watchdog`. `last_advance_at`
+  moves only when `last_persisted_seq` increases; `last_change_seen_at`
+  moves on every received Change frame (append, duplicate, or gap). A
+  Partition is *stalled* (vs idle) when Changes are still arriving but
+  the persisted seq has stopped advancing.
+  """
+  @type stall_status :: %{
+          last_persisted_seq: non_neg_integer(),
+          last_advance_at: integer(),
+          last_change_seen_at: integer()
         }
 
   # ---------- Public API ----------
@@ -68,6 +85,9 @@ defmodule Flezha.State.WalWriter do
 
   @spec last_persisted_seq(GenServer.server()) :: non_neg_integer()
   def last_persisted_seq(server), do: GenServer.call(server, :last_persisted_seq)
+
+  @spec stall_status(GenServer.server()) :: stall_status()
+  def stall_status(server), do: GenServer.call(server, :stall_status)
 
   @spec close(GenServer.server()) :: :ok
   def close(server), do: GenServer.stop(server, :normal)
@@ -148,11 +168,15 @@ defmodule Flezha.State.WalWriter do
     Metrics.put(metrics, :wal_seq, last_seq)
     Metrics.put(metrics, :wal_size_bytes, file_size(wal_path))
 
+    now = :erlang.monotonic_time(:millisecond)
+
     state = %__MODULE__{
       partition_id: partition_id,
       file_handle: file,
       wal_path: wal_path,
       last_persisted_seq: last_seq,
+      last_advance_at: now,
+      last_change_seen_at: now,
       pending_bytes: 0,
       pending_since_us: nil,
       high_watermark: high_watermark(),
@@ -170,6 +194,12 @@ defmodule Flezha.State.WalWriter do
 
   @impl true
   def handle_call({:append, seq, header, change_bytes}, _from, state) do
+    # Every received Change frame — accepted, deduped, or rejected as a
+    # gap — proves the SDK is still emitting, which distinguishes a
+    # stalled Partition from a genuinely idle one for the watchdog.
+    now = :erlang.monotonic_time(:millisecond)
+    state = %{state | last_change_seen_at: now}
+
     cond do
       seq <= state.last_persisted_seq ->
         Metrics.add(state.metrics, :dedup_drops_total, 1)
@@ -200,6 +230,7 @@ defmodule Flezha.State.WalWriter do
         new_state = %{
           state
           | last_persisted_seq: seq,
+            last_advance_at: now,
             pending_bytes: new_pending,
             pending_since_us: state.pending_since_us || System.monotonic_time(:microsecond)
         }
@@ -252,6 +283,16 @@ defmodule Flezha.State.WalWriter do
 
   def handle_call(:last_persisted_seq, _from, state) do
     {:reply, state.last_persisted_seq, state}
+  end
+
+  def handle_call(:stall_status, _from, state) do
+    status = %{
+      last_persisted_seq: state.last_persisted_seq,
+      last_advance_at: state.last_advance_at,
+      last_change_seen_at: state.last_change_seen_at
+    }
+
+    {:reply, status, state}
   end
 
   @impl true

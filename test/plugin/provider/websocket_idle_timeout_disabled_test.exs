@@ -42,6 +42,8 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
     Process.flag(:trap_exit, true)
     parent = self()
 
+    stale = System.monotonic_time(:millisecond) - 60_000
+
     state = %{
       uri: "wss://test.local",
       plugin_id: "test_disabled_ws",
@@ -49,7 +51,13 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
       overwatcher_pid: parent,
       payload_metadata: %{},
       idle_timeout_ms: 0,
-      last_data_frame_at: System.monotonic_time(:millisecond) - 60_000
+      resubscribe_after_ms: 0,
+      ignore_pattern: nil,
+      websocket_established?: true,
+      frames_seen: 0,
+      last_frame_at: stale,
+      last_data_frame_at: stale,
+      last_resubscribe_at: stale
     }
 
     {pid, ref} =
@@ -76,7 +84,13 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
       overwatcher_pid: self(),
       payload_metadata: %{},
       idle_timeout_ms: 0,
-      last_data_frame_at: 0
+      resubscribe_after_ms: 0,
+      ignore_pattern: nil,
+      websocket_established?: false,
+      frames_seen: 0,
+      last_frame_at: 0,
+      last_data_frame_at: 0,
+      last_resubscribe_at: 0
     }
 
     assert {:ok, _} = Websocket.handle_connect(101, [], state)

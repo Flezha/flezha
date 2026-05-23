@@ -148,16 +148,22 @@ defmodule Flezha.Executor.StreamChannel do
     {:noreply, state}
   end
 
-  defp handle_partition_state_change(_executor_id, frame) do
+  defp handle_partition_state_change(executor_id, frame) do
     case StateWire.decode_frame(frame) do
       {:ok, %{partition_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
         partition_id = {rc, sh, pk}
 
         case Flezha.State.Supervisor.find_or_start(partition_id) do
           {:ok, pid} ->
-            # `:duplicate` is silently dropped (dedup on controller outbox).
-            _ = Flezha.State.WalWriter.append(pid, seq, header, body)
-            :ok
+            # `:ok`/`:duplicate` are terminal; a gap means the SDK is ahead
+            # of us, so resync rather than wedge the Partition forever.
+            case Flezha.State.WalWriter.append(pid, seq, header, body) do
+              {:error, {:gap, expected: expected, got: got}} ->
+                recover_seq_gap(executor_id, partition_id, expected, got)
+
+              _ ->
+                :ok
+            end
 
           {:error, reason} ->
             Logger.error(
@@ -171,10 +177,24 @@ defmodule Flezha.Executor.StreamChannel do
     end
   end
 
+  defp recover_seq_gap(executor_id, {rc, sh, pk} = partition_id, expected, got) do
+    :telemetry.execute(
+      [:flezha, :state, :seq_gap],
+      %{expected: expected, got: got},
+      %{relay: rc, shard: sh, key: pk}
+    )
+
+    _ =
+      Flezha.State.Recovery.resync(partition_id, executor_id: executor_id, reason: :seq_gap)
+
+    :ok
+  end
+
   defp handle_partition_state_snapshot(_executor_id, frame) do
     case StateWire.decode_frame(frame) do
       {:ok, %{partition_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
         partition_id = {rc, sh, pk}
+        Flezha.State.Watchdog.compaction_completed(partition_id)
 
         case Flezha.State.Snapshot.write_snapshot(partition_id, seq, header, body) do
           {:ok, _path} ->

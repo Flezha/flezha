@@ -34,6 +34,8 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
   end
 
   defp base_state(overrides) do
+    now = :erlang.monotonic_time(:millisecond)
+
     Map.merge(
       %{
         uri: "wss://test.local",
@@ -42,7 +44,13 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
         overwatcher_pid: self(),
         payload_metadata: %{},
         idle_timeout_ms: 100,
-        last_data_frame_at: System.monotonic_time(:millisecond)
+        resubscribe_after_ms: 0,
+        ignore_pattern: nil,
+        websocket_established?: true,
+        frames_seen: 0,
+        last_frame_at: now,
+        last_data_frame_at: now,
+        last_resubscribe_at: now
       },
       Map.new(overrides)
     )
@@ -83,7 +91,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
           state =
             base_state(
               idle_timeout_ms: 100,
-              last_data_frame_at: System.monotonic_time(:millisecond) - 250,
+              last_frame_at: System.monotonic_time(:millisecond) - 250,
               overwatcher_pid: parent
             )
 
@@ -103,7 +111,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
           state =
             base_state(
               idle_timeout_ms: 100,
-              last_data_frame_at: System.monotonic_time(:millisecond) - 350,
+              last_frame_at: System.monotonic_time(:millisecond) - 350,
               plugin_id: "kraken_trade_ws",
               overwatcher_pid: parent
             )
@@ -199,20 +207,22 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
     end
   end
 
-  describe "handle_control/2 does NOT refresh the watchdog" do
-    test "leaves last_data_frame_at unchanged on a pong frame" do
+  describe "handle_control/2 refreshes connection liveness but not data liveness" do
+    test "a pong frame refreshes last_frame_at and leaves last_data_frame_at unchanged" do
       stale = System.monotonic_time(:millisecond) - 60_000
-      state = base_state(last_data_frame_at: stale)
+      state = base_state(last_frame_at: stale, last_data_frame_at: stale)
 
       assert {:ok, new_state} = Websocket.handle_control({:pong, ""}, state)
+      assert new_state.last_frame_at > stale
       assert new_state.last_data_frame_at == stale
     end
 
-    test "leaves last_data_frame_at unchanged on an unexpected control frame" do
+    test "a ping frame refreshes last_frame_at and leaves last_data_frame_at unchanged" do
       stale = System.monotonic_time(:millisecond) - 60_000
-      state = base_state(last_data_frame_at: stale)
+      state = base_state(last_frame_at: stale, last_data_frame_at: stale)
 
       assert {:ok, new_state} = Websocket.handle_control({:ping, "irrelevant"}, state)
+      assert new_state.last_frame_at > stale
       assert new_state.last_data_frame_at == stale
     end
   end

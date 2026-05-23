@@ -901,13 +901,22 @@ defmodule Flezha.Relay.Overwatch do
   """
   @spec dispatch_compact_partition(binary(), {binary(), binary(), binary()}) ::
           {:ok, reference()} | {:error, term()}
-  def dispatch_compact_partition(executor_id, {rc, sh, pk}) do
+  def dispatch_compact_partition(executor_id, {rc, sh, pk} = partition_id) do
     partition_id_bytes = Wire.encode_partition_id(rc, sh, pk)
 
     command =
       {:compact_partition, %ExecutorCommands.CompactPartition{partition_id: partition_id_bytes}}
 
-    ControlChannel.send_control(executor_id, command)
+    case ControlChannel.send_control(executor_id, command) do
+      {:ok, _ref} = ok ->
+        # Bound the handshake: a snapshot that never arrives is timed out
+        # by the Watchdog rather than left to wedge persistence.
+        Flezha.State.Watchdog.compaction_started(partition_id)
+        ok
+
+      other ->
+        other
+    end
   end
 
   @doc """
