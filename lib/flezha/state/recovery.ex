@@ -38,13 +38,11 @@ defmodule Flezha.State.Recovery do
     case Flezha.Service.HubManager.get_registry("default") do
       {:ok, registry} ->
         match =
-          Enum.find_value(registry, fn
-            {_relay_id, %{metadata: %{tag: tag, relay: %{relay_class: ^rc}}}}
-            when is_binary(tag) ->
-              tag
+          Enum.find_value(registry, fn {_relay_id, entry} ->
+            {cspec, _node_pids, metadata} = normalize_entry(entry)
+            tag = Map.get(metadata, :tag)
 
-            _ ->
-              nil
+            if is_binary(tag) and relay_class(cspec) == rc, do: tag
           end)
 
         case match do
@@ -89,5 +87,26 @@ defmodule Flezha.State.Recovery do
 
         err
     end
+  end
+
+  # The durable registry stores `{relay_id, {cspec, node_pids, metadata}}` (a
+  # pre-namespace row may omit metadata). The owning executor is `metadata.tag`;
+  # the relay_class is the relay's `:relay_class` opt (default: its id), carried
+  # in the cspec's start args — mirror of `Reconciler.Probe.relay_from_cspec/1`.
+  defp normalize_entry({cspec, node_pids, metadata}), do: {cspec, node_pids, metadata}
+  defp normalize_entry({cspec, node_pids}), do: {cspec, node_pids, %{}}
+
+  defp relay_class(%{start: {_m, _f, [arg]}}) do
+    case arg do
+      {_namespace, relay} when is_map(relay) -> relay_class_of(relay)
+      {_namespace, _executor_id, relay} when is_map(relay) -> relay_class_of(relay)
+      _ -> nil
+    end
+  end
+
+  defp relay_class(_), do: nil
+
+  defp relay_class_of(relay) do
+    Keyword.get(Map.get(relay, :opts, []), :relay_class, Map.get(relay, :id))
   end
 end

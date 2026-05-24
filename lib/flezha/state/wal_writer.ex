@@ -27,6 +27,7 @@ defmodule Flezha.State.WalWriter do
     :last_persisted_seq,
     :last_advance_at,
     :last_change_seen_at,
+    :owning_executor,
     :pending_bytes,
     :pending_since_us,
     :high_watermark,
@@ -43,6 +44,7 @@ defmodule Flezha.State.WalWriter do
           last_persisted_seq: non_neg_integer(),
           last_advance_at: integer(),
           last_change_seen_at: integer(),
+          owning_executor: binary() | nil,
           pending_bytes: non_neg_integer(),
           pending_since_us: non_neg_integer() | nil,
           high_watermark: pos_integer(),
@@ -71,10 +73,18 @@ defmodule Flezha.State.WalWriter do
     GenServer.start_link(__MODULE__, partition_id, name: via(partition_id))
   end
 
-  @spec append(GenServer.server(), non_neg_integer(), binary(), binary()) ::
+  @doc """
+  Append a Change at `seq`. `executor_id` identifies the executor that emitted
+  it; a Change from a *different* executor than the one that wrote the current
+  epoch realigns the WAL to the new executor's seq base (executor-restart
+  recovery — see `handle_call/3`). Pass `nil` (the default) to disable epoch
+  tracking — the single-executor / test path keeps the prior dedup/gap/append
+  semantics.
+  """
+  @spec append(GenServer.server(), non_neg_integer(), binary(), binary(), binary() | nil) ::
           :ok | :duplicate | {:error, term()}
-  def append(server, seq, header, change_bytes) do
-    GenServer.call(server, {:append, seq, header, change_bytes})
+  def append(server, seq, header, change_bytes, executor_id \\ nil) do
+    GenServer.call(server, {:append, seq, header, change_bytes, executor_id})
   end
 
   @spec fsync(GenServer.server()) :: :ok
@@ -177,6 +187,7 @@ defmodule Flezha.State.WalWriter do
       last_persisted_seq: last_seq,
       last_advance_at: now,
       last_change_seen_at: now,
+      owning_executor: nil,
       pending_bytes: 0,
       pending_since_us: nil,
       high_watermark: high_watermark(),
@@ -193,14 +204,25 @@ defmodule Flezha.State.WalWriter do
   end
 
   @impl true
-  def handle_call({:append, seq, header, change_bytes}, _from, state) do
-    # Every received Change frame — accepted, deduped, or rejected as a
-    # gap — proves the SDK is still emitting, which distinguishes a
+  def handle_call({:append, seq, header, change_bytes, executor_id}, _from, state) do
+    # Every received Change frame — accepted, deduped, realigned, or rejected
+    # as a gap — proves the SDK is still emitting, which distinguishes a
     # stalled Partition from a genuinely idle one for the watchdog.
     now = :erlang.monotonic_time(:millisecond)
     state = %{state | last_change_seen_at: now}
 
     cond do
+      realign?(state, executor_id, seq) ->
+        # A *different* executor than the one that wrote the current epoch is
+        # emitting a non-contiguous seq — the signature of an executor pod
+        # restart whose post-rebuild seq base has diverged from our WAL. The
+        # rebuilt executor is the live source of truth, so adopt its epoch
+        # instead of dedup-dropping its Changes as stale retransmits, which
+        # would freeze the WAL while the executor keeps producing.
+        state
+        |> realign_epoch(seq, executor_id, now)
+        |> write_record(seq, header, change_bytes, executor_id, now)
+
       seq <= state.last_persisted_seq ->
         Metrics.add(state.metrics, :dedup_drops_total, 1)
         {:reply, :duplicate, state}
@@ -209,35 +231,7 @@ defmodule Flezha.State.WalWriter do
         {:reply, {:error, {:gap, expected: state.last_persisted_seq + 1, got: seq}}, state}
 
       true ->
-        record = encode_record(seq, header, change_bytes)
-        :ok = :file.write(state.file_handle, record)
-        size = byte_size(record)
-
-        Metrics.add(state.metrics, :persisted_changes_total, 1)
-        Metrics.add(state.metrics, :persisted_bytes_total, size)
-        Metrics.put(state.metrics, :wal_seq, seq)
-        Metrics.add(state.metrics, :wal_size_bytes, size)
-
-        # Update outbox dedup file. A failure here is non-fatal: on restart
-        # `scan_for_last_valid_seq/2` recomputes from the WAL itself; the
-        # dedup file is a fast-path cache.
-        _ = Outbox.write_last_seq(state.partition_id, seq)
-
-        FsyncBatcher.mark_dirty(state.partition_id)
-
-        new_pending = state.pending_bytes + size
-
-        new_state = %{
-          state
-          | last_persisted_seq: seq,
-            last_advance_at: now,
-            pending_bytes: new_pending,
-            pending_since_us: state.pending_since_us || System.monotonic_time(:microsecond)
-        }
-
-        new_state = maybe_signal_backpressure(new_state, new_pending)
-
-        {:reply, :ok, new_state}
+        write_record(state, seq, header, change_bytes, executor_id, now)
     end
   end
 
@@ -303,6 +297,85 @@ defmodule Flezha.State.WalWriter do
   end
 
   def terminate(_reason, _state), do: :ok
+
+  # ---------- Append / realign ----------
+
+  defp write_record(state, seq, header, change_bytes, executor_id, now) do
+    record = encode_record(seq, header, change_bytes)
+    :ok = :file.write(state.file_handle, record)
+    size = byte_size(record)
+
+    Metrics.add(state.metrics, :persisted_changes_total, 1)
+    Metrics.add(state.metrics, :persisted_bytes_total, size)
+    Metrics.put(state.metrics, :wal_seq, seq)
+    Metrics.add(state.metrics, :wal_size_bytes, size)
+
+    # Update outbox dedup file. A failure here is non-fatal: on restart
+    # `scan_for_last_valid_seq/2` recomputes from the WAL itself; the
+    # dedup file is a fast-path cache.
+    _ = Outbox.write_last_seq(state.partition_id, seq)
+
+    FsyncBatcher.mark_dirty(state.partition_id)
+
+    new_pending = state.pending_bytes + size
+
+    new_state = %{
+      state
+      | last_persisted_seq: seq,
+        last_advance_at: now,
+        owning_executor: executor_id || state.owning_executor,
+        pending_bytes: new_pending,
+        pending_since_us: state.pending_since_us || System.monotonic_time(:microsecond)
+    }
+
+    new_state = maybe_signal_backpressure(new_state, new_pending)
+
+    {:reply, :ok, new_state}
+  end
+
+  # An executor restart is the only way a Change's seq can diverge under a *new*
+  # executor id: within one executor's lifetime the seq is monotonic, so a low
+  # seq from the same executor is a legitimate retransmit (deduped, not
+  # realigned). `owning_executor == nil` (no Change seen since boot) defers to
+  # the normal dedup/gap/append path so a controller restart still re-seeds the
+  # alive executor via `RestoreInitState` instead of discarding the WAL.
+  defp realign?(state, executor_id, seq) do
+    is_binary(executor_id) and is_binary(state.owning_executor) and
+      executor_id != state.owning_executor and seq != state.last_persisted_seq + 1
+  end
+
+  # Discard the stale pre-restart epoch so a later `RestoreInitState` ships only
+  # the new executor's history: empty the WAL file and drop its snapshots, then
+  # reset the seq baseline so the incoming `seq` appends contiguously.
+  defp realign_epoch(state, seq, executor_id, now) do
+    {:ok, _} = :file.position(state.file_handle, 0)
+    :ok = :file.truncate(state.file_handle)
+
+    Enum.each(Registry.snapshot_paths(state.partition_id), fn {_seq, path} -> File.rm(path) end)
+    _ = Outbox.write_last_seq(state.partition_id, seq - 1)
+
+    emit_realign(state.partition_id, state.last_persisted_seq, seq, executor_id)
+
+    Metrics.put(state.metrics, :wal_size_bytes, 0)
+    Metrics.put(state.metrics, :snapshot_seq, 0)
+
+    %{
+      state
+      | last_persisted_seq: seq - 1,
+        last_advance_at: now,
+        owning_executor: executor_id,
+        pending_bytes: 0,
+        pending_since_us: nil
+    }
+  end
+
+  defp emit_realign({rc, sh, pk}, from_seq, to_seq, executor_id) do
+    :telemetry.execute(
+      [:flezha, :state, :wal_realign],
+      %{from_seq: from_seq, to_seq: to_seq},
+      %{relay: rc, shard: sh, key: pk, executor: executor_id}
+    )
+  end
 
   # ---------- Scan / rewrite helpers ----------
 

@@ -165,8 +165,10 @@ defmodule Flezha.Executor.StreamChannel do
         case Flezha.State.Supervisor.find_or_start(partition_id) do
           {:ok, pid} ->
             # `:ok`/`:duplicate` are terminal; a gap means the SDK is ahead
-            # of us, so resync rather than wedge the Partition forever.
-            case Flezha.State.WalWriter.append(pid, seq, header, body) do
+            # of us, so resync rather than wedge the Partition forever. The
+            # `executor_id` lets the WalWriter realign its epoch when a *new*
+            # executor (a restart/reroute) resumes from a diverged seq base.
+            case Flezha.State.WalWriter.append(pid, seq, header, body, executor_id) do
               {:error, {:gap, expected: expected, got: got}} ->
                 recover_seq_gap(executor_id, partition_id, expected, got)
 
