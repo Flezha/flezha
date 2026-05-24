@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
+use flz_transport::transport::liveness::ControlLiveness;
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::{protocol, FlezhaStream};
 #[cfg(unix)]
@@ -264,7 +265,9 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_openControlS
         }
     };
 
-    register_and_spawn_reader(ctx, stream)
+    // Control stream: liveness-managed (ack-deadline + steady-state idle
+    // watchdog), so a wedged controller drives reconnect via onConnectionLost.
+    register_and_spawn_reader(ctx, stream, true)
 }
 
 /// `long openStream(long handle, int streamType, int index)`
@@ -310,7 +313,9 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_NativeTransport_openStream<'
     };
 
     if stream_type_u8 == protocol::STREAM_TYPE_PRIMARY {
-        register_and_spawn_reader(ctx, stream)
+        // Data stream: no control-channel liveness (it carries no ack and may
+        // be legitimately idle); current blocking-read behavior is preserved.
+        register_and_spawn_reader(ctx, stream, false)
     } else {
         register_without_reader(ctx, stream)
     }
@@ -491,7 +496,11 @@ fn register_without_reader(ctx: &JniContext, stream: Arc<FlezhaStream>) -> jlong
     id as jlong
 }
 
-fn register_and_spawn_reader(ctx: &JniContext, stream: Arc<FlezhaStream>) -> jlong {
+fn register_and_spawn_reader(
+    ctx: &JniContext,
+    stream: Arc<FlezhaStream>,
+    manage_liveness: bool,
+) -> jlong {
     let id = ctx.next_stream_id.fetch_add(1, Ordering::SeqCst);
     let shutdown = Arc::new(AtomicBool::new(false));
     let entry = Arc::new(StreamEntry {
@@ -514,7 +523,7 @@ fn register_and_spawn_reader(ctx: &JniContext, stream: Arc<FlezhaStream>) -> jlo
             // contextDestroy (which joins all readers) before releasing the
             // handle.
             let ctx: &JniContext = unsafe { &*(ctx_ptr as *const JniContext) };
-            reader_loop(ctx, id, reader_stream, shutdown_clone);
+            reader_loop(ctx, id, reader_stream, shutdown_clone, manage_liveness);
         })
         .expect("failed to spawn reader thread");
 
@@ -527,8 +536,18 @@ fn reader_loop(
     stream_id: u64,
     stream: Arc<FlezhaStream>,
     shutdown: Arc<AtomicBool>,
+    manage_liveness: bool,
 ) {
     let mut buf = [0u8; 8192];
+
+    // Control-channel liveness (shared with the Rust SDK via flz_transport):
+    // an ack-deadline until the first frame, then a steady-state idle watchdog.
+    // Data streams pass `manage_liveness = false` and keep blocking reads.
+    let mut live = manage_liveness.then(ControlLiveness::new);
+    if let Some(l) = live.as_ref() {
+        let _ = stream.set_read_timeout(Some(l.current_deadline()));
+    }
+
     loop {
         if shutdown.load(Ordering::SeqCst) {
             break;
@@ -540,10 +559,18 @@ fn reader_loop(
                 break;
             }
             Ok(n) => {
+                if let Some(l) = live.as_mut() {
+                    l.note_frame();
+                    let _ = stream.set_read_timeout(Some(l.current_deadline()));
+                }
                 dispatch_data(ctx, stream_id, &buf[..n]);
             }
             Err(e) if matches!(e.kind(), std::io::ErrorKind::Interrupted) => continue,
             Err(_) => {
+                // For the control stream a timeout (WouldBlock/TimedOut) means
+                // the ack window was missed or the channel wedged past the idle
+                // window; for any stream a hard error is a disconnect. Both
+                // drive reconnect via onConnectionLost.
                 dispatch_stream_closed(ctx, stream_id);
                 dispatch_connection_lost(ctx, stream_id);
                 break;

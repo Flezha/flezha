@@ -5,7 +5,9 @@ defmodule Flezha.Service.CliManager do
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
+  alias Flezha.Reconciler.Leader
   alias Flezha.Service.ConfigManager
+  alias Flezha.Service.HubManager
   alias Flezha.Service.Payloader
   alias Flezha.Service.PluginManager
   alias Flezha.Service.RelayManager
@@ -463,15 +465,162 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  @doc "Lists relays for a specific namespace."
+  @doc """
+  Lists a namespace's relays with the reconciler's per-relay health, assigned
+  executor, and live node. Reads the durable registry, so it surfaces FAILED
+  relays (whose only placement is a dead node) and is multi-node-safe — it no
+  longer crashes on a relay registered across nodes.
+  """
   def list_relays(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
+    rows = HubManager.relay_rows(namespace_display)
+    render_relay_list(rows, namespace_display, output_format)
+  end
 
-    case Flezha.list_relays(namespace_display) do
-      {:ok, relays} ->
-        context = %{key: :namespace, value: namespace_display, display: "namespace"}
-        handle_list_output(relays, "relays", output_format, context)
+  defp render_relay_list(rows, namespace, "json") do
+    result = %{
+      namespace: namespace,
+      relays:
+        Enum.map(rows, fn r ->
+          %{
+            id: r.id,
+            health: r.health,
+            executor: r.executor,
+            node: r.node && to_string(r.node)
+          }
+        end)
+    }
+
+    IO.puts(Jason.encode!(result))
+  end
+
+  defp render_relay_list([], namespace, _) do
+    IO.puts("No relays found for namespace '#{namespace}'.")
+  end
+
+  defp render_relay_list(rows, namespace, _) do
+    IO.puts("Relays in namespace '#{namespace}':")
+    IO.puts("")
+
+    IO.puts([
+      "  ",
+      String.pad_trailing("RELAY", 34),
+      String.pad_trailing("HEALTH", 10),
+      String.pad_trailing("NODE", 22),
+      "EXECUTOR"
+    ])
+
+    Enum.each(rows, fn r ->
+      IO.puts([
+        "  ",
+        String.pad_trailing(to_string(r.id), 34),
+        String.pad_trailing(to_string(r.health), 10),
+        String.pad_trailing(label_or(r.node, "(unplaced)"), 22),
+        label_or(r.executor, "(none)")
+      ])
+    end)
+  end
+
+  @doc """
+  Cluster topology for operators: the elected leader, whether this node is the
+  leader, each node's live relay count, any unplaced (FAILED) relays, and a
+  health rollup. Composes `HubManager` registry access with the reconciler's
+  `Leader` so a split view (one node sees relays, its peer sees none) is
+  visible at a glance.
+  """
+  def cluster_status(namespace, output_format \\ "text") do
+    namespace_display = normalize_namespace(namespace)
+    nodes = HubManager.get_hub_nodes(namespace_display, true)
+    rows = HubManager.relay_rows(namespace_display)
+    counts = Enum.frequencies_by(rows, & &1.node)
+    health = Enum.frequencies_by(rows, & &1.health)
+
+    render_cluster_status(
+      %{
+        namespace: namespace_display,
+        nodes: nodes,
+        leader: safe_leader(),
+        is_leader: safe_is_leader(),
+        counts: counts,
+        health: health
+      },
+      output_format
+    )
+  end
+
+  defp render_cluster_status(s, "json") do
+    result = %{
+      namespace: s.namespace,
+      leader: s.leader && to_string(s.leader),
+      local_node: to_string(node()),
+      is_leader: s.is_leader,
+      nodes:
+        Enum.map(s.nodes, fn n ->
+          %{node: to_string(n), relay_count: Map.get(s.counts, n, 0), leader: n == s.leader}
+        end),
+      unplaced_relays: Map.get(s.counts, nil, 0),
+      relay_health: s.health
+    }
+
+    IO.puts(Jason.encode!(result))
+  end
+
+  defp render_cluster_status(s, _) do
+    IO.puts("Cluster status for namespace '#{s.namespace}':")
+    IO.puts("")
+    IO.puts("  Leader:     #{label_or(s.leader, "(none)")}")
+    IO.puts("  Local node: #{node()}#{if s.is_leader, do: " (leader)", else: ""}")
+    IO.puts("")
+    IO.puts("  Nodes:")
+
+    if s.nodes == [] do
+      IO.puts("    (none)")
+    else
+      Enum.each(s.nodes, fn n ->
+        marker = if n == s.leader, do: " [leader]", else: ""
+        IO.puts("    #{n}: #{Map.get(s.counts, n, 0)} relay(s)#{marker}")
+      end)
     end
+
+    case Map.get(s.counts, nil, 0) do
+      0 -> :ok
+      unplaced -> IO.puts("    (unplaced): #{unplaced} relay(s)")
+    end
+
+    IO.puts("")
+    IO.puts("  Relay health: #{health_summary(s.health)}")
+  end
+
+  defp health_summary(health) when map_size(health) == 0, do: "no relays"
+
+  defp health_summary(health) do
+    health
+    |> Enum.map(fn {state, count} -> "#{state}=#{count}" end)
+    |> Enum.join(", ")
+  end
+
+  defp label_or(nil, default), do: default
+  defp label_or(value, _default), do: to_string(value)
+
+  # Leadership surface is best-effort: when the reconciler is disabled the
+  # Leader GenServer may be absent, so a crash must degrade to "unknown"
+  # rather than fail the whole status command.
+  defp safe_leader do
+    case Leader.leader() do
+      # Leadership disabled (solo / dev): the local node is the de-facto leader.
+      :disabled -> node()
+      # Enabled but not yet settled.
+      :none -> nil
+      node -> node
+    end
+  catch
+    _, _ -> nil
+  end
+
+  defp safe_is_leader do
+    Leader.is_leader?()
+  catch
+    _, _ -> false
   end
 
   @doc "Shows detailed information about relays and their enabled plugins."

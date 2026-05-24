@@ -1,4 +1,5 @@
 pub mod config;
+pub mod liveness;
 pub mod protocol;
 pub mod quic;
 
@@ -41,10 +42,10 @@ impl FlezhaStream {
         match self {
             #[cfg(unix)]
             FlezhaStream::Unix(stream) => stream.set_read_timeout(timeout),
-            FlezhaStream::Quic(_) => {
-                let _ = timeout;
-                Ok(()) // QUIC manages stream deadlines internally
-            }
+            // QUIC reads block on a crossbeam channel; honor the deadline
+            // there (a no-op here would silently skip control-channel liveness
+            // when FLEZHA_TRANSPORT=quic).
+            FlezhaStream::Quic(stream) => stream.set_read_timeout(timeout),
         }
     }
 

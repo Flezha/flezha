@@ -25,7 +25,42 @@ public final class FlezhaEnv {
     public static final String FLEZHA_SOCKET_FILES_PATH = "FLEZHA_SOCKET_FILES_PATH";
     public static final String FLEZHA_WORKER_POOL_SIZE = "FLEZHA_WORKER_POOL_SIZE";
 
+    /** Control-channel liveness knobs — shared with the Rust SDK / flz_transport. */
+    public static final String FLEZHA_CONTROL_ACK_TIMEOUT_MS = "FLEZHA_CONTROL_ACK_TIMEOUT_MS";
+
+    public static final String FLEZHA_CONTROL_KEEPALIVE_MS = "FLEZHA_CONTROL_KEEPALIVE_MS";
+
+    static final long DEFAULT_CONTROL_ACK_TIMEOUT_MS = 10_000L;
+    static final long DEFAULT_CONTROL_KEEPALIVE_MS = 15_000L;
+
     private FlezhaEnv() {}
+
+    /**
+     * Bound on the wait for the controller's first frame (the assign-executor-id
+     * ack). Default 10 s, matching {@code flz_transport::liveness}.
+     */
+    public static long controlAckTimeoutMs() {
+        return envMs(FLEZHA_CONTROL_ACK_TIMEOUT_MS, DEFAULT_CONTROL_ACK_TIMEOUT_MS);
+    }
+
+    /** How often the SDK sends a control-channel keepalive ping. Default 15 s. */
+    public static long controlKeepaliveMs() {
+        return envMs(FLEZHA_CONTROL_KEEPALIVE_MS, DEFAULT_CONTROL_KEEPALIVE_MS);
+    }
+
+    private static long envMs(String key, long defaultMs) {
+        String raw = System.getenv(key);
+        if (raw == null || raw.isBlank()) {
+            return defaultMs;
+        }
+        try {
+            long ms = Long.parseLong(raw.trim());
+            return ms > 0 ? ms : defaultMs;
+        } catch (NumberFormatException e) {
+            LOG.warn("Invalid {}={}; falling back to {} ms", key, raw, defaultMs);
+            return defaultMs;
+        }
+    }
 
     /** Build a config from the real process environment. */
     @Nonnull

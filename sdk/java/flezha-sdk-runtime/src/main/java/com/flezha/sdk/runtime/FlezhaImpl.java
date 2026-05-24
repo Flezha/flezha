@@ -10,6 +10,7 @@ import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.CommandRouter;
 import com.flezha.sdk.runtime.control.ControlChannel;
 import com.flezha.sdk.runtime.control.GracefulShutdown;
+import com.flezha.sdk.runtime.control.KeepaliveSender;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
@@ -37,14 +38,17 @@ public final class FlezhaImpl implements Flezha {
 
     private final ExecutorContext ctx;
     private final ReconnectCoordinator reconnectCoordinator;
+    private final KeepaliveSender keepaliveSender;
     private final AtomicReference<GracefulShutdown> shutdownRef;
 
     private FlezhaImpl(
             ExecutorContext ctx,
             ReconnectCoordinator reconnectCoordinator,
+            KeepaliveSender keepaliveSender,
             AtomicReference<GracefulShutdown> shutdownRef) {
         this.ctx = ctx;
         this.reconnectCoordinator = reconnectCoordinator;
+        this.keepaliveSender = keepaliveSender;
         this.shutdownRef = shutdownRef;
     }
 
@@ -131,6 +135,11 @@ public final class FlezhaImpl implements Flezha {
                     if (ControlChannel.HANDSHAKE_PAYLOAD_ID.equals(frame.payloadId())) {
                         continue;
                     }
+                    if (KeepaliveSender.CONTROL_PING_PAYLOAD_ID.equals(frame.payloadId())) {
+                        // Controller's keepalive echo; the read-level idle
+                        // watchdog already re-armed in flz_jni. Nothing to route.
+                        continue;
+                    }
                     try {
                         controlRouter.route(frame);
                     } catch (FlezhaNativeException e) {
@@ -154,36 +163,19 @@ public final class FlezhaImpl implements Flezha {
                 }
             }
         };
-        NativeTransport.setDispatcher(nativeHandle, eventDispatcher);
-
-        // Open the control stream and send the handshake.
-        long controlStreamId = NativeTransport.openControlStream(nativeHandle);
-        ctx.streamRegistry().setControlStreamId(controlStreamId);
-        try {
-            new ControlChannel(ctx, controlStreamId).sendHandshake(namespace);
-        } catch (Exception e) {
-            NativeTransport.contextDestroy(nativeHandle);
-            throw new IllegalStateException("Failed to send handshake: " + e.getMessage(), e);
-        }
-
-        // Block until AssignExecutorId arrives.
-        try {
-            if (!assignLatch.await(30, TimeUnit.SECONDS)) {
-                LOG.warn("Timed out waiting for AssignExecutorId from controller");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-
         // The shutdown holder is updated on every reconnect because the
         // control stream id changes; the JVM hook resolves it lazily so
-        // both the initial and the post-reconnect value are honoured.
-        AtomicReference<GracefulShutdown> shutdownRef =
-                new AtomicReference<>(new GracefulShutdown(ctx, controlStreamId));
+        // both the initial and the post-reconnect value are honoured. Starts
+        // null and is set once the first control stream opens.
+        AtomicReference<GracefulShutdown> shutdownRef = new AtomicReference<>(null);
 
+        // Build and start the coordinator BEFORE wiring the dispatcher and
+        // opening the control stream, so an early onConnectionLost (the flz_jni
+        // control reader's ack/idle deadline firing) is never dropped because
+        // coordinatorRef[0] was still null — the prior startup race.
         ReconnectCoordinator coordinator = new ReconnectCoordinator(ctx, () -> {
-            // Reconnect hook: attempt to re-open the control stream and
-            // re-send the handshake. Returning true means "succeeded".
+            // Reconnect hook: re-open the control stream and re-send the
+            // handshake. Returning true means "succeeded".
             try {
                 long newControl = NativeTransport.openControlStream(nativeHandle);
                 ctx.streamRegistry().setControlStreamId(newControl);
@@ -194,8 +186,42 @@ public final class FlezhaImpl implements Flezha {
                 return false;
             }
         });
-        coordinator.start();
         coordinatorRef[0] = coordinator;
+        coordinator.start();
+
+        NativeTransport.setDispatcher(nativeHandle, eventDispatcher);
+
+        // Open the control stream and send the handshake. A failure here drives
+        // reconnect rather than stranding a dead start() (the executor keeps
+        // retrying until it lands on a live controller).
+        long controlStreamId = NativeTransport.openControlStream(nativeHandle);
+        ctx.streamRegistry().setControlStreamId(controlStreamId);
+        shutdownRef.set(new GracefulShutdown(ctx, controlStreamId));
+        try {
+            new ControlChannel(ctx, controlStreamId).sendHandshake(namespace);
+        } catch (Exception e) {
+            LOG.warn("Initial handshake send failed: {}; driving reconnect", e.toString());
+            coordinator.onConnectionLost();
+        }
+
+        // Steady-state control-channel keepalive: keeps a quiet-but-healthy
+        // channel inside the flz_jni read-level idle window (so the watchdog
+        // never false-fires) and follows reconnects via the stream registry.
+        KeepaliveSender keepalive = new KeepaliveSender(ctx);
+        keepalive.start();
+
+        // Bound the wait for the controller's first frame (the ack). On timeout
+        // drive reconnect instead of warn-and-continue; the coordinator keeps
+        // retrying in the background, so start() returns a live-eventually SDK.
+        try {
+            long ackMs = FlezhaEnv.controlAckTimeoutMs();
+            if (!assignLatch.await(ackMs, TimeUnit.MILLISECONDS)) {
+                LOG.warn("No AssignExecutorId within {} ms; driving reconnect", ackMs);
+                coordinator.onConnectionLost();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
 
         // Register a JVM shutdown hook so SIGTERM (Kubernetes pre-stop)
         // triggers the graceful-shutdown sequence even when the user
@@ -211,7 +237,7 @@ public final class FlezhaImpl implements Flezha {
                         },
                         "flezha-graceful-shutdown"));
 
-        return new FlezhaImpl(ctx, coordinator, shutdownRef);
+        return new FlezhaImpl(ctx, coordinator, keepalive, shutdownRef);
     }
 
     @Override
@@ -244,6 +270,8 @@ public final class FlezhaImpl implements Flezha {
 
     @Override
     public void close() {
+        keepaliveSender.stop();
+        reconnectCoordinator.shutdown();
         GracefulShutdown active = shutdownRef.get();
         if (active != null) {
             active.run();

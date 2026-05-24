@@ -3,6 +3,7 @@ package com.flezha.sdk.runtime.reconnect;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.ExecutorStatus;
 import java.time.Duration;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import javax.annotation.Nonnull;
@@ -78,7 +79,10 @@ public final class ReconnectCoordinator {
     private void attemptReconnectLoop() {
         int attempt = 0;
         while (running.get() && ctx.status() != ExecutorStatus.STOPPED) {
-            long backoff = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
+            // Full jitter on the schedule so a controller restart that drops the
+            // whole fleet doesn't produce a synchronized reconnect storm (the
+            // Rust SDK jitters the same schedule via flz_transport::liveness).
+            long backoff = jitter(BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]);
             LOG.warn("Reconnecting (attempt {}), sleeping {} ms", attempt + 1, backoff);
             try {
                 Thread.sleep(backoff);
@@ -118,5 +122,14 @@ public final class ReconnectCoordinator {
             value = Math.min(value * 2, 30_000L);
         }
         return table;
+    }
+
+    /** Full jitter into {@code [base/2, base]}. Decorrelates a reconnecting fleet. */
+    public static long jitter(long baseMs) {
+        if (baseMs < 2) {
+            return baseMs;
+        }
+        long half = baseMs / 2;
+        return half + ThreadLocalRandom.current().nextLong(half + 1);
     }
 }

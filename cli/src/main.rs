@@ -1,5 +1,6 @@
 mod audit;
 mod boot;
+mod cluster;
 mod controller;
 mod executor;
 mod namespace;
@@ -23,6 +24,7 @@ fn main() {
 
     match args[1].as_str() {
         "controller" => controller::handle_controller_command(&args[2..]),
+        "cluster" => cluster::handle_cluster_command(&args[2..]),
         "relay" => relay::handle_relay_command(&args[2..]),
         "namespace" => namespace::handle_namespace_command(&args[2..]),
         "executor" => executor::handle_executor_command(&args[2..]),
@@ -49,6 +51,7 @@ fn print_help() {
     println!();
     println!("COMMANDS:");
     println!("    controller     Controller management commands");
+    println!("    cluster        Controller cluster status (nodes, leader, relay health)");
     println!("    relay          Relay management commands");
     println!("    namespace      Namespace management commands");
     println!("    executor       Executor management commands");

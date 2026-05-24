@@ -47,6 +47,10 @@ struct StreamSlot {
 struct ChannelReader {
     rx: channel::Receiver<Bytes>,
     buf: Bytes,
+    // Honors `FlezhaStream::set_read_timeout` on QUIC: when set, a read that
+    // waits longer than this for the next chunk returns `WouldBlock` instead
+    // of blocking forever, so control-channel liveness works over QUIC.
+    read_timeout: Option<Duration>,
 }
 
 impl Read for ChannelReader {
@@ -59,18 +63,31 @@ impl Read for ChannelReader {
             return Ok(n);
         }
 
-        // Buffer exhausted — wait for next chunk from driver
-        match self.rx.recv() {
-            Ok(chunk) => {
-                let n = std::cmp::min(out.len(), chunk.len());
-                out[..n].copy_from_slice(&chunk[..n]);
-                if n < chunk.len() {
-                    self.buf = chunk.slice(n..);
+        // Buffer exhausted — wait for next chunk from driver, honoring the
+        // read deadline if one is armed.
+        let chunk = match self.read_timeout {
+            Some(d) => match self.rx.recv_timeout(d) {
+                Ok(c) => c,
+                Err(channel::RecvTimeoutError::Timeout) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "QUIC read timed out",
+                    ))
                 }
-                Ok(n)
-            }
-            Err(_) => Ok(0), // Channel closed = stream finished
+                Err(channel::RecvTimeoutError::Disconnected) => return Ok(0),
+            },
+            None => match self.rx.recv() {
+                Ok(c) => c,
+                Err(_) => return Ok(0), // Channel closed = stream finished
+            },
+        };
+
+        let n = std::cmp::min(out.len(), chunk.len());
+        out[..n].copy_from_slice(&chunk[..n]);
+        if n < chunk.len() {
+            self.buf = chunk.slice(n..);
         }
+        Ok(n)
     }
 }
 
@@ -187,6 +204,7 @@ impl QuicClient {
             read_rx: Arc::new(Mutex::new(ChannelReader {
                 rx: read_rx,
                 buf: Bytes::new(),
+                read_timeout: None,
             })),
         })
     }
@@ -215,6 +233,17 @@ pub struct QuicBidiStream {
 }
 
 impl QuicBidiStream {
+    /// Arm (or clear) the read deadline. Shared with all clones via the
+    /// `Arc<Mutex<ChannelReader>>`, so the control reader and any writer see
+    /// one deadline. Backs `FlezhaStream::set_read_timeout` on QUIC.
+    pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        self.read_rx
+            .lock()
+            .map_err(|e| io::Error::other(format!("Lock poisoned: {}", e)))?
+            .read_timeout = timeout;
+        Ok(())
+    }
+
     /// Clone by sharing the write channel and read channel.
     pub fn try_clone(&self) -> QuicBidiStream {
         QuicBidiStream {
@@ -631,5 +660,56 @@ fn send_transmit(udp: &UdpSocket, transmit: &Transmit, buf: &[u8]) -> io::Result
         Ok(_) => Ok(()),
         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => Ok(()),
         Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // fails when: QUIC `set_read_timeout` is a no-op (the pre-change behavior),
+    // so `ChannelReader::read` blocks forever on an idle stream and control-
+    // channel liveness is silently skipped on QUIC.
+    #[test]
+    fn channel_reader_honors_read_timeout_when_idle() {
+        let (_tx, rx) = channel::bounded::<Bytes>(4);
+        let mut reader = ChannelReader {
+            rx,
+            buf: Bytes::new(),
+            read_timeout: Some(Duration::from_millis(120)),
+        };
+
+        let started = Instant::now();
+        let mut out = [0u8; 64];
+        let res = reader.read(&mut out);
+
+        assert!(
+            matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock),
+            "idle QUIC read with a deadline must return WouldBlock, got {:?}",
+            res
+        );
+        assert!(
+            started.elapsed() >= Duration::from_millis(100),
+            "read returned before the deadline elapsed"
+        );
+    }
+
+    #[test]
+    fn channel_reader_returns_data_then_eof_on_disconnect() {
+        let (tx, rx) = channel::bounded::<Bytes>(4);
+        tx.send(Bytes::from_static(b"hello")).unwrap();
+        drop(tx); // disconnect after one chunk
+
+        let mut reader = ChannelReader {
+            rx,
+            buf: Bytes::new(),
+            read_timeout: Some(Duration::from_millis(500)),
+        };
+
+        let mut out = [0u8; 64];
+        let n = reader.read(&mut out).unwrap();
+        assert_eq!(&out[..n], b"hello");
+        // Disconnected channel = stream finished = EOF (Ok(0)), not WouldBlock.
+        assert_eq!(reader.read(&mut out).unwrap(), 0);
     }
 }

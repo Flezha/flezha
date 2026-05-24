@@ -203,6 +203,65 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
+  @doc """
+  The live node hosting a relay from its `node_pids` (`[{node, pid}]`): the
+  local node when it holds the runnable pid, else another live cluster node,
+  else `nil` (every entry is on a dead node — a FAILED placement). Sibling of
+  `live_pid/1` for surfacing per-node placement in the CLI.
+  """
+  @spec live_node([{node(), pid()}]) :: node() | nil
+  def live_node(node_pids) when is_list(node_pids) do
+    local = node()
+    live_nodes = [local | Node.list()]
+    on_live_node = Enum.filter(node_pids, fn {n, _pid} -> n in live_nodes end)
+
+    cond do
+      Enum.any?(on_live_node, fn {n, pid} -> n == local and Process.alive?(pid) end) ->
+        local
+
+      true ->
+        case Enum.find(on_live_node, fn {n, _pid} -> n != local end) do
+          {n, _pid} -> n
+          nil -> nil
+        end
+    end
+  end
+
+  def live_node(_), do: nil
+
+  @doc """
+  Per-relay view of a namespace's durable registry for operator surfaces:
+  one row per registered relay (including FAILED ones whose only placement is
+  a dead node, which `get_all_relays/1` filters out), carrying the reconciler's
+  persisted health, the assigned executor, and the live node. Reads the same
+  registry dump the reconciler does, so the CLI sees exactly what the loop sees.
+  """
+  @spec relay_rows(String.t()) :: [%{id: term(), health: atom(), executor: term(), node: term()}]
+  def relay_rows(namespace) do
+    hub_id = Identificator.hub(namespace)
+
+    if ProcessHub.is_alive?(hub_id) do
+      hub_id
+      |> ProcessRegistry.dump()
+      |> Enum.map(fn {relay_id, entry} ->
+        {_cspec, node_pids, metadata} = normalize_registry_entry(entry)
+
+        %{
+          id: relay_id,
+          health: Map.get(metadata, :health, :unknown),
+          executor: Map.get(metadata, :tag),
+          node: live_node(node_pids)
+        }
+      end)
+      |> Enum.sort_by(&inspect(&1.id))
+    else
+      []
+    end
+  end
+
+  defp normalize_registry_entry({cspec, node_pids, metadata}), do: {cspec, node_pids, metadata}
+  defp normalize_registry_entry({cspec, node_pids}), do: {cspec, node_pids, %{}}
+
   def register_handler(namespace, executor_id) do
     ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),

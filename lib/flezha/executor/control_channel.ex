@@ -155,6 +155,24 @@ defmodule Flezha.Executor.ControlChannel do
     {:noreply, state}
   end
 
+  # Steady-state control-channel keepalive from the SDK (see flz_transport
+  # liveness). Echoed back verbatim on the same dedicated `control_ping`
+  # payload so the executor's idle watchdog re-arms; it never enters the
+  # command path on either side. A wedged controller stops echoing, and the
+  # executor's watchdog drives reconnect.
+  @impl true
+  def handle_info({:flz_data, _stream_id, "control_ping", message, _metadata}, state) do
+    case Map.get(state, :stream_ref) do
+      nil ->
+        :ok
+
+      stream_ref ->
+        state.write_fun.(stream_ref, Payloader.build_from_bin("control_ping", message))
+    end
+
+    {:noreply, state}
+  end
+
   # Unified NIF transport message — complete parsed frame
   #
   # Most inbound traffic on the control channel is `CommandResponse` from
