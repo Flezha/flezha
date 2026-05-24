@@ -1,4 +1,5 @@
 defmodule Flezha.Executor.FleetManager do
+  alias Flezha.Cluster.Orchestrator
   alias Flezha.Executor.ExecutorSupervisor
   alias Flezha.Executor.FleetSupervisor
   alias Flezha.Executor.OrphanFinder
@@ -377,24 +378,34 @@ defmodule Flezha.Executor.FleetManager do
         registry
         |> OrphanFinder.collect(curr_node, claimed_ids, active_ids, factory_id_set)
         |> Enum.each(fn {relay_id, pid} ->
-          Logger.info(
-            "[FleetManager] Reissuing AddRelay for orphan relay " <>
-              "#{relay_id} → executor #{new_ce_id}"
-          )
+          # Liveness guard before the registry-sourced call: a relay pid can die
+          # between the OrphanFinder collect and this call, so skip dead pids
+          # rather than spending the bounded timeout exiting on a :noproc.
+          if Process.alive?(pid) do
+            Logger.info(
+              "[FleetManager] Reissuing AddRelay for orphan relay " <>
+                "#{relay_id} → executor #{new_ce_id}"
+            )
 
-          try do
-            # Bounded timeout (< 5s default of the outer Transport.Server
-            # call into FleetManager.connect_handler) so a relay that is
-            # itself calling back into FleetManager cannot deadlock the
-            # new-executor path.
-            GenServer.call(pid, {:executor_migrate, new_ce_id}, 2_000)
-            HubManager.relay_set_executor(namespace, relay_id, new_ce_id)
-          catch
-            :exit, exit_reason ->
-              Logger.warning(
-                "[FleetManager] Failed to reissue relay #{relay_id}: " <>
-                  inspect(exit_reason)
-              )
+            try do
+              # Bounded timeout (< 5s default of the outer Transport.Server
+              # call into FleetManager.connect_handler) so a relay that is
+              # itself calling back into FleetManager cannot deadlock the
+              # new-executor path.
+              GenServer.call(pid, {:executor_migrate, new_ce_id}, 2_000)
+              HubManager.relay_set_executor(namespace, relay_id, new_ce_id)
+            catch
+              :exit, exit_reason ->
+                Logger.warning(
+                  "[FleetManager] Failed to reissue relay #{relay_id}: " <>
+                    inspect(exit_reason)
+                )
+            end
+          else
+            Logger.debug(
+              "[FleetManager] reissue_local_orphans: orphan relay #{relay_id} " <>
+                "pid no longer alive; skipping"
+            )
           end
         end)
 
@@ -471,20 +482,32 @@ defmodule Flezha.Executor.FleetManager do
     new_executor = Enum.random(available_executors)
 
     HubManager.executor_relays(namespace, old_executor)
-    |> Enum.each(fn {relay_id, [{_node, relay_pid}]} ->
-      # Bounded timeout (< 5s default of the outer Transport.Server /
-      # ControlChannel call into FleetManager) so a relay that is
-      # itself calling back into FleetManager cannot deadlock the
-      # disconnect path. The relay will be migrated on its next
-      # bind/rebind attempt.
-      try do
-        GenServer.call(relay_pid, {:executor_migrate, new_executor}, 2_000)
-      catch
-        :exit, reason ->
-          Logger.warning(
-            "[FleetManager] executor_migrate timed out for relay #{relay_id} " <>
-              "(old=#{old_executor} → new=#{new_executor}): #{inspect(reason)}"
+    |> Enum.each(fn {relay_id, node_pids} ->
+      # Multi-node-safe: resolve the live/local pid (dropping dead-node
+      # entries) before calling, so a relay registered on more than one node
+      # neither crashes this path nor blocks on a dead pid.
+      case HubManager.live_pid(node_pids) do
+        nil ->
+          Logger.debug(
+            "[FleetManager] executor_reroute: no live pid for relay #{relay_id}; " <>
+              "it will migrate on its next bind/rebind"
           )
+
+        relay_pid ->
+          # Bounded timeout (< 5s default of the outer Transport.Server /
+          # ControlChannel call into FleetManager) so a relay that is
+          # itself calling back into FleetManager cannot deadlock the
+          # disconnect path. The relay will be migrated on its next
+          # bind/rebind attempt.
+          try do
+            GenServer.call(relay_pid, {:executor_migrate, new_executor}, 2_000)
+          catch
+            :exit, reason ->
+              Logger.warning(
+                "[FleetManager] executor_migrate timed out for relay #{relay_id} " <>
+                  "(old=#{old_executor} → new=#{new_executor}): #{inspect(reason)}"
+              )
+          end
       end
     end)
 
@@ -515,6 +538,11 @@ defmodule Flezha.Executor.FleetManager do
     control_unit = Identificator.control_unit(executor_id)
 
     if !HubManager.hub_alive?(namespace) do
+      # Gate on-demand hub creation on cluster formation: an executor connecting
+      # during the boot window must not create a singleton hub before the node
+      # has joined the cluster. Bounded by the degrade-to-solo timeout, so a
+      # genuinely single-node deployment still proceeds.
+      _ = Orchestrator.await_cluster_ready()
       HubManager.start_hub(namespace)
     end
 

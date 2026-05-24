@@ -272,9 +272,35 @@ defmodule Flezha.Transport.Server do
         {:noreply, state}
 
       {:error, reason} ->
-        Logger.error("[Transport.Server] Failed to establish compute engine: #{inspect(reason)}")
+        # Close the rejected stream so the executor detects the dead/draining
+        # controller promptly and its reconnect loop moves on to a live one,
+        # instead of dangling on a controller that will never ack (e.g. a
+        # `:shutting_down` rejection during drain). Emit a counted signal so the
+        # reject is observable rather than only logged.
+        Logger.error(
+          "[Transport.Server] Rejected executor connect (#{inspect(reason)}); closing stream"
+        )
+
+        :telemetry.execute(
+          [:flezha, :transport, :connect_rejected],
+          %{count: 1},
+          %{reason: reason, transport: state.transport}
+        )
+
+        safe_close(stream_ref)
         {:noreply, state}
     end
+  end
+
+  # Closing a rejected/already-gone stream must never crash the transport
+  # server, so tolerate a NIF decode/close failure here.
+  defp safe_close(stream_ref) do
+    Native.close(stream_ref)
+  rescue
+    e -> Logger.debug("[Transport.Server] close of rejected stream failed: #{inspect(e)}")
+  catch
+    kind, reason ->
+      Logger.debug("[Transport.Server] close of rejected stream #{kind}: #{inspect(reason)}")
   end
 
   # Route a QUIC data stream to the correct StreamChannel process. Bind to the

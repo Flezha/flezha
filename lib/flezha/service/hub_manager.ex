@@ -147,13 +147,56 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
+  @doc """
+  Resolve a relay's runnable pid from a ProcessHub `node_pids` list
+  (`[{node, pid}]`, with 0, 1, or many entries).
+
+  Drops entries on nodes absent from the live cluster, prefers the local node's
+  pid (verified alive), and otherwise returns a pid on another live node.
+  Returns `nil` when no live pid remains.
+
+  This centralises the multi-node-safe access that replaced the former
+  single-element `[{_node, pid}]` matches in `get_all_relays/1`,
+  `executor_switch/3`, and `Flezha.Executor.FleetManager.executor_reroute/4` —
+  any of which raised `FunctionClauseError` the moment a relay was registered on
+  more than one node.
+  """
+  @spec live_pid([{node(), pid()}]) :: pid() | nil
+  def live_pid(node_pids) when is_list(node_pids) do
+    local = node()
+    live_nodes = [local | Node.list()]
+    on_live_node = Enum.filter(node_pids, fn {n, _pid} -> n in live_nodes end)
+
+    local_alive =
+      Enum.find_value(on_live_node, fn
+        {^local, pid} -> if Process.alive?(pid), do: pid, else: nil
+        _ -> nil
+      end)
+
+    cond do
+      is_pid(local_alive) ->
+        local_alive
+
+      true ->
+        case Enum.find(on_live_node, fn {n, _pid} -> n != local end) do
+          {_n, pid} -> pid
+          nil -> nil
+        end
+    end
+  end
+
+  def live_pid(_), do: nil
+
   def get_all_relays(namespace) do
     hub_id = Identificator.hub(namespace)
 
     if ProcessHub.is_alive?(hub_id) do
       ProcessHub.process_list(hub_id, :global)
-      |> Enum.map(fn {relay_id, [{_node, relay_pid}]} ->
-        {relay_id, relay_pid}
+      |> Enum.flat_map(fn {relay_id, node_pids} ->
+        case live_pid(node_pids) do
+          nil -> []
+          relay_pid -> [{relay_id, relay_pid}]
+        end
       end)
     else
       []
@@ -205,9 +248,10 @@ defmodule Flezha.Service.HubManager do
   def executor_switch(namespace, old_executor_id, new_executor_id) do
     hub_id = Identificator.hub(namespace)
 
-    # Updates the executor id in the registry.
+    # Updates the executor id in the registry. Only the relay_id is needed here,
+    # so accept any node_pids arity (a multi-node relay must not crash this).
     executor_relays(namespace, old_executor_id)
-    |> Enum.each(fn {relay_id, [{_node, _relay_pid}]} ->
+    |> Enum.each(fn {relay_id, _node_pids} ->
       relay_set_executor(namespace, relay_id, new_executor_id)
     end)
 

@@ -1,4 +1,5 @@
 defmodule Flezha.Executor.StreamChannel do
+  alias Flezha.Reconciler.Activity
   alias Flezha.State.Wire, as: StateWire
   alias Flezha.Transport.Native
 
@@ -20,7 +21,11 @@ defmodule Flezha.Executor.StreamChannel do
         executor_id: executor_id,
         stream_ref: nil,
         relay_mapping: %{},
-        name: name
+        name: name,
+        # Record per-relay egress activity for the reconciler probe. Read once at
+        # init so the hot path is a single boolean check; the table is created by
+        # Flezha.Reconciler.Supervisor before the transport accepts connects.
+        activity_enabled: Application.get_env(:flezha, :reconciler_enabled, true)
       }
     }
   end
@@ -43,6 +48,9 @@ defmodule Flezha.Executor.StreamChannel do
         {:io_in, relay_id, {message, metadata}},
         %{stream_ref: stream_ref} = state
       ) do
+    # Record egress dispatch before the NIF hand-off so a transient transport
+    # error (healed by the rebind path) does not also read as a throughput stall.
+    if state.activity_enabled, do: Activity.record_output(relay_id)
     Native.send_frame(stream_ref, relay_id, message, metadata)
     {:noreply, state}
   end
@@ -62,6 +70,7 @@ defmodule Flezha.Executor.StreamChannel do
         _from,
         %{stream_ref: stream_ref} = state
       ) do
+    if state.activity_enabled, do: Activity.record_output(relay_id)
     Native.send_frame(stream_ref, relay_id, message, metadata)
     {:reply, :ok, state}
   end

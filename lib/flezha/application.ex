@@ -32,7 +32,18 @@ defmodule Flezha.Application do
         Flezha.Observability.Supervisor,
         Flezha.Shutdown.Coordinator,
         Flezha.Executor.FleetSupervisor,
-        FleetManager
+        FleetManager,
+        # Cluster formation + leadership start BEFORE the transport accepts
+        # executor connects, so a hub is never created on a not-yet-clustered
+        # node (which would diverge from its peers). `Reconciler.Leader` opts
+        # the node into elector-backed orchestration leadership when
+        # `:leadership_enabled`.
+        Flezha.Cluster.Orchestrator,
+        Flezha.Reconciler.Leader,
+        # The reconciler subsystem (egress-activity table + control-loop) starts
+        # before the transport so the activity table exists before any
+        # StreamChannel records a frame. Gated by `:reconciler_enabled`.
+        Flezha.Reconciler.Supervisor
       ] ++
         authz_children() ++
         installer_children() ++
@@ -42,7 +53,6 @@ defmodule Flezha.Application do
           Flezha.Plugin.Provider.Kafka.WorkerRegistry,
           Flezha.Plugin.Provider.Kafka.ProducerSup,
           Flezha.Service.PortPilot,
-          Flezha.Cluster.Orchestrator,
           {Task.Supervisor, name: Flezha.Relay.MessageHandlerTaskSup}
         ] ++
         Flezha.State.Supervisor.application_children() ++

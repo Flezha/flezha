@@ -91,8 +91,13 @@ defmodule Flezha.MixProject do
       {:telemetry, "~> 1.0"},
       # ProcessHub is pinned to the github master branch until durable-registry +
       # coordinator-bootstrap-recovery are stabilised and a new hex version is cut.
-      {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
-      # {:process_hub, path: "../process-hub"},
+      #
+      # Dev (self-healing-control-plane): consume the local ../process-hub checkout
+      # (branch dev) so the additions (leader/0, purge_node/2) are usable before
+      # they are pushed. Restore the git dep at the pushed dev SHA before the
+      # Session-3 operator deploy.
+      # {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
+      {:process_hub, path: "../process-hub"},
       # {:process_hub, "~> 0.5.0-beta"},
       {:blockade, "~> 0.2.2"},
       {:fresh, "~> 0.4.4"},

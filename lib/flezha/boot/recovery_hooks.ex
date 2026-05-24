@@ -19,6 +19,7 @@ defmodule Flezha.Boot.RecoveryHooks do
   """
 
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
 
@@ -77,6 +78,13 @@ defmodule Flezha.Boot.RecoveryHooks do
         wait_for_executor(namespace, factory_ids, deadline())
     end
 
+    # Drop stale `{dead_node, pid}` entries so replay re-registers only live
+    # locations and the registry does not carry dead-node cruft after a cold
+    # boot. The replay dump is captured by ProcessHub BEFORE this hook runs, so
+    # no relay is lost — a relay whose only location was a dead node is still in
+    # the dump and is re-placed on a live node by the replay's ConsistentHashing.
+    purge_dead_node_entries(hub_id)
+
     Logger.info("[recovery_hooks] pre_recovery_replay exit hub=#{hub_id}")
     :ok
   end
@@ -129,6 +137,38 @@ defmodule Flezha.Boot.RecoveryHooks do
        do: [factory_id]
 
   defp extract_factory_id(_), do: []
+
+  # Purge `{dead_node, pid}` registry entries for nodes absent from the live BEAM
+  # cluster. Computed from `Node.list/0` and applied via the deadlock-safe
+  # `Cluster.purge_node/2` — NOT `Cluster.purge_dead_nodes/1`, which calls
+  # `get_hub` (a `GenServer.call` into THIS coordinator process while it is
+  # blocked dispatching the synchronous `pre_recovery_replay` hook → deadlock).
+  defp purge_dead_node_entries(hub_id) do
+    live = MapSet.new([node() | Node.list()])
+
+    dead_nodes =
+      try do
+        ProcessRegistry.dump(hub_id)
+        |> Enum.flat_map(fn {_id, entry} -> entry |> elem(1) |> Keyword.keys() end)
+        |> Enum.uniq()
+        |> Enum.reject(&MapSet.member?(live, &1))
+      rescue
+        _ -> []
+      end
+
+    Enum.each(dead_nodes, fn dead ->
+      case Cluster.purge_node(hub_id, dead) do
+        [] ->
+          :ok
+
+        purged ->
+          Logger.info(
+            "[recovery_hooks] purged dead node #{inspect(dead)} from #{hub_id}: " <>
+              "#{length(purged)} relay entr#{if length(purged) == 1, do: "y", else: "ies"}"
+          )
+      end
+    end)
+  end
 
   defp wait_for_executor(namespace, factory_ids, deadline) do
     cond do

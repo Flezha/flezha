@@ -30,12 +30,26 @@ config :flezha,
   # The reconnect interval in milliseconds.
   reconnect_interval: System.get_env("FLEZHA_RECONNECT_INTERVAL", "1000") |> String.to_integer(),
 
-  # The maximum number of reconnects before giving up.
-  max_reconnects: System.get_env("FLEZHA_MAX_RECONNECTS", "1") |> String.to_integer(),
+  # The maximum number of jittered reconnect attempts before falling back to the
+  # periodic discovery sweep. Greater than 1 so a single transient failure does
+  # not strand a peer until the next sweep.
+  max_reconnects: System.get_env("FLEZHA_MAX_RECONNECTS", "5") |> String.to_integer(),
+
+  # Upper bound for the exponential, jittered reconnect backoff (base is
+  # `reconnect_interval`). Caps how far apart late reconnect attempts spread.
+  reconnect_max_backoff_ms:
+    System.get_env("FLEZHA_RECONNECT_MAX_BACKOFF_MS", "30000") |> String.to_integer(),
 
   # The cluster update interval in milliseconds.
   cluster_update_interval:
     System.get_env("FLEZHA_CLUSTER_UPDATE_INTERVAL", "5000") |> String.to_integer(),
+
+  # Bounded "degrade to solo" window for cluster formation: the Controller waits
+  # this long for discovered peers to connect before declaring the cluster ready
+  # and allowing hubs to be created. A genuinely single-node deployment still
+  # boots after this elapses. See `Flezha.Cluster.Orchestrator.cluster_ready?/0`.
+  cluster_formation_timeout_ms:
+    System.get_env("FLEZHA_CLUSTER_FORMATION_TIMEOUT_MS", "15000") |> String.to_integer(),
 
   # The node base name that is to generate the full name including the host address.
   node_base_name: System.get_env("FLEZHA_NODE_NAME", "flezha"),
@@ -331,7 +345,27 @@ if config_env() != :test do
     pre_replay_fleet_wait_ms:
       System.get_env("FLEZHA_PRE_REPLAY_FLEET_WAIT_MS", "30000") |> String.to_integer(),
     wal_transfer_query_timeout_ms:
-      System.get_env("FLEZHA_WAL_TRANSFER_QUERY_TIMEOUT_MS", "5000") |> String.to_integer()
+      System.get_env("FLEZHA_WAL_TRANSFER_QUERY_TIMEOUT_MS", "5000") |> String.to_integer(),
+    # Opt-in, cluster-wide orchestration leadership (elector-backed, via
+    # `ProcessHub.start_leadership/0`). Started at boot by
+    # `Flezha.Reconciler.Leader` when true; only the elected leader serializes
+    # the registry-mutating cluster-wide reconcile. Off in :test (set in
+    # config/test.exs) so unit tests don't start Erlang `:global` globally.
+    leadership_enabled: System.get_env("FLEZHA_LEADERSHIP_ENABLED", "true") in ["true", "1"],
+    # Authoritative reconciliation control-loop (self-healing-control-plane).
+    # Kill-switch reverts the Controller to the pre-reconciler code paths.
+    reconciler_enabled: System.get_env("FLEZHA_RECONCILER_ENABLED", "true") in ["true", "1"],
+    # Bounded periodic full-sweep backstop interval (ms); event-driven targeted
+    # reconciles run between sweeps. 0 disables the sweep (events only).
+    reconcile_sweep_interval_ms:
+      System.get_env("FLEZHA_RECONCILE_SWEEP_INTERVAL_MS", "20000") |> String.to_integer(),
+    # Debounce window (ms) coalescing a burst of events into one targeted reconcile.
+    reconcile_debounce_ms:
+      System.get_env("FLEZHA_RECONCILE_DEBOUNCE_MS", "250") |> String.to_integer(),
+    # Egress throughput-stall window (ms) — consumed by the Phase 6 ingest-gated
+    # stall detector; the Phase 5 probe records last-output age against it.
+    throughput_stall_window_ms:
+      System.get_env("FLEZHA_THROUGHPUT_STALL_WINDOW_MS", "30000") |> String.to_integer()
 end
 
 # ------------------------------------------------------------------------------------------------
