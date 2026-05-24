@@ -44,6 +44,25 @@ defmodule FlezhaTest.Executor.FleetManagerTest do
     end
   end
 
+  # Replies {:error, :transient} on the first executor_migrate, :ok afterward —
+  # exercises the 6.6 reissue retry. Tags each reply with the attempt count.
+  defp flaky_overwatch(test_pid, ets) do
+    spawn_link(fn -> flaky_loop(test_pid, ets) end)
+  end
+
+  defp flaky_loop(test_pid, ets) do
+    receive do
+      {:"$gen_call", from, {:executor_migrate, _new_ce_id} = msg} ->
+        n = :ets.update_counter(ets, :attempts, {2, 1}, {:attempts, 0})
+        send(test_pid, {:overwatch_called, self(), msg, n})
+        GenServer.reply(from, if(n == 1, do: {:error, :transient}, else: :ok))
+        flaky_loop(test_pid, ets)
+
+      _ ->
+        flaky_loop(test_pid, ets)
+    end
+  end
+
   describe "reissue_local_orphans/5" do
     test "reissues AddRelay for orphans whose factory matches the connecting executor" do
       test_pid = self()
@@ -136,6 +155,32 @@ defmodule FlezhaTest.Executor.FleetManagerTest do
           MapSet.new(),
           MapSet.new(["new_ce"])
         )
+    end
+
+    test "6.6 retries a transient executor_migrate failure before recording the new executor" do
+      test_pid = self()
+      ets = :ets.new(:reissue_retry_test, [:public, :set])
+      pid_p1 = flaky_overwatch(test_pid, ets)
+
+      registry = Map.new([entry("p1", "f1", "dead_ce", pid_p1)])
+
+      HubManager
+      |> expect(:get_registry, fn "ns1" -> {:ok, registry} end)
+      # The executor is recorded exactly once — only after the retry succeeds.
+      |> expect(:relay_set_executor, fn "ns1", "p1", "new_ce" -> :ok end)
+
+      :ok =
+        FleetManager.reissue_local_orphans(
+          "ns1",
+          "new_ce",
+          [%{"id" => "f1"}],
+          MapSet.new(),
+          MapSet.new(["new_ce"])
+        )
+
+      # First attempt fails transiently; the reissue retries rather than dropping.
+      assert_receive {:overwatch_called, ^pid_p1, {:executor_migrate, "new_ce"}, 1}, 1_000
+      assert_receive {:overwatch_called, ^pid_p1, {:executor_migrate, "new_ce"}, 2}, 1_000
     end
   end
 end

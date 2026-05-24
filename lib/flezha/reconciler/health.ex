@@ -8,14 +8,16 @@ defmodule Flezha.Reconciler.Health do
       `:healthy` once an executor appears.
     * `:degraded` — the relay is diverging but an executor exists to converge onto
       (dead pid to re-place, parked Overwatch to un-park, unbound stream to
-      rebind, stale dead-node entries to purge, or an assigned executor that has
-      gone away).
-    * `:healthy`  — pid alive on a live node, not parked, data stream bound, and
-      the assigned executor reachable.
+      rebind, a throughput stall to clear, stale dead-node entries to purge, or
+      an assigned executor that has gone away).
+    * `:healthy`  — pid alive on a live node, not parked, data stream bound, not
+      throughput-stalled, and the assigned executor reachable.
 
-  Throughput-stall (`last_output_age_ms`) is deliberately NOT classified here in
-  Phase 5: stall must be gated on "ingest live AND output stalled" to avoid
-  flagging legitimately idle relays, which lands with the Phase 6 ingest signal.
+  Throughput-stall (`throughput_stalled?`) is gated on "ingest live (recent
+  unbound-stream drop) AND output stalled" (Phase 6.2) so a legitimately idle
+  relay is never flagged. The persistence-path output-staleness is owned by
+  `Flezha.State.Watchdog` (`[:flezha, :state, :output_stall]`) and consumed,
+  not re-detected, here.
   """
 
   alias Flezha.Reconciler.Probe
@@ -31,6 +33,12 @@ defmodule Flezha.Reconciler.Health do
       not p.relay_alive? -> :degraded
       p.parked? -> :degraded
       p.stream_bound? == false -> :degraded
+      # Data in but nothing out (catches a wedged channel whose stream probe is
+      # :unknown yet frames are being dropped).
+      p.throughput_stalled? -> :degraded
+      # A running plugin reporting unhealthy (e.g. parked Kafka producer, idle
+      # WebSocket) — surfaced now; the loop escalates after it persists.
+      p.unhealthy_plugins != [] -> :degraded
       p.dead_node_entries != [] -> :degraded
       not p.executor_reachable? -> :degraded
       true -> :healthy

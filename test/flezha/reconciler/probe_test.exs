@@ -152,4 +152,83 @@ defmodule Flezha.Reconciler.ProbeTest do
     assert is_integer(p.last_output_age_ms)
     assert p.last_output_age_ms >= 0
   end
+
+  # ---------- 6.2 throughput stall (data in, nothing out) ----------
+
+  defp running_relay do
+    stub(%{
+      stream_ref_status: :bound,
+      get_overwatch_state: %Overwatch{init_error: nil, executor_id: "ce1"}
+    })
+  end
+
+  test "throughput stall: a recent drop with a stale last-output flags the relay" do
+    start_supervised!(Activity)
+    Activity.record_drop("r1")
+
+    relay = running_relay()
+    p = Probe.probe("ns", "r1", entry([{node(), relay}]), ctx())
+
+    assert p.throughput_stalled?
+  end
+
+  test "throughput stall: a legitimately idle relay (no recent drop) is not flagged" do
+    start_supervised!(Activity)
+
+    relay = running_relay()
+    p = Probe.probe("ns", "r1", entry([{node(), relay}]), ctx())
+
+    refute p.throughput_stalled?
+  end
+
+  test "throughput stall: a flowing relay (recent output) is not flagged despite a drop" do
+    start_supervised!(Activity)
+    Activity.record_drop("r1")
+    Activity.record_output("r1")
+
+    relay = running_relay()
+    p = Probe.probe("ns", "r1", entry([{node(), relay}]), ctx())
+
+    refute p.throughput_stalled?
+  end
+
+  # ---------- 7.2 plugin health ----------
+
+  defmodule UnhealthyProvider do
+    def health(_opts), do: {:unhealthy, :boom}
+  end
+
+  test "an unhealthy running plugin surfaces in unhealthy_plugins" do
+    table = %Flezha.Plugin.Extension.Table{
+      plugins: %{"pl" => %Flezha.Plugin{id: "pl", provider: UnhealthyProvider, opts: %{}}},
+      phases: %{"pl" => :running},
+      owned_pids: %{}
+    }
+
+    relay =
+      stub(%{
+        get_overwatch_state: %Overwatch{init_error: nil, executor_id: "ce1", extensions: table}
+      })
+
+    p = Probe.probe("ns", "r1", entry([{node(), relay}]), ctx())
+
+    assert p.unhealthy_plugins == ["pl"]
+  end
+
+  test "a prepared (not-yet-running) plugin is not reported unhealthy" do
+    table = %Flezha.Plugin.Extension.Table{
+      plugins: %{"pl" => %Flezha.Plugin{id: "pl", provider: UnhealthyProvider, opts: %{}}},
+      phases: %{"pl" => :prepared},
+      owned_pids: %{}
+    }
+
+    relay =
+      stub(%{
+        get_overwatch_state: %Overwatch{init_error: nil, executor_id: "ce1", extensions: table}
+      })
+
+    p = Probe.probe("ns", "r1", entry([{node(), relay}]), ctx())
+
+    assert p.unhealthy_plugins == []
+  end
 end

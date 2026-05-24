@@ -57,5 +57,24 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       # and confirm the channel is still alive and unchanged.
       assert GenServer.call(pid, :stream_ref_status) == nil
     end
+
+    test "{:io_in, ...} cast on nil-ref counts the drop (6.3) instead of silently dropping",
+         %{pid: pid} do
+      test_pid = self()
+      id = "stream-channel-drop-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        id,
+        [:flezha, :stream, :drop],
+        fn _e, m, md, _ -> send(test_pid, {:drop, m, md}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+
+      :ok = GenServer.cast(pid, {:io_in, "p1", {"msg", %{}}})
+      assert_receive {:drop, %{count: 1}, %{relay_id: "p1"}}
+      assert GenServer.call(pid, :stream_ref_status) == nil
+    end
   end
 end

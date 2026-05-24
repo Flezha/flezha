@@ -87,6 +87,25 @@ defmodule Flezha.Executor.FleetManager do
     Flezha.Executor.ControlChannel.reset_stream_ref(executor_id)
   end
 
+  @doc """
+  Re-issue `ConnectSocket` to `executor_id` so the SDK re-opens its data
+  sockets; the `StreamAcceptor` binds the fresh streams to the unbound
+  `StreamChannel`s (see `executor-controller-connection-healing`). Used by the
+  reconciler to heal a relay whose data stream dropped (`stream_ref: nil`).
+
+  Returns `:ok`, or `{:error, :no_control_unit}` when the executor's control
+  unit is not registered.
+  """
+  @spec rebind_data_streams(binary()) :: :ok | {:error, term()}
+  def rebind_data_streams(executor_id) when is_binary(executor_id) do
+    control_unit = Identificator.control_unit(executor_id)
+
+    case GenServer.whereis(control_unit) do
+      nil -> {:error, :no_control_unit}
+      _ -> GenServer.call(control_unit, :command_sockets_connect)
+    end
+  end
+
   def stop_namespace(namespace) do
     GenServer.call(__MODULE__, {:stop_namespace, namespace})
   end
@@ -387,18 +406,18 @@ defmodule Flezha.Executor.FleetManager do
                 "#{relay_id} → executor #{new_ce_id}"
             )
 
-            try do
-              # Bounded timeout (< 5s default of the outer Transport.Server
-              # call into FleetManager.connect_handler) so a relay that is
-              # itself calling back into FleetManager cannot deadlock the
-              # new-executor path.
-              GenServer.call(pid, {:executor_migrate, new_ce_id}, 2_000)
-              HubManager.relay_set_executor(namespace, relay_id, new_ce_id)
-            catch
-              :exit, exit_reason ->
+            # Only record the new executor once the migrate actually completed —
+            # the previous code set it even when the migrate failed, silently
+            # stranding the relay on a dead executor.
+            case migrate_orphan(pid, new_ce_id) do
+              :ok ->
+                HubManager.relay_set_executor(namespace, relay_id, new_ce_id)
+
+              {:error, reason} ->
                 Logger.warning(
-                  "[FleetManager] Failed to reissue relay #{relay_id}: " <>
-                    inspect(exit_reason)
+                  "[FleetManager] reissue for orphan relay #{relay_id} → " <>
+                    "#{new_ce_id} did not complete (#{inspect(reason)}); " <>
+                    "the reconciler will re-drive"
                 )
             end
           else
@@ -411,6 +430,31 @@ defmodule Flezha.Executor.FleetManager do
 
         :ok
     end
+  end
+
+  # Re-drive executor_migrate for an orphan: retry a *fast* transient failure
+  # once more, but a call timeout (the migrate is slow / still in flight) is left
+  # for the reconciler to re-drive rather than piling duplicate calls onto the
+  # bounded connect path. Returns `:ok` only when the migrate completed.
+  defp migrate_orphan(pid, new_ce_id) do
+    case safe_migrate(pid, new_ce_id) do
+      :ok -> :ok
+      {:error, {:exit, _}} = err -> err
+      {:error, _transient} -> safe_migrate(pid, new_ce_id)
+    end
+  end
+
+  # Bounded timeout (< 5s default of the outer Transport.Server call into
+  # FleetManager.connect_handler) so a relay that is itself calling back into
+  # FleetManager cannot deadlock the new-executor path.
+  defp safe_migrate(pid, new_ce_id) do
+    case GenServer.call(pid, {:executor_migrate, new_ce_id}, 2_000) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+      _ -> :ok
+    end
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
   end
 
   defp get_executor_ids(state, namespace, status) do

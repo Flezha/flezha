@@ -23,6 +23,25 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @callback help() :: String.t()
   @callback provider_info() :: map()
 
+  @typedoc "Health verdict for a running provider instance."
+  @type health_verdict() :: :healthy | {:unhealthy, reason :: term()}
+
+  @doc """
+  Optional health verdict for a *running* provider instance. The reconciler
+  (`Flezha.Plugin.Extension.Table.health/1`) queries this to escalate — restart
+  the provider under a bounded governor — only after the provider's own fast
+  in-process recovery has repeatedly failed. `opts` is the provider's stored
+  opts with `:owned_pid` (its tracked process, if any) injected by the host.
+
+  Default when a provider does NOT export `health/1`: the owned pid being alive
+  (or absent) is healthy. Providers SHOULD reuse their existing liveness state
+  rather than introduce new timers (e.g. the WebSocket provider reuses
+  `last_frame_at`/`last_data_frame_at`).
+  """
+  @callback health(opts :: map()) :: health_verdict()
+
+  @optional_callbacks health: 1
+
   defmacro __using__(_opts) do
     quote do
       @behaviour Flezha.Plugin.ProviderBehaviour

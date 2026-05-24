@@ -123,8 +123,8 @@ defmodule Flezha.Reconciler.ActionsTest do
     assert_receive {:called, {:executor_migrate, "ce_new"}}
   end
 
-  test "rebind_stream resets the control channel (local, any node)" do
-    stub(FleetManager, :reset_control_channel, fn "ce1" -> :ok end)
+  test "rebind_stream reissues ConnectSocket via rebind_data_streams (local, any node)" do
+    stub(FleetManager, :rebind_data_streams, fn "ce1" -> :ok end)
 
     p =
       probe(
@@ -139,6 +139,30 @@ defmodule Flezha.Reconciler.ActionsTest do
     assert Actions.converge(p, :degraded, false) == [:rebind_stream]
   end
 
+  describe "escalate_plugins (7.2)" do
+    test "restarts each unhealthy plugin on a local relay" do
+      pid = forwarder(self())
+      p = probe(local?: true, relay_alive?: true, relay_pid: pid)
+
+      assert Actions.escalate_plugins(p, ["ws", "kafka"]) == [:restart_plugin]
+      assert_receive {:forwarded, {:retry_plugin_restart, "ws"}}
+      assert_receive {:forwarded, {:retry_plugin_restart, "kafka"}}
+    end
+
+    test "is a no-op with no unhealthy plugins" do
+      p = probe(local?: true, relay_alive?: true, relay_pid: self())
+      assert Actions.escalate_plugins(p, []) == []
+    end
+
+    test "is a no-op for a relay owned by another node" do
+      pid = forwarder(self())
+      p = probe(local?: false, relay_alive?: true, relay_pid: pid)
+
+      assert Actions.escalate_plugins(p, ["ws"]) == []
+      refute_receive {:forwarded, _}, 100
+    end
+  end
+
   test "local actions do not run for a relay whose pid is on another node" do
     # local? false → un-park / rebind are left to the owning node's local pass.
     p =
@@ -151,6 +175,20 @@ defmodule Flezha.Reconciler.ActionsTest do
       )
 
     assert Actions.converge(p, :degraded, false) == []
+  end
+
+  defp forwarder(test_pid) do
+    pid = spawn(fn -> forward_loop(test_pid) end)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
+    pid
+  end
+
+  defp forward_loop(test_pid) do
+    receive do
+      msg ->
+        send(test_pid, {:forwarded, msg})
+        forward_loop(test_pid)
+    end
   end
 
   defp ensure_hub(ns) do

@@ -178,6 +178,69 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     assert is_nil(state.init_error)
   end
 
+  test "6.4 a parked relay un-parks via executor_migrate: pings, starts, clears init_error, activates plugins",
+       %{test_pid: test_pid} do
+    # Start the relay with a failing ping so it parks (alive, init_error set).
+    # Started directly (not via RelayManager) so the parked-and-alive GenServer
+    # is not stop_child_quietly'd — this is the cold-restart parked state.
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :timeout} end)
+    Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
+
+    plugin = %Plugin{
+      id: "unpark_plugin",
+      provider: QuietProvider,
+      opts: %{report_to: test_pid},
+      subscriptions: [{:on_input, [position: 0]}]
+    }
+
+    relay = %Builder{id: "unpark_relay", factory_id: @factory, opts: [plugins: [plugin]]}
+
+    {:ok, pid} = Flezha.Relay.Overwatch.start_link({@namespace, "stale_ce", relay})
+
+    on_exit(fn ->
+      try do
+        if Process.alive?(pid), do: GenServer.stop(pid)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
+
+    # It parks (init_error set) and never activates the plugin while parked.
+    assert eventually(fn ->
+             GenServer.call(pid, :get_overwatch_state).init_error != nil
+           end)
+
+    refute_received :activated
+
+    # A healthy executor is now reachable — un-park via executor_migrate.
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:ok, :pong} end)
+    executor_id = RelayManager.assign_executor(@namespace, @factory)
+    assert is_binary(executor_id)
+
+    assert :ok = GenServer.call(pid, {:executor_migrate, executor_id})
+
+    # init_error cleared and the plugin activated (resumes producing).
+    assert_receive :activated, 5_000
+    state = GenServer.call(pid, :get_overwatch_state)
+    assert is_nil(state.init_error)
+
+    assert Flezha.Plugin.Extension.Table.phase(state.extensions, "unpark_plugin") == :running
+  end
+
+  defp eventually(fun, attempts \\ 100) do
+    cond do
+      fun.() ->
+        true
+
+      attempts <= 0 ->
+        false
+
+      true ->
+        Process.sleep(20)
+        eventually(fun, attempts - 1)
+    end
+  end
+
   test "5.10 5.5 mocked-ingress regression: failed startup keeps plugins :prepared, no upstream I/O",
        %{test_pid: test_pid} do
     Application.put_env(:flezha, :overwatch_ping_fn, fn _executor_id ->

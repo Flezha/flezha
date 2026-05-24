@@ -216,6 +216,55 @@ defmodule Flezha.Plugin.Provider.Websocket do
     end
   end
 
+  @doc """
+  Health verdict reusing the two-tier watchdog's canonical timestamps — no new
+  liveness state. Healthy means the connection process is alive and within its
+  `idle_timeout_ms` (connection liveness) and, when `resubscribe_after_ms` is
+  configured, within its data window (data liveness). The in-process watchdog
+  (idle reconnect / resubscribe) remains the fast path; this contract only lets
+  the reconciler escalate after it has repeatedly failed.
+  """
+  @impl ProviderBehaviour
+  @spec health(map()) :: ProviderBehaviour.health_verdict()
+  def health(opts) do
+    pid = Map.get(opts, :owned_pid)
+    idle = Map.get(opts, :idle_timeout_ms, @default_idle_timeout_ms)
+    resub = Map.get(opts, :resubscribe_after_ms, @default_resubscribe_after_ms)
+
+    cond do
+      not is_pid(pid) -> {:unhealthy, :no_connection}
+      not Process.alive?(pid) -> {:unhealthy, :not_alive}
+      true -> health_from_liveness(pid, idle, resub)
+    end
+  end
+
+  defp health_from_liveness(pid, idle, resub) do
+    case query_liveness(pid) do
+      {:ok, frame_age, data_age} ->
+        cond do
+          idle > 0 and frame_age >= idle -> {:unhealthy, :connection_idle}
+          resub > 0 and data_age >= resub -> {:unhealthy, :data_idle}
+          true -> :healthy
+        end
+
+      :timeout ->
+        # Wedged probe → healthy so the reconciler does not escalate on
+        # uncertainty (a genuinely dead pid is caught by Process.alive?/1).
+        :healthy
+    end
+  end
+
+  defp query_liveness(pid) do
+    ref = make_ref()
+    send(pid, {:liveness_probe, self(), ref})
+
+    receive do
+      {^ref, frame_age, data_age} -> {:ok, frame_age, data_age}
+    after
+      500 -> :timeout
+    end
+  end
+
   defp normalize_idle_timeout(value) when is_integer(value) and value >= 0, do: value
   defp normalize_idle_timeout(value) when is_integer(value), do: 0
 
@@ -406,6 +455,15 @@ defmodule Flezha.Plugin.Provider.Websocket do
         schedule_idle_check(state)
         {:ok, state}
     end
+  end
+
+  # Liveness probe for the health contract (Phase 7.1): report the two-tier
+  # watchdog's current silence ages without disturbing them. Off the data path.
+  @impl Fresh
+  def handle_info({:liveness_probe, from, ref}, state) do
+    now = :erlang.monotonic_time(:millisecond)
+    send(from, {ref, now - state.last_frame_at, now - state.last_data_frame_at})
+    {:ok, state}
   end
 
   def handle_info(any, state) do

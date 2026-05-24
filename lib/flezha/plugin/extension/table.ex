@@ -213,6 +213,57 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   @doc """
+  Health verdict for every plugin on the table (plugin health contract). Only
+  `:running` plugins are evaluated — a `:prepared` plugin has not acquired
+  upstream resources yet, so it is reported `:healthy`. Providers that export
+  `health/1` are queried (with `:owned_pid` injected); providers without it
+  default to "owned pid alive (or absent) ⇒ healthy". A provider whose `health/1`
+  raises or times out is reported `:healthy` so the reconciler never escalates on
+  an uncertain probe. Returns `%{plugin_id => :healthy | {:unhealthy, reason}}`.
+  """
+  @spec health(t()) :: %{binary() => Flezha.Plugin.ProviderBehaviour.health_verdict()}
+  def health(%__MODULE__{} = table) do
+    Map.new(table.plugins, fn {plugin_id, plugin} ->
+      {plugin_id, plugin_health(table, plugin_id, plugin)}
+    end)
+  end
+
+  defp plugin_health(table, plugin_id, plugin) do
+    case Map.get(table.phases, plugin_id, :prepared) do
+      :running -> running_plugin_health(table, plugin_id, plugin)
+      _ -> :healthy
+    end
+  end
+
+  defp running_plugin_health(table, plugin_id, %Plugin{provider: provider, opts: opts}) do
+    owned_pid =
+      case Map.get(table.owned_pids, plugin_id) do
+        {pid, _ref} -> pid
+        _ -> nil
+      end
+
+    cond do
+      not Code.ensure_loaded?(provider) -> {:unhealthy, :provider_not_loaded}
+      function_exported?(provider, :health, 1) -> safe_health(provider, opts, owned_pid)
+      is_nil(owned_pid) -> :healthy
+      Process.alive?(owned_pid) -> :healthy
+      true -> {:unhealthy, :owned_pid_dead}
+    end
+  end
+
+  defp safe_health(provider, opts, owned_pid) do
+    case provider.health(Map.put(opts || %{}, :owned_pid, owned_pid)) do
+      :healthy -> :healthy
+      {:unhealthy, _reason} = unhealthy -> unhealthy
+      _ -> :healthy
+    end
+  rescue
+    _ -> :healthy
+  catch
+    _, _ -> :healthy
+  end
+
+  @doc """
   Remove every subscription owned by `plugin_id`, cancel its monitors,
   timers, and owned pids, and rebuild affected dispatch chains.
   """

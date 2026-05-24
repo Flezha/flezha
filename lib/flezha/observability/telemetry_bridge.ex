@@ -44,7 +44,8 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :state, :compaction_timeout] => {:flezha_state, :compaction_timeout, :event},
     [:flezha, :leadership, :transition] => {:flezha_leadership, :transition, :event},
     [:flezha, :reconcile, :action] => {:flezha_reconcile, :action, :event},
-    [:flezha, :reconcile, :health] => {:flezha_reconcile, :health, :event}
+    [:flezha, :reconcile, :health] => {:flezha_reconcile, :health, :event},
+    [:flezha, :stream, :drop] => {:flezha_stream, :drop, :metric}
   }
 
   # ---------- Public API ----------

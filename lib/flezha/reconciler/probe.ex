@@ -11,7 +11,9 @@ defmodule Flezha.Reconciler.Probe do
       `:get_overwatch_state` call, then one `:stream_ref_status` call)
     * the assigned executor's reachability and whether *any* executor advertises
       the relay's factory
-    * last-output egress age (`Flezha.Reconciler.Activity`)
+    * last-output egress age + throughput stall (`Flezha.Reconciler.Activity`:
+      a recent unbound-stream drop with a stale last-output = "data in, nothing
+      out", gated on `:throughput_stall_window_ms`)
 
   Executor reachability/availability are supplied via `ctx` (computed once per
   namespace by the loop) so the probe stays a pure read over injected facts and is
@@ -19,6 +21,7 @@ defmodule Flezha.Reconciler.Probe do
   a wedged relay degrades a dimension to `:unknown` rather than blocking the sweep.
   """
 
+  alias Flezha.Plugin.Extension.Table
   alias Flezha.Reconciler.Activity
   alias Flezha.Service.HubManager
 
@@ -34,6 +37,7 @@ defmodule Flezha.Reconciler.Probe do
     :assigned_executor,
     :park_reason,
     :last_output_age_ms,
+    :last_drop_age_ms,
     dead_node_entries: [],
     relay_alive?: false,
     local?: false,
@@ -41,7 +45,14 @@ defmodule Flezha.Reconciler.Probe do
     # true | false | :unknown — the relay's primary data channel stream_ref
     stream_bound?: :unknown,
     executor_reachable?: false,
-    executor_available?: false
+    executor_available?: false,
+    # ingest live (recent unbound-stream drop) AND output stalled — "data in,
+    # nothing out". Gated on `:throughput_stall_window_ms`; idle relays (no
+    # recent drop) are never flagged. See Phase 6.2.
+    throughput_stalled?: false,
+    # plugin_ids whose provider `health/1` reports unhealthy (running plugins
+    # only). The loop escalates a persistently-unhealthy plugin. See Phase 7.2.
+    unhealthy_plugins: []
   ]
 
   @type stream_state() :: boolean() | :unknown
@@ -56,13 +67,16 @@ defmodule Flezha.Reconciler.Probe do
           assigned_executor: binary() | nil,
           park_reason: term(),
           last_output_age_ms: non_neg_integer() | nil,
+          last_drop_age_ms: non_neg_integer() | nil,
           dead_node_entries: [{node(), pid()}],
           relay_alive?: boolean(),
           local?: boolean(),
           parked?: boolean(),
           stream_bound?: stream_state(),
           executor_reachable?: boolean(),
-          executor_available?: boolean()
+          executor_available?: boolean(),
+          throughput_stalled?: boolean(),
+          unhealthy_plugins: [binary()]
         }
 
   @typedoc """
@@ -95,6 +109,9 @@ defmodule Flezha.Reconciler.Probe do
     overwatch = if relay_alive?, do: overwatch_snapshot(relay_pid), else: nil
     executor_id = (overwatch && Map.get(overwatch, :executor_id)) || assigned
 
+    output_age = age_ms(Activity.last_output_ms(relay_id))
+    drop_age = age_ms(Activity.last_drop_ms(relay_id))
+
     %__MODULE__{
       namespace: namespace,
       relay_id: relay_id,
@@ -112,7 +129,10 @@ defmodule Flezha.Reconciler.Probe do
       executor_reachable?:
         executor_id != nil and MapSet.member?(ctx.active_executors, executor_id),
       executor_available?: factory_id != nil and ctx.factory_available?.(factory_id),
-      last_output_age_ms: last_output_age_ms(relay_id)
+      last_output_age_ms: output_age,
+      last_drop_age_ms: drop_age,
+      throughput_stalled?: throughput_stalled?(output_age, drop_age),
+      unhealthy_plugins: unhealthy_plugins(overwatch)
     }
   end
 
@@ -155,12 +175,39 @@ defmodule Flezha.Reconciler.Probe do
     end
   end
 
-  defp last_output_age_ms(relay_id) do
-    case Activity.last_output_ms(relay_id) do
-      nil -> nil
-      ts -> System.monotonic_time(:millisecond) - ts
+  # Running plugins whose provider health/1 reports unhealthy. Read from the
+  # Overwatch snapshot's extension table (no extra relay call); each provider
+  # probe is bounded + crash-safe inside `Table.health/1`.
+  defp unhealthy_plugins(nil), do: []
+
+  defp unhealthy_plugins(overwatch) do
+    case Map.get(overwatch, :extensions) do
+      %Table{} = table ->
+        table
+        |> Table.health()
+        |> Enum.filter(fn {_id, verdict} -> verdict != :healthy end)
+        |> Enum.map(fn {id, _verdict} -> id end)
+
+      _ ->
+        []
     end
   end
+
+  defp age_ms(nil), do: nil
+  defp age_ms(ts), do: System.monotonic_time(:millisecond) - ts
+
+  # Stall = a frame was dropped (ingest live) within the window AND no output
+  # succeeded within the window ("data in, nothing out"). A legitimately idle
+  # relay has no recent drop, so it is never flagged.
+  defp throughput_stalled?(output_age, drop_age) do
+    window = stall_window_ms()
+    recent_drop? = is_integer(drop_age) and drop_age < window
+    output_stale? = is_nil(output_age) or output_age >= window
+    recent_drop? and output_stale?
+  end
+
+  defp stall_window_ms,
+    do: Application.get_env(:flezha, :throughput_stall_window_ms, 30_000)
 
   # The relay's start-args embed the relay struct as `{ns, relay}` or
   # `{ns, executor_id, relay}` (the dead-node assignment form).

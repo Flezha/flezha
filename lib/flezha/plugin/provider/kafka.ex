@@ -217,6 +217,37 @@ defmodule Flezha.Plugin.Provider.Kafka do
       end
     end
 
+    @doc """
+    Health verdict for the producer worker (plugin health contract). Healthy
+    means the worker pid is alive and not permanently parked — a worker whose
+    `last_error` is `{:swap_exhausted, _}` has exhausted its in-process
+    broker-swap recovery and the queue can no longer drain, so the reconciler
+    escalates by restarting the provider.
+    """
+    @impl true
+    @spec health(map()) :: Flezha.Plugin.ProviderBehaviour.health_verdict()
+    def health(opts) do
+      pid = Map.get(opts, :producer_pid) || Map.get(opts, :owned_pid)
+
+      cond do
+        not is_pid(pid) -> {:unhealthy, :no_producer}
+        not Process.alive?(pid) -> {:unhealthy, :worker_dead}
+        true -> health_from_stats(pid)
+      end
+    end
+
+    defp health_from_stats(pid) do
+      case ProducerWorker.stats(pid) do
+        %{last_error: {:swap_exhausted, reason}} -> {:unhealthy, {:swap_exhausted, reason}}
+        %{} -> :healthy
+      end
+    catch
+      # A wedged/terminating worker read is treated as healthy so the reconciler
+      # does not escalate on an uncertain probe — the worker_dead branch covers
+      # a genuinely gone pid.
+      :exit, _ -> :healthy
+    end
+
     defp convert_value(:partition, value), do: parse_int(value, "partition")
     defp convert_value(:required_acks, value), do: parse_int(value, "required_acks")
     defp convert_value(:retries, value), do: parse_int(value, "retries")

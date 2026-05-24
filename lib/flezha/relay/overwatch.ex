@@ -12,6 +12,7 @@ defmodule Flezha.Relay.Overwatch do
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Reconciler.Activity
   alias Flezha.State.{Restore, Wire}
 
   # Defaults for the bounded-retry governor introduced by
@@ -284,6 +285,30 @@ defmodule Flezha.Relay.Overwatch do
     |> schedule_park_retry()
   end
 
+  defp cancel_park_timer(%__MODULE__{park_timer: nil} = state), do: state
+
+  defp cancel_park_timer(%__MODULE__{park_timer: ref} = state) do
+    _ = Process.cancel_timer(ref)
+    %__MODULE__{state | park_timer: nil}
+  end
+
+  # The minimal SDK relay for a running-relay migrate: the factory + the
+  # current (snapshot-derived) init_values, no plugins (the controller-side
+  # plugin table is untouched on a running migrate).
+  defp migrate_relay(%__MODULE__{} = state) do
+    init_values =
+      if state.snapshot != nil,
+        do: Payloader.json_to_map(state.snapshot),
+        else: state.init_values
+
+    %Flezha.Relay.Builder{
+      id: state.id,
+      factory_id: state.factory_id,
+      init_values: init_values,
+      opts: []
+    }
+  end
+
   defp executor_wait_ms,
     do: Application.get_env(:flezha, :overwatch_executor_wait_ms, 30_000)
 
@@ -548,30 +573,38 @@ defmodule Flezha.Relay.Overwatch do
     {:reply, result, state}
   end
 
+  # Parked relay → event-driven un-park. Supersedes the per-Overwatch 60 s
+  # park-retry self-timer: run the same recovery against the reconnected
+  # executor immediately — re-prepare plugins, ping before start, clear
+  # `init_error` on success, and activate plugins so the relay resumes
+  # producing without waiting for the timer.
   @impl true
+  def handle_call(
+        {:executor_migrate, new_executor_id},
+        _from,
+        %__MODULE__{init_error: reason, builder: relay} = state
+      )
+      when reason != nil do
+    case complete_init(cancel_park_timer(state), new_executor_id, relay) do
+      {:ok, recovered} ->
+        Logger.info("[Overwatch] relay #{state.id} un-parked onto executor #{new_executor_id}")
+        {:reply, :ok, recovered}
+
+      {:error, err, parked} ->
+        {:reply, {:error, err}, park(parked, err)}
+    end
+  end
+
+  # Running relay moved to a new executor (HotSwap reroute / orphan reissue):
+  # rebind the channel, ping before re-issuing start, and surface the start
+  # result so the caller (reissue retry, reconciler) can re-drive on failure.
   def handle_call({:executor_migrate, new_executor_id}, _from, %__MODULE__{} = state) do
-    state = %__MODULE__{
-      state
-      | executor_id: new_executor_id,
-        channel: attach_channel(state.id, new_executor_id)
-    }
+    state = bind_to_executor(state, state.id, new_executor_id)
 
-    init_values =
-      cond do
-        state.snapshot !== nil -> Payloader.json_to_map(state.snapshot)
-        true -> state.init_values
-      end
-
-    relay = %Flezha.Relay.Builder{
-      id: state.id,
-      factory_id: state.factory_id,
-      init_values: init_values,
-      opts: []
-    }
-
-    start_relay_sdk(new_executor_id, relay)
-
-    {:reply, :ok, state}
+    case attempt_ping_and_start(migrate_relay(state), new_executor_id) do
+      {:ok, _} -> {:reply, :ok, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
@@ -591,8 +624,17 @@ defmodule Flezha.Relay.Overwatch do
     payload = run_io(state, :on_input, message, metadata)
 
     case payload do
-      nil -> nil
-      _ -> GenServer.call(state.channel, {:io_in, state.id, payload})
+      nil ->
+        :ok
+
+      _ ->
+        # Count an unbound-stream drop instead of discarding the channel's
+        # `{:error, :no_stream}` reply, so the reconciler-detected stall is
+        # observable (the probe rebinds the stream).
+        case GenServer.call(state.channel, {:io_in, state.id, payload}) do
+          {:error, :no_stream} -> Activity.record_drop(state.id)
+          _ -> :ok
+        end
     end
 
     {:reply, :ok, state}

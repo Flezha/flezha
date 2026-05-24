@@ -35,11 +35,11 @@ defmodule Flezha.Executor.StreamChannel do
         {:io_in, relay_id, {_message, _metadata}},
         %{stream_ref: nil} = state
       ) do
-    Logger.debug(
-      "[StreamChannel #{inspect(state.name)}] dropping outbound cast for " <>
-        "#{relay_id}: stream_ref is nil (awaiting rebind)"
-    )
-
+    # Unbound channel: count the dropped frame so the previously-silent seam is
+    # observable and the reconciler sees "ingest live, output broken"
+    # (record_drop emits [:flezha, :stream, :drop] + a drop timestamp). The probe
+    # rebinds the stream rather than leaving frames silently dropped.
+    Activity.record_drop(relay_id)
     {:noreply, state}
   end
 

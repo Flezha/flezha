@@ -12,8 +12,16 @@ defmodule Flezha.Reconciler.ActivityTest do
       # globally — the hot-path write must never crash the StreamChannel.
       assert :ets.whereis(:flezha_relay_activity) == :undefined
       assert Activity.last_output_ms("missing") == nil
+      assert Activity.last_drop_ms("missing") == nil
       assert Activity.record_output("missing") == :ok
       assert Activity.forget("missing") == :ok
+    end
+
+    test "record_drop emits [:flezha, :stream, :drop] but records nothing when the table is absent" do
+      attach_drop_telemetry()
+      assert Activity.record_drop("ghost") == :ok
+      assert_receive {:drop, %{count: 1}, %{relay_id: "ghost"}}
+      assert Activity.last_drop_ms("ghost") == nil
     end
   end
 
@@ -42,11 +50,39 @@ defmodule Flezha.Reconciler.ActivityTest do
       assert Activity.last_output_ms("relay_b") >= t1
     end
 
-    test "forget drops the entry" do
+    test "forget drops both the output and drop entries" do
       Activity.record_output("relay_c")
+      Activity.record_drop("relay_c")
       assert is_integer(Activity.last_output_ms("relay_c"))
+      assert is_integer(Activity.last_drop_ms("relay_c"))
       assert Activity.forget("relay_c") == :ok
       assert Activity.last_output_ms("relay_c") == nil
+      assert Activity.last_drop_ms("relay_c") == nil
     end
+
+    test "record_drop records a drop timestamp and emits telemetry (6.2 + 6.3)" do
+      attach_drop_telemetry()
+      assert Activity.record_drop("relay_d") == :ok
+      assert_receive {:drop, %{count: 1}, %{relay_id: "relay_d"}}
+      ts = Activity.last_drop_ms("relay_d")
+      assert is_integer(ts)
+      assert ts <= System.monotonic_time(:millisecond)
+      # output and drop are independent keys
+      assert Activity.last_output_ms("relay_d") == nil
+    end
+  end
+
+  defp attach_drop_telemetry do
+    test_pid = self()
+    id = "activity-drop-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      id,
+      [:flezha, :stream, :drop],
+      fn _e, m, md, _ -> send(test_pid, {:drop, m, md}) end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(id) end)
   end
 end

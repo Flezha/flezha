@@ -9,9 +9,9 @@ defmodule Flezha.Reconciler.Actions do
 
     * `:purge_dead_node` — `ProcessHub.Service.Cluster.purge_node/2`
     * `:replace`         — `ProcessHub.start_child/3` (re-place via ConsistentHashing)
-    * `:unpark`          — `Overwatch.executor_migrate` (ping/result/init_error
-      composition fix is Phase 6.4; the loop keeps re-driving until it converges)
-    * `:rebind_stream`   — `FleetManager.reset_control_channel/1`
+    * `:unpark`          — `Overwatch.executor_migrate` (parked clause: ping,
+      start, clear `init_error`, re-activate plugins)
+    * `:rebind_stream`   — `FleetManager.rebind_data_streams/1` (reissue ConnectSocket)
 
   Leadership scope (D2): cluster-wide, registry-mutating actions (`:purge_dead_node`,
   `:replace`) run only on the elected leader so peers do not race the same entries;
@@ -29,7 +29,7 @@ defmodule Flezha.Reconciler.Actions do
 
   @migrate_timeout_ms 2_000
 
-  @type action() :: :purge_dead_node | :replace | :unpark | :rebind_stream
+  @type action() :: :purge_dead_node | :replace | :unpark | :rebind_stream | :restart_plugin
 
   @doc """
   Apply every convergence action whose divergence guard fires. `is_leader?`
@@ -116,9 +116,9 @@ defmodule Flezha.Reconciler.Actions do
 
   defp maybe_unpark(acc, _p), do: acc
 
-  # Rebind a running (non-parked) relay whose data stream dropped: clear the
-  # ControlChannel stream_ref so the SDK's next data stream re-binds via the
-  # existing acceptor path.
+  # Rebind a running (non-parked) relay whose data stream dropped: re-issue
+  # `ConnectSocket` so the SDK re-opens its data sockets and the acceptor binds
+  # them to the unbound StreamChannel (executor-controller-connection-healing).
   defp maybe_rebind_stream(
          acc,
          %Probe{
@@ -130,7 +130,7 @@ defmodule Flezha.Reconciler.Actions do
          } = p
        )
        when is_binary(executor_id) do
-    case FleetManager.reset_control_channel(executor_id) do
+    case FleetManager.rebind_data_streams(executor_id) do
       :ok ->
         emit(p, :rebind_stream)
         [:rebind_stream | acc]
@@ -141,6 +141,27 @@ defmodule Flezha.Reconciler.Actions do
   end
 
   defp maybe_rebind_stream(acc, _p), do: acc
+
+  @doc """
+  Escalate persistently-unhealthy plugins by restarting them via the relay's
+  host (node-local; the host re-inits + re-activates the provider). Driven by
+  the loop only after a plugin has been unhealthy across repeated probes — that
+  strike threshold plus the host's own retry backoff is the bounded governor.
+  Returns `[:restart_plugin]` when at least one restart was triggered.
+  """
+  @spec escalate_plugins(Probe.t(), [binary()]) :: [action()]
+  def escalate_plugins(_p, []), do: []
+
+  def escalate_plugins(%Probe{local?: true, relay_pid: pid} = p, plugin_ids) when is_pid(pid) do
+    Enum.each(plugin_ids, fn plugin_id ->
+      send(pid, {:retry_plugin_restart, plugin_id})
+      emit(p, :restart_plugin)
+    end)
+
+    [:restart_plugin]
+  end
+
+  def escalate_plugins(_p, _plugin_ids), do: []
 
   defp migrate(%Probe{relay_pid: relay_pid, relay_id: relay_id}, target) do
     GenServer.call(relay_pid, {:executor_migrate, target}, @migrate_timeout_ms)

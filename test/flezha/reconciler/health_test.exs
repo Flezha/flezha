@@ -84,6 +84,35 @@ defmodule Flezha.Reconciler.HealthTest do
       assert Health.classify(p) == :degraded
     end
 
+    test "degraded: throughput-stalled (data in, nothing out) even with an :unknown stream" do
+      p =
+        probe(
+          relay_alive?: true,
+          parked?: false,
+          stream_bound?: :unknown,
+          throughput_stalled?: true,
+          executor_reachable?: true,
+          executor_available?: true
+        )
+
+      assert Health.classify(p) == :degraded
+    end
+
+    test "degraded: a running plugin reports unhealthy" do
+      p =
+        probe(
+          relay_alive?: true,
+          parked?: false,
+          stream_bound?: true,
+          throughput_stalled?: false,
+          unhealthy_plugins: ["kafka_egress"],
+          executor_reachable?: true,
+          executor_available?: true
+        )
+
+      assert Health.classify(p) == :degraded
+    end
+
     test "unknown stream state does not by itself degrade an otherwise-healthy relay" do
       # A wedged relay whose :stream_ref_status probe timed out (:unknown) is not
       # treated as unbound — only an explicit `false` triggers a rebind.

@@ -38,9 +38,11 @@ defmodule Flezha.Reconciler.Loop do
 
   defstruct sweep_interval_ms: 20_000,
             debounce_ms: 250,
+            escalation_threshold: 2,
             pending: MapSet.new(),
             hooked: MapSet.new(),
-            health: %{}
+            health: %{},
+            plugin_strikes: %{}
 
   # ---------- API ----------
 
@@ -73,7 +75,13 @@ defmodule Flezha.Reconciler.Loop do
     state = %__MODULE__{
       sweep_interval_ms:
         Keyword.get(opts, :sweep_interval_ms, config(:reconcile_sweep_interval_ms, 20_000)),
-      debounce_ms: Keyword.get(opts, :debounce_ms, config(:reconcile_debounce_ms, 250))
+      debounce_ms: Keyword.get(opts, :debounce_ms, config(:reconcile_debounce_ms, 250)),
+      escalation_threshold:
+        Keyword.get(
+          opts,
+          :escalation_threshold,
+          config(:reconcile_plugin_escalation_threshold, 2)
+        )
     }
 
     schedule_sweep(state)
@@ -126,25 +134,38 @@ defmodule Flezha.Reconciler.Loop do
     if Orchestrator.cluster_ready?() do
       state = ensure_hub_hooks(namespace, state)
       is_leader? = leader?()
+      threshold = state.escalation_threshold
       hub_id = Identificator.hub(namespace)
 
       case safe_dump(hub_id) do
         {:ok, entries} ->
           ctx = build_ctx(namespace)
 
-          {results, health} =
-            Enum.map_reduce(entries, state.health, fn {relay_id, entry}, health_acc ->
-              probe = Probe.probe(namespace, relay_id, entry, ctx)
-              health = Health.classify(probe)
-              actions = Actions.converge(probe, health, is_leader?)
+          {results, {health, strikes}} =
+            Enum.map_reduce(
+              entries,
+              {state.health, state.plugin_strikes},
+              fn {relay_id, entry}, {health_acc, strikes_acc} ->
+                probe = Probe.probe(namespace, relay_id, entry, ctx)
+                health = Health.classify(probe)
+                actions = Actions.converge(probe, health, is_leader?)
 
-              health_acc =
-                track_health(namespace, relay_id, probe, health, is_leader?, health_acc)
+                {esc_actions, strikes_acc} =
+                  maybe_escalate_plugins(namespace, probe, strikes_acc, threshold)
 
-              {{relay_id, health, actions}, health_acc}
-            end)
+                health_acc =
+                  track_health(namespace, relay_id, probe, health, is_leader?, health_acc)
 
-          {results, %{state | health: prune_health(health, namespace, entries)}}
+                {{relay_id, health, actions ++ esc_actions}, {health_acc, strikes_acc}}
+              end
+            )
+
+          {results,
+           %{
+             state
+             | health: prune_health(health, namespace, entries),
+               plugin_strikes: prune_strikes(strikes, namespace, entries)
+           }}
 
         :error ->
           {[], state}
@@ -152,6 +173,45 @@ defmodule Flezha.Reconciler.Loop do
     else
       {[], state}
     end
+  end
+
+  # Escalate a plugin (restart it) only after it has been unhealthy across
+  # `threshold` consecutive probes — the provider's own fast in-process recovery
+  # gets that long to fix it first. The strike resets on escalation and on
+  # recovery, so restarts are bounded (the host adds its own retry backoff).
+  defp maybe_escalate_plugins(namespace, %Probe{local?: true} = probe, strikes, threshold) do
+    unhealthy = MapSet.new(probe.unhealthy_plugins)
+
+    # Plugins that recovered (no longer unhealthy) clear their strike.
+    strikes =
+      Map.reject(strikes, fn {{ns, rid, plugin_id}, _} ->
+        ns == namespace and rid == probe.relay_id and not MapSet.member?(unhealthy, plugin_id)
+      end)
+
+    {to_escalate, strikes} =
+      Enum.reduce(probe.unhealthy_plugins, {[], strikes}, fn plugin_id, {esc, acc} ->
+        key = {namespace, probe.relay_id, plugin_id}
+        n = Map.get(acc, key, 0) + 1
+
+        if n >= threshold do
+          {[plugin_id | esc], Map.put(acc, key, 0)}
+        else
+          {esc, Map.put(acc, key, n)}
+        end
+      end)
+
+    {Actions.escalate_plugins(probe, Enum.reverse(to_escalate)), strikes}
+  end
+
+  defp maybe_escalate_plugins(_namespace, _probe, strikes, _threshold), do: {[], strikes}
+
+  # Forget plugin strikes for relays no longer in the namespace's registry.
+  defp prune_strikes(strikes, namespace, entries) do
+    present = MapSet.new(entries, fn {relay_id, _} -> relay_id end)
+
+    Map.reject(strikes, fn {{ns, rid, _plugin}, _} ->
+      ns == namespace and not MapSet.member?(present, rid)
+    end)
   end
 
   defp build_ctx(namespace) do
