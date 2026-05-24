@@ -45,7 +45,7 @@ defmodule Flezha.Transport.ServerCloseOnRejectTest do
       {:error, :shutting_down}
     end)
 
-    state = %{transport: :uds, pending_streams: %{stream_ref => true}, quic_current_ce_id: nil}
+    state = %{transport: :uds, pending_streams: %{0 => stream_ref}, quic_current_ce_id: nil}
 
     # safe_close tolerates the bogus (non-NIF) ref, so the server does not crash.
     assert {:noreply, new_state} = Server.handle_info(connect_frame(), state)
@@ -62,7 +62,7 @@ defmodule Flezha.Transport.ServerCloseOnRejectTest do
       {:ok, "ce_ok"}
     end)
 
-    state = %{transport: :uds, pending_streams: %{stream_ref => true}, quic_current_ce_id: nil}
+    state = %{transport: :uds, pending_streams: %{0 => stream_ref}, quic_current_ce_id: nil}
 
     assert {:noreply, _} = Server.handle_info(connect_frame(), state)
     refute_receive {:rejected, _, _}, 200

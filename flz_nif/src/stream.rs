@@ -70,6 +70,15 @@ fn close(env: Env, stream: StreamHandleArc) -> NifResult<Term> {
     Ok(atoms::ok().encode(env))
 }
 
+/// Return the driver-assigned stream id for this handle. Matches the id sent in
+/// `{:flz_data, stream_id, ...}` / `{:flz_closed, stream_id, ...}`, letting the
+/// owner correlate a freshly accepted `{:flz_connection, handle}` with the
+/// frames and close events that later arrive for the same stream.
+#[rustler::nif]
+fn stream_id(stream: StreamHandleArc) -> u64 {
+    stream.stream_id
+}
+
 /// Transfer ownership of a stream to a different Elixir process.
 #[rustler::nif]
 fn controlling_process(env: Env, stream: StreamHandleArc, new_owner: LocalPid) -> NifResult<Term> {

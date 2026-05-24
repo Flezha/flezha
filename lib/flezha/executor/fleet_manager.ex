@@ -37,7 +37,8 @@ defmodule Flezha.Executor.FleetManager do
 
       case GenServer.call(
              __MODULE__,
-             {:executor_connect, stream_ref, namespace, factories, transport}
+             {:executor_connect, stream_ref, namespace, factories, transport},
+             executor_connect_timeout()
            ) do
         {:error, reason} ->
           Logger.error("Failed to connect executor: #{inspect(reason)}")
@@ -474,6 +475,15 @@ defmodule Flezha.Executor.FleetManager do
     end)
 
     Map.delete(state.executor_namespaces[namespace], old_executor)
+  end
+
+  # executor_connect/3 may block inside Orchestrator.await_cluster_ready/0
+  # (bounded by :cluster_formation_timeout_ms, default 15s) while the cluster
+  # forms after a restart. The connect call must outlast that window plus the
+  # rest of the connect work, or the caller's default 5s timeout fires and
+  # strands every executor that connects during formation.
+  defp executor_connect_timeout do
+    Application.get_env(:flezha, :cluster_formation_timeout_ms, 15_000) + 5_000
   end
 
   defp executor_connect(stream_ref, namespace, transport) do

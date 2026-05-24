@@ -171,14 +171,21 @@ defmodule Flezha.Transport.Server do
   # Streams start in passive mode by default, so we must set_active to receive data.
   @impl true
   def handle_info({:flz_connection, stream_ref}, state) do
+    # Key pending streams by the driver-assigned stream id (the same id carried
+    # by every {:flz_data,...}/{:flz_closed,...} for this stream) so the
+    # connect_control_channel frame and the close event can be matched back to
+    # the exact handle. The handle resource itself is opaque and not comparable
+    # to the integer id the data/close messages carry.
+    stream_id = Native.stream_id(stream_ref)
+
     Logger.info(
-      "[Transport.Server] New connection accepted (#{state.transport}), stream_ref=#{inspect(stream_ref)}"
+      "[Transport.Server] New connection accepted (#{state.transport}), stream_id=#{stream_id}, stream_ref=#{inspect(stream_ref)}"
     )
 
     # Activate the stream so we receive the connect_control_channel frame.
     Native.set_active(stream_ref)
 
-    pending = Map.put(state.pending_streams, stream_ref, true)
+    pending = Map.put(state.pending_streams, stream_id, stream_ref)
     {:noreply, %{state | pending_streams: pending}}
   end
 
@@ -203,26 +210,31 @@ defmodule Flezha.Transport.Server do
     end
   end
 
-  # Data frame: connect_control_channel handshake
+  # Data frame: connect_control_channel handshake. Bind to the exact stream the
+  # frame arrived on — picking an arbitrary pending stream mis-binds the
+  # ControlChannel to the wrong (often already-closed) handle whenever more than
+  # one connection is pending, e.g. when liveness probes (`nc -zU`) churn the
+  # control socket.
   @impl true
   def handle_info(
-        {:flz_data, _stream_id, "connect_control_channel", message, _metadata},
+        {:flz_data, stream_id, "connect_control_channel", message, _metadata},
         state
       ) do
-    Logger.info(
-      "[Transport.Server] Received connect_control_channel frame, pending_streams=#{map_size(state.pending_streams)}"
-    )
+    case Map.pop(state.pending_streams, stream_id) do
+      {nil, _pending} ->
+        Logger.warning(
+          "[Transport.Server] connect_control_channel for unknown stream_id=#{stream_id} (no pending connection)"
+        )
 
-    # Find the pending stream (most recent connection)
-    case Map.keys(state.pending_streams) do
-      [stream_ref | _rest] ->
-        pending = Map.delete(state.pending_streams, stream_ref)
+        {:noreply, state}
+
+      {stream_ref, pending} ->
+        Logger.info(
+          "[Transport.Server] Received connect_control_channel frame, stream_id=#{stream_id}, pending_streams=#{map_size(pending)}"
+        )
+
         state = %{state | pending_streams: pending}
         handle_new_executor(stream_ref, message, state)
-
-      [] ->
-        Logger.warning("[Transport.Server] connect_control_channel with no pending connection")
-        {:noreply, state}
     end
   end
 
@@ -234,9 +246,14 @@ defmodule Flezha.Transport.Server do
   end
 
   @impl true
-  def handle_info({:flz_closed, _stream_id, reason}, state) do
-    Logger.info("[Transport.Server] Connection closed: reason=#{reason}")
-    {:noreply, state}
+  def handle_info({:flz_closed, stream_id, reason}, state) do
+    # Drop the pending entry so streams that close before completing the
+    # handshake (e.g. liveness-probe connects) don't accumulate. Streams already
+    # handed off to a ControlChannel/StreamChannel are no longer owned here, so
+    # their close events never reach this clause — only still-pending ones do.
+    pending = Map.delete(state.pending_streams, stream_id)
+    Logger.info("[Transport.Server] Connection closed: stream_id=#{stream_id}, reason=#{reason}")
+    {:noreply, %{state | pending_streams: pending}}
   end
 
   @impl true

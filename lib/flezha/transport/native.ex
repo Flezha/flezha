@@ -56,4 +56,11 @@ defmodule Flezha.Transport.Native do
 
   @doc "Disable active mode — the driver buffers incoming frames."
   def set_passive(_stream_ref), do: :erlang.nif_error(:not_loaded)
+
+  @doc """
+  Return the driver-assigned stream id for a handle. Matches the id carried by
+  `{:flz_data, stream_id, ...}` and `{:flz_closed, stream_id, ...}`, so an owner
+  can correlate a `{:flz_connection, handle}` with that stream's later frames.
+  """
+  def stream_id(_stream_ref), do: :erlang.nif_error(:not_loaded)
 end
