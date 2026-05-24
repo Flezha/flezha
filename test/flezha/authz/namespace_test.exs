@@ -22,7 +22,10 @@ defmodule Flezha.AuthZ.NamespaceTest do
       assert {:error, :invalid_namespace_name} = Namespace.validate_name("-leading-hyphen")
       assert {:error, :invalid_namespace_name} = Namespace.validate_name("1starts-with-digit")
       assert {:error, :invalid_namespace_name} = Namespace.validate_name("team_orders")
-      assert {:error, :invalid_namespace_name} = Namespace.validate_name(String.duplicate("a", 64))
+
+      assert {:error, :invalid_namespace_name} =
+               Namespace.validate_name(String.duplicate("a", 64))
+
       assert {:error, :invalid_namespace_name} = Namespace.validate_name(:atom)
     end
   end

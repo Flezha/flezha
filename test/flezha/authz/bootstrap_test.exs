@@ -51,7 +51,10 @@ defmodule Flezha.AuthZ.BootstrapTest do
   test "check_and_write/0 is a no-op once admin@_system exists" do
     :ok = RoleStore.bind("alice", "_system", :admin)
     assert :ok = Bootstrap.check_and_write()
-    refute File.exists?(Path.join(Application.get_env(:flezha, :authn_authz)[:auth_dir], "bootstrap.token"))
+
+    refute File.exists?(
+             Path.join(Application.get_env(:flezha, :authn_authz)[:auth_dir], "bootstrap.token")
+           )
   end
 
   test "claim/2 with --principal binds and flips :enabled" do
@@ -104,7 +107,9 @@ defmodule Flezha.AuthZ.BootstrapTest do
     # Re-point bootstrap_token_path so its parent is /tmp (mode 1777
     # on Linux). The check_parent_mode/1 guard should refuse to
     # write and surface {:error, {:permissive_auth_parent, "/tmp"}}.
-    permissive_dir = Path.join(System.tmp_dir!(), "flz_authz_permissive_#{System.unique_integer([:positive])}")
+    permissive_dir =
+      Path.join(System.tmp_dir!(), "flz_authz_permissive_#{System.unique_integer([:positive])}")
+
     File.mkdir_p!(permissive_dir)
     # Don't chmod permissive_dir's parent — /tmp is permissive on
     # purpose. The bootstrap writer must refuse.
@@ -112,6 +117,7 @@ defmodule Flezha.AuthZ.BootstrapTest do
     :ok = RoleStore.unbind("alice")
 
     prev = Application.get_env(:flezha, :authn_authz)
+
     Application.put_env(
       :flezha,
       :authn_authz,

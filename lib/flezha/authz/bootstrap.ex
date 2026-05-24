@@ -80,7 +80,8 @@ defmodule Flezha.AuthZ.Bootstrap do
         with {:ok, stored} <- read_token_file(path),
              :ok <- compare_constant_time(stored, presented_token),
              {:ok, principal, minted} <- resolve_principal(opts),
-             :ok <- RoleStore.bind(principal, Namespace.system_name(), :admin, bound_by: principal),
+             :ok <-
+               RoleStore.bind(principal, Namespace.system_name(), :admin, bound_by: principal),
              :ok <- AuthState.set_enabled() do
           _ = File.rm(path)
           emit_bootstrap_completed(principal)
@@ -97,7 +98,8 @@ defmodule Flezha.AuthZ.Bootstrap do
 
     case ensure_dir_safe(dir) do
       :ok ->
-        raw = :crypto.strong_rand_bytes(@token_bytes) |> Base.encode32(case: :lower, padding: false)
+        raw =
+          :crypto.strong_rand_bytes(@token_bytes) |> Base.encode32(case: :lower, padding: false)
 
         case File.write(path, raw) do
           :ok ->

@@ -44,7 +44,8 @@ defmodule Flezha.Service.Observability do
     with :ok <- check_enabled(),
          :ok <- validate_caller(caller_context),
          :ok <- AuthZ.require_bound_principal(caller_context),
-         :ok <- AuthZ.authorize(caller_context, :"observability.subscribe", scope_for(caller_context)) do
+         :ok <-
+           AuthZ.authorize(caller_context, :"observability.subscribe", scope_for(caller_context)) do
       emit_audit(:subscribe, caller_context, %{source: source})
       Observability.subscribe(source)
     end
@@ -65,7 +66,8 @@ defmodule Flezha.Service.Observability do
     with :ok <- check_enabled(),
          :ok <- validate_caller(caller_context),
          :ok <- AuthZ.require_bound_principal(caller_context),
-         :ok <- AuthZ.authorize(caller_context, :"observability.subscribe", scope_for(caller_context)),
+         :ok <-
+           AuthZ.authorize(caller_context, :"observability.subscribe", scope_for(caller_context)),
          :ok <- check_pubsub_sink() do
       emit_audit(:tail, caller_context, %{source: source})
       Observability.subscribe(source)
@@ -132,7 +134,12 @@ defmodule Flezha.Service.Observability do
     with :ok <- check_enabled(),
          :ok <- validate_caller(caller_context),
          :ok <- AuthZ.require_bound_principal(caller_context),
-         :ok <- AuthZ.authorize(caller_context, :"observability.enable_source", scope_for(caller_context)),
+         :ok <-
+           AuthZ.authorize(
+             caller_context,
+             :"observability.enable_source",
+             scope_for(caller_context)
+           ),
          :ok <- emit_audit(:enable_source, caller_context, %{source: name}) do
       Registry.enable_source(name)
     end
@@ -143,7 +150,12 @@ defmodule Flezha.Service.Observability do
     with :ok <- check_enabled(),
          :ok <- validate_caller(caller_context),
          :ok <- AuthZ.require_bound_principal(caller_context),
-         :ok <- AuthZ.authorize(caller_context, :"observability.disable_source", scope_for(caller_context)),
+         :ok <-
+           AuthZ.authorize(
+             caller_context,
+             :"observability.disable_source",
+             scope_for(caller_context)
+           ),
          :ok <- emit_audit(:disable_source, caller_context, %{source: name}) do
       Registry.disable_source(name)
     end

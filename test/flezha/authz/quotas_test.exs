@@ -61,7 +61,9 @@ defmodule Flezha.AuthZ.QuotasTest do
 
     :ok = Quotas.record_allocation("team-orders", :max_relays, 2)
     _ = :sys.get_state(QuotaCounters)
-    assert {:error, {:quota_exceeded, _, _}} = Quotas.check_allocation("team-orders", :max_relays, 1)
+
+    assert {:error, {:quota_exceeded, _, _}} =
+             Quotas.check_allocation("team-orders", :max_relays, 1)
 
     :ok = Quotas.record_deallocation("team-orders", :max_relays, 1)
     # The cast must finish before the next read; round-trip a sync call

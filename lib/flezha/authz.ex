@@ -98,7 +98,10 @@ defmodule Flezha.AuthZ do
   @spec enabled?() :: boolean()
   def enabled?() do
     runtime_enabled = Flezha.AuthZ.AuthState.enabled?()
-    config_enabled = Application.get_env(:flezha, :authn_authz, []) |> Keyword.get(:enabled, false)
+
+    config_enabled =
+      Application.get_env(:flezha, :authn_authz, []) |> Keyword.get(:enabled, false)
+
     config_enabled and runtime_enabled
   end
 
@@ -182,7 +185,13 @@ defmodule Flezha.AuthZ do
     end
   end
 
-  defp check_namespace_scope(role, bound_ns, action, caller_context, %{namespace: target_ns} = scope) do
+  defp check_namespace_scope(
+         role,
+         bound_ns,
+         action,
+         caller_context,
+         %{namespace: target_ns} = scope
+       ) do
     cond do
       Policy.cross_namespace_admin_action?(action) ->
         if role == :admin and Namespace.system?(bound_ns) do

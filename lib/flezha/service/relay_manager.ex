@@ -71,7 +71,12 @@ defmodule Flezha.Service.RelayManager do
             end
 
           if partition_count > 0 do
-            _ = Flezha.AuthZ.Quotas.record_allocation(namespace, :max_partitions_per_relay, partition_count)
+            _ =
+              Flezha.AuthZ.Quotas.record_allocation(
+                namespace,
+                :max_partitions_per_relay,
+                partition_count
+              )
           end
 
           ok

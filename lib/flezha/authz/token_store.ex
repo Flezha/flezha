@@ -96,7 +96,13 @@ defmodule Flezha.AuthZ.TokenStore do
   `{:ok, %{principal, namespace, role, expires_at}}`.
   """
   @spec verify(binary()) ::
-          {:ok, %{principal: binary(), namespace: binary(), role: Role.t(), expires_at: integer() | :never}}
+          {:ok,
+           %{
+             principal: binary(),
+             namespace: binary(),
+             role: Role.t(),
+             expires_at: integer() | :never
+           }}
           | {:error, :malformed | :unknown | :token_revoked | :token_expired}
   def verify(token) when is_binary(token) do
     cond do

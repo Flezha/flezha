@@ -28,11 +28,16 @@ defmodule Flezha.AuthZ.Quotas do
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters}
 
-  @type kind :: :max_relays | :max_partitions_per_relay | :max_mailbox_bytes_total
-                | :max_message_rate_per_second | :max_disk_bytes_total
+  @type kind ::
+          :max_relays
+          | :max_partitions_per_relay
+          | :max_mailbox_bytes_total
+          | :max_message_rate_per_second
+          | :max_disk_bytes_total
 
   @type quota_error ::
-          {:error, {:quota_exceeded, kind(), %{current: non_neg_integer(), limit: non_neg_integer()}}}
+          {:error,
+           {:quota_exceeded, kind(), %{current: non_neg_integer(), limit: non_neg_integer()}}}
           | {:error, :namespace_unknown}
 
   @doc """

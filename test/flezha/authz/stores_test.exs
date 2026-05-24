@@ -53,6 +53,7 @@ defmodule Flezha.AuthZ.StoresTest do
       assert :error = RoleStore.lookup("alice")
 
       :ok = RoleStore.bind("alice", "_system", :admin, bound_by: "bootstrap")
+
       assert {:ok, %{principal: "alice", namespace: "_system", role: :admin}} =
                RoleStore.lookup("alice")
 
