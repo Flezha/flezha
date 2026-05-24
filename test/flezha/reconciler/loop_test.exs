@@ -10,6 +10,7 @@ defmodule Flezha.Reconciler.LoopTest do
   path needs a real executor and is verified in Docker (§13.1/§13.4).
   """
   use ExUnit.Case, async: false
+  use Mimic
 
   alias Flezha.Cluster.Orchestrator
   alias Flezha.Reconciler.{Activity, Loop}
@@ -129,6 +130,26 @@ defmodule Flezha.Reconciler.LoopTest do
       send(Process.whereis(Loop), :sweep)
 
       assert_receive {:telemetry, :action, _m, %{relay_id: "r1", action: :purge_dead_node}}, 2_000
+    end
+
+    test "the periodic sweep drives the subsumed Watchdog and Retention sweeps" do
+      test_pid = self()
+      loop = Process.whereis(Loop)
+
+      Flezha.State.Watchdog
+      |> stub(:sweep_now, fn -> send(test_pid, :watchdog_swept) end)
+      |> allow(test_pid, loop)
+
+      Flezha.State.Retention
+      |> stub(:sweep_now, fn -> send(test_pid, :retention_swept) end)
+      |> allow(test_pid, loop)
+
+      # First sweep: both detectors are due (no prior drive), so both fire —
+      # the self-timers they used to hold are now folded into this sweep.
+      send(loop, :sweep)
+
+      assert_receive :watchdog_swept, 1_000
+      assert_receive :retention_swept, 1_000
     end
   end
 

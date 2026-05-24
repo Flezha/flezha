@@ -20,7 +20,6 @@ defmodule Flezha.Relay.Overwatch do
   # control-channel rebind (raspberrypi5 cold-start hits ~5–10 s) recovers
   # within one burst without spinning the supervisor.
   @default_retry_backoff_ms [200, 500, 1_000, 2_000, 5_000, 10_000]
-  @default_park_retry_interval_ms 60_000
 
   require Logger
 
@@ -50,8 +49,7 @@ defmodule Flezha.Relay.Overwatch do
     init_values: %{},
     default_input_type: "2",
     arrived_via_hotswap?: false,
-    init_error: nil,
-    park_timer: nil
+    init_error: nil
   ]
 
   def start_link(args) do
@@ -242,14 +240,6 @@ defmodule Flezha.Relay.Overwatch do
   defp retry_backoff_ms,
     do: Application.get_env(:flezha, :overwatch_retry_backoff_ms, @default_retry_backoff_ms)
 
-  defp park_retry_interval_ms,
-    do:
-      Application.get_env(
-        :flezha,
-        :overwatch_retry_park_interval_ms,
-        @default_park_retry_interval_ms
-      )
-
   # Idle the GenServer for `1..delay` ms. The empty receive consumes no
   # mailbox messages — it only fires the `after` branch on timeout, so
   # casts and infos arriving during the wait stay queued for the next
@@ -264,32 +254,13 @@ defmodule Flezha.Relay.Overwatch do
     end
   end
 
-  defp schedule_park_retry(%__MODULE__{} = state) do
-    interval = park_retry_interval_ms()
-
-    if interval > 0 do
-      ref = Process.send_after(self(), :retry_startup, interval)
-      %__MODULE__{state | park_timer: ref}
-    else
-      state
-    end
-  end
-
-  # Transition the Overwatch into the parked-error state: store the
-  # failure reason, schedule the next periodic retry. The GenServer
-  # stays alive (no `:stop`, no supervisor restart). Plugins remain in
-  # `:prepared` so no upstream I/O fires while parked.
+  # Transition the Overwatch into the parked-error state: store the failure
+  # reason and stay alive (no `:stop`, no supervisor restart). Plugins remain
+  # in `:prepared` so no upstream I/O fires while parked. The reconciler drives
+  # the event-driven un-park (`executor_migrate`) once a healthy executor for
+  # the relay's factory is available.
   defp park(%__MODULE__{} = state, reason) do
-    state
-    |> Map.put(:init_error, reason)
-    |> schedule_park_retry()
-  end
-
-  defp cancel_park_timer(%__MODULE__{park_timer: nil} = state), do: state
-
-  defp cancel_park_timer(%__MODULE__{park_timer: ref} = state) do
-    _ = Process.cancel_timer(ref)
-    %__MODULE__{state | park_timer: nil}
+    Map.put(state, :init_error, reason)
   end
 
   # The minimal SDK relay for a running-relay migrate: the factory + the
@@ -573,11 +544,10 @@ defmodule Flezha.Relay.Overwatch do
     {:reply, result, state}
   end
 
-  # Parked relay → event-driven un-park. Supersedes the per-Overwatch 60 s
-  # park-retry self-timer: run the same recovery against the reconnected
-  # executor immediately — re-prepare plugins, ping before start, clear
-  # `init_error` on success, and activate plugins so the relay resumes
-  # producing without waiting for the timer.
+  # Parked relay → event-driven un-park (the reconciler's `:unpark` action):
+  # run the full recovery against the reconnected executor immediately —
+  # re-prepare plugins, ping before start, clear `init_error` on success, and
+  # activate plugins so the relay resumes producing.
   @impl true
   def handle_call(
         {:executor_migrate, new_executor_id},
@@ -585,7 +555,7 @@ defmodule Flezha.Relay.Overwatch do
         %__MODULE__{init_error: reason, builder: relay} = state
       )
       when reason != nil do
-    case complete_init(cancel_park_timer(state), new_executor_id, relay) do
+    case complete_init(state, new_executor_id, relay) do
       {:ok, recovered} ->
         Logger.info("[Overwatch] relay #{state.id} un-parked onto executor #{new_executor_id}")
         {:reply, :ok, recovered}
@@ -746,30 +716,6 @@ defmodule Flezha.Relay.Overwatch do
   def handle_info({:retry_plugin_restart, plugin_id}, state) do
     table = Table.retry(state.extensions, plugin_id)
     {:noreply, %{state | extensions: table}}
-  end
-
-  @impl true
-  def handle_info(:retry_startup, %__MODULE__{init_error: nil} = state) do
-    # Race: timer fired after init_error cleared — no-op.
-    {:noreply, %__MODULE__{state | park_timer: nil}}
-  end
-
-  def handle_info(:retry_startup, %__MODULE__{builder: relay} = state) do
-    Logger.info("[Overwatch] park-retry firing for relay #{state.id}")
-    state = %__MODULE__{state | park_timer: nil}
-
-    case complete_init(state, state.executor_id, relay) do
-      {:ok, recovered} ->
-        Logger.info("[Overwatch] relay #{state.id} recovered from parked state")
-        {:noreply, recovered}
-
-      {:error, reason, parked} ->
-        Logger.warning(
-          "[Overwatch] relay #{state.id} park-retry failed: #{inspect(reason)}; re-arming"
-        )
-
-        {:noreply, park(parked, reason)}
-    end
   end
 
   @impl true

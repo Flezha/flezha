@@ -25,6 +25,19 @@ defmodule Flezha.Reconciler.ActionsTest do
     end
   end
 
+  # Replies {:error, :boom} to any call (a migrate that does not complete).
+  defmodule ErrEcho do
+    use GenServer
+    def start(test_pid), do: GenServer.start(__MODULE__, test_pid)
+    @impl true
+    def init(t), do: {:ok, t}
+    @impl true
+    def handle_call(msg, _from, t) do
+      send(t, {:called, msg})
+      {:reply, {:error, :boom}, t}
+    end
+  end
+
   defp probe(fields), do: struct(%Probe{namespace: "ns", relay_id: "r1"}, fields)
 
   test "healthy relay → no actions (idempotent no-op)" do
@@ -137,6 +150,51 @@ defmodule Flezha.Reconciler.ActionsTest do
       )
 
     assert Actions.converge(p, :degraded, false) == [:rebind_stream]
+  end
+
+  test "reissue migrates a running orphan to an available executor and records it" do
+    {:ok, echo} = Echo.start(self())
+    on_exit(fn -> if Process.alive?(echo), do: GenServer.stop(echo) end)
+
+    stub(RelayManager, :assign_executor, fn "ns", "f1" -> "ce_new" end)
+    stub(HubManager, :relay_set_executor, fn "ns", "r1", "ce_new" -> :ok end)
+
+    p =
+      probe(
+        relay_alive?: true,
+        parked?: false,
+        local?: true,
+        executor_reachable?: false,
+        executor_available?: true,
+        factory_id: "f1",
+        relay_pid: echo
+      )
+
+    assert Actions.converge(p, :degraded, false) == [:reissue]
+    assert_receive {:called, {:executor_migrate, "ce_new"}}
+  end
+
+  test "reissue does not record the executor when the migrate fails" do
+    {:ok, srv} = ErrEcho.start(self())
+    on_exit(fn -> if Process.alive?(srv), do: GenServer.stop(srv) end)
+
+    stub(RelayManager, :assign_executor, fn "ns", "f1" -> "ce_new" end)
+    # The new executor is recorded only on a completed migrate — never here.
+    reject(HubManager, :relay_set_executor, 3)
+
+    p =
+      probe(
+        relay_alive?: true,
+        parked?: false,
+        local?: true,
+        executor_reachable?: false,
+        executor_available?: true,
+        factory_id: "f1",
+        relay_pid: srv
+      )
+
+    assert Actions.converge(p, :degraded, false) == []
+    assert_receive {:called, {:executor_migrate, "ce_new"}}
   end
 
   describe "escalate_plugins (7.2)" do

@@ -1,9 +1,12 @@
 defmodule Flezha.State.Watchdog do
   @moduledoc """
-  Periodic sweeper that makes a stalled per-Partition persistence/output
-  path *detectable and self-healing* instead of silently frozen.
+  Sweeper that makes a stalled per-Partition persistence/output path
+  *detectable and self-healing* instead of silently frozen. The reconciler's
+  periodic sweep (`Flezha.Reconciler.Loop`) drives `sweep_now/0` on the
+  `:output_watchdog_interval_ms` cadence; this module holds the detection logic
+  and the compaction-handshake tracking, not its own timer.
 
-  Two sweeps run on each tick:
+  Two sweeps run on each pass:
 
     * **Output staleness.** For every persistence-enabled Partition with a
       live `WalWriter`, compare `last_change_seen_at` (any Change frame
@@ -29,10 +32,7 @@ defmodule Flezha.State.Watchdog do
 
   alias Flezha.State.{PersistenceResolver, Recovery, Registry, Supervisor, WalWriter}
 
-  @default_interval_ms 10_000
-  @min_interval_ms 100
-
-  defstruct [:tick_ref, :tick_interval_ms, compactions: %{}, last_resync: %{}]
+  defstruct compactions: %{}, last_resync: %{}
 
   # ---------- Public API ----------
 
@@ -67,10 +67,8 @@ defmodule Flezha.State.Watchdog do
   # ---------- GenServer ----------
 
   @impl true
-  def init(opts) do
-    interval = max(@min_interval_ms, Keyword.get(opts, :interval_ms, configured_interval_ms()))
-    ref = Process.send_after(self(), :tick, interval)
-    {:ok, %__MODULE__{tick_ref: ref, tick_interval_ms: interval}}
+  def init(_opts) do
+    {:ok, %__MODULE__{}}
   end
 
   @impl true
@@ -90,13 +88,6 @@ defmodule Flezha.State.Watchdog do
   @impl true
   def handle_call(:sweep_now, _from, state) do
     {:reply, :ok, sweep(state)}
-  end
-
-  @impl true
-  def handle_info(:tick, state) do
-    state = sweep(state)
-    ref = Process.send_after(self(), :tick, state.tick_interval_ms)
-    {:noreply, %{state | tick_ref: ref}}
   end
 
   # ---------- Sweep ----------
@@ -186,9 +177,5 @@ defmodule Flezha.State.Watchdog do
     {:ok, WalWriter.stall_status(writer)}
   catch
     :exit, _ -> :error
-  end
-
-  defp configured_interval_ms() do
-    Application.get_env(:flezha, :output_watchdog_interval_ms, @default_interval_ms)
   end
 end

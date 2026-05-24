@@ -11,16 +11,20 @@ defmodule Flezha.Reconciler.Actions do
     * `:replace`         — `ProcessHub.start_child/3` (re-place via ConsistentHashing)
     * `:unpark`          — `Overwatch.executor_migrate` (parked clause: ping,
       start, clear `init_error`, re-activate plugins)
+    * `:reissue`         — `Overwatch.executor_migrate` (running clause) for a
+      relay whose assigned executor went away, then records the new executor
+      in the registry (subsumes `FleetManager.reissue_local_orphans`)
     * `:rebind_stream`   — `FleetManager.rebind_data_streams/1` (reissue ConnectSocket)
 
   Leadership scope (D2): cluster-wide, registry-mutating actions (`:purge_dead_node`,
   `:replace`) run only on the elected leader so peers do not race the same entries;
-  node-local actions (`:unpark`, `:rebind_stream`) run on whichever node owns the
-  relay pid, leadership-independent. Returns the list of actions actually applied.
+  node-local actions (`:unpark`, `:reissue`, `:rebind_stream`) run on whichever node
+  owns the relay pid, leadership-independent. Returns the list of actions applied.
   """
 
   alias Flezha.Executor.FleetManager
   alias Flezha.Reconciler.Probe
+  alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
   alias Flezha.Service.RelayManager
   alias ProcessHub.Service.Cluster
@@ -29,7 +33,8 @@ defmodule Flezha.Reconciler.Actions do
 
   @migrate_timeout_ms 2_000
 
-  @type action() :: :purge_dead_node | :replace | :unpark | :rebind_stream | :restart_plugin
+  @type action() ::
+          :purge_dead_node | :replace | :unpark | :reissue | :rebind_stream | :restart_plugin
 
   @doc """
   Apply every convergence action whose divergence guard fires. `is_leader?`
@@ -41,6 +46,7 @@ defmodule Flezha.Reconciler.Actions do
     |> maybe_purge_dead_node(p, is_leader?)
     |> maybe_replace(p, is_leader?)
     |> maybe_unpark(p)
+    |> maybe_reissue(p)
     |> maybe_rebind_stream(p)
     |> Enum.reverse()
   end
@@ -116,6 +122,33 @@ defmodule Flezha.Reconciler.Actions do
 
   defp maybe_unpark(acc, _p), do: acc
 
+  # Re-issue `AddRelay` for a *running* relay whose assigned executor went away,
+  # once another executor for its factory is available. Drives the same
+  # `executor_migrate` (running clause: rebind, ping, re-issue start) and records
+  # the new executor only on success, so a failed migrate leaves the relay for the
+  # next pass to re-drive. Subsumes `FleetManager.reissue_local_orphans`.
+  defp maybe_reissue(
+         acc,
+         %Probe{
+           relay_alive?: true,
+           parked?: false,
+           local?: true,
+           executor_reachable?: false,
+           executor_available?: true
+         } = p
+       ) do
+    with target when is_binary(target) <- RelayManager.assign_executor(p.namespace, p.factory_id),
+         :ok <- migrate(p, target) do
+      record_executor(p, target)
+      emit(p, :reissue)
+      [:reissue | acc]
+    else
+      _ -> acc
+    end
+  end
+
+  defp maybe_reissue(acc, _p), do: acc
+
   # Rebind a running (non-parked) relay whose data stream dropped: re-issue
   # `ConnectSocket` so the SDK re-opens its data sockets and the acceptor binds
   # them to the unbound StreamChannel (executor-controller-connection-healing).
@@ -170,6 +203,16 @@ defmodule Flezha.Reconciler.Actions do
       Logger.warning(
         "[reconciler] executor_migrate for #{relay_id} → #{target} timed out: #{inspect(reason)}"
       )
+
+      {:error, {:exit, reason}}
+  end
+
+  # Record the relay's new executor in the durable registry so the placement is
+  # realized for `flz relay list` / `cluster status` and survives the relay pid.
+  defp record_executor(%Probe{namespace: ns, relay_id: relay_id}, target) do
+    HubManager.relay_set_executor(ns, relay_id, target)
+  catch
+    _, _ -> :ok
   end
 
   defp emit(%Probe{} = p, action) do

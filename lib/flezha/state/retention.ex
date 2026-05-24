@@ -1,8 +1,8 @@
 defmodule Flezha.State.Retention do
   @moduledoc """
-  Periodic sweeper enforcing `time_travel_retention_hours` per Relay class.
+  Sweeper enforcing `time_travel_retention_hours` per Relay class.
 
-  On each tick, walks every Partition under `Registry.state_root/0` and
+  On each pass, walks every Partition under `Registry.state_root/0` and
   prunes:
 
     * Snapshots strictly older than `now - retention_hours`, keeping at
@@ -12,22 +12,18 @@ defmodule Flezha.State.Retention do
 
   `retention_hours = 0` disables time-travel for that Relay class:
   the WAL is truncated to the latest snapshot's seq immediately on
-  every tick ("compact and forget").
+  every pass ("compact and forget").
 
-  Tick cadence is `:flezha, :time_travel_retention_check_interval_ms`,
-  default 60 000 ms. Validated at `init/1`; out-of-range values fail
-  startup loudly.
+  The reconciler's periodic sweep (`Flezha.Reconciler.Loop`) drives
+  `sweep_now/0` on the `:time_travel_retention_check_interval_ms` cadence
+  (default 60 000 ms); this module holds the prune logic, not its own timer.
   """
 
   use GenServer
 
   alias Flezha.State.{Metrics, PersistenceResolver, Registry, Supervisor, WalWriter}
 
-  @default_interval_ms 60_000
-  @min_interval_ms 100
-  @max_interval_ms 24 * 60 * 60 * 1000
-
-  defstruct [:tick_ref, :tick_interval_ms]
+  defstruct []
 
   # ---------- Public API ----------
 
@@ -46,33 +42,14 @@ defmodule Flezha.State.Retention do
   # ---------- GenServer ----------
 
   @impl true
-  def init(opts) do
-    interval = Keyword.get(opts, :interval_ms, configured_interval_ms())
-
-    cond do
-      not is_integer(interval) ->
-        {:stop, {:invalid_interval, interval}}
-
-      interval < @min_interval_ms or interval > @max_interval_ms ->
-        {:stop, {:interval_out_of_range, interval, [@min_interval_ms, @max_interval_ms]}}
-
-      true ->
-        ref = Process.send_after(self(), :tick, interval)
-        {:ok, %__MODULE__{tick_ref: ref, tick_interval_ms: interval}}
-    end
+  def init(_opts) do
+    {:ok, %__MODULE__{}}
   end
 
   @impl true
   def handle_call(:sweep_now, _from, state) do
     sweep_all()
     {:reply, :ok, state}
-  end
-
-  @impl true
-  def handle_info(:tick, state) do
-    sweep_all()
-    ref = Process.send_after(self(), :tick, state.tick_interval_ms)
-    {:noreply, %{state | tick_ref: ref}}
   end
 
   # ---------- Sweep ----------
@@ -202,9 +179,5 @@ defmodule Flezha.State.Retention do
       {:ok, info} -> elem(info, 1)
       _ -> 0
     end
-  end
-
-  defp configured_interval_ms() do
-    Application.get_env(:flezha, :time_travel_retention_check_interval_ms, @default_interval_ms)
   end
 end

@@ -2,7 +2,6 @@ defmodule Flezha.Executor.FleetManager do
   alias Flezha.Cluster.Orchestrator
   alias Flezha.Executor.ExecutorSupervisor
   alias Flezha.Executor.FleetSupervisor
-  alias Flezha.Executor.OrphanFinder
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.EventManager
@@ -234,17 +233,11 @@ defmodule Flezha.Executor.FleetManager do
       )
 
     state = store_factories(state, namespace, executor_id, factories)
-    {state, claimed_relay_ids} = try_migrate_executor(state, namespace, executor_id)
-    active_ids = MapSet.new(get_executor_ids(state, namespace, :active))
+    state = try_migrate_executor(state, namespace, executor_id)
 
-    reissue_local_orphans(
-      namespace,
-      executor_id,
-      factories,
-      claimed_relay_ids,
-      active_ids
-    )
-
+    # The reconciler (subscribed to :executor_connected_event) re-issues
+    # AddRelay for any local relay still tagged with a now-dead executor — the
+    # catch-up that `reissue_local_orphans` used to do inline.
     EventManager.dispatch(
       :executor_connected_event,
       {namespace, executor_id},
@@ -341,6 +334,11 @@ defmodule Flezha.Executor.FleetManager do
     end)
   end
 
+  # Migrate the relays of one already-inactive executor onto the freshly
+  # connected one (the reconnect-of-the-same-fleet case). Broader orphan
+  # catch-up — relays still tagged with any now-dead executor — is the
+  # reconciler's `:reissue` action, triggered by the `:executor_connected_event`
+  # this handler dispatches.
   defp try_migrate_executor(state, namespace, executor_id) do
     in_active_executors = get_executor_ids(state, namespace, :inactive)
 
@@ -348,113 +346,14 @@ defmodule Flezha.Executor.FleetManager do
 
     case List.first(in_active_executors) do
       nil ->
-        {state, MapSet.new()}
+        state
 
       inactive_executor_id ->
-        # Capture which relay_ids the migrate path is about to claim so the
-        # reissue catch-up can skip them — the migrate already calls
-        # Overwatch.executor_migrate, which fires AddRelay.
-        claimed_ids =
-          HubManager.executor_relays(namespace, inactive_executor_id)
-          |> Enum.map(fn {relay_id, _node_pids} -> relay_id end)
-          |> MapSet.new()
-
         namespace_executors =
-          executor_reroute(
-            state,
-            namespace,
-            inactive_executor_id,
-            [executor_id]
-          )
+          executor_reroute(state, namespace, inactive_executor_id, [executor_id])
 
-        new_state =
-          put_in(state, [:executor_namespaces, namespace], namespace_executors)
-
-        {new_state, claimed_ids}
+        put_in(state, [:executor_namespaces, namespace], namespace_executors)
     end
-  end
-
-  @doc false
-  # Public for tests. Re-issues AddRelay (via Overwatch.executor_migrate)
-  # to the freshly connected executor for every local Overwatch whose registered
-  # executor_id no longer points at an active executor. Without this,
-  # relays ProcessHub keeps assigned to a dead executor_id sit silent
-  # until ProcessHub redistributes them.
-  def reissue_local_orphans(namespace, new_ce_id, factories, claimed_ids, active_ids) do
-    factory_id_set = OrphanFinder.factory_ids_from(factories)
-    curr_node = node()
-
-    case HubManager.get_registry(namespace) do
-      {:error, reason} ->
-        Logger.debug(
-          "[FleetManager] reissue_local_orphans: hub registry unavailable for " <>
-            "#{namespace}: #{inspect(reason)}"
-        )
-
-        :ok
-
-      {:ok, registry} ->
-        registry
-        |> OrphanFinder.collect(curr_node, claimed_ids, active_ids, factory_id_set)
-        |> Enum.each(fn {relay_id, pid} ->
-          # Liveness guard before the registry-sourced call: a relay pid can die
-          # between the OrphanFinder collect and this call, so skip dead pids
-          # rather than spending the bounded timeout exiting on a :noproc.
-          if Process.alive?(pid) do
-            Logger.info(
-              "[FleetManager] Reissuing AddRelay for orphan relay " <>
-                "#{relay_id} → executor #{new_ce_id}"
-            )
-
-            # Only record the new executor once the migrate actually completed —
-            # the previous code set it even when the migrate failed, silently
-            # stranding the relay on a dead executor.
-            case migrate_orphan(pid, new_ce_id) do
-              :ok ->
-                HubManager.relay_set_executor(namespace, relay_id, new_ce_id)
-
-              {:error, reason} ->
-                Logger.warning(
-                  "[FleetManager] reissue for orphan relay #{relay_id} → " <>
-                    "#{new_ce_id} did not complete (#{inspect(reason)}); " <>
-                    "the reconciler will re-drive"
-                )
-            end
-          else
-            Logger.debug(
-              "[FleetManager] reissue_local_orphans: orphan relay #{relay_id} " <>
-                "pid no longer alive; skipping"
-            )
-          end
-        end)
-
-        :ok
-    end
-  end
-
-  # Re-drive executor_migrate for an orphan: retry a *fast* transient failure
-  # once more, but a call timeout (the migrate is slow / still in flight) is left
-  # for the reconciler to re-drive rather than piling duplicate calls onto the
-  # bounded connect path. Returns `:ok` only when the migrate completed.
-  defp migrate_orphan(pid, new_ce_id) do
-    case safe_migrate(pid, new_ce_id) do
-      :ok -> :ok
-      {:error, {:exit, _}} = err -> err
-      {:error, _transient} -> safe_migrate(pid, new_ce_id)
-    end
-  end
-
-  # Bounded timeout (< 5s default of the outer Transport.Server call into
-  # FleetManager.connect_handler) so a relay that is itself calling back into
-  # FleetManager cannot deadlock the new-executor path.
-  defp safe_migrate(pid, new_ce_id) do
-    case GenServer.call(pid, {:executor_migrate, new_ce_id}, 2_000) do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
-      _ -> :ok
-    end
-  catch
-    :exit, reason -> {:error, {:exit, reason}}
   end
 
   defp get_executor_ids(state, namespace, status) do

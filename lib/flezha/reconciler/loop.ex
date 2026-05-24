@@ -8,7 +8,10 @@ defmodule Flezha.Reconciler.Loop do
   hooks (`child_registered`/`child_unregistered`/`post_node_join`/`post_node_leave`/
   `post_recovery_replay`) — each debounced and targeted, plus a bounded periodic
   full sweep (`:reconcile_sweep_interval_ms`) as the backstop for anything no event
-  covered (e.g. a `kill -9` node that never `nodedown`'d).
+  covered (e.g. a `kill -9` node that never `nodedown`'d). The periodic sweep also
+  drives the per-Partition persistence sweeps it subsumed — `Flezha.State.Watchdog`
+  (output-staleness / compaction-timeout) and `Flezha.State.Retention` (time-travel
+  prune) — each at its own configured cadence.
 
   Reconcile is gated on `Flezha.Cluster.Orchestrator.cluster_ready?/0` so it never
   acts before the cluster has formed. The cluster-wide, registry-mutating actions
@@ -23,6 +26,7 @@ defmodule Flezha.Reconciler.Loop do
   alias Flezha.Executor.FleetManager
   alias Flezha.Reconciler.{Actions, Health, Leader, Probe}
   alias Flezha.Service.{EventManager, HubManager, Identificator}
+  alias Flezha.State.{Retention, Watchdog}
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.{HookManager, ProcessRegistry}
 
@@ -42,7 +46,8 @@ defmodule Flezha.Reconciler.Loop do
             pending: MapSet.new(),
             hooked: MapSet.new(),
             health: %{},
-            plugin_strikes: %{}
+            plugin_strikes: %{},
+            state_sweep_at: %{}
 
   # ---------- API ----------
 
@@ -101,6 +106,8 @@ defmodule Flezha.Reconciler.Loop do
         {_results, acc} = reconcile(namespace, acc)
         acc
       end)
+
+    state = drive_state_sweeps(state)
 
     schedule_sweep(state)
     {:noreply, state}
@@ -346,6 +353,44 @@ defmodule Flezha.Reconciler.Loop do
     fun.()
   catch
     _, _ -> default
+  end
+
+  # Drive the per-Partition persistence sweeps the reconciler subsumed (their
+  # self-timers were removed): the output-staleness/compaction watchdog and the
+  # time-travel retention prune. Each runs at its own configured cadence, clocked
+  # by this sweep, and is bounded + crash-safe so a wedged or not-yet-started
+  # sweeper never stalls reconciliation.
+  defp drive_state_sweeps(state) do
+    now = System.monotonic_time(:millisecond)
+
+    state
+    |> maybe_drive_state_sweep(
+      :watchdog,
+      Watchdog,
+      config(:output_watchdog_interval_ms, 10_000),
+      now
+    )
+    |> maybe_drive_state_sweep(
+      :retention,
+      Retention,
+      config(:time_travel_retention_check_interval_ms, 60_000),
+      now
+    )
+  end
+
+  defp maybe_drive_state_sweep(state, key, mod, interval_ms, now) do
+    due? =
+      case Map.get(state.state_sweep_at, key) do
+        nil -> true
+        last -> now - last >= interval_ms
+      end
+
+    if due? do
+      _ = safe_call(fn -> mod.sweep_now() end, :ok)
+      %{state | state_sweep_at: Map.put(state.state_sweep_at, key, now)}
+    else
+      state
+    end
   end
 
   defp config(key, default), do: Application.get_env(:flezha, key, default)

@@ -21,8 +21,9 @@ defmodule Flezha.State.WatchdogTest do
           {Elixir.Registry, keys: :unique, name: Supervisor.registry_name()},
           Supervisor,
           Flezha.State.FsyncBatcher,
-          # Long auto-tick: the tests drive sweeps explicitly via sweep_now/0.
-          {Watchdog, interval_ms: 600_000}
+          # The reconciler drives sweeps in production; these tests drive them
+          # explicitly via sweep_now/0 (the Watchdog holds no self-timer).
+          Watchdog
         ] do
       case start_supervised(spec) do
         {:ok, _} -> :ok

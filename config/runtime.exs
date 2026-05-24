@@ -365,7 +365,22 @@ if config_env() != :test do
     # Egress throughput-stall window (ms) — consumed by the Phase 6 ingest-gated
     # stall detector; the Phase 5 probe records last-output age against it.
     throughput_stall_window_ms:
-      System.get_env("FLEZHA_THROUGHPUT_STALL_WINDOW_MS", "30000") |> String.to_integer()
+      System.get_env("FLEZHA_THROUGHPUT_STALL_WINDOW_MS", "30000") |> String.to_integer(),
+    # Consecutive unhealthy probes a plugin must accrue before the loop escalates
+    # (restarts it); the provider's own fast in-process recovery gets that many
+    # sweeps first. Strike resets on escalation and on recovery (Phase 7.2).
+    reconcile_plugin_escalation_threshold:
+      System.get_env("FLEZHA_RECONCILE_PLUGIN_ESCALATION_THRESHOLD", "2")
+      |> String.to_integer(),
+    # Cadences (ms) for the per-Partition persistence sweeps the reconcile sweep
+    # now drives (their self-timers were folded in — Phase 11.2): the
+    # output-staleness/compaction watchdog and the time-travel retention prune.
+    # Each is clocked by the reconcile sweep, so the effective floor is
+    # `reconcile_sweep_interval_ms`.
+    output_watchdog_interval_ms:
+      System.get_env("FLEZHA_OUTPUT_WATCHDOG_INTERVAL_MS", "10000") |> String.to_integer(),
+    time_travel_retention_check_interval_ms:
+      System.get_env("FLEZHA_RETENTION_CHECK_INTERVAL_MS", "60000") |> String.to_integer()
 end
 
 # ------------------------------------------------------------------------------------------------
