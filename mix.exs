@@ -89,15 +89,13 @@ defmodule Flezha.MixProject do
     [
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
-      # ProcessHub is pinned to the github master branch until durable-registry +
-      # coordinator-bootstrap-recovery are stabilised and a new hex version is cut.
-      #
-      # Dev (self-healing-control-plane): consume the local ../process-hub checkout
-      # (branch dev) so the additions (leader/0, purge_node/2) are usable before
-      # they are pushed. Restore the git dep at the pushed dev SHA before the
-      # Session-3 operator deploy.
-      # {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
-      {:process_hub, path: "../process-hub"},
+      # ProcessHub is consumed from the github `dev` branch while the
+      # self-healing-control-plane additions (leader/0, purge_node/2, the
+      # leader-hosted oracle, and hub-to-hub migration) stabilise. mix.lock
+      # pins the exact dev commit; refresh with `mix deps.update process_hub`.
+      # Move to a versioned/hex dep once dev is cut as a release.
+      {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
+      # {:process_hub, path: "../process-hub"},
       # {:process_hub, "~> 0.5.0-beta"},
       {:blockade, "~> 0.2.2"},
       {:fresh, "~> 0.4.4"},
