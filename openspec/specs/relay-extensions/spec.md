@@ -3,9 +3,7 @@
 ## Purpose
 
 The relay-extensions capability is the typed extension-point system exposed by relay hosts (e.g. `Flezha.Relay.Overwatch`). Each host declares its extension points once in a module-level catalog; plugins are represented as a unified `%Flezha.Plugin{}` struct carrying a `subscriptions` list and attach to those extensions as data, and the engine dispatches each extension through `Flezha.Plugin.Extension.Table` — a per-host registry that holds subscriptions, pre-composed dispatch chains keyed by extension kind (`:fold`, `:transform`, `:fanout`, `:request`, `:timer`), an active-extensions bitset, and all subscriber lifecycle state (monitor refs, timer refs, restart bookkeeping, `PluginManager` registrations). The capability defines how plugins declare subscriptions, how the table compiles dispatch chains per extension kind, how the active-bitset fast path makes unused extensions zero-cost, how lifecycle (subscribe / unsubscribe / teardown / restart / handover) is handled uniformly, and what guarantees hold across the extension points a host publishes. Adding a new extension point becomes a catalog entry plus a single `Extension.run/3` call at the dispatch site.
-
 ## Requirements
-
 ### Requirement: Extension-point catalog
 
 The system SHALL declare every extension point exposed by a host module (e.g. `Flezha.Relay.Overwatch`) in a single module-level catalog. Each catalog entry MUST specify the extension name (atom), its dispatch kind (one of `:fold`, `:transform`, `:fanout`, `:request`, `:timer`), and its context-struct module. The catalog SHALL be the sole source of truth for which extension points exist on that host; no runtime registration of new extension names is permitted.
@@ -198,7 +196,6 @@ A Produce attempt that ultimately fails after exhausting `:delivery_timeout_ms` 
 </content>
 </invoke>
 
-
 ### Requirement: Two-phase plugin lifecycle gated on SDK readiness
 
 The system SHALL support a two-phase plugin lifecycle for relay-host plugins: `prepared` (the GenServer/struct is registered, config is validated, no upstream resources are acquired) and `running` (upstream connections opened, subscribe handshakes issued, input emission permitted). The transition from `prepared` to `running` SHALL be driven by `Flezha.Plugin.Extension.Table.bulk_activate/1`, invoked by the relay host ONLY after `start_relay_sdk/2` returns `{:ok, _}` (i.e. the SDK-side relay is bound and ready to accept input).
@@ -327,3 +324,44 @@ The per-frame work added for liveness tracking SHALL be O(1) in the frame size b
 - **WHEN** a websocket plugin is started with a non-empty `ignore_pattern`
 - **THEN** the pattern SHALL be compiled to a reusable matcher at start and reused for every frame
 - **AND** the pattern SHALL NOT be recompiled on the per-frame path
+
+### Requirement: Plugin providers SHALL expose a health contract
+
+`Flezha.Plugin.ProviderBehaviour` SHALL define an optional `health/1` callback returning
+a health verdict for a running provider (default: process alive ⇒ healthy). The WebSocket
+provider's verdict SHALL **reuse the existing canonical liveness timestamps** rather than
+introduce new ones — healthy means its connection-liveness `last_frame_at` (and, when
+`resubscribe_after_ms` is configured, its data-liveness `last_data_frame_at`) are within
+their windows, per the "Websocket connection-liveness watchdog" / "Websocket data-liveness
+watchdog" requirements already in this capability. The Kafka producer provider SHALL
+report healthy only when its worker is alive, not permanently parked, and its queue is
+draining. The reconciler /
+`Extension.Table` SHALL query `health/1` and escalate — restarting an unhealthy provider
+under a bounded governor — only when the provider's own fast in-process recovery has
+repeatedly failed to restore health. The providers' in-process reconnect/retry detectors
+are retained; the health contract adds escalation, it does not replace them.
+
+#### Scenario: Unhealthy provider is restarted
+- **GIVEN** a relay whose Kafka producer worker is alive but permanently parked (not draining)
+- **WHEN** the reconciler queries the provider's `health/1`
+- **THEN** the provider SHALL report unhealthy
+- **AND** the reconciler SHALL restart it under the bounded governor so production resumes
+
+#### Scenario: Healthy provider is left alone
+- **GIVEN** a WebSocket provider that is connected and receiving frames
+- **WHEN** `health/1` is queried
+- **THEN** it SHALL report healthy and the reconciler SHALL take no action
+
+### Requirement: Recovered relays SHALL NOT reuse dead or parked plugin workers
+
+When a relay is recovered/respawned, plugin re-application SHALL NOT reuse a stale
+provider process. `Flezha.Plugin.Provider.Kafka.ProducerSup.ensure_worker/1` (and the
+equivalent provider lookups) SHALL verify the looked-up pid is alive and not parked
+before reuse, and reap a dead/parked worker so a fresh one is started.
+
+#### Scenario: Stale producer pid is reaped on recovery
+- **GIVEN** a recovered relay whose previous Kafka producer worker is dead or parked but still in the registry
+- **WHEN** `ensure_worker/1` runs during plugin re-application
+- **THEN** it SHALL reap the stale entry and start a fresh, healthy producer worker
+- **AND** the recovered relay SHALL produce rather than re-attach to the dead worker
+
