@@ -33,17 +33,12 @@ defmodule Flezha.Application do
         Flezha.Shutdown.Coordinator,
         Flezha.Executor.FleetSupervisor,
         FleetManager,
-        # Cluster formation + leadership start BEFORE the transport accepts
-        # executor connects, so a hub is never created on a not-yet-clustered
-        # node (which would diverge from its peers). `Reconciler.Leader` opts
-        # the node into elector-backed orchestration leadership when
-        # `:leadership_enabled`.
-        Flezha.Cluster.Orchestrator,
-        Flezha.Reconciler.Leader,
-        # The reconciler subsystem (egress-activity table + control-loop) starts
-        # before the transport so the activity table exists before any
-        # StreamChannel records a frame. Gated by `:reconciler_enabled`.
-        Flezha.Reconciler.Supervisor
+        # Cluster formation must start BEFORE the transport accepts executor
+        # connects, so a hub is never created on a not-yet-clustered node.
+        # `consume-recovery-mode-and-self-heal` §4 retired the Reconciler
+        # stack — `Flezha.Convergence.Health` (started after the State trio
+        # below) takes over the bind/rebind/plugin-restart actions.
+        Flezha.Cluster.Orchestrator
       ] ++
         authz_children() ++
         installer_children() ++
@@ -61,6 +56,8 @@ defmodule Flezha.Application do
           Flezha.State.Retention,
           Flezha.State.Watchdog
         ] ++
+        convergence_health_children() ++
+        healthz_children() ++
         memory_reporter_children()
 
     # Flezha.Testnet only compiles in :test (test/support/); ensure_loaded?
@@ -141,6 +138,29 @@ defmodule Flezha.Application do
     case Flezha.Diagnostics.MemoryReporter.configured_interval_ms() do
       {:ok, _ms} -> [Flezha.Diagnostics.MemoryReporter]
       :disabled -> []
+    end
+  end
+
+  # `consume-recovery-mode-and-self-heal` §4.4-4.5: opt the
+  # Convergence Health watcher into the supervision tree. Default
+  # `true` in prod; tests turn it off so the global app boot does not
+  # tick across suites.
+  defp convergence_health_children do
+    if Application.get_env(:flezha, :convergence_health_enabled, true) do
+      [Flezha.Convergence.Health]
+    else
+      []
+    end
+  end
+
+  # `consume-recovery-mode-and-self-heal` §4.6-4.7: opt-in `/healthz`
+  # listener. Off by default — only flezha_market opts in via its
+  # ConfigMap so bare-metal users keep their own probe shape.
+  defp healthz_children do
+    if Application.get_env(:flezha, :healthz_enabled, false) do
+      [Flezha.Healthz.Server]
+    else
+      []
     end
   end
 

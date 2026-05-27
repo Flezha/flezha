@@ -14,9 +14,10 @@ defmodule Flezha.State.Retention do
   the WAL is truncated to the latest snapshot's seq immediately on
   every pass ("compact and forget").
 
-  The reconciler's periodic sweep (`Flezha.Reconciler.Loop`) drives
-  `sweep_now/0` on the `:time_travel_retention_check_interval_ms` cadence
-  (default 60 000 ms); this module holds the prune logic, not its own timer.
+  Holds its own sweep timer (`:time_travel_retention_check_interval_ms`,
+  default 60 000 ms) after `consume-recovery-mode-and-self-heal` §4
+  removed the `Flezha.Reconciler.Loop` periodic sweep that previously
+  drove it.
   """
 
   use GenServer
@@ -43,6 +44,7 @@ defmodule Flezha.State.Retention do
 
   @impl true
   def init(_opts) do
+    schedule_sweep()
     {:ok, %__MODULE__{}}
   end
 
@@ -50,6 +52,20 @@ defmodule Flezha.State.Retention do
   def handle_call(:sweep_now, _from, state) do
     sweep_all()
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_info(:retention_tick, state) do
+    schedule_sweep()
+    sweep_all()
+    {:noreply, state}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  defp schedule_sweep() do
+    interval = Application.get_env(:flezha, :time_travel_retention_check_interval_ms, 60_000)
+    if interval > 0, do: Process.send_after(self(), :retention_tick, interval)
   end
 
   # ---------- Sweep ----------

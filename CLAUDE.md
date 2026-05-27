@@ -24,24 +24,42 @@
   `Flezha.Service.CliManager.state_*/N`.
 - **Detailed notes**: `docs/controller_state_persistence.md`.
 
-## Auto-restore on boot (`auto-restore-on-boot`)
+## Auto-restore on boot (`auto-restore-on-boot` + `consume-recovery-mode-and-self-heal`)
 
 - **ProcessHub pinning**: `mix.exs` pins `process_hub` to the GitHub
-  dev branch — needed for the `durable-registry` and
-  `coordinator-bootstrap-recovery` capabilities.
-- **Modules**: `lib/flezha/boot/` — `StatePathMigrator`, `RecoveryHooks`,
-  `WalTransfer`. The `StatePathMigrator` runs synchronously from
+  dev branch — needed for the `durable-registry`,
+  `coordinator-bootstrap-recovery`, and `recovery-mode-opt-in`
+  capabilities.
+- **Modules**: `lib/flezha/boot/` — `StatePathMigrator`, `RecoveryHooks`.
+  The `StatePathMigrator` runs synchronously from
   `Flezha.Application.start/2` before `Flezha.State.Supervisor`.
+  `Flezha.Boot.WalTransfer` was deleted by
+  `consume-recovery-mode-and-self-heal` (cross-controller WAL transfer
+  is out of scope — cross-node WAL replication is a future-work non-goal).
 - **HubManager wiring**: `Flezha.Service.HubManager.process_hub/1`
-  passes `registry_backend: {:dets, [path: ...]}` and
-  `auto_recovery: [recovery_window_ms, replay_timeout_ms]` to every
-  `ProcessHub.child_spec/1`. After each `start_hub/1` it calls
+  passes `registry_backend: {:dets, [path: ...]}`, `auto_recovery:
+  [recovery_window_ms, replay_timeout_ms, recovery_timeout_ms]`, and
+  `recovery_marker: %{enabled?: true, path: marker_path(hub_id)}` to
+  every `ProcessHub.child_spec/1`. After each `start_hub/1` it calls
   `Flezha.Boot.RecoveryHooks.register/1` to install
-  `pre_recovery_replay` (waits for FleetManager) and
-  `post_recovery_replay` (telemetry).
+  `pre_recovery_replay` (thin telemetry forwarder; the upstream
+  marker gate queues cluster events for us) and `post_recovery_replay`
+  (telemetry). The marker file defaults to
+  `<process_hub_registry_root>/<hub_id>/cluster.healthy` on the same
+  hostPath as the DETS file so the two never drift.
+- **Recovery tracker**:
+  `Flezha.Service.HubManager.RecoveryTracker` is a per-supervisor
+  GenServer subscribed to `[:process_hub, :recovery, _]` telemetry.
+  `HubManager.recovery_state/1` and `await_recovery_complete/1,2`
+  expose the per-hub state machine; `Flezha.BootLoader.await_namespace_hubs/0`
+  and `Flezha.Executor.FleetManager.init/1` gate registry reads on it.
 - **Boot CLI**: `flz boot status`, `flz boot await`,
   `flz boot import-legacy-snapshot` — implemented in `cli/src/boot.rs`
-  / `Flezha.Service.CliManager.boot_*`.
+  / `Flezha.Service.CliManager.boot_*`. Cluster prepare-recovery:
+  `flz cluster prepare-recovery` (Rust `cli/src/cluster.rs` →
+  `Flezha.Service.CliManager.cluster_prepare_recovery/1` →
+  `ProcessHub.prepare_recovery_cluster/1`); `flz cluster status`
+  now surfaces `recovery_state` and `recovery_armed` per node.
 - **Start-fresh workflow**: `flz controller stop && flz reset --yes`
   wipes durable runtime data (`app_data/state/*`, `app_data/process_hub/*`).
   Implemented in `cli/src/reset.rs`; refuses to run while the Controller
@@ -49,14 +67,70 @@
 - **Persistence layers**: ProcessHub durable registry at
   `app_data/process_hub/<hub_id>/registry.dets` (cspec + `opts[:plugins]`)
   + per-Partition WAL at `app_data/state/<relay_class>/<shard_id>/...`
-  (change-by-change progress).
+  (change-by-change progress) + marker file at
+  `app_data/process_hub/<hub_id>/cluster.healthy` (operator gate).
 - **Plugin enable/disable** uses cspec-write-first ordering via
   `ProcessRegistry.update/3`; `Flezha.Service.HubManager.update_relay_plugins/3`
   was deleted (the persistent registry covers durability).
-- **Removed**: `Flezha.Cluster.Snapshot` + `flz cluster snapshot/restore`,
-  the `:overwatch_state_snapshot_interval_ms` periodic capture,
-  `Builder.opts[:initial_state_binary]`.
+- **Runtime config knobs**: `FLEZHA_PROCESS_HUB_RECOVERY_MARKER_PATH`,
+  `FLEZHA_PROCESS_HUB_RECOVERY_TIMEOUT_MS` (default 30 s),
+  `FLEZHA_AUTO_RESTORE_ENABLED` (default `true`; `false` kills the
+  marker gate entirely and reverts to in-memory `:ets`).
+- **Removed by `consume-recovery-mode-and-self-heal`**:
+  `Flezha.Boot.WalTransfer`; `:pre_replay_fleet_wait_ms` config key;
+  `Flezha.Reconciler.{Loop, Actions, Health, Probe, Activity, Leader}`
+  (replaced by `Flezha.Convergence.Health`); `Flezha.State.Outbox`;
+  `Flezha.Reconciler.Supervisor` (top-level); `FLEZHA_RECONCILER_ENABLED`,
+  `FLEZHA_LEADERSHIP_ENABLED`, `FLEZHA_RECONCILE_*` env vars.
 - **Detailed notes**: `docs/auto_restore_on_boot.md`.
+
+## Convergence Health watcher (`consume-recovery-mode-and-self-heal`)
+
+- **Modules**: `lib/flezha/convergence/health.ex` — the single
+  controller-side GenServer driving bind/rebind/plugin-restart
+  decisions. `lib/flezha/healthz/server.ex` — opt-in `:gen_tcp`
+  HTTP/1.1 `/healthz` listener following the
+  `Flezha.Observability.Export.PrometheusHttp` pattern.
+- **Supervision tree**: `Flezha.Convergence.Health` is inserted in
+  `Flezha.Application.start/2` AFTER `Flezha.State.Watchdog`;
+  `Flezha.Healthz.Server` is inserted right after, gated on
+  `:healthz_enabled` (default `false` — flezha_market opts in via
+  its ConfigMap).
+- **Behaviour**: one tick per `convergence_tick_ms` (default 5_000).
+  On init: `HubManager.await_recovery_complete/1` blocks emissions
+  until every per-namespace hub reaches `:normal | :skipped`. On
+  every tick: walk `HubManager.get_all_relays/1` per running
+  namespace, classify each relay as `:healthy | :degraded | :failed
+  | :unbound`, emit at most one action per relay (`:bind`,
+  `:rebind`, `:restart_plugin`, `:noop`).
+- **Output-stall → forced rebind**: subscribes to
+  `[:flezha, :state, :output_stall]` (emitted by
+  `Flezha.State.Watchdog`); on receipt, queues a `:rebind` with
+  exponential back-off `5s/30s/60s/300s`. Single signal closes the
+  silent-freeze failure class.
+- **Plugin escalation**: `handle_plugin_failure/2` tracks strikes
+  per relay-plugin and escalates to a relay restart at
+  `convergence_plugin_strike_threshold` (default 2). Emits
+  `[:flezha, :convergence, :plugin_restart]` and
+  `[:flezha, :convergence, :plugin_escalated]` telemetry.
+- **/healthz contract** (when `FLEZHA_HEALTHZ_ENABLED=true`):
+  `GET /` → `pong\n`; `GET /healthz` → `200 healthy`,
+  `200 recovering` (kubelet must not restart during planned
+  recovery), or `503 unhealthy` with `reason ∈ tick_stale |
+  output_stalled | recovery_failed`. Unknown paths → 404; non-GET
+  → 405; malformed → 400. Bind defaults to `127.0.0.1`.
+- **Runtime config knobs**: `FLEZHA_USE_CONVERGENCE_HEALTH`
+  (default `true`), `FLEZHA_CONVERGENCE_TICK_MS` (default 5_000),
+  `FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS` (default 60_000),
+  `FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD` (default 2),
+  `FLEZHA_HEALTHZ_ENABLED` (default `false`),
+  `FLEZHA_HEALTHZ_PORT` (default 9569).
+- **flezha_market deployment**: `kubernetes/flezha-daemonset.yaml`
+  ships a `livenessProbe: httpGet /healthz:9569` block;
+  ConfigMap sets `FLEZHA_HEALTHZ_ENABLED=true` and the marker path.
+  `kubernetes/prepare-recovery.sh` wraps
+  `flz cluster prepare-recovery` for the operator-driven cold-boot
+  workflow.
 
 ## Graceful shutdown (`controller-graceful-shutdown`)
 

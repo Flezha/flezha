@@ -1,17 +1,20 @@
 defmodule Flezha.Service.CliManager.ClusterTest do
   @moduledoc """
-  CLI surface for the self-healing control plane (Phase 10.2/10.3): the
-  `flz relay list` health column and `flz cluster status` (nodes, leader,
-  per-node relay counts, health rollup). The data sources (`HubManager`
-  registry access + `Reconciler.Leader`) are stubbed so the rendering and
-  shaping are asserted deterministically.
+  CLI surface for `flz relay list` and `flz cluster status`. The data
+  sources (`HubManager` registry access) are stubbed so the rendering
+  and shaping are asserted deterministically.
+
+  After `consume-recovery-mode-and-self-heal` §4 deleted the
+  `Flezha.Reconciler.Leader` GenServer, the cluster_status leader
+  column degrades to the local node — the cluster-wide registry-
+  mutating actions that needed leader election are gone (process_hub's
+  coordinator handles election where it is still required).
   """
   use ExUnit.Case, async: false
   use Mimic
 
   import ExUnit.CaptureIO
 
-  alias Flezha.Reconciler.Leader
   alias Flezha.Service.CliManager
   alias Flezha.Service.HubManager
 
@@ -56,51 +59,44 @@ defmodule Flezha.Service.CliManager.ClusterTest do
   end
 
   describe "cluster_status/2" do
-    test "json reports leader, per-node relay counts, unplaced, and a health rollup" do
-      stub(HubManager, :get_hub_nodes, fn _ns, true -> [:a@h, :b@h] end)
+    test "json reports the local node as leader, per-node relay counts, unplaced, and a health rollup" do
+      stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
 
       stub(HubManager, :relay_rows, fn _ns ->
         [
-          %{id: "r1", health: :healthy, executor: "e1", node: :a@h},
-          %{id: "r2", health: :degraded, executor: "e2", node: :a@h},
-          %{id: "r3", health: :healthy, executor: "e3", node: :b@h},
+          %{id: "r1", health: :healthy, executor: "e1", node: node()},
+          %{id: "r2", health: :degraded, executor: "e2", node: node()},
           %{id: "r4", health: :failed, executor: nil, node: nil}
         ]
       end)
 
-      stub(Leader, :leader, fn -> :a@h end)
-      stub(Leader, :is_leader?, fn -> false end)
+      stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
+      stub(HubManager, :resolved_marker_path, fn _hub_id -> "/tmp/cluster.healthy" end)
 
       out = capture_io(fn -> CliManager.cluster_status("shop", "json") end)
 
       assert {:ok, d} = Jason.decode(out)
-      assert d["leader"] == "a@h"
-      assert d["is_leader"] == false
+      assert d["leader"] == to_string(node())
+      assert d["is_leader"] == true
       assert d["unplaced_relays"] == 1
-      assert d["relay_health"] == %{"healthy" => 2, "degraded" => 1, "failed" => 1}
-
-      nodes = Map.new(d["nodes"], fn n -> {n["node"], n} end)
-      assert nodes["a@h"]["relay_count"] == 2
-      assert nodes["a@h"]["leader"] == true
-      assert nodes["b@h"]["relay_count"] == 1
-      assert nodes["b@h"]["leader"] == false
+      assert d["relay_health"] == %{"healthy" => 1, "degraded" => 1, "failed" => 1}
     end
 
-    test "text output names the leader and per-node counts" do
-      stub(HubManager, :get_hub_nodes, fn _ns, true -> [:a@h] end)
+    test "text output names the local node as leader" do
+      stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
 
       stub(HubManager, :relay_rows, fn _ns ->
-        [%{id: "r1", health: :healthy, executor: "e1", node: :a@h}]
+        [%{id: "r1", health: :healthy, executor: "e1", node: node()}]
       end)
 
-      stub(Leader, :leader, fn -> :a@h end)
-      stub(Leader, :is_leader?, fn -> true end)
+      stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
+      stub(HubManager, :resolved_marker_path, fn _hub_id -> "/tmp/cluster.healthy" end)
 
       out = capture_io(fn -> CliManager.cluster_status("shop", "text") end)
 
       assert out =~ "Cluster status for namespace 'shop'"
       assert out =~ "Leader:"
-      assert out =~ "a@h"
+      assert out =~ to_string(node())
       assert out =~ "1 relay(s)"
       assert out =~ "[leader]"
       assert out =~ "healthy=1"

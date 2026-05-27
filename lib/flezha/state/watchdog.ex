@@ -1,10 +1,12 @@
 defmodule Flezha.State.Watchdog do
   @moduledoc """
   Sweeper that makes a stalled per-Partition persistence/output path
-  *detectable and self-healing* instead of silently frozen. The reconciler's
-  periodic sweep (`Flezha.Reconciler.Loop`) drives `sweep_now/0` on the
-  `:output_watchdog_interval_ms` cadence; this module holds the detection logic
-  and the compaction-handshake tracking, not its own timer.
+  *detectable and self-healing* instead of silently frozen. Holds its own
+  sweep timer (`:output_watchdog_interval_ms`, default 10 s) after
+  `consume-recovery-mode-and-self-heal` §4 removed the
+  `Flezha.Reconciler.Loop` periodic sweep that previously drove it; the
+  Convergence Health watcher consumes the `:output_stall` telemetry the
+  sweep emits.
 
   Two sweeps run on each pass:
 
@@ -68,7 +70,21 @@ defmodule Flezha.State.Watchdog do
 
   @impl true
   def init(_opts) do
+    schedule_sweep()
     {:ok, %__MODULE__{}}
+  end
+
+  @impl true
+  def handle_info(:sweep_tick, state) do
+    schedule_sweep()
+    {:noreply, sweep(state)}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  defp schedule_sweep() do
+    interval = Application.get_env(:flezha, :output_watchdog_interval_ms, 10_000)
+    if interval > 0, do: Process.send_after(self(), :sweep_tick, interval)
   end
 
   @impl true

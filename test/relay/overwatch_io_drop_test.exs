@@ -8,12 +8,9 @@ defmodule FlezhaTest.Relay.OverwatchIoDropTest do
 
   alias Flezha.Executor.StreamChannel
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Reconciler.Activity
   alias Flezha.Relay.Overwatch
 
-  test "io_in call on an unbound channel records a drop" do
-    start_supervised!(Activity)
-
+  test "io_in call on an unbound channel emits a drop telemetry event" do
     test_pid = self()
     id = "ow-io-drop-#{System.unique_integer([:positive])}"
 
