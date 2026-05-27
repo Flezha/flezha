@@ -32,37 +32,24 @@ defmodule Flezha.BootLoader do
     {:noreply, Map.put(state, :boot_ready, true)}
   end
 
-  # After post-hooks fire, wait for every namespace hub to leave the
-  # ProcessHub recovery state machine (`:recovery_pending` →
-  # `:recovering` | `:normal`). Bounded by `:flezha,
-  # :boot_replay_timeout_ms` per hub. Failures are logged but do not
-  # block boot — auto_recovery has its own background continuation.
+  # Wait for every namespace hub to leave the ProcessHub recovery state
+  # machine (`:recovery_pending` → `:recovering` | `:normal`). Bounded by
+  # `:flezha, :boot_replay_timeout_ms`. Failures are logged but do not
+  # block boot — the marker-gated recovery has its own background
+  # continuation and the convergence watcher (phase 4) corrects drift.
   defp await_namespace_hubs() do
     timeout_ms = Application.get_env(:flezha, :boot_replay_timeout_ms, 60_000)
 
-    namespaces =
-      try do
-        Flezha.Service.HubManager.get_running_namespaces()
-      catch
-        # `BootLoader` is started before `HubManager` in the supervision
-        # tree, so on the very first boot the lookup may :exit. There
-        # are no hubs running yet anyway, so an empty list is correct.
-        :exit, _ -> []
+    try do
+      case Flezha.Service.HubManager.await_recovery_complete(timeout_ms) do
+        :ok -> :ok
+        {:error, {:recovery_timeout, hubs}} ->
+          Logger.warning("[boot] recovery timeout for hubs=#{inspect(hubs)}")
       end
-
-    Enum.each(namespaces, fn namespace ->
-      hub_id = Flezha.Service.Identificator.hub(namespace)
-
-      try do
-        case ProcessHub.await_normal(hub_id, timeout_ms) do
-          :ok -> :ok
-          other -> Logger.warning("[boot] await_normal #{hub_id} -> #{inspect(other)}")
-        end
-      catch
-        kind, reason ->
-          Logger.warning("[boot] await_normal #{hub_id} raised #{kind}: #{inspect(reason)}")
-      end
-    end)
+    catch
+      kind, reason ->
+        Logger.warning("[boot] await_recovery_complete raised #{kind}: #{inspect(reason)}")
+    end
   end
 
   @impl true

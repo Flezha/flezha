@@ -112,9 +112,29 @@ defmodule Flezha.Executor.FleetManager do
 
   @impl true
   def init(_) do
+    # Block boot until every per-namespace hub finishes its
+    # marker-gated recovery cycle. With no hubs yet (the common case at
+    # init time — hubs are created lazily by `executor_connect`), this
+    # returns immediately. The gate matters on a restart where the
+    # supervisor brings up a previously-running hub before FleetManager
+    # is asked to serve registry-touching calls.
+    case HubManager.await_recovery_complete(boot_recovery_timeout()) do
+      :ok ->
+        :ok
+
+      {:error, {:recovery_timeout, hubs}} ->
+        Logger.warning(
+          "[fleet_manager] proceeding past recovery timeout; unfinished hubs=#{inspect(hubs)}"
+        )
+    end
+
     schedule_executor_cleanup()
 
     {:ok, %{executor_namespaces: %{}, namespace_factories: %{}}}
+  end
+
+  defp boot_recovery_timeout() do
+    Application.get_env(:flezha, :boot_replay_timeout_ms, 60_000)
   end
 
   @impl true

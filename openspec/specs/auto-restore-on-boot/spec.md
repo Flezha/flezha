@@ -3,9 +3,7 @@
 ## Purpose
 
 The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and executor pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks to coordinate replay with FleetManager readiness, and wires per-Partition WAL/snapshot restoration into the data-stream attach path. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
-
 ## Requirements
-
 ### Requirement: Configure ProcessHub for durable registry and auto-recovery per namespace
 
 `Flezha.Service.HubManager.process_hub/1` SHALL pass `registry_backend: {:dets, [path: <path>]}` and `auto_recovery: <config>` to every `ProcessHub.child_spec/1` call. This activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace.
@@ -245,3 +243,32 @@ The CLI SHALL provide:
 
 - **WHEN** the executor runs `flz boot await --timeout=30000` while one hub is still in `:recovery_pending`
 - **THEN** the CLI blocks; once all hubs reach `:normal` (or the timeout), it returns; on timeout, exits non-zero with which hubs are still pending
+
+### Requirement: Recovery replay SHALL NOT resurrect relays onto dead nodes
+
+ProcessHub recovery replay (`Flezha.Service.HubManager.alter_child_data/2`) SHALL drop
+any `{node, pid}` entries that reference nodes absent from the live cluster when it
+rewrites a relay's child-spec to an active executor, so the replayed relay is placed on a
+live node rather than being treated as "already running" on a gone node. This complements
+the generic ProcessHub `post_node_leave` reaping (see `controller-leadership`) and is
+defense-in-depth for the case where reaping has not yet fired at replay time.
+
+#### Scenario: Stale dead-node pid does not block respawn
+- **GIVEN** a relay's persisted registry entry lists a pid on a node that is no longer in the cluster
+- **WHEN** recovery replay runs `alter_child_data`
+- **THEN** the dead-node entry SHALL be dropped and the relay SHALL be (re)started on a live node + live executor
+- **AND** the relay SHALL resume producing rather than remaining registered-but-silent on the dead node
+
+### Requirement: Recovery and on-demand hub creation SHALL be gated on cluster formation
+
+Recovery-triggering hub creation SHALL occur only after the cluster is formed (or the
+bounded degrade-to-solo timeout has elapsed), so a hub is never created on a
+not-yet-clustered node and then diverge from its peers. After the gate, the reconciler
+owns post-replay convergence (re-place, rebind, reissue) so a relay that replay started
+but did not bring to production is still healed.
+
+#### Scenario: Replay on a freshly-clustered node converges
+- **GIVEN** a controller that has just joined the cluster and replayed its registry
+- **WHEN** the reconciler runs after `post_recovery_replay`
+- **THEN** every replayed relay SHALL be driven to a producing state on a live executor, or marked `FAILED` if no executor can serve it
+

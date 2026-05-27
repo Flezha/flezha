@@ -80,17 +80,13 @@ config :flezha,
   # ProcessHub coordinator into shutdown. The persistent registry still
   # records mutations; only the at-boot replay state machine is off.
   auto_restore_enabled: false,
-  # Orchestration leadership is OFF by default in tests so the singleton
-  # Erlang `:global` commission (elector) is not started across the whole
-  # suite. The leadership test flips it on explicitly and tears it down.
-  leadership_enabled: false,
-  # The reconciler loop is OFF by default in tests so the global app boot does
-  # not run sweeps across suites; the reconciler tests start an isolated Loop /
-  # Activity explicitly (mirroring the leadership test).
-  reconciler_enabled: false,
-  reconcile_sweep_interval_ms: 0,
-  reconcile_debounce_ms: 20,
-  throughput_stall_window_ms: 1_000,
+  # consume-recovery-mode-and-self-heal §4: Convergence Health watcher OFF
+  # in test mode so global ticks would not race per-test fixtures. Tests
+  # that exercise the watcher start it explicitly.
+  convergence_health_enabled: false,
+  # `/healthz` is opt-in everywhere (off in prod by default too); tests
+  # that exercise it bring up the listener inline.
+  healthz_enabled: false,
   # Bounded retry on top of `:start_relay` keeps test wall-clock down —
   # one short attempt is enough, and the parked-retry timer is disabled
   # so a failed startup does not periodically re-fire during a test.

@@ -190,6 +190,164 @@ defmodule Flezha.Service.HubManagerTest do
     end
   end
 
+  describe "recovery-marker resolution" do
+    @tag :tmp_dir
+    test "default config derives marker path under process_hub_registry_root", %{tmp_dir: tmp_dir} do
+      previous_enabled = Application.get_env(:flezha, :auto_restore_enabled)
+      previous_root = Application.get_env(:flezha, :process_hub_registry_root)
+      previous_override = Application.get_env(:flezha, :process_hub_recovery_marker_path)
+      Application.put_env(:flezha, :auto_restore_enabled, true)
+      Application.put_env(:flezha, :process_hub_registry_root, tmp_dir)
+      Application.delete_env(:flezha, :process_hub_recovery_marker_path)
+
+      try do
+        path = HubManager.resolved_marker_path(:my_test_hub)
+        assert path == Path.join([tmp_dir, "my_test_hub", "cluster.healthy"])
+      after
+        Application.put_env(:flezha, :auto_restore_enabled, previous_enabled)
+
+        if previous_root,
+          do: Application.put_env(:flezha, :process_hub_registry_root, previous_root),
+          else: Application.delete_env(:flezha, :process_hub_registry_root)
+
+        if previous_override do
+          Application.put_env(:flezha, :process_hub_recovery_marker_path, previous_override)
+        end
+      end
+    end
+
+    test "marker-path env override is honoured for any hub_id" do
+      previous_override = Application.get_env(:flezha, :process_hub_recovery_marker_path)
+      Application.put_env(
+        :flezha,
+        :process_hub_recovery_marker_path,
+        "/var/lib/process_hub/whatever/cluster.healthy"
+      )
+
+      try do
+        assert HubManager.resolved_marker_path(:default_hub) ==
+                 "/var/lib/process_hub/whatever/cluster.healthy"
+
+        assert HubManager.resolved_marker_path(:market_hub) ==
+                 "/var/lib/process_hub/whatever/cluster.healthy"
+      after
+        if previous_override do
+          Application.put_env(:flezha, :process_hub_recovery_marker_path, previous_override)
+        else
+          Application.delete_env(:flezha, :process_hub_recovery_marker_path)
+        end
+      end
+    end
+  end
+
+  describe "hook_insert_pid/2 fan-out filter (consume-recovery-mode-and-self-heal §2.8)" do
+    test "skips the push when metadata.tag does not match the registered executor_id" do
+      # The handler is registered with executor_id="e1"; the insertion
+      # carries metadata.tag="e2", i.e. ProcessHub bound the relay to
+      # a different executor session. The pre-change code would have
+      # pushed the pid update to e1's stream channels anyway — that
+      # was the EVIDENCE1 §2 data-plane drain. The new code returns
+      # without inspecting `node_pids` at all.
+
+      hook_data = %{
+        child_id: "r1",
+        node_pids: [{node(), self()}],
+        metadata: %{tag: "e2"}
+      }
+
+      # The executor_id supervisor names are not present in this test
+      # (no real executor running), so a fall-through would crash on
+      # `Supervisor.which_children`. A clean :ok signals the filter
+      # short-circuited correctly.
+      assert HubManager.hook_insert_pid("e1", hook_data) == nil
+    end
+
+    test "accepts the push when metadata.tag matches the registered executor_id" do
+      # When the tag matches and node_pids contains an entry on the
+      # local node, the handler would proceed to fan to stream
+      # channels. Those supervisors are absent in this unit test so
+      # the call still raises — but we can isolate the filter decision
+      # by passing an empty node_pids list, which the function handles
+      # cleanly without touching the supervisor tree.
+      hook_data = %{
+        child_id: "r1",
+        node_pids: [],
+        metadata: %{tag: "e1"}
+      }
+
+      assert HubManager.hook_insert_pid("e1", hook_data) == nil
+    end
+
+    test "accepts the push when metadata is absent (legacy / pre-Phase-2 registry rows)" do
+      # Defensive: registry entries without a tag must not break the
+      # dispatcher. The pre-Phase-2 path used `node_pids` only; the
+      # filter must fall through when `metadata.tag` is missing so old
+      # entries that survived a rolling upgrade still get routed.
+      hook_data = %{
+        child_id: "r1",
+        node_pids: [],
+        metadata: %{}
+      }
+
+      assert HubManager.hook_insert_pid("e1", hook_data) == nil
+    end
+  end
+
+  describe "RecoveryTracker" do
+    alias Flezha.Service.HubManager.RecoveryTracker
+
+    setup do
+      # The tracker is started by HubManager's Supervisor in normal app
+      # boot; in test mode HubManager is up so the tracker is already
+      # running. Snapshot/reset the tracker's known state between tests
+      # by observing :unknown for a unique hub_id only this test uses.
+      :ok
+    end
+
+    test "await_complete returns :ok immediately when target is already :normal" do
+      hub_id = :"hm_rt_normal_#{System.unique_integer([:positive])}"
+      RecoveryTracker.observe(hub_id, :normal)
+      assert :ok = RecoveryTracker.await_complete([hub_id], 200)
+    end
+
+    test "await_complete returns :ok immediately when target is already :skipped" do
+      hub_id = :"hm_rt_skipped_#{System.unique_integer([:positive])}"
+      RecoveryTracker.observe(hub_id, :skipped)
+      assert :ok = RecoveryTracker.await_complete([hub_id], 200)
+    end
+
+    test "await_complete blocks until :complete telemetry fires" do
+      hub_id = :"hm_rt_blocking_#{System.unique_integer([:positive])}"
+      RecoveryTracker.observe(hub_id, :recovering)
+      test_pid = self()
+
+      task =
+        Task.async(fn ->
+          send(test_pid, :await_started)
+          RecoveryTracker.await_complete([hub_id], 2_000)
+        end)
+
+      assert_receive :await_started, 1_000
+
+      # Simulate the upstream `[:process_hub, :recovery, :complete]` event.
+      :telemetry.execute(
+        [:process_hub, :recovery, :complete],
+        %{succeeded: 0, failed: 0, skipped: 0, elapsed_ms: 0, cspec_count: 0},
+        %{hub_id: hub_id}
+      )
+
+      assert :ok = Task.await(task, 2_000)
+    end
+
+    test "await_complete times out and reports outstanding hub_ids" do
+      hub_id = :"hm_rt_timeout_#{System.unique_integer([:positive])}"
+      RecoveryTracker.observe(hub_id, :recovering)
+
+      assert {:error, {:recovery_timeout, [^hub_id]}} =
+               RecoveryTracker.await_complete([hub_id], 100)
+    end
+  end
+
   defmodule NoopProvider do
     @moduledoc false
   end

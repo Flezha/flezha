@@ -337,50 +337,41 @@ if config_env() != :test do
   config :flezha,
     process_hub_registry_root:
       System.get_env("FLEZHA_PROCESS_HUB_REGISTRY_ROOT", "app_data/process_hub"),
+    process_hub_recovery_marker_path:
+      System.get_env("FLEZHA_PROCESS_HUB_RECOVERY_MARKER_PATH"),
+    process_hub_recovery_timeout_ms:
+      System.get_env("FLEZHA_PROCESS_HUB_RECOVERY_TIMEOUT_MS", "30000")
+      |> String.to_integer(),
     recovery_window_ms:
       System.get_env("FLEZHA_RECOVERY_WINDOW_MS", "10000") |> String.to_integer(),
     boot_replay_timeout_ms:
       System.get_env("FLEZHA_BOOT_REPLAY_TIMEOUT_MS", "60000") |> String.to_integer(),
     auto_restore_enabled: System.get_env("FLEZHA_AUTO_RESTORE_ENABLED", "true") in ["true", "1"],
-    pre_replay_fleet_wait_ms:
-      System.get_env("FLEZHA_PRE_REPLAY_FLEET_WAIT_MS", "30000") |> String.to_integer(),
-    wal_transfer_query_timeout_ms:
-      System.get_env("FLEZHA_WAL_TRANSFER_QUERY_TIMEOUT_MS", "5000") |> String.to_integer(),
-    # Opt-in, cluster-wide orchestration leadership (elector-backed, via
-    # `ProcessHub.start_leadership/0`). Started at boot by
-    # `Flezha.Reconciler.Leader` when true; only the elected leader serializes
-    # the registry-mutating cluster-wide reconcile. Off in :test (set in
-    # config/test.exs) so unit tests don't start Erlang `:global` globally.
-    leadership_enabled: System.get_env("FLEZHA_LEADERSHIP_ENABLED", "true") in ["true", "1"],
-    # Authoritative reconciliation control-loop (self-healing-control-plane).
-    # Kill-switch reverts the Controller to the pre-reconciler code paths.
-    reconciler_enabled: System.get_env("FLEZHA_RECONCILER_ENABLED", "true") in ["true", "1"],
-    # Bounded periodic full-sweep backstop interval (ms); event-driven targeted
-    # reconciles run between sweeps. 0 disables the sweep (events only).
-    reconcile_sweep_interval_ms:
-      System.get_env("FLEZHA_RECONCILE_SWEEP_INTERVAL_MS", "20000") |> String.to_integer(),
-    # Debounce window (ms) coalescing a burst of events into one targeted reconcile.
-    reconcile_debounce_ms:
-      System.get_env("FLEZHA_RECONCILE_DEBOUNCE_MS", "250") |> String.to_integer(),
-    # Egress throughput-stall window (ms) — consumed by the Phase 6 ingest-gated
-    # stall detector; the Phase 5 probe records last-output age against it.
-    throughput_stall_window_ms:
-      System.get_env("FLEZHA_THROUGHPUT_STALL_WINDOW_MS", "30000") |> String.to_integer(),
-    # Consecutive unhealthy probes a plugin must accrue before the loop escalates
-    # (restarts it); the provider's own fast in-process recovery gets that many
-    # sweeps first. Strike resets on escalation and on recovery (Phase 7.2).
-    reconcile_plugin_escalation_threshold:
-      System.get_env("FLEZHA_RECONCILE_PLUGIN_ESCALATION_THRESHOLD", "2")
-      |> String.to_integer(),
-    # Cadences (ms) for the per-Partition persistence sweeps the reconcile sweep
-    # now drives (their self-timers were folded in — Phase 11.2): the
-    # output-staleness/compaction watchdog and the time-travel retention prune.
-    # Each is clocked by the reconcile sweep, so the effective floor is
-    # `reconcile_sweep_interval_ms`.
+    # Per-Partition output-stall + compaction-timeout watchdog cadence
+    # (Flezha.State.Watchdog holds its own timer after
+    # `consume-recovery-mode-and-self-heal` §4 retired the
+    # Flezha.Reconciler.Loop periodic sweep that previously drove it).
     output_watchdog_interval_ms:
       System.get_env("FLEZHA_OUTPUT_WATCHDOG_INTERVAL_MS", "10000") |> String.to_integer(),
     time_travel_retention_check_interval_ms:
-      System.get_env("FLEZHA_RETENTION_CHECK_INTERVAL_MS", "60000") |> String.to_integer()
+      System.get_env("FLEZHA_RETENTION_CHECK_INTERVAL_MS", "60000") |> String.to_integer(),
+    # consume-recovery-mode-and-self-heal §4: single Convergence Health
+    # watcher replacing the Reconciler stack. `:tick_ms` is the per-relay
+    # decision cadence; `:output_stall_grace_ms` is the minimum bound
+    # stability window before an output-stall triggers a rebind.
+    convergence_health_enabled:
+      System.get_env("FLEZHA_USE_CONVERGENCE_HEALTH", "true") in ["true", "1"],
+    convergence_tick_ms:
+      System.get_env("FLEZHA_CONVERGENCE_TICK_MS", "5000") |> String.to_integer(),
+    convergence_output_stall_grace_ms:
+      System.get_env("FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS", "60000")
+      |> String.to_integer(),
+    convergence_plugin_strike_threshold:
+      System.get_env("FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD", "2")
+      |> String.to_integer(),
+    # Opt-in HTTP `/healthz` listener (consume-recovery-mode-and-self-heal §4.6).
+    healthz_enabled: System.get_env("FLEZHA_HEALTHZ_ENABLED", "false") in ["true", "1"],
+    healthz_port: System.get_env("FLEZHA_HEALTHZ_PORT", "9569") |> String.to_integer()
 end
 
 # ------------------------------------------------------------------------------------------------

@@ -1,32 +1,24 @@
 defmodule Flezha.Boot.RecoveryHooks do
   @moduledoc """
-  Flezha-side handlers for ProcessHub's `pre_recovery_replay` and
+  Thin telemetry forwarders for ProcessHub's `pre_recovery_replay` and
   `post_recovery_replay` hooks.
 
-  `pre_recovery_replay` runs synchronously in the ProcessHub coordinator
-  before the persistent-registry replay dispatches `start_children`. It
-  blocks until at least one active executor exists for any factory
-  referenced by the hub's persistent registry rows, OR
-  `:flezha, :pre_replay_fleet_wait_ms` (default `30_000`) elapses.
-  Without this gate, replay would dispatch `start_children` against an
-  empty `FleetManager` and `child_data_alter` would raise.
+  The upstream `recovery-mode-opt-in` contract owns the recovery
+  state machine, the cluster-event queue, and the cspecs-only replay
+  path; Flezha no longer needs to poll FleetManager readiness or strip
+  dead-node entries from the registry. These handlers exist only to
+  surface the replay lifecycle to Flezha's observability layer.
 
-  `post_recovery_replay` emits `[:flezha, :boot, :recovery_complete]`
-  telemetry for downstream observability (Phoenix LiveDashboard,
-  Prometheus scraper). When the kill-switch
-  `:flezha, :auto_restore_enabled` is `false`, ProcessHub does not fire
-  these hooks, so `register/1` is a no-op in that mode.
+  When the kill-switch `:flezha, :auto_restore_enabled` is `false`,
+  ProcessHub does not fire these hooks (auto_recovery is off), so
+  `register/1` is a no-op in that mode.
   """
 
   alias ProcessHub.Constant.Hook
-  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
 
   require Logger
-
-  @default_pre_replay_fleet_wait_ms 30_000
-  @poll_interval_ms 200
 
   @spec register(atom()) :: :ok
   def register(hub_id) when is_atom(hub_id) do
@@ -58,34 +50,20 @@ defmodule Flezha.Boot.RecoveryHooks do
   end
 
   @doc """
-  Synchronous `pre_recovery_replay` handler. ProcessHub blocks the
-  coordinator until this returns.
+  Synchronous `pre_recovery_replay` handler. Emits Flezha telemetry and
+  returns immediately. ProcessHub blocks the coordinator until this
+  returns; keeping the body small is the contract.
   """
   @spec pre_recovery_replay(atom(), map()) :: :ok
   def pre_recovery_replay(hub_id, _hook_data) do
     namespace = namespace_from_hub(hub_id)
-    factory_ids = factory_ids_from_registry(hub_id)
 
-    Logger.info(
-      "[recovery_hooks] pre_recovery_replay enter hub=#{hub_id} factories=#{inspect(factory_ids)}"
+    :telemetry.execute(
+      [:flezha, :boot, :pre_recovery_replay],
+      %{cspec_count: cspec_count(hub_id), system_time: System.system_time()},
+      %{hub_id: hub_id, namespace: namespace}
     )
 
-    case factory_ids do
-      [] ->
-        Logger.info("[recovery_hooks] pre_recovery_replay: empty registry; nothing to wait on")
-
-      _ ->
-        wait_for_executor(namespace, factory_ids, deadline())
-    end
-
-    # Drop stale `{dead_node, pid}` entries so replay re-registers only live
-    # locations and the registry does not carry dead-node cruft after a cold
-    # boot. The replay dump is captured by ProcessHub BEFORE this hook runs, so
-    # no relay is lost — a relay whose only location was a dead node is still in
-    # the dump and is re-placed on a live node by the replay's ConsistentHashing.
-    purge_dead_node_entries(hub_id)
-
-    Logger.info("[recovery_hooks] pre_recovery_replay exit hub=#{hub_id}")
     :ok
   end
 
@@ -113,100 +91,14 @@ defmodule Flezha.Boot.RecoveryHooks do
     :ok
   end
 
-  # ---------- helpers ----------
-
-  defp factory_ids_from_registry(hub_id) do
+  defp cspec_count(hub_id) do
     try do
-      ProcessRegistry.dump(hub_id)
-      |> Enum.flat_map(fn {_id, entry} -> extract_factory_id(entry) end)
-      |> Enum.uniq()
+      ProcessRegistry.dump(hub_id) |> length()
     rescue
-      _ -> []
+      _ -> 0
+    catch
+      :exit, _ -> 0
     end
-  end
-
-  defp extract_factory_id({child_spec, _node_pids, _metadata}), do: extract_factory_id(child_spec)
-  defp extract_factory_id({child_spec, _node_pids}), do: extract_factory_id(child_spec)
-
-  defp extract_factory_id(%{start: {_m, _f, [%{factory_id: factory_id} | _]}})
-       when is_binary(factory_id) or is_atom(factory_id),
-       do: [factory_id]
-
-  defp extract_factory_id(%{start: {_m, _f, [%{relay: %{factory_id: factory_id}} | _]}})
-       when is_binary(factory_id) or is_atom(factory_id),
-       do: [factory_id]
-
-  defp extract_factory_id(_), do: []
-
-  # Purge `{dead_node, pid}` registry entries for nodes absent from the live BEAM
-  # cluster. Computed from `Node.list/0` and applied via the deadlock-safe
-  # `Cluster.purge_node/2` — NOT `Cluster.purge_dead_nodes/1`, which calls
-  # `get_hub` (a `GenServer.call` into THIS coordinator process while it is
-  # blocked dispatching the synchronous `pre_recovery_replay` hook → deadlock).
-  defp purge_dead_node_entries(hub_id) do
-    live = MapSet.new([node() | Node.list()])
-
-    dead_nodes =
-      try do
-        ProcessRegistry.dump(hub_id)
-        |> Enum.flat_map(fn {_id, entry} -> entry |> elem(1) |> Keyword.keys() end)
-        |> Enum.uniq()
-        |> Enum.reject(&MapSet.member?(live, &1))
-      rescue
-        _ -> []
-      end
-
-    Enum.each(dead_nodes, fn dead ->
-      case Cluster.purge_node(hub_id, dead) do
-        [] ->
-          :ok
-
-        purged ->
-          Logger.info(
-            "[recovery_hooks] purged dead node #{inspect(dead)} from #{hub_id}: " <>
-              "#{length(purged)} relay entr#{if length(purged) == 1, do: "y", else: "ies"}"
-          )
-      end
-    end)
-  end
-
-  defp wait_for_executor(namespace, factory_ids, deadline) do
-    cond do
-      any_executor_available?(namespace, factory_ids) ->
-        :ok
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        Logger.warning(
-          "[recovery_hooks] pre_recovery_replay: timed out waiting for executor; " <>
-            "namespace=#{inspect(namespace)} factories=#{inspect(factory_ids)}"
-        )
-
-        :ok
-
-      true ->
-        Process.sleep(@poll_interval_ms)
-        wait_for_executor(namespace, factory_ids, deadline)
-    end
-  end
-
-  defp any_executor_available?(namespace, factory_ids) do
-    Enum.any?(factory_ids, fn factory_id ->
-      try do
-        case Flezha.Executor.FleetManager.executors_for_factory(namespace, factory_id) do
-          [_ | _] -> true
-          _ -> false
-        end
-      catch
-        :exit, _ -> false
-      end
-    end)
-  end
-
-  defp deadline() do
-    wait_ms =
-      Application.get_env(:flezha, :pre_replay_fleet_wait_ms, @default_pre_replay_fleet_wait_ms)
-
-    System.monotonic_time(:millisecond) + wait_ms
   end
 
   defp namespace_from_hub(hub_id) do

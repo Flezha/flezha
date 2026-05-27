@@ -11,7 +11,6 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   """
   use ExUnit.Case, async: false
 
-  alias Flezha.Boot.RecoveryHooks
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
   alias ProcessHub.Service.ProcessRegistry
@@ -94,39 +93,6 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
       assert {:ok, ids} = Flezha.list_relays(@namespace)
       assert "relay_cli_mn" in ids
-    end
-  end
-
-  describe "dead-node purge on cold-boot replay (pre_recovery_replay)" do
-    @purge_ns "mn_purge_test"
-
-    setup do
-      {:ok, _} = ensure_hub(@purge_ns)
-      on_exit(fn -> HubManager.stop_hub(@purge_ns) end)
-      :ok
-    end
-
-    test "drops {dead_node, pid} pairs, keeping the live local entry" do
-      hub_id = Identificator.hub(@purge_ns)
-
-      # Relay only on a dead node: the live registry entry is removed (the replay
-      # dump, captured by ProcessHub before this hook, still re-places it).
-      inject_relay(@purge_ns, "relay_dead_only", [{:dead@nohost, spawn(fn -> :ok end)}])
-
-      # Relay on dead + live(local): only the dead pair is dropped.
-      inject_relay(@purge_ns, "relay_mixed", [
-        {:dead@nohost, spawn(fn -> :ok end)},
-        {node(), self()}
-      ])
-
-      assert :ok = RecoveryHooks.pre_recovery_replay(hub_id, %{})
-
-      dump = ProcessRegistry.dump(hub_id)
-
-      refute Map.has_key?(dump, "relay_dead_only")
-
-      assert {_spec, node_pids, _meta} = Map.get(dump, "relay_mixed")
-      assert node_pids == [{node(), self()}]
     end
   end
 

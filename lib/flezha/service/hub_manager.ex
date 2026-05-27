@@ -10,6 +10,10 @@ defmodule Flezha.Service.HubManager do
 
   use Supervisor
 
+  alias Flezha.Service.HubManager.RecoveryTracker
+
+  @default_await_timeout_ms 60_000
+
   def start_link(_) do
     Supervisor.start_link(__MODULE__, [], name: __MODULE__)
   end
@@ -23,18 +27,72 @@ defmodule Flezha.Service.HubManager do
 
     case Supervisor.start_child(__MODULE__, process_hub(namespace)) do
       {:ok, _pid} = ok ->
-        wait_until_hub_alive(hub_id)
-        _ = Flezha.Boot.RecoveryHooks.register(hub_id)
+        on_hub_started(hub_id)
         ok
 
       {:ok, _pid, _info} = ok ->
-        wait_until_hub_alive(hub_id)
-        _ = Flezha.Boot.RecoveryHooks.register(hub_id)
+        on_hub_started(hub_id)
         ok
 
       other ->
         other
     end
+  end
+
+  defp on_hub_started(hub_id) do
+    wait_until_hub_alive(hub_id)
+    _ = Flezha.Boot.RecoveryHooks.register(hub_id)
+    # Seed the tracker with the coordinator's current state. The
+    # telemetry events fired during recovery will overwrite this entry
+    # as the lifecycle progresses; the seed only matters when a hub
+    # boots straight into `:normal` (marker present + no replay) and
+    # no telemetry event will follow.
+    _ = RecoveryTracker.observe(hub_id, ProcessHub.recovery_state(hub_id))
+  end
+
+  @doc """
+  Last known recovery state for `hub_id`. Returns
+  `{:ok, :recovery_pending | :recovering | :normal | :skipped | :timeout}`,
+  or `{:error, :unknown_hub}` if the hub is not registered with this
+  supervisor.
+  """
+  @spec recovery_state(atom()) :: {:ok, atom()} | {:error, :unknown_hub}
+  def recovery_state(hub_id) when is_atom(hub_id) do
+    cond do
+      not ProcessHub.is_alive?(hub_id) ->
+        {:error, :unknown_hub}
+
+      true ->
+        case RecoveryTracker.state(hub_id) do
+          :unknown -> {:ok, ProcessHub.recovery_state(hub_id)}
+          state -> {:ok, state}
+        end
+    end
+  end
+
+  @doc """
+  Block until every per-namespace hub reaches a terminal recovery state
+  (`:normal | :skipped`) or `timeout_ms` (default 60s) elapses.
+  Returns `:ok` on success or
+  `{:error, {:recovery_timeout, [hub_id]}}` carrying the offending
+  hub_ids that did not finish.
+  """
+  @spec await_recovery_complete(non_neg_integer()) ::
+          :ok | {:error, {:recovery_timeout, [atom()]}}
+  def await_recovery_complete(timeout_ms \\ @default_await_timeout_ms)
+      when is_integer(timeout_ms) and timeout_ms >= 0 do
+    RecoveryTracker.await_complete(nil, timeout_ms)
+  end
+
+  @doc """
+  Wait for the listed hubs to reach `:normal | :skipped`, with a custom
+  timeout. Returns the same shape as `await_recovery_complete/1`.
+  """
+  @spec await_recovery_complete([atom()], non_neg_integer()) ::
+          :ok | {:error, {:recovery_timeout, [atom()]}}
+  def await_recovery_complete(hub_ids, timeout_ms)
+      when is_list(hub_ids) and is_integer(timeout_ms) do
+    RecoveryTracker.await_complete(hub_ids, timeout_ms)
   end
 
   # Supervisor.start_child returns once the hub's top supervisor is up,
@@ -89,12 +147,31 @@ defmodule Flezha.Service.HubManager do
   end
 
   def get_running_namespaces() do
-    Supervisor.which_children(__MODULE__)
-    |> Enum.map(fn {id, _pid, _type, _modules} -> id end)
-    |> Enum.filter(fn id -> ProcessHub.is_alive?(id) end)
+    list_running_hub_ids()
     |> Enum.map(&extract_namespace_from_hub/1)
     |> Enum.reject(&is_nil/1)
   end
+
+  @doc """
+  All hub_ids currently registered with this supervisor that have a live
+  coordinator. Filters non-hub children (e.g. `RecoveryTracker`) by the
+  `Identificator.hub/1`-shaped atom suffix and gating on
+  `ProcessHub.is_alive?/1`. Used by `RecoveryTracker.await_complete/2`
+  when the caller does not pass an explicit hub-id list.
+  """
+  @spec list_running_hub_ids() :: [atom()]
+  def list_running_hub_ids() do
+    Supervisor.which_children(__MODULE__)
+    |> Enum.map(fn {id, _pid, _type, _modules} -> id end)
+    |> Enum.filter(&hub_id?/1)
+    |> Enum.filter(fn id -> ProcessHub.is_alive?(id) end)
+  end
+
+  defp hub_id?(id) when is_atom(id) do
+    String.ends_with?(Atom.to_string(id), "_hub")
+  end
+
+  defp hub_id?(_), do: false
 
   defp extract_namespace_from_hub(hub_id) when is_atom(hub_id) do
     hub_id
@@ -336,27 +413,45 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def hook_insert_pid(executor_id, %{child_id: relay_id, node_pids: node_pids}) do
-    curr_node = node()
+  def hook_insert_pid(executor_id, %{child_id: relay_id} = hook_data) do
+    node_pids = Map.get(hook_data, :node_pids, [])
+    metadata = Map.get(hook_data, :metadata, %{})
+    assigned_ce = Map.get(metadata, :tag)
 
-    updated_pids =
-      Enum.filter(node_pids, fn {node, _pid} ->
-        node === curr_node
-      end)
-      |> Enum.map(fn {_, pid} -> pid end)
-
-    case updated_pids do
-      [] ->
+    # Phase 2 fix (consume-recovery-mode-and-self-heal §2.8): only the
+    # executor whose session id matches the registry entry's
+    # `metadata.tag` (a.k.a `assigned_ce`) should receive this relay's
+    # frames. The pre-change behaviour pushed the update to EVERY
+    # registered executor's stream channels — `e1` AND `e2` both got
+    # the pid list, and `e2`'s SDK dropped each frame at
+    # `fast.rs:249` (`relay instance ... not found`), causing the
+    # measurable per-pod data-plane drain that EVIDENCE1 §2 captured.
+    cond do
+      is_binary(assigned_ce) and assigned_ce != executor_id ->
+        # This insertion is for a different executor; this handler is
+        # registered for `executor_id` only.
         nil
 
-      _ ->
-        stream_channels =
-          Supervisor.which_children(Identificator.stream_sup_primary(executor_id)) ++
-            Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
+      true ->
+        curr_node = node()
 
-        Enum.each(stream_channels, fn {_, pid, _, _} ->
-          GenServer.call(pid, {:relay_pid_update, relay_id, updated_pids})
-        end)
+        updated_pids =
+          Enum.filter(node_pids, fn {node, _pid} -> node === curr_node end)
+          |> Enum.map(fn {_, pid} -> pid end)
+
+        case updated_pids do
+          [] ->
+            nil
+
+          _ ->
+            stream_channels =
+              Supervisor.which_children(Identificator.stream_sup_primary(executor_id)) ++
+                Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
+
+            Enum.each(stream_channels, fn {_, pid, _, _} ->
+              GenServer.call(pid, {:relay_pid_update, relay_id, updated_pids})
+            end)
+        end
     end
   end
 
@@ -466,7 +561,9 @@ defmodule Flezha.Service.HubManager do
 
   @impl true
   def init(_init_arg) do
-    Supervisor.init([], strategy: :one_for_one)
+    # RecoveryTracker MUST start before any hub so the telemetry handler
+    # is attached before `[:process_hub, :recovery, _]` events can fire.
+    Supervisor.init([RecoveryTracker], strategy: :one_for_one)
   end
 
   defp process_hub(namespace) do
@@ -483,6 +580,7 @@ defmodule Flezha.Service.HubManager do
       },
       registry_backend: registry_backend_config(hub_id),
       auto_recovery: auto_recovery_config(),
+      recovery_marker: recovery_marker_config(hub_id),
       # Relay startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
       cross_node_request_timeout: 10_000,
@@ -526,8 +624,40 @@ defmodule Flezha.Service.HubManager do
       _ ->
         [
           recovery_window_ms: Application.get_env(:flezha, :recovery_window_ms, 10_000),
-          replay_timeout_ms: Application.get_env(:flezha, :boot_replay_timeout_ms, 60_000)
+          replay_timeout_ms: Application.get_env(:flezha, :boot_replay_timeout_ms, 60_000),
+          recovery_timeout_ms:
+            Application.get_env(:flezha, :process_hub_recovery_timeout_ms, 30_000)
         ]
     end
   end
+
+  defp recovery_marker_config(hub_id) do
+    case Application.get_env(:flezha, :auto_restore_enabled, true) do
+      false ->
+        # When auto_recovery is off the upstream library ignores recovery_marker.
+        # Pass nil so its default `enabled?: false` resolution applies.
+        nil
+
+      _ ->
+        %{enabled?: true, path: marker_path(hub_id)}
+    end
+  end
+
+  defp marker_path(hub_id) do
+    case Application.get_env(:flezha, :process_hub_recovery_marker_path) do
+      nil ->
+        root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
+        Path.join([root, Atom.to_string(hub_id), "cluster.healthy"])
+
+      override when is_binary(override) ->
+        override
+    end
+  end
+
+  @doc false
+  # Public for the CLI `flz cluster status --recovery` surface (introduced
+  # by `consume-recovery-mode-and-self-heal`). Resolves the same marker path
+  # the hub spec uses, so an operator-visible check matches the live state.
+  @spec resolved_marker_path(atom()) :: binary()
+  def resolved_marker_path(hub_id), do: marker_path(hub_id)
 end

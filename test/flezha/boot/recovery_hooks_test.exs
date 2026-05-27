@@ -4,32 +4,45 @@ defmodule Flezha.Boot.RecoveryHooksTest do
   alias Flezha.Boot.RecoveryHooks
 
   setup do
-    Application.put_env(:flezha, :pre_replay_fleet_wait_ms, 100)
     Application.put_env(:flezha, :auto_restore_enabled, true)
 
     on_exit(fn ->
-      Application.delete_env(:flezha, :pre_replay_fleet_wait_ms)
       Application.delete_env(:flezha, :auto_restore_enabled)
     end)
 
     :ok
   end
 
-  test "pre_recovery_replay returns :ok when persistent registry is empty" do
-    hub_id = :"empty_test_hub_#{System.unique_integer([:positive])}"
+  test "pre_recovery_replay emits telemetry and returns quickly" do
+    test_pid = self()
+    handler_id = "pre-recovery-replay-test-#{System.unique_integer([:positive])}"
 
-    assert :ok = RecoveryHooks.pre_recovery_replay(hub_id, %{})
-  end
+    :telemetry.attach(
+      handler_id,
+      [:flezha, :boot, :pre_recovery_replay],
+      fn event, measurements, metadata, _ ->
+        send(test_pid, {:telemetry, event, measurements, metadata})
+      end,
+      nil
+    )
 
-  test "pre_recovery_replay times out gracefully when no executor connects" do
-    hub_id = :"timeout_test_hub_#{System.unique_integer([:positive])}"
-    Application.put_env(:flezha, :pre_replay_fleet_wait_ms, 50)
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    hub_id = :"pre_recovery_replay_test_hub_#{System.unique_integer([:positive])}"
 
     started = System.monotonic_time(:millisecond)
     assert :ok = RecoveryHooks.pre_recovery_replay(hub_id, %{})
     elapsed = System.monotonic_time(:millisecond) - started
 
-    assert elapsed < 1_000
+    assert elapsed < 100,
+           "pre_recovery_replay should be near-instant; took #{elapsed}ms"
+
+    assert_receive {:telemetry, [:flezha, :boot, :pre_recovery_replay], measurements, metadata},
+                   500
+
+    assert is_integer(measurements.cspec_count)
+    assert metadata.hub_id == hub_id
+    assert is_binary(metadata.namespace)
   end
 
   test "post_recovery_replay emits telemetry" do

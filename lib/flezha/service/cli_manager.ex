@@ -5,7 +5,6 @@ defmodule Flezha.Service.CliManager do
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
-  alias Flezha.Reconciler.Leader
   alias Flezha.Service.ConfigManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.Payloader
@@ -534,6 +533,7 @@ defmodule Flezha.Service.CliManager do
     rows = HubManager.relay_rows(namespace_display)
     counts = Enum.frequencies_by(rows, & &1.node)
     health = Enum.frequencies_by(rows, & &1.health)
+    {recovery_per_node, marker_per_node} = cluster_status_recovery(namespace_display, nodes)
 
     render_cluster_status(
       %{
@@ -542,10 +542,131 @@ defmodule Flezha.Service.CliManager do
         leader: safe_leader(),
         is_leader: safe_is_leader(),
         counts: counts,
-        health: health
+        health: health,
+        recovery_per_node: recovery_per_node,
+        recovery_marker_per_node: marker_per_node
       },
       output_format
     )
+  end
+
+  @doc """
+  RPC fan-out: ask every node in the cluster (including the local one)
+  for its `HubManager.recovery_state/1` and whether the marker file
+  exists. Returns `{state_map, marker_present_map}` keyed by node().
+  Used to populate the `recovery_state` / `recovery_armed` columns on
+  `flz cluster status`.
+  """
+  @spec cluster_status_recovery(binary(), [node()]) :: {map(), map()}
+  def cluster_status_recovery(namespace, nodes) do
+    hub_id = Flezha.Service.Identificator.hub(namespace)
+
+    {state_map, marker_map} =
+      Enum.reduce(nodes, {%{}, %{}}, fn n, {sa, ma} ->
+        {state, marker_present?} =
+          if n == node() do
+            local_recovery_snapshot(hub_id)
+          else
+            try do
+              :rpc.call(n, __MODULE__, :local_recovery_snapshot, [hub_id], 5_000)
+              |> case do
+                {:badrpc, _} -> {:unreachable, false}
+                {s, m} -> {s, m}
+              end
+            catch
+              _, _ -> {:unreachable, false}
+            end
+          end
+
+        {Map.put(sa, n, state), Map.put(ma, n, marker_present?)}
+      end)
+
+    {state_map, marker_map}
+  end
+
+  @doc false
+  @spec local_recovery_snapshot(atom()) :: {atom(), boolean()}
+  def local_recovery_snapshot(hub_id) when is_atom(hub_id) do
+    state =
+      case HubManager.recovery_state(hub_id) do
+        {:ok, s} -> s
+        {:error, :unknown_hub} -> :unknown
+      end
+
+    marker_present? = File.exists?(HubManager.resolved_marker_path(hub_id))
+    {state, marker_present?}
+  end
+
+  @doc """
+  Operator-facing CLI implementation for `flz cluster prepare-recovery`.
+  Fans `ProcessHub.prepare_recovery_cluster/1` out via the upstream
+  library and prints one row per node. Exit code derived from the
+  upstream return shape: 0 on full success, 1 on partial, 2 on error.
+  """
+  @spec cluster_prepare_recovery(binary()) :: :ok
+  def cluster_prepare_recovery(namespace \\ "default") do
+    namespace_display = normalize_namespace(namespace)
+    hub_id = Flezha.Service.Identificator.hub(namespace_display)
+    marker_path = HubManager.resolved_marker_path(hub_id)
+    nodes = HubManager.get_hub_nodes(namespace_display, true)
+
+    result = ProcessHub.prepare_recovery_cluster(hub_id)
+    print_prepare_recovery_table(hub_id, marker_path, nodes, result)
+    set_prepare_recovery_exit_code(result)
+    :ok
+  end
+
+  defp print_prepare_recovery_table(hub_id, marker_path, nodes, result) do
+    IO.puts(
+      "  " <>
+        String.pad_trailing("node", 30) <>
+        String.pad_trailing("hub_id", 18) <>
+        String.pad_trailing("marker_path", 60) <>
+        "result"
+    )
+
+    {ok_nodes, unreachable_nodes} =
+      case result do
+        {:ok, acked} -> {acked, []}
+        {:partial, acked, unreachable} -> {acked, unreachable}
+        {:error, _reason} -> {[], nodes}
+      end
+
+    Enum.each(nodes, fn n ->
+      label =
+        cond do
+          n in ok_nodes -> "ok"
+          n in unreachable_nodes -> "unreachable"
+          true -> "skipped"
+        end
+
+      IO.puts([
+        "  ",
+        String.pad_trailing(to_string(n), 30),
+        String.pad_trailing(to_string(hub_id), 18),
+        String.pad_trailing(marker_path, 60),
+        label
+      ])
+    end)
+
+    case result do
+      {:error, reason} ->
+        IO.puts("  error: #{inspect(reason)}")
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp set_prepare_recovery_exit_code(result) do
+    # Matches the System.halt/1 exit-code convention used by `boot_await/0`,
+    # `boot_import_legacy_snapshot/2`, and the controller verbs. See
+    # `Flezha.Service.CliManager` for the codebase-wide pattern.
+    case result do
+      {:ok, _} -> :ok
+      {:partial, _, _} -> System.halt(1)
+      {:error, _} -> System.halt(2)
+    end
   end
 
   defp render_cluster_status(s, "json") do
@@ -556,7 +677,13 @@ defmodule Flezha.Service.CliManager do
       is_leader: s.is_leader,
       nodes:
         Enum.map(s.nodes, fn n ->
-          %{node: to_string(n), relay_count: Map.get(s.counts, n, 0), leader: n == s.leader}
+          %{
+            node: to_string(n),
+            relay_count: Map.get(s.counts, n, 0),
+            leader: n == s.leader,
+            recovery_state: Map.get(s.recovery_per_node, n, :unknown),
+            recovery_armed: not Map.get(s.recovery_marker_per_node, n, false)
+          }
         end),
       unplaced_relays: Map.get(s.counts, nil, 0),
       relay_health: s.health
@@ -578,7 +705,13 @@ defmodule Flezha.Service.CliManager do
     else
       Enum.each(s.nodes, fn n ->
         marker = if n == s.leader, do: " [leader]", else: ""
-        IO.puts("    #{n}: #{Map.get(s.counts, n, 0)} relay(s)#{marker}")
+        rs = Map.get(s.recovery_per_node, n, :unknown)
+        armed = not Map.get(s.recovery_marker_per_node, n, false)
+
+        IO.puts(
+          "    #{n}: #{Map.get(s.counts, n, 0)} relay(s) recovery_state=#{rs} " <>
+            "recovery_armed=#{armed}#{marker}"
+        )
       end)
     end
 
@@ -602,25 +735,20 @@ defmodule Flezha.Service.CliManager do
   defp label_or(nil, default), do: default
   defp label_or(value, _default), do: to_string(value)
 
-  # Leadership surface is best-effort: when the reconciler is disabled the
-  # Leader GenServer may be absent, so a crash must degrade to "unknown"
-  # rather than fail the whole status command.
+  # consume-recovery-mode-and-self-heal §4: the
+  # `Flezha.Reconciler.Leader` GenServer is deleted along with the rest
+  # of the Reconciler stack — leader election was used by the
+  # `Reconciler.Loop`'s cluster-wide registry-mutating actions, which
+  # the Convergence Health watcher no longer needs (it uses local
+  # reads + process_hub's own coordinator for cluster-wide work).
+  # The CLI cluster_status surface keeps the column for backwards
+  # compatibility and surfaces the local node as the de-facto leader.
   defp safe_leader do
-    case Leader.leader() do
-      # Leadership disabled (solo / dev): the local node is the de-facto leader.
-      :disabled -> node()
-      # Enabled but not yet settled.
-      :none -> nil
-      node -> node
-    end
-  catch
-    _, _ -> nil
+    node()
   end
 
   defp safe_is_leader do
-    Leader.is_leader?()
-  catch
-    _, _ -> false
+    true
   end
 
   @doc "Shows detailed information about relays and their enabled plugins."
