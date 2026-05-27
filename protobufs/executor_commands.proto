@@ -29,6 +29,8 @@ message CommandRequest {
         CompactPartitionResponse compact_partition_response = 17;
         PartitionMailboxStatus partition_mailbox_status = 18;
         Ping ping = 19;
+        ExecutorReconnected executor_reconnected = 20;
+        ReassignExecutorId reassign_executor_id = 21;
     }
 }
 
@@ -184,4 +186,27 @@ message Ping {
 
 message PingResponse {
     string nonce = 1;
+}
+
+// SDK -> Controller, emitted as the FIRST frame on every newly-established
+// control stream after `handle_reconnect` runs. Preserves the executor's
+// identity across the reconnect so the Controller can compute a binding
+// delta instead of re-issuing every relay. `reason` is one of
+// `control_stream_broken | read_error | write_error | keepalive_timeout
+// | controller_requested`. Old Controllers that do not recognise this
+// variant silently skip it; new SDKs against an old Controller therefore
+// degrade to the pre-change "re-issue everything" behaviour.
+message ExecutorReconnected {
+    string previous_id = 1;
+    string new_id = 2;
+    string reason = 3;
+}
+
+// Controller -> SDK. Issued only when the Controller has reassigned the
+// SDK's bindings to a different executor session during the disconnect
+// window (i.e. `bindings_for_executor(previous_id)` is empty). The SDK
+// updates its in-memory `executor_id` in place; subsequent
+// `ExecutorReconnected` emissions carry the new id.
+message ReassignExecutorId {
+    string new_id = 1;
 }

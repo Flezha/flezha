@@ -219,8 +219,6 @@ The SDK's `connect_control_channel` init write SHALL NOT panic the reader thread
 - **THEN** the SDK SHALL clear the read timeout and read subsequent frames with no deadline
 - **AND** steady-state disconnect detection (EOF → reconnect) SHALL be unchanged
 
-
-
 ### Requirement: Controller-side cold-restart relay startup SHALL self-heal via an end-to-end ping before `:start_relay`
 
 When the Controller restarts and `Flezha.Relay.Overwatch` GenServers come up from durable registry replay, each Overwatch SHALL probe the resolved Executor's end-to-end control-channel health via a `:ping_executor` round-trip BEFORE issuing `{:start_relay, …}` to the Executor's `ControlUnit`. The ping SHALL traverse the same `ControlChannel → SDK → ControlChannel` path that `AddRelay` uses, so a successful round-trip proves the channel is bound, the SDK is listening, and the reply path is intact.
@@ -274,3 +272,103 @@ A periodic `:retry_startup` timer SHALL fire every 60 s (configurable via `:over
 - **AND** the ping + `start_relay_sdk` round-trip SHALL succeed
 - **AND** `state.init_error` SHALL be cleared to `nil`
 - **AND** the parked-retry timer SHALL NOT re-arm
+
+### Requirement: Control-channel liveness SHALL be implemented once in shared `flz_transport` and serve both SDKs
+
+The control-channel ack-deadline and steady-state liveness SHALL be implemented once in
+the shared `flz_transport` layer and consumed by BOTH the Rust SDK (`sock_conn`) and the
+Java SDK (via `flz_jni`'s reader loop), reading the same `FLEZHA_CONTROL_ACK_TIMEOUT_MS`
+configuration — this is the shared form of the existing Rust-only ack-deadline
+requirement. The Rust SDK's private ack-deadline copy in `control_unit.rs` SHALL be
+removed in favor of the shared implementation, so the liveness invariant lives in exactly
+one place and Rust/Java parity holds by construction.
+
+#### Scenario: Both SDKs share one ack-deadline implementation
+- **GIVEN** the ack-deadline + liveness logic implemented in `flz_transport`
+- **WHEN** either the Rust SDK or the Java SDK opens a control channel
+- **THEN** both SHALL enforce the same first-frame deadline from the same shared code path
+- **AND** the Rust SDK SHALL no longer carry a separate private ack-deadline implementation
+
+### Requirement: Java SDK SHALL bound the wait for the controller's registration ack and reconnect on timeout
+
+After the Java SDK opens a control channel and sends its handshake, it SHALL require the
+controller to send at least one frame within `FLEZHA_CONTROL_ACK_TIMEOUT_MS` (default
+10 s). If no frame arrives, the SDK SHALL treat the controller as non-servicing and drive
+its `ReconnectCoordinator` to reconnect, exactly as the Rust SDK does. The Java reader's
+blocking read (today timeout-less in `flz_jni`) SHALL honor the deadline. A handshake
+send failure SHALL drive reconnect, not strand a dead thread. The
+`assignLatch`-timeout path SHALL drive reconnect rather than warn-and-continue, and the
+`ReconnectCoordinator` wiring SHALL be free of the startup race that can drop the first
+connection-lost event.
+
+#### Scenario: Controller accepts but never acknowledges → Java SDK reconnects
+- **GIVEN** a Java executor whose controller accepts the control socket then stays silent (mid-shutdown or being replaced)
+- **WHEN** `FLEZHA_CONTROL_ACK_TIMEOUT_MS` elapses with no controller frame
+- **THEN** the Java SDK SHALL trigger `ReconnectCoordinator` and SHALL NOT block its reader thread indefinitely
+- **AND** the executor SHALL reconnect until it lands on a controller that completes registration
+
+#### Scenario: First controller frame clears the Java ack deadline
+- **WHEN** the controller sends its assign-executor-id command within the window
+- **THEN** the Java SDK SHALL clear the deadline and read subsequent frames with no timeout
+
+### Requirement: Steady-state control-channel liveness detects a post-handshake wedge
+
+Both SDKs SHALL run a steady-state liveness check on the control channel beyond the
+first-frame ack-deadline — a jittered periodic probe or idle watchdog implemented in
+shared `flz_transport` — so a controller that goes silent *after* a successful handshake
+(a half-open socket or a hung controller that the OS never surfaces as a read error) is
+detected and drives reconnect. The check SHALL NOT fire while normal control traffic is
+flowing.
+
+#### Scenario: Controller wedges after handshake
+- **GIVEN** an executor with an established control channel that has completed registration
+- **WHEN** the controller stops responding on the control channel (half-open / hung) with no clean close
+- **THEN** the SDK's steady-state liveness check SHALL detect the silence within its window and drive reconnect
+
+#### Scenario: Active control channel is not flagged
+- **GIVEN** a control channel carrying normal control traffic
+- **WHEN** the steady-state liveness check runs
+- **THEN** it SHALL NOT trigger a reconnect
+
+### Requirement: Control-channel liveness SHALL be enforced on the QUIC transport
+
+The ack-deadline and steady-state liveness SHALL be enforced on the QUIC transport via a
+QUIC-native mechanism (e.g. a read-with-timeout / timer select), because
+`FlezhaStream::set_read_timeout` is a no-op on QUIC; the liveness guarantee SHALL NOT be
+silently skipped when `FLEZHA_TRANSPORT=quic`.
+
+#### Scenario: QUIC accept-but-never-ack is detected
+- **GIVEN** an executor connected over QUIC to a controller that accepts but never acknowledges
+- **WHEN** the ack window elapses
+- **THEN** the SDK SHALL detect the dead control channel and reconnect, not rely solely on QUIC idle/keepalive expiry
+
+### Requirement: Reconnect backoff SHALL be jittered and converged across SDKs
+
+Both SDKs SHALL use a single shared reconnect backoff schedule with full jitter so that a
+controller restart dropping many executors does not produce a synchronized reconnect
+storm. Attempts SHALL remain unbounded (the executor must keep trying until a live
+controller is found).
+
+#### Scenario: Fleet reconnect does not thunder
+- **GIVEN** N executors whose controller restarts simultaneously
+- **WHEN** they all enter their reconnect loops
+- **THEN** their attempts SHALL be spread by jitter rather than firing in lockstep
+
+### Requirement: Java SDK transport-edge and decode events SHALL NOT crash the runtime thread
+
+The Java SDK and its `flz_jni` reader SHALL NOT crash the runtime thread on any
+control-socket event — clean peer close (0-byte read), truncated/malformed frame, unknown
+command variant, or missing fields — and SHALL instead surface a typed error and drive
+the reconnect path. This is the Java parity of the Rust "runtime threads SHALL NOT panic
+on any control-socket transport-edge event" requirement.
+
+#### Scenario: Controller closes the Java SDK control socket cleanly
+- **GIVEN** a Java executor with relays streaming
+- **WHEN** the controller process restarts (clean close on the control socket)
+- **THEN** the Java executor process SHALL stay alive and reconnect
+- **AND** no reader/runtime thread SHALL die unrecoverably
+
+#### Scenario: Java SDK receives a truncated control frame
+- **WHEN** the Java reader receives a truncated/malformed frame
+- **THEN** it SHALL drive reconnect and SHALL NOT crash the runtime thread
+

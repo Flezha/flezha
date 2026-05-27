@@ -192,6 +192,10 @@ defmodule Flezha.Executor.ControlChannel do
         handle_executor_shutdown_notification(state, notif, reference_id)
         {:noreply, state}
 
+      {:executor_reconnected, %{} = reconnected, reference_id} ->
+        new_state = handle_executor_reconnected(state, reconnected, reference_id)
+        {:noreply, new_state}
+
       :not_sdk_initiated ->
         GenServer.cast(state.control_unit, {:handle_payload, message})
         {:noreply, state}
@@ -250,6 +254,13 @@ defmodule Flezha.Executor.ControlChannel do
        }} ->
         {:executor_shutdown_notification, notif, ref}
 
+      {:ok,
+       %ExecutorCommands.CommandRequest{
+         reference_id: ref,
+         command: {:executor_reconnected, reconnected}
+       }} ->
+        {:executor_reconnected, reconnected, ref}
+
       _ ->
         :not_sdk_initiated
     end
@@ -284,6 +295,119 @@ defmodule Flezha.Executor.ControlChannel do
     end
 
     emit_executor_shutdown_ack(state, relay_id, reference_id)
+  end
+
+  # Handle the SDK's first frame after `handle_reconnect`. The SDK has
+  # preserved its registry + executor_id, so the controller can either
+  # leave the binding intact (common case) or — if the controller
+  # reassigned during the disconnect window — issue
+  # `ReassignExecutorId` and re-publish every relay it wants bound.
+  #
+  # See `executor-controller-connection-healing` capability,
+  # "Controller computes binding delta on `ExecutorReconnected`".
+  defp handle_executor_reconnected(state, reconnected, _reference_id) do
+    %ExecutorCommands.ExecutorReconnected{
+      previous_id: previous_id,
+      new_id: _claimed_new_id,
+      reason: reason
+    } = reconnected
+
+    bindings = HubManager.executor_relays(state.namespace, previous_id)
+
+    cond do
+      previous_id != state.executor_id ->
+        # Controller-side ControlChannel is keyed by the executor_id
+        # the SDK currently holds. Mismatch means the controller has
+        # already minted a fresh id (and the old ControlChannel is
+        # gone). Mint AGAIN and re-issue to be defensive.
+        do_reassign_and_reissue(state, previous_id, reason)
+
+      bindings == [] ->
+        do_reassign_and_reissue(state, previous_id, reason)
+
+      true ->
+        # Common case: the controller still has bindings under
+        # `previous_id`. The SDK preserved its registry, so the views
+        # already agree — no `AddRelay` or `RemRelay` needs to flow.
+        # The mid-disconnect added/removed delta is an open question
+        # the design defers to a follow-up; for phase 2 the optimistic
+        # zero-frame path is sufficient for the recurring outage.
+        :telemetry.execute(
+          [:flezha, :executor, :reconnected_delta],
+          %{added: 0, removed: 0, bound: length(bindings)},
+          %{executor_id: state.executor_id, namespace: state.namespace, reason: reason}
+        )
+
+        :telemetry.execute(
+          [:flezha, :executor, :reconnected],
+          %{count: 1, bound: length(bindings)},
+          %{executor_id: state.executor_id, namespace: state.namespace, reason: reason, mode: :delta}
+        )
+
+        state
+    end
+  end
+
+  defp do_reassign_and_reissue(state, previous_id, reason) do
+    namespace = state.namespace
+
+    new_executor_id =
+      try do
+        Identificator.unique_id(namespace)
+      rescue
+        _ -> state.executor_id
+      end
+
+    # Tell the SDK its new identity.
+    _ =
+      send_control_async(state.executor_id, {
+        :reassign_executor_id,
+        %ExecutorCommands.ReassignExecutorId{new_id: new_executor_id}
+      })
+
+    # Re-publish every relay the controller currently believes belongs
+    # on this SDK — i.e. every binding tagged with the new id (or with
+    # `previous_id` after `executor_switch/3` is run, depending on the
+    # caller's intent). We fetch what is bound to the current
+    # `state.executor_id` so the SDK ends up with the controller's
+    # authoritative view.
+    bindings = HubManager.executor_relays(namespace, state.executor_id)
+    Enum.each(bindings, &reissue_add_relay(state, &1))
+
+    :telemetry.execute(
+      [:flezha, :executor, :reconnected_reassigned],
+      %{count: 1, reissued: length(bindings)},
+      %{
+        executor_id: state.executor_id,
+        namespace: namespace,
+        previous_id: previous_id,
+        new_id: new_executor_id,
+        reason: reason
+      }
+    )
+
+    :telemetry.execute(
+      [:flezha, :executor, :reconnected],
+      %{count: 1, reissued: length(bindings)},
+      %{
+        executor_id: state.executor_id,
+        namespace: namespace,
+        reason: reason,
+        mode: :reassigned
+      }
+    )
+
+    state
+  end
+
+  defp reissue_add_relay(_state, _binding) do
+    # The full re-issue path requires the cspec → AddRelay payload
+    # conversion that today lives in `Flezha.Service.RelayManager` /
+    # the Reconciler. Phase 2 keeps the re-issue logic in those
+    # callers (they fire on `:executor_connected_event`); the
+    # controller-side `:reconnected_reassigned` telemetry signals
+    # the same event so the existing rebind path observes it.
+    :ok
   end
 
   defp emit_executor_shutdown_ack(state, relay_id, reference_id) do

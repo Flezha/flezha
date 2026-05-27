@@ -1,5 +1,4 @@
 defmodule Flezha.Executor.StreamChannel do
-  alias Flezha.Reconciler.Activity
   alias Flezha.State.Wire, as: StateWire
   alias Flezha.Transport.Native
 
@@ -21,11 +20,7 @@ defmodule Flezha.Executor.StreamChannel do
         executor_id: executor_id,
         stream_ref: nil,
         relay_mapping: %{},
-        name: name,
-        # Record per-relay egress activity for the reconciler probe. Read once at
-        # init so the hot path is a single boolean check; the table is created by
-        # Flezha.Reconciler.Supervisor before the transport accepts connects.
-        activity_enabled: Application.get_env(:flezha, :reconciler_enabled, true)
+        name: name
       }
     }
   end
@@ -35,11 +30,11 @@ defmodule Flezha.Executor.StreamChannel do
         {:io_in, relay_id, {_message, _metadata}},
         %{stream_ref: nil} = state
       ) do
-    # Unbound channel: count the dropped frame so the previously-silent seam is
-    # observable and the reconciler sees "ingest live, output broken"
-    # (record_drop emits [:flezha, :stream, :drop] + a drop timestamp). The probe
-    # rebinds the stream rather than leaving frames silently dropped.
-    Activity.record_drop(relay_id)
+    # Unbound channel: emit `[:flezha, :stream, :drop]` so the seam
+    # is observable. The Convergence Health watcher subscribes to
+    # `:output_stall` for rebind decisions; drop telemetry remains a
+    # useful operator signal independent of that.
+    :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{relay_id: relay_id})
     {:noreply, state}
   end
 
@@ -48,9 +43,6 @@ defmodule Flezha.Executor.StreamChannel do
         {:io_in, relay_id, {message, metadata}},
         %{stream_ref: stream_ref} = state
       ) do
-    # Record egress dispatch before the NIF hand-off so a transient transport
-    # error (healed by the rebind path) does not also read as a throughput stall.
-    if state.activity_enabled, do: Activity.record_output(relay_id)
     Native.send_frame(stream_ref, relay_id, message, metadata)
     {:noreply, state}
   end
@@ -70,7 +62,6 @@ defmodule Flezha.Executor.StreamChannel do
         _from,
         %{stream_ref: stream_ref} = state
       ) do
-    if state.activity_enabled, do: Activity.record_output(relay_id)
     Native.send_frame(stream_ref, relay_id, message, metadata)
     {:reply, :ok, state}
   end
@@ -132,11 +123,33 @@ defmodule Flezha.Executor.StreamChannel do
   end
 
   def handle_info({:flz_data, _stream_id, relay_id, message, metadata}, state) do
-    relays = Map.get(state.relay_mapping, relay_id, [])
+    case Map.get(state.relay_mapping, relay_id, []) do
+      [] ->
+        :ok
 
-    Enum.each(relays, fn pid ->
-      GenServer.cast(pid, {:io_out, message, metadata})
-    end)
+      [pid] ->
+        GenServer.cast(pid, {:io_out, message, metadata})
+
+      [first | _] = pids ->
+        # Defensive: the HubManager `hook_insert_pid/2` filter should
+        # guarantee a single-pid list for any relay, but if a
+        # regression slips that through we must NOT fan out frames to
+        # every pid — that is the EVIDENCE1 §2 data-plane drain that
+        # produced 22 frames/s on unchosen executors. Route to the
+        # first pid only and surface the misuse via telemetry.
+        Logger.error(
+          "[stream_channel] fan-out warning for relay=#{inspect(relay_id)}: " <>
+            "expected one pid, got #{length(pids)}: #{inspect(pids)}"
+        )
+
+        :telemetry.execute(
+          [:flezha, :stream, :fanout_warning],
+          %{count: 1, pid_count: length(pids)},
+          %{relay_id: relay_id, executor_id: state.executor_id}
+        )
+
+        GenServer.cast(first, {:io_out, message, metadata})
+    end
 
     {:noreply, state}
   end
