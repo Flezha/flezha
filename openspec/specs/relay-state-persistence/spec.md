@@ -480,9 +480,6 @@ If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Partition
 - **WHEN** the SDK on the source executor responds to `MigrationSerialization{relay_id}` with payload bytes `B = serialize_relay_state(instance)`, and a second SDK on the destination executor receives `MigrationDeserialization{factory_id, relay_id, serialized_state: B}`
 - **THEN** the destination's freshly-started instance SHALL have Partition state byte-identical to the source's at the moment of serialization, as observed by `serialize_relay_state` re-issued against the destination
 
-
-
-
 ### Requirement: The persisted `executor_id` in a relay-binding record is advisory across a controller restart
 
 `Flezha.Relay.Overwatch.init/1` accepts a `stale_executor_id` argument that originates from the durable relay-binding record replayed at boot. This value SHALL be treated as advisory only — it identifies the executor the relay was bound to BEFORE the current controller process started. The Overwatch SHALL re-resolve the live `executor_id` via `RelayManager.assign_executor/2` inside `handle_continue({:bind_executor, …}, _)` and SHALL NOT issue any control-plane calls (`AddRelay`, `:ping_executor`, `start_relay_sdk`) against the persisted value directly.
@@ -556,3 +553,53 @@ When the Controller ships `CompactPartition{partition_id}` to the SDK, it SHALL 
 - **THEN** the Controller SHALL emit `[:flezha, :state, :compaction_timeout]`
 - **AND** WAL append for the Partition SHALL NOT remain blocked (no "large WAL, no snapshot, frozen" state)
 - **AND** persistence SHALL recover via resync and compaction SHALL be eligible to retry later
+
+### Requirement: State path resolution SHALL be single-source and coherent
+
+The on-disk location of a Partition's WAL/snapshot/outbox SHALL be computed from a single
+authoritative resolver that every reader, writer, and the boot-time migrator agree on, so
+that no path divergence can orphan persisted state. If `FLEZHA_STATE_DIR` is set, the
+resolver and the migrator SHALL use the same value, and a change of root between boots
+SHALL be reconciled — existing state migrated from the old root to the new one — rather
+than silently orphaned. The boot migrator SHALL NOT relocate state into a layout (e.g. a
+`_system/` namespace prefix) that the reader does not read; layout changes ahead of reader
+support are prohibited because they orphan state.
+
+#### Scenario: WAL is not orphaned by a path-resolution change
+- **GIVEN** persisted WAL/snapshot files for running Partitions
+- **WHEN** the Controller restarts after this change
+- **THEN** the restore path SHALL find the existing files at the resolver's path
+- **AND** no Partition's state SHALL become invisible because the migrator and reader disagree on the path
+
+#### Scenario: Migrator and reader agree on layout
+- **WHEN** the boot migrator runs
+- **THEN** the directory layout it produces SHALL be exactly the layout `Flezha.State.Registry` reads
+- **AND** any layout the reader does not support SHALL NOT be produced by the migrator
+
+### Requirement: Per-Partition WAL SHALL realign to a restarted executor's seq base
+
+The Controller's per-Partition WAL SHALL adopt a restarted executor's sequence base as the
+live source of truth rather than freezing. When an executor process restarts and reconnects
+under a new executor id, it resumes emitting Changes from a fresh sequence base derived from
+its post-restart rebuild (e.g. a Kafka replay), which may diverge from the persisted
+`last_persisted_seq`. The WAL SHALL realign its baseline — discarding the superseded
+pre-restart WAL/snapshots so a later `RestoreInitState` ships only the new epoch — instead
+of dedup-dropping the new executor's Changes as stale. A Change at or below
+`last_persisted_seq` from the *same* executor SHALL remain a legitimate dedup. A realignment
+SHALL emit `[:flezha, :state, :wal_realign]` telemetry.
+
+#### Scenario: A restarted executor's diverged seq base realigns the WAL
+- **GIVEN** a Partition whose WAL has advanced to seq N under executor A
+- **WHEN** executor A restarts and a new executor B resumes emitting Changes from a seq base diverged from N
+- **THEN** the WAL SHALL realign to executor B's seq base and resume advancing rather than freeze at N
+- **AND** a `[:flezha, :state, :wal_realign]` event SHALL be emitted
+
+#### Scenario: A same-executor duplicate is still deduped
+- **GIVEN** a Partition whose WAL has advanced to seq N under executor A
+- **WHEN** executor A re-sends a Change at or below seq N (a retransmit, not a restart)
+- **THEN** the Change SHALL be deduped and the WAL SHALL NOT realign
+
+#### Scenario: Output-stall resync resolves the owning executor
+- **WHEN** the Watchdog detects an output stall and triggers a resync for a Partition
+- **THEN** `Flezha.State.Recovery.resolve_executor/1` SHALL resolve the owning executor id from the durable registry entry's metadata tag, keyed by the relay's relay_class (its `:relay_class` opt, defaulting to its id)
+

@@ -12,7 +12,6 @@ defmodule Flezha.Relay.Overwatch do
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Reconciler.Activity
   alias Flezha.State.{Restore, Wire}
 
   # Defaults for the bounded-retry governor introduced by
@@ -49,7 +48,14 @@ defmodule Flezha.Relay.Overwatch do
     init_values: %{},
     default_input_type: "2",
     arrived_via_hotswap?: false,
-    init_error: nil
+    init_error: nil,
+    # `consume-recovery-mode-and-self-heal` §3.3-3.5: the synchronous
+    # `:executor_migrate` retry loop used to block `:stop_relay` for
+    # the full 19 s aggregate backoff schedule. The retry now runs in
+    # a `Task.Supervisor.async_nolink/3` task; this field carries the
+    # in-flight task's reference + pid so `:stop_relay` can terminate
+    # it cleanly. `nil` when no migrate is in flight.
+    migrate_task: nil
   ]
 
   def start_link(args) do
@@ -340,7 +346,12 @@ defmodule Flezha.Relay.Overwatch do
   defp maybe_dispatch_restore_init_state(%__MODULE__{arrived_via_hotswap?: true}, _relay), do: :ok
 
   defp maybe_dispatch_restore_init_state(%__MODULE__{} = state, relay) do
-    relay_class = Keyword.get(relay.opts, :relay_class, relay.id)
+    do_dispatch_restore(state, relay.opts, state.executor_id)
+    :ok
+  end
+
+  defp do_dispatch_restore(%__MODULE__{} = state, relay_opts, executor_id) do
+    relay_class = Keyword.get(relay_opts, :relay_class, state.id)
 
     if Flezha.State.PersistenceResolver.persistence_enabled?(relay_class) do
       partitions = enumerate_persisted_partitions(relay_class)
@@ -348,7 +359,7 @@ defmodule Flezha.Relay.Overwatch do
       Enum.each(partitions, fn {rc, sh, pk} ->
         case Flezha.State.Restore.has_persisted_state?({rc, sh, pk}) do
           true ->
-            _ = dispatch_restore_init_state(state.executor_id, {rc, sh, pk})
+            _ = dispatch_restore_init_state(executor_id, {rc, sh, pk})
 
           false ->
             :ok
@@ -357,6 +368,25 @@ defmodule Flezha.Relay.Overwatch do
     end
 
     :ok
+  end
+
+  @doc """
+  External trigger for the bind-driven per-Partition replay
+  (`consume-recovery-mode-and-self-heal` §3.1-3.2). Called from
+  `Flezha.State.Recovery.resync_for_overwatch/2` when a non-bind
+  caller (the Convergence Health watcher's rebind action in phase 4)
+  needs to re-issue the `RestoreInitState` handshake for an already-
+  bound Overwatch.
+
+  Implementation routes the work back to the Overwatch process via a
+  cast so the caller never blocks on enumeration / dispatch — the
+  Overwatch is the single owner of "enumerate my partitions, dispatch
+  RestoreInitState for each".
+  """
+  @spec kick_restore_for_bound_executor(pid(), binary()) :: :ok
+  def kick_restore_for_bound_executor(overwatch_pid, executor_id)
+      when is_pid(overwatch_pid) and is_binary(executor_id) do
+    GenServer.cast(overwatch_pid, {:kick_restore, executor_id})
   end
 
   defp enumerate_persisted_partitions(relay_class) do
@@ -485,10 +515,22 @@ defmodule Flezha.Relay.Overwatch do
 
   @impl true
   def handle_call(:stop_relay, from, state) do
-    GenServer.call(
-      Identificator.control_unit(state.executor_id),
-      {:stop_relay, state.id}
-    )
+    # `consume-recovery-mode-and-self-heal` §3.5: terminate any
+    # in-flight `:executor_migrate` task BEFORE the synchronous stop
+    # sequence so the operator's `flz relay stop r1` always returns
+    # within its normal handle_call window even mid-retry.
+    state = terminate_migrate_task(state)
+
+    case state.executor_id do
+      nil ->
+        :ok
+
+      _ ->
+        GenServer.call(
+          Identificator.control_unit(state.executor_id),
+          {:stop_relay, state.id}
+        )
+    end
 
     fire_on_terminate(state, :stopped)
     table = Table.teardown_all(state.extensions)
@@ -544,30 +586,29 @@ defmodule Flezha.Relay.Overwatch do
     {:reply, result, state}
   end
 
-  # Parked relay → event-driven un-park (the reconciler's `:unpark` action):
-  # run the full recovery against the reconnected executor immediately —
-  # re-prepare plugins, ping before start, clear `init_error` on success, and
-  # activate plugins so the relay resumes producing.
+  # Async `:executor_migrate` for the PARKED un-park path only — that's
+  # where the bounded retry loop (up to 19 s aggregate) actually lives,
+  # and the spec's stop-during-migrate scenario quotes "~10 s into the
+  # backoff schedule". The running-migrate path is a single ping +
+  # start round-trip; keeping it synchronous preserves the existing
+  # HotSwap handover invariants (`executor_disconnect_migrate_op` and
+  # peers) that depend on state being applied before the call returns.
   @impl true
+  def handle_call({:executor_migrate, _}, _from, %__MODULE__{migrate_task: t} = state)
+      when t != nil do
+    {:reply, {:error, :busy}, state}
+  end
+
   def handle_call(
         {:executor_migrate, new_executor_id},
         _from,
-        %__MODULE__{init_error: reason, builder: relay} = state
+        %__MODULE__{init_error: reason} = state
       )
       when reason != nil do
-    case complete_init(state, new_executor_id, relay) do
-      {:ok, recovered} ->
-        Logger.info("[Overwatch] relay #{state.id} un-parked onto executor #{new_executor_id}")
-        {:reply, :ok, recovered}
-
-      {:error, err, parked} ->
-        {:reply, {:error, err}, park(parked, err)}
-    end
+    {ref, pid} = spawn_migrate_task({:unpark, state, new_executor_id})
+    {:reply, :ok, %{state | migrate_task: %{ref: ref, pid: pid, mode: :unpark}}}
   end
 
-  # Running relay moved to a new executor (HotSwap reroute / orphan reissue):
-  # rebind the channel, ping before re-issuing start, and surface the start
-  # result so the caller (reissue retry, reconciler) can re-drive on failure.
   def handle_call({:executor_migrate, new_executor_id}, _from, %__MODULE__{} = state) do
     state = bind_to_executor(state, state.id, new_executor_id)
 
@@ -602,7 +643,8 @@ defmodule Flezha.Relay.Overwatch do
         # `{:error, :no_stream}` reply, so the reconciler-detected stall is
         # observable (the probe rebinds the stream).
         case GenServer.call(state.channel, {:io_in, state.id, payload}) do
-          {:error, :no_stream} -> Activity.record_drop(state.id)
+          {:error, :no_stream} ->
+            :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{relay_id: state.id})
           _ -> :ok
         end
     end
@@ -667,6 +709,17 @@ defmodule Flezha.Relay.Overwatch do
     {:noreply, %__MODULE__{state | snapshot: binary}}
   end
 
+  # `consume-recovery-mode-and-self-heal` §3.1-3.2: external callers
+  # (the Convergence Health watcher's rebind action in phase 4) trigger
+  # a fresh per-Partition replay against the Overwatch's bound
+  # executor without knowing the Overwatch's internals. The cast is
+  # the indirection point used by
+  # `Flezha.State.Recovery.resync_for_overwatch/2`.
+  def handle_cast({:kick_restore, executor_id}, %__MODULE__{} = state) do
+    do_dispatch_restore(state, state.builder.opts, executor_id)
+    {:noreply, state}
+  end
+
   defp run_io(%__MODULE__{} = state, extension, message, metadata) do
     ctx = %Ctx.IO{
       relay_id: state.id,
@@ -687,6 +740,43 @@ defmodule Flezha.Relay.Overwatch do
   def handle_info({:extension_timer, name, plugin_id}, %__MODULE__{} = state) do
     table = Table.fire_timer(state.extensions, name, plugin_id)
     {:noreply, %{state | extensions: table}}
+  end
+
+  # `consume-recovery-mode-and-self-heal` §3.4: the in-flight
+  # `:executor_migrate` task posts its result via a plain `send/2`
+  # before the task process exits, so this clause runs before the
+  # `:DOWN` cleanup. The state update happens here; the `:DOWN`
+  # message is then drained by the dedicated clause below.
+  @impl true
+  def handle_info(
+        {:migrate_task_result, _task_pid, result},
+        %__MODULE__{migrate_task: %{}} = state
+      ) do
+    {:noreply, apply_migrate_result(state, result)}
+  end
+
+  def handle_info({:migrate_task_result, _task_pid, _result}, state) do
+    # Late delivery: the task was terminated by `:stop_relay`, or a
+    # second migrate already replaced `state.migrate_task`. Drop.
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %__MODULE__{migrate_task: %{ref: ref}} = state) do
+    # The task has exited normally (or crashed before posting a result).
+    # Clear the migrate_task slot so the next migrate can spawn.
+    {:noreply, %{state | migrate_task: nil}}
+  end
+
+  # Task.Supervisor.async_nolink also sends `{ref, return_value}` from
+  # the task before it exits — we already consumed the result via the
+  # explicit `{:migrate_task_result, ...}` send/2 from inside the task
+  # body, so the auto-reply is redundant. Drop it; without this clause
+  # it crashes the Overwatch with FunctionClauseError.
+  @impl true
+  def handle_info({ref, _value}, state) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, state}
   end
 
   @impl true
@@ -926,5 +1016,50 @@ defmodule Flezha.Relay.Overwatch do
        }}
 
     ControlChannel.send_control_async(executor_id, command)
+  end
+
+  # -----------------------------------------------------------------
+  # `consume-recovery-mode-and-self-heal` §3.3-3.5: async migrate task
+  # plumbing. Kept together so the task-spawn / terminate / result-
+  # application surface is reviewable as a single unit.
+  # -----------------------------------------------------------------
+
+  defp terminate_migrate_task(%__MODULE__{migrate_task: nil} = state), do: state
+
+  defp terminate_migrate_task(%__MODULE__{migrate_task: %{ref: ref, pid: pid}} = state) do
+    _ = Process.demonitor(ref, [:flush])
+    _ = Task.Supervisor.terminate_child(Flezha.Relay.MessageHandlerTaskSup, pid)
+    %{state | migrate_task: nil}
+  end
+
+  defp spawn_migrate_task({:unpark, state, new_executor_id}) do
+    relay = state.builder
+    parent = self()
+
+    task =
+      Task.Supervisor.async_nolink(Flezha.Relay.MessageHandlerTaskSup, fn ->
+        # complete_init is the heavy bounded-retry path; running it in
+        # a task ensures `:stop_relay` is never blocked by it.
+        case complete_init(state, new_executor_id, relay) do
+          {:ok, recovered} ->
+            send(parent, {:migrate_task_result, self(), {:unparked, recovered}})
+            :ok
+
+          {:error, err, parked} ->
+            send(parent, {:migrate_task_result, self(), {:park, parked, err}})
+            :ok
+        end
+      end)
+
+    {task.ref, task.pid}
+  end
+
+  defp apply_migrate_result(state, {:unparked, recovered}) do
+    Logger.info("[Overwatch] relay #{state.id} un-parked onto executor #{recovered.executor_id}")
+    %{recovered | migrate_task: nil}
+  end
+
+  defp apply_migrate_result(_state, {:park, parked, err}) do
+    %{park(parked, err) | migrate_task: nil}
   end
 end

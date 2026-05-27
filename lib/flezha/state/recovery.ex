@@ -30,8 +30,30 @@ defmodule Flezha.State.Recovery do
   end
 
   @doc """
+  Bind-driven WAL replay trigger. Called by `Flezha.Relay.Overwatch`
+  from `handle_continue(:after_bind, _)` with the Overwatch's own
+  `executor_id` so the replay never depends on a class→executor lookup
+  in the durable registry (the lookup that failed on cold boot and
+  produced the silent "resync skipped reason=:output_stall" no-op).
+
+  This is the single state-restoration trigger for non-HotSwap relays;
+  every Overwatch bind unconditionally invokes it. The implementation
+  is intentionally trivial — the heavy lifting lives in
+  `Flezha.Relay.Overwatch.dispatch_restore_init_state/2`.
+  """
+  @spec resync_for_overwatch(pid(), binary()) :: :ok
+  def resync_for_overwatch(overwatch_pid, executor_id)
+      when is_pid(overwatch_pid) and is_binary(executor_id) do
+    Overwatch.kick_restore_for_bound_executor(overwatch_pid, executor_id)
+    :ok
+  end
+
+  @doc """
   Resolve the `executor_id` currently owning `relay_class` from the
   ProcessHub registry. Returns `{:ok, executor_id}` or `{:error, term}`.
+
+  Retained for the CLI `flz state rotate` surface — the resync path
+  itself no longer relies on this lookup (see `resync_for_overwatch/2`).
   """
   @spec resolve_executor(tuple()) :: {:ok, binary()} | {:error, term()}
   def resolve_executor({rc, _sh, _pk}) do
@@ -57,35 +79,36 @@ defmodule Flezha.State.Recovery do
 
   defp do_resync(partition_id, opts) do
     reason = Keyword.get(opts, :reason, :unknown)
+    executor_id = Keyword.get(opts, :executor_id)
 
-    resolved =
-      case Keyword.get(opts, :executor_id) do
-        eid when is_binary(eid) -> {:ok, eid}
-        _ -> resolve_executor(partition_id)
-      end
+    cond do
+      is_binary(executor_id) ->
+        dispatch_resync(partition_id, executor_id, reason)
 
-    case resolved do
-      {:ok, executor_id} ->
-        case Overwatch.dispatch_restore_init_state(executor_id, partition_id) do
-          {:ok, _ref} = ok ->
-            ok
+      true ->
+        # No executor_id and no class→executor synthesis: the
+        # pre-Phase-3 fallback that called `resolve_executor/1` here
+        # produced the silent "resync skipped reason=:output_stall"
+        # no-op on cold boot. Callers without an executor_id are
+        # signalling "I observed a stall" — the Convergence Health
+        # watcher (phase 4) drives the rebind action; this module
+        # no longer pretends to dispatch one out-of-band.
+        {:error, :no_executor_id}
+    end
+  end
 
-          other ->
-            Logger.warning(
-              "[State.Recovery] resync dispatch failed reason=#{inspect(reason)} " <>
-                "partition=#{inspect(partition_id)}: #{inspect(other)}"
-            )
+  defp dispatch_resync(partition_id, executor_id, reason) do
+    case Overwatch.dispatch_restore_init_state(executor_id, partition_id) do
+      {:ok, _ref} = ok ->
+        ok
 
-            other
-        end
-
-      {:error, why} = err ->
+      other ->
         Logger.warning(
-          "[State.Recovery] resync skipped reason=#{inspect(reason)} " <>
-            "partition=#{inspect(partition_id)}: #{inspect(why)}"
+          "[State.Recovery] resync dispatch failed reason=#{inspect(reason)} " <>
+            "partition=#{inspect(partition_id)}: #{inspect(other)}"
         )
 
-        err
+        other
     end
   end
 

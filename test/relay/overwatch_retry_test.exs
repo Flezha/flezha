@@ -220,10 +220,16 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     assert :ok = GenServer.call(pid, {:executor_migrate, executor_id})
 
     # init_error cleared and the plugin activated (resumes producing).
+    # `consume-recovery-mode-and-self-heal` §3.3-3.5 made `:executor_migrate`
+    # async (the retry loop runs in a `Task.Supervisor.async_nolink` task),
+    # so we poll the state instead of asserting immediately.
     assert_receive :activated, 5_000
-    state = GenServer.call(pid, :get_overwatch_state)
-    assert is_nil(state.init_error)
 
+    assert eventually(fn ->
+             is_nil(GenServer.call(pid, :get_overwatch_state).init_error)
+           end)
+
+    state = GenServer.call(pid, :get_overwatch_state)
     assert Flezha.Plugin.Extension.Table.phase(state.extensions, "unpark_plugin") == :running
   end
 
