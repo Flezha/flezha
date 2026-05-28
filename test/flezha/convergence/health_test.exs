@@ -17,8 +17,14 @@ defmodule Flezha.Convergence.HealthTest do
   """
 
   use ExUnit.Case, async: false
+  use Mimic
 
   alias Flezha.Convergence.Health
+  alias Flezha.Executor.FleetManager
+  alias Flezha.Service.HubManager
+  alias Flezha.Service.RelayManager
+
+  setup :set_mimic_global
 
   setup do
     test_pid = self()
@@ -30,7 +36,9 @@ defmodule Flezha.Convergence.HealthTest do
         [:flezha, :convergence, :tick],
         [:flezha, :convergence, :action],
         [:flezha, :convergence, :plugin_restart],
-        [:flezha, :convergence, :plugin_escalated]
+        [:flezha, :convergence, :plugin_escalated],
+        [:flezha, :executor, :reconnected],
+        [:flezha, :executor, :reconnected_reassigned]
       ],
       fn event, measurements, metadata, _ ->
         send(test_pid, {:telemetry, event, measurements, metadata})
@@ -115,6 +123,128 @@ defmodule Flezha.Convergence.HealthTest do
 
       Process.sleep(50)
       assert Process.alive?(pid)
+    end
+  end
+
+  describe "fresh-process executor takeover (orphan rebind)" do
+    @namespace "takeover-ns"
+
+    test "tick rebinds an orphan-bound relay and emits :reconnected_reassigned" do
+      relay_id = "r-orphan"
+      orphan = "exec-old"
+      target = "exec-new"
+      relay_pid = spawn_overwatch_stub(orphan, "fct-1")
+
+      stub_namespace_topology(@namespace, relay_id, relay_pid, orphan, target, "fct-1")
+
+      {:ok, _pid} = start_supervised({Health, tick_ms: 60_000})
+      _ = Health.tick_now()
+
+      assert_receive {:executor_migrate, ^target}, 1_000
+      assert_receive {:relay_set_executor, @namespace, ^relay_id, ^target}, 500
+      assert_receive {:hook_insert_pid, ^target, ^relay_id}, 500
+
+      assert_receive {:telemetry, [:flezha, :executor, :reconnected_reassigned], %{count: 1},
+                      %{previous_id: ^orphan, new_id: ^target, namespace: @namespace}},
+                     500
+
+      assert_receive {:telemetry, [:flezha, :executor, :reconnected], %{count: 1},
+                      %{mode: :reassigned, executor_id: ^target}},
+                     500
+    end
+
+    test ":executor_connected_event triggers an immediate tick" do
+      relay_id = "r-event"
+      orphan = "exec-gone"
+      target = "exec-fresh"
+      relay_pid = spawn_overwatch_stub(orphan, "fct-1")
+
+      stub_namespace_topology(@namespace, relay_id, relay_pid, orphan, target, "fct-1")
+
+      {:ok, _pid} = start_supervised({Health, tick_ms: 60_000})
+
+      Flezha.Service.EventManager.dispatch(
+        :executor_connected_event,
+        {@namespace, target},
+        %{members: :local}
+      )
+
+      assert_receive {:telemetry, [:flezha, :executor, :reconnected_reassigned], _, _}, 1_000
+    end
+
+    test "rebind is skipped when no active executor advertises the factory" do
+      relay_id = "r-no-target"
+      orphan = "exec-gone"
+      relay_pid = spawn_overwatch_stub(orphan, "fct-1")
+
+      HubManager
+      |> stub(:await_recovery_complete, fn _timeout -> :ok end)
+      |> stub(:get_running_namespaces, fn -> [@namespace] end)
+      |> stub(:get_all_relays, fn @namespace -> [{relay_id, relay_pid}] end)
+      |> stub(:get_pid, fn @namespace, ^relay_id -> {:ok, relay_pid} end)
+
+      FleetManager
+      |> stub(:active_executors, fn @namespace -> [] end)
+      |> stub(:executors_for_factory, fn @namespace, _ -> [] end)
+
+      RelayManager
+      |> stub(:assign_executor, fn @namespace, _ -> nil end)
+
+      {:ok, _pid} = start_supervised({Health, tick_ms: 60_000})
+      _ = Health.tick_now()
+
+      refute_receive {:telemetry, [:flezha, :executor, :reconnected_reassigned], _, _}, 200
+    end
+  end
+
+  defp stub_namespace_topology(namespace, relay_id, relay_pid, _orphan, target, factory) do
+    test_pid = self()
+
+    HubManager
+    |> stub(:await_recovery_complete, fn _timeout -> :ok end)
+    |> stub(:get_running_namespaces, fn -> [namespace] end)
+    |> stub(:get_all_relays, fn ^namespace -> [{relay_id, relay_pid}] end)
+    |> stub(:get_pid, fn ^namespace, ^relay_id -> {:ok, relay_pid} end)
+    |> stub(:relay_set_executor, fn ns, rid, exec ->
+      send(test_pid, {:relay_set_executor, ns, rid, exec})
+      :ok
+    end)
+    |> stub(:hook_insert_pid, fn exec, %{child_id: rid} ->
+      send(test_pid, {:hook_insert_pid, exec, rid})
+      :ok
+    end)
+
+    FleetManager
+    |> stub(:active_executors, fn ^namespace -> [target] end)
+    |> stub(:executors_for_factory, fn ^namespace, ^factory -> [target] end)
+
+    RelayManager
+    |> stub(:assign_executor, fn ^namespace, ^factory -> target end)
+
+    :ok
+  end
+
+  defp spawn_overwatch_stub(executor_id, factory_id) do
+    test_pid = self()
+
+    spawn_link(fn ->
+      overwatch_loop(test_pid, %{executor_id: executor_id, factory_id: factory_id})
+    end)
+  end
+
+  defp overwatch_loop(test_pid, state) do
+    receive do
+      {:"$gen_call", from, :get_overwatch_state} ->
+        GenServer.reply(from, state)
+        overwatch_loop(test_pid, state)
+
+      {:"$gen_call", from, {:executor_migrate, new_id}} ->
+        send(test_pid, {:executor_migrate, new_id})
+        GenServer.reply(from, :ok)
+        overwatch_loop(test_pid, %{state | executor_id: new_id})
+
+      _ ->
+        overwatch_loop(test_pid, state)
     end
   end
 end

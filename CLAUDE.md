@@ -131,6 +131,25 @@
   `kubernetes/prepare-recovery.sh` wraps
   `flz cluster prepare-recovery` for the operator-driven cold-boot
   workflow.
+- **Fresh-process executor takeover**: phase 5 of the change keeps
+  the takeover on the same self-healing loop instead of bolting on
+  a parallel path. `FleetManager.handle_call(:executor_connect, ...)`
+  dispatches `:executor_connected_event` and returns; nothing else.
+  `Flezha.Convergence.Health` subscribes to that event via
+  `EventManager.add_handler/1` and runs an immediate tick. The
+  existing `:rebind_if_executor_available` action body — already
+  responsible for migrating relays whose `bound_executor` is no
+  longer active — flips the registry tag via
+  `HubManager.relay_set_executor/3` and seeds the new executor's
+  pre-spawned `StreamChannel.relay_mapping` via
+  `HubManager.hook_insert_pid/2` (the same fan-out the
+  `child_registered` hook uses), then emits
+  `[:flezha, :executor, :reconnected_reassigned]` +
+  `[:flezha, :executor, :reconnected]` (mode: `:reassigned`,
+  reason: `:convergence_rebind`) per reseated relay. The existing
+  back-off (5s/30s/60s/300s) carries the retry semantics — a
+  failed Overwatch migrate leaves the registry untouched and the
+  relay stays `:degraded` for the next tick.
 
 ## Graceful shutdown (`controller-graceful-shutdown`)
 

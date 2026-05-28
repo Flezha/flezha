@@ -254,11 +254,11 @@ defmodule Flezha.Executor.FleetManager do
       )
 
     state = store_factories(state, namespace, executor_id, factories)
-    state = try_migrate_executor(state, namespace, executor_id)
 
-    # The reconciler (subscribed to :executor_connected_event) re-issues
-    # AddRelay for any local relay still tagged with a now-dead executor — the
-    # catch-up that `reissue_local_orphans` used to do inline.
+    # Fresh-process executor takeover (relays tagged to a now-orphaned
+    # executor are reseated onto this new id) is driven by the
+    # `Flezha.Convergence.Health` watcher, which subscribes to this
+    # event and runs an immediate tick.
     EventManager.dispatch(
       :executor_connected_event,
       {namespace, executor_id},
@@ -353,28 +353,6 @@ defmodule Flezha.Executor.FleetManager do
         ce_id, acc -> remove_ce_factories(acc, namespace, ce_id)
       end)
     end)
-  end
-
-  # Migrate the relays of one already-inactive executor onto the freshly
-  # connected one (the reconnect-of-the-same-fleet case). Broader orphan
-  # catch-up — relays still tagged with any now-dead executor — is the
-  # reconciler's `:reissue` action, triggered by the `:executor_connected_event`
-  # this handler dispatches.
-  defp try_migrate_executor(state, namespace, executor_id) do
-    in_active_executors = get_executor_ids(state, namespace, :inactive)
-
-    Logger.info("Attempting to migrate executor #{executor_id} in namespace #{namespace}")
-
-    case List.first(in_active_executors) do
-      nil ->
-        state
-
-      inactive_executor_id ->
-        namespace_executors =
-          executor_reroute(state, namespace, inactive_executor_id, [executor_id])
-
-        put_in(state, [:executor_namespaces, namespace], namespace_executors)
-    end
   end
 
   defp get_executor_ids(state, namespace, status) do

@@ -415,6 +415,15 @@ defmodule FlezhaTest do
     num_relays = 15
     relay_ids = for i <- 1..num_relays, do: "relay_#{i}"
 
+    # Fresh-process executor takeover (an :inactive peer's bindings
+    # are migrated onto the freshly-connected executor) is driven by
+    # `Flezha.Convergence.Health`, which is OFF in the default test
+    # config to avoid global-tick races. Start it locally for this
+    # test, gated on `:executor_connected_event` so the rebind fires
+    # within ~ms of `executor_id_3` connecting.
+    {:ok, _} =
+      start_supervised({Flezha.Convergence.Health, tick_ms: 60_000})
+
     executor_id_1 = NodeTestHelper.start_executor(namespace)
     executor_id_2 = NodeTestHelper.start_executor(namespace)
 
@@ -448,11 +457,17 @@ defmodule FlezhaTest do
     # Start a new executor under the same namespace.
     executor_id_3 = NodeTestHelper.start_executor(namespace)
 
-    # Make sure all the relays are migrated to the new executor.
-    RelayManager.relay_registry(namespace)
-    |> Enum.each(fn {_relay_id, {_cspec, _cnodes, %{tag: new_executor}}} ->
-      assert new_executor === executor_id_3
-    end)
+    # The Convergence Health watcher reseats every relay tagged to a
+    # dead executor onto `executor_id_3` on its next tick; the
+    # `:executor_connected_event` above triggers that tick within ~ms.
+    # Poll rather than assume the rebind already landed.
+    assert eventually(fn ->
+             RelayManager.relay_registry(namespace)
+             |> Enum.all?(fn {_relay_id, {_cspec, _cnodes, %{tag: tag}}} ->
+               tag === executor_id_3
+             end)
+           end),
+           "relays did not reseat to executor_id_3 within timeout"
 
     # Make sure the states have been migrated.
     for {relay_id, _info} <- relay_infos do
@@ -608,5 +623,21 @@ defmodule FlezhaTest do
     assert length(HubManager.get_hub_nodes(namespace, true)) === 1
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  defp eventually(fun, timeout \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    do_eventually = fn do_self, fun, deadline ->
+      cond do
+        fun.() -> true
+        System.monotonic_time(:millisecond) >= deadline -> false
+        true ->
+          Process.sleep(25)
+          do_self.(do_self, fun, deadline)
+      end
+    end
+
+    do_eventually.(do_eventually, fun, deadline)
   end
 end

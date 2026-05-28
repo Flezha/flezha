@@ -33,6 +33,7 @@ defmodule Flezha.Convergence.Health do
   use GenServer
 
   alias Flezha.Executor.FleetManager
+  alias Flezha.Service.EventManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
 
@@ -110,6 +111,12 @@ defmodule Flezha.Convergence.Health do
         nil
       )
 
+    # Fresh-process executor takeover: a new SDK connecting with an
+    # orphan peer in its namespace is detected on the next tick, but
+    # subscribing to `:executor_connected_event` cuts the worst-case
+    # detection latency from `tick_ms` to ~ms.
+    _ = EventManager.add_handler(:executor_connected_event)
+
     # Schedule the first tick immediately so `:awaiting_recovery`
     # telemetry fires without waiting `tick_ms`.
     Process.send_after(self(), :tick, 0)
@@ -147,6 +154,13 @@ defmodule Flezha.Convergence.Health do
     # if the relay still exists and is bound.
     _ = maybe_rebind(state, relay_id)
     {:noreply, state}
+  end
+
+  # Fresh-process executor takeover trigger: run a tick now instead of
+  # waiting up to `tick_ms` so the orphan rebind fires within ~ms of
+  # the new SDK's `connect_control_channel`.
+  def handle_info({:executor_connected_event, {_namespace, _executor_id}}, %__MODULE__{} = state) do
+    {:noreply, run_tick(state)}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -323,21 +337,43 @@ defmodule Flezha.Convergence.Health do
     0
   end
 
+  # The orphan-rebind seam: on a successful Overwatch migrate, also flip
+  # the registry tag and fan the new pid into the target executor's
+  # `StreamChannel.relay_mapping` (via the same hook the `child_registered`
+  # callback uses) so frames land. Failure of any step leaves the relay
+  # `:degraded` for the next tick under the existing back-off.
   defp act(_state, namespace, relay_id, relay_pid, :rebind_if_executor_available, ctx) do
     factory = ctx.factory_for_relay.(relay_id)
 
-    if factory != nil and ctx.factory_available?.(factory) do
-      case RelayManager.assign_executor(namespace, factory) do
-        target when is_binary(target) ->
-          _ = safe_migrate(relay_pid, target)
-          emit_action(namespace, relay_id, :rebind)
-          1
+    with true <- factory != nil and ctx.factory_available?.(factory),
+         target when is_binary(target) <- RelayManager.assign_executor(namespace, factory),
+         %{executor_id: prev} when is_binary(prev) <- overwatch_snapshot(relay_pid),
+         :ok <- safe_migrate(relay_pid, target),
+         _ <- HubManager.relay_set_executor(namespace, relay_id, target),
+         _ <-
+           HubManager.hook_insert_pid(target, %{
+             child_id: relay_id,
+             node_pids: [{node(), relay_pid}],
+             metadata: %{tag: target}
+           }) do
+      emit_action(namespace, relay_id, :rebind)
+      meta = %{namespace: namespace, relay_id: relay_id, executor_id: target}
 
-        _ ->
-          0
-      end
+      :telemetry.execute(
+        [:flezha, :executor, :reconnected_reassigned],
+        %{count: 1},
+        Map.merge(meta, %{previous_id: prev, new_id: target, reason: :convergence_rebind})
+      )
+
+      :telemetry.execute(
+        [:flezha, :executor, :reconnected],
+        %{count: 1},
+        Map.merge(meta, %{reason: :convergence_rebind, mode: :reassigned})
+      )
+
+      1
     else
-      0
+      _ -> 0
     end
   end
 
