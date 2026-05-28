@@ -34,10 +34,12 @@ defmodule Flezha.Convergence.Planner do
   @spec key(op()) :: Backoff.key()
   def key(%{primitive: primitive, target: target}), do: {primitive, target}
 
-  # Prerequisite order: wake reconnects, then evictions, then (re)binds,
-  # then plugin starts. Each group preserves Delta order within it.
+  # Prerequisite order: wake reconnects, then wedged-channel kills, then
+  # evictions, then (re)binds, then plugin starts. Each group preserves
+  # Delta order within it.
   defp ordered_ops(%Diff{} = d) do
     wake_ops(d) ++
+      wedge_ops(d) ++
       eviction_ops(d) ++
       bind_ops(d) ++
       plugin_ops(d)
@@ -48,6 +50,15 @@ defmodule Flezha.Convergence.Planner do
   end
 
   defp wake_ops(%Diff{}), do: []
+
+  # A wedged channel is healed by reconnecting its stream (primitive 8):
+  # Heal kills the pid; its supervisor restarts it and the StreamAcceptor
+  # re-binds the fresh channel.
+  defp wedge_ops(%Diff{wedged_channels: wedged}) do
+    Enum.map(wedged, fn {pid, kind, _relay} ->
+      op(:reconnect_stream, nil, pid, %{kind: kind})
+    end)
+  end
 
   defp eviction_ops(%Diff{misbound_relays: misbound}) do
     misbound
@@ -77,8 +88,8 @@ defmodule Flezha.Convergence.Planner do
 
   defp plugin_ops(%Diff{} = d) do
     missing =
-      Enum.map(d.missing_plugins, fn {{ns, rid}, plugin_id, cfg} ->
-        op(:start_plugin, ns, rid, %{plugin_id: plugin_id, config: cfg})
+      Enum.map(d.missing_plugins, fn {{ns, rid}, plugin_id, plugin} ->
+        op(:start_plugin, ns, rid, %{plugin_id: plugin_id, plugin: plugin})
       end)
 
     extra =

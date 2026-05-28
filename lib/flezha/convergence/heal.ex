@@ -12,26 +12,32 @@ defmodule Flezha.Convergence.Heal do
   `execute/1` dispatches one planned op to its primitive and returns
   `:ok | :error` so the Loop can drive `Backoff`.
 
-  `rebind_relay` is real this session: it carries the fresh-process
-  executor-takeover migration that already shipped (a relay tagged to a
-  dead/wrong executor is migrated onto an available one, its registry
-  tag flipped, and its pid fanned into the new executor's stream
-  channels). Every other primitive is an observable no-op (emits
-  `[:flezha, :convergence, :heal]` and returns `:ok`) so the
-  Intent→Probe→Diff→Planner→Heal pipeline runs end to end with behaviour
-  unchanged from the chaos baseline. Sessions 3-4 fill in the bodies:
-  Phase A `start_plugin`/`stop_plugin`/`restart_plugin`, Phase B
-  `evict_executor`, Phase C wedged-channel kill, Phase D/F
-  `reconnect_stream`.
+  Real primitives:
+
+    * `rebind_relay` — migrate a relay tagged to a dead/wrong executor
+      onto an available one (flip the registry tag, fan its pid into the
+      new executor's stream channels).
+    * `start_plugin` / `stop_plugin` — reconcile a relay's running plugin
+      set against its declared cspec manifest (invariant I2).
+    * `evict_executor` — forcibly drop a dead executor binding (I1).
+    * `reconnect_stream` for `kind: :stream_channel` — SIGKILL a wedged
+      channel so the supervisor restarts and the acceptor rebinds (I4).
+
+  `start_relay`, `stop_relay`, `restart_plugin`, `replay_state`,
+  `compact_wal`, and the non-channel `reconnect_stream` kinds are
+  observable no-ops (emit `[:flezha, :convergence, :heal]`, return `:ok`)
+  pending later phases.
   """
 
   alias Flezha.Convergence.SafeCall
+  alias Flezha.Executor.FleetManager
   alias Flezha.Service.{HubManager, RelayManager}
 
   require Logger
 
   @relay_call_timeout_ms 1_000
   @migrate_timeout_ms 2_000
+  @plugin_call_timeout_ms 2_000
 
   @primitives ~w(start_relay stop_relay rebind_relay start_plugin stop_plugin
                  restart_plugin evict_executor reconnect_stream replay_state
@@ -60,17 +66,73 @@ defmodule Flezha.Convergence.Heal do
     rebind_relay(namespace, relay_id)
   end
 
-  # Each clause below is an observable no-op this session; Sessions 3-4
+  # Phase A (I2): (re)subscribe a declared-but-missing plugin into the
+  # running relay via the same `{:plugin_subscribe, ...}` path `flz plugin
+  # enable` uses (which activates immediately since the SDK is already up).
+  defp apply_primitive(:start_plugin, %{namespace: ns, target: rid, args: args}) do
+    with {:ok, pid} when is_pid(pid) <- HubManager.get_pid(ns, rid),
+         {:ok, :ok} <-
+           SafeCall.bounded(
+             pid,
+             {:plugin_subscribe, args.plugin_id, args.plugin},
+             @plugin_call_timeout_ms
+           ) do
+      :ok
+    else
+      _ -> :error
+    end
+  end
+
+  # Phase A (I2): unsubscribe a plugin that is running but no longer
+  # declared in the cspec.
+  defp apply_primitive(:stop_plugin, %{namespace: ns, target: rid, args: args}) do
+    with {:ok, pid} when is_pid(pid) <- HubManager.get_pid(ns, rid),
+         {:ok, :ok} <-
+           SafeCall.bounded(pid, {:plugin_unsubscribe, args.plugin_id}, @plugin_call_timeout_ms) do
+      :ok
+    else
+      _ -> :error
+    end
+  end
+
+  # Phase B (I1): forcibly drop a dead/orphaned executor binding so its
+  # relays become misbound and rebind onto a live executor next tick.
+  defp apply_primitive(:evict_executor, %{target: executor_id}) when is_binary(executor_id) do
+    case FleetManager.evict_executor(executor_id) do
+      :ok -> :ok
+      _ -> :error
+    end
+  end
+
+  # Phase C (I4): a wedged stream channel is healed by reconnecting its
+  # stream — kill the pid so its supervisor restarts it and the
+  # StreamAcceptor re-binds the fresh channel.
+  defp apply_primitive(:reconnect_stream, %{target: pid, args: %{kind: :stream_channel}})
+       when is_pid(pid) do
+    kill_channel(pid)
+  end
+
+  # Each clause below is an observable no-op this session; later phases
   # replace the body with the real side effect named in the moduledoc.
   defp apply_primitive(:start_relay, _op), do: :ok
   defp apply_primitive(:stop_relay, _op), do: :ok
-  defp apply_primitive(:start_plugin, _op), do: :ok
-  defp apply_primitive(:stop_plugin, _op), do: :ok
   defp apply_primitive(:restart_plugin, _op), do: :ok
-  defp apply_primitive(:evict_executor, _op), do: :ok
   defp apply_primitive(:reconnect_stream, _op), do: :ok
   defp apply_primitive(:replay_state, _op), do: :ok
   defp apply_primitive(:compact_wal, _op), do: :ok
+
+  # Malformed op (no live target) — never produced by the Planner, but a
+  # crash here would take down the whole tick. Treat as a failed heal.
+  defp apply_primitive(prim, _op) when prim in [:evict_executor, :start_plugin, :stop_plugin],
+    do: :error
+
+  # SIGKILL the wedged channel and drop its strike row. Supervisor
+  # restart + StreamAcceptor rebind close the gap.
+  defp kill_channel(pid) do
+    Process.exit(pid, :kill)
+    HubManager.clear_channel_timeout(pid)
+    :ok
+  end
 
   # Migrate a relay bound to a dead/wrong executor onto an available one.
   # On success: flip the registry tag and seed the target executor's

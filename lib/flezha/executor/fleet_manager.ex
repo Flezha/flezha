@@ -35,10 +35,12 @@ defmodule Flezha.Executor.FleetManager do
       {:error, :shutting_down}
     else
       factories = parse_factories(init_payload)
+      previous_executor_id = parse_previous_executor_id(init_payload)
 
       case GenServer.call(
              __MODULE__,
-             {:executor_connect, stream_ref, namespace, factories, transport},
+             {:executor_connect, stream_ref, namespace, factories, transport,
+              previous_executor_id},
              executor_connect_timeout()
            ) do
         {:error, reason} ->
@@ -53,6 +55,20 @@ defmodule Flezha.Executor.FleetManager do
 
   def active_executors(namespace) do
     GenServer.call(__MODULE__, {:active_executors, namespace})
+  end
+
+  @doc """
+  Atomically evict a dead/orphaned executor binding: clear every relay's
+  stale stream mapping (`HubManager.hook_remove_pid/2`), stop its executor
+  supervisor, drop its factory refs + relay-insertion hook, and remove it
+  from `executor_namespaces`. Its relays become misbound and rebind onto
+  a live executor on the next convergence tick. Idempotent — an unknown
+  id returns `:ok`. Driven by `Flezha.Convergence.Heal.execute/1` (row 16)
+  and by `connect_handler/4` when an SDK presents a `previous_executor_id`.
+  """
+  @spec evict_executor(binary()) :: :ok
+  def evict_executor(executor_id) when is_binary(executor_id) do
+    GenServer.call(__MODULE__, {:evict_executor, executor_id})
   end
 
   @doc """
@@ -229,10 +245,16 @@ defmodule Flezha.Executor.FleetManager do
 
   @impl true
   def handle_call(
-        {:executor_connect, stream_ref, namespace, factories, transport},
+        {:executor_connect, stream_ref, namespace, factories, transport, previous_executor_id},
         _from,
         state
       ) do
+    # When the SDK presents its persisted id from a prior process, evict
+    # that stale binding BEFORE the new bind so the old executor's relays
+    # and stream mappings never linger as a corpse the takeover rebinds
+    # onto (proposal §2 "FleetManager never evicts dead executors").
+    state = maybe_evict_previous(state, previous_executor_id)
+
     # executor_connect/3 currently always returns {:ok, ...} — no error
     # path exists at the controller level yet. If one is ever added, re-introduce
     # the {:error, reason} branch here.
@@ -267,6 +289,11 @@ defmodule Flezha.Executor.FleetManager do
     )
 
     {:reply, {:ok, {namespace, executor_id}}, state}
+  end
+
+  @impl true
+  def handle_call({:evict_executor, executor_id}, _from, state) do
+    {:reply, :ok, do_evict_executor(state, executor_id)}
   end
 
   @impl true
@@ -362,6 +389,47 @@ defmodule Flezha.Executor.FleetManager do
     |> Map.get(namespace, %{})
     |> Enum.filter(fn {_, {s, _}} -> s == status end)
     |> Enum.map(fn {executor_id, {_, _}} -> executor_id end)
+  end
+
+  defp maybe_evict_previous(state, previous_id) when is_binary(previous_id) and previous_id != "" do
+    do_evict_executor(state, previous_id)
+  end
+
+  defp maybe_evict_previous(state, _), do: state
+
+  defp do_evict_executor(state, executor_id) do
+    case find_executor_namespace(state, executor_id) do
+      nil ->
+        state
+
+      namespace ->
+        if HubManager.hub_alive?(namespace) do
+          HubManager.executor_relays(namespace, executor_id)
+          |> Enum.each(fn {relay_id, _node_pids} ->
+            HubManager.hook_remove_pid(executor_id, %{child_id: relay_id})
+          end)
+
+          HubManager.unregister_handler(namespace, executor_id)
+        end
+
+        FleetSupervisor.stop_executor_sup(executor_id)
+
+        :telemetry.execute(
+          [:flezha, :executor, :evicted],
+          %{count: 1},
+          %{namespace: namespace, executor_id: executor_id}
+        )
+
+        state
+        |> remove_ce_factories(namespace, executor_id)
+        |> update_in([:executor_namespaces, namespace], &Map.delete(&1 || %{}, executor_id))
+    end
+  end
+
+  defp find_executor_namespace(state, executor_id) do
+    Enum.find_value(state.executor_namespaces, fn {namespace, executors} ->
+      if Map.has_key?(executors, executor_id), do: namespace, else: nil
+    end)
   end
 
   defp handle_executor_disconnect(state, namespace, executor_id) do
@@ -511,6 +579,15 @@ defmodule Flezha.Executor.FleetManager do
     GenServer.call(control_unit, :command_sockets_connect)
 
     {:ok, namespace, executor_id}
+  end
+
+  # The SDK's persisted id from a prior process (Phase D writes it); used
+  # to evict the stale binding on reconnect. Absent on first connect.
+  defp parse_previous_executor_id(init_payload) do
+    case Map.get(init_payload, "previous_executor_id") do
+      id when is_binary(id) and id != "" -> id
+      _ -> nil
+    end
   end
 
   defp parse_factories(init_payload) do

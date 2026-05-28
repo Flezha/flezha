@@ -74,6 +74,13 @@ defmodule Flezha.Executor.StreamChannel do
   end
 
   @impl true
+  def handle_call({:relay_pid_remove, relay_id}, _from, state) do
+    relay_mapping = Map.delete(state[:relay_mapping], relay_id)
+
+    {:reply, :ok, Map.put(state, :relay_mapping, relay_mapping)}
+  end
+
+  @impl true
   def handle_call({:relay_bulk_insert, relays}, _from, state) do
     relay_mapping =
       Enum.reduce(relays, state.relay_mapping, fn {relay_id, updated_pids}, acc ->

@@ -402,9 +402,9 @@ defmodule Flezha.Relay.Overwatch do
     # `relay.opts[:plugins]` accepts two shapes: bare `%Plugin{}` (the
     # cold-start `flz relay start --plugins` path emits this) and
     # `{plugin_id, %Plugin{}}` tuples (the cspec-persistence path written
-    # by `Flezha.Service.HubManager.update_relay_plugins/3` after a
-    # successful `flz plugin enable`). Both normalise into the tuple
-    # form `Table.bulk_subscribe/2` expects.
+    # by `Flezha.Service.PluginManager` through `ProcessRegistry.update/3`
+    # after a successful `flz plugin enable`). Both normalise into the
+    # tuple form `Table.bulk_subscribe/2` expects.
     already_prepared? =
       state.extensions.plugins != %{} and Enum.count(state.extensions.plugins) > 0
 

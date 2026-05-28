@@ -59,9 +59,9 @@ defmodule Flezha.Plugin do
   the struct itself — so this function is the identity. It exists as a
   contract surface: any future field that holds runtime-only state
   (e.g. a worker pid or timer ref tracked alongside the plugin) MUST
-  be dropped here, otherwise it will be persisted into the cspec via
-  `Flezha.Service.HubManager.update_relay_plugins/3` and resurface
-  on the next Overwatch (re)start as a stale reference.
+  be dropped here, otherwise it will be persisted into the cspec by
+  `Flezha.Service.PluginManager` (through `ProcessRegistry.update/3`) and
+  resurface on the next Overwatch (re)start as a stale reference.
 
   Verified by `test/flezha/plugin_test.exs` — round-tripping the
   output through `:erlang.term_to_binary/1` plus

@@ -62,11 +62,46 @@ defmodule Flezha.Convergence.Diff do
         end
       end)
 
+    {missing, extra} = plugin_divergence(declared, observed)
+
     %__MODULE__{
       unbound_relays: Enum.reverse(unbound),
       misbound_relays: Enum.reverse(misbound),
-      stalled_relays: Enum.map(MapSet.to_list(stalled), &{&1, 0})
+      missing_plugins: missing,
+      extra_plugins: extra,
+      stalled_relays: Enum.map(MapSet.to_list(stalled), &{&1, 0}),
+      wedged_channels: Map.get(reality, :wedged_channels, [])
     }
+  end
+
+  # I2: a relay's declared plugin set (durable cspec) vs the set actually
+  # subscribed in its running extension table. Only diffed for relays we
+  # observed with a live pid — a plugin can only be (un)subscribed on a
+  # running relay; unbound relays are healed by binding first, which
+  # replays the full cspec plugin list.
+  defp plugin_divergence(declared, observed) do
+    Enum.reduce(declared, {[], []}, fn %{namespace: ns, relay_id: rid, plugins: plugins},
+                                       {missing_acc, extra_acc} ->
+      ref = {ns, rid}
+      observed_relay = Map.get(observed, ref, %{})
+      pid = Map.get(observed_relay, :pid)
+
+      if is_pid(pid) do
+        running = MapSet.new(Map.get(observed_relay, :running_plugins, []))
+        declared_ids = MapSet.new(plugins, fn {id, _plugin} -> id end)
+
+        missing =
+          for {id, plugin} <- plugins, not MapSet.member?(running, id), do: {ref, id, plugin}
+
+        extra =
+          for id <- MapSet.to_list(running), not MapSet.member?(declared_ids, id),
+              do: {ref, id, pid}
+
+        {missing_acc ++ missing, extra_acc ++ extra}
+      else
+        {missing_acc, extra_acc}
+      end
+    end)
   end
 
   @doc "True when the delta has no divergence to heal."
