@@ -369,9 +369,10 @@ if config_env() != :test do
     convergence_plugin_strike_threshold:
       System.get_env("FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD", "2")
       |> String.to_integer(),
-    # Opt-in HTTP `/healthz` listener (consume-recovery-mode-and-self-heal §4.6).
+    # /healthz listener — default bind 0.0.0.0 so a kubelet httpGet probe reaches the pod IP.
     healthz_enabled: System.get_env("FLEZHA_HEALTHZ_ENABLED", "false") in ["true", "1"],
-    healthz_port: System.get_env("FLEZHA_HEALTHZ_PORT", "9569") |> String.to_integer()
+    healthz_port: System.get_env("FLEZHA_HEALTHZ_PORT", "9569") |> String.to_integer(),
+    healthz_bind: System.get_env("FLEZHA_HEALTHZ_BIND", "0.0.0.0")
 end
 
 # ------------------------------------------------------------------------------------------------
