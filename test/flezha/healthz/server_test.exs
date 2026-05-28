@@ -17,6 +17,7 @@ defmodule Flezha.Healthz.ServerTest do
 
   use ExUnit.Case, async: false
 
+  alias Flezha.Convergence.Snapshot
   alias Flezha.Healthz.Server
 
   setup do
@@ -27,12 +28,27 @@ defmodule Flezha.Healthz.ServerTest do
     {:ok, port} = Server.listen_port()
 
     on_exit(fn ->
+      # Reset the globally-started snapshot so leaked health state does
+      # not bleed into other suites.
+      Snapshot.publish(%{last_tick_at: nil, stalled_relays: [], bound_relays: 0, producing_relays: 0})
+
       if previous_port,
         do: Application.put_env(:flezha, :healthz_port, previous_port),
         else: Application.delete_env(:flezha, :healthz_port)
     end)
 
     {:ok, port: port}
+  end
+
+  # Publish a convergence snapshot the way the Loop would, so the reader
+  # under test has live state to format.
+  defp publish_tick(stalled) do
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      stalled_relays: stalled,
+      bound_relays: 0,
+      producing_relays: 0
+    })
   end
 
   test "GET / returns pong", %{port: port} do
@@ -52,8 +68,7 @@ defmodule Flezha.Healthz.ServerTest do
   end
 
   test "healthy → 200 with status: healthy", %{port: port} do
-    Server.note_tick()
-    Server.clear_output_stall("any")
+    publish_tick([])
 
     {status, _headers, body} = get(port, "/healthz")
     assert status == 200
@@ -62,8 +77,7 @@ defmodule Flezha.Healthz.ServerTest do
   end
 
   test "output stalled → 503 with reason: output_stalled", %{port: port} do
-    Server.note_tick()
-    Server.note_output_stall("btc_kraken")
+    publish_tick(["btc_kraken"])
 
     {status, _headers, body} = get(port, "/healthz")
     decoded = Jason.decode!(body)
@@ -78,9 +92,6 @@ defmodule Flezha.Healthz.ServerTest do
       assert decoded["reason"] == "output_stalled"
       assert decoded["stalled_relays"] == ["btc_kraken"]
     end
-
-    # Clean up so other tests are not affected.
-    Server.clear_output_stall("btc_kraken")
   end
 
   test "tick stale → 503 with reason: tick_stale (when configured for fast staleness)",
@@ -95,7 +106,7 @@ defmodule Flezha.Healthz.ServerTest do
     end)
 
     # First a tick to set the timestamp...
-    Server.note_tick()
+    publish_tick([])
     # ...then sleep past tick_ms × 2 so the staleness window elapses.
     Process.sleep(50)
 

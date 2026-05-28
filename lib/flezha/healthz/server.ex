@@ -1,18 +1,22 @@
 defmodule Flezha.Healthz.Server do
   @moduledoc """
-  Opt-in HTTP `/healthz` listener introduced by
-  `consume-recovery-mode-and-self-heal` §4.6-4.7. Hand-rolled
-  `:gen_tcp` HTTP/1.1 server following the pattern in
+  Opt-in HTTP `/healthz` listener. Hand-rolled `:gen_tcp` HTTP/1.1
+  server following the pattern in
   `Flezha.Observability.Export.PrometheusHttp` — same idle-timeout
   hygiene, same single-socket accept loop, no Cowboy/Plug dep.
 
-  Endpoint contract (per the `convergence-self-healing` capability):
+  This is a thin reader of `Flezha.Convergence.Snapshot.current/0` (the
+  single published source of truth, design.md invariant I7) plus the
+  per-hub recovery cache. It holds no health state of its own and runs
+  no telemetry handler — the convergence `Loop` publishes the snapshot
+  this server formats.
+
+  Endpoint contract:
 
     * `GET /healthz` — body JSON
-      - `200 OK` `{"status":"healthy", ...}` when every namespace hub
-        is `:normal`, the last convergence tick fired inside the
-        `tick_window`, and no bound relay has been output-stalled
-        past the grace window.
+      - `200 OK` `{"status":"healthy", ...}` when every namespace hub is
+        `:normal`, the last convergence tick fired inside the tick
+        window, and no relay is output-stalled.
       - `200 OK` `{"status":"recovering", ...}` when any hub is in
         `:recovery_pending | :recovering` (kubelet must NOT restart
         during a planned recovery).
@@ -23,12 +27,12 @@ defmodule Flezha.Healthz.Server do
     * Anything else → `404 / 405 / 400`.
 
   Gated by `:healthz_enabled` (default `false`); when off the
-  application supervisor omits this child entirely (see
-  `Flezha.Application.healthz_children/0`).
+  application supervisor omits this child entirely.
   """
 
   use GenServer
 
+  alias Flezha.Convergence.Snapshot
   alias Flezha.Service.HubManager
 
   @idle_timeout_ms 5_000
@@ -47,39 +51,6 @@ defmodule Flezha.Healthz.Server do
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-  end
-
-  @doc """
-  Note a fresh convergence tick. Called from the
-  `Flezha.Convergence.Health` watcher's telemetry handler. The
-  /healthz check reads this timestamp to compute tick staleness.
-  """
-  @spec note_tick() :: :ok
-  def note_tick() do
-    case Process.whereis(__MODULE__) do
-      nil -> :ok
-      pid -> GenServer.cast(pid, :note_tick)
-    end
-  end
-
-  @doc """
-  Note an output-stalled relay so the /healthz probe can surface
-  `reason: "output_stalled"`. Cleared by `clear_output_stall/1`.
-  """
-  @spec note_output_stall(binary()) :: :ok
-  def note_output_stall(relay_id) when is_binary(relay_id) do
-    case Process.whereis(__MODULE__) do
-      nil -> :ok
-      pid -> GenServer.cast(pid, {:note_output_stall, relay_id})
-    end
-  end
-
-  @spec clear_output_stall(binary()) :: :ok
-  def clear_output_stall(relay_id) when is_binary(relay_id) do
-    case Process.whereis(__MODULE__) do
-      nil -> :ok
-      pid -> GenServer.cast(pid, {:clear_output_stall, relay_id})
-    end
   end
 
   @doc "Return the listening port — useful for tests that bind to port 0."
@@ -113,71 +84,16 @@ defmodule Flezha.Healthz.Server do
       {:ok, listen_socket} ->
         {:ok, actual_port} = :inet.port(listen_socket)
         send(self(), :accept_loop)
-
-        # Subscribe to the watcher's tick + the State.Watchdog's
-        # output-stall events so the JSON body is computed from
-        # live observations without a manual ping/clear discipline.
-        _ =
-          :telemetry.attach_many(
-            {__MODULE__, :events},
-            [
-              [:flezha, :convergence, :tick],
-              [:flezha, :state, :output_stall]
-            ],
-            &__MODULE__.handle_telemetry/4,
-            nil
-          )
-
-        {:ok,
-         %{
-           listen_socket: listen_socket,
-           port: actual_port,
-           last_tick_at: nil,
-           stalled_relays: MapSet.new()
-         }}
+        {:ok, %{listen_socket: listen_socket, port: actual_port}}
 
       {:error, reason} ->
         {:stop, {:listen_failed, reason}}
     end
   end
 
-  @doc false
-  def handle_telemetry(event, _measurements, metadata, _config) do
-    case event do
-      [:flezha, :convergence, :tick] ->
-        note_tick()
-
-      [:flezha, :state, :output_stall] ->
-        relay_id = Map.get(metadata, :relay)
-        if is_binary(relay_id), do: note_output_stall(relay_id)
-
-      _ ->
-        :ok
-    end
-  catch
-    _, _ -> :ok
-  end
-
   @impl true
   def handle_call(:listen_port, _from, %{port: port} = state) do
     {:reply, {:ok, port}, state}
-  end
-
-  def handle_call(:snapshot, _from, state) do
-    {:reply, %{last_tick_at: state.last_tick_at, stalled_relays: state.stalled_relays}, state}
-  end
-
-  @impl true
-  def handle_cast(:note_tick, state) do
-    {:noreply, %{state | last_tick_at: System.monotonic_time(:millisecond)}}
-  end
-
-  def handle_cast({:note_output_stall, relay_id}, state) do
-    {:noreply, %{state | stalled_relays: MapSet.put(state.stalled_relays, relay_id)}}
-  end
-
-  def handle_cast({:clear_output_stall, relay_id}, state) do
-    {:noreply, %{state | stalled_relays: MapSet.delete(state.stalled_relays, relay_id)}}
   end
 
   @impl true
@@ -191,7 +107,6 @@ defmodule Flezha.Healthz.Server do
 
   @impl true
   def terminate(_reason, %{listen_socket: ls}) do
-    _ = :telemetry.detach({__MODULE__, :events})
     _ = :gen_tcp.close(ls)
     :ok
   end
@@ -291,48 +206,39 @@ defmodule Flezha.Healthz.Server do
     end
   end
 
+  # Reads the single published convergence snapshot and the per-hub
+  # recovery cache. No local state, no telemetry.
   defp compute_health() do
-    snapshot = GenServer.call(__MODULE__, :snapshot)
+    current = Snapshot.current()
     recovery_states = collect_recovery_states()
+    stalled = Map.get(current, :stalled_relays, [])
+    last_tick_at = Map.get(current, :last_tick_at)
 
     cond do
       any_recovering?(recovery_states) ->
-        body = encode_json(%{
-          status: "recovering",
-          recovery_state: pick_recovery_state(recovery_states)
-        })
-        {:recovering, body}
+        {:recovering,
+         encode_json(%{status: "recovering", recovery_state: pick_recovery_state(recovery_states)})}
 
       any_recovery_failed?(recovery_states) ->
-        body = encode_json(%{status: "unhealthy", reason: "recovery_failed"})
-        {:unhealthy, body}
+        {:unhealthy, encode_json(%{status: "unhealthy", reason: "recovery_failed"})}
 
-      MapSet.size(snapshot.stalled_relays) > 0 ->
-        body =
-          encode_json(%{
-            status: "unhealthy",
-            reason: "output_stalled",
-            stalled_relays: MapSet.to_list(snapshot.stalled_relays)
-          })
+      stalled != [] ->
+        {:unhealthy,
+         encode_json(%{status: "unhealthy", reason: "output_stalled", stalled_relays: stalled})}
 
-        {:unhealthy, body}
-
-      tick_stale?(snapshot.last_tick_at) ->
-        body = encode_json(%{status: "unhealthy", reason: "tick_stale"})
-        {:unhealthy, body}
+      tick_stale?(last_tick_at) ->
+        {:unhealthy, encode_json(%{status: "unhealthy", reason: "tick_stale"})}
 
       true ->
-        tick_age_ms = if snapshot.last_tick_at, do: now_ms() - snapshot.last_tick_at, else: nil
+        tick_age_ms = if last_tick_at, do: now_ms() - last_tick_at, else: nil
 
-        body =
-          encode_json(%{
-            status: "healthy",
-            tick_age_ms: tick_age_ms,
-            bound_relays: count_bound_relays(),
-            producing_relays: count_bound_relays()
-          })
-
-        {:healthy, body}
+        {:healthy,
+         encode_json(%{
+           status: "healthy",
+           tick_age_ms: tick_age_ms,
+           bound_relays: Map.get(current, :bound_relays, 0),
+           producing_relays: Map.get(current, :producing_relays, 0)
+         })}
     end
   end
 
@@ -361,25 +267,14 @@ defmodule Flezha.Healthz.Server do
     end
   end
 
-  defp tick_stale?(nil) do
-    # No tick observed yet — only stale once we have been running long
-    # enough that a tick SHOULD have fired. Without a baseline boot
-    # time the safest answer is "not stale yet"; kubelet will retry
-    # within seconds anyway.
-    false
-  end
+  # No tick observed yet — only stale once a tick SHOULD have fired.
+  # Without a baseline boot time the safest answer is "not stale yet";
+  # kubelet retries within seconds anyway.
+  defp tick_stale?(nil), do: false
 
   defp tick_stale?(last_tick_at) do
     tick_ms = Application.get_env(:flezha, :convergence_tick_ms, 5_000)
     now_ms() - last_tick_at > tick_ms * 2
-  end
-
-  defp count_bound_relays() do
-    HubManager.get_running_namespaces()
-    |> Enum.flat_map(fn ns -> HubManager.get_all_relays(ns) end)
-    |> length()
-  catch
-    _, _ -> 0
   end
 
   defp now_ms(), do: System.monotonic_time(:millisecond)
