@@ -417,12 +417,12 @@ defmodule FlezhaTest do
 
     # Fresh-process executor takeover (an :inactive peer's bindings
     # are migrated onto the freshly-connected executor) is driven by
-    # `Flezha.Convergence.Health`, which is OFF in the default test
-    # config to avoid global-tick races. Start it locally for this
-    # test, gated on `:executor_connected_event` so the rebind fires
-    # within ~ms of `executor_id_3` connecting.
+    # `Flezha.Convergence.Loop`, which is OFF in the default test config
+    # to avoid global-tick races. Start it locally for this test, gated
+    # on `:executor_connected_event` so the rebind fires within ~ms of
+    # `executor_id_3` connecting.
     {:ok, _} =
-      start_supervised({Flezha.Convergence.Health, tick_ms: 60_000})
+      start_supervised({Flezha.Convergence.Loop, tick_ms: 60_000})
 
     executor_id_1 = NodeTestHelper.start_executor(namespace)
     executor_id_2 = NodeTestHelper.start_executor(namespace)
@@ -457,8 +457,8 @@ defmodule FlezhaTest do
     # Start a new executor under the same namespace.
     executor_id_3 = NodeTestHelper.start_executor(namespace)
 
-    # The Convergence Health watcher reseats every relay tagged to a
-    # dead executor onto `executor_id_3` on its next tick; the
+    # The convergence Loop reseats every relay tagged to a dead executor
+    # onto `executor_id_3` on its next tick; the
     # `:executor_connected_event` above triggers that tick within ~ms.
     # Poll rather than assume the rebind already landed.
     assert eventually(fn ->

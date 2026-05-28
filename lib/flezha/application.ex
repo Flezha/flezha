@@ -28,6 +28,9 @@ defmodule Flezha.Application do
         Flezha.Service.EventManager,
         Flezha.BootLoader,
         Flezha.Service.Identificator,
+        # Owns the recovery-state cache + the published convergence
+        # snapshot; must be up before any hub fires recovery telemetry.
+        Flezha.Convergence.Snapshot,
         Flezha.Service.HubManager,
         Flezha.Observability.Supervisor,
         Flezha.Shutdown.Coordinator,
@@ -35,9 +38,10 @@ defmodule Flezha.Application do
         FleetManager,
         # Cluster formation must start BEFORE the transport accepts executor
         # connects, so a hub is never created on a not-yet-clustered node.
-        # `consume-recovery-mode-and-self-heal` §4 retired the Reconciler
-        # stack — `Flezha.Convergence.Health` (started after the State trio
-        # below) takes over the bind/rebind/plugin-restart actions.
+        # The transport must not accept connects before the cluster is
+        # formed, so a hub is never created on a not-yet-clustered node.
+        # `Flezha.Convergence.Loop` (started after the State trio below)
+        # owns all bind/rebind/plugin-restart healing.
         Flezha.Cluster.Orchestrator
       ] ++
         authz_children() ++
@@ -56,7 +60,7 @@ defmodule Flezha.Application do
           Flezha.State.Retention,
           Flezha.State.Watchdog
         ] ++
-        convergence_health_children() ++
+        convergence_loop_children() ++
         healthz_children() ++
         memory_reporter_children()
 
@@ -141,13 +145,12 @@ defmodule Flezha.Application do
     end
   end
 
-  # `consume-recovery-mode-and-self-heal` §4.4-4.5: opt the
-  # Convergence Health watcher into the supervision tree. Default
-  # `true` in prod; tests turn it off so the global app boot does not
-  # tick across suites.
-  defp convergence_health_children do
+  # Opt the convergence Loop into the supervision tree. Default `true`
+  # in prod; tests turn it off so the global app boot does not tick
+  # across suites. The `Snapshot` it publishes to is always started.
+  defp convergence_loop_children do
     if Application.get_env(:flezha, :convergence_health_enabled, true) do
-      [Flezha.Convergence.Health]
+      [Flezha.Convergence.Loop]
     else
       []
     end

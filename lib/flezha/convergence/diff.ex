@@ -1,0 +1,80 @@
+defmodule Flezha.Convergence.Diff do
+  @moduledoc """
+  One pure function — `compute/2` — turning declared `Intent` and probed
+  reality into a structured `Delta` enumerating every invariant
+  violation (design.md §2-§3). This is NOT a per-failure-mode dispatch:
+  each `Delta` field corresponds to one of the seven invariants, and all
+  catalogue rows reduce to populating these fields.
+
+  Sessions 3-4 enrich the population logic (plugins, output advance,
+  stream health, wake detection, resources). This session populates the
+  binding fields (I1) and the stalled set (I3) so the pipeline is real
+  while heals stay stubbed.
+  """
+
+  @type relay_ref :: {atom(), binary()}
+
+  @type t :: %__MODULE__{
+          unbound_relays: [relay_ref()],
+          misbound_relays: [{relay_ref(), binary()}],
+          missing_plugins: [{relay_ref(), binary(), map()}],
+          extra_plugins: [{relay_ref(), binary(), pid()}],
+          stalled_relays: [{relay_ref(), non_neg_integer()}],
+          degraded_external: [{relay_ref(), term()}],
+          wedged_channels: [{pid(), atom(), relay_ref()}],
+          broken_streams: [{atom(), term()}],
+          silent_streams: [{atom(), term()}],
+          wake_event: boolean(),
+          resource_violations: [{atom(), term(), term()}],
+          observability_drift: [{atom(), atom(), atom()}]
+        }
+
+  defstruct unbound_relays: [],
+            misbound_relays: [],
+            missing_plugins: [],
+            extra_plugins: [],
+            stalled_relays: [],
+            degraded_external: [],
+            wedged_channels: [],
+            broken_streams: [],
+            silent_streams: [],
+            wake_event: false,
+            resource_violations: [],
+            observability_drift: []
+
+  @spec compute(Flezha.Convergence.Intent.t(), map()) :: t()
+  def compute(%Flezha.Convergence.Intent{relays: declared}, reality) do
+    active = Map.get(reality, :active_executors, %{})
+    observed = Map.get(reality, :relays, %{})
+    stalled = Map.get(reality, :stalled_relays, MapSet.new())
+
+    {unbound, misbound} =
+      Enum.reduce(declared, {[], []}, fn %{namespace: ns, relay_id: rid}, {unb, mis} ->
+        ref = {ns, rid}
+        observed_relay = Map.get(observed, ref, %{})
+        bound = Map.get(observed_relay, :bound_executor)
+        live = Map.get(active, ns, MapSet.new())
+
+        cond do
+          is_nil(bound) -> {[ref | unb], mis}
+          not MapSet.member?(live, bound) -> {unb, [{ref, bound} | mis]}
+          true -> {unb, mis}
+        end
+      end)
+
+    %__MODULE__{
+      unbound_relays: Enum.reverse(unbound),
+      misbound_relays: Enum.reverse(misbound),
+      stalled_relays: Enum.map(MapSet.to_list(stalled), &{&1, 0})
+    }
+  end
+
+  @doc "True when the delta has no divergence to heal."
+  @spec empty?(t()) :: boolean()
+  def empty?(%__MODULE__{} = d) do
+    d.unbound_relays == [] and d.misbound_relays == [] and d.missing_plugins == [] and
+      d.extra_plugins == [] and d.stalled_relays == [] and d.wedged_channels == [] and
+      d.broken_streams == [] and d.silent_streams == [] and d.wake_event == false and
+      d.resource_violations == [] and d.observability_drift == []
+  end
+end

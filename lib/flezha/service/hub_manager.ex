@@ -10,7 +10,7 @@ defmodule Flezha.Service.HubManager do
 
   use Supervisor
 
-  alias Flezha.Service.HubManager.RecoveryTracker
+  alias Flezha.Convergence.{Probe, SafeCall, Snapshot}
 
   @default_await_timeout_ms 60_000
 
@@ -42,12 +42,12 @@ defmodule Flezha.Service.HubManager do
   defp on_hub_started(hub_id) do
     wait_until_hub_alive(hub_id)
     _ = Flezha.Boot.RecoveryHooks.register(hub_id)
-    # Seed the tracker with the coordinator's current state. The
-    # telemetry events fired during recovery will overwrite this entry
-    # as the lifecycle progresses; the seed only matters when a hub
-    # boots straight into `:normal` (marker present + no replay) and
-    # no telemetry event will follow.
-    _ = RecoveryTracker.observe(hub_id, ProcessHub.recovery_state(hub_id))
+    # Seed the snapshot cache with the coordinator's current state. The
+    # recovery telemetry fired during recovery overwrites this entry as
+    # the lifecycle progresses; the seed only matters when a hub boots
+    # straight into `:normal` (marker present + no replay) and no
+    # telemetry event will follow.
+    _ = Snapshot.observe_recovery(hub_id, ProcessHub.recovery_state(hub_id))
   end
 
   @doc """
@@ -63,7 +63,7 @@ defmodule Flezha.Service.HubManager do
         {:error, :unknown_hub}
 
       true ->
-        case RecoveryTracker.state(hub_id) do
+        case Probe.recovery_state(hub_id) do
           :unknown -> {:ok, ProcessHub.recovery_state(hub_id)}
           state -> {:ok, state}
         end
@@ -81,7 +81,7 @@ defmodule Flezha.Service.HubManager do
           :ok | {:error, {:recovery_timeout, [atom()]}}
   def await_recovery_complete(timeout_ms \\ @default_await_timeout_ms)
       when is_integer(timeout_ms) and timeout_ms >= 0 do
-    RecoveryTracker.await_complete(nil, timeout_ms)
+    Probe.await_recovery_complete(nil, timeout_ms)
   end
 
   @doc """
@@ -92,7 +92,7 @@ defmodule Flezha.Service.HubManager do
           :ok | {:error, {:recovery_timeout, [atom()]}}
   def await_recovery_complete(hub_ids, timeout_ms)
       when is_list(hub_ids) and is_integer(timeout_ms) do
-    RecoveryTracker.await_complete(hub_ids, timeout_ms)
+    Probe.await_recovery_complete(hub_ids, timeout_ms)
   end
 
   # Supervisor.start_child returns once the hub's top supervisor is up,
@@ -154,9 +154,9 @@ defmodule Flezha.Service.HubManager do
 
   @doc """
   All hub_ids currently registered with this supervisor that have a live
-  coordinator. Filters non-hub children (e.g. `RecoveryTracker`) by the
+  coordinator. Filters non-hub children by the
   `Identificator.hub/1`-shaped atom suffix and gating on
-  `ProcessHub.is_alive?/1`. Used by `RecoveryTracker.await_complete/2`
+  `ProcessHub.is_alive?/1`. Used by `Probe.await_recovery_complete/2`
   when the caller does not pass an explicit hub-id list.
   """
   @spec list_running_hub_ids() :: [atom()]
@@ -448,17 +448,10 @@ defmodule Flezha.Service.HubManager do
               Supervisor.which_children(Identificator.stream_sup_primary(executor_id)) ++
                 Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
 
-            # A wedged StreamChannel must not crash the caller (Convergence.Health).
+            # A wedged StreamChannel must not crash the caller.
             Enum.each(stream_channels, fn
               {_, pid, _, _} when is_pid(pid) ->
-                try do
-                  GenServer.call(pid, {:relay_pid_update, relay_id, updated_pids}, 1_000)
-                catch
-                  :exit, reason ->
-                    Logger.warning(
-                      "[hub_manager] relay_pid_update timeout relay=#{inspect(relay_id)} executor=#{inspect(executor_id)} pid=#{inspect(pid)} reason=#{inspect(reason)}"
-                    )
-                end
+                _ = SafeCall.bounded(pid, {:relay_pid_update, relay_id, updated_pids}, 1_000)
 
               _ ->
                 :ok
@@ -573,9 +566,10 @@ defmodule Flezha.Service.HubManager do
 
   @impl true
   def init(_init_arg) do
-    # RecoveryTracker MUST start before any hub so the telemetry handler
-    # is attached before `[:process_hub, :recovery, _]` events can fire.
-    Supervisor.init([RecoveryTracker], strategy: :one_for_one)
+    # Dynamic supervisor for the per-namespace hubs; recovery-state
+    # caching moved to `Flezha.Convergence.Snapshot` (started earlier in
+    # the application tree).
+    Supervisor.init([], strategy: :one_for_one)
   end
 
   defp process_hub(namespace) do

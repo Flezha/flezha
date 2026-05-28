@@ -100,10 +100,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   test "await_recovery_complete/2 times out when a hub is stuck in :recovering" do
     fake_hub_id = :"fake_stuck_hub_#{System.unique_integer([:positive])}"
-    # Bypass the supervisor: we want to simulate a hub that the tracker
-    # has observed as :recovering without ever transitioning. The
-    # tracker treats explicit observations as authoritative.
-    HubManager.RecoveryTracker.observe(fake_hub_id, :recovering)
+    # Simulate a hub observed as :recovering that never transitions.
+    # The snapshot treats explicit observations as authoritative.
+    Flezha.Convergence.Snapshot.observe_recovery(fake_hub_id, :recovering)
 
     assert {:error, {:recovery_timeout, [^fake_hub_id]}} =
              HubManager.await_recovery_complete([fake_hub_id], 100)

@@ -293,38 +293,30 @@ defmodule Flezha.Service.HubManagerTest do
     end
   end
 
-  describe "RecoveryTracker" do
-    alias Flezha.Service.HubManager.RecoveryTracker
+  describe "recovery state (Snapshot + Probe)" do
+    alias Flezha.Convergence.{Probe, Snapshot}
 
-    setup do
-      # The tracker is started by HubManager's Supervisor in normal app
-      # boot; in test mode HubManager is up so the tracker is already
-      # running. Snapshot/reset the tracker's known state between tests
-      # by observing :unknown for a unique hub_id only this test uses.
-      :ok
-    end
-
-    test "await_complete returns :ok immediately when target is already :normal" do
+    test "await returns :ok immediately when target is already :normal" do
       hub_id = :"hm_rt_normal_#{System.unique_integer([:positive])}"
-      RecoveryTracker.observe(hub_id, :normal)
-      assert :ok = RecoveryTracker.await_complete([hub_id], 200)
+      Snapshot.observe_recovery(hub_id, :normal)
+      assert :ok = Probe.await_recovery_complete([hub_id], 200)
     end
 
-    test "await_complete returns :ok immediately when target is already :skipped" do
+    test "await returns :ok immediately when target is already :skipped" do
       hub_id = :"hm_rt_skipped_#{System.unique_integer([:positive])}"
-      RecoveryTracker.observe(hub_id, :skipped)
-      assert :ok = RecoveryTracker.await_complete([hub_id], 200)
+      Snapshot.observe_recovery(hub_id, :skipped)
+      assert :ok = Probe.await_recovery_complete([hub_id], 200)
     end
 
-    test "await_complete blocks until :complete telemetry fires" do
+    test "await blocks until :complete telemetry fires" do
       hub_id = :"hm_rt_blocking_#{System.unique_integer([:positive])}"
-      RecoveryTracker.observe(hub_id, :recovering)
+      Snapshot.observe_recovery(hub_id, :recovering)
       test_pid = self()
 
       task =
         Task.async(fn ->
           send(test_pid, :await_started)
-          RecoveryTracker.await_complete([hub_id], 2_000)
+          Probe.await_recovery_complete([hub_id], 2_000)
         end)
 
       assert_receive :await_started, 1_000
@@ -339,12 +331,12 @@ defmodule Flezha.Service.HubManagerTest do
       assert :ok = Task.await(task, 2_000)
     end
 
-    test "await_complete times out and reports outstanding hub_ids" do
+    test "await times out and reports outstanding hub_ids" do
       hub_id = :"hm_rt_timeout_#{System.unique_integer([:positive])}"
-      RecoveryTracker.observe(hub_id, :recovering)
+      Snapshot.observe_recovery(hub_id, :recovering)
 
       assert {:error, {:recovery_timeout, [^hub_id]}} =
-               RecoveryTracker.await_complete([hub_id], 100)
+               Probe.await_recovery_complete([hub_id], 100)
     end
   end
 
