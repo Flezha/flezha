@@ -43,6 +43,10 @@ flezha-*.tar
 # Log files
 /logs/
 
+# Local chaos harness + its soak/report outputs. Kept on disk (work in
+# progress) but out of `git status` until it is ready to be committed.
+/chaos/
+
 # Openspecs
 /openspec/changes
 !/openspec/changes/archive

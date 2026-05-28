@@ -4,3 +4,4 @@ sockets/*
 recovery/*
 certs/*
 auth/*
+process_hub/*
