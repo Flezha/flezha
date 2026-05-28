@@ -104,15 +104,19 @@ defmodule Flezha.AuthZ.BootstrapTest do
   end
 
   test "permissive parent directory aborts bootstrap write" do
-    # Re-point bootstrap_token_path so its parent is /tmp (mode 1777
-    # on Linux). The check_parent_mode/1 guard should refuse to
-    # write and surface {:error, {:permissive_auth_parent, "/tmp"}}.
-    permissive_dir =
+    # `check_parent_mode/1` inspects the GRANDPARENT of the token (the
+    # dir holding the auth dir). Build a controlled root and chmod it
+    # group/other-writable so the guard fires deterministically — the
+    # host's `System.tmp_dir!()` mode (umask-dependent) must not decide
+    # the outcome. The guard should refuse and surface
+    # `{:error, {:permissive_auth_parent, _}}`.
+    permissive_root =
       Path.join(System.tmp_dir!(), "flz_authz_permissive_#{System.unique_integer([:positive])}")
 
-    File.mkdir_p!(permissive_dir)
-    # Don't chmod permissive_dir's parent — /tmp is permissive on
-    # purpose. The bootstrap writer must refuse.
+    auth_dir = Path.join(permissive_root, "auth")
+    File.mkdir_p!(auth_dir)
+    File.chmod!(permissive_root, 0o777)
+
     File.rm_rf!(Application.get_env(:flezha, :authn_authz)[:bootstrap_token_path])
     :ok = RoleStore.unbind("alice")
 
@@ -121,12 +125,12 @@ defmodule Flezha.AuthZ.BootstrapTest do
     Application.put_env(
       :flezha,
       :authn_authz,
-      Keyword.put(prev, :bootstrap_token_path, Path.join(permissive_dir, "bootstrap.token"))
+      Keyword.put(prev, :bootstrap_token_path, Path.join(auth_dir, "bootstrap.token"))
     )
 
     on_exit(fn ->
       Application.put_env(:flezha, :authn_authz, prev)
-      File.rm_rf!(permissive_dir)
+      File.rm_rf!(permissive_root)
     end)
 
     log =
