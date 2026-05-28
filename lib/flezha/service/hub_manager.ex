@@ -448,8 +448,20 @@ defmodule Flezha.Service.HubManager do
               Supervisor.which_children(Identificator.stream_sup_primary(executor_id)) ++
                 Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
 
-            Enum.each(stream_channels, fn {_, pid, _, _} ->
-              GenServer.call(pid, {:relay_pid_update, relay_id, updated_pids})
+            # A wedged StreamChannel must not crash the caller (Convergence.Health).
+            Enum.each(stream_channels, fn
+              {_, pid, _, _} when is_pid(pid) ->
+                try do
+                  GenServer.call(pid, {:relay_pid_update, relay_id, updated_pids}, 1_000)
+                catch
+                  :exit, reason ->
+                    Logger.warning(
+                      "[hub_manager] relay_pid_update timeout relay=#{inspect(relay_id)} executor=#{inspect(executor_id)} pid=#{inspect(pid)} reason=#{inspect(reason)}"
+                    )
+                end
+
+              _ ->
+                :ok
             end)
         end
     end

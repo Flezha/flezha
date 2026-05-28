@@ -352,7 +352,13 @@ defmodule Flezha.State.WalWriter do
     :ok = :file.truncate(state.file_handle)
 
     Enum.each(Registry.snapshot_paths(state.partition_id), fn {_seq, path} -> File.rm(path) end)
-    _ = Outbox.write_last_seq(state.partition_id, seq - 1)
+    # When the new epoch begins at seq=0, last_persisted_seq = -1; outbox stores unsigned
+    # ints so we clear the dedup file instead (absence ≡ "no records persisted yet").
+    if seq > 0 do
+      _ = Outbox.write_last_seq(state.partition_id, seq - 1)
+    else
+      _ = File.rm(Registry.outbox_dedup_path(state.partition_id))
+    end
 
     emit_realign(state.partition_id, state.last_persisted_seq, seq, executor_id)
 

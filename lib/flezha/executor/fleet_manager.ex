@@ -468,8 +468,20 @@ defmodule Flezha.Executor.FleetManager do
       Supervisor.which_children(Identificator.stream_sup_primary(new_executor)) ++
         Supervisor.which_children(Identificator.stream_sup_secondary(new_executor))
 
-    Enum.each(stream_channels, fn {_, pid, _, _} ->
-      GenServer.call(pid, {:relay_bulk_insert, overwatchers})
+    # Defensive: a slow StreamChannel must not crash the caller.
+    Enum.each(stream_channels, fn
+      {_, pid, _, _} when is_pid(pid) ->
+        try do
+          GenServer.call(pid, {:relay_bulk_insert, overwatchers}, 1_000)
+        catch
+          :exit, reason ->
+            Logger.warning(
+              "[fleet_manager] relay_bulk_insert timeout executor=#{inspect(new_executor)} pid=#{inspect(pid)} reason=#{inspect(reason)}"
+            )
+        end
+
+      _ ->
+        :ok
     end)
 
     Map.delete(state.executor_namespaces[namespace], old_executor)
