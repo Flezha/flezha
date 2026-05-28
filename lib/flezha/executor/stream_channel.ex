@@ -31,9 +31,9 @@ defmodule Flezha.Executor.StreamChannel do
         %{stream_ref: nil} = state
       ) do
     # Unbound channel: emit `[:flezha, :stream, :drop]` so the seam
-    # is observable. The Convergence Health watcher subscribes to
-    # `:output_stall` for rebind decisions; drop telemetry remains a
-    # useful operator signal independent of that.
+    # is observable. The convergence Loop subscribes to `:output_stall`
+    # for rebind decisions; drop telemetry remains a useful operator
+    # signal independent of that.
     :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{relay_id: relay_id})
     {:noreply, state}
   end

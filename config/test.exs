@@ -80,9 +80,9 @@ config :flezha,
   # ProcessHub coordinator into shutdown. The persistent registry still
   # records mutations; only the at-boot replay state machine is off.
   auto_restore_enabled: false,
-  # consume-recovery-mode-and-self-heal §4: Convergence Health watcher OFF
-  # in test mode so global ticks would not race per-test fixtures. Tests
-  # that exercise the watcher start it explicitly.
+  # Convergence Loop OFF in test mode so global ticks do not race
+  # per-test fixtures. Tests that exercise it start it explicitly.
+  # (The always-on Convergence.Snapshot is unaffected by this flag.)
   convergence_health_enabled: false,
   # `/healthz` is opt-in everywhere (off in prod by default too); tests
   # that exercise it bring up the listener inline.

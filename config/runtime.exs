@@ -355,10 +355,9 @@ if config_env() != :test do
       System.get_env("FLEZHA_OUTPUT_WATCHDOG_INTERVAL_MS", "10000") |> String.to_integer(),
     time_travel_retention_check_interval_ms:
       System.get_env("FLEZHA_RETENTION_CHECK_INTERVAL_MS", "60000") |> String.to_integer(),
-    # consume-recovery-mode-and-self-heal §4: single Convergence Health
-    # watcher replacing the Reconciler stack. `:tick_ms` is the per-relay
-    # decision cadence; `:output_stall_grace_ms` is the minimum bound
-    # stability window before an output-stall triggers a rebind.
+    # The single convergence Loop. `:tick_ms` is the per-relay decision
+    # cadence; `:output_stall_grace_ms` is the minimum bound stability
+    # window before an output-stall triggers a rebind.
     convergence_health_enabled:
       System.get_env("FLEZHA_USE_CONVERGENCE_HEALTH", "true") in ["true", "1"],
     convergence_tick_ms:

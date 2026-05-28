@@ -735,14 +735,10 @@ defmodule Flezha.Service.CliManager do
   defp label_or(nil, default), do: default
   defp label_or(value, _default), do: to_string(value)
 
-  # consume-recovery-mode-and-self-heal §4: the
-  # `Flezha.Reconciler.Leader` GenServer is deleted along with the rest
-  # of the Reconciler stack — leader election was used by the
-  # `Reconciler.Loop`'s cluster-wide registry-mutating actions, which
-  # the Convergence Health watcher no longer needs (it uses local
-  # reads + process_hub's own coordinator for cluster-wide work).
-  # The CLI cluster_status surface keeps the column for backwards
-  # compatibility and surfaces the local node as the de-facto leader.
+  # There is no leader-election process: the convergence Loop uses local
+  # reads + process_hub's own coordinator for cluster-wide work. The CLI
+  # cluster_status surface keeps the column and surfaces the local node
+  # as the de-facto leader.
   defp safe_leader do
     node()
   end

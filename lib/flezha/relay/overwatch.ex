@@ -374,9 +374,8 @@ defmodule Flezha.Relay.Overwatch do
   External trigger for the bind-driven per-Partition replay
   (`consume-recovery-mode-and-self-heal` §3.1-3.2). Called from
   `Flezha.State.Recovery.resync_for_overwatch/2` when a non-bind
-  caller (the Convergence Health watcher's rebind action in phase 4)
-  needs to re-issue the `RestoreInitState` handshake for an already-
-  bound Overwatch.
+  caller (the convergence Loop's rebind heal) needs to re-issue the
+  `RestoreInitState` handshake for an already-bound Overwatch.
 
   Implementation routes the work back to the Overwatch process via a
   cast so the caller never blocks on enumeration / dispatch — the
@@ -709,8 +708,7 @@ defmodule Flezha.Relay.Overwatch do
     {:noreply, %__MODULE__{state | snapshot: binary}}
   end
 
-  # `consume-recovery-mode-and-self-heal` §3.1-3.2: external callers
-  # (the Convergence Health watcher's rebind action in phase 4) trigger
+  # External callers (the convergence Loop's rebind heal) trigger
   # a fresh per-Partition replay against the Overwatch's bound
   # executor without knowing the Overwatch's internals. The cast is
   # the indirection point used by

@@ -86,13 +86,9 @@ defmodule Flezha.State.Recovery do
         dispatch_resync(partition_id, executor_id, reason)
 
       true ->
-        # No executor_id and no class→executor synthesis: the
-        # pre-Phase-3 fallback that called `resolve_executor/1` here
-        # produced the silent "resync skipped reason=:output_stall"
-        # no-op on cold boot. Callers without an executor_id are
-        # signalling "I observed a stall" — the Convergence Health
-        # watcher (phase 4) drives the rebind action; this module
-        # no longer pretends to dispatch one out-of-band.
+        # Callers without an executor_id are only signalling "I observed
+        # a stall"; the convergence Loop's rebind heal owns the recovery
+        # action. This module does not dispatch one out-of-band.
         {:error, :no_executor_id}
     end
   end

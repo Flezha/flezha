@@ -7,6 +7,7 @@ defmodule Flezha.Executor.FleetManager do
   alias Flezha.Service.EventManager
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
   alias Flezha.Transport.Native
+  alias Flezha.Convergence.SafeCall
 
   require Logger
 
@@ -257,8 +258,8 @@ defmodule Flezha.Executor.FleetManager do
 
     # Fresh-process executor takeover (relays tagged to a now-orphaned
     # executor are reseated onto this new id) is driven by the
-    # `Flezha.Convergence.Health` watcher, which subscribes to this
-    # event and runs an immediate tick.
+    # `Flezha.Convergence.Loop`, which subscribes to this event and runs
+    # an immediate tick.
     EventManager.dispatch(
       :executor_connected_event,
       {namespace, executor_id},
@@ -441,15 +442,7 @@ defmodule Flezha.Executor.FleetManager do
           # itself calling back into FleetManager cannot deadlock the
           # disconnect path. The relay will be migrated on its next
           # bind/rebind attempt.
-          try do
-            GenServer.call(relay_pid, {:executor_migrate, new_executor}, 2_000)
-          catch
-            :exit, reason ->
-              Logger.warning(
-                "[FleetManager] executor_migrate timed out for relay #{relay_id} " <>
-                  "(old=#{old_executor} → new=#{new_executor}): #{inspect(reason)}"
-              )
-          end
+          _ = SafeCall.bounded(relay_pid, {:executor_migrate, new_executor}, 2_000)
       end
     end)
 
@@ -471,14 +464,7 @@ defmodule Flezha.Executor.FleetManager do
     # Defensive: a slow StreamChannel must not crash the caller.
     Enum.each(stream_channels, fn
       {_, pid, _, _} when is_pid(pid) ->
-        try do
-          GenServer.call(pid, {:relay_bulk_insert, overwatchers}, 1_000)
-        catch
-          :exit, reason ->
-            Logger.warning(
-              "[fleet_manager] relay_bulk_insert timeout executor=#{inspect(new_executor)} pid=#{inspect(pid)} reason=#{inspect(reason)}"
-            )
-        end
+        _ = SafeCall.bounded(pid, {:relay_bulk_insert, overwatchers}, 1_000)
 
       _ ->
         :ok

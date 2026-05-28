@@ -2,11 +2,9 @@ defmodule Flezha.State.Watchdog do
   @moduledoc """
   Sweeper that makes a stalled per-Partition persistence/output path
   *detectable and self-healing* instead of silently frozen. Holds its own
-  sweep timer (`:output_watchdog_interval_ms`, default 10 s) after
-  `consume-recovery-mode-and-self-heal` §4 removed the
-  `Flezha.Reconciler.Loop` periodic sweep that previously drove it; the
-  Convergence Health watcher consumes the `:output_stall` telemetry the
-  sweep emits.
+  sweep timer (`:output_watchdog_interval_ms`, default 10 s); the
+  convergence `Loop` consumes the `:output_stall` telemetry the sweep
+  emits.
 
   Two sweeps run on each pass:
 
