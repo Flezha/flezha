@@ -337,8 +337,7 @@ if config_env() != :test do
   config :flezha,
     process_hub_registry_root:
       System.get_env("FLEZHA_PROCESS_HUB_REGISTRY_ROOT", "app_data/process_hub"),
-    process_hub_recovery_marker_path:
-      System.get_env("FLEZHA_PROCESS_HUB_RECOVERY_MARKER_PATH"),
+    process_hub_recovery_marker_path: System.get_env("FLEZHA_PROCESS_HUB_RECOVERY_MARKER_PATH"),
     process_hub_recovery_timeout_ms:
       System.get_env("FLEZHA_PROCESS_HUB_RECOVERY_TIMEOUT_MS", "30000")
       |> String.to_integer(),
@@ -367,6 +366,11 @@ if config_env() != :test do
       |> String.to_integer(),
     convergence_plugin_strike_threshold:
       System.get_env("FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD", "2")
+      |> String.to_integer(),
+    # A tick slower than this counts as a latency breach; ≥ 3 consecutive
+    # breaches (or ticks stopping) flips /healthz to 503 (proposal §2).
+    convergence_tick_latency_threshold_ms:
+      System.get_env("FLEZHA_CONVERGENCE_TICK_LATENCY_THRESHOLD_MS", "1000")
       |> String.to_integer(),
     # /healthz listener — default bind 0.0.0.0 so a kubelet httpGet probe reaches the pod IP.
     healthz_enabled: System.get_env("FLEZHA_HEALTHZ_ENABLED", "false") in ["true", "1"],

@@ -33,7 +33,9 @@ defmodule Flezha.Convergence.Snapshot do
     last_tick_at: nil,
     stalled_relays: [],
     bound_relays: 0,
-    producing_relays: 0
+    producing_relays: 0,
+    tick_latency_p99_ms: nil,
+    tick_breach_streak: 0
   }
 
   # ---------- public API ----------
@@ -148,8 +150,12 @@ defmodule Flezha.Convergence.Snapshot do
 
   defp insert(key, value) do
     case :ets.whereis(@table) do
-      :undefined -> :ok
-      tid -> true = :ets.insert(tid, {key, value}); :ok
+      :undefined ->
+        :ok
+
+      tid ->
+        true = :ets.insert(tid, {key, value})
+        :ok
     end
   end
 end

@@ -46,7 +46,6 @@ defmodule Flezha.Convergence.Diff do
   def compute(%Flezha.Convergence.Intent{relays: declared}, reality) do
     active = Map.get(reality, :active_executors, %{})
     observed = Map.get(reality, :relays, %{})
-    stalled = Map.get(reality, :stalled_relays, MapSet.new())
 
     {unbound, misbound} =
       Enum.reduce(declared, {[], []}, fn %{namespace: ns, relay_id: rid}, {unb, mis} ->
@@ -69,10 +68,39 @@ defmodule Flezha.Convergence.Diff do
       misbound_relays: Enum.reverse(misbound),
       missing_plugins: missing,
       extra_plugins: extra,
-      stalled_relays: Enum.map(MapSet.to_list(stalled), &{&1, 0}),
+      stalled_relays: stalled_relays(reality, observed),
       wedged_channels: Map.get(reality, :wedged_channels, [])
     }
   end
+
+  # I3: resolve each stalled relay-instance id (emitted by the Watchdog,
+  # keyed `relay_instance`) against the relays we observed running, so the
+  # Planner rebinds the exact `{namespace, relay_id}` instance. A stalled
+  # id with no live relay is dropped — there is nothing to rebind. Age is
+  # `tick_at - stalled_since` when both are known.
+  defp stalled_relays(reality, observed) do
+    tick_at = Map.get(reality, :tick_at)
+    index = Map.new(Map.keys(observed), fn {_ns, rid} = ref -> {rid, ref} end)
+
+    reality
+    |> Map.get(:stalled_relays, %{})
+    |> normalize_stalled()
+    |> Enum.flat_map(fn {relay_id, since} ->
+      case Map.get(index, relay_id) do
+        nil -> []
+        ref -> [{ref, stall_age(tick_at, since)}]
+      end
+    end)
+  end
+
+  defp normalize_stalled(map) when is_map(map) and not is_struct(map), do: Map.to_list(map)
+  defp normalize_stalled(set) when is_struct(set, MapSet), do: Enum.map(set, &{&1, nil})
+  defp normalize_stalled(list) when is_list(list), do: Enum.map(list, &{&1, nil})
+
+  defp stall_age(tick_at, since) when is_integer(tick_at) and is_integer(since),
+    do: max(tick_at - since, 0)
+
+  defp stall_age(_tick_at, _since), do: 0
 
   # I2: a relay's declared plugin set (durable cspec) vs the set actually
   # subscribed in its running extension table. Only diffed for relays we
@@ -94,7 +122,8 @@ defmodule Flezha.Convergence.Diff do
           for {id, plugin} <- plugins, not MapSet.member?(running, id), do: {ref, id, plugin}
 
         extra =
-          for id <- MapSet.to_list(running), not MapSet.member?(declared_ids, id),
+          for id <- MapSet.to_list(running),
+              not MapSet.member?(declared_ids, id),
               do: {ref, id, pid}
 
         {missing_acc ++ missing, extra_acc ++ extra}

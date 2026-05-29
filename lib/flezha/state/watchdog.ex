@@ -145,11 +145,16 @@ defmodule Flezha.State.Watchdog do
     end
   end
 
+  # The partition's `relay_class` is, by the flezha relay convention
+  # (`RelayManager`: "the relay_id is used as the relay_class identifier"),
+  # the relay-instance id the convergence Loop binds. Emitting it as
+  # `relay_instance` lets the Loop rebind the exact stalled instance
+  # rather than the factory/class name.
   defp flag_output_stall({rc, sh, pk} = pid, status, now, _timeout) do
     :telemetry.execute(
       [:flezha, :state, :output_stall],
       %{stalled_ms: now - status.last_advance_at, last_seq: status.last_persisted_seq},
-      %{relay: rc, shard: sh, key: pk}
+      %{relay_class: rc, relay_instance: rc, shard: sh, key: pk}
     )
 
     _ = Recovery.resync(pid, reason: :output_stall)

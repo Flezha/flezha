@@ -13,15 +13,22 @@ defmodule Flezha.Healthz.Server do
 
   Endpoint contract:
 
-    * `GET /healthz` — body JSON
+    * `GET /healthz` — body JSON, carrying `bound_relays` and
+      `producing_relays` as distinct counters.
       - `200 OK` `{"status":"healthy", ...}` when every namespace hub is
-        `:normal`, the last convergence tick fired inside the tick
-        window, and no relay is output-stalled.
+        `:normal` and `producing_relays == bound_relays`.
+      - `200 OK` `{"status":"degraded", ...}` when
+        `producing_relays < bound_relays` (one or more relays output-
+        stalled). A stalled relay is NOT a restart signal — kubelet must
+        leave the pod alone while the Loop rebinds it.
       - `200 OK` `{"status":"recovering", ...}` when any hub is in
         `:recovery_pending | :recovering` (kubelet must NOT restart
         during a planned recovery).
-      - `503 Service Unavailable` `{"status":"unhealthy", ...}`
-        otherwise. `reason` ∈ `tick_stale | output_stalled | recovery_failed`.
+      - `503 Service Unavailable` `{"status":"unhealthy", ...}` ONLY when
+        the convergence Loop itself is wedged (`reason` ∈
+        `tick_stale | recovery_failed`): it has stopped ticking
+        (`wall - last_tick > tick_ms × 3`) or blew the per-tick latency
+        budget for ≥ 3 consecutive ticks.
 
     * `GET /` — `pong\\n` (cheap probe target).
     * Anything else → `404 / 405 / 400`.
@@ -201,6 +208,7 @@ defmodule Flezha.Healthz.Server do
   defp respond_healthz(socket) do
     case compute_health() do
       {:healthy, body} -> send_response(socket, 200, "application/json", body)
+      {:degraded, body} -> send_response(socket, 200, "application/json", body)
       {:recovering, body} -> send_response(socket, 200, "application/json", body)
       {:unhealthy, body} -> send_response(socket, 503, "application/json", body)
     end
@@ -211,33 +219,51 @@ defmodule Flezha.Healthz.Server do
   defp compute_health() do
     current = Snapshot.current()
     recovery_states = collect_recovery_states()
+    bound = Map.get(current, :bound_relays, 0)
+    producing = Map.get(current, :producing_relays, 0)
     stalled = Map.get(current, :stalled_relays, [])
     last_tick_at = Map.get(current, :last_tick_at)
+    breach_streak = Map.get(current, :tick_breach_streak, 0)
+    p99 = Map.get(current, :tick_latency_p99_ms)
 
     cond do
       any_recovering?(recovery_states) ->
         {:recovering,
-         encode_json(%{status: "recovering", recovery_state: pick_recovery_state(recovery_states)})}
+         encode_json(%{
+           status: "recovering",
+           recovery_state: pick_recovery_state(recovery_states)
+         })}
 
       any_recovery_failed?(recovery_states) ->
         {:unhealthy, encode_json(%{status: "unhealthy", reason: "recovery_failed"})}
 
-      stalled != [] ->
+      loop_wedged?(last_tick_at, breach_streak) ->
         {:unhealthy,
-         encode_json(%{status: "unhealthy", reason: "output_stalled", stalled_relays: stalled})}
+         encode_json(%{
+           status: "unhealthy",
+           reason: "tick_stale",
+           tick_age_ms: tick_age(last_tick_at),
+           tick_latency_p99_ms: p99,
+           tick_breach_streak: breach_streak
+         })}
 
-      tick_stale?(last_tick_at) ->
-        {:unhealthy, encode_json(%{status: "unhealthy", reason: "tick_stale"})}
+      producing < bound ->
+        {:degraded,
+         encode_json(%{
+           status: "degraded",
+           tick_age_ms: tick_age(last_tick_at),
+           bound_relays: bound,
+           producing_relays: producing,
+           stalled_relays: stalled
+         })}
 
       true ->
-        tick_age_ms = if last_tick_at, do: now_ms() - last_tick_at, else: nil
-
         {:healthy,
          encode_json(%{
            status: "healthy",
-           tick_age_ms: tick_age_ms,
-           bound_relays: Map.get(current, :bound_relays, 0),
-           producing_relays: Map.get(current, :producing_relays, 0)
+           tick_age_ms: tick_age(last_tick_at),
+           bound_relays: bound,
+           producing_relays: producing
          })}
     end
   end
@@ -267,15 +293,21 @@ defmodule Flezha.Healthz.Server do
     end
   end
 
-  # No tick observed yet — only stale once a tick SHOULD have fired.
-  # Without a baseline boot time the safest answer is "not stale yet";
-  # kubelet retries within seconds anyway.
-  defp tick_stale?(nil), do: false
+  # 503 ONLY when the Loop is genuinely wedged. Two independent signals,
+  # either of which means kubelet should restart the pod:
+  #   * it has stopped ticking (`wall - last_tick > tick_ms × 3`), or
+  #   * it blew the per-tick latency budget for ≥ 3 consecutive ticks.
+  # A merely output-stalled relay is `degraded`, never wedged — that
+  # hair-trigger SIGTERM'd healthy pods (proposal §2).
+  defp loop_wedged?(nil, _streak), do: false
 
-  defp tick_stale?(last_tick_at) do
+  defp loop_wedged?(last_tick_at, breach_streak) do
     tick_ms = Application.get_env(:flezha, :convergence_tick_ms, 5_000)
-    now_ms() - last_tick_at > tick_ms * 2
+    now_ms() - last_tick_at > tick_ms * 3 or breach_streak >= 3
   end
+
+  defp tick_age(nil), do: nil
+  defp tick_age(last_tick_at), do: now_ms() - last_tick_at
 
   defp now_ms(), do: System.monotonic_time(:millisecond)
 

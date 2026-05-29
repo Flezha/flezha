@@ -8,10 +8,11 @@ defmodule Flezha.Healthz.ServerTest do
     * `/` returns `pong\\n`
     * `/healthz` returns 200 healthy after a tick observation with
       no stalled relays.
-    * `/healthz` returns 503 with `reason: "tick_stale"` when no
-      tick has been observed inside `tick_ms × 2`.
-    * `/healthz` returns 503 with `reason: "output_stalled"` when
-      the watcher has marked a relay as stalled.
+    * `/healthz` returns 200 `degraded` when a relay is output-stalled
+      (`producing_relays < bound_relays`) — a stalled relay is the
+      Loop's job to rebind, NOT a kubelet restart signal.
+    * `/healthz` returns 503 with `reason: "tick_stale"` only when the
+      Loop is wedged (ticks stopped past `tick_ms × 3`).
     * Unknown paths return 404; non-GET methods return 405.
   """
 
@@ -30,7 +31,12 @@ defmodule Flezha.Healthz.ServerTest do
     on_exit(fn ->
       # Reset the globally-started snapshot so leaked health state does
       # not bleed into other suites.
-      Snapshot.publish(%{last_tick_at: nil, stalled_relays: [], bound_relays: 0, producing_relays: 0})
+      Snapshot.publish(%{
+        last_tick_at: nil,
+        stalled_relays: [],
+        bound_relays: 0,
+        producing_relays: 0
+      })
 
       if previous_port,
         do: Application.put_env(:flezha, :healthz_port, previous_port),
@@ -41,13 +47,16 @@ defmodule Flezha.Healthz.ServerTest do
   end
 
   # Publish a convergence snapshot the way the Loop would, so the reader
-  # under test has live state to format.
-  defp publish_tick(stalled) do
+  # under test has live state to format. `producing_relays` is derived as
+  # `bound - stalled`, mirroring the Loop.
+  defp publish_tick(stalled, bound \\ 0) do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
       stalled_relays: stalled,
-      bound_relays: 0,
-      producing_relays: 0
+      bound_relays: bound,
+      producing_relays: max(bound - length(stalled), 0),
+      tick_latency_p99_ms: 0,
+      tick_breach_streak: 0
     })
   end
 
@@ -76,20 +85,22 @@ defmodule Flezha.Healthz.ServerTest do
     assert decoded["status"] in ["healthy", "recovering"]
   end
 
-  test "output stalled → 503 with reason: output_stalled", %{port: port} do
-    publish_tick(["btc_kraken"])
+  test "output stalled → 200 degraded (not a restart signal)", %{port: port} do
+    # One of two bound relays stalled: producing(1) < bound(2).
+    publish_tick(["btc_kraken"], 2)
 
     {status, _headers, body} = get(port, "/healthz")
     decoded = Jason.decode!(body)
 
     if decoded["status"] == "recovering" do
-      # No hubs running in this test env may report recovering;
-      # that is the spec's deliberate "do not restart during planned
-      # recovery" branch and takes precedence over output_stalled.
+      # The spec's deliberate "do not restart during planned recovery"
+      # branch takes precedence over degraded.
       assert status == 200
     else
-      assert status == 503
-      assert decoded["reason"] == "output_stalled"
+      assert status == 200
+      assert decoded["status"] == "degraded"
+      assert decoded["bound_relays"] == 2
+      assert decoded["producing_relays"] == 1
       assert decoded["stalled_relays"] == ["btc_kraken"]
     end
   end

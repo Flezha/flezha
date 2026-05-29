@@ -28,15 +28,24 @@ defmodule Flezha.Convergence.Loop do
 
   @default_tick_ms 5_000
   @default_output_stall_grace_ms 60_000
+  @default_tick_latency_threshold_ms 1_000
+  @latency_window 20
 
   @telemetry_subs [[:flezha, :state, :output_stall]]
   @handler_id {__MODULE__, :events}
 
   defstruct tick_ms: @default_tick_ms,
             output_stall_grace_ms: @default_output_stall_grace_ms,
+            tick_latency_threshold_ms: @default_tick_latency_threshold_ms,
             recovery_awaited?: false,
             backoff: Backoff.new(),
-            stalled_relays: MapSet.new()
+            # relay_instance => monotonic_ms when last flagged stalled.
+            # Entries age out once they cross the output-stall grace,
+            # so a relay that resumes producing auto-clears (no manual
+            # clear) — Phase F invariant I3.
+            stalled_relays: %{},
+            tick_latencies: [],
+            tick_breach_streak: 0
 
   # ---------- public API ----------
 
@@ -53,13 +62,32 @@ defmodule Flezha.Convergence.Loop do
   @impl true
   def init(opts) do
     tick_ms =
-      Keyword.get(opts, :tick_ms, Application.get_env(:flezha, :convergence_tick_ms, @default_tick_ms))
+      Keyword.get(
+        opts,
+        :tick_ms,
+        Application.get_env(:flezha, :convergence_tick_ms, @default_tick_ms)
+      )
 
     grace_ms =
       Keyword.get(
         opts,
         :output_stall_grace_ms,
-        Application.get_env(:flezha, :convergence_output_stall_grace_ms, @default_output_stall_grace_ms)
+        Application.get_env(
+          :flezha,
+          :convergence_output_stall_grace_ms,
+          @default_output_stall_grace_ms
+        )
+      )
+
+    latency_threshold_ms =
+      Keyword.get(
+        opts,
+        :tick_latency_threshold_ms,
+        Application.get_env(
+          :flezha,
+          :convergence_tick_latency_threshold_ms,
+          @default_tick_latency_threshold_ms
+        )
       )
 
     _ =
@@ -72,7 +100,12 @@ defmodule Flezha.Convergence.Loop do
     # without waiting `tick_ms`.
     Process.send_after(self(), :tick, 0)
 
-    {:ok, %__MODULE__{tick_ms: tick_ms, output_stall_grace_ms: grace_ms}}
+    {:ok,
+     %__MODULE__{
+       tick_ms: tick_ms,
+       output_stall_grace_ms: grace_ms,
+       tick_latency_threshold_ms: latency_threshold_ms
+     }}
   end
 
   @impl true
@@ -87,7 +120,8 @@ defmodule Flezha.Convergence.Loop do
   end
 
   def handle_info({:output_stall, relay_id}, %__MODULE__{} = state) when is_binary(relay_id) do
-    {:noreply, %{state | stalled_relays: MapSet.put(state.stalled_relays, relay_id)}}
+    now = System.monotonic_time(:millisecond)
+    {:noreply, %{state | stalled_relays: Map.put(state.stalled_relays, relay_id, now)}}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -107,7 +141,7 @@ defmodule Flezha.Convergence.Loop do
 
   @doc false
   def handle_telemetry([:flezha, :state, :output_stall], _measurements, metadata, loop_pid) do
-    relay_id = Map.get(metadata, :relay_instance) || Map.get(metadata, :relay)
+    relay_id = Map.get(metadata, :relay_instance)
     if is_binary(relay_id) and is_pid(loop_pid), do: send(loop_pid, {:output_stall, relay_id})
     :ok
   catch
@@ -140,22 +174,63 @@ defmodule Flezha.Convergence.Loop do
   end
 
   defp run_tick(%__MODULE__{} = state) do
+    started_at = System.monotonic_time(:millisecond)
+
+    # Age out stalled entries the Watchdog has stopped re-flagging: a
+    # relay that resumed producing leaves the set without a manual clear
+    # (invariant I3 auto-clear).
+    stalled = expire_stalled(state.stalled_relays, started_at, state.output_stall_grace_ms)
+    state = %{state | stalled_relays: stalled}
+
     intent = Intent.declared()
-    reality = Map.put(Probe.snapshot(), :stalled_relays, state.stalled_relays)
+    reality = Map.put(Probe.snapshot(), :stalled_relays, stalled)
     delta = Diff.compute(intent, reality)
     plan = Planner.plan(delta, state.backoff)
 
     {backoff, issued} = execute_plan(plan, state.backoff)
 
-    publish(intent, state)
+    elapsed = System.monotonic_time(:millisecond) - started_at
+
+    {latencies, p99, streak} =
+      record_latency(
+        state.tick_latencies,
+        elapsed,
+        state.tick_breach_streak,
+        state.tick_latency_threshold_ms
+      )
+
+    state = %{state | backoff: backoff, tick_latencies: latencies, tick_breach_streak: streak}
+
+    publish(intent, state, p99)
 
     :telemetry.execute(
       [:flezha, :convergence, :tick],
-      %{relays_total: length(intent.relays), actions_issued: issued},
+      %{relays_total: length(intent.relays), actions_issued: issued, duration_ms: elapsed},
       %{state: :ticking}
     )
 
-    %{state | backoff: backoff}
+    state
+  end
+
+  defp expire_stalled(stalled, now, grace_ms) do
+    :maps.filter(fn _relay, since -> now - since < grace_ms end, stalled)
+  end
+
+  # Rolling window of the last `@latency_window` tick durations → p99;
+  # `streak` counts consecutive ticks over the budget (reset on a fast
+  # tick) so `/healthz` can tell a wedged loop from a single slow tick.
+  defp record_latency(latencies, elapsed, streak, threshold_ms) do
+    latencies = Enum.take([elapsed | latencies], @latency_window)
+    streak = if elapsed > threshold_ms, do: streak + 1, else: 0
+    {latencies, percentile(latencies, 99), streak}
+  end
+
+  defp percentile([], _p), do: 0
+
+  defp percentile(values, p) do
+    sorted = Enum.sort(values)
+    idx = (round(p / 100 * length(sorted)) - 1) |> max(0) |> min(length(sorted) - 1)
+    Enum.at(sorted, idx)
   end
 
   defp execute_plan(plan, backoff) do
@@ -167,14 +242,18 @@ defmodule Flezha.Convergence.Loop do
     end)
   end
 
-  defp publish(%Intent{relays: relays}, %__MODULE__{} = state) do
+  defp publish(%Intent{relays: relays}, %__MODULE__{} = state, p99) do
     bound = length(relays)
+    stalled = Map.keys(state.stalled_relays)
+    producing = max(bound - length(stalled), 0)
 
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_relays: MapSet.to_list(state.stalled_relays),
+      stalled_relays: stalled,
       bound_relays: bound,
-      producing_relays: bound
+      producing_relays: producing,
+      tick_latency_p99_ms: p99,
+      tick_breach_streak: state.tick_breach_streak
     })
   end
 end

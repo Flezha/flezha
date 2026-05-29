@@ -151,6 +151,24 @@ defmodule Flezha.ConvergenceTest do
       assert delta.missing_plugins == []
     end
 
+    test "I3: resolves stalled instance ids to {ns, rid} with age, drops unknown ids" do
+      intent = %Intent{
+        relays: [%{namespace: :ns, relay_id: "live", factory_id: nil, plugins: []}]
+      }
+
+      reality = %{
+        active_executors: %{ns: MapSet.new(["e"])},
+        relays: %{{:ns, "live"} => %{bound_executor: "e"}},
+        tick_at: 1_000,
+        # "live" is running → resolved with age 600; "ghost" has no live
+        # relay → dropped (nothing to rebind).
+        stalled_relays: %{"live" => 400, "ghost" => 200}
+      }
+
+      delta = Diff.compute(intent, reality)
+      assert delta.stalled_relays == [{{:ns, "live"}, 600}]
+    end
+
     test "I4: passes wedged channels through from reality" do
       reality = %{
         active_executors: %{},
@@ -169,7 +187,10 @@ defmodule Flezha.ConvergenceTest do
       delta = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead"}]}
       plan = Planner.plan(delta, Backoff.new())
 
-      assert [%{primitive: :evict_executor, target: "e_dead"}, %{primitive: :rebind_relay} = rebind] =
+      assert [
+               %{primitive: :evict_executor, target: "e_dead"},
+               %{primitive: :rebind_relay} = rebind
+             ] =
                plan
 
       assert rebind.namespace == :ns
@@ -190,6 +211,16 @@ defmodule Flezha.ConvergenceTest do
       assert [first | _] = Planner.plan(delta, Backoff.new())
       assert %{primitive: :reconnect_stream, target: pid, args: %{kind: :stream_channel}} = first
       assert pid == self()
+    end
+
+    test "stalled relays emit a rebind targeting the instance id" do
+      delta = %Diff{stalled_relays: [{{:ns, "live"}, 600}]}
+
+      assert [%{primitive: :rebind_relay, namespace: :ns, target: "live", args: args}] =
+               Planner.plan(delta, Backoff.new())
+
+      assert args.reason == :output_stall
+      assert args.output_age_ms == 600
     end
 
     test "missing plugins emit start_plugin carrying the full %Plugin{}" do
@@ -220,11 +251,22 @@ defmodule Flezha.ConvergenceTest do
 
   describe "Snapshot" do
     test "publish/current round-trips" do
-      Snapshot.publish(%{last_tick_at: 42, stalled_relays: ["x"], bound_relays: 1, producing_relays: 1})
+      Snapshot.publish(%{
+        last_tick_at: 42,
+        stalled_relays: ["x"],
+        bound_relays: 1,
+        producing_relays: 1
+      })
+
       assert Snapshot.current().last_tick_at == 42
       assert Snapshot.current().stalled_relays == ["x"]
       # reset for other suites
-      Snapshot.publish(%{last_tick_at: nil, stalled_relays: [], bound_relays: 0, producing_relays: 0})
+      Snapshot.publish(%{
+        last_tick_at: nil,
+        stalled_relays: [],
+        bound_relays: 0,
+        producing_relays: 0
+      })
     end
 
     test "observe_recovery caches per-hub state" do
@@ -254,7 +296,13 @@ defmodule Flezha.ConvergenceTest do
       victim = spawn(fn -> Process.sleep(:infinity) end)
       ref = Process.monitor(victim)
 
-      op = %{primitive: :reconnect_stream, namespace: nil, target: victim, args: %{kind: :stream_channel}}
+      op = %{
+        primitive: :reconnect_stream,
+        namespace: nil,
+        target: victim,
+        args: %{kind: :stream_channel}
+      }
+
       assert Heal.execute(op) == :ok
 
       assert_receive {:DOWN, ^ref, :process, ^victim, :killed}, 1_000

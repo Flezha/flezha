@@ -92,7 +92,10 @@ defmodule Flezha.State.WatchdogTest do
 
     assert_receive {:output_stall, %{stalled_ms: ms, last_seq: 2}, meta}, 1_000
     assert ms >= @stall_ms
-    assert meta.relay == "TestRelay"
+    # `relay_instance` is the rebind target the convergence Loop consumes;
+    # by the flezha convention it equals the on-disk `relay_class`.
+    assert meta.relay_instance == "TestRelay"
+    assert meta.relay_class == "TestRelay"
     assert_receive {:resync_called, ^partition_id, opts}, 1_000
     assert opts[:reason] == :output_stall
   end
