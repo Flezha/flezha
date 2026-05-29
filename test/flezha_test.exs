@@ -466,21 +466,34 @@ defmodule FlezhaTest do
     # onto `executor_id_3` on its next tick; the
     # `:executor_connected_event` above triggers that tick within ~ms.
     # Poll rather than assume the rebind already landed.
-    assert eventually(fn ->
-             RelayManager.relay_registry(namespace)
-             |> Enum.all?(fn {_relay_id, {_cspec, _cnodes, %{tag: tag}}} ->
-               tag === executor_id_3
-             end)
-           end),
+    assert eventually(
+             fn ->
+               RelayManager.relay_registry(namespace)
+               |> Enum.all?(fn {_relay_id, {_cspec, _cnodes, %{tag: tag}}} ->
+                 tag === executor_id_3
+               end)
+             end,
+             15_000
+           ),
            "relays did not reseat to executor_id_3 within timeout"
 
-    # Make sure the states have been migrated.
-    for {relay_id, _info} <- relay_infos do
-      {:ok, json_state} = RelayManager.get_partition_state(namespace, relay_id)
-
-      assert json_state ===
-               "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}}"
+    # The rebind tag flips before the WAL restore finishes replaying the
+    # change-log onto the reseated executor, so poll the migrated state
+    # rather than reading it the instant the tag lands.
+    expected_state = fn relay_id ->
+      "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}}"
     end
+
+    assert eventually(
+             fn ->
+               Enum.all?(relay_infos, fn {relay_id, _info} ->
+                 RelayManager.get_partition_state(namespace, relay_id) ===
+                   {:ok, expected_state.(relay_id)}
+               end)
+             end,
+             15_000
+           ),
+           "relay states did not migrate to executor_id_3 within timeout"
 
     # Stop the new executor.
     NodeTestHelper.stop_executor(namespace, executor_id_3)
