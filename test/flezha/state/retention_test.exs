@@ -44,7 +44,7 @@ defmodule Flezha.State.RetentionTest do
       {:ok, srv} = Supervisor.lookup(pid)
       header = TestHelpers.stub_header()
 
-      for n <- 1..6, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+      for n <- 0..6, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
       {:ok, _} = Snapshot.write_snapshot(pid, 4, header, "snap@4")
       # After snapshot the writer is at seq 6 with WAL = [5, 6].
       assert WalWriter.last_persisted_seq(srv) == 6
@@ -67,7 +67,7 @@ defmodule Flezha.State.RetentionTest do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)
 
-      for n <- 1..3, do: :ok = WalWriter.append(srv, n, header, "x")
+      for n <- 0..3, do: :ok = WalWriter.append(srv, n, header, "x")
       {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
       {:ok, _} = Snapshot.write_snapshot(pid, 3, header, "snap@3")
 
@@ -83,7 +83,7 @@ defmodule Flezha.State.RetentionTest do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)
 
-      for n <- 1..4, do: :ok = WalWriter.append(srv, n, header, "y" <> Integer.to_string(n))
+      for n <- 0..4, do: :ok = WalWriter.append(srv, n, header, "y" <> Integer.to_string(n))
       :ok = Retention.rewrite_wal_excluding_pre_seq(pid, 2)
 
       {:ok, dev} = :file.open(Registry.wal_path(pid), [:raw, :read, :binary])

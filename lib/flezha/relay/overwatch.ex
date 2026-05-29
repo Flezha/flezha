@@ -351,6 +351,8 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   defp do_dispatch_restore(%__MODULE__{} = state, relay_opts, executor_id) do
+    # The SDK keys per-Partition state by the relay INSTANCE id (== `state.id`),
+    # so the WAL lives under `state/{relay_id}/...`. Enumerate by the same key.
     relay_class = Keyword.get(relay_opts, :relay_class, state.id)
 
     if Flezha.State.PersistenceResolver.persistence_enabled?(relay_class) do
@@ -706,6 +708,14 @@ defmodule Flezha.Relay.Overwatch do
   def handle_cast({:apply_external_snapshot, binary}, %__MODULE__{} = state)
       when is_binary(binary) do
     {:noreply, %__MODULE__{state | snapshot: binary}}
+  end
+
+  # A relay that arrived via HotSwap handover already received its state
+  # in-band (`alter_handover_state` ships `MigrationDeserialization`); a WAL
+  # replay on top would apply every change a second time. Skip — same guard
+  # as the bind-time `maybe_dispatch_restore_init_state`.
+  def handle_cast({:kick_restore, _executor_id}, %__MODULE__{arrived_via_hotswap?: true} = state) do
+    {:noreply, state}
   end
 
   # External callers (the convergence Loop's rebind heal) trigger

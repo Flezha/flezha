@@ -75,6 +75,7 @@ defmodule Flezha.State.WatchdogTest do
     pid = TestHelpers.sample_partition_id(suffix <> uniq())
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
+    :ok = WalWriter.append(w, 0, header, "z")
     :ok = WalWriter.append(w, 1, header, "a")
     :ok = WalWriter.append(w, 2, header, "b")
     {pid, w}

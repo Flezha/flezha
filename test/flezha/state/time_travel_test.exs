@@ -38,7 +38,7 @@ defmodule Flezha.State.TimeTravelTest do
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, srv} = Supervisor.lookup(pid)
 
-    for n <- 1..5, do: :ok = WalWriter.append(srv, n, header, "v" <> Integer.to_string(n))
+    for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "v" <> Integer.to_string(n))
     {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
 
     assert {:ok, result} = TimeTravel.query(pid, {:seq, 4})

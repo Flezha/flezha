@@ -29,11 +29,11 @@ defmodule Flezha.State.RestoreTest do
     %{base: base, partition_id: TestHelpers.sample_partition_id("rest_" <> uniq())}
   end
 
-  test "cold partition: empty snapshot, empty change_log, terminal_seq=0", %{partition_id: pid} do
+  test "cold partition: empty snapshot, empty change_log, terminal_seq=-1 (no records)", %{partition_id: pid} do
     assert {:ok, payload} = Restore.assemble_payload(pid)
     assert payload.snapshot_bytes == <<>>
     assert payload.change_log_bytes == <<>>
-    assert payload.terminal_seq_hint == 0
+    assert payload.terminal_seq_hint == -1
     refute Restore.has_persisted_state?(pid)
   end
 
@@ -53,7 +53,7 @@ defmodule Flezha.State.RestoreTest do
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, srv} = Supervisor.lookup(pid)
 
-    for n <- 1..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+    for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
 
     {:ok, _} = Snapshot.write_snapshot(pid, 3, header, "snap@3")
 

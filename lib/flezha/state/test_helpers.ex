@@ -29,6 +29,27 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
+  Reset all per-Partition state: terminate every live `WalWriter` and wipe
+  the on-disk `state_root`. Integration tests reuse relay ids across cases;
+  now that restore actually rehydrates a relay from its WAL on (re)bind,
+  leftover state from a prior test would leak into the next one. Call from a
+  `setup` block so each test starts from empty partitions.
+  """
+  @spec reset_all_partitions() :: :ok
+  def reset_all_partitions() do
+    sup = Flezha.State.Supervisor
+
+    for {_, pid, _, _} <- DynamicSupervisor.which_children(sup), is_pid(pid) do
+      DynamicSupervisor.terminate_child(sup, pid)
+    end
+
+    state_root = Application.get_env(:flezha, :state_root, "app_data/state")
+    File.rm_rf(state_root)
+    File.mkdir_p(state_root)
+    :ok
+  end
+
+  @doc """
   Build a 16-byte WAL header. The controller treats the header as opaque
   bytes; tests only need a stable shape to round-trip records through
   `WalWriter.encode_record/3` and back.

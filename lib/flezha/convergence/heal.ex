@@ -154,6 +154,15 @@ defmodule Flezha.Convergence.Heal do
           metadata: %{tag: target}
         })
 
+      # Replay the per-Partition WAL into the new binding. The `executor_migrate`
+      # above is a HotSwap handover, which only carries state when the previous
+      # executor is alive to serialise it; when the previous executor died (the
+      # common rebind trigger) the new executor's shard would otherwise init
+      # empty and the relay's persisted state is lost (state resets to 0).
+      # resync routes a `RestoreInitState` handshake for each persisted
+      # partition to `target`, rebuilding state from the durable WAL.
+      _ = Flezha.State.Recovery.resync_for_overwatch(pid, target)
+
       emit_reconnected(namespace, relay_id, prev, target)
       :ok
     else

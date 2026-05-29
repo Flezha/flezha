@@ -23,15 +23,18 @@ defmodule Flezha.State.Restore do
 
   @spec assemble_payload(Registry.partition_id()) :: {:ok, payload()}
   def assemble_payload(partition_id) do
+    # `-1` (not `0`) is the "no snapshot" sentinel: the WAL is 0-based, so a
+    # `0` sentinel with the `seq > snapshot_seq` tail filter would silently
+    # drop the very first change record. `-1` includes seq 0.
     {snapshot_bytes, snapshot_seq} =
       case Snapshot.latest_snapshot(partition_id) do
         nil ->
-          {<<>>, 0}
+          {<<>>, -1}
 
         {seq, path} ->
           case Snapshot.read_snapshot(path) do
             {:ok, _header, bytes} -> {bytes, seq}
-            {:error, _} -> {<<>>, 0}
+            {:error, _} -> {<<>>, -1}
           end
       end
 

@@ -41,7 +41,7 @@ defmodule Flezha.State.SnapshotTest do
     {:ok, srv} = Supervisor.lookup(pid)
     header = TestHelpers.stub_header()
 
-    for n <- 1..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+    for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
 
     {:ok, _} = Snapshot.write_snapshot(pid, 3, header, "snap@3")
 

@@ -94,13 +94,13 @@ defmodule Flezha.State.FsyncBatcherTest do
       pid = TestHelpers.sample_partition_id("real")
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)
-      :ok = WalWriter.append(srv, 1, TestHelpers.stub_header(), "x")
+      :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "x")
 
       FsyncBatcher.mark_dirty(pid)
       :ok = FsyncBatcher.flush_now()
 
       # No exception means the fsync path executed cleanly.
-      assert WalWriter.last_persisted_seq(srv) == 1
+      assert WalWriter.last_persisted_seq(srv) == 0
     end
   end
 

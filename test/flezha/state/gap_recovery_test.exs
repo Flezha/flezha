@@ -33,6 +33,8 @@ defmodule Flezha.State.GapRecoveryTest do
     {:ok, writer} = Supervisor.lookup(partition_id)
     header = TestHelpers.stub_header()
 
+    :ok = WalWriter.append(writer, 0, header, "z")
+
     :ok = WalWriter.append(writer, 1, header, "a")
     :ok = WalWriter.append(writer, 2, header, "b")
     :ok = WalWriter.append(writer, 3, header, "c")

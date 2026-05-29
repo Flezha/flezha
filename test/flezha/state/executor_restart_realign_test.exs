@@ -60,8 +60,8 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
   test "an executor restart realigns the frozen WAL to the new executor's seq base", ctx do
     # The pre-restart executor advances the WAL to seq 5.
     old = start_channel("exec_old")
-    feed(old, ctx, 1..5)
-    assert WalWriter.last_persisted_seq(ctx.writer) == 5
+    feed(old, ctx, 0..4)
+    assert WalWriter.last_persisted_seq(ctx.writer) == 4
 
     # A pre-restart snapshot exists; realignment must discard it so a later
     # RestoreInitState ships only the new epoch (not stale snapshot + new WAL).
@@ -71,19 +71,19 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
     # The executor pod restarts: a NEW executor id reconnects and, after its
     # Kafka rebuild, resumes from a fresh low seq base (1, 2, 3...).
     new = start_channel("exec_new")
-    feed(new, ctx, 1..3)
+    feed(new, ctx, 0..2)
 
     # Realignment fires once on the first regressed Change, adopting the new
     # executor's epoch as the WAL's source of truth.
-    assert_receive {:wal_realign, %{from_seq: 5, to_seq: 1}, meta}, 1_000
+    assert_receive {:wal_realign, %{from_seq: 4, to_seq: 0}, meta}, 1_000
     assert meta.relay == "TestRelay"
     assert meta.executor == "exec_new"
 
     # The WAL is no longer frozen at 5: it follows the new executor down to 3,
     # then keeps advancing on the new epoch.
-    assert WalWriter.last_persisted_seq(ctx.writer) == 3
-    feed(new, ctx, 4..6)
-    assert WalWriter.last_persisted_seq(ctx.writer) == 6
+    assert WalWriter.last_persisted_seq(ctx.writer) == 2
+    feed(new, ctx, 3..5)
+    assert WalWriter.last_persisted_seq(ctx.writer) == 5
 
     # The stale pre-restart snapshot was discarded by the realignment.
     assert Snapshot.latest_snapshot(ctx.partition_id) == nil
@@ -94,14 +94,14 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
 
   test "a same-executor duplicate is still deduped (no spurious realign)", ctx do
     same = start_channel("exec_same")
-    feed(same, ctx, 1..5)
+    feed(same, ctx, 0..4)
 
     # The SAME executor resends an already-persisted seq: a legitimate
     # retransmit, deduped — not a restart, so the WAL must not realign.
     feed(same, ctx, [3])
 
     refute_received {:wal_realign, _, _}
-    assert WalWriter.last_persisted_seq(ctx.writer) == 5
+    assert WalWriter.last_persisted_seq(ctx.writer) == 4
     assert Metrics.get(Metrics.for_partition(ctx.partition_id), :dedup_drops_total) >= 1
   end
 

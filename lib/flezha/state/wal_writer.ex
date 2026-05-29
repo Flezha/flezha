@@ -41,7 +41,7 @@ defmodule Flezha.State.WalWriter do
           partition_id: Registry.partition_id(),
           file_handle: :file.io_device(),
           wal_path: binary(),
-          last_persisted_seq: non_neg_integer(),
+          last_persisted_seq: integer(),
           last_advance_at: integer(),
           last_change_seen_at: integer(),
           owning_executor: binary() | nil,
@@ -62,7 +62,7 @@ defmodule Flezha.State.WalWriter do
   the persisted seq has stopped advancing.
   """
   @type stall_status :: %{
-          last_persisted_seq: non_neg_integer(),
+          last_persisted_seq: integer(),
           last_advance_at: integer(),
           last_change_seen_at: integer()
         }
@@ -93,7 +93,7 @@ defmodule Flezha.State.WalWriter do
   @spec truncate_up_to(GenServer.server(), non_neg_integer()) :: :ok
   def truncate_up_to(server, seq), do: GenServer.call(server, {:truncate_up_to, seq})
 
-  @spec last_persisted_seq(GenServer.server()) :: non_neg_integer()
+  @spec last_persisted_seq(GenServer.server()) :: integer()
   def last_persisted_seq(server), do: GenServer.call(server, :last_persisted_seq)
 
   @spec stall_status(GenServer.server()) :: stall_status()
@@ -394,9 +394,13 @@ defmodule Flezha.State.WalWriter do
   "last valid record" answer. The cost is O(records-since-snapshot)
   at boot; acceptable because compaction keeps WALs short.
   """
-  @spec scan_for_last_valid_seq(:file.io_device(), binary()) :: non_neg_integer()
+  @spec scan_for_last_valid_seq(:file.io_device(), binary()) :: integer()
   def scan_for_last_valid_seq(device, _wal_path) do
-    do_scan(device, 0, 0, 0)
+    # `-1`, not `0`, for an empty WAL: the SDK's per-Partition seq is 0-based
+    # (`change_seq` starts at 0), so a `0` floor makes the dedup guard
+    # (`seq <= last_persisted_seq`) drop the very first change (seq 0) of every
+    # relay. `-1` is the same "no records yet" sentinel `realign_epoch` uses.
+    do_scan(device, 0, -1, 0)
   end
 
   defp do_scan(device, position, last_seq, last_end) do

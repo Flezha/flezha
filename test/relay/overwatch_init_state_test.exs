@@ -23,6 +23,9 @@ defmodule FlezhaTest.Relay.OverwatchInitStateTest do
   end
 
   setup do
+    # Clean per-Partition state so a cold-start test sees no leftover WAL to
+    # restore (restore now rehydrates on bind).
+    Flezha.State.TestHelpers.reset_all_partitions()
     on_exit(fn -> RelayManager.stop_all_relays(@namespace) end)
     :ok
   end

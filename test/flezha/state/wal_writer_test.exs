@@ -83,14 +83,15 @@ defmodule Flezha.State.WalWriterTest do
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
 
-      assert :ok = WalWriter.append(srv, 1, header, "a")
-      assert :ok = WalWriter.append(srv, 2, header, "bb")
-      assert :ok = WalWriter.append(srv, 3, header, "ccc")
-      assert WalWriter.last_persisted_seq(srv) == 3
+      # Per-Partition seq is 0-based (the SDK's change_seq starts at 0).
+      assert :ok = WalWriter.append(srv, 0, header, "a")
+      assert :ok = WalWriter.append(srv, 1, header, "bb")
+      assert :ok = WalWriter.append(srv, 2, header, "ccc")
+      assert WalWriter.last_persisted_seq(srv) == 2
 
       m = Metrics.to_map(Metrics.for_partition(pid))
       assert m.persisted_changes_total == 3
-      assert m.wal_seq == 3
+      assert m.wal_seq == 2
       assert m.persisted_bytes_total > 0
     end
 
@@ -98,8 +99,8 @@ defmodule Flezha.State.WalWriterTest do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
 
-      assert :ok = WalWriter.append(srv, 1, TestHelpers.stub_header(), "x")
-      assert :duplicate = WalWriter.append(srv, 1, TestHelpers.stub_header(), "x")
+      assert :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "x")
+      assert :duplicate = WalWriter.append(srv, 0, TestHelpers.stub_header(), "x")
       assert Metrics.get(Metrics.for_partition(pid), :dedup_drops_total) == 1
     end
 
@@ -108,8 +109,8 @@ defmodule Flezha.State.WalWriterTest do
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
 
-      assert :ok = WalWriter.append(srv, 1, header, "a")
-      assert {:error, {:gap, expected: 2, got: 5}} = WalWriter.append(srv, 5, header, "z")
+      assert :ok = WalWriter.append(srv, 0, header, "a")
+      assert {:error, {:gap, expected: 1, got: 5}} = WalWriter.append(srv, 5, header, "z")
     end
   end
 
@@ -118,9 +119,9 @@ defmodule Flezha.State.WalWriterTest do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
-      :ok = WalWriter.append(srv, 1, header, "a")
-      :ok = WalWriter.append(srv, 2, header, "b")
-      :ok = WalWriter.append(srv, 3, header, "c")
+      :ok = WalWriter.append(srv, 0, header, "a")
+      :ok = WalWriter.append(srv, 1, header, "b")
+      :ok = WalWriter.append(srv, 2, header, "c")
 
       WalWriter.close(srv)
       # Drop the dedup file so the writer must rebuild from the WAL.
@@ -128,15 +129,15 @@ defmodule Flezha.State.WalWriterTest do
 
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv2} = Supervisor.lookup(pid) |> ok!()
-      assert WalWriter.last_persisted_seq(srv2) == 3
+      assert WalWriter.last_persisted_seq(srv2) == 2
     end
 
     test "truncates partial-write tail past last valid record", %{partition_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
-      :ok = WalWriter.append(srv, 1, header, "a")
-      :ok = WalWriter.append(srv, 2, header, "bb")
+      :ok = WalWriter.append(srv, 0, header, "a")
+      :ok = WalWriter.append(srv, 1, header, "bb")
       WalWriter.close(srv)
 
       # Append 5 garbage bytes that look like a partial record.
@@ -144,12 +145,12 @@ defmodule Flezha.State.WalWriterTest do
 
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv2} = Supervisor.lookup(pid) |> ok!()
-      assert WalWriter.last_persisted_seq(srv2) == 2
+      assert WalWriter.last_persisted_seq(srv2) == 1
 
-      # File should be truncated back to the end of seq 2's record.
+      # File should be truncated back to the end of the last valid record.
       {:ok, info} = :file.read_file_info(Registry.wal_path(pid))
-      r1 = WalWriter.encode_record(1, header, "a")
-      r2 = WalWriter.encode_record(2, header, "bb")
+      r1 = WalWriter.encode_record(0, header, "a")
+      r2 = WalWriter.encode_record(1, header, "bb")
       assert elem(info, 1) == byte_size(r1) + byte_size(r2)
     end
   end
@@ -160,7 +161,7 @@ defmodule Flezha.State.WalWriterTest do
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
 
-      for n <- 1..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+      for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
 
       :ok = WalWriter.truncate_up_to(srv, 3)
 

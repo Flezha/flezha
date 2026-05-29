@@ -50,6 +50,7 @@ fn register_relays() {
     register_relay::<CoalescingCounterRelay>();
     register_relay::<PersistenceOffRelay>();
     register_relay::<HybridChannelRelay>();
+    register_relay::<ResumeProbeRelay>();
 }
 
 // -- DoNothingRelay -----------------------------------------------------------
@@ -151,6 +152,74 @@ impl Relay for StoreInputRelay {
         c.channel::<String>("sink")
             .from::<StoreInputShard>()
             .to_plugin("store_input_sink");
+    }
+}
+
+// -- ResumeProbeRelay ---------------------------------------------------------
+//
+// Stateful counter that EMITS its running total on every input, so a Kafka
+// plugin on the output makes the persisted value externally observable. Used
+// by chaos/tests/stateful-resume.sh to prove WAL-backed state survives a hard
+// controller kill / executor restart: after recovery the relay resumes from
+// the persisted total (replayed changes), not from zero. Input is a decimal
+// delta string; output is the new running total as ASCII bytes.
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct ResumeProbeState {
+    total: i64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+enum ResumeProbeChange {
+    Add(i64),
+}
+impl Change for ResumeProbeChange {}
+
+#[derive(Default)]
+struct ResumeProbeShard;
+impl Shard for ResumeProbeShard {
+    type Input = String;
+    type Output = Vec<u8>;
+    type State = ResumeProbeState;
+    type Change = ResumeProbeChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "resume_probe_shard"
+    }
+    fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> ResumeProbeState {
+        // Default + change replay rebuilds the total on restore (same pattern
+        // as stateful_counter); no snapshot fast-path needed.
+        ResumeProbeState::default()
+    }
+    fn apply_change(state: &mut ResumeProbeState, change: &ResumeProbeChange) {
+        match change {
+            ResumeProbeChange::Add(d) => state.total = state.total.saturating_add(*d),
+        }
+    }
+    fn run(
+        &mut self,
+        input: String,
+        mut state: StateHandle<'_, Self>,
+        ctx: &mut ShardCtx<'_>,
+    ) -> Result<(), ShardError> {
+        let delta: i64 = input.parse().unwrap_or(0);
+        let new_total = state.total.saturating_add(delta);
+        state.apply(ResumeProbeChange::Add(delta));
+        ctx.emit::<Vec<u8>>(new_total.to_string().into_bytes())
+    }
+}
+
+struct ResumeProbeRelay;
+impl Relay for ResumeProbeRelay {
+    fn factory_id() -> &'static str {
+        "resume_probe"
+    }
+    fn channels(c: &mut ChannelBuilder) {
+        c.input::<String>("input").into::<ResumeProbeShard>();
+        c.channel::<Vec<u8>>("total")
+            .from::<ResumeProbeShard>()
+            .to_plugin("resume_probe_out");
     }
 }
 

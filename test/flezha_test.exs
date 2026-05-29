@@ -38,6 +38,11 @@ defmodule FlezhaTest do
   end
 
   setup _context do
+    # Restore now rehydrates a relay from its WAL on (re)bind, so leftover
+    # per-Partition state from an earlier test that reused the same relay_id
+    # would leak in. Start each test from empty partitions.
+    Flezha.State.TestHelpers.reset_all_partitions()
+
     on_exit(fn ->
       RelayManager.stop_all_relays(@default_namespace)
       FleetManager.stop_namespace(@temp_namespace)
