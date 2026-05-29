@@ -73,3 +73,10 @@ sdk/java/**/target/
 
 # Claude Code per-project scratch.
 /.claude/scheduled_tasks.lock
+
+# Compiled NIF artifacts: Rustler rebuilds them from the flz_nif crate on
+# `mix compile`, and the prod image cross-compiles its own per arch
+# (docker/prod/Dockerfile.controller). They are also arch-specific
+# (x86-64 here, aarch64 on the rpi5 controller) so a committed copy is
+# both redundant and wrong for other targets.
+/priv/native/*.so
