@@ -35,7 +35,16 @@ public final class ControlChannel {
     }
 
     public void sendHandshake(@Nonnull String namespace) throws Exception {
-        HandshakeMessage msg = HandshakeMessage.from(namespace);
+        sendHandshake(namespace, null);
+    }
+
+    /**
+     * Send the handshake, optionally announcing {@code previousExecutorId} (the
+     * node-locally persisted id from a prior process). Pass {@code null} on
+     * reconnect so the field is omitted, mirroring the Rust SDK.
+     */
+    public void sendHandshake(@Nonnull String namespace, String previousExecutorId) throws Exception {
+        HandshakeMessage msg = HandshakeMessage.from(namespace, previousExecutorId);
         String json = ctx.objectMapper().writeValueAsString(msg);
         byte[] frame = FrameEncoder.build(HANDSHAKE_PAYLOAD_ID, json.getBytes(StandardCharsets.UTF_8), Map.of());
         int status = NativeTransport.streamWrite(ctx.nativeHandle(), controlStreamId, frame);

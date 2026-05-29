@@ -6,7 +6,6 @@ import com.flezha.sdk.state.NoChange;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -16,6 +15,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.zip.CRC32;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,7 +91,11 @@ public final class PartitionFlusher {
         if (changeType == NoChange.class) {
             return false;
         }
-        return partitions.putIfAbsent(partitionId.encoded(), entry) == null;
+        // Overwrite any prior entry under this identity: after a reconnect the
+        // relay registry is cleared and AddRelay rebuilds fresh slots under the
+        // same relay_id, so the new slot's buffer/changeSeq must replace the
+        // dead one rather than be skipped.
+        return partitions.put(partitionId.encoded(), entry) == null;
     }
 
     /** Number of registered Partitions; test-visible. */
@@ -151,7 +155,11 @@ public final class PartitionFlusher {
 
         List<Change> coalesced = coalesce(snapshot);
         for (Change change : coalesced) {
-            long seq = entry.changeSeq().incrementAndGet();
+            // 0-based per-Partition seq: the controller treats the first valid
+            // seq as 0 (last_persisted_seq starts at -1). getAndIncrement on an
+            // AtomicLong based at 0 yields 0 first, matching the Rust flusher's
+            // fetch_add from AtomicU64::new(0).
+            long seq = entry.changeSeq().getAndIncrement();
             byte[] payload = entry.codec().serialize(change);
             byte[] header = entry.headerTemplate().stamp(entry.schemaVersion(), payload);
             byte[] frame = buildPartitionStateChangeFrame(entry.partitionId(), seq, header, payload);
@@ -206,36 +214,35 @@ public final class PartitionFlusher {
     }
 
     /**
-     * Wire-frame layout (umbrella spec):
+     * Wire-frame layout, byte-identical to the controller's
+     * {@code Flezha.State.Wire.decode_frame/1}:
      * <pre>
-     *   [partition_id_len: u32 BE]
-     *   [partition_id_bytes: utf8]
+     *   [partition_id_len: u16 BE]
+     *   [partition_id_bytes]          // PartitionId.encodedBytes(): [rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]
      *   [seq: u64 BE]
      *   [header: 16 bytes]
      *   [change_bytes_len: u32 BE]
      *   [change_bytes: opaque]
-     *   [crc32: u32 BE]   // over the entire preceding frame
+     *   [crc32: u32 BE]               // over change_bytes only
      * </pre>
      */
     public static byte[] buildPartitionStateChangeFrame(PartitionId pid, long seq, byte[] header, byte[] changeBytes) {
-        byte[] idBytes = pid.encoded().getBytes(StandardCharsets.UTF_8);
+        byte[] idBytes = pid.encodedBytes();
+        if (idBytes.length > 0xFFFF) {
+            throw new IllegalStateException("partition identity exceeds 65535 bytes");
+        }
+        CRC32 crc = new CRC32();
+        crc.update(changeBytes);
         try (ByteArrayOutputStream bos = new ByteArrayOutputStream();
                 DataOutputStream out = new DataOutputStream(bos)) {
-            out.writeInt(idBytes.length);
+            out.writeShort(idBytes.length); // u16 BE
             out.write(idBytes);
-            out.writeLong(seq);
-            out.write(header);
-            out.writeInt(changeBytes.length);
+            out.writeLong(seq); // u64 BE
+            out.write(header); // 16 bytes
+            out.writeInt(changeBytes.length); // u32 BE
             out.write(changeBytes);
-            byte[] body = bos.toByteArray();
-            java.util.zip.CRC32 crc = new java.util.zip.CRC32();
-            crc.update(body);
-            try (ByteArrayOutputStream framed = new ByteArrayOutputStream();
-                    DataOutputStream framedOut = new DataOutputStream(framed)) {
-                framedOut.write(body);
-                framedOut.writeInt((int) crc.getValue());
-                return framed.toByteArray();
-            }
+            out.writeInt((int) crc.getValue()); // u32 BE over change_bytes
+            return bos.toByteArray();
         } catch (IOException e) {
             throw new IllegalStateException("frame build failed", e);
         }

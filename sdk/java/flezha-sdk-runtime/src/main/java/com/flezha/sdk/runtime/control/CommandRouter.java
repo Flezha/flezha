@@ -15,6 +15,7 @@ import com.flezha.sdk.runtime.control.handlers.PartitionApplyStateHandler;
 import com.flezha.sdk.runtime.control.handlers.PartitionMailboxStatusHandler;
 import com.flezha.sdk.runtime.control.handlers.PartitionStateHandler;
 import com.flezha.sdk.runtime.control.handlers.PingHandler;
+import com.flezha.sdk.runtime.control.handlers.ReassignExecutorIdHandler;
 import com.flezha.sdk.runtime.control.handlers.RelayMessageHandler;
 import com.flezha.sdk.runtime.control.handlers.RemRelayHandler;
 import com.flezha.sdk.runtime.control.handlers.RestoreInitStateHandler;
@@ -66,6 +67,9 @@ public final class CommandRouter {
         // Resolved reflectively because the protobuf codegen jar may lag the
         // .proto file in a partial-deploy window.
         registerCase(mut, "PING", new PingHandler());
+        // Phase D: controller-driven executor-session reassignment during a
+        // disconnect window. Resolved reflectively for codegen resilience.
+        registerCase(mut, "REASSIGN_EXECUTOR_ID", new ReassignExecutorIdHandler());
         this.handlers = java.util.Collections.unmodifiableMap(mut);
     }
 

@@ -14,6 +14,7 @@ import com.flezha.sdk.runtime.control.KeepaliveSender;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
+import com.flezha.sdk.runtime.state.PartitionStateSink;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -189,6 +190,11 @@ public final class FlezhaImpl implements Flezha {
         coordinatorRef[0] = coordinator;
         coordinator.start();
 
+        // A broken-pipe flood on the data stream (control channel still alive)
+        // drives a full control reconnect via the coordinator — the same
+        // recovery path as an observed connection-lost event.
+        PartitionStateSink.installReconnectRequester(coordinator::onConnectionLost);
+
         NativeTransport.setDispatcher(nativeHandle, eventDispatcher);
 
         // Open the control stream and send the handshake. A failure here drives
@@ -198,7 +204,11 @@ public final class FlezhaImpl implements Flezha {
         ctx.streamRegistry().setControlStreamId(controlStreamId);
         shutdownRef.set(new GracefulShutdown(ctx, controlStreamId));
         try {
-            new ControlChannel(ctx, controlStreamId).sendHandshake(namespace);
+            // Initial connect announces a prior process's persisted id (if any)
+            // as previous_executor_id so the controller evicts the stale
+            // binding before re-binding. Reconnects omit it (see coordinator).
+            new ControlChannel(ctx, controlStreamId)
+                    .sendHandshake(namespace, ExecutorIdStore.load().orElse(null));
         } catch (Exception e) {
             LOG.warn("Initial handshake send failed: {}; driving reconnect", e.toString());
             coordinator.onConnectionLost();

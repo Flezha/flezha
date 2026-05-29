@@ -98,6 +98,17 @@ public final class ShardDispatcher {
         return shardId;
     }
 
+    /**
+     * The per-Partition {@link Shard} instance held by this dispatcher. Used by
+     * the warm-restore path to call {@code initState} / {@code applyChange} when
+     * rebuilding a Partition's state from the controller's change-log.
+     */
+    @Nonnull
+    @SuppressWarnings("rawtypes")
+    public Shard shardInstance() {
+        return shardInstance;
+    }
+
     public ShardDescriptor descriptor() {
         return shardDescriptor;
     }

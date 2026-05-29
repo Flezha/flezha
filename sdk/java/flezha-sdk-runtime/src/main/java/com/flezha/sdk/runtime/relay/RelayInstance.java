@@ -3,6 +3,12 @@ package com.flezha.sdk.runtime.relay;
 import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.partition.PartitionSlot;
+import com.flezha.sdk.runtime.state.FlusherEntry;
+import com.flezha.sdk.runtime.state.HeaderTemplate;
+import com.flezha.sdk.runtime.state.KryoCodec;
+import com.flezha.sdk.runtime.state.PartitionFlusher;
+import com.flezha.sdk.runtime.state.PartitionId;
+import com.flezha.sdk.runtime.state.PartitionStateSink;
 import com.flezha.sdk.runtime.worker.ShardDispatcher;
 import com.flezha.sdk.shard.Shard;
 import com.flezha.sdk.state.NoChange;
@@ -13,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Function;
 import javax.annotation.Nonnull;
 
 /**
@@ -96,6 +103,13 @@ public final class RelayInstance {
         }
         List<Class<?>> kryoTypes = List.copyOf(kryoTypeSet);
 
+        // Shared per-instance flusher inputs: one codec (stable Kryo IDs across
+        // the Relay class), a stateless header template, and the global state
+        // sink as the send path. Each changeful Partition registers below.
+        KryoCodec codec = new KryoCodec(kryoTypes);
+        HeaderTemplate headerTemplate = new HeaderTemplate();
+        Function<byte[], Boolean> sendFrame = PartitionStateSink::send;
+
         RelayInstance shell = new RelayInstance(
                 topology, instanceId, partitions, partitionKeyToIdx, dispatchers, persistenceEnabled, kryoTypes);
 
@@ -117,6 +131,8 @@ public final class RelayInstance {
                 PartitionSlot slot =
                         new PartitionSlot(dispatcher, shardId, Optional.empty(), changeful, mailboxCapacity, policy);
                 slot.state().set(initial);
+                registerWithFlusher(
+                        instanceId, desc, shardInstance, slot, persistenceEnabled, codec, headerTemplate, sendFrame);
                 slots = List.of(slot);
                 dispatchers.add(dispatcher);
             } else {
@@ -133,6 +149,15 @@ public final class RelayInstance {
                     PartitionSlot slot = new PartitionSlot(
                             dispatcher, shardId, Optional.of(key), changeful, mailboxCapacity, policy);
                     slot.state().set(initial);
+                    registerWithFlusher(
+                            instanceId,
+                            desc,
+                            shardInstance,
+                            slot,
+                            persistenceEnabled,
+                            codec,
+                            headerTemplate,
+                            sendFrame);
                     slots.add(slot);
                     keyMap.put(key, idx);
                 }
@@ -142,6 +167,39 @@ public final class RelayInstance {
             partitionKeyToIdx.add(Map.copyOf(keyMap));
         }
         return shell;
+    }
+
+    /**
+     * Register a changeful Partition with the per-process flusher so its
+     * recorded Changes are framed and shipped to the controller's per-Partition
+     * WAL. {@code NoChange} Shards are skipped (the flusher no-ops them too).
+     * The identity is keyed by the relay INSTANCE id so two relays of the same
+     * factory never collide on one Partition's WAL.
+     */
+    private static void registerWithFlusher(
+            String instanceId,
+            ShardDescriptor desc,
+            Shard<?, ?, ?, ?, ?, ?> shardInstance,
+            PartitionSlot slot,
+            boolean persistenceEnabled,
+            KryoCodec codec,
+            HeaderTemplate headerTemplate,
+            Function<byte[], Boolean> sendFrame) {
+        if (!slot.changeful()) {
+            return;
+        }
+        PartitionId partitionId = PartitionId.of(instanceId, desc.name(), slot.shardKey());
+        FlusherEntry entry = new FlusherEntry(
+                slot.changeBufferLock(),
+                slot.changeBuffer(),
+                persistenceEnabled,
+                slot.changeSeq(),
+                sendFrame,
+                headerTemplate,
+                partitionId,
+                shardInstance.schemaVersion(),
+                codec);
+        PartitionFlusher.getOrStart().register(partitionId, entry, desc.changeType());
     }
 
     private static Shard<?, ?, ?, ?, ?, ?> instantiate(Class<? extends Shard<?, ?, ?, ?, ?, ?>> shardClass) {
