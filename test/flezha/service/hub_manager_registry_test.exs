@@ -96,6 +96,55 @@ defmodule Flezha.Service.HubManagerRegistryTest do
     end
   end
 
+  describe "durable_registry_pending?/0" do
+    @pending_ns "mn_pending_test"
+
+    setup do
+      # Start the hub while auto-restore is off so it keeps the in-memory `:ets`
+      # registry backend (no DETS file under the shared tmp root, so the
+      # unstarted-hub on-disk branch stays out of these assertions). Then flip
+      # the flag on — the detection only runs when auto-restore is enabled.
+      {:ok, _} = ensure_hub(@pending_ns)
+
+      prev_restore = Application.get_env(:flezha, :auto_restore_enabled)
+      prev_root = Application.get_env(:flezha, :process_hub_registry_root)
+      # Empty root so the unstarted-hub on-disk branch can never fire from
+      # residue left by other suites — these assertions isolate the
+      # running-hub `dump`-vs-`get_all_relays` discriminator.
+      root = Path.join(System.tmp_dir!(), "flezha_pending_test_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(root)
+      Application.put_env(:flezha, :process_hub_registry_root, root)
+      Application.put_env(:flezha, :auto_restore_enabled, true)
+
+      on_exit(fn ->
+        restore_env(:auto_restore_enabled, prev_restore)
+        restore_env(:process_hub_registry_root, prev_root)
+        File.rm_rf(root)
+        HubManager.stop_hub(@pending_ns)
+      end)
+
+      :ok
+    end
+
+    test "false when every durable relay is bound to a live pid" do
+      inject_relay(@pending_ns, "relay_bound", [{node(), self()}])
+
+      refute HubManager.durable_registry_pending?()
+    end
+
+    test "true when a durable relay has no live pid (replayed but not yet reseated)" do
+      # The DETS row survives a restart with a stale node entry, so `dump/1`
+      # counts it while `get_all_relays/1` (live-pid filtered) drops it — the
+      # registry-loaded-but-unbound window.
+      inject_relay(@pending_ns, "relay_unbound", [{:dead@nohost, spawn(fn -> :ok end)}])
+
+      assert HubManager.durable_registry_pending?()
+    end
+  end
+
+  defp restore_env(key, nil), do: Application.delete_env(:flezha, key)
+  defp restore_env(key, val), do: Application.put_env(:flezha, key, val)
+
   defp ensure_hub(ns) do
     case HubManager.start_hub(ns) do
       {:ok, pid} -> {:ok, pid}

@@ -252,13 +252,14 @@ defmodule Flezha.Convergence.Loop do
     stalled = Map.keys(state.stalled_relays)
     producing = max(bound - length(stalled), 0)
 
-    # Hubs are started lazily on executor reconnect, so immediately after a
-    # restart the durable registry has not been loaded yet and Intent is empty
-    # (intended == 0). Surfacing the on-disk pending-restore signal lets
-    # `/healthz` report `recovering` instead of vacuously `healthy` until the
-    # registry is read back. Only consulted when nothing is declared yet (the
-    # disk check is cheap, but irrelevant once relays are loaded).
-    pending_restore = intended == 0 and HubManager.durable_registry_pending?()
+    # After a restart the durable registry may hold relays that are not yet
+    # bound to a live pid — either the hub has not started (lazy on executor
+    # reconnect) or it has replayed its DETS rows but the stale pids are dead.
+    # In that window `Intent` is short of the durable set, so `bound < intended`
+    # cannot catch it (it compares two already-shrunken counts). Surfacing the
+    # registry-vs-loaded signal lets `/healthz` report `recovering` instead of
+    # vacuously `healthy` until every durable relay is reloaded and bound.
+    pending_restore = HubManager.durable_registry_pending?()
 
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),

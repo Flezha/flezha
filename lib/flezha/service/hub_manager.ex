@@ -738,36 +738,69 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
-  True when auto-restore is enabled and a durable `registry.dets` exists
-  on disk for a hub that is not yet running — i.e. relays were declared
-  in a prior process and this (re)started controller has not loaded them
-  back yet. `stop_hub/1` and `flz reset` both wipe the registry dir, so a
-  persisted file always means undeclared-but-durable relays, never a
-  legitimately-empty namespace. Used by `/healthz` to report `recovering`
-  during the post-restart window before lazy executor-driven hub start
-  repopulates the in-memory registry.
+  True when auto-restore is enabled and the durable registry holds relays
+  this (re)started controller has not loaded back into live, bound
+  processes yet. Two windows close the post-restart "vacuously healthy"
+  hole:
+
+    * **hub not running** — a `registry.dets` exists on disk for a hub
+      that has not started (hubs start lazily on executor reconnect).
+      `stop_hub/1` and `flz reset` both wipe the registry dir, so a
+      persisted file always means durable-but-unloaded relays, never a
+      legitimately-empty namespace.
+
+    * **hub running, relays not bound** — the hub has started and
+      replayed its DETS rows (so they appear in `ProcessRegistry.dump/1`,
+      which keeps entries whose stale `node_pids` survived the restart),
+      but those pids are dead so `get_all_relays/1` (live-pid filtered)
+      still returns fewer. The durable count exceeding the bound count is
+      exactly the rebind-in-progress window the on-disk check above
+      cannot see (the hub is in `list_running_hub_ids/0`).
+
+  `dump/1` reads ProcessHub's own registered backend, so no second DETS
+  handle is opened — there is no contention with the hub's own handle.
+  Used by `/healthz` to report `recovering` instead of `healthy` until
+  the registry is fully reloaded and bound.
   """
   @spec durable_registry_pending?() :: boolean()
   def durable_registry_pending?() do
-    if Application.get_env(:flezha, :auto_restore_enabled, true) do
-      running = MapSet.new(list_running_hub_ids())
+    Application.get_env(:flezha, :auto_restore_enabled, true) and
+      (running_hub_relays_unbound?() or unstarted_hub_has_registry?())
+  end
 
-      root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
+  # Running hub whose durable registry declares more relays than are
+  # currently bound to a live pid — relays replayed from DETS but not yet
+  # reseated onto a reconnected executor.
+  defp running_hub_relays_unbound?() do
+    Enum.any?(list_running_hub_ids(), fn hub_id ->
+      namespace = extract_namespace_from_hub(hub_id)
 
-      case File.ls(root) do
-        {:ok, entries} ->
-          Enum.any?(entries, fn entry ->
-            hub_id = String.to_atom(entry)
+      namespace != nil and durable_relay_count(hub_id) > length(get_all_relays(namespace))
+    end)
+  end
 
-            not MapSet.member?(running, hub_id) and
-              File.regular?(Path.join([root, entry, "registry.dets"]))
-          end)
+  defp durable_relay_count(hub_id) do
+    map_size(ProcessRegistry.dump(hub_id))
+  catch
+    :exit, _ -> 0
+  end
 
-        _ ->
-          false
-      end
-    else
-      false
+  # On-disk registry.dets for a hub that has not started yet.
+  defp unstarted_hub_has_registry?() do
+    running = MapSet.new(list_running_hub_ids())
+    root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
+
+    case File.ls(root) do
+      {:ok, entries} ->
+        Enum.any?(entries, fn entry ->
+          hub_id = String.to_atom(entry)
+
+          not MapSet.member?(running, hub_id) and
+            File.regular?(Path.join([root, entry, "registry.dets"]))
+        end)
+
+      _ ->
+        false
     end
   end
 
