@@ -193,6 +193,26 @@ defmodule Flezha.Plugin.Provider.Kafka do
     end
 
     @doc """
+    Force every producer worker for `plugin_id` to reconnect to a fresh
+    broker client. Drives the convergence `:restart_plugin` heal; idempotent
+    and safe when the plugin has no running producer (returns
+    `{:error, :no_producer}`).
+    """
+    @spec restart(binary()) :: :ok | {:error, :no_producer}
+    def restart(plugin_id) when is_binary(plugin_id) do
+      pattern = {{plugin_id, :"$1", :"$2"}, :"$3", :_}
+
+      case Registry.select(ProducerSup.registry_name(), [{pattern, [], [:"$3"]}]) do
+        [] ->
+          {:error, :no_producer}
+
+        pids ->
+          Enum.each(pids, &ProducerWorker.refresh_broker/1)
+          :ok
+      end
+    end
+
+    @doc """
     Same as `stats/1` but with explicit `(topic, partition)` for the rare
     case of a registry collision or programmatic lookup.
     """
@@ -217,12 +237,21 @@ defmodule Flezha.Plugin.Provider.Kafka do
       end
     end
 
+    # A worker that has given up on this many consecutive batches is
+    # reported `:produce_stalled` so the convergence loop can escalate to a
+    # plugin restart. The worker self-refreshes its broker client on the
+    # same threshold; health flags a stall that a fresh connection did not
+    # clear, which is the signal worth escalating.
+    @stall_health_threshold 3
+
     @doc """
     Health verdict for the producer worker (plugin health contract). Healthy
     means the worker pid is alive and not permanently parked — a worker whose
     `last_error` is `{:swap_exhausted, _}` has exhausted its in-process
-    broker-swap recovery and the queue can no longer drain, so the reconciler
-    escalates by restarting the provider.
+    broker-swap recovery and the queue can no longer drain, and a worker with
+    a sustained run of failed batches (`:produce_stalled`) is wedged against a
+    healthy-but-unreachable broker, so the convergence loop escalates by
+    restarting the provider.
     """
     @impl true
     @spec health(map()) :: Flezha.Plugin.ProviderBehaviour.health_verdict()
@@ -238,8 +267,14 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     defp health_from_stats(pid) do
       case ProducerWorker.stats(pid) do
-        %{last_error: {:swap_exhausted, reason}} -> {:unhealthy, {:swap_exhausted, reason}}
-        %{} -> :healthy
+        %{last_error: {:swap_exhausted, reason}} ->
+          {:unhealthy, {:swap_exhausted, reason}}
+
+        %{consecutive_failures: n} when n >= @stall_health_threshold ->
+          {:unhealthy, :produce_stalled}
+
+        %{} ->
+          :healthy
       end
     catch
       # A wedged/terminating worker read is treated as healthy so the reconciler

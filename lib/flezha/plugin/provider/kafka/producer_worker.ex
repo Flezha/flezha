@@ -51,6 +51,13 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     :out_of_order_sequence_number
   ]
 
+  # Consecutive `fail_batch/3` occurrences (a batch that exhausted its
+  # retries / delivery timeout) before we force a fresh broker connection.
+  # A clean broker restart leaves the shared client alive but produce stalls
+  # forever; refreshing the client is the only path back. Reset to 0 on any
+  # successful batch.
+  @default_stall_threshold 3
+
   @spec via(binary(), binary(), non_neg_integer()) :: {:via, Registry, term()}
   def via(plugin_id, topic, partition) do
     {:via, Registry, {ProducerSup.registry_name(), {plugin_id, topic, partition}}}
@@ -121,6 +128,16 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     GenServer.call(server, :stats)
   end
 
+  @doc """
+  Force a fresh broker connection now, bypassing the stall counter. Used by
+  the convergence `:restart_plugin` heal to recover a producer wedged
+  against a healthy-but-unreachable broker without waiting for the next
+  failed batch. No-op for workers that own no shared registry seat
+  (test-injected `:worker_pid`).
+  """
+  @spec refresh_broker(GenServer.server()) :: :ok
+  def refresh_broker(server), do: GenServer.cast(server, :refresh_broker)
+
   @spec stop(GenServer.server()) :: :ok
   def stop(server), do: GenServer.stop(server)
 
@@ -146,6 +163,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       retry_backoff_ms: Keyword.get(opts, :retry_backoff_ms, 100),
       retry_max_backoff_ms: Keyword.get(opts, :retry_max_backoff_ms, 5_000),
       delivery_timeout_ms: Keyword.get(opts, :delivery_timeout_ms, 30_000),
+      dispatch_timeout_ms: Keyword.get(opts, :dispatch_timeout_ms, 10_000),
       required_acks: Keyword.get(opts, :required_acks, -1),
       request_timeout_ms: Keyword.get(opts, :request_timeout_ms, 10_000),
       idempotent: Keyword.get(opts, :idempotent, true),
@@ -170,9 +188,12 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       linger_timer: nil,
       in_flight: nil,
       retry_timer: nil,
+      dispatch_timer: nil,
       blocked: :queue.new(),
       dropped_total: 0,
       last_error: nil,
+      consecutive_failures: 0,
+      stall_threshold: Keyword.get(opts, :stall_threshold, @default_stall_threshold),
       block_in_cast_warned?: false,
       swap_started_at: nil,
       swap_attempt: 0,
@@ -226,8 +247,20 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
        dropped_total: state.dropped_total,
        queue_depth: state.queue_size,
        in_flight: in_flight_size(state),
-       last_error: state.last_error
+       last_error: state.last_error,
+       consecutive_failures: state.consecutive_failures
      }, state}
+  end
+
+  def handle_cast(:refresh_broker, %{registry_ref: nil} = state), do: {:noreply, state}
+
+  def handle_cast(:refresh_broker, state) do
+    Logger.info(
+      "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+        "convergence requested broker refresh; forcing fresh connection"
+    )
+
+    {:noreply, %{force_replace_broker(state) | consecutive_failures: 0}}
   end
 
   @impl true
@@ -248,7 +281,23 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   def handle_info({:batch_result, batch_ref, result, attempt_no}, state) do
     case state.in_flight do
       %{ref: ^batch_ref} = batch ->
+        state = cancel_dispatch_timer(state)
         {:noreply, handle_batch_result(state, batch, attempt_no, result)}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:dispatch_timeout, batch_ref}, state) do
+    case state.in_flight do
+      %{ref: ^batch_ref} = batch ->
+        # The send neither returned nor crashed in time (e.g. the shared client
+        # is wedged on a dead socket after a broker restart). Treat the stranded
+        # dispatch as a retriable failure so the batch advances toward
+        # fail_batch / broker refresh instead of stalling the worker forever.
+        state = %{state | dispatch_timer: nil}
+        {:noreply, handle_batch_result(state, batch, batch.attempt, {:error, :dispatch_timeout})}
 
       _ ->
         {:noreply, state}
@@ -552,7 +601,9 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   defp do_send(state, batch, attempt) do
     parent = self()
-    ref = batch.ref
+    # Fresh ref per dispatch: a late result from a prior hung/timed-out send no
+    # longer matches in_flight and is ignored, so a slow send can't double-apply.
+    ref = make_ref()
     request = build_produce_request(state, batch.records, batch.base_sequence)
     send_fn = state.send_fn
     worker = state.worker_pid
@@ -560,11 +611,23 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     partition = state.partition
 
     spawn(fn ->
-      result = send_fn.(worker, request, NodeSelector.topic_partition(topic, partition))
+      # A crash or call timeout in the shared client (e.g. a wedged socket after
+      # a broker restart) must never silently strand the worker: turn it into a
+      # retriable result so in_flight always resolves.
+      result =
+        try do
+          send_fn.(worker, request, NodeSelector.topic_partition(topic, partition))
+        catch
+          :exit, reason -> {:error, {:exit, reason}}
+          kind, reason -> {:error, {:send_crashed, kind, reason}}
+        end
+
       send(parent, {:batch_result, ref, result, attempt})
     end)
 
-    %{state | in_flight: %{batch | attempt: attempt}}
+    state = cancel_dispatch_timer(state)
+    timer = Process.send_after(self(), {:dispatch_timeout, ref}, state.dispatch_timeout_ms)
+    %{state | in_flight: %{batch | ref: ref, attempt: attempt}, dispatch_timer: timer}
   end
 
   defp build_produce_request(state, records, base_sequence) do
@@ -758,7 +821,62 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   defp fail_batch(state, batch, reason) do
     emit_failed_per_record(state, batch, batch.attempt + 1, reason)
+
+    state = %{state | consecutive_failures: state.consecutive_failures + 1}
+    state = maybe_refresh_broker(state, reason)
+
     complete_batch(state, batch, {:error, {:delivery_failed, reason}})
+  end
+
+  # On a sustained stall (N consecutive give-ups) force a fresh broker
+  # client. A clean broker restart never kills the shared client, so the
+  # worker-DOWN swap path never fires and produce stalls forever. Refresh
+  # trips the registry's worker monitor, driving the standard
+  # `{:kafka_worker_dead, ...}` swap that reconnects on a new client.
+  # Reset the counter so we don't hammer refresh every subsequent batch.
+  defp maybe_refresh_broker(%{registry_ref: nil} = state, _reason), do: state
+
+  defp maybe_refresh_broker(state, reason) do
+    if state.consecutive_failures >= state.stall_threshold do
+      Logger.warning(
+        "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+          "#{state.consecutive_failures} consecutive failed batches " <>
+          "(last reason=#{inspect(reason)}); forcing fresh broker connection"
+      )
+
+      %{force_replace_broker(state) | consecutive_failures: 0}
+    else
+      state
+    end
+  end
+
+  # Reliable recovery: re-acquire a freshly started shared client by identity
+  # and rebind worker_pid directly. Avoids the monitor-DOWN swap fan-out, which
+  # never reaches a stalled caller once the entry has been torn down.
+  defp force_replace_broker(%{connection_identity: nil} = state), do: state
+
+  defp force_replace_broker(state) do
+    case WorkerRegistry.force_replace(state.connection_identity) do
+      {:ok, new_pid} when is_pid(new_pid) ->
+        rebind_worker(%{state | worker_pid: new_pid, last_error: nil})
+
+      _ ->
+        state
+    end
+  end
+
+  # A fresh broker client invalidates the idempotent producer-id/epoch, so
+  # re-init to realign sequence numbers. Non-idempotent producers carry no id.
+  defp rebind_worker(%{idempotent: false} = state), do: state
+
+  defp rebind_worker(state) do
+    case state.init_producer_id_fn.(state.worker_pid, state.metadata_refresh_timeout_ms) do
+      {:ok, %{producer_id: pid, producer_epoch: epoch}} ->
+        %{state | producer_id: pid, producer_epoch: epoch, sequence: 0}
+
+      _ ->
+        %{state | producer_id: nil, producer_epoch: nil, sequence: 0}
+    end
   end
 
   defp emit_failed_per_record(state, batch, attempts, reason) do
@@ -784,6 +902,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     state = %{
       state
       | in_flight: nil,
+        consecutive_failures:
+          if(reply == :ok, do: 0, else: state.consecutive_failures),
         last_error:
           case reply do
             :ok -> nil
@@ -877,6 +997,12 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
       {:error, reason} when is_atom(reason) and reason in @permanent ->
         {:permanent, reason}
+
+      {:error, {:send_crashed, _kind, _reason}} ->
+        {:retry, :network_exception}
+
+      {:error, :dispatch_timeout} ->
+        {:retry, :dispatch_timeout}
 
       {:error, reason} ->
         {:permanent, reason}
@@ -990,7 +1116,13 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp cancel_timers(state) do
     if is_reference(state.linger_timer), do: Process.cancel_timer(state.linger_timer)
     if is_reference(state.retry_timer), do: Process.cancel_timer(state.retry_timer)
+    state = cancel_dispatch_timer(state)
     %{state | linger_timer: nil, retry_timer: nil}
+  end
+
+  defp cancel_dispatch_timer(%{dispatch_timer: t} = state) do
+    if is_reference(t), do: Process.cancel_timer(t)
+    %{state | dispatch_timer: nil}
   end
 
   defp rewind_in_flight(%{in_flight: nil} = state, _reason), do: state

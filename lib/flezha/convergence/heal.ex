@@ -22,11 +22,12 @@ defmodule Flezha.Convergence.Heal do
     * `evict_executor` — forcibly drop a dead executor binding (I1).
     * `reconnect_stream` for `kind: :stream_channel` — SIGKILL a wedged
       channel so the supervisor restarts and the acceptor rebinds (I4).
+    * `restart_plugin` — force a wedged provider plugin (e.g. the Kafka
+      producer stalled against a restarted broker) onto a fresh connection.
 
-  `start_relay`, `stop_relay`, `restart_plugin`, `replay_state`,
-  `compact_wal`, and the non-channel `reconnect_stream` kinds are
-  observable no-ops (emit `[:flezha, :convergence, :heal]`, return `:ok`)
-  pending later phases.
+  `start_relay`, `stop_relay`, `replay_state`, `compact_wal`, and the
+  non-channel `reconnect_stream` kinds are observable no-ops (emit
+  `[:flezha, :convergence, :heal]`, return `:ok`) pending later phases.
   """
 
   alias Flezha.Convergence.SafeCall
@@ -112,11 +113,26 @@ defmodule Flezha.Convergence.Heal do
     kill_channel(pid)
   end
 
+  # Restart a wedged provider plugin. The motivating case is the Kafka
+  # producer stalling forever after a clean broker restart: the shared
+  # client stays alive returning retriable errors, so no in-process swap
+  # ever fires. `Kafka.Producer.restart/1` forces each of the plugin's
+  # producer workers onto a fresh broker client. Idempotent and safe when
+  # the plugin (or its producer) is absent.
+  defp apply_primitive(:restart_plugin, %{args: %{plugin_id: plugin_id}})
+       when is_binary(plugin_id) do
+    case Flezha.Plugin.Provider.Kafka.Producer.restart(plugin_id) do
+      :ok -> :ok
+      {:error, :no_producer} -> :ok
+    end
+  end
+
+  defp apply_primitive(:restart_plugin, _op), do: :ok
+
   # Each clause below is an observable no-op this session; later phases
   # replace the body with the real side effect named in the moduledoc.
   defp apply_primitive(:start_relay, _op), do: :ok
   defp apply_primitive(:stop_relay, _op), do: :ok
-  defp apply_primitive(:restart_plugin, _op), do: :ok
   defp apply_primitive(:reconnect_stream, _op), do: :ok
   defp apply_primitive(:replay_state, _op), do: :ok
   defp apply_primitive(:compact_wal, _op), do: :ok

@@ -105,6 +105,28 @@ defmodule Flezha.Healthz.ServerTest do
     end
   end
 
+  test "relays declared but not yet bound → 200 recovering (post-restart rebind)", %{port: port} do
+    # 3 relays intended, only 1 actually bound (controller mid-rebind). Capable-
+    # but-not-ready must read recovering, never healthy.
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      stalled_relays: [],
+      intended_relays: 3,
+      bound_relays: 1,
+      producing_relays: 1,
+      tick_latency_p99_ms: 0,
+      tick_breach_streak: 0
+    })
+
+    {status, _headers, body} = get(port, "/healthz")
+    assert status == 200
+    decoded = Jason.decode!(body)
+    assert decoded["status"] == "recovering"
+    assert decoded["reason"] == "relays_rebinding"
+    assert decoded["bound_relays"] == 1
+    assert decoded["intended_relays"] == 3
+  end
+
   test "tick stale → 503 with reason: tick_stale (when configured for fast staleness)",
        %{port: port} do
     previous = Application.get_env(:flezha, :convergence_tick_ms)

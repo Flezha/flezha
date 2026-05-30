@@ -34,6 +34,21 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerHealthTest do
     assert Producer.health(%{producer_pid: pid}) == {:unhealthy, {:swap_exhausted, :no_broker}}
   end
 
+  test "unhealthy with :produce_stalled after N consecutive failed batches" do
+    pid = stub(%{last_error: :no_broker, consecutive_failures: 3, queue_depth: 5, in_flight: 0})
+    assert Producer.health(%{producer_pid: pid}) == {:unhealthy, :produce_stalled}
+  end
+
+  test "healthy again once a successful batch resets the consecutive-failure run" do
+    pid = stub(%{last_error: nil, consecutive_failures: 0, queue_depth: 0, in_flight: 0})
+    assert Producer.health(%{producer_pid: pid}) == :healthy
+  end
+
+  test "still healthy below the stall threshold" do
+    pid = stub(%{last_error: :no_broker, consecutive_failures: 2, queue_depth: 1, in_flight: 0})
+    assert Producer.health(%{producer_pid: pid}) == :healthy
+  end
+
   test "unhealthy when there is no producer pid" do
     assert Producer.health(%{}) == {:unhealthy, :no_producer}
   end

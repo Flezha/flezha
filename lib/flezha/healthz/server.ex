@@ -220,6 +220,7 @@ defmodule Flezha.Healthz.Server do
     current = Snapshot.current()
     recovery_states = collect_recovery_states()
     bound = Map.get(current, :bound_relays, 0)
+    intended = Map.get(current, :intended_relays, bound)
     producing = Map.get(current, :producing_relays, 0)
     stalled = Map.get(current, :stalled_relays, [])
     last_tick_at = Map.get(current, :last_tick_at)
@@ -245,6 +246,19 @@ defmodule Flezha.Healthz.Server do
            tick_age_ms: tick_age(last_tick_at),
            tick_latency_p99_ms: p99,
            tick_breach_streak: breach_streak
+         })}
+
+      bound < intended ->
+        # Declared relays are not all bound yet (e.g. controller just restarted
+        # and the Loop is still rebinding them). Capable-but-not-ready ⇒
+        # recovering, never "healthy": kubelet must not restart mid-rebind.
+        {:recovering,
+         encode_json(%{
+           status: "recovering",
+           reason: "relays_rebinding",
+           intended_relays: intended,
+           bound_relays: bound,
+           producing_relays: producing
          })}
 
       producing < bound ->

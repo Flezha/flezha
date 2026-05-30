@@ -794,6 +794,76 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
   end
 
+  describe "sustained produce stall forces a fresh broker connection (unified-convergence-loop)" do
+    test "resumes producing after K give-ups without the shared worker dying" do
+      registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+      identity = %{hosts: [{"k", 9092}]}
+      fresh = spawn(fn -> Process.sleep(:infinity) end)
+
+      Mimic.stub(WorkerRegistry, :force_replace, fn ^identity -> {:ok, fresh} end)
+
+      # Two full batch give-ups (each exhausts retries fast), then the broker
+      # is reachable again and the third batch succeeds — recovery rebinds onto
+      # a freshly replaced client (no reliance on the swap fan-out).
+      {pid, _} =
+        start_worker(
+          retry_backoff_ms: 1,
+          retry_max_backoff_ms: 3,
+          delivery_timeout_ms: 30,
+          retries: 1,
+          linger_ms: 1,
+          script:
+            List.duplicate({:return, {:error, :no_broker}}, 4) ++
+              List.duplicate({:return, Fakes.ok_response(@topic, @partition, 500)}, 4),
+          extra: [stall_threshold: 2, connection_identity: identity]
+        )
+
+      seed_registry_ref(pid, registry_ref)
+
+      assert {:error, {:delivery_failed, :no_broker}} = ProducerWorker.enqueue(pid, "m1", %{})
+      assert :sys.get_state(pid).consecutive_failures == 1
+
+      assert {:error, {:delivery_failed, :no_broker}} = ProducerWorker.enqueue(pid, "m2", %{})
+
+      # Crossing the threshold triggered a refresh and reset the counter, so
+      # the worker is not parked and keeps draining on the same pid.
+      assert :sys.get_state(pid).consecutive_failures == 0
+      assert Process.alive?(pid)
+
+      attach(:produce_ok)
+      assert :ok = ProducerWorker.enqueue(pid, "m3", %{})
+
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :ok], _, _}
+      assert :sys.get_state(pid).consecutive_failures == 0
+    end
+
+    test "refresh_broker/1 cast forces a fresh connection on demand" do
+      registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+      identity = %{hosts: [{"k", 9092}]}
+      test_pid = self()
+      fresh = spawn(fn -> Process.sleep(:infinity) end)
+
+      Mimic.stub(WorkerRegistry, :force_replace, fn ^identity ->
+        send(test_pid, :refresh_called)
+        {:ok, fresh}
+      end)
+
+      {pid, _} =
+        start_worker(
+          script: [{:return, Fakes.ok_response(@topic, @partition)}],
+          extra: [connection_identity: identity]
+        )
+
+      seed_registry_ref(pid, registry_ref)
+      :sys.replace_state(pid, fn s -> %{s | consecutive_failures: 5} end)
+
+      ProducerWorker.refresh_broker(pid)
+
+      assert_receive :refresh_called, 500
+      assert :sys.get_state(pid).consecutive_failures == 0
+    end
+  end
+
   describe "worker swap on {:kafka_worker_dead, ...} (task 2.7)" do
     defp seed_registry_ref(pid, ref) do
       :sys.replace_state(pid, fn state -> %{state | registry_ref: ref} end)

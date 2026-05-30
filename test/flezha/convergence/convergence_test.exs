@@ -312,6 +312,17 @@ defmodule Flezha.ConvergenceTest do
       op = %{primitive: :evict_executor, namespace: nil, target: "ghost_executor", args: %{}}
       assert Heal.execute(op) == :ok
     end
+
+    test "restart_plugin for an absent producer is an idempotent :ok" do
+      op = %{
+        primitive: :restart_plugin,
+        namespace: :ns,
+        target: "r",
+        args: %{plugin_id: "no-such-plugin-#{System.unique_integer([:positive])}"}
+      }
+
+      assert Heal.execute(op) == :ok
+    end
   end
 
   describe "HubManager channel-health watchdog" do

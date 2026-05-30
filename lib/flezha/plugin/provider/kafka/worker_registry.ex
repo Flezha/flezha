@@ -89,6 +89,38 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
     GenServer.call(server, {:swap, old_ref, self()}, 30_000)
   end
 
+  @doc """
+  Force a fresh broker connection for the identity behind `ref`.
+
+  A clean broker restart leaves the shared `KafkaEx.New.Client` alive but
+  permanently returning retriable produce errors, so the worker-DOWN
+  recovery path never fires. `refresh/1` stops that client deliberately,
+  which trips the registry's own worker monitor and drives the SAME
+  `{:kafka_worker_dead, ref, reason}` fan-out + `pending_refs` snapshot
+  every holder already swaps on — a brand-new client process reconnects
+  fresh, refcount inherited unchanged.
+
+  Returns `:ok` once the stop is issued, or `{:error, :no_entry}` if the
+  token's entry is already gone (a concurrent DOWN won the race — recovery
+  is already in flight, so the caller needs no further action).
+  """
+  @spec refresh(ref(), GenServer.server()) :: {:ok, pid()} | {:error, term()}
+  def refresh(ref, server \\ __MODULE__) do
+    GenServer.call(server, {:refresh, ref}, 30_000)
+  end
+
+  @doc """
+  Unconditionally replace the shared client for `identity` with a freshly
+  started one and return its pid. Recreates the entry if it was already torn
+  down (a dead client's DOWN clears the entry, and the swap notification may
+  never reach a stalled caller). This is the reliable recovery path — it does
+  not depend on caller tokens or the monitor-DOWN swap fan-out.
+  """
+  @spec force_replace(identity(), GenServer.server()) :: {:ok, pid()} | {:error, term()}
+  def force_replace(identity, server \\ __MODULE__) do
+    GenServer.call(server, {:force_replace, identity}, 30_000)
+  end
+
   @doc false
   @spec inspect_state(GenServer.server()) :: map()
   def inspect_state(server \\ __MODULE__) do
@@ -97,6 +129,11 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
   @impl true
   def init(opts) do
+    # Clients are start_link'd into this process; trap exits so a client that
+    # dies (e.g. fails to connect mid broker-restart) becomes a message handled
+    # via the monitor DOWN path instead of crashing the whole registry.
+    Process.flag(:trap_exit, true)
+
     {:ok,
      %{
        starter: Keyword.get(opts, :starter, &default_start/1),
@@ -211,6 +248,121 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
     end
   end
 
+  def handle_call({:refresh, {key, req_token}}, _from, state) do
+    case Map.get(state.entries, key) do
+      %{pid: old_pid, monitor: old_mon, callers: callers, identity: identity} = entry ->
+        # A clean broker restart never kills the shared client, so the
+        # monitor-DOWN swap path never fires. Replace the client in place and
+        # explicitly notify every holder to re-acquire the fresh pid. Relying on
+        # a self-inflicted DOWN loses caller tokens under refresh churn and
+        # silently strands producers on a dead client.
+        Process.demonitor(old_mon, [:flush])
+        _ = state.stopper.(old_pid)
+
+        case state.starter.(identity) do
+          {:ok, new_pid} when is_pid(new_pid) ->
+            wmref = Process.monitor(new_pid)
+
+            state = %{
+              state
+              | entries: Map.put(state.entries, key, %{entry | pid: new_pid, monitor: wmref}),
+                worker_monitors:
+                  state.worker_monitors |> Map.delete(old_mon) |> Map.put(wmref, key)
+            }
+
+            # The calling worker rebinds directly from the returned pid; the
+            # OTHER holders still cache the dead pid, so notify them to swap.
+            Enum.each(callers, fn {caller_pid, ctoken} ->
+              if ctoken != req_token do
+                send(caller_pid, {:kafka_worker_dead, {key, ctoken}, :broker_refresh})
+              end
+            end)
+
+            {:reply, {:ok, new_pid}, state}
+
+          other ->
+            # Could not start a replacement (rare — start is lazy). Drop the
+            # entry and snapshot refs so the notified callers rebuild on swap.
+            Logger.warning(
+              "[Kafka.WorkerRegistry] refresh restart failed for #{inspect(key)}: " <>
+                "#{inspect(other)}; tearing down so callers rebuild"
+            )
+
+            if MapSet.size(entry.callers) > 0 do
+              Process.send_after(self(), {:linger_expired_pending_refs, key}, state.linger_ms)
+            end
+
+            state = %{
+              state
+              | entries: Map.delete(state.entries, key),
+                worker_monitors: Map.delete(state.worker_monitors, old_mon),
+                pending_refs:
+                  Map.put(state.pending_refs, key, {entry.identity, entry.refs})
+            }
+
+            Enum.each(callers, fn {caller_pid, ctoken} ->
+              send(caller_pid, {:kafka_worker_dead, {key, ctoken}, :broker_refresh})
+            end)
+
+            {:reply, {:error, :restart_failed}, state}
+        end
+
+      nil ->
+        {:reply, {:error, :no_entry}, state}
+    end
+  end
+
+  def handle_call({:force_replace, identity}, _from, state) do
+    key = canonical_key(identity)
+    prev = Map.get(state.entries, key)
+
+    state =
+      case prev do
+        %{monitor: mon, pid: old_pid} ->
+          Process.demonitor(mon, [:flush])
+          _ = state.stopper.(old_pid)
+          %{state | worker_monitors: Map.delete(state.worker_monitors, mon)}
+
+        nil ->
+          state
+      end
+
+    # The broker DNS entry disappears while its container is down, so a start
+    # here can crash (`:nxdomain`). Keep the registry alive — the caller stays
+    # on its old client and retries until the broker (and its DNS) is back.
+    started =
+      try do
+        state.starter.(identity)
+      catch
+        kind, reason -> {:error, {:start_crashed, kind, reason}}
+      end
+
+    case started do
+      {:ok, new_pid} when is_pid(new_pid) ->
+        wmref = Process.monitor(new_pid)
+
+        entry = %{
+          pid: new_pid,
+          refs: if(prev, do: prev.refs, else: 1),
+          linger: nil,
+          monitor: wmref,
+          callers: if(prev, do: prev.callers, else: MapSet.new()),
+          identity: identity
+        }
+
+        state = %{
+          state
+          | entries: Map.put(state.entries, key, entry),
+            worker_monitors: Map.put(state.worker_monitors, wmref, key)
+        }
+
+        {:reply, {:ok, new_pid}, state}
+
+      other ->
+        {:reply, {:error, {:start_failed, other}}, state}
+    end
+  end
+
   def handle_call(:inspect_state, _from, state) do
     summary =
       Map.new(state.entries, fn {key, entry} ->
@@ -248,6 +400,9 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
   def handle_info({:linger_expired_pending_refs, key}, state) do
     {:noreply, %{state | pending_refs: Map.delete(state.pending_refs, key)}}
   end
+
+  # Trapped client EXITs are handled via the monitor DOWN path; ignore here.
+  def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     cond do

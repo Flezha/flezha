@@ -201,7 +201,7 @@ defmodule Flezha.Convergence.Loop do
 
     state = %{state | backoff: backoff, tick_latencies: latencies, tick_breach_streak: streak}
 
-    publish(intent, state, p99)
+    publish(intent, reality, state, p99)
 
     :telemetry.execute(
       [:flezha, :convergence, :tick],
@@ -242,14 +242,20 @@ defmodule Flezha.Convergence.Loop do
     end)
   end
 
-  defp publish(%Intent{relays: relays}, %__MODULE__{} = state, p99) do
-    bound = length(relays)
+  defp publish(%Intent{relays: relays}, reality, %__MODULE__{} = state, p99) do
+    # `intended` = declared relays (what should be bound); `bound` = relays
+    # actually observed running on executors. After a restart the controller is
+    # up but its relays are not yet rebound (bound < intended) — that is a
+    # recovery window, NOT healthy, even though nothing is "stalled".
+    intended = length(relays)
+    bound = map_size(Map.get(reality, :relays, %{}))
     stalled = Map.keys(state.stalled_relays)
     producing = max(bound - length(stalled), 0)
 
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
       stalled_relays: stalled,
+      intended_relays: intended,
       bound_relays: bound,
       producing_relays: producing,
       tick_latency_p99_ms: p99,
