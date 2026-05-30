@@ -88,6 +88,21 @@ defmodule Flezha.Convergence.Snapshot do
     insert({:recovery, hub_id}, state)
   end
 
+  @doc """
+  Drop every observed `{:recovery, hub_id}` row. The cache otherwise lives
+  for the life of the BEAM, so a hub left mid-recovery would keep gating
+  `Probe.await_recovery_complete/2` forever. Used by tests that need the
+  gate to weigh only their own hubs; harmless in prod (rows are re-seeded
+  by `HubManager.start_hub/1` + recovery telemetry).
+  """
+  @spec reset_recovery_states() :: :ok
+  def reset_recovery_states() do
+    case :ets.whereis(@table) do
+      :undefined -> :ok
+      tid -> :ets.match_delete(tid, {{:recovery, :_}, :_}) && :ok
+    end
+  end
+
   # ---------- telemetry callback ----------
 
   @doc false

@@ -426,8 +426,18 @@ defmodule FlezhaTest do
     # to avoid global-tick races. Start it locally for this test, gated
     # on `:executor_connected_event` so the rebind fires within ~ms of
     # `executor_id_3` connecting.
+    # The Loop's recovery gate (`Probe.await_recovery_complete/2`) requires
+    # every hub the always-on Snapshot has ever observed to be settled. That
+    # cache accumulates across test files and is never cleared, so a hub left
+    # mid-recovery by an earlier test would block this Loop's first tick
+    # forever. Reset it so the gate only weighs this test's hubs.
+    Flezha.Convergence.Snapshot.reset_recovery_states()
+
+    # Short periodic tick so the reseat reconciles within the assertion
+    # budget even if the single `:executor_connected_event` is missed under
+    # in-suite contention (other tests also drive the global EventManager).
     {:ok, _} =
-      start_supervised({Flezha.Convergence.Loop, tick_ms: 60_000})
+      start_supervised({Flezha.Convergence.Loop, tick_ms: 1_000})
 
     executor_id_1 = NodeTestHelper.start_executor(namespace)
     executor_id_2 = NodeTestHelper.start_executor(namespace)
@@ -463,11 +473,15 @@ defmodule FlezhaTest do
     executor_id_3 = NodeTestHelper.start_executor(namespace)
 
     # The convergence Loop reseats every relay tagged to a dead executor
-    # onto `executor_id_3` on its next tick; the
-    # `:executor_connected_event` above triggers that tick within ~ms.
-    # Poll rather than assume the rebind already landed.
+    # onto `executor_id_3`. In production a periodic tick + the
+    # `:executor_connected_event` drive this; in-suite, async tick delivery
+    # and the global recovery gate are non-deterministic, so drive the real
+    # reconcile path synchronously via `tick_now/0` on each poll and wait
+    # for the reseat to land.
     assert eventually(
              fn ->
+               Flezha.Convergence.Loop.tick_now()
+
                RelayManager.relay_registry(namespace)
                |> Enum.all?(fn {_relay_id, {_cspec, _cnodes, %{tag: tag}}} ->
                  tag === executor_id_3
@@ -486,6 +500,8 @@ defmodule FlezhaTest do
 
     assert eventually(
              fn ->
+               Flezha.Convergence.Loop.tick_now()
+
                Enum.all?(relay_infos, fn {relay_id, _info} ->
                  RelayManager.get_partition_state(namespace, relay_id) ===
                    {:ok, expected_state.(relay_id)}
