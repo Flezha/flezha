@@ -238,7 +238,7 @@ defmodule Flezha.Healthz.Server do
       any_recovery_failed?(recovery_states) ->
         {:unhealthy, encode_json(%{status: "unhealthy", reason: "recovery_failed"})}
 
-      loop_wedged?(last_tick_at, breach_streak) ->
+      loop_hard_wedged?(last_tick_at, breach_streak) ->
         {:unhealthy,
          encode_json(%{
            status: "unhealthy",
@@ -246,6 +246,18 @@ defmodule Flezha.Healthz.Server do
            tick_age_ms: tick_age(last_tick_at),
            tick_latency_p99_ms: p99,
            tick_breach_streak: breach_streak
+         })}
+
+      loop_tick_gapped?(last_tick_at) ->
+        # One large tick gap means the whole BEAM was suspended (host
+        # sleep/hibernate, `docker pause`, long GC) — the Loop is resuming, not
+        # wedged. Report recovering so kubelet does not restart during a planned
+        # wake; this escalates to 503 only once the gap exceeds the hard bound.
+        {:recovering,
+         encode_json(%{
+           status: "recovering",
+           reason: "tick_resuming",
+           tick_age_ms: tick_age(last_tick_at)
          })}
 
       bound < intended ->
@@ -313,12 +325,21 @@ defmodule Flezha.Healthz.Server do
   #   * it blew the per-tick latency budget for ≥ 3 consecutive ticks.
   # A merely output-stalled relay is `degraded`, never wedged — that
   # hair-trigger SIGTERM'd healthy pods (proposal §2).
-  defp loop_wedged?(nil, _streak), do: false
+  # A genuinely wedged loop: the latency budget blew for ≥ 3 consecutive ticks
+  # (running but stuck), OR ticks have been stale far longer than any pause/wake
+  # would explain (the gapped grace below covers shorter freezes).
+  defp loop_hard_wedged?(nil, _streak), do: false
 
-  defp loop_wedged?(last_tick_at, breach_streak) do
-    tick_ms = Application.get_env(:flezha, :convergence_tick_ms, 5_000)
-    now_ms() - last_tick_at > tick_ms * 3 or breach_streak >= 3
+  defp loop_hard_wedged?(last_tick_at, breach_streak) do
+    now_ms() - last_tick_at > tick_ms() * 24 or breach_streak >= 3
   end
+
+  # A single tick gap past the normal cadence but within the hard bound — treat
+  # as a freeze/wake in progress (recovering), not a wedge.
+  defp loop_tick_gapped?(nil), do: false
+  defp loop_tick_gapped?(last_tick_at), do: now_ms() - last_tick_at > tick_ms() * 3
+
+  defp tick_ms(), do: Application.get_env(:flezha, :convergence_tick_ms, 5_000)
 
   defp tick_age(nil), do: nil
   defp tick_age(last_tick_at), do: now_ms() - last_tick_at
