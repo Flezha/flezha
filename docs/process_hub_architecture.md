@@ -10,6 +10,13 @@ lifecycle. Read it before proposing changes in those areas — most of the
 behaviour described here is already automatic, and the most common mistake is
 to assume Flezha owns logic that ProcessHub already provides.
 
+> **READ FIRST: `docs/process_hub_recovery_model.md`.** The live, cluster-synced
+> ProcessHub registry is ALWAYS the source of truth for which relays run where;
+> DETS is a disk backup used ONLY to cold-start a fully-downed cluster. A node
+> rejoining a live cluster syncs from peers and MUST NOT trust its local DETS.
+> Treating DETS as the authority causes split-brain, stale-state crashes, and
+> dishonest health reporting.
+
 ## Two-level distribution
 
 Flezha distributes relays at two independent levels:
