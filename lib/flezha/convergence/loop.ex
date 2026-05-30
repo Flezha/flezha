@@ -28,24 +28,19 @@ defmodule Flezha.Convergence.Loop do
 
   @default_tick_ms 5_000
   @default_output_stall_grace_ms 60_000
-  @default_tick_latency_threshold_ms 1_000
-  @latency_window 20
 
   @telemetry_subs [[:flezha, :state, :output_stall]]
   @handler_id {__MODULE__, :events}
 
   defstruct tick_ms: @default_tick_ms,
             output_stall_grace_ms: @default_output_stall_grace_ms,
-            tick_latency_threshold_ms: @default_tick_latency_threshold_ms,
             recovery_awaited?: false,
             backoff: Backoff.new(),
             # relay_instance => monotonic_ms when last flagged stalled.
             # Entries age out once they cross the output-stall grace,
             # so a relay that resumes producing auto-clears (no manual
             # clear) — Phase F invariant I3.
-            stalled_relays: %{},
-            tick_latencies: [],
-            tick_breach_streak: 0
+            stalled_relays: %{}
 
   # ---------- public API ----------
 
@@ -79,17 +74,6 @@ defmodule Flezha.Convergence.Loop do
         )
       )
 
-    latency_threshold_ms =
-      Keyword.get(
-        opts,
-        :tick_latency_threshold_ms,
-        Application.get_env(
-          :flezha,
-          :convergence_tick_latency_threshold_ms,
-          @default_tick_latency_threshold_ms
-        )
-      )
-
     _ =
       :telemetry.attach_many(@handler_id, @telemetry_subs, &__MODULE__.handle_telemetry/4, self())
 
@@ -103,8 +87,7 @@ defmodule Flezha.Convergence.Loop do
     {:ok,
      %__MODULE__{
        tick_ms: tick_ms,
-       output_stall_grace_ms: grace_ms,
-       tick_latency_threshold_ms: latency_threshold_ms
+       output_stall_grace_ms: grace_ms
      }}
   end
 
@@ -191,17 +174,9 @@ defmodule Flezha.Convergence.Loop do
 
     elapsed = System.monotonic_time(:millisecond) - started_at
 
-    {latencies, p99, streak} =
-      record_latency(
-        state.tick_latencies,
-        elapsed,
-        state.tick_breach_streak,
-        state.tick_latency_threshold_ms
-      )
+    state = %{state | backoff: backoff}
 
-    state = %{state | backoff: backoff, tick_latencies: latencies, tick_breach_streak: streak}
-
-    publish(intent, reality, state, p99)
+    publish(intent, reality, state)
 
     :telemetry.execute(
       [:flezha, :convergence, :tick],
@@ -216,23 +191,6 @@ defmodule Flezha.Convergence.Loop do
     :maps.filter(fn _relay, since -> now - since < grace_ms end, stalled)
   end
 
-  # Rolling window of the last `@latency_window` tick durations → p99;
-  # `streak` counts consecutive ticks over the budget (reset on a fast
-  # tick) so `/healthz` can tell a wedged loop from a single slow tick.
-  defp record_latency(latencies, elapsed, streak, threshold_ms) do
-    latencies = Enum.take([elapsed | latencies], @latency_window)
-    streak = if elapsed > threshold_ms, do: streak + 1, else: 0
-    {latencies, percentile(latencies, 99), streak}
-  end
-
-  defp percentile([], _p), do: 0
-
-  defp percentile(values, p) do
-    sorted = Enum.sort(values)
-    idx = (round(p / 100 * length(sorted)) - 1) |> max(0) |> min(length(sorted) - 1)
-    Enum.at(sorted, idx)
-  end
-
   defp execute_plan(plan, backoff) do
     now = System.monotonic_time(:millisecond)
 
@@ -242,7 +200,7 @@ defmodule Flezha.Convergence.Loop do
     end)
   end
 
-  defp publish(%Intent{relays: relays}, reality, %__MODULE__{} = state, p99) do
+  defp publish(%Intent{relays: relays}, reality, %__MODULE__{} = state) do
     # `intended` = declared relays (what should be bound); `bound` = relays
     # actually observed running on executors. After a restart the controller is
     # up but its relays are not yet rebound (bound < intended) — that is a
@@ -267,9 +225,7 @@ defmodule Flezha.Convergence.Loop do
       intended_relays: intended,
       bound_relays: bound,
       producing_relays: producing,
-      pending_restore: pending_restore,
-      tick_latency_p99_ms: p99,
-      tick_breach_streak: state.tick_breach_streak
+      pending_restore: pending_restore
     })
   end
 end

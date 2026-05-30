@@ -58,6 +58,16 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   # successful batch.
   @default_stall_threshold 3
 
+  # Error reasons that mean the shared client has NO working broker connection
+  # (the classic clean-broker-restart wedge). A single batch failing this way
+  # is authoritative that the client must be recreated — waiting for
+  # `@default_stall_threshold` batches strands a low-traffic producer that may
+  # emit only one batch per input burst. Recreate is throttled by
+  # `@force_replace_throttle_ms` so a genuinely-down broker is not recreated on
+  # every batch.
+  @client_wedged [:no_broker, :broker_not_available, :network_exception, :leader_not_available]
+  @force_replace_throttle_ms 2_000
+
   @spec via(binary(), binary(), non_neg_integer()) :: {:via, Registry, term()}
   def via(plugin_id, topic, partition) do
     {:via, Registry, {ProducerSup.registry_name(), {plugin_id, topic, partition}}}
@@ -194,6 +204,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       last_error: nil,
       consecutive_failures: 0,
       stall_threshold: Keyword.get(opts, :stall_threshold, @default_stall_threshold),
+      last_force_replace_at: nil,
       block_in_cast_warned?: false,
       swap_started_at: nil,
       swap_attempt: 0,
@@ -260,7 +271,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
         "convergence requested broker refresh; forcing fresh connection"
     )
 
-    {:noreply, %{force_replace_broker(state) | consecutive_failures: 0}}
+    {:noreply, force_replaced(state)}
   end
 
   @impl true
@@ -837,17 +848,45 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp maybe_refresh_broker(%{registry_ref: nil} = state, _reason), do: state
 
   defp maybe_refresh_broker(state, reason) do
-    if state.consecutive_failures >= state.stall_threshold do
-      Logger.warning(
-        "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
-          "#{state.consecutive_failures} consecutive failed batches " <>
-          "(last reason=#{inspect(reason)}); forcing fresh broker connection"
-      )
+    cond do
+      # A no-broker-connection error means the shared client is wedged on a
+      # dead/stale socket (the clean-broker-restart case). One such batch is
+      # authoritative — recreate now, throttled, instead of waiting for the
+      # stall counter a low-traffic producer may never reach.
+      reason in @client_wedged and force_replace_due?(state) ->
+        Logger.warning(
+          "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+            "no broker connection (reason=#{inspect(reason)}); forcing fresh broker connection"
+        )
 
-      %{force_replace_broker(state) | consecutive_failures: 0}
-    else
-      state
+        force_replaced(state)
+
+      state.consecutive_failures >= state.stall_threshold ->
+        Logger.warning(
+          "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+            "#{state.consecutive_failures} consecutive failed batches " <>
+            "(last reason=#{inspect(reason)}); forcing fresh broker connection"
+        )
+
+        force_replaced(state)
+
+      true ->
+        state
     end
+  end
+
+  defp force_replaced(state) do
+    %{
+      force_replace_broker(state)
+      | consecutive_failures: 0,
+        last_force_replace_at: state.now_fn.()
+    }
+  end
+
+  defp force_replace_due?(%{last_force_replace_at: nil}), do: true
+
+  defp force_replace_due?(state) do
+    state.now_fn.() - state.last_force_replace_at >= @force_replace_throttle_ms
   end
 
   # Reliable recovery: re-acquire a freshly started shared client by identity

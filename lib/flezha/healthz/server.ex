@@ -225,8 +225,6 @@ defmodule Flezha.Healthz.Server do
     stalled = Map.get(current, :stalled_relays, [])
     pending_restore = Map.get(current, :pending_restore, false)
     last_tick_at = Map.get(current, :last_tick_at)
-    breach_streak = Map.get(current, :tick_breach_streak, 0)
-    p99 = Map.get(current, :tick_latency_p99_ms)
 
     cond do
       any_recovering?(recovery_states) ->
@@ -239,14 +237,12 @@ defmodule Flezha.Healthz.Server do
       any_recovery_failed?(recovery_states) ->
         {:unhealthy, encode_json(%{status: "unhealthy", reason: "recovery_failed"})}
 
-      loop_hard_wedged?(last_tick_at, breach_streak) ->
+      loop_hard_wedged?(last_tick_at) ->
         {:unhealthy,
          encode_json(%{
            status: "unhealthy",
            reason: "tick_stale",
-           tick_age_ms: tick_age(last_tick_at),
-           tick_latency_p99_ms: p99,
-           tick_breach_streak: breach_streak
+           tick_age_ms: tick_age(last_tick_at)
          })}
 
       loop_tick_gapped?(last_tick_at) ->
@@ -345,10 +341,15 @@ defmodule Flezha.Healthz.Server do
   # A genuinely wedged loop: the latency budget blew for ≥ 3 consecutive ticks
   # (running but stuck), OR ticks have been stale far longer than any pause/wake
   # would explain (the gapped grace below covers shorter freezes).
-  defp loop_hard_wedged?(nil, _streak), do: false
+  defp loop_hard_wedged?(nil), do: false
 
-  defp loop_hard_wedged?(last_tick_at, breach_streak) do
-    now_ms() - last_tick_at > tick_ms() * 24 or breach_streak >= 3
+  # Authoritative liveness: the loop is wedged only when it has STOPPED
+  # ticking. Slow-but-completing ticks (e.g. a side-effecting probe waiting
+  # on a suspended channel) are not death — escalating them to a 503 makes
+  # kubelet kill a pod that is alive and producing. Tick age is the only
+  # signal that distinguishes a dead loop from a busy one.
+  defp loop_hard_wedged?(last_tick_at) do
+    now_ms() - last_tick_at > tick_ms() * 24
   end
 
   # A single tick gap past the normal cadence but within the hard bound — treat
