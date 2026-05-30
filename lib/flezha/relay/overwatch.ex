@@ -327,14 +327,21 @@ defmodule Flezha.Relay.Overwatch do
 
   # The executor's control unit GenServer registers itself in
   # `Flezha.Service.Identificator` as the LAST step of its supervision
-  # tree (`ExecutorSupervisor.init/1` → `ControlUnit.start_link/1`),
-  # so its presence is a sufficient signal that the executor's CU,
-  # StreamSup, and StreamAcceptor are all live. Note: `StreamSup.stream_ids/2`
-  # alone is NOT a liveness check — it derives names from config.
+  # tree (`ExecutorSupervisor.init/1` → `ControlUnit.start_link/1`).
+  # Registration alone is NOT sufficient: a SIGKILL'd executor can leave
+  # the cu registered as a zombie (the `{:flz_closed}` disconnect never
+  # arrived), so we additionally require a fresh end-to-end ping when
+  # `:overwatch_ping_enabled` is on. Skipped in the unit suites that drive
+  # synthetic executors with no real SDK behind the cu.
   defp executor_ready?(executor_id) do
     case Registry.lookup(Identificator, "#{executor_id}_cu") do
-      [{_pid, _}] -> true
-      _ -> false
+      [{_pid, _}] ->
+        if Application.get_env(:flezha, :overwatch_ping_enabled, true),
+          do: ping_executor(executor_id) == :ok,
+          else: true
+
+      _ ->
+        false
     end
   end
 

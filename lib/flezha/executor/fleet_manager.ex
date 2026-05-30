@@ -183,6 +183,30 @@ defmodule Flezha.Executor.FleetManager do
     {:reply, executor_ids, state}
   end
 
+  # Evict each id in `executor_ids` that the periodic liveness sweep
+  # already proved unreachable (cu dead, or end-to-end ping failed). The
+  # ping happens outside the GenServer (see `liveness_sweep/1`); this call
+  # only applies the verdict so the FleetManager is never blocked on a
+  # round-trip. `do_evict_executor` stops the executor supervisor — taking
+  # the zombie ControlUnit/ControlChannel down with it — and drops the id
+  # from the active set, closing the silent "relay bound to a zombie that
+  # produces nothing" failure class.
+  @impl true
+  def handle_call({:evict_unreachable, executor_ids}, _from, state) do
+    state =
+      Enum.reduce(executor_ids, state, fn executor_id, acc ->
+        :telemetry.execute(
+          [:flezha, :executor, :evicted_unreachable],
+          %{count: 1},
+          %{executor_id: executor_id}
+        )
+
+        do_evict_executor(acc, executor_id)
+      end)
+
+    {:reply, :ok, state}
+  end
+
   @impl true
   def handle_call({:executors_for_factory, namespace, factory_id}, _from, state) do
     active_ids = MapSet.new(get_executor_ids(state, namespace, :active))
@@ -305,7 +329,17 @@ defmodule Flezha.Executor.FleetManager do
   def handle_info(:schedule_executor_cleanup, state) do
     schedule_executor_cleanup()
 
-    {:noreply, executor_cleanup(state)}
+    state = executor_cleanup(state)
+
+    # Sweep the active set for zombies: an executor whose container was
+    # SIGKILL'd but whose controller-side ControlUnit GenServer is still
+    # alive (so it still looks "active") and whose `{:flz_closed}` disconnect
+    # signal never arrived. The ping round-trips happen in a detached task so
+    # the FleetManager is never blocked; unreachable ids are evicted via a
+    # follow-up `{:evict_unreachable, ...}` call.
+    liveness_sweep(state)
+
+    {:noreply, state}
   end
 
   @impl true
@@ -381,6 +415,56 @@ defmodule Flezha.Executor.FleetManager do
         ce_id, acc -> remove_ce_factories(acc, namespace, ce_id)
       end)
     end)
+  end
+
+  # Spawn a detached task that pings every `:active` executor end-to-end and
+  # reports the unreachable ones back for eviction. Detached because a ping is
+  # a bounded GenServer.call into the cu (default 2 s) per executor — running
+  # them inline would block the FleetManager mailbox for seconds under churn.
+  # A genuinely live executor replies to its ping and is left untouched, so a
+  # healthy node is never evicted.
+  defp liveness_sweep(state) do
+    active =
+      state.executor_namespaces
+      |> Map.values()
+      |> Enum.flat_map(&get_active_ids/1)
+
+    if active != [] do
+      fleet = self()
+
+      _ =
+        Task.start(fn ->
+          unreachable = Enum.reject(active, &executor_reachable?/1)
+
+          if unreachable != [] do
+            _ = SafeCall.bounded(fleet, {:evict_unreachable, unreachable}, 5_000)
+          end
+        end)
+    end
+
+    :ok
+  end
+
+  defp get_active_ids(executors) do
+    executors
+    |> Enum.filter(fn {_id, {status, _ts}} -> status == :active end)
+    |> Enum.map(fn {id, _} -> id end)
+  end
+
+  @doc """
+  True only when `executor_id`'s ControlUnit GenServer is registered AND a
+  fresh end-to-end `Ping` round-trips to its SDK. A registered-but-wedged
+  control unit (the zombie left behind by a SIGKILL'd container whose
+  `{:flz_closed}` disconnect never arrived) fails the ping, so callers in the
+  relay-assignment path can skip it. Used both by the FleetManager liveness
+  sweep and by `RelayManager.assign_executor/2` as defense in depth.
+  """
+  @spec executor_reachable?(binary()) :: boolean()
+  def executor_reachable?(executor_id) when is_binary(executor_id) do
+    case Flezha.Executor.ControlUnit.ping_executor(executor_id) do
+      {:ok, :pong} -> true
+      _ -> false
+    end
   end
 
   defp get_executor_ids(state, namespace, status) do

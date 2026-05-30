@@ -420,16 +420,36 @@ defmodule Flezha.Service.RelayManager do
   warnings.
   """
   def assign_executor(namespace, nil) do
-    case FleetManager.active_executors(namespace) do
-      [] -> nil
-      executor_ids -> Enum.random(executor_ids)
-    end
+    namespace
+    |> FleetManager.active_executors()
+    |> pick_reachable()
   end
 
   def assign_executor(namespace, factory_id) when is_binary(factory_id) do
-    case FleetManager.executors_for_factory(namespace, factory_id) do
-      [] -> nil
-      executor_ids -> Enum.random(executor_ids)
+    namespace
+    |> FleetManager.executors_for_factory(factory_id)
+    |> pick_reachable()
+  end
+
+  # Defense in depth against the zombie-executor failure class: even if a
+  # SIGKILL'd executor momentarily lingers in the active set (its
+  # controller-side ControlUnit GenServer is still registered but its SDK
+  # connection is gone), never hand a relay to one that does not answer a
+  # fresh end-to-end ping. Prefer reachable executors; fall back to the raw
+  # pool only when none answer yet (a still-initialising real executor must
+  # not be starved — Overwatch's own pre-`:start_relay` ping is the final
+  # gate). Ping filtering is skipped when `:overwatch_ping_enabled` is off
+  # so the unit suites that drive synthetic executors keep working.
+  defp pick_reachable([]), do: nil
+
+  defp pick_reachable(executor_ids) do
+    if Application.get_env(:flezha, :overwatch_ping_enabled, true) do
+      case Enum.filter(executor_ids, &FleetManager.executor_reachable?/1) do
+        [] -> Enum.random(executor_ids)
+        reachable -> Enum.random(reachable)
+      end
+    else
+      Enum.random(executor_ids)
     end
   end
 end
