@@ -764,7 +764,10 @@ defmodule Flezha.Service.HubManager do
   """
   @spec durable_registry_pending?() :: boolean()
   def durable_registry_pending?() do
-    Application.get_env(:flezha, :auto_restore_enabled, true) and
+    # Kill-switch semantics: only an explicit `false` disables auto-restore.
+    # Reading it as a strict boolean would crash the convergence Loop tick on
+    # a non-boolean value; `!= false` keeps the default-on behaviour robust.
+    Application.get_env(:flezha, :auto_restore_enabled, true) != false and
       (running_hub_relays_unbound?() or unstarted_hub_has_registry?())
   end
 

@@ -18,6 +18,7 @@ defmodule FlezhaTest.Relay.OverwatchAsyncMigrateTest do
 
   setup do
     test_pid = self()
+    ets = :ets.new(:overwatch_async_migrate_test, [:public, :set])
 
     on_exit(fn ->
       RelayManager.stop_all_relays(@namespace)
@@ -25,17 +26,30 @@ defmodule FlezhaTest.Relay.OverwatchAsyncMigrateTest do
       Application.delete_env(:flezha, :overwatch_reset_channel_fn)
     end)
 
-    {:ok, test_pid: test_pid}
+    {:ok, test_pid: test_pid, ets: ets}
+  end
+
+  # `await_active_executor` pings once to confirm the executor is reachable
+  # before the start-retry path runs. To reach the PARKED state these tests
+  # need, the readiness gate (first ping) must pass while the START pings
+  # fail — otherwise the relay stops with `:executor_not_ready`.
+  defp park_after_gate(ets) do
+    fn _executor_id ->
+      case :ets.update_counter(ets, :calls, {2, 1}, {:calls, 0}) do
+        1 -> {:ok, :pong}
+        _ -> {:error, :timeout}
+      end
+    end
   end
 
   test "stop_relay returns :ok within 1s while a parked-unpark migrate task is in flight",
-       %{test_pid: test_pid} do
+       %{test_pid: test_pid, ets: ets} do
     # The async migrate path lives on the parked-unpark branch — that's
     # where the bounded retry loop with the 19 s aggregate budget runs.
-    # Boot a parked relay (failing ping) and then trigger un-park with a
-    # ping that blocks for several seconds, simulating the spec's
-    # "~10 s into the backoff schedule" scenario.
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :timeout} end)
+    # Boot a parked relay (start ping fails after the readiness gate) and
+    # then trigger un-park with a ping that blocks for several seconds,
+    # simulating the spec's "~10 s into the backoff schedule" scenario.
+    Application.put_env(:flezha, :overwatch_ping_fn, park_after_gate(ets))
     Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
 
     relay = %Builder{id: "stop_during_migrate", factory_id: @factory, opts: []}
@@ -81,8 +95,8 @@ defmodule FlezhaTest.Relay.OverwatchAsyncMigrateTest do
   end
 
   test "starting a second parked-unpark migrate while one is in flight returns :busy",
-       %{test_pid: test_pid} do
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :timeout} end)
+       %{test_pid: test_pid, ets: ets} do
+    Application.put_env(:flezha, :overwatch_ping_fn, park_after_gate(ets))
     Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
 
     relay = %Builder{id: "busy_migrate_test", factory_id: @factory, opts: []}

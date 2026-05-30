@@ -293,7 +293,18 @@ defmodule Flezha.Executor.FleetManager do
 
   @impl true
   def handle_call({:evict_executor, executor_id}, _from, state) do
-    {:reply, :ok, do_evict_executor(state, executor_id)}
+    # Safe no-op on a healthy target: never evict an executor that is
+    # currently `:active` (connection open). The convergence Diff runs off
+    # a snapshot that can lag a reconnect by a tick; acting on that stale
+    # view is exactly the false-eviction → cascade-rebind regression this
+    # change exists to remove. The authoritative live set is the gate.
+    # (`maybe_evict_previous` is a different, authoritative path: the SDK
+    # itself presents its prior id, so that eviction stays unconditional.)
+    if executor_active?(state, executor_id) do
+      {:reply, :ok, state}
+    else
+      {:reply, :ok, do_evict_executor(state, executor_id)}
+    end
   end
 
   @impl true
@@ -389,6 +400,15 @@ defmodule Flezha.Executor.FleetManager do
     |> Map.get(namespace, %{})
     |> Enum.filter(fn {_, {s, _}} -> s == status end)
     |> Enum.map(fn {executor_id, {_, _}} -> executor_id end)
+  end
+
+  # An executor is healthy iff some namespace holds it with `:active` status.
+  defp executor_active?(state, executor_id) do
+    state
+    |> Map.get(:executor_namespaces, %{})
+    |> Enum.any?(fn {_ns, executors} ->
+      match?({:active, _}, Map.get(executors, executor_id))
+    end)
   end
 
   defp maybe_evict_previous(state, previous_id) when is_binary(previous_id) and previous_id != "" do

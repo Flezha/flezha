@@ -63,8 +63,8 @@ defmodule Flezha.Convergence.Heal do
     :error
   end
 
-  defp apply_primitive(:rebind_relay, %{namespace: namespace, target: relay_id}) do
-    rebind_relay(namespace, relay_id)
+  defp apply_primitive(:rebind_relay, %{namespace: namespace, target: relay_id} = op) do
+    rebind_relay(namespace, relay_id, Map.get(op, :args, %{}))
   end
 
   # Phase A (I2): (re)subscribe a declared-but-missing plugin into the
@@ -107,10 +107,15 @@ defmodule Flezha.Convergence.Heal do
 
   # Phase C (I4): a wedged stream channel is healed by reconnecting its
   # stream — kill the pid so its supervisor restarts it and the
-  # StreamAcceptor re-binds the fresh channel.
+  # StreamAcceptor re-binds the fresh channel. Safe no-op if the channel
+  # cleared its strikes between detection and now (recovered on its own).
   defp apply_primitive(:reconnect_stream, %{target: pid, args: %{kind: :stream_channel}})
        when is_pid(pid) do
-    kill_channel(pid)
+    if pid in HubManager.wedged_channel_pids() do
+      kill_channel(pid)
+    else
+      :ok
+    end
   end
 
   # Restart a wedged provider plugin. The motivating case is the Kafka
@@ -155,10 +160,11 @@ defmodule Flezha.Convergence.Heal do
   # `StreamChannel.relay_mapping` (the same hook `child_registered`
   # uses) so frames land. Any failed step leaves the registry untouched
   # and the relay degraded for the next tick under Backoff.
-  defp rebind_relay(namespace, relay_id) do
+  defp rebind_relay(namespace, relay_id, args) do
     with {:ok, pid} when is_pid(pid) <- HubManager.get_pid(namespace, relay_id),
          %{factory_id: factory, executor_id: prev} <- overwatch_snapshot(pid),
          true <- factory != nil,
+         false <- skip_rebind?(namespace, factory, prev, args),
          target when is_binary(target) <- RelayManager.assign_executor(namespace, factory),
          {:ok, :ok} <- SafeCall.bounded(pid, {:executor_migrate, target}, @migrate_timeout_ms) do
       _ = HubManager.relay_set_executor(namespace, relay_id, target)
@@ -182,8 +188,27 @@ defmodule Flezha.Convergence.Heal do
       emit_reconnected(namespace, relay_id, prev, target)
       :ok
     else
+      # `skip_rebind?` returned true — a MISBOUND relay whose bound executor
+      # is already active and owns the factory, so a stale-snapshot rebind
+      # would only disrupt a healthy relay. Safe no-op.
+      true -> :ok
       _ -> :error
     end
+  end
+
+  # An output-stall rebind MUST always act: the relay is bound to an active
+  # executor yet not producing, so "well bound" is exactly the broken state
+  # to heal — skipping it would defeat the silent-freeze self-heal.
+  defp skip_rebind?(_namespace, _factory, _prev, %{reason: :output_stall}), do: false
+
+  # A misbound rebind is a safe no-op once the bound executor is back in the
+  # live, factory-owning active set (a reconnect between snapshot and heal
+  # time): re-reading the authoritative set here stops a detection slip from
+  # churning a healthy relay.
+  defp skip_rebind?(_namespace, _factory, prev, _args) when prev in [nil, ""], do: false
+
+  defp skip_rebind?(namespace, factory, prev, _args) do
+    prev in FleetManager.executors_for_factory(namespace, factory)
   end
 
   defp overwatch_snapshot(pid) do

@@ -296,6 +296,10 @@ defmodule Flezha.ConvergenceTest do
       victim = spawn(fn -> Process.sleep(:infinity) end)
       ref = Process.monitor(victim)
 
+      # The heal verifies the channel is still wedged before killing it
+      # (safe no-op on a recovered target), so register the strikes first.
+      :ets.insert(:flezha_channel_health, {victim, {3, System.monotonic_time(:millisecond)}})
+
       op = %{
         primitive: :reconnect_stream,
         namespace: nil,
@@ -306,6 +310,24 @@ defmodule Flezha.ConvergenceTest do
       assert Heal.execute(op) == :ok
 
       assert_receive {:DOWN, ^ref, :process, ^victim, :killed}, 1_000
+    end
+
+    test "reconnect_stream is a safe no-op on a channel that is no longer wedged" do
+      victim = spawn(fn -> Process.sleep(:infinity) end)
+      ref = Process.monitor(victim)
+
+      op = %{
+        primitive: :reconnect_stream,
+        namespace: nil,
+        target: victim,
+        args: %{kind: :stream_channel}
+      }
+
+      assert Heal.execute(op) == :ok
+
+      refute_receive {:DOWN, ^ref, :process, ^victim, :killed}, 300
+      assert Process.alive?(victim)
+      Process.exit(victim, :kill)
     end
 
     test "evict_executor on an unknown id is an idempotent :ok" do

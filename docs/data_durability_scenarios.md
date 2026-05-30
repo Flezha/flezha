@@ -71,6 +71,12 @@ message and cripple throughput). Instead:
 
 - `docker kill` / `kill -9` / `terminationGracePeriodSeconds` too short on an executor →
   drain is cut off → best-effort loss. Use graceful stop + adequate grace.
+- **The executor binary must receive SIGTERM directly.** Run it as PID 1 (exec-form
+  `CMD`/entrypoint, or `setpriv`/`gosu` to drop privileges by `exec`). A wrapper that
+  forks the binary and force-kills it on SIGTERM — notably `su` ("Session terminated,
+  killing shell") — terminates the SDK before its graceful drain ships final state, so
+  a "graceful" stop silently degrades to a hard kill. The prod `market-executor` is
+  correct (exec-form `CMD ["./market_analyzer"]`, `runAsUser: 1000`, no `su`).
 - Plain-restarting the sole controller and expecting the relay list back instantly /
   `/healthz` to read `recovering` → use recovery mode instead.
 - Assuming output is exactly-once → it is at-least-once; dedup downstream.

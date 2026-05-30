@@ -821,13 +821,19 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       seed_registry_ref(pid, registry_ref)
 
       assert {:error, {:delivery_failed, :no_broker}} = ProducerWorker.enqueue(pid, "m1", %{})
-      assert :sys.get_state(pid).consecutive_failures == 1
+
+      # A no-broker error is authoritative: the FIRST such batch forces a fresh
+      # client immediately (throttled), resetting the counter — recovery no
+      # longer waits for the stall threshold a low-traffic producer may never
+      # reach.
+      assert :sys.get_state(pid).consecutive_failures == 0
 
       assert {:error, {:delivery_failed, :no_broker}} = ProducerWorker.enqueue(pid, "m2", %{})
 
-      # Crossing the threshold triggered a refresh and reset the counter, so
-      # the worker is not parked and keeps draining on the same pid.
-      assert :sys.get_state(pid).consecutive_failures == 0
+      # The throttle window blocks a second immediate refresh, so this give-up
+      # only increments the counter (still below the stall threshold) — the
+      # worker keeps draining on the same pid.
+      assert :sys.get_state(pid).consecutive_failures == 1
       assert Process.alive?(pid)
 
       attach(:produce_ok)

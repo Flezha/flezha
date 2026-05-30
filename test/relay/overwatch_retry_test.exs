@@ -76,14 +76,14 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
 
   test "5.1 backoff respected — multiple ping attempts with delays in between",
        %{test_pid: test_pid, ets: ets} do
-    :ets.insert(ets, {:attempts, 0})
-
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _executor_id ->
-      ts = System.monotonic_time(:millisecond)
-      n = :ets.update_counter(ets, :attempts, {2, 1}, {:attempts, 0})
-      send(test_pid, {:ping_attempt, n, ts})
-      {:error, :timeout}
-    end)
+    Application.put_env(
+      :flezha,
+      :overwatch_ping_fn,
+      gate_then(ets, fn _executor_id, attempt ->
+        send(test_pid, {:ping_attempt, attempt, System.monotonic_time(:millisecond)})
+        {:error, :timeout}
+      end)
+    )
 
     Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
 
@@ -105,11 +105,15 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
   end
 
   test "5.2 bounded retry exhausts and surfaces the parked init_error to the caller",
-       %{test_pid: test_pid} do
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _executor_id ->
-      send(test_pid, :ping_called)
-      {:error, :timeout}
-    end)
+       %{test_pid: test_pid, ets: ets} do
+    Application.put_env(
+      :flezha,
+      :overwatch_ping_fn,
+      gate_then(ets, fn _executor_id, _attempt ->
+        send(test_pid, :ping_called)
+        {:error, :timeout}
+      end)
+    )
 
     Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _executor_id ->
       send(test_pid, :channel_reset)
@@ -179,11 +183,17 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
   end
 
   test "6.4 a parked relay un-parks via executor_migrate: pings, starts, clears init_error, activates plugins",
-       %{test_pid: test_pid} do
-    # Start the relay with a failing ping so it parks (alive, init_error set).
-    # Started directly (not via RelayManager) so the parked-and-alive GenServer
-    # is not stop_child_quietly'd — this is the cold-restart parked state.
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :timeout} end)
+       %{test_pid: test_pid, ets: ets} do
+    # Start the relay so the readiness gate passes but the START ping fails,
+    # parking it (alive, init_error set). Started directly (not via
+    # RelayManager) so the parked-and-alive GenServer is not
+    # stop_child_quietly'd — this is the cold-restart parked state.
+    Application.put_env(
+      :flezha,
+      :overwatch_ping_fn,
+      gate_then(ets, fn _executor_id, _attempt -> {:error, :timeout} end)
+    )
+
     Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
 
     plugin = %Plugin{
@@ -233,6 +243,20 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     assert Flezha.Plugin.Extension.Table.phase(state.extensions, "unpark_plugin") == :running
   end
 
+  # `await_active_executor` pings once to confirm the executor is reachable
+  # before the start-retry path runs. These tests drive the START ping to
+  # fail; the readiness gate must still pass or the relay stops with
+  # `:executor_not_ready` instead of exercising the retry/park behaviour.
+  # First call = readiness gate (pong); later calls = start attempts (run body).
+  defp gate_then(ets, start_fn) do
+    fn executor_id ->
+      case :ets.update_counter(ets, :calls, {2, 1}, {:calls, 0}) do
+        1 -> {:ok, :pong}
+        n -> start_fn.(executor_id, n - 1)
+      end
+    end
+  end
+
   defp eventually(fun, attempts \\ 100) do
     cond do
       fun.() ->
@@ -248,10 +272,12 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
   end
 
   test "5.10 5.5 mocked-ingress regression: failed startup keeps plugins :prepared, no upstream I/O",
-       %{test_pid: test_pid} do
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _executor_id ->
-      {:error, :timeout}
-    end)
+       %{test_pid: test_pid, ets: ets} do
+    Application.put_env(
+      :flezha,
+      :overwatch_ping_fn,
+      gate_then(ets, fn _executor_id, _attempt -> {:error, :timeout} end)
+    )
 
     Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
 
