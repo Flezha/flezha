@@ -477,6 +477,17 @@ defmodule Flezha.Executor.FleetManager do
     put_in(state, [:executor_namespaces, namespace], namespace_executors)
   end
 
+  # Drop the dead executor from the active set unconditionally. Each branch
+  # of the disconnect handler also performs best-effort relay-migration side
+  # effects against ProcessHub / StreamChannels that can raise `:noproc` while
+  # the hub or a freshly reconnected peer is mid-restart under rapid churn. If
+  # one of those raises, the executor's `:active` entry must still be removed —
+  # otherwise it lingers as a corpse that `active_executors/1` keeps reporting
+  # and relays get assigned to a dead node (unbounded ghost accumulation).
+  defp drop_executor(state, namespace, executor_id) do
+    Map.delete(state.executor_namespaces[namespace] || %{}, executor_id)
+  end
+
   defp hub_migrate(_state, namespace, _executor_id) do
     HubManager.stop_hub(namespace)
 
@@ -492,6 +503,33 @@ defmodule Flezha.Executor.FleetManager do
   defp executor_reroute(state, namespace, old_executor, available_executors) do
     new_executor = Enum.random(available_executors)
 
+    # Best-effort relay migration. These calls reach into ProcessHub and the
+    # new executor's StreamChannels, which can raise `:noproc` while the hub or
+    # the freshly reconnected peer is mid-restart. A failure here must not abort
+    # the dead executor's removal from the active set below — its relays heal on
+    # the next convergence tick regardless.
+    try do
+      reroute_relays(namespace, old_executor, new_executor)
+    rescue
+      error ->
+        Logger.warning(
+          "[FleetManager] executor_reroute side effects failed for " <>
+            "#{old_executor} -> #{new_executor}: #{inspect(error)}; " <>
+            "evicting anyway, relays heal on next convergence tick"
+        )
+    catch
+      :exit, reason ->
+        Logger.warning(
+          "[FleetManager] executor_reroute side effects exited for " <>
+            "#{old_executor} -> #{new_executor}: #{inspect(reason)}; " <>
+            "evicting anyway, relays heal on next convergence tick"
+        )
+    end
+
+    drop_executor(state, namespace, old_executor)
+  end
+
+  defp reroute_relays(namespace, old_executor, new_executor) do
     HubManager.executor_relays(namespace, old_executor)
     |> Enum.each(fn {relay_id, node_pids} ->
       # Multi-node-safe: resolve the live/local pid (dropping dead-node
@@ -537,8 +575,6 @@ defmodule Flezha.Executor.FleetManager do
       _ ->
         :ok
     end)
-
-    Map.delete(state.executor_namespaces[namespace], old_executor)
   end
 
   # executor_connect/3 may block inside Orchestrator.await_cluster_ready/0
