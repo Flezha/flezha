@@ -223,6 +223,7 @@ defmodule Flezha.Healthz.Server do
     intended = Map.get(current, :intended_relays, bound)
     producing = Map.get(current, :producing_relays, 0)
     stalled = Map.get(current, :stalled_relays, [])
+    pending_restore = Map.get(current, :pending_restore, false)
     last_tick_at = Map.get(current, :last_tick_at)
     breach_streak = Map.get(current, :tick_breach_streak, 0)
     p99 = Map.get(current, :tick_latency_p99_ms)
@@ -268,6 +269,22 @@ defmodule Flezha.Healthz.Server do
          encode_json(%{
            status: "recovering",
            reason: "relays_rebinding",
+           intended_relays: intended,
+           bound_relays: bound,
+           producing_relays: producing
+         })}
+
+      pending_restore ->
+        # Intent is empty (intended == 0) only because hubs start lazily on
+        # executor reconnect and the durable registry has not been read back
+        # since this controller (re)started — relays.dets exists on disk for a
+        # hub that is not running yet. `bound < intended` cannot catch this
+        # (0 < 0 is false), so without this the system reports vacuously
+        # `healthy`. Recovering, never healthy, until the registry is loaded.
+        {:recovering,
+         encode_json(%{
+           status: "recovering",
+           reason: "restoring_registry",
            intended_relays: intended,
            bound_relays: bound,
            producing_relays: producing

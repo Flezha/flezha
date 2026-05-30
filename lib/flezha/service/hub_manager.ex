@@ -737,6 +737,40 @@ defmodule Flezha.Service.HubManager do
     Path.join(dir, "registry.dets")
   end
 
+  @doc """
+  True when auto-restore is enabled and a durable `registry.dets` exists
+  on disk for a hub that is not yet running — i.e. relays were declared
+  in a prior process and this (re)started controller has not loaded them
+  back yet. `stop_hub/1` and `flz reset` both wipe the registry dir, so a
+  persisted file always means undeclared-but-durable relays, never a
+  legitimately-empty namespace. Used by `/healthz` to report `recovering`
+  during the post-restart window before lazy executor-driven hub start
+  repopulates the in-memory registry.
+  """
+  @spec durable_registry_pending?() :: boolean()
+  def durable_registry_pending?() do
+    if Application.get_env(:flezha, :auto_restore_enabled, true) do
+      running = MapSet.new(list_running_hub_ids())
+
+      root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
+
+      case File.ls(root) do
+        {:ok, entries} ->
+          Enum.any?(entries, fn entry ->
+            hub_id = String.to_atom(entry)
+
+            not MapSet.member?(running, hub_id) and
+              File.regular?(Path.join([root, entry, "registry.dets"]))
+          end)
+
+        _ ->
+          false
+      end
+    else
+      false
+    end
+  end
+
   defp auto_recovery_config() do
     case Application.get_env(:flezha, :auto_restore_enabled, true) do
       false ->

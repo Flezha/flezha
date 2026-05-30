@@ -127,6 +127,52 @@ defmodule Flezha.Healthz.ServerTest do
     assert decoded["intended_relays"] == 3
   end
 
+  test "durable registry pending → 200 recovering (post-restart, registry not loaded yet)",
+       %{port: port} do
+    # Hubs start lazily on executor reconnect, so right after a restart Intent is
+    # empty (intended == 0) while relays.dets still sits on disk. This must read
+    # recovering, never vacuously healthy — `bound < intended` (0 < 0) misses it.
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      stalled_relays: [],
+      intended_relays: 0,
+      bound_relays: 0,
+      producing_relays: 0,
+      pending_restore: true,
+      tick_latency_p99_ms: 0,
+      tick_breach_streak: 0
+    })
+
+    {status, _headers, body} = get(port, "/healthz")
+    assert status == 200
+    decoded = Jason.decode!(body)
+    assert decoded["status"] == "recovering"
+    assert decoded["reason"] == "restoring_registry"
+    assert decoded["intended_relays"] == 0
+    assert decoded["bound_relays"] == 0
+  end
+
+  test "genuinely empty, fully started system → 200 healthy", %{port: port} do
+    # No durable relays pending and nothing declared: a legitimately-empty
+    # controller that has finished starting must still report healthy, so the
+    # restoring-registry branch never masks a steady-state empty system.
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      stalled_relays: [],
+      intended_relays: 0,
+      bound_relays: 0,
+      producing_relays: 0,
+      pending_restore: false,
+      tick_latency_p99_ms: 0,
+      tick_breach_streak: 0
+    })
+
+    {status, _headers, body} = get(port, "/healthz")
+    assert status == 200
+    decoded = Jason.decode!(body)
+    assert decoded["status"] == "healthy"
+  end
+
   test "tick stale → 503 with reason: tick_stale (when configured for fast staleness)",
        %{port: port} do
     previous = Application.get_env(:flezha, :convergence_tick_ms)

@@ -22,7 +22,7 @@ defmodule Flezha.Convergence.Loop do
   use GenServer
 
   alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, Probe, Snapshot}
-  alias Flezha.Service.EventManager
+  alias Flezha.Service.{EventManager, HubManager}
 
   require Logger
 
@@ -252,12 +252,21 @@ defmodule Flezha.Convergence.Loop do
     stalled = Map.keys(state.stalled_relays)
     producing = max(bound - length(stalled), 0)
 
+    # Hubs are started lazily on executor reconnect, so immediately after a
+    # restart the durable registry has not been loaded yet and Intent is empty
+    # (intended == 0). Surfacing the on-disk pending-restore signal lets
+    # `/healthz` report `recovering` instead of vacuously `healthy` until the
+    # registry is read back. Only consulted when nothing is declared yet (the
+    # disk check is cheap, but irrelevant once relays are loaded).
+    pending_restore = intended == 0 and HubManager.durable_registry_pending?()
+
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
       stalled_relays: stalled,
       intended_relays: intended,
       bound_relays: bound,
       producing_relays: producing,
+      pending_restore: pending_restore,
       tick_latency_p99_ms: p99,
       tick_breach_streak: state.tick_breach_streak
     })
