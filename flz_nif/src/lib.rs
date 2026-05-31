@@ -1,4 +1,5 @@
 mod atoms;
+mod driver_msg;
 mod frame_buffer;
 mod quic_driver;
 mod resources;

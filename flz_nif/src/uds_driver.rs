@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 use crossbeam::channel::{Receiver, Sender};
 use mio::net::UnixListener;
 use mio::{Events, Interest, Poll, Token, Waker};
-use rustler::{Encoder, LocalPid, OwnedEnv, Term};
+use rustler::LocalPid;
 
-use crate::atoms;
+use crate::driver_msg::{send_closed_msg, send_connection_msg, send_data_msg};
 use crate::frame_buffer::{FrameBuffer, ParsedFrame};
 use crate::resources::StreamHandle;
 
@@ -430,61 +430,5 @@ fn read_stream_data(
     }
 }
 
-/// Send {:flz_data, stream_id, payload_id, message, metadata} to the owner process.
-fn send_data_msg(owner: LocalPid, stream_id: u64, frame: ParsedFrame) {
-    let mut env = OwnedEnv::new();
-    let _ = env.send_and_clear(&owner, |env| {
-        let metadata_pairs: Vec<(Term, Term)> = frame
-            .metadata
-            .iter()
-            .map(|(k, v)| (k.as_str().encode(env), v.as_str().encode(env)))
-            .collect();
-
-        let metadata_term = Term::map_from_pairs(env, &metadata_pairs)
-            .unwrap_or_else(|_| rustler::types::atom::nil().encode(env));
-
-        let mut msg_binary = rustler::NewBinary::new(env, frame.message.len());
-        msg_binary.as_mut_slice().copy_from_slice(&frame.message);
-
-        rustler::types::tuple::make_tuple(
-            env,
-            &[
-                atoms::flz_data().encode(env),
-                stream_id.encode(env),
-                frame.payload_id.as_str().encode(env),
-                rustler::Binary::from(msg_binary).encode(env),
-                metadata_term,
-            ],
-        )
-    });
-}
-
-/// Send {:flz_closed, stream_id, reason} to the owner process.
-fn send_closed_msg(owner: LocalPid, stream_id: u64, reason: &str) {
-    let reason_owned = reason.to_string();
-    let mut env = OwnedEnv::new();
-    let _ = env.send_and_clear(&owner, |env| {
-        rustler::types::tuple::make_tuple(
-            env,
-            &[
-                atoms::flz_closed().encode(env),
-                stream_id.encode(env),
-                reason_owned.as_str().encode(env),
-            ],
-        )
-    });
-}
-
-/// Send {:flz_connection, stream_handle} to the acceptor.
-fn send_connection_msg(acceptor: LocalPid, stream_handle: rustler::ResourceArc<StreamHandle>) {
-    let mut env = OwnedEnv::new();
-    let _ = env.send_and_clear(&acceptor, |env| {
-        rustler::types::tuple::make_tuple(
-            env,
-            &[
-                atoms::flz_connection().encode(env),
-                stream_handle.encode(env),
-            ],
-        )
-    });
-}
+// send_data_msg / send_closed_msg / send_connection_msg live in
+// crate::driver_msg (shared with the QUIC driver).
