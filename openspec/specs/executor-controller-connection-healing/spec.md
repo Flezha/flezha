@@ -246,32 +246,12 @@ The new `:ping_executor` command and its `PingResponse` SHALL be carried by the 
 
 ### Requirement: Overwatch bounded retry + parked-error state
 
-`Flezha.Relay.Overwatch.complete_init/3` SHALL wrap its `ping → resolve_init_state → start_relay_sdk` sequence in a bounded retry loop with exponential backoff and full jitter. The default schedule SHALL be 6 attempts at `200ms, 500ms, 1s, 2s, 5s, 10s` (configurable via `:overwatch_retry_attempts` and `:overwatch_retry_backoff_ms`). On every retry the Overwatch SHALL re-resolve the live executor via `RelayManager.assign_executor/2` so a fresh executor that came online during the backoff is picked up.
+`Flezha.Relay.Overwatch` SHALL, before issuing `:start_relay`, gate on an active executor being reachable: `await_active_executor/3` polls `RelayManager.assign_executor/2` and confirms readiness (`executor_ready?/1` — the CU is registered AND, when `:overwatch_ping_enabled`, an end-to-end ping returns pong) within a bounded window. Only once an executor is confirmed ready does the bounded `:start_relay` retry run; on exhaustion the relay parks with `init_error` (alive, no upstream I/O) and the convergence Loop drives the un-park rebind. The un-park `:executor_migrate` SHALL run in a supervised task so `:stop_relay` stays responsive mid-retry.
 
-On exhaustion the Overwatch SHALL park in `init_error` state — the GenServer SHALL remain alive, the error reason SHALL be stored in `state.init_error`, and the supervisor SHALL NOT see a crash. The parked Overwatch SHALL respond:
-
-- `{:error, reason}` to `:registry_executor_set` calls (existing behaviour at `lib/flezha/relay/overwatch.ex:311`),
-- `{:reply, {:error, :startup_failed}, state}` to `{:io_in, _, _}` calls (refuse external `io_in` while parked),
-- silent no-op + log on `{:io_in, _, _}` casts (drop and increment counter).
-
-A periodic `:retry_startup` timer SHALL fire every 60 s (configurable via `:overwatch_retry_park_interval_ms`) in the parked state and SHALL re-attempt the full sequence so a transient outage recovers without operator intervention. The timer SHALL be cleared once `init_error` is `nil`.
-
-#### Scenario: Bounded retry exits to parked state after N attempts
-- **GIVEN** a relay `r1` whose ping or `:start_relay` repeatedly times out (the executor's SDK is gone)
-- **WHEN** the Overwatch exhausts its 6 attempts (~19 s aggregate with the default schedule)
-- **THEN** the Overwatch SHALL NOT crash
-- **AND** `state.init_error` SHALL be set to the last error reason (e.g. `{:start_relay_failed, :timeout}`)
-- **AND** the supervisor SHALL NOT receive an `:EXIT` from the Overwatch
-- **AND** subsequent `:io_in` calls SHALL receive `{:error, :startup_failed}`
-
-#### Scenario: Periodic background retry recovers from transient outage
-- **GIVEN** a relay `r1` parked with `state.init_error == {:start_relay_failed, :timeout}`
-- **AND** a fresh executor `e2` comes online in the same namespace + factory after the initial retry burst ends
-- **WHEN** the parked-retry timer fires (default 60 s)
-- **THEN** the Overwatch SHALL re-resolve the live executor via `RelayManager.assign_executor/2`
-- **AND** the ping + `start_relay_sdk` round-trip SHALL succeed
-- **AND** `state.init_error` SHALL be cleared to `nil`
-- **AND** the parked-retry timer SHALL NOT re-arm
+#### Scenario: start gates on executor readiness before retrying
+- **GIVEN** a relay is (re)starting and no executor for its factory is reachable yet
+- **WHEN** Overwatch runs `await_active_executor/3`
+- **THEN** it waits for a ready executor before issuing `:start_relay`, and if none becomes ready within the window it stops/parks rather than pinging a dead binding.
 
 ### Requirement: Control-channel liveness SHALL be implemented once in shared `flz_transport` and serve both SDKs
 
@@ -371,4 +351,32 @@ on any control-socket transport-edge event" requirement.
 #### Scenario: Java SDK receives a truncated control frame
 - **WHEN** the Java reader receives a truncated/malformed frame
 - **THEN** it SHALL drive reconnect and SHALL NOT crash the runtime thread
+
+### Requirement: Executor liveness is transport-connection-close only
+
+Executor liveness SHALL be derived solely from transport connection state: a socket close (`executor_disconnected`) drops the executor from the active set immediately and unconditionally (wrapped so side-effect failures cannot leave a ghost). There SHALL be NO proactive liveness ping-sweep that evicts an executor for a missed periodic ping — a single missed ping on a live-but-busy executor MUST NOT trigger eviction or cascade rebind.
+
+#### Scenario: a frozen-but-connected executor is not evicted
+- **GIVEN** an executor is briefly frozen (GC / host contention) but its transport connection is open
+- **WHEN** the convergence Loop ticks
+- **THEN** no eviction or rebind is issued for it (liveness is connection-state, not ping-timeout)
+- **AND** when the same executor's connection actually closes, it is dropped from the active set immediately.
+
+### Requirement: Controller computes the binding delta on `ExecutorReconnected`
+
+On receiving `ExecutorReconnected { previous_id, new_id, reason }` the controller SHALL compute the binding delta against `previous_id`: if the SDK and controller agree on the id and bindings exist, it is a zero-frame no-op; otherwise the controller mints/uses the authoritative id, issues `ReassignExecutorId` if needed, and re-issues the relay set. On disconnect, eviction SHALL clear each relay's stale stream mapping via `HubManager.hook_remove_pid/2` so a reconnecting SDK's fresh stream binds cleanly to the nil-ref `StreamChannel`.
+
+#### Scenario: stale stream mappings are cleared on disconnect
+- **GIVEN** executor `default_X` with relays bound to its stream channels disconnects
+- **WHEN** the controller evicts `default_X`
+- **THEN** each relay's stream mapping on `default_X` is removed (`hook_remove_pid/2`) and the channels become rebindable, so a fresh stream from a reconnecting process binds without a stale-pid conflict.
+
+### Requirement: Convergence eviction is idempotent and safe on an active executor
+
+`FleetManager.evict_executor/1` driven by the convergence Loop SHALL be a no-op when the target executor is currently `:active` (its connection is open), and SHALL be idempotent on an unknown id. The authoritative connect-handler path (`previous_executor_id` presented by the SDK itself) remains unconditional.
+
+#### Scenario: a reconnected executor survives a stale eviction op
+- **GIVEN** the Diff snapshot queued `default_X` for eviction but `default_X` reconnected before the heal ran
+- **WHEN** `evict_executor(default_X)` executes
+- **THEN** FleetManager observes `default_X` is `:active` and performs no eviction, leaving its relays producing.
 

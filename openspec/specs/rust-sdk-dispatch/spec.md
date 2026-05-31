@@ -94,15 +94,21 @@ The "registry" name carries forward from the pre-change implementation; what's s
 
 ### Requirement: Reconnect Semantics Preserved
 
-On unexpected disconnect (BrokenPipe / UnexpectedEof / ConnectionReset / QUIC connection lost) the Rust SDK SHALL clear `io_streams`, clear the live Relay-instance registry, drain in-flight work (per-Partition mailboxes), reset `executor_id` to `"undefined"`, and reconnect with exponential backoff (200 ms → 30 s cap) per `docs/sdk_protocol_spec.md` §5. On intentional disconnect (`ExecutorDisconnect` handled) the SDK SHALL NOT reconnect. These semantics MUST hold identically to the pre-change implementation; the only difference is that "live relay registry" is now "live Relay-instance registry" and "drain in-flight work" now means draining all partition mailboxes across all Relay instances.
+Across a control-channel reconnect the Rust SDK SHALL preserve its `relay_registry`, shared I/O streams, and `executor_id` (no clear-and-reassign window where frames are dropped). In addition:
 
-#### Scenario: Unexpected disconnect triggers full state reset + reconnect
-- **WHEN** the agent process is killed while the SDK has 10 live Relay instances with in-flight work in their partition mailboxes
-- **THEN** the SDK SHALL drop all queued work, close mailboxes, reset state, and re-establish a fresh `executor_id` once the agent is available again
+1. **Live-sink resolution** — the per-Partition state send path (`PartitionStateSink`) SHALL resolve the *live* secondary stream on every send rather than caching a stream handle, so a reconnect's freshly-wired stream is used without re-registering Partitions.
+2. **Reconnect ring** — when no sink is installed or a write fails (the reconnect window), state-change frames SHALL be buffered in a bounded ring (drop-oldest on overflow) and replayed through the new sink on install, so changes produced mid-reconnect are not silently lost.
+3. **Broken-pipe flood → control reconnect** — sustained write failures (a flood within a short window) SHALL trigger a full control-channel reconnect via the coordinator rather than spinning on a dead stream.
 
-#### Scenario: Intentional disconnect halts the reconnect loop
-- **WHEN** the agent sends `ExecutorDisconnect{}` and the SDK handles it
-- **THEN** the SDK SHALL close sockets and not attempt any reconnection
+#### Scenario: state changes produced during a reconnect are not lost
+- **GIVEN** the secondary stream drops and the SDK is reconnecting
+- **WHEN** the relay produces state changes before the new stream is wired
+- **THEN** the frames are buffered in the reconnect ring and replayed once the new sink is installed, preserving seq order.
+
+#### Scenario: a broken-pipe flood drives a control reconnect
+- **GIVEN** the state send path sees a flood of write failures within the detection window
+- **WHEN** the threshold is crossed
+- **THEN** the SDK requests a full control-channel reconnect from the coordinator instead of continuing to write to the dead stream.
 
 ### Requirement: Command Dispatch Behavior Preserved Byte-for-Byte for Surviving Commands
 
@@ -318,4 +324,22 @@ This requirement covers fixture behavior only; it does not change the SDK's `Sha
 
 - **WHEN** a `CompareFilterRelay` instance is initialized with `comparable = "hello world"` and the test sends `"hello world"` to the relay
 - **THEN** the test SHALL receive `{:message_forward, "hello world"}` within 2 seconds
+
+### Requirement: `ExecutorReconnected` control message defined and emitted
+
+The SDK SHALL emit an `ExecutorReconnected { previous_id, new_id, reason }` control frame as the first message after re-establishing the control stream, and SHALL emit a single structured reconnect log line. The controller SHALL use this frame to compute the binding delta: a stable reconnect under the same id is a zero-frame no-op; a controller-side reassignment during the disconnect window triggers `ReassignExecutorId { new_id }` and a re-issue of the relay set. `reason` SHALL be one of the transport-edge causes (e.g. broken pipe, read/write error, keepalive timeout, controller-requested).
+
+#### Scenario: a stable reconnect is a zero-delta no-op
+- **GIVEN** the SDK reconnects within the disconnect window holding the same `executor_id`
+- **WHEN** it sends `ExecutorReconnected{previous_id == current, new_id == current}`
+- **THEN** the controller's bindings already agree and no `AddRelay`/`RemRelay` frames are issued.
+
+### Requirement: Node-local persisted executor id announced as `previous_executor_id`
+
+On a fresh process start (not a reconnect) the SDK SHALL load its node-local persisted executor id (atomically written via tmp+rename at `FLEZHA_EXECUTOR_ID_PATH`) and announce it as `previous_executor_id` in the connect handshake, so the controller evicts the stale binding from the prior process before binding the new one. Reconnects SHALL NOT re-announce it (identity is preserved in-place).
+
+#### Scenario: a restarted process reclaims its bindings
+- **GIVEN** an SDK process held `executor_id = default_X` and persisted it locally
+- **WHEN** the process is killed and a fresh process starts, reads `default_X`, and announces it as `previous_executor_id`
+- **THEN** the controller evicts the stale `default_X` binding before the new bind, so no relay is left bound to the dead process.
 

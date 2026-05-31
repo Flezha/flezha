@@ -103,63 +103,21 @@ The hot path SHALL pay only the brief sticky-CAS hold during the state clone —
 
 ### Requirement: Restart restores state via RestoreInitState handshake
 
-On Partition data-stream attach (handled by `Flezha.Executor.StreamChannel`'s `{:attach_stream, stream_ref}` callback for a Partition stream), for each Partition whose Relay has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL: (1) call `Restore.assemble_payload(partition_id)` to read the latest snapshot bytes plus the tail-WAL bytes; (2) ship `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}` to the SDK over the control channel; (3) BLOCK the Partition's input streaming (entry channel and inter-shard inputs targeting this Partition queue at the agent-side outbox); (4) await `RestoreInitStateResponse{partition_id, terminal_seq}` from the SDK; (5) UNBLOCK the Partition's input streaming; subsequent Changes from the SDK carry `seq = terminal_seq + 1`.
+On executor (re)bind, the controller SHALL drive a `RestoreInitState` handshake for each persisted Partition of the relay, and the SDK SHALL rebuild the live Partition slot from the controller's durable WAL — snapshot apply followed by change-log fold — rather than initialising empty. Restore SHALL be:
 
-The dispatch SHALL fire exactly once per Partition per Relay-startup, before any input frame is forwarded to the SDK. This is the canonical state-restoration trigger; it works identically across boot replay, ProcessHub redistribution, AddRelay reissue after executor restart, and any other Relay-startup path.
+1. **Unconditional on every Overwatch bind** — driven by `Flezha.State.Recovery.resync_for_overwatch/2` (not a class→executor lookup that fails on cold boot). When the relay arrived via HotSwap handover, the in-band state is authoritative and the `{:kick_restore}` path SHALL skip to avoid double-applying.
+2. **Keyed by relay instance id, not factory id** — the Partition wire identity is `[rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]` keyed by the relay *instance*, so two relays of the same factory class never collide on one WAL.
+3. **Inclusive of seq 0** — an empty WAL initialises `last_persisted_seq = -1` (not `0`) and the "no snapshot" restore sentinel is `-1`, so the 0-based first change is never dedup-dropped. After fold, the SDK re-arms `change_seq = terminal_seq + 1` so the next produced frame is contiguous.
 
-For Partitions whose Relay has `persistence_enabled = false` OR whose agent-side state is empty (no snapshot, no WAL records), the agent SHALL fall through to the existing `relay-init-state` capability flow.
+#### Scenario: a stateful relay resumes its accumulated state after both executors restart
+- **GIVEN** a `resume_probe` relay has accumulated a running total of 100 in persisted state
+- **WHEN** both executors are gracefully stopped and restarted under load and the relay rebinds
+- **THEN** the relay's restored state is 100 (the WAL snapshot + change-log), driving one more `+7` input emits 107, and no state is lost.
 
-**Note on HotSwap migration**: when a Relay arrives on this controller via HotSwap (the destination side of a `HotSwap{handover: true}` migration), the Partition's state is delivered in-band via the existing `alter_handover_state/2` callback path — `dispatch_restore_init_state/2` SHALL NOT additionally fire for HotSwap-migrated Partitions. The `Overwatch` GenServer SHALL track an `arrived_via_hotswap?` flag set during `alter_handover_state/2` and consulted by the per-Partition stream-attach handler.
-
-The previous mutual-exclusivity rule with `executor_migrate` is removed: `executor_migrate` no longer carries state (the `:overwatch_state_snapshot_interval_ms` periodic capture is removed in this change), so it is no longer a competing state-delivery path. `dispatch_restore_init_state/2` is the single state-restoration mechanism for non-HotSwap Relay starts.
-
-#### Scenario: Cold start with no persisted state
-
-- **WHEN** a Partition reconnects and the agent has no WAL or snapshot for it AND `persistence_enabled = true`
-- **THEN** `RestoreInitState` SHALL NOT be issued; the agent SHALL invoke the existing `relay-init-state` capability flow
-
-#### Scenario: Restart with snapshot only
-
-- **WHEN** a Partition reconnects with a snapshot at `seq = 100` and an empty WAL (post-compaction)
-- **THEN** the agent SHALL ship `RestoreInitState` with the snapshot bytes and empty change_log_bytes; `RestoreInitStateResponse` SHALL carry `terminal_seq = 100`
-
-#### Scenario: Restart with snapshot and tail WAL
-
-- **WHEN** a Partition reconnects with a snapshot at `seq = 100` and WAL records seqs 101-150
-- **THEN** the agent SHALL ship `RestoreInitState` with the snapshot bytes and the WAL bytes (records 101-150 framed); `RestoreInitStateResponse` SHALL carry `terminal_seq = 150`
-
-#### Scenario: Restart with WAL only (no snapshot)
-
-- **WHEN** a Partition reconnects with WAL records seqs 1-50 and no snapshot
-- **THEN** the agent SHALL ship `RestoreInitState` with empty snapshot_bytes and WAL bytes for seqs 1-50; `RestoreInitStateResponse` SHALL carry `terminal_seq = 50`
-
-#### Scenario: Persistence-disabled Relay skips RestoreInitState
-
-- **WHEN** a Partition reconnects under a Relay with `persistence_enabled = false`
-- **THEN** the agent SHALL NOT call `Restore.assemble_payload` AND SHALL NOT ship `RestoreInitState`; the existing `relay-init-state` capability flow runs instead
-
-#### Scenario: HotSwap-migrated Partition skips dispatch (state delivered in-band)
-
-- **GIVEN** a Relay arrives on this controller via HotSwap from a peer; `Overwatch` consumed the state via `alter_handover_state/2` and set `arrived_via_hotswap? = true`
-- **WHEN** the Partition's data stream attaches to `StreamChannel`
-- **THEN** `dispatch_restore_init_state/2` SHALL NOT fire for any of the Relay's Partitions; the in-band handover state stands
-
-#### Scenario: Boot replay + Partition reconnect ships RestoreInitState
-
-- **GIVEN** the controller cold-boots, ClusterMode resolves to `:recovering`, Coordinator replays the registry, an executor connects and is assigned to a re-registered Relay
-- **WHEN** the SDK opens a data stream for a Partition that has on-disk WAL records under `app_data/state/{relay_class}/{shard_id}/{partition_key}.wal`
-- **THEN** the controller SHALL ship `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}` over the control channel BEFORE forwarding any input frames
-
-#### Scenario: Executor pod restart preserves state via flat path + dispatch
-
-- **GIVEN** a Relay running on a controller; the executor pod restarts and connects with a new `executor_id`
-- **WHEN** the connection-healing path reissues `AddRelay` and the new executor opens Partition data streams
-- **THEN** for each Partition with on-disk state, `dispatch_restore_init_state/2` SHALL fire (the flat WAL path means the same files are found regardless of `executor_id`); the new executor SHALL receive snapshot+WAL via the existing handshake; SDK applies snapshot, folds WAL; zero data loss
-
-#### Scenario: Input streaming blocked during restoration
-
-- **WHEN** an entry-channel frame arrives for a Partition mid-restoration (between agent ship of `RestoreInitState` and receipt of `RestoreInitStateResponse`)
-- **THEN** the agent SHALL queue the frame in its per-Partition outbox; the frame SHALL NOT ship to the SDK until restoration completes
+#### Scenario: the first change of a fresh relay survives restart
+- **GIVEN** a relay produced exactly one state change (seq 0) and no snapshot exists
+- **WHEN** the executor restarts and restore runs
+- **THEN** the seq-0 change is included in the restored change-log (the `-1` empty-WAL/no-snapshot sentinels keep it), not dropped as a dedup floor.
 
 ### Requirement: Time-travel queries via WAL retention beyond latest snapshot
 
@@ -602,4 +560,19 @@ SHALL emit `[:flezha, :state, :wal_realign]` telemetry.
 #### Scenario: Output-stall resync resolves the owning executor
 - **WHEN** the Watchdog detects an output stall and triggers a resync for a Partition
 - **THEN** `Flezha.State.Recovery.resolve_executor/1` SHALL resolve the owning executor id from the durable registry entry's metadata tag, keyed by the relay's relay_class (its `:relay_class` opt, defaulting to its id)
+
+### Requirement: Output is persisted before it is emitted (flush-before-emit)
+
+For a persistence-enabled relay, the SDK SHALL drain a just-applied state change to the durable WAL send path BEFORE writing the corresponding output frame, so durable state never lags emitted output by more than the in-flight network window. This is gated on `persistence_enabled` and `FLEZHA_FLUSH_BEFORE_EMIT` (default on); non-persistent relays keep the zero-cost inline emit. Each change is moved out of the buffer exactly once and seq order is preserved via the shared `change_seq`.
+
+#### Scenario: durable state does not trail emitted output
+- **GIVEN** a persistence-enabled relay applies a state change and then emits output for it
+- **WHEN** the dispatch runs with flush-before-emit enabled
+- **THEN** the change is shipped to the per-Partition WAL path before the output frame is written
+- **AND** on a subsequent hard-kill the restored state is no further behind the emitted output than the single in-flight change.
+
+#### Scenario: a non-persistent relay keeps the inline fast path
+- **GIVEN** a relay with persistence disabled
+- **WHEN** it emits output
+- **THEN** no flush-before-emit drain occurs and the emit path is unchanged.
 

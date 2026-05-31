@@ -272,3 +272,32 @@ but did not bring to production is still healed.
 - **WHEN** the reconciler runs after `post_recovery_replay`
 - **THEN** every replayed relay SHALL be driven to a producing state on a live executor, or marked `FAILED` if no executor can serve it
 
+### Requirement: Boot ordering is gated on recovery completion, not on the replay hook
+
+Registry-dependent services SHALL gate their readiness on `HubManager.await_recovery_complete/1` rather than on the `pre_recovery_replay` hook doing the waiting. `Flezha.Executor.FleetManager.init/1` and the convergence `Loop` SHALL block on `await_recovery_complete` before serving registry-dependent work. The `pre_recovery_replay` hook handler is consequently a thin telemetry forwarder (it emits `[:flezha, :boot, :pre_recovery_replay]` and returns; it does NOT poll FleetManager and there is no `:pre_replay_fleet_wait_ms` budget), because the upstream ProcessHub recovery-marker gate queues cluster events until the cluster is formed.
+
+#### Scenario: a registry consumer waits for recovery before serving
+- **GIVEN** a controller boot where a hub must replay its durable registry
+- **WHEN** `FleetManager.init/1` runs
+- **THEN** it calls `HubManager.await_recovery_complete/1` and proceeds only once every hub reaches `:normal`/`:skipped` (or the bounded timeout elapses)
+- **AND** the `pre_recovery_replay` hook itself only forwards telemetry and does not block on the fleet.
+
+### Requirement: The auto-restore kill-switch tolerates a non-boolean value
+
+`HubManager.durable_registry_pending?/0` SHALL read `:auto_restore_enabled` as a kill-switch where only an explicit `false` disables auto-restore (`Application.get_env(:flezha, :auto_restore_enabled, true) != false`). A `nil` or otherwise non-boolean value SHALL be treated as enabled and MUST NOT crash the convergence Loop tick that reads this predicate.
+
+#### Scenario: a nil config value does not crash the loop tick
+- **GIVEN** `:auto_restore_enabled` is set to `nil` (e.g. cross-test env pollution)
+- **WHEN** the convergence Loop tick calls `durable_registry_pending?/0`
+- **THEN** the predicate treats auto-restore as enabled and returns a boolean without raising
+- **AND** the Loop tick completes normally.
+
+### Requirement: A sole-instance restart preserves relays only via recovery mode
+
+A plain restart of the sole controller SHALL skip-replay and rebuild the relay list from executors re-announcing (the durable registry is wiped on a skip-replay boot, by design). To preserve relays across a sole-instance restart, recovery mode (the `cluster.healthy` marker removed / `flz cluster prepare-recovery`) SHALL be used so the registry replays from DETS, and `/healthz` SHALL honestly report `recovering`/`restoring_registry` until rebound.
+
+#### Scenario: recovery-mode restart preserves the relay list
+- **GIVEN** a sole controller has relays bound and the operator wants them preserved across a restart
+- **WHEN** recovery mode is armed (marker removed / `flz cluster prepare-recovery`) and the controller restarts
+- **THEN** the registry replays from DETS, `/healthz` reports `recovering` until rebound, and the relays return without operator re-arming.
+
