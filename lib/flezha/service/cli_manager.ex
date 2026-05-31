@@ -116,7 +116,7 @@ defmodule Flezha.Service.CliManager do
        %Plugin{
          id: plugin_id,
          provider: provider_mod,
-         opts: atomize_map(raw_opts),
+         opts: atomize_keys(raw_opts),
          subscriptions: subscriptions,
          namespace: namespace,
          relay_id: relay_id
@@ -203,18 +203,6 @@ defmodule Flezha.Service.CliManager do
 
   defp atomize_sub_opt_value(v) when is_binary(v), do: String.to_atom(v)
   defp atomize_sub_opt_value(v), do: v
-
-  # Atomise top-level keys of a plugin-opts map. Values (including nested maps
-  # like `request_payload`) stay verbatim — plugins that need atoms in their
-  # nested opts decode them themselves.
-  defp atomize_map(map) when is_map(map) do
-    Map.new(map, fn {k, v} ->
-      key = if is_binary(k), do: String.to_atom(k), else: k
-      {key, v}
-    end)
-  end
-
-  defp atomize_map(other), do: other
 
   @doc "Stops a relay."
   def relay_stop(namespace, relay_id) do
