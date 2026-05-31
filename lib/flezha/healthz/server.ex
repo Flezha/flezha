@@ -1,19 +1,13 @@
 defmodule Flezha.Healthz.Server do
   @moduledoc """
-  Opt-in HTTP `/healthz` listener. Hand-rolled `:gen_tcp` HTTP/1.1
-  server following the pattern in
-  `Flezha.Observability.Export.PrometheusHttp` — same idle-timeout
-  hygiene, same single-socket accept loop, no Cowboy/Plug dep.
-
-  This is a thin reader of `Flezha.Convergence.Snapshot.current/0` (the
-  single published source of truth, design.md invariant I7) plus the
-  per-hub recovery cache. It holds no health state of its own and runs
-  no telemetry handler — the convergence `Loop` publishes the snapshot
-  this server formats.
+  Opt-in HTTP `/healthz` listener, built on `Flezha.Http.Listener`. A thin
+  reader of `Flezha.Convergence.Snapshot.current/0` (the single published
+  source of truth) plus the per-hub recovery cache; it holds no health
+  state of its own.
 
   Endpoint contract:
 
-    * `GET /healthz` — body JSON, carrying `bound_relays` and
+    * `GET /healthz` — JSON body carrying `bound_relays` and
       `producing_relays` as distinct counters.
       - `200 OK` `{"status":"healthy", ...}` when every namespace hub is
         `:normal` and `producing_relays == bound_relays`.
@@ -26,9 +20,7 @@ defmodule Flezha.Healthz.Server do
         during a planned recovery).
       - `503 Service Unavailable` `{"status":"unhealthy", ...}` ONLY when
         the convergence Loop itself is wedged (`reason` ∈
-        `tick_stale | recovery_failed`): it has stopped ticking
-        (`wall - last_tick > tick_ms × 3`) or blew the per-tick latency
-        budget for ≥ 3 consecutive ticks.
+        `tick_stale | recovery_failed`).
 
     * `GET /` — `pong\\n` (cheap probe target).
     * Anything else → `404 / 405 / 400`.
@@ -40,10 +32,8 @@ defmodule Flezha.Healthz.Server do
   use GenServer
 
   alias Flezha.Convergence.Snapshot
+  alias Flezha.Http.Listener
   alias Flezha.Service.HubManager
-
-  @idle_timeout_ms 5_000
-  @max_request_line_bytes 8_192
 
   # ---------- Public API ----------
 
@@ -76,20 +66,8 @@ defmodule Flezha.Healthz.Server do
     port = Application.get_env(:flezha, :healthz_port, 9569)
     bind = Application.get_env(:flezha, :healthz_bind, "127.0.0.1")
 
-    {:ok, ip} = :inet.parse_address(String.to_charlist(bind))
-
-    listen_opts = [
-      :binary,
-      packet: :raw,
-      active: false,
-      reuseaddr: true,
-      ip: ip,
-      backlog: 128
-    ]
-
-    case :gen_tcp.listen(port, listen_opts) do
-      {:ok, listen_socket} ->
-        {:ok, actual_port} = :inet.port(listen_socket)
+    case Listener.listen(port, bind) do
+      {:ok, listen_socket, actual_port} ->
         send(self(), :accept_loop)
         {:ok, %{listen_socket: listen_socket, port: actual_port}}
 
@@ -106,7 +84,7 @@ defmodule Flezha.Healthz.Server do
   @impl true
   def handle_info(:accept_loop, %{listen_socket: listen_socket} = state) do
     parent = self()
-    spawn(fn -> accept_loop(parent, listen_socket) end)
+    spawn(fn -> Listener.accept_loop(parent, listen_socket, &route/2) end)
     {:noreply, state}
   end
 
@@ -118,100 +96,21 @@ defmodule Flezha.Healthz.Server do
     :ok
   end
 
-  # ---------- Acceptor / handler ----------
+  # ---------- routing ----------
 
-  defp accept_loop(parent, listen_socket) do
-    case :gen_tcp.accept(listen_socket, 1_000) do
-      {:ok, socket} ->
-        spawn(fn ->
-          try do
-            serve(socket)
-          catch
-            _, _ -> :gen_tcp.close(socket)
-          end
-        end)
+  defp route(socket, {:get, "/healthz"}), do: respond_healthz(socket)
+  defp route(socket, {:get, "/"}), do: Listener.send_response(socket, 200, "text/plain", "pong\n")
+  defp route(socket, {:get, _}), do: Listener.send_response(socket, 404, "text/plain", "not found\n")
 
-        accept_loop(parent, listen_socket)
+  defp route(socket, {:method_not_allowed, _}),
+    do: Listener.send_response(socket, 405, "text/plain", "method not allowed\n")
 
-      {:error, :timeout} ->
-        if Process.alive?(parent), do: accept_loop(parent, listen_socket), else: :ok
-
-      {:error, :closed} ->
-        :ok
-
-      {:error, _other} ->
-        :ok
-    end
-  end
-
-  defp serve(socket) do
-    case read_request_line(socket) do
-      {:ok, line} ->
-        _ = drain_headers(socket, 5)
-        handle_request(socket, line)
-
-      {:error, :timeout} ->
-        :gen_tcp.close(socket)
-
-      {:error, _} ->
-        _ = send_response(socket, 400, "text/plain", "bad request\n")
-        :gen_tcp.close(socket)
-    end
-  end
-
-  defp read_request_line(socket) do
-    :inet.setopts(socket, packet: :line)
-
-    case :gen_tcp.recv(socket, 0, @idle_timeout_ms) do
-      {:ok, line} when byte_size(line) > @max_request_line_bytes -> {:error, :too_long}
-      {:ok, line} -> {:ok, line}
-      err -> err
-    end
-  end
-
-  defp drain_headers(socket, attempts) when attempts > 0 do
-    case :gen_tcp.recv(socket, 0, 500) do
-      {:ok, "\r\n"} -> :ok
-      {:ok, "\n"} -> :ok
-      {:ok, _other} -> drain_headers(socket, attempts - 1)
-      _ -> :ok
-    end
-  end
-
-  defp drain_headers(_socket, _), do: :ok
-
-  defp handle_request(socket, line) do
-    case parse_request_line(line) do
-      {:get, "/healthz"} -> respond_healthz(socket)
-      {:get, "/"} -> send_response(socket, 200, "text/plain", "pong\n")
-      {:get, _} -> send_response(socket, 404, "text/plain", "not found\n")
-      {:method_not_allowed, _} -> send_response(socket, 405, "text/plain", "method not allowed\n")
-      :bad -> send_response(socket, 400, "text/plain", "bad request\n")
-    end
-
-    :gen_tcp.close(socket)
-  end
-
-  defp parse_request_line(line) do
-    case String.split(String.trim(line)) do
-      [method, path, "HTTP/" <> _] ->
-        case String.upcase(method) do
-          "GET" -> {:get, path}
-          _ -> {:method_not_allowed, path}
-        end
-
-      _ ->
-        :bad
-    end
-  end
+  defp route(socket, :bad), do: Listener.send_response(socket, 400, "text/plain", "bad request\n")
 
   defp respond_healthz(socket) do
-    case compute_health() do
-      {:healthy, body} -> send_response(socket, 200, "application/json", body)
-      {:degraded, body} -> send_response(socket, 200, "application/json", body)
-      {:recovering, body} -> send_response(socket, 200, "application/json", body)
-      {:unhealthy, body} -> send_response(socket, 503, "application/json", body)
-    end
+    {status, body} = compute_health()
+    code = if status == :unhealthy, do: 503, else: 200
+    Listener.send_response(socket, code, "application/json", body)
   end
 
   # Reads the single published convergence snapshot and the per-hub
@@ -332,25 +231,13 @@ defmodule Flezha.Healthz.Server do
     end
   end
 
-  # 503 ONLY when the Loop is genuinely wedged. Two independent signals,
-  # either of which means kubelet should restart the pod:
-  #   * it has stopped ticking (`wall - last_tick > tick_ms × 3`), or
-  #   * it blew the per-tick latency budget for ≥ 3 consecutive ticks.
-  # A merely output-stalled relay is `degraded`, never wedged — that
-  # hair-trigger SIGTERM'd healthy pods (proposal §2).
-  # A genuinely wedged loop: the latency budget blew for ≥ 3 consecutive ticks
-  # (running but stuck), OR ticks have been stale far longer than any pause/wake
-  # would explain (the gapped grace below covers shorter freezes).
+  # 503 only when the Loop has genuinely STOPPED ticking far longer than any
+  # pause/wake could explain. Tick age is the only authoritative liveness
+  # signal: a slow-but-completing tick is alive, not wedged, so escalating it
+  # would make kubelet kill a producing pod. Shorter freezes are `recovering`
+  # via the gapped grace below; a merely output-stalled relay is `degraded`.
   defp loop_hard_wedged?(nil), do: false
-
-  # Authoritative liveness: the loop is wedged only when it has STOPPED
-  # ticking. Slow-but-completing ticks (e.g. a side-effecting probe waiting
-  # on a suspended channel) are not death — escalating them to a 503 makes
-  # kubelet kill a pod that is alive and producing. Tick age is the only
-  # signal that distinguishes a dead loop from a busy one.
-  defp loop_hard_wedged?(last_tick_at) do
-    now_ms() - last_tick_at > tick_ms() * 24
-  end
+  defp loop_hard_wedged?(last_tick_at), do: now_ms() - last_tick_at > tick_ms() * 24
 
   # A single tick gap past the normal cadence but within the hard bound — treat
   # as a freeze/wake in progress (recovering), not a wedge.
@@ -363,37 +250,6 @@ defmodule Flezha.Healthz.Server do
   defp tick_age(last_tick_at), do: now_ms() - last_tick_at
 
   defp now_ms(), do: System.monotonic_time(:millisecond)
-
-  defp send_response(socket, status, content_type, body) do
-    body_bin = IO.iodata_to_binary(body)
-    size = byte_size(body_bin)
-
-    response = [
-      "HTTP/1.1 ",
-      Integer.to_string(status),
-      " ",
-      status_text(status),
-      "\r\n",
-      "Content-Type: ",
-      content_type,
-      "\r\n",
-      "Content-Length: ",
-      Integer.to_string(size),
-      "\r\n",
-      "Connection: close\r\n",
-      "\r\n",
-      body_bin
-    ]
-
-    _ = :gen_tcp.send(socket, response)
-    :ok
-  end
-
-  defp status_text(200), do: "OK"
-  defp status_text(400), do: "Bad Request"
-  defp status_text(404), do: "Not Found"
-  defp status_text(405), do: "Method Not Allowed"
-  defp status_text(503), do: "Service Unavailable"
 
   defp encode_json(map), do: Jason.encode!(map)
 end
