@@ -155,25 +155,8 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
       nil ->
         case state.starter.(identity) do
           {:ok, pid} when is_pid(pid) ->
-            wmref = Process.monitor(pid)
-
-            entry = %{
-              pid: pid,
-              refs: 1,
-              linger: nil,
-              monitor: wmref,
-              callers: MapSet.new(),
-              identity: identity
-            }
-
-            state = %{
-              state
-              | entries: Map.put(state.entries, key, entry),
-                worker_monitors: Map.put(state.worker_monitors, wmref, key)
-            }
-
+            state = install_worker(state, key, identity, pid, 1, MapSet.new())
             {token, state} = register_owner(state, key, caller)
-
             {:reply, {:ok, pid, {key, token}}, state}
 
           {:error, reason} ->
@@ -213,23 +196,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
             case state.starter.(identity) do
               {:ok, pid} when is_pid(pid) ->
-                wmref = Process.monitor(pid)
-
-                entry = %{
-                  pid: pid,
-                  refs: count,
-                  linger: nil,
-                  monitor: wmref,
-                  callers: MapSet.new(),
-                  identity: identity
-                }
-
-                state = %{
-                  state
-                  | entries: Map.put(state.entries, key, entry),
-                    worker_monitors: Map.put(state.worker_monitors, wmref, key)
-                }
-
+                state = install_worker(state, key, identity, pid, count, MapSet.new())
                 {token, state} = register_owner(state, key, caller)
                 {:reply, {:ok, pid, {key, token}}, state}
 
@@ -339,23 +306,9 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
     case started do
       {:ok, new_pid} when is_pid(new_pid) ->
-        wmref = Process.monitor(new_pid)
-
-        entry = %{
-          pid: new_pid,
-          refs: if(prev, do: prev.refs, else: 1),
-          linger: nil,
-          monitor: wmref,
-          callers: if(prev, do: prev.callers, else: MapSet.new()),
-          identity: identity
-        }
-
-        state = %{
-          state
-          | entries: Map.put(state.entries, key, entry),
-            worker_monitors: Map.put(state.worker_monitors, wmref, key)
-        }
-
+        refs = if prev, do: prev.refs, else: 1
+        callers = if prev, do: prev.callers, else: MapSet.new()
+        state = install_worker(state, key, identity, new_pid, refs, callers)
         {:reply, {:ok, new_pid}, state}
 
       other ->
@@ -456,6 +409,19 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
     end)
 
     :ok
+  end
+
+  # Monitor a freshly started worker and register its entry under `key`.
+  defp install_worker(state, key, identity, pid, refs, callers) do
+    wmref = Process.monitor(pid)
+
+    entry = %{pid: pid, refs: refs, linger: nil, monitor: wmref, callers: callers, identity: identity}
+
+    %{
+      state
+      | entries: Map.put(state.entries, key, entry),
+        worker_monitors: Map.put(state.worker_monitors, wmref, key)
+    }
   end
 
   defp register_owner(state, key, caller) do

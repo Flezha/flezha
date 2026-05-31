@@ -14,8 +14,8 @@ defmodule Flezha.Service.HubManager do
 
   @default_await_timeout_ms 60_000
 
-  # Wedged-channel watchdog (unified-convergence-loop Phase C): a stream
-  # channel that times out `@channel_wedge_threshold` times within
+  # Wedged-channel watchdog: a stream channel that times out
+  # `@channel_wedge_threshold` times within
   # `@channel_wedge_window_ms` is treated as wedged. Counters live in the
   # always-on `:flezha_channel_health` ETS table owned by
   # `Flezha.Convergence.Snapshot`; the Loop probes channels each tick and
@@ -364,7 +364,7 @@ defmodule Flezha.Service.HubManager do
     )
   end
 
-  # ---------- channel-health watchdog (Phase C) ----------
+  # ---------- channel-health watchdog ----------
 
   @doc """
   Ping every stream channel of `executor_id` with a bounded
@@ -374,15 +374,7 @@ defmodule Flezha.Service.HubManager do
   """
   @spec health_check_channels(binary()) :: :ok
   def health_check_channels(executor_id) when is_binary(executor_id) do
-    channels =
-      try do
-        Supervisor.which_children(Identificator.stream_sup_primary(executor_id)) ++
-          Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
-      catch
-        :exit, _ -> []
-      end
-
-    Enum.each(channels, fn
+    Enum.each(stream_channels_for_executor(executor_id), fn
       {_, pid, _, _} when is_pid(pid) ->
         case SafeCall.bounded(pid, :stream_ref_status, 1_000) do
           {:ok, _} -> clear_channel_timeout(pid)
@@ -398,53 +390,63 @@ defmodule Flezha.Service.HubManager do
   @doc "Pids that have struck out (≥ threshold timeouts inside the window)."
   @spec wedged_channel_pids() :: [pid()]
   def wedged_channel_pids() do
-    case :ets.whereis(@channel_health_table) do
-      :undefined ->
-        []
+    with_channel_health([], fn tid ->
+      now = System.monotonic_time(:millisecond)
 
-      tid ->
-        now = System.monotonic_time(:millisecond)
-
-        tid
-        |> :ets.tab2list()
-        |> Enum.filter(fn {pid, {count, first_ts}} ->
-          is_pid(pid) and count >= @channel_wedge_threshold and
-            now - first_ts <= @channel_wedge_window_ms
-        end)
-        |> Enum.map(fn {pid, _} -> pid end)
-    end
+      tid
+      |> :ets.tab2list()
+      |> Enum.filter(fn {pid, {count, first_ts}} ->
+        is_pid(pid) and count >= @channel_wedge_threshold and
+          now - first_ts <= @channel_wedge_window_ms
+      end)
+      |> Enum.map(fn {pid, _} -> pid end)
+    end)
   end
 
   @doc "Drop a channel's strike row (after a healthy reply or a kill)."
   @spec clear_channel_timeout(pid()) :: :ok
   def clear_channel_timeout(pid) when is_pid(pid) do
-    case :ets.whereis(@channel_health_table) do
-      :undefined -> :ok
-      tid -> true = :ets.delete(tid, pid); :ok
-    end
+    with_channel_health(:ok, fn tid ->
+      true = :ets.delete(tid, pid)
+      :ok
+    end)
   end
 
   # Add a strike. A strike older than the window resets the counter so
   # only *consecutive* timeouts within the window escalate to wedged.
   defp record_channel_timeout(pid) when is_pid(pid) do
+    with_channel_health(:ok, fn tid ->
+      now = System.monotonic_time(:millisecond)
+
+      entry =
+        case :ets.lookup(tid, pid) do
+          [{^pid, {count, first_ts}}] when now - first_ts <= @channel_wedge_window_ms ->
+            {count + 1, first_ts}
+
+          _ ->
+            {1, now}
+        end
+
+      true = :ets.insert(tid, {pid, entry})
+      :ok
+    end)
+  end
+
+  # Live stream-channel children (primary + secondary) for an executor; `[]`
+  # if the supervisors are gone.
+  defp stream_channels_for_executor(executor_id) do
+    Supervisor.which_children(Identificator.stream_sup_primary(executor_id)) ++
+      Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
+  catch
+    :exit, _ -> []
+  end
+
+  # Run `fun` with the `:flezha_channel_health` table id, or return `default`
+  # when the table has not been created yet.
+  defp with_channel_health(default, fun) do
     case :ets.whereis(@channel_health_table) do
-      :undefined ->
-        :ok
-
-      tid ->
-        now = System.monotonic_time(:millisecond)
-
-        entry =
-          case :ets.lookup(tid, pid) do
-            [{^pid, {count, first_ts}}] when now - first_ts <= @channel_wedge_window_ms ->
-              {count + 1, first_ts}
-
-            _ ->
-              {1, now}
-          end
-
-        true = :ets.insert(tid, {pid, entry})
-        :ok
+      :undefined -> default
+      tid -> fun.(tid)
     end
   end
 
@@ -499,14 +501,11 @@ defmodule Flezha.Service.HubManager do
     metadata = Map.get(hook_data, :metadata, %{})
     assigned_ce = Map.get(metadata, :tag)
 
-    # Phase 2 fix (consume-recovery-mode-and-self-heal §2.8): only the
-    # executor whose session id matches the registry entry's
+    # Only the executor whose session id matches the registry entry's
     # `metadata.tag` (a.k.a `assigned_ce`) should receive this relay's
-    # frames. The pre-change behaviour pushed the update to EVERY
-    # registered executor's stream channels — `e1` AND `e2` both got
-    # the pid list, and `e2`'s SDK dropped each frame at
-    # `fast.rs:249` (`relay instance ... not found`), causing the
-    # measurable per-pod data-plane drain that EVIDENCE1 §2 captured.
+    # frames. Pushing the pid list to every registered executor makes the
+    # non-owning executor's SDK drop each frame (`relay instance not found`),
+    # draining the data plane.
     cond do
       is_binary(assigned_ce) and assigned_ce != executor_id ->
         # This insertion is for a different executor; this handler is
@@ -530,7 +529,7 @@ defmodule Flezha.Service.HubManager do
                 Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
 
             # A wedged StreamChannel must not crash the caller; a timeout
-            # feeds the wedged-channel watchdog (Phase C).
+            # feeds the wedged-channel watchdog.
             Enum.each(stream_channels, fn
               {_, pid, _, _} when is_pid(pid) ->
                 case SafeCall.bounded(pid, {:relay_pid_update, relay_id, updated_pids}, 1_000) do
@@ -553,15 +552,7 @@ defmodule Flezha.Service.HubManager do
   stale mappings never linger; idempotent on an already-gone executor.
   """
   def hook_remove_pid(executor_id, %{child_id: relay_id}) do
-    stream_channels =
-      try do
-        Supervisor.which_children(Identificator.stream_sup_primary(executor_id)) ++
-          Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
-      catch
-        :exit, _ -> []
-      end
-
-    Enum.each(stream_channels, fn
+    Enum.each(stream_channels_for_executor(executor_id), fn
       {_, pid, _, _} when is_pid(pid) ->
         _ = SafeCall.bounded(pid, {:relay_pid_remove, relay_id}, 1_000)
         clear_channel_timeout(pid)
@@ -740,27 +731,12 @@ defmodule Flezha.Service.HubManager do
   @doc """
   True when auto-restore is enabled and the durable registry holds relays
   this (re)started controller has not loaded back into live, bound
-  processes yet. Two windows close the post-restart "vacuously healthy"
-  hole:
-
-    * **hub not running** — a `registry.dets` exists on disk for a hub
-      that has not started (hubs start lazily on executor reconnect).
-      `stop_hub/1` and `flz reset` both wipe the registry dir, so a
-      persisted file always means durable-but-unloaded relays, never a
-      legitimately-empty namespace.
-
-    * **hub running, relays not bound** — the hub has started and
-      replayed its DETS rows (so they appear in `ProcessRegistry.dump/1`,
-      which keeps entries whose stale `node_pids` survived the restart),
-      but those pids are dead so `get_all_relays/1` (live-pid filtered)
-      still returns fewer. The durable count exceeding the bound count is
-      exactly the rebind-in-progress window the on-disk check above
-      cannot see (the hub is in `list_running_hub_ids/0`).
-
-  `dump/1` reads ProcessHub's own registered backend, so no second DETS
-  handle is opened — there is no contention with the hub's own handle.
-  Used by `/healthz` to report `recovering` instead of `healthy` until
-  the registry is fully reloaded and bound.
+  processes yet — closing the post-restart "vacuously healthy" hole.
+  Covers both an on-disk `registry.dets` for a hub that has not started
+  (`unstarted_hub_has_registry?/0`) and a running hub whose replayed DETS
+  rows outnumber the live-bound relays (`running_hub_relays_unbound?/0`).
+  Used by `/healthz` to report `recovering` instead of `healthy` until the
+  registry is fully reloaded and bound.
   """
   @spec durable_registry_pending?() :: boolean()
   def durable_registry_pending?() do
@@ -846,9 +822,9 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc false
-  # Public for the CLI `flz cluster status --recovery` surface (introduced
-  # by `consume-recovery-mode-and-self-heal`). Resolves the same marker path
-  # the hub spec uses, so an operator-visible check matches the live state.
+  # Public for the CLI `flz cluster status --recovery` surface. Resolves the
+  # same marker path the hub spec uses, so an operator-visible check matches
+  # the live state.
   @spec resolved_marker_path(atom()) :: binary()
   def resolved_marker_path(hub_id), do: marker_path(hub_id)
 end
