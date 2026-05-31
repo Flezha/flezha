@@ -1,8 +1,7 @@
 defmodule Flezha.Convergence.SafeCall do
   @moduledoc """
-  One bounded `GenServer.call` wrapper used everywhere the controller
-  used to scatter ad-hoc `try/catch :exit` blocks around a call into a
-  process that may be wedged, mid-restart, or already gone.
+  One bounded `GenServer.call` wrapper for calls into a process that may
+  be wedged, mid-restart, or already gone.
 
   `bounded/3` returns `{:ok, reply}` on success and `{:error, reason}`
   on timeout / `:noproc` / any other exit, after logging once and

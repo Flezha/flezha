@@ -1,11 +1,10 @@
 defmodule Flezha.Convergence.Intent do
   @moduledoc """
   Pure reader of declared, durable state — "what the system should look
-  like" (design.md §1). Derived from the ProcessHub registry: every
-  running namespace's relays, each relay's declared plugins (read from
-  the durable cspec start-args via `HubManager.relay_plugins/2` — the
-  same record `PluginManager` writes through `ProcessRegistry.update/3`),
-  and its factory. Read-only; never mutates the registry.
+  like". Derived from the ProcessHub registry: every running namespace's
+  relays, each relay's declared plugins (read from the durable cspec
+  start-args via `HubManager.relay_plugins/2`), and its factory.
+  Read-only; never mutates the registry.
 
   The Loop diffs this against `Probe.snapshot/0` (reality) each tick.
   """

@@ -1,15 +1,10 @@
 defmodule Flezha.Convergence.Diff do
   @moduledoc """
   One pure function — `compute/2` — turning declared `Intent` and probed
-  reality into a structured `Delta` enumerating every invariant
-  violation (design.md §2-§3). This is NOT a per-failure-mode dispatch:
-  each `Delta` field corresponds to one of the seven invariants, and all
-  catalogue rows reduce to populating these fields.
-
-  Sessions 3-4 enrich the population logic (plugins, output advance,
-  stream health, wake detection, resources). This session populates the
-  binding fields (I1) and the stalled set (I3) so the pipeline is real
-  while heals stay stubbed.
+  reality into a structured `Delta` enumerating every invariant violation.
+  This is NOT a per-failure-mode dispatch: each `Delta` field corresponds
+  to one invariant, and all catalogue rows reduce to populating these
+  fields.
   """
 
   @type relay_ref :: {atom(), binary()}

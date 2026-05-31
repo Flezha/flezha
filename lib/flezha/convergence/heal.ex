@@ -1,8 +1,8 @@
 defmodule Flezha.Convergence.Heal do
   @moduledoc """
-  The entire heal surface: ten idempotent, bounded primitives (design.md
-  §4). Every catalogue row reduces to a composition of these — adding a
-  failure mode never adds a primitive.
+  The entire heal surface: ten idempotent, bounded primitives. Every
+  catalogue row reduces to a composition of these — adding a failure mode
+  never adds a primitive.
 
       start_relay   stop_relay      rebind_relay
       start_plugin  stop_plugin     restart_plugin
@@ -12,22 +12,22 @@ defmodule Flezha.Convergence.Heal do
   `execute/1` dispatches one planned op to its primitive and returns
   `:ok | :error` so the Loop can drive `Backoff`.
 
-  Real primitives:
+  Active primitives:
 
     * `rebind_relay` — migrate a relay tagged to a dead/wrong executor
       onto an available one (flip the registry tag, fan its pid into the
       new executor's stream channels).
     * `start_plugin` / `stop_plugin` — reconcile a relay's running plugin
-      set against its declared cspec manifest (invariant I2).
-    * `evict_executor` — forcibly drop a dead executor binding (I1).
+      set against its declared cspec manifest.
+    * `evict_executor` — forcibly drop a dead executor binding.
     * `reconnect_stream` for `kind: :stream_channel` — SIGKILL a wedged
-      channel so the supervisor restarts and the acceptor rebinds (I4).
+      channel so the supervisor restarts and the acceptor rebinds.
     * `restart_plugin` — force a wedged provider plugin (e.g. the Kafka
       producer stalled against a restarted broker) onto a fresh connection.
 
   `start_relay`, `stop_relay`, `replay_state`, `compact_wal`, and the
   non-channel `reconnect_stream` kinds are observable no-ops (emit
-  `[:flezha, :convergence, :heal]`, return `:ok`) pending later phases.
+  `[:flezha, :convergence, :heal]`, return `:ok`).
   """
 
   alias Flezha.Convergence.SafeCall
@@ -67,9 +67,9 @@ defmodule Flezha.Convergence.Heal do
     rebind_relay(namespace, relay_id, Map.get(op, :args, %{}))
   end
 
-  # Phase A (I2): (re)subscribe a declared-but-missing plugin into the
-  # running relay via the same `{:plugin_subscribe, ...}` path `flz plugin
-  # enable` uses (which activates immediately since the SDK is already up).
+  # (re)subscribe a declared-but-missing plugin into the running relay via
+  # the same `{:plugin_subscribe, ...}` path `flz plugin enable` uses (which
+  # activates immediately since the SDK is already up).
   defp apply_primitive(:start_plugin, %{namespace: ns, target: rid, args: args}) do
     with {:ok, pid} when is_pid(pid) <- HubManager.get_pid(ns, rid),
          {:ok, :ok} <-
@@ -84,8 +84,7 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
-  # Phase A (I2): unsubscribe a plugin that is running but no longer
-  # declared in the cspec.
+  # Unsubscribe a plugin that is running but no longer declared in the cspec.
   defp apply_primitive(:stop_plugin, %{namespace: ns, target: rid, args: args}) do
     with {:ok, pid} when is_pid(pid) <- HubManager.get_pid(ns, rid),
          {:ok, :ok} <-
@@ -96,8 +95,8 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
-  # Phase B (I1): forcibly drop a dead/orphaned executor binding so its
-  # relays become misbound and rebind onto a live executor next tick.
+  # Forcibly drop a dead/orphaned executor binding so its relays become
+  # misbound and rebind onto a live executor next tick.
   defp apply_primitive(:evict_executor, %{target: executor_id}) when is_binary(executor_id) do
     case FleetManager.evict_executor(executor_id) do
       :ok -> :ok
@@ -105,10 +104,10 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
-  # Phase C (I4): a wedged stream channel is healed by reconnecting its
-  # stream — kill the pid so its supervisor restarts it and the
-  # StreamAcceptor re-binds the fresh channel. Safe no-op if the channel
-  # cleared its strikes between detection and now (recovered on its own).
+  # A wedged stream channel is healed by reconnecting its stream — kill the
+  # pid so its supervisor restarts it and the StreamAcceptor re-binds the
+  # fresh channel. Safe no-op if the channel cleared its strikes between
+  # detection and now (recovered on its own).
   defp apply_primitive(:reconnect_stream, %{target: pid, args: %{kind: :stream_channel}})
        when is_pid(pid) do
     if pid in HubManager.wedged_channel_pids() do
@@ -134,8 +133,7 @@ defmodule Flezha.Convergence.Heal do
 
   defp apply_primitive(:restart_plugin, _op), do: :ok
 
-  # Each clause below is an observable no-op this session; later phases
-  # replace the body with the real side effect named in the moduledoc.
+  # Observable no-ops: emit heal telemetry (above) and return :ok.
   defp apply_primitive(:start_relay, _op), do: :ok
   defp apply_primitive(:stop_relay, _op), do: :ok
   defp apply_primitive(:reconnect_stream, _op), do: :ok

@@ -1,22 +1,16 @@
 defmodule Flezha.Convergence.Loop do
   @moduledoc """
-  The single convergence GenServer (design.md §1) — the four-seam
-  declarative reconciler. Every tick (and on declared events) it reads
-  `Intent`,
-  probes `Probe` reality, computes a `Diff`, the `Planner` turns the diff
-  into backoff-filtered primitive ops, and `Heal` executes them. The
-  resulting reality + health summary is published to
-  `Flezha.Convergence.Snapshot` so `/healthz`, the CLI, and telemetry
-  all read one source of truth (invariant I7).
+  The single convergence GenServer — the four-seam declarative reconciler.
+  Every tick (and on declared events) it reads `Intent`, probes `Probe`
+  reality, computes a `Diff`, the `Planner` turns the diff into
+  backoff-filtered primitive ops, and `Heal` executes them. The resulting
+  reality + health summary is published to `Flezha.Convergence.Snapshot` so
+  `/healthz`, the CLI, and telemetry all read one source of truth.
 
   Reality-matches-intent is the *event*, not the default: the loop heals
   every divergence it finds, not only ones triggered by a specific
   signal. Declared events (`:output_stall`, `:executor_connected`) just
   shorten detection latency by triggering an immediate tick.
-
-  Heal primitives are observable no-ops this session (see
-  `Flezha.Convergence.Heal`); behaviour matches the chaos baseline until
-  Sessions 3-4 fill them in.
   """
 
   use GenServer
@@ -37,9 +31,8 @@ defmodule Flezha.Convergence.Loop do
             recovery_awaited?: false,
             backoff: Backoff.new(),
             # relay_instance => monotonic_ms when last flagged stalled.
-            # Entries age out once they cross the output-stall grace,
-            # so a relay that resumes producing auto-clears (no manual
-            # clear) — Phase F invariant I3.
+            # Entries age out once they cross the output-stall grace, so a
+            # relay that resumes producing auto-clears (no manual clear).
             stalled_relays: %{}
 
   # ---------- public API ----------
@@ -135,8 +128,7 @@ defmodule Flezha.Convergence.Loop do
 
   # ---------- tick body ----------
 
-  # Gate every emission on recovery completion (the upstream
-  # `recovery-mode-opt-in` contract): no heal fires against a
+  # Gate every emission on recovery completion: no heal fires against a
   # half-restored registry.
   defp run_or_await(%__MODULE__{recovery_awaited?: true} = state), do: run_tick(state)
 
@@ -160,8 +152,7 @@ defmodule Flezha.Convergence.Loop do
     started_at = System.monotonic_time(:millisecond)
 
     # Age out stalled entries the Watchdog has stopped re-flagging: a
-    # relay that resumed producing leaves the set without a manual clear
-    # (invariant I3 auto-clear).
+    # relay that resumed producing leaves the set without a manual clear.
     stalled = expire_stalled(state.stalled_relays, started_at, state.output_stall_grace_ms)
     state = %{state | stalled_relays: stalled}
 

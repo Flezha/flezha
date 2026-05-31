@@ -1,7 +1,7 @@
 defmodule Flezha.Convergence.Probe do
   @moduledoc """
   Pure observer of live, ephemeral reality — "what the system actually
-  looks like right now" (design.md §1). No decisions, no side effects.
+  looks like right now". No decisions, no side effects.
 
   `snapshot/0` builds a `Reality` map the Loop diffs against
   `Intent.declared/0`. Recovery lifecycle state is served here too:
@@ -102,8 +102,7 @@ defmodule Flezha.Convergence.Probe do
     end)
   end
 
-  # Output-stall set is published into the Snapshot by the Loop; Phase F
-  # refines this with per-relay output_advance_ts.
+  # Output-stall set is published into the Snapshot by the Loop.
   defp stalled_relays() do
     Snapshot.current()
     |> Map.get(:stalled_relays, [])

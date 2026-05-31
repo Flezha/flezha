@@ -63,8 +63,8 @@ defmodule Flezha.Executor.FleetManager do
   supervisor, drop its factory refs + relay-insertion hook, and remove it
   from `executor_namespaces`. Its relays become misbound and rebind onto
   a live executor on the next convergence tick. Idempotent — an unknown
-  id returns `:ok`. Driven by `Flezha.Convergence.Heal.execute/1` (row 16)
-  and by `connect_handler/4` when an SDK presents a `previous_executor_id`.
+  id returns `:ok`. Driven by `Flezha.Convergence.Heal.execute/1` and by
+  `connect_handler/4` when an SDK presents a `previous_executor_id`.
   """
   @spec evict_executor(binary()) :: :ok
   def evict_executor(executor_id) when is_binary(executor_id) do
@@ -251,13 +251,11 @@ defmodule Flezha.Executor.FleetManager do
       ) do
     # When the SDK presents its persisted id from a prior process, evict
     # that stale binding BEFORE the new bind so the old executor's relays
-    # and stream mappings never linger as a corpse the takeover rebinds
-    # onto (proposal §2 "FleetManager never evicts dead executors").
+    # and stream mappings never linger as a corpse the takeover rebinds onto.
     state = maybe_evict_previous(state, previous_executor_id)
 
-    # executor_connect/3 currently always returns {:ok, ...} — no error
-    # path exists at the controller level yet. If one is ever added, re-introduce
-    # the {:error, reason} branch here.
+    # executor_connect/3 always returns {:ok, ...} — no controller-level error
+    # path exists. If one is added, re-introduce the {:error, reason} branch.
     {:ok, namespace, executor_id} =
       executor_connect(stream_ref, namespace, transport)
 
@@ -637,8 +635,8 @@ defmodule Flezha.Executor.FleetManager do
     {:ok, namespace, executor_id}
   end
 
-  # The SDK's persisted id from a prior process (Phase D writes it); used
-  # to evict the stale binding on reconnect. Absent on first connect.
+  # The SDK's persisted id from a prior process; used to evict the stale
+  # binding on reconnect. Absent on first connect.
   defp parse_previous_executor_id(init_payload) do
     case Map.get(init_payload, "previous_executor_id") do
       id when is_binary(id) and id != "" -> id

@@ -49,12 +49,10 @@ defmodule Flezha.Relay.Overwatch do
     default_input_type: "2",
     arrived_via_hotswap?: false,
     init_error: nil,
-    # `consume-recovery-mode-and-self-heal` §3.3-3.5: the synchronous
-    # `:executor_migrate` retry loop used to block `:stop_relay` for
-    # the full 19 s aggregate backoff schedule. The retry now runs in
-    # a `Task.Supervisor.async_nolink/3` task; this field carries the
-    # in-flight task's reference + pid so `:stop_relay` can terminate
-    # it cleanly. `nil` when no migrate is in flight.
+    # The `:executor_migrate` retry runs in a `Task.Supervisor.async_nolink/3`
+    # task so it never blocks `:stop_relay`; this field carries the in-flight
+    # task's reference + pid so `:stop_relay` can terminate it cleanly. `nil`
+    # when no migrate is in flight.
     migrate_task: nil
   ]
 
@@ -380,10 +378,9 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @doc """
-  External trigger for the bind-driven per-Partition replay
-  (`consume-recovery-mode-and-self-heal` §3.1-3.2). Called from
-  `Flezha.State.Recovery.resync_for_overwatch/2` when a non-bind
-  caller (the convergence Loop's rebind heal) needs to re-issue the
+  External trigger for the bind-driven per-Partition replay. Called from
+  `Flezha.State.Recovery.resync_for_overwatch/2` when a non-bind caller
+  (the convergence Loop's rebind heal) needs to re-issue the
   `RestoreInitState` handshake for an already-bound Overwatch.
 
   Implementation routes the work back to the Overwatch process via a
@@ -523,10 +520,9 @@ defmodule Flezha.Relay.Overwatch do
 
   @impl true
   def handle_call(:stop_relay, from, state) do
-    # `consume-recovery-mode-and-self-heal` §3.5: terminate any
-    # in-flight `:executor_migrate` task BEFORE the synchronous stop
-    # sequence so the operator's `flz relay stop r1` always returns
-    # within its normal handle_call window even mid-retry.
+    # Terminate any in-flight `:executor_migrate` task BEFORE the synchronous
+    # stop sequence so `flz relay stop r1` always returns within its normal
+    # handle_call window even mid-retry.
     state = terminate_migrate_task(state)
 
     case state.executor_id do
@@ -757,11 +753,10 @@ defmodule Flezha.Relay.Overwatch do
     {:noreply, %{state | extensions: table}}
   end
 
-  # `consume-recovery-mode-and-self-heal` §3.4: the in-flight
-  # `:executor_migrate` task posts its result via a plain `send/2`
-  # before the task process exits, so this clause runs before the
-  # `:DOWN` cleanup. The state update happens here; the `:DOWN`
-  # message is then drained by the dedicated clause below.
+  # The in-flight `:executor_migrate` task posts its result via a plain
+  # `send/2` before the task process exits, so this clause runs before the
+  # `:DOWN` cleanup. The state update happens here; the `:DOWN` message is
+  # then drained by the dedicated clause below.
   @impl true
   def handle_info(
         {:migrate_task_result, _task_pid, result},
@@ -1034,9 +1029,8 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   # -----------------------------------------------------------------
-  # `consume-recovery-mode-and-self-heal` §3.3-3.5: async migrate task
-  # plumbing. Kept together so the task-spawn / terminate / result-
-  # application surface is reviewable as a single unit.
+  # Async migrate task plumbing. Kept together so the task-spawn /
+  # terminate / result-application surface is reviewable as a single unit.
   # -----------------------------------------------------------------
 
   defp terminate_migrate_task(%__MODULE__{migrate_task: nil} = state), do: state

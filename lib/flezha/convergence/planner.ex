@@ -1,8 +1,8 @@
 defmodule Flezha.Convergence.Planner do
   @moduledoc """
   Pure function `plan/3` turning a `Delta` into an ordered,
-  backoff-filtered list of primitive ops (design.md §5). Each op is a
-  map `%{primitive: atom, namespace: atom, target: term, args: map}`.
+  backoff-filtered list of primitive ops. Each op is a map
+  `%{primitive: atom, namespace: atom, target: term, args: map}`.
 
   Ordering rules: a relay is bound (`rebind_relay`/`start_relay`) before
   its plugins start; an executor is evicted (`evict_executor`) before
