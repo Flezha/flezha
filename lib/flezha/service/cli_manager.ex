@@ -91,10 +91,7 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp decode_plugins_json(nil), do: {:ok, []}
-  defp decode_plugins_json(""), do: {:ok, []}
-  defp decode_plugins_json("[]"), do: {:ok, []}
-  defp decode_plugins_json("{}"), do: {:ok, []}
+  defp decode_plugins_json(j) when j in [nil, "", "[]", "{}"], do: {:ok, []}
 
   defp decode_plugins_json(json) when is_binary(json) do
     case Jason.decode(json) do
