@@ -12,33 +12,15 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
   `:flezha, :observability, :otp_backend, :poll_intervals, :host`.
   """
 
-  use GenServer
+  use Flezha.Observability.OtpBackend.Source, source: :host, default_poll_ms: 5_000
 
   alias Flezha.Observability.{Bus, Registry, Signal}
   alias Flezha.Observability.OtpBackend.ProcParser
-
-  @source :host
-  @default_poll_ms 5_000
 
   @stat_path "/proc/self/stat"
   @status_path "/proc/self/status"
   @loadavg_path "/proc/loadavg"
   @fd_dir "/proc/self/fd"
-
-  # ---------- GenServer ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :permanent,
-      type: :worker
-    }
-  end
-
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-  end
 
   @impl GenServer
   def init(_opts) do
@@ -179,10 +161,4 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
     )
   end
 
-  defp poll_interval_ms() do
-    Application.get_env(:flezha, :observability, [])
-    |> Keyword.get(:otp_backend, [])
-    |> Keyword.get(:poll_intervals, %{})
-    |> Map.get(@source, @default_poll_ms)
-  end
 end

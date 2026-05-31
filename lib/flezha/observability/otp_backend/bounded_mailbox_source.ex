@@ -19,27 +19,9 @@ defmodule Flezha.Observability.OtpBackend.BoundedMailboxSource do
   `:flezha, :observability, :otp_backend, :poll_intervals, :flezha_bounded_mailbox`.
   """
 
-  use GenServer
+  use Flezha.Observability.OtpBackend.Source, source: :flezha_bounded_mailbox, default_poll_ms: 1_000
 
   alias Flezha.Observability.{Bus, Registry, Signal}
-
-  @source :flezha_bounded_mailbox
-  @default_poll_ms 1_000
-
-  # ---------- GenServer ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :permanent,
-      type: :worker
-    }
-  end
-
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-  end
 
   @impl GenServer
   def init(_opts) do
@@ -87,10 +69,4 @@ defmodule Flezha.Observability.OtpBackend.BoundedMailboxSource do
     :ok
   end
 
-  defp poll_interval_ms() do
-    Application.get_env(:flezha, :observability, [])
-    |> Keyword.get(:otp_backend, [])
-    |> Keyword.get(:poll_intervals, %{})
-    |> Map.get(@source, @default_poll_ms)
-  end
 end

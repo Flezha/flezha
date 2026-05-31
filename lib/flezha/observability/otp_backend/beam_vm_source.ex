@@ -12,28 +12,11 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
   `:flezha, :observability, :otp_backend, :poll_intervals, :beam_vm`.
   """
 
-  use GenServer
+  use Flezha.Observability.OtpBackend.Source, source: :beam_vm, default_poll_ms: 1_000
 
   alias Flezha.Observability.{Bus, Registry, Signal}
 
-  @source :beam_vm
-  @default_poll_ms 1_000
   @memory_buckets [:total, :processes, :atom, :binary, :ets]
-
-  # ---------- GenServer ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :permanent,
-      type: :worker
-    }
-  end
-
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-  end
 
   @impl GenServer
   def init(_opts) do
@@ -191,12 +174,5 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
       end)
 
     if total_delta > 0, do: active_delta / total_delta, else: 0.0
-  end
-
-  defp poll_interval_ms() do
-    Application.get_env(:flezha, :observability, [])
-    |> Keyword.get(:otp_backend, [])
-    |> Keyword.get(:poll_intervals, %{})
-    |> Map.get(@source, @default_poll_ms)
   end
 end
