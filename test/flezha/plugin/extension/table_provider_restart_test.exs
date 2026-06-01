@@ -137,4 +137,72 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
     def init_provider(_opts), do: {:error, :econnrefused}
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
+
+  # fails when: a fast-failing provider (e.g. a 429-throttled WS) retries at the
+  # base delay forever because the backoff counter is reset on every restart
+  test "fast-failing provider accumulates backoff instead of resetting every restart" do
+    plugin_id = "flapping_ws"
+
+    plugin = %Plugin{
+      id: plugin_id,
+      provider: FakeProvider,
+      opts: %{},
+      subscriptions: [{:on_input, []}]
+    }
+
+    {:ok, table} = Table.subscribe(Table.new(@catalog), plugin_id, plugin)
+
+    # Three rapid crash→retry cycles, each with ~0 ms uptime (well under the
+    # stable-uptime window) so the backoff counter must climb 1 → 2 → 3.
+    table = crash_and_retry(table, plugin_id)
+    assert Map.fetch!(table.retries, plugin_id) == 1
+
+    table = crash_and_retry(table, plugin_id)
+    assert Map.fetch!(table.retries, plugin_id) == 2
+
+    table = crash_and_retry(table, plugin_id)
+    assert Map.fetch!(table.retries, plugin_id) == 3
+  end
+
+  # fails when: a provider that recovered and ran healthily is punished with a
+  # long backoff on its next unrelated crash
+  test "backoff counter resets after an owned pid stays up past the stable threshold" do
+    plugin_id = "recovering_ws"
+
+    plugin = %Plugin{
+      id: plugin_id,
+      provider: FakeProvider,
+      opts: %{},
+      subscriptions: [{:on_input, []}]
+    }
+
+    {:ok, table} = Table.subscribe(Table.new(@catalog), plugin_id, plugin)
+
+    table = crash_and_retry(table, plugin_id)
+    table = crash_and_retry(table, plugin_id)
+    assert Map.fetch!(table.retries, plugin_id) == 2
+
+    # Backdate the freshly-restarted pid's start time so its next crash counts
+    # as a long, healthy run rather than a flap.
+    old = :erlang.monotonic_time(:millisecond) - 70_000
+    table = %{table | started_at: Map.put(table.started_at, plugin_id, old)}
+
+    table = crash_and_retry(table, plugin_id)
+    assert Map.fetch!(table.retries, plugin_id) == 1
+  end
+
+  # One crash→retry cycle: kill the current owned pid, drive handle_down for the
+  # monitor :DOWN, then run the scheduled retry. Returns the updated table.
+  defp crash_and_retry(table, plugin_id) do
+    {pid, ref} = Map.fetch!(table.owned_pids, plugin_id)
+    Process.exit(pid, {:shutdown, :idle_timeout})
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
+
+    {{:ok, table}, _log} =
+      with_log(fn ->
+        Table.handle_down(table, ref, pid, {:shutdown, :idle_timeout})
+      end)
+
+    Table.retry(table, plugin_id)
+  end
 end

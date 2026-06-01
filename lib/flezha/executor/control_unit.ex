@@ -110,16 +110,19 @@ defmodule Flezha.Executor.ControlUnit do
 
   @impl true
   def handle_call({:get_partition_state, relay_id}, from, state) do
-    {:ok, ref} =
-      ControlChannel.send_control(
-        state.executor_id,
-        {
-          :get_partition_state,
-          %ExecutorCommands.PartitionState{relay_id: relay_id}
-        }
-      )
+    case ControlChannel.send_control(
+           state.executor_id,
+           {
+             :get_partition_state,
+             %ExecutorCommands.PartitionState{relay_id: relay_id}
+           }
+         ) do
+      {:ok, ref} ->
+        {:noreply, store_ref(state, ref, from)}
 
-    {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
@@ -128,7 +131,7 @@ defmodule Flezha.Executor.ControlUnit do
 
     case res do
       {:ok, ref} ->
-        {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+        {:noreply, store_ref(state, ref, from)}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -137,32 +140,38 @@ defmodule Flezha.Executor.ControlUnit do
 
   @impl true
   def handle_call(:command_assign_executor_id, from, state) do
-    {:ok, ref} =
-      ControlChannel.send_control(
-        state.executor_id,
-        {
-          :assign_executor_id,
-          %ExecutorCommands.AssignExecutorId{executor_id: state.executor_id}
-        }
-      )
+    case ControlChannel.send_control(
+           state.executor_id,
+           {
+             :assign_executor_id,
+             %ExecutorCommands.AssignExecutorId{executor_id: state.executor_id}
+           }
+         ) do
+      {:ok, ref} ->
+        {:reply, :ok, store_ref(state, ref, from)}
 
-    {:reply, :ok, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
   def handle_call(:command_sockets_connect, from, state) do
     sockets_count = ConfigManager.concurrent_channel_count()
 
-    {:ok, ref} =
-      ControlChannel.send_control(
-        state.executor_id,
-        {
-          :connect_socket,
-          %ExecutorCommands.ConnectSocket{sockets_count: sockets_count}
-        }
-      )
+    case ControlChannel.send_control(
+           state.executor_id,
+           {
+             :connect_socket,
+             %ExecutorCommands.ConnectSocket{sockets_count: sockets_count}
+           }
+         ) do
+      {:ok, ref} ->
+        {:reply, :ok, store_ref(state, ref, from)}
 
-    {:reply, :ok, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
@@ -204,37 +213,47 @@ defmodule Flezha.Executor.ControlUnit do
       init_values: init_values
     }
 
-    {:ok, ref} = ControlChannel.send_control(state.executor_id, {:add_relay, command})
+    case ControlChannel.send_control(state.executor_id, {:add_relay, command}) do
+      {:ok, ref} ->
+        {:noreply, store_ref(state, ref, from)}
 
-    {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
   def handle_call({:stop_relay, relay_id}, from, state) do
-    {:ok, ref} =
-      ControlChannel.send_control(
-        state.executor_id,
-        {
-          :rem_relay,
-          %ExecutorCommands.RemRelay{relay_id: relay_id}
-        }
-      )
+    case ControlChannel.send_control(
+           state.executor_id,
+           {
+             :rem_relay,
+             %ExecutorCommands.RemRelay{relay_id: relay_id}
+           }
+         ) do
+      {:ok, ref} ->
+        {:noreply, store_ref(state, ref, from)}
 
-    {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
   def handle_call(:disconnect_executor, from, state) do
-    {:ok, ref} =
-      ControlChannel.send_control(
-        state.executor_id,
-        {
-          :executor_disconnect,
-          %ExecutorCommands.ExecutorDisconnect{}
-        }
-      )
+    case ControlChannel.send_control(
+           state.executor_id,
+           {
+             :executor_disconnect,
+             %ExecutorCommands.ExecutorDisconnect{}
+           }
+         ) do
+      {:ok, ref} ->
+        {:noreply, store_ref(state, ref, from)}
 
-    {:noreply, Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
@@ -277,6 +296,12 @@ defmodule Flezha.Executor.ControlUnit do
     new_refs = handle_refs(state[:response_refs], ref, reply)
 
     Map.put(state, :response_refs, new_refs)
+  end
+
+  # Register the caller against the control-channel reference so the matching
+  # `CommandResponse` (delivered later via `handle_payload/2`) is routed back.
+  defp store_ref(state, ref, from) do
+    Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))
   end
 
   defp handle_refs(refs, ref, reply) do

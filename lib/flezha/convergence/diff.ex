@@ -116,10 +116,20 @@ defmodule Flezha.Convergence.Diff do
         missing =
           for {id, plugin} <- plugins, not MapSet.member?(running, id), do: {ref, id, plugin}
 
+        # An empty declared set is ambiguous: a genuinely pluginless relay
+        # vs a cspec read that returned nothing (Intent.declared/0 falls back
+        # to [] on any read failure, and the durable cspec can lag a running
+        # relay's actual plugin set). Tearing down EVERY running plugin on
+        # that basis caused a per-tick stop/re-subscribe storm. Reconcile
+        # "extra" plugins only against a non-empty declaration.
         extra =
-          for id <- MapSet.to_list(running),
-              not MapSet.member?(declared_ids, id),
-              do: {ref, id, pid}
+          if MapSet.size(declared_ids) == 0 do
+            []
+          else
+            for id <- MapSet.to_list(running),
+                not MapSet.member?(declared_ids, id),
+                do: {ref, id, pid}
+          end
 
         {missing_acc ++ missing, extra_acc ++ extra}
       else

@@ -868,10 +868,18 @@ defmodule Flezha.Relay.Overwatch do
 
   @impl true
   def alter_handover_state(%__MODULE__{} = state, {handover_state, pipe_serialized}) do
+    # `serialized_state` is a protobuf bytes field. When the SDK has no state
+    # to hand over (no prior snapshot, or the source executor is already gone)
+    # `pipe_serialized` is nil, and Protox.encode/1 raises on a non-binary —
+    # which crashed send_control before the deserialization command was ever
+    # sent, leaving the executor stuck "awaiting controller control-plane
+    # traffic". An empty binary means "no prior state": the relay starts fresh.
+    serialized_state = if is_binary(pipe_serialized), do: pipe_serialized, else: <<>>
+
     command = %ExecutorCommands.MigrationDeserialization{
       relay_id: state.id,
       factory_id: Map.get(handover_state, :factory_id),
-      serialized_state: pipe_serialized
+      serialized_state: serialized_state
     }
 
     result = send_control(state.executor_id, {:migration_deserialization, command})
@@ -904,10 +912,18 @@ defmodule Flezha.Relay.Overwatch do
         }
 
       _ ->
-        GenServer.call(
-          Identificator.control_unit(executor_id),
-          {:send_control, command}
-        )
+        # A wedged control unit (waiting on a reply the dead transport will
+        # never deliver) must surface as a clean error, never an exit that
+        # crashes this relay. The controller-side idle watchdog reaps the
+        # corpse; here we just heal/park instead of crash-looping.
+        try do
+          GenServer.call(
+            Identificator.control_unit(executor_id),
+            {:send_control, command}
+          )
+        catch
+          :exit, reason -> {:error, {:control_unit_exit, reason}}
+        end
     end
   end
 

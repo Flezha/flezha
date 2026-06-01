@@ -134,6 +134,31 @@ defmodule Flezha.ConvergenceTest do
       assert delta.extra_plugins == []
     end
 
+    # fails when: a relay whose declared plugin set reads empty (cspec lag or
+    # read failure) has its entire running plugin set torn down every tick,
+    # causing a stop/re-subscribe storm
+    test "I2: empty declared plugin set never marks running plugins as extra" do
+      intent = %Intent{
+        relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: []}]
+      }
+
+      reality = %{
+        active_executors: %{ns: MapSet.new(["e"])},
+        relays: %{
+          {:ns, "r"} => %{
+            bound_executor: "e",
+            pid: self(),
+            running_plugins: ["ws_in", "kafka_out"]
+          }
+        },
+        stalled_relays: MapSet.new()
+      }
+
+      delta = Diff.compute(intent, reality)
+      assert delta.missing_plugins == []
+      assert delta.extra_plugins == []
+    end
+
     test "I2: skips plugin diff for relays with no live pid" do
       p = plugin("declared")
 

@@ -17,6 +17,7 @@ defmodule Flezha.Plugin.Extension.Table do
         owned_pids:     %{plugin_id => {pid, ref}},
         timers:         %{timer_ref => {plugin_id, name}},
         retries:        %{plugin_id => non_neg_integer()},
+        started_at:     %{plugin_id => monotonic_ms},
         host_pid:       pid()
       }
 
@@ -34,6 +35,12 @@ defmodule Flezha.Plugin.Extension.Table do
 
   require Logger
 
+  # Restart backoff: only reset the retry counter once an owned pid has
+  # stayed up at least this long, so a provider that fails fast (e.g. a WS
+  # whose upstream keeps 429-ing) accumulates backoff instead of hammering.
+  @stable_uptime_ms 60_000
+  @max_retry_delay_ms 60_000
+
   defstruct catalog: %{},
             active_mask: 0,
             subs: %{},
@@ -45,6 +52,7 @@ defmodule Flezha.Plugin.Extension.Table do
             owned_pids: %{},
             timers: %{},
             retries: %{},
+            started_at: %{},
             host_pid: nil
 
   @type t() :: %__MODULE__{}
@@ -332,7 +340,7 @@ defmodule Flezha.Plugin.Extension.Table do
           _ ->
             Logger.error("[Extension.Table] subscriber #{plugin_id} crashed: #{inspect(reason)}")
 
-            {:ok, schedule_retry(table, plugin_id, plugin)}
+            {:ok, table |> reset_retries_if_stable(plugin_id) |> schedule_retry(plugin_id, plugin)}
         end
     end
   end
@@ -590,7 +598,9 @@ defmodule Flezha.Plugin.Extension.Table do
     %{
       table
       | owned_pids: Map.put(table.owned_pids, plugin_id, {pid, ref}),
-        monitors: Map.put(table.monitors, ref, plugin_id)
+        monitors: Map.put(table.monitors, ref, plugin_id),
+        started_at:
+          Map.put(table.started_at, plugin_id, :erlang.monotonic_time(:millisecond))
     }
   end
 
@@ -712,7 +722,8 @@ defmodule Flezha.Plugin.Extension.Table do
       table
       | plugins: Map.delete(table.plugins, plugin_id),
         phases: Map.delete(table.phases, plugin_id),
-        retries: Map.delete(table.retries, plugin_id)
+        retries: Map.delete(table.retries, plugin_id),
+        started_at: Map.delete(table.started_at, plugin_id)
     }
   end
 
@@ -985,6 +996,25 @@ defmodule Flezha.Plugin.Extension.Table do
 
   ## Private — restart/retry
 
+  # Reset the backoff counter only when the just-crashed owned pid stayed up
+  # long enough to count as a real recovery; a fast-failing provider keeps
+  # its accumulated count so `retry_delay/1` grows.
+  defp reset_retries_if_stable(%__MODULE__{} = table, plugin_id) do
+    case Map.get(table.started_at, plugin_id) do
+      nil ->
+        table
+
+      started_at ->
+        uptime = :erlang.monotonic_time(:millisecond) - started_at
+
+        if uptime >= @stable_uptime_ms do
+          %{table | retries: Map.delete(table.retries, plugin_id)}
+        else
+          table
+        end
+    end
+  end
+
   defp schedule_retry(%__MODULE__{} = table, plugin_id, _plugin) do
     count = Map.get(table.retries, plugin_id, 0)
     delay = retry_delay(count)
@@ -1023,8 +1053,12 @@ defmodule Flezha.Plugin.Extension.Table do
             add_subscription(acc, kind, name, plugin_id, fresh_plugin, sub_opts)
           end)
 
-        new_table = %{new_table | retries: Map.delete(new_table.retries, plugin_id)}
-
+        # NB: do NOT reset the retry counter here. `init_provider/1` only
+        # prepares the provider; the upstream connection opens later in
+        # `activate/1` and may still fail. Resetting on prepare made a
+        # connection that keeps failing (e.g. a 429-throttled WS) retry at
+        # the base delay forever. The counter is reset only after an owned
+        # pid stays up `@stable_uptime_ms` (see `reset_retries_if_stable/2`).
         if prior_phase == :running do
           activate_plugin(new_table, plugin_id, fresh_plugin)
         else
@@ -1045,7 +1079,11 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   defp retry_delay(count) do
-    (4000 * :math.pow(2, count)) |> round()
+    exp = min(count, 20)
+
+    (4000 * :math.pow(2, exp))
+    |> round()
+    |> min(@max_retry_delay_ms)
   end
 
   ## Private — helpers
