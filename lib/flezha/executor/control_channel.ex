@@ -9,20 +9,6 @@ defmodule Flezha.Executor.ControlChannel do
 
   use GenServer
 
-  # Controller-side liveness watchdog. The SDK sends a `control_ping` every
-  # `:executor_keepalive` ms; the controller echoes it. If NO inbound frame
-  # (ping, command response, anything) arrives for `idle_timeout_ms` the
-  # underlying transport handle is treated as dead — `Native.send_data/2`
-  # enqueues into a closed stream with no failure signal, so silence is the
-  # only detectable symptom. On firing we synthesize the `{:flz_closed}`
-  # disconnect the dead transport never delivered: FleetManager demotes the
-  # executor and its relays rebind onto a healthy one instead of crash-looping
-  # against the corpse. Default threshold is 3x keepalive (~90s) so two missed
-  # pings are tolerated before acting. Set `:executor_control_idle_timeout_ms`
-  # to 0 to disable.
-  @default_executor_keepalive_ms 30_000
-  @idle_check_min_ms 5_000
-
   def start_link({namespace, executor_id, stream_ref}) do
     GenServer.start_link(__MODULE__, {namespace, executor_id, stream_ref, nil},
       name: Identificator.control_channel(executor_id)
@@ -110,16 +96,13 @@ defmodule Flezha.Executor.ControlChannel do
 
   @impl true
   def init({namespace, executor_id, stream_ref, write_fun}) do
-    schedule_idle_check()
-
     {:ok,
      %{
        namespace: namespace,
        executor_id: executor_id,
        stream_ref: stream_ref,
        write_fun: write_fun || (&Native.send_data/2),
-       control_unit: Identificator.control_unit(executor_id),
-       last_inbound_at: :erlang.monotonic_time(:millisecond)
+       control_unit: Identificator.control_unit(executor_id)
      }}
   end
 
@@ -144,11 +127,7 @@ defmodule Flezha.Executor.ControlChannel do
 
   @impl true
   def handle_call(:reset_stream_ref, _from, state) do
-    # Arm the watchdog from the reset instant so a channel whose stream was
-    # cleared (e.g. by the overwatch ping-failure path) and whose SDK never
-    # reconnects is still demoted after the idle threshold, rather than
-    # lingering :active as a corpse relays keep binding to.
-    {:reply, :ok, %{touch(state) | stream_ref: nil}}
+    {:reply, :ok, %{state | stream_ref: nil}}
   end
 
   @impl true
@@ -196,7 +175,7 @@ defmodule Flezha.Executor.ControlChannel do
         state.write_fun.(stream_ref, Payloader.build_from_bin("control_ping", message))
     end
 
-    {:noreply, touch(state)}
+    {:noreply, state}
   end
 
   # Unified NIF transport message — complete parsed frame
@@ -213,8 +192,6 @@ defmodule Flezha.Executor.ControlChannel do
   # handover.
   @impl true
   def handle_info({:flz_data, _stream_id, _payload_id, message, _metadata}, state) do
-    state = touch(state)
-
     case decode_sdk_initiated(message) do
       {:executor_shutdown_notification, %{} = notif, reference_id} ->
         handle_executor_shutdown_notification(state, notif, reference_id)
@@ -236,83 +213,11 @@ defmodule Flezha.Executor.ControlChannel do
     handle_connection_closed(state)
   end
 
-  # Liveness watchdog tick: if no inbound frame has arrived within the idle
-  # threshold the transport is dead but never signalled it, so synthesize the
-  # missing disconnect. `handle_connection_closed/1` calls into FleetManager,
-  # which tears down this executor's supervision tree (incl. this process);
-  # we do not trap exits, so that termination interrupts the in-flight call
-  # cleanly — the same proven path the real `{:flz_closed}` takes.
-  @impl true
-  def handle_info(:control_idle_check, state) do
-    timeout = idle_timeout_ms()
-    now = :erlang.monotonic_time(:millisecond)
-    silence = now - state.last_inbound_at
-
-    if timeout > 0 and silence >= timeout do
-      Logger.warning(
-        "[control_channel] executor #{state.executor_id} on #{state.namespace} silent for " <>
-          "#{silence} ms (>= #{timeout} ms idle threshold); synthesizing disconnect"
-      )
-
-      :telemetry.execute(
-        [:flezha, :executor, :control_idle_timeout],
-        %{silence_ms: silence},
-        %{executor_id: state.executor_id, namespace: state.namespace}
-      )
-
-      # FleetManager tears down this executor's tree (incl. us); we don't trap
-      # exits, so the call won't return. Re-arm first so the watchdog survives
-      # the rare path where the executor is already gone from the fleet and the
-      # call returns normally instead of terminating us.
-      schedule_idle_check()
-      handle_connection_closed(state)
-    else
-      schedule_idle_check()
-      {:noreply, state}
-    end
-  end
-
   @impl true
   def handle_info(msg, state) do
     Logger.warning("Unexpected message at control channel: #{inspect(msg)}")
 
     {:noreply, state}
-  end
-
-  defp touch(state), do: %{state | last_inbound_at: :erlang.monotonic_time(:millisecond)}
-
-  defp schedule_idle_check() do
-    timeout = idle_timeout_ms()
-
-    if timeout > 0 do
-      interval = max(@idle_check_min_ms, div(timeout, 3))
-      Process.send_after(self(), :control_idle_check, interval)
-    end
-
-    :ok
-  end
-
-  defp idle_timeout_ms() do
-    case Application.get_env(:flezha, :executor_control_idle_timeout_ms) do
-      n when is_integer(n) and n >= 0 -> n
-      bin when is_binary(bin) -> parse_int(bin, 3 * executor_keepalive_ms())
-      _ -> 3 * executor_keepalive_ms()
-    end
-  end
-
-  defp executor_keepalive_ms() do
-    case Application.get_env(:flezha, :executor_keepalive, @default_executor_keepalive_ms) do
-      n when is_integer(n) -> n
-      bin when is_binary(bin) -> parse_int(bin, @default_executor_keepalive_ms)
-      _ -> @default_executor_keepalive_ms
-    end
-  end
-
-  defp parse_int(bin, fallback) do
-    case Integer.parse(bin) do
-      {n, ""} -> n
-      _ -> fallback
-    end
   end
 
   defp handle_connection_closed(state) do

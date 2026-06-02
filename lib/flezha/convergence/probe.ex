@@ -21,7 +21,6 @@ defmodule Flezha.Convergence.Probe do
           active_executors: %{binary() => MapSet.t()},
           recovery: %{atom() => atom()},
           stalled_relays: MapSet.t(),
-          wedged_channels: [{pid(), atom(), term()}],
           tick_at: integer()
         }
 
@@ -30,14 +29,12 @@ defmodule Flezha.Convergence.Probe do
   @spec snapshot() :: reality()
   def snapshot() do
     namespaces = running_namespaces()
-    active = active_executors(namespaces)
 
     %{
       relays: relays(namespaces),
-      active_executors: active,
+      active_executors: active_executors(namespaces),
       recovery: Snapshot.recovery_states(),
       stalled_relays: stalled_relays(),
-      wedged_channels: wedged_channels(active),
       tick_at: System.monotonic_time(:millisecond)
     }
   end
@@ -75,18 +72,6 @@ defmodule Flezha.Convergence.Probe do
       %{plugins: plugins} when is_map(plugins) -> Map.keys(plugins)
       _ -> []
     end
-  end
-
-  # Side-effecting health sweep: ping every active executor's stream
-  # channels (records/clears strikes in `:flezha_channel_health`), then
-  # return the wedged set. Runs in the Loop process; a wedged channel's
-  # bounded ping costs at most `@relay_call_timeout_ms`.
-  defp wedged_channels(active) do
-    Enum.each(active, fn {_ns, executors} ->
-      Enum.each(executors, &HubManager.health_check_channels/1)
-    end)
-
-    Enum.map(HubManager.wedged_channel_pids(), &{&1, :stream_channel, nil})
   end
 
   defp active_executors(namespaces) do

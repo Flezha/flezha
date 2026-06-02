@@ -16,10 +16,8 @@ defmodule Flezha.Convergence.Diff do
           extra_plugins: [{relay_ref(), binary(), pid()}],
           stalled_relays: [{relay_ref(), non_neg_integer()}],
           degraded_external: [{relay_ref(), term()}],
-          wedged_channels: [{pid(), atom(), relay_ref()}],
           broken_streams: [{atom(), term()}],
           silent_streams: [{atom(), term()}],
-          wake_event: boolean(),
           resource_violations: [{atom(), term(), term()}],
           observability_drift: [{atom(), atom(), atom()}]
         }
@@ -30,10 +28,8 @@ defmodule Flezha.Convergence.Diff do
             extra_plugins: [],
             stalled_relays: [],
             degraded_external: [],
-            wedged_channels: [],
             broken_streams: [],
             silent_streams: [],
-            wake_event: false,
             resource_violations: [],
             observability_drift: []
 
@@ -63,8 +59,7 @@ defmodule Flezha.Convergence.Diff do
       misbound_relays: Enum.reverse(misbound),
       missing_plugins: missing,
       extra_plugins: extra,
-      stalled_relays: stalled_relays(reality, observed),
-      wedged_channels: Map.get(reality, :wedged_channels, [])
+      stalled_relays: stalled_relays(reality, observed)
     }
   end
 
@@ -142,8 +137,8 @@ defmodule Flezha.Convergence.Diff do
   @spec empty?(t()) :: boolean()
   def empty?(%__MODULE__{} = d) do
     d.unbound_relays == [] and d.misbound_relays == [] and d.missing_plugins == [] and
-      d.extra_plugins == [] and d.stalled_relays == [] and d.wedged_channels == [] and
-      d.broken_streams == [] and d.silent_streams == [] and d.wake_event == false and
+      d.extra_plugins == [] and d.stalled_relays == [] and
+      d.broken_streams == [] and d.silent_streams == [] and
       d.resource_violations == [] and d.observability_drift == []
   end
 end

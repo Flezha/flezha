@@ -6,9 +6,8 @@ defmodule Flezha.Convergence.Planner do
 
   Ordering rules: a relay is bound (`rebind_relay`/`start_relay`) before
   its plugins start; an executor is evicted (`evict_executor`) before
-  another binding claims its relays; a `wake_event` triggers
-  `reconnect_stream` first. Ops still inside their `Backoff` cooldown are
-  dropped, and the per-tick op count is capped at `max_ops`.
+  another binding claims its relays. Ops still inside their `Backoff`
+  cooldown are dropped, and the per-tick op count is capped at `max_ops`.
 
   Adding a failure mode does NOT touch the Planner — it surfaces through
   an existing `Delta` field healed by one of the ten primitives.
@@ -34,30 +33,12 @@ defmodule Flezha.Convergence.Planner do
   @spec key(op()) :: Backoff.key()
   def key(%{primitive: primitive, target: target}), do: {primitive, target}
 
-  # Prerequisite order: wake reconnects, then wedged-channel kills, then
-  # evictions, then (re)binds, then plugin starts. Each group preserves
-  # Delta order within it.
+  # Prerequisite order: evictions, then (re)binds, then plugin starts.
+  # Each group preserves Delta order within it.
   defp ordered_ops(%Diff{} = d) do
-    wake_ops(d) ++
-      wedge_ops(d) ++
-      eviction_ops(d) ++
+    eviction_ops(d) ++
       bind_ops(d) ++
       plugin_ops(d)
-  end
-
-  defp wake_ops(%Diff{wake_event: true}) do
-    [op(:reconnect_stream, nil, :all, %{reason: :wake_event})]
-  end
-
-  defp wake_ops(%Diff{}), do: []
-
-  # A wedged channel is healed by reconnecting its stream (primitive 8):
-  # Heal kills the pid; its supervisor restarts it and the StreamAcceptor
-  # re-binds the fresh channel.
-  defp wedge_ops(%Diff{wedged_channels: wedged}) do
-    Enum.map(wedged, fn {pid, kind, _relay} ->
-      op(:reconnect_stream, nil, pid, %{kind: kind})
-    end)
   end
 
   defp eviction_ops(%Diff{misbound_relays: misbound}) do

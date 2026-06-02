@@ -134,5 +134,22 @@ defmodule Flezha.State.GapRecoveryTest do
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
   end
 
+  test "a snapshot frame is written off the channel loop", ctx do
+    sc = start_channel("exec-snap")
+
+    send(
+      sc,
+      {:flz_data, 0, "partition_state_snapshot", frame(ctx.partition_id, 3, ctx.header, "snap"),
+       %{}}
+    )
+
+    # The snapshot write runs in a spawned process; poll until it lands.
+    assert eventually(fn -> Flezha.State.Snapshot.latest_snapshot(ctx.partition_id) != nil end)
+  end
+
+  defp eventually(fun), do: eventually(fun, 50)
+  defp eventually(_fun, 0), do: false
+  defp eventually(fun, retries), do: fun.() || (Process.sleep(10) && eventually(fun, retries - 1))
+
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 end

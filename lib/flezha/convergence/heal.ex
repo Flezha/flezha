@@ -1,12 +1,12 @@
 defmodule Flezha.Convergence.Heal do
   @moduledoc """
-  The entire heal surface: ten idempotent, bounded primitives. Every
+  The entire heal surface: nine idempotent, bounded primitives. Every
   catalogue row reduces to a composition of these — adding a failure mode
   never adds a primitive.
 
       start_relay   stop_relay      rebind_relay
       start_plugin  stop_plugin     restart_plugin
-      evict_executor reconnect_stream
+      evict_executor
       replay_state  compact_wal
 
   `execute/1` dispatches one planned op to its primitive and returns
@@ -16,18 +16,16 @@ defmodule Flezha.Convergence.Heal do
 
     * `rebind_relay` — migrate a relay tagged to a dead/wrong executor
       onto an available one (flip the registry tag, fan its pid into the
-      new executor's stream channels).
+      new executor's stream channels). An output-stall rebind first asks
+      the bound executor to re-open its data streams in place.
     * `start_plugin` / `stop_plugin` — reconcile a relay's running plugin
       set against its declared cspec manifest.
     * `evict_executor` — forcibly drop a dead executor binding.
-    * `reconnect_stream` for `kind: :stream_channel` — SIGKILL a wedged
-      channel so the supervisor restarts and the acceptor rebinds.
     * `restart_plugin` — force a wedged provider plugin (e.g. the Kafka
       producer stalled against a restarted broker) onto a fresh connection.
 
-  `start_relay`, `stop_relay`, `replay_state`, `compact_wal`, and the
-  non-channel `reconnect_stream` kinds are observable no-ops (emit
-  `[:flezha, :convergence, :heal]`, return `:ok`).
+  `start_relay`, `stop_relay`, `replay_state`, and `compact_wal` are
+  observable no-ops (emit `[:flezha, :convergence, :heal]`, return `:ok`).
   """
 
   alias Flezha.Convergence.SafeCall
@@ -41,8 +39,7 @@ defmodule Flezha.Convergence.Heal do
   @plugin_call_timeout_ms 2_000
 
   @primitives ~w(start_relay stop_relay rebind_relay start_plugin stop_plugin
-                 restart_plugin evict_executor reconnect_stream replay_state
-                 compact_wal)a
+                 restart_plugin evict_executor replay_state compact_wal)a
 
   @spec primitives() :: [atom()]
   def primitives(), do: @primitives
@@ -104,19 +101,6 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
-  # A wedged stream channel is healed by reconnecting its stream — kill the
-  # pid so its supervisor restarts it and the StreamAcceptor re-binds the
-  # fresh channel. Safe no-op if the channel cleared its strikes between
-  # detection and now (recovered on its own).
-  defp apply_primitive(:reconnect_stream, %{target: pid, args: %{kind: :stream_channel}})
-       when is_pid(pid) do
-    if pid in HubManager.wedged_channel_pids() do
-      kill_channel(pid)
-    else
-      :ok
-    end
-  end
-
   # Restart a wedged provider plugin. The motivating case is the Kafka
   # producer stalling forever after a clean broker restart: the shared
   # client stays alive returning retriable errors, so no in-process swap
@@ -136,7 +120,6 @@ defmodule Flezha.Convergence.Heal do
   # Observable no-ops: emit heal telemetry (above) and return :ok.
   defp apply_primitive(:start_relay, _op), do: :ok
   defp apply_primitive(:stop_relay, _op), do: :ok
-  defp apply_primitive(:reconnect_stream, _op), do: :ok
   defp apply_primitive(:replay_state, _op), do: :ok
   defp apply_primitive(:compact_wal, _op), do: :ok
 
@@ -144,14 +127,6 @@ defmodule Flezha.Convergence.Heal do
   # crash here would take down the whole tick. Treat as a failed heal.
   defp apply_primitive(prim, _op) when prim in [:evict_executor, :start_plugin, :stop_plugin],
     do: :error
-
-  # SIGKILL the wedged channel and drop its strike row. Supervisor
-  # restart + StreamAcceptor rebind close the gap.
-  defp kill_channel(pid) do
-    Process.exit(pid, :kill)
-    HubManager.clear_channel_timeout(pid)
-    :ok
-  end
 
   # Migrate a relay bound to a dead/wrong executor onto an available one.
   # On success: flip the registry tag and seed the target executor's

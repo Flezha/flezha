@@ -14,16 +14,6 @@ defmodule Flezha.Service.HubManager do
 
   @default_await_timeout_ms 60_000
 
-  # Wedged-channel watchdog: a stream channel that times out
-  # `@channel_wedge_threshold` times within
-  # `@channel_wedge_window_ms` is treated as wedged. Counters live in the
-  # always-on `:flezha_channel_health` ETS table owned by
-  # `Flezha.Convergence.Snapshot`; the Loop probes channels each tick and
-  # `hook_insert_pid/2` records on the bind path.
-  @channel_health_table :flezha_channel_health
-  @channel_wedge_threshold 3
-  @channel_wedge_window_ms 30_000
-
   def start_link(_) do
     Supervisor.start_link(__MODULE__, [], name: __MODULE__)
   end
@@ -364,74 +354,6 @@ defmodule Flezha.Service.HubManager do
     )
   end
 
-  # ---------- channel-health watchdog ----------
-
-  @doc """
-  Ping every stream channel of `executor_id` with a bounded
-  `:stream_ref_status` call and feed the result into the wedged-channel
-  watchdog: a reply clears the channel's strike counter, a timeout adds a
-  strike. Called by `Flezha.Convergence.Probe` once per tick.
-  """
-  @spec health_check_channels(binary()) :: :ok
-  def health_check_channels(executor_id) when is_binary(executor_id) do
-    Enum.each(stream_channels_for_executor(executor_id), fn
-      {_, pid, _, _} when is_pid(pid) ->
-        case SafeCall.bounded(pid, :stream_ref_status, 1_000) do
-          {:ok, _} -> clear_channel_timeout(pid)
-          {:error, :timeout} -> record_channel_timeout(pid)
-          {:error, _} -> :ok
-        end
-
-      _ ->
-        :ok
-    end)
-  end
-
-  @doc "Pids that have struck out (≥ threshold timeouts inside the window)."
-  @spec wedged_channel_pids() :: [pid()]
-  def wedged_channel_pids() do
-    with_channel_health([], fn tid ->
-      now = System.monotonic_time(:millisecond)
-
-      tid
-      |> :ets.tab2list()
-      |> Enum.filter(fn {pid, {count, first_ts}} ->
-        is_pid(pid) and count >= @channel_wedge_threshold and
-          now - first_ts <= @channel_wedge_window_ms
-      end)
-      |> Enum.map(fn {pid, _} -> pid end)
-    end)
-  end
-
-  @doc "Drop a channel's strike row (after a healthy reply or a kill)."
-  @spec clear_channel_timeout(pid()) :: :ok
-  def clear_channel_timeout(pid) when is_pid(pid) do
-    with_channel_health(:ok, fn tid ->
-      true = :ets.delete(tid, pid)
-      :ok
-    end)
-  end
-
-  # Add a strike. A strike older than the window resets the counter so
-  # only *consecutive* timeouts within the window escalate to wedged.
-  defp record_channel_timeout(pid) when is_pid(pid) do
-    with_channel_health(:ok, fn tid ->
-      now = System.monotonic_time(:millisecond)
-
-      entry =
-        case :ets.lookup(tid, pid) do
-          [{^pid, {count, first_ts}}] when now - first_ts <= @channel_wedge_window_ms ->
-            {count + 1, first_ts}
-
-          _ ->
-            {1, now}
-        end
-
-      true = :ets.insert(tid, {pid, entry})
-      :ok
-    end)
-  end
-
   # Live stream-channel children (primary + secondary) for an executor; `[]`
   # if the supervisors are gone.
   defp stream_channels_for_executor(executor_id) do
@@ -439,15 +361,6 @@ defmodule Flezha.Service.HubManager do
       Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
   catch
     :exit, _ -> []
-  end
-
-  # Run `fun` with the `:flezha_channel_health` table id, or return `default`
-  # when the table has not been created yet.
-  defp with_channel_health(default, fun) do
-    case :ets.whereis(@channel_health_table) do
-      :undefined -> default
-      tid -> fun.(tid)
-    end
   end
 
   def unregister_handler(namespace, executor_id) do
@@ -528,15 +441,10 @@ defmodule Flezha.Service.HubManager do
               Supervisor.which_children(Identificator.stream_sup_primary(executor_id)) ++
                 Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
 
-            # A wedged StreamChannel must not crash the caller; a timeout
-            # feeds the wedged-channel watchdog.
+            # A wedged StreamChannel must not crash the caller.
             Enum.each(stream_channels, fn
               {_, pid, _, _} when is_pid(pid) ->
-                case SafeCall.bounded(pid, {:relay_pid_update, relay_id, updated_pids}, 1_000) do
-                  {:ok, _} -> clear_channel_timeout(pid)
-                  {:error, :timeout} -> record_channel_timeout(pid)
-                  {:error, _} -> :ok
-                end
+                _ = SafeCall.bounded(pid, {:relay_pid_update, relay_id, updated_pids}, 1_000)
 
               _ ->
                 :ok
@@ -546,16 +454,15 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
-  Clear a relay's pid mapping from every stream channel of `executor_id`
-  and drop its `:flezha_channel_health` rows. Invoked directly by
-  `Flezha.Executor.FleetManager.evict_executor/1` so a dead executor's
-  stale mappings never linger; idempotent on an already-gone executor.
+  Clear a relay's pid mapping from every stream channel of `executor_id`.
+  Invoked directly by `Flezha.Executor.FleetManager.evict_executor/1` so a
+  dead executor's stale mappings never linger; idempotent on an
+  already-gone executor.
   """
   def hook_remove_pid(executor_id, %{child_id: relay_id}) do
     Enum.each(stream_channels_for_executor(executor_id), fn
       {_, pid, _, _} when is_pid(pid) ->
         _ = SafeCall.bounded(pid, {:relay_pid_remove, relay_id}, 1_000)
-        clear_channel_timeout(pid)
 
       _ ->
         :ok

@@ -15,7 +15,7 @@ defmodule Flezha.State.WalWriter do
 
   use GenServer, restart: :transient
 
-  alias Flezha.State.{FsyncBatcher, Metrics, Outbox, Registry}
+  alias Flezha.State.{FsyncBatcher, Metrics, Outbox, Recovery, Registry}
 
   @header_size 16
   @reservoir_capacity 1024
@@ -85,6 +85,18 @@ defmodule Flezha.State.WalWriter do
           :ok | :duplicate | {:error, term()}
   def append(server, seq, header, change_bytes, executor_id \\ nil) do
     GenServer.call(server, {:append, seq, header, change_bytes, executor_id})
+  end
+
+  @doc """
+  Non-blocking append. The caller (a `StreamChannel`) hands off the Change and
+  returns immediately, so WAL/recovery latency never stalls the data-plane
+  channel. On a seq gap the writer emits `[:flezha, :state, :seq_gap]` and
+  drives resync itself.
+  """
+  @spec append_async(GenServer.server(), non_neg_integer(), binary(), binary(), binary() | nil) ::
+          :ok
+  def append_async(server, seq, header, change_bytes, executor_id \\ nil) do
+    GenServer.cast(server, {:append_async, seq, header, change_bytes, executor_id})
   end
 
   @spec fsync(GenServer.server()) :: :ok
@@ -287,6 +299,34 @@ defmodule Flezha.State.WalWriter do
     }
 
     {:reply, status, state}
+  end
+
+  @impl true
+  def handle_cast({:append_async, seq, header, change_bytes, executor_id}, state) do
+    case handle_call({:append, seq, header, change_bytes, executor_id}, nil, state) do
+      {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->
+        {rc, sh, pk} = new_state.partition_id
+
+        :telemetry.execute(
+          [:flezha, :state, :seq_gap],
+          %{expected: expected, got: got},
+          %{relay: rc, shard: sh, key: pk}
+        )
+
+        # Resync (a RestoreInitState handshake / WAL replay) runs in a separate
+        # process so it never blocks this writer's append queue — and so the
+        # test resync fun may re-enter `append/5` without self-deadlock.
+        partition_id = new_state.partition_id
+
+        spawn(fn ->
+          Recovery.resync(partition_id, executor_id: executor_id, reason: :seq_gap)
+        end)
+
+        {:noreply, new_state}
+
+      {:reply, _result, new_state} ->
+        {:noreply, new_state}
+    end
   end
 
   @impl true

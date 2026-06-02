@@ -123,12 +123,6 @@ defmodule Flezha.Convergence.Snapshot do
   def init(_opts) do
     _ = :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
 
-    # Wedged-channel watchdog strike counters. Public so the hook handler,
-    # the Loop's probe, and the eviction path all write it.
-    if :ets.whereis(:flezha_channel_health) == :undefined do
-      _ = :ets.new(:flezha_channel_health, [:named_table, :public, :set, write_concurrency: true])
-    end
-
     _ =
       :telemetry.attach_many(
         @handler_id,

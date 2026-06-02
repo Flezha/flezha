@@ -177,15 +177,6 @@ config :flezha,
   # The default is 30 seconds.
   executor_keepalive: System.get_env("FLEZHA_EXECUTOR_KEEPALIVE", "30000") |> String.to_integer(),
 
-  # Controller-side control-plane idle watchdog. If no inbound frame (SDK
-  # keepalive ping or command response) arrives on an executor's ControlChannel
-  # within this window, the transport is treated as dead and the executor is
-  # demoted so its relays rebind onto a healthy one. Unset → 3x executor
-  # keepalive (~90s); set 0 to disable. The SDK pings every ~15s, so 90s
-  # tolerates ~6 missed pings before acting.
-  executor_control_idle_timeout_ms:
-    System.get_env("FLEZHA_EXECUTOR_CONTROL_IDLE_TIMEOUT_MS", "90000") |> String.to_integer(),
-
   # ------------------------------------------------------------------------------------------------
   # Graceful shutdown (controller-graceful-shutdown).
   #

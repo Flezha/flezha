@@ -177,6 +177,10 @@ defmodule Flezha.Executor.StreamChannel do
     {:noreply, state}
   end
 
+  # Persistence frames are handed to the per-partition WalWriter via a
+  # non-blocking cast: the writer appends, drives seq-gap resync, and writes
+  # snapshots (an fsync) in its own process, so disk/recovery latency never
+  # stalls this channel — which also carries the relay's output frames.
   defp handle_partition_state_change(executor_id, frame) do
     case StateWire.decode_frame(frame) do
       {:ok, %{partition_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
@@ -184,17 +188,7 @@ defmodule Flezha.Executor.StreamChannel do
 
         case Flezha.State.Supervisor.find_or_start(partition_id) do
           {:ok, pid} ->
-            # `:ok`/`:duplicate` are terminal; a gap means the SDK is ahead
-            # of us, so resync rather than wedge the Partition forever. The
-            # `executor_id` lets the WalWriter realign its epoch when a *new*
-            # executor (a restart/reroute) resumes from a diverged seq base.
-            case Flezha.State.WalWriter.append(pid, seq, header, body, executor_id) do
-              {:error, {:gap, expected: expected, got: got}} ->
-                recover_seq_gap(executor_id, partition_id, expected, got)
-
-              _ ->
-                :ok
-            end
+            Flezha.State.WalWriter.append_async(pid, seq, header, body, executor_id)
 
           {:error, reason} ->
             Logger.error(
@@ -208,38 +202,32 @@ defmodule Flezha.Executor.StreamChannel do
     end
   end
 
-  defp recover_seq_gap(executor_id, {rc, sh, pk} = partition_id, expected, got) do
-    :telemetry.execute(
-      [:flezha, :state, :seq_gap],
-      %{expected: expected, got: got},
-      %{relay: rc, shard: sh, key: pk}
-    )
-
-    _ =
-      Flezha.State.Recovery.resync(partition_id, executor_id: executor_id, reason: :seq_gap)
-
-    :ok
-  end
-
+  # Writing a snapshot fsyncs and truncates the per-partition WAL (a call back
+  # into its writer), so run it in a separate process — off this channel's loop
+  # and outside the writer (which would self-call).
   defp handle_partition_state_snapshot(_executor_id, frame) do
     case StateWire.decode_frame(frame) do
       {:ok, %{partition_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
         partition_id = {rc, sh, pk}
-        Flezha.State.Watchdog.compaction_completed(partition_id)
-
-        case Flezha.State.Snapshot.write_snapshot(partition_id, seq, header, body) do
-          {:ok, _path} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.error(
-              "[stream] partition_state_snapshot write failed " <>
-                "partition=#{inspect(partition_id)}: #{inspect(reason)}"
-            )
-        end
+        spawn(fn -> write_snapshot(partition_id, seq, header, body) end)
 
       {:error, reason} ->
         Logger.warning("[stream] partition_state_snapshot decode failed: #{inspect(reason)}")
+    end
+  end
+
+  defp write_snapshot(partition_id, seq, header, body) do
+    Flezha.State.Watchdog.compaction_completed(partition_id)
+
+    case Flezha.State.Snapshot.write_snapshot(partition_id, seq, header, body) do
+      {:ok, _path} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "[stream] partition_state_snapshot write failed " <>
+            "partition=#{inspect(partition_id)}: #{inspect(reason)}"
+        )
     end
   end
 end

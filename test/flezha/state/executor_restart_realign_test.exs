@@ -117,7 +117,8 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
     end)
 
     # Barrier: a synchronous call drains the channel mailbox (FIFO), so every
-    # frame's synchronous WalWriter.append has completed before we assert.
+    # frame has been handed to the WalWriter; the later synchronous WalWriter
+    # read is itself queued behind those async appends (writer FIFO).
     _ = GenServer.call(channel, :stream_ref_status)
     :ok
   end

@@ -11,7 +11,6 @@ defmodule Flezha.ConvergenceTest do
 
   alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, SafeCall, Snapshot}
   alias Flezha.Plugin
-  alias Flezha.Service.HubManager
 
   defp plugin(id) do
     Plugin.new(
@@ -193,18 +192,6 @@ defmodule Flezha.ConvergenceTest do
       delta = Diff.compute(intent, reality)
       assert delta.stalled_relays == [{{:ns, "live"}, 600}]
     end
-
-    test "I4: passes wedged channels through from reality" do
-      reality = %{
-        active_executors: %{},
-        relays: %{},
-        stalled_relays: MapSet.new(),
-        wedged_channels: [{self(), :stream_channel, nil}]
-      }
-
-      delta = Diff.compute(%Intent{relays: []}, reality)
-      assert delta.wedged_channels == [{self(), :stream_channel, nil}]
-    end
   end
 
   describe "Planner.plan/3" do
@@ -225,17 +212,6 @@ defmodule Flezha.ConvergenceTest do
     test "caps ops per tick at max_ops" do
       delta = %Diff{unbound_relays: for(i <- 1..30, do: {:ns, "r#{i}"})}
       assert length(Planner.plan(delta, Backoff.new(), max_ops: 5)) == 5
-    end
-
-    test "wedged channels heal via reconnect_stream, ordered before binds" do
-      delta = %Diff{
-        wedged_channels: [{self(), :stream_channel, nil}],
-        unbound_relays: [{:ns, "r"}]
-      }
-
-      assert [first | _] = Planner.plan(delta, Backoff.new())
-      assert %{primitive: :reconnect_stream, target: pid, args: %{kind: :stream_channel}} = first
-      assert pid == self()
     end
 
     test "stalled relays emit a rebind targeting the instance id" do
@@ -306,53 +282,14 @@ defmodule Flezha.ConvergenceTest do
   describe "Heal" do
     test "stubbed primitives are dispatchable no-ops" do
       # Real primitives (`rebind_relay`, `start_plugin`, `stop_plugin`,
-      # `evict_executor`, channel `reconnect_stream`) are covered below /
-      # by the `executor disconnect preserve` integration test; the rest
-      # remain observable no-ops pending later phases.
+      # `evict_executor`) are covered below / by the `executor disconnect
+      # preserve` integration test; the rest remain observable no-ops.
       stubbed = [:start_relay, :stop_relay, :restart_plugin, :replay_state, :compact_wal]
 
       for primitive <- stubbed do
         op = %{primitive: primitive, namespace: nil, target: :noop, args: %{}}
         assert Heal.execute(op) == :ok
       end
-    end
-
-    test "reconnect_stream kills a wedged stream channel and returns :ok" do
-      victim = spawn(fn -> Process.sleep(:infinity) end)
-      ref = Process.monitor(victim)
-
-      # The heal verifies the channel is still wedged before killing it
-      # (safe no-op on a recovered target), so register the strikes first.
-      :ets.insert(:flezha_channel_health, {victim, {3, System.monotonic_time(:millisecond)}})
-
-      op = %{
-        primitive: :reconnect_stream,
-        namespace: nil,
-        target: victim,
-        args: %{kind: :stream_channel}
-      }
-
-      assert Heal.execute(op) == :ok
-
-      assert_receive {:DOWN, ^ref, :process, ^victim, :killed}, 1_000
-    end
-
-    test "reconnect_stream is a safe no-op on a channel that is no longer wedged" do
-      victim = spawn(fn -> Process.sleep(:infinity) end)
-      ref = Process.monitor(victim)
-
-      op = %{
-        primitive: :reconnect_stream,
-        namespace: nil,
-        target: victim,
-        args: %{kind: :stream_channel}
-      }
-
-      assert Heal.execute(op) == :ok
-
-      refute_receive {:DOWN, ^ref, :process, ^victim, :killed}, 300
-      assert Process.alive?(victim)
-      Process.exit(victim, :kill)
     end
 
     test "evict_executor on an unknown id is an idempotent :ok" do
@@ -369,39 +306,6 @@ defmodule Flezha.ConvergenceTest do
       }
 
       assert Heal.execute(op) == :ok
-    end
-  end
-
-  describe "HubManager channel-health watchdog" do
-    test "wedged_channel_pids honours the strike threshold and clear" do
-      a = spawn(fn -> Process.sleep(:infinity) end)
-      b = spawn(fn -> Process.sleep(:infinity) end)
-      now = System.monotonic_time(:millisecond)
-
-      # a: 3 strikes inside the window → wedged. b: 2 strikes → not yet.
-      :ets.insert(:flezha_channel_health, {a, {3, now}})
-      :ets.insert(:flezha_channel_health, {b, {2, now}})
-
-      wedged = HubManager.wedged_channel_pids()
-      assert a in wedged
-      refute b in wedged
-
-      HubManager.clear_channel_timeout(a)
-      refute a in HubManager.wedged_channel_pids()
-
-      :ets.delete(:flezha_channel_health, b)
-      Process.exit(a, :kill)
-      Process.exit(b, :kill)
-    end
-
-    test "a strike older than the window does not count as wedged" do
-      stale = spawn(fn -> Process.sleep(:infinity) end)
-      old = System.monotonic_time(:millisecond) - 60_000
-      :ets.insert(:flezha_channel_health, {stale, {5, old}})
-
-      refute stale in HubManager.wedged_channel_pids()
-      :ets.delete(:flezha_channel_health, stale)
-      Process.exit(stale, :kill)
     end
   end
 
