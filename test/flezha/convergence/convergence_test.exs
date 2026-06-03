@@ -248,6 +248,40 @@ defmodule Flezha.ConvergenceTest do
       Agent.stop(pid)
       assert {:error, :noproc} = SafeCall.bounded(pid, {:get, & &1}, 100)
     end
+
+    test "on timeout, probes the wedged target's mailbox depth and current function" do
+      prev_level = Logger.level()
+      Logger.configure(level: :warning)
+      on_exit(fn -> Logger.configure(level: prev_level) end)
+
+      {:ok, pid} = GenServer.start_link(__MODULE__.WedgeServer, nil)
+
+      # Wedge it: a blocking call leaves the server stuck inside handle_call.
+      spawn(fn -> catch_exit(GenServer.call(pid, :block, :infinity)) end)
+      Process.sleep(20)
+      # Pile messages behind the blocked call so the probe sees a backlog.
+      for _ <- 1..5, do: GenServer.cast(pid, :noop)
+
+      handler_ids =
+        :telemetry_test.attach_event_handlers(self(), [[:flezha, :convergence, :safe_call]])
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, :timeout} = SafeCall.bounded(pid, :ping, 50)
+        end)
+
+      assert log =~ "target_queue_len="
+      assert log =~ "target_current_function="
+
+      assert_receive {[:flezha, :convergence, :safe_call], _ref, %{count: 1},
+                      %{result: :timeout, target_queue_len: qlen, target_current_function: cf}}
+
+      assert qlen >= 5
+      assert is_tuple(cf)
+
+      handler_ids |> List.wrap() |> Enum.each(&:telemetry.detach/1)
+      Process.exit(pid, :kill)
+    end
   end
 
   describe "Snapshot" do
@@ -311,5 +345,27 @@ defmodule Flezha.ConvergenceTest do
 
   defmodule NoopProvider do
     @moduledoc false
+  end
+
+  # A GenServer that wedges inside `handle_call(:block, ...)` so the SafeCall
+  # probe has a live-but-stuck target to introspect.
+  defmodule WedgeServer do
+    @moduledoc false
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:block, _from, state) do
+      receive do
+        :never -> {:reply, :ok, state}
+      end
+    end
+
+    def handle_call(_other, _from, state), do: {:reply, :ok, state}
+
+    @impl true
+    def handle_cast(_msg, state), do: {:noreply, state}
   end
 end

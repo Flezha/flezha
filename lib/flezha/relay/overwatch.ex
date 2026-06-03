@@ -53,7 +53,11 @@ defmodule Flezha.Relay.Overwatch do
     # task so it never blocks `:stop_relay`; this field carries the in-flight
     # task's reference + pid so `:stop_relay` can terminate it cleanly. `nil`
     # when no migrate is in flight.
-    migrate_task: nil
+    migrate_task: nil,
+    # Last heartbeat bookkeeping for the self-health tick: monotonic ms of the
+    # previous beat + the reductions count then, so each beat can report drift
+    # ("how far behind") and reductions-delta. `nil` until the first beat.
+    last_hb: nil
   ]
 
   def start_link(args) do
@@ -88,6 +92,11 @@ defmodule Flezha.Relay.Overwatch do
       builder: relay
     }
 
+    # Arm the self-health heartbeat from init (not handle_continue) so it is
+    # already running if the bind/start work below wedges — its cessation plus
+    # the last reported queue depth is then the wedge signal.
+    schedule_heartbeat()
+
     {:ok, state, {:continue, {:bind_executor, stale_executor_id, relay}}}
   end
 
@@ -98,7 +107,9 @@ defmodule Flezha.Relay.Overwatch do
     # after a restart (Identificator.unique_id/1 generates a fresh id
     # per connect), so we re-resolve via RelayManager.assign_executor/2
     # — the same lookup HubManager.alter_child_data/2 performs.
-    case await_active_executor(state.namespace, relay.factory_id, executor_wait_ms()) do
+    case with_op_span(:await_executor, relay.id, fn ->
+           await_active_executor(state.namespace, relay.factory_id, executor_wait_ms())
+         end) do
       {:ok, executor_id} ->
         if executor_id != stale_executor_id do
           Logger.info(
@@ -530,10 +541,12 @@ defmodule Flezha.Relay.Overwatch do
         :ok
 
       _ ->
-        GenServer.call(
-          Identificator.control_unit(state.executor_id),
-          {:stop_relay, state.id}
-        )
+        with_op_span(:stop_relay, state.id, fn ->
+          GenServer.call(
+            Identificator.control_unit(state.executor_id),
+            {:stop_relay, state.id}
+          )
+        end)
     end
 
     fire_on_terminate(state, :stopped)
@@ -585,7 +598,10 @@ defmodule Flezha.Relay.Overwatch do
   def handle_call(:get_partition_state, _from, state) do
     command = %ExecutorCommands.PartitionState{relay_id: state.id}
 
-    result = send_control(state.executor_id, {:partition_state, command})
+    result =
+      with_op_span(:partition_state, state.id, fn ->
+        send_control(state.executor_id, {:partition_state, command})
+      end)
 
     {:reply, result, state}
   end
@@ -819,6 +835,37 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
+  def handle_info(:heartbeat, %__MODULE__{} = state) do
+    schedule_heartbeat()
+
+    now = System.monotonic_time(:millisecond)
+    {:message_queue_len, qlen} = Process.info(self(), :message_queue_len)
+    {:reductions, reds} = Process.info(self(), :reductions)
+
+    {drift_ms, reds_delta} =
+      case state.last_hb do
+        %{at_ms: prev_at, reductions: prev_reds} ->
+          {now - (prev_at + heartbeat_interval_ms()), reds - prev_reds}
+
+        _ ->
+          {0, 0}
+      end
+
+    if qlen >= heartbeat_queue_warn() or drift_ms >= heartbeat_drift_warn_ms() do
+      Logger.warning(
+        "[Overwatch] heartbeat behind relay=#{state.id} queue_len=#{qlen} " <>
+          "drift_ms=#{drift_ms} reductions_delta=#{reds_delta} executor=#{inspect(state.executor_id)}"
+      )
+    else
+      Logger.debug(
+        "[Overwatch] heartbeat relay=#{state.id} queue_len=#{qlen} drift_ms=#{drift_ms}"
+      )
+    end
+
+    {:noreply, %{state | last_hb: %{at_ms: now, reductions: reds}}}
+  end
+
+  @impl true
   def handle_info(
         {:flezha_request, handler_key, payload, reply_to, ref},
         %__MODULE__{} = state
@@ -882,7 +929,10 @@ defmodule Flezha.Relay.Overwatch do
       serialized_state: serialized_state
     }
 
-    result = send_control(state.executor_id, {:migration_deserialization, command})
+    result =
+      with_op_span(:migration_deserialize, state.id, fn ->
+        send_control(state.executor_id, {:migration_deserialization, command})
+      end)
 
     case result do
       {:error, reason} -> Logger.error("Failed to deserialize relay: #{inspect(reason)}")
@@ -900,6 +950,45 @@ defmodule Flezha.Relay.Overwatch do
         arrived_via_hotswap?: true
     }
   end
+
+  # Time a known-blocking operation and surface a `[Overwatch] op_slow` warning
+  # when it runs long. The last logged `op_begin` with no matching `op_end`
+  # pinpoints exactly which operation wedged the GenServer. `try/after` (never
+  # `catch`) so the span is recorded even on exit/throw while the failure still
+  # propagates unchanged (`send_control`'s own `:exit` catch must still fire).
+  defp with_op_span(op, relay_id, fun) do
+    started = System.monotonic_time(:millisecond)
+    Logger.debug("[Overwatch] op_begin op=#{op} relay=#{relay_id}")
+
+    try do
+      fun.()
+    after
+      ms = System.monotonic_time(:millisecond) - started
+
+      if ms >= op_warn_ms() do
+        Logger.warning("[Overwatch] op_slow op=#{op} relay=#{relay_id} duration_ms=#{ms}")
+      else
+        Logger.debug("[Overwatch] op_end op=#{op} relay=#{relay_id} duration_ms=#{ms}")
+      end
+    end
+  end
+
+  defp schedule_heartbeat() do
+    interval = heartbeat_interval_ms()
+    if interval > 0, do: Process.send_after(self(), :heartbeat, interval)
+  end
+
+  defp heartbeat_interval_ms,
+    do: Application.get_env(:flezha, :overwatch_heartbeat_interval_ms, 15_000)
+
+  defp heartbeat_queue_warn,
+    do: Application.get_env(:flezha, :overwatch_heartbeat_queue_warn, 50)
+
+  defp heartbeat_drift_warn_ms,
+    do: Application.get_env(:flezha, :overwatch_heartbeat_drift_warn_ms, 5_000)
+
+  defp op_warn_ms,
+    do: Application.get_env(:flezha, :overwatch_op_warn_ms, 2_000)
 
   defp send_control(executor_id, command) do
     control_unit = Identificator.control_unit(executor_id)
@@ -928,15 +1017,17 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   defp start_relay_sdk(executor_id, relay) do
-    GenServer.call(
-      Identificator.control_unit(executor_id),
-      {:start_relay, relay},
-      # 8s wasn't enough when the SDK is on the Java side — Spring/JPA
-      # warmup plus the AddRelay control-channel round-trip easily
-      # exceeds that during a cold start. 30s gives Spring time to breathe
-      # without masking genuine stalls.
-      30_000
-    )
+    with_op_span(:start_relay, relay.id, fn ->
+      GenServer.call(
+        Identificator.control_unit(executor_id),
+        {:start_relay, relay},
+        # 8s wasn't enough when the SDK is on the Java side — Spring/JPA
+        # warmup plus the AddRelay control-channel round-trip easily
+        # exceeds that during a cold start. 30s gives Spring time to breathe
+        # without masking genuine stalls.
+        30_000
+      )
+    end)
   end
 
   defp attach_channel(relay_id, executor_id) do

@@ -8,6 +8,7 @@ defmodule Flezha.Service.RelayManager do
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
   alias Flezha.Executor.FleetManager
+  alias Flezha.Convergence.SafeCall
   alias Flezha.Relay.Builder, as: RelayBuilder
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
 
@@ -41,7 +42,11 @@ defmodule Flezha.Service.RelayManager do
   def get_overwatch_state(namespace, relay_id) do
     case get_relay_pid(namespace, relay_id) do
       {:ok, relay_pid} ->
-        {:ok, GenServer.call(relay_pid, :get_overwatch_state)}
+        # `SafeCall.bounded` returns `{:ok, state} | {:error, reason}` — the same
+        # success shape as before, but a wedged relay now yields a logged
+        # `{:error, :timeout}` (with the target's mailbox/current-function) instead
+        # of an unhandled exit.
+        SafeCall.bounded(relay_pid, :get_overwatch_state, overwatch_call_timeout_ms())
 
       err ->
         err
@@ -398,10 +403,22 @@ defmodule Flezha.Service.RelayManager do
 
   def get_partition_state(namespace, relay_id) do
     case get_relay_pid(namespace, relay_id) do
-      {:ok, relay_pid} -> GenServer.call(relay_pid, :get_partition_state)
-      err -> err
+      {:ok, relay_pid} ->
+        # Unwrap one level: the relay's own reply is already `{:ok, json} |
+        # {:error, reason}`, so collapse `SafeCall`'s outer `{:ok, _}` to preserve
+        # the existing contract; a bounded timeout/noproc stays `{:error, reason}`.
+        case SafeCall.bounded(relay_pid, :get_partition_state, overwatch_call_timeout_ms()) do
+          {:ok, reply} -> reply
+          {:error, _} = err -> err
+        end
+
+      err ->
+        err
     end
   end
+
+  defp overwatch_call_timeout_ms,
+    do: Application.get_env(:flezha, :overwatch_call_timeout_ms, 5_000)
 
   def assign_executor(namespace) do
     assign_executor(namespace, nil)

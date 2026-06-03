@@ -97,6 +97,8 @@ defmodule Flezha.Executor.ControlUnit do
 
   @impl true
   def init({namespace, executor_id}) do
+    schedule_heartbeat()
+
     {
       :ok,
       %{
@@ -300,8 +302,11 @@ defmodule Flezha.Executor.ControlUnit do
 
   # Register the caller against the control-channel reference so the matching
   # `CommandResponse` (delivered later via `handle_payload/2`) is routed back.
+  # The monotonic timestamp lets the heartbeat report the age of the oldest
+  # outstanding reply — the backlog that grows silently on a dead transport.
   defp store_ref(state, ref, from) do
-    Map.put(state, :response_refs, Map.put(state.response_refs, ref, from))
+    entry = {:reply, from, System.monotonic_time(:millisecond)}
+    Map.put(state, :response_refs, Map.put(state.response_refs, ref, entry))
   end
 
   defp handle_refs(refs, ref, reply) do
@@ -319,7 +324,7 @@ defmodule Flezha.Executor.ControlUnit do
 
         Map.delete(refs, ref)
 
-      from ->
+      {:reply, from, _inserted_at} ->
         GenServer.reply(from, reply)
         Map.delete(refs, ref)
     end
@@ -338,5 +343,53 @@ defmodule Flezha.Executor.ControlUnit do
   end
 
   @impl true
+  def handle_info(:heartbeat, state) do
+    schedule_heartbeat()
+
+    now = System.monotonic_time(:millisecond)
+    {:message_queue_len, qlen} = Process.info(self(), :message_queue_len)
+    pending = map_size(state.response_refs)
+    oldest_age_ms = oldest_pending_age_ms(state.response_refs, now)
+
+    if pending >= pending_warn() or oldest_age_ms >= pending_age_warn_ms() do
+      Logger.warning(
+        "[ControlUnit] backlog executor=#{state.executor_id} pending_refs=#{pending} " <>
+          "oldest_age_ms=#{oldest_age_ms} queue_len=#{qlen}"
+      )
+    else
+      Logger.debug(
+        "[ControlUnit] heartbeat executor=#{state.executor_id} pending_refs=#{pending} queue_len=#{qlen}"
+      )
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(_msg, state), do: {:noreply, state}
+
+  # Age of the oldest outstanding non-ping reply (ping refs self-clean via their
+  # own timeout timer, so they never form a silent backlog).
+  defp oldest_pending_age_ms(refs, now) do
+    refs
+    |> Map.values()
+    |> Enum.reduce(0, fn
+      {:reply, _from, at}, acc -> max(acc, now - at)
+      _other, acc -> acc
+    end)
+  end
+
+  defp schedule_heartbeat() do
+    interval = heartbeat_interval_ms()
+    if interval > 0, do: Process.send_after(self(), :heartbeat, interval)
+  end
+
+  defp heartbeat_interval_ms,
+    do: Application.get_env(:flezha, :control_unit_heartbeat_interval_ms, 15_000)
+
+  defp pending_warn,
+    do: Application.get_env(:flezha, :control_unit_pending_warn, 32)
+
+  defp pending_age_warn_ms,
+    do: Application.get_env(:flezha, :control_unit_pending_age_warn_ms, 10_000)
 end

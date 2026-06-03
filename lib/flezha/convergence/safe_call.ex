@@ -21,15 +21,21 @@ defmodule Flezha.Convergence.SafeCall do
     :exit, reason ->
       classified = classify(reason)
 
+      # On a timeout the target is alive but wedged — introspect it so the log
+      # names WHERE it is stuck instead of forcing operators to infer the wedge
+      # from the caller side. `:noproc` targets are already gone (nothing to probe).
+      probe = if classified == :timeout, do: probe_target(server), else: %{}
+
       :telemetry.execute(
         [:flezha, :convergence, :safe_call],
         %{count: 1},
-        %{result: classified, server: server}
+        Map.merge(%{result: classified, server: server}, probe)
       )
 
       Logger.warning(
         "[convergence] bounded call failed server=#{inspect(server)} " <>
-          "request=#{inspect(elem_tag(request))} reason=#{inspect(reason)}"
+          "request=#{inspect(elem_tag(request))} reason=#{inspect(reason)}" <>
+          format_probe(probe)
       )
 
       {:error, classified}
@@ -39,6 +45,34 @@ defmodule Flezha.Convergence.SafeCall do
   defp classify({:noproc, _}), do: :noproc
   defp classify(:noproc), do: :noproc
   defp classify(reason), do: reason
+
+  # Resolve the target (pid | name | {name, node}) to a pid and sample its
+  # mailbox depth + current function. `current_function` is the high-signal
+  # field: it shows `:gen.do_call/4` when the target is itself blocked on a
+  # downstream call. A remote/dead pid yields `nil` from `Process.info` — report
+  # status rather than crash.
+  defp probe_target(server) do
+    case GenServer.whereis(server) do
+      pid when is_pid(pid) ->
+        case Process.info(pid, [:message_queue_len, :current_function]) do
+          [{:message_queue_len, qlen}, {:current_function, cf}] ->
+            %{target_pid: pid, target_queue_len: qlen, target_current_function: cf}
+
+          nil ->
+            %{target_pid: pid, target_status: :unavailable}
+        end
+
+      _ ->
+        %{target_status: :no_proc}
+    end
+  end
+
+  defp format_probe(probe) when map_size(probe) == 0, do: ""
+
+  defp format_probe(%{target_queue_len: qlen, target_current_function: cf}),
+    do: " target_queue_len=#{qlen} target_current_function=#{inspect(cf)}"
+
+  defp format_probe(probe), do: " target=#{inspect(probe)}"
 
   # Log only the message tag, never the full payload (frames can be large).
   defp elem_tag(request) when is_tuple(request) and tuple_size(request) > 0, do: elem(request, 0)
