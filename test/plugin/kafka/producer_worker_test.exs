@@ -475,17 +475,137 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
              ProducerWorker.enqueue(pid, "hi", %{})
   end
 
-  test "duplicate_sequence_number is treated as already delivered" do
-    # error_code 45 = duplicate_sequence_number
+  test "duplicate_sequence_number is treated as already delivered (no re-init, no resend)" do
+    # error_code 46 = duplicate_sequence_number — the batch is genuinely stored.
+    test_pid = self()
+
     {pid, _} =
       start_worker(
         idempotent: true,
-        script: [{:return, Fakes.err_response(@topic, @partition, 45)}]
+        init_producer_id_fn: fn _w, _t ->
+          send(test_pid, :init_called)
+          {:ok, %{producer_id: 7777, producer_epoch: 0}}
+        end,
+        script: [{:return, Fakes.err_response(@topic, @partition, 46)}]
       )
+
+    # The boot-time InitProducerId fires once; drain it before asserting no re-init.
+    assert_receive :init_called
 
     attach(:produce_ok)
     assert :ok = ProducerWorker.enqueue(pid, "x", %{})
     assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :ok], _, _}
+
+    # Exactly one send (the original) — a duplicate must not re-init or resend.
+    assert_received {:send_called, _, _}
+    refute_received {:send_called, _, _}
+    refute_received :init_called
+  end
+
+  for {label, code} <- [out_of_order_sequence_number: 45, invalid_producer_epoch: 47] do
+    test "#{label} fence re-inits the producer session and resends without acking the fence" do
+      test_pid = self()
+      {:ok, epoch_counter} = Agent.start_link(fn -> 0 end)
+
+      # Boot init returns epoch 0; the post-fence re-init returns epoch 1 so we
+      # can prove the resend rode a fresh session.
+      init_fn = fn _w, _t ->
+        epoch = Agent.get_and_update(epoch_counter, fn n -> {n, n + 1} end)
+        send(test_pid, {:init_called, epoch})
+        {:ok, %{producer_id: 7777, producer_epoch: epoch}}
+      end
+
+      {pid, _} =
+        start_worker(
+          idempotent: true,
+          retry_backoff_ms: 1,
+          init_producer_id_fn: init_fn,
+          script: [
+            {:return, Fakes.err_response(@topic, @partition, unquote(code))},
+            {:return, Fakes.ok_response(@topic, @partition)}
+          ]
+        )
+
+      assert_receive {:init_called, 0}
+
+      attach(:produce_ok)
+      assert :ok = ProducerWorker.enqueue(pid, "hello", %{})
+
+      # The fence drove a second InitProducerId (session re-init).
+      assert_receive {:init_called, 1}
+
+      # Two sends: the fenced original, then the resend on the fresh session
+      # with sequence realigned to 0.
+      assert_received {:send_called, req1, _}
+      assert_received {:send_called, req2, _}
+      [%{data: [%{record_set: rb1}]}] = req1.topic_data
+      [%{data: [%{record_set: rb2}]}] = req2.topic_data
+      assert rb1.producer_epoch == 0
+      assert rb2.producer_epoch == 1
+      assert rb2.base_sequence == 0
+
+      # Delivered on the resend — never a fake ack on the fence itself.
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :ok], _, _}
+    end
+  end
+
+  test "non-idempotent producer (the default) treats a transient hiccup as a plain retry" do
+    test_pid = self()
+
+    {pid, _} =
+      start_worker(
+        idempotent: false,
+        retry_backoff_ms: 1,
+        init_producer_id_fn: fn _w, _t ->
+          send(test_pid, :init_called)
+          {:ok, %{producer_id: 1, producer_epoch: 1}}
+        end,
+        script: [
+          # 6 = not_leader_for_partition (transient), then ok.
+          {:return, Fakes.err_response(@topic, @partition, 6)},
+          {:return, Fakes.ok_response(@topic, @partition)}
+        ]
+      )
+
+    refute_received :init_called
+
+    assert :ok = ProducerWorker.enqueue(pid, "x", %{})
+
+    assert_received {:send_called, req1, _}
+    [%{data: [%{record_set: rb1}]}] = req1.topic_data
+    assert rb1.producer_id == -1
+    assert rb1.base_sequence == -1
+  end
+
+  test "a fence the worker cannot recover trips the convergence restart_plugin backstop" do
+    {pid, _} =
+      start_worker(
+        idempotent: true,
+        retries: 1,
+        retry_backoff_ms: 1,
+        delivery_timeout_ms: 1_000,
+        # Every send fences — each batch exhausts its retry and fails.
+        script: List.duplicate({:return, Fakes.err_response(@topic, @partition, 45)}, 30)
+      )
+
+    attach(:produce_failed)
+
+    # Each synchronous enqueue is its own batch; three failed batches drive
+    # consecutive_failures past the health threshold.
+    for _ <- 1..3 do
+      assert {:error, {:delivery_failed, :out_of_order_sequence_number}} =
+               ProducerWorker.enqueue(pid, "x", %{})
+    end
+
+    assert_received {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _, _}
+
+    # The producer now reports :produce_stalled — the exact signal convergence
+    # escalates on to fire :restart_plugin.
+    stats = ProducerWorker.stats(pid)
+    assert stats.consecutive_failures >= 3
+
+    assert {:unhealthy, :produce_stalled} =
+             Flezha.Plugin.Provider.Kafka.Producer.health(%{producer_pid: pid})
   end
 
   test "max_batch_bytes triggers immediate flush even within linger window" do

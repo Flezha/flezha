@@ -58,6 +58,11 @@ ENV MIX_ENV=prod \
 # Copy mix metadata first to maximise layer-cache hits when only source changes.
 COPY mix.exs mix.lock ./
 
+# TEMP: vendored process_hub path dep (../process-hub == /process-hub here) —
+# must exist before deps.get so its transitive deps resolve. Revert to the
+# git/hex dep once process-hub is trusted+published. See flezha_market BUGS.md.
+COPY vendor/process-hub /process-hub
+
 RUN --mount=type=cache,target=/root/.hex \
     --mount=type=cache,target=/root/.mix \
     mix local.hex --force \

@@ -30,7 +30,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
       * `:queue_max`                       — int, default `10_000`
       * `:queue_overflow`                  — `:drop_oldest` (default), `:drop_newest`, or `:block`
       * `:queue_block_timeout_ms`          — int, default `5_000`
-      * `:idempotent`                      — bool, default `true`
+      * `:idempotent`                      — bool, default `false` (opt in for exactly-once)
       * `:auto_create_topic`               — bool, default `true`
       * `:auto_create_partitions`          — int, default `1`
       * `:auto_create_replication_factor`  — int, default `2`
@@ -65,7 +65,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
                   queue_max: 10_000,
                   queue_overflow: :drop_oldest,
                   queue_block_timeout_ms: 5_000,
-                  idempotent: true,
+                  idempotent: false,
                   auto_create_topic: true,
                   auto_create_partitions: 1,
                   auto_create_replication_factor: 2,
@@ -146,7 +146,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
         retry_max_backoff_ms: coerce_int(Map.get(opts, :retry_max_backoff_ms, 5_000)),
         delivery_timeout_ms: coerce_int(Map.get(opts, :delivery_timeout_ms, 30_000)),
         required_acks: coerce_int(Map.get(opts, :required_acks, -1)),
-        idempotent: coerce_bool(Map.get(opts, :idempotent, true)),
+        idempotent: coerce_bool(Map.get(opts, :idempotent, false)),
         auto_create_topic: coerce_bool(Map.get(opts, :auto_create_topic, true)),
         auto_create_partitions: coerce_int(Map.get(opts, :auto_create_partitions, 1)),
         auto_create_replication_factor:

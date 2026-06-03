@@ -45,11 +45,12 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     :cluster_authorization_failed
   ]
 
-  @idempotence_already_delivered [
-    :duplicate_sequence_number,
-    :invalid_producer_epoch,
-    :out_of_order_sequence_number
-  ]
+  # The batch is genuinely stored already (a retry that landed twice). Safe to ack.
+  @idempotence_already_delivered [:duplicate_sequence_number]
+
+  # The producer session is fenced/desynced and the batch was NOT stored. The
+  # session must be re-initialised and the batch resent — acking it would drop data.
+  @idempotence_fenced [:out_of_order_sequence_number, :invalid_producer_epoch]
 
   # Consecutive `fail_batch/3` occurrences (a batch that exhausted its
   # retries / delivery timeout) before we force a fresh broker connection.
@@ -176,7 +177,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       dispatch_timeout_ms: Keyword.get(opts, :dispatch_timeout_ms, 10_000),
       required_acks: Keyword.get(opts, :required_acks, -1),
       request_timeout_ms: Keyword.get(opts, :request_timeout_ms, 10_000),
-      idempotent: Keyword.get(opts, :idempotent, true),
+      idempotent: Keyword.get(opts, :idempotent, false),
       auto_create_topic: Keyword.get(opts, :auto_create_topic, true),
       auto_create_partitions: Keyword.get(opts, :auto_create_partitions, 1),
       auto_create_replication_factor: Keyword.get(opts, :auto_create_replication_factor, 2),
@@ -741,6 +742,36 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
         })
 
         complete_batch(state, batch, :ok)
+
+      {:fenced, reason} ->
+        # The producer session is fenced and the batch was NOT stored. Re-init
+        # the session on the same (healthy) broker client, realign sequence
+        # numbers, and resend with backoff — never ack a fenced batch. Bounded
+        # by retries / delivery_timeout so a re-fencing broker can't spin; on
+        # exhaustion fail_batch/3 increments consecutive_failures and the
+        # convergence :restart_plugin backstop takes over.
+        cond do
+          attempt + 1 > state.retries ->
+            fail_batch(state, batch, reason)
+
+          elapsed_ms(state, batch) >= state.delivery_timeout_ms ->
+            fail_batch(state, batch, reason)
+
+          true ->
+            state = rebind_worker(state)
+            base_seq = state.sequence
+            next_seq = state.sequence + length(batch.records)
+            batch = %{batch | base_sequence: base_seq, attempt: attempt + 1, last_error: reason}
+
+            Telemetry.retry(attempt + 1, retry_backoff_ms(state, attempt + 1), %{
+              plugin_id: state.plugin_id,
+              topic: state.topic,
+              partition: state.partition,
+              reason: reason
+            })
+
+            schedule_retry(%{state | sequence: next_seq, in_flight: batch, last_error: reason}, batch)
+        end
     end
   end
 
@@ -904,8 +935,10 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     end
   end
 
-  # A fresh broker client invalidates the idempotent producer-id/epoch, so
-  # re-init to realign sequence numbers. Non-idempotent producers carry no id.
+  # (Re-)initialise the idempotent producer session: fetch a fresh
+  # producer-id/epoch and reset the sequence so numbering realigns. Used both
+  # after a broker-client swap (the old id is invalid on a fresh client) and on
+  # a producer fence. Non-idempotent producers carry no id.
   defp rebind_worker(%{idempotent: false} = state), do: state
 
   defp rebind_worker(state) do
@@ -1014,6 +1047,9 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
           {:error, :unknown_topic_or_partition} ->
             {:retry, :unknown_topic_or_partition}
+
+          {:error, error_atom} when error_atom in @idempotence_fenced ->
+            {:fenced, error_atom}
 
           {:error, error_atom} when error_atom in @idempotence_already_delivered ->
             {:already_delivered, error_atom}

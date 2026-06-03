@@ -32,8 +32,10 @@ The plugin SHALL:
 * Cap in-process buffering at `:queue_max` items, applying the
   `:queue_overflow` strategy when saturated.
 * Use idempotent producer semantics (Produce v5+ with per-`(topic, partition)`
-  sequence numbers) when `:idempotent = true` (default) — retries cannot
-  duplicate messages on the broker.
+  sequence numbers) when `:idempotent = true` (opt-in; default `false`) —
+  retries cannot duplicate messages on the broker. On a broker-induced fence
+  (`out_of_order_sequence_number` / `invalid_producer_epoch`) the worker
+  re-inits the producer session and resends rather than dropping the batch.
 * Surface every state transition as a `:telemetry` event under the
   `[:flezha, :plugin, :kafka, _, _]` namespace.
 
@@ -63,7 +65,7 @@ transient broker burp.
 | `:queue_max` | `10_000` | `int` | per-`(plugin, topic, partition)` queue depth |
 | `:queue_overflow` | `:drop_oldest` | atom | `:drop_oldest` / `:drop_newest` / `:block` |
 | `:queue_block_timeout_ms` | `5_000` | `int` | only used when `:queue_overflow = :block` |
-| `:idempotent` | `true` | `bool` | requires Kafka 0.11+; gracefully falls back to non-idempotent if `InitProducerId` fails |
+| `:idempotent` | `false` | `bool` | opt-in exactly-once; requires Kafka 0.11+; gracefully falls back to non-idempotent if `InitProducerId` fails |
 | `:auto_create_topic` | `true` | `bool` | issues `CreateTopics` on first `:unknown_topic_or_partition` |
 | `:auto_create_partitions` | `1` | `int` | partition count at auto-create |
 | `:auto_create_replication_factor` | `2` | `int` | RF at auto-create |
@@ -263,7 +265,7 @@ If your previous configuration looked like:
 …you get the new behavior **automatically**:
 
 * `:required_acks` is now `-1` (was `1`)
-* `:idempotent` is now `true`
+* `:idempotent` is `false` by default — opt in with `idempotent: true` for exactly-once
 * Retries handle transient broker unavailability up to 30 s
 * The destination topic is auto-created on first publish
 
