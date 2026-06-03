@@ -106,6 +106,7 @@ defmodule Flezha.Cluster.Orchestrator do
 
   @impl true
   def handle_info({:nodedown, node}, state) do
+    Logger.warning("[cluster] peer #{inspect(node)} went down; scheduling reconnect")
     schedule_reconnect(node, 0)
 
     {:noreply, state}
@@ -129,11 +130,16 @@ defmodule Flezha.Cluster.Orchestrator do
         # Stop active reconnect attempts and unmonitor. The periodic
         # `:update_cluster` sweep remains the durable path that re-adds the peer
         # once it is reachable again.
+        Logger.warning(
+          "[cluster] giving up active reconnect to #{inspect(node)} after #{retries} tries; sweep will retry"
+        )
+
         Node.monitor(node, false)
 
       true ->
         case Node.connect(node) do
           true ->
+            Logger.info("[cluster] reconnected to peer #{inspect(node)} (try #{retries})")
             Node.monitor(node, true)
 
           false ->
@@ -149,17 +155,23 @@ defmodule Flezha.Cluster.Orchestrator do
     {:ok, discovery_handler, to_connect} = DiscoveryProtocol.get_nodes(discovery_handler)
     connected = Node.list()
 
+    Logger.debug(
+      "[cluster] discovery returned #{inspect(to_connect)}; already connected #{inspect(connected)}"
+    )
+
     Enum.each(to_connect, fn node ->
       if !Enum.member?(connected, node) do
         case Node.connect(node) do
           true ->
+            Logger.info("[cluster] connected to peer #{inspect(node)}")
             Node.monitor(node, true)
 
           false ->
+            Logger.warning("[cluster] connect to #{inspect(node)} failed; scheduling reconnect")
             schedule_reconnect(node, 0)
 
           :ignored ->
-            nil
+            Logger.warning("[cluster] connect to #{inspect(node)} ignored (distribution down)")
         end
       end
     end)
@@ -181,6 +193,10 @@ defmodule Flezha.Cluster.Orchestrator do
 
   defp mark_ready() do
     :ets.insert(@ets_table, {:ready, true})
+
+    Logger.info(
+      "[cluster] formed and ready; members #{inspect([node() | Node.list()])}"
+    )
 
     :telemetry.execute(
       [:flezha, :cluster, :ready],
