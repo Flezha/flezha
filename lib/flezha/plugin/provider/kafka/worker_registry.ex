@@ -3,7 +3,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
   Refcounted, per-cluster shared-worker registry for the hardened Kafka producer.
 
   Two plugin instances configured against the same connection identity (hosts +
-  ssl_options + auth) acquire the SAME `KafkaEx.New.Client` worker pid; the
+  ssl_options + auth) acquire the SAME `KafkaEx.Client` worker pid; the
   worker is stopped after a 5-second linger once the last owner releases it.
 
   Design:
@@ -92,7 +92,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
   @doc """
   Force a fresh broker connection for the identity behind `ref`.
 
-  A clean broker restart leaves the shared `KafkaEx.New.Client` alive but
+  A clean broker restart leaves the shared `KafkaEx.Client` alive but
   permanently returning retriable produce errors, so the worker-DOWN
   recovery path never fires. `refresh/1` stops that client deliberately,
   which trips the registry's own worker monitor and drives the SAME

@@ -45,9 +45,12 @@ WORKDIR /app
 # protobuf-compiler is needed by `use Protox` in lib/flezha/executor/
 # commands_proto.ex, which shells out to protoc at compile time.
 # git is needed by mix.exs's kafka_ex github: dep.
+# cmake is needed by crc32cer (kafka_ex transitive dep), whose NIF
+# Makefile shells out to cmake.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         build-essential \
+        cmake \
         git \
         protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*

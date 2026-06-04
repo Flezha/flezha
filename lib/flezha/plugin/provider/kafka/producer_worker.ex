@@ -5,7 +5,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   drives idempotent producer-id semantics.
 
   Issues real Produce/InitProducerId/CreateTopics requests through a
-  `KafkaEx.New.Client` (Kayrock-based) shared worker pid acquired from
+  `KafkaEx.Client` (Kayrock-based) shared worker pid acquired from
   `Flezha.Plugin.Provider.Kafka.WorkerRegistry`.
 
   All side-effects (broker I/O, metadata refreshes, topic creation) run in
@@ -20,8 +20,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   alias Flezha.Plugin.Provider.Kafka.ProducerSup
   alias Flezha.Plugin.Provider.Kafka.Telemetry
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
-  alias KafkaEx.New.Client, as: KafkaClient
-  alias KafkaEx.New.Structs.NodeSelector
+  alias KafkaEx.Client, as: KafkaClient
+  alias KafkaEx.Client.NodeSelector
 
   @retriable [
     :no_broker,
@@ -1127,26 +1127,27 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   defp default_create_topic(worker_pid, topic, opts, timeout_ms) do
     request = %Kayrock.CreateTopics.V0.Request{
-      timeout: opts.timeout_ms,
-      create_topic_requests: [
+      timeout_ms: opts.timeout_ms,
+      topics: [
         %{
-          topic: topic,
+          name: topic,
           num_partitions: opts.num_partitions,
           replication_factor: opts.replication_factor,
-          replica_assignment: [],
-          config_entries:
+          assignments: [],
+          configs:
             Enum.map(opts.config_entries, fn
-              {k, v} -> %{config_name: to_string(k), config_value: to_string(v)}
-              %{config_name: _, config_value: _} = m -> m
+              {k, v} -> %{name: to_string(k), value: to_string(v)}
+              %{config_name: cn, config_value: cv} -> %{name: to_string(cn), value: to_string(cv)}
+              %{name: _, value: _} = m -> m
             end)
         }
       ]
     }
 
     case KafkaClient.send_request(worker_pid, request, NodeSelector.controller(), timeout_ms) do
-      {:ok, %{topic_errors: errors}} ->
+      {:ok, %{topics: errors}} ->
         case Enum.find(errors, fn e ->
-               Map.get(e, :topic) == topic or Map.get(e, :topic_name) == topic
+               Map.get(e, :name) == topic
              end) do
           %{error_code: 0} ->
             :ok
