@@ -558,11 +558,12 @@ defmodule Flezha.Service.HubManager do
           {namespace, relay}
       end
 
+    relay_id = Map.get(relay, :id)
     factory_id = Map.get(relay, :factory_id)
-    assigned_executor = RelayManager.assign_executor(namespace, factory_id)
+    assigned_executor = RelayManager.assign_executor(namespace, factory_id, relay_id)
 
     Logger.info(
-      "[hub_manager] alter_child_data relay=#{inspect(Map.get(relay, :id))} " <>
+      "[hub_manager] alter_child_data relay=#{inspect(relay_id)} " <>
         "factory=#{inspect(factory_id)} assigned_ce=#{inspect(assigned_executor)}"
     )
 

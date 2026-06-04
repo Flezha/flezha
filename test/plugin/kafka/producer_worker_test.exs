@@ -577,7 +577,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     assert rb1.base_sequence == -1
   end
 
-  test "a fence the worker cannot recover trips the convergence restart_plugin backstop" do
+  test "a fence the worker cannot recover surfaces :produce_stalled health after exhaustion" do
     {pid, _} =
       start_worker(
         idempotent: true,
@@ -599,8 +599,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
     assert_received {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _, _}
 
-    # The producer now reports :produce_stalled — the exact signal convergence
-    # escalates on to fire :restart_plugin.
+    # The producer now reports :produce_stalled on its health surface; the
+    # in-process maybe_refresh_broker/2 path drives recovery on batch failure.
     stats = ProducerWorker.stats(pid)
     assert stats.consecutive_failures >= 3
 

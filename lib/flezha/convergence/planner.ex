@@ -4,13 +4,13 @@ defmodule Flezha.Convergence.Planner do
   backoff-filtered list of primitive ops. Each op is a map
   `%{primitive: atom, namespace: atom, target: term, args: map}`.
 
-  Ordering rules: a relay is bound (`rebind_relay`/`start_relay`) before
-  its plugins start; an executor is evicted (`evict_executor`) before
-  another binding claims its relays. Ops still inside their `Backoff`
-  cooldown are dropped, and the per-tick op count is capped at `max_ops`.
+  Ordering rules: a relay is bound (`rebind_relay`) before its plugins
+  start; an executor is evicted (`evict_executor`) before another binding
+  claims its relays. Ops still inside their `Backoff` cooldown are dropped,
+  and the per-tick op count is capped at `max_ops`.
 
   Adding a failure mode does NOT touch the Planner — it surfaces through
-  an existing `Delta` field healed by one of the ten primitives.
+  an existing `Delta` field healed by one of the four primitives.
   """
 
   alias Flezha.Convergence.{Backoff, Diff}
@@ -54,17 +54,14 @@ defmodule Flezha.Convergence.Planner do
         op(:rebind_relay, ns, rid, %{})
       end)
 
+    # Unbound (incl. parked) relays bind via the same rebind primitive: it
+    # resolves an executor and sends `:executor_migrate`, which un-parks them.
     start =
       Enum.map(d.unbound_relays, fn {ns, rid} ->
-        op(:start_relay, ns, rid, %{})
+        op(:rebind_relay, ns, rid, %{})
       end)
 
-    stall_rebind =
-      Enum.map(d.stalled_relays, fn {{ns, rid}, age} ->
-        op(:rebind_relay, ns, rid, %{reason: :output_stall, output_age_ms: age})
-      end)
-
-    rebind ++ start ++ stall_rebind
+    rebind ++ start
   end
 
   defp plugin_ops(%Diff{} = d) do

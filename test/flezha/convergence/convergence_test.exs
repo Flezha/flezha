@@ -175,22 +175,44 @@ defmodule Flezha.ConvergenceTest do
       assert delta.missing_plugins == []
     end
 
-    test "I3: resolves stalled instance ids to {ns, rid} with age, drops unknown ids" do
+    test "skips misbound classification when the namespace's live-executor read is :unknown" do
+      # C1 regression: a failed FleetManager read (Probe records `:unknown`)
+      # must NOT make every bound relay misbound — that mass-migrates a whole
+      # namespace on a transient read race.
       intent = %Intent{
-        relays: [%{namespace: :ns, relay_id: "live", factory_id: nil, plugins: []}]
+        relays: [
+          %{namespace: :ns, relay_id: "a", factory_id: nil, plugins: []},
+          %{namespace: :ns, relay_id: "b", factory_id: nil, plugins: []}
+        ]
       }
 
       reality = %{
-        active_executors: %{ns: MapSet.new(["e"])},
-        relays: %{{:ns, "live"} => %{bound_executor: "e"}},
-        tick_at: 1_000,
-        # "live" is running → resolved with age 600; "ghost" has no live
-        # relay → dropped (nothing to rebind).
-        stalled_relays: %{"live" => 400, "ghost" => 200}
+        active_executors: %{ns: :unknown},
+        relays: %{
+          {:ns, "a"} => %{bound_executor: "e1"},
+          {:ns, "b"} => %{bound_executor: "e2"}
+        },
+        stalled_relays: MapSet.new()
       }
 
       delta = Diff.compute(intent, reality)
-      assert delta.stalled_relays == [{{:ns, "live"}, 600}]
+      assert delta.misbound_relays == []
+      assert delta.unbound_relays == []
+    end
+
+    test "skips a relay whose own state read failed (bound_executor :unknown)" do
+      intent = %Intent{relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: []}]}
+
+      reality = %{
+        active_executors: %{ns: MapSet.new(["e_live"])},
+        relays: %{{:ns, "r"} => %{bound_executor: :unknown, pid: nil, running_plugins: []}},
+        stalled_relays: MapSet.new()
+      }
+
+      delta = Diff.compute(intent, reality)
+      assert delta.misbound_relays == []
+      assert delta.unbound_relays == []
+      assert delta.missing_plugins == []
     end
   end
 
@@ -214,14 +236,11 @@ defmodule Flezha.ConvergenceTest do
       assert length(Planner.plan(delta, Backoff.new(), max_ops: 5)) == 5
     end
 
-    test "stalled relays emit a rebind targeting the instance id" do
-      delta = %Diff{stalled_relays: [{{:ns, "live"}, 600}]}
+    test "unbound relays bind via rebind_relay (un-park), not a no-op" do
+      delta = %Diff{unbound_relays: [{:ns, "parked"}]}
 
-      assert [%{primitive: :rebind_relay, namespace: :ns, target: "live", args: args}] =
+      assert [%{primitive: :rebind_relay, namespace: :ns, target: "parked"}] =
                Planner.plan(delta, Backoff.new())
-
-      assert args.reason == :output_stall
-      assert args.output_age_ms == 600
     end
 
     test "missing plugins emit start_plugin carrying the full %Plugin{}" do
@@ -344,16 +363,9 @@ defmodule Flezha.ConvergenceTest do
   end
 
   describe "Heal" do
-    test "stubbed primitives are dispatchable no-ops" do
-      # Real primitives (`rebind_relay`, `start_plugin`, `stop_plugin`,
-      # `evict_executor`) are covered below / by the `executor disconnect
-      # preserve` integration test; the rest remain observable no-ops.
-      stubbed = [:start_relay, :stop_relay, :restart_plugin, :replay_state, :compact_wal]
-
-      for primitive <- stubbed do
-        op = %{primitive: primitive, namespace: nil, target: :noop, args: %{}}
-        assert Heal.execute(op) == :ok
-      end
+    test "the heal surface is exactly the four reachable primitives" do
+      assert Enum.sort(Heal.primitives()) ==
+               Enum.sort([:rebind_relay, :start_plugin, :stop_plugin, :evict_executor])
     end
 
     test "evict_executor on an unknown id is an idempotent :ok" do
@@ -361,15 +373,95 @@ defmodule Flezha.ConvergenceTest do
       assert Heal.execute(op) == :ok
     end
 
-    test "restart_plugin for an absent producer is an idempotent :ok" do
-      op = %{
-        primitive: :restart_plugin,
-        namespace: :ns,
-        target: "r",
-        args: %{plugin_id: "no-such-plugin-#{System.unique_integer([:positive])}"}
+    test "a deleted/unknown primitive is no longer dispatchable" do
+      # `restart_plugin`, `start_relay`, `replay_state`, `compact_wal` were
+      # never planned and did nothing — they are gone, not silent no-ops.
+      for primitive <- [:restart_plugin, :start_relay, :replay_state, :compact_wal] do
+        op = %{primitive: primitive, namespace: nil, target: :noop, args: %{}}
+        assert Heal.execute(op) == :error
+      end
+    end
+  end
+
+  describe "Loop.apply_misbound_streak/2 (B5)" do
+    alias Flezha.Convergence.Loop
+
+    test "a relay misbound for one tick is not yet migrated; two ticks releases it" do
+      delta = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead"}]}
+
+      {streaks, tick1} = Loop.apply_misbound_streak(%{}, delta)
+      assert tick1.misbound_relays == []
+
+      {_streaks, tick2} = Loop.apply_misbound_streak(streaks, delta)
+      assert tick2.misbound_relays == [{{:ns, "r"}, "e_dead"}]
+    end
+
+    test "a relay seen bound again resets its streak" do
+      delta = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead"}]}
+      {streaks, _} = Loop.apply_misbound_streak(%{}, delta)
+
+      # Bound again this tick → drops out → streak resets.
+      {streaks, _} = Loop.apply_misbound_streak(streaks, %Diff{misbound_relays: []})
+      {_streaks, tick} = Loop.apply_misbound_streak(streaks, delta)
+      assert tick.misbound_relays == []
+    end
+  end
+
+  describe "Loop.ready_namespaces/1 (D)" do
+    alias Flezha.Convergence.Loop
+    alias Flezha.Service.Identificator
+
+    test "heals namespaces whose hub is recovered, skips a hub still recovering" do
+      ready_ns = "conv_ready_#{System.unique_integer([:positive])}"
+      busy_ns = "conv_busy_#{System.unique_integer([:positive])}"
+      Snapshot.observe_recovery(Identificator.hub(ready_ns), :normal)
+      Snapshot.observe_recovery(Identificator.hub(busy_ns), :recovering)
+
+      intent = %Intent{
+        relays: [
+          %{namespace: ready_ns, relay_id: "a", factory_id: nil, plugins: []},
+          %{namespace: busy_ns, relay_id: "b", factory_id: nil, plugins: []}
+        ]
       }
 
-      assert Heal.execute(op) == :ok
+      ready = Loop.ready_namespaces(intent)
+      assert MapSet.member?(ready, ready_ns)
+      refute MapSet.member?(ready, busy_ns)
+    end
+  end
+
+  describe "RelayManager.pick_executor/2 — deterministic HRW placement (C1p)" do
+    alias Flezha.Service.RelayManager
+
+    test "empty candidate set yields nil" do
+      assert RelayManager.pick_executor([], "r") == nil
+    end
+
+    test "same (relay_id, set) always picks the same executor" do
+      set = ["e1", "e2", "e3"]
+      pick = RelayManager.pick_executor(set, "btc")
+      assert pick in set
+      assert RelayManager.pick_executor(Enum.shuffle(set), "btc") == pick
+    end
+
+    test "removing only the chosen executor moves only that relay (stable)" do
+      set = ["e1", "e2", "e3", "e4"]
+      relays = for i <- 1..40, do: "relay_#{i}"
+      before = Map.new(relays, fn r -> {r, RelayManager.pick_executor(set, r)} end)
+
+      victim = "e2"
+      after_set = set -- [victim]
+
+      for r <- relays do
+        new_pick = RelayManager.pick_executor(after_set, r)
+
+        if before[r] == victim do
+          assert new_pick in after_set
+        else
+          # relays not on the removed executor keep their placement
+          assert new_pick == before[r]
+        end
+      end
     end
   end
 

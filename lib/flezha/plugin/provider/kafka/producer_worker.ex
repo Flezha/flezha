@@ -140,11 +140,11 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   @doc """
-  Force a fresh broker connection now, bypassing the stall counter. Used by
-  the convergence `:restart_plugin` heal to recover a producer wedged
-  against a healthy-but-unreachable broker without waiting for the next
-  failed batch. No-op for workers that own no shared registry seat
-  (test-injected `:worker_pid`).
+  Force a fresh broker connection now, bypassing the stall counter — an
+  on-demand recovery for a producer wedged against a healthy-but-unreachable
+  broker, without waiting for the next failed batch. (The automatic path is
+  `maybe_refresh_broker/2` on batch failure.) No-op for workers that own no
+  shared registry seat (test-injected `:worker_pid`).
   """
   @spec refresh_broker(GenServer.server()) :: :ok
   def refresh_broker(server), do: GenServer.cast(server, :refresh_broker)
@@ -748,8 +748,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
         # the session on the same (healthy) broker client, realign sequence
         # numbers, and resend with backoff — never ack a fenced batch. Bounded
         # by retries / delivery_timeout so a re-fencing broker can't spin; on
-        # exhaustion fail_batch/3 increments consecutive_failures and the
-        # convergence :restart_plugin backstop takes over.
+        # exhaustion fail_batch/3 increments consecutive_failures and
+        # maybe_refresh_broker/2 forces a fresh broker client.
         cond do
           attempt + 1 > state.retries ->
             fail_batch(state, batch, reason)

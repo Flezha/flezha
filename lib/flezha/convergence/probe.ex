@@ -18,9 +18,8 @@ defmodule Flezha.Convergence.Probe do
 
   @type reality :: %{
           relays: %{{binary(), binary()} => map()},
-          active_executors: %{binary() => MapSet.t()},
+          active_executors: %{binary() => MapSet.t() | :unknown},
           recovery: %{atom() => atom()},
-          stalled_relays: MapSet.t(),
           tick_at: integer()
         }
 
@@ -34,16 +33,32 @@ defmodule Flezha.Convergence.Probe do
       relays: relays(namespaces),
       active_executors: active_executors(namespaces),
       recovery: Snapshot.recovery_states(),
-      stalled_relays: stalled_relays(),
       tick_at: System.monotonic_time(:millisecond)
     }
   end
 
+  # Probe every relay concurrently: one wedged Overwatch costs ~one timeout,
+  # not N×timeout serial in the Loop process. A relay we cannot read is
+  # recorded as `bound_executor: :unknown` so the Diff skips it — a failed
+  # observation must never drive a mutating heal.
   defp relays(namespaces) do
-    Enum.reduce(namespaces, %{}, fn ns, acc ->
-      Enum.reduce(safe_relays(ns), acc, fn {relay_id, pid}, inner ->
-        Map.put(inner, {ns, relay_id}, observe_relay(pid))
+    pairs =
+      Enum.flat_map(namespaces, fn ns ->
+        Enum.map(safe_relays(ns), fn {relay_id, pid} -> {{ns, relay_id}, pid} end)
       end)
+
+    pairs
+    |> Task.async_stream(
+      fn {ref, pid} -> {ref, observe_relay(pid)} end,
+      max_concurrency: System.schedulers_online() * 4,
+      timeout: @relay_call_timeout_ms + 250,
+      on_timeout: :kill_task,
+      ordered: true
+    )
+    |> Enum.zip(pairs)
+    |> Enum.reduce(%{}, fn
+      {{:ok, {ref, observed}}, _pair}, acc -> Map.put(acc, ref, observed)
+      {{:exit, _}, {ref, _pid}}, acc -> Map.put(acc, ref, unreadable())
     end)
   end
 
@@ -59,12 +74,15 @@ defmodule Flezha.Convergence.Probe do
         }
 
       _ ->
-        %{pid: pid, bound_executor: nil, factory_id: nil, parked?: false, running_plugins: []}
+        unreadable()
     end
   end
 
   defp observe_relay(_),
     do: %{pid: nil, bound_executor: nil, factory_id: nil, parked?: false, running_plugins: []}
+
+  defp unreadable(),
+    do: %{pid: nil, bound_executor: :unknown, factory_id: nil, parked?: false, running_plugins: []}
 
   # The plugin ids currently subscribed in the relay's extension table.
   defp running_plugins(ow) do
@@ -74,24 +92,20 @@ defmodule Flezha.Convergence.Probe do
     end
   end
 
+  # On a failed FleetManager read we record `:unknown`, NOT an empty set:
+  # the Diff must skip misbound classification for the namespace rather than
+  # mass-migrate every relay on a transient read failure.
   defp active_executors(namespaces) do
     Enum.into(namespaces, %{}, fn ns ->
       executors =
         try do
           FleetManager.active_executors(ns) |> MapSet.new()
         catch
-          :exit, _ -> MapSet.new()
+          :exit, _ -> :unknown
         end
 
       {ns, executors}
     end)
-  end
-
-  # Output-stall set is published into the Snapshot by the Loop.
-  defp stalled_relays() do
-    Snapshot.current()
-    |> Map.get(:stalled_relays, [])
-    |> MapSet.new()
   end
 
   # ---------- recovery ----------

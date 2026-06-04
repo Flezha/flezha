@@ -13,25 +13,13 @@ defmodule Flezha.Convergence.Diff do
           unbound_relays: [relay_ref()],
           misbound_relays: [{relay_ref(), binary()}],
           missing_plugins: [{relay_ref(), binary(), map()}],
-          extra_plugins: [{relay_ref(), binary(), pid()}],
-          stalled_relays: [{relay_ref(), non_neg_integer()}],
-          degraded_external: [{relay_ref(), term()}],
-          broken_streams: [{atom(), term()}],
-          silent_streams: [{atom(), term()}],
-          resource_violations: [{atom(), term(), term()}],
-          observability_drift: [{atom(), atom(), atom()}]
+          extra_plugins: [{relay_ref(), binary(), pid()}]
         }
 
   defstruct unbound_relays: [],
             misbound_relays: [],
             missing_plugins: [],
-            extra_plugins: [],
-            stalled_relays: [],
-            degraded_external: [],
-            broken_streams: [],
-            silent_streams: [],
-            resource_violations: [],
-            observability_drift: []
+            extra_plugins: []
 
   @spec compute(Flezha.Convergence.Intent.t(), map()) :: t()
   def compute(%Flezha.Convergence.Intent{relays: declared}, reality) do
@@ -46,7 +34,14 @@ defmodule Flezha.Convergence.Diff do
         live = Map.get(active, ns, MapSet.new())
 
         cond do
+          # `:unknown` = an observation failed this tick — either the relay's
+          # own state read (`bound`) or the namespace's live-executor read
+          # (`live`, Probe could not reach FleetManager). With no authoritative
+          # signal we must NOT classify it: acting on an empty/failed read
+          # mass-migrates healthy relays on a transient read race.
+          bound == :unknown -> {unb, mis}
           is_nil(bound) -> {[ref | unb], mis}
+          live == :unknown -> {unb, mis}
           not MapSet.member?(live, bound) -> {unb, [{ref, bound} | mis]}
           true -> {unb, mis}
         end
@@ -58,39 +53,9 @@ defmodule Flezha.Convergence.Diff do
       unbound_relays: Enum.reverse(unbound),
       misbound_relays: Enum.reverse(misbound),
       missing_plugins: missing,
-      extra_plugins: extra,
-      stalled_relays: stalled_relays(reality, observed)
+      extra_plugins: extra
     }
   end
-
-  # I3: resolve each stalled relay-instance id (emitted by the Watchdog,
-  # keyed `relay_instance`) against the relays we observed running, so the
-  # Planner rebinds the exact `{namespace, relay_id}` instance. A stalled
-  # id with no live relay is dropped — there is nothing to rebind. Age is
-  # `tick_at - stalled_since` when both are known.
-  defp stalled_relays(reality, observed) do
-    tick_at = Map.get(reality, :tick_at)
-    index = Map.new(Map.keys(observed), fn {_ns, rid} = ref -> {rid, ref} end)
-
-    reality
-    |> Map.get(:stalled_relays, %{})
-    |> normalize_stalled()
-    |> Enum.flat_map(fn {relay_id, since} ->
-      case Map.get(index, relay_id) do
-        nil -> []
-        ref -> [{ref, stall_age(tick_at, since)}]
-      end
-    end)
-  end
-
-  defp normalize_stalled(map) when is_map(map) and not is_struct(map), do: Map.to_list(map)
-  defp normalize_stalled(set) when is_struct(set, MapSet), do: Enum.map(set, &{&1, nil})
-  defp normalize_stalled(list) when is_list(list), do: Enum.map(list, &{&1, nil})
-
-  defp stall_age(tick_at, since) when is_integer(tick_at) and is_integer(since),
-    do: max(tick_at - since, 0)
-
-  defp stall_age(_tick_at, _since), do: 0
 
   # I2: a relay's declared plugin set (durable cspec) vs the set actually
   # subscribed in its running extension table. Only diffed for relays we
@@ -136,9 +101,7 @@ defmodule Flezha.Convergence.Diff do
   @doc "True when the delta has no divergence to heal."
   @spec empty?(t()) :: boolean()
   def empty?(%__MODULE__{} = d) do
-    d.unbound_relays == [] and d.misbound_relays == [] and d.missing_plugins == [] and
-      d.extra_plugins == [] and d.stalled_relays == [] and
-      d.broken_streams == [] and d.silent_streams == [] and
-      d.resource_violations == [] and d.observability_drift == []
+    d.unbound_relays == [] and d.misbound_relays == [] and
+      d.missing_plugins == [] and d.extra_plugins == []
   end
 end

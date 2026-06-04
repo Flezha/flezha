@@ -74,7 +74,7 @@ defmodule Flezha.Executor.FleetManager do
   @doc """
   Returns active compute engines in `namespace` that advertise `factory_id`.
 
-  Used by `RelayManager.assign_executor/2` so we never route a
+  Used by `RelayManager.assign_executor/3` so we never route a
   relay to a node that doesn't own its factory — without this filter
   every input frame for a misrouted relay hits a dead registry entry
   on the foreign node and generates a `enqueue: relay X not found`

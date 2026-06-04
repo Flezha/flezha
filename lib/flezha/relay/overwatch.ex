@@ -105,10 +105,10 @@ defmodule Flezha.Relay.Overwatch do
     # Wait for an active executor in this namespace advertising
     # `relay.factory_id`. The DETS-baked executor_id is usually stale
     # after a restart (Identificator.unique_id/1 generates a fresh id
-    # per connect), so we re-resolve via RelayManager.assign_executor/2
+    # per connect), so we re-resolve via RelayManager.assign_executor/3
     # — the same lookup HubManager.alter_child_data/2 performs.
     case with_op_span(:await_executor, relay.id, fn ->
-           await_active_executor(state.namespace, relay.factory_id, executor_wait_ms())
+           await_active_executor(state.namespace, relay.factory_id, relay.id, executor_wait_ms())
          end) do
       {:ok, executor_id} ->
         if executor_id != stale_executor_id do
@@ -173,7 +173,7 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   defp do_start_with_retry(%__MODULE__{} = state, relay, [delay | rest], attempt) do
-    executor_id = resolve_executor(state.namespace, relay.factory_id, state.executor_id)
+    executor_id = resolve_executor(state.namespace, relay.factory_id, relay.id, state.executor_id)
     state = %__MODULE__{state | executor_id: executor_id}
 
     case attempt_ping_and_start(relay, executor_id) do
@@ -245,8 +245,8 @@ defmodule Flezha.Relay.Overwatch do
     end
   end
 
-  defp resolve_executor(namespace, factory_id, fallback) do
-    case RelayManager.assign_executor(namespace, factory_id) do
+  defp resolve_executor(namespace, factory_id, relay_id, fallback) do
+    case RelayManager.assign_executor(namespace, factory_id, relay_id) do
       id when is_binary(id) and byte_size(id) > 0 -> id
       _ -> fallback
     end
@@ -298,30 +298,30 @@ defmodule Flezha.Relay.Overwatch do
   defp executor_wait_ms,
     do: Application.get_env(:flezha, :overwatch_executor_wait_ms, 30_000)
 
-  # Poll `RelayManager.assign_executor/2` until it returns a live
+  # Poll `RelayManager.assign_executor/3` until it returns a live
   # executor id whose CU is registered in Flezha.Service.Identificator,
   # or the deadline elapses. Returns `{:ok, executor_id}` or
   # `{:error, :timeout}`.
-  defp await_active_executor(namespace, factory_id, timeout_ms) do
+  defp await_active_executor(namespace, factory_id, relay_id, timeout_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_await_active_executor(namespace, factory_id, deadline)
+    do_await_active_executor(namespace, factory_id, relay_id, deadline)
   end
 
-  defp do_await_active_executor(namespace, factory_id, deadline) do
-    case RelayManager.assign_executor(namespace, factory_id) do
+  defp do_await_active_executor(namespace, factory_id, relay_id, deadline) do
+    case RelayManager.assign_executor(namespace, factory_id, relay_id) do
       executor_id when is_binary(executor_id) ->
         if executor_ready?(executor_id) do
           {:ok, executor_id}
         else
-          retry_or_timeout(namespace, factory_id, deadline)
+          retry_or_timeout(namespace, factory_id, relay_id, deadline)
         end
 
       _ ->
-        retry_or_timeout(namespace, factory_id, deadline)
+        retry_or_timeout(namespace, factory_id, relay_id, deadline)
     end
   end
 
-  defp retry_or_timeout(namespace, factory_id, deadline) do
+  defp retry_or_timeout(namespace, factory_id, relay_id, deadline) do
     now = System.monotonic_time(:millisecond)
 
     cond do
@@ -330,7 +330,7 @@ defmodule Flezha.Relay.Overwatch do
 
       true ->
         Process.sleep(50)
-        do_await_active_executor(namespace, factory_id, deadline)
+        do_await_active_executor(namespace, factory_id, relay_id, deadline)
     end
   end
 

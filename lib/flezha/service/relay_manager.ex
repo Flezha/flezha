@@ -420,38 +420,43 @@ defmodule Flezha.Service.RelayManager do
   defp overwatch_call_timeout_ms,
     do: Application.get_env(:flezha, :overwatch_call_timeout_ms, 5_000)
 
-  def assign_executor(namespace) do
-    assign_executor(namespace, nil)
-  end
-
   @doc """
-  Pick an active compute engine for a new relay.
+  Pick an active compute engine for `relay_id` in `namespace`.
 
-  When `factory_id` is given, restricts the pool to compute engines that
-  actually advertise that factory. Without this filter a mixed-factory
-  namespace (e.g. market-relay owning `crypto_trades` + market-app
-  owning `market-init-state`) would random-pick the wrong node half the
-  time, routing every input frame to a process that doesn't exist on
-  the foreign node. The Java SDK surfaces this as a steady stream of
-  `DefaultRelayDispatcher.enqueue: relay 'X' not found`
-  warnings.
+  Placement is deterministic — rendezvous (HRW) hashing of `relay_id` over
+  the candidate executors — so every controller and every tick computes the
+  same target with no coordination, load spreads evenly, and only ~1/N
+  relays move when the executor set changes. A newly connected executor
+  never reshuffles existing relays: placement is computed only at start /
+  forced rebind.
+
+  When `factory_id` is given the pool is restricted to executors advertising
+  that factory. Without this filter a mixed-factory namespace (e.g.
+  market-relay owning `crypto_trades` + market-app owning
+  `market-init-state`) would pick the wrong node, routing every input frame
+  to a process that doesn't exist on the foreign node (the Java SDK surfaces
+  this as `DefaultRelayDispatcher.enqueue: relay 'X' not found`). Returns
+  `nil` when no candidate exists.
   """
-  def assign_executor(namespace, nil) do
+  @spec assign_executor(String.t(), binary() | nil, binary()) :: binary() | nil
+  def assign_executor(namespace, factory_id, relay_id) do
     namespace
-    |> FleetManager.active_executors()
-    |> pick_executor()
+    |> candidate_executors(factory_id)
+    |> pick_executor(relay_id)
   end
 
-  def assign_executor(namespace, factory_id) when is_binary(factory_id) do
-    namespace
-    |> FleetManager.executors_for_factory(factory_id)
-    |> pick_executor()
-  end
+  defp candidate_executors(namespace, nil), do: FleetManager.active_executors(namespace)
 
-  # The active set is the authority: an executor is in it only while its
-  # transport connection is open, so membership already answers "is it
-  # reachable". Overwatch's pre-`:start_relay` ping is the final gate before
-  # any work is handed over. No assignment-time re-ping.
-  defp pick_executor([]), do: nil
-  defp pick_executor(executor_ids), do: Enum.random(executor_ids)
+  defp candidate_executors(namespace, factory_id) when is_binary(factory_id),
+    do: FleetManager.executors_for_factory(namespace, factory_id)
+
+  # The candidate set is the authority: an executor is in it only while its
+  # transport connection is open. HRW then picks the executor with the
+  # highest hash of `{relay_id, executor}` — deterministic and stable under
+  # membership change.
+  @doc false
+  def pick_executor([], _relay_id), do: nil
+
+  def pick_executor(executor_ids, relay_id),
+    do: Enum.max_by(executor_ids, fn ce -> :erlang.phash2({relay_id, ce}) end)
 end

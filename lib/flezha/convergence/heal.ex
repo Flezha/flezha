@@ -1,31 +1,22 @@
 defmodule Flezha.Convergence.Heal do
   @moduledoc """
-  The entire heal surface: nine idempotent, bounded primitives. Every
+  The entire heal surface: four idempotent, bounded primitives. Every
   catalogue row reduces to a composition of these — adding a failure mode
   never adds a primitive.
 
-      start_relay   stop_relay      rebind_relay
-      start_plugin  stop_plugin     restart_plugin
+      rebind_relay
+      start_plugin  stop_plugin
       evict_executor
-      replay_state  compact_wal
 
   `execute/1` dispatches one planned op to its primitive and returns
   `:ok | :error` so the Loop can drive `Backoff`.
 
-  Active primitives:
-
-    * `rebind_relay` — migrate a relay tagged to a dead/wrong executor
-      onto an available one (flip the registry tag, fan its pid into the
-      new executor's stream channels). An output-stall rebind first asks
-      the bound executor to re-open its data streams in place.
+    * `rebind_relay` — migrate a relay tagged to a dead/wrong executor (or
+      not yet bound) onto an available one: flip the registry tag, fan its
+      pid into the new executor's stream channels, replay the WAL.
     * `start_plugin` / `stop_plugin` — reconcile a relay's running plugin
       set against its declared cspec manifest.
     * `evict_executor` — forcibly drop a dead executor binding.
-    * `restart_plugin` — force a wedged provider plugin (e.g. the Kafka
-      producer stalled against a restarted broker) onto a fresh connection.
-
-  `start_relay`, `stop_relay`, `replay_state`, and `compact_wal` are
-  observable no-ops (emit `[:flezha, :convergence, :heal]`, return `:ok`).
   """
 
   alias Flezha.Convergence.SafeCall
@@ -38,8 +29,7 @@ defmodule Flezha.Convergence.Heal do
   @migrate_timeout_ms 2_000
   @plugin_call_timeout_ms 2_000
 
-  @primitives ~w(start_relay stop_relay rebind_relay start_plugin stop_plugin
-                 restart_plugin evict_executor replay_state compact_wal)a
+  @primitives ~w(rebind_relay start_plugin stop_plugin evict_executor)a
 
   @spec primitives() :: [atom()]
   def primitives(), do: @primitives
@@ -101,28 +91,6 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
-  # Restart a wedged provider plugin. The motivating case is the Kafka
-  # producer stalling forever after a clean broker restart: the shared
-  # client stays alive returning retriable errors, so no in-process swap
-  # ever fires. `Kafka.Producer.restart/1` forces each of the plugin's
-  # producer workers onto a fresh broker client. Idempotent and safe when
-  # the plugin (or its producer) is absent.
-  defp apply_primitive(:restart_plugin, %{args: %{plugin_id: plugin_id}})
-       when is_binary(plugin_id) do
-    case Flezha.Plugin.Provider.Kafka.Producer.restart(plugin_id) do
-      :ok -> :ok
-      {:error, :no_producer} -> :ok
-    end
-  end
-
-  defp apply_primitive(:restart_plugin, _op), do: :ok
-
-  # Observable no-ops: emit heal telemetry (above) and return :ok.
-  defp apply_primitive(:start_relay, _op), do: :ok
-  defp apply_primitive(:stop_relay, _op), do: :ok
-  defp apply_primitive(:replay_state, _op), do: :ok
-  defp apply_primitive(:compact_wal, _op), do: :ok
-
   # Malformed op (no live target) — never produced by the Planner, but a
   # crash here would take down the whole tick. Treat as a failed heal.
   defp apply_primitive(prim, _op) when prim in [:evict_executor, :start_plugin, :stop_plugin],
@@ -138,7 +106,7 @@ defmodule Flezha.Convergence.Heal do
          %{factory_id: factory, executor_id: prev} <- overwatch_snapshot(pid),
          true <- factory != nil,
          false <- skip_rebind?(namespace, factory, prev, args),
-         target when is_binary(target) <- RelayManager.assign_executor(namespace, factory),
+         target when is_binary(target) <- RelayManager.assign_executor(namespace, factory, relay_id),
          {:ok, :ok} <- SafeCall.bounded(pid, {:executor_migrate, target}, @migrate_timeout_ms) do
       _ = HubManager.relay_set_executor(namespace, relay_id, target)
 
@@ -168,11 +136,6 @@ defmodule Flezha.Convergence.Heal do
       _ -> :error
     end
   end
-
-  # An output-stall rebind MUST always act: the relay is bound to an active
-  # executor yet not producing, so "well bound" is exactly the broken state
-  # to heal — skipping it would defeat the silent-freeze self-heal.
-  defp skip_rebind?(_namespace, _factory, _prev, %{reason: :output_stall}), do: false
 
   # A misbound rebind is a safe no-op once the bound executor is back in the
   # live, factory-owning active set (a reconnect between snapshot and heal

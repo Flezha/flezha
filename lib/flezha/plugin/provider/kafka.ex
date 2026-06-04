@@ -193,26 +193,6 @@ defmodule Flezha.Plugin.Provider.Kafka do
     end
 
     @doc """
-    Force every producer worker for `plugin_id` to reconnect to a fresh
-    broker client. Drives the convergence `:restart_plugin` heal; idempotent
-    and safe when the plugin has no running producer (returns
-    `{:error, :no_producer}`).
-    """
-    @spec restart(binary()) :: :ok | {:error, :no_producer}
-    def restart(plugin_id) when is_binary(plugin_id) do
-      pattern = {{plugin_id, :"$1", :"$2"}, :"$3", :_}
-
-      case Registry.select(ProducerSup.registry_name(), [{pattern, [], [:"$3"]}]) do
-        [] ->
-          {:error, :no_producer}
-
-        pids ->
-          Enum.each(pids, &ProducerWorker.refresh_broker/1)
-          :ok
-      end
-    end
-
-    @doc """
     Same as `stats/1` but with explicit `(topic, partition)` for the rare
     case of a registry collision or programmatic lookup.
     """

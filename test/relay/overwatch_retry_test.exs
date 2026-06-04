@@ -224,7 +224,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
 
     # A healthy executor is now reachable — un-park via executor_migrate.
     Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:ok, :pong} end)
-    executor_id = RelayManager.assign_executor(@namespace, @factory)
+    executor_id = RelayManager.assign_executor(@namespace, @factory, "unpark_relay")
     assert is_binary(executor_id)
 
     assert :ok = GenServer.call(pid, {:executor_migrate, executor_id})

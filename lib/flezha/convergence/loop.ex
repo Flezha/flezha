@@ -16,23 +16,28 @@ defmodule Flezha.Convergence.Loop do
   use GenServer
 
   alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, Probe, Snapshot}
-  alias Flezha.Service.{EventManager, HubManager}
+  alias Flezha.Service.{EventManager, HubManager, Identificator}
 
   require Logger
 
   @default_tick_ms 5_000
   @default_output_stall_grace_ms 60_000
+  # A relay must be misbound for this many consecutive ticks before it is
+  # migrated, so a brief executor blip cannot trigger a full-namespace
+  # migration + WAL replay.
+  @misbound_min_ticks 2
 
   @telemetry_subs [[:flezha, :state, :output_stall]]
   @handler_id {__MODULE__, :events}
 
   defstruct tick_ms: @default_tick_ms,
             output_stall_grace_ms: @default_output_stall_grace_ms,
-            recovery_awaited?: false,
             backoff: Backoff.new(),
+            # {namespace, relay_id} => consecutive ticks observed misbound.
+            misbound_streaks: %{},
             # relay_instance => monotonic_ms when last flagged stalled.
-            # Entries age out once they cross the output-stall grace, so a
-            # relay that resumes producing auto-clears (no manual clear).
+            # Reported to /healthz as degraded; the Watchdog resyncs the
+            # relay in place. Entries age out after the output-stall grace.
             stalled_relays: %{}
 
   # ---------- public API ----------
@@ -86,13 +91,13 @@ defmodule Flezha.Convergence.Loop do
 
   @impl true
   def handle_info(:tick, %__MODULE__{} = state) do
-    state = run_or_await(state)
+    state = run_tick(state)
     Process.send_after(self(), :tick, state.tick_ms)
     {:noreply, state}
   end
 
   def handle_info({:executor_connected_event, {_namespace, _executor_id}}, %__MODULE__{} = state) do
-    {:noreply, run_or_await(state)}
+    {:noreply, run_tick(state)}
   end
 
   def handle_info({:output_stall, relay_id}, %__MODULE__{} = state) when is_binary(relay_id) do
@@ -104,7 +109,7 @@ defmodule Flezha.Convergence.Loop do
 
   @impl true
   def handle_call(:tick_now, _from, %__MODULE__{} = state) do
-    {:reply, :ok, run_or_await(state)}
+    {:reply, :ok, run_tick(state)}
   end
 
   @impl true
@@ -128,27 +133,25 @@ defmodule Flezha.Convergence.Loop do
 
   # ---------- tick body ----------
 
-  # Gate every emission on recovery completion: no heal fires against a
-  # half-restored registry.
-  defp run_or_await(%__MODULE__{recovery_awaited?: true} = state), do: run_tick(state)
-
-  defp run_or_await(%__MODULE__{} = state) do
-    case Probe.await_recovery_complete(0) do
-      :ok ->
-        run_tick(%{state | recovery_awaited?: true})
-
-      {:error, {:recovery_timeout, hub_ids}} ->
-        :telemetry.execute(
-          [:flezha, :convergence, :tick],
-          %{relays_total: 0, actions_issued: 0},
-          %{state: :awaiting_recovery, unfinished_hubs: hub_ids}
-        )
-
-        state
-    end
+  # A raise/throw inside the tick must NOT crash the Loop: it runs inline in
+  # the single self-healing GenServer under default restart intensity, so an
+  # uncaught error would cascade to the controller's top supervisor. Skip the
+  # tick and carry the prior state instead.
+  defp run_tick(%__MODULE__{} = state) do
+    do_run_tick(state)
+  rescue
+    e ->
+      Logger.error("[convergence] tick crashed, skipping: #{Exception.message(e)}")
+      tick_failed_telemetry()
+      state
+  catch
+    kind, reason ->
+      Logger.error("[convergence] tick aborted (#{kind}): #{inspect(reason)}")
+      tick_failed_telemetry()
+      state
   end
 
-  defp run_tick(%__MODULE__{} = state) do
+  defp do_run_tick(%__MODULE__{} = state) do
     started_at = System.monotonic_time(:millisecond)
 
     # Age out stalled entries the Watchdog has stopped re-flagging: a
@@ -157,8 +160,18 @@ defmodule Flezha.Convergence.Loop do
     state = %{state | stalled_relays: stalled}
 
     intent = Intent.declared()
-    reality = Map.put(Probe.snapshot(), :stalled_relays, stalled)
-    delta = Diff.compute(intent, reality)
+    reality = Probe.snapshot()
+
+    # Per-namespace recovery gate: heal only relays whose hub has finished
+    # recovery. A namespace mid-replay is skipped (no heal against a
+    # half-restored registry) without blocking healing for ready namespaces.
+    ready = ready_namespaces(intent)
+    heal_relays = Enum.filter(intent.relays, &MapSet.member?(ready, &1.namespace))
+    delta = Diff.compute(%Intent{relays: heal_relays}, reality)
+
+    {streaks, delta} = apply_misbound_streak(state.misbound_streaks, delta)
+    state = %{state | misbound_streaks: streaks}
+
     plan = Planner.plan(delta, state.backoff)
 
     {backoff, issued} = execute_plan(plan, state.backoff)
@@ -167,6 +180,8 @@ defmodule Flezha.Convergence.Loop do
 
     state = %{state | backoff: backoff}
 
+    # Publish health over the FULL intent so /healthz reports the true
+    # intended count, not just the recovery-ready subset.
     publish(intent, reality, state)
 
     :telemetry.execute(
@@ -176,6 +191,43 @@ defmodule Flezha.Convergence.Loop do
     )
 
     state
+  end
+
+  defp tick_failed_telemetry() do
+    :telemetry.execute(
+      [:flezha, :convergence, :tick],
+      %{relays_total: 0, actions_issued: 0},
+      %{state: :error}
+    )
+  end
+
+  # Namespaces whose hub has reached `:normal | :skipped`. A hub still
+  # `:recovering` (or never observed, `:unknown`) is not healed this tick.
+  @doc false
+  def ready_namespaces(%Intent{relays: relays}) do
+    states = Probe.recovery_states()
+
+    relays
+    |> Enum.map(& &1.namespace)
+    |> Enum.uniq()
+    |> Enum.filter(fn ns -> Map.get(states, Identificator.hub(ns), :unknown) in [:normal, :skipped] end)
+    |> MapSet.new()
+  end
+
+  # A relay must be misbound for @misbound_min_ticks consecutive ticks before
+  # it is migrated. Relays not misbound this tick drop out of the streak map
+  # (reset), so a relay seen bound again clears immediately.
+  @doc false
+  def apply_misbound_streak(streaks, %Diff{misbound_relays: misbound} = delta) do
+    new_streaks =
+      Enum.reduce(misbound, %{}, fn {ref, _dead}, acc ->
+        Map.put(acc, ref, Map.get(streaks, ref, 0) + 1)
+      end)
+
+    ready =
+      Enum.filter(misbound, fn {ref, _dead} -> Map.get(new_streaks, ref) >= @misbound_min_ticks end)
+
+    {new_streaks, %{delta | misbound_relays: ready}}
   end
 
   defp expire_stalled(stalled, now, grace_ms) do
