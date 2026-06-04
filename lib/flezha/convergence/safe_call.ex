@@ -49,11 +49,12 @@ defmodule Flezha.Convergence.SafeCall do
   # Resolve the target (pid | name | {name, node}) to a pid and sample its
   # mailbox depth + current function. `current_function` is the high-signal
   # field: it shows `:gen.do_call/4` when the target is itself blocked on a
-  # downstream call. A remote/dead pid yields `nil` from `Process.info` — report
-  # status rather than crash.
+  # downstream call. `Process.info/2` only accepts a LOCAL pid — it raises
+  # `ArgumentError` on a remote pid (and yields `nil` only for a dead local
+  # one), so we introspect locally and report a remote pid as such.
   defp probe_target(server) do
     case GenServer.whereis(server) do
-      pid when is_pid(pid) ->
+      pid when is_pid(pid) and node(pid) == node() ->
         case Process.info(pid, [:message_queue_len, :current_function]) do
           [{:message_queue_len, qlen}, {:current_function, cf}] ->
             %{target_pid: pid, target_queue_len: qlen, target_current_function: cf}
@@ -61,6 +62,9 @@ defmodule Flezha.Convergence.SafeCall do
           nil ->
             %{target_pid: pid, target_status: :unavailable}
         end
+
+      pid when is_pid(pid) ->
+        %{target_pid: pid, target_status: :remote, target_node: node(pid)}
 
       _ ->
         %{target_status: :no_proc}

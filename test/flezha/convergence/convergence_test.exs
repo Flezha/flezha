@@ -282,6 +282,36 @@ defmodule Flezha.ConvergenceTest do
       handler_ids |> List.wrap() |> Enum.each(&:telemetry.detach/1)
       Process.exit(pid, :kill)
     end
+
+    test "on timeout against a remote pid, reports :remote instead of crashing the caller" do
+      # Regression: `Process.info/2` raises `ArgumentError` on a remote pid.
+      # That raise is an :error, not an :exit, so the catch in bounded/3 never
+      # covered it — it propagated out of Convergence.Loop and took the node down.
+      prev_level = Logger.level()
+      Logger.configure(level: :warning)
+      on_exit(fn -> Logger.configure(level: prev_level) end)
+
+      args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
+
+      {:ok, peer, peer_node} =
+        :peer.start_link(%{host: ~c"127.0.0.1", name: :safecall_remote_probe, args: [args]})
+
+      on_exit(fn ->
+        if Process.alive?(peer), do: catch_exit(:peer.stop(peer))
+      end)
+
+      # A bare remote process that never answers, so the call times out and the
+      # timeout branch probes a genuinely remote pid.
+      remote_pid = Node.spawn(peer_node, :timer, :sleep, [:infinity])
+      assert node(remote_pid) == peer_node
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, :timeout} = SafeCall.bounded(remote_pid, :ping, 50)
+        end)
+
+      assert log =~ "target_status: :remote"
+    end
   end
 
   describe "Snapshot" do
