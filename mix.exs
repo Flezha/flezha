@@ -94,8 +94,8 @@ defmodule Flezha.MixProject do
       # leader-hosted oracle, and hub-to-hub migration) stabilise. mix.lock
       # pins the exact dev commit; refresh with `mix deps.update process_hub`.
       # Move to a versioned/hex dep once dev is cut as a release.
-      # {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
-      {:process_hub, path: "../process-hub"},
+      {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
+      # {:process_hub, path: "../process-hub"},
       # {:process_hub, "~> 0.5.0-beta"},
       {:blockade, "~> 0.2.2"},
       {:fresh, "~> 0.4.4"},
