@@ -224,6 +224,35 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
     end
   end
 
+  describe "5.10 idle watchdog stands down while disconnected" do
+    # fails when: a transient disconnect leaves last_frame_at stale, and the
+    # next idle tick tears down the reconnecting socket with
+    # {:shutdown, :idle_timeout} — the daily false "data stops" that only
+    # heals minutes later via attempt_restart.
+    test "a stale last_frame_at during reconnect does not exit with :idle_timeout" do
+      attach_telemetry([:flezha, :ws, :idle_reconnect])
+      stale = :erlang.monotonic_time(:millisecond) - 500
+
+      {pid, ref} =
+        spawn_monitor(fn ->
+          s =
+            state(
+              idle_timeout_ms: 100,
+              websocket_established?: false,
+              last_frame_at: stale,
+              last_data_frame_at: stale
+            )
+
+          Websocket.handle_info(:idle_check, s)
+          Process.sleep(500)
+        end)
+
+      refute_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 300
+      refute_receive {:telemetry, [:flezha, :ws, :idle_reconnect], _, _}, 50
+      Process.exit(pid, :kill)
+    end
+  end
+
   describe "5.9 per-frame path is single-read, single-classification" do
     test "a data frame derives both timestamps from one clock read" do
       s = state(ignore_pattern: "heartbeat", last_frame_at: 0, last_data_frame_at: 0)

@@ -443,7 +443,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
     now = :erlang.monotonic_time(:millisecond)
 
     cond do
-      state.idle_timeout_ms > 0 and now - state.last_frame_at >= state.idle_timeout_ms ->
+      # While Fresh is reconnecting there is no socket to police and
+      # last_frame_at stays stale until handle_connect resets it; gate the
+      # idle tier on an established socket so it can't tear down a healthy
+      # reconnect with :idle_timeout.
+      state.websocket_established? and state.idle_timeout_ms > 0 and
+          now - state.last_frame_at >= state.idle_timeout_ms ->
         reconnect_dead_connection(state, now - state.last_frame_at)
 
       state.resubscribe_after_ms > 0 and
