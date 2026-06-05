@@ -1,13 +1,15 @@
 defmodule FlezhaTest.Executor.ControlUnitHealthTest do
   @moduledoc """
-  Self-health observability for the ControlUnit: the `:heartbeat` tick surfaces
-  the outstanding-reply backlog (`pending_refs` + oldest age) that otherwise
-  grows silently when the transport stops delivering responses. The handler is
-  a public function, exercised directly with a crafted state.
+  ControlUnit out-of-band recovery. A control reply left unacked past the evict
+  threshold is a positive dead-executor signal: the ControlUnit fails the
+  waiter, drops the ref, and synthesizes the FleetManager disconnect that evicts
+  the executor and rebinds its relays — never routing through the (possibly
+  wedged) Overwatch relay process.
+
+  Fail surfaces as: market data stops and never recovers because a silent
+  executor's relay is never rebound onto a live executor.
   """
   use ExUnit.Case, async: false
-
-  import ExUnit.CaptureLog
 
   alias Flezha.Executor.ControlUnit
 
@@ -17,38 +19,41 @@ defmodule FlezhaTest.Executor.ControlUnitHealthTest do
     on_exit(fn -> Logger.configure(level: prev) end)
   end
 
-  test "heartbeat warns when a stored reply has been outstanding too long" do
+  test "heartbeat evicts the executor when a control reply is unacked past the threshold" do
     now = System.monotonic_time(:millisecond)
+    reply_ref = make_ref()
 
-    # One reply outstanding for 60s exceeds the 10s age threshold -> warn.
     state = %{
-      executor_id: "ex_cu",
+      namespace: "default",
+      executor_id: "ex_dead",
       response_refs: %{
-        make_ref() => {:reply, {self(), make_ref()}, now - 60_000}
+        make_ref() => {:reply, {self(), reply_ref}, now - 120_000}
       }
     }
 
-    log = capture_log(fn -> assert {:noreply, ^state} = ControlUnit.handle_info(:heartbeat, state) end)
+    assert {:noreply, %{response_refs: refs}} = ControlUnit.handle_info(:heartbeat, state)
 
-    assert log =~ "[ControlUnit] backlog executor=ex_cu"
-    assert log =~ "pending_refs=1"
-    assert log =~ "oldest_age_ms="
-    assert log =~ "queue_len="
+    # The stuck ref is dropped and its caller is unblocked with a clean error
+    # (so a blocking caller never hangs forever on the dead executor).
+    assert refs == %{}
+    assert_receive {^reply_ref, {:error, :timeout}}
   end
 
-  test "heartbeat warns when the pending-ref count crosses the threshold" do
+  test "heartbeat leaves a fresh reply ref alone (no false eviction)" do
     now = System.monotonic_time(:millisecond)
+    ref = make_ref()
 
-    refs =
-      for _ <- 1..40, into: %{} do
-        {make_ref(), {:reply, {self(), make_ref()}, now}}
-      end
+    state = %{
+      namespace: "default",
+      executor_id: "ex_ok",
+      response_refs: %{
+        ref => {:reply, {self(), make_ref()}, now - 1_000}
+      }
+    }
 
-    state = %{executor_id: "ex_cu2", response_refs: refs}
+    assert {:noreply, %{response_refs: refs}} = ControlUnit.handle_info(:heartbeat, state)
 
-    log = capture_log(fn -> ControlUnit.handle_info(:heartbeat, state) end)
-
-    assert log =~ "[ControlUnit] backlog executor=ex_cu2"
-    assert log =~ "pending_refs=40"
+    assert Map.has_key?(refs, ref)
+    refute_receive {_ref, {:error, :timeout}}, 50
   end
 end

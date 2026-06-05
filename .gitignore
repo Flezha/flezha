@@ -80,3 +80,9 @@ sdk/java/**/target/
 # (x86-64 here, aarch64 on the rpi5 controller) so a committed copy is
 # both redundant and wrong for other targets.
 /priv/native/*.so
+
+# Local process_hub synced into the controller build context by the deploy
+.process-hub-local/
+
+# Local dev
+.playwright-mcp

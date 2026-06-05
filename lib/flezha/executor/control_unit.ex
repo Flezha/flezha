@@ -1,6 +1,7 @@
 defmodule Flezha.Executor.ControlUnit do
   alias Flezha.Service.Identificator
   alias Flezha.Executor.ControlChannel
+  alias Flezha.Executor.FleetManager
   alias Flezha.Service.ConfigManager
 
   use GenServer
@@ -342,41 +343,64 @@ defmodule Flezha.Executor.ControlUnit do
     end
   end
 
+  # A control reply unacked past the evict threshold means the executor is dead:
+  # fail the waiters and evict via FleetManager (not the wedged Overwatch).
   @impl true
   def handle_info(:heartbeat, state) do
     schedule_heartbeat()
 
     now = System.monotonic_time(:millisecond)
-    {:message_queue_len, qlen} = Process.info(self(), :message_queue_len)
-    pending = map_size(state.response_refs)
-    oldest_age_ms = oldest_pending_age_ms(state.response_refs, now)
+    evict_ms = pending_evict_ms()
+    stuck = stuck_reply_refs(state.response_refs, now, evict_ms)
 
-    if pending >= pending_warn() or oldest_age_ms >= pending_age_warn_ms() do
-      Logger.warning(
-        "[ControlUnit] backlog executor=#{state.executor_id} pending_refs=#{pending} " <>
-          "oldest_age_ms=#{oldest_age_ms} queue_len=#{qlen}"
-      )
+    if stuck == [] do
+      {:noreply, state}
     else
-      Logger.debug(
-        "[ControlUnit] heartbeat executor=#{state.executor_id} pending_refs=#{pending} queue_len=#{qlen}"
+      Logger.warning(
+        "[ControlUnit] executor=#{state.executor_id} #{length(stuck)} control reply(s) " <>
+          "unacked >= #{evict_ms}ms — evicting executor and rebinding its relays"
       )
-    end
 
-    {:noreply, state}
+      refs = fail_stuck_refs(state.response_refs, stuck)
+      synthesize_disconnect(state.namespace, state.executor_id)
+      {:noreply, %{state | response_refs: refs}}
+    end
   end
 
   @impl true
   def handle_info(_msg, state), do: {:noreply, state}
 
-  # Age of the oldest outstanding non-ping reply (ping refs self-clean via their
-  # own timeout timer, so they never form a silent backlog).
-  defp oldest_pending_age_ms(refs, now) do
-    refs
-    |> Map.values()
-    |> Enum.reduce(0, fn
-      {:reply, _from, at}, acc -> max(acc, now - at)
-      _other, acc -> acc
+  # Deferred replies outstanding past the threshold (ping refs self-clean).
+  defp stuck_reply_refs(_refs, _now, evict_ms) when evict_ms <= 0, do: []
+
+  defp stuck_reply_refs(refs, now, evict_ms) do
+    for {ref, {:reply, _from, at}} <- refs, now - at >= evict_ms, do: ref
+  end
+
+  defp fail_stuck_refs(refs, stuck) do
+    Enum.reduce(stuck, refs, fn ref, acc ->
+      case Map.get(acc, ref) do
+        {:reply, from, _at} ->
+          GenServer.reply(from, {:error, :timeout})
+          Map.delete(acc, ref)
+
+        _ ->
+          acc
+      end
     end)
+  end
+
+  # Fire-and-forget so the heartbeat never blocks on FleetManager.
+  defp synthesize_disconnect(namespace, executor_id) do
+    spawn(fn ->
+      try do
+        GenServer.call(FleetManager, {:executor_disconnected, namespace, executor_id})
+      catch
+        :exit, _ -> :ok
+      end
+    end)
+
+    :ok
   end
 
   defp schedule_heartbeat() do
@@ -387,9 +411,6 @@ defmodule Flezha.Executor.ControlUnit do
   defp heartbeat_interval_ms,
     do: Application.get_env(:flezha, :control_unit_heartbeat_interval_ms, 15_000)
 
-  defp pending_warn,
-    do: Application.get_env(:flezha, :control_unit_pending_warn, 32)
-
-  defp pending_age_warn_ms,
-    do: Application.get_env(:flezha, :control_unit_pending_age_warn_ms, 10_000)
+  defp pending_evict_ms,
+    do: Application.get_env(:flezha, :control_unit_pending_evict_ms, 90_000)
 end

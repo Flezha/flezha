@@ -56,15 +56,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENV MIX_ENV=prod \
-    LANG=C.UTF-8
+    LANG=C.UTF-8 \
+    FLEZHA_PROCESS_HUB_PATH=/app/.process-hub-local
 
 # Copy mix metadata first to maximise layer-cache hits when only source changes.
 COPY mix.exs mix.lock ./
+# Local process_hub source the deploy syncs in; mix.exs builds from this path.
+COPY .process-hub-local ./.process-hub-local
 
 RUN --mount=type=cache,target=/root/.hex \
     --mount=type=cache,target=/root/.mix \
     mix local.hex --force \
     && mix local.rebar --force \
+    && mix deps.unlock process_hub \
     && mix deps.get --only prod
 
 # RUSTLER_SKIP_COMPILATION makes rustler pick up the .so dropped into

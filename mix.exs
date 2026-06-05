@@ -89,14 +89,9 @@ defmodule Flezha.MixProject do
     [
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
-      # ProcessHub is consumed from the github `dev` branch while the
-      # self-healing-control-plane additions (leader/0, purge_node/2, the
-      # leader-hosted oracle, and hub-to-hub migration) stabilise. mix.lock
-      # pins the exact dev commit; refresh with `mix deps.update process_hub`.
-      # Move to a versioned/hex dep once dev is cut as a release.
-      {:process_hub, git: "https://github.com/alfetahe/process-hub", branch: "dev"},
-      # {:process_hub, path: "../process-hub"},
-      # {:process_hub, "~> 0.5.0-beta"},
+      # github `dev` branch by default; the deploy sets FLEZHA_PROCESS_HUB_PATH
+      # to build from the local checkout (see process_hub_dep/0).
+      {:process_hub, process_hub_dep()},
       {:blockade, "~> 0.2.2"},
       {:fresh, "~> 0.4.4"},
       {:kafka_ex, github: "alfetahe/kafka_ex", ref: "7a6de03b817e4c90e18fb8effc4293a81ae4ce77"},
@@ -111,6 +106,13 @@ defmodule Flezha.MixProject do
       # :mint_web_socket) so the OTLP exporter calls Mint directly.
       {:mint, "~> 1.7"}
     ]
+  end
+
+  defp process_hub_dep do
+    case System.get_env("FLEZHA_PROCESS_HUB_PATH") do
+      path when is_binary(path) and path != "" -> [path: path]
+      _ -> [git: "https://github.com/alfetahe/process-hub", branch: "dev"]
+    end
   end
 
   # TODO: Also copy windows binaries

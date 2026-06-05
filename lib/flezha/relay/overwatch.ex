@@ -53,11 +53,7 @@ defmodule Flezha.Relay.Overwatch do
     # task so it never blocks `:stop_relay`; this field carries the in-flight
     # task's reference + pid so `:stop_relay` can terminate it cleanly. `nil`
     # when no migrate is in flight.
-    migrate_task: nil,
-    # Last heartbeat bookkeeping for the self-health tick: monotonic ms of the
-    # previous beat + the reductions count then, so each beat can report drift
-    # ("how far behind") and reductions-delta. `nil` until the first beat.
-    last_hb: nil
+    migrate_task: nil
   ]
 
   def start_link(args) do
@@ -91,11 +87,6 @@ defmodule Flezha.Relay.Overwatch do
       extensions: Table.new(__extensions_catalog__()),
       builder: relay
     }
-
-    # Arm the self-health heartbeat from init (not handle_continue) so it is
-    # already running if the bind/start work below wedges — its cessation plus
-    # the last reported queue depth is then the wedge signal.
-    schedule_heartbeat()
 
     {:ok, state, {:continue, {:bind_executor, stale_executor_id, relay}}}
   end
@@ -371,16 +362,19 @@ defmodule Flezha.Relay.Overwatch do
     # so the WAL lives under `state/{relay_id}/...`. Enumerate by the same key.
     relay_class = Keyword.get(relay_opts, :relay_class, state.id)
 
+    # Off-process: the replay does blocking disk reads, never touches state.
+    spawn(fn -> replay_persisted_partitions(relay_class, executor_id) end)
+
+    :ok
+  end
+
+  defp replay_persisted_partitions(relay_class, executor_id) do
     if Flezha.State.PersistenceResolver.persistence_enabled?(relay_class) do
-      partitions = enumerate_persisted_partitions(relay_class)
-
-      Enum.each(partitions, fn {rc, sh, pk} ->
-        case Flezha.State.Restore.has_persisted_state?({rc, sh, pk}) do
-          true ->
-            _ = dispatch_restore_init_state(executor_id, {rc, sh, pk})
-
-          false ->
-            :ok
+      relay_class
+      |> enumerate_persisted_partitions()
+      |> Enum.each(fn partition_id ->
+        if Flezha.State.Restore.has_persisted_state?(partition_id) do
+          _ = dispatch_restore_init_state(executor_id, partition_id)
         end
       end)
     end
@@ -595,15 +589,24 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
-  def handle_call(:get_partition_state, _from, state) do
-    command = %ExecutorCommands.PartitionState{relay_id: state.id}
+  def handle_call(:get_partition_state, from, %__MODULE__{} = state) do
+    # Off the GenServer loop so a slow executor can't back up the mailbox.
+    executor_id = state.executor_id
+    relay_id = state.id
 
-    result =
-      with_op_span(:partition_state, state.id, fn ->
-        send_control(state.executor_id, {:partition_state, command})
-      end)
+    spawn(fn ->
+      result =
+        with_op_span(:partition_state, relay_id, fn ->
+          send_control(
+            executor_id,
+            {:partition_state, %ExecutorCommands.PartitionState{relay_id: relay_id}}
+          )
+        end)
 
-    {:reply, result, state}
+      GenServer.reply(from, result)
+    end)
+
+    {:noreply, state}
   end
 
   # Async `:executor_migrate` for the PARKED un-park path only — that's
@@ -835,37 +838,6 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
-  def handle_info(:heartbeat, %__MODULE__{} = state) do
-    schedule_heartbeat()
-
-    now = System.monotonic_time(:millisecond)
-    {:message_queue_len, qlen} = Process.info(self(), :message_queue_len)
-    {:reductions, reds} = Process.info(self(), :reductions)
-
-    {drift_ms, reds_delta} =
-      case state.last_hb do
-        %{at_ms: prev_at, reductions: prev_reds} ->
-          {now - (prev_at + heartbeat_interval_ms()), reds - prev_reds}
-
-        _ ->
-          {0, 0}
-      end
-
-    if qlen >= heartbeat_queue_warn() or drift_ms >= heartbeat_drift_warn_ms() do
-      Logger.warning(
-        "[Overwatch] heartbeat behind relay=#{state.id} queue_len=#{qlen} " <>
-          "drift_ms=#{drift_ms} reductions_delta=#{reds_delta} executor=#{inspect(state.executor_id)}"
-      )
-    else
-      Logger.debug(
-        "[Overwatch] heartbeat relay=#{state.id} queue_len=#{qlen} drift_ms=#{drift_ms}"
-      )
-    end
-
-    {:noreply, %{state | last_hb: %{at_ms: now, reductions: reds}}}
-  end
-
-  @impl true
   def handle_info(
         {:flezha_request, handler_key, payload, reply_to, ref},
         %__MODULE__{} = state
@@ -972,20 +944,6 @@ defmodule Flezha.Relay.Overwatch do
       end
     end
   end
-
-  defp schedule_heartbeat() do
-    interval = heartbeat_interval_ms()
-    if interval > 0, do: Process.send_after(self(), :heartbeat, interval)
-  end
-
-  defp heartbeat_interval_ms,
-    do: Application.get_env(:flezha, :overwatch_heartbeat_interval_ms, 15_000)
-
-  defp heartbeat_queue_warn,
-    do: Application.get_env(:flezha, :overwatch_heartbeat_queue_warn, 50)
-
-  defp heartbeat_drift_warn_ms,
-    do: Application.get_env(:flezha, :overwatch_heartbeat_drift_warn_ms, 5_000)
 
   defp op_warn_ms,
     do: Application.get_env(:flezha, :overwatch_op_warn_ms, 2_000)
