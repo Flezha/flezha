@@ -541,7 +541,12 @@ fn driver_loop(
                 Event::Stream(StreamEvent::Writable { id }) => {
                     flush_write_buffer(&mut connection, id, &mut streams);
                 }
-                Event::ConnectionLost { .. } => {
+                Event::ConnectionLost { reason } => {
+                    tracing::warn!(
+                        target: "flezha::transport",
+                        transport = "quic",
+                        "QUIC connection lost; driver thread exiting: {}", reason
+                    );
                     return;
                 }
                 _ => {}
@@ -579,7 +584,14 @@ fn drain_readable(
                 }
                 Ok(None) => break, // No more data
                 Err(quinn_proto::ReadError::Blocked) => break,
-                Err(_) => break,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "flezha::transport",
+                        transport = "quic", stream_id = ?id,
+                        "QUIC stream read error: {}", e
+                    );
+                    break;
+                }
             }
         }
         let _ = chunks.finalize();

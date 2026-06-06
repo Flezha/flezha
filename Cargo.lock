@@ -440,6 +440,7 @@ dependencies = [
  "rustls-pemfile",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

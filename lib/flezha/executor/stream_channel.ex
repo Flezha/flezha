@@ -10,20 +10,33 @@ defmodule Flezha.Executor.StreamChannel do
     GenServer.start_link(__MODULE__, {executor_id, type, name}, name: name)
   end
 
+  @io_liveness_interval_ms 30_000
+
   @impl true
   def init({executor_id, _type, name}) do
     # Channel starts unbound. Acceptors atomically attach a NIF stream
     # via the {:bind, ref} call once a connection arrives.
+    schedule_io_liveness_check()
+
     {
       :ok,
       %{
         executor_id: executor_id,
         stream_ref: nil,
         relay_mapping: %{},
-        name: name
+        name: name,
+        inbound_count: 0,
+        last_check_count: 0
       }
     }
   end
+
+  defp schedule_io_liveness_check do
+    interval = Application.get_env(:flezha, :io_stream_liveness_interval_ms, @io_liveness_interval_ms)
+    if interval > 0, do: Process.send_after(self(), :io_liveness_check, interval)
+  end
+
+  defp mark_inbound(state), do: %{state | inbound_count: state.inbound_count + 1}
 
   @impl true
   def handle_cast(
@@ -103,7 +116,7 @@ defmodule Flezha.Executor.StreamChannel do
   # snapshot-vs-bind race that could otherwise overwrite a live ref.
   @impl true
   def handle_call({:bind, new_ref}, _from, %{stream_ref: nil} = state) do
-    {:reply, :ok, %{state | stream_ref: new_ref}}
+    {:reply, :ok, %{state | stream_ref: new_ref, last_check_count: state.inbound_count}}
   end
 
   @impl true
@@ -120,13 +133,13 @@ defmodule Flezha.Executor.StreamChannel do
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id == "partition_state_change" do
     handle_partition_state_change(state.executor_id, message)
-    {:noreply, state}
+    {:noreply, mark_inbound(state)}
   end
 
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id == "partition_state_snapshot" do
     handle_partition_state_snapshot(state.executor_id, message)
-    {:noreply, state}
+    {:noreply, mark_inbound(state)}
   end
 
   def handle_info({:flz_data, _stream_id, relay_id, message, metadata}, state) do
@@ -158,7 +171,24 @@ defmodule Flezha.Executor.StreamChannel do
         GenServer.cast(first, {:io_out, message, metadata})
     end
 
-    {:noreply, state}
+    {:noreply, mark_inbound(state)}
+  end
+
+  @impl true
+  def handle_info(:io_liveness_check, state) do
+    schedule_io_liveness_check()
+
+    if not is_nil(state.stream_ref) and state.inbound_count == state.last_check_count do
+      interval = Application.get_env(:flezha, :io_stream_liveness_interval_ms, @io_liveness_interval_ms)
+
+      :telemetry.execute(
+        [:flezha, :stream, :io_stale],
+        %{idle_ms: interval},
+        %{executor_id: state.executor_id, relays: Map.keys(state.relay_mapping)}
+      )
+    end
+
+    {:noreply, %{state | last_check_count: state.inbound_count}}
   end
 
   # NIF transport: stream closed. Synchronous rebindability contract — once

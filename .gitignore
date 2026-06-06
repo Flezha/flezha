@@ -86,3 +86,4 @@ sdk/java/**/target/
 
 # Local dev
 .playwright-mcp
+stash/*

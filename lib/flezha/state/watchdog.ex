@@ -32,7 +32,7 @@ defmodule Flezha.State.Watchdog do
 
   alias Flezha.State.{PersistenceResolver, Recovery, Registry, Supervisor, WalWriter}
 
-  defstruct compactions: %{}, last_resync: %{}
+  defstruct compactions: %{}, last_resync: %{}, catastrophic: %{}
 
   # ---------- Public API ----------
 
@@ -111,7 +111,69 @@ defmodule Flezha.State.Watchdog do
 
     state
     |> sweep_output_staleness(now)
+    |> sweep_catastrophic_dataflow(now)
     |> sweep_compactions(now)
+  end
+
+  # Detects a relay that produced output but received zero Change frames for the
+  # full timeout — the condition the output-staleness sweep cannot see (no Changes
+  # arriving means the partition looks idle, not stalled). Latched per relay_class.
+  defp sweep_catastrophic_dataflow(state, now) do
+    timeout = Application.get_env(:flezha, :catastrophic_dataflow_timeout_ms, 60_000)
+
+    if timeout <= 0 do
+      state
+    else
+      Registry.all_partitions()
+      |> collect_statuses()
+      |> Enum.group_by(fn {{rc, _sh, _pk}, _status} -> rc end)
+      |> Enum.reduce(state, fn {rc, list}, acc ->
+        any_dead? = Enum.any?(list, fn {_pid, s} -> input_dead?(s, now, timeout) end)
+        latched? = Map.has_key?(acc.catastrophic, rc)
+
+        cond do
+          any_dead? and not latched? ->
+            flag_catastrophic(rc, list, now, timeout)
+            %{acc | catastrophic: Map.put(acc.catastrophic, rc, now)}
+
+          not any_dead? and latched? ->
+            Logger.info("[watchdog] catastrophic data-flow recovered relay=#{inspect(rc)}")
+            %{acc | catastrophic: Map.delete(acc.catastrophic, rc)}
+
+          true ->
+            acc
+        end
+      end)
+    end
+  end
+
+  defp collect_statuses(partitions) do
+    Enum.flat_map(partitions, fn pid ->
+      with {:ok, writer} <- Supervisor.lookup(pid),
+           {:ok, status} <- safe_stall_status(writer) do
+        [{pid, status}]
+      else
+        _ -> []
+      end
+    end)
+  end
+
+  # Produced output before (seq advanced past 0) but no Change frame has arrived
+  # for the whole timeout window => the upstream feed into this relay is dead.
+  defp input_dead?(status, now, timeout) do
+    status.last_persisted_seq > 0 and now - status.last_change_seen_at >= timeout
+  end
+
+  defp flag_catastrophic(rc, _list, _now, timeout) do
+    :telemetry.execute(
+      [:flezha, :state, :catastrophic_dataflow_stop],
+      %{timeout_ms: timeout},
+      %{relay_class: rc, relay_instance: rc}
+    )
+
+    Logger.critical(
+      "[watchdog] data-flow stop relay=#{inspect(rc)}: no input Changes for >= #{timeout}ms despite prior output"
+    )
   end
 
   defp sweep_output_staleness(state, now) do
