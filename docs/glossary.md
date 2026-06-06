@@ -53,4 +53,4 @@ Executor.
   Controller.
 - `docs/process_hub_architecture.md` — Two-level distribution (ProcessHub picks
   a Controller node; the Controller picks an Executor).
-- `docs/controller_state_persistence.md` — Per-Partition WAL/snapshot/retention.
+- `docs/resilience/state_persistence.md` — Per-Partition WAL/snapshot/retention.

@@ -342,8 +342,16 @@ fn driver_loop(
                     }
                     Event::Stream(StreamEvent::Writable { id }) => {
                         let conn_state = connections.get_mut(ch).unwrap();
+                        let mut broken: Option<(u64, LocalPid)> = None;
                         if let Some(stream_state) = conn_state.streams.get_mut(&id) {
-                            flush_quic_write(&mut conn_state.connection, id, stream_state);
+                            if flush_quic_write(&mut conn_state.connection, id, stream_state) {
+                                broken = Some((stream_state.nif_stream_id, *stream_state.owner.lock().unwrap()));
+                            }
+                        }
+                        if let Some((nif_id, owner)) = broken {
+                            conn_state.streams.remove(&id);
+                            nif_stream_map.remove(&nif_id);
+                            send_closed_msg(owner, nif_id, "write_error");
                         }
                     }
                     Event::Stream(StreamEvent::Finished { id }) => {
@@ -395,13 +403,17 @@ fn driver_loop(
                 } => {
                     if let Some(&(ch, qstream_id)) = nif_stream_map.get(&nif_id) {
                         if let Some(conn_state) = connections.get_mut(&ch) {
+                            let mut broken: Option<LocalPid> = None;
                             if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
                                 stream_state.write_buffer.extend_from_slice(&data);
-                                flush_quic_write(
-                                    &mut conn_state.connection,
-                                    qstream_id,
-                                    stream_state,
-                                );
+                                if flush_quic_write(&mut conn_state.connection, qstream_id, stream_state) {
+                                    broken = Some(*stream_state.owner.lock().unwrap());
+                                }
+                            }
+                            if let Some(owner) = broken {
+                                conn_state.streams.remove(&qstream_id);
+                                nif_stream_map.remove(&nif_id);
+                                send_closed_msg(owner, nif_id, "write_error");
                             }
                         }
                     }
@@ -419,13 +431,17 @@ fn driver_loop(
                     );
                     if let Some(&(ch, qstream_id)) = nif_stream_map.get(&nif_id) {
                         if let Some(conn_state) = connections.get_mut(&ch) {
+                            let mut broken: Option<LocalPid> = None;
                             if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
                                 stream_state.write_buffer.extend_from_slice(&frame);
-                                flush_quic_write(
-                                    &mut conn_state.connection,
-                                    qstream_id,
-                                    stream_state,
-                                );
+                                if flush_quic_write(&mut conn_state.connection, qstream_id, stream_state) {
+                                    broken = Some(*stream_state.owner.lock().unwrap());
+                                }
+                            }
+                            if let Some(owner) = broken {
+                                conn_state.streams.remove(&qstream_id);
+                                nif_stream_map.remove(&nif_id);
+                                send_closed_msg(owner, nif_id, "write_error");
                             }
                         }
                     }
@@ -506,10 +522,18 @@ fn driver_loop(
                     .filter(|(_, s)| !s.write_buffer.is_empty())
                     .map(|(&id, _)| id)
                     .collect();
+                let mut broken_streams: Vec<(StreamId, u64, LocalPid)> = Vec::new();
                 for qstream_id in stream_ids {
                     if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
-                        flush_quic_write(&mut conn_state.connection, qstream_id, stream_state);
+                        if flush_quic_write(&mut conn_state.connection, qstream_id, stream_state) {
+                            broken_streams.push((qstream_id, stream_state.nif_stream_id, *stream_state.owner.lock().unwrap()));
+                        }
                     }
+                }
+                for (qstream_id, nif_id, owner) in broken_streams {
+                    conn_state.streams.remove(&qstream_id);
+                    nif_stream_map.remove(&nif_id);
+                    send_closed_msg(owner, nif_id, "write_error");
                 }
                 let _ =
                     flush_connection_transmits(&mut conn_state.connection, &udp, &mut transmit_buf);
@@ -631,13 +655,14 @@ fn drain_readable(
 }
 
 /// Attempt to flush buffered write data to a QUIC stream.
+/// Returns true if the stream is broken (write error).
 fn flush_quic_write(
     connection: &mut quinn_proto::Connection,
     qstream_id: StreamId,
     stream_state: &mut QuicStreamState,
-) {
+) -> bool {
     if stream_state.write_buffer.is_empty() {
-        return;
+        return false;
     }
 
     match connection
@@ -646,13 +671,12 @@ fn flush_quic_write(
     {
         Ok(written) => {
             stream_state.write_buffer.drain(..written);
+            false
         }
-        Err(quinn_proto::WriteError::Blocked) => {
-            // Keep buffer, wait for Writable event.
-        }
+        Err(quinn_proto::WriteError::Blocked) => false,
         Err(_) => {
-            // Write error — discard buffer.
             stream_state.write_buffer.clear();
+            true
         }
     }
 }

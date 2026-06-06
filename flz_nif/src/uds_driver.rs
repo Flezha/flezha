@@ -179,7 +179,13 @@ fn driver_loop(
 
         // Flush writable streams (backpressure relief)
         for stream_id in writable_streams {
-            flush_write_buffer(stream_id, &mut streams, &mut poll);
+            if flush_write_buffer(stream_id, &mut streams, &mut poll) {
+                if let Some(state) = streams.get(&stream_id) {
+                    let owner = *state.owner.lock().unwrap();
+                    send_closed_msg(owner, stream_id, "write_error");
+                }
+                close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
+            }
         }
 
         // Read from streams
@@ -194,7 +200,13 @@ fn driver_loop(
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
                 ServerCommand::SendData { stream_id, data } => {
-                    enqueue_write(stream_id, data, &mut streams, &mut poll);
+                    if enqueue_write(stream_id, data, &mut streams, &mut poll) {
+                        if let Some(state) = streams.get(&stream_id) {
+                            let owner = *state.owner.lock().unwrap();
+                            send_closed_msg(owner, stream_id, "write_error");
+                        }
+                        close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
+                    }
                 }
                 ServerCommand::SendFrame {
                     stream_id,
@@ -207,7 +219,13 @@ fn driver_loop(
                         &message,
                         metadata,
                     );
-                    enqueue_write(stream_id, frame, &mut streams, &mut poll);
+                    if enqueue_write(stream_id, frame, &mut streams, &mut poll) {
+                        if let Some(state) = streams.get(&stream_id) {
+                            let owner = *state.owner.lock().unwrap();
+                            send_closed_msg(owner, stream_id, "write_error");
+                        }
+                        close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
+                    }
                 }
                 ServerCommand::SetActive { stream_id } => {
                     if let Some(state) = streams.get_mut(&stream_id) {
@@ -252,64 +270,72 @@ fn driver_loop(
             .map(|(&id, _)| id)
             .collect();
         for stream_id in ids_with_data {
-            flush_write_buffer(stream_id, &mut streams, &mut poll);
+            if flush_write_buffer(stream_id, &mut streams, &mut poll) {
+                if let Some(state) = streams.get(&stream_id) {
+                    let owner = *state.owner.lock().unwrap();
+                    send_closed_msg(owner, stream_id, "write_error");
+                }
+                close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
+            }
         }
     }
 }
 
 /// Enqueue data for writing to a stream. Attempts immediate flush.
+/// Returns true if the stream is broken (write error).
 fn enqueue_write(
     stream_id: u64,
     data: Vec<u8>,
     streams: &mut HashMap<u64, StreamState>,
     poll: &mut Poll,
-) {
+) -> bool {
     if let Some(state) = streams.get_mut(&stream_id) {
         state.write_buffer.extend_from_slice(&data);
-        // Try to flush immediately
-        try_flush(state, poll);
+        return try_flush(state, poll);
     }
+    false
 }
 
 /// Attempt to write buffered data to the stream.
 /// If WouldBlock, registers for WRITABLE events so we retry later.
-fn try_flush(state: &mut StreamState, poll: &mut Poll) {
+/// Returns true if the stream is broken (write error).
+fn try_flush(state: &mut StreamState, poll: &mut Poll) -> bool {
     while !state.write_buffer.is_empty() {
         match state.stream.write(&state.write_buffer) {
-            Ok(0) => break, // Can't make progress
+            Ok(0) => break,
             Ok(n) => {
                 state.write_buffer.drain(..n);
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // Socket buffer full — register for WRITABLE to retry later
                 let _ = poll.registry().reregister(
                     &mut state.stream,
                     state.token,
                     Interest::READABLE | Interest::WRITABLE,
                 );
-                return;
+                return false;
             }
             Err(_) => {
-                // Write error — discard buffer, stream is likely broken
                 state.write_buffer.clear();
-                return;
+                return true;
             }
         }
     }
 
-    // Buffer fully flushed — only need READABLE events now
     if state.write_buffer.is_empty() {
         let _ = poll
             .registry()
             .reregister(&mut state.stream, state.token, Interest::READABLE);
     }
+    false
 }
 
 /// Flush write buffer for a specific stream by ID.
-fn flush_write_buffer(stream_id: u64, streams: &mut HashMap<u64, StreamState>, poll: &mut Poll) {
+/// Returns true if the stream is broken (write error).
+fn flush_write_buffer(stream_id: u64, streams: &mut HashMap<u64, StreamState>, poll: &mut Poll) -> bool {
     if let Some(state) = streams.get_mut(&stream_id) {
-        try_flush(state, poll);
+        return try_flush(state, poll);
     }
+    false
 }
 
 // reason: accept loop needs the listener plus all per-connection bookkeeping (stream/token maps, id counters, acceptor pid, mio waker); splitting would just bundle them into an inline struct

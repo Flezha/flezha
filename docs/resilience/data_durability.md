@@ -2,7 +2,7 @@
 
 This is the single reference for **where flezha can lose relay state or output, where
 it cannot, and how to operate so you never lose data on a planned action.** Read it
-with `docs/process_hub_recovery_model.md` (which covers *relay placement* recovery; this
+with `docs/resilience/process_hub_recovery_model.md` (which covers *relay placement* recovery; this
 doc covers *relay state + output* durability).
 
 ## The two things that can be "lost"
@@ -65,7 +65,7 @@ message and cripple throughput). Instead:
   be re-emitted after a rebind/restore — use Kafka keys/transactions, HTTP idempotency
   keys, or DB upserts downstream.
 - **Never treat DETS as the source of truth** in code or ops — it is a cold-start backup
-  only (see `docs/process_hub_recovery_model.md`).
+  only (see `docs/resilience/process_hub_recovery_model.md`).
 
 ## Common pitfalls
 

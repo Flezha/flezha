@@ -161,6 +161,6 @@ deterministic function of the Change log; otherwise returns
 ## Related docs
 
 - `docs/relay_state_persistence.md` — Rust-side per-Partition persistence
-- `docs/controller_state_persistence.md` — controller-side WAL and time-travel
+- `docs/resilience/state_persistence.md` — controller-side WAL and time-travel
 - `docs/sdk_protocol_spec.md` — wire-format spec
 - `docs/relay_architecture.md` — overall Relay/Shard/Partition model

@@ -162,7 +162,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     instance owns exactly one producer worker (one topic+partition per
     `init_provider/1` call), so the lookup is unique.
 
-    Returns `{:ok, %{dropped_total, queue_depth, in_flight, last_error,
+    Returns `{:ok, %{queue_depth, in_flight, last_error, consecutive_failures,
     topic, partition}}` or `{:error, :no_producer}`.
     """
     @spec stats(binary()) :: {:ok, map()} | {:error, :no_producer}

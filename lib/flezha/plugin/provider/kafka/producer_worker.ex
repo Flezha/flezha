@@ -201,7 +201,6 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       retry_timer: nil,
       dispatch_timer: nil,
       blocked: :queue.new(),
-      dropped_total: 0,
       last_error: nil,
       consecutive_failures: 0,
       stall_threshold: Keyword.get(opts, :stall_threshold, @default_stall_threshold),
@@ -256,7 +255,6 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   def handle_call(:stats, _from, state) do
     {:reply,
      %{
-       dropped_total: state.dropped_total,
        queue_depth: state.queue_size,
        in_flight: in_flight_size(state),
        last_error: state.last_error,
@@ -450,8 +448,6 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
           reason: :overflow
         })
 
-        state = %{state | dropped_total: state.dropped_total + 1}
-
         case from_or_async do
           :async -> {:dropped_async, state}
           _from -> {:replied, {:error, {:queue_full, :overflow}}, state}
@@ -470,7 +466,6 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
           reason: :overflow
         })
 
-        state = %{state | dropped_total: state.dropped_total + 1}
         {:admitted, push(state, record)}
 
       state.queue_overflow == :block and from_or_async == :async ->
@@ -485,7 +480,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
           reason: :overflow
         })
 
-        {:dropped_async, %{state | dropped_total: state.dropped_total + 1}}
+        {:dropped_async, state}
 
       state.queue_overflow == :block ->
         from = from_or_async

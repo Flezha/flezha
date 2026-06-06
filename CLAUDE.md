@@ -22,7 +22,7 @@
   `flz state rotate <relay/shard/key>`, `flz state retention <relay> <hours>`.
   Implemented in `cli/src/state.rs`; RPCs into
   `Flezha.Service.CliManager.state_*/N`.
-- **Detailed notes**: `docs/controller_state_persistence.md`.
+- **Detailed notes**: `docs/resilience/state_persistence.md`.
 
 ## Auto-restore on boot (`auto-restore-on-boot` + `consume-recovery-mode-and-self-heal`)
 
@@ -82,7 +82,7 @@
   (replaced by `Flezha.Convergence.Health`); `Flezha.State.Outbox`;
   `Flezha.Reconciler.Supervisor` (top-level); `FLEZHA_RECONCILER_ENABLED`,
   `FLEZHA_LEADERSHIP_ENABLED`, `FLEZHA_RECONCILE_*` env vars.
-- **Detailed notes**: `docs/auto_restore_on_boot.md`.
+- **Detailed notes**: `docs/resilience/auto_restore_on_boot.md`.
 
 ## Convergence Health watcher (`consume-recovery-mode-and-self-heal`)
 
@@ -181,7 +181,7 @@
 - **Test config**: `config/test.exs` sets
   `:graceful_shutdown_enabled` to `false` so `Application.stop/1`
   teardown remains fast.
-- **Detailed notes**: `docs/operations/graceful_shutdown.md`.
+- **Detailed notes**: `docs/resilience/graceful_shutdown.md`.
 
 ## Observability foundation (`platform-observability-foundation`)
 

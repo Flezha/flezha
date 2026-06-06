@@ -9,7 +9,7 @@ sockets.
 
 It refuses to run while the Controller is up. Stop it first with
 `flz controller stop` (see
-[`graceful_shutdown.md`](graceful_shutdown.md)).
+[`../resilience/graceful_shutdown.md`](../resilience/graceful_shutdown.md)).
 
 ## Command surface
 

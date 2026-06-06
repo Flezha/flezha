@@ -10,7 +10,7 @@ lifecycle. Read it before proposing changes in those areas — most of the
 behaviour described here is already automatic, and the most common mistake is
 to assume Flezha owns logic that ProcessHub already provides.
 
-> **READ FIRST: `docs/process_hub_recovery_model.md`.** The live, cluster-synced
+> **READ FIRST: `docs/resilience/process_hub_recovery_model.md`.** The live, cluster-synced
 > ProcessHub registry is ALWAYS the source of truth for which relays run where;
 > DETS is a disk backup used ONLY to cold-start a fully-downed cluster. A node
 > rejoining a live cluster syncs from peers and MUST NOT trust its local DETS.
@@ -226,16 +226,12 @@ State persistence is split between two layers:
 
 * **HotSwap migration** uses an in-memory snapshot captured by
   `prepare_handover_state` and consumed by `alter_handover_state/2` on
-  the destination — see `lib/flezha/relay/overwatch.ex`. The destination
-  also pulls the source's WAL/snapshot files via
-  `Flezha.Boot.WalTransfer.stream/2` so the per-Partition log follows
-  the relay (the WAL-follows-relay rule from `auto-restore-on-boot`).
+  the destination — see `lib/flezha/relay/overwatch.ex`.
 * **Cold-boot restart** is covered by the per-Partition WAL/snapshot
   files in `app_data/state/{relay_class}/{shard_id}/...`
-  (`docs/controller_state_persistence.md`) plus ProcessHub's persistent
+  (`docs/resilience/state_persistence.md`) plus ProcessHub's persistent
   registry under `app_data/process_hub/{hub_id}/registry.dets`. There is
-  no periodic in-memory snapshot loop and no `flz cluster snapshot`
-  CLI — those were removed by the `auto-restore-on-boot` change.
+  no periodic in-memory snapshot loop and no `flz cluster snapshot` CLI.
 
 ## Executor → controller discovery and connection
 
@@ -260,7 +256,7 @@ State persistence is split between two layers:
 These are common assumptions to double-check against the actual code:
 
 - **Auto-restore-on-boot exists** via ProcessHub's durable registry +
-  per-Partition WAL/snapshot files. See `docs/auto_restore_on_boot.md`
+  per-Partition WAL/snapshot files. See `docs/resilience/auto_restore_on_boot.md`
   for the full safety analysis. Anything beyond that boundary
   (out-of-cluster portable backups, point-in-time-to-arbitrary-past)
   is out of scope.
@@ -314,7 +310,7 @@ and HotSwap migration — restores the same plugin set without executor
 intervention.
 
 This persistence layer is independent of the per-Partition WAL +
-snapshot persistence in `lib/flezha/state/` (`docs/controller_state_persistence.md`):
+snapshot persistence in `lib/flezha/state/` (`docs/resilience/state_persistence.md`):
 the cspec persists *which* plugins are subscribed; the per-Partition
 layer persists *how much progress* a Partition has made through its
 input stream. Both layers can be present, absent, or partially
@@ -342,7 +338,7 @@ v1).
 ## Related docs
 
 - `docs/sdk_protocol_spec.md` — wire-level binary framing and protobuf commands.
-- `docs/controller_state_persistence.md` — per-Partition WAL, snapshot, and time-travel.
-- `docs/auto_restore_on_boot.md` — the single auto-restore mechanism (ProcessHub durable registry + per-Partition WAL).
+- `docs/resilience/state_persistence.md` — per-Partition WAL, snapshot, and time-travel.
+- `docs/resilience/auto_restore_on_boot.md` — the single auto-restore mechanism (ProcessHub durable registry + per-Partition WAL).
 - `docs/nif_architecture.md` — transport NIF design (UDS + QUIC drivers).
 - `docs/deployment.md` — k8s DaemonSet layout, env vars, hostPath volumes.

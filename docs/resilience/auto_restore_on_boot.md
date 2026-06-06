@@ -1,9 +1,9 @@
 # Auto-restore on boot
 
-This is the single restart-survival mechanism in Flezha. It supersedes
-`flz cluster snapshot/restore`, the periodic Overwatch state-snapshot
-loop, and the `Builder.opts[:initial_state_binary]` priming option —
-all removed by the `auto-restore-on-boot` change.
+This is the single restart-survival mechanism in Flezha. On boot, the
+controller rehydrates the relay list from the durable ProcessHub registry
+and ships the on-disk WAL + snapshot to each executor so relays resume
+from their last persisted state.
 
 ## Two persistence layers
 
@@ -27,12 +27,10 @@ controller ships it to the new executor on Partition stream attach.
 2. `Flezha.Service.HubManager` starts each per-namespace ProcessHub
    with `registry_backend: {:dets, [path: ...]}` and
    `auto_recovery: [recovery_window_ms: ..., replay_timeout_ms: ...]`.
-3. `Flezha.Boot.RecoveryHooks.register/1` registers a synchronous
-   `pre_recovery_replay` hook (waits for `FleetManager` to report at
-   least one active executor for any factory in the persistent
-   registry, bounded by `:flezha, :pre_replay_fleet_wait_ms`) and an
-   async `post_recovery_replay` hook (emits
-   `[:flezha, :boot, :recovery_complete]` telemetry).
+3. `Flezha.Boot.RecoveryHooks.register/1` installs thin telemetry
+   forwarders for ProcessHub's `pre_recovery_replay` and
+   `post_recovery_replay` hooks so the recovery lifecycle is visible
+   on the observability bus.
 4. ProcessHub's coordinator runs the recovery state machine
    (`:recovery_pending → :recovering | :normal`). If any peer
    transitions to `:normal` within `recovery_window_ms`, this node
@@ -48,21 +46,6 @@ controller ships it to the new executor on Partition stream attach.
 6. `Flezha.BootLoader` waits for `ProcessHub.await_normal/2` per
    namespace hub before flipping `boot_ready?`.
 
-## Cross-controller WAL transfer
-
-When `Restore.assemble_payload/1` returns empty locally but the cspec
-indicates a previously-running relay, `Flezha.Boot.WalTransfer.query/1`
-is broadcast to peer controllers in the same namespace; the highest
-`last_persisted_seq` peer wins (lexicographic tiebreaker on node
-name). `Flezha.Boot.WalTransfer.stream/2` pulls the file via chunked
-Erlang messages into a `.transferring` sibling, fsyncs, atomically
-renames on success. Telemetry: `[:flezha, :boot, :wal_pulled]` and
-`[:flezha, :boot, :wal_pull_failed]`.
-
-The same module is invoked by `Overwatch.alter_handover_state/2` on a
-HotSwap destination to keep the WAL co-located with the current host —
-the WAL-follows-relay rule.
-
 ## Safety analysis
 
 | Scenario | Replay? | Result |
@@ -72,8 +55,8 @@ the WAL-follows-relay rule.
 | Rolling k8s rollout | No | Same as single-controller, repeated per pod. No stampede. |
 | Single-node deployment | Yes | Window elapses with no peer; `:recovering`; replay; `:normal`. |
 | Executor pod restart with `executor_id` rotation | N/A | Controller never went down. New `executor_id` is assigned via the existing flow; flat WAL layout means state is found and shipped via `RestoreInitState`. Zero data loss. |
-| HotSwap migration (relay moves A → B) | N/A | `prepare_handover_state` ships in-memory state in-band; `WalTransfer.stream/2` pulls source's WAL files in parallel. `dispatch_restore_init_state/2` does NOT fire (handover delivers state). State files on A are not deleted (retention sweeper handles long-term orphans). |
-| HotSwap mid-flight crash on destination | N/A | Source state files preserved (cleanup-only-on-explicit-stop rule). ProcessHub retries the migration. |
+| HotSwap migration (relay moves A → B) | N/A | `prepare_handover_state` ships in-memory state in-band; `dispatch_restore_init_state/2` does NOT fire (handover delivers state). State files on A are not deleted (retention sweeper handles long-term orphans). |
+| HotSwap mid-flight crash on destination | N/A | Source state files preserved. ProcessHub retries the migration. |
 | Network partition during boot | Yes (suspect) | Brief duplicate-start window during heal; ProcessHub's `Divergence` strategy resolves. Documented limitation. Operators in fragile environments can `FLEZHA_AUTO_RESTORE_ENABLED=false`. |
 | Quorum loss (3-node cluster, 2 die) | No (returning) | Survivor authoritative; returning nodes reconcile against ProcessHub placement. |
 | Subset-rejoin (cluster down, only some nodes return) | Yes | **Single tolerated data-loss case** — rows held only on the non-rejoining nodes are lost. |
@@ -102,8 +85,6 @@ flz boot import-legacy-snapshot /path/to/snap.flz [--force]
 | `FLEZHA_RECOVERY_WINDOW_MS` | `:flezha, :recovery_window_ms` | `10_000` | How long a returning node waits for a `:normal` peer before replaying. |
 | `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `:flezha, :boot_replay_timeout_ms` | `60_000` | Cap on how long ProcessHub takes to drain the replay before declaring `:normal`. |
 | `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | `:flezha, :process_hub_registry_root` | `app_data/process_hub` | Parent dir for each per-namespace `<hub_id>/registry.dets`. |
-| `FLEZHA_PRE_REPLAY_FLEET_WAIT_MS` | `:flezha, :pre_replay_fleet_wait_ms` | `30_000` | Maximum wait inside the `pre_recovery_replay` hook for `FleetManager` to report an active executor. |
-| `FLEZHA_WAL_TRANSFER_QUERY_TIMEOUT_MS` | `:flezha, :wal_transfer_query_timeout_ms` | `5_000` | RPC timeout for `WalTransfer.query/1`. |
 
 ## Kill-switch and rollback
 
@@ -122,9 +103,8 @@ boot).
 | Module | Role |
 |---|---|
 | `Flezha.Service.HubManager` | Configures `registry_backend` + `auto_recovery`; calls `Flezha.Boot.RecoveryHooks.register/1` on each `start_hub/1`. |
-| `Flezha.Boot.RecoveryHooks` | `pre_recovery_replay` (gate on FleetManager readiness) + `post_recovery_replay` (telemetry). |
+| `Flezha.Boot.RecoveryHooks` | Telemetry forwarders for `pre_recovery_replay` / `post_recovery_replay` lifecycle events. |
 | `Flezha.Boot.StatePathMigrator` | One-shot legacy-layout → flat-layout migration. |
-| `Flezha.Boot.WalTransfer` | `query/1` + `stream/2` for cross-controller WAL transfer. |
 | `Flezha.Relay.Overwatch` | `arrived_via_hotswap?` gate; `maybe_dispatch_restore_init_state/2` ships `RestoreInitState` to the SDK. |
 | `Flezha.State.Registry` | Flat path resolution (`{relay_class, shard_id, partition_key}`). |
 | `Flezha.Service.RelayManager.stop_relay/2` | Only operator-driven path that deletes state directories. |

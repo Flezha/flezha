@@ -367,7 +367,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     {:error, {:permanent, _}} = ProducerWorker.enqueue(pid, "x", %{})
 
     stats = ProducerWorker.stats(pid)
-    assert stats.dropped_total == 0
     assert stats.queue_depth == 0
     assert stats.in_flight == 0
     assert stats.last_error == :record_list_too_large
@@ -730,7 +729,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       stats = ProducerWorker.stats(pid)
       assert stats.queue_depth == 5
-      assert stats.dropped_total >= 195
     end
 
     test "drop-newest under cast emits dropped telemetry without replying" do

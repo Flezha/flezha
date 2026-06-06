@@ -1,12 +1,18 @@
 # Convergence Subsystem — Reliability & Performance Audit
 
+> **Fix status:** All five items in the prioritized fix list (section 5) have
+> been implemented: C1 (sanity gate on empty executors), C2 (tick try/rescue),
+> C3 (concurrent probe via `Task.async_stream`), C4 (misbound streak ≥ 2 ticks),
+> and H4 (output-stall grace period). The "Not implemented" annotations below
+> are historical — the current code reflects these fixes.
+
 ## Context
 
 The convergence loop (`lib/flezha/convergence/`) is the controller's single self-healing
 mechanism. The working theory under test: **the loop that is supposed to heal the system is
 itself a primary cause of outages ("breakouts"), churns healthy relays, and degrades
-performance.** This document is the evidence-backed verdict. It is diagnosis only — **no fixes are
-implemented.** Changes are scoped to be **minimal and deletion-funded** (consistent with the
+performance.** This document is the evidence-backed verdict.
+Changes are scoped to be **minimal and deletion-funded** (consistent with the
 repo's LOC budget), so the actionable fix list below leads with the smallest surgical changes and
 marks the larger redesign as optional.
 
