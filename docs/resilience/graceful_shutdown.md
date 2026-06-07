@@ -33,6 +33,16 @@ the same outcome.
    take ownership). Polls peer registry dumps every 500 ms until each
    captured Relay is visible on at least one peer node, or the bounded
    timeout elapses.
+   - **Peer RPC is concurrent.** Each 500 ms poll calls all known peer
+     nodes in parallel via `Task.async_stream` (2 s timeout per node,
+     `:kill_task` on timeout). A single slow or unreachable peer does not
+     serialize the drain loop against the rest.
+   - **HotSwap race window.** ProcessHub's `HotSwap` strategy auto-migrates
+     relays ~500 ms after `cluster_leave`. The drain poller uses the peer
+     registry dump to confirm a relay has landed, but there is a brief window
+     where HotSwap migration is in flight and the relay is not yet visible on
+     any peer. The 500 ms poll cadence is intentionally longer than the HotSwap
+     propagation time to let this settle; the drain timeout covers the tail.
    - **No-peer case**: solo nodes skip the migration wait; local
      termination flushes WAL state to disk for restart-survival via
      `auto-restore-on-boot`.

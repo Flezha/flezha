@@ -14,7 +14,9 @@ The controller-graceful-shutdown capability defines how the Flezha controller (B
 
 **Drain** SHALL dispatch `ProcessHub` `cluster_leave` for every running namespace's hub by calling `Flezha.Service.HubManager.stop_hub_manager()` (which causes ProcessHub's `terminate/2` to dispatch `@event_cluster_leave` to peers) and SHALL synchronously poll `ProcessHub.registry_dump/1` across peers every `500 ms` until **every Relay that was locally hosted at quiesce time** is registered as locally hosted on at least one peer (HotSwap migration complete) or until the local Relay has terminated AND the leaving node has no peers (no migration target — local termination flushes WAL state to disk for restart survival). Each poll SHALL emit `[:flezha, :shutdown, :drain_progress]` with `%{migrated: integer(), remaining: integer(), elapsed_ms: integer()}`.
 
-**Finalise** SHALL synchronously flush `Flezha.State.FsyncBatcher` (`GenServer.call(FsyncBatcher, :flush_all, …)`) and stop transports via `Flezha.Transport.Server` shutdown. After finalise returns, normal supervision-tree shutdown completes the rest.
+Registry dumps from all peers SHALL be fetched **concurrently** within each poll cycle using a bounded `Task.async_stream` over the peer node list. Each peer RPC call SHALL have an individual timeout of `2_000 ms`. A peer that does not respond within its timeout SHALL be excluded from that poll cycle's dump (treated as no contribution, same as the existing fallback). The wall-clock cost of one drain poll cycle SHALL NOT exceed the per-peer RPC timeout regardless of the number of peers.
+
+**Finalise** SHALL synchronously complete all pending I/O steps: flush `Flezha.State.FsyncBatcher`, close the `Flezha.Observability.AuditLog.Writer` (if running), and stop transports via `Flezha.Transport.Server`. Each step SHALL be wrapped in a shared `safe_finalise_step(label, fun, timeout_ms)` private helper that catches `:exit` and logs a warning with `label` rather than crashing the coordinator. After finalise returns, normal supervision-tree shutdown completes the rest.
 
 The whole sequence SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` (default `60_000`, env `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`). On timeout the coordinator SHALL log `[shutdown] timeout phase=<current> still_local=<count>` at ERROR, emit `[:flezha, :shutdown, :timeout]`, advance to finalise, and return `{:partial, still_local}` to the caller. The coordinator SHALL NEVER block the BEAM beyond this bound — orchestrator-side grace period is the wall-clock backstop.
 
@@ -43,6 +45,21 @@ The whole sequence SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` 
 - **GIVEN** a coordinator already in `:draining` from a prior `Coordinator.shutdown(:sigterm)`
 - **WHEN** an operator runs `flz controller stop` (which calls `Coordinator.shutdown(:cli)`) before the first call returns
 - **THEN** the second call logs `[shutdown] already in progress (phase=drain), joining`, registers as a waiter, and receives the same final outcome (`:ok` or `{:partial, …}`) as the first caller
+
+#### Scenario: Slow peer does not stall drain poll cycle
+
+- **GIVEN** a controller draining with 3 peers where one peer (`controller-3`) is unresponsive
+- **WHEN** a drain poll cycle runs
+- **THEN** the RPC calls to all 3 peers are issued concurrently
+- **AND** `controller-3`'s call times out after 2 s without blocking the calls to `controller-1` and `controller-2`
+- **AND** the poll cycle completes within ≈2 s total (not ≈6 s as with serial calls)
+- **AND** `controller-3` is excluded from that cycle's dump, same as if it returned an error
+
+#### Scenario: Finalise step crash does not abort shutdown
+
+- **GIVEN** `FsyncBatcher` has already terminated before the finalise phase runs
+- **WHEN** the coordinator attempts to flush it
+- **THEN** the `:exit` is caught by `safe_finalise_step`, a warning is logged, and the coordinator proceeds to the next finalise step without crashing
 
 ### Requirement: SIGTERM and SIGINT SHALL trigger graceful shutdown in every BEAM run mode
 

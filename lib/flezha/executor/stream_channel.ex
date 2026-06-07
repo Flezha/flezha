@@ -166,6 +166,17 @@ defmodule Flezha.Executor.StreamChannel do
   def handle_info({:flz_closed, _stream_id, _reason}, state) do
     Logger.warning("Connection closed for IO socket.")
 
+    # Emit output_stall immediately for every relay in the mapping so the
+    # convergence Loop triggers a rebind tick rather than waiting for the
+    # Watchdog's 60s grace period to detect the dead socket.
+    for {relay_id, _} <- state.relay_mapping do
+      :telemetry.execute(
+        [:flezha, :state, :output_stall],
+        %{count: 1},
+        %{relay_instance: relay_id}
+      )
+    end
+
     {:noreply, %{state | stream_ref: nil}}
   end
 

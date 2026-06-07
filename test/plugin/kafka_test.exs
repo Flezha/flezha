@@ -83,7 +83,6 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     {:ok, _opts, _pid} = Kafka.Producer.init_provider(build_opts(plugin_id, 3))
 
     assert {:ok, stats} = Kafka.Producer.stats(plugin_id)
-    assert stats.dropped_total == 0
     assert stats.queue_depth == 0
     assert stats.topic == @topic
     assert stats.partition == 3

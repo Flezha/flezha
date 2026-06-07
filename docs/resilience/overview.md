@@ -35,6 +35,7 @@ Intent → Probe → Diff → Planner → Heal
 | `Convergence.Heal` | Executes ops via four idempotent primitives: `rebind_relay`, `start_plugin`, `stop_plugin`, `evict_executor` |
 | `Convergence.Backoff` | Per-`{primitive, target}` exponential cooldown: 5 s → 30 s → 60 s → 300 s |
 | `Convergence.Snapshot` | ETS table holding the latest published health summary; read by `/healthz`, CLI, and telemetry |
+| `Convergence.RecoveryGate` | Classifies which namespaces are ready for healing based on per-hub recovery state; `:timeout` hubs are included rather than blocking all healing |
 | `Convergence.SafeCall` | Bounded `GenServer.call` that returns `{:error, reason}` instead of crashing when a process is wedged or gone |
 
 **Stability guarantees built into the loop:**

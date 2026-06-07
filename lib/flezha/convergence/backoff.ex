@@ -19,9 +19,6 @@ defmodule Flezha.Convergence.Backoff do
   @spec new() :: t()
   def new(), do: %__MODULE__{}
 
-  @spec schedule_ms() :: [pos_integer()]
-  def schedule_ms(), do: @schedule_ms
-
   @doc """
   Keep only the ops whose `{primitive, target}` key is past its cooldown
   deadline. `key_fn` extracts the backoff key from an op. Ops come first

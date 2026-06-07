@@ -10,7 +10,7 @@ defmodule Flezha.Service.HubManager do
 
   use Supervisor
 
-  alias Flezha.Convergence.{Probe, SafeCall, Snapshot}
+  alias Flezha.Convergence.{RecoveryGate, SafeCall, Snapshot}
 
   @default_await_timeout_ms 60_000
 
@@ -63,7 +63,7 @@ defmodule Flezha.Service.HubManager do
         {:error, :unknown_hub}
 
       true ->
-        case Probe.recovery_state(hub_id) do
+        case Flezha.Convergence.Snapshot.recovery_state(hub_id) do
           :unknown -> {:ok, ProcessHub.recovery_state(hub_id)}
           state -> {:ok, state}
         end
@@ -81,7 +81,7 @@ defmodule Flezha.Service.HubManager do
           :ok | {:error, {:recovery_timeout, [atom()]}}
   def await_recovery_complete(timeout_ms \\ @default_await_timeout_ms)
       when is_integer(timeout_ms) and timeout_ms >= 0 do
-    Probe.await_recovery_complete(nil, timeout_ms)
+    RecoveryGate.await_recovery_complete(nil, timeout_ms)
   end
 
   @doc """
@@ -92,7 +92,7 @@ defmodule Flezha.Service.HubManager do
           :ok | {:error, {:recovery_timeout, [atom()]}}
   def await_recovery_complete(hub_ids, timeout_ms)
       when is_list(hub_ids) and is_integer(timeout_ms) do
-    Probe.await_recovery_complete(hub_ids, timeout_ms)
+    RecoveryGate.await_recovery_complete(hub_ids, timeout_ms)
   end
 
   # Supervisor.start_child returns once the hub's top supervisor is up,
@@ -156,7 +156,7 @@ defmodule Flezha.Service.HubManager do
   All hub_ids currently registered with this supervisor that have a live
   coordinator. Filters non-hub children by the
   `Identificator.hub/1`-shaped atom suffix and gating on
-  `ProcessHub.is_alive?/1`. Used by `Probe.await_recovery_complete/2`
+  `ProcessHub.is_alive?/1`. Used by `RecoveryGate.await_recovery_complete/2`
   when the caller does not pass an explicit hub-id list.
   """
   @spec list_running_hub_ids() :: [atom()]

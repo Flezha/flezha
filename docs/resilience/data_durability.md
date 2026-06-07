@@ -47,6 +47,17 @@ message and cripple throughput). Instead:
   expensive checkpoint/2-phase-commit machinery (this is what Apache Flink's end-to-end
   exactly-once buys, at a real cost). flezha is "durable state + at-least-once output."
 
+**FsyncBatcher and the lag window.** The WAL writer does not fsync after every record.
+`State.FsyncBatcher` coalesces dirty-mark casts from all per-partition `WalWriter`
+processes and issues one `:file.datasync/1` call per writer per cadence tick (default
+5 ms). On a hard kill, records written within the last ~5 ms may not have been
+fsynced and can be lost. This is the mechanical source of the "async WAL lag" in the
+scenario matrix above. The fsync cadence is configurable via
+`:flezha, :agent_fsync_interval_ms`; lowering it reduces the lag window at the cost
+of higher I/O pressure. Compare: the audit-log writer has a separate `:per_record` vs
+`:batched` fsync mode (`:per_record` is its default); WAL state persistence always
+uses the batched FsyncBatcher — per-record WAL fsync is not supported.
+
 ## How to avoid loss — operator playbook
 
 - **Deploy / upgrade executors with a graceful stop, never a kill.** Send SIGTERM (or

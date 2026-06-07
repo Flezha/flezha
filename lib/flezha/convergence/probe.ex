@@ -4,10 +4,7 @@ defmodule Flezha.Convergence.Probe do
   looks like right now". No decisions, no side effects.
 
   `snapshot/0` builds a `Reality` map the Loop diffs against
-  `Intent.declared/0`. Recovery lifecycle state is served here too:
-  `recovery_state/1` reads the cache published by
-  `Flezha.Convergence.Snapshot`; `await_recovery_complete/2` blocks the
-  caller until every requested hub reaches `:normal | :skipped`.
+  `Intent.declared/0`.
   """
 
   alias Flezha.Convergence.{SafeCall, Snapshot}
@@ -108,77 +105,6 @@ defmodule Flezha.Convergence.Probe do
     end)
   end
 
-  # ---------- recovery ----------
-
-  @doc "Last known recovery state for `hub_id`; `:unknown` if never observed."
-  @spec recovery_state(atom()) :: atom()
-  defdelegate recovery_state(hub_id), to: Snapshot
-
-  @doc "All observed `{hub_id => state}` recovery entries."
-  @spec recovery_states() :: %{atom() => atom()}
-  defdelegate recovery_states(), to: Snapshot
-
-  @doc """
-  Block until every hub in `hub_ids` (defaults to all running hubs plus
-  any hub the Snapshot has observed) reaches `:normal | :skipped`, or
-  `timeout` ms expires. Runs in the caller so multiple subsystems can
-  await in parallel. Returns `:ok` or
-  `{:error, {:recovery_timeout, [hub_id]}}`.
-  """
-  @spec await_recovery_complete([atom()] | nil, non_neg_integer()) ::
-          :ok | {:error, {:recovery_timeout, [atom()]}}
-  def await_recovery_complete(hub_ids \\ nil, timeout)
-      when is_integer(timeout) and timeout >= 0 do
-    deadline = System.monotonic_time(:millisecond) + timeout
-
-    unfinished =
-      hub_ids
-      |> resolve_targets()
-      |> Enum.reduce([], fn hub_id, acc ->
-        remaining = max(deadline - System.monotonic_time(:millisecond), 0)
-        if wait_for_normal(hub_id, remaining) == :ok, do: acc, else: [hub_id | acc]
-      end)
-
-    case Enum.reverse(unfinished) do
-      [] -> :ok
-      hubs -> {:error, {:recovery_timeout, hubs}}
-    end
-  end
-
-  defp resolve_targets(nil) do
-    Enum.uniq(running_hub_ids() ++ Map.keys(recovery_states()))
-  end
-
-  defp resolve_targets(hub_ids) when is_list(hub_ids), do: hub_ids
-
-  defp wait_for_normal(hub_id, timeout) do
-    if ProcessHub.is_alive?(hub_id) do
-      case ProcessHub.await_normal(hub_id, timeout) do
-        :ok -> :ok
-        {:error, :timeout} -> :timeout
-      end
-    else
-      poll_recovery(hub_id, System.monotonic_time(:millisecond) + timeout)
-    end
-  end
-
-  defp poll_recovery(hub_id, deadline) do
-    case recovery_state(hub_id) do
-      s when s in [:normal, :skipped] ->
-        :ok
-
-      _ ->
-        remaining = deadline - System.monotonic_time(:millisecond)
-
-        if remaining <= 0 do
-          :timeout
-        else
-          Process.sleep(min(remaining, 50))
-          poll_recovery(hub_id, deadline)
-        end
-    end
-  end
-
   # ---------- helpers ----------
 
   defp running_namespaces() do
@@ -193,11 +119,4 @@ defmodule Flezha.Convergence.Probe do
     :exit, _ -> []
   end
 
-  defp running_hub_ids() do
-    HubManager.list_running_hub_ids()
-  rescue
-    _ -> []
-  catch
-    :exit, _ -> []
-  end
 end

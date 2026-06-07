@@ -25,6 +25,10 @@ defmodule Flezha.Healthz.ServerTest do
     previous_port = Application.get_env(:flezha, :healthz_port)
     Application.put_env(:flezha, :healthz_port, 0)
 
+    # Clear recovery states from prior tests so `collect_recovery_states/0`
+    # starts with a clean slate. The healthz reader now uses Snapshot directly.
+    Snapshot.reset_recovery_states()
+
     {:ok, _pid} = start_supervised(Server)
     {:ok, port} = Server.listen_port()
 
@@ -37,6 +41,8 @@ defmodule Flezha.Healthz.ServerTest do
         bound_relays: 0,
         producing_relays: 0
       })
+
+      Snapshot.reset_recovery_states()
 
       if previous_port,
         do: Application.put_env(:flezha, :healthz_port, previous_port),
@@ -58,6 +64,18 @@ defmodule Flezha.Healthz.ServerTest do
       tick_latency_p99_ms: 0,
       tick_breach_streak: 0
     })
+  end
+
+  test "hub in :timeout recovery state → 200 recovering (not 503)", %{port: port} do
+    hub_id = :"healthz_timeout_hub_#{System.unique_integer([:positive])}"
+    Snapshot.observe_recovery(hub_id, :timeout)
+    publish_tick([])
+
+    {status, _headers, body} = get(port, "/healthz")
+    assert status == 200
+    decoded = Jason.decode!(body)
+    assert decoded["status"] == "recovering"
+    assert decoded["recovery_state"] == "timeout"
   end
 
   test "GET / returns pong", %{port: port} do

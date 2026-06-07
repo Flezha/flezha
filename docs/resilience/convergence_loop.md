@@ -49,6 +49,7 @@ mutation is in `Heal`; every other module is side-effect-free.
 | `Convergence.Heal` | Four idempotent primitives: `rebind_relay`, `start_plugin`, `stop_plugin`, `evict_executor` |
 | `Convergence.Backoff` | Per-`{primitive, target}` cooldown table: `5 s → 30 s → 60 s → 300 s`; reset on success |
 | `Convergence.Snapshot` | Shared ETS table read by `/healthz`, CLI, and telemetry; also caches per-hub recovery state |
+| `Convergence.RecoveryGate` | Single query point for hub recovery state: classifies which namespaces are ready for healing; exposes `await_recovery_complete/2` |
 | `Convergence.SafeCall` | `GenServer.call` wrapper returning `{:error, reason}` on timeout / `:noproc` / any exit |
 
 ---
@@ -62,11 +63,14 @@ immediately when:
 - `:executor_connected_event` fires (an executor reconnected — an immediate tick
   detects and rebinds the relay rather than waiting up to 5 s)
 
-**Recovery gate:** the first real tick is withheld until every namespace hub
-reaches `:normal | :skipped` (ProcessHub's recovery state machine). Hubs that
-are still `:recovering` or `:recovery_pending` are skipped; hubs in any other
-state block the gate. This prevents the loop from issuing binds against a
-partially-replayed registry.
+**Recovery gate:** `RecoveryGate.ready_namespaces/1` is called on every tick to
+determine which namespaces are eligible for healing. A namespace's hub must be in
+`:normal` or `:skipped` to be included. Hubs in `:recovering` or `:recovery_pending`
+are excluded — healing against a partially-replayed registry would produce false
+divergence. Hubs in `:timeout` (DETS replay window expired; live cluster ring still
+healthy) are **included** with a `Logger.warning` so one stuck hub does not silently
+disable healing for every other namespace. `await_recovery_complete/2` (used by
+`HubManager` and `BootLoader`) is also on `RecoveryGate`.
 
 **Tick isolation:** the entire tick body is wrapped in `try/rescue`. An uncaught
 exception logs an error and emits `[:flezha, :convergence, :tick_error]`

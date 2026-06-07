@@ -1,11 +1,5 @@
 # Convergence Subsystem — Reliability & Performance Audit
 
-> **Fix status:** All five items in the prioritized fix list (section 5) have
-> been implemented: C1 (sanity gate on empty executors), C2 (tick try/rescue),
-> C3 (concurrent probe via `Task.async_stream`), C4 (misbound streak ≥ 2 ticks),
-> and H4 (output-stall grace period). The "Not implemented" annotations below
-> are historical — the current code reflects these fixes.
-
 ## Context
 
 The convergence loop (`lib/flezha/convergence/`) is the controller's single self-healing
@@ -156,52 +150,46 @@ and immediately mutates state on it.
 
 ---
 
-## 5. Prioritized fix list (minimal, deletion-funded first)
+## 5. Fixes landed
 
-Each item below is scoped to the smallest diff that removes the biggest real risk. **Per repo
-workflow: each fix gets a failing test first that reproduces the bug, then the fix, then proof the
-test bites by reverting.** Not implemented.
+All six items from the original prioritized list were implemented. Commit `0e92be0`
+(`fix(convergence): stop the self-healing loop from causing outages; deterministic
+placement`) landed C1–C4. The output-stall healing gap (H4) and per-hub recovery
+gate (H5) landed in the `resilience-refactor-and-hardening` change.
 
-1. **[C1 — biggest risk, small change] Sanity gate in `Diff.compute`/`Loop.run_tick`.** When
-   `active_executors` for a namespace is empty (or implausibly small) while Intent declares relays,
-   **suppress the misbound→evict/rebind plan for that namespace this tick** and emit a telemetry
-   skip. ~10–15 lines in `diff.ex`/`loop.ex`, no new module. Test: empty `active_executors` +
-   non-empty Intent ⇒ `delta.misbound_relays == []` (fails today: it lists every relay).
+- **C1 — sanity gate on empty executors.** `Diff.compute/2` treats
+  `active_executors: :unknown` (a failed FleetManager read) as "skip destructive
+  ops for this namespace," not "all executors gone." A transient GenServer timeout
+  can no longer trigger a mass-evict/rebind. (`0e92be0`)
 
-2. **[C4 — high value] Require misbound to persist K ticks before rebind.** Track a per-relay
-   misbound-streak in Loop state; only plan `rebind_relay`/`evict_executor` after the relay has
-   been misbound for ≥2 consecutive ticks. Contains flap storms; tiny state addition. Test: one
-   tick misbound ⇒ no rebind op; two ⇒ rebind op.
+- **C2 — tick try/rescue.** The entire `run_tick` body in `Loop` is wrapped in
+  `try/rescue`. Any uncaught exception emits `[:flezha, :convergence, :tick_error]`
+  telemetry and converts to a skipped tick; the Loop survives and schedules the
+  next tick normally. (`0e92be0`)
 
-3. **[C2 — cheap hardening] Isolate the tick / raise restart intensity.** Wrap the `run_tick` body
-   so any raise (not just `:exit`) is caught, logged, and converted to a skipped tick instead of a
-   Loop crash; and/or set explicit `max_restarts` on the Loop child. ~5 lines. Test: a heal op that
-   raises ⇒ Loop survives and next tick runs.
+- **C3 — concurrent probe via `Task.async_stream`.** `Probe.relays/0` probes every
+  Overwatch concurrently with `max_concurrency: schedulers × 4`, 1 000 ms timeout,
+  `:kill_task` on timeout. N slow relays cost ~1 s total instead of N × 1 s, and
+  the Loop is not blocked during the probe phase. (`0e92be0`)
 
-4. **[C3 — larger, optional] Concurrent probe with staleness budget.** Replace the serial
-   `Enum.reduce` in `Probe.relays` with `Task.async_stream(..., timeout: 1000, on_timeout: :kill_task)`
-   so N slow relays cost ~1 s total, not N s, and never block the event loop. Net-neutral LOC.
-   Test: K wedged relays ⇒ probe wall-clock ≈ one timeout, not K×timeout.
+- **C4 — misbound-streak gate.** `Loop` maintains a `misbound_streaks` map
+  `%{{ns, relay_id} => count}`. A `rebind_relay` op is only planned after a relay
+  has been misbound in **≥ 2 consecutive ticks**. A single executor blip cannot
+  trigger a full-namespace WAL resync. (`0e92be0`)
 
-5. **[H4 — small] Soften output-stall rebind.** Make `:output_stall` resume streams in place /
-   require corroboration before a full migrate, so quiet feeds don't churn. Reuses existing
-   stream-resume path. Test: stalled relay on a healthy executor ⇒ no migrate op.
+- **H4 — output-stall healing gap closed.** Three coordinated changes:
+  (1) `handle_info({:output_stall, relay_id})` in `Loop` triggers an immediate
+  tick in addition to recording the stall timestamp. (2) `inject_stall_rebinds/5`
+  appends backoff-filtered `rebind_relay %{reason: :output_stall}` ops for stalled
+  relays not already in the Planner's plan. (3) `Heal.skip_rebind?/4` first clause
+  bypasses the active-executor guard for stall-driven rebinds, so a relay on a
+  healthy executor is still rebound when its stream is known dead.
+  `StreamChannel.handle_info({:flz_closed})` now emits output_stall telemetry
+  for every relay in its `relay_mapping` immediately on socket close, cutting
+  detection latency from ~70 s to ~10 s (5 s backoff). (`resilience-refactor-and-hardening`)
 
-6. **[H5 — small] Don't let one stuck hub disable all healing.** Gate per-hub, not globally: heal
-   the namespaces whose hubs are normal even if one hub is stuck. Test: one hub stuck +
-   one normal ⇒ normal namespace still heals.
-
-Items 1–3 are the **minimal high-impact set** and the recommended first batch. 4–6 are follow-ups.
-None require SDK changes (convergence is controller-side; confirmed — `sdk/rust` and `sdk/java`
-are untouched by these).
-
----
-
-## Verification (for when fixes are approved)
-
-- Run targeted unit tests: `mix test test/flezha/convergence/convergence_test.exs` (native; the
-  Docker rule is flezha_market-only). Each fix's new test must fail on clean HEAD and pass after.
-- The existing `executor disconnect preserve` integration test covers live healing — re-run it
-  after C1/C4 to confirm no regression in legitimate rebind.
-- Mine `[:flezha, :convergence, :tick]` (`actions_issued`) on a healthy cluster: target is
-  ~0 ops/tick. Any steady-state non-zero is a live repro of C1/H7.
+- **H5 — per-hub recovery gate (`RecoveryGate`).** `Convergence.RecoveryGate`
+  replaces the inline `ready_namespaces/1` private function. `:timeout` hubs
+  (DETS replay expired; live cluster ring healthy) are included in the ready set
+  with a `Logger.warning` rather than blocking all healing indefinitely. One stuck
+  hub no longer silences healing for every other namespace. (`resilience-refactor-and-hardening`)

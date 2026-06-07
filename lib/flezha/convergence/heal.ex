@@ -141,6 +141,11 @@ defmodule Flezha.Convergence.Heal do
   # live, factory-owning active set (a reconnect between snapshot and heal
   # time): re-reading the authoritative set here stops a detection slip from
   # churning a healthy relay.
+
+  # Output-stall proves the binding is not producing — always proceed regardless
+  # of whether the bound executor is still in the active set.
+  defp skip_rebind?(_ns, _factory, _prev, %{reason: :output_stall}), do: false
+
   defp skip_rebind?(_namespace, _factory, prev, _args) when prev in [nil, ""], do: false
 
   defp skip_rebind?(namespace, factory, prev, _args) do

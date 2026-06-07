@@ -383,6 +383,63 @@ defmodule Flezha.ConvergenceTest do
     end
   end
 
+  describe "Loop output-stall rebind injection" do
+    alias Flezha.Convergence.{Backoff, Intent, Loop}
+
+    test "stalled relay not in plan gets a rebind_relay op injected with reason: :output_stall" do
+      ns = "stall_ns_#{System.unique_integer([:positive])}"
+      relay_id = "relay_stalled"
+
+      intent = %Intent{
+        relays: [%{namespace: ns, relay_id: relay_id, factory_id: nil, plugins: []}]
+      }
+
+      ready = MapSet.new([ns])
+      stalled = %{relay_id => System.monotonic_time(:millisecond)}
+
+      injected = Loop.inject_stall_rebinds_for_test([], stalled, intent, ready, Backoff.new())
+
+      assert [%{primitive: :rebind_relay, target: ^relay_id, args: %{reason: :output_stall}}] =
+               injected
+    end
+
+    test "stalled relay already in plan is not duplicated" do
+      ns = "stall_ns2_#{System.unique_integer([:positive])}"
+      relay_id = "relay_dup"
+
+      intent = %Intent{
+        relays: [%{namespace: ns, relay_id: relay_id, factory_id: nil, plugins: []}]
+      }
+
+      ready = MapSet.new([ns])
+      stalled = %{relay_id => System.monotonic_time(:millisecond)}
+      existing_op = %{primitive: :rebind_relay, namespace: ns, target: relay_id, args: %{}}
+
+      result =
+        Loop.inject_stall_rebinds_for_test([existing_op], stalled, intent, ready, Backoff.new())
+
+      assert length(result) == 1
+      assert hd(result) == existing_op
+    end
+
+    test "stalled relay in backoff cooldown is filtered out" do
+      ns = "stall_ns3_#{System.unique_integer([:positive])}"
+      relay_id = "relay_cooldown"
+
+      intent = %Intent{
+        relays: [%{namespace: ns, relay_id: relay_id, factory_id: nil, plugins: []}]
+      }
+
+      ready = MapSet.new([ns])
+      stalled = %{relay_id => System.monotonic_time(:millisecond)}
+      now = System.monotonic_time(:millisecond)
+      backoff = Backoff.update(Backoff.new(), {:rebind_relay, relay_id}, :error, now)
+
+      result = Loop.inject_stall_rebinds_for_test([], stalled, intent, ready, backoff)
+      assert result == []
+    end
+  end
+
   describe "Loop.apply_misbound_streak/2 (B5)" do
     alias Flezha.Convergence.Loop
 
@@ -404,29 +461,6 @@ defmodule Flezha.ConvergenceTest do
       {streaks, _} = Loop.apply_misbound_streak(streaks, %Diff{misbound_relays: []})
       {_streaks, tick} = Loop.apply_misbound_streak(streaks, delta)
       assert tick.misbound_relays == []
-    end
-  end
-
-  describe "Loop.ready_namespaces/1 (D)" do
-    alias Flezha.Convergence.Loop
-    alias Flezha.Service.Identificator
-
-    test "heals namespaces whose hub is recovered, skips a hub still recovering" do
-      ready_ns = "conv_ready_#{System.unique_integer([:positive])}"
-      busy_ns = "conv_busy_#{System.unique_integer([:positive])}"
-      Snapshot.observe_recovery(Identificator.hub(ready_ns), :normal)
-      Snapshot.observe_recovery(Identificator.hub(busy_ns), :recovering)
-
-      intent = %Intent{
-        relays: [
-          %{namespace: ready_ns, relay_id: "a", factory_id: nil, plugins: []},
-          %{namespace: busy_ns, relay_id: "b", factory_id: nil, plugins: []}
-        ]
-      }
-
-      ready = Loop.ready_namespaces(intent)
-      assert MapSet.member?(ready, ready_ns)
-      refute MapSet.member?(ready, busy_ns)
     end
   end
 

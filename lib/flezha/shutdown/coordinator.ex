@@ -451,12 +451,25 @@ defmodule Flezha.Shutdown.Coordinator do
     {flat_still, migrated, remaining}
   end
 
+  defp fetch_peer_dumps([], _hub_id), do: []
+
   defp fetch_peer_dumps(peers, hub_id) do
-    Enum.flat_map(peers, fn node ->
-      case :rpc.call(node, ProcessHub, :registry_dump, [hub_id], 2_000) do
-        dump when is_map(dump) -> [{node, dump}]
-        _ -> []
-      end
+    peers
+    |> Task.async_stream(
+      fn node ->
+        case :rpc.call(node, ProcessHub, :registry_dump, [hub_id], 2_000) do
+          dump when is_map(dump) -> {node, dump}
+          _ -> nil
+        end
+      end,
+      max_concurrency: length(peers),
+      timeout: 2_100,
+      on_timeout: :kill_task
+    )
+    |> Enum.flat_map(fn
+      {:ok, nil} -> []
+      {:ok, entry} -> [entry]
+      {:exit, _} -> []
     end)
   end
 
@@ -494,13 +507,9 @@ defmodule Flezha.Shutdown.Coordinator do
 
   defp safe_close_audit_writer() do
     if Process.whereis(Flezha.Observability.AuditLog.Writer) do
-      try do
+      safe_finalise_step(:audit_log_writer, fn ->
         Flezha.Observability.AuditLog.Writer.close(@finalise_call_timeout_ms)
-      catch
-        :exit, reason ->
-          Logger.warning("[shutdown] audit_log writer close exit: #{inspect(reason)}")
-          :ok
-      end
+      end)
     else
       :ok
     end
@@ -508,28 +517,24 @@ defmodule Flezha.Shutdown.Coordinator do
 
   defp safe_flush_fsync_batcher() do
     if Process.whereis(FsyncBatcher) do
-      try do
+      safe_finalise_step(:fsync_batcher, fn ->
         GenServer.call(FsyncBatcher, :flush_all, @finalise_call_timeout_ms)
-      catch
-        :exit, reason ->
-          Logger.warning("[shutdown] FsyncBatcher flush_all exit: #{inspect(reason)}")
-          :ok
-      end
+      end)
     else
       :ok
     end
   end
 
   defp safe_stop_transports() do
-    try do
-      TransportServer.stop_all()
-    catch
-      :exit, reason ->
-        Logger.warning("[shutdown] transport stop exit: #{inspect(reason)}")
-        :ok
+    safe_finalise_step(:transport, fn -> TransportServer.stop_all() end)
+  end
 
+  defp safe_finalise_step(label, fun, _timeout \\ @finalise_call_timeout_ms) do
+    try do
+      fun.()
+    catch
       kind, reason ->
-        Logger.warning("[shutdown] transport stop #{kind}: #{inspect(reason)}")
+        Logger.warning("[shutdown] #{label} #{kind}: #{inspect(reason)}")
         :ok
     end
   end

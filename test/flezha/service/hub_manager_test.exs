@@ -293,19 +293,19 @@ defmodule Flezha.Service.HubManagerTest do
     end
   end
 
-  describe "recovery state (Snapshot + Probe)" do
-    alias Flezha.Convergence.{Probe, Snapshot}
+  describe "recovery state (Snapshot + RecoveryGate)" do
+    alias Flezha.Convergence.{RecoveryGate, Snapshot}
 
     test "await returns :ok immediately when target is already :normal" do
       hub_id = :"hm_rt_normal_#{System.unique_integer([:positive])}"
       Snapshot.observe_recovery(hub_id, :normal)
-      assert :ok = Probe.await_recovery_complete([hub_id], 200)
+      assert :ok = RecoveryGate.await_recovery_complete([hub_id], 200)
     end
 
     test "await returns :ok immediately when target is already :skipped" do
       hub_id = :"hm_rt_skipped_#{System.unique_integer([:positive])}"
       Snapshot.observe_recovery(hub_id, :skipped)
-      assert :ok = Probe.await_recovery_complete([hub_id], 200)
+      assert :ok = RecoveryGate.await_recovery_complete([hub_id], 200)
     end
 
     test "await blocks until :complete telemetry fires" do
@@ -316,7 +316,7 @@ defmodule Flezha.Service.HubManagerTest do
       task =
         Task.async(fn ->
           send(test_pid, :await_started)
-          Probe.await_recovery_complete([hub_id], 2_000)
+          RecoveryGate.await_recovery_complete([hub_id], 2_000)
         end)
 
       assert_receive :await_started, 1_000
@@ -336,7 +336,7 @@ defmodule Flezha.Service.HubManagerTest do
       Snapshot.observe_recovery(hub_id, :recovering)
 
       assert {:error, {:recovery_timeout, [^hub_id]}} =
-               Probe.await_recovery_complete([hub_id], 100)
+               RecoveryGate.await_recovery_complete([hub_id], 100)
     end
   end
 

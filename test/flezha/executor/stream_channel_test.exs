@@ -18,6 +18,55 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
     %{pid: pid, name: name}
   end
 
+  describe "stream closed → output_stall telemetry" do
+    test "{:flz_closed} emits output_stall telemetry for every relay in relay_mapping",
+         %{pid: pid} do
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_b", [self()]})
+      :ok = GenServer.call(pid, {:bind, :ref_x})
+
+      test_pid = self()
+      handler_id = "stall_test_#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:flezha, :state, :output_stall],
+        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.relay_instance}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      send(pid, {:flz_closed, :ref_x, :eof})
+      # flush through mailbox
+      _ = GenServer.call(pid, :stream_ref_status)
+
+      assert_receive {:output_stall, "relay_a"}
+      assert_receive {:output_stall, "relay_b"}
+    end
+
+    test "{:flz_closed} with empty relay_mapping emits no output_stall telemetry",
+         %{pid: pid} do
+      test_pid = self()
+      handler_id = "stall_test_empty_#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:flezha, :state, :output_stall],
+        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.relay_instance}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      :ok = GenServer.call(pid, {:bind, :ref_y})
+      send(pid, {:flz_closed, :ref_y, :eof})
+      _ = GenServer.call(pid, :stream_ref_status)
+
+      refute_receive {:output_stall, _}, 100
+    end
+  end
+
   describe "rebind contract" do
     test "fresh channel has nil stream_ref", %{pid: pid} do
       assert GenServer.call(pid, :stream_ref_status) == nil

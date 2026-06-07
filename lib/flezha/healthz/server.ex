@@ -33,7 +33,6 @@ defmodule Flezha.Healthz.Server do
 
   alias Flezha.Convergence.Snapshot
   alias Flezha.Http.Listener
-  alias Flezha.Service.HubManager
 
   # ---------- Public API ----------
 
@@ -133,9 +132,6 @@ defmodule Flezha.Healthz.Server do
            recovery_state: pick_recovery_state(recovery_states)
          })}
 
-      any_recovery_failed?(recovery_states) ->
-        {:unhealthy, encode_json(%{status: "unhealthy", reason: "recovery_failed"})}
-
       loop_hard_wedged?(last_tick_at) ->
         {:unhealthy,
          encode_json(%{
@@ -207,18 +203,11 @@ defmodule Flezha.Healthz.Server do
   end
 
   defp collect_recovery_states() do
-    HubManager.list_running_hub_ids()
-    |> Enum.map(fn hub_id ->
-      case HubManager.recovery_state(hub_id) do
-        {:ok, state} -> state
-        _ -> :unknown
-      end
-    end)
+    Snapshot.recovery_states() |> Map.values()
   end
 
-  defp any_recovering?(states), do: Enum.any?(states, &(&1 in [:recovery_pending, :recovering]))
-
-  defp any_recovery_failed?(states), do: Enum.any?(states, &(&1 == :timeout))
+  defp any_recovering?(states),
+    do: Enum.any?(states, &(&1 in [:recovery_pending, :recovering, :timeout]))
 
   defp pick_recovery_state([]), do: "unknown"
 

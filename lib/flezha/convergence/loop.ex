@@ -15,8 +15,8 @@ defmodule Flezha.Convergence.Loop do
 
   use GenServer
 
-  alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, Probe, Snapshot}
-  alias Flezha.Service.{EventManager, HubManager, Identificator}
+  alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, Probe, RecoveryGate, Snapshot}
+  alias Flezha.Service.{EventManager, HubManager}
 
   require Logger
 
@@ -102,7 +102,8 @@ defmodule Flezha.Convergence.Loop do
 
   def handle_info({:output_stall, relay_id}, %__MODULE__{} = state) when is_binary(relay_id) do
     now = System.monotonic_time(:millisecond)
-    {:noreply, %{state | stalled_relays: Map.put(state.stalled_relays, relay_id, now)}}
+    state = %{state | stalled_relays: Map.put(state.stalled_relays, relay_id, now)}
+    {:noreply, run_tick(state)}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -165,7 +166,7 @@ defmodule Flezha.Convergence.Loop do
     # Per-namespace recovery gate: heal only relays whose hub has finished
     # recovery. A namespace mid-replay is skipped (no heal against a
     # half-restored registry) without blocking healing for ready namespaces.
-    ready = ready_namespaces(intent)
+    ready = RecoveryGate.ready_namespaces(intent)
     heal_relays = Enum.filter(intent.relays, &MapSet.member?(ready, &1.namespace))
     delta = Diff.compute(%Intent{relays: heal_relays}, reality)
 
@@ -173,6 +174,7 @@ defmodule Flezha.Convergence.Loop do
     state = %{state | misbound_streaks: streaks}
 
     plan = Planner.plan(delta, state.backoff)
+    plan = inject_stall_rebinds(plan, stalled, intent, ready, state.backoff)
 
     {backoff, issued} = execute_plan(plan, state.backoff)
 
@@ -201,19 +203,6 @@ defmodule Flezha.Convergence.Loop do
     )
   end
 
-  # Namespaces whose hub has reached `:normal | :skipped`. A hub still
-  # `:recovering` (or never observed, `:unknown`) is not healed this tick.
-  @doc false
-  def ready_namespaces(%Intent{relays: relays}) do
-    states = Probe.recovery_states()
-
-    relays
-    |> Enum.map(& &1.namespace)
-    |> Enum.uniq()
-    |> Enum.filter(fn ns -> Map.get(states, Identificator.hub(ns), :unknown) in [:normal, :skipped] end)
-    |> MapSet.new()
-  end
-
   # A relay must be misbound for @misbound_min_ticks consecutive ticks before
   # it is migrated. Relays not misbound this tick drop out of the streak map
   # (reset), so a relay seen bound again clears immediately.
@@ -232,6 +221,41 @@ defmodule Flezha.Convergence.Loop do
 
   defp expire_stalled(stalled, now, grace_ms) do
     :maps.filter(fn _relay, since -> now - since < grace_ms end, stalled)
+  end
+
+  # Inject backoff-filtered rebind_relay ops for stalled relays not already
+  # covered by the plan. Uses args.reason :output_stall so Heal skips the
+  # active-executor guard that would block a healthy-but-frozen relay.
+  @doc false
+  def inject_stall_rebinds_for_test(plan, stalled, intent, ready, backoff) do
+    inject_stall_rebinds(plan, stalled, intent, ready, backoff)
+  end
+
+  defp inject_stall_rebinds(plan, stalled, %Intent{relays: intent_relays}, ready, backoff) do
+    covered = MapSet.new(plan, fn op -> op.target end)
+    ns_by_relay = Map.new(intent_relays, fn r -> {r.relay_id, r.namespace} end)
+    now = System.monotonic_time(:millisecond)
+
+    stall_ops =
+      stalled
+      |> Map.keys()
+      |> Enum.reject(&MapSet.member?(covered, &1))
+      |> Enum.flat_map(fn relay_id ->
+        case Map.get(ns_by_relay, relay_id) do
+          nil ->
+            []
+
+          ns ->
+            if MapSet.member?(ready, ns) do
+              [%{primitive: :rebind_relay, namespace: ns, target: relay_id, args: %{reason: :output_stall}}]
+            else
+              []
+            end
+        end
+      end)
+      |> Backoff.filter(backoff, &Planner.key/1, now)
+
+    plan ++ stall_ops
   end
 
   defp execute_plan(plan, backoff) do

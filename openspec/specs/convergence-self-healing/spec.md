@@ -18,11 +18,38 @@ The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.
 
 The self-healing decision logic MUST be expressed as a pure-function pipeline under `lib/flezha/convergence/`: `Probe.snapshot/0` (observe reality) → `Intent` (declared state) → `Diff.compute/2` (divergence delta) → `Planner` (ordered, backoff-filtered ops) → `Heal.execute/1` (bounded primitives). Adding a failure mode means extending the Diff/Planner/Heal seams, NOT adding a new self-healing module or scattering decision branches across services. The heal surface is a fixed, small set of idempotent primitives.
 
+Recovery-gating queries (namespace readiness, await-recovery-complete) SHALL be issued via `Flezha.Convergence.RecoveryGate`. `Probe` SHALL NOT expose `recovery_state/1`, `recovery_states/0`, or `await_recovery_complete/2` as its own functions; callers MUST use `RecoveryGate` directly.
+
 #### Scenario: a new divergence reuses the existing seams
 - **GIVEN** a new failure mode "wedged stream channel" must be healed
 - **WHEN** it is added
 - **THEN** the Probe surfaces the fact (per-pid strike counters), the Diff classifies it (`wedged_channels`), the Planner emits an existing primitive (`reconnect_stream`), and the Heal executes it
 - **AND** no new top-level self-healing GenServer is introduced.
+
+#### Scenario: recovery-gate queries go through RecoveryGate
+
+- **WHEN** the Loop needs to determine which namespaces are ready for healing
+- **THEN** it calls `Flezha.Convergence.RecoveryGate.ready_namespaces/1`
+- **AND** there is no equivalent function exposed on `Probe` or implemented inline in `Loop`
+
+### Requirement: A hub stuck in `:recovery_timeout` does not permanently block healing for its namespace
+
+The convergence loop MUST include hubs in `:recovery_timeout` state in the ready set returned by `RecoveryGate.ready_namespaces/1`. Heal operations for relays in a timed-out hub's namespace MUST proceed using the live cluster state (the authoritative source), not be gated indefinitely.
+
+A `Logger.warning` MUST be emitted for each `:recovery_timeout` namespace included in the ready set so operators are alerted to the stuck hub.
+
+#### Scenario: timed-out hub does not block healthy relays
+
+- **GIVEN** a controller hosting two namespaces: `ns_ok` (hub `:normal`) and `ns_timeout` (hub `:recovery_timeout`)
+- **WHEN** a convergence tick runs
+- **THEN** the Loop heals misbound relays in both `ns_ok` and `ns_timeout`
+- **AND** a `Logger.warning` is emitted naming `ns_timeout` as timed-out
+
+#### Scenario: normal operation is unchanged for healthy hubs
+
+- **GIVEN** all hubs are in `:normal` or `:skipped`
+- **WHEN** a convergence tick runs
+- **THEN** no warning is emitted and healing proceeds as before
 
 ### Requirement: Every heal primitive is a safe no-op on a healthy target
 
@@ -63,10 +90,40 @@ The `/healthz` HTTP endpoint MUST derive `bound_relays`, `producing_relays`, and
 - **WHEN** `/healthz` is queried
 - **THEN** the status is `200` (healthy/degraded), and `503` fires only when the loop has not ticked within the authoritative tick-age bound.
 
-#### Scenario: a recovery timeout surfaces as 503 recovery_failed
-- **GIVEN** a hub's recovery is observed as `:timeout`
+#### Scenario: a recovery timeout surfaces as 200 recovering, not 503
+
+- **GIVEN** a hub has recovery state `:timeout` (DETS replay window expired but live cluster ring is healthy)
 - **WHEN** `/healthz` is queried
-- **THEN** the status is `503 unhealthy` with reason `recovery_failed`, and it returns to `200 healthy` once the hub reaches `:normal`.
+- **THEN** the response is `200 recovering` with `recovery_state: "recovery_timeout"` in the body
+- **AND** the response is NOT `503 unhealthy`
+- **AND** kubelet does not restart the pod
+
+### Requirement: Output-stalled relays SHALL be actively rebound, not only reported as degraded
+
+When `Flezha.Convergence.Loop` receives an `{:output_stall, relay_id}` message from the Watchdog telemetry handler, it SHALL:
+
+1. Record the stall timestamp in `stalled_relays` (existing behaviour — for healthz reporting).
+2. Trigger an immediate convergence tick (same as `executor_connected_event`).
+
+On each tick, after `Planner.plan/2` produces its plan, the Loop SHALL inject additional `rebind_relay` ops for every relay whose `relay_id` is in `stalled_relays` and which is not already covered by the plan, using `args: %{reason: :output_stall}`. These injected ops SHALL be filtered through the standard per-target `Backoff` so a persistently stalled relay follows the 5s → 30s → 60s → 300s cooldown, not a per-tick storm.
+
+`Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the relay's currently-bound executor is in the live active set. The output-stall condition proves the binding is not producing; the active-executor guard exists only to avoid disrupting a healthy relay, which an output-stalled relay is not.
+
+#### Scenario: output-stalled relay is rebound on the next tick
+
+- **GIVEN** relay `btc_kraken` is bound to active executor `ex1` and has not produced output past the output-stall grace period
+- **WHEN** the Watchdog flags it and the convergence Loop receives the stall event
+- **THEN** the Loop triggers an immediate tick
+- **AND** a `rebind_relay` op with `args: %{reason: :output_stall}` is issued for `btc_kraken`
+- **AND** `skip_rebind?` returns `false` even though `ex1` is still active
+- **AND** the relay is migrated to a new executor and begins producing again
+
+#### Scenario: repeated stalls are backoff-throttled
+
+- **GIVEN** relay `btc_kraken` was just rebound due to an output stall 2 seconds ago
+- **WHEN** the Watchdog flags another output stall for `btc_kraken`
+- **THEN** the injected rebind op is filtered out by Backoff (5s cooldown not yet elapsed)
+- **AND** no rebind is issued on this tick
 
 ### Requirement: Rolling upgrade preserves producing-relays count
 
@@ -109,4 +166,12 @@ When an SDK executor process restarts and presents `previous_executor_id`, the c
 - **WHEN** the SDK process is killed and restarts, reading its persisted `executor_id = default_X` and announcing it as `previous_executor_id`
 - **THEN** the controller evicts the stale `default_X` binding inside the connect handler before the new bind, re-attaches the relay, and kafka offsets resume within a couple of ticks
 - **AND** no entry in the active executor set references a dead `default_X`.
+
+## Removed Requirements
+
+### Requirement: `Backoff.schedule_ms/0` is part of the public API
+
+**Reason**: The function has zero callers in application code. It was added as a test-convenience export but is not referenced anywhere. Removing it trims the public API surface.
+
+**Migration**: Any test or external code that calls `Backoff.schedule_ms/0` should inline the value `[5_000, 30_000, 60_000, 300_000]` or read the module attribute `@schedule_ms` if needed for compile-time assertions.
 
