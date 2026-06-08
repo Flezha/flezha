@@ -30,8 +30,11 @@ public final class FlezhaEnv {
 
     public static final String FLEZHA_CONTROL_KEEPALIVE_MS = "FLEZHA_CONTROL_KEEPALIVE_MS";
 
+    public static final String FLEZHA_DATA_HEARTBEAT_MS = "FLEZHA_DATA_HEARTBEAT_MS";
+
     static final long DEFAULT_CONTROL_ACK_TIMEOUT_MS = 10_000L;
     static final long DEFAULT_CONTROL_KEEPALIVE_MS = 15_000L;
+    static final long DEFAULT_DATA_HEARTBEAT_MS = 10_000L;
 
     private FlezhaEnv() {}
 
@@ -46,6 +49,11 @@ public final class FlezhaEnv {
     /** How often the SDK sends a control-channel keepalive ping. Default 15 s. */
     public static long controlKeepaliveMs() {
         return envMs(FLEZHA_CONTROL_KEEPALIVE_MS, DEFAULT_CONTROL_KEEPALIVE_MS);
+    }
+
+    /** How often the SDK heartbeats the data channel. Default 10 s, matching the Rust SDK. */
+    public static long dataHeartbeatMs() {
+        return envMs(FLEZHA_DATA_HEARTBEAT_MS, DEFAULT_DATA_HEARTBEAT_MS);
     }
 
     private static long envMs(String key, long defaultMs) {

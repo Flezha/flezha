@@ -126,4 +126,75 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       assert GenServer.call(pid, :stream_ref_status) == nil
     end
   end
+
+  describe "heartbeat liveness → output_stall telemetry" do
+    @threshold_ms 25
+
+    setup do
+      prev_threshold = Application.get_env(:flezha, :io_stream_liveness_threshold_ms)
+      prev_interval = Application.get_env(:flezha, :io_stream_liveness_interval_ms)
+      # Small threshold for a fast test; interval 0 disables the auto-timer so the
+      # only liveness ticks are the ones the test drives explicitly.
+      Application.put_env(:flezha, :io_stream_liveness_threshold_ms, @threshold_ms)
+      Application.put_env(:flezha, :io_stream_liveness_interval_ms, 0)
+
+      test_pid = self()
+      id = "io_stale_#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        id,
+        [:flezha, :state, :output_stall],
+        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.relay_instance}) end,
+        nil
+      )
+
+      on_exit(fn ->
+        :telemetry.detach(id)
+        restore_env(:io_stream_liveness_threshold_ms, prev_threshold)
+        restore_env(:io_stream_liveness_interval_ms, prev_interval)
+      end)
+
+      :ok
+    end
+
+    test "idle relay that keeps heart-beating is never flagged", %{pid: pid} do
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
+      :ok = GenServer.call(pid, {:bind, :ref_x})
+
+      # No real output, but a fresh heartbeat lands right before the check.
+      Process.sleep(@threshold_ms * 3)
+      send(pid, {:flz_data, :ref_x, "data_heartbeat", "", %{}})
+      send(pid, :io_liveness_check)
+      _ = GenServer.call(pid, :stream_ref_status)
+
+      refute_receive {:output_stall, _}, 100
+    end
+
+    test "relay whose heartbeats stop is flagged for every relay", %{pid: pid} do
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_b", [self()]})
+      :ok = GenServer.call(pid, {:bind, :ref_x})
+
+      # Last heartbeat, then silence past the threshold.
+      send(pid, {:flz_data, :ref_x, "data_heartbeat", "", %{}})
+      Process.sleep(@threshold_ms * 3)
+      send(pid, :io_liveness_check)
+
+      assert_receive {:output_stall, "relay_a"}
+      assert_receive {:output_stall, "relay_b"}
+    end
+
+    test "unbound stream is never flagged", %{pid: pid} do
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
+
+      Process.sleep(@threshold_ms * 3)
+      send(pid, :io_liveness_check)
+      _ = GenServer.call(pid, :stream_ref_status)
+
+      refute_receive {:output_stall, _}, 100
+    end
+  end
+
+  defp restore_env(key, nil), do: Application.delete_env(:flezha, key)
+  defp restore_env(key, value), do: Application.put_env(:flezha, key, value)
 end

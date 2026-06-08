@@ -59,7 +59,10 @@ mutation is in `Heal`; every other module is side-effect-free.
 One tick per `convergence_tick_ms` (default 5 000 ms). The tick also fires
 immediately when:
 
-- `[:flezha, :state, :output_stall]` is emitted by `State.Watchdog`
+- `[:flezha, :state, :output_stall]` is emitted (by `State.Watchdog`, or by
+  `Executor.StreamChannel` when a bound data channel goes silent past
+  `:io_stream_liveness_threshold_ms` — i.e. several missed data-channel
+  heartbeats, not merely absent relay output)
 - `:executor_connected_event` fires (an executor reconnected — an immediate tick
   detects and rebinds the relay rather than waiting up to 5 s)
 

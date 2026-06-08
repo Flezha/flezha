@@ -10,18 +10,34 @@ defmodule Flezha.Executor.StreamChannel do
     GenServer.start_link(__MODULE__, {executor_id, type, name}, name: name)
   end
 
+  @io_liveness_interval_ms 10_000
+  @io_liveness_threshold_ms 30_000
+
   @impl true
   def init({executor_id, _type, name}) do
+    # The executor heartbeats the data channel every ~10s; a bound stream whose
+    # last frame (heartbeat or data) is older than the threshold is stalled — a
+    # silent data-plane wedge that raises no `{:flz_closed}` write-error.
+    schedule_io_liveness_check()
+
     {
       :ok,
       %{
         executor_id: executor_id,
         stream_ref: nil,
         relay_mapping: %{},
-        name: name
+        name: name,
+        last_seen: System.monotonic_time(:millisecond)
       }
     }
   end
+
+  defp schedule_io_liveness_check do
+    interval = Application.get_env(:flezha, :io_stream_liveness_interval_ms, @io_liveness_interval_ms)
+    if interval > 0, do: Process.send_after(self(), :io_liveness_check, interval)
+  end
+
+  defp mark_seen(state), do: %{state | last_seen: System.monotonic_time(:millisecond)}
 
   @impl true
   def handle_cast(
@@ -101,7 +117,7 @@ defmodule Flezha.Executor.StreamChannel do
   # snapshot-vs-bind race that could otherwise overwrite a live ref.
   @impl true
   def handle_call({:bind, new_ref}, _from, %{stream_ref: nil} = state) do
-    {:reply, :ok, %{state | stream_ref: new_ref}}
+    {:reply, :ok, %{state | stream_ref: new_ref, last_seen: System.monotonic_time(:millisecond)}}
   end
 
   @impl true
@@ -118,13 +134,19 @@ defmodule Flezha.Executor.StreamChannel do
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id == "partition_state_change" do
     handle_partition_state_change(state.executor_id, message)
-    {:noreply, state}
+    {:noreply, mark_seen(state)}
   end
 
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id == "partition_state_snapshot" do
     handle_partition_state_snapshot(state.executor_id, message)
-    {:noreply, state}
+    {:noreply, mark_seen(state)}
+  end
+
+  # Data-channel heartbeat: the executor emits this every ~10s while connected,
+  # so an idle-but-healthy relay keeps the channel live without producing output.
+  def handle_info({:flz_data, _stream_id, "data_heartbeat", _message, _metadata}, state) do
+    {:noreply, mark_seen(state)}
   end
 
   def handle_info({:flz_data, _stream_id, relay_id, message, metadata}, state) do
@@ -154,6 +176,37 @@ defmodule Flezha.Executor.StreamChannel do
         )
 
         GenServer.cast(first, {:io_out, message, metadata})
+    end
+
+    {:noreply, mark_seen(state)}
+  end
+
+  # Periodic liveness check: a bound stream whose last frame (heartbeat or data)
+  # is older than the threshold has missed several heartbeats and is stalled.
+  # Emit `output_stall` for each mapped relay (the signal the convergence Loop
+  # rebinds on) — but keep `stream_ref`, since the rebind re-establishes it.
+  @impl true
+  def handle_info(:io_liveness_check, state) do
+    schedule_io_liveness_check()
+
+    threshold =
+      Application.get_env(:flezha, :io_stream_liveness_threshold_ms, @io_liveness_threshold_ms)
+
+    stale? = System.monotonic_time(:millisecond) - state.last_seen >= threshold
+
+    if not is_nil(state.stream_ref) and stale? do
+      Logger.warning(
+        "[stream_channel] IO stream silent past liveness threshold, flagging output_stall: " <>
+          "executor=#{inspect(state.executor_id)} relays=#{inspect(Map.keys(state.relay_mapping))}"
+      )
+
+      for {relay_id, _} <- state.relay_mapping do
+        :telemetry.execute(
+          [:flezha, :state, :output_stall],
+          %{count: 1},
+          %{relay_instance: relay_id}
+        )
+      end
     end
 
     {:noreply, state}

@@ -1,5 +1,7 @@
 package com.flezha.sdk.runtime.stream;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -35,6 +37,15 @@ public final class StreamRegistry {
             return pair.secondary();
         }
         return 0L;
+    }
+
+    /** Returns every registered secondary stream id — one heartbeat is written per stream. */
+    public List<Long> secondaries() {
+        List<Long> out = new ArrayList<>(byIndex.size());
+        for (StreamPair pair : byIndex.values()) {
+            out.add(pair.secondary());
+        }
+        return out;
     }
 
     /** Returns the secondary stream id associated with a particular primary stream, if any. */

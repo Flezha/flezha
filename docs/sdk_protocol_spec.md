@@ -167,7 +167,17 @@ Well-known payload IDs:
 |------------|---------|
 | `connect_control_channel` | Handshake init message (SDK -> controller) |
 | `control_command` | Protobuf command messages (controller -> SDK) |
+| `control_ping` | Control-channel keepalive ping/echo (re-arms the read-level idle watchdog) |
+| `data_heartbeat` | Data-channel heartbeat (SDK -> controller; per-channel liveness) |
 | `{relay_id}` | Stream I/O data (both directions) |
+
+The `data_heartbeat` frame carries an empty message and empty metadata. The
+executor writes one on every secondary stream every `FLEZHA_DATA_HEARTBEAT_MS`
+(default 10 s) while connected, so an idle-but-healthy relay keeps the
+controller's per-channel liveness clock fresh without producing real output.
+The controller treats any inbound frame (heartbeat or relay output) as
+liveness; a bound channel silent past `:io_stream_liveness_threshold_ms`
+(default 30 s) is flagged as a stall.
 
 ### Metadata Serialization
 

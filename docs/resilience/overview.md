@@ -226,6 +226,16 @@ by Rust and Java SDKs):
 - **Keepalive ping** (`FLEZHA_CONTROL_KEEPALIVE_MS`, default 15 s): jittered
   round-trip prevents the idle timeout from firing on a healthy-but-quiet channel.
 
+**Data-channel heartbeat** (`FLEZHA_DATA_HEARTBEAT_MS`, default 10 s, shared by
+Rust and Java SDKs): the executor writes a bare `data_heartbeat` frame on every
+secondary stream while connected. The control channel staying alive does not
+prove the data plane is — the data plane is what froze in the 21 h candle
+incident — so liveness rides the data channel directly. The controller's
+`StreamChannel` treats any inbound frame (heartbeat or relay output) as
+liveness and flags `[:flezha, :state, :output_stall]` only when a bound channel
+is silent past `:io_stream_liveness_threshold_ms` (default 30 s, ≈3 beats). An
+idle-but-healthy relay is therefore never mistaken for a stall.
+
 ---
 
 ## 12. Observability Feeding into Healing

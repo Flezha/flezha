@@ -28,9 +28,15 @@ use std::time::Duration;
 /// echoes it and both SDKs drop it after the read-level liveness re-arm.
 pub const CONTROL_PING_PAYLOAD_ID: &str = "control_ping";
 
+/// Payload id for the data-channel heartbeat. The executor writes a bare frame
+/// on every secondary stream so an idle-but-healthy relay keeps the controller's
+/// per-channel liveness clock fresh without producing real output.
+pub const DATA_HEARTBEAT_PAYLOAD_ID: &str = "data_heartbeat";
+
 const DEFAULT_ACK_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_IDLE_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_KEEPALIVE_MS: u64 = 15_000;
+const DEFAULT_DATA_HEARTBEAT_MS: u64 = 10_000;
 
 fn env_ms(key: &str, default_ms: u64) -> Duration {
     std::env::var(key)
@@ -55,6 +61,12 @@ pub fn control_idle_timeout() -> Duration {
 /// How often the executor sends a control-channel keepalive ping. Default 15 s.
 pub fn control_keepalive_interval() -> Duration {
     env_ms("FLEZHA_CONTROL_KEEPALIVE_MS", DEFAULT_KEEPALIVE_MS)
+}
+
+/// How often the executor heartbeats the data channel. Default 10 s — below the
+/// controller's stall threshold so a couple of missed beats stay inside it.
+pub fn data_heartbeat_interval() -> Duration {
+    env_ms("FLEZHA_DATA_HEARTBEAT_MS", DEFAULT_DATA_HEARTBEAT_MS)
 }
 
 /// Full-jitter a base duration into `[base/2, base]` so a fleet that all

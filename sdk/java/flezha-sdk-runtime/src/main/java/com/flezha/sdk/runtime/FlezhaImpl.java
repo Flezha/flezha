@@ -10,6 +10,7 @@ import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.CommandRouter;
 import com.flezha.sdk.runtime.control.ControlChannel;
 import com.flezha.sdk.runtime.control.GracefulShutdown;
+import com.flezha.sdk.runtime.control.DataHeartbeatSender;
 import com.flezha.sdk.runtime.control.KeepaliveSender;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
@@ -40,16 +41,19 @@ public final class FlezhaImpl implements Flezha {
     private final ExecutorContext ctx;
     private final ReconnectCoordinator reconnectCoordinator;
     private final KeepaliveSender keepaliveSender;
+    private final DataHeartbeatSender dataHeartbeatSender;
     private final AtomicReference<GracefulShutdown> shutdownRef;
 
     private FlezhaImpl(
             ExecutorContext ctx,
             ReconnectCoordinator reconnectCoordinator,
             KeepaliveSender keepaliveSender,
+            DataHeartbeatSender dataHeartbeatSender,
             AtomicReference<GracefulShutdown> shutdownRef) {
         this.ctx = ctx;
         this.reconnectCoordinator = reconnectCoordinator;
         this.keepaliveSender = keepaliveSender;
+        this.dataHeartbeatSender = dataHeartbeatSender;
         this.shutdownRef = shutdownRef;
     }
 
@@ -220,6 +224,11 @@ public final class FlezhaImpl implements Flezha {
         KeepaliveSender keepalive = new KeepaliveSender(ctx);
         keepalive.start();
 
+        // Steady-state data-channel heartbeat: keeps the controller's per-channel
+        // liveness clock fresh even when a relay produces no real output.
+        DataHeartbeatSender dataHeartbeat = new DataHeartbeatSender(ctx);
+        dataHeartbeat.start();
+
         // Bound the wait for the controller's first frame (the ack). On timeout
         // drive reconnect instead of warn-and-continue; the coordinator keeps
         // retrying in the background, so start() returns a live-eventually SDK.
@@ -247,7 +256,7 @@ public final class FlezhaImpl implements Flezha {
                         },
                         "flezha-graceful-shutdown"));
 
-        return new FlezhaImpl(ctx, coordinator, keepalive, shutdownRef);
+        return new FlezhaImpl(ctx, coordinator, keepalive, dataHeartbeat, shutdownRef);
     }
 
     @Override
@@ -281,6 +290,7 @@ public final class FlezhaImpl implements Flezha {
     @Override
     public void close() {
         keepaliveSender.stop();
+        dataHeartbeatSender.stop();
         reconnectCoordinator.shutdown();
         GracefulShutdown active = shutdownRef.get();
         if (active != null) {
