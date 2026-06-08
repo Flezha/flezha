@@ -50,7 +50,7 @@ Configurable root via `:flezha, :state_root` (default `app_data/state`).
 | `Flezha.State.Outbox` | `last_persisted_seq` cache file (`<partition_key>.outbox.dedup`). |
 | `Flezha.State.PersistenceResolver` | Per-Relay config resolution (`relay_persistence`, `time_travel_retention_hours`, `compact_after_bytes`). |
 | `Flezha.State.Supervisor` | `DynamicSupervisor` for per-Partition `WalWriter` GenServers + a process registry for name lookup. |
-| `Flezha.State.WalWriter` | One GenServer per Partition. Owns the WAL file handle. |
+| `Flezha.State.WalWriter` | One GenServer per Partition. Owns the WAL file handle; opens it in `handle_continue/2` so creation never blocks the caller. |
 | `Flezha.State.FsyncBatcher` | Single shared GenServer driving `:file.datasync/1` across dirty writers on a fixed cadence. |
 | `Flezha.State.Snapshot` | Snapshot file lifecycle (`.tmp → fsync → rename → truncate`). |
 | `Flezha.State.Retention` | Periodic sweeper enforcing `time_travel_retention_hours`. |
@@ -71,6 +71,19 @@ The trailing `crc32` lets `WalWriter.scan_for_last_valid_seq/2` detect
 partial-write tails at boot — the file is forward-scanned (forward, not
 backward, because there is no length field at the record tail) and any
 bytes past the last valid record are truncated.
+
+## Writer startup
+
+`StreamChannel` resolves a writer with `Supervisor.find_or_start/1` on
+every `partition_state_change` frame. To keep the channel's loop off the
+disk, `WalWriter.init/1` only builds the struct and returns
+`{:continue, :open}`; the process is already Registry-registered, so
+`find_or_start` returns in microseconds. All disk work — `mkdir`,
+`:file.open`, `scan_for_last_valid_seq`, seek-to-EOF — runs in
+`handle_continue(:open, …)`. Since a continue is processed before any
+queued message, appends that arrive during the scan wait in the writer's
+own mailbox, never the channel's; `last_persisted_seq` recovery is
+unchanged.
 
 ## fsync batching
 

@@ -180,23 +180,18 @@ defmodule Flezha.State.WalWriter do
   @impl true
   def init(partition_id) do
     Process.flag(:trap_exit, true)
-    wal_path = Registry.wal_path(partition_id)
-    File.mkdir_p!(Path.dirname(wal_path))
-    {:ok, file} = :file.open(wal_path, [:raw, :read, :write, :binary])
-
-    last_seq = scan_for_last_valid_seq(file, wal_path)
-
-    metrics = Metrics.for_partition(partition_id)
-    Metrics.put(metrics, :wal_seq, last_seq)
-    Metrics.put(metrics, :wal_size_bytes, file_size(wal_path))
-
     now = :erlang.monotonic_time(:millisecond)
 
+    # Disk I/O (mkdir/open/scan/seek) is deferred to `handle_continue/2` so this
+    # `init` returns instantly: the process is already Registry-registered, so a
+    # `Supervisor.find_or_start/1` from a StreamChannel never blocks on disk. The
+    # continue runs before any queued append, so appends queue in this writer's
+    # mailbox — never the channel's. `-1` is the "no records yet" seq sentinel.
     state = %__MODULE__{
       partition_id: partition_id,
-      file_handle: file,
-      wal_path: wal_path,
-      last_persisted_seq: last_seq,
+      file_handle: nil,
+      wal_path: Registry.wal_path(partition_id),
+      last_persisted_seq: -1,
       last_advance_at: now,
       last_change_seen_at: now,
       owning_executor: nil,
@@ -204,15 +199,28 @@ defmodule Flezha.State.WalWriter do
       pending_since_us: nil,
       high_watermark: high_watermark(),
       low_watermark: low_watermark(),
-      metrics: metrics,
+      metrics: Metrics.for_partition(partition_id),
       latency_reservoir: :queue.new(),
       backpressured?: false
     }
 
+    {:ok, state, {:continue, :open}}
+  end
+
+  @impl true
+  def handle_continue(:open, state) do
+    File.mkdir_p!(Path.dirname(state.wal_path))
+    {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
+
+    last_seq = scan_for_last_valid_seq(file, state.wal_path)
+
+    Metrics.put(state.metrics, :wal_seq, last_seq)
+    Metrics.put(state.metrics, :wal_size_bytes, file_size(state.wal_path))
+
     # Reposition for appends.
     {:ok, _} = :file.position(file, :eof)
 
-    {:ok, state}
+    {:noreply, %{state | file_handle: file, last_persisted_seq: last_seq}}
   end
 
   @impl true
