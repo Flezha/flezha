@@ -19,6 +19,7 @@ config :flezha,
     overflow_policy: :drop,
     cardinality_budget_per_source: 1_000,
     pubsub_sink_enabled: false,
+    data_plane_liveness: true,
     # Built-in pollers are off by default in tests so unrelated test
     # modules don't pick up cross-test BEAM/host samples. Tests that
     # exercise the OTP backend opt in via Application.put_env/3.

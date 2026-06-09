@@ -13,6 +13,7 @@ defmodule Flezha.Relay.Overwatch do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
   alias Flezha.State.{Restore, Wire}
+  alias Flezha.Transport.LivenessCounters
 
   # Defaults for the bounded-retry governor introduced by
   # `fix-overwatch-restart-storm`. Tuned to ~19 s aggregate so a transient
@@ -49,6 +50,10 @@ defmodule Flezha.Relay.Overwatch do
     default_input_type: "2",
     arrived_via_hotswap?: false,
     init_error: nil,
+    # Liveness counters ref (io_in_received / forwarded / filtered_nil) so a
+    # stall can be localised to "WS plugin stopped feeding" vs "relay stopped
+    # forwarding to the channel".
+    liveness_ref: nil,
     # The `:executor_migrate` retry runs in a `Task.Supervisor.async_nolink/3`
     # task so it never blocks `:stop_relay`; this field carries the in-flight
     # task's reference + pid so `:stop_relay` can terminate it cleanly. `nil`
@@ -85,7 +90,8 @@ defmodule Flezha.Relay.Overwatch do
       snapshot: nil,
       default_input_type: Keyword.get(relay.opts, :default_input_type, "2"),
       extensions: Table.new(__extensions_catalog__()),
-      builder: relay
+      builder: relay,
+      liveness_ref: LivenessCounters.register_relay(relay.id)
     }
 
     {:ok, state, {:continue, {:bind_executor, stale_executor_id, relay}}}
@@ -656,6 +662,7 @@ defmodule Flezha.Relay.Overwatch do
   def handle_call({:io_in, message, metadata}, _from, state) do
     metadata = Map.put_new(metadata, "input_type", state.default_input_type)
     payload = run_io(state, :on_input, message, metadata)
+    record_io(state.liveness_ref, payload)
 
     case payload do
       nil ->
@@ -668,7 +675,9 @@ defmodule Flezha.Relay.Overwatch do
         case GenServer.call(state.channel, {:io_in, state.id, payload}) do
           {:error, :no_stream} ->
             :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{relay_id: state.id})
-          _ -> :ok
+
+          _ ->
+            :ok
         end
     end
 
@@ -706,9 +715,10 @@ defmodule Flezha.Relay.Overwatch do
   def handle_cast({:io_in, message, metadata}, state) do
     metadata = Map.put_new(metadata, "input_type", state.default_input_type)
     payload = run_io(state, :on_input, message, metadata)
+    record_io(state.liveness_ref, payload)
 
     case payload do
-      nil -> nil
+      nil -> :ok
       _ -> GenServer.cast(state.channel, {:io_in, state.id, payload})
     end
 
@@ -748,6 +758,13 @@ defmodule Flezha.Relay.Overwatch do
   def handle_cast({:kick_restore, executor_id}, %__MODULE__{} = state) do
     do_dispatch_restore(state, state.builder.opts, executor_id)
     {:noreply, state}
+  end
+
+  # Liveness bookkeeping for one ingress message: always an io_in, then either
+  # filtered (on_input returned nil) or forwarded to the channel.
+  defp record_io(ref, payload) do
+    LivenessCounters.bump_relay(ref, :io_in_received)
+    LivenessCounters.bump_relay(ref, if(is_nil(payload), do: :filtered_nil, else: :forwarded))
   end
 
   defp run_io(%__MODULE__{} = state, extension, message, metadata) do
@@ -791,7 +808,10 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, %__MODULE__{migrate_task: %{ref: ref}} = state) do
+  def handle_info(
+        {:DOWN, ref, :process, _pid, _reason},
+        %__MODULE__{migrate_task: %{ref: ref}} = state
+      ) do
     # The task has exited normally (or crashed before posting a result).
     # Clear the migrate_task slot so the next migrate can spawn.
     {:noreply, %{state | migrate_task: nil}}

@@ -15,8 +15,21 @@ defmodule Flezha.Convergence.Loop do
 
   use GenServer
 
-  alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, Probe, RecoveryGate, Snapshot}
+  alias Flezha.Convergence.{
+    Backoff,
+    Diff,
+    Heal,
+    Intent,
+    Planner,
+    Probe,
+    RecoveryGate,
+    Snapshot,
+    StallClassifier
+  }
+
   alias Flezha.Service.{EventManager, HubManager}
+  alias Flezha.Transport.LivenessCounters
+  alias Flezha.Transport.Server, as: TransportServer
 
   require Logger
 
@@ -38,7 +51,11 @@ defmodule Flezha.Convergence.Loop do
             # relay_instance => monotonic_ms when last flagged stalled.
             # Reported to /healthz as degraded; the Watchdog resyncs the
             # relay in place. Entries age out after the output-stall grace.
-            stalled_relays: %{}
+            stalled_relays: %{},
+            # Previous data-plane liveness snapshot + last emitted stall layer.
+            # Detection only — the classifier never feeds a heal decision.
+            prev_liveness: nil,
+            last_stall_verdict: :ok
 
   # ---------- public API ----------
 
@@ -192,8 +209,58 @@ defmodule Flezha.Convergence.Loop do
       %{state: :ticking}
     )
 
-    state
+    classify_data_plane(state)
   end
+
+  # Detection-only: localise a silent data-plane stall to one layer and emit a
+  # single event when the verdict changes. This adds NO heal action — the
+  # existing `:output_stall → rebind` path is untouched — and any error here is
+  # swallowed so instrumentation can never break convergence.
+  defp classify_data_plane(%__MODULE__{} = state) do
+    if LivenessCounters.poll_enabled?() do
+      current = build_liveness_snapshot()
+      verdict = StallClassifier.classify(current, state.prev_liveness, %{})
+      maybe_emit_stall(verdict, state.last_stall_verdict)
+      %{state | prev_liveness: current, last_stall_verdict: verdict_key(verdict)}
+    else
+      state
+    end
+  rescue
+    e ->
+      Logger.warning("[convergence] data-plane classifier skipped: #{Exception.message(e)}")
+      state
+  catch
+    _, _ -> state
+  end
+
+  defp build_liveness_snapshot() do
+    drivers =
+      TransportServer.list_active_transports()
+      |> Enum.flat_map(fn t ->
+        case TransportServer.get_stats(t) do
+          {:ok, %{driver: d}} when is_map(d) -> [Map.put(d, :transport, t)]
+          _ -> []
+        end
+      end)
+
+    %{channels: channels, relays: relays} = LivenessCounters.snapshot_all()
+    %{drivers: drivers, channels: channels, relays: relays}
+  end
+
+  defp maybe_emit_stall(:ok, _last), do: :ok
+
+  defp maybe_emit_stall({layer, ctx}, last) when layer != last do
+    :telemetry.execute(
+      [:flezha, :data_plane, :stall_localized],
+      %{count: 1},
+      Map.put(ctx, :layer, layer)
+    )
+  end
+
+  defp maybe_emit_stall(_verdict, _last), do: :ok
+
+  defp verdict_key(:ok), do: :ok
+  defp verdict_key({layer, _ctx}), do: layer
 
   defp tick_failed_telemetry() do
     :telemetry.execute(
@@ -214,7 +281,9 @@ defmodule Flezha.Convergence.Loop do
       end)
 
     ready =
-      Enum.filter(misbound, fn {ref, _dead} -> Map.get(new_streaks, ref) >= @misbound_min_ticks end)
+      Enum.filter(misbound, fn {ref, _dead} ->
+        Map.get(new_streaks, ref) >= @misbound_min_ticks
+      end)
 
     {new_streaks, %{delta | misbound_relays: ready}}
   end
@@ -247,7 +316,14 @@ defmodule Flezha.Convergence.Loop do
 
           ns ->
             if MapSet.member?(ready, ns) do
-              [%{primitive: :rebind_relay, namespace: ns, target: relay_id, args: %{reason: :output_stall}}]
+              [
+                %{
+                  primitive: :rebind_relay,
+                  namespace: ns,
+                  target: relay_id,
+                  args: %{reason: :output_stall}
+                }
+              ]
             else
               []
             end

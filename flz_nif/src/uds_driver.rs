@@ -9,6 +9,7 @@ use mio::{Events, Interest, Poll, Token, Waker};
 use rustler::LocalPid;
 
 use crate::driver_msg::{send_closed_msg, send_connection_msg, send_data_msg};
+use crate::driver_stats::{DriverStats, StreamSnapshot};
 use crate::frame_buffer::{FrameBuffer, ParsedFrame};
 use crate::resources::StreamHandle;
 
@@ -52,6 +53,12 @@ struct StreamState {
     active: bool,
     passive_queue: Vec<ParsedFrame>,
     write_buffer: Vec<u8>,
+    // Liveness counters (single-threaded driver, no contention). Copied into
+    // the DriverStats snapshot once per loop iteration.
+    frames_written: u64,
+    frames_read: u64,
+    last_write_ms: u64,
+    last_read_ms: u64,
 }
 
 /// Start result passed back from driver thread to NIF via channel.
@@ -69,8 +76,9 @@ pub fn run_uds_driver(
     cmd_rx: Receiver<ServerCommand>,
     cmd_tx: Sender<ServerCommand>,
     ready_tx: Sender<std::io::Result<DriverReady>>,
+    stats: Arc<DriverStats>,
 ) {
-    match init_and_run(socket_path, acceptor_pid, cmd_rx, cmd_tx, ready_tx) {
+    match init_and_run(socket_path, acceptor_pid, cmd_rx, cmd_tx, ready_tx, stats) {
         Ok(()) => {}
         Err(e) => eprintln!("[flz_nif] UDS driver fatal error: {}", e),
     }
@@ -82,6 +90,7 @@ fn init_and_run(
     cmd_rx: Receiver<ServerCommand>,
     cmd_tx: Sender<ServerCommand>,
     ready_tx: Sender<std::io::Result<DriverReady>>,
+    stats: Arc<DriverStats>,
 ) -> std::io::Result<()> {
     // Clean up stale socket file
     if socket_path.exists() {
@@ -114,9 +123,14 @@ fn init_and_run(
         &waker,
         poll,
         listener,
+        stats,
     )
 }
 
+// reason: the loop owns the listener, command channel, waker, poll registry and
+// the shared stats handle; bundling them into a struct would not reduce the
+// genuine state the loop must thread.
+#[allow(clippy::too_many_arguments)]
 fn driver_loop(
     socket_path: PathBuf,
     acceptor_pid: LocalPid,
@@ -125,6 +139,7 @@ fn driver_loop(
     _waker: &Arc<Waker>,
     mut poll: Poll,
     listener: UnixListener,
+    stats: Arc<DriverStats>,
 ) -> std::io::Result<()> {
     let mut events = Events::with_capacity(256);
     let mut streams: HashMap<u64, StreamState> = HashMap::new();
@@ -135,6 +150,11 @@ fn driver_loop(
 
     loop {
         let _ = poll.poll(&mut events, Some(std::time::Duration::from_millis(50)));
+
+        // Liveness heartbeat: bump once per iteration before any work, so a
+        // frozen counter (with a stale last_loop_ms) pinpoints a wedged thread.
+        let now = stats.now_ms();
+        stats.mark_loop(now, cmd_rx.len() as u64);
 
         // Collect events that need stream reads (to avoid borrow issues)
         let mut readable_streams: Vec<u64> = Vec::new();
@@ -179,7 +199,7 @@ fn driver_loop(
 
         // Flush writable streams (backpressure relief)
         for stream_id in writable_streams {
-            if flush_write_buffer(stream_id, &mut streams, &mut poll) {
+            if flush_write_buffer(stream_id, &mut streams, &mut poll, now) {
                 if let Some(state) = streams.get(&stream_id) {
                     let owner = *state.owner.lock().unwrap();
                     send_closed_msg(owner, stream_id, "write_error");
@@ -190,7 +210,7 @@ fn driver_loop(
 
         // Read from streams
         for stream_id in readable_streams {
-            let closed = read_stream_data(stream_id, &mut streams, &mut read_buf);
+            let closed = read_stream_data(stream_id, &mut streams, &mut read_buf, now);
             if closed {
                 close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
             }
@@ -200,7 +220,7 @@ fn driver_loop(
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
                 ServerCommand::SendData { stream_id, data } => {
-                    if enqueue_write(stream_id, data, &mut streams, &mut poll) {
+                    if enqueue_write(stream_id, data, &mut streams, &mut poll, now) {
                         if let Some(state) = streams.get(&stream_id) {
                             let owner = *state.owner.lock().unwrap();
                             send_closed_msg(owner, stream_id, "write_error");
@@ -219,7 +239,7 @@ fn driver_loop(
                         &message,
                         metadata,
                     );
-                    if enqueue_write(stream_id, frame, &mut streams, &mut poll) {
+                    if enqueue_write(stream_id, frame, &mut streams, &mut poll, now) {
                         if let Some(state) = streams.get(&stream_id) {
                             let owner = *state.owner.lock().unwrap();
                             send_closed_msg(owner, stream_id, "write_error");
@@ -270,7 +290,7 @@ fn driver_loop(
             .map(|(&id, _)| id)
             .collect();
         for stream_id in ids_with_data {
-            if flush_write_buffer(stream_id, &mut streams, &mut poll) {
+            if flush_write_buffer(stream_id, &mut streams, &mut poll, now) {
                 if let Some(state) = streams.get(&stream_id) {
                     let owner = *state.owner.lock().unwrap();
                     send_closed_msg(owner, stream_id, "write_error");
@@ -278,6 +298,26 @@ fn driver_loop(
                 close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
             }
         }
+
+        // Rebuild the per-stream liveness snapshot once per iteration (off the
+        // per-frame path). A frozen loop means this never refreshes — matching
+        // the stale last_loop_ms that flags the wedge.
+        let snap: HashMap<u64, StreamSnapshot> = streams
+            .iter()
+            .map(|(&id, s)| {
+                (
+                    id,
+                    StreamSnapshot {
+                        write_buffer_len: s.write_buffer.len() as u64,
+                        frames_written: s.frames_written,
+                        frames_read: s.frames_read,
+                        last_write_ms: s.last_write_ms,
+                        last_read_ms: s.last_read_ms,
+                    },
+                )
+            })
+            .collect();
+        stats.set_streams(snap);
     }
 }
 
@@ -288,10 +328,12 @@ fn enqueue_write(
     data: Vec<u8>,
     streams: &mut HashMap<u64, StreamState>,
     poll: &mut Poll,
+    now: u64,
 ) -> bool {
     if let Some(state) = streams.get_mut(&stream_id) {
+        state.frames_written += 1;
         state.write_buffer.extend_from_slice(&data);
-        return try_flush(state, poll);
+        return try_flush(state, poll, now);
     }
     false
 }
@@ -299,12 +341,13 @@ fn enqueue_write(
 /// Attempt to write buffered data to the stream.
 /// If WouldBlock, registers for WRITABLE events so we retry later.
 /// Returns true if the stream is broken (write error).
-fn try_flush(state: &mut StreamState, poll: &mut Poll) -> bool {
+fn try_flush(state: &mut StreamState, poll: &mut Poll, now: u64) -> bool {
     while !state.write_buffer.is_empty() {
         match state.stream.write(&state.write_buffer) {
             Ok(0) => break,
             Ok(n) => {
                 state.write_buffer.drain(..n);
+                state.last_write_ms = now;
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 let _ = poll.registry().reregister(
@@ -331,9 +374,14 @@ fn try_flush(state: &mut StreamState, poll: &mut Poll) -> bool {
 
 /// Flush write buffer for a specific stream by ID.
 /// Returns true if the stream is broken (write error).
-fn flush_write_buffer(stream_id: u64, streams: &mut HashMap<u64, StreamState>, poll: &mut Poll) -> bool {
+fn flush_write_buffer(
+    stream_id: u64,
+    streams: &mut HashMap<u64, StreamState>,
+    poll: &mut Poll,
+    now: u64,
+) -> bool {
     if let Some(state) = streams.get_mut(&stream_id) {
-        return try_flush(state, poll);
+        return try_flush(state, poll, now);
     }
     false
 }
@@ -386,6 +434,10 @@ fn accept_connections(
                         active: false,
                         passive_queue: Vec::new(),
                         write_buffer: Vec::new(),
+                        frames_written: 0,
+                        frames_read: 0,
+                        last_write_ms: 0,
+                        last_read_ms: 0,
                     },
                 );
                 token_to_stream.insert(token, stream_id);
@@ -420,6 +472,7 @@ fn read_stream_data(
     stream_id: u64,
     streams: &mut HashMap<u64, StreamState>,
     read_buf: &mut [u8],
+    now: u64,
 ) -> bool {
     let state = match streams.get_mut(&stream_id) {
         Some(s) => s,
@@ -437,6 +490,8 @@ fn read_stream_data(
             Ok(n) => {
                 let frames = state.frame_buffer.feed(&read_buf[..n]);
                 let owner = *state.owner.lock().unwrap();
+                state.last_read_ms = now;
+                state.frames_read += frames.len() as u64;
 
                 if state.active {
                     for frame in frames {

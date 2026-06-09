@@ -1,5 +1,6 @@
 defmodule Flezha.Executor.StreamChannel do
   alias Flezha.State.Wire, as: StateWire
+  alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Native
 
   require Logger
@@ -27,17 +28,40 @@ defmodule Flezha.Executor.StreamChannel do
         stream_ref: nil,
         relay_mapping: %{},
         name: name,
-        last_seen: System.monotonic_time(:millisecond)
+        last_seen: System.monotonic_time(:millisecond),
+        liveness_ref: LivenessCounters.register_channel(executor_id, name)
       }
     }
   end
 
   defp schedule_io_liveness_check do
-    interval = Application.get_env(:flezha, :io_stream_liveness_interval_ms, @io_liveness_interval_ms)
+    interval =
+      Application.get_env(:flezha, :io_stream_liveness_interval_ms, @io_liveness_interval_ms)
+
     if interval > 0, do: Process.send_after(self(), :io_liveness_check, interval)
   end
 
-  defp mark_seen(state), do: %{state | last_seen: System.monotonic_time(:millisecond)}
+  defp mark_seen(state) do
+    LivenessCounters.bump_channel(state[:liveness_ref], :flz_data_received)
+    %{state | last_seen: System.monotonic_time(:millisecond)}
+  end
+
+  # Count an outbound io_in: one frame received and one send_frame issued, with
+  # the send timestamp. A stall shows whether the channel is still being fed
+  # (io_in_received) and still calling send_frame (send_frame_calls).
+  defp bump_send(state) do
+    ref = state[:liveness_ref]
+    LivenessCounters.bump_channel(ref, :io_in_received)
+    LivenessCounters.bump_channel(ref, :send_frame_calls)
+    LivenessCounters.set_channel(ref, :last_send_ms, System.monotonic_time(:millisecond))
+  end
+
+  # Count an io_in that hit an unbound stream: fed, but dropped (not sent).
+  defp bump_drop(state) do
+    ref = state[:liveness_ref]
+    LivenessCounters.bump_channel(ref, :io_in_received)
+    LivenessCounters.bump_channel(ref, :nil_drops)
+  end
 
   @impl true
   def handle_cast(
@@ -48,6 +72,7 @@ defmodule Flezha.Executor.StreamChannel do
     # is observable. The convergence Loop subscribes to `:output_stall`
     # for rebind decisions; drop telemetry remains a useful operator
     # signal independent of that.
+    bump_drop(state)
     :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{relay_id: relay_id})
     {:noreply, state}
   end
@@ -57,6 +82,7 @@ defmodule Flezha.Executor.StreamChannel do
         {:io_in, relay_id, {message, metadata}},
         %{stream_ref: stream_ref} = state
       ) do
+    bump_send(state)
     Native.send_frame(stream_ref, relay_id, message, metadata)
     {:noreply, state}
   end
@@ -67,6 +93,7 @@ defmodule Flezha.Executor.StreamChannel do
         _from,
         %{stream_ref: nil} = state
       ) do
+    bump_drop(state)
     {:reply, {:error, :no_stream}, state}
   end
 
@@ -76,6 +103,7 @@ defmodule Flezha.Executor.StreamChannel do
         _from,
         %{stream_ref: stream_ref} = state
       ) do
+    bump_send(state)
     Native.send_frame(stream_ref, relay_id, message, metadata)
     {:reply, :ok, state}
   end

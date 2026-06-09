@@ -1,10 +1,12 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crossbeam::channel;
 use rustler::{Encoder, Env, LocalPid, NifResult, ResourceArc, Term};
 
+use crate::driver_stats::{DriverStats, DriverStatsOut, StreamStatsOut};
 use crate::resources::{TransportServer, TransportServerArc};
 use crate::uds_driver::{self, ServerCommand};
 use crate::{atoms, quic_driver};
@@ -20,11 +22,20 @@ fn start_uds_server(env: Env, socket_path: String, acceptor_pid: LocalPid) -> Ni
     let (ready_tx, ready_rx) = channel::bounded(1);
 
     let cmd_tx_clone = cmd_tx.clone();
+    let stats = Arc::new(DriverStats::new());
+    let stats_clone = Arc::clone(&stats);
 
     let driver_handle = thread::Builder::new()
         .name("flz-uds-driver".into())
         .spawn(move || {
-            uds_driver::run_uds_driver(path, acceptor_pid, cmd_rx, cmd_tx_clone, ready_tx);
+            uds_driver::run_uds_driver(
+                path,
+                acceptor_pid,
+                cmd_rx,
+                cmd_tx_clone,
+                ready_tx,
+                stats_clone,
+            );
         })
         .map_err(|e| rustler::Error::Term(Box::new(format!("spawn error: {}", e))))?;
 
@@ -38,6 +49,7 @@ fn start_uds_server(env: Env, socket_path: String, acceptor_pid: LocalPid) -> Ni
         cmd_tx,
         waker: ready.waker,
         driver_handle: Mutex::new(Some(driver_handle)),
+        stats: Some(stats),
     });
 
     Ok((atoms::ok(), server).encode(env))
@@ -90,6 +102,7 @@ fn start_quic_server(
         cmd_tx,
         waker: ready.waker,
         driver_handle: Mutex::new(Some(driver_handle)),
+        stats: None,
     });
 
     Ok((atoms::ok(), server).encode(env))
@@ -101,4 +114,40 @@ fn stop_server(env: Env, server: TransportServerArc) -> NifResult<Term> {
     let _ = server.cmd_tx.send(ServerCommand::Shutdown);
     let _ = server.waker.wake();
     Ok(atoms::ok().encode(env))
+}
+
+/// Self-reported driver liveness for this server. Returns a map for UDS
+/// servers, or `:undefined` for QUIC (no per-stream stats yet). Read by the
+/// `:flezha_transport` observability source ~1 Hz — never on a data path.
+#[rustler::nif]
+fn driver_stats(env: Env, server: TransportServerArc) -> NifResult<Term> {
+    let stats = match &server.stats {
+        Some(s) => s,
+        None => return Ok(atoms::undefined().encode(env)),
+    };
+
+    let streams = match stats.streams.lock() {
+        Ok(guard) => guard
+            .iter()
+            .map(|(&stream_id, s)| StreamStatsOut {
+                stream_id,
+                write_buffer_len: s.write_buffer_len,
+                frames_written: s.frames_written,
+                frames_read: s.frames_read,
+                last_write_ms: s.last_write_ms,
+                last_read_ms: s.last_read_ms,
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+
+    let out = DriverStatsOut {
+        now_ms: stats.now_ms(),
+        loop_iterations: stats.loop_iterations.load(Ordering::Relaxed),
+        last_loop_ms: stats.last_loop_ms.load(Ordering::Relaxed),
+        cmd_queue_depth: stats.cmd_queue_depth.load(Ordering::Relaxed),
+        streams,
+    };
+
+    Ok(out.encode(env))
 }

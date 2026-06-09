@@ -210,7 +210,12 @@ config :flezha,
     ring_buffer_max_entries_per_source: 10_000,
     overflow_policy: :drop,
     cardinality_budget_per_source: 1_000,
-    pubsub_sink_enabled: true
+    pubsub_sink_enabled: true,
+    # Data-plane liveness instrumentation: always-on atomic counters plus the
+    # ~1s driver poll + per-tick stall classifier. Cheap enough to leave on;
+    # set FLEZHA_DATA_PLANE_LIVENESS=false to drop the poll + classifier.
+    data_plane_liveness:
+      System.get_env("FLEZHA_DATA_PLANE_LIVENESS", "true") in ["1", "true", "yes", "on"]
   ],
   # ------------------------------------------------------------------------------------------------
   # Durable audit log (platform-audit-log).

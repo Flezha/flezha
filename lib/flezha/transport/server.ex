@@ -108,13 +108,29 @@ defmodule Flezha.Transport.Server do
 
   @impl true
   def handle_call(:get_stats, _from, state) do
-    stats = %{
-      transport: state.transport,
-      status: :up,
-      pending_streams: map_size(state.pending_streams || %{})
-    }
+    stats =
+      %{
+        transport: state.transport,
+        status: :up,
+        pending_streams: map_size(state.pending_streams || %{})
+      }
+      |> put_driver_stats(state.server_ref)
 
     {:reply, {:ok, stats}, state}
+  end
+
+  # Merge the NIF driver self-report when available. UDS returns a map; QUIC
+  # returns `:undefined` (no per-stream stats yet). A NIF/decode failure must
+  # not break the stats call, so tolerate it.
+  defp put_driver_stats(stats, server_ref) do
+    case Native.driver_stats(server_ref) do
+      driver when is_map(driver) -> Map.put(stats, :driver, driver)
+      _ -> stats
+    end
+  rescue
+    _ -> stats
+  catch
+    _, _ -> stats
   end
 
   @impl true

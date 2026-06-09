@@ -5,6 +5,7 @@ use crossbeam::channel::Sender;
 use mio::Waker;
 use rustler::{LocalPid, ResourceArc};
 
+use crate::driver_stats::DriverStats;
 use crate::uds_driver::ServerCommand;
 
 /// Opaque handle to a running transport server, held by Elixir as a NIF resource.
@@ -12,6 +13,9 @@ pub struct TransportServer {
     pub cmd_tx: Sender<ServerCommand>,
     pub waker: Arc<Waker>,
     pub driver_handle: Mutex<Option<JoinHandle<()>>>,
+    // Self-reported driver liveness. `None` for the QUIC driver, which does not
+    // yet surface per-stream stats (the silent-stall incident was UDS).
+    pub stats: Option<Arc<DriverStats>>,
 }
 
 impl Drop for TransportServer {

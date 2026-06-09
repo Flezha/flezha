@@ -248,6 +248,21 @@ idle-but-healthy relay is therefore never mistaken for a stall.
 
 ---
 
+## 13. Data-Plane Liveness Instrumentation (stall localization)
+
+`flz_nif/src/driver_stats.rs`, `lib/flezha/transport/liveness_counters.ex`,
+`lib/flezha/convergence/stall_classifier.ex`
+
+Detection-only instrumentation that localizes a silent `io_in`/output stall to
+the exact layer that wedged. The output-stall watchdog (§4) tells you a stream
+went silent; this tells you **why** — was it the relay, the channel, the NIF
+command queue, the driver thread, the socket, or the executor? It adds **zero**
+data-plane behaviour and no remediation. See
+[`transport_liveness.md`](transport_liveness.md) for the full signal set,
+verdict decision tree, and the zero-code `/proc` fallback.
+
+---
+
 ## Durability guarantee summary
 
 | Scenario | State loss | Output |

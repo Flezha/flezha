@@ -34,6 +34,14 @@ defmodule Flezha.Transport.Native do
   @doc "Stop a running transport server."
   def stop_server(_server_ref), do: :erlang.nif_error(:not_loaded)
 
+  @doc """
+  Self-reported driver liveness for a server. Returns a map
+  (`%{now_ms, loop_iterations, last_loop_ms, cmd_queue_depth, streams: [...]}`)
+  for UDS servers, or `:undefined` for QUIC. A frozen `loop_iterations` with a
+  stale `last_loop_ms` means the driver thread is wedged.
+  """
+  def driver_stats(_server_ref), do: :erlang.nif_error(:not_loaded)
+
   # --- Behaviour callbacks (stream operations) ---
 
   @impl true
