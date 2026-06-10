@@ -87,3 +87,5 @@ sdk/java/**/target/
 # Local dev
 .playwright-mcp
 stash/*
+# Local-only ops journal (per-incident prod freeze log)
+/incident_log.md

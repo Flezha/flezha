@@ -261,7 +261,7 @@ data-plane behaviour and no remediation. See
 [`transport_liveness.md`](transport_liveness.md) for the full signal set,
 verdict decision tree, and the zero-code `/proc` fallback. Production
 data-freeze incidents are tracked one-entry-per-occurrence in
-[`incident_log.md`](incident_log.md).
+`incident_log.md` at the repo root (local-only, gitignored).
 
 ---
 
