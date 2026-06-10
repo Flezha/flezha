@@ -152,7 +152,10 @@ defmodule Flezha.Cluster.Orchestrator do
   end
 
   defp connect_nodes(discovery_handler) do
-    {:ok, discovery_handler, to_connect} = DiscoveryProtocol.get_nodes(discovery_handler)
+    {:ok, discovery_handler, discovered} = DiscoveryProtocol.get_nodes(discovery_handler)
+    # Discovery includes this pod's own address; `Node.list/0` never contains
+    # self, so without this filter every sweep "connects" to self and logs it.
+    to_connect = Enum.reject(discovered, &(&1 == node()))
     connected = Node.list()
 
     Logger.debug(

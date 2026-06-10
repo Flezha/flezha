@@ -194,7 +194,9 @@ defmodule Flezha.Transport.Server do
     # to the integer id the data/close messages carry.
     stream_id = Native.stream_id(stream_ref)
 
-    Logger.info(
+    # Debug: the kubelet liveness probe opens+closes a connection every 30s,
+    # so at info this pair dominates steady-state logs with no signal.
+    Logger.debug(
       "[Transport.Server] New connection accepted (#{state.transport}), stream_id=#{stream_id}, stream_ref=#{inspect(stream_ref)}"
     )
 
@@ -268,7 +270,7 @@ defmodule Flezha.Transport.Server do
     # handed off to a ControlChannel/StreamChannel are no longer owned here, so
     # their close events never reach this clause — only still-pending ones do.
     pending = Map.delete(state.pending_streams, stream_id)
-    Logger.info("[Transport.Server] Connection closed: stream_id=#{stream_id}, reason=#{reason}")
+    Logger.debug("[Transport.Server] Connection closed: stream_id=#{stream_id}, reason=#{reason}")
     {:noreply, %{state | pending_streams: pending}}
   end
 

@@ -145,7 +145,10 @@ defmodule Flezha.Diagnostics.MemoryReporter do
   end
 
   defp emit_reading do
-    Logger.info(to_log_line(capture()))
+    # Debug: the `:beam_vm` observability source carries the same readings
+    # (ring buffer + Prometheus), so the periodic log line is redundant noise
+    # at info level.
+    Logger.debug(to_log_line(capture()))
   end
 
   # `binary_alloc` carrier size diverges from `:erlang.memory(:binary)`

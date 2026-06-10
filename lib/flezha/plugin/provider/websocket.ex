@@ -409,7 +409,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
     if rem(counter, 1000) == 0 do
       sample = String.slice(message, 0, 120)
 
-      Logger.info(
+      Logger.debug(
         "[Plugin.Provider.Websocket] frames_seen=#{counter} plugin_id=#{inspect(state.plugin_id)} last_msg_size=#{byte_size(message)} sample=#{inspect(sample)}"
       )
     end
