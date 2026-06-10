@@ -23,7 +23,19 @@ defmodule Flezha.Transport.LivenessCounters do
   # each slot and its key in `snapshot_all/0`. Position (1-based) is the index;
   # appending a slot is the only edit needed. `last_send_ms` holds a monotonic-ms
   # timestamp (set, not incremented); the rest are monotonic counts.
-  @channel_slots [:io_in_received, :send_frame_calls, :nil_drops, :flz_data_received, :last_send_ms]
+  # `hb_count` counts heartbeat frames; `hb_dispatches` mirrors the executor's
+  # self-reported dispatch-progress counter carried in heartbeat metadata —
+  # heartbeats advancing while hb_dispatches is frozen means the executor
+  # process is alive but its dispatch pool is wedged.
+  @channel_slots [
+    :io_in_received,
+    :send_frame_calls,
+    :nil_drops,
+    :flz_data_received,
+    :last_send_ms,
+    :hb_count,
+    :hb_dispatches
+  ]
   @relay_slots [:io_in_received, :forwarded, :filtered_nil]
   @channel_size length(@channel_slots)
   @relay_size length(@relay_slots)
@@ -91,6 +103,42 @@ defmodule Flezha.Transport.LivenessCounters do
     ref
   end
 
+  @doc """
+  Register a per-executor data-stream NIF server so the stall classifier can
+  poll its driver self-report. Without this the classifier only sees the
+  control-channel driver — the data-plane drivers were its blind spot during
+  the 2026-06-10 freeze. Pass `self()` (the owning `StreamAcceptor`).
+  """
+  @spec register_driver(term(), atom(), reference()) :: :ok
+  def register_driver(executor_id, type, server_ref) do
+    ensure_table()
+    :ets.insert(@table, {{:driver, executor_id, type}, server_ref, self()})
+    :ok
+  end
+
+  @doc """
+  Live data-stream driver refs as `{{executor_id, type}, server_ref}` pairs,
+  pruning entries whose owner has died.
+  """
+  @spec driver_refs() :: [{{term(), atom()}, reference()}]
+  def driver_refs() do
+    case :ets.whereis(@table) do
+      :undefined ->
+        []
+
+      _ ->
+        :ets.match_object(@table, {{:driver, :_, :_}, :_, :_})
+        |> Enum.flat_map(fn {{:driver, executor_id, type} = key, ref, owner} ->
+          if Process.alive?(owner) do
+            [{{executor_id, type}, ref}]
+          else
+            :ets.delete(@table, key)
+            []
+          end
+        end)
+    end
+  end
+
   # ---------- hot-path mutation ----------
 
   @doc "Increment a channel counter slot by one."
@@ -142,6 +190,10 @@ defmodule Flezha.Transport.LivenessCounters do
 
                 {:relay, relay_id} ->
                   {chans, [relay_snapshot(relay_id, ref) | rels]}
+
+                # Driver server refs are polled via `driver_refs/0`, not here.
+                {:driver, _executor_id, _type} ->
+                  {chans, rels}
               end
             else
               :ets.delete(@table, key)

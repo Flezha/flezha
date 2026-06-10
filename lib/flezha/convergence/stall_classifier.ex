@@ -17,6 +17,8 @@ defmodule Flezha.Convergence.StallClassifier do
     * `:nif_queue_backing_up`   — commands enqueued but the driver isn't draining them
     * `:socket_write_blocked`   — driver writing into a buffer the peer won't drain
     * `:executor_not_consuming` — controller sending fine, executor reads nothing back
+    * `:executor_pool_wedged`   — executor alive (heartbeats flowing) and fed, but its
+      self-reported dispatch counter is frozen — the SDK pool stopped processing
     * `:channel_not_sending`    — channel fed but not calling send_frame
     * `:relay_not_forwarding`   — relay fed but not forwarding to its channel
 
@@ -46,6 +48,7 @@ defmodule Flezha.Convergence.StallClassifier do
       nif_queue_backing_up(current, previous, o) ||
       socket_write_blocked(current, previous, o) ||
       executor_not_consuming(current, previous, o) ||
+      executor_pool_wedged(current, previous) ||
       channel_not_sending(current, previous) ||
       relay_not_forwarding(current, previous) ||
       :ok
@@ -94,6 +97,52 @@ defmodule Flezha.Convergence.StallClassifier do
            age(d.now_ms, s.last_read_ms) > o.stall_ms do
         {:executor_not_consuming, %{transport: d.transport, stream_id: s.stream_id}}
       end
+    end)
+  end
+
+  # ---------- executor self-report check ----------
+
+  # The executor's heartbeat thread outlives a wedged dispatch pool, so an
+  # executor can look perfectly alive while processing nothing (the 2026-06-10
+  # freeze). Heartbeat metadata carries a dispatch-progress counter; flag the
+  # executor when it is being fed and heartbeating but that counter is frozen.
+  defp executor_pool_wedged(current, previous) do
+    prev_by_exec = group_channels_by_executor(previous.channels)
+
+    current.channels
+    |> group_channels_by_executor()
+    |> find_first(fn {executor_id, cur} ->
+      case Map.get(prev_by_exec, executor_id) do
+        nil ->
+          nil
+
+        prev ->
+          if cur.send_frame_calls > prev.send_frame_calls and cur.hb_count > prev.hb_count and
+               cur.hb_dispatches > 0 and cur.hb_dispatches == prev.hb_dispatches do
+            {:executor_pool_wedged, %{executor_id: executor_id, dispatches: cur.hb_dispatches}}
+          end
+      end
+    end)
+  end
+
+  # Aggregate per-channel counters to one row per executor: sends and
+  # heartbeats sum across its channels; the self-reported dispatch counter is
+  # process-global on the executor, so max() collapses duplicates.
+  defp group_channels_by_executor(channels) do
+    Enum.reduce(channels, %{}, fn c, acc ->
+      row = %{
+        send_frame_calls: Map.get(c, :send_frame_calls, 0),
+        hb_count: Map.get(c, :hb_count, 0),
+        hb_dispatches: Map.get(c, :hb_dispatches, 0)
+      }
+
+      Map.update(acc, c.executor_id, row, fn v ->
+        %{
+          send_frame_calls: v.send_frame_calls + row.send_frame_calls,
+          hb_count: v.hb_count + row.hb_count,
+          hb_dispatches: max(v.hb_dispatches, row.hb_dispatches)
+        }
+      end)
     end)
   end
 

@@ -259,7 +259,9 @@ went silent; this tells you **why** — was it the relay, the channel, the NIF
 command queue, the driver thread, the socket, or the executor? It adds **zero**
 data-plane behaviour and no remediation. See
 [`transport_liveness.md`](transport_liveness.md) for the full signal set,
-verdict decision tree, and the zero-code `/proc` fallback.
+verdict decision tree, and the zero-code `/proc` fallback. Production
+data-freeze incidents are tracked one-entry-per-occurrence in
+[`incident_log.md`](incident_log.md).
 
 ---
 

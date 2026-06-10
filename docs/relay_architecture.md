@@ -320,9 +320,14 @@ c.channel::<Candle>("ohlc.candles")
 
 `OverflowPolicy` is one of:
 
-- **`Block`** — the producer parks on the consumer's `BlockParker` until
-  the drain pops an item, then retries the push. Preserves ordering at
-  the cost of producer-thread stall under sustained pressure.
+- **`Block`** — the producer first drains the full mailbox inline when no
+  drainer is actively running (the slot's drain may exist only as a queued
+  pool task; parking on it self-deadlocks a fully-blocked worker pool —
+  the 2026-06-10 production freeze), otherwise parks briefly on the
+  consumer's `BlockParker` and retries. Preserves ordering, loses nothing,
+  and never stalls indefinitely; a producer blocked >5 s logs a
+  `flezha::mailbox` warning naming the consumer shard. Requires an
+  acyclic shard graph.
 - **`DropNewest`** — incoming item discarded; consumer's
   `drops_newest_total` counter increments by 1.
 - **`DropOldest`** — consumer's mailbox atomically pops its oldest item
@@ -343,12 +348,12 @@ and the wire, so the policy enum has nothing to act on.
 | PluginBound  | (n/a)        | No SDK-side mailbox sits between the producer Shard and the wire; backpressure is OS socket buffer + transport flow control. |
 
 An executor who wants strict end-to-end ordering at the entry edge can
-declare `.on_full(OverflowPolicy::Block)` on their entry channel — they
-opt into the documented co-tenancy hazard (the wire reader parks while
-this one Relay's mailbox is full, so sibling Relays sharing the same
-physical connection stop receiving frames until it drains). The default
-`DropNewest` keeps the reader running and records every drop on the
-per-Partition `drops_newest_total` counter.
+declare `.on_full(OverflowPolicy::Block)` on their entry channel — the
+wire reader then drains the saturated Relay's mailbox inline (briefly
+delaying sibling Relays on the same physical connection) instead of
+dropping. The default `DropNewest` keeps the reader free of that
+co-tenancy cost and records every drop on the per-Partition
+`drops_newest_total` counter.
 
 ### Per-Partition counter set
 

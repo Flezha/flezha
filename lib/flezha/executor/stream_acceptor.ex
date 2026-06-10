@@ -25,6 +25,7 @@ defmodule Flezha.Executor.StreamAcceptor do
       {:ok, server_ref} ->
         Logger.info("[StreamAcceptor] Listening on #{path} for #{type} streams (#{executor_id})")
 
+        Flezha.Transport.LivenessCounters.register_driver(executor_id, type, server_ref)
         stream_ids = StreamSup.stream_ids(executor_id, type)
 
         {:ok,

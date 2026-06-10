@@ -15,16 +15,19 @@ defmodule Flezha.Executor.StreamChannel do
   @io_liveness_threshold_ms 30_000
 
   @impl true
-  def init({executor_id, _type, name}) do
-    # The executor heartbeats the data channel every ~10s; a bound stream whose
-    # last frame (heartbeat or data) is older than the threshold is stalled — a
-    # silent data-plane wedge that raises no `{:flz_closed}` write-error.
-    schedule_io_liveness_check()
+  def init({executor_id, type, name}) do
+    # The executor heartbeats every SECONDARY stream every ~10s; a bound
+    # secondary whose last frame (heartbeat or data) is older than the
+    # threshold is stalled — a silent data-plane wedge that raises no
+    # `{:flz_closed}` write-error. Primary channels are send-only (the
+    # executor never writes them), so the check would flag them forever.
+    if type == :secondary, do: schedule_io_liveness_check()
 
     {
       :ok,
       %{
         executor_id: executor_id,
+        type: type,
         stream_ref: nil,
         relay_mapping: %{},
         name: name,
@@ -172,8 +175,19 @@ defmodule Flezha.Executor.StreamChannel do
   end
 
   # Data-channel heartbeat: the executor emits this every ~10s while connected,
-  # so an idle-but-healthy relay keeps the channel live without producing output.
-  def handle_info({:flz_data, _stream_id, "data_heartbeat", _message, _metadata}, state) do
+  # so an idle-but-healthy relay keeps the channel live without producing
+  # output. Metadata carries the executor's dispatch-progress self-report; the
+  # stall classifier compares it across ticks to catch an alive-but-wedged
+  # dispatch pool (a state every heartbeat-level signal is blind to).
+  def handle_info({:flz_data, _stream_id, "data_heartbeat", _message, metadata}, state) do
+    ref = state[:liveness_ref]
+    LivenessCounters.bump_channel(ref, :hb_count)
+
+    case Integer.parse(Map.get(metadata, "dispatches", "")) do
+      {dispatches, _} -> LivenessCounters.set_channel(ref, :hb_dispatches, dispatches)
+      :error -> :ok
+    end
+
     {:noreply, mark_seen(state)}
   end
 
@@ -209,11 +223,18 @@ defmodule Flezha.Executor.StreamChannel do
     {:noreply, mark_seen(state)}
   end
 
-  # Periodic liveness check: a bound stream whose last frame (heartbeat or data)
-  # is older than the threshold has missed several heartbeats and is stalled.
-  # Emit `output_stall` for each mapped relay (the signal the convergence Loop
-  # rebinds on) — but keep `stream_ref`, since the rebind re-establishes it.
+  # Periodic liveness check: a bound SECONDARY stream whose last frame
+  # (heartbeat or data) is older than the threshold has missed several
+  # heartbeats and is stalled. Emit `output_stall` for each mapped relay (the
+  # signal the convergence Loop rebinds on) — but keep `stream_ref`, since the
+  # rebind re-establishes it. Primary streams are send-only and never receive
+  # heartbeats, so the check is meaningless there (it flagged a false
+  # output_stall every 10s for 21h straight on 2026-06-09/10).
   @impl true
+  def handle_info(:io_liveness_check, %{type: type} = state) when type != :secondary do
+    {:noreply, state}
+  end
+
   def handle_info(:io_liveness_check, state) do
     schedule_io_liveness_check()
 

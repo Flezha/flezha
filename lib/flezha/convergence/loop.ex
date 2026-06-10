@@ -234,7 +234,7 @@ defmodule Flezha.Convergence.Loop do
   end
 
   defp build_liveness_snapshot() do
-    drivers =
+    control_drivers =
       TransportServer.list_active_transports()
       |> Enum.flat_map(fn t ->
         case TransportServer.get_stats(t) do
@@ -243,13 +243,34 @@ defmodule Flezha.Convergence.Loop do
         end
       end)
 
+    # Per-executor data-stream servers (StreamAcceptor-owned) — the layer
+    # that actually carries relay traffic, invisible to get_stats/1.
+    data_drivers =
+      LivenessCounters.driver_refs()
+      |> Enum.flat_map(fn {{executor_id, type}, ref} ->
+        case Flezha.Transport.Native.driver_stats(ref) do
+          d when is_map(d) -> [Map.put(d, :transport, {:uds_data, executor_id, type})]
+          _ -> []
+        end
+      end)
+
     %{channels: channels, relays: relays} = LivenessCounters.snapshot_all()
-    %{drivers: drivers, channels: channels, relays: relays}
+    %{drivers: control_drivers ++ data_drivers, channels: channels, relays: relays}
+  end
+
+  defp maybe_emit_stall(:ok, last) when last not in [nil, :ok] do
+    Logger.info("[convergence] data-plane stall cleared (was #{inspect(last)})")
   end
 
   defp maybe_emit_stall(:ok, _last), do: :ok
 
   defp maybe_emit_stall({layer, ctx}, last) when layer != last do
+    # Telemetry feeds the bus; the log line is what an operator greps during
+    # an incident — the 2026-06-10 freeze emitted no log at onset.
+    Logger.warning(
+      "[convergence] data-plane stall localized: layer=#{inspect(layer)} #{inspect(ctx)}"
+    )
+
     :telemetry.execute(
       [:flezha, :data_plane, :stall_localized],
       %{count: 1},

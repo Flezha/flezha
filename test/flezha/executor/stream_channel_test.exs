@@ -130,7 +130,7 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
   describe "heartbeat liveness → output_stall telemetry" do
     @threshold_ms 25
 
-    setup do
+    setup %{name: name} do
       prev_threshold = Application.get_env(:flezha, :io_stream_liveness_threshold_ms)
       prev_interval = Application.get_env(:flezha, :io_stream_liveness_interval_ms)
       # Small threshold for a fast test; interval 0 disables the auto-timer so the
@@ -154,7 +154,12 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
         restore_env(:io_stream_liveness_interval_ms, prev_interval)
       end)
 
-      :ok
+      # Heartbeats only arrive on secondary streams; the check is gated to them.
+      sec_name = :"#{name}_secondary"
+      {:ok, pid} = StreamChannel.start_link({"ce_test", sec_name, :secondary})
+      on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+
+      %{pid: pid, name: sec_name}
     end
 
     test "idle relay that keeps heart-beating is never flagged", %{pid: pid} do
@@ -192,6 +197,37 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       _ = GenServer.call(pid, :stream_ref_status)
 
       refute_receive {:output_stall, _}, 100
+    end
+
+    test "primary (send-only) stream is never flagged even when bound and silent" do
+      name = :"sc_primary_#{System.unique_integer([:positive])}"
+      {:ok, pid} = StreamChannel.start_link({"ce_test", name, :primary})
+      on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
+      :ok = GenServer.call(pid, {:bind, :ref_x})
+
+      Process.sleep(@threshold_ms * 3)
+      send(pid, :io_liveness_check)
+      _ = GenServer.call(pid, :stream_ref_status)
+
+      refute_receive {:output_stall, _}, 100
+    end
+
+    test "heartbeat metadata records the executor's dispatch self-report", %{
+      pid: pid,
+      name: name
+    } do
+      send(pid, {:flz_data, :ref_x, "data_heartbeat", "", %{"dispatches" => "42"}})
+      send(pid, {:flz_data, :ref_x, "data_heartbeat", "", %{"dispatches" => "57"}})
+      _ = GenServer.call(pid, :stream_ref_status)
+
+      row =
+        Flezha.Transport.LivenessCounters.snapshot_all().channels
+        |> Enum.find(fn c -> c.executor_id == "ce_test" and c.name == name end)
+
+      assert row.hb_count == 2
+      assert row.hb_dispatches == 57
     end
   end
 

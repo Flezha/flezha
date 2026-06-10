@@ -46,9 +46,25 @@ unambiguously means the thread is wedged. QUIC has no equivalent yet —
 **BEAM counters** (`Flezha.Transport.LivenessCounters`): always-on
 `:atomics`-backed `:counters`, one array per channel and per relay, registered in
 a public ETS table. Channels bump `io_in_received`, `send_frame_calls`,
-`nil_drops`, `flz_data_received` and set `last_send_ms`; relays bump
-`io_in_received`, `forwarded`, `filtered_nil`. Sub-100 ns increments, no hot-path
-locks or allocations. Dead-owner entries are pruned on the next `snapshot_all/0`.
+`nil_drops`, `flz_data_received`, `hb_count` and set `last_send_ms`,
+`hb_dispatches`; relays bump `io_in_received`, `forwarded`, `filtered_nil`.
+Sub-100 ns increments, no hot-path locks or allocations. Dead-owner entries are
+pruned on the next `snapshot_all/0`. `StreamAcceptor` additionally registers its
+per-executor data-stream NIF server refs (`register_driver/3`) so the classifier
+polls the drivers that actually carry relay traffic, not just the control
+channel's.
+
+**Executor dispatch self-report** (Rust SDK): every `data_heartbeat` frame
+carries `dispatches` (process-global count of payloads dispatched through
+`drain_partition`) and `blocked_parks` (Block-policy full-mailbox episodes) in
+its metadata. The heartbeat thread outlives a wedged dispatch pool, so without
+this counter an executor can look alive while processing nothing — exactly the
+2026-06-10 freeze. The secondary `StreamChannel` mirrors the values into
+`hb_count` / `hb_dispatches`.
+
+The per-stream `output_stall` heartbeat check runs only on SECONDARY channels —
+primary streams are send-only (the executor never writes them), so the check
+there produced a permanent false positive (one warning every 10 s).
 
 **Metric emission** (`Observability.OtpBackend.TransportSource`, ~1 Hz): the
 driver stats are surfaced per transport (`:driver_loop_iterations`,
@@ -62,9 +78,11 @@ classifier's job, not the metrics'.
 
 `Flezha.Convergence.StallClassifier.classify/3` is a **pure** function over the
 current and previous liveness snapshot. The convergence Loop builds a snapshot
-each tick (driver `get_stats` + `LivenessCounters.snapshot_all`), classifies it,
-and emits one `[:flezha, :data_plane, :stall_localized]` event (carrying
-`%{layer: …}`) when the verdict changes. The classifier feeds **no** heal
+each tick (control driver `get_stats` + registered data-stream `driver_stats` +
+`LivenessCounters.snapshot_all`), classifies it, and on verdict change logs a
+`[convergence] data-plane stall localized: layer=…` warning (and an info line
+on clear) plus one `[:flezha, :data_plane, :stall_localized]` event (carrying
+`%{layer: …}`). The classifier feeds **no** heal
 decision — the existing `:output_stall → rebind` path is untouched — and any
 error in the step is swallowed so instrumentation can never break convergence.
 
@@ -79,6 +97,7 @@ never reads as a stall:
 | `:nif_queue_backing_up` | `cmd_queue_depth` high (> 256) and rising, no stream's `frames_written` advancing |
 | `:socket_write_blocked` | a stream's `write_buffer_len` rising, `frames_written` advancing, last write stale (> 30 s) |
 | `:executor_not_consuming` | `frames_written` advancing but `frames_read` flat, last read stale (> 30 s) |
+| `:executor_pool_wedged` | per executor: `send_frame_calls` advancing, `hb_count` advancing, self-reported `hb_dispatches` > 0 and frozen — alive but processing nothing |
 | `:channel_not_sending` | channel `io_in_received` advancing, `send_frame_calls` flat, `nil_drops` flat (stream bound) |
 | `:relay_not_forwarding` | relay `io_in_received` advancing, `forwarded` flat, the gap not explained by `filtered_nil` |
 

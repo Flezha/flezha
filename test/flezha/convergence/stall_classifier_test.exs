@@ -94,6 +94,91 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert ctx.stream_id == 1
   end
 
+  test "executor_pool_wedged: fed and heartbeating but dispatch counter frozen" do
+    # The 2026-06-10 prod signature: controller sends ~100 frames/s, the
+    # executor's heartbeat thread stays alive, but its dispatch pool is
+    # deadlocked so the self-reported counter never moves.
+    prev =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 100),
+          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000)
+        ]
+      )
+
+    curr =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 200),
+          channel(name: :scs, hb_count: 6, hb_dispatches: 9_000)
+        ]
+      )
+
+    assert {:executor_pool_wedged, ctx} = StallClassifier.classify(curr, prev)
+    assert ctx.executor_id == "exec-1"
+    assert ctx.dispatches == 9_000
+  end
+
+  test "executor_pool_wedged does NOT fire while dispatches advance" do
+    prev =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 100),
+          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000)
+        ]
+      )
+
+    curr =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 200),
+          channel(name: :scs, hb_count: 6, hb_dispatches: 9_500)
+        ]
+      )
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
+  test "executor_pool_wedged does NOT fire for executors that don't self-report (old SDK)" do
+    prev =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 100),
+          channel(name: :scs, hb_count: 5, hb_dispatches: 0)
+        ]
+      )
+
+    curr =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 200),
+          channel(name: :scs, hb_count: 6, hb_dispatches: 0)
+        ]
+      )
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
+  test "executor_pool_wedged does NOT fire when heartbeats stopped (channel-level stall instead)" do
+    prev =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 100),
+          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000)
+        ]
+      )
+
+    curr =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 200),
+          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000)
+        ]
+      )
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
   test "channel_not_sending: channel fed but send_frame flat (stream bound)" do
     prev = snapshot(channels: [channel(io_in_received: 10, send_frame_calls: 10)])
     curr = snapshot(channels: [channel(io_in_received: 30, send_frame_calls: 10)])
@@ -180,7 +265,9 @@ defmodule Flezha.Convergence.StallClassifierTest do
       send_frame_calls: Keyword.get(opts, :send_frame_calls, 0),
       nil_drops: Keyword.get(opts, :nil_drops, 0),
       flz_data_received: Keyword.get(opts, :flz_data_received, 0),
-      last_send_ms: Keyword.get(opts, :last_send_ms, 0)
+      last_send_ms: Keyword.get(opts, :last_send_ms, 0),
+      hb_count: Keyword.get(opts, :hb_count, 0),
+      hb_dispatches: Keyword.get(opts, :hb_dispatches, 0)
     }
   end
 
