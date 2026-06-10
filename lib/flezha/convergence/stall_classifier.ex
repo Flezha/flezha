@@ -93,7 +93,11 @@ defmodule Flezha.Convergence.StallClassifier do
 
   defp executor_not_consuming(current, previous, o) do
     find_stream(current, previous, fn d, s, prev_s ->
+      # `prev_s.frames_read > 0` exempts one-directional streams: a primary
+      # data stream is write-only on the controller side (the executor never
+      # answers on it), so "reads flat" is its normal state, not a stall.
       if s.frames_written > prev_s.frames_written and s.frames_read == prev_s.frames_read and
+           prev_s.frames_read > 0 and
            age(d.now_ms, s.last_read_ms) > o.stall_ms do
         {:executor_not_consuming, %{transport: d.transport, stream_id: s.stream_id}}
       end

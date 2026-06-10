@@ -94,6 +94,34 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert ctx.stream_id == 1
   end
 
+  test "executor_not_consuming does NOT fire on a one-directional (write-only) stream" do
+    # A primary data stream never carries executor→controller frames, so
+    # frames_read stays 0 forever — that is its normal state, not a stall.
+    prev =
+      snapshot(
+        drivers: [
+          driver(
+            transport: {:uds_data, "exec-1", :primary},
+            loop_iterations: 1,
+            streams: [stream(frames_written: 10, frames_read: 0, last_read_ms: 0)]
+          )
+        ]
+      )
+
+    curr =
+      snapshot(
+        drivers: [
+          driver(
+            transport: {:uds_data, "exec-1", :primary},
+            loop_iterations: 2,
+            streams: [stream(frames_written: 500, frames_read: 0, last_read_ms: 0)]
+          )
+        ]
+      )
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
   test "executor_pool_wedged: fed and heartbeating but dispatch counter frozen" do
     # The 2026-06-10 prod signature: controller sends ~100 frames/s, the
     # executor's heartbeat thread stays alive, but its dispatch pool is
