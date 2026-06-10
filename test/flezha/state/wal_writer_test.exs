@@ -173,6 +173,61 @@ defmodule Flezha.State.WalWriterTest do
     end
   end
 
+  describe "non-blocking init" do
+    test "init/1 returns instantly with the disk scan deferred to handle_continue",
+         %{partition_id: pid} do
+      # Run in a child so init's `trap_exit` flag doesn't leak onto the test process.
+      assert {:ok, %WalWriter{file_handle: nil}, {:continue, :open}} =
+               Task.async(fn -> WalWriter.init(pid) end) |> Task.await()
+    end
+
+    test "an append issued immediately after start lands after the deferred scan",
+         %{partition_id: pid} do
+      header = TestHelpers.stub_header()
+
+      # Pre-seed a WAL up to seq 2 so the deferred scan has records to recover.
+      wal_path = Registry.wal_path(pid)
+      File.mkdir_p!(Path.dirname(wal_path))
+
+      File.write!(
+        wal_path,
+        WalWriter.encode_record(0, header, "a") <>
+          WalWriter.encode_record(1, header, "b") <>
+          WalWriter.encode_record(2, header, "c")
+      )
+
+      {:ok, srv} = Supervisor.find_or_start(pid)
+      # Cast the next contiguous change before handle_continue can have run.
+      :ok = WalWriter.append_async(srv, 3, header, "d")
+
+      # The call queues behind the continue and the cast, proving ordering: the
+      # scan recovered seq 2 and the queued append advanced it to 3 with no loss.
+      assert WalWriter.last_persisted_seq(srv) == 3
+
+      # And it is durable: a fresh writer recovers seq 3 from the WAL on disk.
+      WalWriter.close(srv)
+      File.rm(Registry.outbox_dedup_path(pid))
+      {:ok, srv2} = Supervisor.find_or_start(pid)
+      assert WalWriter.last_persisted_seq(srv2) == 3
+    end
+
+    test "writers for distinct partitions are independent processes", %{partition_id: pid} do
+      other = TestHelpers.sample_partition_id("p_" <> uniq())
+
+      {:ok, a} = Supervisor.find_or_start(pid)
+      {:ok, b} = Supervisor.find_or_start(other)
+
+      assert a != b
+      assert Process.alive?(a) and Process.alive?(b)
+      assert {:ok, ^a} = Supervisor.lookup(pid)
+      assert {:ok, ^b} = Supervisor.lookup(other)
+
+      header = TestHelpers.stub_header()
+      assert :ok = WalWriter.append(a, 0, header, "a")
+      assert :ok = WalWriter.append(b, 0, header, "b")
+    end
+  end
+
   defp ok!({:ok, x}), do: {:ok, x}
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
