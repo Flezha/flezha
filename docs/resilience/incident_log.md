@@ -10,6 +10,7 @@ the day it happens** — the occurrence table is how we see recurrence.
 
 | Date (UTC) | Duration | Root cause | Status |
 |---|---|---|---|
+| 2026-06-10 18:20 | ~25 min | Controller StreamChannel blocked in `WalWriter.init` WAL pread-scan (post-restart replay of the large pre-freeze WAL on the rpi4 SD card) | Fixed: `839f019` (init → handle_continue, was written 06-08 but never merged) + classifier one-directional exemption `9b455bd`; deployed 2026-06-10 |
 | 2026-06-10 13:46 | ~3.5 h (manual restart) | SDK BlockParker self-deadlock (confirmed live, thread-level evidence) | Fixed: inline drain in `enqueue` + regression test; deployed 2026-06-10 |
 | ≤ 2026-06-02, ~5+/day | minutes–hours each | Convergence loop SIGKILLed its own busy StreamChannel (proven) | Fixed `336f960`, deployed |
 | 2026-05-09 → 2026-06-10, sporadic | hours each | Unattributed individually; signature consistent with the BlockParker deadlock (possible from 2026-05-09, the day Block-default inter-shard channels reached prod) | Class closed by the 2026-06-10 fix; do not retro-attribute specific incidents |
@@ -23,6 +24,34 @@ false positive on primary channels removed.
 Format: `## YYYY-MM-DD HH:MM UTC — <one-line verdict>`
 
 ---
+
+## 2026-06-10 18:20 UTC — controller secondary StreamChannel blocked in WalWriter.init WAL scan
+
+- **Onset**: candles resumed at 18:19 after the BlockParker-fix deploy +
+  relay re-seed, then stopped again at 18:19:xx; order book never resumed.
+- **Detection (minutes, not hours — the new instrumentation worked)**:
+  secondary channel's `hb_count`/`flz_data_received` frozen while the NIF
+  secondary driver showed `frames_read` advancing (64,870, last read 3 ms
+  ago) → frames arriving but not processed by the channel. The convergence
+  SafeCall warning showed the channel pid with `message_queue_len` 209 →
+  68,759 stuck in `{:gen, :do_call, 4}`.
+- **Live stacktraces**: channel blocked in
+  `Flezha.State.Supervisor.find_or_start/1` (a `DynamicSupervisor.start_child`
+  with infinity timeout); the starting `WalWriter` blocked in
+  `init/1 → do_scan → decode_record → :prim_file.pread` — record-by-record
+  pread scan of the partition's large pre-freeze WAL on the rpi4 SD card.
+  One secondary channel multiplexes all partitions, so one slow writer init
+  froze every relay's output path.
+- **Why it had a ready fix**: commit `839f019` (authored 2026-06-08, branch
+  `wal-writer-nonblocking-init`) moves all WalWriter disk I/O to
+  `handle_continue(:open)` so `find_or_start` returns in microseconds — it
+  was never merged. Merged + deployed today; also fixed an
+  `:executor_not_consuming` classifier false positive on write-only primary
+  streams (`9b455bd`) found during the same verification.
+- **Relation to 13:46**: different layer, same family as the historical
+  "22:14 candle incident" (channel blocked on inline disk I/O). Today's
+  13:46 freeze was the executor-side BlockParker deadlock; this one is
+  controller-side. Both fixed and deployed 2026-06-10.
 
 ## 2026-06-10 13:46 UTC — executor SDK self-deadlock: single pool worker parked forever on a full Block-policy mailbox
 
