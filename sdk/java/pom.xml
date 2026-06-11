@@ -10,7 +10,7 @@
     <packaging>pom</packaging>
 
     <name>Flezha SDK Parent</name>
-    <description>Java 21 SDK for authoring Flezha compute engines.</description>
+    <description>Java 21 SDK for authoring Flezha executors.</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
