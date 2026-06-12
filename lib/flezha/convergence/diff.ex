@@ -13,13 +13,15 @@ defmodule Flezha.Convergence.Diff do
           unbound_relays: [relay_ref()],
           misbound_relays: [{relay_ref(), binary()}],
           missing_plugins: [{relay_ref(), binary(), map()}],
-          extra_plugins: [{relay_ref(), binary(), pid()}]
+          extra_plugins: [{relay_ref(), binary(), pid()}],
+          unhealthy_plugins: [{relay_ref(), binary(), map(), term()}]
         }
 
   defstruct unbound_relays: [],
             misbound_relays: [],
             missing_plugins: [],
-            extra_plugins: []
+            extra_plugins: [],
+            unhealthy_plugins: []
 
   @spec compute(Flezha.Convergence.Intent.t(), map()) :: t()
   def compute(%Flezha.Convergence.Intent{relays: declared}, reality) do
@@ -47,34 +49,46 @@ defmodule Flezha.Convergence.Diff do
         end
       end)
 
-    {missing, extra} = plugin_divergence(declared, observed)
+    {missing, extra, unhealthy} = plugin_divergence(declared, observed)
 
     %__MODULE__{
       unbound_relays: Enum.reverse(unbound),
       misbound_relays: Enum.reverse(misbound),
       missing_plugins: missing,
-      extra_plugins: extra
+      extra_plugins: extra,
+      unhealthy_plugins: unhealthy
     }
   end
 
   # I2: a relay's declared plugin set (durable cspec) vs the set actually
-  # subscribed in its running extension table. Only diffed for relays we
+  # subscribed in its running extension table, plus each subscribed declared
+  # plugin's provider self-reported health. Only diffed for relays we
   # observed with a live pid — a plugin can only be (un)subscribed on a
   # running relay; unbound relays are healed by binding first, which
   # replays the full cspec plugin list.
   defp plugin_divergence(declared, observed) do
-    Enum.reduce(declared, {[], []}, fn %{namespace: ns, relay_id: rid, plugins: plugins},
-                                       {missing_acc, extra_acc} ->
+    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, relay_id: rid, plugins: plugins},
+                                           {missing_acc, extra_acc, unhealthy_acc} ->
       ref = {ns, rid}
       observed_relay = Map.get(observed, ref, %{})
       pid = Map.get(observed_relay, :pid)
 
       if is_pid(pid) do
         running = MapSet.new(Map.get(observed_relay, :running_plugins, []))
+        health = Map.get(observed_relay, :plugin_health, %{})
         declared_ids = MapSet.new(plugins, fn {id, _plugin} -> id end)
 
         missing =
           for {id, plugin} <- plugins, not MapSet.member?(running, id), do: {ref, id, plugin}
+
+        # Disjoint from `missing`: a subscribed declared plugin whose provider
+        # self-reports unhealthy (the authoritative production signal; an
+        # absent or uncertain probe is healthy by contract).
+        unhealthy =
+          for {id, plugin} <- plugins,
+              MapSet.member?(running, id),
+              match?({:unhealthy, _}, Map.get(health, id)),
+              do: {ref, id, plugin, elem(Map.get(health, id), 1)}
 
         # An empty declared set is ambiguous: a genuinely pluginless relay
         # vs a cspec read that returned nothing (Intent.declared/0 falls back
@@ -91,9 +105,9 @@ defmodule Flezha.Convergence.Diff do
                 do: {ref, id, pid}
           end
 
-        {missing_acc ++ missing, extra_acc ++ extra}
+        {missing_acc ++ missing, extra_acc ++ extra, unhealthy_acc ++ unhealthy}
       else
-        {missing_acc, extra_acc}
+        {missing_acc, extra_acc, unhealthy_acc}
       end
     end)
   end
@@ -102,6 +116,6 @@ defmodule Flezha.Convergence.Diff do
   @spec empty?(t()) :: boolean()
   def empty?(%__MODULE__{} = d) do
     d.unbound_relays == [] and d.misbound_relays == [] and
-      d.missing_plugins == [] and d.extra_plugins == []
+      d.missing_plugins == [] and d.extra_plugins == [] and d.unhealthy_plugins == []
   end
 end

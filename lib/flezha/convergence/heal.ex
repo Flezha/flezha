@@ -1,11 +1,11 @@
 defmodule Flezha.Convergence.Heal do
   @moduledoc """
-  The entire heal surface: four idempotent, bounded primitives. Every
+  The entire heal surface: five idempotent, bounded primitives. Every
   catalogue row reduces to a composition of these — adding a failure mode
   never adds a primitive.
 
       rebind_relay
-      start_plugin  stop_plugin
+      start_plugin  stop_plugin  restart_plugin
       evict_executor
 
   `execute/1` dispatches one planned op to its primitive and returns
@@ -16,6 +16,9 @@ defmodule Flezha.Convergence.Heal do
       pid into the new executor's stream channels, replay the WAL.
     * `start_plugin` / `stop_plugin` — reconcile a relay's running plugin
       set against its declared cspec manifest.
+    * `restart_plugin` — tear down and re-subscribe a declared plugin whose
+      provider self-reports unhealthy, so `activate/1` reopens its
+      upstream resources.
     * `evict_executor` — forcibly drop a dead executor binding.
   """
 
@@ -29,7 +32,7 @@ defmodule Flezha.Convergence.Heal do
   @migrate_timeout_ms 2_000
   @plugin_call_timeout_ms 2_000
 
-  @primitives ~w(rebind_relay start_plugin stop_plugin evict_executor)a
+  @primitives ~w(rebind_relay start_plugin stop_plugin restart_plugin evict_executor)a
 
   @spec primitives() :: [atom()]
   def primitives(), do: @primitives
@@ -82,6 +85,23 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
+  # Tear down + re-subscribe a declared plugin whose provider self-reported
+  # unhealthy. On failure the plugin is left unsubscribed and the next tick
+  # retries it through `start_plugin` (it diffs as missing) under Backoff.
+  defp apply_primitive(:restart_plugin, %{namespace: ns, target: rid, args: args}) do
+    with {:ok, pid} when is_pid(pid) <- HubManager.get_pid(ns, rid),
+         {:ok, :ok} <-
+           SafeCall.bounded(
+             pid,
+             {:plugin_restart, args.plugin_id, args.plugin},
+             @plugin_call_timeout_ms
+           ) do
+      :ok
+    else
+      _ -> :error
+    end
+  end
+
   # Forcibly drop a dead/orphaned executor binding so its relays become
   # misbound and rebind onto a live executor next tick.
   defp apply_primitive(:evict_executor, %{target: executor_id}) when is_binary(executor_id) do
@@ -93,8 +113,9 @@ defmodule Flezha.Convergence.Heal do
 
   # Malformed op (no live target) — never produced by the Planner, but a
   # crash here would take down the whole tick. Treat as a failed heal.
-  defp apply_primitive(prim, _op) when prim in [:evict_executor, :start_plugin, :stop_plugin],
-    do: :error
+  defp apply_primitive(prim, _op)
+       when prim in [:evict_executor, :start_plugin, :stop_plugin, :restart_plugin],
+       do: :error
 
   # Migrate a relay bound to a dead/wrong executor onto an available one.
   # On success: flip the registry tag and seed the target executor's

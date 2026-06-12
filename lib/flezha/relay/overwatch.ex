@@ -580,6 +580,24 @@ defmodule Flezha.Relay.Overwatch do
     {:reply, :ok, %{state | extensions: table}}
   end
 
+  # Convergence heal for a declared plugin whose provider self-reports
+  # unhealthy: tear down (kills the owned pid) and re-subscribe from the
+  # declared manifest so `activate/1` reopens upstream resources. On a
+  # failed re-subscribe the plugin stays unsubscribed — the next tick diffs
+  # it as missing and retries via `start_plugin` under backoff.
+  @impl true
+  def handle_call({:plugin_restart, plugin_id, %Plugin{} = plugin}, _from, %__MODULE__{} = state) do
+    table = Table.unsubscribe(state.extensions, plugin_id)
+
+    case Table.subscribe(table, plugin_id, plugin) do
+      {:ok, table} ->
+        {:reply, :ok, %{state | extensions: Table.bulk_activate(table)}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, %{state | extensions: table}}
+    end
+  end
+
   @impl true
   def handle_call(
         :get_executor,

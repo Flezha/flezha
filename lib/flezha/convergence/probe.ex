@@ -9,9 +9,13 @@ defmodule Flezha.Convergence.Probe do
 
   alias Flezha.Convergence.{SafeCall, Snapshot}
   alias Flezha.Executor.FleetManager
+  alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.HubManager
 
   @relay_call_timeout_ms 1_000
+  # Headroom above the Overwatch call for provider health probes (the
+  # websocket liveness probe blocks up to 500 ms per wedged connection).
+  @health_probe_budget_ms 1_500
 
   @type reality :: %{
           relays: %{{binary(), binary()} => map()},
@@ -48,7 +52,7 @@ defmodule Flezha.Convergence.Probe do
     |> Task.async_stream(
       fn {ref, pid} -> {ref, observe_relay(pid)} end,
       max_concurrency: System.schedulers_online() * 4,
-      timeout: @relay_call_timeout_ms + 250,
+      timeout: @relay_call_timeout_ms + @health_probe_budget_ms,
       on_timeout: :kill_task,
       ordered: true
     )
@@ -67,7 +71,8 @@ defmodule Flezha.Convergence.Probe do
           bound_executor: Map.get(ow, :executor_id),
           factory_id: Map.get(ow, :factory_id),
           parked?: Map.get(ow, :init_error) != nil,
-          running_plugins: running_plugins(ow)
+          running_plugins: running_plugins(ow),
+          plugin_health: plugin_health(pid, ow)
         }
 
       _ ->
@@ -76,10 +81,24 @@ defmodule Flezha.Convergence.Probe do
   end
 
   defp observe_relay(_),
-    do: %{pid: nil, bound_executor: nil, factory_id: nil, parked?: false, running_plugins: []}
+    do: %{
+      pid: nil,
+      bound_executor: nil,
+      factory_id: nil,
+      parked?: false,
+      running_plugins: [],
+      plugin_health: %{}
+    }
 
   defp unreadable(),
-    do: %{pid: nil, bound_executor: :unknown, factory_id: nil, parked?: false, running_plugins: []}
+    do: %{
+      pid: nil,
+      bound_executor: :unknown,
+      factory_id: nil,
+      parked?: false,
+      running_plugins: [],
+      plugin_health: %{}
+    }
 
   # The plugin ids currently subscribed in the relay's extension table.
   defp running_plugins(ow) do
@@ -87,6 +106,23 @@ defmodule Flezha.Convergence.Probe do
       %{plugins: plugins} when is_map(plugins) -> Map.keys(plugins)
       _ -> []
     end
+  end
+
+  # Provider self-reported health (`Extension.Table.health/1`). Owned plugin
+  # pids live on the Overwatch's node, so only the loop running there can
+  # probe them; elsewhere — and on any failed read — report `%{}`: an
+  # uncertain probe is healthy and must never drive a heal.
+  defp plugin_health(pid, ow) do
+    with true <- node(pid) == node(),
+         %Table{} = table <- Map.get(ow, :extensions) do
+      Table.health(table)
+    else
+      _ -> %{}
+    end
+  rescue
+    _ -> %{}
+  catch
+    _, _ -> %{}
   end
 
   # On a failed FleetManager read we record `:unknown`, NOT an empty set:

@@ -52,6 +52,10 @@ defmodule Flezha.Convergence.Loop do
             # Reported to /healthz as degraded; the Watchdog resyncs the
             # relay in place. Entries age out after the output-stall grace.
             stalled_relays: %{},
+            # relay_ids whose declared plugins were missing or self-reported
+            # unhealthy on the last tick. Reported to /healthz as degraded;
+            # kept only to log set transitions, not steady state.
+            plugin_degraded: [],
             # Previous data-plane liveness snapshot + last emitted stall layer.
             # Detection only — the classifier never feeds a heal decision.
             prev_liveness: nil,
@@ -190,6 +194,10 @@ defmodule Flezha.Convergence.Loop do
     {streaks, delta} = apply_misbound_streak(state.misbound_streaks, delta)
     state = %{state | misbound_streaks: streaks}
 
+    plugin_degraded = plugin_degraded_relays(delta)
+    maybe_log_plugin_degraded(plugin_degraded, state.plugin_degraded)
+    state = %{state | plugin_degraded: plugin_degraded}
+
     plan = Planner.plan(delta, state.backoff)
     plan = inject_stall_rebinds(plan, stalled, intent, ready, state.backoff)
 
@@ -313,6 +321,32 @@ defmodule Flezha.Convergence.Loop do
     :maps.filter(fn _relay, since -> now - since < grace_ms end, stalled)
   end
 
+  # Relays whose declared plugins diverge from production reality this tick:
+  # missing (not subscribed) or self-reported unhealthy. Sorted for a stable
+  # transition compare.
+  defp plugin_degraded_relays(%Diff{} = delta) do
+    missing = Enum.map(delta.missing_plugins, fn {{_ns, rid}, _id, _plugin} -> rid end)
+    unhealthy = Enum.map(delta.unhealthy_plugins, fn {{_ns, rid}, _id, _plugin, _r} -> rid end)
+    Enum.uniq(missing ++ unhealthy) |> Enum.sort()
+  end
+
+  defp maybe_log_plugin_degraded(same, same), do: :ok
+
+  defp maybe_log_plugin_degraded(new, old) do
+    fresh = new -- old
+    cleared = old -- new
+
+    if fresh != [] do
+      Logger.warning(
+        "[convergence] plugin-degraded relays #{inspect(fresh)} — declared plugins missing or unhealthy; healing"
+      )
+    end
+
+    if cleared != [] do
+      Logger.info("[convergence] plugin-degraded cleared for #{inspect(cleared)}")
+    end
+  end
+
   # Inject backoff-filtered rebind_relay ops for stalled relays not already
   # covered by the plan. Uses args.reason :output_stall so Heal skips the
   # active-executor guard that would block a healthy-but-frozen relay.
@@ -372,7 +406,8 @@ defmodule Flezha.Convergence.Loop do
     intended = length(relays)
     bound = map_size(Map.get(reality, :relays, %{}))
     stalled = Map.keys(state.stalled_relays)
-    producing = max(bound - length(stalled), 0)
+    non_producing = Enum.uniq(stalled ++ state.plugin_degraded)
+    producing = max(bound - length(non_producing), 0)
 
     # After a restart the durable registry may hold relays that are not yet
     # bound to a live pid — either the hub has not started (lazy on executor
@@ -386,6 +421,7 @@ defmodule Flezha.Convergence.Loop do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
       stalled_relays: stalled,
+      plugin_degraded_relays: state.plugin_degraded,
       intended_relays: intended,
       bound_relays: bound,
       producing_relays: producing,

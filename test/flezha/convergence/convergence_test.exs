@@ -158,6 +158,68 @@ defmodule Flezha.ConvergenceTest do
       assert delta.extra_plugins == []
     end
 
+    test "I3: a subscribed declared plugin self-reporting unhealthy diffs as unhealthy" do
+      p = plugin("ws_in")
+
+      intent = %Intent{
+        relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: [{"ws_in", p}]}]
+      }
+
+      reality = %{
+        active_executors: %{ns: MapSet.new(["e"])},
+        relays: %{
+          {:ns, "r"} => %{
+            bound_executor: "e",
+            pid: self(),
+            running_plugins: ["ws_in"],
+            plugin_health: %{"ws_in" => {:unhealthy, :connection_idle}}
+          }
+        },
+        stalled_relays: MapSet.new()
+      }
+
+      delta = Diff.compute(intent, reality)
+      assert delta.unhealthy_plugins == [{{:ns, "r"}, "ws_in", p, :connection_idle}]
+      assert delta.missing_plugins == []
+      refute Diff.empty?(delta)
+    end
+
+    test "I3: missing and unhealthy buckets are disjoint; uncertain health is healthy" do
+      missing = plugin("gone")
+      shaky = plugin("shaky")
+      fine = plugin("fine")
+
+      intent = %Intent{
+        relays: [
+          %{
+            namespace: :ns,
+            relay_id: "r",
+            factory_id: nil,
+            plugins: [{"gone", missing}, {"shaky", shaky}, {"fine", fine}]
+          }
+        ]
+      }
+
+      reality = %{
+        active_executors: %{ns: MapSet.new(["e"])},
+        relays: %{
+          {:ns, "r"} => %{
+            bound_executor: "e",
+            pid: self(),
+            running_plugins: ["shaky", "fine"],
+            # "gone" is absent from health (unsubscribed); "fine" has no
+            # verdict at all (uncertain probe) — both must not be unhealthy.
+            plugin_health: %{"shaky" => {:unhealthy, :produce_stalled}}
+          }
+        },
+        stalled_relays: MapSet.new()
+      }
+
+      delta = Diff.compute(intent, reality)
+      assert delta.missing_plugins == [{{:ns, "r"}, "gone", missing}]
+      assert delta.unhealthy_plugins == [{{:ns, "r"}, "shaky", shaky, :produce_stalled}]
+    end
+
     test "I2: skips plugin diff for relays with no live pid" do
       p = plugin("declared")
 
@@ -252,6 +314,18 @@ defmodule Flezha.ConvergenceTest do
 
       assert args.plugin_id == "p1"
       assert args.plugin == p
+    end
+
+    test "unhealthy plugins emit restart_plugin carrying the %Plugin{} and reason" do
+      p = plugin("p1")
+      delta = %Diff{unhealthy_plugins: [{{:ns, "r"}, "p1", p, :produce_stalled}]}
+
+      assert [%{primitive: :restart_plugin, namespace: :ns, target: "r", args: args}] =
+               Planner.plan(delta, Backoff.new())
+
+      assert args.plugin_id == "p1"
+      assert args.plugin == p
+      assert args.reason == :produce_stalled
     end
   end
 
@@ -363,9 +437,15 @@ defmodule Flezha.ConvergenceTest do
   end
 
   describe "Heal" do
-    test "the heal surface is exactly the four reachable primitives" do
+    test "the heal surface is exactly the five reachable primitives" do
       assert Enum.sort(Heal.primitives()) ==
-               Enum.sort([:rebind_relay, :start_plugin, :stop_plugin, :evict_executor])
+               Enum.sort([
+                 :rebind_relay,
+                 :start_plugin,
+                 :stop_plugin,
+                 :restart_plugin,
+                 :evict_executor
+               ])
     end
 
     test "evict_executor on an unknown id is an idempotent :ok" do
@@ -374,12 +454,17 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "a deleted/unknown primitive is no longer dispatchable" do
-      # `restart_plugin`, `start_relay`, `replay_state`, `compact_wal` were
-      # never planned and did nothing — they are gone, not silent no-ops.
-      for primitive <- [:restart_plugin, :start_relay, :replay_state, :compact_wal] do
+      # `start_relay`, `replay_state`, `compact_wal` were never planned and
+      # did nothing — they are gone, not silent no-ops.
+      for primitive <- [:start_relay, :replay_state, :compact_wal] do
         op = %{primitive: primitive, namespace: nil, target: :noop, args: %{}}
         assert Heal.execute(op) == :error
       end
+    end
+
+    test "a malformed restart_plugin op (no args) is a failed heal, not a crash" do
+      op = %{primitive: :restart_plugin, namespace: nil, target: :noop}
+      assert Heal.execute(op) == :error
     end
   end
 

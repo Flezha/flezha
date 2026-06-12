@@ -121,6 +121,7 @@ defmodule Flezha.Healthz.Server do
     intended = Map.get(current, :intended_relays, bound)
     producing = Map.get(current, :producing_relays, 0)
     stalled = Map.get(current, :stalled_relays, [])
+    plugin_degraded = Map.get(current, :plugin_degraded_relays, [])
     pending_restore = Map.get(current, :pending_restore, false)
     last_tick_at = Map.get(current, :last_tick_at)
 
@@ -185,10 +186,12 @@ defmodule Flezha.Healthz.Server do
         {:degraded,
          encode_json(%{
            status: "degraded",
+           reason: degraded_reason(stalled, plugin_degraded),
            tick_age_ms: tick_age(last_tick_at),
            bound_relays: bound,
            producing_relays: producing,
-           stalled_relays: stalled
+           stalled_relays: stalled,
+           plugin_degraded_relays: plugin_degraded
          })}
 
       true ->
@@ -201,6 +204,10 @@ defmodule Flezha.Healthz.Server do
          })}
     end
   end
+
+  defp degraded_reason(_stalled, []), do: "output_stalled"
+  defp degraded_reason([], _plugin_degraded), do: "plugin_unhealthy"
+  defp degraded_reason(_stalled, _plugin_degraded), do: "output_stalled+plugin_unhealthy"
 
   defp collect_recovery_states() do
     Snapshot.recovery_states() |> Map.values()

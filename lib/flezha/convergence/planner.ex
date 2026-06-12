@@ -75,7 +75,12 @@ defmodule Flezha.Convergence.Planner do
         op(:stop_plugin, ns, rid, %{plugin_id: plugin_id})
       end)
 
-    missing ++ extra
+    unhealthy =
+      Enum.map(d.unhealthy_plugins, fn {{ns, rid}, plugin_id, plugin, reason} ->
+        op(:restart_plugin, ns, rid, %{plugin_id: plugin_id, plugin: plugin, reason: reason})
+      end)
+
+    missing ++ extra ++ unhealthy
   end
 
   defp op(primitive, namespace, target, args) do

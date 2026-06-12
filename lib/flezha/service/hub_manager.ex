@@ -398,9 +398,16 @@ defmodule Flezha.Service.HubManager do
 
     case ProcessHub.is_alive?(hub_id) do
       true ->
-        ProcessRegistry.update(hub_id, relay_id, fn cspec, node_pids, metadata ->
-          {cspec, node_pids, Map.put(metadata, :tag, executor_id)}
-        end)
+        # propagate: true — every node's registry must agree on the owning
+        # executor or hook_insert_pid gates frames on a stale tag elsewhere.
+        ProcessRegistry.update(
+          hub_id,
+          relay_id,
+          fn cspec, node_pids, metadata ->
+            {cspec, node_pids, Map.put(metadata, :tag, executor_id)}
+          end,
+          propagate: true
+        )
 
         :ok
 

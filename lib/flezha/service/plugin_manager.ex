@@ -255,9 +255,16 @@ defmodule Flezha.Service.PluginManager do
       true ->
         result =
           try do
-            ProcessRegistry.update(hub_id, relay_id, fn cspec, node_pids, metadata ->
-              {HubManager.rewrite_cspec_plugins(cspec, update_fn), node_pids, metadata}
-            end)
+            # propagate: true — the manifest must be declared on every hub
+            # node so a restart driven from any node's registry restores it.
+            ProcessRegistry.update(
+              hub_id,
+              relay_id,
+              fn cspec, node_pids, metadata ->
+                {HubManager.rewrite_cspec_plugins(cspec, update_fn), node_pids, metadata}
+              end,
+              propagate: true
+            )
           catch
             :exit, _ -> {:error, :no_response}
           end

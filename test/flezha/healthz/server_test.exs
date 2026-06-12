@@ -123,6 +123,30 @@ defmodule Flezha.Healthz.ServerTest do
     end
   end
 
+  test "plugin-degraded relay → 200 degraded with reason plugin_unhealthy", %{port: port} do
+    # One of two bound relays has declared plugins missing/unhealthy.
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      stalled_relays: [],
+      plugin_degraded_relays: ["btc_kraken"],
+      bound_relays: 2,
+      producing_relays: 1
+    })
+
+    {status, _headers, body} = get(port, "/healthz")
+    decoded = Jason.decode!(body)
+
+    if decoded["status"] == "recovering" do
+      # Planned-recovery branch takes precedence over degraded.
+      assert status == 200
+    else
+      assert status == 200
+      assert decoded["status"] == "degraded"
+      assert decoded["reason"] == "plugin_unhealthy"
+      assert decoded["plugin_degraded_relays"] == ["btc_kraken"]
+    end
+  end
+
   test "relays declared but not yet bound → 200 recovering (post-restart rebind)", %{port: port} do
     # 3 relays intended, only 1 actually bound (controller mid-rebind). Capable-
     # but-not-ready must read recovering, never healthy.

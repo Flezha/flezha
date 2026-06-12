@@ -36,7 +36,7 @@ defmodule Flezha.Service.PluginManagerTest do
     |> Mimic.stub(:is_alive?, fn _hub_id -> true end)
 
     ProcessRegistry
-    |> Mimic.stub(:update, fn _hub_id, relay_id, fun ->
+    |> Mimic.stub(:update, fn _hub_id, relay_id, fun, _opts ->
       cond do
         relay_id != @relay_id ->
           {:error, :not_found}
