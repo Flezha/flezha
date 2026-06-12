@@ -104,7 +104,7 @@ wait_for_new_ce_id() {
 }
 
 note "bringing up dev compose stack (project=${PROJECT}, transport=${FLEZHA_TRANSPORT:-uds})"
-"${COMPOSE[@]}" up -d agent rust
+"${COMPOSE[@]}" up -d controller rust
 
 note "waiting for agent + rust executor to handshake (this includes a one-time elixir + cargo compile on first run; budget ~3-8 min)"
 INITIAL_CE_ID=""

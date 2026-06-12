@@ -43,10 +43,10 @@ mutation is in `Heal`; every other module is side-effect-free.
 |--------|------|
 | `Convergence.Loop` | GenServer owning the tick timer, misbound-streak table, event subscriptions, and try/rescue guard |
 | `Convergence.Intent` | Reads the ProcessHub registry: declared relays, their declared plugins, and factory ids |
-| `Convergence.Probe` | Reads live reality: active executors per namespace, per-relay Overwatch state, hub recovery phase |
-| `Convergence.Diff` | Pure function: intent vs reality → `%Diff{unbound_relays, misbound_relays, missing_plugins, extra_plugins}` |
+| `Convergence.Probe` | Reads live reality: active executors per namespace, per-relay Overwatch state (incl. provider plugin health via `Extension.Table.health/1`), hub recovery phase |
+| `Convergence.Diff` | Pure function: intent vs reality → `%Diff{unbound_relays, misbound_relays, missing_plugins, extra_plugins, unhealthy_plugins}` |
 | `Convergence.Planner` | Pure function: `%Diff{}` + `%Backoff{}` → ordered op list, filtered by cooldown, capped at `max_ops` (default 20) |
-| `Convergence.Heal` | Four idempotent primitives: `rebind_relay`, `start_plugin`, `stop_plugin`, `evict_executor` |
+| `Convergence.Heal` | Five idempotent primitives: `rebind_relay`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_executor` |
 | `Convergence.Backoff` | Per-`{primitive, target}` cooldown table: `5 s → 30 s → 60 s → 300 s`; reset on success |
 | `Convergence.Snapshot` | Shared ETS table read by `/healthz`, CLI, and telemetry; also caches per-hub recovery state |
 | `Convergence.RecoveryGate` | Single query point for hub recovery state: classifies which namespaces are ready for healing; exposes `await_recovery_complete/2` |
@@ -129,6 +129,23 @@ Reconcile a relay's running plugin set against its declared cspec manifest.
 Both are safe to retry; `stop_plugin` on an already-stopped plugin is a no-op;
 `start_plugin` on an already-running plugin is a no-op.
 
+The declared manifest is cluster-wide: `flz plugin enable/disable` persists
+through `ProcessRegistry.update/4` with `propagate: true`, which re-applies the
+cspec rewrite on every hub node (2 s per-peer budget, best-effort; an
+unreachable peer converges on rejoin via peer sync). The same propagation
+applies to the executor tag written by `relay_set_executor/3`. Without it a
+restart driven from another node's registry copy yields a running-but-pluginless
+relay that the loop cannot heal — the 2026-06-12 production gap.
+
+### `restart_plugin`
+
+Tears down and re-subscribes a declared plugin whose provider self-reports
+unhealthy, so `activate/1` reopens its upstream resources (websocket reconnect,
+Kafka producer worker rebuild). Routed through Overwatch
+`{:plugin_restart, id, plugin}` → `Extension.Table` unsubscribe + subscribe.
+If the re-subscribe fails the plugin stays unsubscribed and the next tick
+retries it as a missing plugin under backoff.
+
 ### `evict_executor`
 
 Forcibly drops a dead executor binding from the FleetManager table. Called once
@@ -137,13 +154,24 @@ associated relays are rebound.
 
 ---
 
-## Plugin strike escalation
+## Plugin health (production-liveness detection)
 
-`Convergence.Loop` tracks per-relay-plugin failure strikes. When a plugin fails
-heal (`start_plugin` returns `:error`) across `convergence_plugin_strike_threshold`
-(default 2) consecutive attempts, the loop escalates to a full relay restart.
-Emits `[:flezha, :convergence, :plugin_restart]` and
-`[:flezha, :convergence, :plugin_escalated]` telemetry.
+Channel heartbeats prove the executor link is alive, not that production is.
+The authoritative production signal is the plugin provider's own `health/1`
+self-report, collected per tick by `Probe` through `Extension.Table.health/1`:
+
+- `relay_kafka_producer` → `{:unhealthy, :produce_stalled | :swap_exhausted |
+  :worker_dead | :no_producer}` on a sustained produce stall or dead worker.
+- `relay_websocket` → `{:unhealthy, :no_connection | :not_alive |
+  :connection_idle | :data_idle}` on a dead or silent upstream connection.
+- An uncertain probe (timeout, raise, no `health/1` export, Overwatch on a
+  different node) reports healthy — the loop never escalates on uncertainty.
+
+A declared, subscribed, unhealthy plugin diffs into `unhealthy_plugins` and is
+healed by `restart_plugin` under the standard backoff. Relays with missing or
+unhealthy declared plugins are published as `plugin_degraded_relays`; `/healthz`
+reports `degraded` (HTTP 200, reason `plugin_unhealthy`) while the set is
+non-empty, and the loop logs set transitions only.
 
 ---
 
@@ -154,6 +182,9 @@ health summary. `Healthz.Server` reads `Snapshot.current/0` — it holds no stat
 of its own. The published map includes:
 
 - `bound_relays`, `producing_relays` (for the `degraded` vs `healthy` split)
+- `stalled_relays` and `plugin_degraded_relays` (both subtract from
+  `producing_relays`; `/healthz` degraded reason distinguishes
+  `output_stalled` from `plugin_unhealthy`)
 - Per-hub recovery state
 - Tick timestamp (used to detect a stale loop for the `tick_stale` 503 case)
 
@@ -166,8 +197,6 @@ of its own. The published map includes:
 | `FLEZHA_USE_CONVERGENCE_HEALTH` | `:convergence_health_enabled` | `true` | Master kill-switch; `false` removes `Loop` from the supervision tree. `Convergence.Snapshot` always starts so recovery-state reads work even with the loop disabled. |
 | `FLEZHA_CONVERGENCE_TICK_MS` | `:convergence_tick_ms` | `5000` | Tick interval. |
 | `FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS` | `:convergence_output_stall_grace_ms` | `60000` | How long an output stall must persist before an immediate tick is triggered (separate from the watchdog's own `output_stall_timeout_ms`). |
-| `FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD` | `:convergence_plugin_strike_threshold` | `2` | Consecutive plugin-heal failures before relay restart escalation. |
-| `FLEZHA_CONVERGENCE_TICK_LATENCY_THRESHOLD_MS` | `:convergence_tick_latency_threshold_ms` | `1000` | Tick-duration threshold above which `[:flezha, :convergence, :tick_slow]` is emitted. |
 
 ---
 
@@ -175,13 +204,9 @@ of its own. The published map includes:
 
 | Event | Measurements | Metadata |
 |-------|-------------|----------|
-| `[:flezha, :convergence, :tick]` | `%{duration_ms, actions_issued}` | `%{namespace}` |
-| `[:flezha, :convergence, :tick_slow]` | `%{duration_ms}` | `%{}` |
-| `[:flezha, :convergence, :tick_error]` | `%{}` | `%{error: inspect(e)}` |
-| `[:flezha, :convergence, :heal]` | `%{}` | `%{primitive, namespace, target}` |
-| `[:flezha, :convergence, :safe_call]` | `%{}` | `%{reason: :timeout \| :noproc \| :error}` |
-| `[:flezha, :convergence, :plugin_restart]` | `%{}` | `%{namespace, relay_id, plugin_id}` |
-| `[:flezha, :convergence, :plugin_escalated]` | `%{}` | `%{namespace, relay_id, plugin_id}` |
+| `[:flezha, :convergence, :tick]` | `%{relays_total, actions_issued, duration_ms}` | `%{state: :ticking \| :error}` |
+| `[:flezha, :convergence, :heal]` | `%{count}` | `%{primitive, namespace, target}` |
+| `[:flezha, :convergence, :safe_call]` | `%{count}` | `%{result, server, …probe fields}` |
 
 A healthy cluster emits `actions_issued: 0` on most ticks. Sustained non-zero
 `actions_issued` in steady state indicates a structural problem (read race,

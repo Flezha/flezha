@@ -30,6 +30,23 @@ situation (see "Recovery" below).
   is stale (it reflects the moment the node went down, not current reality).
   Trusting it re-introduces dead pids / duplicate bindings = split-brain.
 
+### Registry writes must be cluster-wide for durable manifests
+
+Interval sync propagates **which children run where**, not edits to a row's
+child_spec/metadata: `append_data/2` only rewrites a peer row when its pid
+changed, and then with the *sender's* cspec. A plain
+`ProcessRegistry.update/3` is therefore node-local — an edit issued on one
+node never reaches the others and is clobbered on the next pid change.
+
+Durable manifests embedded in the cspec (the relay plugin list written by
+`flz plugin enable`, the executor tag from `relay_set_executor/3`) MUST be
+written with `ProcessRegistry.update/4` `propagate: true`, which re-applies
+the same pure update function on every hub node (2 s per-peer budget,
+best-effort; a node missed while down converges on rejoin via peer sync).
+All hub nodes are assumed to run the same release — the propagated function
+must resolve on every node. This closed the 2026-06-12 outage gap where a
+relay restarted from a peer's pluginless cspec and nothing could heal it.
+
 ## Recovery from DETS — the ONE exception
 
 DETS replay (re-starting children from the persisted registry) is valid in

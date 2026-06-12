@@ -58,7 +58,7 @@ note() {
 }
 
 flz() {
-  "${COMPOSE[@]}" exec -T agent _build/dev/rel/flezha/bin/flz "$@"
+  "${COMPOSE[@]}" exec -T controller /flezha/target/release/flz "$@"
 }
 
 SOCKETS_DIR="${REPO_ROOT}/app_data/sockets"
@@ -98,7 +98,7 @@ assert_plugin_listed() {
 }
 
 note "bringing up dev compose stack (project=${PROJECT})"
-"${COMPOSE[@]}" up -d agent rust
+"${COMPOSE[@]}" up -d controller rust
 
 note "waiting for agent + rust executor to handshake"
 INITIAL_CE_ID=""

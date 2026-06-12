@@ -18,6 +18,12 @@ doc covers *relay state + output* durability).
 The core durability invariant we provide: **on a *graceful* stop, no state is lost; on a
 *hard kill*, a small best-effort window can lose the most-recent un-persisted state.**
 
+A third durable artifact is the relay's **plugin manifest** (the `on_output`/feed
+plugin chain): it lives in the relay's registry cspec and is written cluster-wide
+(`propagate: true`), so a relay restarted from any node re-attaches its full plugin
+set and the convergence loop re-adds anything missing. See
+`process_hub_recovery_model.md` "Registry writes must be cluster-wide".
+
 ## Scenario matrix
 
 | Scenario | Relay state | Output | Why / how |
