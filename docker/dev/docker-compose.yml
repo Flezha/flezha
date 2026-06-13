@@ -50,7 +50,6 @@ services:
   zookeeper:
     image: zookeeper:3.9.3
     container_name: flezha_zookeeper
-    restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -62,7 +61,6 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.8.6
     container_name: flezha_kafka
-    restart: unless-stopped
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
