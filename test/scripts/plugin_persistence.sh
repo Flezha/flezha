@@ -105,7 +105,7 @@ INITIAL_CE_ID=""
 DEADLINE=$(( $(date +%s) + REJOIN_TIMEOUT_S ))
 while [ -z "${INITIAL_CE_ID}" ] && [ "$(date +%s)" -lt "${DEADLINE}" ]; do
   INITIAL_CE_ID="$(fetch_active_ce_id)"
-  [ -z "${INITIAL_CE_ID}" ] && sleep 5
+  if [ -z "${INITIAL_CE_ID}" ]; then sleep 5; fi
 done
 
 if [ -z "${INITIAL_CE_ID}" ]; then

@@ -49,6 +49,7 @@ WORKDIR /app
 # Makefile shells out to cmake.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        curl \
         build-essential \
         cmake \
         git \
@@ -66,8 +67,11 @@ COPY .process-hub-local ./.process-hub-local
 
 RUN --mount=type=cache,target=/root/.hex \
     --mount=type=cache,target=/root/.mix \
-    mix local.hex --force \
-    && mix local.rebar --force \
+    (mix local.hex --force || mix archive.install github hexpm/hex branch latest --force) \
+    && (mix local.rebar --force \
+        || (curl -fsSL -o /usr/local/bin/rebar3 https://github.com/erlang/rebar3/releases/latest/download/rebar3 \
+            && chmod +x /usr/local/bin/rebar3 \
+            && mix local.rebar rebar3 /usr/local/bin/rebar3 --force)) \
     && mix deps.unlock process_hub \
     && mix deps.get --only prod
 
