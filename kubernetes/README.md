@@ -104,3 +104,36 @@ Logs are configured via environment variables:
 - `FLEZHA_LOG_LEVEL`: `info` (default, can be: debug, info, warning, error)
 
 The controller logs to both stdout (for `kubectl logs`) and file (for persistence).
+
+## Node hardening (required, once per node)
+
+`node-hardening.sh` makes a node freeze diagnosable and cheaply
+self-recovering. It is **not** applied by any manifest — k8s cannot set
+kernel sysctls or journald storage for the host — so it must be run by
+hand, with sudo, **on every cluster node**, and re-run whenever a node is
+reimaged. A node that skips it loses its crash-window logs (journald in
+volatile `/run`) and will not panic-reboot on a >120s kernel hang.
+
+```bash
+# Copy to each node and run as root, e.g.
+scp kubernetes/node-hardening.sh <node>:/tmp/
+ssh <node> 'sudo bash /tmp/node-hardening.sh'
+```
+
+What it sets (idempotent):
+- journald `Storage=persistent`, capped at 200M / 14 days — survives reboot
+  so the next wedge's logs are recoverable.
+- `kernel.hung_task_panic=1` + `kernel.panic=10` — a >120s uninterruptible
+  kernel hang panics and reboots in 10s.
+
+Verify on a node:
+```bash
+cat /proc/sys/kernel/hung_task_panic   # expect 1
+grep Storage /etc/systemd/journald.conf.d/persist.conf   # expect persistent
+```
+
+Note: `hung_task_panic` only fires on kernel D-state hangs. A userspace
+containerd/kubelet wedge (the 2026-06-11 and 2026-06-13 rpi4 outages) will
+not self-reboot from this — persistent journald is what makes that case
+diagnosable. The single-Pi SPOF behind those outages (postgres/kafka/KRaft
+controller all hostPath-pinned to one node) is a separate, still-open issue.
