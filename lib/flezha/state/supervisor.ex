@@ -53,6 +53,27 @@ defmodule Flezha.State.Supervisor do
   end
 
   @doc """
+  Hard-delete a Partition's persisted state: stop its `WalWriter` (if
+  running), drop any pending `FsyncBatcher` dirty mark, and remove the
+  on-disk `{key}.wal`, `{key}.snap.{seq}`, and `{key}.outbox.dedup`
+  files. Idempotent — deleting a never-seen / already-gone partition_id
+  succeeds (`:ok`), which is what the SDK reaper's fire-and-forget send
+  and the `flz state delete` CLI both rely on.
+  """
+  @spec delete_partition(tuple()) :: {:ok, %{partition_id: tuple(), status: :ok}}
+  def delete_partition(partition_id) do
+    case lookup(partition_id) do
+      {:ok, pid} -> WalWriter.close(pid)
+      :error -> :ok
+    end
+
+    Flezha.State.FsyncBatcher.forget(partition_id)
+    Flezha.State.Registry.delete_files(partition_id)
+
+    {:ok, %{partition_id: partition_id, status: :ok}}
+  end
+
+  @doc """
   Look up a running writer pid without starting one.
   """
   @spec lookup(tuple()) :: {:ok, pid()} | :error

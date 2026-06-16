@@ -106,6 +106,14 @@ jobs:
           cargo bench -p flezha_executor --features bench-internals \
             --bench dispatch -- regression_ \
             --save-baseline cron-$(date +%Y%m%d)
+      - name: Criterion dynamic-partition steady-state bench
+        # Trend signal for the dynamic-mode hot path (lazy per-key routing:
+        # shard_key + DashMap lookup). Single relay, 1k active Partitions,
+        # no eviction — measures routing only, not reaping.
+        run: |
+          cargo bench -p flezha_executor --features bench-internals \
+            --bench dynamic_partition_steady_state -- \
+            --save-baseline cron-$(date +%Y%m%d)
       - uses: actions/upload-artifact@v5
         with:
           name: criterion-weekly

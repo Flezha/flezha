@@ -1320,6 +1320,25 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
+  `flz state delete <relay/shard/key>` — hard-delete one Partition's
+  persisted state (WAL + snapshots + outbox-dedup). Idempotent: deleting
+  a partition with no on-disk state still succeeds. This is the
+  operator-driven, confirmation-returning counterpart to the SDK reaper's
+  fire-and-forget `delete_partition_state` send (Decision 8).
+  """
+  def state_delete(path_string) do
+    case String.split(path_string, "/", parts: 3) do
+      [rc, sh, pk] ->
+        {:ok, _} = Flezha.State.Supervisor.delete_partition({rc, sh, pk})
+        IO.puts("deleted persisted state for #{rc}/#{sh}/#{pk}")
+
+      _ ->
+        IO.puts(:stderr, "state delete: expected <relay>/<shard>/<partition_key>; got #{path_string}")
+        System.halt(1)
+    end
+  end
+
+  @doc """
   `flz state retention <relay_class> <hours>` — set runtime retention
   for `<relay_class>`. Persisted across the next Application boot only
   if the executor separately writes it to runtime.exs.

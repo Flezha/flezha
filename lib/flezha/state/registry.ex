@@ -72,6 +72,20 @@ defmodule Flezha.State.Registry do
     Path.join(state_dir(pid), encode_partition_key(partition_key) <> ".outbox.dedup")
   end
 
+  @doc """
+  Remove every on-disk file for one Partition (WAL, all snapshots, the
+  outbox-dedup file). Idempotent: missing files are ignored. Used by the
+  dynamic-mode hard-delete path (`Flezha.State.Supervisor.delete_partition/1`).
+  """
+  @spec delete_files(partition_id()) :: :ok
+  def delete_files({_, _, _} = pid) do
+    [wal_path(pid), outbox_dedup_path(pid)]
+    |> Enum.concat(Enum.map(snapshot_paths(pid), fn {_seq, path} -> path end))
+    |> Enum.each(&File.rm/1)
+
+    :ok
+  end
+
   @spec snapshot_path(partition_id(), non_neg_integer()) :: binary()
   def snapshot_path({_, _, partition_key} = pid, seq) do
     Path.join(

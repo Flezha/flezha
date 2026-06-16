@@ -40,6 +40,7 @@ defmodule Flezha.State.Wire do
 
   @payload_id_partition_state_change "partition_state_change"
   @payload_id_partition_state_snapshot "partition_state_snapshot"
+  @payload_id_delete_partition_state "delete_partition_state"
 
   @header_size 16
 
@@ -48,6 +49,21 @@ defmodule Flezha.State.Wire do
 
   @spec payload_id_partition_state_snapshot() :: binary()
   def payload_id_partition_state_snapshot(), do: @payload_id_partition_state_snapshot
+
+  @doc """
+  Payload-id for the dynamic-mode hard-delete RPC (SDK → controller). The
+  frame body is the bare structured `partition_id` (`decode_partition_id/1`);
+  there is no seq / header / crc. The SDK ships it fire-and-forget when it
+  evicts a persistence-enabled dynamic Partition, so the controller drops
+  the WAL/snapshot/outbox files and a later recreate cold-starts fresh.
+
+  The response (`{partition_id, status}`) is returned synchronously to the
+  CLI delete path (`flz state delete`); the reaper path does not read a
+  reply (fire-and-forget), so no response frame is written back on the
+  data stream.
+  """
+  @spec payload_id_delete_partition_state() :: binary()
+  def payload_id_delete_partition_state(), do: @payload_id_delete_partition_state
 
   @spec header_size() :: pos_integer()
   def header_size(), do: @header_size

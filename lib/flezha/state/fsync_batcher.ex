@@ -41,6 +41,16 @@ defmodule Flezha.State.FsyncBatcher do
   end
 
   @doc """
+  Drop any pending dirty mark for `partition_id`. Called when a Partition
+  is hard-deleted so the next tick does not try to fsync a writer that is
+  being torn down.
+  """
+  @spec forget(tuple()) :: :ok
+  def forget(partition_id) do
+    GenServer.cast(__MODULE__, {:forget, partition_id})
+  end
+
+  @doc """
   Force an immediate tick, primarily for tests. Idempotent and safe
   under load (the next scheduled tick is preserved).
   """
@@ -90,6 +100,10 @@ defmodule Flezha.State.FsyncBatcher do
   @impl true
   def handle_cast({:mark_dirty, partition_id}, state) do
     {:noreply, %{state | dirty_set: MapSet.put(state.dirty_set, partition_id)}}
+  end
+
+  def handle_cast({:forget, partition_id}, state) do
+    {:noreply, %{state | dirty_set: MapSet.delete(state.dirty_set, partition_id)}}
   end
 
   @impl true

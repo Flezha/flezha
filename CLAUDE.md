@@ -7,11 +7,21 @@
   `FsyncBatcher`, `Snapshot`, `Retention`, `Restore`, `TimeTravel`,
   `TestHelpers`.
 - **On-disk layout**: `app_data/state/{relay_class}/{shard_id}/{partition_key}.{wal,snap.{seq},outbox.dedup}` (flat — `executor_id` was dropped by `auto-restore-on-boot`; `Flezha.Boot.StatePathMigrator` handles upgrade migration).
-- **Wire payload-ids**: `partition_state_change`, `partition_state_snapshot`
-  (data stream); `RestoreInitState`, `RestoreInitStateResponse`,
+- **Wire payload-ids**: `partition_state_change`, `partition_state_snapshot`,
+  `delete_partition_state` (data stream); `RestoreInitState`, `RestoreInitStateResponse`,
   `CompactPartition`, `CompactPartitionResponse`, `PartitionMailboxStatus`
   (control channel). See `docs/sdk_protocol_spec.md` "Per-Partition
   State Persistence".
+- **Dynamic partitioning (`relay-dynamic-partitioning`)**: SDK-side
+  `sdk/rust/src/partition/dynamic.rs` (`DynamicPartitionRegistry` +
+  `Reaper`). Dynamic-mode Shards (`shard_key()` overridden, empty
+  `shard_keys()`) create Partitions lazily per key. Eviction is OFF by
+  default (`partition_idle_ttl() -> None`); when a TTL is opted in, the
+  per-Shard reaper evicts idle Partitions **destructively** — it ships
+  `delete_partition_state` (SDK→controller) and the recreate cold-starts
+  fresh (no restore-from-disk, by decision 2026-06-16). Controller handler:
+  `Flezha.State.Supervisor.delete_partition/1` (stops WalWriter, drops
+  FsyncBatcher mark, unlinks files via `Registry.delete_files/1`).
 - **Runtime config knobs**: `:state_root` (default `app_data/state`),
   `:agent_fsync_interval_ms` (5 ms), `:wal_high_watermark_bytes`
   (16 MiB), `:wal_low_watermark_bytes` (`high / 2`),
@@ -19,9 +29,9 @@
   `:time_travel_retention_hours` (per-Relay map), `:relay_persistence`
   (per-Relay map).
 - **CLI**: `flz state list <relay>`, `flz state at <relay/shard/key> <seq|ts>`,
-  `flz state rotate <relay/shard/key>`, `flz state retention <relay> <hours>`.
-  Implemented in `cli/src/state.rs`; RPCs into
-  `Flezha.Service.CliManager.state_*/N`.
+  `flz state rotate <relay/shard/key>`, `flz state retention <relay> <hours>`,
+  `flz state delete <relay/shard/key>`. Implemented in `cli/src/state.rs`;
+  RPCs into `Flezha.Service.CliManager.state_*/N`.
 - **Detailed notes**: `docs/resilience/state_persistence.md`.
 
 ## Auto-restore on boot (`auto-restore-on-boot` + `consume-recovery-mode-and-self-heal`)

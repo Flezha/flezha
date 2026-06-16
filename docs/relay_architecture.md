@@ -49,9 +49,11 @@ and capability spec deltas, see
 
 - **Partition** — a "lane" of a Shard. Single-mode (default) means one
   partition per Shard; static mode declares fixed `shard_keys()` and
-  routes inputs to one or more named partitions via `partition_for`.
-  At most one drain task runs per partition at any time (sticky
-  ordering).
+  routes inputs to one or more named partitions via `partition_for`;
+  dynamic mode overrides `shard_key()` (with empty `shard_keys()`) to
+  create partitions lazily per key seen at runtime (see "Dynamic
+  partitioning" below). At most one drain task runs per partition at any
+  time (sticky ordering).
 
 - **Channel** — the typed wire between producers/consumers. Three kinds:
   `Entry` (controller → SDK, restricted to `Vec<u8>` / `String`),
@@ -249,6 +251,9 @@ The dispatch path is engineered to keep the per-message cost low:
    - Single-mode: jump straight to partition index 0.
    - Static-mode: one HashMap lookup per partition key returned by
      `S::partition_for(&input)`.
+   - Dynamic-mode: one `S::shard_key(&input)` call, then one DashMap
+     lookup on the per-Shard `DynamicPartitionRegistry` (lazily creating
+     the partition on a miss). `None` from `shard_key` drops the input.
 3. **Mailbox push + counter + inflight CAS** — one `ArrayQueue::try_push`,
    one Relaxed `pushes_total` increment, and one atomic compare-exchange.
    If the CAS wins, submit a drain task to the pool; otherwise an
@@ -275,6 +280,43 @@ single-partition / static-fanout bench shapes, the recorded
 `BENCH_FLOOR_MSG_PER_SEC` and `SINGLE_PARTITION_FLOOR_MSG_PER_SEC`
 values, the floor-update protocol, and CI triage instructions when the
 `bench-regression` gate fires.
+
+## Dynamic partitioning
+
+Dynamic mode lifts the compile-time-keyset requirement: a Shard opts in by
+overriding `shard_key()` (with `SHARD_KEY_OVERRIDDEN = true`) and an empty
+`shard_keys()`. Use it only when the keyset is genuinely unbounded
+(per-user, per-session, per-arbitrary-symbol); for a bounded keyset, static
+mode is simpler and cheaper.
+
+A dynamic Shard owns zero Partitions at startup. The first input with
+`shard_key(&input) == Some(key)` lazily creates a `PartitionSlot` (cold
+`init_state(Some(key), None)`) under a per-Shard `DynamicPartitionRegistry`
+(`DashMap`); `None` drops the input. Concurrent producers for a fresh key
+share one slot (the DashMap insert serializes), and the inflight CAS then
+serializes dispatch as in static mode.
+
+Two per-Shard knobs:
+
+- `partition_idle_ttl() -> Option<Duration>` — **default `None` = no
+  eviction** (Partitions live as long as the Relay; no reaper spawned).
+  `Some(ttl)` spawns a per-Shard reaper that evicts any Partition idle
+  longer than `ttl`, sweeping every `min(ttl/4, 30s)`
+  (`FLEZHA_REAP_INTERVAL_MS` overrides for tests). It takes a Partition's
+  drain gate before evicting, so it never interrupts a running `Shard::run`.
+  **Eviction is destructive:** the slot and (when persistent) the on-disk
+  WAL/snapshot are dropped (a fire-and-forget `delete_partition_state` to
+  the controller), and a later input cold-starts fresh — no
+  restore-from-disk. (Deliberate: keeps recreate off any blocking
+  controller round-trip that could stall a pool worker.)
+- `max_partitions() -> usize` (default `100_000`) — soft cap. At the cap,
+  new-key inputs are dropped (`inputs_dropped_capped_total`); existing keys
+  are unaffected. Bounds memory against a runaway `shard_key`, not
+  admission.
+
+Per-Shard counters (`DynamicPartitionCounters`): `partitions_created_total`,
+`partitions_evicted_total`, `inputs_dropped_no_key_total`,
+`inputs_dropped_capped_total`.
 
 ## Backpressure and bounded mailboxes
 

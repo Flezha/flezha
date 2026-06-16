@@ -152,6 +152,7 @@ flz state list <relay_class>
 flz state at <relay/shard/partition_key> <seq | iso8601-timestamp>
 flz state rotate <relay/shard/partition_key>
 flz state retention <relay_class> <hours>
+flz state delete <relay/shard/partition_key>
 ```
 
 Implemented in `cli/src/state.rs` (Rust binary) which RPCs into
@@ -170,6 +171,27 @@ this engine.
 :time_travel_retention_hours, %{<RelayClass> => hours}, persistent: true)`;
 the next `Retention` tick reads the new value. Persistence across an
 Application boot requires writing it to `runtime.exs`.
+
+## Dynamic-partition hard delete
+
+`relay-dynamic-partitioning` adds a destructive delete path. When a
+dynamic-mode Shard opts into an idle TTL (`partition_idle_ttl() ->
+Some(ttl)`; default is `None` = no eviction), the SDK reaper evicts an
+idle, persistence-enabled Partition by shipping a fire-and-forget
+`delete_partition_state` frame on the secondary stream (payload-id
+`Flezha.State.Wire.payload_id_delete_partition_state/0`; body is the bare
+structured `partition_id`). `Flezha.Executor.StreamChannel` routes it to
+`Flezha.State.Supervisor.delete_partition/1`, which stops the per-Partition
+`WalWriter`, drops any pending `FsyncBatcher` dirty mark, and unlinks the
+`{key}.wal`, `{key}.snap.{seq}`, and `{key}.outbox.dedup` files
+(`Flezha.State.Registry.delete_files/1`). The delete is **idempotent** —
+deleting a never-seen or already-gone partition succeeds.
+
+A later input for the same key cold-starts a fresh Partition (new WAL from
+seq 0); there is **no** restore-from-disk on recreate. The operator-driven
+counterpart, `flz state delete <relay/shard/key>`, calls the same
+`delete_partition/1` and returns a confirmation (the reaper path is
+fire-and-forget and reads no reply).
 
 ## Crash-recovery semantics
 

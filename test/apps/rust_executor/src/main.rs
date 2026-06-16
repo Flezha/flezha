@@ -51,6 +51,80 @@ fn register_relays() {
     register_relay::<PersistenceOffRelay>();
     register_relay::<HybridChannelRelay>();
     register_relay::<ResumeProbeRelay>();
+    register_relay::<DynamicPartitionRelay>();
+}
+
+// -- DynamicPartitionRelay ----------------------------------------------------
+//
+// Dynamic-mode relay shared by the e2e correctness test and `mix bench
+// --shape dynamic`. Key = text before the first ':' (`"drop"` → None, drop).
+// Eviction TTL is read from `DYN_TEST_TTL_MS` (the e2e sets 200ms to exercise
+// reap + delete; the bench leaves it unset → no eviction, pure routing).
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct DynState {
+    seen: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+enum DynChange {
+    Push(String),
+}
+impl Change for DynChange {}
+
+#[derive(Default)]
+struct DynamicPartitionShard;
+impl Shard for DynamicPartitionShard {
+    type Input = String;
+    type Output = Vec<u8>;
+    type State = DynState;
+    type Change = DynChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "dynamic_partition_shard"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> DynState {
+        DynState::default()
+    }
+    fn apply_change(state: &mut DynState, change: &DynChange) {
+        let DynChange::Push(s) = change;
+        state.seen.push(s.clone());
+    }
+    const SHARD_KEY_OVERRIDDEN: bool = true;
+    fn shard_key(input: &String) -> Option<String> {
+        (input != "drop").then(|| input.split(':').next().unwrap_or(input).to_string())
+    }
+    fn partition_idle_ttl() -> Option<Duration> {
+        env::var("DYN_TEST_TTL_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .map(Duration::from_millis)
+    }
+    fn run(
+        &mut self,
+        input: String,
+        mut state: StateHandle<'_, Self>,
+        ctx: &mut ShardCtx<'_>,
+    ) -> Result<(), ShardError> {
+        state.apply(DynChange::Push(input.clone()));
+        ctx.emit::<Vec<u8>>(input.into_bytes())
+    }
+}
+
+struct DynamicPartitionRelay;
+impl Relay for DynamicPartitionRelay {
+    fn factory_id() -> &'static str {
+        "dynamic_partition"
+    }
+    fn channels(c: &mut ChannelBuilder) {
+        c.input::<String>("input")
+            .on_full(OverflowPolicy::Block)
+            .into::<DynamicPartitionShard>();
+        c.channel::<Vec<u8>>("kafka")
+            .from::<DynamicPartitionShard>()
+            .to_plugin("test_kafka");
+    }
 }
 
 // -- DoNothingRelay -----------------------------------------------------------

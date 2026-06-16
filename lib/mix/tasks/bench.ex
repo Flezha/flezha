@@ -25,11 +25,13 @@ defmodule Mix.Tasks.Bench do
       with `mix test.java_sdk` (builds host `flz_jni` + Maven) or
       `mvn -f test/apps/java_executor/pom.xml package`.
     * `--shape` - Bench shape: `regression` (default; the apples-to-apples
-      regression check, factory `do_nothing`, dimensions from `-n` / `-m`) or
+      regression check, factory `do_nothing`, dimensions from `-n` / `-m`),
       `partitioning` (the `relay-bench-harness` partitioning-stress shape, factory
       `partitioning_stress`, dimensions hard-coded at `8 × 20_000` per
       `relay-bench-harness/design.md` Decision 6, swept across the comma-list in
-      `--pool-sizes`).
+      `--pool-sizes`), or `dynamic` (the `relay-dynamic-partitioning` shape, factory
+      `dynamic_partition`, lazy per-key Partitions with 8 keys/relay,
+      dimensions from `-n` / `-m`).
     * `--pool-sizes` - Comma-separated worker-pool sizes (default: `"1,8"`),
       only honored when `--shape partitioning`. Each value spawns a fresh
       Rust executor binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
@@ -88,14 +90,19 @@ defmodule Mix.Tasks.Bench do
     Logger.configure(level: :warning)
 
     case shape do
-      :regression -> run_regression_shape(runtime, num_relays, messages_per_relay)
+      :regression -> run_default_shape(runtime, num_relays, messages_per_relay, :regression)
+      :dynamic -> run_default_shape(runtime, num_relays, messages_per_relay, :dynamic)
       :partitioning -> run_partitioning_shape(num_relays, messages_per_relay, pool_sizes)
     end
   end
 
-  # ----- Shape: regression (today's behaviour, byte-identical default) -----
+  # ----- Single-namespace shapes: regression (default) and dynamic -----
+  #
+  # `:regression` is byte-identical to the historical default behaviour.
+  # `:dynamic` reuses the same harness with the `dynamic_partition`
+  # factory and keyed inputs (see `input_for_shape/3`).
 
-  defp run_regression_shape(runtime, num_relays, messages_per_relay) do
+  defp run_default_shape(runtime, num_relays, messages_per_relay, shape) do
     namespace =
       cond do
         runtime != :rust ->
@@ -111,7 +118,7 @@ defmodule Mix.Tasks.Bench do
       end
 
     try do
-      run_performance_test(namespace, num_relays, messages_per_relay, :regression)
+      run_performance_test(namespace, num_relays, messages_per_relay, shape)
     after
       if namespace == @bench_namespace do
         cleanup_test_environment(namespace)
@@ -242,9 +249,10 @@ defmodule Mix.Tasks.Bench do
   defp parse_shape(nil), do: :regression
   defp parse_shape("regression"), do: :regression
   defp parse_shape("partitioning"), do: :partitioning
+  defp parse_shape("dynamic"), do: :dynamic
 
   defp parse_shape(other) do
-    raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\" or \"partitioning\"."
+    raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\", \"partitioning\", or \"dynamic\"."
   end
 
   defp parse_pool_sizes(nil), do: [1, 8]
@@ -265,8 +273,13 @@ defmodule Mix.Tasks.Bench do
 
   defp factory_for_shape(:regression), do: "do_nothing"
   defp factory_for_shape(:partitioning), do: "partitioning_stress"
+  defp factory_for_shape(:dynamic), do: "dynamic_partition"
 
   defp dimensions_for_shape(:regression, opts) do
+    {opts[:num_relays] || 100, opts[:messages_per_relay] || 100}
+  end
+
+  defp dimensions_for_shape(:dynamic, opts) do
     {opts[:num_relays] || 100, opts[:messages_per_relay] || 100}
   end
 
@@ -400,7 +413,7 @@ defmodule Mix.Tasks.Bench do
           for msg_num <- 1..test_messages_per_relay do
             GenServer.cast(
               relay_pid,
-              {:io_in, "test_msg_#{relay_id}_#{msg_num}", %{}}
+              {:io_in, input_for_shape(shape, relay_id, msg_num), %{}}
             )
           end
         end)
@@ -469,4 +482,18 @@ defmodule Mix.Tasks.Bench do
   # 8 emits to C[p0] → 8 emits to D[p0] → 8 plugin-bound emits per input.
   defp expected_responses(:regression, total_messages), do: total_messages
   defp expected_responses(:partitioning, total_messages), do: total_messages * 8
+  # `dynamic_partition` emits once per input (one plugin-bound emit),
+  # so each dispatched input produces one `:on_output` event.
+  defp expected_responses(:dynamic, total_messages), do: total_messages
+
+  # Per-shape wire input. The dynamic shape prefixes a bounded key
+  # (`k0`..`k7`) so a steady burst exercises 8 dynamic Partitions per relay
+  # without tripping the soft cap; other shapes are key-agnostic.
+  defp input_for_shape(:dynamic, relay_id, msg_num) do
+    "k#{rem(msg_num, 8)}:test_msg_#{relay_id}_#{msg_num}"
+  end
+
+  defp input_for_shape(_shape, relay_id, msg_num) do
+    "test_msg_#{relay_id}_#{msg_num}"
+  end
 end

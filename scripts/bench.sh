@@ -40,10 +40,12 @@ Usage: ./scripts/bench.sh [OPTIONS]
 Options:
   -r, --runtime <rust|java>          SDK runtime (default: rust)
   -t, --transport <uds|quic>         Wire transport (default: uds)
-  -s, --shape <regression|partitioning>
+  -s, --shape <regression|partitioning|dynamic>
                                      Bench shape (default: regression).
                                      `partitioning` ignores -n/-m and uses the
-                                     8x4x8x20k stress workload.
+                                     8x4x8x20k stress workload. `dynamic` drives
+                                     the dynamic_partition_bench relay (lazy
+                                     per-key Partitions, 8 keys/relay), honors -n/-m.
       --pool-sizes <list>            Comma-separated worker-pool sizes for
                                      --shape partitioning (default: 1,8)
   -n, --num-relays <N>               Relay count for regression shape (default: 100)
@@ -78,8 +80,8 @@ case "$TRANSPORT" in uds|quic) ;; *)
     echo "Error: --transport must be 'uds' or 'quic', got '$TRANSPORT'"; exit 1 ;;
 esac
 if [[ -n "$SHAPE" ]]; then
-    case "$SHAPE" in regression|partitioning) ;; *)
-        echo "Error: --shape must be 'regression' or 'partitioning', got '$SHAPE'"; exit 1 ;;
+    case "$SHAPE" in regression|partitioning|dynamic) ;; *)
+        echo "Error: --shape must be 'regression', 'partitioning', or 'dynamic', got '$SHAPE'"; exit 1 ;;
     esac
 fi
 

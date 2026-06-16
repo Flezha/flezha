@@ -143,6 +143,22 @@ The 10% tolerance band absorbs runner-image variance. If CI variance is consiste
 
 If none of the above explain it, widen the tolerance band rather than lowering the floor.
 
+## Dynamic-partitioning steady-state floor
+
+`cargo bench --features bench-internals --bench dynamic_partition_steady_state`
+(`steady_state_1k_partitions`) measures the dynamic-mode hot path: 1,000
+active dynamic Partitions, no eviction, 200K inputs round-robined across
+the keys. It isolates the dynamic routing cost — one `shard_key` call plus
+one `DashMap` lookup per input — over the static path.
+
+Recorded floor (reference host, `cargo bench`, 2026-06-16):
+**~520 K inputs/s** (median ~383 ms for 200K inputs). This is a steady-
+state floor for dynamic routing, not a CI gate; the `bench-regression`
+gate continues to track single/static dispatch via `dispatch.rs`. The
+dynamic code path is isolated behind `PartitioningMode::Dynamic`, so the
+single- and static-mode floors are unaffected (the only added cost on
+those paths is one Relaxed `last_activity_at` store per push).
+
 ## See also
 
 - `docs/relay_architecture.md` — dispatch hot path, partition mailboxes, work-stealing pool.

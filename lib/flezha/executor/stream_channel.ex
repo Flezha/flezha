@@ -174,6 +174,15 @@ defmodule Flezha.Executor.StreamChannel do
     {:noreply, mark_seen(state)}
   end
 
+  # Dynamic-mode hard-delete: the executor evicted a persistence-enabled
+  # Partition. Drop its WAL/snapshot/outbox files so a later recreate
+  # cold-starts. Fire-and-forget — no response frame is written back.
+  def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
+      when payload_id == "delete_partition_state" do
+    handle_delete_partition_state(message)
+    {:noreply, mark_seen(state)}
+  end
+
   # Data-channel heartbeat: the executor emits this every ~10s while connected,
   # so an idle-but-healthy relay keeps the channel live without producing
   # output. Metadata carries the executor's dispatch-progress self-report; the
@@ -324,6 +333,18 @@ defmodule Flezha.Executor.StreamChannel do
 
       {:error, reason} ->
         Logger.warning("[stream] partition_state_snapshot decode failed: #{inspect(reason)}")
+    end
+  end
+
+  # Run the file teardown off this channel's loop: it stops the writer and
+  # unlinks files, which we never want to gate the output-carrying channel on.
+  defp handle_delete_partition_state(frame) do
+    case StateWire.decode_partition_id(frame) do
+      {:ok, {rc, sh, pk}} ->
+        spawn(fn -> Flezha.State.Supervisor.delete_partition({rc, sh, pk}) end)
+
+      {:error, reason} ->
+        Logger.warning("[stream] delete_partition_state decode failed: #{inspect(reason)}")
     end
   end
 
