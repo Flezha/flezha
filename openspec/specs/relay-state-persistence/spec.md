@@ -576,3 +576,36 @@ For a persistence-enabled relay, the SDK SHALL drain a just-applied state change
 - **WHEN** it emits output
 - **THEN** no flush-before-emit drain occurs and the emit path is unchanged.
 
+### Requirement: Per-Partition state is deleted on dynamic-mode eviction
+
+When the SDK evicts a Partition due to dynamic-mode idle-TTL eviction (see `relay-shard-partition-model` "Per-Shard idle-TTL eviction is opt-in"), eviction SHALL be destructive. If persistence is enabled for the Relay class, the SDK SHALL ship a fire-and-forget `delete_partition_state{partition_id}` frame so the agent removes the per-Partition WAL, snapshot, and outbox files (`{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` under `app_data/state/{relay}/{shard}/`). A subsequent input for the same key SHALL cold-start a fresh Partition (new WAL from seq 0); the SDK SHALL NOT restore the evicted Partition's state from disk.
+
+#### Scenario: Eviction deletes on-disk state
+- **WHEN** a persistence-enabled dynamic-mode Partition is evicted
+- **THEN** the SDK SHALL ship `delete_partition_state{partition_id}` and the agent SHALL remove the WAL, snapshot, and outbox files for that partition_id
+
+#### Scenario: Recreate after eviction cold-starts
+- **WHEN** a dynamic-mode Partition is evicted and a subsequent input arrives for the same key
+- **THEN** the SDK SHALL recreate the Partition via `init_state(Some(key), None)` and a new WAL SHALL start from seq 0; no restore-from-disk SHALL occur
+
+### Requirement: Per-Partition state delete RPC
+
+The agent SHALL accept a `delete_partition_state` data-stream frame whose body is the structured `partition_id`. On receipt the agent SHALL: (1) stop any per-Partition `WalWriter` for that partition_id and drop its pending `FsyncBatcher` dirty mark; (2) remove the `{key}.wal`, `{key}.snap.{seq}` (all sequences), and `{key}.outbox.dedup` files. Delete SHALL be idempotent: a delete for a partition_id with no files SHALL succeed.
+
+The delete is reachable via two paths:
+
+- The SDK reaper, for evicted persistence-enabled Partitions (fire-and-forget; the agent writes no response frame back on the data stream).
+- The CLI command `flz state delete <relay/shard/key>`, which calls `Flezha.State.Supervisor.delete_partition/1` directly and returns a `{partition_id, status}` confirmation synchronously.
+
+#### Scenario: Delete removes existing files
+- **WHEN** the agent receives `delete_partition_state` for a partition_id that has WAL and snapshot files on disk
+- **THEN** the agent SHALL stop the per-Partition processes and remove all three file types
+
+#### Scenario: Delete is idempotent for nonexistent partition
+- **WHEN** the agent receives `delete_partition_state` for a partition_id with no on-disk state
+- **THEN** the agent SHALL succeed without error (the delete is a no-op)
+
+#### Scenario: CLI delete returns confirmation
+- **WHEN** an operator runs `flz state delete <relay/shard/key>` against a Partition with on-disk state
+- **THEN** `Flezha.State.Supervisor.delete_partition/1` SHALL remove the files and return `{:ok, %{partition_id, status: :ok}}`, and the CLI SHALL exit 0
+

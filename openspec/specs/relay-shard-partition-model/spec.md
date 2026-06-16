@@ -390,14 +390,15 @@ The SDK SHALL expose a four-layer abstraction comprising Relay, Shard, Partition
 
 ### Requirement: Static and single partitioning modes are supported in v1
 
-A Shard SHALL run in one of exactly two partitioning modes:
+A Shard SHALL run in one of exactly three partitioning modes (the v1 title is retained for MODIFIED-matcher binding; the body below replaces the v1 wording end-to-end and adds dynamic mode):
 
-- **Single partition (default)**: when the Shard implements neither `shard_keys()` nor `shard_key()`. The runtime SHALL create exactly one Partition with `shard_key = None` at relay startup, and SHALL call `Shard::init_state(None)` to initialize its state.
+- **Single partition (default)**: when the Shard implements neither `shard_keys()` nor `shard_key()` (i.e. `SHARD_KEY_OVERRIDDEN = false` and `shard_keys()` returns empty). The runtime SHALL create exactly one Partition with `shard_key = None` at relay startup, and SHALL call `Shard::init_state(None)` to initialize its state.
 - **Static partitions**: when the Shard implements `fn shard_keys() -> Vec<&'static str>` returning a non-empty list. The runtime SHALL create one Partition per declared key at relay startup, and SHALL call `Shard::init_state(Some(key))` for each.
+- **Dynamic partitions**: when the Shard overrides `shard_key(input: &Input) -> Option<String>` AND sets `SHARD_KEY_OVERRIDDEN = true` AND leaves `shard_keys()` empty. The runtime SHALL own zero Partitions for the Shard at relay startup; Partitions SHALL be created lazily on the first input whose `shard_key(&input)` returns `Some(k)` (see "Dynamic-mode lazy partition creation"). Inputs whose `shard_key(&input)` returns `None` SHALL be dropped without allocating a Partition; the per-Shard `inputs_dropped_no_key_total` counter SHALL be incremented.
 
-The runtime SHALL refuse to start a Relay where any Shard:
-- declares both `shard_keys()` and `shard_key()` simultaneously;
-- declares only `shard_key()` without `shard_keys()` (this is the API shape reserved for the future dynamic mode and MUST fail with a clear error message in v1).
+The Relay startup SHALL fail with a clear error message if a Shard:
+
+- declares both `shard_keys()` and `shard_key()` simultaneously (i.e. `shard_keys()` non-empty AND `SHARD_KEY_OVERRIDDEN = true`).
 
 #### Scenario: Single partition for a Shard with no partitioning declared
 - **WHEN** a Shard implements neither `shard_keys()` nor `shard_key()` and the Relay is started
@@ -405,11 +406,15 @@ The runtime SHALL refuse to start a Relay where any Shard:
 
 #### Scenario: Static partitions created at relay startup
 - **WHEN** a Shard declares `shard_keys() = ["1m", "1h", "1d", "1w"]` and the Relay is started
-- **THEN** the SDK SHALL create exactly four Partitions for that Shard, with `shard_key = Some("1m")`, `Some("1h")`, `Some("1d")`, `Some("1w")` respectively; `init_state` SHALL be called exactly once for each
+- **THEN** the SDK SHALL create exactly four Partitions for that Shard at startup, with `shard_key = Some("1m")`, `Some("1h")`, `Some("1d")`, `Some("1w")` respectively; `init_state` SHALL be called exactly once for each
 
-#### Scenario: Dynamic-mode-only declaration is rejected in v1
-- **WHEN** a Shard implements `shard_key(input: &Input) -> Option<String>` without also implementing `shard_keys()`
-- **THEN** the Relay startup SHALL fail with an error referring to the dynamic-mode reservation, and the Relay MUST NOT be partially registered
+#### Scenario: Dynamic-mode declaration is accepted at relay startup
+- **WHEN** a Shard overrides `shard_key()` and sets `SHARD_KEY_OVERRIDDEN = true` while leaving `shard_keys()` empty
+- **THEN** the Relay startup SHALL succeed and the Shard SHALL be registered in dynamic mode with zero Partitions
+
+#### Scenario: Both shard_keys and shard_key declared is rejected
+- **WHEN** a Shard returns a non-empty `shard_keys()` AND sets `SHARD_KEY_OVERRIDDEN = true`
+- **THEN** Relay startup SHALL fail with an error naming the conflicting Shard
 
 ### Requirement: Sticky per-partition ordering
 
@@ -785,4 +790,102 @@ The `RelayHandler` trait, `RelayResult` enum, `RelayRunner` enum, `register_fact
 #### Scenario: Old registration function is removed
 - **WHEN** a Rust file attempts to call `register_factory(...)` after the cutover
 - **THEN** the compilation SHALL fail with an unresolved-name error
+
+### Requirement: Dynamic-mode lazy partition creation
+
+For dynamic-mode Shards, the runtime SHALL create a `PartitionSlot` for a key on the first input whose `shard_key(&input)` returns `Some(k)` and for which no slot already exists. Slot creation SHALL be synchronous within the dispatch path: allocate the slot, allocate the mailbox at the Shard's declared `mailbox_capacity()`, push the triggering input, submit a runner job. The per-Shard `partitions_created_total` counter SHALL be incremented on each create.
+
+Concurrent producers pushing inputs for the same brand-new key SHALL all observe the same `PartitionSlot` instance after creation. The runtime SHALL NOT allocate two distinct slots for the same key under any concurrency pattern.
+
+#### Scenario: First input with a fresh key creates the partition
+- **WHEN** a dynamic-mode Shard receives an input whose `shard_key()` returns `Some("user-42")` and no Partition for `"user-42"` exists
+- **THEN** the runtime SHALL create a Partition keyed `"user-42"`, push the input onto its mailbox, increment `partitions_created_total`, and submit a runner job
+
+#### Scenario: Subsequent inputs with the same key reuse the partition
+- **WHEN** a second input arrives with `shard_key()` returning `Some("user-42")` after the first one created the slot
+- **THEN** the runtime SHALL push onto the existing Partition's mailbox; `partitions_created_total` SHALL NOT increment
+
+#### Scenario: shard_key returning None drops the input
+- **WHEN** a dynamic-mode Shard's `shard_key(&input)` returns `None` for a given input
+- **THEN** the runtime SHALL drop the input without allocating a Partition and SHALL increment `inputs_dropped_no_key_total`
+
+#### Scenario: Concurrent producers for the same fresh key share one slot
+- **WHEN** N producer threads simultaneously push the first inputs for the same brand-new key `"user-99"`
+- **THEN** the runtime SHALL allocate exactly one `PartitionSlot` for `"user-99"` and all N inputs SHALL land on its single mailbox in some serial order
+
+### Requirement: Per-Shard idle-TTL eviction is opt-in (no eviction by default)
+
+`Shard::partition_idle_ttl()` SHALL return `Option<Duration>` and SHALL default to `None`. When it returns `None`, the Shard's dynamic Partitions SHALL NOT be evicted — they live for the lifetime of the Relay (as static Partitions do) and no reaper thread SHALL be spawned for the Shard.
+
+When `partition_idle_ttl()` returns `Some(ttl)`, the SDK SHALL run one reaper thread for the Shard that periodically evicts Partitions whose time since last input push exceeds `ttl`. The reaper SHALL acquire the Partition's `inflight` CAS before evicting and SHALL confirm its mailbox is empty; if the CAS is contended, the reaper SHALL skip the Partition and try again on the next sweep. Eviction SHALL increment the per-Shard `partitions_evicted_total` counter.
+
+The reaper SHALL sweep on a cadence derived as `min(ttl / 4, 30s)`, overridable globally via the `FLEZHA_REAP_INTERVAL_MS` environment variable for testing.
+
+#### Scenario: No eviction by default
+- **WHEN** a dynamic-mode Shard does not override `partition_idle_ttl()` (it returns `None`)
+- **THEN** no reaper thread SHALL be spawned and its Partitions SHALL never be evicted by idle TTL
+
+#### Scenario: Idle partition is evicted after TTL elapses
+- **WHEN** a Shard sets `partition_idle_ttl() = Some(ttl)` and a Partition has had no input push for longer than `ttl` and is not currently running
+- **THEN** the next reaper sweep SHALL acquire its inflight CAS, evict it from the registry, and increment `partitions_evicted_total`
+
+#### Scenario: Active partition is not evicted mid-run
+- **WHEN** a Partition's `Shard::run` is in flight (its inflight CAS is held) when the reaper sweeps
+- **THEN** the reaper SHALL skip this Partition for this sweep without evicting; eviction SHALL be reattempted on the next sweep
+
+#### Scenario: Recently active partition is preserved
+- **WHEN** a Partition received an input push within the past `ttl` interval
+- **THEN** the reaper SHALL NOT evict it on this sweep
+
+### Requirement: Eviction is destructive; recreate is a cold start
+
+Eviction of a dynamic-mode Partition SHALL be destructive. When a Partition is evicted AND persistence is enabled for the Relay class, the SDK SHALL ship a fire-and-forget `delete_partition_state{partition_id}` frame to the controller so its on-disk WAL/snapshot/outbox files are removed. The SDK SHALL NOT block the reaper on a response.
+
+When a dynamic-mode Partition has been evicted and a subsequent input arrives for the same key, the runtime SHALL recreate the `PartitionSlot` synchronously (per "Dynamic-mode lazy partition creation") and SHALL call `Shard::init_state(Some(key), None)` — a fresh cold start. The runtime SHALL NOT restore the evicted Partition's state from disk on recreate. (This is a deliberate decision: it keeps the recreate path off any blocking controller round-trip, so a recreate can never stall a work-stealing pool worker.)
+
+#### Scenario: Recreate after eviction is a cold start
+- **WHEN** a dynamic-mode Shard with persistence enabled is reaped and a subsequent input arrives for the same key
+- **THEN** the runtime SHALL recreate the slot and call `Shard::init_state(Some(key), None)`; the Shard's `run` SHALL observe freshly-initialized state, not the state from before eviction
+
+#### Scenario: Eviction deletes persisted state
+- **WHEN** a persistence-enabled dynamic-mode Partition is evicted
+- **THEN** the SDK SHALL ship `delete_partition_state{partition_id}` to the controller, which SHALL remove the Partition's `{key}.wal`, `{key}.snap.{seq}`, and `{key}.outbox.dedup` files
+
+#### Scenario: Recreate without persistence is a cold start
+- **WHEN** a dynamic-mode Shard with persistence disabled is reaped and a subsequent input arrives for the same key
+- **THEN** the runtime SHALL call `Shard::init_state(Some(key), None)` and the Shard's `run` SHALL observe the freshly-initialized state
+
+### Requirement: Soft cap on dynamic partitions per Shard
+
+Each dynamic-mode Shard SHALL declare a maximum partition count via `fn max_partitions() -> usize` (default `100_000`). When the per-Shard partition count reaches this cap, the runtime SHALL drop new-key inputs without allocating a Partition and SHALL increment `inputs_dropped_capped_total`. Inputs whose `shard_key()` resolves to a key with an existing Partition SHALL NOT be affected by the cap; they SHALL be processed normally.
+
+The cap is soft: enforcement is best-effort against concurrent inserts. The runtime SHALL NOT propagate an over-cap rejection back to the agent; the input is silently dropped and the counter is incremented.
+
+#### Scenario: Cap reached drops new-key inputs
+- **WHEN** a dynamic-mode Shard with `max_partitions = 5` already owns 5 Partitions and an input arrives whose `shard_key()` returns a 6th unseen key
+- **THEN** the runtime SHALL drop the input, SHALL NOT allocate a Partition, and SHALL increment `inputs_dropped_capped_total`
+
+#### Scenario: Cap does not affect inputs for existing keys
+- **WHEN** a dynamic-mode Shard is at its cap and an input arrives whose `shard_key()` returns a key that already has a Partition
+- **THEN** the runtime SHALL push to that Partition's mailbox normally; `inputs_dropped_capped_total` SHALL NOT increment
+
+#### Scenario: Cap recovers as TTLs elapse
+- **WHEN** a dynamic-mode Shard is at its cap, time passes such that some Partitions exceed `partition_idle_ttl()`, and the reaper evicts them
+- **THEN** subsequent new-key inputs SHALL allocate Partitions normally up to the cap
+
+### Requirement: Per-Shard dynamic-mode counters
+
+Each dynamic-mode Shard SHALL expose the following monotonically-increasing counters on its registry, backed by `AtomicU64`:
+
+- `partitions_created_total` — incremented once per `PartitionSlot` allocation (including a cold recreate after eviction).
+- `partitions_evicted_total` — incremented once per eviction.
+- `inputs_dropped_no_key_total` — incremented when `shard_key(&input)` returns `None`.
+- `inputs_dropped_capped_total` — incremented when an input is dropped due to the soft cap.
+
+Counters SHALL be observable via the same per-Partition / per-Shard observability surface as the bounded-mailbox counters from `relay-shard-partition-model`'s "Per-Partition mailbox is bounded with declared capacity" requirement. Export to a metrics sink is not in scope for this requirement; this requirement only mandates the data is captured.
+
+#### Scenario: Counter shape after a churn cycle
+- **GIVEN** a dynamic-mode Shard with a TTL set
+- **WHEN** 100 fresh keys are pushed, 30 of those 100 are subsequently reaped, then 10 of the reaped keys see a fresh input each
+- **THEN** `partitions_created_total = 110` (100 initial + 10 cold recreates), `partitions_evicted_total = 30`
 
