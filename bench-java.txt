@@ -1,28 +1,35 @@
+Running bench: runtime=java transport=uds relays=100 msg/relay=100
 Starting Flezha performance test...
 Runtime: java
-Processors: 100
-Messages per processor: 1000
+Shape: regression
+Relays: 100
+Messages per relay: 100
 
+23:04:44.138 module=Flezha.Shutdown.SignalHandler function=handle_continue/2 [warning] [shutdown] os.set_signal unavailable: {:error, :badarg}; falling back to release-mode SIGTERM
 Setting up test environment with compute engines...
 Started 2 compute engines for performance testing
-Starting flow test with 100 processors...
-Processor creation took: 243.639 ms for 100 processors
-Plugin setup took: 9.493 ms for 100 processors
-Sending 100000 total messages (1000 per processor)...
-Message sending took: 682.685 ms
-Message processing took: 355.808 ms for 100000 messages
+Starting flow test with 100 relays (factory=do_nothing)...
+Relay creation took: 828.105 ms for 100 relays
+Plugin setup took: 786.915 ms for 100 relays
+Sending 10000 total messages (100 per relay)...
+Message sending took: 30.041 ms
+Message processing took: 87.087 ms for 10000 messages
 
 === Performance Summary ===
-Processors created: 100
-Total messages processed: 100000
-Processor creation: 243.639 ms
-Plugin setup: 9.493 ms
-Message sending: 682.685 ms
-Message processing: 355.808 ms
-Total time: 1291.625 ms
-Throughput: 281050.45 messages/second
-Average time per processor: 12.91625 ms
+Relays created: 100
+Total inputs dispatched: 10000
+Plugin-forwarded responses received: 10000
+Relay creation: 828.105 ms
+Plugin setup: 786.915 ms
+Message sending: 30.041 ms
+Message processing: 87.087 ms
+Total time: 1732.148 ms
+Throughput: 114827.7 messages/second
+Average time per relay: 17.32148 ms
+23:04:48.107 module=Flezha.Service.RelayManager function=maybe_delete_shard/1 [warning] [relay_manager] skipping state dir app_data/state/flow_test_2/dynamic_partition_bench_shard: write in flight (.tmp / .rewriting present)
 
 Performance test completed successfully!
 Cleaning up test environment...
+23:04:48.112 module=Flezha.Executor.ControlChannel function=handle_connection_closed/1 [warning] Connection closed for control socket for bench_5635281091 on bench
+23:04:48.113 module=Flezha.Executor.ControlChannel function=handle_connection_closed/1 [warning] Connection closed for control socket for bench_624148539168 on bench
 Test environment cleanup completed
