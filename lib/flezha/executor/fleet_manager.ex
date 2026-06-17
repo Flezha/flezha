@@ -409,7 +409,8 @@ defmodule Flezha.Executor.FleetManager do
     end)
   end
 
-  defp maybe_evict_previous(state, previous_id) when is_binary(previous_id) and previous_id != "" do
+  defp maybe_evict_previous(state, previous_id)
+       when is_binary(previous_id) and previous_id != "" do
     do_evict_executor(state, previous_id)
   end
 

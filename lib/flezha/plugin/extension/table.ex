@@ -340,7 +340,8 @@ defmodule Flezha.Plugin.Extension.Table do
           _ ->
             Logger.error("[Extension.Table] subscriber #{plugin_id} crashed: #{inspect(reason)}")
 
-            {:ok, table |> reset_retries_if_stable(plugin_id) |> schedule_retry(plugin_id, plugin)}
+            {:ok,
+             table |> reset_retries_if_stable(plugin_id) |> schedule_retry(plugin_id, plugin)}
         end
     end
   end
@@ -599,8 +600,7 @@ defmodule Flezha.Plugin.Extension.Table do
       table
       | owned_pids: Map.put(table.owned_pids, plugin_id, {pid, ref}),
         monitors: Map.put(table.monitors, ref, plugin_id),
-        started_at:
-          Map.put(table.started_at, plugin_id, :erlang.monotonic_time(:millisecond))
+        started_at: Map.put(table.started_at, plugin_id, :erlang.monotonic_time(:millisecond))
     }
   end
 

@@ -107,5 +107,4 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert {:error, {:recovery_timeout, [^fake_hub_id]}} =
              HubManager.await_recovery_complete([fake_hub_id], 100)
   end
-
 end

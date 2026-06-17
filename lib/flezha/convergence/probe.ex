@@ -154,5 +154,4 @@ defmodule Flezha.Convergence.Probe do
   catch
     :exit, _ -> []
   end
-
 end

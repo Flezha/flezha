@@ -86,7 +86,9 @@ defmodule Flezha.Observability.Export.PrometheusHttp do
 
   defp route(socket, {:get, "/metrics"}), do: respond_metrics(socket)
   defp route(socket, {:get, "/"}), do: respond_index(socket)
-  defp route(socket, {:get, _}), do: Listener.send_response(socket, 404, "text/plain", "not found\n")
+
+  defp route(socket, {:get, _}),
+    do: Listener.send_response(socket, 404, "text/plain", "not found\n")
 
   defp route(socket, {:method_not_allowed, _}),
     do: Listener.send_response(socket, 405, "text/plain", "method not allowed\n")

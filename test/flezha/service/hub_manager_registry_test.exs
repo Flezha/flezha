@@ -111,7 +111,9 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       # Empty root so the unstarted-hub on-disk branch can never fire from
       # residue left by other suites — these assertions isolate the
       # running-hub `dump`-vs-`get_all_relays` discriminator.
-      root = Path.join(System.tmp_dir!(), "flezha_pending_test_#{System.unique_integer([:positive])}")
+      root =
+        Path.join(System.tmp_dir!(), "flezha_pending_test_#{System.unique_integer([:positive])}")
+
       File.mkdir_p!(root)
       Application.put_env(:flezha, :process_hub_registry_root, root)
       Application.put_env(:flezha, :auto_restore_enabled, true)

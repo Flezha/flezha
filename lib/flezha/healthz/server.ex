@@ -99,7 +99,9 @@ defmodule Flezha.Healthz.Server do
 
   defp route(socket, {:get, "/healthz"}), do: respond_healthz(socket)
   defp route(socket, {:get, "/"}), do: Listener.send_response(socket, 200, "text/plain", "pong\n")
-  defp route(socket, {:get, _}), do: Listener.send_response(socket, 404, "text/plain", "not found\n")
+
+  defp route(socket, {:get, _}),
+    do: Listener.send_response(socket, 404, "text/plain", "not found\n")
 
   defp route(socket, {:method_not_allowed, _}),
     do: Listener.send_response(socket, 405, "text/plain", "method not allowed\n")

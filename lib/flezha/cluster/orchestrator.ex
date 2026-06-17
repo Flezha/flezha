@@ -197,9 +197,7 @@ defmodule Flezha.Cluster.Orchestrator do
   defp mark_ready() do
     :ets.insert(@ets_table, {:ready, true})
 
-    Logger.info(
-      "[cluster] formed and ready; members #{inspect([node() | Node.list()])}"
-    )
+    Logger.info("[cluster] formed and ready; members #{inspect([node() | Node.list()])}")
 
     :telemetry.execute(
       [:flezha, :cluster, :ready],

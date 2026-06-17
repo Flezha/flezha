@@ -346,7 +346,12 @@ defmodule Flezha.Executor.ControlChannel do
         :telemetry.execute(
           [:flezha, :executor, :reconnected],
           %{count: 1, bound: length(bindings)},
-          %{executor_id: state.executor_id, namespace: state.namespace, reason: reason, mode: :delta}
+          %{
+            executor_id: state.executor_id,
+            namespace: state.namespace,
+            reason: reason,
+            mode: :delta
+          }
         )
 
         state

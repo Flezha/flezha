@@ -127,7 +127,8 @@ defmodule Flezha.Convergence.Heal do
          %{factory_id: factory, executor_id: prev} <- overwatch_snapshot(pid),
          true <- factory != nil,
          false <- skip_rebind?(namespace, factory, prev, args),
-         target when is_binary(target) <- RelayManager.assign_executor(namespace, factory, relay_id),
+         target when is_binary(target) <-
+           RelayManager.assign_executor(namespace, factory, relay_id),
          {:ok, :ok} <- SafeCall.bounded(pid, {:executor_migrate, target}, @migrate_timeout_ms) do
       _ = HubManager.relay_set_executor(namespace, relay_id, target)
 

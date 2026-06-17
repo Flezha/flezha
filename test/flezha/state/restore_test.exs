@@ -29,7 +29,9 @@ defmodule Flezha.State.RestoreTest do
     %{base: base, partition_id: TestHelpers.sample_partition_id("rest_" <> uniq())}
   end
 
-  test "cold partition: empty snapshot, empty change_log, terminal_seq=-1 (no records)", %{partition_id: pid} do
+  test "cold partition: empty snapshot, empty change_log, terminal_seq=-1 (no records)", %{
+    partition_id: pid
+  } do
     assert {:ok, payload} = Restore.assemble_payload(pid)
     assert payload.snapshot_bytes == <<>>
     assert payload.change_log_bytes == <<>>

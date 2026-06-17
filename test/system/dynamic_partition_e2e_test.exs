@@ -101,8 +101,12 @@ defmodule FlezhaTest.System.DynamicPartitionE2ETest do
 
   defp do_wait_until(fun, deadline) do
     cond do
-      fun.() -> true
-      System.monotonic_time(:millisecond) >= deadline -> false
+      fun.() ->
+        true
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        false
+
       true ->
         Process.sleep(25)
         do_wait_until(fun, deadline)

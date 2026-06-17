@@ -103,5 +103,4 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
       })
     )
   end
-
 end

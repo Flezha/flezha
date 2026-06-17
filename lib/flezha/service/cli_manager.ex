@@ -1333,7 +1333,11 @@ defmodule Flezha.Service.CliManager do
         IO.puts("deleted persisted state for #{rc}/#{sh}/#{pk}")
 
       _ ->
-        IO.puts(:stderr, "state delete: expected <relay>/<shard>/<partition_key>; got #{path_string}")
+        IO.puts(
+          :stderr,
+          "state delete: expected <relay>/<shard>/<partition_key>; got #{path_string}"
+        )
+
         System.halt(1)
     end
   end

@@ -765,7 +765,10 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
               reason: reason
             })
 
-            schedule_retry(%{state | sequence: next_seq, in_flight: batch, last_error: reason}, batch)
+            schedule_retry(
+              %{state | sequence: next_seq, in_flight: batch, last_error: reason},
+              batch
+            )
         end
     end
   end
@@ -969,8 +972,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     state = %{
       state
       | in_flight: nil,
-        consecutive_failures:
-          if(reply == :ok, do: 0, else: state.consecutive_failures),
+        consecutive_failures: if(reply == :ok, do: 0, else: state.consecutive_failures),
         last_error:
           case reply do
             :ok -> nil

@@ -66,8 +66,7 @@ defmodule FlezhaTest.Executor.ControlChannelReconnectedTest do
     payload = build_reconnected_payload("exec-a", "exec-a", "control_stream_broken", "ref-1")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
-    assert_receive {:telemetry, [:flezha, :executor, :reconnected_delta], measurements,
-                    metadata},
+    assert_receive {:telemetry, [:flezha, :executor, :reconnected_delta], measurements, metadata},
                    500
 
     assert measurements.added == 0

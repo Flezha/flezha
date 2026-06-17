@@ -160,5 +160,4 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
       })
     )
   end
-
 end

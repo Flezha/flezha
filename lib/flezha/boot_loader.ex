@@ -42,7 +42,9 @@ defmodule Flezha.BootLoader do
 
     try do
       case Flezha.Service.HubManager.await_recovery_complete(timeout_ms) do
-        :ok -> :ok
+        :ok ->
+          :ok
+
         {:error, {:recovery_timeout, hubs}} ->
           Logger.warning("[boot] recovery timeout for hubs=#{inspect(hubs)}")
       end

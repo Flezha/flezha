@@ -218,6 +218,7 @@ defmodule Flezha.Service.HubManagerTest do
 
     test "marker-path env override is honoured for any hub_id" do
       previous_override = Application.get_env(:flezha, :process_hub_recovery_marker_path)
+
       Application.put_env(
         :flezha,
         :process_hub_recovery_marker_path,

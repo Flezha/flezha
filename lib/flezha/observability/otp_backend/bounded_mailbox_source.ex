@@ -19,7 +19,9 @@ defmodule Flezha.Observability.OtpBackend.BoundedMailboxSource do
   `:flezha, :observability, :otp_backend, :poll_intervals, :flezha_bounded_mailbox`.
   """
 
-  use Flezha.Observability.OtpBackend.Source, source: :flezha_bounded_mailbox, default_poll_ms: 1_000
+  use Flezha.Observability.OtpBackend.Source,
+    source: :flezha_bounded_mailbox,
+    default_poll_ms: 1_000
 
   alias Flezha.Observability.{Bus, Registry, Signal}
 
@@ -68,5 +70,4 @@ defmodule Flezha.Observability.OtpBackend.BoundedMailboxSource do
     # :mailbox_high_water (gauge) / :messages_dropped (counter) signals.
     :ok
   end
-
 end

@@ -263,8 +263,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
               state
               | entries: Map.delete(state.entries, key),
                 worker_monitors: Map.delete(state.worker_monitors, old_mon),
-                pending_refs:
-                  Map.put(state.pending_refs, key, {entry.identity, entry.refs})
+                pending_refs: Map.put(state.pending_refs, key, {entry.identity, entry.refs})
             }
 
             Enum.each(callers, fn {caller_pid, ctoken} ->
@@ -415,7 +414,14 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
   defp install_worker(state, key, identity, pid, refs, callers) do
     wmref = Process.monitor(pid)
 
-    entry = %{pid: pid, refs: refs, linger: nil, monitor: wmref, callers: callers, identity: identity}
+    entry = %{
+      pid: pid,
+      refs: refs,
+      linger: nil,
+      monitor: wmref,
+      callers: callers,
+      identity: identity
+    }
 
     %{
       state

@@ -800,8 +800,12 @@ defmodule FlezhaTest do
 
     do_eventually = fn do_self, fun, deadline ->
       cond do
-        fun.() -> true
-        System.monotonic_time(:millisecond) >= deadline -> false
+        fun.() ->
+          true
+
+        System.monotonic_time(:millisecond) >= deadline ->
+          false
+
         true ->
           Process.sleep(25)
           do_self.(do_self, fun, deadline)

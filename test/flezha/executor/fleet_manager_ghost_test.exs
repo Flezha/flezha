@@ -72,6 +72,7 @@ defmodule FlezhaTest.Executor.FleetManagerGhostTest do
 
     active = FleetManager.active_executors(@namespace)
     assert "live_peer" in active
+
     assert Enum.all?(active, fn id -> id == "live_peer" end),
            "no dead round_* ghosts may remain, got: #{inspect(active)}"
   end
