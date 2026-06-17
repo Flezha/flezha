@@ -78,7 +78,55 @@ use flezha_executor::{
 process startup. `Flezha::new(namespace)` boots the SDK; the controller
 later spawns instances by calling `flz relay start <factory_id>`.
 
-## Worked example
+## Authoring sugar (default path)
+
+`#[flezha::shard]`, `#[derive(flezha::State)]`, and `flezha::relay!` collapse
+the trait ceremony — they are **pure expansion** over the `Relay`/`Shard`/
+`Change`/`Channel` traits below, so a sugared shard and a hand-written one
+compose in the same relay and "ejecting" a sugared shard to a full impl is a
+paste of its expansion. The single contract binding every SDK (Rust, Java, and
+future Python/Elixir) is `docs/sdk_authoring_contract.md`.
+
+```rust
+use flezha_executor::state::StateHandle;
+use serde::{Deserialize, Serialize};
+
+// `&mut State` ⇒ stateful; the return value is auto-emitted to `sink`.
+#[derive(Serialize, Deserialize, Clone, Default, flezha_executor::State)]
+struct OhlcState { candles: Vec<f64> }
+
+#[flezha_executor::shard(id = "parse_shard")]
+fn parse(input: String) -> f64 {
+    input.parse().unwrap_or(0.0)
+}
+
+#[flezha_executor::shard(id = "ohlc_shard", keys = ["1m", "1h", "1d", "1w"], partition_for = all_tfs)]
+fn ohlc(price: f64, state: &mut OhlcState) -> Vec<u8> {
+    state.push_candles(price);            // journaled via #[derive(State)]
+    format!("{price}").into_bytes()
+}
+
+fn all_tfs(_: &f64) -> Vec<&'static str> { vec!["1m", "1h", "1d", "1w"] }
+
+// Linear pipeline ⇒ no `channels()` block, auto-registered (no `register_relay`).
+flezha_executor::relay! {
+    id: "market",
+    pipeline: input::<String> -> Parse -> Ohlc -> plugin::<Vec<u8>>("ohlc_kafka")
+}
+```
+
+Single-shard `input → sink` relays add `sink = "…"` to `#[flezha::shard]` and
+need no `relay!` and no `register_relay`. Attribute opt-ins: `id`, `sink`,
+`keys` + `partition_for` (static mode), `shard_key` + `idle_ttl` +
+`max_partitions` (dynamic mode), `capacity`, `on_full`, `clock`. Static and
+dynamic opt-ins are mutually exclusive (a compile error). Anything beyond a
+single shard or a linear chain — fan-out, multi-input — stays on an explicit
+`channels()` body (the escape hatch below).
+
+## Worked example (raw traits — the escape hatch)
+
+The sugar above expands to exactly this hand-written form; reach for it
+directly when a relay's topology is not a single shard or a linear chain.
 
 ```rust
 use flezha_executor::{
@@ -239,6 +287,26 @@ public final class App {
     }
 }
 ```
+
+#### Java authoring sugar
+
+The `@Shard` / `@State` / `@Relay` / `@PartitionFor` annotations (annotation
+processor `flezha-sdk-processor`) generate the impls above, mirroring the Rust
+macros under the same `docs/sdk_authoring_contract.md` contract. A `@Shard`
+class declares a `run` method (`Output run(Input)` or
+`Output run(Input, StateHandle<State, Change>)`); the processor generates
+`<ClassName>Shard` (the five `*Type()` getters, `name`, `initState`,
+`applyChange`), a single-shard relay when `sink` is set, and a
+`GeneratedRelays.registerAll()` aggregator so the author makes one startup call.
+`@State` generates `<ClassName>Change` plus a `<ClassName>Handle` carrying a
+`set<Field>` / `push<Field>` mutator per field; a stateful `run` takes that
+handle and journals with `state.push<Field>(v)` — no change type named, the
+same shape as Rust's `state.push_field(v)`. Worked
+twins live in `test/apps/java_executor` (`SugarDoNothing`, `SugarStore`,
+`SugarEntry`/`SugarDownstream` + `SugarStaticPartitionRelay`). The dynamic-mode
+`@ShardKey` opt-in generates the dynamic surface but is not yet runnable: the
+Java runtime has not landed `relay-dynamic-partitioning` (no `partitionIdleTtl`/
+`maxPartitions` methods, and the v1 runtime rejects `shardKeyOverridden`).
 
 ## Hot-path lookups
 

@@ -52,6 +52,7 @@ fn register_relays() {
     register_relay::<HybridChannelRelay>();
     register_relay::<ResumeProbeRelay>();
     register_relay::<DynamicPartitionRelay>();
+    register_relay::<MixedRelay>();
 }
 
 // -- DynamicPartitionRelay ----------------------------------------------------
@@ -1104,5 +1105,208 @@ impl Relay for HybridChannelRelay {
                 v.to_be_bytes().to_vec()
             })
             .into::<HybridConsumerShard>();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Authoring-sugar twins (`simplify-sdk-authoring`). Each mirrors a
+// hand-written relay above to prove the macros expand to the same trait
+// surface and interoperate with raw shards. See
+// `docs/sdk_authoring_contract.md`.
+// ---------------------------------------------------------------------------
+
+// Single-shard stateless sugar — twin of `DoNothingShard` / `DoNothingRelay`.
+// Auto-wires input -> shard -> plugin and auto-registers (no `register_relay`).
+#[flezha_executor::shard(id = "sugar_do_nothing", sink = "sugar_do_nothing_echo")]
+fn sugar_do_nothing(input: String) -> Vec<u8> {
+    input.into_bytes()
+}
+
+// Single-shard stateful sugar with `#[derive(flezha::State)]` — twin of
+// `StoreInputShard` / `StoreInputRelay`.
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug, flezha_executor::State)]
+struct SugarStoreState {
+    text_inputs: Vec<String>,
+}
+
+#[flezha_executor::shard(id = "sugar_store_input", sink = "sugar_store_sink")]
+fn sugar_store_input(input: String, state: &mut SugarStoreState) -> String {
+    state.push_text_inputs(input.clone());
+    input
+}
+
+// `relay!` linear-pipeline twin of `StaticPartitionRelay`.
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug, flezha_executor::State)]
+struct MacroStaticEntryState {
+    seen: Vec<String>,
+}
+
+fn macro_static_part(input: &str) -> Vec<&'static str> {
+    match input.chars().next() {
+        Some('a') => vec!["a"],
+        Some('b') => vec!["b"],
+        Some('c') => vec!["c"],
+        _ => vec!["d"],
+    }
+}
+
+#[flezha_executor::shard(
+    id = "macro_static_entry_shard",
+    keys = ["a", "b", "c", "d"],
+    partition_for = macro_static_part
+)]
+fn macro_static_entry(input: String, state: &mut MacroStaticEntryState) -> String {
+    state.push_seen(input.clone());
+    input
+}
+
+#[flezha_executor::shard(id = "macro_static_downstream_shard")]
+fn macro_static_downstream(input: String) -> Vec<u8> {
+    input.into_bytes()
+}
+
+flezha_executor::relay! {
+    id: "sugar_static_partition",
+    pipeline: input::<String> -> MacroStaticEntry -> MacroStaticDownstream -> plugin::<Vec<u8>>("test_kafka")
+}
+
+// Mixed relay: one `#[flezha::shard]` shard wired to one hand-written
+// `impl Shard` shard in an explicit `channels()` body.
+#[flezha_executor::shard(id = "mixed_macro_entry_shard")]
+fn mixed_macro_entry(input: String) -> String {
+    input
+}
+
+#[derive(Default)]
+struct MixedHandDownstream;
+impl Shard for MixedHandDownstream {
+    type Input = String;
+    type Output = Vec<u8>;
+    type State = ();
+    type Change = NoChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "mixed_hand_downstream"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) {}
+    fn run(
+        &mut self,
+        input: String,
+        _: StateHandle<'_, Self>,
+        ctx: &mut ShardCtx<'_>,
+    ) -> Result<(), ShardError> {
+        ctx.emit::<Vec<u8>>(input.into_bytes())
+    }
+}
+
+struct MixedRelay;
+impl Relay for MixedRelay {
+    fn factory_id() -> &'static str {
+        "mixed_relay"
+    }
+    fn channels(c: &mut ChannelBuilder) {
+        c.input::<String>("input").into::<MixedMacroEntry>();
+        c.channel::<String>("hop")
+            .from::<MixedMacroEntry>()
+            .into::<MixedHandDownstream>();
+        c.channel::<Vec<u8>>("kafka")
+            .from::<MixedHandDownstream>()
+            .to_plugin("test_kafka");
+    }
+}
+
+#[cfg(test)]
+mod macro_twin_tests {
+    use super::*;
+    use flezha_executor::testing::ShardTestHarness;
+
+    // Cross-SDK conformance (`docs/sdk_authoring_contract.md` §6): the reference
+    // relay's shards expand to this exact associated-type mapping. A divergence
+    // is a compile error, not a silent drift. The Java SugarTwinTest asserts the
+    // same mapping at runtime.
+    fn _reference_relay_conformance()
+    where
+        MacroStaticEntry: Shard<
+            Input = String,
+            Output = String,
+            State = MacroStaticEntryState,
+            Clock = WallClock,
+            Config = (),
+        >,
+        MacroStaticDownstream: Shard<
+            Input = String,
+            Output = Vec<u8>,
+            State = (),
+            Change = NoChange,
+            Clock = WallClock,
+            Config = (),
+        >,
+    {
+    }
+
+    #[test]
+    fn sugar_do_nothing_emits_like_hand_written() {
+        let inputs = vec!["alpha".to_string(), "beta".to_string()];
+        let expected: Vec<Vec<u8>> = vec![b"alpha".to_vec(), b"beta".to_vec()];
+
+        let mut sugar = ShardTestHarness::<SugarDoNothing>::new();
+        sugar.apply_inputs(inputs.clone());
+        sugar.expect_emits(&expected);
+
+        let mut hand = ShardTestHarness::<DoNothingShard>::new();
+        hand.apply_inputs(inputs);
+        hand.expect_emits(&expected);
+    }
+
+    #[test]
+    fn sugar_store_input_journals_and_emits() {
+        let inputs = vec!["one".to_string(), "two".to_string()];
+
+        let mut sugar = ShardTestHarness::<SugarStoreInput>::new();
+        sugar.apply_inputs(inputs.clone());
+        assert_eq!(sugar.state().text_inputs, inputs);
+        sugar.replay_equals().expect("derived change replay diverged");
+        sugar.expect_emits(&inputs);
+    }
+
+    #[test]
+    fn macro_static_entry_partitions_and_journals() {
+        // `partition_for` routes by first char; the shard journals every input.
+        assert_eq!(MacroStaticEntry::partition_for(&"apple".to_string()), vec!["a"]);
+        assert_eq!(MacroStaticEntry::partition_for(&"zebra".to_string()), vec!["d"]);
+        assert_eq!(MacroStaticEntry::shard_keys(), vec!["a", "b", "c", "d"]);
+
+        let inputs = vec!["apple".to_string(), "avocado".to_string()];
+        let mut h = ShardTestHarness::<MacroStaticEntry>::new();
+        h.apply_inputs(inputs.clone());
+        assert_eq!(h.state().seen, inputs);
+        h.replay_equals().expect("derived change replay diverged");
+        h.expect_emits(&inputs);
+    }
+
+    #[test]
+    fn mixed_macro_and_hand_shards_run() {
+        // The macro entry shard passes through; the hand shard turns it to bytes.
+        let mut entry = ShardTestHarness::<MixedMacroEntry>::new();
+        entry.apply_inputs(vec!["hi".to_string()]);
+        entry.expect_emits(&["hi".to_string()]);
+
+        let mut down = ShardTestHarness::<MixedHandDownstream>::new();
+        down.apply_inputs(vec!["hi".to_string()]);
+        down.expect_emits(&[b"hi".to_vec()]);
+    }
+
+    #[test]
+    fn sugar_relays_register() {
+        // Auto-wire + `relay!` relays are harvested without `register_relay`.
+        flezha_executor::register_inventory_relays();
+        let ids = flezha_executor::relay::registry::class_factory_ids();
+        for id in ["sugar_do_nothing", "sugar_store_input", "sugar_static_partition"] {
+            assert!(ids.contains(&id), "auto-registered relay `{id}` missing");
+        }
+        // The mixed relay registers manually, as before.
+        register_relay::<MixedRelay>();
+        assert!(flezha_executor::relay::registry::get_class("mixed_relay").is_some());
     }
 }

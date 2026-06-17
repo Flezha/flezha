@@ -14,6 +14,12 @@ The factory id list matches `test/apps/rust_executor/`'s `do_nothing` /
 `store_input` / `compare_filter` set; the `relay-message-handlers`
 factories are absent from both apps until that capability ships.
 
+It also carries authoring-sugar twins (`@Shard` / `@State` / `@Relay`, generated
+by `flezha-sdk-processor`): `SugarDoNothing`, `SugarStore`, and the 2-shard
+`SugarEntry` → `SugarDownstream` reference relay (`SugarStaticPartitionRelay`).
+`SugarTwinTest` asserts they register and process input identically to the
+hand-written equivalents. See `docs/sdk_authoring_contract.md`.
+
 ## Build
 
 ```sh
