@@ -606,8 +606,7 @@ defmodule Flezha.Service.HubManager do
         handover: true
       },
       registry_backend: registry_backend_config(hub_id),
-      auto_recovery: auto_recovery_config(),
-      recovery_marker: recovery_marker_config(hub_id),
+      auto_recovery: auto_recovery_config(hub_id),
       # Relay startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
       cross_node_request_timeout: 10_000,
@@ -698,30 +697,18 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  defp auto_recovery_config() do
+  defp auto_recovery_config(hub_id) do
     case Application.get_env(:flezha, :auto_restore_enabled, true) do
       false ->
         false
 
       _ ->
         [
-          recovery_window_ms: Application.get_env(:flezha, :recovery_window_ms, 10_000),
+          marker_path: marker_path(hub_id),
           replay_timeout_ms: Application.get_env(:flezha, :boot_replay_timeout_ms, 60_000),
           recovery_timeout_ms:
             Application.get_env(:flezha, :process_hub_recovery_timeout_ms, 30_000)
         ]
-    end
-  end
-
-  defp recovery_marker_config(hub_id) do
-    case Application.get_env(:flezha, :auto_restore_enabled, true) do
-      false ->
-        # When auto_recovery is off the upstream library ignores recovery_marker.
-        # Pass nil so its default `enabled?: false` resolution applies.
-        nil
-
-      _ ->
-        %{enabled?: true, path: marker_path(hub_id)}
     end
   end
 
