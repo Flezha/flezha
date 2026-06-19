@@ -325,11 +325,12 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp trigger_to_subscription("on_input"), do: [{:on_input, []}]
-  defp trigger_to_subscription("on_output"), do: [{:on_output, []}]
-  defp trigger_to_subscription("interval"), do: [{:on_interval, [interval_ms: 5_000]}]
-  defp trigger_to_subscription("proactive"), do: [{:on_terminate, []}]
-  defp trigger_to_subscription(_), do: [{:on_input, []}]
+  @doc false
+  def trigger_to_subscription("on_input"), do: [{:on_input, []}]
+  def trigger_to_subscription("on_output"), do: [{:on_output, []}]
+  def trigger_to_subscription("interval"), do: [{:on_interval, [interval_ms: 5_000]}]
+  def trigger_to_subscription("proactive"), do: [{:on_interval, [interval_ms: 5_000]}]
+  def trigger_to_subscription(_), do: [{:on_input, []}]
 
   defp atomize_keys(map) when is_map(map) do
     Map.new(map, fn {k, v} ->
