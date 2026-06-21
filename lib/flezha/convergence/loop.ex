@@ -59,7 +59,10 @@ defmodule Flezha.Convergence.Loop do
             # Previous data-plane liveness snapshot + last emitted stall layer.
             # Detection only — the classifier never feeds a heal decision.
             prev_liveness: nil,
-            last_stall_verdict: :ok
+            last_stall_verdict: :ok,
+            # Monotonic ms when `bound < intended` first held; nil while met or
+            # recovering. healthz escalates recovering → degraded past its grace.
+            unmet_intent_since: nil
 
   # ---------- public API ----------
 
@@ -208,8 +211,9 @@ defmodule Flezha.Convergence.Loop do
     state = %{state | backoff: backoff}
 
     # Publish health over the FULL intent so /healthz reports the true
-    # intended count, not just the recovery-ready subset.
-    publish(intent, reality, state)
+    # intended count, not just the recovery-ready subset. Returns state with
+    # the refreshed unmet-intent deadline.
+    state = publish(intent, reality, state)
 
     :telemetry.execute(
       [:flezha, :convergence, :tick],
@@ -418,14 +422,34 @@ defmodule Flezha.Convergence.Loop do
     # vacuously `healthy` until every durable relay is reloaded and bound.
     pending_restore = HubManager.durable_registry_pending?()
 
+    # Unmet-intent clock: runs while `bound < intended` and not recovering.
+    now = System.monotonic_time(:millisecond)
+
+    unmet_intent_since =
+      cond do
+        bound >= intended or any_recovering?(reality) -> nil
+        is_integer(state.unmet_intent_since) -> state.unmet_intent_since
+        true -> now
+      end
+
     Snapshot.publish(%{
-      last_tick_at: System.monotonic_time(:millisecond),
+      last_tick_at: now,
       stalled_relays: stalled,
       plugin_degraded_relays: state.plugin_degraded,
       intended_relays: intended,
       bound_relays: bound,
       producing_relays: producing,
-      pending_restore: pending_restore
+      pending_restore: pending_restore,
+      unmet_intent_ms: unmet_intent_since && now - unmet_intent_since
     })
+
+    %{state | unmet_intent_since: unmet_intent_since}
+  end
+
+  defp any_recovering?(reality) do
+    reality
+    |> Map.get(:recovery, %{})
+    |> Map.values()
+    |> Enum.any?(&(&1 in [:recovery_pending, :recovering, :timeout]))
   end
 end

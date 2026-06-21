@@ -125,6 +125,7 @@ defmodule Flezha.Healthz.Server do
     stalled = Map.get(current, :stalled_relays, [])
     plugin_degraded = Map.get(current, :plugin_degraded_relays, [])
     pending_restore = Map.get(current, :pending_restore, false)
+    unmet_intent_ms = Map.get(current, :unmet_intent_ms)
     last_tick_at = Map.get(current, :last_tick_at)
 
     cond do
@@ -156,17 +157,28 @@ defmodule Flezha.Healthz.Server do
          })}
 
       bound < intended ->
-        # Declared relays are not all bound yet (e.g. controller just restarted
-        # and the Loop is still rebinding them). Capable-but-not-ready ⇒
-        # recovering, never "healthy": kubelet must not restart mid-rebind.
-        {:recovering,
-         encode_json(%{
-           status: "recovering",
-           reason: "relays_rebinding",
-           intended_relays: intended,
-           bound_relays: bound,
-           producing_relays: producing
-         })}
+        # Declared but not all bound: recovering within the grace, degraded
+        # past it. Always 200 — a restart can't re-bind an executor-orphaned relay.
+        if is_integer(unmet_intent_ms) and unmet_intent_ms > unmet_intent_grace_ms() do
+          {:degraded,
+           encode_json(%{
+             status: "degraded",
+             reason: "relays_unbound",
+             intended_relays: intended,
+             bound_relays: bound,
+             producing_relays: producing,
+             unmet_intent_ms: unmet_intent_ms
+           })}
+        else
+          {:recovering,
+           encode_json(%{
+             status: "recovering",
+             reason: "relays_rebinding",
+             intended_relays: intended,
+             bound_relays: bound,
+             producing_relays: producing
+           })}
+        end
 
       pending_restore ->
         # Intent is empty (intended == 0) only because hubs start lazily on
@@ -243,6 +255,9 @@ defmodule Flezha.Healthz.Server do
   defp loop_tick_gapped?(last_tick_at), do: now_ms() - last_tick_at > tick_ms() * 3
 
   defp tick_ms(), do: Application.get_env(:flezha, :convergence_tick_ms, 5_000)
+
+  defp unmet_intent_grace_ms(),
+    do: Application.get_env(:flezha, :convergence_unmet_intent_grace_ms, 120_000)
 
   defp tick_age(nil), do: nil
   defp tick_age(last_tick_at), do: now_ms() - last_tick_at

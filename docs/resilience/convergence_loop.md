@@ -182,9 +182,18 @@ health summary. `Healthz.Server` reads `Snapshot.current/0` — it holds no stat
 of its own. The published map includes:
 
 - `bound_relays`, `producing_relays` (for the `degraded` vs `healthy` split)
+- `intended_relays` (declared count); `bound < intended` ⇒ `/healthz` is
+  `recovering` (post-restart rebind window), never `healthy`
 - `stalled_relays` and `plugin_degraded_relays` (both subtract from
   `producing_relays`; `/healthz` degraded reason distinguishes
   `output_stalled` from `plugin_unhealthy`)
+- `unmet_intent_ms` — how long `bound < intended` has held while not
+  recovering (nil otherwise). Once it exceeds
+  `:convergence_unmet_intent_grace_ms`, `/healthz` escalates `recovering →
+  degraded` (HTTP 200, reason `relays_unbound`) so a relay stuck unbound
+  alarms instead of sitting silently `recovering` forever. Not 503: a
+  controller restart cannot re-bind an executor-orphaned relay. The clock
+  resets while any hub is recovering.
 - Per-hub recovery state
 - Tick timestamp (used to detect a stale loop for the `tick_stale` 503 case)
 
@@ -197,6 +206,7 @@ of its own. The published map includes:
 | `FLEZHA_USE_CONVERGENCE_HEALTH` | `:convergence_health_enabled` | `true` | Master kill-switch; `false` removes `Loop` from the supervision tree. `Convergence.Snapshot` always starts so recovery-state reads work even with the loop disabled. |
 | `FLEZHA_CONVERGENCE_TICK_MS` | `:convergence_tick_ms` | `5000` | Tick interval. |
 | `FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS` | `:convergence_output_stall_grace_ms` | `60000` | How long an output stall must persist before an immediate tick is triggered (separate from the watchdog's own `output_stall_timeout_ms`). |
+| `FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS` | `:convergence_unmet_intent_grace_ms` | `120000` | How long `bound < intended` may hold (while not recovering) before `/healthz` escalates `recovering → degraded` and the `:unmet_intent` alarm fires. ~10 ticks at the default cadence. |
 
 ---
 

@@ -169,6 +169,43 @@ defmodule Flezha.Healthz.ServerTest do
     assert decoded["intended_relays"] == 3
   end
 
+  test "relays declared but unbound PAST the grace → 200 degraded (not silent recovering)",
+       %{port: port} do
+    # The silent-30h-outage gap: a relay declared but never bound must not sit
+    # at `recovering` forever. Once `unmet_intent_ms` exceeds the grace the
+    # reader escalates to `degraded` so it alarms (still 200 — a restart can't
+    # re-bind an orphaned relay).
+    prev = Application.get_env(:flezha, :convergence_unmet_intent_grace_ms)
+    Application.put_env(:flezha, :convergence_unmet_intent_grace_ms, 100)
+
+    on_exit(fn ->
+      if prev,
+        do: Application.put_env(:flezha, :convergence_unmet_intent_grace_ms, prev),
+        else: Application.delete_env(:flezha, :convergence_unmet_intent_grace_ms)
+    end)
+
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      stalled_relays: [],
+      intended_relays: 1,
+      bound_relays: 0,
+      producing_relays: 0,
+      unmet_intent_ms: 5_000,
+      tick_latency_p99_ms: 0,
+      tick_breach_streak: 0
+    })
+
+    {status, _headers, body} = get(port, "/healthz")
+    assert status == 200
+    decoded = Jason.decode!(body)
+    refute decoded["status"] == "healthy"
+    assert decoded["status"] == "degraded"
+    assert decoded["reason"] == "relays_unbound"
+    assert decoded["intended_relays"] == 1
+    assert decoded["bound_relays"] == 0
+    assert decoded["unmet_intent_ms"] == 5_000
+  end
+
   test "durable registry pending → 200 recovering (post-restart, registry not loaded yet)",
        %{port: port} do
     # Hubs start lazily on executor reconnect, so right after a restart Intent is

@@ -369,6 +369,10 @@ if config_env() != :test do
     convergence_output_stall_grace_ms:
       System.get_env("FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS", "60000")
       |> String.to_integer(),
+    # Grace before declared-but-unbound relays flip /healthz to degraded.
+    convergence_unmet_intent_grace_ms:
+      System.get_env("FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS", "120000")
+      |> String.to_integer(),
     convergence_plugin_strike_threshold:
       System.get_env("FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD", "2")
       |> String.to_integer(),
