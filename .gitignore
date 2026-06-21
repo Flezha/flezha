@@ -61,6 +61,7 @@ flezha-*.tar
 # `maven-archiver/`) leaked in. Building is now a documented
 # prerequisite — see README "Building" / `mix test.java_sdk`.
 test/apps/java_compute_engine/target/
+test/apps/java_executor/target/
 sdk/java/**/target/
 
 # scripts/ci-local.sh isolates its Cargo artifacts here so it doesn't
