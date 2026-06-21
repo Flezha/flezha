@@ -132,6 +132,7 @@ fn driver_stats(env: Env, server: TransportServerArc) -> NifResult<Term> {
             .map(|(&stream_id, s)| StreamStatsOut {
                 stream_id,
                 write_buffer_len: s.write_buffer_len,
+                write_buffer_dropped: s.write_buffer_dropped,
                 frames_written: s.frames_written,
                 frames_read: s.frames_read,
                 last_write_ms: s.last_write_ms,

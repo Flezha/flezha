@@ -145,6 +145,25 @@ The hysteresis prevents oscillation around the threshold. The SDK's
 per-Partition mailbox observer translates the signal into the channel's
 declared `OverflowPolicy` (see `relay-state-persistence-rust`).
 
+### Hard in-memory bound (shed)
+
+The soft watermark only *signals* the SDK; nothing forces a
+non-cooperating SDK (or a wedged disk) to slow down. A hard bound,
+strictly above the soft watermark, caps the writer's own memory:
+`append_async/5` sheds (drops) the incoming Change when either
+`pending_bytes` reaches `:flezha, :wal_hard_watermark_bytes` (default
+`4 ×` the soft watermark) **or** the writer's mailbox depth reaches
+`:flezha, :wal_pending_msg_cap` (default `5_000` — a cast flood grows
+the mailbox even when each record is tiny). Each shed increments
+`wal_shed_total` (per-Partition `Metrics` counter); the resulting seq
+gap drives the existing `Recovery.resync` handshake (once per shed
+episode), so the SDK — authoritative for partition state — re-sends the
+missing Changes. Back-pressure sheds, never blocks: the async cast path
+stays non-blocking so a slow disk cannot stall the data-plane channel.
+This is the controller-side mirror of the SDK bounded-mailbox
+`DropNewest` policy and bounds the blast radius of the 2026-06-19
+OOM.
+
 ## Time-travel CLI
 
 ```
@@ -208,8 +227,10 @@ fire-and-forget and reads no reply).
 |---|---|---|
 | `:flezha, :state_root` | `"app_data/state"` | Root for per-Partition files. |
 | `:flezha, :agent_fsync_interval_ms` | `5` | `FsyncBatcher` tick cadence. Range [1, 1000]. |
-| `:flezha, :wal_high_watermark_bytes` | `16 * 1024 * 1024` | Back-pressure trigger. |
+| `:flezha, :wal_high_watermark_bytes` | `16 * 1024 * 1024` | Soft back-pressure trigger (signals SDK). |
 | `:flezha, :wal_low_watermark_bytes` | `high / 2` | Back-pressure release. |
+| `:flezha, :wal_hard_watermark_bytes` | `high * 4` | Hard un-fsynced-bytes bound; past it `append_async` sheds. |
+| `:flezha, :wal_pending_msg_cap` | `5_000` | Hard mailbox-depth bound; past it `append_async` sheds. |
 | `:flezha, :time_travel_retention_check_interval_ms` | `60_000` | `Retention` tick cadence. |
 | `:flezha, :time_travel_retention_hours` | `%{}` (default 6 from PersistenceResolver) | Per-Relay retention overrides. |
 | `:flezha, :default_time_travel_retention_hours` | `6` | Global default when no override. |

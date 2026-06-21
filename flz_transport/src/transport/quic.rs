@@ -17,6 +17,26 @@ use quinn_proto::{
 const UDP_TOKEN: Token = Token(0);
 const WAKER_TOKEN: Token = Token(1);
 
+/// Default per-stream send-buffer cap (8 MiB). Override with
+/// `FLEZHA_MAX_WRITE_BUFFER_BYTES`. Mirrors the UDS driver cap so a slow peer
+/// cannot grow the buffered-write `Vec` without bound.
+const DEFAULT_MAX_WRITE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+
+fn max_write_buffer_bytes() -> usize {
+    std::env::var("FLEZHA_MAX_WRITE_BUFFER_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_MAX_WRITE_BUFFER_BYTES)
+}
+
+/// Whether buffering `incoming` bytes onto a `buffered`-byte send buffer would
+/// exceed `cap`. An empty buffer always accepts; once non-empty it stays at or
+/// below `cap` (DropNewest).
+fn would_overflow_write_buffer(buffered: usize, incoming: usize, cap: usize) -> bool {
+    buffered != 0 && buffered + incoming > cap
+}
+
 // ---------------------------------------------------------------------------
 // Driver ↔ App communication types
 // ---------------------------------------------------------------------------
@@ -38,6 +58,8 @@ struct StreamSlot {
     read_tx: channel::Sender<Bytes>,
     write_buf: Vec<u8>,
     pending_write_reply: Option<(usize, channel::Sender<io::Result<usize>>)>,
+    max_write_buffer_bytes: usize,
+    write_buffer_dropped: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +494,8 @@ fn driver_loop(
                                     read_tx,
                                     write_buf: Vec::new(),
                                     pending_write_reply: None,
+                                    max_write_buffer_bytes: max_write_buffer_bytes(),
+                                    write_buffer_dropped: 0,
                                 },
                             );
                             let _ = reply.send(Ok(stream_id));
@@ -488,26 +512,44 @@ fn driver_loop(
                 } => {
                     if let Some(slot) = streams.get_mut(&stream_id) {
                         let total_len = data.len();
-                        match connection.send_stream(stream_id).write(&data) {
-                            Ok(written) => {
-                                if written < total_len {
-                                    // Partial write — buffer remainder, defer reply
-                                    slot.write_buf.extend_from_slice(&data[written..]);
-                                    slot.pending_write_reply = Some((total_len, reply));
-                                } else {
-                                    let _ = reply.send(Ok(total_len));
+                        if would_overflow_write_buffer(
+                            slot.write_buf.len(),
+                            total_len,
+                            slot.max_write_buffer_bytes,
+                        ) {
+                            // DropNewest: the peer is not draining; drop rather than
+                            // grow the buffer without bound. The data stream is
+                            // at-least-once with downstream dedup.
+                            slot.write_buffer_dropped += 1;
+                            tracing::warn!(
+                                target: "flezha::transport",
+                                transport = "quic",
+                                dropped = slot.write_buffer_dropped,
+                                "QUIC send buffer at cap; dropping frame"
+                            );
+                            let _ = reply.send(Ok(total_len));
+                        } else {
+                            match connection.send_stream(stream_id).write(&data) {
+                                Ok(written) => {
+                                    if written < total_len {
+                                        // Partial write — buffer remainder, defer reply
+                                        slot.write_buf.extend_from_slice(&data[written..]);
+                                        slot.pending_write_reply = Some((total_len, reply));
+                                    } else {
+                                        let _ = reply.send(Ok(total_len));
+                                    }
                                 }
-                            }
-                            Err(quinn_proto::WriteError::Blocked) => {
-                                // Fully blocked — buffer everything, defer reply
-                                slot.write_buf = data;
-                                slot.pending_write_reply = Some((total_len, reply));
-                            }
-                            Err(e) => {
-                                let _ = reply.send(Err(io::Error::new(
-                                    io::ErrorKind::BrokenPipe,
-                                    format!("QUIC write error: {}", e),
-                                )));
+                                Err(quinn_proto::WriteError::Blocked) => {
+                                    // Fully blocked — buffer everything, defer reply
+                                    slot.write_buf = data;
+                                    slot.pending_write_reply = Some((total_len, reply));
+                                }
+                                Err(e) => {
+                                    let _ = reply.send(Err(io::Error::new(
+                                        io::ErrorKind::BrokenPipe,
+                                        format!("QUIC write error: {}", e),
+                                    )));
+                                }
                             }
                         }
                     } else {
@@ -704,6 +746,23 @@ mod tests {
             started.elapsed() >= Duration::from_millis(100),
             "read returned before the deadline elapsed"
         );
+    }
+
+    // Parallel to the UDS R2d guard: the send-buffer cap predicate bounds the
+    // buffered-write `Vec` with DropNewest once it is non-empty.
+    #[test]
+    fn write_buffer_cap_drops_newest_past_bound() {
+        let cap = 1024;
+
+        assert!(!would_overflow_write_buffer(0, 4096, cap));
+        assert!(!would_overflow_write_buffer(512, 512, cap));
+        assert!(would_overflow_write_buffer(512, 513, cap));
+        assert!(would_overflow_write_buffer(cap, 1, cap));
+    }
+
+    #[test]
+    fn max_write_buffer_bytes_defaults_when_unset() {
+        assert_eq!(max_write_buffer_bytes(), DEFAULT_MAX_WRITE_BUFFER_BYTES);
     }
 
     #[test]

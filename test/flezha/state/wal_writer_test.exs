@@ -228,6 +228,56 @@ defmodule Flezha.State.WalWriterTest do
     end
   end
 
+  describe "hard in-memory bound (shed)" do
+    # R2c: a WalWriter that cannot drain must not let its mailbox / un-fsynced
+    # bytes grow without bound. Past the hard bound, async appends are shed
+    # (dropped + counted) and the resulting seq gap drives resync.
+    test "sheds appends past the hard bound, leaving a gap that drives resync",
+         %{partition_id: pid} do
+      cap = 50
+      Application.put_env(:flezha, :wal_pending_msg_cap, cap)
+      parent = self()
+
+      Application.put_env(:flezha, :state_resync_fun, fn partition_id, opts ->
+        send(parent, {:resync_called, partition_id, opts})
+        {:ok, make_ref()}
+      end)
+
+      on_exit(fn ->
+        Application.delete_env(:flezha, :wal_pending_msg_cap)
+        Application.delete_env(:flezha, :state_resync_fun)
+      end)
+
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid) |> ok!()
+      header = TestHelpers.stub_header()
+
+      # Baseline at seq 0 (synchronous, so handle_continue has run).
+      assert :ok = WalWriter.append(srv, 0, header, "a")
+
+      # Freeze the writer, then flood its mailbox so the cast handler — once it
+      # resumes — sees a backlog far past the cap.
+      :sys.suspend(srv)
+      k = 500
+      for n <- 1..k, do: WalWriter.append_async(srv, n, header, "x")
+
+      {:message_queue_len, qlen} = Process.info(srv, :message_queue_len)
+      assert qlen >= k
+
+      :sys.resume(srv)
+
+      # A sync call drains behind every queued cast.
+      last = WalWriter.last_persisted_seq(srv)
+
+      shed = Metrics.get(Metrics.for_partition(pid), :wal_shed_total)
+      assert shed > 0
+      # The WAL never advanced to k — shed Changes were dropped, not written.
+      assert last < k
+      # The shed gap drove a resync (the SDK is authoritative for partition state).
+      assert_receive {:resync_called, ^pid, _opts}, 1_000
+    end
+  end
+
   defp ok!({:ok, x}), do: {:ok, x}
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))

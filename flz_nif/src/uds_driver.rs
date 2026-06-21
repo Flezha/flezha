@@ -17,6 +17,18 @@ const LISTENER_TOKEN: Token = Token(0);
 const WAKER_TOKEN: Token = Token(1);
 const STREAM_TOKEN_BASE: usize = 2;
 
+/// Default per-stream send-buffer cap (8 MiB) — a few seconds of peak per-stream
+/// throughput. Override with `FLEZHA_MAX_WRITE_BUFFER_BYTES`.
+const DEFAULT_MAX_WRITE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+
+fn max_write_buffer_bytes() -> usize {
+    std::env::var("FLEZHA_MAX_WRITE_BUFFER_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_MAX_WRITE_BUFFER_BYTES)
+}
+
 /// Commands sent from NIF functions to the driver thread.
 pub enum ServerCommand {
     SendData {
@@ -53,8 +65,13 @@ struct StreamState {
     active: bool,
     passive_queue: Vec<ParsedFrame>,
     write_buffer: Vec<u8>,
+    // Hard cap on the per-stream send buffer: past it `enqueue_write` drops the
+    // newest frame so a slow/non-reading executor cannot grow controller memory
+    // without bound (mirrors the SDK bounded-mailbox DropNewest).
+    max_write_buffer_bytes: usize,
     // Liveness counters (single-threaded driver, no contention). Copied into
     // the DriverStats snapshot once per loop iteration.
+    write_buffer_dropped: u64,
     frames_written: u64,
     frames_read: u64,
     last_write_ms: u64,
@@ -309,6 +326,7 @@ fn driver_loop(
                     id,
                     StreamSnapshot {
                         write_buffer_len: s.write_buffer.len() as u64,
+                        write_buffer_dropped: s.write_buffer_dropped,
                         frames_written: s.frames_written,
                         frames_read: s.frames_read,
                         last_write_ms: s.last_write_ms,
@@ -331,11 +349,30 @@ fn enqueue_write(
     now: u64,
 ) -> bool {
     if let Some(state) = streams.get_mut(&stream_id) {
+        if would_overflow_write_buffer(
+            state.write_buffer.len(),
+            data.len(),
+            state.max_write_buffer_bytes,
+        ) {
+            // DropNewest: the peer is not draining; drop rather than grow the
+            // buffer without bound. Counted, not silent.
+            state.write_buffer_dropped += 1;
+            return false;
+        }
+
         state.frames_written += 1;
         state.write_buffer.extend_from_slice(&data);
         return try_flush(state, poll, now);
     }
     false
+}
+
+/// Whether enqueuing `incoming` bytes onto a `buffered`-byte send buffer would
+/// exceed `cap`. An empty buffer always accepts (so a single oversized frame on
+/// an idle stream is never dropped); once non-empty, the buffer stays at or
+/// below `cap`.
+fn would_overflow_write_buffer(buffered: usize, incoming: usize, cap: usize) -> bool {
+    buffered != 0 && buffered + incoming > cap
 }
 
 /// Attempt to write buffered data to the stream.
@@ -434,6 +471,8 @@ fn accept_connections(
                         active: false,
                         passive_queue: Vec::new(),
                         write_buffer: Vec::new(),
+                        max_write_buffer_bytes: max_write_buffer_bytes(),
+                        write_buffer_dropped: 0,
                         frames_written: 0,
                         frames_read: 0,
                         last_write_ms: 0,
@@ -513,3 +552,34 @@ fn read_stream_data(
 
 // send_data_msg / send_closed_msg / send_connection_msg live in
 // crate::driver_msg (shared with the QUIC driver).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // R2d: without the cap, `enqueue_write` appends to `write_buffer` on every
+    // `WouldBlock` and it grows without bound. The cap predicate bounds it:
+    // DropNewest once the buffer is non-empty and the frame would exceed the cap.
+    #[test]
+    fn write_buffer_cap_drops_newest_past_bound() {
+        let cap = 1024;
+
+        // Empty buffer always accepts (a single oversized frame on an idle stream
+        // is never dropped).
+        assert!(!would_overflow_write_buffer(0, 4096, cap));
+
+        // Filling exactly to the cap is allowed; one byte past it is dropped.
+        assert!(!would_overflow_write_buffer(512, 512, cap));
+        assert!(would_overflow_write_buffer(512, 513, cap));
+
+        // Already at the cap: every further frame is dropped — bounded, not 1:1.
+        assert!(would_overflow_write_buffer(cap, 1, cap));
+        assert!(would_overflow_write_buffer(cap, 4096, cap));
+    }
+
+    #[test]
+    fn max_write_buffer_bytes_defaults_when_unset() {
+        // No env override in the test process → the documented default.
+        assert_eq!(max_write_buffer_bytes(), DEFAULT_MAX_WRITE_BUFFER_BYTES);
+    }
+}

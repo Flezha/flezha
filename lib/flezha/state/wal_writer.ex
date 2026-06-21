@@ -32,9 +32,12 @@ defmodule Flezha.State.WalWriter do
     :pending_since_us,
     :high_watermark,
     :low_watermark,
+    :hard_watermark,
+    :pending_msg_cap,
     :metrics,
     :latency_reservoir,
-    :backpressured?
+    :backpressured?,
+    :shedding?
   ]
 
   @type t :: %__MODULE__{
@@ -49,9 +52,12 @@ defmodule Flezha.State.WalWriter do
           pending_since_us: non_neg_integer() | nil,
           high_watermark: pos_integer(),
           low_watermark: pos_integer(),
+          hard_watermark: pos_integer(),
+          pending_msg_cap: pos_integer(),
           metrics: :counters.counters_ref(),
           latency_reservoir: :queue.queue(),
-          backpressured?: boolean()
+          backpressured?: boolean(),
+          shedding?: boolean()
         }
 
   @typedoc """
@@ -91,7 +97,9 @@ defmodule Flezha.State.WalWriter do
   Non-blocking append. The caller (a `StreamChannel`) hands off the Change and
   returns immediately, so WAL/recovery latency never stalls the data-plane
   channel. On a seq gap the writer emits `[:flezha, :state, :seq_gap]` and
-  drives resync itself.
+  drives resync itself. Past the hard in-memory bound (un-fsynced bytes or
+  mailbox depth) the Change is shed (dropped, `wal_shed_total` incremented),
+  and the resulting gap drives resync — back-pressure sheds, never blocks.
   """
   @spec append_async(GenServer.server(), non_neg_integer(), binary(), binary(), binary() | nil) ::
           :ok
@@ -199,9 +207,12 @@ defmodule Flezha.State.WalWriter do
       pending_since_us: nil,
       high_watermark: high_watermark(),
       low_watermark: low_watermark(),
+      hard_watermark: hard_watermark(),
+      pending_msg_cap: pending_msg_cap(),
       metrics: Metrics.for_partition(partition_id),
       latency_reservoir: :queue.new(),
-      backpressured?: false
+      backpressured?: false,
+      shedding?: false
     }
 
     {:ok, state, {:continue, :open}}
@@ -311,6 +322,14 @@ defmodule Flezha.State.WalWriter do
 
   @impl true
   def handle_cast({:append_async, seq, header, change_bytes, executor_id}, state) do
+    if over_hard_bound?(state) do
+      {:noreply, shed(state, seq, executor_id)}
+    else
+      do_append_async(seq, header, change_bytes, executor_id, %{state | shedding?: false})
+    end
+  end
+
+  defp do_append_async(seq, header, change_bytes, executor_id, state) do
     case handle_call({:append, seq, header, change_bytes, executor_id}, nil, state) do
       {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->
         {rc, sh, pk} = new_state.partition_id
@@ -499,6 +518,48 @@ defmodule Flezha.State.WalWriter do
     end
   end
 
+  # ---------- Hard bound (shed) ----------
+
+  # Last-resort safety net above the soft watermark: cooperative SDKs throttle on
+  # `PartitionMailboxStatus` first; only a slow disk or a non-cooperating SDK
+  # reaches here. Covers un-fsynced bytes AND mailbox depth — a cast flood grows
+  # the mailbox even when bytes-per-record is small.
+  defp over_hard_bound?(state) do
+    state.pending_bytes >= state.hard_watermark or
+      message_queue_len() >= state.pending_msg_cap
+  end
+
+  defp message_queue_len() do
+    case Process.info(self(), :message_queue_len) do
+      {:message_queue_len, n} -> n
+      nil -> 0
+    end
+  end
+
+  # Drop the Change without writing; the resulting seq gap drives the existing
+  # resync handshake so the SDK (authoritative) re-sends. Resync is spawned once
+  # per shed episode (on the false->true transition) to avoid a resync storm
+  # under a sustained flood.
+  defp shed(state, seq, executor_id) do
+    Metrics.add(state.metrics, :wal_shed_total, 1)
+
+    if state.shedding? do
+      state
+    else
+      {rc, sh, pk} = state.partition_id
+
+      :telemetry.execute(
+        [:flezha, :state, :seq_gap],
+        %{expected: state.last_persisted_seq + 1, got: seq},
+        %{relay: rc, shard: sh, key: pk}
+      )
+
+      partition_id = state.partition_id
+      spawn(fn -> Recovery.resync(partition_id, executor_id: executor_id, reason: :shed) end)
+      %{state | shedding?: true}
+    end
+  end
+
   # ---------- Backpressure ----------
 
   defp maybe_signal_backpressure(%{backpressured?: false} = state, pending)
@@ -582,5 +643,17 @@ defmodule Flezha.State.WalWriter do
       :wal_low_watermark_bytes,
       div(high_watermark(), 2)
     )
+  end
+
+  # Hard in-memory bound, strictly above the soft watermark (default 4x) so
+  # cooperative back-pressure takes effect before anything is shed.
+  defp hard_watermark() do
+    Application.get_env(:flezha, :wal_hard_watermark_bytes, high_watermark() * 4)
+  end
+
+  # Pending mailbox-depth cap: a cast flood can grow the mailbox even when each
+  # record is small.
+  defp pending_msg_cap() do
+    Application.get_env(:flezha, :wal_pending_msg_cap, 5_000)
   end
 end

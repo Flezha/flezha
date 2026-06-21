@@ -12,8 +12,9 @@ defmodule Flezha.State.Metrics do
     5. `:flush_latency_ms_p99`    — gauge
     6. `:fsync_durability_lag_ms` — gauge
 
-  Plus `:dedup_drops_total` and `:wal_seq` (gauge for last persisted seq),
-  for a total of 8. Allocations are lazy and stored in a module-level
+  Plus `:dedup_drops_total`, `:wal_seq` (gauge for last persisted seq),
+  and `:wal_shed_total` (appends dropped past the hard in-memory bound),
+  for a total of 9. Allocations are lazy and stored in a module-level
   `:ets` table keyed by `partition_id`.
   """
 
@@ -29,7 +30,8 @@ defmodule Flezha.State.Metrics do
     :flush_latency_ms_p99,
     :fsync_durability_lag_ms,
     :dedup_drops_total,
-    :wal_seq
+    :wal_seq,
+    :wal_shed_total
   ]
 
   @counter_indices @counters |> Enum.with_index(1) |> Enum.into(%{})

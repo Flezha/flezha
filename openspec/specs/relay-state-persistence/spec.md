@@ -307,6 +307,36 @@ The agent SHALL NOT issue `:full` more than once per Partition while the waterma
 - **WHEN** a Shard with `OverflowPolicy::Block` on its emit channel calls `ctx.emit(...)` for a Partition under `:full` status
 - **THEN** the producer SHALL park its calling thread; on receipt of `:open` status the producer SHALL unpark and the emit SHALL succeed; the producer's `Shard::run` SHALL eventually return `Ok(())`
 
+### Requirement: Hard in-memory bound sheds WAL appends past the watermark
+
+Each `WalWriter` SHALL enforce a hard in-memory bound on un-fsynced data —
+covering both queued-but-not-fsynced bytes and pending mailbox depth — in
+addition to the soft watermark that ships `PartitionMailboxStatus` to the SDK.
+When the hard bound is exceeded, `append_async/5` SHALL shed the incoming Change
+(drop it without writing) and increment a shed counter, rather than growing the
+writer's mailbox or un-fsynced bytes without bound. The data plane SHALL NOT
+block: the shed leaves a sequence gap that the existing resync path repairs.
+
+The hard bound SHALL be strictly above the soft watermark so that normal
+back-pressure (the SDK throttling on `PartitionMailboxStatus`) takes effect
+first; shedding is the last-resort safety net for a slow disk or an
+SDK that does not honour the wire signal.
+
+#### Scenario: Appends past the hard bound are shed, not buffered
+
+- **WHEN** a `WalWriter` cannot drain (fsync stalled / writer suspended) and
+  `append_async/5` is called repeatedly until the un-fsynced bytes or pending
+  mailbox depth exceed the hard bound
+- **THEN** further appends are dropped and a shed counter increments, and the
+  writer's pending mailbox depth stays bounded instead of growing one-to-one
+  with the calls
+
+#### Scenario: Shed-induced gap is repaired by resync
+
+- **WHEN** a Change has been shed, leaving the next received seq non-contiguous
+- **THEN** the existing seq-gap resync handshake re-pulls the missing state from
+  the SDK (the authoritative source), so no committed data is lost
+
 ### Requirement: Crash-safe persistence on agent reboot
 
 On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.State.Supervisor` SHALL call `Registry.scan_dir/1` for each `app_data/state/{relay}/{shard}/` directory and reconstruct the in-memory persistence state:

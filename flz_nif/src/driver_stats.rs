@@ -10,6 +10,7 @@ use std::time::Instant;
 #[derive(Default, Clone)]
 pub struct StreamSnapshot {
     pub write_buffer_len: u64,
+    pub write_buffer_dropped: u64,
     pub frames_written: u64,
     pub frames_read: u64,
     pub last_write_ms: u64,
@@ -84,6 +85,7 @@ pub struct DriverStatsOut {
 pub struct StreamStatsOut {
     pub stream_id: u64,
     pub write_buffer_len: u64,
+    pub write_buffer_dropped: u64,
     pub frames_written: u64,
     pub frames_read: u64,
     pub last_write_ms: u64,
@@ -115,6 +117,7 @@ mod tests {
             7,
             StreamSnapshot {
                 write_buffer_len: 42,
+                write_buffer_dropped: 2,
                 frames_written: 5,
                 frames_read: 3,
                 last_write_ms: 90,
@@ -126,6 +129,7 @@ mod tests {
         let guard = stats.streams.lock().unwrap();
         let s = guard.get(&7).unwrap();
         assert_eq!(s.write_buffer_len, 42);
+        assert_eq!(s.write_buffer_dropped, 2);
         assert_eq!(s.frames_written, 5);
         assert_eq!(s.frames_read, 3);
     }

@@ -27,7 +27,7 @@ Kraken WS plugin
   → Native.send_frame
   → [crossbeam unbounded command channel]                [cmd_queue_depth]
   → flz-uds-driver loop (uds_driver.rs)                  [loop_iterations, last_loop_ms]
-  → per-stream write_buffer → UnixStream write           [write_buffer_len, last_write_ms, frames_written]
+  → per-stream write_buffer (capped) → UnixStream write   [write_buffer_len, write_buffer_dropped, last_write_ms, frames_written]
 Inbound mirror: driver read → StreamChannel({:flz_data}) [flz_data_received] + [last_read_ms, frames_read]
 ```
 
@@ -36,8 +36,9 @@ Inbound mirror: driver read → StreamChannel({:flz_data}) [flz_data_received] +
 **NIF driver self-report** (`driver_stats/1`, `flz_nif`): per UDS server —
 `loop_iterations` (heartbeat, bumped once per loop iteration), `last_loop_ms`
 (driver-elapsed ms at the last iteration), `now_ms`, `cmd_queue_depth`
-(`cmd_rx.len()`), and per stream `{write_buffer_len, frames_written, frames_read,
-last_write_ms, last_read_ms}`. The loop counters are lock-free `AtomicU64`; the
+(`cmd_rx.len()`), and per stream `{write_buffer_len, write_buffer_dropped,
+frames_written, frames_read, last_write_ms, last_read_ms}`. The loop counters are
+lock-free `AtomicU64`; the
 per-stream snapshot is rebuilt under a `Mutex` once per loop iteration — never on
 the per-frame path. A frozen `loop_iterations` with a stale `last_loop_ms`
 unambiguously means the thread is wedged. QUIC has no equivalent yet —
@@ -74,6 +75,22 @@ driver stats are surfaced per transport (`:driver_loop_iterations`,
 per-stream label values — because the per-entity localization is the
 classifier's job, not the metrics'.
 
+## Send-buffer cap
+
+The per-stream send buffer is bounded so a slow or non-reading executor cannot
+grow controller memory without limit (a contributor to the 2026-06-19 OOM). When
+the socket returns `WouldBlock` and the buffered bytes are already at
+`max_write_buffer_bytes` (default 8 MiB, env `FLEZHA_MAX_WRITE_BUFFER_BYTES`),
+`enqueue_write` drops the newest frame instead of appending it — a `DropNewest`
+policy mirroring the SDK bounded mailbox — and bumps the per-stream
+`write_buffer_dropped` counter (surfaced in `driver_stats/1`). An empty buffer
+always accepts, so a single large frame on an idle stream is never dropped. The
+data stream is at-least-once with downstream dedup, so a dropped frame is
+recoverable; unbounded growth → OOM is strictly worse. The driver never blocks
+its command loop on a slow peer. The QUIC driver
+(`flz_transport/src/transport/quic.rs`) mirrors the same cap + drop counter on
+its `write_buf`.
+
 ## The stall classifier
 
 `Flezha.Convergence.StallClassifier.classify/3` is a **pure** function over the
@@ -109,6 +126,10 @@ negligible); this flag gates the ~1 Hz driver poll + per-tick classifier. The
 classifier additionally runs only when the convergence Loop runs
 (`FLEZHA_USE_CONVERGENCE_HEALTH`, default on) and the source only when
 `:otp_backend_enabled` is on.
+
+`FLEZHA_MAX_WRITE_BUFFER_BYTES` (default `8 * 1024 * 1024`) caps the per-stream
+send buffer in both the UDS and QUIC drivers; past it the newest frame is dropped
+(`write_buffer_dropped`).
 
 ## Zero-code operator fallback
 
