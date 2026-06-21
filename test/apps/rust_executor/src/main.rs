@@ -1220,6 +1220,173 @@ impl Relay for MixedRelay {
 mod macro_twin_tests {
     use super::*;
     use flezha_executor::testing::ShardTestHarness;
+    use std::collections::{HashMap, VecDeque};
+
+    // -----------------------------------------------------------------------
+    // Canonical keyed-collection reference shard (`expressive-state-journaling`,
+    // authoring-contract §3 / §6): a rolling per-key window. The sugared form
+    // uses `#[journal(map_deque)]` + an `Option<Output>` warmup gate;
+    // `RollingWindowTwin` is the equivalent hand-written `Shard`/`Change`. The
+    // tests below assert the two are behaviourally identical and that the
+    // sugared form survives `replay_equals`.
+    // -----------------------------------------------------------------------
+
+    const ROLLING_WINDOW_N: usize = 3;
+
+    #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug, flezha_executor::State)]
+    struct RollingWindowState {
+        #[journal(map_deque)]
+        window: HashMap<String, VecDeque<f64>>,
+    }
+
+    #[flezha_executor::shard(id = "rolling_window")]
+    fn rolling_window(input: (String, f64), state: &mut RollingWindowState) -> Option<f64> {
+        let (key, value) = input;
+        state.push_back_window(key.clone(), value);
+        let len = state.window.get(&key).map(|w| w.len()).unwrap_or(0);
+        if len > ROLLING_WINDOW_N {
+            state.pop_front_window(key.clone(), len - ROLLING_WINDOW_N);
+        }
+        let w = state.window.get(&key)?;
+        if w.len() < ROLLING_WINDOW_N {
+            return None;
+        }
+        Some(w.iter().sum::<f64>() / ROLLING_WINDOW_N as f64)
+    }
+
+    // Hand-written twin: the exact `Shard` / `Change` impl the sugar expands to
+    // (variant names differ; behaviour does not).
+    #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
+    struct RollingWindowTwinState {
+        window: HashMap<String, VecDeque<f64>>,
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+    enum RollingWindowTwinChange {
+        PushBack(String, f64),
+        PopFront(String, usize),
+    }
+    impl Change for RollingWindowTwinChange {}
+
+    #[derive(Default)]
+    struct RollingWindowTwin;
+    impl Shard for RollingWindowTwin {
+        type Input = (String, f64);
+        type Output = f64;
+        type State = RollingWindowTwinState;
+        type Change = RollingWindowTwinChange;
+        type Clock = WallClock;
+        type Config = ();
+        fn name() -> &'static str {
+            "rolling_window_twin"
+        }
+        fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> RollingWindowTwinState {
+            RollingWindowTwinState::default()
+        }
+        fn apply_change(state: &mut RollingWindowTwinState, change: &RollingWindowTwinChange) {
+            match change {
+                RollingWindowTwinChange::PushBack(k, v) => {
+                    state.window.entry(k.clone()).or_default().push_back(*v);
+                }
+                RollingWindowTwinChange::PopFront(k, n) => {
+                    let e = state.window.entry(k.clone()).or_default();
+                    for _ in 0..(*n).min(e.len()) {
+                        e.pop_front();
+                    }
+                }
+            }
+        }
+        fn run(
+            &mut self,
+            input: (String, f64),
+            mut state: StateHandle<'_, Self>,
+            ctx: &mut ShardCtx<'_>,
+        ) -> Result<(), ShardError> {
+            let (key, value) = input;
+            state.apply(RollingWindowTwinChange::PushBack(key.clone(), value));
+            let len = state.window.get(&key).map(|w| w.len()).unwrap_or(0);
+            if len > ROLLING_WINDOW_N {
+                state.apply(RollingWindowTwinChange::PopFront(
+                    key.clone(),
+                    len - ROLLING_WINDOW_N,
+                ));
+            }
+            let Some(w) = state.window.get(&key) else {
+                return Ok(());
+            };
+            if w.len() < ROLLING_WINDOW_N {
+                return Ok(());
+            }
+            let mean = w.iter().sum::<f64>() / ROLLING_WINDOW_N as f64;
+            ctx.emit::<f64>(mean)
+        }
+    }
+
+    // Per-mode coverage for the remaining journaling modes (`map_set`,
+    // `map_vec`), composed with a flat field on one `Change` enum.
+    #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug, flezha_executor::State)]
+    struct KeyedCollectionsState {
+        #[journal(map_set)]
+        last: HashMap<String, f64>,
+        #[journal(map_vec)]
+        closes: HashMap<String, Vec<f64>>,
+        ticks: u64,
+    }
+
+    #[flezha_executor::shard(id = "keyed_collections")]
+    fn keyed_collections(input: (String, f64), state: &mut KeyedCollectionsState) {
+        let (key, value) = input;
+        state.set_last(key.clone(), value);
+        state.push_closes(key.clone(), value);
+        // Keep at most three closes per key; drain the overflow off the front.
+        let len = state.closes.get(&key).map(|c| c.len()).unwrap_or(0);
+        if len > 3 {
+            state.drain_closes_front(key.clone(), len - 3);
+        }
+        state.set_ticks(state.ticks + 1);
+    }
+
+    // `init = fn` maps the static partition key to per-partition config the
+    // macro's default (`Default::default()`) cannot supply. Mirrors the market
+    // `sma`/`ohlc` shards whose window / bucket come from the shard key.
+    #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug, flezha_executor::State)]
+    struct WindowedState {
+        window: usize,
+        #[journal(map_vec)]
+        closes: HashMap<String, Vec<f64>>,
+    }
+
+    fn windowed_init(shard_key: Option<&str>) -> WindowedState {
+        WindowedState {
+            window: if shard_key == Some("win_2") { 2 } else { 3 },
+            closes: HashMap::new(),
+        }
+    }
+
+    fn windowed_part(_: &(String, f64)) -> Vec<&'static str> {
+        vec!["win_2", "win_3"]
+    }
+
+    #[flezha_executor::shard(
+        id = "windowed",
+        init = windowed_init,
+        keys = ["win_2", "win_3"],
+        partition_for = windowed_part
+    )]
+    fn windowed(input: (String, f64), state: &mut WindowedState) -> Option<f64> {
+        let (key, value) = input;
+        let window = state.window;
+        state.push_closes(key.clone(), value);
+        let len = state.closes.get(&key).map(|c| c.len()).unwrap_or(0);
+        if len > window {
+            state.drain_closes_front(key.clone(), len - window);
+        }
+        let c = state.closes.get(&key)?;
+        if c.len() < window {
+            return None;
+        }
+        Some(c.iter().sum::<f64>() / window as f64)
+    }
 
     // Cross-SDK conformance (`docs/sdk_authoring_contract.md` §6): the reference
     // relay's shards expand to this exact associated-type mapping. A divergence
@@ -1308,5 +1475,87 @@ mod macro_twin_tests {
         // The mixed relay registers manually, as before.
         register_relay::<MixedRelay>();
         assert!(flezha_executor::relay::registry::get_class("mixed_relay").is_some());
+    }
+
+    #[test]
+    fn rolling_window_matches_hand_written_twin() {
+        let inputs = vec![
+            ("a".to_string(), 1.0),
+            ("a".to_string(), 2.0),
+            ("a".to_string(), 3.0),
+            ("a".to_string(), 4.0),
+            ("b".to_string(), 10.0),
+            ("b".to_string(), 20.0),
+            ("b".to_string(), 30.0),
+        ];
+
+        let mut sugar = ShardTestHarness::<RollingWindow>::new();
+        sugar.apply_inputs(inputs.clone());
+
+        let mut twin = ShardTestHarness::<RollingWindowTwin>::new();
+        twin.apply_inputs(inputs);
+
+        // The generated journaling replays deterministically (4.3).
+        sugar.replay_equals().expect("sugared replay diverged");
+
+        // Behaviourally identical to the hand-written twin: same state (4.2).
+        assert_eq!(sugar.state().window, twin.state().window);
+
+        // ...and the same emits (warmup gate via `Option<Output>`).
+        let expected = [2.0_f64, 3.0, 20.0];
+        sugar.expect_emits(&expected);
+        twin.expect_emits(&expected);
+    }
+
+    #[test]
+    fn keyed_collections_modes_journal_and_replay() {
+        let inputs = vec![
+            ("x".to_string(), 1.0),
+            ("x".to_string(), 2.0),
+            ("x".to_string(), 3.0),
+            ("x".to_string(), 4.0),
+            ("y".to_string(), 9.0),
+        ];
+        let mut h = ShardTestHarness::<KeyedCollections>::new();
+        h.apply_inputs(inputs);
+
+        // map_set keeps the latest per key.
+        assert_eq!(h.state().last.get("x"), Some(&4.0));
+        assert_eq!(h.state().last.get("y"), Some(&9.0));
+        // map_vec push + drain_front keeps the last three per key.
+        assert_eq!(h.state().closes.get("x"), Some(&vec![2.0, 3.0, 4.0]));
+        assert_eq!(h.state().closes.get("y"), Some(&vec![9.0]));
+        // The flat field composes into the same `Change` enum.
+        assert_eq!(h.state().ticks, 5);
+
+        h.replay_equals().expect("keyed-collections replay diverged");
+    }
+
+    #[test]
+    fn shard_init_maps_partition_key_to_state() {
+        // The `init = fn` hook receives the static partition key, so each
+        // partition starts from key-derived config the macro default can't give.
+        assert_eq!(Windowed::init_state(Some("win_2"), None).window, 2);
+        assert_eq!(Windowed::init_state(Some("win_3"), None).window, 3);
+        // Cold-start / harness default (key absent) falls through to the else arm.
+        assert_eq!(Windowed::init_state(None, None).window, 3);
+
+        // Behaviour differs per partition: window 2 emits one bar earlier than
+        // window 3 for the same input stream, and replay stays deterministic.
+        let inputs = vec![
+            ("a".to_string(), 2.0),
+            ("a".to_string(), 4.0),
+            ("a".to_string(), 6.0),
+        ];
+
+        let mut w2 = ShardTestHarness::<Windowed>::with_initial_state(windowed_init(Some("win_2")));
+        w2.apply_inputs(inputs.clone());
+        w2.replay_equals().expect("windowed(win_2) replay diverged");
+        w2.expect_emits(&[3.0_f64, 5.0]); // means of [2,4] then [4,6]
+
+        let mut w3 = ShardTestHarness::<Windowed>::with_initial_state(windowed_init(Some("win_3")));
+        w3.apply_inputs(inputs);
+        w3.replay_equals().expect("windowed(win_3) replay diverged");
+        w3.expect_emits(&[4.0_f64]); // single mean of [2,4,6]
     }
 }

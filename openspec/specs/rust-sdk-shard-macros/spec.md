@@ -104,3 +104,45 @@ A relay SHALL be able to mix macro-generated shards and hand-written shards.
 
 - **WHEN** a relay wires a `#[flezha::shard]`-generated shard to a hand-written `impl Shard` shard
 - **THEN** the relay compiles, registers, and processes input through both shards correctly
+
+### Requirement: Map-aware `#[derive(flezha::State)]` journaling mutators
+
+`#[derive(flezha::State)]` SHALL generate journaling mutators, `Change` variants, and `apply_change` arms for map fields annotated `#[journal(map_set | map_vec | map_deque)]`, in addition to the existing flat-field derivation. The generated mutators perform the mutation live and record it as a `Change`; the generated `apply_change` replays it. Flat-field and map fields on the same struct SHALL compose into a single `Change` enum.
+
+- `map_set` on `HashMap<K, V>` → `set_<field>(key, V)`, variant `Set<Field>(K, V)`.
+- `map_vec` on `HashMap<K, Vec<U>>` → `push_<field>(key, U)`, `drain_<field>_front(key, usize)`, `replace_last_<field>(key, U)`.
+- `map_deque` on `HashMap<K, VecDeque<U>>` → `push_back_<field>(key, U)`, `pop_front_<field>(key, usize)`.
+
+#### Scenario: map_vec field generates collection mutators
+
+- **WHEN** a `#[derive(flezha::State)]` struct has a `#[journal(map_vec)] closes: HashMap<String, Vec<f64>>` field
+- **THEN** the derive generates `push_closes`, `drain_closes_front`, and `replace_last_closes` mutators, the matching `Change` variants, and an `apply_change` that replays each on the keyed vector
+
+#### Scenario: map_set field generates a keyed setter
+
+- **WHEN** a `#[derive(flezha::State)]` struct has a `#[journal(map_set)] by_product: HashMap<String, ProductState>` field
+- **THEN** the derive generates `set_by_product(key, ProductState)`, a `SetByProduct(String, ProductState)` variant, and an `apply_change` arm that inserts the value
+
+#### Scenario: Mixed flat and map fields compose
+
+- **WHEN** a struct mixes a flat field and a `#[journal(...)]` map field
+- **THEN** both contribute variants to a single generated `Change` enum and arms to a single `apply_change`
+
+#### Scenario: Unannotated or mismatched map field errors
+
+- **WHEN** a map field lacks a `#[journal(...)]` annotation, or its type does not match the declared mode
+- **THEN** the derive emits a `compile_error!` directing the author to a hand-written `Change`, and generates no journaling for that field
+
+### Requirement: `Option<Output>` return in `#[flezha::shard]`
+
+`#[flezha::shard]` SHALL accept a `run` function returning `Option<Output>` (or `Result<Option<Output>, ShardError>`), emitting on `Some` and emitting nothing on `None`. The existing unit return (no output) and unconditional `Output` return (always emit) SHALL be unchanged.
+
+#### Scenario: Optional return drives conditional emit
+
+- **WHEN** a `#[flezha::shard]` `run` returns `Option<Output>`
+- **THEN** the generated `run` emits via the shard context on `Some` and emits nothing on `None`, without the author referencing `ShardCtx`
+
+#### Scenario: Generated behaviour equals hand-written
+
+- **WHEN** a shard authored with map-aware `#[derive(flezha::State)]` + `#[flezha::shard]` returning `Option<Output>` is expanded
+- **THEN** its behaviour is identical to the hand-written `Shard`/`Change` impl, and `ShardTestHarness::replay_equals` passes

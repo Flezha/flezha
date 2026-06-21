@@ -5,6 +5,7 @@ import com.flezha.sdk.shard.Shard;
 import com.flezha.sdk.shard.ShardCtx;
 import com.flezha.sdk.shard.ShardException;
 import com.flezha.sdk.state.Change;
+import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.ReplayMismatch;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -22,8 +23,8 @@ import javax.annotation.Nonnull;
  * {@code state.apply}-ed and the values {@code ctx.emit}-ed. Mirrors the
  * Rust SDK's {@code ShardTestHarness<S>}.
  *
- * <p>{@link #replayEquals()} is the determinism gate: it reconstructs a fresh
- * state from {@code Shard.initState}, replays the recorded Changes, and
+ * <p>{@link #replayEquals()} is the determinism gate: it reconstructs the
+ * initial state captured at construction, replays the recorded Changes, and
  * compares the Kryo-serialized bytes. Equality means the Shard's state is
  * a deterministic function of the Change log — which is the umbrella's
  * correctness contract.
@@ -32,12 +33,24 @@ public final class ShardTestHarness<Input, State, Output, ChangeT extends Change
 
     private final Shard<Input, State, Output, ChangeT, ?, ?> shard;
     private State state;
+    /** Kryo snapshot of the state at construction, replayed by {@link #replayEquals()}. */
+    private byte[] initialStateBytes;
+
     private final List<ChangeT> recordedChanges = new ArrayList<>();
     private final List<Object> recordedEmits = new ArrayList<>();
 
     private ShardTestHarness(Shard<Input, State, Output, ChangeT, ?, ?> shard, State initialState) {
         this.shard = shard;
-        this.state = initialState;
+        captureInitial(initialState);
+    }
+
+    /** Snapshot {@code initial} as the replay baseline, before {@code applyInputs} mutates it. */
+    private void captureInitial(State initial) {
+        this.state = initial;
+        // Stateless shards journal nothing, so there is no replay baseline to capture
+        // (and their `Stateless` state is not Kryo-registered).
+        this.initialStateBytes =
+                shard.changeType() == NoChange.class ? null : new KryoCodec(shard.kryoTypes()).serialize(initial);
     }
 
     /**
@@ -53,14 +66,14 @@ public final class ShardTestHarness<Input, State, Output, ChangeT extends Change
 
     @Nonnull
     public ShardTestHarness<Input, State, Output, ChangeT> withInitialState(@Nonnull State state) {
-        this.state = state;
+        captureInitial(state);
         return this;
     }
 
     @Nonnull
     public ShardTestHarness<Input, State, Output, ChangeT> withPayload(
             @Nonnull Optional<String> shardKey, @Nonnull RestoreInitPayload payload) {
-        this.state = shard.initState(shardKey, Optional.of(payload));
+        captureInitial(shard.initState(shardKey, Optional.of(payload)));
         return this;
     }
 
@@ -134,20 +147,25 @@ public final class ShardTestHarness<Input, State, Output, ChangeT extends Change
     }
 
     /**
-     * Determinism gate. Builds a fresh state via
-     * {@code Shard.initState(Optional.empty(), Optional.empty())},
-     * folds the recorded Change log, then compares the Kryo bytes of the
-     * harness's current state against the replayed state. Returns
+     * Determinism gate. Reconstructs the initial state captured at
+     * construction (the snapshot the runtime would restore), folds the
+     * recorded Change log, then compares the Kryo bytes of the harness's
+     * current state against the replayed state. Returns
      * {@code Optional.empty()} on byte-equality (deterministic Shard) or
      * {@link ReplayMismatch} carrying the diagnostic bytes otherwise.
      */
+    @SuppressWarnings("unchecked")
     @Nonnull
     public Optional<ReplayMismatch> replayEquals() {
-        State fresh = shard.initState(Optional.empty(), Optional.empty());
+        // Stateless shards have no journaled state — replay is vacuously equal.
+        if (initialStateBytes == null) {
+            return Optional.empty();
+        }
+        KryoCodec codec = new KryoCodec(shard.kryoTypes());
+        State fresh = (State) codec.deserialize(initialStateBytes, state.getClass());
         for (ChangeT c : recordedChanges) {
             shard.applyChange(fresh, c);
         }
-        KryoCodec codec = new KryoCodec(shard.kryoTypes());
         byte[] expected = codec.serialize(state);
         byte[] actual = codec.serialize(fresh);
         if (Arrays.equals(expected, actual)) {

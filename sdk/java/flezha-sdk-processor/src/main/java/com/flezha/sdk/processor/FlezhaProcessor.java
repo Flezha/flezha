@@ -1,5 +1,7 @@
 package com.flezha.sdk.processor;
 
+import com.flezha.sdk.authoring.InitState;
+import com.flezha.sdk.authoring.Journal;
 import com.flezha.sdk.authoring.PartitionFor;
 import com.flezha.sdk.authoring.Relay;
 import com.flezha.sdk.authoring.Shard;
@@ -142,6 +144,34 @@ public final class FlezhaProcessor extends AbstractProcessor {
             String pascal = pascal(fname);
             String ftype = f.asType().toString();
 
+            Journal journal = f.getAnnotation(Journal.class);
+            TypeMirror[] kv = mapKV(f.asType());
+            if (journal != null) {
+                if (!expandJournalField(
+                        f,
+                        fname,
+                        pascal,
+                        changeSimple,
+                        journal.value(),
+                        kv,
+                        b,
+                        variantClasses,
+                        applyBody,
+                        handleMethods)) {
+                    return;
+                }
+                continue;
+            }
+            // A map field without @Journal is an unsupported mutation: there is
+            // no single per-entry op to record. Direct to a hand-written Change.
+            if (kv != null) {
+                error(
+                        f,
+                        "@State: a map field needs a @Journal(MAP_SET | MAP_VEC | MAP_DEQUE) annotation to "
+                                + "derive its per-key journaling mutators; hand-write a Change for anything richer");
+                return;
+            }
+
             // Set<Field>(T)
             String setVar = "Set" + pascal;
             variantClasses.add(setVar);
@@ -233,6 +263,215 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 + "(value)); }\n";
     }
 
+    // ---- @Journal map fields ---------------------------------------------
+
+    /**
+     * Expand a {@code @Journal} map field into per-key mutators, {@code Change}
+     * variants, and {@code apply} arms. Returns {@code false} (after reporting)
+     * on a type/mode mismatch.
+     */
+    private boolean expandJournalField(
+            VariableElement f,
+            String fname,
+            String pascal,
+            String changeSimple,
+            Journal.Mode mode,
+            TypeMirror[] kv,
+            StringBuilder b,
+            List<String> variantClasses,
+            StringBuilder applyBody,
+            StringBuilder handleMethods) {
+        if (kv == null) {
+            error(f, "@Journal requires a Map<K, V> field; hand-write a Change for anything richer");
+            return false;
+        }
+        String keyType = kv[0].toString();
+        TypeMirror valMirror = kv[1];
+
+        switch (mode) {
+            case MAP_SET -> {
+                String valType = valMirror.toString();
+                String var = "Set" + pascal;
+                variantClasses.add(var);
+                b.append(mapFactory(changeSimple, "set" + pascal, keyType, valType, var));
+                b.append(mapVariant(changeSimple, var, keyType, valType));
+                applyBody
+                        .append("        if (change instanceof ")
+                        .append(var)
+                        .append(" c) { state.")
+                        .append(fname)
+                        .append(".put(c.k, c.v); return; }\n");
+                handleMethods.append(mapHandleMutator(changeSimple, "set" + pascal, keyType, valType));
+            }
+            case MAP_VEC -> {
+                TypeMirror elem = listElement(valMirror);
+                if (elem == null) {
+                    error(
+                            f,
+                            "@Journal(MAP_VEC) requires a Map<K, List<U>> field; hand-write a Change for "
+                                    + "anything richer");
+                    return false;
+                }
+                String u = elem.toString();
+                String newColl = "new java.util.ArrayList<>()";
+
+                String pushVar = "Push" + pascal;
+                variantClasses.add(pushVar);
+                b.append(mapFactory(changeSimple, "push" + pascal, keyType, u, pushVar));
+                b.append(mapVariant(changeSimple, pushVar, keyType, u));
+                applyBody
+                        .append("        if (change instanceof ")
+                        .append(pushVar)
+                        .append(" c) { state.")
+                        .append(fname)
+                        .append(".computeIfAbsent(c.k, __k -> ")
+                        .append(newColl)
+                        .append(").add(c.v); return; }\n");
+                handleMethods.append(mapHandleMutator(changeSimple, "push" + pascal, keyType, u));
+
+                String rlVar = "ReplaceLast" + pascal;
+                variantClasses.add(rlVar);
+                b.append(mapFactory(changeSimple, "replaceLast" + pascal, keyType, u, rlVar));
+                b.append(mapVariant(changeSimple, rlVar, keyType, u));
+                applyBody
+                        .append("        if (change instanceof ")
+                        .append(rlVar)
+                        .append(" c) { var __l = state.")
+                        .append(fname)
+                        .append(".computeIfAbsent(c.k, __k -> ")
+                        .append(newColl)
+                        .append("); if (__l.isEmpty()) { __l.add(c.v); } else { __l.set(__l.size() - 1, c.v); } "
+                                + "return; }\n");
+                handleMethods.append(mapHandleMutator(changeSimple, "replaceLast" + pascal, keyType, u));
+
+                String drainVar = "Drain" + pascal + "Front";
+                variantClasses.add(drainVar);
+                b.append(intOpFactory(changeSimple, "drain" + pascal + "Front", keyType, drainVar));
+                b.append(intOpVariant(changeSimple, drainVar, keyType));
+                applyBody
+                        .append("        if (change instanceof ")
+                        .append(drainVar)
+                        .append(" c) { var __l = state.")
+                        .append(fname)
+                        .append(".computeIfAbsent(c.k, __k -> ")
+                        .append(newColl)
+                        .append("); int __n = Math.min(c.n, __l.size()); __l.subList(0, __n).clear(); return; }\n");
+                handleMethods.append(intOpHandleMutator(changeSimple, "drain" + pascal + "Front", keyType));
+            }
+            case MAP_DEQUE -> {
+                TypeMirror elem = dequeElement(valMirror);
+                if (elem == null) {
+                    error(
+                            f,
+                            "@Journal(MAP_DEQUE) requires a Map<K, Deque<U>> field; hand-write a Change for "
+                                    + "anything richer");
+                    return false;
+                }
+                String u = elem.toString();
+                String newColl = "new java.util.ArrayDeque<>()";
+
+                String pushVar = "PushBack" + pascal;
+                variantClasses.add(pushVar);
+                b.append(mapFactory(changeSimple, "pushBack" + pascal, keyType, u, pushVar));
+                b.append(mapVariant(changeSimple, pushVar, keyType, u));
+                applyBody
+                        .append("        if (change instanceof ")
+                        .append(pushVar)
+                        .append(" c) { state.")
+                        .append(fname)
+                        .append(".computeIfAbsent(c.k, __k -> ")
+                        .append(newColl)
+                        .append(").addLast(c.v); return; }\n");
+                handleMethods.append(mapHandleMutator(changeSimple, "pushBack" + pascal, keyType, u));
+
+                String popVar = "PopFront" + pascal;
+                variantClasses.add(popVar);
+                b.append(intOpFactory(changeSimple, "popFront" + pascal, keyType, popVar));
+                b.append(intOpVariant(changeSimple, popVar, keyType));
+                applyBody
+                        .append("        if (change instanceof ")
+                        .append(popVar)
+                        .append(" c) { var __d = state.")
+                        .append(fname)
+                        .append(".computeIfAbsent(c.k, __k -> ")
+                        .append(newColl)
+                        .append("); int __n = Math.min(c.n, __d.size()); for (int __i = 0; __i < __n; __i++) { "
+                                + "__d.pollFirst(); } return; }\n");
+                handleMethods.append(intOpHandleMutator(changeSimple, "popFront" + pascal, keyType));
+            }
+        }
+        return true;
+    }
+
+    /** Two-arg `(key, value)` factory for a map-journaling variant. */
+    private static String mapFactory(
+            String changeSimple, String method, String keyType, String valType, String variant) {
+        return "    public static " + changeSimple + " " + method + "(" + keyType + " key, " + valType
+                + " value) { return new " + variant + "(key, value); }\n";
+    }
+
+    /** Two-field `(K k, V v)` variant with structural equality. */
+    private static String mapVariant(String changeSimple, String name, String keyType, String valType) {
+        return "    public static final class " + name + " extends " + changeSimple + " {\n"
+                + "        public final " + keyType + " k;\n"
+                + "        public final " + valType + " v;\n"
+                + "        public " + name + "(" + keyType + " k, " + valType + " v) { this.k = k; this.v = v; }\n"
+                + "        @Override public boolean equals(Object o) { return o instanceof " + name
+                + " c && Objects.equals(k, c.k) && Objects.equals(v, c.v); }\n"
+                + "        @Override public int hashCode() { return Objects.hash(k, v); }\n"
+                + "        @Override public String toString() { return \"" + name + "(\" + k + \", \" + v + \")\"; }\n"
+                + "    }\n\n";
+    }
+
+    private static String mapHandleMutator(String changeSimple, String method, String keyType, String valType) {
+        return "    public void " + method + "(" + keyType + " key, " + valType + " value) { h.apply(" + changeSimple
+                + "." + method + "(key, value)); }\n";
+    }
+
+    /** Two-arg `(key, int n)` factory for a count-based map op (drain / pop). */
+    private static String intOpFactory(String changeSimple, String method, String keyType, String variant) {
+        return "    public static " + changeSimple + " " + method + "(" + keyType + " key, int n) { return new "
+                + variant + "(key, n); }\n";
+    }
+
+    /** Two-field `(K k, int n)` variant with structural equality. */
+    private static String intOpVariant(String changeSimple, String name, String keyType) {
+        return "    public static final class " + name + " extends " + changeSimple + " {\n"
+                + "        public final " + keyType + " k;\n"
+                + "        public final int n;\n"
+                + "        public " + name + "(" + keyType + " k, int n) { this.k = k; this.n = n; }\n"
+                + "        @Override public boolean equals(Object o) { return o instanceof " + name
+                + " c && Objects.equals(k, c.k) && n == c.n; }\n"
+                + "        @Override public int hashCode() { return Objects.hash(k, n); }\n"
+                + "        @Override public String toString() { return \"" + name + "(\" + k + \", \" + n + \")\"; }\n"
+                + "    }\n\n";
+    }
+
+    private static String intOpHandleMutator(String changeSimple, String method, String keyType) {
+        return "    public void " + method + "(" + keyType + " key, int n) { h.apply(" + changeSimple + "." + method
+                + "(key, n)); }\n";
+    }
+
+    private TypeMirror[] mapKV(TypeMirror ty) {
+        if (ty instanceof DeclaredType dt && types.erasure(dt).toString().equals("java.util.Map")) {
+            List<? extends TypeMirror> ta = dt.getTypeArguments();
+            if (ta.size() == 2) {
+                return new TypeMirror[] {ta.get(0), ta.get(1)};
+            }
+        }
+        return null;
+    }
+
+    private TypeMirror dequeElement(TypeMirror ty) {
+        if (ty instanceof DeclaredType dt && types.erasure(dt).toString().equals("java.util.Deque")) {
+            List<? extends TypeMirror> ta = dt.getTypeArguments();
+            if (ta.size() == 1) {
+                return ta.get(0);
+            }
+        }
+        return null;
+    }
+
     private static String factory(String changeSimple, String method, String paramType, String variant) {
         return "    public static "
                 + changeSimple
@@ -290,8 +529,26 @@ public final class FlezhaProcessor extends AbstractProcessor {
 
         TypeMirror inputType = params.get(0).asType();
         TypeMirror returnType = run.getReturnType();
-        boolean emits = returnType.getKind() != TypeKind.VOID;
-        String outputType = emits ? returnType.toString() : "java.lang.Void";
+        // `void` = no output; `Optional<O>` = emit-on-present; bare `O` = always emit.
+        boolean emits;
+        boolean optional = false;
+        String outputType;
+        if (returnType.getKind() == TypeKind.VOID) {
+            emits = false;
+            outputType = "java.lang.Void";
+        } else if (isOptional(returnType)) {
+            TypeMirror oe = optionalElement(returnType);
+            if (oe == null) {
+                error(run, "@Shard `run` returning Optional must be parameterized as Optional<Output>");
+                return;
+            }
+            emits = true;
+            optional = true;
+            outputType = oe.toString();
+        } else {
+            emits = true;
+            outputType = returnType.toString();
+        }
 
         boolean stateful = params.size() == 2;
         String stateType;
@@ -336,6 +593,16 @@ public final class FlezhaProcessor extends AbstractProcessor {
         ExecutableElement shardKey = findAnnotated(shard, ShardKey.class);
         if (partitionFor != null && shardKey != null) {
             error(shard, "@PartitionFor (static) and @ShardKey (dynamic) are mutually exclusive");
+            return;
+        }
+
+        // Per-partition state init: @InitState maps the shard key to State.
+        ExecutableElement initState = findAnnotated(shard, InitState.class);
+        if (initState != null && !stateful) {
+            error(
+                    shard,
+                    "@InitState requires a stateful run (a @State handle parameter); a stateless shard "
+                            + "has no state to initialize");
             return;
         }
 
@@ -409,11 +676,13 @@ public final class FlezhaProcessor extends AbstractProcessor {
         b.append("    @Override public Class<WallClock> clockType() { return WallClock.class; }\n");
         b.append("    @Override public Class<Void> configType() { return Void.class; }\n");
 
+        String initBody =
+                initState != null ? "impl." + initState.getSimpleName() + "(shardKey)" : "new " + stateType + "()";
         b.append("    @Override public ")
                 .append(stateType)
-                .append(" initState(Optional<String> shardKey, Optional<RestoreInitPayload> initPayload) { return new ")
-                .append(stateType)
-                .append("(); }\n");
+                .append(" initState(Optional<String> shardKey, Optional<RestoreInitPayload> initPayload) { return ")
+                .append(initBody)
+                .append("; }\n");
 
         if (stateful) {
             b.append("    @Override public void applyChange(")
@@ -463,15 +732,22 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append(changeType)
                 .append("> state, ShardCtx ctx) throws ShardException {\n");
         String call = stateful ? "impl.run(input, " + handleArg + ")" : "impl.run(input)";
-        if (emits) {
+        if (!emits) {
+            b.append("        ").append(call).append(";\n");
+        } else if (optional) {
+            b.append("        java.util.Optional<")
+                    .append(outputType)
+                    .append("> out = ")
+                    .append(call)
+                    .append(";\n");
+            b.append("        if (out.isPresent()) { ctx.emit(out.get()); }\n");
+        } else {
             b.append("        ")
                     .append(outputType)
                     .append(" out = ")
                     .append(call)
                     .append(";\n");
             b.append("        if (out != null) { ctx.emit(out); }\n");
-        } else {
-            b.append("        ").append(call).append(";\n");
         }
         b.append("    }\n");
         b.append("}\n");
@@ -612,6 +888,20 @@ public final class FlezhaProcessor extends AbstractProcessor {
 
     private TypeMirror listElement(TypeMirror ty) {
         if (ty instanceof DeclaredType dt && types.erasure(dt).toString().equals("java.util.List")) {
+            List<? extends TypeMirror> ta = dt.getTypeArguments();
+            if (ta.size() == 1) {
+                return ta.get(0);
+            }
+        }
+        return null;
+    }
+
+    private boolean isOptional(TypeMirror ty) {
+        return ty instanceof DeclaredType dt && types.erasure(dt).toString().equals("java.util.Optional");
+    }
+
+    private TypeMirror optionalElement(TypeMirror ty) {
+        if (ty instanceof DeclaredType dt) {
             List<? extends TypeMirror> ta = dt.getTypeArguments();
             if (ta.size() == 1) {
                 return ta.get(0);

@@ -43,6 +43,23 @@ class FlezhaProcessorTest {
     }
 
     @Test
+    void rejectsInitStateOnStatelessShard() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.InitState;
+                import com.flezha.sdk.authoring.Shard;
+                import java.util.Optional;
+                @Shard(id = "bad_init")
+                public class BadInit {
+                    @InitState public String initState(Optional<String> key) { return ""; }
+                    public String run(String in) { return in; }
+                }
+                """;
+        assertThat(diagnose("t.BadInit", code)).anyMatch(m -> m.contains("@InitState requires a stateful run"));
+    }
+
+    @Test
     void rejectsTooManyRunParameters() {
         String code =
                 """
@@ -70,6 +87,56 @@ class FlezhaProcessorTest {
                 }
                 """;
         assertThat(diagnose("t.BadState", code)).anyMatch(m -> m.contains("public, non-final fields"));
+    }
+
+    @Test
+    void rejectsUnannotatedMapField() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.State;
+                import java.util.HashMap;
+                import java.util.Map;
+                @State
+                public class MapState {
+                    public Map<String, Double> last = new HashMap<>();
+                }
+                """;
+        assertThat(diagnose("t.MapState", code)).anyMatch(m -> m.contains("@Journal"));
+    }
+
+    @Test
+    void rejectsJournalTypeMismatch() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Journal;
+                import com.flezha.sdk.authoring.State;
+                import java.util.HashMap;
+                import java.util.Map;
+                @State
+                public class MismatchState {
+                    @Journal(Journal.Mode.MAP_VEC)
+                    public Map<String, Double> bad = new HashMap<>();
+                }
+                """;
+        assertThat(diagnose("t.MismatchState", code)).anyMatch(m -> m.contains("Map<K, List<U>>"));
+    }
+
+    @Test
+    void rejectsRawOptionalReturn() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Shard;
+                import java.util.Optional;
+                @Shard(id = "bad_opt")
+                public class BadOpt {
+                    @SuppressWarnings({"rawtypes", "unchecked"})
+                    public Optional run(String in) { return Optional.of(in); }
+                }
+                """;
+        assertThat(diagnose("t.BadOpt", code)).anyMatch(m -> m.contains("Optional<Output>"));
     }
 
     private List<String> diagnose(String fqn, String code) {

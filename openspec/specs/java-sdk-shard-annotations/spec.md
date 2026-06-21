@@ -85,3 +85,40 @@ The Java processor SHALL apply the same signature-to-types, state, and auto-wiri
 
 - **WHEN** the reference relay is authored with Java annotations and with Rust macros
 - **THEN** both expand to a structurally identical topology and associated-type mapping
+
+### Requirement: Map-aware `@State` `@Journal` mutators
+
+The `@State` annotation processor SHALL generate journaling mutators, a `Change` type, and `applyChange` for map fields annotated `@Journal(MapSet | MapVec | MapDeque)`, mirroring the Rust derive. The generated mutators perform the mutation live and record it; the generated `applyChange` replays it. Flat and map fields on the same class SHALL compose into a single generated `Change`.
+
+- `MapSet` on `Map<K, V>` → `set<Field>(key, V)`.
+- `MapVec` on `Map<K, List<U>>` → `push<Field>(key, U)`, `drain<Field>Front(key, n)`, `replaceLast<Field>(key, U)`.
+- `MapDeque` on `Map<K, Deque<U>>` → `pushBack<Field>(key, U)`, `popFront<Field>(key, n)`.
+
+#### Scenario: MapVec field generates collection mutators
+
+- **WHEN** a `@State` class has a `@Journal(MapVec) Map<String, List<Double>> closes` field
+- **THEN** the processor generates `pushCloses`, `drainClosesFront`, and `replaceLastCloses`, the matching change records, and an `applyChange` that replays each on the keyed list
+
+#### Scenario: MapSet field generates a keyed setter
+
+- **WHEN** a `@State` class has a `@Journal(MapSet) Map<String, ProductState> byProduct` field
+- **THEN** the processor generates `setByProduct(key, ProductState)`, the matching change, and an `applyChange` that inserts the value
+
+#### Scenario: Unannotated or mismatched map field errors
+
+- **WHEN** a map field lacks `@Journal`, or its type does not match the declared mode
+- **THEN** the processor reports a compilation error directing the author to a hand-written change, and generates no journaling for that field
+
+### Requirement: `Optional<Output>` return in `@Shard`
+
+The `@Shard` annotation processor SHALL accept a `run` method returning `Optional<Output>`, emitting when present and emitting nothing when absent. The `void` return (no output) and unconditional `Output` return (always emit) SHALL be unchanged.
+
+#### Scenario: Optional return drives conditional emit
+
+- **WHEN** a `@Shard` `run` returns `Optional<Output>`
+- **THEN** the generated shard emits on present and emits nothing on empty, without the author referencing the shard context
+
+#### Scenario: Generated relay matches the hand-written twin
+
+- **WHEN** a keyed-collection shard authored with `@State` + `@Shard` returning `Optional<Output>` is processed
+- **THEN** the generated relay processes input identically to a hand-written twin and `replayEquals()` is empty

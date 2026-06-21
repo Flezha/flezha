@@ -82,6 +82,10 @@ public final class KryoCodec {
         kryo.register(Map.class);
         kryo.register(Set.class);
         kryo.register(java.time.Instant.class);
+        // Appended at the tail so existing IDs stay stable. `ArrayDeque` backs
+        // `@Journal(MAP_DEQUE)` map-of-deque state.
+        kryo.register(java.util.ArrayDeque.class);
+        kryo.register(java.util.Deque.class);
     }
 
     /** Serialize an arbitrary registered object. */

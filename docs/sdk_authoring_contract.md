@@ -30,7 +30,8 @@ mutable-state parameter.
 | Source in the `run` declaration              | Associated type / item        |
 | --------------------------------------------- | ------------------------------ |
 | first non-state value param of type `I`       | `type Input = I`               |
-| return type `O` (or `Result<O, _>`)           | `type Output = O`              |
+| return type `O` (or `Result<O, _>`)           | `type Output = O` (always emit) |
+| return type `Option<O>` / `Optional<O>`       | `type Output = O`, emit on present |
 | return type unit (`()` / `void`)              | no output channel              |
 | a mutable-state param of type `S`             | `type State = S` (stateful)    |
 | no mutable-state param                        | `type State = ()`, `Change = NoChange` |
@@ -66,6 +67,73 @@ must be cloneable/serializable for a `Set`/`Push` variant to be generated; a
 field that is not triggers a compile-time diagnostic directing the author to a
 hand-written `Change`.
 
+### 3.1 Keyed and collection state journaling
+
+Real compute shards keep their state as a per-key map and mutate a collection
+or computed value inside each entry. A map field annotated `#[journal(...)]`
+(Rust) / `@Journal(...)` (Java) opts that field into per-key journaling: the
+SDK generates named per-key mutators, the matching `Change` variants, and the
+`apply_change` arms that replay them. The annotation is **required** on a map
+field — an unannotated map field is a compile error (there is no single per-key
+op to record), directing the author to a hand-written `Change`. The field type
+must match the declared mode, or the SDK reports an error.
+
+| Mode (Rust / Java)                | Field type                  | Generated mutators                                                        | Change variants                                              | `apply_change` |
+| --------------------------------- | --------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------- |
+| `map_set` / `MapSet`              | `HashMap<K, V>`             | `set_<field>(key, V)`                                                      | `Set<Field>(K, V)`                                          | `map.insert(key, value)` |
+| `map_vec` / `MapVec`              | `HashMap<K, Vec<U>>`        | `push_<field>(key, U)`, `drain_<field>_front(key, n)`, `replace_last_<field>(key, U)` | `Push<Field>(K, U)`, `Drain<Field>Front(K, usize)`, `ReplaceLast<Field>(K, U)` | insert-default-then-op on the keyed vector |
+| `map_deque` / `MapDeque`          | `HashMap<K, VecDeque<U>>`   | `push_back_<field>(key, U)`, `pop_front_<field>(key, n)`                   | `PushBack<Field>(K, U)`, `PopFront<Field>(K, usize)`        | insert-default-then-op on the keyed deque |
+
+Java names follow the language's casing (`setByProduct`, `pushCloses`,
+`drainClosesFront`, `pushBackWindow`, `popFrontWindow`) and use
+`Map<K, V>` / `Map<K, List<U>>` / `Map<K, Deque<U>>`. The collection modes use
+**insert-default-then-op** semantics: the keyed collection is created on first
+touch, so `push`/`drain`/`pop` never need a guard for an absent key.
+
+**`map_set` is the universal fallback.** When a per-entry value is computed
+(an EMA, an RSI, a whole candle), compute it in the logic function and call
+`set_<field>(key, value)`; the change records the per-key value and replay
+re-applies it by insertion. Prefer `map_vec` / `map_deque` only for **growing
+collections** (a rolling window, an appended bar history): journaling the whole
+collection each tick via `map_set` would grow every WAL record to the
+collection's size, whereas the collection modes keep each record a single delta.
+A per-key *struct* that merely contains a collection (e.g. a struct holding both
+a deque and a scalar) is not journaled sub-field-incrementally — split it into
+parallel map fields, or use `map_set` to record the whole per-key value.
+
+Flat fields and `#[journal(...)]` map fields on the same struct compose into a
+single generated `Change` enum and a single `apply_change`.
+
+### 3.2 Emit-or-skip output return
+
+A logic function returning an optional output — `Option<O>` (Rust) /
+`Optional<O>` (Java) — emits when present and emits nothing when absent. This
+replaces the explicit warmup gate (`if series.len() < n { return } …
+ctx.emit(v)`): `None` / `empty` skips, `Some(v)` / present emits. The SDK
+generates the emit call, so the author never touches the shard context. The
+unit return (`()` / `void`, no output channel) and the unconditional `O`
+return (always emit) are unchanged.
+
+### 3.3 Single hand-written path determinism
+
+A shard that mutates state **only** through generated journaling mutators has
+exactly one hand-written path — the logic function — and one generated replay
+path — the generated `apply_change`. The engine journals the recorded `Change`s
+before emit (unchanged flush-before-emit ordering) and, on warm restart,
+rebuilds state by folding those same `Change`s through the **generated**
+`apply_change`. Because that `apply_change` is generated from the same mutator
+definitions the mutators use, it cannot drift from the live path — the
+live-vs-replay divergence that `ShardTestHarness::replay_equals` /
+`replayEquals()` exists to catch is structurally unrepresentable for sugared
+shards. The replay-determinism harness remains the conformance gate for **all**
+shards (sugared and hand-written).
+
+A consequence: shards that hand-wrote an idempotency guard for replay safety
+(e.g. a `last_open_us` dedup that stops a re-folded input from double-counting)
+no longer need it. Journaling an idempotent `set` op means replay re-assigns the
+computed value rather than re-folding an input, so removing the guard does not
+change replay equality.
+
 ## 4. Partitioning mode is an explicit opt-in, never inferred
 
 The mode changes lifecycle and on-disk state layout, so it is always an
@@ -83,6 +151,18 @@ compile-time error (composite static×dynamic keys are out of scope). The
 dynamic opt-ins target the trait surface introduced by
 `relay-dynamic-partitioning` (`SHARD_KEY_OVERRIDDEN`, `partition_idle_ttl`,
 `max_partitions`).
+
+**Per-partition state init (`init`).** By default a stateful shard's
+`init_state` returns `State::default()`. When a partition's starting state is a
+function of its key — e.g. a statically-partitioned shard whose window length or
+bucket span is encoded in the shard key — declare an `init` opt-in naming a
+function `fn(Option<&str>) -> State` (Rust: `#[flezha::shard(init = fn)]`; Java:
+an `@InitState State initState(Optional<String> shardKey)` method on the
+authoring class). The generated `init_state` delegates to it, passing the shard
+key (absent in single-partition mode and the test-harness default). `init`
+requires a state parameter — declaring it on a stateless shard is a compile-time
+error. The restore payload stays runtime-applied after `init_state` returns, so
+the `init` function never sees it.
 
 ## 5. Single-shard auto-wiring and registration
 
@@ -146,6 +226,69 @@ flezha::relay! {
 | `StaticDownstream` | `String` | `Vec<u8>` | `()`               | `NoChange`          | single |
 
 `factory_id` = `static_partition`. `Clock = WallClock`, `Config = ()` for both.
+
+### 6.1 Canonical keyed-collection reference shard
+
+Every SDK's conformance test also implements this one shard — a **rolling
+per-key window** — and asserts its generated journaling matches a hand-written
+twin and survives the replay-determinism harness. It is the reference for the
+§3.1 keyed/collection rules and the §3.2 emit-or-skip return.
+
+**Before (hand-written `Shard` + `Change`):** a `Change` enum with
+`PushBack(key, value)` / `PopFront(key, n)`, an `apply_change` that folds each
+onto the keyed deque, and a `run` that re-derives the same two mutations before
+the warmup check and `ctx.emit`.
+
+**After (Rust sugar):**
+
+```rust
+#[derive(flezha::State)]
+struct RollingWindowState {
+    #[journal(map_deque)]
+    window: HashMap<String, VecDeque<f64>>,
+}
+
+#[flezha::shard(id = "rolling_window")]
+fn rolling_window(input: (String, f64), state: &mut RollingWindowState) -> Option<f64> {
+    let (key, value) = input;
+    state.push_back_window(key.clone(), value);          // journaled
+    let len = state.window.get(&key).map(|w| w.len()).unwrap_or(0);
+    if len > N {
+        state.pop_front_window(key.clone(), len - N);    // journaled
+    }
+    let w = state.window.get(&key)?;
+    if w.len() < N { return None; }                      // warmup → skip
+    Some(w.iter().sum::<f64>() / N as f64)               // emit on present
+}
+```
+
+**Java sugar** is the same shape: `@Journal(MapDeque) Map<String, Deque<Double>>
+window`, `pushBackWindow` / `popFrontWindow` mutators, and a `run` returning
+`Optional<Double>`.
+
+**Expected expanded `Change` + `apply_change`** (identical across SDKs, up to
+variant naming):
+
+```rust
+enum RollingWindowStateChange {
+    PushBackWindow(String, f64),
+    PopFrontWindow(String, usize),
+}
+
+fn apply_change(state: &mut RollingWindowState, change: &RollingWindowStateChange) {
+    match change {
+        PushBackWindow(k, v) => { state.window.entry(k.clone()).or_default().push_back(*v); }
+        PopFrontWindow(k, n) => {
+            let e = state.window.entry(k.clone()).or_default();
+            for _ in 0..(*n).min(e.len()) { e.pop_front(); }
+        }
+    }
+}
+```
+
+The sugared and hand-written forms produce byte-identical emits and
+logically-equal state, and the sugared form passes `replay_equals` /
+`replayEquals()` — the conformance assertion each SDK makes.
 
 ## 7. Forward-looking sketches (non-normative)
 

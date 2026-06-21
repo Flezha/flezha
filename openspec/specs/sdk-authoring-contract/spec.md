@@ -119,3 +119,51 @@ The contract SHALL be the single source of truth for authoring sugar across Rust
 
 - **WHEN** the Python or Elixir SDK is later built
 - **THEN** it follows the contract's documented decorator/macro sketch and inference rules without changing the contract
+
+### Requirement: Keyed and collection state journaling
+
+The authoring contract SHALL define journaling mutators for per-key map state so a stateful shard whose state is a `HashMap`-of-values or `HashMap`-of-collections can be authored without a hand-written `Change` or `apply_change`. Every SDK realization SHALL generate, from a journal-annotated map field, named mutators whose calls are the journaled changes, and a generated change-application that replays them.
+
+The defined modes are:
+
+- **map-set** — `HashMap<K, V>`: a `set` mutator per field; the change records `(key, value)`; application inserts the value at the key.
+- **map-vec** — `HashMap<K, Vec<U>>`: `push`, `drain-front(n)`, and `replace-last` mutators; the change records the operation and its argument(s); application performs it on the keyed vector (creating it if absent).
+- **map-deque** — `HashMap<K, Deque<U>>`: `push-back` and `pop-front(n)` mutators; application performs them on the keyed deque.
+
+#### Scenario: Map-of-collection field generates per-key mutators
+
+- **WHEN** a state type declares a `HashMap<String, Vec<f64>>` field annotated for map-vec journaling
+- **THEN** the SDK generates `push`, `drain-front`, and `replace-last` mutators keyed by the map key, plus the matching change variants and the change-application that replays them
+
+#### Scenario: Map-set is the universal fallback
+
+- **WHEN** a shard computes a new per-key value and calls the generated `set` mutator
+- **THEN** the change records the per-key value, and replay re-applies it by insertion — with no hand-written `Change` or `apply_change`
+
+#### Scenario: Inexpressible mutation reports an error
+
+- **WHEN** a map field's per-entry mutation cannot be expressed by any defined mode (or the field type does not match the declared mode)
+- **THEN** the SDK reports a clear authoring error directing the author to a hand-written `Change`, and SHALL NOT generate silent or incorrect journaling
+
+### Requirement: Emit-or-skip output return
+
+The authoring contract SHALL define an optional-output return shape for the logic function: a `run` returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged.
+
+#### Scenario: Optional output emits on present, skips on absent
+
+- **WHEN** a `@Shard`/`#[flezha::shard]` `run` returns an optional `Output`
+- **THEN** the generated shard emits the value when present and emits nothing when absent, without the author touching the shard context
+
+### Requirement: Single hand-written path determinism
+
+The authoring contract SHALL state that a shard mutating state only through generated journaling mutators has exactly one hand-written path (`run`) and one generated replay path (the generated change-application); the two cannot diverge because the replay path is generated from the same mutator definitions. The replay-determinism conformance test remains the gate for all shards (sugared and hand-written).
+
+#### Scenario: Sugared shard cannot drift between live and replay
+
+- **WHEN** a shard mutates state solely through generated journaling mutators
+- **THEN** its replay path is generated (not hand-written), so a live-vs-replay mutation divergence is unrepresentable, and the replay-determinism harness passes
+
+#### Scenario: Replay-safety guards are unnecessary for idempotent set journaling
+
+- **WHEN** a shard that previously hand-wrote an idempotency guard for replay safety migrates to map-set journaling
+- **THEN** the guard is unnecessary because replay re-assigns the computed value rather than re-folding an input, and removing it does not change replay equality
