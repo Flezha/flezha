@@ -3,6 +3,8 @@ defmodule Flezha.Diagnostics.MemoryReporterTest do
 
   require Logger
 
+  import ExUnit.CaptureLog
+
   alias Flezha.Diagnostics.MemoryReporter
 
   @env_var "FLEZHA_MEMORY_REPORT_INTERVAL_MS"
@@ -117,6 +119,27 @@ defmodule Flezha.Diagnostics.MemoryReporterTest do
       assert Process.alive?(pid)
       assert :sys.get_state(pid) == %{interval_ms: 10_000}
       GenServer.stop(pid)
+    end
+
+    test "emits the reading line at :info so it reaches Loki" do
+      # Test config pins the primary level to :error; lower it so the :info
+      # line is emitted, then restore.
+      previous = Logger.level()
+      Logger.configure(level: :info)
+      on_exit(fn -> Logger.configure(level: previous) end)
+
+      {:ok, pid} = GenServer.start_link(MemoryReporter, %{interval_ms: 10_000})
+
+      log =
+        capture_log([level: :info], fn ->
+          send(pid, :report)
+          :sys.get_state(pid)
+        end)
+
+      GenServer.stop(pid)
+
+      assert log =~ "[info]"
+      assert log =~ "module=Flezha.Diagnostics.MemoryReporter "
     end
   end
 end

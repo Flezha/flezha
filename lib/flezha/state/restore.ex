@@ -13,7 +13,9 @@ defmodule Flezha.State.Restore do
   cold start), `terminal_seq_hint = 0` and both bodies are empty.
   """
 
-  alias Flezha.State.{Registry, Snapshot, WalWriter}
+  alias Flezha.State.{Registry, Snapshot}
+
+  @header_size 16
 
   @type payload :: %{
           snapshot_bytes: binary(),
@@ -60,36 +62,36 @@ defmodule Flezha.State.Restore do
       File.exists?(Registry.wal_path(partition_id))
   end
 
+  # Read the WAL once and parse records in memory; a per-record `:file.pread`
+  # churns small transient refc binaries that fragment the binary allocator.
   defp read_tail_wal(partition_id, snapshot_seq) do
-    path = Registry.wal_path(partition_id)
+    case :file.read_file(Registry.wal_path(partition_id)) do
+      {:ok, data} ->
+        {iodata, terminal_seq} = gather_records(data, snapshot_seq, [], snapshot_seq)
+        {IO.iodata_to_binary(iodata), terminal_seq}
 
-    if File.exists?(path) do
-      {:ok, dev} = :file.open(path, [:raw, :read, :binary])
-
-      try do
-        gather_records(dev, 0, snapshot_seq, [], snapshot_seq)
-      after
-        :file.close(dev)
-      end
-    else
-      {<<>>, snapshot_seq}
+      {:error, _} ->
+        {<<>>, snapshot_seq}
     end
   end
 
-  defp gather_records(dev, position, snapshot_seq, acc, terminal_seq) do
-    case WalWriter.decode_record(dev, position) do
-      {:ok, seq, header, bytes, consumed} ->
-        new_acc =
-          if seq > snapshot_seq do
-            [WalWriter.encode_record(seq, header, bytes) | acc]
-          else
-            acc
-          end
+  defp gather_records(<<seq::64-big, len::32-big, tail::binary>> = data, snapshot_seq, acc, term_seq)
+       when len >= @header_size and byte_size(tail) >= len + 4 do
+    <<header::binary-size(@header_size), change::binary-size(len - @header_size), crc::32-big,
+      _::binary>> = tail
 
-        gather_records(dev, position + consumed, snapshot_seq, new_acc, max(terminal_seq, seq))
-
-      {:error, _} ->
-        {acc |> Enum.reverse() |> IO.iodata_to_binary(), terminal_seq}
+    if :erlang.crc32(<<header::binary, change::binary>>) == crc do
+      # Keep the on-disk bytes verbatim rather than re-framing them.
+      <<record::binary-size(12 + len + 4), rest::binary>> = data
+      acc = if seq > snapshot_seq, do: [record | acc], else: acc
+      gather_records(rest, snapshot_seq, acc, max(term_seq, seq))
+    else
+      # Stop at the first corrupt record, mirroring the device-scan contract.
+      {Enum.reverse(acc), term_seq}
     end
+  end
+
+  defp gather_records(_remaining, _snapshot_seq, acc, term_seq) do
+    {Enum.reverse(acc), term_seq}
   end
 end
