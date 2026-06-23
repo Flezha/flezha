@@ -1,5 +1,5 @@
 .PHONY: build build-release nif nif-release test clean \
-        docker-build docker-build-multiarch \
+        docker-build docker-publish \
         docker-build-dev docker-build-toolchain \
         k8s-apply k8s-delete \
         stabilize-test-check
@@ -62,15 +62,12 @@ docker-build:
 	  -f docker/prod/Dockerfile.controller \
 	  .
 
-# Build and push multi-arch image (amd64 + arm64) via buildx.
-# Usage: VERSION=0.2.0 make docker-build-multiarch
-docker-build-multiarch:
-	docker buildx build \
-	  --platform linux/amd64,linux/arm64 \
-	  -t alfetahe/flezha:$(VERSION) \
-	  -f docker/prod/Dockerfile.controller \
-	  --push \
-	  .
+# Publish a controller image to Docker Hub. Builds NATIVELY on the host arch
+# (no QEMU/buildx), pushes the per-arch tag, and rebuilds the manifest list.
+# `make docker-publish` → prod (:latest); `make docker-publish ARGS=--dev` → dev.
+# Run once per architecture host. See docker/prod/README.md.
+docker-publish:
+	scripts/publish-image.sh $(ARGS)
 
 # Build the runtime-dev image (`:latest-dev`) for the current host arch.
 # Layers Node.js + a pre-built testnet WS server on top of `:latest`, so

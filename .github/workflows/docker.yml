@@ -1,30 +1,17 @@
 name: Docker
 
-# Builds the prod (`:latest`) and runtime-dev (`:latest-dev`) controller images
-# and fails if either exceeds its size budget. On push to main, also
-# pushes both tags to Docker Hub. The toolchain image (`:latest-toolchain`)
-# is build-only for hacking on Flezha itself and is not published from CI;
-# the maintainer publishes it from a workstation when needed.
+# PR-only build check: builds the prod (`:latest`) and runtime-dev
+# (`:latest-dev`) controller images and fails if either exceeds its size
+# budget. It NEVER pushes. All publishing to Docker Hub is done by
+# scripts/publish-image.sh, which builds natively per architecture and
+# assembles the multi-arch manifest — keeping a single publisher so CI can't
+# clobber the manifest with a single-arch push.
 #
-# Per the no-QEMU/buildx policy, multi-arch images are produced by
-# building natively on each architecture's own runner (the matrix below).
-# Cross-compilation via QEMU is forbidden.
+# Per the no-QEMU/buildx policy, multi-arch images are never cross-compiled;
+# each architecture builds on its own hardware.
 
 on:
   pull_request:
-    paths:
-      - "docker/prod/**"
-      - "docker/dev/Dockerfile.runtime"
-      - "test/apps/testnet/**"
-      - "mix.exs"
-      - "mix.lock"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "flz_nif/**"
-      - ".dockerignore"
-      - ".github/workflows/docker.yml"
-  push:
-    branches: [main]
     paths:
       - "docker/prod/**"
       - "docker/dev/Dockerfile.runtime"
@@ -104,34 +91,3 @@ jobs:
             fail=1
           fi
           exit "$fail"
-
-      - name: Check Docker Hub credentials
-        id: dockerhub
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
-            echo "have_creds=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "have_creds=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::DOCKERHUB_USERNAME / DOCKERHUB_TOKEN not set; skipping publish."
-          fi
-
-      - name: Login to Docker Hub
-        if: |
-          github.event_name == 'push' && github.ref == 'refs/heads/main' &&
-          steps.dockerhub.outputs.have_creds == 'true'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Push :latest and :latest-dev
-        if: |
-          github.event_name == 'push' && github.ref == 'refs/heads/main' &&
-          steps.dockerhub.outputs.have_creds == 'true'
-        run: |
-          docker push alfetahe/flezha:latest
-          docker push alfetahe/flezha:latest-dev

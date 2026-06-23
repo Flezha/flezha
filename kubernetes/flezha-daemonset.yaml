@@ -50,9 +50,9 @@ spec:
               mountPath: /var/lib/flezha
       containers:
         - name: flezha
-          # Update VERSION tag before deploying
-          image: alfetahe/flezha:dev-latest
-          imagePullPolicy: Always
+          # Multi-arch image published by scripts/publish-image.sh.
+          image: alfetahe/flezha:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - name: epmd
               containerPort: 4369

@@ -27,20 +27,18 @@ The daemonset is already configured to use `dockerhub-secret` via `imagePullSecr
 
 ### Building Custom Images
 
-To build your own multi-arch image:
+Build and publish natively per architecture (no QEMU/buildx) with the publish
+script — run it once on each architecture host:
 
 ```bash
-# From flezha root directory
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/prod/Dockerfile.controller \
-  -t alfetahe/flezha:latest \
-  . --push
-
-# Build for same arhitecture
-docker build -f docker/prod/Dockerfile.controller -t alfetahe/flezha:latest . && docker push alfetahe/flezha:latest
+# From flezha root directory, logged in as the image owner
+scripts/publish-image.sh          # prod :latest  (host-arch tag + manifest)
+scripts/publish-image.sh --dev    # dev  :latest-dev
 ```
 
-See `docker/prod/README.md` for detailed build instructions.
+Each run pushes the host-arch tag and rebuilds the manifest list from the
+per-arch tags on Docker Hub, so amd64 and arm64 never overwrite each other.
+See `docker/prod/README.md` for details.
 
 ## Setup
 - Apply the namespace: `kubectl apply -f flezha-namespace.yaml`

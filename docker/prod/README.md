@@ -57,88 +57,36 @@ Budget: **300 MiB** (`IMAGE_SIZE_LIMIT_BYTES=314572800`). Adjust with a
 one-line edit if a legitimate size change ships in the same PR.
 
 
-## Build Local Image (Single Architecture)
+## process_hub source
+
+The image fetches `process_hub` from its GitHub `dev` branch at build time
+(`mix.exs::process_hub_dep/0` default). Nothing is baked in from a local
+checkout — a plain git clone is all the build context needs.
+
+## Publishing to Docker Hub
+
+`:latest` (prod) and `:latest-dev` (dev) are multi-arch manifest lists, built
+**natively on each architecture's own hardware** (no QEMU, no buildx
+`--platform`, per the project policy). Use `scripts/publish-image.sh`:
 
 ```bash
-# Build and push on amd64
-docker build -f docker/prod/Dockerfile.controller -t alfetahe/flezha:latest-amd64 .
-docker push alfetahe/flezha:latest-amd64
+docker login -u alfetahe
 
-# Build and push on arm64
-docker build -f docker/prod/Dockerfile.controller -t alfetahe/flezha:latest-arm64 .
-docker push alfetahe/flezha:latest-arm64
-
-# Push to the latest
-docker buildx imagetools create -t alfetahe/flezha:latest \
-  alfetahe/flezha:latest-amd64 alfetahe/flezha:latest-arm64
-
-# Build and push for current architecture.
-docker build -f docker/prod/Dockerfile.controller -t alfetahe/flezha:latest .
-docker push alfetahe/flezha:latest
+# Run on each architecture host (e.g. an arm64 Pi, and amd64 moon):
+scripts/publish-image.sh           # prod  → pushes :latest-<arch>, rebuilds :latest
+scripts/publish-image.sh --dev     # dev   → pushes :latest-dev-<arch>, rebuilds :latest-dev
 ```
 
-## Build Multi-Architecture Image and Push to Docker Hub
+Each run pushes the **host arch** tag (`:latest-amd64` / `:latest-arm64`), then
+rebuilds the `:latest` manifest from whichever per-arch tags currently exist on
+Docker Hub. So building on amd64 updates the amd64 variant and building on arm64
+updates the arm64 variant — **they never overwrite each other**. Run the script
+on one host per architecture you want represented in the manifest.
 
-The result is a single manifest list under one tag (e.g. `latest`) that serves both
-`linux/amd64` and `linux/arm64`. Docker automatically pulls the correct variant per host.
-
-### Option A — Single machine (QEMU emulation)
-
-Simplest setup. The non-native platform (usually arm64) is emulated and compiles slowly
-
-```bash
-# Setup buildx (one-time)
-docker buildx create --name multiarch --use
-docker buildx inspect --bootstrap
-
-# Build and push with both version and latest tags
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/prod/Dockerfile.controller \
-  -t alfetahe/flezha:0.2.0 \
-  -t alfetahe/flezha:latest \
-  . --push
-```
-
-### Option B — Two native machines (faster, recommended)
-
-Build each architecture on its own machine, push them as separate tags, then combine
-them into one manifest list. All commands use standard `docker` — no SSH magic required.
-
-**On your amd64 machine:**
-
-```bash
-docker build -f docker/prod/Dockerfile.controller \
-  -t alfetahe/flezha:amd64 .
-docker push alfetahe/flezha:amd64
-```
-
-**On your arm64 machine (SSH in normally, then run):**
-
-```bash
-docker build -f docker/prod/Dockerfile.controller \
-  -t alfetahe/flezha:arm64 .
-docker push alfetahe/flezha:arm64
-```
-
-**Back on either machine — combine into one manifest and push:**
-
-```bash
-docker manifest create alfetahe/flezha:latest \
-  alfetahe/flezha:amd64 \
-  alfetahe/flezha:arm64
-
-docker manifest push alfetahe/flezha:latest
-
-# Optionally tag a version as well
-docker manifest create alfetahe/flezha:0.2.0 \
-  alfetahe/flezha:amd64 \
-  alfetahe/flezha:arm64
-
-docker manifest push alfetahe/flezha:0.2.0
-```
-
-Both options produce the same single `latest` tag on Docker Hub — a manifest list
-containing one image digest per architecture.
+Builds reuse the BuildKit layer cache and the Dockerfile's `--mount=type=cache`
+mounts (fast incremental Rust/Elixir) and `--pull` to refresh base images. Pass
+`NO_CACHE=1 scripts/publish-image.sh` to force a clean rebuild when bumping the
+base image or toolchain.
 
 ## Run Docker Image
 
