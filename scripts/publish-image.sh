@@ -20,6 +20,11 @@
 # Caching: layer cache + the Dockerfile's `--mount=type=cache` mounts (fast
 # incremental Rust/Elixir) and `--pull` to refresh base images. Pass NO_CACHE=1
 # to force a clean rebuild when bumping the base image or toolchain.
+#
+# --provenance=false --sbom=false: keep each per-arch push a plain single-image
+# manifest. BuildKit otherwise attaches a provenance attestation, turning the
+# pushed tag into an image index that `docker manifest create` rejects with
+# "is a manifest list".
 set -euo pipefail
 
 IMAGE="alfetahe/flezha"
@@ -54,7 +59,7 @@ cd "$(dirname "$0")/.."
 [ -f "$dockerfile" ] || { echo "ERROR: $dockerfile not found (run from the flezha repo)" >&2; exit 1; }
 
 echo "==> Building $arch_tag ($mode, native $arch)"
-DOCKER_BUILDKIT=1 docker build --pull ${NO_CACHE:+--no-cache} -f "$dockerfile" -t "$arch_tag" .
+DOCKER_BUILDKIT=1 docker build --pull --provenance=false --sbom=false ${NO_CACHE:+--no-cache} -f "$dockerfile" -t "$arch_tag" .
 echo "    size: $(docker image inspect "$arch_tag" --format '{{.Size}}' | awk '{printf "%.1f MiB", $1/1024/1024}')"
 
 echo "==> Pushing $arch_tag"
