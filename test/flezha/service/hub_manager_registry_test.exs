@@ -11,6 +11,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   """
   use ExUnit.Case, async: false
 
+  alias Flezha.Convergence.Snapshot
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
   alias ProcessHub.Service.ProcessRegistry
@@ -93,6 +94,41 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
       assert {:ok, ids} = Flezha.list_relays(@namespace)
       assert "relay_cli_mn" in ids
+    end
+  end
+
+  describe "relay_rows/1 health surface" do
+    @health_ns "mn_health_test"
+
+    setup do
+      {:ok, _} = ensure_hub(@health_ns)
+      prev = Snapshot.current()
+      on_exit(fn ->
+        Snapshot.publish(prev)
+        HubManager.stop_hub(@health_ns)
+      end)
+
+      :ok
+    end
+
+    test "reflects the Convergence Loop's classified health, not the absent metadata key" do
+      # Regression: relay_rows/1 used to read `metadata[:health]`, a key nothing
+      # ever writes, so every relay reported `:unknown` forever even while
+      # producing. It must instead read the loop's published per-relay health.
+      inject_relay(@health_ns, "relay_health", [{node(), self()}])
+
+      Snapshot.publish(%{relay_health: %{{@health_ns, "relay_health"} => :healthy}})
+
+      row = Enum.find(HubManager.relay_rows(@health_ns), &(&1.id == "relay_health"))
+      assert row.health == :healthy
+    end
+
+    test "a relay the loop has not yet observed reports :unknown, not a crash" do
+      inject_relay(@health_ns, "relay_unseen", [{node(), self()}])
+      Snapshot.publish(%{relay_health: %{}})
+
+      row = Enum.find(HubManager.relay_rows(@health_ns), &(&1.id == "relay_unseen"))
+      assert row.health == :unknown
     end
   end
 

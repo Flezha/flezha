@@ -549,6 +549,81 @@ defmodule Flezha.ConvergenceTest do
     end
   end
 
+  describe "Loop.relay_health_map/3 (operator health surface)" do
+    alias Flezha.Convergence.{Intent, Loop}
+
+    defp intent_relay(ns, rid),
+      do: %{namespace: ns, relay_id: rid, factory_id: nil, plugins: []}
+
+    defp reality(ns, observed_relays, active),
+      do: %{relays: observed_relays, active_executors: %{ns => active}}
+
+    test "a bound relay on a live executor is :healthy" do
+      ns = "ns"
+      intent = %Intent{relays: [intent_relay(ns, "r")]}
+
+      reality =
+        reality(ns, %{{ns, "r"} => %{bound_executor: "e1", pid: self()}}, MapSet.new(["e1"]))
+
+      health = Loop.relay_health_map(intent.relays, reality, %Loop{})
+      assert health == %{{ns, "r"} => :healthy}
+    end
+
+    test "a relay bound to no executor is :unbound" do
+      ns = "ns"
+      intent = %Intent{relays: [intent_relay(ns, "r")]}
+      reality = reality(ns, %{{ns, "r"} => %{bound_executor: nil}}, MapSet.new(["e1"]))
+
+      assert Loop.relay_health_map(intent.relays, reality, %Loop{}) == %{{ns, "r"} => :unbound}
+    end
+
+    test "a relay bound to a dead executor is :failed" do
+      ns = "ns"
+      intent = %Intent{relays: [intent_relay(ns, "r")]}
+      reality = reality(ns, %{{ns, "r"} => %{bound_executor: "gone"}}, MapSet.new(["e1"]))
+
+      assert Loop.relay_health_map(intent.relays, reality, %Loop{}) == %{{ns, "r"} => :failed}
+    end
+
+    test "a bound-but-stalled relay is :degraded" do
+      ns = "ns"
+      intent = %Intent{relays: [intent_relay(ns, "r")]}
+
+      reality =
+        reality(ns, %{{ns, "r"} => %{bound_executor: "e1", pid: self()}}, MapSet.new(["e1"]))
+
+      state = %Loop{stalled_relays: %{"r" => System.monotonic_time(:millisecond)}}
+      assert Loop.relay_health_map(intent.relays, reality, state) == %{{ns, "r"} => :degraded}
+    end
+
+    test "a bound relay with a degraded plugin is :degraded" do
+      ns = "ns"
+      intent = %Intent{relays: [intent_relay(ns, "r")]}
+
+      reality =
+        reality(ns, %{{ns, "r"} => %{bound_executor: "e1", pid: self()}}, MapSet.new(["e1"]))
+
+      assert Loop.relay_health_map(intent.relays, reality, %Loop{plugin_degraded: ["r"]}) ==
+               %{{ns, "r"} => :degraded}
+    end
+
+    test "an unobservable relay (failed read) is :unknown for the tick, not classified" do
+      ns = "ns"
+      intent = %Intent{relays: [intent_relay(ns, "r")]}
+      reality = reality(ns, %{{ns, "r"} => %{bound_executor: :unknown}}, MapSet.new(["e1"]))
+
+      assert Loop.relay_health_map(intent.relays, reality, %Loop{}) == %{{ns, "r"} => :unknown}
+    end
+
+    test "a relay whose namespace live-executor read failed is :unknown, not :failed" do
+      ns = "ns"
+      intent = %Intent{relays: [intent_relay(ns, "r")]}
+      reality = reality(ns, %{{ns, "r"} => %{bound_executor: "e1"}}, :unknown)
+
+      assert Loop.relay_health_map(intent.relays, reality, %Loop{}) == %{{ns, "r"} => :unknown}
+    end
+  end
+
   describe "RelayManager.pick_executor/2 — deterministic HRW placement (C1p)" do
     alias Flezha.Service.RelayManager
 

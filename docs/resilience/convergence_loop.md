@@ -194,6 +194,14 @@ of its own. The published map includes:
   alarms instead of sitting silently `recovering` forever. Not 503: a
   controller restart cannot re-bind an executor-orphaned relay. The clock
   resets while any hub is recovering.
+- `relay_health` — a `{namespace, relay_id} => :healthy | :degraded | :failed |
+  :unbound | :unknown` map, classified per tick from the same probed reality the
+  `Diff` uses (bound + live-executor + stall/plugin signals). This is the
+  authoritative source for the `HEALTH` column in `flz relay list` and the
+  `Relay health:` rollup in `flz cluster status` — `HubManager.relay_rows/1`
+  reads `Snapshot.relay_health/2`, not registry metadata. A relay reports
+  `:unknown` only before the first tick observes it (or on a failed read that
+  tick); it is a transient startup state, never permanent.
 - Per-hub recovery state
 - Tick timestamp (used to detect a stale loop for the `tick_stale` 503 case)
 

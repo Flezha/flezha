@@ -440,10 +440,48 @@ defmodule Flezha.Convergence.Loop do
       bound_relays: bound,
       producing_relays: producing,
       pending_restore: pending_restore,
-      unmet_intent_ms: unmet_intent_since && now - unmet_intent_since
+      unmet_intent_ms: unmet_intent_since && now - unmet_intent_since,
+      relay_health: relay_health_map(relays, reality, state)
     })
 
     %{state | unmet_intent_since: unmet_intent_since}
+  end
+
+  # Per-relay health for the operator surfaces (`flz relay list`,
+  # `flz cluster status`), keyed `{namespace, relay_id}`. Derives the same
+  # authoritative reality the Diff classifies against, so the CLI sees exactly
+  # what the loop sees. A relay only appears `:unknown` here while a tick has
+  # not yet observed it or its read failed — never permanently. Mirrors the
+  # bound/misbound cond in `Diff.compute/2`, extended with the produce signals.
+  @doc false
+  @spec relay_health_map([Intent.relay()], map(), %__MODULE__{}) :: %{{atom(), binary()} => atom()}
+  def relay_health_map(relays, reality, %__MODULE__{} = state) do
+    observed = Map.get(reality, :relays, %{})
+    active = Map.get(reality, :active_executors, %{})
+    plugin_degraded = MapSet.new(state.plugin_degraded)
+
+    Map.new(relays, fn %{namespace: ns, relay_id: rid} ->
+      obs = Map.get(observed, {ns, rid}, %{})
+      bound = Map.get(obs, :bound_executor)
+      live = Map.get(active, ns, MapSet.new())
+
+      health =
+        cond do
+          # An observation failed this tick (relay state or live-executor read);
+          # no authoritative signal, so report `:unknown` for this tick only.
+          bound == :unknown -> :unknown
+          is_nil(bound) -> :unbound
+          live == :unknown -> :unknown
+          # Bound to an executor that is no longer live — the loop will rebind.
+          not MapSet.member?(live, bound) -> :failed
+          Map.get(obs, :parked?, false) -> :degraded
+          Map.has_key?(state.stalled_relays, rid) -> :degraded
+          MapSet.member?(plugin_degraded, rid) -> :degraded
+          true -> :healthy
+        end
+
+      {{ns, rid}, health}
+    end)
   end
 
   defp any_recovering?(reality) do

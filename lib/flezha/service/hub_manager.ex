@@ -309,9 +309,11 @@ defmodule Flezha.Service.HubManager do
   @doc """
   Per-relay view of a namespace's durable registry for operator surfaces:
   one row per registered relay (including FAILED ones whose only placement is
-  a dead node, which `get_all_relays/1` filters out), carrying the reconciler's
-  persisted health, the assigned executor, and the live node. Reads the same
-  registry dump the reconciler does, so the CLI sees exactly what the loop sees.
+  a dead node, which `get_all_relays/1` filters out), carrying the assigned
+  executor and live node from the registry dump and the live health classified
+  by the Convergence Loop (`Snapshot.relay_health/2`), so the CLI sees exactly
+  what the loop sees. A registry row the loop has not yet observed reports
+  `:unknown` until the next tick covers it.
   """
   @spec relay_rows(String.t()) :: [%{id: term(), health: atom(), executor: term(), node: term()}]
   def relay_rows(namespace) do
@@ -325,7 +327,7 @@ defmodule Flezha.Service.HubManager do
 
         %{
           id: relay_id,
-          health: Map.get(metadata, :health, :unknown),
+          health: Snapshot.relay_health(namespace, relay_id),
           executor: Map.get(metadata, :tag),
           node: live_node(node_pids)
         }
