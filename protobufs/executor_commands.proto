@@ -31,6 +31,7 @@ message CommandRequest {
         Ping ping = 19;
         ExecutorReconnected executor_reconnected = 20;
         ReassignExecutorId reassign_executor_id = 21;
+        TaskCompleted task_completed = 22;
     }
 }
 
@@ -53,6 +54,10 @@ message AddRelay {
     string relay_id = 1;
     string factory_id = 2;
     string init_values = 3;
+    // Compute-unit kind for this unit (e.g. "relay", "task"). Empty/absent
+    // is interpreted as "relay" so pre-change SDKs and old wire frames stay
+    // backward-compatible. Populated by the Controller from the relay's :kind.
+    string kind = 4;
 }
 
 message RemRelay {
@@ -209,4 +214,18 @@ message ExecutorReconnected {
 // `ExecutorReconnected` emissions carry the new id.
 message ReassignExecutorId {
     string new_id = 1;
+}
+
+// SDK -> Controller. Emitted by a task-kind unit when its run-once function
+// returns. `status` is "ok" on success or "error" on failure (with `error`
+// describing it). The Controller drives the same stop/teardown path as an
+// explicit stop (deregister-on-completion) so a finished task is removed
+// from the durable registry and never replayed on boot or misjudged by
+// convergence. Direction is reversed like ExecutorShutdownNotification:
+// SDK -> Controller over the "control_command" payload_id; old Controllers
+// ignore the unknown variant via Protox unknown-field handling.
+message TaskCompleted {
+    string relay_id = 1;
+    string status = 2;
+    string error = 3;
 }

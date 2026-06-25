@@ -18,6 +18,9 @@ defmodule Flezha.Relay.Kind do
       (write-ahead log, snapshots, restore, time-travel, and per-partition
       state introspection). Declared `true` for `:relay`.
 
+  Recognised kinds: `:relay` (fully capable) and `:task` (a run-once,
+  stateless job — declares no capabilities, so every flag reads `false`).
+
   ## Extension protocol
 
   Adding a capability flag later (e.g. `:restart_on_boot?`, `:scheduled?`) is
@@ -37,7 +40,8 @@ defmodule Flezha.Relay.Kind do
   @type capability() :: atom()
 
   @capabilities %{
-    relay: %{persistent_state?: true}
+    relay: %{persistent_state?: true},
+    task: %{}
   }
 
   @doc "Sparse capability descriptor for `kind` (declared-true capabilities only)."

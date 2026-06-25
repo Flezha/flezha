@@ -1,5 +1,6 @@
 defmodule Flezha.Executor.ControlChannel do
   alias Flezha.Service.HubManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
   alias Flezha.Executor.FleetManager
@@ -201,6 +202,10 @@ defmodule Flezha.Executor.ControlChannel do
         new_state = handle_executor_reconnected(state, reconnected, reference_id)
         {:noreply, new_state}
 
+      {:task_completed, %{} = completed, _reference_id} ->
+        handle_task_completed(state, completed)
+        {:noreply, state}
+
       :not_sdk_initiated ->
         GenServer.cast(state.control_unit, {:handle_payload, message})
         {:noreply, state}
@@ -266,6 +271,13 @@ defmodule Flezha.Executor.ControlChannel do
        }} ->
         {:executor_reconnected, reconnected, ref}
 
+      {:ok,
+       %ExecutorCommands.CommandRequest{
+         reference_id: ref,
+         command: {:task_completed, completed}
+       }} ->
+        {:task_completed, completed, ref}
+
       _ ->
         :not_sdk_initiated
     end
@@ -300,6 +312,48 @@ defmodule Flezha.Executor.ControlChannel do
     end
 
     emit_executor_shutdown_ack(state, relay_id, reference_id)
+  end
+
+  # A task-kind unit's `run` returned. Deregister-on-completion: drive the
+  # normal stop/teardown so the task leaves the durable registry and is never
+  # replayed on boot. A terminal failure (`status = "error"`) tears down
+  # identically (no retry) and is surfaced via telemetry.
+  defp handle_task_completed(state, completed) do
+    %ExecutorCommands.TaskCompleted{
+      relay_id: relay_id,
+      status: status,
+      error: error
+    } = completed
+
+    if status == "error" do
+      Logger.warning(
+        "[control_channel] task #{inspect(relay_id)} failed in namespace " <>
+          "#{inspect(state.namespace)}: #{inspect(error)}"
+      )
+
+      :telemetry.execute(
+        [:flezha, :task, :failed],
+        %{count: 1},
+        %{namespace: state.namespace, relay_id: relay_id, error: error}
+      )
+    end
+
+    namespace = state.namespace
+
+    # Tear down off the control-channel process: `stop_relay` drives a
+    # RemRelay round-trip whose CommandResponse returns on THIS control
+    # stream, so calling it inline would deadlock the reader.
+    Task.start(fn ->
+      case RelayManager.stop_relay(namespace, relay_id) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "[control_channel] task #{inspect(relay_id)} teardown failed: #{inspect(reason)}"
+          )
+      end
+    end)
   end
 
   # Handle the SDK's first frame after `handle_reconnect`. The SDK has

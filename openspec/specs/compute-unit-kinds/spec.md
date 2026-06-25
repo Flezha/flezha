@@ -7,11 +7,15 @@ The compute-unit-kinds capability lets the controller host more than one kind of
 ## Requirements
 ### Requirement: A relay declares a kind
 
-Every relay SHALL carry a `kind` (an atom). The kind SHALL be set when the relay is started and SHALL be frozen for the relay's lifetime — it cannot change without a stop + start cycle. When a kind is not specified at start, it SHALL default to `:relay`. In this change, `:relay` is the only valid kind; starting a relay with any other kind SHALL fail with a clear error naming the unknown kind, and no relay process SHALL be created.
+Every relay SHALL carry a `kind` (an atom). The kind SHALL be set when the relay is started and SHALL be frozen for the relay's lifetime — it cannot change without a stop + start cycle. When a kind is not specified at start, it SHALL default to `:relay`. The recognized kinds are `:relay` and `:task`; starting a relay with any other kind SHALL fail with a clear error naming the unknown kind, and no relay process SHALL be created.
 
 #### Scenario: Default kind is `:relay`
 - **WHEN** a relay is started without an explicit kind
 - **THEN** its kind SHALL be `:relay`
+
+#### Scenario: Task is a recognized kind
+- **WHEN** a relay is started with kind `:task`
+- **THEN** the start SHALL be accepted and the relay's kind SHALL be `:task`
 
 #### Scenario: Kind is frozen for the relay's lifetime
 - **WHEN** a relay is running with a given kind
@@ -55,13 +59,25 @@ A request for a relay's per-partition state SHALL succeed only when the relay's 
 
 ### Requirement: The default `:relay` kind preserves existing behavior exactly
 
-Introducing the kind dimension and the capability model SHALL NOT change any observable behavior of a relay started without an explicit kind. The `:relay` kind being fully capable, the state-introspection gate SHALL pass, and every other kind-divergent path (partition-count quota, restore-on-boot, HotSwap state transfer, output-stall watchdog, convergence health) SHALL behave identically to the pre-change control plane — these paths self-gate on the presence of partitions/state and are not modified by this change. There SHALL be no change to the wire protocol, the SDK, the CLI commands, the on-disk layout, configuration, or telemetry.
+Introducing the task kind SHALL NOT change any observable behavior of a relay started without an explicit kind. The `:relay` kind being fully capable, the state-introspection gate SHALL pass, and every other kind-divergent path (partition-count quota, restore-on-boot, HotSwap state transfer, output-stall watchdog, convergence health) SHALL behave identically to the pre-change control plane — these paths self-gate on the presence of partitions/state. The `AddRelay` wire message MAY now carry an optional `kind` field; when the field is empty or absent it SHALL be interpreted as `:relay`, so existing relays and pre-change SDK builds are unaffected. The on-disk state layout, runtime configuration keys, and emitted telemetry for a `:relay` relay SHALL be unchanged, and the relay dispatch hot path SHALL be unchanged save a single per-frame match over the sealed unit registry.
 
 #### Scenario: Existing relays are unaffected
 - **WHEN** a relay is started, run, migrated, queried, and stopped without specifying a kind
 - **THEN** its behavior SHALL be indistinguishable from the behavior before this change, including partition-quota enforcement, restore-on-boot, HotSwap migration, self-healing, and state queries
 
-#### Scenario: No external surface changes
-- **WHEN** this change is applied
-- **THEN** the `AddRelay` wire message, the Rust and Java SDKs, the CLI commands, the on-disk state layout, the runtime configuration keys, and the emitted telemetry SHALL be unchanged
+#### Scenario: Default kind is wire-backward-compatible
+- **WHEN** a relay is started without an explicit kind, or a pre-change SDK omits the `kind` field
+- **THEN** the `AddRelay` `kind` field SHALL be empty and SHALL be interpreted as `:relay`, and the relay SHALL behave exactly as before this change
+
+### Requirement: A relay's kind is carried to the SDK on `AddRelay`
+
+The controller SHALL transport a relay's `kind` to the SDK on the `AddRelay` wire message via an optional `kind` field populated from the relay's `:kind`. The field SHALL be backward-compatible: an empty or absent value SHALL be interpreted by the SDK as `:relay`. This is the single, kind-agnostic mechanism by which any kind (today `:relay` and `:task`) reaches the SDK; no per-kind wire message SHALL be required.
+
+#### Scenario: Task kind travels on the wire
+- **WHEN** the controller starts a relay whose kind is `:task` and issues `AddRelay`
+- **THEN** the `AddRelay` `kind` field SHALL carry the task kind, and the SDK SHALL resolve it to spawn a task instance
+
+#### Scenario: Absent kind field resolves to relay
+- **WHEN** the SDK receives an `AddRelay` with an empty or absent `kind` field
+- **THEN** it SHALL resolve the kind to `:relay`
 

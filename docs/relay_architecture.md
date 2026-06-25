@@ -74,13 +74,56 @@ source of truth listing only the capabilities a kind *has* (as `true`); the
 control plane reads every flag with `Flezha.Relay.Kind.capable?/2`, so any
 capability a kind does not declare reads `false`. The `:relay` kind declares
 `persistent_state?` (per-partition WAL/snapshot/restore/time-travel/state
-introspection) and is the only kind today, so behavior is unchanged. Adding a
+introspection). Adding a
 capability later is a one-line extension: add the single gate that reads the
 flag (defaulting absent to `false`) and opt the built-in kinds that need it
 into it in `Flezha.Relay.Kind`; kinds that do not opt in are unaffected. The
 first gate is per-partition state introspection, which returns
 `{:error, {:unsupported_for_kind, :persistent_state}}` for a kind without
 `persistent_state?` instead of querying a compute unit that has no state.
+
+### The `:task` kind (run-once jobs)
+
+`:task` is a stateless, run-once compute unit — a job. It declares **no**
+capabilities (so `persistent_state?` reads `false`, and the state-introspection
+gate rejects `flz relay state <task>`), has no shards, partitions, or input
+channel, and may emit output to bound plugins like a relay.
+
+Lifecycle: `flz relay start <id> <factory> --kind task` populates the optional
+`kind` field on the `AddRelay` wire message (empty ⇒ `:relay`, backward
+compatible). The SDK holds a sealed unit registry (relay or task) resolved once
+per frame at the dispatch boundary; for a task it schedules the author's
+`Task::run(ctx, args)` once on the work pool, with `args` taken from
+`init_values`. When `run` returns, the SDK emits a `TaskCompleted`
+SDK→Controller control message; the controller drives **deregister-on-completion**
+through the normal stop/teardown path (`RelayManager.stop_relay/2`), so a
+finished task drops out of the durable registry — never replayed on boot, never
+misjudged by convergence. A `run` that errors is terminal (deregister + report
+`[:flezha, :task, :failed]`; no retry).
+
+Authoring (Rust SDK): a distinct lightweight trait, registered as a sibling of
+`register_relay`:
+
+```rust
+struct Greet;
+impl flezha_executor::Task for Greet {
+    fn factory_id() -> &'static str { "greet" }
+    fn run(ctx: &mut flezha_executor::TaskCtx, args: &str)
+        -> Result<(), flezha_executor::TaskError> {
+        ctx.emit(format!("hello {args}").into_bytes())?;
+        Ok(())
+    }
+}
+flezha_executor::register_task::<Greet>();
+```
+
+A near-instant task may run to completion and self-deregister before the start
+RPC confirms the unit's binding; that clean exit is reported as a successful
+start (`{:ok, …}` with no live `executor_id`), not a failure.
+
+Deferred for a later change (v1 known gaps): mid-run controller reboot may
+replay an in-flight task from the durable registry; no retry/backoff,
+exactly-once dedup, or in-flight visibility/cancel.
 
 ## Public API
 

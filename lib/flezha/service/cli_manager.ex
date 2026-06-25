@@ -18,7 +18,8 @@ defmodule Flezha.Service.CliManager do
         factory_id,
         init_values,
         opts \\ [],
-        plugins_json \\ "[]"
+        plugins_json \\ "[]",
+        kind \\ "relay"
       ) do
     opts_kw =
       Payloader.json_to_map(opts)
@@ -27,7 +28,7 @@ defmodule Flezha.Service.CliManager do
 
     case decode_plugins(plugins_json, normalize_namespace(namespace), relay_id) do
       {:ok, []} ->
-        start_relay(namespace, relay_id, factory_id, init_values, opts_kw)
+        start_relay(namespace, relay_id, factory_id, init_values, opts_kw, kind)
 
       {:ok, plugins} ->
         start_relay(
@@ -35,7 +36,8 @@ defmodule Flezha.Service.CliManager do
           relay_id,
           factory_id,
           init_values,
-          Keyword.put(opts_kw, :plugins, plugins)
+          Keyword.put(opts_kw, :plugins, plugins),
+          kind
         )
 
       {:error, reason} ->
@@ -43,10 +45,11 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp start_relay(namespace, relay_id, factory_id, init_values, opts_kw) do
+  defp start_relay(namespace, relay_id, factory_id, init_values, opts_kw, kind) do
     relay = %Flezha.Relay.Builder{
       id: relay_id,
       factory_id: factory_id,
+      kind: parse_kind(kind),
       init_values: Payloader.json_to_map(init_values),
       opts: opts_kw
     }
@@ -56,6 +59,19 @@ defmodule Flezha.Service.CliManager do
       {:error, reason} -> IO.puts("Error starting relay: #{inspect(reason)}")
     end
   end
+
+  # Resolve the wire kind string to its atom without minting atoms from
+  # untrusted input: only already-known kinds convert; anything else stays a
+  # string, which `Validator.valid_kind/1` rejects at start.
+  defp parse_kind(kind) when kind in [nil, "", "relay"], do: :relay
+
+  defp parse_kind(kind) when is_binary(kind) do
+    String.to_existing_atom(kind)
+  rescue
+    ArgumentError -> kind
+  end
+
+  defp parse_kind(kind), do: kind
 
   ## CLI --plugins decoder ----------------------------------------------------
   ##

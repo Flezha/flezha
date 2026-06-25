@@ -290,10 +290,21 @@ message AddRelay {
     string relay_id = 1;
     string factory_id = 2;
     string init_values = 3;
+    string kind = 4; // compute-unit kind; empty/absent ⇒ "relay"
 }
 
 message RemRelay {
     string relay_id = 1;
+}
+
+// SDK -> Controller. Emitted by a task-kind unit when its run-once
+// function returns ("ok" | "error"). The Controller drives the normal
+// stop/teardown path (deregister-on-completion). Old Controllers ignore
+// the unknown variant.
+message TaskCompleted {
+    string relay_id = 1;
+    string status = 2;
+    string error = 3;
 }
 
 message MigrationSerialization {
@@ -592,11 +603,20 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `AddRelay { relay_id: string, factory_id: string, init_values: string }` |
-| Behavior | SDK creates a new relay instance from the named factory. If `init_values` is non-empty, it is parsed as JSON and deserialized into the relay's state via `json_deserialize_state()`. Then `post_alter()` is called. |
+| Proto message | `AddRelay { relay_id: string, factory_id: string, init_values: string, kind: string }` |
+| Behavior | SDK creates a new compute unit from the named factory. `kind` (empty ⇒ `"relay"`) selects the unit kind. For `"relay"`: a relay instance, deserializing non-empty `init_values` JSON into state via `json_deserialize_state()`, then `post_alter()`. For `"task"`: a task instance whose `run(ctx, args)` is scheduled once on the work pool with `args = init_values`. |
 | Response status | `"success"` on success, `"error"` on failure |
 | Response raw_data | empty |
-| Possible errors | Factory not found; JSON parse failure; deserialization failure |
+| Possible errors | Factory not found (relay or task class); JSON parse failure; deserialization failure; unknown `kind` |
+
+### TaskCompleted
+
+| Field | Value |
+|-------|-------|
+| Direction | SDK -> Controller (same `control_command` envelope as `ExecutorReconnected`) |
+| Proto message | `TaskCompleted { relay_id: string, status: string, error: string }` |
+| Behavior | Emitted when a task-kind unit's `run` returns: `status` is `"ok"` or `"error"` (with `error`). The Controller drives the normal stop/teardown path (deregister-on-completion) so the finished task leaves the durable registry; an errored task is torn down identically (terminal — no retry) and surfaced via `[:flezha, :task, :failed]`. |
+| Response | None (one-way notification; old Controllers ignore the unknown variant) |
 
 ### RemRelay
 

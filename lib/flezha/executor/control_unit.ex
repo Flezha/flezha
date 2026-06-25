@@ -210,10 +210,15 @@ defmodule Flezha.Executor.ControlUnit do
           ""
       end
 
+    # Empty kind ⇒ `:relay` on the SDK side, keeping the wire frame
+    # byte-identical to pre-kind builds for the default kind.
+    kind = if relay.kind in [nil, :relay], do: "", else: to_string(relay.kind)
+
     command = %ExecutorCommands.AddRelay{
       relay_id: relay.id,
       factory_id: relay.factory_id,
-      init_values: init_values
+      init_values: init_values,
+      kind: kind
     }
 
     case ControlChannel.send_control(state.executor_id, {:add_relay, command}) do

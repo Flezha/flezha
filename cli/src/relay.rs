@@ -28,7 +28,7 @@ pub fn handle_relay_command(args: &[String]) {
 }
 
 fn handle_start(args: &[String]) {
-    let example_usage = "Usage: flz relay start <relay_id> <factory_id> [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>] [--plugins <json-array>]";
+    let example_usage = "Usage: flz relay start <relay_id> <factory_id> [--kind <relay|task>] [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>] [--plugins <json-array>]";
 
     if args.len() < 3 {
         eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
@@ -47,6 +47,8 @@ fn handle_start(args: &[String]) {
         }
     };
 
+    let kind = extract_param(&args[3..], "--kind", "--kind").unwrap_or_else(|| "relay".to_string());
+
     let mut opts: HashMap<String, String> = HashMap::new();
 
     if let Some(spt) = extract_param(&args[3..], "--snapshot-interval", "-si") {
@@ -62,13 +64,14 @@ fn handle_start(args: &[String]) {
     let escaped_plugins_json = plugins_json.replace("\"", "\\\"");
 
     let rpc_command = format!(
-        "Flezha.Service.CliManager.relay_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
+        "Flezha.Service.CliManager.relay_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
         namespace,
         relay_id,
         factory_id,
         escaped_init_values,
         escaped_opts_json,
         escaped_plugins_json,
+        kind,
     );
 
     println!("Starting relay...");

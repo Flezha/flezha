@@ -6,11 +6,14 @@ use flezha_executor::shard::{Shard, ShardCtx, ShardError};
 use flezha_executor::state::{
     Change, CoalesceKey, NoChange, RestoreInitPayload, StateHandle, WallClock,
 };
-use flezha_executor::{register_relay, ChannelBuilder, OverflowPolicy, Relay};
+use flezha_executor::{
+    register_relay, register_task, ChannelBuilder, OverflowPolicy, Relay, Task, TaskCtx, TaskError,
+};
 use serde::{Deserialize, Serialize};
 
 fn main() {
     register_relays();
+    register_tasks();
 
     let _executor = flezha_executor::new(namespace());
 
@@ -53,6 +56,28 @@ fn register_relays() {
     register_relay::<ResumeProbeRelay>();
     register_relay::<DynamicPartitionRelay>();
     register_relay::<MixedRelay>();
+}
+
+fn register_tasks() {
+    register_task::<EchoTask>();
+}
+
+// -- EchoTask -----------------------------------------------------------------
+//
+// Run-once task exercised by the `task-kind` e2e: emits its args back as
+// output once, then returns Ok so the SDK ships `TaskCompleted` and the
+// controller deregisters it.
+struct EchoTask;
+
+impl Task for EchoTask {
+    fn factory_id() -> &'static str {
+        "echo_task"
+    }
+
+    fn run(ctx: &mut TaskCtx, args: &str) -> Result<(), TaskError> {
+        ctx.emit(format!("echo:{args}").into_bytes())?;
+        Ok(())
+    }
 }
 
 // -- DynamicPartitionRelay ----------------------------------------------------

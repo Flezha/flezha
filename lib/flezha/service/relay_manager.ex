@@ -350,6 +350,13 @@ defmodule Flezha.Service.RelayManager do
                   {:error, %{relay_id: relay.id, node: node(), reason: reason}}
               end
             catch
+              # Started, then exited cleanly before we could read its binding —
+              # a run-once task that already completed, or a concurrent stop. A
+              # clean exit is a successful start, not a failure; no live binding
+              # remains, so `executor_id` is nil.
+              :exit, {reason, _} when reason in [:normal, :noproc] ->
+                {:ok, %{relay_id: relay.id, executor_id: nil, node: relay_node, pid: pid}}
+
               :exit, {reason, _} ->
                 Logger.warning(
                   "Relay #{relay.id} appeared in `started` but died during " <>

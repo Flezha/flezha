@@ -144,6 +144,17 @@ a fully-downed cluster, it replays the relay list from DETS (opt-in via the
 cluster it syncs from peers and discards the local DETS copy — peers are always
 authoritative. See [`process_hub_recovery_model.md`](process_hub_recovery_model.md).
 
+**Task-kind units (deferred boot-recovery gaps).** A completed `:task` unit is
+deregistered on completion, so it never reaches boot recovery. But a task still
+running (in the registry, not yet complete) when the controller restarts WILL be
+replayed from DETS and its `run` may execute again — a duplicate side-effect.
+v1 does not gate this (no `restart_on_boot?` capability). Related v1 gaps: task
+output is at-least-once with no task-specific dedup; there is no in-flight task
+visibility or cooperative cancel beyond `flz relay stop`. These are documented
+for a proper follow-up — see the `relay-task-kind` change design notes. (A
+near-instant task completing during the start RPC's confirmation window is
+handled — a clean exit there is reported as a successful start.)
+
 ---
 
 ## 7. Graceful Shutdown & Drain
