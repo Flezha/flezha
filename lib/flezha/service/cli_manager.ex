@@ -228,6 +228,14 @@ defmodule Flezha.Service.CliManager do
       {:error, :not_found} ->
         IO.puts("Relay '#{relay_id}' not found in namespace '#{namespace_display}'.")
 
+      {:error, {:unsupported_for_kind, :persistent_state}} ->
+        IO.puts(
+          "Relay '#{relay_id}' in namespace '#{namespace_display}' has no per-partition state: " <>
+            "its kind does not support state introspection."
+        )
+
+        System.halt(1)
+
       {:error, reason} when is_binary(reason) ->
         IO.puts("Error getting relay state: #{reason}")
 

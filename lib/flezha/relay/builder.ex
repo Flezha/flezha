@@ -13,6 +13,10 @@ defmodule Flezha.Relay.Builder do
     * `:relay_class` — optional string overriding the relay class identifier
       used as the on-disk persistence key under
       `app_data/state/{relay_class}/`. Defaults to `relay.id` when absent.
+
+  The `:kind` field (an atom, default `:relay`) is the relay's compute-unit
+  kind. It is set at start and frozen for the relay's lifetime; see
+  `Flezha.Relay.Kind` for the kind/capability model.
   """
 
   alias Flezha.Service.Validator
@@ -20,11 +24,12 @@ defmodule Flezha.Relay.Builder do
   @type t() :: %__MODULE__{
           id: String.t(),
           factory_id: String.t(),
+          kind: atom(),
           init_values: map(),
           opts: Keyword.t()
         }
   @enforce_keys [:id, :factory_id]
-  defstruct [:id, :factory_id, init_values: %{}, opts: []]
+  defstruct [:id, :factory_id, kind: :relay, init_values: %{}, opts: []]
 
   def from_json(json_str) do
     case Jason.decode!(json_str) do
@@ -51,7 +56,8 @@ defmodule Flezha.Relay.Builder do
   end
 
   def validate_relay(namespace, relay) do
-    with :ok <- Validator.byte_limit_exceed(relay.id),
+    with :ok <- Validator.valid_kind(relay.kind),
+         :ok <- Validator.byte_limit_exceed(relay.id),
          :ok <- Validator.valid_namespace(namespace),
          :ok <- Validator.relay_unique(namespace, relay.id) do
       :ok

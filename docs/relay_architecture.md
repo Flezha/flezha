@@ -64,6 +64,24 @@ and capability spec deltas, see
 - **Runner** — the work-stealing pool that drains mailboxes. One pool
   per `Flezha::new()`; size controlled by `FLEZHA_WORKER_POOL_SIZE`.
 
+### Relay kind and capabilities (controller-side)
+
+On the controller, every relay is a **compute unit** that carries a **kind** (an
+atom, default `:relay`, set at start and frozen for its lifetime). Each kind
+declares a **sparse,
+default-`false` capability descriptor** in `Flezha.Relay.Kind` — the single
+source of truth listing only the capabilities a kind *has* (as `true`); the
+control plane reads every flag with `Flezha.Relay.Kind.capable?/2`, so any
+capability a kind does not declare reads `false`. The `:relay` kind declares
+`persistent_state?` (per-partition WAL/snapshot/restore/time-travel/state
+introspection) and is the only kind today, so behavior is unchanged. Adding a
+capability later is a one-line extension: add the single gate that reads the
+flag (defaulting absent to `false`) and opt the built-in kinds that need it
+into it in `Flezha.Relay.Kind`; kinds that do not opt in are unaffected. The
+first gate is per-partition state introspection, which returns
+`{:error, {:unsupported_for_kind, :persistent_state}}` for a kind without
+`persistent_state?` instead of querying a compute unit that has no state.
+
 ## Public API
 
 The full surface is small:

@@ -12,6 +12,7 @@ defmodule Flezha.Relay.Overwatch do
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Relay.Kind
   alias Flezha.State.{Restore, Wire}
   alias Flezha.Transport.LivenessCounters
 
@@ -614,23 +615,29 @@ defmodule Flezha.Relay.Overwatch do
 
   @impl true
   def handle_call(:get_partition_state, from, %__MODULE__{} = state) do
-    # Off the GenServer loop so a slow executor can't back up the mailbox.
-    executor_id = state.executor_id
-    relay_id = state.id
+    if Kind.capable?(state.builder.kind, :persistent_state?) do
+      # Query the executor off the GenServer loop so a slow reply can't back up
+      # the mailbox; `from` is answered when the round-trip completes.
+      relay_id = state.id
+      executor_id = state.executor_id
 
-    spawn(fn ->
-      result =
-        with_op_span(:partition_state, relay_id, fn ->
-          send_control(
-            executor_id,
-            {:partition_state, %ExecutorCommands.PartitionState{relay_id: relay_id}}
-          )
-        end)
+      spawn(fn ->
+        result =
+          with_op_span(:partition_state, relay_id, fn ->
+            send_control(
+              executor_id,
+              {:partition_state, %ExecutorCommands.PartitionState{relay_id: relay_id}}
+            )
+          end)
 
-      GenServer.reply(from, result)
-    end)
+        GenServer.reply(from, result)
+      end)
 
-    {:noreply, state}
+      {:noreply, state}
+    else
+      # The kind has no per-partition state; fail cleanly without the round-trip.
+      {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, state}
+    end
   end
 
   # Async `:executor_migrate` for the PARKED un-park path only — that's
