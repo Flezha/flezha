@@ -618,6 +618,13 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 | Behavior | Emitted when a task-kind unit's `run` returns: `status` is `"ok"` or `"error"` (with `error`). The Controller drives the normal stop/teardown path (deregister-on-completion) so the finished task leaves the durable registry; an errored task is torn down identically (terminal — no retry) and surfaced via `[:flezha, :task, :failed]`. |
 | Response | None (one-way notification; old Controllers ignore the unknown variant) |
 
+Both SDKs are at parity on this contract: the Rust and Java SDKs each read the
+optional `AddRelay.kind` field (empty ⇒ `"relay"`) and emit `TaskCompleted`
+byte-identically, so the Controller decodes a Java task's completion exactly as a
+Rust one. A task's plugin output is a frame whose payload id is the task's
+instance id with **empty** metadata (no `channel` key), written on a secondary
+stream — identical across both SDKs.
+
 ### RemRelay
 
 | Field | Value |

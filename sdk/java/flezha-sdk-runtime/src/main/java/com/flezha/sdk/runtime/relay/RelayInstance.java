@@ -40,7 +40,7 @@ import javax.annotation.Nonnull;
  *       (used by the per-Partition flusher and the Compact handler).</li>
  * </ul>
  */
-public final class RelayInstance {
+public final class RelayInstance implements Unit {
 
     private final RelayTopology topology;
     private final String instanceId;

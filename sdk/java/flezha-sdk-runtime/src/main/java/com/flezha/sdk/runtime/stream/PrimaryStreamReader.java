@@ -7,6 +7,8 @@ import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.relay.ChannelDescriptor;
 import com.flezha.sdk.runtime.relay.RelayInstance;
 import com.flezha.sdk.runtime.relay.RelayTopology;
+import com.flezha.sdk.runtime.relay.TaskInstance;
+import com.flezha.sdk.runtime.relay.Unit;
 import com.flezha.sdk.runtime.worker.ShardDispatcher;
 import java.nio.charset.StandardCharsets;
 import javax.annotation.Nonnull;
@@ -51,10 +53,20 @@ public final class PrimaryStreamReader {
 
     private void dispatch(Frame frame) {
         String relayInstanceId = frame.payloadId();
-        RelayInstance instance = ctx.relayInstanceRegistry().get(relayInstanceId);
-        if (instance == null) {
-            LOG.warn("dispatch: relay instance `{}` not found on stream {}", relayInstanceId, streamId);
+        Unit unit = ctx.relayInstanceRegistry().get(relayInstanceId);
+        if (unit == null) {
+            LOG.warn("dispatch: unit instance `{}` not found on stream {}", relayInstanceId, streamId);
             return;
+        }
+        // Resolve the unit kind once per frame. A task has no input channel,
+        // so a data frame addressed to it is a logged no-op.
+        RelayInstance instance;
+        switch (unit) {
+            case RelayInstance ri -> instance = ri;
+            case TaskInstance ignored -> {
+                LOG.warn("dispatch: data frame for task `{}` dropped (tasks have no input channel)", relayInstanceId);
+                return;
+            }
         }
         RelayTopology topology = instance.topology();
 

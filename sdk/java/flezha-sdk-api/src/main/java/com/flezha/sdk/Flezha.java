@@ -2,6 +2,8 @@ package com.flezha.sdk;
 
 import com.flezha.sdk.relay.Relay;
 import com.flezha.sdk.relay.RelayRegistry;
+import com.flezha.sdk.task.Task;
+import com.flezha.sdk.task.TaskRegistry;
 import java.util.Map;
 import javax.annotation.Nonnull;
 
@@ -28,6 +30,15 @@ public interface Flezha extends AutoCloseable {
      */
     static void registerRelay(@Nonnull Class<? extends Relay> relayClass) {
         RelayRegistry.registerRelay(relayClass);
+    }
+
+    /**
+     * Register a {@link Task} class. Sibling of {@link #registerRelay(Class)};
+     * pass-through to {@link TaskRegistry#registerTask(Class)}. Makes the
+     * task spawnable via {@code flz relay start <factory> --kind task}.
+     */
+    static void registerTask(@Nonnull Class<? extends Task> taskClass) {
+        TaskRegistry.registerTask(taskClass);
     }
 
     /** Returns the executor id assigned by the controller during handshake. */
@@ -67,9 +78,10 @@ public interface Flezha extends AutoCloseable {
         if (namespace == null || namespace.isEmpty()) {
             throw new IllegalArgumentException("namespace must not be null or empty");
         }
-        if (RelayRegistry.isEmpty()) {
-            throw new IllegalStateException("Cannot start Flezha: no relay classes registered. "
-                    + "Call Flezha.registerRelay(MyRelay.class) before Flezha.newInstance(...).");
+        if (RelayRegistry.isEmpty() && TaskRegistry.isEmpty()) {
+            throw new IllegalStateException("Cannot start Flezha: no relay or task classes registered. "
+                    + "Call Flezha.registerRelay(MyRelay.class) or Flezha.registerTask(MyTask.class) "
+                    + "before Flezha.newInstance(...).");
         }
 
         // The implementation class lives in flezha-sdk-runtime to avoid a

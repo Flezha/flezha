@@ -117,6 +117,31 @@ impl flezha_executor::Task for Greet {
 flezha_executor::register_task::<Greet>();
 ```
 
+Authoring (Java SDK): a distinct `com.flezha.sdk.task.Task` interface, registered
+as a sibling of `Flezha.registerRelay`:
+
+```java
+public final class GreetTask implements Task {
+    public String factoryId() { return "greet"; }
+    public void run(TaskCtx ctx, String args) throws TaskException {
+        ctx.emit("hello " + args);
+    }
+}
+Flezha.registerTask(GreetTask.class);
+```
+
+The Java runtime mirrors the Rust shape: a sealed `Unit` (provisional name)
+permits a relay instance or a task instance in one per-executor registry,
+resolved once per frame at `PrimaryStreamReader.dispatch`; an `AddRelay` whose
+`kind` resolves to `:task` schedules `Task.run` once on the worker pool with
+`init_values` as `args`; `TaskCtx.emit` writes an instance-id-keyed,
+empty-metadata frame on a secondary stream; and `TaskCompleted` is emitted on
+the control stream byte-identically to the Rust SDK, so the controller drives a
+Java task's teardown unchanged. Java task factories are advertised on connect
+alongside relay factories. Java v1 ships hand-written `Task` impls only (no
+`@Task` annotation sugar) and no task test harness; it inherits the same deferred
+gaps below.
+
 A near-instant task may run to completion and self-deregister before the start
 RPC confirms the unit's binding; that clean exit is reported as a successful
 start (`{:ok, …}` with no live `executor_id`), not a failure.

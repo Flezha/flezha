@@ -12,7 +12,7 @@ public final class PartitionStateHandler implements CommandHandler {
     @Override
     public byte[] handle(ExecutorContext ctx, CommandRequest request, List<String> errors) throws Exception {
         String relayId = request.getPartitionState().getRelayId();
-        RelayInstance instance = ctx.relayInstanceRegistry().get(relayId);
+        RelayInstance instance = ctx.relayInstanceRegistry().getRelay(relayId);
         if (instance == null) {
             errors.add("Relay with id " + relayId + " not found");
             return new byte[0];

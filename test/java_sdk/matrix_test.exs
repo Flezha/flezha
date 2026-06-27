@@ -168,4 +168,77 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
       end
     end
   end
+
+  # Task-kind cells. The Rust task path is proven by
+  # test/system/task_kind_e2e_test.exs; here we prove Java parity — a run-once
+  # task spawned via `kind: :task` runs once, emits, signals `TaskCompleted`,
+  # and is deregistered on completion — over both transports.
+  for transport <- [:uds, :quic] do
+    describe "task kind (runtime=java, transport=#{transport})" do
+      @describetag runtime: :java, transport: transport
+
+      @tag scenario: "task run-once + completion/teardown"
+      test "a run-once Java task completes and is deregistered", ctx do
+        NodeTestHelper.start_executor(@temp_namespace, runtime: :java, transport: ctx.transport)
+
+        relay_id = "java_task_ok_#{ctx.transport}_#{System.unique_integer([:positive])}"
+
+        builder = %Flezha.Relay.Builder{
+          id: relay_id,
+          factory_id: "echo_task",
+          kind: :task,
+          init_values: %{"msg" => "hi"}
+        }
+
+        # A near-instant run-once unit may self-deregister before its binding
+        # is observable; a clean exit during start confirmation is success.
+        assert {:ok, _info} = RelayManager.start_relay(@temp_namespace, builder)
+
+        # Deregister-on-completion: the unit drops out of the durable registry
+        # with no explicit stop — proof the run-once + TaskCompleted loop ran.
+        assert wait_until(fn -> not registered?(relay_id) end, 10_000),
+               "task was never deregistered after completion"
+      end
+
+      @tag scenario: "task terminal error + teardown"
+      test "a failing Java task is deregistered without retry", ctx do
+        NodeTestHelper.start_executor(@temp_namespace, runtime: :java, transport: ctx.transport)
+
+        relay_id = "java_task_err_#{ctx.transport}_#{System.unique_integer([:positive])}"
+
+        builder = %Flezha.Relay.Builder{
+          id: relay_id,
+          factory_id: "echo_task",
+          kind: :task,
+          init_values: %{"mode" => "fail"}
+        }
+
+        assert {:ok, _info} = RelayManager.start_relay(@temp_namespace, builder)
+
+        # Terminal failure: TaskCompleted{status:"error"} drives the same
+        # teardown as success — deregistered, no retry, nothing left running.
+        assert wait_until(fn -> not registered?(relay_id) end, 10_000),
+               "failing task was never deregistered"
+      end
+    end
+  end
+
+  defp registered?(relay_id) do
+    match?({:ok, pid} when is_pid(pid), Flezha.Service.HubManager.get_pid(@temp_namespace, relay_id))
+  end
+
+  defp wait_until(fun, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_until(fun, deadline)
+  end
+
+  defp do_wait_until(fun, deadline) do
+    cond do
+      fun.() -> true
+      System.monotonic_time(:millisecond) >= deadline -> false
+      true ->
+        Process.sleep(25)
+        do_wait_until(fun, deadline)
+    end
+  end
 end

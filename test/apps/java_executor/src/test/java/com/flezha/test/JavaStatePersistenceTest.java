@@ -130,7 +130,7 @@ class JavaStatePersistenceTest {
                         new ArrayList<>());
 
         PartitionSlot slot =
-                ctx.relayInstanceRegistry().get(instanceId).partitions().get(0).get(0);
+                ctx.relayInstanceRegistry().getRelay(instanceId).partitions().get(0).get(0);
         assertThat(((CounterShard.State) slot.state().get()).value).isEqualTo((long) n);
         assertThat(RestoreInitStateResponse.parseFrom(resp).getTerminalSeq()).isEqualTo((long) (n - 1));
         assertThat(slot.changeSeq().get()).isEqualTo((long) n);

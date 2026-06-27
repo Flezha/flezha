@@ -2,6 +2,8 @@ package com.flezha.sdk.runtime.control;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.flezha.sdk.relay.RelayRegistry;
+import com.flezha.sdk.task.TaskRegistry;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -32,7 +34,10 @@ public record HandshakeMessage(
     }
 
     public static HandshakeMessage from(String namespace, String previousExecutorId) {
-        List<String> ids = RelayRegistry.factoryIds();
+        // Relay factories first, then task factories — both kinds are advertised
+        // in one combined list so the controller validates any AddRelay kind.
+        List<String> ids = new ArrayList<>(RelayRegistry.factoryIds());
+        ids.addAll(TaskRegistry.factoryIds());
         List<FactoryInfo> infos =
                 ids.stream().map(id -> new FactoryInfo(id, "")).collect(Collectors.toList());
         return new HandshakeMessage(namespace, ids, infos, previousExecutorId);

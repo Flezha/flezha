@@ -105,7 +105,7 @@ public final class GracefulShutdown {
             return;
         }
 
-        Map<String, RelayInstance> relays = ctx.relayInstanceRegistry().snapshot();
+        Map<String, RelayInstance> relays = ctx.relayInstanceRegistry().relaySnapshot();
         if (relays.isEmpty()) {
             return;
         }

@@ -9,6 +9,10 @@ import com.flezha.sdk.runtime.relay.RelayClassRegistry;
 import com.flezha.sdk.runtime.relay.RelayInstance;
 import com.flezha.sdk.runtime.relay.RelayInstanceRegistry;
 import com.flezha.sdk.runtime.relay.RelayTopology;
+import com.flezha.sdk.runtime.relay.TaskInstance;
+import com.flezha.sdk.runtime.task.TaskClassRegistry;
+import com.flezha.sdk.runtime.task.TaskRunner;
+import com.flezha.sdk.task.Task;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,7 +43,21 @@ public final class AddRelayHandler implements CommandHandler {
         RelayInstanceRegistry registry = ctx.relayInstanceRegistry();
 
         if (registry.contains(relayId)) {
-            LOG.info("AddRelay: relay instance {} already registered, skipping", relayId);
+            LOG.info("AddRelay: unit instance {} already registered, skipping", relayId);
+            return new byte[0];
+        }
+
+        // Empty/"relay" → relay (backward-compatible default); "task" → task.
+        if ("task".equals(cmd.getKind())) {
+            Class<? extends Task> taskClass = TaskClassRegistry.getTaskClass(factoryId);
+            if (taskClass == null) {
+                errors.add("Task class with id " + factoryId + " does not exist");
+                return new byte[0];
+            }
+            // Register before scheduling so a duplicate AddRelay (while run is
+            // in-flight) is idempotent and never re-runs.
+            registry.add(new TaskInstance(relayId, factoryId));
+            TaskRunner.start(ctx, relayId, taskClass, initValues);
             return new byte[0];
         }
 

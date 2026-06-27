@@ -21,7 +21,7 @@ public final class PartitionApplyStateHandler implements CommandHandler {
         String relayId = cmd.getRelayId();
         byte[] stateBytes = cmd.getStateBinary().toByteArray();
 
-        RelayInstance instance = ctx.relayInstanceRegistry().get(relayId);
+        RelayInstance instance = ctx.relayInstanceRegistry().getRelay(relayId);
         if (instance == null) {
             errors.add("Relay with id " + relayId + " not found");
             return new byte[0];

@@ -122,7 +122,9 @@ The Java SDK's worker pool (sized by `FLEZHA_WORKER_POOL_SIZE`, default = `Runti
 
 ### Requirement: Command Dispatch
 
-The Java SDK SHALL implement handlers for every `CommandRequest` variant defined in `executor_commands.proto`: `AssignExecutorId`, `ConnectSocket`, `AddRelay`, `RemRelay`, `PartitionState`, `MigrationSerialization`, `MigrationDeserialization`, `RelayMessage`, `ExecutorDisconnect`. Each handler MUST produce a `CommandResponse` that echoes the original `reference_id` and sets `status = "success"` or `status = "error"` with populated `errors` per `docs/sdk_protocol_spec.md` §6. `AddRelay` and `RemRelay` SHALL spawn and tear down `RelayInstance` objects respectively (the wire field is named `relay_id` for backward continuity; the SDK maps it to `relayInstanceId`). `RelayMessage` SHALL respond with the canonical "unsupported" error until `relay-message-handlers` ships per-Shard `handleMessage`.
+The Java SDK SHALL implement handlers for every `CommandRequest` variant defined in `executor_commands.proto`: `AssignExecutorId`, `ConnectSocket`, `AddRelay`, `RemRelay`, `PartitionState`, `MigrationSerialization`, `MigrationDeserialization`, `RelayMessage`, `ExecutorDisconnect`. Each handler MUST produce a `CommandResponse` that echoes the original `reference_id` and sets `status = "success"` or `status = "error"` with populated `errors` per `docs/sdk_protocol_spec.md` §6. `AddRelay` and `RemRelay` SHALL spawn and tear down unit instances respectively (the wire field is named `relay_id` for backward continuity; the SDK maps it to `relayInstanceId`).
+
+`AddRelay` SHALL read the optional `kind` field: an empty or absent value SHALL be interpreted as `:relay` and SHALL spawn a `RelayInstance` exactly as before this change; a value resolving to `:task` SHALL spawn a `TaskInstance`. The per-executor instance registry SHALL hold a sealed `Unit` (provisional name) permitting the relay-instance and task-instance variants, keyed by `relayInstanceId`; the variant SHALL be resolved once per inbound frame at the dispatch boundary, leaving the relay dispatch hot path unchanged save that single per-frame branch. `RemRelay` SHALL remove either variant by instance id. `RelayMessage` SHALL respond with the canonical "unsupported" error until `relay-message-handlers` ships per-Shard `handleMessage`.
 
 #### Scenario: AddRelay spawns a relay instance
 - **WHEN** the agent sends `AddRelay{relay_id:"p1", factory_id:"market"}` and Relay class `MarketRelay` is registered with `factoryId() == "market"`
@@ -135,6 +137,18 @@ The Java SDK SHALL implement handlers for every `CommandRequest` variant defined
 #### Scenario: AddRelay with unknown factory_id returns error
 - **WHEN** the agent sends `AddRelay{factory_id:"missing"}`
 - **THEN** the SDK SHALL respond with `status = "error"` and `errors` containing a string naming the missing factory id
+
+#### Scenario: AddRelay with empty kind spawns a relay (backward-compatible)
+- **WHEN** the agent sends `AddRelay{relay_id:"p1", factory_id:"market"}` with the `kind` field empty or absent
+- **THEN** the SDK SHALL resolve the kind to `:relay` and spawn a `RelayInstance` exactly as before this change
+
+#### Scenario: AddRelay with kind task spawns a task variant
+- **WHEN** the agent sends `AddRelay{relay_id:"t1", factory_id:"greet", kind:"task"}` and `GreetTask` is registered as a task with `factoryId() == "greet"`
+- **THEN** the SDK SHALL register a `TaskInstance` keyed by `"t1"` as the task variant of the sealed unit registry and respond with `status = "success"`
+
+#### Scenario: RemRelay removes either unit variant
+- **WHEN** the agent sends `RemRelay{relay_id:"t1"}` for a live task instance (and likewise for a relay instance)
+- **THEN** the SDK SHALL remove the instance from the sealed unit registry by id and respond with `status = "success"`
 
 #### Scenario: PartitionState returns the per-Shard / per-Partition JSON shape
 - **WHEN** the agent sends `PartitionState{relay_id:"p1"}` and `p1` exists with two Shards (`shardA` single-mode, `shardB` static-mode with keys `["1m", "1h"]`)

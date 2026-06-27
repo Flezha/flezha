@@ -53,6 +53,11 @@ public final class RelayClassRegistry {
                     "Relay class `" + relayClass.getName() + "` returned null/empty from factoryId()");
         }
 
+        if (com.flezha.sdk.runtime.task.TaskClassRegistry.getTaskClass(factoryId) != null) {
+            throw new IllegalArgumentException("Duplicate factory id `" + factoryId + "` for Relay class `"
+                    + relayClass.getName() + "` (already registered as a Task)");
+        }
+
         RelayTopology topology = RelayTopologyBuilder.build(relay);
 
         Entry existing = ENTRIES.putIfAbsent(factoryId, new Entry(relayClass, topology));

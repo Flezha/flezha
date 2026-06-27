@@ -17,6 +17,7 @@ import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
 import com.flezha.sdk.runtime.state.PartitionStateSink;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
+import com.flezha.sdk.task.TaskRegistry;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -72,11 +73,13 @@ public final class FlezhaImpl implements Flezha {
      */
     @Nonnull
     public static Flezha start(@Nonnull String namespace) {
-        if (RelayRegistry.isEmpty()) {
+        if (RelayRegistry.isEmpty() && TaskRegistry.isEmpty()) {
             throw new IllegalStateException(
-                    "No relay classes registered; call Flezha.registerRelay(MyRelay.class) first.");
+                    "No relay or task classes registered; call Flezha.registerRelay(MyRelay.class) "
+                            + "or Flezha.registerTask(MyTask.class) first.");
         }
         RelayRegistry.freeze();
+        TaskRegistry.freeze();
 
         FlezhaEnv.ResolvedConfig resolved = FlezhaEnv.resolveFromEnv();
         FlezhaEnv.logConfig(resolved);

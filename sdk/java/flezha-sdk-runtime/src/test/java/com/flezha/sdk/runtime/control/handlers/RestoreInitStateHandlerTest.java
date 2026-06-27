@@ -182,7 +182,11 @@ class RestoreInitStateHandlerTest {
     }
 
     private static PartitionSlot slot(ExecutorContext ctx) {
-        return ctx.relayInstanceRegistry().get(INSTANCE).partitions().get(0).get(0);
+        return ctx.relayInstanceRegistry()
+                .getRelay(INSTANCE)
+                .partitions()
+                .get(0)
+                .get(0);
     }
 
     /** Synthesize one controller-format WAL record. */

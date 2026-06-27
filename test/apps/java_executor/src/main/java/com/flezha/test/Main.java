@@ -15,6 +15,7 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         String namespace = args.length > 0 ? args[0] : "default";
         registerRelays();
+        registerTasks();
         Flezha unused = Flezha.newInstance(namespace);
         // Intentionally unused — the SDK instance holds the connection open;
         // the JVM stays alive until stdin closes.
@@ -30,6 +31,10 @@ public final class Main {
         Flezha.registerRelay(PersistenceOffRelay.class);
         Flezha.registerRelay(HybridChannelRelay.class);
         // EchoMessageRelay is reintroduced once per-Shard `handleMessage` lands.
+    }
+
+    private static void registerTasks() {
+        Flezha.registerTask(EchoTask.class);
     }
 
     private static void stdKeeper() {

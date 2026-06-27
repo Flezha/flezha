@@ -12,11 +12,11 @@ public final class MigrationSerializationHandler implements CommandHandler {
     @Override
     public byte[] handle(ExecutorContext ctx, CommandRequest request, List<String> errors) throws Exception {
         String relayId = request.getMigrationSerialization().getRelayId();
-        RelayInstance instance = ctx.relayInstanceRegistry().remove(relayId);
-        if (instance == null) {
+        if (ctx.relayInstanceRegistry().getRelay(relayId) == null) {
             errors.add("Relay with id " + relayId + " not found");
             return new byte[0];
         }
+        RelayInstance instance = (RelayInstance) ctx.relayInstanceRegistry().remove(relayId);
         return RelayStateSerializer.serialize(instance);
     }
 }

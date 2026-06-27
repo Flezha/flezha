@@ -229,3 +229,37 @@ Java SDK integration test class names and test descriptions SHALL use canonical 
 #### Scenario: Test class names compile after rename
 - **WHEN** `mvn -f sdk/java test` is run
 - **THEN** all integration test classes SHALL compile and run; no class name SHALL contain `Processor`, `Operator`, or `ComputeEngine`
+
+
+### Requirement: Reference Java test app registers a Task
+
+The Java reference test app at `test/apps/java_executor/` SHALL register at least one `Task` class via `Flezha.registerTask(...)`, mirroring the task that `test/apps/rust_executor/` registers (an `EchoTask` that emits its `args` as plugin output and returns success). The task SHALL be a hand-written `Task` implementation (no annotation-processor sugar in v1). Registering the task SHALL NOT disturb the test app's relay registrations or its run-until-stdin-closes behavior.
+
+#### Scenario: Java test app registers a task factory
+
+- **WHEN** the Java test app starts and registers its units
+- **THEN** it SHALL call `Flezha.registerTask(EchoTask.class)`, and the handshake `factory_ids` SHALL include the task's factory id alongside the relay factory ids
+
+#### Scenario: Java and Rust test apps expose the same task factory
+
+- **WHEN** the task factory ids registered by the Java test app are compared to those registered by `test/apps/rust_executor/`
+- **THEN** both SHALL expose the mirrored echo-task factory id, so the same `flz relay start … --kind task` exercises either runtime
+
+### Requirement: Integration matrix exercises a run-once Java task over both transports
+
+The Elixir↔Java integration suite SHALL exercise a run-once Java task against the unchanged Elixir controller across both transports (`{transport: [:uds, :quic]}`). The suite SHALL assert, per transport: the task's `run` executes exactly once with the supplied `args`; emitted output reaches a bound plugin; a `TaskCompleted{status:"ok"}` is received and the task is torn down and absent from the durable registry; and a deliberately-failing task emits `TaskCompleted{status:"error"}` with its message and is likewise deregistered without retry.
+
+#### Scenario: Run-once Java task completes and is torn down over UDS
+
+- **WHEN** the suite starts an `EchoTask` on a Java executor over UDS with `args="hi"` and a bound output plugin
+- **THEN** the task SHALL run once, its emitted output SHALL reach the plugin, the controller SHALL receive `TaskCompleted{status:"ok"}`, and the task SHALL be removed from the durable registry
+
+#### Scenario: Run-once Java task completes and is torn down over QUIC
+
+- **WHEN** the same scenario runs over QUIC
+- **THEN** the same assertions SHALL hold, exercising the full handshake + task spawn + run-once + emit + completion path on QUIC
+
+#### Scenario: A failing Java task reports a terminal error
+
+- **WHEN** the suite starts a task whose `run` throws over either transport
+- **THEN** the controller SHALL receive `TaskCompleted{status:"error"}` carrying the throwable's message, the task SHALL be deregistered without retry, and no relay/task process SHALL remain

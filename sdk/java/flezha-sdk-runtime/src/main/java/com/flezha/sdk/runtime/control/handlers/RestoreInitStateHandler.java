@@ -123,7 +123,8 @@ public final class RestoreInitStateHandler implements CommandHandler {
      * frames {@code partition_id}, so a byte-equal match is exact.
      */
     private static Located findSlot(ExecutorContext ctx, byte[] partitionId) {
-        for (RelayInstance instance : ctx.relayInstanceRegistry().snapshot().values()) {
+        for (RelayInstance instance :
+                ctx.relayInstanceRegistry().relaySnapshot().values()) {
             List<List<PartitionSlot>> partitions = instance.partitions();
             for (List<PartitionSlot> shardPartitions : partitions) {
                 for (PartitionSlot slot : shardPartitions) {
