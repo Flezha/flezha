@@ -58,10 +58,10 @@ defmodule Flezha.Executor.FleetManager do
   end
 
   @doc """
-  Atomically evict a dead/orphaned executor binding: clear every relay's
+  Atomically evict a dead/orphaned executor binding: clear every operative's
   stale stream mapping (`HubManager.hook_remove_pid/2`), stop its executor
-  supervisor, drop its factory refs + relay-insertion hook, and remove it
-  from `executor_namespaces`. Its relays become misbound and rebind onto
+  supervisor, drop its factory refs + operative-insertion hook, and remove it
+  from `executor_namespaces`. Its operatives become misbound and rebind onto
   a live executor on the next convergence tick. Idempotent — an unknown
   id returns `:ok`. Driven by `Flezha.Convergence.Heal.execute/1` and by
   `connect_handler/4` when an SDK presents a `previous_executor_id`.
@@ -74,10 +74,10 @@ defmodule Flezha.Executor.FleetManager do
   @doc """
   Returns active compute engines in `namespace` that advertise `factory_id`.
 
-  Used by `RelayManager.assign_executor/3` so we never route a
-  relay to a node that doesn't own its factory — without this filter
-  every input frame for a misrouted relay hits a dead registry entry
-  on the foreign node and generates a `enqueue: relay X not found`
+  Used by `OperativeManager.assign_executor/3` so we never route a
+  operative to a node that doesn't own its factory — without this filter
+  every input frame for a misrouted operative hits a dead registry entry
+  on the foreign node and generates a `enqueue: operative X not found`
   warning on every input.
   """
   def executors_for_factory(namespace, factory_id) do
@@ -92,7 +92,7 @@ defmodule Flezha.Executor.FleetManager do
   Clear the `stream_ref` on this executor's `ControlChannel` so the existing
   rebind machinery (see `executor-controller-connection-healing`) picks up
   the next data stream the SDK opens. Called by
-  `Flezha.Relay.Overwatch` after an end-to-end ping fails, indicating the
+  `Flezha.Operative.Overwatch` after an end-to-end ping fails, indicating the
   controller-side `ControlChannel` is alive but its underlying transport
   handle is stale.
 
@@ -108,7 +108,7 @@ defmodule Flezha.Executor.FleetManager do
   Re-issue `ConnectSocket` to `executor_id` so the SDK re-opens its data
   sockets; the `StreamAcceptor` binds the fresh streams to the unbound
   `StreamChannel`s (see `executor-controller-connection-healing`). Used by the
-  reconciler to heal a relay whose data stream dropped (`stream_ref: nil`).
+  reconciler to heal a operative whose data stream dropped (`stream_ref: nil`).
 
   Returns `:ok`, or `{:error, :no_control_unit}` when the executor's control
   unit is not registered.
@@ -214,7 +214,7 @@ defmodule Flezha.Executor.FleetManager do
 
           # Drop every plugin registered for this namespace so a follow-up
           # test re-using the same namespace does not collide on
-          # `{:error, "plugin already registered"}`. The runtime relay
+          # `{:error, "plugin already registered"}`. The runtime operative
           # processes are about to disappear with the namespace's hub —
           # the registry is the only thing that survives without explicit
           # cleanup.
@@ -250,7 +250,7 @@ defmodule Flezha.Executor.FleetManager do
         state
       ) do
     # When the SDK presents its persisted id from a prior process, evict
-    # that stale binding BEFORE the new bind so the old executor's relays
+    # that stale binding BEFORE the new bind so the old executor's operatives
     # and stream mappings never linger as a corpse the takeover rebinds onto.
     state = maybe_evict_previous(state, previous_executor_id)
 
@@ -276,7 +276,7 @@ defmodule Flezha.Executor.FleetManager do
 
     state = store_factories(state, namespace, executor_id, factories)
 
-    # Fresh-process executor takeover (relays tagged to a now-orphaned
+    # Fresh-process executor takeover (operatives tagged to a now-orphaned
     # executor are reseated onto this new id) is driven by the
     # `Flezha.Convergence.Loop`, which subscribes to this event and runs
     # an immediate tick.
@@ -423,9 +423,9 @@ defmodule Flezha.Executor.FleetManager do
 
       namespace ->
         if HubManager.hub_alive?(namespace) do
-          HubManager.executor_relays(namespace, executor_id)
-          |> Enum.each(fn {relay_id, _node_pids} ->
-            HubManager.hook_remove_pid(executor_id, %{child_id: relay_id})
+          HubManager.executor_operatives(namespace, executor_id)
+          |> Enum.each(fn {operative_id, _node_pids} ->
+            HubManager.hook_remove_pid(executor_id, %{child_id: operative_id})
           end)
 
           HubManager.unregister_handler(namespace, executor_id)
@@ -497,12 +497,12 @@ defmodule Flezha.Executor.FleetManager do
   end
 
   # Drop the dead executor from the active set unconditionally. Each branch
-  # of the disconnect handler also performs best-effort relay-migration side
+  # of the disconnect handler also performs best-effort operative-migration side
   # effects against ProcessHub / StreamChannels that can raise `:noproc` while
   # the hub or a freshly reconnected peer is mid-restart under rapid churn. If
   # one of those raises, the executor's `:active` entry must still be removed —
   # otherwise it lingers as a corpse that `active_executors/1` keeps reporting
-  # and relays get assigned to a dead node (unbounded ghost accumulation).
+  # and operatives get assigned to a dead node (unbounded ghost accumulation).
   defp drop_executor(state, namespace, executor_id) do
     Map.delete(state.executor_namespaces[namespace] || %{}, executor_id)
   end
@@ -522,52 +522,52 @@ defmodule Flezha.Executor.FleetManager do
   defp executor_reroute(state, namespace, old_executor, available_executors) do
     new_executor = Enum.random(available_executors)
 
-    # Best-effort relay migration. These calls reach into ProcessHub and the
+    # Best-effort operative migration. These calls reach into ProcessHub and the
     # new executor's StreamChannels, which can raise `:noproc` while the hub or
     # the freshly reconnected peer is mid-restart. A failure here must not abort
-    # the dead executor's removal from the active set below — its relays heal on
+    # the dead executor's removal from the active set below — its operatives heal on
     # the next convergence tick regardless.
     try do
-      reroute_relays(namespace, old_executor, new_executor)
+      reroute_operatives(namespace, old_executor, new_executor)
     rescue
       error ->
         Logger.warning(
           "[FleetManager] executor_reroute side effects failed for " <>
             "#{old_executor} -> #{new_executor}: #{inspect(error)}; " <>
-            "evicting anyway, relays heal on next convergence tick"
+            "evicting anyway, operatives heal on next convergence tick"
         )
     catch
       :exit, reason ->
         Logger.warning(
           "[FleetManager] executor_reroute side effects exited for " <>
             "#{old_executor} -> #{new_executor}: #{inspect(reason)}; " <>
-            "evicting anyway, relays heal on next convergence tick"
+            "evicting anyway, operatives heal on next convergence tick"
         )
     end
 
     drop_executor(state, namespace, old_executor)
   end
 
-  defp reroute_relays(namespace, old_executor, new_executor) do
-    HubManager.executor_relays(namespace, old_executor)
-    |> Enum.each(fn {relay_id, node_pids} ->
+  defp reroute_operatives(namespace, old_executor, new_executor) do
+    HubManager.executor_operatives(namespace, old_executor)
+    |> Enum.each(fn {operative_id, node_pids} ->
       # Multi-node-safe: resolve the live/local pid (dropping dead-node
-      # entries) before calling, so a relay registered on more than one node
+      # entries) before calling, so a operative registered on more than one node
       # neither crashes this path nor blocks on a dead pid.
       case HubManager.live_pid(node_pids) do
         nil ->
           Logger.debug(
-            "[FleetManager] executor_reroute: no live pid for relay #{relay_id}; " <>
+            "[FleetManager] executor_reroute: no live pid for operative #{operative_id}; " <>
               "it will migrate on its next bind/rebind"
           )
 
-        relay_pid ->
+        operative_pid ->
           # Bounded timeout (< 5s default of the outer Transport.Server /
-          # ControlChannel call into FleetManager) so a relay that is
+          # ControlChannel call into FleetManager) so a operative that is
           # itself calling back into FleetManager cannot deadlock the
-          # disconnect path. The relay will be migrated on its next
+          # disconnect path. The operative will be migrated on its next
           # bind/rebind attempt.
-          _ = SafeCall.bounded(relay_pid, {:executor_migrate, new_executor}, 2_000)
+          _ = SafeCall.bounded(operative_pid, {:executor_migrate, new_executor}, 2_000)
       end
     end)
 
@@ -577,9 +577,9 @@ defmodule Flezha.Executor.FleetManager do
     HubManager.register_handler(namespace, new_executor)
 
     overwatchers =
-      HubManager.executor_relays(namespace, new_executor)
-      |> Enum.map(fn {relay_id, node_pids} ->
-        {relay_id, Enum.map(node_pids, &elem(&1, 1))}
+      HubManager.executor_operatives(namespace, new_executor)
+      |> Enum.map(fn {operative_id, node_pids} ->
+        {operative_id, Enum.map(node_pids, &elem(&1, 1))}
       end)
 
     stream_channels =
@@ -589,7 +589,7 @@ defmodule Flezha.Executor.FleetManager do
     # Defensive: a slow StreamChannel must not crash the caller.
     Enum.each(stream_channels, fn
       {_, pid, _, _} when is_pid(pid) ->
-        _ = SafeCall.bounded(pid, {:relay_bulk_insert, overwatchers}, 1_000)
+        _ = SafeCall.bounded(pid, {:operative_bulk_insert, overwatchers}, 1_000)
 
       _ ->
         :ok

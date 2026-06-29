@@ -4,17 +4,17 @@ defmodule Flezha.Convergence.Heal do
   catalogue row reduces to a composition of these — adding a failure mode
   never adds a primitive.
 
-      rebind_relay
+      rebind_operative
       start_plugin  stop_plugin  restart_plugin
       evict_executor
 
   `execute/1` dispatches one planned op to its primitive and returns
   `:ok | :error` so the Loop can drive `Backoff`.
 
-    * `rebind_relay` — migrate a relay tagged to a dead/wrong executor (or
+    * `rebind_operative` — migrate a operative tagged to a dead/wrong executor (or
       not yet bound) onto an available one: flip the registry tag, fan its
       pid into the new executor's stream channels, replay the WAL.
-    * `start_plugin` / `stop_plugin` — reconcile a relay's running plugin
+    * `start_plugin` / `stop_plugin` — reconcile a operative's running plugin
       set against its declared cspec manifest.
     * `restart_plugin` — tear down and re-subscribe a declared plugin whose
       provider self-reports unhealthy, so `activate/1` reopens its
@@ -24,15 +24,15 @@ defmodule Flezha.Convergence.Heal do
 
   alias Flezha.Convergence.SafeCall
   alias Flezha.Executor.FleetManager
-  alias Flezha.Service.{HubManager, RelayManager}
+  alias Flezha.Service.{HubManager, OperativeManager}
 
   require Logger
 
-  @relay_call_timeout_ms 1_000
+  @operative_call_timeout_ms 1_000
   @migrate_timeout_ms 2_000
   @plugin_call_timeout_ms 2_000
 
-  @primitives ~w(rebind_relay start_plugin stop_plugin restart_plugin evict_executor)a
+  @primitives ~w(rebind_operative start_plugin stop_plugin restart_plugin evict_executor)a
 
   @spec primitives() :: [atom()]
   def primitives(), do: @primitives
@@ -53,11 +53,11 @@ defmodule Flezha.Convergence.Heal do
     :error
   end
 
-  defp apply_primitive(:rebind_relay, %{namespace: namespace, target: relay_id} = op) do
-    rebind_relay(namespace, relay_id, Map.get(op, :args, %{}))
+  defp apply_primitive(:rebind_operative, %{namespace: namespace, target: operative_id} = op) do
+    rebind_operative(namespace, operative_id, Map.get(op, :args, %{}))
   end
 
-  # (re)subscribe a declared-but-missing plugin into the running relay via
+  # (re)subscribe a declared-but-missing plugin into the running operative via
   # the same `{:plugin_subscribe, ...}` path `flz plugin enable` uses (which
   # activates immediately since the SDK is already up).
   defp apply_primitive(:start_plugin, %{namespace: ns, target: rid, args: args}) do
@@ -102,7 +102,7 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
-  # Forcibly drop a dead/orphaned executor binding so its relays become
+  # Forcibly drop a dead/orphaned executor binding so its operatives become
   # misbound and rebind onto a live executor next tick.
   defp apply_primitive(:evict_executor, %{target: executor_id}) when is_binary(executor_id) do
     case FleetManager.evict_executor(executor_id) do
@@ -117,43 +117,43 @@ defmodule Flezha.Convergence.Heal do
        when prim in [:evict_executor, :start_plugin, :stop_plugin, :restart_plugin],
        do: :error
 
-  # Migrate a relay bound to a dead/wrong executor onto an available one.
+  # Migrate a operative bound to a dead/wrong executor onto an available one.
   # On success: flip the registry tag and seed the target executor's
-  # `StreamChannel.relay_mapping` (the same hook `child_registered`
+  # `StreamChannel.operative_mapping` (the same hook `child_registered`
   # uses) so frames land. Any failed step leaves the registry untouched
-  # and the relay degraded for the next tick under Backoff.
-  defp rebind_relay(namespace, relay_id, args) do
-    with {:ok, pid} when is_pid(pid) <- HubManager.get_pid(namespace, relay_id),
+  # and the operative degraded for the next tick under Backoff.
+  defp rebind_operative(namespace, operative_id, args) do
+    with {:ok, pid} when is_pid(pid) <- HubManager.get_pid(namespace, operative_id),
          %{factory_id: factory, executor_id: prev} <- overwatch_snapshot(pid),
          true <- factory != nil,
          false <- skip_rebind?(namespace, factory, prev, args),
          target when is_binary(target) <-
-           RelayManager.assign_executor(namespace, factory, relay_id),
+           OperativeManager.assign_executor(namespace, factory, operative_id),
          {:ok, :ok} <- SafeCall.bounded(pid, {:executor_migrate, target}, @migrate_timeout_ms) do
-      _ = HubManager.relay_set_executor(namespace, relay_id, target)
+      _ = HubManager.operative_set_executor(namespace, operative_id, target)
 
       _ =
         HubManager.hook_insert_pid(target, %{
-          child_id: relay_id,
+          child_id: operative_id,
           node_pids: [{node(), pid}],
           metadata: %{tag: target}
         })
 
-      # Replay the per-Partition WAL into the new binding. The `executor_migrate`
+      # Replay the per-Segment WAL into the new binding. The `executor_migrate`
       # above is a HotSwap handover, which only carries state when the previous
       # executor is alive to serialise it; when the previous executor died (the
-      # common rebind trigger) the new executor's shard would otherwise init
-      # empty and the relay's persisted state is lost (state resets to 0).
+      # common rebind trigger) the new executor's operation would otherwise init
+      # empty and the operative's persisted state is lost (state resets to 0).
       # resync routes a `RestoreInitState` handshake for each persisted
-      # partition to `target`, rebuilding state from the durable WAL.
+      # segment to `target`, rebuilding state from the durable WAL.
       _ = Flezha.State.Recovery.resync_for_overwatch(pid, target)
 
-      emit_reconnected(namespace, relay_id, prev, target)
+      emit_reconnected(namespace, operative_id, prev, target)
       :ok
     else
-      # `skip_rebind?` returned true — a MISBOUND relay whose bound executor
+      # `skip_rebind?` returned true — a MISBOUND operative whose bound executor
       # is already active and owns the factory, so a stale-snapshot rebind
-      # would only disrupt a healthy relay. Safe no-op.
+      # would only disrupt a healthy operative. Safe no-op.
       true -> :ok
       _ -> :error
     end
@@ -162,7 +162,7 @@ defmodule Flezha.Convergence.Heal do
   # A misbound rebind is a safe no-op once the bound executor is back in the
   # live, factory-owning active set (a reconnect between snapshot and heal
   # time): re-reading the authoritative set here stops a detection slip from
-  # churning a healthy relay.
+  # churning a healthy operative.
 
   # Output-stall proves the binding is not producing — always proceed regardless
   # of whether the bound executor is still in the active set.
@@ -175,14 +175,14 @@ defmodule Flezha.Convergence.Heal do
   end
 
   defp overwatch_snapshot(pid) do
-    case SafeCall.bounded(pid, :get_overwatch_state, @relay_call_timeout_ms) do
+    case SafeCall.bounded(pid, :get_overwatch_state, @operative_call_timeout_ms) do
       {:ok, ow} when is_map(ow) -> ow
       _ -> nil
     end
   end
 
-  defp emit_reconnected(namespace, relay_id, prev, target) do
-    meta = %{namespace: namespace, relay_id: relay_id, executor_id: target}
+  defp emit_reconnected(namespace, operative_id, prev, target) do
+    meta = %{namespace: namespace, operative_id: operative_id, executor_id: target}
 
     :telemetry.execute(
       [:flezha, :executor, :reconnected_reassigned],

@@ -31,10 +31,10 @@ defmodule Flezha.Convergence.Snapshot do
 
   @default_current %{
     last_tick_at: nil,
-    stalled_relays: [],
-    bound_relays: 0,
-    producing_relays: 0,
-    relay_health: %{}
+    stalled_operatives: [],
+    bound_operatives: 0,
+    producing_operatives: 0,
+    operative_health: %{}
   }
 
   # ---------- public API ----------
@@ -59,16 +59,16 @@ defmodule Flezha.Convergence.Snapshot do
   end
 
   @doc """
-  Per-relay health for `{namespace, relay_id}`, classified by the Loop on its
-  last tick. `:unknown` before the first tick or for a relay the Loop has not
+  Per-operative health for `{namespace, operative_id}`, classified by the Loop on its
+  last tick. `:unknown` before the first tick or for a operative the Loop has not
   observed (e.g. a durable-registry row with no live placement). One of
   `:healthy | :degraded | :failed | :unbound | :unknown`.
   """
-  @spec relay_health(String.t(), term()) :: atom()
-  def relay_health(namespace, relay_id) do
+  @spec operative_health(String.t(), term()) :: atom()
+  def operative_health(namespace, operative_id) do
     current()
-    |> Map.get(:relay_health, %{})
-    |> Map.get({namespace, relay_id}, :unknown)
+    |> Map.get(:operative_health, %{})
+    |> Map.get({namespace, operative_id}, :unknown)
   end
 
   @doc "Last known recovery state for `hub_id`; `:unknown` if never observed."

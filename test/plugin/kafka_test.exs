@@ -99,7 +99,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{channel: "2"}))
 
     ctx = %Ctx.IO{
-      relay_id: "p",
+      operative_id: "p",
       namespace: "n",
       message: "trade_payload",
       metadata: %{"channel" => "4"}
@@ -117,7 +117,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{channel: "2"}))
 
     ctx = %Ctx.IO{
-      relay_id: "p",
+      operative_id: "p",
       namespace: "n",
       message: "untagged",
       metadata: %{}
@@ -229,7 +229,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
              responses: [
                %{
                  topic: @topic,
-                 partition_responses: [
+                 segment_responses: [
                    %{
                      partition: 0,
                      error_code: 0,
@@ -247,7 +247,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         %{state | send_fn: send_fn}
       end)
 
-      ctx = %Ctx.IO{relay_id: "p", namespace: "n", message: "hello", metadata: %{}}
+      ctx = %Ctx.IO{operative_id: "p", namespace: "n", message: "hello", metadata: %{}}
       assert {:ok, ^ctx} = Kafka.Producer.on_input(ctx, opts)
       assert {:ok, ^ctx} = Kafka.Producer.on_output(ctx, opts)
 
@@ -273,7 +273,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         %{state | send_fn: fn _w, _r, _ns -> Process.sleep(30_000) end}
       end)
 
-      ctx = %Ctx.IO{relay_id: "p", namespace: "n", message: "x", metadata: %{}}
+      ctx = %Ctx.IO{operative_id: "p", namespace: "n", message: "x", metadata: %{}}
 
       {elapsed_us, result} =
         :timer.tc(fn -> Kafka.Producer.on_output(ctx, opts) end)
@@ -324,7 +324,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
       on_exit(fn -> :telemetry.detach(handler_id) end)
 
-      ctx = %Ctx.IO{relay_id: "p", namespace: "n", message: "x", metadata: %{}}
+      ctx = %Ctx.IO{operative_id: "p", namespace: "n", message: "x", metadata: %{}}
       assert {:ok, ^ctx} = Kafka.Producer.on_output(ctx, opts)
 
       assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _,

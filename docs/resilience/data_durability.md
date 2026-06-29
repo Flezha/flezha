@@ -1,39 +1,39 @@
 # Data & state durability: what survives, what doesn't, and how to avoid loss
 
-This is the single reference for **where flezha can lose relay state or output, where
+This is the single reference for **where flezha can lose operative state or output, where
 it cannot, and how to operate so you never lose data on a planned action.** Read it
-with `docs/resilience/process_hub_recovery_model.md` (which covers *relay placement* recovery; this
-doc covers *relay state + output* durability).
+with `docs/resilience/process_hub_recovery_model.md` (which covers *operative placement* recovery; this
+doc covers *operative state + output* durability).
 
 ## The two things that can be "lost"
 
-1. **Relay state** — a relay's accumulated in-memory state (e.g. a running total). The
-   authoritative live copy lives on the relay's **one bound executor**; it is backed up
-   **asynchronously** to a per-Partition **WAL on the controller** (the executor streams
-   `partition_state_change` frames; the controller batches the fsync, ~5 ms).
-2. **Output** — what a relay emits on `on_output`. Output is routed **through the
-   controller** (the relay sends an output frame; the controller runs the `on_output`
-   plugin chain → Kafka/HTTP/relay/etc.). Output is **at-least-once**.
+1. **Operative state** — an operative's accumulated in-memory state (e.g. a running total). The
+   authoritative live copy lives on the operative's **one bound executor**; it is backed up
+   **asynchronously** to a per-Segment **WAL on the controller** (the executor streams
+   `segment_state_change` frames; the controller batches the fsync, ~5 ms).
+2. **Output** — what an operative emits on `on_output`. Output is routed **through the
+   controller** (the operative sends an output frame; the controller runs the `on_output`
+   plugin chain → Kafka/HTTP/operative/etc.). Output is **at-least-once**.
 
 The core durability invariant we provide: **on a *graceful* stop, no state is lost; on a
 *hard kill*, a small best-effort window can lose the most-recent un-persisted state.**
 
-A third durable artifact is the relay's **plugin manifest** (the `on_output`/feed
-plugin chain): it lives in the relay's registry cspec and is written cluster-wide
-(`propagate: true`), so a relay restarted from any node re-attaches its full plugin
+A third durable artifact is the operative's **plugin manifest** (the `on_output`/feed
+plugin chain): it lives in the operative's registry cspec and is written cluster-wide
+(`propagate: true`), so an operative restarted from any node re-attaches its full plugin
 set and the convergence loop re-adds anything missing. See
 `process_hub_recovery_model.md` "Registry writes must be cluster-wide".
 
 ## Scenario matrix
 
-| Scenario | Relay state | Output | Why / how |
+| Scenario | Operative state | Output | Why / how |
 |---|---|---|---|
-| **Graceful executor stop** (SIGTERM / rolling deploy / `disconnect()` / `Drop`) | **No loss** | At-least-once | SDK `shutdown.rs` serializes each relay's *final* state, ships it to the controller, and waits for `ExecutorShutdownAck` before exiting. |
-| **Single executor SIGKILL** (hard) under load | **Brief best-effort loss** | At-least-once | No graceful drain; the relay rebinds to a peer/itself and restores from the controller WAL, which may lag the last few changes emitted under load. |
+| **Graceful executor stop** (SIGTERM / rolling deploy / `disconnect()` / `Drop`) | **No loss** | At-least-once | SDK `shutdown.rs` serializes each operative's *final* state, ships it to the controller, and waits for `ExecutorShutdownAck` before exiting. |
+| **Single executor SIGKILL** (hard) under load | **Brief best-effort loss** | At-least-once | No graceful drain; the operative rebinds to a peer/itself and restores from the controller WAL, which may lag the last few changes emitted under load. |
 | **All executors SIGKILL'd at once** under load | **Brief best-effort loss** | At-least-once | Same WAL-restore path, with no live copy anywhere — reliably exposes the lag (this is what `stateful-resume` provokes). |
 | **Executor OOM / container crash / node death** | **Brief best-effort loss** | At-least-once | Same as SIGKILL — no drain runs. |
 | **Controller graceful restart / rolling deploy with a live peer** | **No loss** | At-least-once | The new instance syncs the registry from the surviving peer; executors stay connected. |
-| **Controller plain restart, sole instance** (marker present) | State in WAL preserved; **relay *list* briefly unknown (~6 s)** | At-least-once | Skip-replay boot wipes local DETS by design; the registry is rebuilt from executors re-announcing. `/healthz` is `healthy` (vacuously) during the gap — safe for kubelet, but not "recovering". Prefer recovery mode (below). |
+| **Controller plain restart, sole instance** (marker present) | State in WAL preserved; **operative *list* briefly unknown (~6 s)** | At-least-once | Skip-replay boot wipes local DETS by design; the registry is rebuilt from executors re-announcing. `/healthz` is `healthy` (vacuously) during the gap — safe for kubelet, but not "recovering". Prefer recovery mode (below). |
 | **Controller recovery-mode restart, sole instance** (marker removed / `flz cluster prepare-recovery`) | **No loss** | At-least-once | Replays the registry from DETS; `/healthz` honestly reports `recovering` until rebound. The correct way to restart the *only* instance. |
 | **Whole cluster down → cold start** | Recovered from DETS | n/a | The ONE case DETS replay is for: no peer survives, disk is the only record. |
 | **Node rejoins a live cluster** | Synced from peers; local DETS discarded | n/a | Correct — local DETS is stale; peers are authoritative. |
@@ -44,7 +44,7 @@ set and the convergence loop re-adds anything missing. See
 The executor streams **output frames** and **state-change frames** to the controller
 independently, and the controller emits output before the matching state is durably
 fsync'd. So on a hard kill, output (e.g. total=135 in Kafka) can outlive the durable
-state (WAL=128), and the restored relay comes back slightly stale. We deliberately do
+state (WAL=128), and the restored operative comes back slightly stale. We deliberately do
 **not** close this with per-record acking (it would add a network round-trip to every
 message and cripple throughput). Instead:
 
@@ -54,7 +54,7 @@ message and cripple throughput). Instead:
   exactly-once buys, at a real cost). flezha is "durable state + at-least-once output."
 
 **FsyncBatcher and the lag window.** The WAL writer does not fsync after every record.
-`State.FsyncBatcher` coalesces dirty-mark casts from all per-partition `WalWriter`
+`State.FsyncBatcher` coalesces dirty-mark casts from all per-segment `WalWriter`
 processes and issues one `:file.datasync/1` call per writer per cadence tick (default
 5 ms). On a hard kill, records written within the last ~5 ms may not have been
 fsynced and can be lost. This is the mechanical source of the "async WAL lag" in the
@@ -69,14 +69,14 @@ uses the batched FsyncBatcher — per-record WAL fsync is not supported.
 - **Deploy / upgrade executors with a graceful stop, never a kill.** Send SIGTERM (or
   `flz`-driven `disconnect`) and set the orchestrator grace period
   (`terminationGracePeriodSeconds` / `stop_grace_period`) **longer than the drain**
-  (serialize + ack; default ack budget 2 s/relay, serialize cap 10 s). Roll one node at
+  (serialize + ack; default ack budget 2 s/operative, serialize cap 10 s). Roll one node at
   a time so a peer is always live.
 - **Restart the controller correctly:**
   - Multi-node / rolling: bring the new instance up *before* killing the old → peer sync,
     zero loss.
-  - Sole instance that must keep its relays: use **recovery mode** (remove the
+  - Sole instance that must keep its operatives: use **recovery mode** (remove the
     `cluster.healthy` marker / `flz cluster prepare-recovery`) → replays from DETS.
-  - Plain restart of a sole instance is "accept the relay-list rebuild window" — only do
+  - Plain restart of a sole instance is "accept the operative-list rebuild window" — only do
     it when that's acceptable.
 - **Make sinks idempotent where exactly-once matters.** Output is at-least-once and can
   be re-emitted after a rebind/restore — use Kafka keys/transactions, HTTP idempotency
@@ -94,7 +94,7 @@ uses the batched FsyncBatcher — per-record WAL fsync is not supported.
   killing shell") — terminates the SDK before its graceful drain ships final state, so
   a "graceful" stop silently degrades to a hard kill. The prod `market-executor` is
   correct (exec-form `CMD ["./market_analyzer"]`, `runAsUser: 1000`, no `su`).
-- Plain-restarting the sole controller and expecting the relay list back instantly /
+- Plain-restarting the sole controller and expecting the operative list back instantly /
   `/healthz` to read `recovering` → use recovery mode instead.
 - Assuming output is exactly-once → it is at-least-once; dedup downstream.
 - Forcing a node to recover from its own DETS while peers are alive → split-brain /

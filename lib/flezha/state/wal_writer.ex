@@ -1,6 +1,6 @@
 defmodule Flezha.State.WalWriter do
   @moduledoc """
-  Per-Partition `GenServer` wrapping a single open WAL file handle.
+  Per-Segment `GenServer` wrapping a single open WAL file handle.
 
   Each appended record is `<<seq::64-big, len::32-big, header::binary,
   change_bytes::binary, crc32::32-big>>` where `len = 16 + byte_size(change_bytes)`
@@ -10,7 +10,7 @@ defmodule Flezha.State.WalWriter do
   `Flezha.State.FsyncBatcher` which drives the actual `:file.datasync/1`
   on its tick cadence. High-watermark crossings emit a telemetry event
   (`[:flezha, :state, :wal, :backpressure]`) that section-9 wiring picks
-  up to ship the wire-level `PartitionMailboxStatus`.
+  up to ship the wire-level `SegmentMailboxStatus`.
   """
 
   use GenServer, restart: :transient
@@ -21,7 +21,7 @@ defmodule Flezha.State.WalWriter do
   @reservoir_capacity 1024
 
   defstruct [
-    :partition_id,
+    :segment_id,
     :file_handle,
     :wal_path,
     :last_persisted_seq,
@@ -41,7 +41,7 @@ defmodule Flezha.State.WalWriter do
   ]
 
   @type t :: %__MODULE__{
-          partition_id: Registry.partition_id(),
+          segment_id: Registry.segment_id(),
           file_handle: :file.io_device(),
           wal_path: binary(),
           last_persisted_seq: integer(),
@@ -64,7 +64,7 @@ defmodule Flezha.State.WalWriter do
   Liveness view consumed by `Flezha.State.Watchdog`. `last_advance_at`
   moves only when `last_persisted_seq` increases; `last_change_seen_at`
   moves on every received Change frame (append, duplicate, or gap). A
-  Partition is *stalled* (vs idle) when Changes are still arriving but
+  Segment is *stalled* (vs idle) when Changes are still arriving but
   the persisted seq has stopped advancing.
   """
   @type stall_status :: %{
@@ -75,8 +75,8 @@ defmodule Flezha.State.WalWriter do
 
   # ---------- Public API ----------
 
-  def start_link(partition_id) do
-    GenServer.start_link(__MODULE__, partition_id, name: via(partition_id))
+  def start_link(segment_id) do
+    GenServer.start_link(__MODULE__, segment_id, name: via(segment_id))
   end
 
   @doc """
@@ -122,8 +122,8 @@ defmodule Flezha.State.WalWriter do
   @spec close(GenServer.server()) :: :ok
   def close(server), do: GenServer.stop(server, :normal)
 
-  defp via(partition_id) do
-    {:via, Elixir.Registry, {Flezha.State.Supervisor.registry_name(), partition_id}}
+  defp via(segment_id) do
+    {:via, Elixir.Registry, {Flezha.State.Supervisor.registry_name(), segment_id}}
   end
 
   # ---------- Encode / decode ----------
@@ -186,7 +186,7 @@ defmodule Flezha.State.WalWriter do
   # ---------- GenServer ----------
 
   @impl true
-  def init(partition_id) do
+  def init(segment_id) do
     Process.flag(:trap_exit, true)
     now = :erlang.monotonic_time(:millisecond)
 
@@ -196,9 +196,9 @@ defmodule Flezha.State.WalWriter do
     # continue runs before any queued append, so appends queue in this writer's
     # mailbox — never the channel's. `-1` is the "no records yet" seq sentinel.
     state = %__MODULE__{
-      partition_id: partition_id,
+      segment_id: segment_id,
       file_handle: nil,
-      wal_path: Registry.wal_path(partition_id),
+      wal_path: Registry.wal_path(segment_id),
       last_persisted_seq: -1,
       last_advance_at: now,
       last_change_seen_at: now,
@@ -209,7 +209,7 @@ defmodule Flezha.State.WalWriter do
       low_watermark: low_watermark(),
       hard_watermark: hard_watermark(),
       pending_msg_cap: pending_msg_cap(),
-      metrics: Metrics.for_partition(partition_id),
+      metrics: Metrics.for_segment(segment_id),
       latency_reservoir: :queue.new(),
       backpressured?: false,
       shedding?: false
@@ -238,7 +238,7 @@ defmodule Flezha.State.WalWriter do
   def handle_call({:append, seq, header, change_bytes, executor_id}, _from, state) do
     # Every received Change frame — accepted, deduped, realigned, or rejected
     # as a gap — proves the SDK is still emitting, which distinguishes a
-    # stalled Partition from a genuinely idle one for the watchdog.
+    # stalled Segment from a genuinely idle one for the watchdog.
     now = :erlang.monotonic_time(:millisecond)
     state = %{state | last_change_seen_at: now}
 
@@ -332,21 +332,21 @@ defmodule Flezha.State.WalWriter do
   defp do_append_async(seq, header, change_bytes, executor_id, state) do
     case handle_call({:append, seq, header, change_bytes, executor_id}, nil, state) do
       {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->
-        {rc, sh, pk} = new_state.partition_id
+        {rc, sh, pk} = new_state.segment_id
 
         :telemetry.execute(
           [:flezha, :state, :seq_gap],
           %{expected: expected, got: got},
-          %{relay: rc, shard: sh, key: pk}
+          %{operative: rc, operation: sh, key: pk}
         )
 
         # Resync (a RestoreInitState handshake / WAL replay) runs in a separate
         # process so it never blocks this writer's append queue — and so the
         # test resync fun may re-enter `append/5` without self-deadlock.
-        partition_id = new_state.partition_id
+        segment_id = new_state.segment_id
 
         spawn(fn ->
-          Recovery.resync(partition_id, executor_id: executor_id, reason: :seq_gap)
+          Recovery.resync(segment_id, executor_id: executor_id, reason: :seq_gap)
         end)
 
         {:noreply, new_state}
@@ -380,9 +380,9 @@ defmodule Flezha.State.WalWriter do
     # Update outbox dedup file. A failure here is non-fatal: on restart
     # `scan_for_last_valid_seq/2` recomputes from the WAL itself; the
     # dedup file is a fast-path cache.
-    _ = Outbox.write_last_seq(state.partition_id, seq)
+    _ = Outbox.write_last_seq(state.segment_id, seq)
 
-    FsyncBatcher.mark_dirty(state.partition_id)
+    FsyncBatcher.mark_dirty(state.segment_id)
 
     new_pending = state.pending_bytes + size
 
@@ -418,16 +418,16 @@ defmodule Flezha.State.WalWriter do
     {:ok, _} = :file.position(state.file_handle, 0)
     :ok = :file.truncate(state.file_handle)
 
-    Enum.each(Registry.snapshot_paths(state.partition_id), fn {_seq, path} -> File.rm(path) end)
+    Enum.each(Registry.snapshot_paths(state.segment_id), fn {_seq, path} -> File.rm(path) end)
     # When the new epoch begins at seq=0, last_persisted_seq = -1; outbox stores unsigned
     # ints so we clear the dedup file instead (absence ≡ "no records persisted yet").
     if seq > 0 do
-      _ = Outbox.write_last_seq(state.partition_id, seq - 1)
+      _ = Outbox.write_last_seq(state.segment_id, seq - 1)
     else
-      _ = File.rm(Registry.outbox_dedup_path(state.partition_id))
+      _ = File.rm(Registry.outbox_dedup_path(state.segment_id))
     end
 
-    emit_realign(state.partition_id, state.last_persisted_seq, seq, executor_id)
+    emit_realign(state.segment_id, state.last_persisted_seq, seq, executor_id)
 
     Metrics.put(state.metrics, :wal_size_bytes, 0)
     Metrics.put(state.metrics, :snapshot_seq, 0)
@@ -446,7 +446,7 @@ defmodule Flezha.State.WalWriter do
     :telemetry.execute(
       [:flezha, :state, :wal_realign],
       %{from_seq: from_seq, to_seq: to_seq},
-      %{relay: rc, shard: sh, key: pk, executor: executor_id}
+      %{operative: rc, operation: sh, key: pk, executor: executor_id}
     )
   end
 
@@ -463,10 +463,10 @@ defmodule Flezha.State.WalWriter do
   """
   @spec scan_for_last_valid_seq(:file.io_device(), binary()) :: integer()
   def scan_for_last_valid_seq(device, _wal_path) do
-    # `-1`, not `0`, for an empty WAL: the SDK's per-Partition seq is 0-based
+    # `-1`, not `0`, for an empty WAL: the SDK's per-Segment seq is 0-based
     # (`change_seq` starts at 0), so a `0` floor makes the dedup guard
     # (`seq <= last_persisted_seq`) drop the very first change (seq 0) of every
-    # relay. `-1` is the same "no records yet" sentinel `realign_epoch` uses.
+    # operative. `-1` is the same "no records yet" sentinel `realign_epoch` uses.
     do_scan(device, 0, -1, 0)
   end
 
@@ -521,7 +521,7 @@ defmodule Flezha.State.WalWriter do
   # ---------- Hard bound (shed) ----------
 
   # Last-resort safety net above the soft watermark: cooperative SDKs throttle on
-  # `PartitionMailboxStatus` first; only a slow disk or a non-cooperating SDK
+  # `SegmentMailboxStatus` first; only a slow disk or a non-cooperating SDK
   # reaches here. Covers un-fsynced bytes AND mailbox depth — a cast flood grows
   # the mailbox even when bytes-per-record is small.
   defp over_hard_bound?(state) do
@@ -546,16 +546,16 @@ defmodule Flezha.State.WalWriter do
     if state.shedding? do
       state
     else
-      {rc, sh, pk} = state.partition_id
+      {rc, sh, pk} = state.segment_id
 
       :telemetry.execute(
         [:flezha, :state, :seq_gap],
         %{expected: state.last_persisted_seq + 1, got: seq},
-        %{relay: rc, shard: sh, key: pk}
+        %{operative: rc, operation: sh, key: pk}
       )
 
-      partition_id = state.partition_id
-      spawn(fn -> Recovery.resync(partition_id, executor_id: executor_id, reason: :shed) end)
+      segment_id = state.segment_id
+      spawn(fn -> Recovery.resync(segment_id, executor_id: executor_id, reason: :shed) end)
       %{state | shedding?: true}
     end
   end
@@ -564,13 +564,13 @@ defmodule Flezha.State.WalWriter do
 
   defp maybe_signal_backpressure(%{backpressured?: false} = state, pending)
        when pending >= state.high_watermark do
-    emit_backpressure(state.partition_id, :full, pending)
+    emit_backpressure(state.segment_id, :full, pending)
     %{state | backpressured?: true}
   end
 
   defp maybe_signal_backpressure(%{backpressured?: true} = state, pending)
        when pending <= state.low_watermark do
-    emit_backpressure(state.partition_id, :open, pending)
+    emit_backpressure(state.segment_id, :open, pending)
     %{state | backpressured?: false}
   end
 
@@ -578,16 +578,16 @@ defmodule Flezha.State.WalWriter do
 
   # Emit the telemetry event AND ship the wire signal. The telemetry
   # event is for in-process observers (metrics, debug); the wire signal
-  # routes through the producing Shard's `OverflowPolicy` machinery on
+  # routes through the producing Operation's `OverflowPolicy` machinery on
   # the SDK side.
-  defp emit_backpressure(partition_id, status, pending) do
+  defp emit_backpressure(segment_id, status, pending) do
     :telemetry.execute(
       [:flezha, :state, :wal, :backpressure],
       %{pending_bytes: pending},
-      %{partition_id: partition_id, status: status}
+      %{segment_id: segment_id, status: status}
     )
 
-    _ = Flezha.Relay.Overwatch.notify_partition_backpressure(partition_id, status)
+    _ = Flezha.Operative.Overwatch.notify_segment_backpressure(segment_id, status)
     :ok
   end
 

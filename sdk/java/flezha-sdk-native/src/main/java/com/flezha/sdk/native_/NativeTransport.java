@@ -139,26 +139,26 @@ public final class NativeTransport {
     public static final int STREAM_TYPE_SECONDARY = 0x02;
 
     /**
-     * Send a per-Partition state-change frame on the controller's control channel.
+     * Send a per-Segment state-change frame on the controller's control channel.
      * The {@code frame} bytes are the umbrella-spec wire format (instance id,
-     * shard name, partition key, seq, header, change bytes, crc32) already
-     * built by the SDK's {@code PartitionFlusher}. Returns 0 on OK, non-zero
+     * operation name, segment key, seq, header, change bytes, crc32) already
+     * built by the SDK's {@code SegmentFlusher}. Returns 0 on OK, non-zero
      * {@link FlezhaStatus} otherwise.
      *
      * <p>Wraps the existing generic {@link #streamWrite(long, long, byte[])}
-     * with the {@code partition_state_change} payload-id constant from
-     * {@code relay-state-persistence-controller}'s wire spec.
+     * with the {@code segment_state_change} payload-id constant from
+     * {@code operative-state-persistence-controller}'s wire spec.
      */
-    public static int sendPartitionStateChange(long handle, long streamId, @Nonnull byte[] frame) {
+    public static int sendSegmentStateChange(long handle, long streamId, @Nonnull byte[] frame) {
         return streamWrite(handle, streamId, frame);
     }
 
     /**
-     * Send a per-Partition state-snapshot frame on the controller's control channel.
+     * Send a per-Segment state-snapshot frame on the controller's control channel.
      * Wraps {@link #streamWrite(long, long, byte[])} with the
-     * {@code partition_state_snapshot} payload-id.
+     * {@code segment_state_snapshot} payload-id.
      */
-    public static int sendPartitionStateSnapshot(long handle, long streamId, @Nonnull byte[] frame) {
+    public static int sendSegmentStateSnapshot(long handle, long streamId, @Nonnull byte[] frame) {
         return streamWrite(handle, streamId, frame);
     }
 }

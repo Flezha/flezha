@@ -1,8 +1,8 @@
 defmodule Flezha.State.Metrics do
   @moduledoc """
-  Per-Partition `:counters` references for the persistence subsystem.
+  Per-Segment `:counters` references for the persistence subsystem.
 
-  Six counter slots per Partition (see `relay-state-persistence-controller`
+  Six counter slots per Segment (see `operative-state-persistence-controller`
   `design.md` Decision 9):
 
     1. `:persisted_changes_total` — monotonic
@@ -15,7 +15,7 @@ defmodule Flezha.State.Metrics do
   Plus `:dedup_drops_total`, `:wal_seq` (gauge for last persisted seq),
   and `:wal_shed_total` (appends dropped past the hard in-memory bound),
   for a total of 9. Allocations are lazy and stored in a module-level
-  `:ets` table keyed by `partition_id`.
+  `:ets` table keyed by `segment_id`.
   """
 
   alias Flezha.State.Registry
@@ -39,20 +39,20 @@ defmodule Flezha.State.Metrics do
   @spec counters() :: [atom()]
   def counters(), do: @counters
 
-  @spec for_partition(Registry.partition_id()) :: :counters.counters_ref()
-  def for_partition(partition_id) do
+  @spec for_segment(Registry.segment_id()) :: :counters.counters_ref()
+  def for_segment(segment_id) do
     ensure_table()
 
-    case :ets.lookup(@table, partition_id) do
-      [{^partition_id, ref}] ->
+    case :ets.lookup(@table, segment_id) do
+      [{^segment_id, ref}] ->
         ref
 
       [] ->
         ref = :counters.new(length(@counters), [:write_concurrency])
         # `:ets.insert_new/2` keeps the first writer's ref under races.
-        case :ets.insert_new(@table, {partition_id, ref}) do
+        case :ets.insert_new(@table, {segment_id, ref}) do
           true -> ref
-          false -> :ets.lookup_element(@table, partition_id, 2)
+          false -> :ets.lookup_element(@table, segment_id, 2)
         end
     end
   end
@@ -77,24 +77,24 @@ defmodule Flezha.State.Metrics do
     Map.new(@counters, fn name -> {name, :counters.get(ref, index!(name))} end)
   end
 
-  @spec drop_partition(Registry.partition_id()) :: :ok
-  def drop_partition(partition_id) do
+  @spec drop_segment(Registry.segment_id()) :: :ok
+  def drop_segment(segment_id) do
     ensure_table()
-    :ets.delete(@table, partition_id)
+    :ets.delete(@table, segment_id)
     :ok
   end
 
   @doc """
-  Snapshot every Partition's counter set. Returns
-  `[{partition_id, %{counter_name => value}}]`. Used by the metrics
+  Snapshot every Segment's counter set. Returns
+  `[{segment_id, %{counter_name => value}}]`. Used by the metrics
   exporter and by `flz state list`.
   """
-  @spec snapshot_all() :: [{Registry.partition_id(), %{atom() => integer()}}]
+  @spec snapshot_all() :: [{Registry.segment_id(), %{atom() => integer()}}]
   def snapshot_all() do
     ensure_table()
 
     :ets.tab2list(@table)
-    |> Enum.map(fn {partition_id, ref} -> {partition_id, to_map(ref)} end)
+    |> Enum.map(fn {segment_id, ref} -> {segment_id, to_map(ref)} end)
   end
 
   defp index!(name) do

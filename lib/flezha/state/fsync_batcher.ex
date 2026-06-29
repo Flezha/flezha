@@ -36,18 +36,18 @@ defmodule Flezha.State.FsyncBatcher do
   end
 
   @spec mark_dirty(tuple()) :: :ok
-  def mark_dirty(partition_id) do
-    GenServer.cast(__MODULE__, {:mark_dirty, partition_id})
+  def mark_dirty(segment_id) do
+    GenServer.cast(__MODULE__, {:mark_dirty, segment_id})
   end
 
   @doc """
-  Drop any pending dirty mark for `partition_id`. Called when a Partition
+  Drop any pending dirty mark for `segment_id`. Called when a Segment
   is hard-deleted so the next tick does not try to fsync a writer that is
   being torn down.
   """
   @spec forget(tuple()) :: :ok
-  def forget(partition_id) do
-    GenServer.cast(__MODULE__, {:forget, partition_id})
+  def forget(segment_id) do
+    GenServer.cast(__MODULE__, {:forget, segment_id})
   end
 
   @doc """
@@ -98,12 +98,12 @@ defmodule Flezha.State.FsyncBatcher do
   end
 
   @impl true
-  def handle_cast({:mark_dirty, partition_id}, state) do
-    {:noreply, %{state | dirty_set: MapSet.put(state.dirty_set, partition_id)}}
+  def handle_cast({:mark_dirty, segment_id}, state) do
+    {:noreply, %{state | dirty_set: MapSet.put(state.dirty_set, segment_id)}}
   end
 
-  def handle_cast({:forget, partition_id}, state) do
-    {:noreply, %{state | dirty_set: MapSet.delete(state.dirty_set, partition_id)}}
+  def handle_cast({:forget, segment_id}, state) do
+    {:noreply, %{state | dirty_set: MapSet.delete(state.dirty_set, segment_id)}}
   end
 
   @impl true
@@ -131,8 +131,8 @@ defmodule Flezha.State.FsyncBatcher do
   defp drain(state) do
     count = MapSet.size(state.dirty_set)
 
-    Enum.each(state.dirty_set, fn partition_id ->
-      case Supervisor.lookup(partition_id) do
+    Enum.each(state.dirty_set, fn segment_id ->
+      case Supervisor.lookup(segment_id) do
         {:ok, pid} ->
           # `try` because a writer can exit between `mark_dirty/1` and the tick.
           try do

@@ -1,10 +1,10 @@
 package com.flezha.sdk.state;
 
 /**
- * Empty per-partition state for stateless sugared shards. The annotation
- * processor uses this as the {@code State} type when a {@code @Shard} class's
+ * Empty per-segment state for stateless sugared operations. The annotation
+ * processor uses this as the {@code State} type when a {@code @Operation} class's
  * {@code run} method declares no state parameter, so a generated stateless
- * shard still satisfies the {@link com.flezha.sdk.shard.Shard} type surface
+ * operation still satisfies the {@link com.flezha.sdk.operation.Operation} type surface
  * with a no-op {@code initState}.
  */
 public final class Stateless {

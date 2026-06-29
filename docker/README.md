@@ -16,12 +16,12 @@ toolchain) — never by `dev/` or `prod/`. See
 
 ## Failure recovery volume
 
-The controller persists the child specs of locally hosted relays **and**
+The controller persists the child specs of locally hosted operatives **and**
 the recoverable plugins attached to them under `FLEZHA_DATA_DIR` (default
 `/flezha/app_data/recovery` in the provided compose file). Two DETS files
 live side-by-side in that directory:
 
-- `recovery.dets` — relay child specs, keyed by `child_id`.
+- `recovery.dets` — operative child specs, keyed by `child_id`.
 - `recovery_plugins.dets` — recoverable plugin bindings, keyed by
   `plugin_id`.
 
@@ -31,14 +31,14 @@ files. If you override the volume or data dir, make sure the new location
 is (a) persistent across container restarts, and (b) owned by the
 non-root `flezha` user (uid 1000) that the image runs as. Without a
 persistent volume, recovery is a no-op and the cluster reverts to today's
-behaviour (waiting for SDK clients to reissue `AddRelay` and
+behaviour (waiting for SDK clients to reissue `AddOperative` and
 `enable_plugin`).
 
 Set `FLEZHA_RECOVERY_ENABLED=false` in the environment to disable the
 subsystem entirely.
 
 Note that only a subset of plugins is recoverable — plugins whose
-provider is bound to a caller pid (`relay_beam_msg`,
+provider is bound to a caller pid (`operative_beam_msg`,
 `monitored_io_forward`) are deliberately excluded and must be
 re-established by the caller on reconnect. See the top-level
 [`README.md`](../README.md#failure-recovery) for the per-provider table.

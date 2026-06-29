@@ -11,7 +11,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
   @catalog Host.build_catalog(
              [
-               {:on_relay_init, :fold, Ctx.Init},
+               {:on_operative_init, :fold, Ctx.Init},
                {:on_input, :transform, Ctx.IO},
                {:on_snapshot, :fanout, Ctx.Snapshot},
                {:on_message, :request, Ctx.Msg},
@@ -21,19 +21,19 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
            )
 
   defmodule FoldA do
-    def on_relay_init(%Ctx.Init{} = ctx, _opts) do
+    def on_operative_init(%Ctx.Init{} = ctx, _opts) do
       {:ok, %Ctx.Init{ctx | accumulated: Map.put(ctx.accumulated, :a, 1)}}
     end
   end
 
   defmodule FoldB do
-    def on_relay_init(%Ctx.Init{} = ctx, _opts) do
+    def on_operative_init(%Ctx.Init{} = ctx, _opts) do
       {:ok, %Ctx.Init{ctx | accumulated: Map.put(ctx.accumulated, :b, 2)}}
     end
   end
 
   defmodule FoldErr do
-    def on_relay_init(_ctx, _opts), do: {:error, :boom}
+    def on_operative_init(_ctx, _opts), do: {:error, :boom}
   end
 
   defmodule TransformUpcase do
@@ -51,7 +51,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
   defmodule FanoutNotify do
     def on_snapshot(%Ctx.Snapshot{} = ctx, opts) do
-      send(Map.fetch!(opts, :pid), {:fanout_called, ctx.relay_id})
+      send(Map.fetch!(opts, :pid), {:fanout_called, ctx.operative_id})
       :ok
     end
   end
@@ -70,9 +70,9 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
   describe ":fold dispatch" do
     test "empty returns ctx unchanged (fast path)" do
       table = Table.new(@catalog)
-      ctx = %Ctx.Init{relay_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
 
-      assert {:ok, ^ctx} = Extension.run(table, :on_relay_init, ctx)
+      assert {:ok, ^ctx} = Extension.run(table, :on_operative_init, ctx)
     end
 
     test "single subscriber merges its accumulated" do
@@ -83,13 +83,13 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           id: "a",
           provider: FoldA,
           opts: %{},
-          subscriptions: [{:on_relay_init, []}]
+          subscriptions: [{:on_operative_init, []}]
         })
 
-      ctx = %Ctx.Init{relay_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
 
       assert {:ok, %Ctx.Init{accumulated: %{a: 1}}} =
-               Extension.run(table, :on_relay_init, ctx)
+               Extension.run(table, :on_operative_init, ctx)
     end
 
     test "two subscribers chain in position order" do
@@ -100,7 +100,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           id: "a",
           provider: FoldA,
           opts: %{},
-          subscriptions: [{:on_relay_init, [position: 0]}]
+          subscriptions: [{:on_operative_init, [position: 0]}]
         })
 
       {:ok, table} =
@@ -108,13 +108,13 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           id: "b",
           provider: FoldB,
           opts: %{},
-          subscriptions: [{:on_relay_init, [position: 1]}]
+          subscriptions: [{:on_operative_init, [position: 1]}]
         })
 
-      ctx = %Ctx.Init{relay_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
 
       assert {:ok, %Ctx.Init{accumulated: %{a: 1, b: 2}}} =
-               Extension.run(table, :on_relay_init, ctx)
+               Extension.run(table, :on_operative_init, ctx)
     end
 
     test "on_error: :fail halts chain" do
@@ -125,11 +125,11 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           id: "e",
           provider: FoldErr,
           opts: %{},
-          subscriptions: [{:on_relay_init, [on_error: :fail]}]
+          subscriptions: [{:on_operative_init, [on_error: :fail]}]
         })
 
-      ctx = %Ctx.Init{relay_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
-      assert {:error, :boom} = Extension.run(table, :on_relay_init, ctx)
+      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+      assert {:error, :boom} = Extension.run(table, :on_operative_init, ctx)
     end
 
     test "on_error: :empty skips failure" do
@@ -140,7 +140,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           id: "e",
           provider: FoldErr,
           opts: %{},
-          subscriptions: [{:on_relay_init, [on_error: :empty]}]
+          subscriptions: [{:on_operative_init, [on_error: :empty]}]
         })
 
       {:ok, table} =
@@ -148,20 +148,20 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           id: "b",
           provider: FoldB,
           opts: %{},
-          subscriptions: [{:on_relay_init, [position: 1]}]
+          subscriptions: [{:on_operative_init, [position: 1]}]
         })
 
-      ctx = %Ctx.Init{relay_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
 
       assert {:ok, %Ctx.Init{accumulated: %{b: 2}}} =
-               Extension.run(table, :on_relay_init, ctx)
+               Extension.run(table, :on_operative_init, ctx)
     end
   end
 
   describe ":transform dispatch" do
     test "empty returns ctx unchanged" do
       table = Table.new(@catalog)
-      ctx = %Ctx.IO{relay_id: "p", namespace: :n, message: "x", metadata: %{}}
+      ctx = %Ctx.IO{operative_id: "p", namespace: :n, message: "x", metadata: %{}}
 
       assert {:ok, ^ctx} = Extension.run(table, :on_input, ctx)
     end
@@ -177,7 +177,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           subscriptions: [{:on_input, []}]
         })
 
-      ctx = %Ctx.IO{relay_id: "p", namespace: :n, message: "hi", metadata: %{}}
+      ctx = %Ctx.IO{operative_id: "p", namespace: :n, message: "hi", metadata: %{}}
       assert {:ok, %Ctx.IO{message: "HI"}} = Extension.run(table, :on_input, ctx)
     end
 
@@ -192,7 +192,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           subscriptions: [{:on_input, [position: 0]}]
         })
 
-      ctx = %Ctx.IO{relay_id: "p", namespace: :n, message: "x", metadata: %{}}
+      ctx = %Ctx.IO{operative_id: "p", namespace: :n, message: "x", metadata: %{}}
       assert {:skip, :rate_limited} = Extension.run(table, :on_input, ctx)
     end
 
@@ -215,7 +215,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           subscriptions: [{:on_input, [position: 1]}]
         })
 
-      ctx = %Ctx.IO{relay_id: "p", namespace: :n, message: "hi", metadata: %{}}
+      ctx = %Ctx.IO{operative_id: "p", namespace: :n, message: "hi", metadata: %{}}
 
       log =
         capture_log(fn ->
@@ -232,7 +232,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
   describe ":fanout dispatch" do
     test "empty returns :ok without invoking anything" do
       table = Table.new(@catalog)
-      ctx = %Ctx.Snapshot{relay_id: "p", namespace: :n, snapshot: nil}
+      ctx = %Ctx.Snapshot{operative_id: "p", namespace: :n, snapshot: nil}
 
       assert :ok = Extension.run(table, :on_snapshot, ctx)
     end
@@ -256,7 +256,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           subscriptions: [{:on_snapshot, []}]
         })
 
-      ctx = %Ctx.Snapshot{relay_id: "p", namespace: :n, snapshot: nil}
+      ctx = %Ctx.Snapshot{operative_id: "p", namespace: :n, snapshot: nil}
 
       log =
         capture_log(fn ->
@@ -282,7 +282,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         payload: <<>>,
         reply_to: self(),
         ref: ref,
-        relay_id: "p",
+        operative_id: "p",
         namespace: "n"
       }
 
@@ -308,7 +308,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         payload: "hi",
         reply_to: self(),
         ref: ref,
-        relay_id: "p",
+        operative_id: "p",
         namespace: "n"
       }
 
@@ -377,7 +377,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
                Table.subscribe(table, "x", %Plugin{
                  id: "x",
                  provider: FoldA,
-                 subscriptions: [{:on_relay_init, [timeout_ms: :bad]}]
+                 subscriptions: [{:on_operative_init, [timeout_ms: :bad]}]
                })
     end
 
@@ -388,7 +388,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
                Table.subscribe(table, "x", %Plugin{
                  id: "x",
                  provider: FoldA,
-                 subscriptions: [{:on_relay_init, [on_error: :weird]}]
+                 subscriptions: [{:on_operative_init, [on_error: :weird]}]
                })
     end
   end
@@ -402,7 +402,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         Table.subscribe(table, "a", %Plugin{
           id: "a",
           provider: FoldA,
-          subscriptions: [{:on_relay_init, []}]
+          subscriptions: [{:on_operative_init, []}]
         })
 
       assert table.active_mask != 0

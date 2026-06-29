@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   @moduledoc """
   Covers the two-phase plugin lifecycle introduced by
-  `fix-overwatch-restart-storm` (capability `relay-extensions` —
+  `fix-overwatch-restart-storm` (capability `operative-extensions` —
   "Two-phase plugin lifecycle gated on SDK readiness"). Plugins enter the
   `:prepared` phase on `Table.subscribe/3`; `bulk_activate/1` transitions
   every prepared plugin to `:running`, invoking the optional `activate/1`

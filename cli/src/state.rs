@@ -27,17 +27,17 @@ pub fn handle_state_command(args: &[String]) {
 
 fn handle_list(args: &[String]) {
     if args.len() < 2 {
-        eprintln!("Usage: flz state list <relay_class> [--output text|json]");
+        eprintln!("Usage: flz state list <operative_class> [--output text|json]");
         exit(1);
     }
 
-    let relay_class = &args[1];
+    let operative_class = &args[1];
     let output_format = get_output_format(&args[2..]);
     let command = get_flezha_command();
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.state_list(\"{}\", \"{}\")",
-        relay_class, output_format,
+        operative_class, output_format,
     );
 
     let status = Command::new(command)
@@ -53,7 +53,7 @@ fn handle_list(args: &[String]) {
 
 fn handle_at(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("Usage: flz state at <relay/shard/partition_key> <seq | iso8601-timestamp> [--output text|json]");
+        eprintln!("Usage: flz state at <operative/operation/segment_key> <seq | iso8601-timestamp> [--output text|json]");
         exit(1);
     }
 
@@ -80,7 +80,7 @@ fn handle_at(args: &[String]) {
 
 fn handle_rotate(args: &[String]) {
     if args.len() < 2 {
-        eprintln!("Usage: flz state rotate <relay/shard/partition_key>");
+        eprintln!("Usage: flz state rotate <operative/operation/segment_key>");
         exit(1);
     }
 
@@ -102,17 +102,17 @@ fn handle_rotate(args: &[String]) {
 
 fn handle_retention(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("Usage: flz state retention <relay_class> <hours>");
+        eprintln!("Usage: flz state retention <operative_class> <hours>");
         exit(1);
     }
 
-    let relay_class = &args[1];
+    let operative_class = &args[1];
     let hours = &args[2];
     let command = get_flezha_command();
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.state_retention(\"{}\", \"{}\")",
-        relay_class, hours,
+        operative_class, hours,
     );
 
     let status = Command::new(command)
@@ -128,7 +128,7 @@ fn handle_retention(args: &[String]) {
 
 fn handle_delete(args: &[String]) {
     if args.len() < 2 {
-        eprintln!("Usage: flz state delete <relay/shard/partition_key>");
+        eprintln!("Usage: flz state delete <operative/operation/segment_key>");
         exit(1);
     }
 
@@ -149,23 +149,23 @@ fn handle_delete(args: &[String]) {
 }
 
 fn print_state_help() {
-    println!("flz state - Per-Partition state inspection and time-travel queries");
+    println!("flz state - Per-Segment state inspection and time-travel queries");
     println!();
     println!("USAGE:");
     println!("    flz state <SUBCOMMAND>");
     println!();
     println!("SUBCOMMANDS:");
-    println!("    list <relay>                          List Partitions under a Relay class");
-    println!("    at <relay/shard/key> <seq|ts>         Query state at a point in time");
-    println!("    rotate <relay/shard/key>              Force a compaction snapshot");
-    println!("    retention <relay> <hours>             Set time-travel retention");
-    println!("    delete <relay/shard/key>              Hard-delete a Partition's persisted state");
+    println!("    list <operative>                          List Segments under an Operative class");
+    println!("    at <operative/operation/key> <seq|ts>         Query state at a point in time");
+    println!("    rotate <operative/operation/key>              Force a compaction snapshot");
+    println!("    retention <operative> <hours>             Set time-travel retention");
+    println!("    delete <operative/operation/key>              Hard-delete a Segment's persisted state");
     println!();
     println!("EXAMPLES:");
-    println!("    flz state list MarketRelay");
-    println!("    flz state at MarketRelay/OhlcShard/M1 12345");
-    println!("    flz state at MarketRelay/OhlcShard/M1 2026-05-01T12:00:00Z");
-    println!("    flz state rotate MarketRelay/OhlcShard/M1");
-    println!("    flz state retention MarketRelay 6");
-    println!("    flz state delete MarketRelay/OhlcShard/M1");
+    println!("    flz state list MarketOperative");
+    println!("    flz state at MarketOperative/OhlcOperation/M1 12345");
+    println!("    flz state at MarketOperative/OhlcOperation/M1 2026-05-01T12:00:00Z");
+    println!("    flz state rotate MarketOperative/OhlcOperation/M1");
+    println!("    flz state retention MarketOperative 6");
+    println!("    flz state delete MarketOperative/OhlcOperation/M1");
 }

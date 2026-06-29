@@ -23,24 +23,24 @@ the same outcome.
 ## Phases
 
 1. **Quiesce** — sets a process-tree-visible flag (`Coordinator.shutting_down?/0`).
-   - `Flezha.Service.RelayManager.start_relay/2` returns `{:error, :shutting_down}`.
+   - `Flezha.Service.OperativeManager.start_operative/2` returns `{:error, :shutting_down}`.
    - `Flezha.Executor.FleetManager` rejects new executor connect attempts.
-   - Already-running Relays and connected executors are NOT touched.
-2. **Drain** — captures the locally-hosted Relay set per namespace,
+   - Already-running Operatives and connected executors are NOT touched.
+2. **Drain** — captures the locally-hosted Operative set per namespace,
    then calls `Flezha.Service.HubManager.stop_hub_manager/0` so
    ProcessHub's coordinator dispatches `cluster_leave` to peers
    (their migration strategies — `HotSwap{handover: true}` —
    take ownership). Polls peer registry dumps every 500 ms until each
-   captured Relay is visible on at least one peer node, or the bounded
+   captured Operative is visible on at least one peer node, or the bounded
    timeout elapses.
    - **Peer RPC is concurrent.** Each 500 ms poll calls all known peer
      nodes in parallel via `Task.async_stream` (2 s timeout per node,
      `:kill_task` on timeout). A single slow or unreachable peer does not
      serialize the drain loop against the rest.
    - **HotSwap race window.** ProcessHub's `HotSwap` strategy auto-migrates
-     relays ~500 ms after `cluster_leave`. The drain poller uses the peer
-     registry dump to confirm a relay has landed, but there is a brief window
-     where HotSwap migration is in flight and the relay is not yet visible on
+     operatives ~500 ms after `cluster_leave`. The drain poller uses the peer
+     registry dump to confirm an operative has landed, but there is a brief window
+     where HotSwap migration is in flight and the operative is not yet visible on
      any peer. The 500 ms poll cadence is intentionally longer than the HotSwap
      propagation time to let this settle; the drain timeout covers the tail.
    - **No-peer case**: solo nodes skip the migration wait; local
@@ -53,7 +53,7 @@ the same outcome.
 The whole sequence is bounded by
 `:flezha, :graceful_shutdown_timeout_ms`. On timeout: ERROR log,
 `[:flezha, :shutdown, :timeout]` telemetry event, advance to
-finalise, return `{:partial, [relay_ids…]}`.
+finalise, return `{:partial, [operative_ids…]}`.
 
 ## Configuration
 
@@ -108,8 +108,8 @@ Exit codes:
 
 | Code | Meaning                                                                        |
 | ---- | ------------------------------------------------------------------------------ |
-| 0    | Clean shutdown (all Relays migrated to peers, or `--force` finalised cleanly)  |
-| 1    | Partial drain — timeout elapsed, some Relays still local at finalise           |
+| 0    | Clean shutdown (all Operatives migrated to peers, or `--force` finalised cleanly)  |
+| 1    | Partial drain — timeout elapsed, some Operatives still local at finalise           |
 | 2    | Already shutting down — coordinator was in-flight; outcome reflects that one   |
 | 3    | Controller socket unreachable (controller not running, or wrong socket path)   |
 
@@ -123,7 +123,7 @@ Exit codes:
 | `:phase_started`   | `%{}`                                                      | `%{phase: :quiesce \| :drain \| :finalise}`    |
 | `:phase_completed` | `%{duration_ms}`                                           | `%{phase}`                                     |
 | `:drain_progress`  | `%{migrated, remaining, elapsed_ms}`                       | `%{}`                                          |
-| `:timeout`         | `%{}`                                                      | `%{phase, still_local: [relay_ids…]}`          |
+| `:timeout`         | `%{}`                                                      | `%{phase, still_local: [operative_ids…]}`      |
 | `:complete`        | `%{duration_ms}`                                           | `%{outcome: :clean \| :partial \| :forced, reason}` |
 
 ### Structured log lines

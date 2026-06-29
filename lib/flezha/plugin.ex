@@ -1,12 +1,12 @@
 defmodule Flezha.Plugin do
   @moduledoc """
   Unified plugin struct used by every extension-point subscription on a host
-  (e.g. `Flezha.Relay.Overwatch`).
+  (e.g. `Flezha.Operative.Overwatch`).
 
   A single `%Flezha.Plugin{}` may subscribe to multiple extension points.
   Each entry in `subscriptions` is a `{extension_name, sub_opts}` tuple; the
   provider module MUST export a callback for each subscribed extension kind
-  (e.g. `on_input/2`, `on_message/2`, `on_relay_init/2`, ...).
+  (e.g. `on_input/2`, `on_message/2`, `on_operative_init/2`, ...).
   """
 
   @type extension_name :: atom()
@@ -19,7 +19,7 @@ defmodule Flezha.Plugin do
           opts: map(),
           subscriptions: [subscription()],
           namespace: atom() | binary() | nil,
-          relay_id: binary() | nil
+          operative_id: binary() | nil
         }
 
   @enforce_keys [:id, :provider]
@@ -29,7 +29,7 @@ defmodule Flezha.Plugin do
     opts: %{},
     subscriptions: [],
     namespace: nil,
-    relay_id: nil
+    operative_id: nil
   ]
 
   @doc """
@@ -54,7 +54,7 @@ defmodule Flezha.Plugin do
   DETS, ...).
 
   Today every field on `%Flezha.Plugin{}` (`:id`, `:provider`, `:opts`,
-  `:subscriptions`, `:namespace`, `:relay_id`) is inert data —
+  `:subscriptions`, `:namespace`, `:operative_id`) is inert data —
   there are no live pids, monitor refs, timer refs, or closures held in
   the struct itself — so this function is the identity. It exists as a
   contract surface: any future field that holds runtime-only state

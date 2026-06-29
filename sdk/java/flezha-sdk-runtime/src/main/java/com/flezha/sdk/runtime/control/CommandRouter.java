@@ -4,20 +4,20 @@ import com.flezha.sdk.native_.NativeTransport;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.CommandResponse;
 import com.flezha.sdk.runtime.ExecutorContext;
-import com.flezha.sdk.runtime.control.handlers.AddRelayHandler;
+import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
 import com.flezha.sdk.runtime.control.handlers.AssignExecutorIdHandler;
-import com.flezha.sdk.runtime.control.handlers.CompactPartitionHandler;
+import com.flezha.sdk.runtime.control.handlers.CompactSegmentHandler;
 import com.flezha.sdk.runtime.control.handlers.ConnectSocketHandler;
 import com.flezha.sdk.runtime.control.handlers.ExecutorDisconnectHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationDeserializationHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationSerializationHandler;
-import com.flezha.sdk.runtime.control.handlers.PartitionApplyStateHandler;
-import com.flezha.sdk.runtime.control.handlers.PartitionMailboxStatusHandler;
-import com.flezha.sdk.runtime.control.handlers.PartitionStateHandler;
+import com.flezha.sdk.runtime.control.handlers.SegmentApplyStateHandler;
+import com.flezha.sdk.runtime.control.handlers.SegmentMailboxStatusHandler;
+import com.flezha.sdk.runtime.control.handlers.SegmentStateHandler;
 import com.flezha.sdk.runtime.control.handlers.PingHandler;
 import com.flezha.sdk.runtime.control.handlers.ReassignExecutorIdHandler;
-import com.flezha.sdk.runtime.control.handlers.RelayMessageHandler;
-import com.flezha.sdk.runtime.control.handlers.RemRelayHandler;
+import com.flezha.sdk.runtime.control.handlers.OperationMessageHandler;
+import com.flezha.sdk.runtime.control.handlers.RemOperativeHandler;
 import com.flezha.sdk.runtime.control.handlers.RestoreInitStateHandler;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
@@ -48,21 +48,21 @@ public final class CommandRouter {
         java.util.Map<CommandRequest.CommandCase, CommandHandler> mut = new java.util.LinkedHashMap<>();
         mut.put(CommandRequest.CommandCase.ASSIGN_EXECUTOR_ID, new AssignExecutorIdHandler());
         mut.put(CommandRequest.CommandCase.CONNECT_SOCKET, new ConnectSocketHandler());
-        mut.put(CommandRequest.CommandCase.ADD_RELAY, new AddRelayHandler());
-        mut.put(CommandRequest.CommandCase.REM_RELAY, new RemRelayHandler());
-        mut.put(CommandRequest.CommandCase.PARTITION_STATE, new PartitionStateHandler());
+        mut.put(CommandRequest.CommandCase.ADD_OPERATIVE, new AddOperativeHandler());
+        mut.put(CommandRequest.CommandCase.REM_OPERATIVE, new RemOperativeHandler());
+        mut.put(CommandRequest.CommandCase.SEGMENT_STATE, new SegmentStateHandler());
         mut.put(CommandRequest.CommandCase.MIGRATION_SERIALIZATION, new MigrationSerializationHandler());
         mut.put(CommandRequest.CommandCase.MIGRATION_DESERIALIZATION, new MigrationDeserializationHandler());
         mut.put(CommandRequest.CommandCase.EXECUTOR_DISCONNECT, new ExecutorDisconnectHandler());
-        mut.put(CommandRequest.CommandCase.RELAY_MESSAGE, new RelayMessageHandler());
-        mut.put(CommandRequest.CommandCase.PARTITION_APPLY_STATE, new PartitionApplyStateHandler());
-        // State-persistence handlers added by relay-state-persistence-java.
+        mut.put(CommandRequest.CommandCase.OPERATION_MESSAGE, new OperationMessageHandler());
+        mut.put(CommandRequest.CommandCase.SEGMENT_APPLY_STATE, new SegmentApplyStateHandler());
+        // State-persistence handlers added by operative-state-persistence-java.
         // The matching CommandCase enum constants land in the protobuf
         // codegen once the .proto regenerates; the lookups are resolved
         // reflectively to keep this file resilient to a stale codegen jar.
         registerCase(mut, "RESTORE_INIT_STATE", new RestoreInitStateHandler());
-        registerCase(mut, "COMPACT_PARTITION", new CompactPartitionHandler());
-        registerCase(mut, "PARTITION_MAILBOX_STATUS", new PartitionMailboxStatusHandler());
+        registerCase(mut, "COMPACT_SEGMENT", new CompactSegmentHandler());
+        registerCase(mut, "SEGMENT_MAILBOX_STATUS", new SegmentMailboxStatusHandler());
         // Cold-restart end-to-end health probe (fix-overwatch-restart-storm).
         // Resolved reflectively because the protobuf codegen jar may lag the
         // .proto file in a partial-deploy window.

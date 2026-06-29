@@ -1,15 +1,15 @@
 package com.flezha.test;
 
-import com.flezha.sdk.authoring.Shard;
+import com.flezha.sdk.authoring.Operation;
 import java.util.Deque;
 import java.util.Optional;
 
 /**
- * Canonical keyed-collection reference shard (authoring-contract §3 / §6): a
+ * Canonical keyed-collection reference operation (authoring-contract §3 / §6): a
  * rolling per-key window. Uses {@code @Journal(MAP_DEQUE)} + an
  * {@code Optional<Output>} warmup gate. Twin: {@link RollingWindowTwin}.
  */
-@Shard(id = "java_rolling_window")
+@Operation(id = "java_rolling_window")
 public class RollingWindow {
     static final int N = 3;
 

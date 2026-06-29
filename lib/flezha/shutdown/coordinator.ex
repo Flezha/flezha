@@ -4,12 +4,12 @@ defmodule Flezha.Shutdown.Coordinator do
   (`quiesce → drain → finalise`) on `shutdown/2`.
 
   - **Quiesce** sets a process-tree-visible flag (`shutting_down?/0`)
-    so `Flezha.Service.RelayManager.start_relay/2` returns
+    so `Flezha.Service.OperativeManager.start_operative/2` returns
     `{:error, :shutting_down}` and `Flezha.Executor.FleetManager`
     rejects new executor connect attempts.
-  - **Drain** captures the locally-hosted Relay set, dispatches
+  - **Drain** captures the locally-hosted Operative set, dispatches
     ProcessHub `cluster_leave` (via `HubManager.stop_hub_manager/0`),
-    then polls peer registry dumps until every captured Relay is
+    then polls peer registry dumps until every captured Operative is
     visible on at least one peer (or the bounded timeout elapses).
     Solo nodes (no peers) skip the migration wait.
   - **Finalise** flushes `Flezha.State.FsyncBatcher` and stops
@@ -218,7 +218,7 @@ defmodule Flezha.Shutdown.Coordinator do
     duration_ms = now - state.phase_start_ms
     emit_telemetry(:phase_completed, %{duration_ms: duration_ms}, %{phase: :quiesce})
 
-    captured = capture_local_relays()
+    captured = capture_local_operatives()
     locally_hosted = Enum.reduce(captured, 0, fn {_ns, ids}, acc -> acc + length(ids) end)
 
     Logger.info("[shutdown] phase=drain locally_hosted=#{locally_hosted}")
@@ -232,7 +232,7 @@ defmodule Flezha.Shutdown.Coordinator do
 
     # Dispatch ProcessHub `cluster_leave` by stopping the local hub
     # supervisor. ProcessHub's coordinator `terminate/2` notifies
-    # peers so they can claim our Relays via the configured migration
+    # peers so they can claim our Operatives via the configured migration
     # strategy (HotSwap with handover).
     safe_stop_hub_manager()
 
@@ -250,7 +250,7 @@ defmodule Flezha.Shutdown.Coordinator do
           "[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot"
         )
 
-        # Local Relays already terminated by stop_hub_manager above;
+        # Local Operatives already terminated by stop_hub_manager above;
         # WAL fsync flush happens in the finalise phase.
         send(self(), :drain_complete)
         {:noreply, %{state | still_local: []}}
@@ -402,7 +402,7 @@ defmodule Flezha.Shutdown.Coordinator do
 
   # ---------- Drain helpers ----------
 
-  defp capture_local_relays() do
+  defp capture_local_operatives() do
     HubManager.get_running_namespaces()
     |> Enum.into(%{}, fn ns ->
       hub_id = Identificator.hub(ns)
@@ -411,7 +411,7 @@ defmodule Flezha.Shutdown.Coordinator do
         case ProcessHub.is_alive?(hub_id) do
           true ->
             ProcessHub.process_list(hub_id, :local)
-            |> Enum.map(fn {relay_id, _pid} -> relay_id end)
+            |> Enum.map(fn {operative_id, _pid} -> operative_id end)
 
           false ->
             []
@@ -430,17 +430,17 @@ defmodule Flezha.Shutdown.Coordinator do
 
   defp drain_progress(captured_local, peer_map) do
     {still_local, migrated, remaining} =
-      Enum.reduce(captured_local, {[], 0, 0}, fn {ns, relay_ids}, {still, mig, rem} ->
+      Enum.reduce(captured_local, {[], 0, 0}, fn {ns, operative_ids}, {still, mig, rem} ->
         peers = Map.get(peer_map, ns, [])
         hub_id = Identificator.hub(ns)
         peer_dumps = fetch_peer_dumps(peers, hub_id)
 
         {ns_still, ns_mig, ns_rem} =
-          Enum.reduce(relay_ids, {[], 0, 0}, fn relay_id, {s, m, r} ->
-            if relay_visible_on_peer?(relay_id, peer_dumps) do
+          Enum.reduce(operative_ids, {[], 0, 0}, fn operative_id, {s, m, r} ->
+            if operative_visible_on_peer?(operative_id, peer_dumps) do
               {s, m + 1, r}
             else
-              {[relay_id | s], m, r + 1}
+              {[operative_id | s], m, r + 1}
             end
           end)
 
@@ -473,9 +473,9 @@ defmodule Flezha.Shutdown.Coordinator do
     end)
   end
 
-  defp relay_visible_on_peer?(relay_id, peer_dumps) do
+  defp operative_visible_on_peer?(operative_id, peer_dumps) do
     Enum.any?(peer_dumps, fn {node, dump} ->
-      case Map.get(dump, relay_id) do
+      case Map.get(dump, operative_id) do
         nil ->
           false
 

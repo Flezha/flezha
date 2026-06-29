@@ -147,7 +147,7 @@ defmodule Flezha.Plugin.Installer.InstallerTest do
           provider: #{first_mod},
           subscriptions: [{:on_input, []}],
           default_opts: %{},
-          scope: :relay
+          scope: :operative
         }
       ],
       dependencies: #{inspect(deps)}

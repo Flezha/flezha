@@ -1,6 +1,6 @@
 # Plugin lifecycle: `init_provider/1` vs `activate/1`
 
-Plugin providers attached to a relay host (e.g. `Flezha.Relay.Overwatch`)
+Plugin providers attached to an operative host (e.g. `Flezha.Operative.Overwatch`)
 move through two phases:
 
 - **`:prepared`** — the provider's GenServer is registered, config is
@@ -10,17 +10,17 @@ move through two phases:
   handshakes issue, downstream consumers attach. Input may flow.
 
 The transition is driven by `Flezha.Plugin.Extension.Table.bulk_activate/1`,
-invoked by the relay host **only** after `start_relay_sdk/2` returns
-`{:ok, _}` — i.e. the SDK-side relay is bound and ready to accept
+invoked by the operative host **only** after `start_operative_sdk/2` returns
+`{:ok, _}` — i.e. the SDK-side operative is bound and ready to accept
 input. Plugins that finish `init_provider/1` before the SDK is ready
 remain in `:prepared` and emit no `:io_in` until activation.
 
-The split exists because the controller's relay-startup path is a
-multi-step handshake (resolve executor → ping → AddRelay) that can fail
+The split exists because the controller's operative-startup path is a
+multi-step handshake (resolve executor → ping → AddOperative) that can fail
 or stall. Provider code that opens upstream connections during
-`init_provider/1` runs even when the relay never becomes
+`init_provider/1` runs even when the operative never becomes
 `:running` — every retry cycle re-opens the connection, every
-incoming frame queues into a relay that cannot drain to the SDK, and
+incoming frame queues into an operative that cannot drain to the SDK, and
 the controller's process memory grows without bound. This was the root
 cause of the 2026-05-15 production incident (`fix-overwatch-restart-storm`).
 
@@ -41,7 +41,7 @@ provider needs to do any of the following:
   endpoint, or HTTP host.
 - Issue a protocol-level handshake (websocket subscribe, Kafka API
   version negotiate, NATS subscription).
-- Acquire a resource whose health depends on the relay's SDK side
+- Acquire a resource whose health depends on the operative's SDK side
   being ready.
 
 The callback signature is `activate(opts :: map()) :: :ok | {:ok, pid()} | {:error, term()}`.
@@ -59,7 +59,7 @@ every restart.
 - Subscribe-style protocol handshakes that solicit upstream traffic.
 - Long blocking calls (the host's `dist_sup` is waiting on
   `start_link`).
-- Anything that assumes the relay's SDK side is bound — at
+- Anything that assumes the operative's SDK side is bound — at
   `init_provider/1` time it is not.
 
 ## In-tree examples

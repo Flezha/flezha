@@ -1,7 +1,7 @@
 defmodule Flezha.Plugin.Host do
   @moduledoc """
   Macro used by a module that exposes extension points (e.g.
-  `Flezha.Relay.Overwatch`).
+  `Flezha.Operative.Overwatch`).
 
       use Flezha.Plugin.Host, extensions: [
         {:on_input, :transform, Flezha.Plugin.Extension.Ctx.IO},

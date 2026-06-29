@@ -7,10 +7,10 @@ defmodule Flezha.AuthZ.Action do
   """
 
   @actions [
-    # Relay lifecycle and read.
-    :"relay.start",
-    :"relay.stop",
-    :"relay.list",
+    # Operative lifecycle and read.
+    :"operative.start",
+    :"operative.stop",
+    :"operative.list",
     # Plugin lifecycle and read.
     :"plugin.install",
     :"plugin.enable",

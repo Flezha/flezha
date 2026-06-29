@@ -12,7 +12,7 @@ defmodule FlezhaTest.Executor.ControlChannelShutdownNotificationTest do
       ControlChannel SHALL cast `{:apply_external_snapshot, binary}` to
       that pid and SHALL emit `ExecutorShutdownAck` on the stream.
     * Missing Overwatch — `HubManager.get_pid/2` returns `{:error, _}`
-      (the relay migrated to a peer controller). The ControlChannel SHALL
+      (the operative migrated to a peer controller). The ControlChannel SHALL
       log a warning and SHALL still emit the ack so the SDK never blocks
       on a non-existent target.
 
@@ -123,13 +123,13 @@ defmodule FlezhaTest.Executor.ControlChannelShutdownNotificationTest do
     {pid, stream_ref}
   end
 
-  defp build_notification_payload(relay_id, serialized_state, reference_id) do
+  defp build_notification_payload(operative_id, serialized_state, reference_id) do
     request = %ExecutorCommands.CommandRequest{
       reference_id: reference_id,
       command:
         {:executor_shutdown_notification,
          %ExecutorCommands.ExecutorShutdownNotification{
-           relay_id: relay_id,
+           operative_id: operative_id,
            serialized_state: serialized_state
          }}
     }
@@ -138,7 +138,7 @@ defmodule FlezhaTest.Executor.ControlChannelShutdownNotificationTest do
     IO.iodata_to_binary(iodata)
   end
 
-  defp assert_ack_for(framed_payload, expected_relay_id, expected_reference_id) do
+  defp assert_ack_for(framed_payload, expected_operative_id, expected_reference_id) do
     # The Payloader frame format defined in lib/flezha/service/payloader.ex
     # (32-byte padded id, 4-byte payload size, 4-byte message size, message,
     # 2-byte metadata size, metadata) is what Native.send_data normally
@@ -155,7 +155,7 @@ defmodule FlezhaTest.Executor.ControlChannelShutdownNotificationTest do
 
     assert {:executor_shutdown_ack,
             %ExecutorCommands.ExecutorShutdownAck{
-              relay_id: ^expected_relay_id
+              operative_id: ^expected_operative_id
             }} = req.command
   end
 end

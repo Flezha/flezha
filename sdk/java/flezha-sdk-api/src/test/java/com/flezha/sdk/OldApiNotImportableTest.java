@@ -15,21 +15,21 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Mirror of the Rust SDK's {@code OldApiNotImportable} test (per
- * {@code relay-mvp-rust/tasks.md §9.5}). Asserts that user code importing
- * any of the deleted legacy types (e.g. {@code RelayHandler}) fails
+ * {@code operative-mvp-rust/boundeds.md §9.5}). Asserts that user code importing
+ * any of the deleted legacy types (e.g. {@code ContinuousOperativeHandler}) fails
  * to compile after the cutover.
  */
 class OldApiNotImportableTest {
 
     @Test
-    @DisplayName("user code importing RelayHandler fails to compile")
-    void importingRelayHandlerFails() {
+    @DisplayName("user code importing ContinuousOperativeHandler fails to compile")
+    void importingContinuousOperativeHandlerFails() {
         String src =
                 """
                 package nowhere;
-                import com.flezha.sdk.RelayHandler;
+                import com.flezha.sdk.ContinuousOperativeHandler;
                 public final class UsesLegacyApi {
-                    void foo(RelayHandler<?, ?, ?> h) { }
+                    void foo(ContinuousOperativeHandler<?, ?, ?> h) { }
                 }
                 """;
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
@@ -45,9 +45,9 @@ class OldApiNotImportableTest {
                 .call();
 
         assertThat(ok)
-                .as("import com.flezha.sdk.RelayHandler should not resolve after relay-mvp-java")
+                .as("import com.flezha.sdk.ContinuousOperativeHandler should not resolve after operative-mvp-java")
                 .isFalse();
-        assertThat(err.toString()).contains("com.flezha.sdk.RelayHandler");
+        assertThat(err.toString()).contains("com.flezha.sdk.ContinuousOperativeHandler");
     }
 
     @Test
@@ -74,7 +74,7 @@ class OldApiNotImportableTest {
                 .call();
 
         assertThat(ok)
-                .as("import com.flezha.sdk.FactoryRegistry should not resolve after relay-mvp-java")
+                .as("import com.flezha.sdk.FactoryRegistry should not resolve after operative-mvp-java")
                 .isFalse();
     }
 

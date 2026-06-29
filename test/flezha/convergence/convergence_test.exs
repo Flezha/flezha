@@ -19,14 +19,14 @@ defmodule Flezha.ConvergenceTest do
       opts: %{},
       subscriptions: [{:on_output, []}],
       namespace: "default",
-      relay_id: "r"
+      operative_id: "r"
     )
   end
 
   describe "Backoff" do
     test "fresh keys are eligible; failures arm an exponential cooldown" do
       b = Backoff.new()
-      key = {:rebind_relay, "btc"}
+      key = {:rebind_operative, "btc"}
       now = 1_000
 
       assert Backoff.eligible?(b, key, now)
@@ -43,70 +43,70 @@ defmodule Flezha.ConvergenceTest do
 
     test "filter drops ops still in cooldown, keeps the rest" do
       now = 0
-      b = Backoff.update(Backoff.new(), {:rebind_relay, "a"}, :error, now)
+      b = Backoff.update(Backoff.new(), {:rebind_operative, "a"}, :error, now)
 
       ops = [
-        %{primitive: :rebind_relay, target: "a"},
-        %{primitive: :rebind_relay, target: "b"}
+        %{primitive: :rebind_operative, target: "a"},
+        %{primitive: :rebind_operative, target: "b"}
       ]
 
       kept = Backoff.filter(ops, b, &Planner.key/1, now)
-      assert kept == [%{primitive: :rebind_relay, target: "b"}]
+      assert kept == [%{primitive: :rebind_operative, target: "b"}]
     end
   end
 
   describe "Diff.compute/2" do
-    test "classifies unbound and misbound relays against active executors" do
+    test "classifies unbound and misbound operatives against active executors" do
       intent = %Intent{
-        relays: [
-          %{namespace: :ns, relay_id: "unbound", factory_id: nil, plugins: []},
-          %{namespace: :ns, relay_id: "ok", factory_id: nil, plugins: []},
-          %{namespace: :ns, relay_id: "stale", factory_id: nil, plugins: []}
+        operatives: [
+          %{namespace: :ns, operative_id: "unbound", factory_id: nil, plugins: []},
+          %{namespace: :ns, operative_id: "ok", factory_id: nil, plugins: []},
+          %{namespace: :ns, operative_id: "stale", factory_id: nil, plugins: []}
         ]
       }
 
       reality = %{
         active_executors: %{ns: MapSet.new(["e_live"])},
-        relays: %{
+        operatives: %{
           {:ns, "unbound"} => %{bound_executor: nil},
           {:ns, "ok"} => %{bound_executor: "e_live"},
           {:ns, "stale"} => %{bound_executor: "e_dead"}
         },
-        stalled_relays: MapSet.new()
+        stalled_operatives: MapSet.new()
       }
 
       delta = Diff.compute(intent, reality)
 
-      assert delta.unbound_relays == [{:ns, "unbound"}]
-      assert delta.misbound_relays == [{{:ns, "stale"}, "e_dead"}]
+      assert delta.unbound_operatives == [{:ns, "unbound"}]
+      assert delta.misbound_operatives == [{{:ns, "stale"}, "e_dead"}]
       refute Diff.empty?(delta)
     end
 
-    test "empty delta when every relay is bound to a live executor" do
-      intent = %Intent{relays: [%{namespace: :ns, relay_id: "ok", factory_id: nil, plugins: []}]}
+    test "empty delta when every operative is bound to a live executor" do
+      intent = %Intent{operatives: [%{namespace: :ns, operative_id: "ok", factory_id: nil, plugins: []}]}
 
       reality = %{
         active_executors: %{ns: MapSet.new(["e_live"])},
-        relays: %{{:ns, "ok"} => %{bound_executor: "e_live"}},
-        stalled_relays: MapSet.new()
+        operatives: %{{:ns, "ok"} => %{bound_executor: "e_live"}},
+        stalled_operatives: MapSet.new()
       }
 
       assert Diff.empty?(Diff.compute(intent, reality))
     end
 
-    test "I2: classifies missing and extra plugins on a live relay" do
+    test "I2: classifies missing and extra plugins on a live operative" do
       p = plugin("declared")
 
       intent = %Intent{
-        relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: [{"declared", p}]}]
+        operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"declared", p}]}]
       }
 
       reality = %{
         active_executors: %{ns: MapSet.new(["e"])},
-        relays: %{
+        operatives: %{
           {:ns, "r"} => %{bound_executor: "e", pid: self(), running_plugins: ["stray"]}
         },
-        stalled_relays: MapSet.new()
+        stalled_operatives: MapSet.new()
       }
 
       delta = Diff.compute(intent, reality)
@@ -119,13 +119,13 @@ defmodule Flezha.ConvergenceTest do
       p = plugin("p1")
 
       intent = %Intent{
-        relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: [{"p1", p}]}]
+        operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"p1", p}]}]
       }
 
       reality = %{
         active_executors: %{ns: MapSet.new(["e"])},
-        relays: %{{:ns, "r"} => %{bound_executor: "e", pid: self(), running_plugins: ["p1"]}},
-        stalled_relays: MapSet.new()
+        operatives: %{{:ns, "r"} => %{bound_executor: "e", pid: self(), running_plugins: ["p1"]}},
+        stalled_operatives: MapSet.new()
       }
 
       delta = Diff.compute(intent, reality)
@@ -133,24 +133,24 @@ defmodule Flezha.ConvergenceTest do
       assert delta.extra_plugins == []
     end
 
-    # fails when: a relay whose declared plugin set reads empty (cspec lag or
+    # fails when: a operative whose declared plugin set reads empty (cspec lag or
     # read failure) has its entire running plugin set torn down every tick,
     # causing a stop/re-subscribe storm
     test "I2: empty declared plugin set never marks running plugins as extra" do
       intent = %Intent{
-        relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: []}]
+        operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: []}]
       }
 
       reality = %{
         active_executors: %{ns: MapSet.new(["e"])},
-        relays: %{
+        operatives: %{
           {:ns, "r"} => %{
             bound_executor: "e",
             pid: self(),
             running_plugins: ["ws_in", "kafka_out"]
           }
         },
-        stalled_relays: MapSet.new()
+        stalled_operatives: MapSet.new()
       }
 
       delta = Diff.compute(intent, reality)
@@ -162,12 +162,12 @@ defmodule Flezha.ConvergenceTest do
       p = plugin("ws_in")
 
       intent = %Intent{
-        relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: [{"ws_in", p}]}]
+        operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"ws_in", p}]}]
       }
 
       reality = %{
         active_executors: %{ns: MapSet.new(["e"])},
-        relays: %{
+        operatives: %{
           {:ns, "r"} => %{
             bound_executor: "e",
             pid: self(),
@@ -175,7 +175,7 @@ defmodule Flezha.ConvergenceTest do
             plugin_health: %{"ws_in" => {:unhealthy, :connection_idle}}
           }
         },
-        stalled_relays: MapSet.new()
+        stalled_operatives: MapSet.new()
       }
 
       delta = Diff.compute(intent, reality)
@@ -190,10 +190,10 @@ defmodule Flezha.ConvergenceTest do
       fine = plugin("fine")
 
       intent = %Intent{
-        relays: [
+        operatives: [
           %{
             namespace: :ns,
-            relay_id: "r",
+            operative_id: "r",
             factory_id: nil,
             plugins: [{"gone", missing}, {"shaky", shaky}, {"fine", fine}]
           }
@@ -202,7 +202,7 @@ defmodule Flezha.ConvergenceTest do
 
       reality = %{
         active_executors: %{ns: MapSet.new(["e"])},
-        relays: %{
+        operatives: %{
           {:ns, "r"} => %{
             bound_executor: "e",
             pid: self(),
@@ -212,7 +212,7 @@ defmodule Flezha.ConvergenceTest do
             plugin_health: %{"shaky" => {:unhealthy, :produce_stalled}}
           }
         },
-        stalled_relays: MapSet.new()
+        stalled_operatives: MapSet.new()
       }
 
       delta = Diff.compute(intent, reality)
@@ -220,17 +220,17 @@ defmodule Flezha.ConvergenceTest do
       assert delta.unhealthy_plugins == [{{:ns, "r"}, "shaky", shaky, :produce_stalled}]
     end
 
-    test "I2: skips plugin diff for relays with no live pid" do
+    test "I2: skips plugin diff for operatives with no live pid" do
       p = plugin("declared")
 
       intent = %Intent{
-        relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: [{"declared", p}]}]
+        operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"declared", p}]}]
       }
 
       reality = %{
         active_executors: %{ns: MapSet.new()},
-        relays: %{{:ns, "r"} => %{bound_executor: nil, pid: nil, running_plugins: []}},
-        stalled_relays: MapSet.new()
+        operatives: %{{:ns, "r"} => %{bound_executor: nil, pid: nil, running_plugins: []}},
+        stalled_operatives: MapSet.new()
       }
 
       delta = Diff.compute(intent, reality)
@@ -239,53 +239,53 @@ defmodule Flezha.ConvergenceTest do
 
     test "skips misbound classification when the namespace's live-executor read is :unknown" do
       # C1 regression: a failed FleetManager read (Probe records `:unknown`)
-      # must NOT make every bound relay misbound — that mass-migrates a whole
+      # must NOT make every bound operative misbound — that mass-migrates a whole
       # namespace on a transient read race.
       intent = %Intent{
-        relays: [
-          %{namespace: :ns, relay_id: "a", factory_id: nil, plugins: []},
-          %{namespace: :ns, relay_id: "b", factory_id: nil, plugins: []}
+        operatives: [
+          %{namespace: :ns, operative_id: "a", factory_id: nil, plugins: []},
+          %{namespace: :ns, operative_id: "b", factory_id: nil, plugins: []}
         ]
       }
 
       reality = %{
         active_executors: %{ns: :unknown},
-        relays: %{
+        operatives: %{
           {:ns, "a"} => %{bound_executor: "e1"},
           {:ns, "b"} => %{bound_executor: "e2"}
         },
-        stalled_relays: MapSet.new()
+        stalled_operatives: MapSet.new()
       }
 
       delta = Diff.compute(intent, reality)
-      assert delta.misbound_relays == []
-      assert delta.unbound_relays == []
+      assert delta.misbound_operatives == []
+      assert delta.unbound_operatives == []
     end
 
-    test "skips a relay whose own state read failed (bound_executor :unknown)" do
-      intent = %Intent{relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: []}]}
+    test "skips a operative whose own state read failed (bound_executor :unknown)" do
+      intent = %Intent{operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: []}]}
 
       reality = %{
         active_executors: %{ns: MapSet.new(["e_live"])},
-        relays: %{{:ns, "r"} => %{bound_executor: :unknown, pid: nil, running_plugins: []}},
-        stalled_relays: MapSet.new()
+        operatives: %{{:ns, "r"} => %{bound_executor: :unknown, pid: nil, running_plugins: []}},
+        stalled_operatives: MapSet.new()
       }
 
       delta = Diff.compute(intent, reality)
-      assert delta.misbound_relays == []
-      assert delta.unbound_relays == []
+      assert delta.misbound_operatives == []
+      assert delta.unbound_operatives == []
       assert delta.missing_plugins == []
     end
   end
 
   describe "Planner.plan/3" do
-    test "orders eviction before rebind for misbound relays" do
-      delta = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead"}]}
+    test "orders eviction before rebind for misbound operatives" do
+      delta = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead"}]}
       plan = Planner.plan(delta, Backoff.new())
 
       assert [
                %{primitive: :evict_executor, target: "e_dead"},
-               %{primitive: :rebind_relay} = rebind
+               %{primitive: :rebind_operative} = rebind
              ] =
                plan
 
@@ -294,14 +294,14 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "caps ops per tick at max_ops" do
-      delta = %Diff{unbound_relays: for(i <- 1..30, do: {:ns, "r#{i}"})}
+      delta = %Diff{unbound_operatives: for(i <- 1..30, do: {:ns, "r#{i}"})}
       assert length(Planner.plan(delta, Backoff.new(), max_ops: 5)) == 5
     end
 
-    test "unbound relays bind via rebind_relay (un-park), not a no-op" do
-      delta = %Diff{unbound_relays: [{:ns, "parked"}]}
+    test "unbound operatives bind via rebind_operative (un-park), not a no-op" do
+      delta = %Diff{unbound_operatives: [{:ns, "parked"}]}
 
-      assert [%{primitive: :rebind_relay, namespace: :ns, target: "parked"}] =
+      assert [%{primitive: :rebind_operative, namespace: :ns, target: "parked"}] =
                Planner.plan(delta, Backoff.new())
     end
 
@@ -411,19 +411,19 @@ defmodule Flezha.ConvergenceTest do
     test "publish/current round-trips" do
       Snapshot.publish(%{
         last_tick_at: 42,
-        stalled_relays: ["x"],
-        bound_relays: 1,
-        producing_relays: 1
+        stalled_operatives: ["x"],
+        bound_operatives: 1,
+        producing_operatives: 1
       })
 
       assert Snapshot.current().last_tick_at == 42
-      assert Snapshot.current().stalled_relays == ["x"]
+      assert Snapshot.current().stalled_operatives == ["x"]
       # reset for other suites
       Snapshot.publish(%{
         last_tick_at: nil,
-        stalled_relays: [],
-        bound_relays: 0,
-        producing_relays: 0
+        stalled_operatives: [],
+        bound_operatives: 0,
+        producing_operatives: 0
       })
     end
 
@@ -440,7 +440,7 @@ defmodule Flezha.ConvergenceTest do
     test "the heal surface is exactly the five reachable primitives" do
       assert Enum.sort(Heal.primitives()) ==
                Enum.sort([
-                 :rebind_relay,
+                 :rebind_operative,
                  :start_plugin,
                  :stop_plugin,
                  :restart_plugin,
@@ -454,9 +454,9 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "a deleted/unknown primitive is no longer dispatchable" do
-      # `start_relay`, `replay_state`, `compact_wal` were never planned and
+      # `start_operative`, `replay_state`, `compact_wal` were never planned and
       # did nothing — they are gone, not silent no-ops.
-      for primitive <- [:start_relay, :replay_state, :compact_wal] do
+      for primitive <- [:start_operative, :replay_state, :compact_wal] do
         op = %{primitive: primitive, namespace: nil, target: :noop, args: %{}}
         assert Heal.execute(op) == :error
       end
@@ -471,34 +471,34 @@ defmodule Flezha.ConvergenceTest do
   describe "Loop output-stall rebind injection" do
     alias Flezha.Convergence.{Backoff, Intent, Loop}
 
-    test "stalled relay not in plan gets a rebind_relay op injected with reason: :output_stall" do
+    test "stalled operative not in plan gets a rebind_operative op injected with reason: :output_stall" do
       ns = "stall_ns_#{System.unique_integer([:positive])}"
-      relay_id = "relay_stalled"
+      operative_id = "operative_stalled"
 
       intent = %Intent{
-        relays: [%{namespace: ns, relay_id: relay_id, factory_id: nil, plugins: []}]
+        operatives: [%{namespace: ns, operative_id: operative_id, factory_id: nil, plugins: []}]
       }
 
       ready = MapSet.new([ns])
-      stalled = %{relay_id => System.monotonic_time(:millisecond)}
+      stalled = %{operative_id => System.monotonic_time(:millisecond)}
 
       injected = Loop.inject_stall_rebinds_for_test([], stalled, intent, ready, Backoff.new())
 
-      assert [%{primitive: :rebind_relay, target: ^relay_id, args: %{reason: :output_stall}}] =
+      assert [%{primitive: :rebind_operative, target: ^operative_id, args: %{reason: :output_stall}}] =
                injected
     end
 
-    test "stalled relay already in plan is not duplicated" do
+    test "stalled operative already in plan is not duplicated" do
       ns = "stall_ns2_#{System.unique_integer([:positive])}"
-      relay_id = "relay_dup"
+      operative_id = "operative_dup"
 
       intent = %Intent{
-        relays: [%{namespace: ns, relay_id: relay_id, factory_id: nil, plugins: []}]
+        operatives: [%{namespace: ns, operative_id: operative_id, factory_id: nil, plugins: []}]
       }
 
       ready = MapSet.new([ns])
-      stalled = %{relay_id => System.monotonic_time(:millisecond)}
-      existing_op = %{primitive: :rebind_relay, namespace: ns, target: relay_id, args: %{}}
+      stalled = %{operative_id => System.monotonic_time(:millisecond)}
+      existing_op = %{primitive: :rebind_operative, namespace: ns, target: operative_id, args: %{}}
 
       result =
         Loop.inject_stall_rebinds_for_test([existing_op], stalled, intent, ready, Backoff.new())
@@ -507,18 +507,18 @@ defmodule Flezha.ConvergenceTest do
       assert hd(result) == existing_op
     end
 
-    test "stalled relay in backoff cooldown is filtered out" do
+    test "stalled operative in backoff cooldown is filtered out" do
       ns = "stall_ns3_#{System.unique_integer([:positive])}"
-      relay_id = "relay_cooldown"
+      operative_id = "operative_cooldown"
 
       intent = %Intent{
-        relays: [%{namespace: ns, relay_id: relay_id, factory_id: nil, plugins: []}]
+        operatives: [%{namespace: ns, operative_id: operative_id, factory_id: nil, plugins: []}]
       }
 
       ready = MapSet.new([ns])
-      stalled = %{relay_id => System.monotonic_time(:millisecond)}
+      stalled = %{operative_id => System.monotonic_time(:millisecond)}
       now = System.monotonic_time(:millisecond)
-      backoff = Backoff.update(Backoff.new(), {:rebind_relay, relay_id}, :error, now)
+      backoff = Backoff.update(Backoff.new(), {:rebind_operative, operative_id}, :error, now)
 
       result = Loop.inject_stall_rebinds_for_test([], stalled, intent, ready, backoff)
       assert result == []
@@ -528,131 +528,131 @@ defmodule Flezha.ConvergenceTest do
   describe "Loop.apply_misbound_streak/2 (B5)" do
     alias Flezha.Convergence.Loop
 
-    test "a relay misbound for one tick is not yet migrated; two ticks releases it" do
-      delta = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead"}]}
+    test "a operative misbound for one tick is not yet migrated; two ticks releases it" do
+      delta = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead"}]}
 
       {streaks, tick1} = Loop.apply_misbound_streak(%{}, delta)
-      assert tick1.misbound_relays == []
+      assert tick1.misbound_operatives == []
 
       {_streaks, tick2} = Loop.apply_misbound_streak(streaks, delta)
-      assert tick2.misbound_relays == [{{:ns, "r"}, "e_dead"}]
+      assert tick2.misbound_operatives == [{{:ns, "r"}, "e_dead"}]
     end
 
-    test "a relay seen bound again resets its streak" do
-      delta = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead"}]}
+    test "a operative seen bound again resets its streak" do
+      delta = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead"}]}
       {streaks, _} = Loop.apply_misbound_streak(%{}, delta)
 
       # Bound again this tick → drops out → streak resets.
-      {streaks, _} = Loop.apply_misbound_streak(streaks, %Diff{misbound_relays: []})
+      {streaks, _} = Loop.apply_misbound_streak(streaks, %Diff{misbound_operatives: []})
       {_streaks, tick} = Loop.apply_misbound_streak(streaks, delta)
-      assert tick.misbound_relays == []
+      assert tick.misbound_operatives == []
     end
   end
 
-  describe "Loop.relay_health_map/3 (operator health surface)" do
+  describe "Loop.operative_health_map/3 (operator health surface)" do
     alias Flezha.Convergence.{Intent, Loop}
 
-    defp intent_relay(ns, rid),
-      do: %{namespace: ns, relay_id: rid, factory_id: nil, plugins: []}
+    defp intent_operative(ns, rid),
+      do: %{namespace: ns, operative_id: rid, factory_id: nil, plugins: []}
 
-    defp reality(ns, observed_relays, active),
-      do: %{relays: observed_relays, active_executors: %{ns => active}}
+    defp reality(ns, observed_operatives, active),
+      do: %{operatives: observed_operatives, active_executors: %{ns => active}}
 
-    test "a bound relay on a live executor is :healthy" do
+    test "a bound operative on a live executor is :healthy" do
       ns = "ns"
-      intent = %Intent{relays: [intent_relay(ns, "r")]}
+      intent = %Intent{operatives: [intent_operative(ns, "r")]}
 
       reality =
         reality(ns, %{{ns, "r"} => %{bound_executor: "e1", pid: self()}}, MapSet.new(["e1"]))
 
-      health = Loop.relay_health_map(intent.relays, reality, %Loop{})
+      health = Loop.operative_health_map(intent.operatives, reality, %Loop{})
       assert health == %{{ns, "r"} => :healthy}
     end
 
-    test "a relay bound to no executor is :unbound" do
+    test "a operative bound to no executor is :unbound" do
       ns = "ns"
-      intent = %Intent{relays: [intent_relay(ns, "r")]}
+      intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_executor: nil}}, MapSet.new(["e1"]))
 
-      assert Loop.relay_health_map(intent.relays, reality, %Loop{}) == %{{ns, "r"} => :unbound}
+      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{{ns, "r"} => :unbound}
     end
 
-    test "a relay bound to a dead executor is :failed" do
+    test "a operative bound to a dead executor is :failed" do
       ns = "ns"
-      intent = %Intent{relays: [intent_relay(ns, "r")]}
+      intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_executor: "gone"}}, MapSet.new(["e1"]))
 
-      assert Loop.relay_health_map(intent.relays, reality, %Loop{}) == %{{ns, "r"} => :failed}
+      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{{ns, "r"} => :failed}
     end
 
-    test "a bound-but-stalled relay is :degraded" do
+    test "a bound-but-stalled operative is :degraded" do
       ns = "ns"
-      intent = %Intent{relays: [intent_relay(ns, "r")]}
+      intent = %Intent{operatives: [intent_operative(ns, "r")]}
 
       reality =
         reality(ns, %{{ns, "r"} => %{bound_executor: "e1", pid: self()}}, MapSet.new(["e1"]))
 
-      state = %Loop{stalled_relays: %{"r" => System.monotonic_time(:millisecond)}}
-      assert Loop.relay_health_map(intent.relays, reality, state) == %{{ns, "r"} => :degraded}
+      state = %Loop{stalled_operatives: %{"r" => System.monotonic_time(:millisecond)}}
+      assert Loop.operative_health_map(intent.operatives, reality, state) == %{{ns, "r"} => :degraded}
     end
 
-    test "a bound relay with a degraded plugin is :degraded" do
+    test "a bound operative with a degraded plugin is :degraded" do
       ns = "ns"
-      intent = %Intent{relays: [intent_relay(ns, "r")]}
+      intent = %Intent{operatives: [intent_operative(ns, "r")]}
 
       reality =
         reality(ns, %{{ns, "r"} => %{bound_executor: "e1", pid: self()}}, MapSet.new(["e1"]))
 
-      assert Loop.relay_health_map(intent.relays, reality, %Loop{plugin_degraded: ["r"]}) ==
+      assert Loop.operative_health_map(intent.operatives, reality, %Loop{plugin_degraded: ["r"]}) ==
                %{{ns, "r"} => :degraded}
     end
 
-    test "an unobservable relay (failed read) is :unknown for the tick, not classified" do
+    test "an unobservable operative (failed read) is :unknown for the tick, not classified" do
       ns = "ns"
-      intent = %Intent{relays: [intent_relay(ns, "r")]}
+      intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_executor: :unknown}}, MapSet.new(["e1"]))
 
-      assert Loop.relay_health_map(intent.relays, reality, %Loop{}) == %{{ns, "r"} => :unknown}
+      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{{ns, "r"} => :unknown}
     end
 
-    test "a relay whose namespace live-executor read failed is :unknown, not :failed" do
+    test "a operative whose namespace live-executor read failed is :unknown, not :failed" do
       ns = "ns"
-      intent = %Intent{relays: [intent_relay(ns, "r")]}
+      intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_executor: "e1"}}, :unknown)
 
-      assert Loop.relay_health_map(intent.relays, reality, %Loop{}) == %{{ns, "r"} => :unknown}
+      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{{ns, "r"} => :unknown}
     end
   end
 
-  describe "RelayManager.pick_executor/2 — deterministic HRW placement (C1p)" do
-    alias Flezha.Service.RelayManager
+  describe "OperativeManager.pick_executor/2 — deterministic HRW placement (C1p)" do
+    alias Flezha.Service.OperativeManager
 
     test "empty candidate set yields nil" do
-      assert RelayManager.pick_executor([], "r") == nil
+      assert OperativeManager.pick_executor([], "r") == nil
     end
 
-    test "same (relay_id, set) always picks the same executor" do
+    test "same (operative_id, set) always picks the same executor" do
       set = ["e1", "e2", "e3"]
-      pick = RelayManager.pick_executor(set, "btc")
+      pick = OperativeManager.pick_executor(set, "btc")
       assert pick in set
-      assert RelayManager.pick_executor(Enum.shuffle(set), "btc") == pick
+      assert OperativeManager.pick_executor(Enum.shuffle(set), "btc") == pick
     end
 
-    test "removing only the chosen executor moves only that relay (stable)" do
+    test "removing only the chosen executor moves only that operative (stable)" do
       set = ["e1", "e2", "e3", "e4"]
-      relays = for i <- 1..40, do: "relay_#{i}"
-      before = Map.new(relays, fn r -> {r, RelayManager.pick_executor(set, r)} end)
+      operatives = for i <- 1..40, do: "operative_#{i}"
+      before = Map.new(operatives, fn r -> {r, OperativeManager.pick_executor(set, r)} end)
 
       victim = "e2"
       after_set = set -- [victim]
 
-      for r <- relays do
-        new_pick = RelayManager.pick_executor(after_set, r)
+      for r <- operatives do
+        new_pick = OperativeManager.pick_executor(after_set, r)
 
         if before[r] == victim do
           assert new_pick in after_set
         else
-          # relays not on the removed executor keep their placement
+          # operatives not on the removed executor keep their placement
           assert new_pick == before[r]
         end
       end

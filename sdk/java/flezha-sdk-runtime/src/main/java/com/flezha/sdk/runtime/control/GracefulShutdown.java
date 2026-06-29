@@ -5,8 +5,8 @@ import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.ExecutorShutdownNotification;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
-import com.flezha.sdk.runtime.relay.RelayInstance;
-import com.flezha.sdk.runtime.relay.RelayStateSerializer;
+import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
+import com.flezha.sdk.runtime.operative.ContinuousOperativeStateSerializer;
 import com.google.protobuf.ByteString;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,9 +25,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>On graceful shutdown — SIGTERM (Kubernetes pre-stop), explicit
  * {@code Flezha.close()}, or JVM exit via the registered shutdown hook —
- * the SDK serializes each currently-running relay's state via the
+ * the SDK serializes each currently-running operative's state via the
  * same per-driver path used for {@code MigrationSerialization} and
- * emits one {@link ExecutorShutdownNotification} per relay on the
+ * emits one {@link ExecutorShutdownNotification} per operative on the
  * control channel. The controller overwrites its
  * {@code Overwatch.state.snapshot} with the supplied binary so the next
  * reconnecting executor picks up the executor's true final state — see
@@ -36,11 +36,11 @@ import org.slf4j.LoggerFactory;
  * <h2>Timing contract</h2>
  *
  * <ul>
- *   <li>Per-relay ack wait is bounded at <strong>2 seconds</strong>,
- *       parallelised across relays via {@link CompletableFuture#allOf}
+ *   <li>Per-operative ack wait is bounded at <strong>2 seconds</strong>,
+ *       parallelised across operatives via {@link CompletableFuture#allOf}
  *       so total wait is bounded by 2 s (not 2N s).</li>
  *   <li>The serializer step is in-process (Jackson) and effectively
- *       constant-time; no separate cap is enforced. Relays with
+ *       constant-time; no separate cap is enforced. ContinuousOperatives with
  *       multi-second serializers should refactor.</li>
  *   <li>On timeout the SDK proceeds to exit unconditionally and SHALL
  *       NOT block its container's shutdown grace period.</li>
@@ -56,7 +56,7 @@ public final class GracefulShutdown {
 
     private static final Logger LOG = LoggerFactory.getLogger(GracefulShutdown.class);
 
-    /** Per-relay ack wait. Total wait is bounded at this value via parallelism. */
+    /** Per-operative ack wait. Total wait is bounded at this value via parallelism. */
     private static final long ACK_TIMEOUT_MS = 2_000L;
 
     /** Wire-level payload_id reused from the existing controller -> SDK CommandRequest flow. */
@@ -105,31 +105,31 @@ public final class GracefulShutdown {
             return;
         }
 
-        Map<String, RelayInstance> relays = ctx.relayInstanceRegistry().relaySnapshot();
-        if (relays.isEmpty()) {
+        Map<String, ContinuousOperativeInstance> operatives = ctx.operativeInstanceRegistry().operativeSnapshot();
+        if (operatives.isEmpty()) {
             return;
         }
 
-        List<CompletableFuture<Void>> waits = new ArrayList<>(relays.size());
+        List<CompletableFuture<Void>> waits = new ArrayList<>(operatives.size());
 
-        for (Map.Entry<String, RelayInstance> entry : relays.entrySet()) {
-            String relayId = entry.getKey();
-            RelayInstance instance = entry.getValue();
+        for (Map.Entry<String, ContinuousOperativeInstance> entry : operatives.entrySet()) {
+            String operativeId = entry.getKey();
+            ContinuousOperativeInstance instance = entry.getValue();
 
             byte[] serializedState;
             try {
-                serializedState = RelayStateSerializer.serialize(instance);
+                serializedState = ContinuousOperativeStateSerializer.serialize(instance);
             } catch (Exception e) {
-                LOG.warn("Skipping shutdown notification for {} — serializeState failed: {}", relayId, e.toString());
+                LOG.warn("Skipping shutdown notification for {} — serializeState failed: {}", operativeId, e.toString());
                 continue;
             }
 
-            String referenceId = "shutdown-" + relayId + "-" + System.nanoTime();
+            String referenceId = "shutdown-" + operativeId + "-" + System.nanoTime();
 
             CommandRequest request = CommandRequest.newBuilder()
                     .setReferenceId(referenceId)
                     .setExecutorShutdownNotification(ExecutorShutdownNotification.newBuilder()
-                            .setRelayId(relayId)
+                            .setOperativeId(operativeId)
                             .setSerializedState(ByteString.copyFrom(serializedState))
                             .build())
                     .build();
@@ -140,12 +140,12 @@ public final class GracefulShutdown {
 
             int writeStatus = writer.write(controlStreamId, frameBytes);
             if (writeStatus != 0) {
-                LOG.warn("Failed to write ExecutorShutdownNotification for {} (status={})", relayId, writeStatus);
+                LOG.warn("Failed to write ExecutorShutdownNotification for {} (status={})", operativeId, writeStatus);
                 PENDING_ACKS.remove(referenceId);
                 continue;
             }
 
-            String pidForLog = relayId;
+            String pidForLog = operativeId;
             CompletableFuture<Void> bounded = ackFuture
                     .orTimeout(ACK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                     .exceptionally(throwable -> {
@@ -180,7 +180,7 @@ public final class GracefulShutdown {
     }
 
     /**
-     * Wakes the per-relay wait registered by {@link #run}. Called
+     * Wakes the per-operative wait registered by {@link #run}. Called
      * from {@code CommandRouter} when an
      * {@link com.flezha.sdk.proto.ExecutorShutdownAck} arrives. Missing
      * entries — i.e. the wait already timed out — are logged and

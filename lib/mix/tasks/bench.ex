@@ -1,24 +1,24 @@
 defmodule Mix.Tasks.Bench do
   use Mix.Task
   require Logger
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Flezha.Executor.FleetManager
 
-  @shortdoc "Run performance tests for Flezha relays"
+  @shortdoc "Run performance tests for Flezha operatives"
   @moduledoc """
-  Run performance tests for Flezha relays.
+  Run performance tests for Flezha operatives.
 
   ## Usage
 
-      mix bench --num-relays 1000 --messages-per-relay 1000
+      mix bench --num-operatives 1000 --messages-per-operative 1000
       mix bench --runtime java -n 100 -m 1000
-      mix bench --runtime rust --shape partitioning --pool-sizes 1,8
+      mix bench --runtime rust --shape segmenting --pool-sizes 1,8
 
   ## Options
 
-    * `--num-relays` / `-n` - Number of relays to create (default: 100)
-    * `--messages-per-relay` / `-m` - Number of messages to send per relay (default: 100)
+    * `--num-operatives` / `-n` - Number of operatives to create (default: 100)
+    * `--messages-per-operative` / `-m` - Number of messages to send per operative (default: 100)
     * `--runtime` / `-r` - Which SDK to benchmark: `rust` (default) or `java`.
       The `java` runtime requires the test jar at
       `test/apps/java_executor/target/java_executor.jar`. Build it
@@ -26,14 +26,14 @@ defmodule Mix.Tasks.Bench do
       `mvn -f test/apps/java_executor/pom.xml package`.
     * `--shape` - Bench shape: `regression` (default; the apples-to-apples
       regression check, factory `do_nothing`, dimensions from `-n` / `-m`),
-      `partitioning` (the `relay-bench-harness` partitioning-stress shape, factory
-      `partitioning_stress`, dimensions hard-coded at `8 × 20_000` per
-      `relay-bench-harness/design.md` Decision 6, swept across the comma-list in
-      `--pool-sizes`), or `dynamic` (the `relay-dynamic-partitioning` shape, factory
-      `dynamic_partition`, lazy per-key Partitions with 8 keys/relay,
+      `segmenting` (the `operative-bench-harness` segmenting-stress shape, factory
+      `segmenting_stress`, dimensions hard-coded at `8 × 20_000` per
+      `operative-bench-harness/design.md` Decision 6, swept across the comma-list in
+      `--pool-sizes`), or `dynamic` (the `operative-dynamic-segmenting` shape, factory
+      `dynamic_segment`, lazy per-key Segments with 8 keys/operative,
       dimensions from `-n` / `-m`).
     * `--pool-sizes` - Comma-separated worker-pool sizes (default: `"1,8"`),
-      only honored when `--shape partitioning`. Each value spawns a fresh
+      only honored when `--shape segmenting`. Each value spawns a fresh
       Rust executor binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
       reports throughput per-size; the final scaling summary is parsed by CI.
 
@@ -55,15 +55,15 @@ defmodule Mix.Tasks.Bench do
     {opts, _, _} =
       OptionParser.parse(args,
         switches: [
-          num_relays: :integer,
-          messages_per_relay: :integer,
+          num_operatives: :integer,
+          messages_per_operative: :integer,
           runtime: :string,
           shape: :string,
           pool_sizes: :string
         ],
         aliases: [
-          n: :num_relays,
-          m: :messages_per_relay,
+          n: :num_operatives,
+          m: :messages_per_operative,
           r: :runtime
         ]
       )
@@ -72,14 +72,14 @@ defmodule Mix.Tasks.Bench do
     shape = parse_shape(opts[:shape])
     pool_sizes = parse_pool_sizes(opts[:pool_sizes])
 
-    {num_relays, messages_per_relay} = dimensions_for_shape(shape, opts)
+    {num_operatives, messages_per_operative} = dimensions_for_shape(shape, opts)
 
     IO.puts("Starting Flezha performance test...")
     IO.puts("Runtime: #{runtime}")
     IO.puts("Shape: #{shape}")
-    IO.puts("Relays: #{num_relays}")
-    IO.puts("Messages per relay: #{messages_per_relay}")
-    if shape == :partitioning, do: IO.puts("Pool sizes: #{Enum.join(pool_sizes, ",")}")
+    IO.puts("Operatives: #{num_operatives}")
+    IO.puts("Messages per operative: #{messages_per_operative}")
+    if shape == :segmenting, do: IO.puts("Pool sizes: #{Enum.join(pool_sizes, ",")}")
     IO.puts("")
 
     Process.put(:bench_runtime, runtime)
@@ -90,19 +90,19 @@ defmodule Mix.Tasks.Bench do
     Logger.configure(level: :warning)
 
     case shape do
-      :regression -> run_default_shape(runtime, num_relays, messages_per_relay, :regression)
-      :dynamic -> run_default_shape(runtime, num_relays, messages_per_relay, :dynamic)
-      :partitioning -> run_partitioning_shape(num_relays, messages_per_relay, pool_sizes)
+      :regression -> run_default_shape(runtime, num_operatives, messages_per_operative, :regression)
+      :dynamic -> run_default_shape(runtime, num_operatives, messages_per_operative, :dynamic)
+      :segmenting -> run_segmenting_shape(num_operatives, messages_per_operative, pool_sizes)
     end
   end
 
   # ----- Single-namespace shapes: regression (default) and dynamic -----
   #
   # `:regression` is byte-identical to the historical default behaviour.
-  # `:dynamic` reuses the same harness with the `dynamic_partition`
+  # `:dynamic` reuses the same harness with the `dynamic_segment`
   # factory and keyed inputs (see `input_for_shape/3`).
 
-  defp run_default_shape(runtime, num_relays, messages_per_relay, shape) do
+  defp run_default_shape(runtime, num_operatives, messages_per_operative, shape) do
     namespace =
       cond do
         runtime != :rust ->
@@ -118,7 +118,7 @@ defmodule Mix.Tasks.Bench do
       end
 
     try do
-      run_performance_test(namespace, num_relays, messages_per_relay, shape)
+      run_performance_test(namespace, num_operatives, messages_per_operative, shape)
     after
       if namespace == @bench_namespace do
         cleanup_test_environment(namespace)
@@ -126,12 +126,12 @@ defmodule Mix.Tasks.Bench do
     end
   end
 
-  # ----- Shape: partitioning (new — sweeps pool sizes, emits scaling summary) -----
+  # ----- Shape: segmenting (new — sweeps pool sizes, emits scaling summary) -----
 
-  defp run_partitioning_shape(num_relays, messages_per_relay, pool_sizes) do
+  defp run_segmenting_shape(num_operatives, messages_per_operative, pool_sizes) do
     results =
       Enum.map(pool_sizes, fn pool ->
-        IO.puts("\n=== Partitioning Stress: pool=#{pool} ===")
+        IO.puts("\n=== Segmenting Stress: pool=#{pool} ===")
         # Always bring up a fresh bench namespace per pool size — the default
         # namespace's compute engines were started without FLEZHA_WORKER_POOL_SIZE
         # threaded through, so they can't be reused for the per-pool sweep.
@@ -141,9 +141,9 @@ defmodule Mix.Tasks.Bench do
           throughput =
             run_performance_test(
               @bench_namespace,
-              num_relays,
-              messages_per_relay,
-              :partitioning
+              num_operatives,
+              messages_per_operative,
+              :segmenting
             )
 
           {pool, throughput}
@@ -196,7 +196,7 @@ defmodule Mix.Tasks.Bench do
   defp cleanup_test_environment(namespace) do
     IO.puts("Cleaning up test environment...")
 
-    RelayManager.stop_all_relays(namespace)
+    OperativeManager.stop_all_operatives(namespace)
 
     case Process.get(:bench_executors) do
       engines when is_list(engines) ->
@@ -248,11 +248,11 @@ defmodule Mix.Tasks.Bench do
 
   defp parse_shape(nil), do: :regression
   defp parse_shape("regression"), do: :regression
-  defp parse_shape("partitioning"), do: :partitioning
+  defp parse_shape("segmenting"), do: :segmenting
   defp parse_shape("dynamic"), do: :dynamic
 
   defp parse_shape(other) do
-    raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\", \"partitioning\", or \"dynamic\"."
+    raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\", \"segmenting\", or \"dynamic\"."
   end
 
   defp parse_pool_sizes(nil), do: [1, 8]
@@ -272,22 +272,22 @@ defmodule Mix.Tasks.Bench do
   end
 
   defp factory_for_shape(:regression), do: "do_nothing"
-  defp factory_for_shape(:partitioning), do: "partitioning_stress"
-  defp factory_for_shape(:dynamic), do: "dynamic_partition"
+  defp factory_for_shape(:segmenting), do: "segmenting_stress"
+  defp factory_for_shape(:dynamic), do: "dynamic_segment"
 
   defp dimensions_for_shape(:regression, opts) do
-    {opts[:num_relays] || 100, opts[:messages_per_relay] || 100}
+    {opts[:num_operatives] || 100, opts[:messages_per_operative] || 100}
   end
 
   defp dimensions_for_shape(:dynamic, opts) do
-    {opts[:num_relays] || 100, opts[:messages_per_relay] || 100}
+    {opts[:num_operatives] || 100, opts[:messages_per_operative] || 100}
   end
 
-  defp dimensions_for_shape(:partitioning, opts) do
-    if opts[:num_relays] || opts[:messages_per_relay] do
+  defp dimensions_for_shape(:segmenting, opts) do
+    if opts[:num_operatives] || opts[:messages_per_operative] do
       IO.warn(
-        "--shape partitioning ignores -n/-m; dimensions are hard-coded at 8 × 20_000 " <>
-          "per relay-bench-harness/design.md Decision 6. Use --shape regression for " <>
+        "--shape segmenting ignores -n/-m; dimensions are hard-coded at 8 × 20_000 " <>
+          "per operative-bench-harness/design.md Decision 6. Use --shape regression for " <>
           "custom dimensions."
       )
     end
@@ -342,26 +342,26 @@ defmodule Mix.Tasks.Bench do
     "java -jar #{jar_path} #{namespace}"
   end
 
-  defp run_performance_test(namespace, num_relays, test_messages_per_relay, shape) do
+  defp run_performance_test(namespace, num_operatives, test_messages_per_operative, shape) do
     factory = factory_for_shape(shape)
-    IO.puts("Starting flow test with #{num_relays} relays (factory=#{factory})...")
+    IO.puts("Starting flow test with #{num_operatives} operatives (factory=#{factory})...")
 
-    {relay_creation_time, relay_infos} =
+    {operative_creation_time, operative_infos} =
       :timer.tc(fn ->
-        for i <- 1..num_relays do
-          relay_id = "flow_test_#{i}"
+        for i <- 1..num_operatives do
+          operative_id = "flow_test_#{i}"
 
-          relay = %Flezha.Relay.Builder{
-            id: relay_id,
+          operative = %Flezha.Operative.Builder{
+            id: operative_id,
             factory_id: factory
           }
 
-          case RelayManager.start_relay(namespace, relay) do
+          case OperativeManager.start_operative(namespace, operative) do
             {:ok, info} ->
-              {relay_id, info}
+              {operative_id, info}
 
             error ->
-              IO.puts("Failed to start relay #{relay_id}: #{inspect(error)}")
+              IO.puts("Failed to start operative #{operative_id}: #{inspect(error)}")
               nil
           end
         end
@@ -369,18 +369,18 @@ defmodule Mix.Tasks.Bench do
       end)
 
     IO.puts(
-      "Relay creation took: #{relay_creation_time / 1000} ms for #{length(relay_infos)} relays"
+      "Operative creation took: #{operative_creation_time / 1000} ms for #{length(operative_infos)} operatives"
     )
 
     {plugin_setup_time, _} =
       :timer.tc(fn ->
-        Enum.each(relay_infos, fn {relay_id, _info} ->
+        Enum.each(operative_infos, fn {operative_id, _info} ->
           PluginManager.enable_plugin(
-            relay_id <> "_beam_msg_forward",
+            operative_id <> "_beam_msg_forward",
             %Flezha.Plugin{
-              id: relay_id <> "_beam_msg_forward",
+              id: operative_id <> "_beam_msg_forward",
               namespace: namespace,
-              relay_id: relay_id,
+              operative_id: operative_id,
               provider: Flezha.Plugin.Provider.BeamMsgForward,
               opts: %{recv_pid: self()},
               subscriptions: [{:on_output, []}]
@@ -388,11 +388,11 @@ defmodule Mix.Tasks.Bench do
           )
 
           PluginManager.enable_plugin(
-            relay_id <> "_stdout_plugin",
+            operative_id <> "_stdout_plugin",
             %Flezha.Plugin{
-              id: relay_id <> "_stdout_plugin",
+              id: operative_id <> "_stdout_plugin",
               namespace: namespace,
-              relay_id: relay_id,
+              operative_id: operative_id,
               provider: Flezha.Plugin.Provider.StdOut,
               opts: %{},
               subscriptions: []
@@ -401,19 +401,19 @@ defmodule Mix.Tasks.Bench do
         end)
       end)
 
-    IO.puts("Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(relay_infos)} relays")
+    IO.puts("Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(operative_infos)} operatives")
 
-    total_messages = length(relay_infos) * test_messages_per_relay
+    total_messages = length(operative_infos) * test_messages_per_operative
 
-    IO.puts("Sending #{total_messages} total messages (#{test_messages_per_relay} per relay)...")
+    IO.puts("Sending #{total_messages} total messages (#{test_messages_per_operative} per operative)...")
 
     {message_send_time, _} =
       :timer.tc(fn ->
-        Enum.each(relay_infos, fn {relay_id, %{pid: relay_pid}} ->
-          for msg_num <- 1..test_messages_per_relay do
+        Enum.each(operative_infos, fn {operative_id, %{pid: operative_pid}} ->
+          for msg_num <- 1..test_messages_per_operative do
             GenServer.cast(
-              relay_pid,
-              {:io_in, input_for_shape(shape, relay_id, msg_num), %{}}
+              operative_pid,
+              {:io_in, input_for_shape(shape, operative_id, msg_num), %{}}
             )
           end
         end)
@@ -442,26 +442,26 @@ defmodule Mix.Tasks.Bench do
     )
 
     total_time =
-      relay_creation_time + plugin_setup_time + message_send_time + message_receive_time
+      operative_creation_time + plugin_setup_time + message_send_time + message_receive_time
 
     throughput_msgs_per_sec = total_messages * 1_000_000 / message_receive_time
 
     IO.puts("\n=== Performance Summary ===")
-    IO.puts("Relays created: #{length(relay_infos)}")
+    IO.puts("Operatives created: #{length(operative_infos)}")
     IO.puts("Total inputs dispatched: #{total_messages}")
     IO.puts("Plugin-forwarded responses received: #{expected_responses}")
-    IO.puts("Relay creation: #{relay_creation_time / 1000} ms")
+    IO.puts("Operative creation: #{operative_creation_time / 1000} ms")
     IO.puts("Plugin setup: #{plugin_setup_time / 1000} ms")
     IO.puts("Message sending: #{message_send_time / 1000} ms")
     IO.puts("Message processing: #{message_receive_time / 1000} ms")
     IO.puts("Total time: #{total_time / 1000} ms")
     IO.puts("Throughput: #{Float.round(throughput_msgs_per_sec, 2)} messages/second")
-    IO.puts("Average time per relay: #{total_time / length(relay_infos) / 1000} ms")
+    IO.puts("Average time per operative: #{total_time / length(operative_infos) / 1000} ms")
 
-    RelayManager.stop_all_relays(namespace)
+    OperativeManager.stop_all_operatives(namespace)
 
-    if length(relay_infos) == 0 do
-      exit("No relays were created successfully")
+    if length(operative_infos) == 0 do
+      exit("No operatives were created successfully")
     end
 
     if total_messages == 0 do
@@ -473,27 +473,27 @@ defmodule Mix.Tasks.Bench do
     throughput_msgs_per_sec
   end
 
-  # `do_nothing` echoes once per input (single shard, single partition,
+  # `do_nothing` echoes once per input (single operation, single segment,
   # one plugin-bound emit), so each dispatched input produces one
-  # `:on_output` event. `partitioning_stress` chains four shards × 8
-  # partitions; only ShardD emits to a plugin, and only its `p0` partition
-  # is targeted by the pipeline routing so it runs once per ShardC emit.
-  # The entry shard fans 8-wide → ShardA runs 8× → 8 emits to B[p0] →
+  # `:on_output` event. `segmenting_stress` chains four operations × 8
+  # segments; only OperationD emits to a plugin, and only its `p0` segment
+  # is targeted by the pipeline routing so it runs once per OperationC emit.
+  # The entry operation fans 8-wide → OperationA runs 8× → 8 emits to B[p0] →
   # 8 emits to C[p0] → 8 emits to D[p0] → 8 plugin-bound emits per input.
   defp expected_responses(:regression, total_messages), do: total_messages
-  defp expected_responses(:partitioning, total_messages), do: total_messages * 8
-  # `dynamic_partition` emits once per input (one plugin-bound emit),
+  defp expected_responses(:segmenting, total_messages), do: total_messages * 8
+  # `dynamic_segment` emits once per input (one plugin-bound emit),
   # so each dispatched input produces one `:on_output` event.
   defp expected_responses(:dynamic, total_messages), do: total_messages
 
   # Per-shape wire input. The dynamic shape prefixes a bounded key
-  # (`k0`..`k7`) so a steady burst exercises 8 dynamic Partitions per relay
+  # (`k0`..`k7`) so a steady burst exercises 8 dynamic Segments per operative
   # without tripping the soft cap; other shapes are key-agnostic.
-  defp input_for_shape(:dynamic, relay_id, msg_num) do
-    "k#{rem(msg_num, 8)}:test_msg_#{relay_id}_#{msg_num}"
+  defp input_for_shape(:dynamic, operative_id, msg_num) do
+    "k#{rem(msg_num, 8)}:test_msg_#{operative_id}_#{msg_num}"
   end
 
-  defp input_for_shape(_shape, relay_id, msg_num) do
-    "test_msg_#{relay_id}_#{msg_num}"
+  defp input_for_shape(_shape, operative_id, msg_num) do
+    "test_msg_#{operative_id}_#{msg_num}"
   end
 end

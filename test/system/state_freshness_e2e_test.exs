@@ -2,7 +2,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   @moduledoc """
   End-to-end SIGTERM verification for `ship-fresh-state-on-sdk-shutdown`.
 
-  Spins up a real Rust executor subprocess, registers a relay
+  Spins up a real Rust executor subprocess, registers a operative
   with `snapshot_interval: 0` (so the controller has no periodic capture and
   the only path to populate `Overwatch.state.snapshot` is the SDK's
   shutdown notification), then sends SIGTERM to the OS pid and asserts
@@ -16,17 +16,17 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
       mix test --include system test/system/state_freshness_e2e_test.exs
 
   The complementary unit-level coverage lives in
-  `test/relay/overwatch_external_snapshot_test.exs` and
+  `test/operative/overwatch_external_snapshot_test.exs` and
   `test/flezha/executor/control_channel_shutdown_notification_test.exs`.
   """
 
   use ExUnit.Case, async: false
 
   alias Flezha.Executor.FleetManager
-  alias Flezha.Relay.Builder
+  alias Flezha.Operative.Builder
   alias Flezha.Service.EventManager
   alias Flezha.Service.PortPilot
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.OperativeManager
 
   @moduletag :system
   @namespace "state_freshness_e2e"
@@ -35,7 +35,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   setup do
     on_exit(fn ->
       try do
-        RelayManager.stop_all_relays(@namespace)
+        OperativeManager.stop_all_operatives(@namespace)
       catch
         _, _ -> :ok
       end
@@ -57,10 +57,10 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
 
     {:os_pid, os_pid} = :erlang.port_info(port, :os_pid)
 
-    relay_id = "freshness_e2e_#{System.unique_integer([:positive])}"
+    operative_id = "freshness_e2e_#{System.unique_integer([:positive])}"
 
     builder = %Builder{
-      id: relay_id,
+      id: operative_id,
       factory_id: @factory,
       init_values: %{},
       # Disabled-snapshot — flezha_market-shape. The only path for
@@ -71,16 +71,16 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
       opts: [snapshot_interval: 0]
     }
 
-    assert {:ok, info} = RelayManager.start_relay(@namespace, builder)
+    assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
     assert info.executor_id == ce_id
 
-    {:ok, overwatch_pid} = RelayManager.get_relay_pid(@namespace, relay_id)
+    {:ok, overwatch_pid} = OperativeManager.get_operative_pid(@namespace, operative_id)
     pre_state = :sys.get_state(overwatch_pid)
 
     assert pre_state.snapshot == nil,
            "precondition: snapshot must be nil before SIGTERM (snapshot_interval=0)"
 
-    # Drive a few inputs so the SDK's per-relay state has something
+    # Drive a few inputs so the SDK's per-operative state has something
     # distinguishable from the empty initial state. The `store_input`
     # factory appends each text input to `state.text_inputs`; the SDK's
     # graceful-shutdown serializer then ships JSON containing those
@@ -88,13 +88,13 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     # empty-initial-state JSON, which is true but uninteresting — it
     # would not catch a regression where the notification fires before
     # processing in-flight inputs.
-    inputs_sent = ["alpha-#{relay_id}", "beta-#{relay_id}", "gamma-#{relay_id}"]
+    inputs_sent = ["alpha-#{operative_id}", "beta-#{operative_id}", "gamma-#{operative_id}"]
 
     Enum.each(inputs_sent, fn line ->
-      RelayManager.send_io(relay_id, @namespace, line, %{"input_type" => "2"})
+      OperativeManager.send_io(operative_id, @namespace, line, %{"input_type" => "2"})
     end)
 
-    # Inputs travel via primary stream and the relay's `run` runs
+    # Inputs travel via primary stream and the operative's `run` runs
     # async in the SDK's worker pool. Settle briefly so the state has
     # been mutated before we trigger SIGTERM.
     Process.sleep(200)
@@ -114,15 +114,19 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     # initial state) would fail one of these.
     decoded = Jason.decode!(snapshot)
     assert is_map(decoded)
-    assert Map.has_key?(decoded, "text_inputs")
-    assert Map.has_key?(decoded, "binary_inputs")
+    # Operative state serializes as `%{operation_name => operation_state}`;
+    # this single-operation operative has exactly one entry.
+    assert map_size(decoded) == 1
+    inner = decoded |> Map.values() |> hd()
+    assert Map.has_key?(inner, "text_inputs")
+    assert Map.has_key?(inner, "binary_inputs")
 
-    received_inputs = Map.fetch!(decoded, "text_inputs")
+    received_inputs = Map.fetch!(inner, "text_inputs")
     assert is_list(received_inputs)
 
     # The snapshot SHALL reflect the state at SIGTERM time — i.e. the
-    # inputs we sent must be present (in some order; relay input
-    # ordering is sticky per relay, so they appear in send order).
+    # inputs we sent must be present (in some order; operative input
+    # ordering is sticky per operative, so they appear in send order).
     assert Enum.sort(received_inputs) == Enum.sort(inputs_sent),
            "graceful-shutdown snapshot did not include all sent inputs.\n" <>
              "  sent:     #{inspect(inputs_sent)}\n" <>

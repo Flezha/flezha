@@ -118,7 +118,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     capture_io(fn -> CliManager.install_plugin(fpz, "{}") end)
 
     # Enable — this will call PluginManager.enable_plugin which expects a
-    # real relay. Without one, the enable will fail. Verify the error
+    # real operative. Without one, the enable will fail. Verify the error
     # is surfaced to stdout rather than crashing.
     enable_output =
       capture_io(fn -> CliManager.installer_enable_plugin("cli_life_#{unique}", "{}") end)
@@ -173,7 +173,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
   end
 
   test "uninstall reports the refusal reason when plugin is enabled", %{tmp: tmp} do
-    # Even without a live relay to attach subscriptions to, we can
+    # Even without a live operative to attach subscriptions to, we can
     # force the catalog row to :enabled and verify uninstall refuses.
     unique = System.unique_integer([:positive])
     mod = "CliIntegration.Refuse#{unique}"
@@ -219,7 +219,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
           provider: #{first_mod},
           subscriptions: [{:on_input, []}],
           default_opts: %{},
-          scope: :relay
+          scope: :operative
         }
       ],
       dependencies: []

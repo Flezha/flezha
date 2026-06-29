@@ -27,7 +27,7 @@ defmodule Flezha.State.WalWriterTest do
       File.rm_rf!(base)
     end)
 
-    %{base: base, partition_id: TestHelpers.sample_partition_id("p_" <> uniq())}
+    %{base: base, segment_id: TestHelpers.sample_segment_id("p_" <> uniq())}
   end
 
   describe "encode/decode round-trip" do
@@ -78,33 +78,33 @@ defmodule Flezha.State.WalWriterTest do
   end
 
   describe "append" do
-    test "appends sequential records and updates metrics", %{partition_id: pid} do
+    test "appends sequential records and updates metrics", %{segment_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
 
-      # Per-Partition seq is 0-based (the SDK's change_seq starts at 0).
+      # Per-Segment seq is 0-based (the SDK's change_seq starts at 0).
       assert :ok = WalWriter.append(srv, 0, header, "a")
       assert :ok = WalWriter.append(srv, 1, header, "bb")
       assert :ok = WalWriter.append(srv, 2, header, "ccc")
       assert WalWriter.last_persisted_seq(srv) == 2
 
-      m = Metrics.to_map(Metrics.for_partition(pid))
+      m = Metrics.to_map(Metrics.for_segment(pid))
       assert m.persisted_changes_total == 3
       assert m.wal_seq == 2
       assert m.persisted_bytes_total > 0
     end
 
-    test "rejects duplicate seq with :duplicate", %{partition_id: pid} do
+    test "rejects duplicate seq with :duplicate", %{segment_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
 
       assert :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "x")
       assert :duplicate = WalWriter.append(srv, 0, TestHelpers.stub_header(), "x")
-      assert Metrics.get(Metrics.for_partition(pid), :dedup_drops_total) == 1
+      assert Metrics.get(Metrics.for_segment(pid), :dedup_drops_total) == 1
     end
 
-    test "detects gaps", %{partition_id: pid} do
+    test "detects gaps", %{segment_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -115,7 +115,7 @@ defmodule Flezha.State.WalWriterTest do
   end
 
   describe "scan_for_last_valid_seq" do
-    test "recovers last seq across a re-open", %{partition_id: pid} do
+    test "recovers last seq across a re-open", %{segment_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -132,7 +132,7 @@ defmodule Flezha.State.WalWriterTest do
       assert WalWriter.last_persisted_seq(srv2) == 2
     end
 
-    test "truncates partial-write tail past last valid record", %{partition_id: pid} do
+    test "truncates partial-write tail past last valid record", %{segment_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -156,7 +156,7 @@ defmodule Flezha.State.WalWriterTest do
   end
 
   describe "truncate_up_to" do
-    test "drops records with seq <= target", %{partition_id: pid} do
+    test "drops records with seq <= target", %{segment_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -175,14 +175,14 @@ defmodule Flezha.State.WalWriterTest do
 
   describe "non-blocking init" do
     test "init/1 returns instantly with the disk scan deferred to handle_continue",
-         %{partition_id: pid} do
+         %{segment_id: pid} do
       # Run in a child so init's `trap_exit` flag doesn't leak onto the test process.
       assert {:ok, %WalWriter{file_handle: nil}, {:continue, :open}} =
                Task.async(fn -> WalWriter.init(pid) end) |> Task.await()
     end
 
     test "an append issued immediately after start lands after the deferred scan",
-         %{partition_id: pid} do
+         %{segment_id: pid} do
       header = TestHelpers.stub_header()
 
       # Pre-seed a WAL up to seq 2 so the deferred scan has records to recover.
@@ -211,8 +211,8 @@ defmodule Flezha.State.WalWriterTest do
       assert WalWriter.last_persisted_seq(srv2) == 3
     end
 
-    test "writers for distinct partitions are independent processes", %{partition_id: pid} do
-      other = TestHelpers.sample_partition_id("p_" <> uniq())
+    test "writers for distinct segments are independent processes", %{segment_id: pid} do
+      other = TestHelpers.sample_segment_id("p_" <> uniq())
 
       {:ok, a} = Supervisor.find_or_start(pid)
       {:ok, b} = Supervisor.find_or_start(other)
@@ -233,13 +233,13 @@ defmodule Flezha.State.WalWriterTest do
     # bytes grow without bound. Past the hard bound, async appends are shed
     # (dropped + counted) and the resulting seq gap drives resync.
     test "sheds appends past the hard bound, leaving a gap that drives resync",
-         %{partition_id: pid} do
+         %{segment_id: pid} do
       cap = 50
       Application.put_env(:flezha, :wal_pending_msg_cap, cap)
       parent = self()
 
-      Application.put_env(:flezha, :state_resync_fun, fn partition_id, opts ->
-        send(parent, {:resync_called, partition_id, opts})
+      Application.put_env(:flezha, :state_resync_fun, fn segment_id, opts ->
+        send(parent, {:resync_called, segment_id, opts})
         {:ok, make_ref()}
       end)
 
@@ -269,11 +269,11 @@ defmodule Flezha.State.WalWriterTest do
       # A sync call drains behind every queued cast.
       last = WalWriter.last_persisted_seq(srv)
 
-      shed = Metrics.get(Metrics.for_partition(pid), :wal_shed_total)
+      shed = Metrics.get(Metrics.for_segment(pid), :wal_shed_total)
       assert shed > 0
       # The WAL never advanced to k — shed Changes were dropped, not written.
       assert last < k
-      # The shed gap drove a resync (the SDK is authoritative for partition state).
+      # The shed gap drove a resync (the SDK is authoritative for segment state).
       assert_receive {:resync_called, ^pid, _opts}, 1_000
     end
   end

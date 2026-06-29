@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The controller-graceful-shutdown capability defines how the Flezha controller (BEAM agent) reacts to operator-initiated and orchestrator-initiated termination signals so that locally hosted Relays migrate cleanly to peers (or flush WAL state for restart survival), in-flight work is allowed to drain, and the BEAM exits within the orchestrator's grace window. The capability owns a three-phase shutdown coordinator (quiesce → drain → finalise), OS signal trapping wired into `Flezha.Application`, the `flz controller stop` CLI surface, the `Application.prep_stop/1` integration, the configuration knobs that let operators tune or disable the mechanism, the structured-log + telemetry observability surface, and the docker-compose / kubernetes packaging that wires orchestrator grace periods to the BEAM-side timeout.
+The controller-graceful-shutdown capability defines how the Flezha controller (BEAM agent) reacts to operator-initiated and orchestrator-initiated termination signals so that locally hosted Operatives migrate cleanly to peers (or flush WAL state for restart survival), in-flight work is allowed to drain, and the BEAM exits within the orchestrator's grace window. The capability owns a three-phase shutdown coordinator (quiesce → drain → finalise), OS signal trapping wired into `Flezha.Application`, the `flz controller stop` CLI surface, the `Application.prep_stop/1` integration, the configuration knobs that let operators tune or disable the mechanism, the structured-log + telemetry observability surface, and the docker-compose / kubernetes packaging that wires orchestrator grace periods to the BEAM-side timeout.
 
 ## Requirements
 
@@ -10,9 +10,9 @@ The controller-graceful-shutdown capability defines how the Flezha controller (B
 
 `Flezha.Shutdown.Coordinator` is a GenServer started by `Flezha.Application` after `Flezha.Service.HubManager`. On `Coordinator.shutdown(reason, opts)` it SHALL execute three phases in order: **quiesce → drain → finalise**. Each phase SHALL emit one structured log line at start and one telemetry event under `[:flezha, :shutdown, :phase_started | :phase_completed]` with metadata `%{phase: :quiesce | :drain | :finalise, reason: atom()}`.
 
-**Quiesce** SHALL set a process-tree-visible flag such that `Flezha.Service.RelayManager.start_relay/2` returns `{:error, :shutting_down}` and `Flezha.Executor.FleetManager` rejects new executor connect attempts with a structured error. Already-running Relays and already-connected executors SHALL NOT be affected by this phase.
+**Quiesce** SHALL set a process-tree-visible flag such that `Flezha.Service.OperativeManager.start_operative/2` returns `{:error, :shutting_down}` and `Flezha.Executor.FleetManager` rejects new executor connect attempts with a structured error. Already-running Operatives and already-connected executors SHALL NOT be affected by this phase.
 
-**Drain** SHALL dispatch `ProcessHub` `cluster_leave` for every running namespace's hub by calling `Flezha.Service.HubManager.stop_hub_manager()` (which causes ProcessHub's `terminate/2` to dispatch `@event_cluster_leave` to peers) and SHALL synchronously poll `ProcessHub.registry_dump/1` across peers every `500 ms` until **every Relay that was locally hosted at quiesce time** is registered as locally hosted on at least one peer (HotSwap migration complete) or until the local Relay has terminated AND the leaving node has no peers (no migration target — local termination flushes WAL state to disk for restart survival). Each poll SHALL emit `[:flezha, :shutdown, :drain_progress]` with `%{migrated: integer(), remaining: integer(), elapsed_ms: integer()}`.
+**Drain** SHALL dispatch `ProcessHub` `cluster_leave` for every running namespace's hub by calling `Flezha.Service.HubManager.stop_hub_manager()` (which causes ProcessHub's `terminate/2` to dispatch `@event_cluster_leave` to peers) and SHALL synchronously poll `ProcessHub.registry_dump/1` across peers every `500 ms` until **every Operative that was locally hosted at quiesce time** is registered as locally hosted on at least one peer (HotSwap migration complete) or until the local Operative has terminated AND the leaving node has no peers (no migration target — local termination flushes WAL state to disk for restart survival). Each poll SHALL emit `[:flezha, :shutdown, :drain_progress]` with `%{migrated: integer(), remaining: integer(), elapsed_ms: integer()}`.
 
 Registry dumps from all peers SHALL be fetched **concurrently** within each poll cycle using a bounded `Task.async_stream` over the peer node list. Each peer RPC call SHALL have an individual timeout of `2_000 ms`. A peer that does not respond within its timeout SHALL be excluded from that poll cycle's dump (treated as no contribution, same as the existing fallback). The wall-clock cost of one drain poll cycle SHALL NOT exceed the per-peer RPC timeout regardless of the number of peers.
 
@@ -24,21 +24,21 @@ The whole sequence SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` 
 
 #### Scenario: Three-phase clean shutdown on a node with peers
 
-- **GIVEN** a controller hosting two Relays (`relay-a` and `relay-b`) with HotSwap targets available on a peer node `controller-2`
+- **GIVEN** a controller hosting two Operatives (`operative-a` and `operative-b`) with HotSwap targets available on a peer node `controller-2`
 - **WHEN** an operator calls `Flezha.Shutdown.Coordinator.shutdown(:cli, [])`
-- **THEN** the coordinator logs `[shutdown] phase=quiesce`, transitions through `quiesce → drain → finalise`, polls `ProcessHub.registry_dump/1` until both Relays appear under `controller-2` in the registry dump (and not under the leaving node), emits `:drain_progress` events along the way, logs `[shutdown] complete duration_ms=<T> outcome=clean`, and returns `:ok`
+- **THEN** the coordinator logs `[shutdown] phase=quiesce`, transitions through `quiesce → drain → finalise`, polls `ProcessHub.registry_dump/1` until both Operatives appear under `controller-2` in the registry dump (and not under the leaving node), emits `:drain_progress` events along the way, logs `[shutdown] complete duration_ms=<T> outcome=clean`, and returns `:ok`
 
 #### Scenario: Drain timeout escalates to finalise with partial outcome
 
-- **GIVEN** a controller hosting 50 Relays whose HotSwap throughput is below the configured timeout budget (e.g. `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS=5000`)
+- **GIVEN** a controller hosting 50 Operatives whose HotSwap throughput is below the configured timeout budget (e.g. `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS=5000`)
 - **WHEN** the coordinator's drain phase exceeds the timeout
-- **THEN** the coordinator logs `[shutdown] timeout phase=drain still_local=<N>` at ERROR, emits `[:flezha, :shutdown, :timeout]` with `%{still_local: [relay_ids…]}`, runs the finalise phase, and returns `{:partial, [relay_ids…]}` to its caller
+- **THEN** the coordinator logs `[shutdown] timeout phase=drain still_local=<N>` at ERROR, emits `[:flezha, :shutdown, :timeout]` with `%{still_local: [operative_ids…]}`, runs the finalise phase, and returns `{:partial, [operative_ids…]}` to its caller
 
 #### Scenario: No-peer node skips migration wait
 
 - **GIVEN** a controller running solo (no other nodes connected to its ProcessHub)
 - **WHEN** `Coordinator.shutdown(:sigterm)` is invoked
-- **THEN** the coordinator detects zero peers, skips the migration-wait portion of drain, logs `[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot`, terminates locally hosted Relays so their WAL fsyncs flush, runs finalise, and returns `:ok`
+- **THEN** the coordinator detects zero peers, skips the migration-wait portion of drain, logs `[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot`, terminates locally hosted Operatives so their WAL fsyncs flush, runs finalise, and returns `:ok`
 
 #### Scenario: Idempotent re-entry — second `shutdown/1` joins the in-flight one
 
@@ -79,9 +79,9 @@ If `:os.set_signal/2` raises (unsupported OS, sandboxing), the SignalHandler SHA
 
 #### Scenario: SIGTERM in `iex -S mix` triggers graceful shutdown
 
-- **GIVEN** a controller running under `iex -S mix` with one Relay locally hosted and a peer node available
+- **GIVEN** a controller running under `iex -S mix` with one Operative locally hosted and a peer node available
 - **WHEN** the OS sends SIGTERM to the BEAM process
-- **THEN** the SignalHandler logs `[shutdown] received SIGTERM`, the coordinator runs quiesce → drain → finalise, the Relay migrates to the peer, and the BEAM exits with status 0 — same outcome as in release mode
+- **THEN** the SignalHandler logs `[shutdown] received SIGTERM`, the coordinator runs quiesce → drain → finalise, the Operative migrates to the peer, and the BEAM exits with status 0 — same outcome as in release mode
 
 #### Scenario: SIGTERM with kill-switch off behaves like today (immediate BEAM exit)
 
@@ -109,9 +109,9 @@ When `:flezha, :graceful_shutdown_enabled` is `false`, `prep_stop/1` SHALL fall 
 
 #### Scenario: Release-mode `bin/flezha stop` runs the coordinator
 
-- **GIVEN** a controller running as a release with two locally hosted Relays and an available peer
+- **GIVEN** a controller running as a release with two locally hosted Operatives and an available peer
 - **WHEN** an operator runs `bin/flezha stop` (which issues `:init.stop()` to the running BEAM)
-- **THEN** `Application.prep_stop/1` is called, which calls `Coordinator.shutdown(:prep_stop)`; the coordinator drains both Relays via HotSwap; `prep_stop/1` returns and the BEAM completes its supervision-tree shutdown — exit status 0 with both Relays running on the peer
+- **THEN** `Application.prep_stop/1` is called, which calls `Coordinator.shutdown(:prep_stop)`; the coordinator drains both Operatives via HotSwap; `prep_stop/1` returns and the BEAM completes its supervision-tree shutdown — exit status 0 with both Operatives running on the peer
 
 #### Scenario: prep_stop honours the kill-switch fall-through
 
@@ -131,8 +131,8 @@ The CLI SHALL accept the following flags:
 
 Exit codes:
 
-- `0` — clean shutdown (all Relays migrated to peers, or no peers and local termination).
-- `1` — partial drain (timeout elapsed; some Relays still local at finalise).
+- `0` — clean shutdown (all Operatives migrated to peers, or no peers and local termination).
+- `1` — partial drain (timeout elapsed; some Operatives still local at finalise).
 - `2` — already shutting down (idempotent re-issue; the in-flight shutdown completed cleanly OR with a partial outcome — exit code reflects that outcome).
 - `3` — controller not reachable on the CLI socket.
 
@@ -140,13 +140,13 @@ The RPC SHALL work whether the controller is running as a release, under `mix ru
 
 #### Scenario: `flz controller stop` succeeds in release mode
 
-- **GIVEN** a release-mode controller hosting one Relay with an available peer
+- **GIVEN** a release-mode controller hosting one Operative with an available peer
 - **WHEN** an operator runs `flz controller stop`
 - **THEN** the CLI streams drain progress (`[:flezha, :shutdown, :drain_progress]` events formatted as `drain: migrated=1 remaining=0 elapsed_ms=…`), prints `[shutdown] complete duration_ms=… outcome=clean`, and exits with status `0`
 
 #### Scenario: `flz controller stop` works in `iex -S mix`
 
-- **GIVEN** a controller running under `iex -S mix` with one Relay and an available peer
+- **GIVEN** a controller running under `iex -S mix` with one Operative and an available peer
 - **WHEN** an operator runs `flz controller stop` from a separate shell
 - **THEN** the CLI sees the iex BEAM via the CLI socket, drives the coordinator through quiesce → drain → finalise, and exits with status `0`. The iex session shows `[shutdown] complete` and the BEAM exits, returning the operator to the host shell
 
@@ -197,7 +197,7 @@ The controller SHALL emit the following telemetry events under `[:flezha, :shutd
 - `:phase_started` — `%{phase: :quiesce | :drain | :finalise}`. One per phase.
 - `:phase_completed` — `%{phase: :quiesce | :drain | :finalise, duration_ms: integer()}`. One per phase.
 - `:drain_progress` — `%{migrated: integer(), remaining: integer(), elapsed_ms: integer()}`. Emitted on each 500 ms drain poll.
-- `:timeout` — `%{phase: :quiesce | :drain | :finalise, still_local: [relay_ids…]}`. Emitted only when the bounded timeout elapses.
+- `:timeout` — `%{phase: :quiesce | :drain | :finalise, still_local: [operative_ids…]}`. Emitted only when the bounded timeout elapses.
 - `:complete` — `%{duration_ms: integer(), outcome: :clean | :partial | :forced, reason: atom()}`. Emitted at coordinator return.
 
 Structured log lines (INFO unless noted) SHALL accompany each event:
@@ -213,7 +213,7 @@ Structured log lines (INFO unless noted) SHALL accompany each event:
 #### Scenario: Telemetry consumer observes a complete shutdown lifecycle
 
 - **GIVEN** a telemetry handler attached to `[:flezha, :shutdown, :_]`
-- **WHEN** `Coordinator.shutdown(:cli)` runs to completion on a 2-Relay node with a peer
+- **WHEN** `Coordinator.shutdown(:cli)` runs to completion on a 2-Operative node with a peer
 - **THEN** the handler observes events in order: `:requested`, `:phase_started{quiesce}`, `:phase_completed{quiesce}`, `:phase_started{drain}`, one or more `:drain_progress`, `:phase_completed{drain}`, `:phase_started{finalise}`, `:phase_completed{finalise}`, `:complete{outcome=clean}`
 
 #### Scenario: `flz controller status` surfaces shutdown state mid-drain
@@ -238,9 +238,9 @@ The DaemonSet's controller container SHALL declare:
 
 #### Scenario: K8s pod stop runs preStop, then SIGTERM, exits within grace
 
-- **GIVEN** a deployed DaemonSet with a controller pod hosting one Relay and a peer pod available
+- **GIVEN** a deployed DaemonSet with a controller pod hosting one Operative and a peer pod available
 - **WHEN** the operator runs `kubectl delete pod <pod>`
-- **THEN** k8s runs `flz controller stop --timeout-ms 60000` via the preStop hook (which drives the coordinator), then sends SIGTERM (which the SignalHandler observes as a second-signal during shutdown and ignores), then waits up to 75 s; the pod exits cleanly within grace, the Relay is running on the peer, and the new pod (when scheduled) finds no orphaned local state
+- **THEN** k8s runs `flz controller stop --timeout-ms 60000` via the preStop hook (which drives the coordinator), then sends SIGTERM (which the SignalHandler observes as a second-signal during shutdown and ignores), then waits up to 75 s; the pod exits cleanly within grace, the Operative is running on the peer, and the new pod (when scheduled) finds no orphaned local state
 
 #### Scenario: PreStop timeout knob honoured by configmap
 
@@ -259,6 +259,6 @@ Operators tuning `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` away from `60000` SHALL u
 
 #### Scenario: `docker compose stop` allows graceful shutdown to complete
 
-- **GIVEN** a `docker compose up` of `docker/prod/docker-compose.yml` with a controller hosting a Relay and a peer service available
+- **GIVEN** a `docker compose up` of `docker/prod/docker-compose.yml` with a controller hosting a Operative and a peer service available
 - **WHEN** the operator runs `docker compose stop`
-- **THEN** docker sends SIGTERM, the controller's SignalHandler picks it up, the coordinator drains in ≤ 60 s; docker's 75 s grace period elapses without a SIGKILL; the controller exits cleanly with the Relay migrated to the peer
+- **THEN** docker sends SIGTERM, the controller's SignalHandler picks it up, the coordinator drains in ≤ 60 s; docker's 75 s grace period elapses without a SIGKILL; the controller exits cleanly with the Operative migrated to the peer

@@ -6,7 +6,7 @@ import java.util.Optional;
 
 /**
  * Per-tick Change carrying an interval bucket, timestamp, and delta. Used by
- * {@link CoalescingCounterRelay} to demonstrate the per-Partition flusher's
+ * {@link CoalescingCounterContinuousOperative} to demonstrate the per-Segment flusher's
  * coalescing path: Changes with equal {@code (interval, ts)} collapse to the
  * latest within a flush window.
  */

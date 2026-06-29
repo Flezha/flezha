@@ -120,11 +120,11 @@ defmodule Flezha.Convergence.RecoveryGateTest do
   end
 
   defp intent_for(namespaces) do
-    relays =
+    operatives =
       Enum.map(namespaces, fn ns ->
-        %{namespace: ns, relay_id: "r_#{ns}", factory_id: nil, plugins: []}
+        %{namespace: ns, operative_id: "r_#{ns}", factory_id: nil, plugins: []}
       end)
 
-    %Intent{relays: relays}
+    %Intent{operatives: operatives}
   end
 end

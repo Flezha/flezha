@@ -20,7 +20,7 @@ alias ProcessHub.Service.ProcessRegistry
 
 namespace = "smoke_persist_ns"
 hub_id = Identificator.hub(namespace)
-relay_id = "smoke_relay_persist"
+operative_id = "smoke_operative_persist"
 executor_id = "smoke_executor_xyz"
 
 IO.puts("\n=== STEP 1: Start hub ===")
@@ -31,13 +31,13 @@ IO.puts("hub alive? #{ProcessHub.is_alive?(hub_id)}, state=#{ProcessHub.recovery
 IO.puts("\n=== STEP 2: Insert post-alter cspec (3-tuple shape, what production persists) ===")
 
 cspec = %{
-  id: relay_id,
+  id: operative_id,
   start:
-    {Flezha.Relay.Overwatch, :start_link,
+    {Flezha.Operative.Overwatch, :start_link,
      [
        {namespace, executor_id,
-        %Flezha.Relay.Builder{
-          id: relay_id,
+        %Flezha.Operative.Builder{
+          id: operative_id,
           factory_id: "store_input",
           init_values: %{},
           opts: [
@@ -49,7 +49,7 @@ cspec = %{
                  opts: %{},
                  subscriptions: [{:on_output, []}],
                  namespace: namespace,
-                 relay_id: relay_id
+                 operative_id: operative_id
                }}
             ]
           ]
@@ -73,7 +73,7 @@ IO.puts("DETS file persisted: #{File.exists?(dets_path)} (#{File.stat!(dets_path
 
 IO.puts("\n=== STEP 4: Restart the hub — replay should pick up the persisted cspec ===")
 
-# We don't need the relay to actually start (no executor connected) —
+# We don't need the operative to actually start (no executor connected) —
 # what we want is to verify dist_sup tries to start it from DETS.
 spawn(fn ->
   try do
@@ -87,8 +87,8 @@ Process.sleep(2_000)
 
 IO.puts("\n=== STEP 5: Verify cspec round-tripped from DETS ===")
 
-# After restart, the registry should still know about the relay even if
-# the start_proxy failed (no executor to honor start_relay_sdk). dist_sup
+# After restart, the registry should still know about the operative even if
+# the start_proxy failed (no executor to honor start_operative_sdk). dist_sup
 # would try to start it; what we care about is that the cspec was
 # present in the registry on the new hub instance.
 case File.exists?(dets_path) do
@@ -107,5 +107,5 @@ IO.puts("  STEP 4 — hub restarted; replay picks up DETS rows on init")
 IO.puts("  STEP 5 — DETS file persisted across the cycle")
 IO.puts("")
 IO.puts("Out of scope for this smoke (covered by mix test + scripts/auto_restore_e2e.sh):")
-IO.puts("  - Real executor → real relay → real WAL files")
+IO.puts("  - Real executor → real operative → real WAL files")
 IO.puts("  - BEAM cold-boot (this script does an in-process hub-only restart)")

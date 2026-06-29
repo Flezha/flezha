@@ -5,7 +5,7 @@ defmodule Mix.Tasks.Bench.Floor do
   @moduledoc """
   Prints the `BENCH_FLOOR_MSG_PER_SEC` value recorded in
   `docs/benchmarking.md` to stdout. Used by the `bench-regression` CI job
-  per `relay-bench-harness/design.md` Decision 6 to fetch the floor at
+  per `operative-bench-harness/design.md` Decision 6 to fetch the floor at
   runtime instead of hard-coding it in workflow YAML.
 
   Output format: a single integer line with no surrounding whitespace.
@@ -46,7 +46,7 @@ defmodule Mix.Tasks.Bench.Floor do
         Mix.shell().error(
           "Could not read #{@doc_path}: #{:file.format_error(reason)}. " <>
             "The bench floor is recorded by `mix bench --shape regression` and " <>
-            "embedded by relay-bench-harness §4.6."
+            "embedded by operative-bench-harness §4.6."
         )
 
         exit({:shutdown, 1})

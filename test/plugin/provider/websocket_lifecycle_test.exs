@@ -2,7 +2,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketLifecycleTest do
   @moduledoc """
   Asserts `Plugin.Provider.Websocket.init_provider/1` does NOT open a TLS
   connection — that work moves to `activate/1` per
-  `fix-overwatch-restart-storm` capability `relay-extensions` "Plugin
+  `fix-overwatch-restart-storm` capability `operative-extensions` "Plugin
   providers SHALL NOT perform upstream I/O in `init_provider/1`".
 
   Approach: hand `init_provider/1` an unroutable URI and require it

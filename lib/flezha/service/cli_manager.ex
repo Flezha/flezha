@@ -9,31 +9,31 @@ defmodule Flezha.Service.CliManager do
   alias Flezha.Service.HubManager
   alias Flezha.Service.Payloader
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.OperativeManager
 
-  @doc "Starts a relay."
-  def relay_start(
+  @doc "Starts a operative."
+  def operative_start(
         namespace,
-        relay_id,
+        operative_id,
         factory_id,
         init_values,
         opts \\ [],
         plugins_json \\ "[]",
-        kind \\ "relay"
+        kind \\ "continuous"
       ) do
     opts_kw =
       Payloader.json_to_map(opts)
       |> atom_converter()
       |> Keyword.new()
 
-    case decode_plugins(plugins_json, normalize_namespace(namespace), relay_id) do
+    case decode_plugins(plugins_json, normalize_namespace(namespace), operative_id) do
       {:ok, []} ->
-        start_relay(namespace, relay_id, factory_id, init_values, opts_kw, kind)
+        start_operative(namespace, operative_id, factory_id, init_values, opts_kw, kind)
 
       {:ok, plugins} ->
-        start_relay(
+        start_operative(
           namespace,
-          relay_id,
+          operative_id,
           factory_id,
           init_values,
           Keyword.put(opts_kw, :plugins, plugins),
@@ -41,29 +41,29 @@ defmodule Flezha.Service.CliManager do
         )
 
       {:error, reason} ->
-        IO.puts("Error starting relay: #{inspect(reason)}")
+        IO.puts("Error starting operative: #{inspect(reason)}")
     end
   end
 
-  defp start_relay(namespace, relay_id, factory_id, init_values, opts_kw, kind) do
-    relay = %Flezha.Relay.Builder{
-      id: relay_id,
+  defp start_operative(namespace, operative_id, factory_id, init_values, opts_kw, kind) do
+    operative = %Flezha.Operative.Builder{
+      id: operative_id,
       factory_id: factory_id,
       kind: parse_kind(kind),
       init_values: Payloader.json_to_map(init_values),
       opts: opts_kw
     }
 
-    case RelayManager.start_relay(normalize_namespace(namespace), relay) do
-      {:ok, _} -> IO.puts("Relay has been started")
-      {:error, reason} -> IO.puts("Error starting relay: #{inspect(reason)}")
+    case OperativeManager.start_operative(normalize_namespace(namespace), operative) do
+      {:ok, _} -> IO.puts("Operative has been started")
+      {:error, reason} -> IO.puts("Error starting operative: #{inspect(reason)}")
     end
   end
 
   # Resolve the wire kind string to its atom without minting atoms from
   # untrusted input: only already-known kinds convert; anything else stays a
   # string, which `Validator.valid_kind/1` rejects at start.
-  defp parse_kind(kind) when kind in [nil, "", "relay"], do: :relay
+  defp parse_kind(kind) when kind in [nil, "", "continuous"], do: :continuous
 
   defp parse_kind(kind) when is_binary(kind) do
     String.to_existing_atom(kind)
@@ -75,7 +75,7 @@ defmodule Flezha.Service.CliManager do
 
   ## CLI --plugins decoder ----------------------------------------------------
   ##
-  ## Turns the JSON array shipped by `flz relay start --plugins` into a list
+  ## Turns the JSON array shipped by `flz operative start --plugins` into a list
   ## of `%Flezha.Plugin{}` structs ready for `Builder.opts = [plugins: ...]`.
   ## Returns errors matching design.md §D2b's vocabulary:
   ##   * `{:invalid_plugins_json, reason}`
@@ -83,7 +83,7 @@ defmodule Flezha.Service.CliManager do
   ##   * `{:invalid_subscription, details}`
   ##   * `{:invalid_opts, details}`
 
-  defp decode_plugins(plugins_json, namespace, relay_id) do
+  defp decode_plugins(plugins_json, namespace, operative_id) do
     case decode_plugins_json(plugins_json) do
       {:ok, []} ->
         {:ok, []}
@@ -92,7 +92,7 @@ defmodule Flezha.Service.CliManager do
         providers = ConfigManager.get_enabled_plugins()
 
         Enum.reduce_while(specs, {:ok, []}, fn spec, {:ok, acc} ->
-          case build_plugin(spec, providers, namespace, relay_id) do
+          case build_plugin(spec, providers, namespace, operative_id) do
             {:ok, plugin} -> {:cont, {:ok, [plugin | acc]}}
             {:error, _} = err -> {:halt, err}
           end
@@ -119,7 +119,7 @@ defmodule Flezha.Service.CliManager do
 
   defp decode_plugins_json(_), do: {:ok, []}
 
-  defp build_plugin(spec, providers, namespace, relay_id) when is_map(spec) do
+  defp build_plugin(spec, providers, namespace, operative_id) when is_map(spec) do
     with {:ok, plugin_id} <- fetch_string(spec, "id"),
          {:ok, provider_id} <- fetch_string(spec, "provider"),
          {:ok, provider_mod} <- resolve_provider(providers, provider_id),
@@ -132,7 +132,7 @@ defmodule Flezha.Service.CliManager do
          opts: atomize_keys(raw_opts),
          subscriptions: subscriptions,
          namespace: namespace,
-         relay_id: relay_id
+         operative_id: operative_id
        }}
     end
   end
@@ -217,54 +217,54 @@ defmodule Flezha.Service.CliManager do
   defp atomize_sub_opt_value(v) when is_binary(v), do: String.to_atom(v)
   defp atomize_sub_opt_value(v), do: v
 
-  @doc "Stops a relay."
-  def relay_stop(namespace, relay_id) do
-    case RelayManager.stop_relay(normalize_namespace(namespace), relay_id) do
-      :ok -> IO.puts("Relay has been stopped")
-      {:error, reason} -> IO.puts("Error stopping relay: #{inspect(reason)}")
+  @doc "Stops a operative."
+  def operative_stop(namespace, operative_id) do
+    case OperativeManager.stop_operative(normalize_namespace(namespace), operative_id) do
+      :ok -> IO.puts("Operative has been stopped")
+      {:error, reason} -> IO.puts("Error stopping operative: #{inspect(reason)}")
     end
   end
 
-  @doc "Get relay state."
-  def partition_state(namespace, relay_id) do
+  @doc "Get operative state."
+  def segment_state(namespace, operative_id) do
     namespace_display = normalize_namespace(namespace)
 
-    case RelayManager.get_partition_state(
+    case OperativeManager.get_segment_state(
            normalize_namespace(namespace),
-           relay_id
+           operative_id
          ) do
       {:ok, json_state} when is_binary(json_state) ->
-        IO.puts("State for relay '#{relay_id}' in namespace '#{namespace_display}':")
+        IO.puts("State for operative '#{operative_id}' in namespace '#{namespace_display}':")
         IO.puts(json_state)
 
       {:ok, state} ->
-        IO.puts("State for relay '#{relay_id}' in namespace '#{namespace_display}':")
+        IO.puts("State for operative '#{operative_id}' in namespace '#{namespace_display}':")
         IO.puts(inspect(state))
 
       {:error, :not_found} ->
-        IO.puts("Relay '#{relay_id}' not found in namespace '#{namespace_display}'.")
+        IO.puts("Operative '#{operative_id}' not found in namespace '#{namespace_display}'.")
 
       {:error, {:unsupported_for_kind, :persistent_state}} ->
         IO.puts(
-          "Relay '#{relay_id}' in namespace '#{namespace_display}' has no per-partition state: " <>
+          "Operative '#{operative_id}' in namespace '#{namespace_display}' has no per-segment state: " <>
             "its kind does not support state introspection."
         )
 
         System.halt(1)
 
       {:error, reason} when is_binary(reason) ->
-        IO.puts("Error getting relay state: #{reason}")
+        IO.puts("Error getting operative state: #{reason}")
 
       {:error, reason} ->
-        IO.puts("Error getting relay state: #{inspect(reason)}")
+        IO.puts("Error getting operative state: #{inspect(reason)}")
 
       other ->
         IO.puts("Unexpected result: #{inspect(other)}")
     end
   end
 
-  @doc "Listens to a relay IO."
-  def relay_listen(namespace, relay_id, io_type) do
+  @doc "Listens to a operative IO."
+  def operative_listen(namespace, operative_id, io_type) do
     namespace_display = normalize_namespace(namespace)
 
     extension =
@@ -281,11 +281,11 @@ defmodule Flezha.Service.CliManager do
       id: plugin_id,
       provider: MonitoredIOForward,
       namespace: namespace_display,
-      relay_id: relay_id,
+      operative_id: operative_id,
       opts: %{
         recv_pid: self(),
         plugin_id: plugin_id,
-        relay_id: relay_id,
+        operative_id: operative_id,
         namespace: namespace_display
       },
       subscriptions: [{extension, []}]
@@ -305,13 +305,13 @@ defmodule Flezha.Service.CliManager do
          {:ok, opts} <- Jason.decode(opts_json) do
       subscriptions = extract_subscriptions(plugin_flags, opts)
       namespace = Map.get(opts, "namespace", "default")
-      relay_id = Map.get(plugin_flags, "relay_id") || Map.get(opts, "relay_id")
+      operative_id = Map.get(plugin_flags, "operative_id") || Map.get(opts, "operative_id")
 
       plugin = %Plugin{
         id: plugin_id,
         provider: provider_mod,
         namespace: namespace,
-        relay_id: relay_id,
+        operative_id: operative_id,
         opts: atomize_keys(plugin_flags),
         subscriptions: subscriptions
       }
@@ -405,7 +405,7 @@ defmodule Flezha.Service.CliManager do
       "on_input" => :on_input,
       "on_output" => :on_output,
       "on_interval" => :on_interval,
-      "on_relay_init" => :on_relay_init,
+      "on_operative_init" => :on_operative_init,
       "on_message" => :on_message,
       "on_snapshot" => :on_snapshot,
       "on_terminate" => :on_terminate,
@@ -475,21 +475,21 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  Lists a namespace's relays with the reconciler's per-relay health, assigned
+  Lists a namespace's operatives with the reconciler's per-operative health, assigned
   executor, and live node. Reads the durable registry, so it surfaces FAILED
-  relays (whose only placement is a dead node) and is multi-node-safe — it no
-  longer crashes on a relay registered across nodes.
+  operatives (whose only placement is a dead node) and is multi-node-safe — it no
+  longer crashes on a operative registered across nodes.
   """
-  def list_relays(namespace, output_format \\ "text") do
+  def list_operatives(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
-    rows = HubManager.relay_rows(namespace_display)
-    render_relay_list(rows, namespace_display, output_format)
+    rows = HubManager.operative_rows(namespace_display)
+    render_operative_list(rows, namespace_display, output_format)
   end
 
-  defp render_relay_list(rows, namespace, "json") do
+  defp render_operative_list(rows, namespace, "json") do
     result = %{
       namespace: namespace,
-      relays:
+      operatives:
         Enum.map(rows, fn r ->
           %{
             id: r.id,
@@ -503,17 +503,17 @@ defmodule Flezha.Service.CliManager do
     IO.puts(Jason.encode!(result))
   end
 
-  defp render_relay_list([], namespace, _) do
-    IO.puts("No relays found for namespace '#{namespace}'.")
+  defp render_operative_list([], namespace, _) do
+    IO.puts("No operatives found for namespace '#{namespace}'.")
   end
 
-  defp render_relay_list(rows, namespace, _) do
-    IO.puts("Relays in namespace '#{namespace}':")
+  defp render_operative_list(rows, namespace, _) do
+    IO.puts("Operatives in namespace '#{namespace}':")
     IO.puts("")
 
     IO.puts([
       "  ",
-      String.pad_trailing("RELAY", 34),
+      String.pad_trailing("OPERATIVE", 34),
       String.pad_trailing("HEALTH", 10),
       String.pad_trailing("NODE", 22),
       "EXECUTOR"
@@ -532,15 +532,15 @@ defmodule Flezha.Service.CliManager do
 
   @doc """
   Cluster topology for operators: the elected leader, whether this node is the
-  leader, each node's live relay count, any unplaced (FAILED) relays, and a
+  leader, each node's live operative count, any unplaced (FAILED) operatives, and a
   health rollup. Composes `HubManager` registry access with the reconciler's
-  `Leader` so a split view (one node sees relays, its peer sees none) is
+  `Leader` so a split view (one node sees operatives, its peer sees none) is
   visible at a glance.
   """
   def cluster_status(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
     nodes = HubManager.get_hub_nodes(namespace_display, true)
-    rows = HubManager.relay_rows(namespace_display)
+    rows = HubManager.operative_rows(namespace_display)
     counts = Enum.frequencies_by(rows, & &1.node)
     health = Enum.frequencies_by(rows, & &1.health)
     {recovery_per_node, marker_per_node} = cluster_status_recovery(namespace_display, nodes)
@@ -689,14 +689,14 @@ defmodule Flezha.Service.CliManager do
         Enum.map(s.nodes, fn n ->
           %{
             node: to_string(n),
-            relay_count: Map.get(s.counts, n, 0),
+            operative_count: Map.get(s.counts, n, 0),
             leader: n == s.leader,
             recovery_state: Map.get(s.recovery_per_node, n, :unknown),
             recovery_armed: not Map.get(s.recovery_marker_per_node, n, false)
           }
         end),
-      unplaced_relays: Map.get(s.counts, nil, 0),
-      relay_health: s.health
+      unplaced_operatives: Map.get(s.counts, nil, 0),
+      operative_health: s.health
     }
 
     IO.puts(Jason.encode!(result))
@@ -719,7 +719,7 @@ defmodule Flezha.Service.CliManager do
         armed = not Map.get(s.recovery_marker_per_node, n, false)
 
         IO.puts(
-          "    #{n}: #{Map.get(s.counts, n, 0)} relay(s) recovery_state=#{rs} " <>
+          "    #{n}: #{Map.get(s.counts, n, 0)} operative(s) recovery_state=#{rs} " <>
             "recovery_armed=#{armed}#{marker}"
         )
       end)
@@ -727,14 +727,14 @@ defmodule Flezha.Service.CliManager do
 
     case Map.get(s.counts, nil, 0) do
       0 -> :ok
-      unplaced -> IO.puts("    (unplaced): #{unplaced} relay(s)")
+      unplaced -> IO.puts("    (unplaced): #{unplaced} operative(s)")
     end
 
     IO.puts("")
-    IO.puts("  Relay health: #{health_summary(s.health)}")
+    IO.puts("  Operative health: #{health_summary(s.health)}")
   end
 
-  defp health_summary(health) when map_size(health) == 0, do: "no relays"
+  defp health_summary(health) when map_size(health) == 0, do: "no operatives"
 
   defp health_summary(health) do
     health
@@ -757,41 +757,41 @@ defmodule Flezha.Service.CliManager do
     true
   end
 
-  @doc "Shows detailed information about relays and their enabled plugins."
-  def relay_info(namespace, output_format \\ "text") do
+  @doc "Shows detailed information about operatives and their enabled plugins."
+  def operative_info(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_relays(namespace_display) do
-      {:ok, relays} ->
-        if Enum.empty?(relays) do
-          handle_empty_relays(namespace_display, output_format)
+    case Flezha.list_operatives(namespace_display) do
+      {:ok, operatives} ->
+        if Enum.empty?(operatives) do
+          handle_empty_operatives(namespace_display, output_format)
         else
-          handle_relay_info_output(relays, namespace_display, output_format)
+          handle_operative_info_output(operatives, namespace_display, output_format)
         end
     end
   end
 
-  defp handle_empty_relays(namespace_display, "json") do
+  defp handle_empty_operatives(namespace_display, "json") do
     result = %{
       namespace: namespace_display,
-      relays: [],
-      message: "No relays found"
+      operatives: [],
+      message: "No operatives found"
     }
 
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_empty_relays(namespace_display, _) do
-    IO.puts("No relays found for namespace '#{namespace_display}'.")
+  defp handle_empty_operatives(namespace_display, _) do
+    IO.puts("No operatives found for namespace '#{namespace_display}'.")
   end
 
-  defp handle_relay_info_output(relays, namespace_display, "json") do
-    relay_data =
-      Enum.map(relays, fn relay_id ->
-        case RelayManager.get_overwatch_state(namespace_display, relay_id) do
+  defp handle_operative_info_output(operatives, namespace_display, "json") do
+    operative_data =
+      Enum.map(operatives, fn operative_id ->
+        case OperativeManager.get_overwatch_state(namespace_display, operative_id) do
           {:ok, state} ->
             %{
-              id: relay_id,
+              id: operative_id,
               executor_id: state.executor_id,
               namespace: state.namespace,
               default_input_type: state.default_input_type,
@@ -799,25 +799,25 @@ defmodule Flezha.Service.CliManager do
             }
 
           {:error, reason} ->
-            %{id: relay_id, error: inspect(reason)}
+            %{id: operative_id, error: inspect(reason)}
         end
       end)
 
-    result = %{namespace: namespace_display, relays: relay_data}
+    result = %{namespace: namespace_display, operatives: operative_data}
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_relay_info_output(relays, namespace_display, _) do
-    IO.puts("Relay information for namespace '#{namespace_display}':")
+  defp handle_operative_info_output(operatives, namespace_display, _) do
+    IO.puts("Operative information for namespace '#{namespace_display}':")
     IO.puts("")
 
-    Enum.each(relays, fn relay_id ->
-      case RelayManager.get_overwatch_state(namespace_display, relay_id) do
+    Enum.each(operatives, fn operative_id ->
+      case OperativeManager.get_overwatch_state(namespace_display, operative_id) do
         {:ok, state} ->
-          display_relay_info(relay_id, state)
+          display_operative_info(operative_id, state)
 
         {:error, reason} ->
-          IO.puts("Relay: #{relay_id}")
+          IO.puts("Operative: #{operative_id}")
           IO.puts("  Error getting overwatch state: #{inspect(reason)}")
           IO.puts("")
       end
@@ -839,8 +839,8 @@ defmodule Flezha.Service.CliManager do
 
   defp format_plugins_json(_), do: []
 
-  defp display_relay_info(relay_id, state) do
-    IO.puts("Relay: #{relay_id}")
+  defp display_operative_info(operative_id, state) do
+    IO.puts("Operative: #{operative_id}")
     IO.puts("  Executor ID: #{state.executor_id}")
     IO.puts("  Group ID: #{state.namespace}")
     IO.puts("  Default Input Type: #{state.default_input_type}")
@@ -1025,7 +1025,7 @@ defmodule Flezha.Service.CliManager do
   defp print_supported_extensions(provider_mod) do
     extensions =
       for ext <- [
-            :on_relay_init,
+            :on_operative_init,
             :on_input,
             :on_output,
             :on_interval,
@@ -1152,7 +1152,7 @@ defmodule Flezha.Service.CliManager do
 
   @doc """
   `flz boot import-legacy-snapshot <file> [--force]` — read a legacy `.flz`
-  ETF snapshot and write each relay's child spec into ProcessHub's
+  ETF snapshot and write each operative's child spec into ProcessHub's
   persistent registry via `start_children/3`. Refuses to import on a
   non-empty hub unless `force?` is `true`.
   """
@@ -1199,29 +1199,29 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp run_legacy_import(payload) do
-    relays = Map.get(payload, :relays, [])
+    operatives = Map.get(payload, :operatives, [])
 
-    Enum.each(relays, fn entry ->
+    Enum.each(operatives, fn entry ->
       namespace = Map.fetch!(entry, :namespace)
       cspec = Map.fetch!(entry, :cspec)
       hub_id = Flezha.Service.Identificator.hub(namespace)
       _ = ProcessHub.start_children(hub_id, [cspec], async_wait: false)
     end)
 
-    IO.puts("boot import-legacy-snapshot: imported #{length(relays)} relays")
+    IO.puts("boot import-legacy-snapshot: imported #{length(operatives)} operatives")
     :ok
   end
 
   # ---------- `flz state` subcommand handlers ----------
 
   @doc """
-  `flz state list <relay_class>` — print one row per Partition under
-  `<relay_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
+  `flz state list <operative_class>` — print one row per Segment under
+  `<operative_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
   """
-  def state_list(relay_class, output_format \\ "text") do
+  def state_list(operative_class, output_format \\ "text") do
     rows =
       for {{rc, sh, pk} = pid, counters} <- Flezha.State.Metrics.snapshot_all(),
-          rc == relay_class do
+          rc == operative_class do
         wal_bytes =
           case :file.read_file_info(Flezha.State.Registry.wal_path(pid)) do
             {:ok, info} -> elem(info, 1)
@@ -1229,9 +1229,9 @@ defmodule Flezha.Service.CliManager do
           end
 
         %{
-          relay_class: rc,
-          shard_id: sh,
-          partition_key: pk,
+          operative_class: rc,
+          operation_id: sh,
+          segment_key: pk,
           wal_seq: counters.wal_seq,
           snapshot_seq: counters.snapshot_seq,
           wal_bytes: wal_bytes,
@@ -1243,16 +1243,16 @@ defmodule Flezha.Service.CliManager do
 
     case output_format do
       "json" ->
-        IO.puts(Jason.encode!(%{relay_class: relay_class, partitions: rows}))
+        IO.puts(Jason.encode!(%{operative_class: operative_class, segments: rows}))
 
       _ ->
-        IO.puts("Partitions under relay #{relay_class}:\n")
+        IO.puts("Segments under operative #{operative_class}:\n")
         Enum.each(rows, &print_state_row/1)
     end
   end
 
   defp print_state_row(row) do
-    IO.puts("  #{row.shard_id}/#{row.partition_key}")
+    IO.puts("  #{row.operation_id}/#{row.segment_key}")
     IO.puts("    wal_seq:                 #{row.wal_seq}")
     IO.puts("    snapshot_seq:            #{row.snapshot_seq}")
     IO.puts("    wal_bytes:               #{row.wal_bytes}")
@@ -1263,19 +1263,19 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  `flz state at <relay/shard/partition> <seq | timestamp>` — point-in-time
-  query. Resolves the path string into a `(executor_id, relay,
-  shard, partition_key)` by scanning the on-disk state tree (one match
+  `flz state at <operative/operation/segment> <seq | timestamp>` — point-in-time
+  query. Resolves the path string into a `(executor_id, operative,
+  operation, segment_key)` by scanning the on-disk state tree (one match
   expected; ambiguous paths print all matches and exit non-zero).
   """
   def state_at(path_string, target_string, output_format \\ "text") do
     case parse_state_path(path_string) do
-      {:ok, partition_id} ->
+      {:ok, segment_id} ->
         target = parse_state_target(target_string)
 
-        case Flezha.State.TimeTravel.query(partition_id, target) do
+        case Flezha.State.TimeTravel.query(segment_id, target) do
           {:ok, result} ->
-            print_state_at(partition_id, target, result, output_format)
+            print_state_at(segment_id, target, result, output_format)
 
           {:error, %{kind: kind, message: msg, earliest_available: earliest}} ->
             IO.puts(
@@ -1292,7 +1292,7 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp print_state_at(_partition_id, _target, result, "json") do
+  defp print_state_at(_segment_id, _target, result, "json") do
     IO.puts(
       Jason.encode!(%{
         terminal_seq: result.terminal_seq,
@@ -1302,8 +1302,8 @@ defmodule Flezha.Service.CliManager do
     )
   end
 
-  defp print_state_at(partition_id, target, result, _) do
-    {rc, sh, pk} = partition_id
+  defp print_state_at(segment_id, target, result, _) do
+    {rc, sh, pk} = segment_id
 
     IO.puts("state at #{rc}/#{sh}/#{pk} target=#{inspect(target)}:")
     IO.puts("  terminal_seq:    #{result.terminal_seq}")
@@ -1312,15 +1312,15 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  `flz state rotate <relay/shard/partition>` — force a compaction by
-  asking Overwatch to dispatch a `CompactPartition` to the SDK.
+  `flz state rotate <operative/operation/segment>` — force a compaction by
+  asking Overwatch to dispatch a `CompactSegment` to the SDK.
   """
   def state_rotate(path_string) do
     case parse_state_path(path_string) do
       {:ok, {rc, sh, pk}} ->
-        case lookup_executor_for_partition(rc, sh, pk) do
+        case lookup_executor_for_segment(rc, sh, pk) do
           {:ok, executor_id} ->
-            case Flezha.Relay.Overwatch.dispatch_compact_partition(executor_id, {rc, sh, pk}) do
+            case Flezha.Operative.Overwatch.dispatch_compact_segment(executor_id, {rc, sh, pk}) do
               {:ok, _ref} ->
                 IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
 
@@ -1340,27 +1340,27 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp lookup_executor_for_partition(rc, sh, pk) do
+  defp lookup_executor_for_segment(rc, sh, pk) do
     Flezha.State.Recovery.resolve_executor({rc, sh, pk})
   end
 
   @doc """
-  `flz state delete <relay/shard/key>` — hard-delete one Partition's
+  `flz state delete <operative/operation/key>` — hard-delete one Segment's
   persisted state (WAL + snapshots + outbox-dedup). Idempotent: deleting
-  a partition with no on-disk state still succeeds. This is the
+  a segment with no on-disk state still succeeds. This is the
   operator-driven, confirmation-returning counterpart to the SDK reaper's
-  fire-and-forget `delete_partition_state` send (Decision 8).
+  fire-and-forget `delete_segment_state` send (Decision 8).
   """
   def state_delete(path_string) do
     case String.split(path_string, "/", parts: 3) do
       [rc, sh, pk] ->
-        {:ok, _} = Flezha.State.Supervisor.delete_partition({rc, sh, pk})
+        {:ok, _} = Flezha.State.Supervisor.delete_segment({rc, sh, pk})
         IO.puts("deleted persisted state for #{rc}/#{sh}/#{pk}")
 
       _ ->
         IO.puts(
           :stderr,
-          "state delete: expected <relay>/<shard>/<partition_key>; got #{path_string}"
+          "state delete: expected <operative>/<operation>/<segment_key>; got #{path_string}"
         )
 
         System.halt(1)
@@ -1368,17 +1368,17 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  `flz state retention <relay_class> <hours>` — set runtime retention
-  for `<relay_class>`. Persisted across the next Application boot only
+  `flz state retention <operative_class> <hours>` — set runtime retention
+  for `<operative_class>`. Persisted across the next Application boot only
   if the executor separately writes it to runtime.exs.
   """
-  def state_retention(relay_class, hours_string) do
+  def state_retention(operative_class, hours_string) do
     case Integer.parse(hours_string) do
       {hours, ""} when hours >= 0 ->
         current = Application.get_env(:flezha, :time_travel_retention_hours, %{})
-        updated = Map.put(current, relay_class, hours)
+        updated = Map.put(current, operative_class, hours)
         Application.put_env(:flezha, :time_travel_retention_hours, updated, persistent: true)
-        IO.puts("retention[#{relay_class}] = #{hours} hours (in-memory; persist via runtime.exs)")
+        IO.puts("retention[#{operative_class}] = #{hours} hours (in-memory; persist via runtime.exs)")
 
       _ ->
         IO.puts(:stderr, "state retention: hours must be a non-negative integer")
@@ -1396,12 +1396,12 @@ defmodule Flezha.Service.CliManager do
         end
 
       _ ->
-        {:error, "expected <relay>/<shard>/<partition_key>; got #{path_string}"}
+        {:error, "expected <operative>/<operation>/<segment_key>; got #{path_string}"}
     end
   end
 
   defp has_persisted_state?(rc, sh, pk) do
-    Enum.any?(Flezha.State.Registry.all_partitions(), fn {r, s, p} ->
+    Enum.any?(Flezha.State.Registry.all_segments(), fn {r, s, p} ->
       r == rc and s == sh and p == pk
     end)
   end

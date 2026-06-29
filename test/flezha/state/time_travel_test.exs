@@ -26,14 +26,14 @@ defmodule Flezha.State.TimeTravelTest do
       File.rm_rf!(base)
     end)
 
-    %{base: base, partition_id: TestHelpers.sample_partition_id("tt_" <> uniq())}
+    %{base: base, segment_id: TestHelpers.sample_segment_id("tt_" <> uniq())}
   end
 
-  test "no_data error when partition has no persisted state", %{partition_id: pid} do
+  test "no_data error when segment has no persisted state", %{segment_id: pid} do
     assert {:error, %{kind: :no_data}} = TimeTravel.query(pid, {:seq, 100})
   end
 
-  test "seq query returns the right slice", %{partition_id: pid} do
+  test "seq query returns the right slice", %{segment_id: pid} do
     header = TestHelpers.stub_header()
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, srv} = Supervisor.lookup(pid)
@@ -52,7 +52,7 @@ defmodule Flezha.State.TimeTravelTest do
     assert result.change_log_bytes == expected
   end
 
-  test "outside_retention error for seq before earliest snapshot", %{partition_id: pid} do
+  test "outside_retention error for seq before earliest snapshot", %{segment_id: pid} do
     header = TestHelpers.stub_header()
     {:ok, _} = Snapshot.write_snapshot(pid, 100, header, "snap@100")
 

@@ -2,8 +2,8 @@ defmodule Flezha.Convergence.Intent do
   @moduledoc """
   Pure reader of declared, durable state — "what the system should look
   like". Derived from the ProcessHub registry: every running namespace's
-  relays, each relay's declared plugins (read from the durable cspec
-  start-args via `HubManager.relay_plugins/2`), and its factory.
+  operatives, each operative's declared plugins (read from the durable cspec
+  start-args via `HubManager.operative_plugins/2`), and its factory.
   Read-only; never mutates the registry.
 
   The Loop diffs this against `Probe.snapshot/0` (reality) each tick.
@@ -12,34 +12,34 @@ defmodule Flezha.Convergence.Intent do
   alias Flezha.Plugin
   alias Flezha.Service.HubManager
 
-  @type relay :: %{
+  @type operative :: %{
           namespace: atom(),
-          relay_id: binary(),
+          operative_id: binary(),
           factory_id: binary() | nil,
           plugins: [{binary(), Plugin.t()}]
         }
-  @type t :: %__MODULE__{relays: [relay()]}
+  @type t :: %__MODULE__{operatives: [operative()]}
 
-  defstruct relays: []
+  defstruct operatives: []
 
   @spec declared() :: t()
   def declared() do
-    relays =
+    operatives =
       HubManager.get_running_namespaces()
       |> Enum.flat_map(&declared_for_namespace/1)
 
-    %__MODULE__{relays: relays}
+    %__MODULE__{operatives: operatives}
   end
 
   defp declared_for_namespace(namespace) do
     namespace
-    |> HubManager.get_all_relays()
-    |> Enum.map(fn {relay_id, _pid} ->
+    |> HubManager.get_all_operatives()
+    |> Enum.map(fn {operative_id, _pid} ->
       %{
         namespace: namespace,
-        relay_id: relay_id,
+        operative_id: operative_id,
         factory_id: nil,
-        plugins: declared_plugins(namespace, relay_id)
+        plugins: declared_plugins(namespace, operative_id)
       }
     end)
   catch
@@ -51,8 +51,8 @@ defmodule Flezha.Convergence.Intent do
   # enable/disable`. Returns `{plugin_id, %Plugin{}}` tuples; empty on any
   # read failure so a transient registry hiccup never spuriously stops a
   # plugin.
-  defp declared_plugins(namespace, relay_id) do
-    case HubManager.relay_plugins(to_string(namespace), relay_id) do
+  defp declared_plugins(namespace, operative_id) do
+    case HubManager.operative_plugins(to_string(namespace), operative_id) do
       {:ok, plugins} when is_list(plugins) -> plugins
       _ -> []
     end

@@ -118,28 +118,28 @@ docker exec -it flezha_controller_dev bash -c "cd test/apps/testnet && npm insta
 docker exec -it flezha_controller_dev bash
 
 
-# Start relay, websocket plugin and kafka output plugins:
-_build/dev/rel/flezha/bin/flz relay start my_relay store_input --init_values '{"binary_inputs": [], "text_inputs": ["FIRST"]}' 
+# Start operative, websocket plugin and kafka output plugins:
+_build/dev/rel/flezha/bin/flz operative start my_operative store_input --init_values '{"binary_inputs": [], "text_inputs": ["FIRST"]}' 
 
 
-_build/dev/rel/flezha/bin/flz plugin enable test_plugin_ws relay_websocket \
-      --Xrelay_id="my_relay" \
+_build/dev/rel/flezha/bin/flz plugin enable test_plugin_ws operative_websocket \
+      --Xoperative_id="my_operative" \
       --Xtrigger="proactive" \
       --Xuri="ws://localhost:4500" \
       --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":1000}}"}}' \
       --Xposition=0
 
 
-_build/dev/rel/flezha/bin/flz plugin enable test_plugin_kafka relay_kafka_producer \
-  --Xrelay_id=my_relay \
+_build/dev/rel/flezha/bin/flz plugin enable test_plugin_kafka operative_kafka_producer \
+  --Xoperative_id=my_operative \
   --Xtrigger=on_output \
   --Xhosts=kafka:9092 \
   --Xtopic=test_topic
   
   
-# Listen to relay IO:  
-_build/dev/rel/flezha/bin/flz relay io_listen input my_relay
-_build/dev/rel/flezha/bin/flz relay io_listen output my_relay
+# Listen to operative IO:  
+_build/dev/rel/flezha/bin/flz operative io_listen input my_operative
+_build/dev/rel/flezha/bin/flz operative io_listen output my_operative
 ```
 
 # Kafka UI:

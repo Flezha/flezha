@@ -1,15 +1,15 @@
 package com.flezha.sdk;
 
-import com.flezha.sdk.relay.Relay;
-import com.flezha.sdk.relay.RelayRegistry;
-import com.flezha.sdk.task.Task;
-import com.flezha.sdk.task.TaskRegistry;
+import com.flezha.sdk.operative.ContinuousOperative;
+import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.bounded.BoundedOperative;
+import com.flezha.sdk.bounded.BoundedOperativeRegistry;
 import java.util.Map;
 import javax.annotation.Nonnull;
 
 /**
  * SDK entry point. Obtain an instance via {@link #newInstance(String)}
- * after calling {@link #registerRelay(Class)} for every Relay class the
+ * after calling {@link #registerContinuous(Class)} for every ContinuousOperative class the
  * compute engine supports.
  *
  * <p>The concrete implementation lives in {@code flezha-sdk-runtime}; this
@@ -17,7 +17,7 @@ import javax.annotation.Nonnull;
  *
  * <p>{@link Flezha} is {@link AutoCloseable}: the {@link #close()}
  * method runs the graceful-shutdown sequence introduced by
- * ship-fresh-state-on-sdk-shutdown, shipping each running relay's
+ * ship-fresh-state-on-sdk-shutdown, shipping each running operative's
  * final state to the controller before tearing down. The same sequence is
  * registered as a JVM shutdown hook so SIGTERM (Kubernetes pre-stop)
  * triggers it without an explicit {@code close()} call.
@@ -25,20 +25,20 @@ import javax.annotation.Nonnull;
 public interface Flezha extends AutoCloseable {
 
     /**
-     * Register a Relay class. Pass-through to
-     * {@link RelayRegistry#registerRelay(Class)}.
+     * Register a ContinuousOperative class. Pass-through to
+     * {@link ContinuousOperativeRegistry#registerContinuous(Class)}.
      */
-    static void registerRelay(@Nonnull Class<? extends Relay> relayClass) {
-        RelayRegistry.registerRelay(relayClass);
+    static void registerContinuous(@Nonnull Class<? extends ContinuousOperative> operativeClass) {
+        ContinuousOperativeRegistry.registerContinuous(operativeClass);
     }
 
     /**
-     * Register a {@link Task} class. Sibling of {@link #registerRelay(Class)};
-     * pass-through to {@link TaskRegistry#registerTask(Class)}. Makes the
-     * task spawnable via {@code flz relay start <factory> --kind task}.
+     * Register a {@link BoundedOperative} class. Sibling of {@link #registerContinuous(Class)};
+     * pass-through to {@link BoundedOperativeRegistry#registerBounded(Class)}. Makes the
+     * bounded spawnable via {@code flz operative start <factory> --kind bounded}.
      */
-    static void registerTask(@Nonnull Class<? extends Task> taskClass) {
-        TaskRegistry.registerTask(taskClass);
+    static void registerBounded(@Nonnull Class<? extends BoundedOperative> boundedClass) {
+        BoundedOperativeRegistry.registerBounded(boundedClass);
     }
 
     /** Returns the executor id assigned by the controller during handshake. */
@@ -46,19 +46,19 @@ public interface Flezha extends AutoCloseable {
     String getId();
 
     /**
-     * Returns a snapshot of currently-spawned Relay instances keyed by what
-     * the wire calls {@code relay_id}.
+     * Returns a snapshot of currently-spawned ContinuousOperative instances keyed by what
+     * the wire calls {@code operative_id}.
      */
     @Nonnull
-    Map<String, ?> getRelays();
+    Map<String, ?> getOperatives();
 
     /**
      * Run the graceful-shutdown sequence: serialize each running
-     * relay's state and ship it to the controller so the next
+     * operative's state and ship it to the controller so the next
      * reconnecting executor picks up the executor's true final state
      * (instead of the up-to-{@code overwatch_state_snapshot_interval_ms}
-     * stale periodic snapshot). Per-relay ack wait is bounded at
-     * 2 seconds, parallelised across relays.
+     * stale periodic snapshot). Per-operative ack wait is bounded at
+     * 2 seconds, parallelised across operatives.
      *
      * <p>Idempotent across SIGTERM + explicit close — the second caller
      * observes that shutdown has already started and returns immediately.
@@ -71,16 +71,16 @@ public interface Flezha extends AutoCloseable {
      * controller sends {@code AssignExecutorId}. Thread-safe; may be called
      * at most once per JVM for a given namespace.
      *
-     * @throws IllegalStateException if no Relay classes have been registered.
+     * @throws IllegalStateException if no ContinuousOperative classes have been registered.
      */
     @Nonnull
     static Flezha newInstance(@Nonnull String namespace) {
         if (namespace == null || namespace.isEmpty()) {
             throw new IllegalArgumentException("namespace must not be null or empty");
         }
-        if (RelayRegistry.isEmpty() && TaskRegistry.isEmpty()) {
-            throw new IllegalStateException("Cannot start Flezha: no relay or task classes registered. "
-                    + "Call Flezha.registerRelay(MyRelay.class) or Flezha.registerTask(MyTask.class) "
+        if (ContinuousOperativeRegistry.isEmpty() && BoundedOperativeRegistry.isEmpty()) {
+            throw new IllegalStateException("Cannot start Flezha: no operative or bounded classes registered. "
+                    + "Call Flezha.registerContinuous(MyContinuousOperative.class) or Flezha.registerBounded(MyBoundedOperative.class) "
                     + "before Flezha.newInstance(...).");
         }
 

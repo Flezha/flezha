@@ -1,9 +1,9 @@
 defmodule Flezha.Service.PluginManager do
   @moduledoc """
   Per-node registry of enabled `%Flezha.Plugin{}` entries. Routes
-  `enable_plugin/2` into the owning relay's Overwatch via the unified
+  `enable_plugin/2` into the owning operative's Overwatch via the unified
   `{:plugin_subscribe, ...}` / `{:plugin_unsubscribe, ...}` messages and
-  persists the subscription into the relay's ProcessHub child-spec
+  persists the subscription into the operative's ProcessHub child-spec
   (now backed by ProcessHub's durable registry) so it survives any
   subsequent Overwatch (re)start, controller restart, or full cluster
   cold boot.
@@ -23,7 +23,7 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Plugin
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.OperativeManager
   alias ProcessHub.Service.ProcessRegistry
 
   @no_response_retry_attempts 8
@@ -34,7 +34,7 @@ defmodule Flezha.Service.PluginManager do
   def enable_plugin(plugin_id, %Plugin{} = plugin) do
     cond do
       has_init_subscription?(plugin) ->
-        {:error, "init-state plugins must be attached at relay start"}
+        {:error, "init-state plugins must be attached at operative start"}
 
       true ->
         case GenServer.call(__MODULE__, {:enable_plugin, plugin_id, plugin}) do
@@ -46,8 +46,8 @@ defmodule Flezha.Service.PluginManager do
 
   defp has_init_subscription?(%Plugin{subscriptions: subs}) when is_list(subs) do
     Enum.any?(subs, fn
-      {:on_relay_init, _} -> true
-      :on_relay_init -> true
+      {:on_operative_init, _} -> true
+      :on_operative_init -> true
       _ -> false
     end)
   end
@@ -61,9 +61,9 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  def disable_relay_plugins(namespace, relay_id)
-      when is_binary(namespace) and is_binary(relay_id) do
-    GenServer.call(__MODULE__, {:disable_relay_plugins, namespace, relay_id})
+  def disable_operative_plugins(namespace, operative_id)
+      when is_binary(namespace) and is_binary(operative_id) do
+    GenServer.call(__MODULE__, {:disable_operative_plugins, namespace, operative_id})
   end
 
   def disable_namespace_plugins(namespace) when is_binary(namespace) do
@@ -102,11 +102,11 @@ defmodule Flezha.Service.PluginManager do
   def handle_call({:enable_plugin, plugin_id, %Plugin{} = plugin}, _from, state) do
     {reply, new_state} =
       with :ok <- plugin_id_unique(state, plugin_id),
-           :ok <- check_relay_target(plugin),
+           :ok <- check_operative_target(plugin),
            :ok <- write_enable_to_cspec(plugin, plugin_id),
-           {:ok, pid} <- resolve_relay(plugin),
+           {:ok, pid} <- resolve_operative(plugin),
            :ok <- forward_subscribe(pid, plugin_id, plugin) do
-        {{:ok, "plugin enabled"}, Map.put(state, plugin_id, {plugin.namespace, plugin.relay_id})}
+        {{:ok, "plugin enabled"}, Map.put(state, plugin_id, {plugin.namespace, plugin.operative_id})}
       else
         err -> {err, state}
       end
@@ -119,10 +119,10 @@ defmodule Flezha.Service.PluginManager do
       nil ->
         {:reply, {:error, "plugin not found"}, state}
 
-      {namespace, relay_id} ->
-        case write_disable_to_cspec(namespace, relay_id, plugin_id) do
+      {namespace, operative_id} ->
+        case write_disable_to_cspec(namespace, operative_id, plugin_id) do
           :ok ->
-            case RelayManager.get_relay_pid(namespace, relay_id) do
+            case OperativeManager.get_operative_pid(namespace, operative_id) do
               {:ok, pid} ->
                 _ = GenServer.call(pid, {:plugin_unsubscribe, plugin_id})
                 {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
@@ -131,7 +131,7 @@ defmodule Flezha.Service.PluginManager do
                 {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
             end
 
-          {:error, :relay_not_found} ->
+          {:error, :operative_not_found} ->
             {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
 
           {:error, reason} ->
@@ -155,11 +155,11 @@ defmodule Flezha.Service.PluginManager do
     {:reply, :ok, new_state}
   end
 
-  def handle_call({:disable_relay_plugins, namespace, relay_id}, _from, state) do
+  def handle_call({:disable_operative_plugins, namespace, operative_id}, _from, state) do
     matching =
       state
       |> Enum.filter(fn
-        {_id, {ns, rid}} -> ns == namespace and rid == relay_id
+        {_id, {ns, rid}} -> ns == namespace and rid == operative_id
         _ -> false
       end)
       |> Enum.map(fn {id, _} -> id end)
@@ -173,7 +173,7 @@ defmodule Flezha.Service.PluginManager do
           {ns, rid} ->
             _ = write_disable_to_cspec(ns, rid, plugin_id)
 
-            case RelayManager.get_relay_pid(ns, rid) do
+            case OperativeManager.get_operative_pid(ns, rid) do
               {:ok, pid} -> _ = GenServer.call(pid, {:plugin_unsubscribe, plugin_id})
               _ -> :ok
             end
@@ -204,18 +204,18 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  defp check_relay_target(%Plugin{namespace: ns, relay_id: rid})
+  defp check_operative_target(%Plugin{namespace: ns, operative_id: rid})
        when is_binary(ns) and is_binary(rid),
        do: :ok
 
-  defp check_relay_target(%Plugin{namespace: ns, relay_id: rid}) do
+  defp check_operative_target(%Plugin{namespace: ns, operative_id: rid}) do
     {:error,
-     "plugin missing namespace or relay_id (got namespace=#{inspect(ns)}, relay_id=#{inspect(rid)})"}
+     "plugin missing namespace or operative_id (got namespace=#{inspect(ns)}, operative_id=#{inspect(rid)})"}
   end
 
-  defp resolve_relay(%Plugin{namespace: ns, relay_id: pid_id})
+  defp resolve_operative(%Plugin{namespace: ns, operative_id: pid_id})
        when is_binary(ns) and is_binary(pid_id) do
-    RelayManager.get_relay_pid(ns, pid_id)
+    OperativeManager.get_operative_pid(ns, pid_id)
   end
 
   defp forward_subscribe(pid, plugin_id, plugin) do
@@ -225,27 +225,27 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  defp write_enable_to_cspec(%Plugin{namespace: ns, relay_id: relay_id} = plugin, plugin_id) do
+  defp write_enable_to_cspec(%Plugin{namespace: ns, operative_id: operative_id} = plugin, plugin_id) do
     stripped = Plugin.strip_transient(plugin)
 
-    update_cspec_plugins(ns, relay_id, fn plugins ->
+    update_cspec_plugins(ns, operative_id, fn plugins ->
       plugins
       |> Enum.reject(fn {id, _} -> id == plugin_id end)
       |> Kernel.++([{plugin_id, stripped}])
     end)
   end
 
-  defp write_disable_to_cspec(namespace, relay_id, plugin_id) do
-    update_cspec_plugins(namespace, relay_id, fn plugins ->
+  defp write_disable_to_cspec(namespace, operative_id, plugin_id) do
+    update_cspec_plugins(namespace, operative_id, fn plugins ->
       Enum.reject(plugins, fn {id, _plugin} -> id == plugin_id end)
     end)
   end
 
-  defp update_cspec_plugins(namespace, relay_id, update_fn) do
-    do_update_cspec_plugins(namespace, relay_id, update_fn, 0)
+  defp update_cspec_plugins(namespace, operative_id, update_fn) do
+    do_update_cspec_plugins(namespace, operative_id, update_fn, 0)
   end
 
-  defp do_update_cspec_plugins(namespace, relay_id, update_fn, attempt) do
+  defp do_update_cspec_plugins(namespace, operative_id, update_fn, attempt) do
     hub_id = Identificator.hub(namespace)
 
     cond do
@@ -259,7 +259,7 @@ defmodule Flezha.Service.PluginManager do
             # node so a restart driven from any node's registry restores it.
             ProcessRegistry.update(
               hub_id,
-              relay_id,
+              operative_id,
               fn cspec, node_pids, metadata ->
                 {HubManager.rewrite_cspec_plugins(cspec, update_fn), node_pids, metadata}
               end,
@@ -276,21 +276,21 @@ defmodule Flezha.Service.PluginManager do
           {:error, :no_response} when attempt < @no_response_retry_attempts ->
             backoff = min(@no_response_retry_initial_ms * Bitwise.bsl(1, attempt), 5_000)
             Process.sleep(backoff)
-            do_update_cspec_plugins(namespace, relay_id, update_fn, attempt + 1)
+            do_update_cspec_plugins(namespace, operative_id, update_fn, attempt + 1)
 
-          # The relay row may live on a peer node whose pubsub-based
+          # The operative row may live on a peer node whose pubsub-based
           # synchronization hasn't fanned out to us yet — retry briefly
           # before surfacing the error.
           {:error, "No child found"} when attempt < @no_response_retry_attempts ->
             backoff = min(@no_response_retry_initial_ms * Bitwise.bsl(1, attempt), 5_000)
             Process.sleep(backoff)
-            do_update_cspec_plugins(namespace, relay_id, update_fn, attempt + 1)
+            do_update_cspec_plugins(namespace, operative_id, update_fn, attempt + 1)
 
           {:error, :not_found} ->
-            {:error, :relay_not_found}
+            {:error, :operative_not_found}
 
           {:error, "No child found"} ->
-            {:error, :relay_not_found}
+            {:error, :operative_not_found}
 
           {:error, reason} ->
             {:error, reason}

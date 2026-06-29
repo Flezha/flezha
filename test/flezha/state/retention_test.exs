@@ -35,11 +35,11 @@ defmodule Flezha.State.RetentionTest do
       File.rm_rf!(base)
     end)
 
-    %{base: base, partition_id: TestHelpers.sample_partition_id("ret_" <> uniq())}
+    %{base: base, segment_id: TestHelpers.sample_segment_id("ret_" <> uniq())}
   end
 
-  describe "sweep_partition" do
-    test "0-retention truncates WAL down to the latest snapshot", %{partition_id: pid} do
+  describe "sweep_segment" do
+    test "0-retention truncates WAL down to the latest snapshot", %{segment_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)
       header = TestHelpers.stub_header()
@@ -49,19 +49,19 @@ defmodule Flezha.State.RetentionTest do
       # After snapshot the writer is at seq 6 with WAL = [5, 6].
       assert WalWriter.last_persisted_seq(srv) == 6
 
-      :ok = Retention.sweep_partition(pid, 0)
+      :ok = Retention.sweep_segment(pid, 0)
 
       # Latest snapshot remains; WAL should still be [5, 6] because they're > kept_seq=4.
       assert {4, _} = Snapshot.latest_snapshot(pid)
 
       # Add an older snapshot to demonstrate it gets reaped under 0 retention.
       {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
-      :ok = Retention.sweep_partition(pid, 0)
+      :ok = Retention.sweep_segment(pid, 0)
       assert [{5, _}] = Registry.snapshot_paths(pid)
     end
 
     test "non-zero retention keeps only the latest when all snaps are within window", %{
-      partition_id: pid
+      segment_id: pid
     } do
       header = TestHelpers.stub_header()
       {:ok, _} = Supervisor.find_or_start(pid)
@@ -74,11 +74,11 @@ defmodule Flezha.State.RetentionTest do
       # 1-hour retention; both snaps are within the window. Per design.md
       # Decision 5: when no snap is older than cutoff, kept_seq = latest_seq
       # and earlier snaps are deleted as redundant.
-      :ok = Retention.sweep_partition(pid, 1)
+      :ok = Retention.sweep_segment(pid, 1)
       assert [{3, _}] = Registry.snapshot_paths(pid)
     end
 
-    test "rewriting preserves crc-validity of kept records", %{partition_id: pid} do
+    test "rewriting preserves crc-validity of kept records", %{segment_id: pid} do
       header = TestHelpers.stub_header()
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)

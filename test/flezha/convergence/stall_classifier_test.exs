@@ -222,17 +222,17 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert StallClassifier.classify(curr, prev) == :ok
   end
 
-  test "relay_not_forwarding: relay fed but forwarded flat (not all filtered)" do
-    prev = snapshot(relays: [relay(io_in_received: 10, forwarded: 10, filtered_nil: 0)])
-    curr = snapshot(relays: [relay(io_in_received: 30, forwarded: 10, filtered_nil: 2)])
+  test "operative_not_forwarding: operative fed but forwarded flat (not all filtered)" do
+    prev = snapshot(operatives: [operative(io_in_received: 10, forwarded: 10, filtered_nil: 0)])
+    curr = snapshot(operatives: [operative(io_in_received: 30, forwarded: 10, filtered_nil: 2)])
 
-    assert {:relay_not_forwarding, ctx} = StallClassifier.classify(curr, prev)
-    assert ctx.relay_id == "relay-1"
+    assert {:operative_not_forwarding, ctx} = StallClassifier.classify(curr, prev)
+    assert ctx.operative_id == "operative-1"
   end
 
-  test "relay_not_forwarding does NOT fire when on_input filters everything" do
-    prev = snapshot(relays: [relay(io_in_received: 10, forwarded: 0, filtered_nil: 10)])
-    curr = snapshot(relays: [relay(io_in_received: 30, forwarded: 0, filtered_nil: 30)])
+  test "operative_not_forwarding does NOT fire when on_input filters everything" do
+    prev = snapshot(operatives: [operative(io_in_received: 10, forwarded: 0, filtered_nil: 10)])
+    curr = snapshot(operatives: [operative(io_in_received: 30, forwarded: 0, filtered_nil: 30)])
 
     assert StallClassifier.classify(curr, prev) == :ok
   end
@@ -259,7 +259,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
     %{
       drivers: Keyword.get(opts, :drivers, []),
       channels: Keyword.get(opts, :channels, []),
-      relays: Keyword.get(opts, :relays, [])
+      operatives: Keyword.get(opts, :operatives, [])
     }
   end
 
@@ -299,9 +299,9 @@ defmodule Flezha.Convergence.StallClassifierTest do
     }
   end
 
-  defp relay(opts) do
+  defp operative(opts) do
     %{
-      relay_id: Keyword.get(opts, :relay_id, "relay-1"),
+      operative_id: Keyword.get(opts, :operative_id, "operative-1"),
       io_in_received: Keyword.get(opts, :io_in_received, 0),
       forwarded: Keyword.get(opts, :forwarded, 0),
       filtered_nil: Keyword.get(opts, :filtered_nil, 0)

@@ -131,7 +131,7 @@ defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
           provider: #{mod},
           subscriptions: [{:on_input, []}],
           default_opts: %{},
-          scope: :relay
+          scope: :operative
         }
       ],
       dependencies: []

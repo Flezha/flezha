@@ -3,32 +3,32 @@ defmodule Flezha.State.WireTest do
 
   alias Flezha.State.Wire
 
-  describe "encode_partition_id / decode_partition_id" do
+  describe "encode_segment_id / decode_segment_id" do
     test "round-trips structured identity" do
-      bin = Wire.encode_partition_id("MarketRelay", "OhlcShard", "M1")
-      assert {:ok, {"MarketRelay", "OhlcShard", "M1"}} = Wire.decode_partition_id(bin)
+      bin = Wire.encode_segment_id("MarketOperative", "OhlcOperation", "M1")
+      assert {:ok, {"MarketOperative", "OhlcOperation", "M1"}} = Wire.decode_segment_id(bin)
     end
 
-    test "rejects relay_class > 255 bytes" do
+    test "rejects operative_class > 255 bytes" do
       assert_raise ArgumentError, fn ->
-        Wire.encode_partition_id(String.duplicate("x", 256), "S", "P")
+        Wire.encode_segment_id(String.duplicate("x", 256), "S", "P")
       end
     end
 
-    test "rejects partition_key > 65535 bytes" do
+    test "rejects segment_key > 65535 bytes" do
       assert_raise ArgumentError, fn ->
-        Wire.encode_partition_id("R", "S", String.duplicate("x", 65_536))
+        Wire.encode_segment_id("R", "S", String.duplicate("x", 65_536))
       end
     end
 
     test "decode error for malformed bytes" do
-      assert {:error, :bad_partition_id} = Wire.decode_partition_id(<<0xFF>>)
+      assert {:error, :bad_segment_id} = Wire.decode_segment_id(<<0xFF>>)
     end
   end
 
   describe "decode_frame" do
     test "round-trips a well-formed frame" do
-      identity = Wire.encode_partition_id("R", "S", "PK")
+      identity = Wire.encode_segment_id("R", "S", "PK")
       seq = 42
       header = <<1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0>>
       body = "hello world"
@@ -39,14 +39,14 @@ defmodule Flezha.State.WireTest do
           byte_size(body)::32-big, body::binary, crc::32-big>>
 
       assert {:ok, decoded} = Wire.decode_frame(frame)
-      assert decoded.partition_id == {"R", "S", "PK"}
+      assert decoded.segment_id == {"R", "S", "PK"}
       assert decoded.seq == 42
       assert decoded.header == header
       assert decoded.body == body
     end
 
     test "detects crc mismatch" do
-      identity = Wire.encode_partition_id("R", "S", "PK")
+      identity = Wire.encode_segment_id("R", "S", "PK")
       seq = 1
       header = <<1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0>>
       body = "x"

@@ -1,8 +1,8 @@
 package com.flezha.sdk.runtime.control;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.flezha.sdk.relay.RelayRegistry;
-import com.flezha.sdk.task.TaskRegistry;
+import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.bounded.BoundedOperativeRegistry;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -13,8 +13,8 @@ import java.util.stream.Collectors;
  * {@code namespace}, {@code factory_ids}, {@code factories},
  * {@code previous_executor_id}.
  *
- * <p>{@code factories} carries a per-Relay description record. The
- * Relay interface has no description hook today, so the per-id
+ * <p>{@code factories} carries a per-ContinuousOperative description record. The
+ * ContinuousOperative interface has no description hook today, so the per-id
  * description is always empty.
  *
  * <p>{@code previous_executor_id} is the node-locally persisted id from a prior
@@ -34,10 +34,10 @@ public record HandshakeMessage(
     }
 
     public static HandshakeMessage from(String namespace, String previousExecutorId) {
-        // Relay factories first, then task factories — both kinds are advertised
-        // in one combined list so the controller validates any AddRelay kind.
-        List<String> ids = new ArrayList<>(RelayRegistry.factoryIds());
-        ids.addAll(TaskRegistry.factoryIds());
+        // ContinuousOperative factories first, then bounded factories — both kinds are advertised
+        // in one combined list so the controller validates any AddOperative kind.
+        List<String> ids = new ArrayList<>(ContinuousOperativeRegistry.factoryIds());
+        ids.addAll(BoundedOperativeRegistry.factoryIds());
         List<FactoryInfo> infos =
                 ids.stream().map(id -> new FactoryInfo(id, "")).collect(Collectors.toList());
         return new HandshakeMessage(namespace, ids, infos, previousExecutorId);

@@ -2,18 +2,18 @@ use std::io::{self, Read};
 use std::time::Duration;
 use std::{env, thread};
 
-use flezha_executor::shard::{Shard, ShardCtx, ShardError};
+use flezha_executor::operation::{Operation, OperationCtx, OperationError};
 use flezha_executor::state::{
     Change, CoalesceKey, NoChange, RestoreInitPayload, StateHandle, WallClock,
 };
 use flezha_executor::{
-    register_relay, register_task, ChannelBuilder, OverflowPolicy, Relay, Task, TaskCtx, TaskError,
+    register_continuous, register_bounded, ChannelBuilder, OverflowPolicy, ContinuousOperative, BoundedOperative, BoundedCtx, BoundedError,
 };
 use serde::{Deserialize, Serialize};
 
 fn main() {
-    register_relays();
-    register_tasks();
+    register_continuous_all();
+    register_bounded_all();
 
     let _executor = flezha_executor::new(namespace());
 
@@ -42,47 +42,47 @@ fn std_keeper() -> thread::JoinHandle<()> {
     }
 }
 
-fn register_relays() {
-    register_relay::<DoNothingRelay>();
-    register_relay::<StoreInputRelay>();
-    register_relay::<CompareFilterRelay>();
-    register_relay::<StaticPartitionRelay>();
-    register_relay::<PartitioningStressRelay>();
-    register_relay::<BoundedMailboxRelay>();
-    register_relay::<StatefulCounterRelay>();
-    register_relay::<CoalescingCounterRelay>();
-    register_relay::<PersistenceOffRelay>();
-    register_relay::<HybridChannelRelay>();
-    register_relay::<ResumeProbeRelay>();
-    register_relay::<DynamicPartitionRelay>();
-    register_relay::<MixedRelay>();
+fn register_continuous_all() {
+    register_continuous::<DoNothingOperative>();
+    register_continuous::<StoreInputOperative>();
+    register_continuous::<CompareFilterOperative>();
+    register_continuous::<StaticSegmentOperative>();
+    register_continuous::<SegmentingStressOperative>();
+    register_continuous::<BoundedMailboxOperative>();
+    register_continuous::<StatefulCounterOperative>();
+    register_continuous::<CoalescingCounterOperative>();
+    register_continuous::<PersistenceOffOperative>();
+    register_continuous::<HybridChannelOperative>();
+    register_continuous::<ResumeProbeOperative>();
+    register_continuous::<DynamicSegmentOperative>();
+    register_continuous::<MixedOperative>();
 }
 
-fn register_tasks() {
-    register_task::<EchoTask>();
+fn register_bounded_all() {
+    register_bounded::<EchoBounded>();
 }
 
-// -- EchoTask -----------------------------------------------------------------
+// -- EchoBounded -----------------------------------------------------------------
 //
-// Run-once task exercised by the `task-kind` e2e: emits its args back as
+// Run-once bounded operative exercised by the `bounded-kind` e2e: emits its args back as
 // output once, then returns Ok so the SDK ships `TaskCompleted` and the
 // controller deregisters it.
-struct EchoTask;
+struct EchoBounded;
 
-impl Task for EchoTask {
+impl BoundedOperative for EchoBounded {
     fn factory_id() -> &'static str {
-        "echo_task"
+        "echo_bounded"
     }
 
-    fn run(ctx: &mut TaskCtx, args: &str) -> Result<(), TaskError> {
+    fn run(ctx: &mut BoundedCtx, args: &str) -> Result<(), BoundedError> {
         ctx.emit(format!("echo:{args}").into_bytes())?;
         Ok(())
     }
 }
 
-// -- DynamicPartitionRelay ----------------------------------------------------
+// -- DynamicSegmentOperative ----------------------------------------------------
 //
-// Dynamic-mode relay shared by the e2e correctness test and `mix bench
+// Dynamic-mode operative shared by the e2e correctness test and `mix bench
 // --shape dynamic`. Key = text before the first ':' (`"drop"` → None, drop).
 // Eviction TTL is read from `DYN_TEST_TTL_MS` (the e2e sets 200ms to exercise
 // reap + delete; the bench leaves it unset → no eviction, pure routing).
@@ -99,8 +99,8 @@ enum DynChange {
 impl Change for DynChange {}
 
 #[derive(Default)]
-struct DynamicPartitionShard;
-impl Shard for DynamicPartitionShard {
+struct DynamicSegmentOperation;
+impl Operation for DynamicSegmentOperation {
     type Input = String;
     type Output = Vec<u8>;
     type State = DynState;
@@ -108,7 +108,7 @@ impl Shard for DynamicPartitionShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "dynamic_partition_shard"
+        "dynamic_segment_operation"
     }
     fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> DynState {
         DynState::default()
@@ -117,11 +117,11 @@ impl Shard for DynamicPartitionShard {
         let DynChange::Push(s) = change;
         state.seen.push(s.clone());
     }
-    const SHARD_KEY_OVERRIDDEN: bool = true;
-    fn shard_key(input: &String) -> Option<String> {
+    const OPERATION_KEY_OVERRIDDEN: bool = true;
+    fn operation_key(input: &String) -> Option<String> {
         (input != "drop").then(|| input.split(':').next().unwrap_or(input).to_string())
     }
-    fn partition_idle_ttl() -> Option<Duration> {
+    fn segment_idle_ttl() -> Option<Duration> {
         env::var("DYN_TEST_TTL_MS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -131,36 +131,36 @@ impl Shard for DynamicPartitionShard {
         &mut self,
         input: String,
         mut state: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         state.apply(DynChange::Push(input.clone()));
         ctx.emit::<Vec<u8>>(input.into_bytes())
     }
 }
 
-struct DynamicPartitionRelay;
-impl Relay for DynamicPartitionRelay {
+struct DynamicSegmentOperative;
+impl ContinuousOperative for DynamicSegmentOperative {
     fn factory_id() -> &'static str {
-        "dynamic_partition"
+        "dynamic_segment"
     }
     fn channels(c: &mut ChannelBuilder) {
         c.input::<String>("input")
             .on_full(OverflowPolicy::Block)
-            .into::<DynamicPartitionShard>();
+            .into::<DynamicSegmentOperation>();
         c.channel::<Vec<u8>>("kafka")
-            .from::<DynamicPartitionShard>()
+            .from::<DynamicSegmentOperation>()
             .to_plugin("test_kafka");
     }
 }
 
-// -- DoNothingRelay -----------------------------------------------------------
+// -- DoNothingOperative -----------------------------------------------------------
 //
 // Echoes the input bytes on the plugin-bound `echo` channel. Stateless;
 // inherits `Change = NoChange` so the runtime skips flush-buffer registration.
 
 #[derive(Default)]
-struct DoNothingShard;
-impl Shard for DoNothingShard {
+struct DoNothingOperation;
+impl Operation for DoNothingOperation {
     type Input = String;
     type Output = Vec<u8>;
     type State = ();
@@ -168,33 +168,33 @@ impl Shard for DoNothingShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "do_nothing_shard"
+        "do_nothing_operation"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
     fn run(
         &mut self,
         input: String,
         _: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         ctx.emit::<Vec<u8>>(input.into_bytes())
     }
 }
 
-struct DoNothingRelay;
-impl Relay for DoNothingRelay {
+struct DoNothingOperative;
+impl ContinuousOperative for DoNothingOperative {
     fn factory_id() -> &'static str {
         "do_nothing"
     }
     fn channels(c: &mut ChannelBuilder) {
-        c.input::<String>("input").into::<DoNothingShard>();
+        c.input::<String>("input").into::<DoNothingOperation>();
         c.channel::<Vec<u8>>("echo")
-            .from::<DoNothingShard>()
+            .from::<DoNothingOperation>()
             .to_plugin("do_nothing_echo");
     }
 }
 
-// -- StoreInputRelay ----------------------------------------------------------
+// -- StoreInputOperative ----------------------------------------------------------
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 struct StoreInputState {
@@ -209,8 +209,8 @@ enum StoreInputChange {
 impl Change for StoreInputChange {}
 
 #[derive(Default)]
-struct StoreInputShard;
-impl Shard for StoreInputShard {
+struct StoreInputOperation;
+impl Operation for StoreInputOperation {
     type Input = String;
     type Output = String;
     type State = StoreInputState;
@@ -218,7 +218,7 @@ impl Shard for StoreInputShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "store_input_shard"
+        "store_input_operation"
     }
     fn init_state(
         _: Option<&str>,
@@ -235,32 +235,32 @@ impl Shard for StoreInputShard {
         &mut self,
         input: String,
         mut state: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         state.apply(StoreInputChange::PushText(input.clone()));
         ctx.emit::<String>(input)
     }
 }
 
-struct StoreInputRelay;
-impl Relay for StoreInputRelay {
+struct StoreInputOperative;
+impl ContinuousOperative for StoreInputOperative {
     fn factory_id() -> &'static str {
         "store_input"
     }
     fn channels(c: &mut ChannelBuilder) {
-        c.input::<String>("input").into::<StoreInputShard>();
+        c.input::<String>("input").into::<StoreInputOperation>();
         c.channel::<String>("sink")
-            .from::<StoreInputShard>()
+            .from::<StoreInputOperation>()
             .to_plugin("store_input_sink");
     }
 }
 
-// -- ResumeProbeRelay ---------------------------------------------------------
+// -- ResumeProbeOperative ---------------------------------------------------------
 //
 // Stateful counter that EMITS its running total on every input, so a Kafka
 // plugin on the output makes the persisted value externally observable. Used
 // by chaos/tests/stateful-resume.sh to prove WAL-backed state survives a hard
-// controller kill / executor restart: after recovery the relay resumes from
+// controller kill / executor restart: after recovery the operative resumes from
 // the persisted total (replayed changes), not from zero. Input is a decimal
 // delta string; output is the new running total as ASCII bytes.
 
@@ -276,8 +276,8 @@ enum ResumeProbeChange {
 impl Change for ResumeProbeChange {}
 
 #[derive(Default)]
-struct ResumeProbeShard;
-impl Shard for ResumeProbeShard {
+struct ResumeProbeOperation;
+impl Operation for ResumeProbeOperation {
     type Input = String;
     type Output = Vec<u8>;
     type State = ResumeProbeState;
@@ -285,7 +285,7 @@ impl Shard for ResumeProbeShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "resume_probe_shard"
+        "resume_probe_operation"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> ResumeProbeState {
         // Default + change replay rebuilds the total on restore (same pattern
@@ -301,8 +301,8 @@ impl Shard for ResumeProbeShard {
         &mut self,
         input: String,
         mut state: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         let delta: i64 = input.parse().unwrap_or(0);
         let new_total = state.total.saturating_add(delta);
         state.apply(ResumeProbeChange::Add(delta));
@@ -310,20 +310,20 @@ impl Shard for ResumeProbeShard {
     }
 }
 
-struct ResumeProbeRelay;
-impl Relay for ResumeProbeRelay {
+struct ResumeProbeOperative;
+impl ContinuousOperative for ResumeProbeOperative {
     fn factory_id() -> &'static str {
         "resume_probe"
     }
     fn channels(c: &mut ChannelBuilder) {
-        c.input::<String>("input").into::<ResumeProbeShard>();
+        c.input::<String>("input").into::<ResumeProbeOperation>();
         c.channel::<Vec<u8>>("total")
-            .from::<ResumeProbeShard>()
+            .from::<ResumeProbeOperation>()
             .to_plugin("resume_probe_out");
     }
 }
 
-// -- CompareFilterRelay -------------------------------------------------------
+// -- CompareFilterOperative -------------------------------------------------------
 
 #[derive(Serialize, Deserialize, Clone)]
 struct CompareFilterState {
@@ -341,8 +341,8 @@ impl Default for CompareFilterState {
 }
 
 #[derive(Default)]
-struct CompareFilterShard;
-impl Shard for CompareFilterShard {
+struct CompareFilterOperation;
+impl Operation for CompareFilterOperation {
     type Input = String;
     type Output = String;
     type State = CompareFilterState;
@@ -350,7 +350,7 @@ impl Shard for CompareFilterShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "compare_filter_shard"
+        "compare_filter_operation"
     }
     fn init_state(
         _: Option<&str>,
@@ -362,8 +362,8 @@ impl Shard for CompareFilterShard {
         &mut self,
         input: String,
         state: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         if state.comparable == input {
             ctx.emit::<String>(input)?;
         }
@@ -371,20 +371,20 @@ impl Shard for CompareFilterShard {
     }
 }
 
-struct CompareFilterRelay;
-impl Relay for CompareFilterRelay {
+struct CompareFilterOperative;
+impl ContinuousOperative for CompareFilterOperative {
     fn factory_id() -> &'static str {
         "compare_filter"
     }
     fn channels(c: &mut ChannelBuilder) {
-        c.input::<String>("input").into::<CompareFilterShard>();
+        c.input::<String>("input").into::<CompareFilterOperation>();
         c.channel::<String>("sink")
-            .from::<CompareFilterShard>()
+            .from::<CompareFilterOperation>()
             .to_plugin("compare_filter_sink");
     }
 }
 
-// -- StaticPartitionRelay -----------------------------------------------------
+// -- StaticSegmentOperative -----------------------------------------------------
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 struct StaticEntryState {
@@ -398,8 +398,8 @@ enum StaticEntryChange {
 impl Change for StaticEntryChange {}
 
 #[derive(Default)]
-struct StaticEntryShard;
-impl Shard for StaticEntryShard {
+struct StaticEntryOperation;
+impl Operation for StaticEntryOperation {
     type Input = String;
     type Output = String;
     type State = StaticEntryState;
@@ -407,7 +407,7 @@ impl Shard for StaticEntryShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "static_entry_shard"
+        "static_entry_operation"
     }
     fn init_state(
         _: Option<&str>,
@@ -420,11 +420,11 @@ impl Shard for StaticEntryShard {
             StaticEntryChange::Push(s) => state.seen.push(s.clone()),
         }
     }
-    fn shard_keys() -> Vec<&'static str> {
+    fn operation_keys() -> Vec<&'static str> {
         vec!["a", "b", "c", "d"]
     }
-    const PARTITION_FOR_OVERRIDDEN: bool = true;
-    fn partition_for(input: &String) -> Vec<&'static str> {
+    const SEGMENT_FOR_OVERRIDDEN: bool = true;
+    fn segment_for(input: &String) -> Vec<&'static str> {
         match input.chars().next() {
             Some('a') => vec!["a"],
             Some('b') => vec!["b"],
@@ -436,16 +436,16 @@ impl Shard for StaticEntryShard {
         &mut self,
         input: String,
         mut state: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         state.apply(StaticEntryChange::Push(input.clone()));
         ctx.emit::<String>(input)
     }
 }
 
 #[derive(Default)]
-struct StaticDownstreamShard;
-impl Shard for StaticDownstreamShard {
+struct StaticDownstreamOperation;
+impl Operation for StaticDownstreamOperation {
     type Input = String;
     type Output = Vec<u8>;
     type State = ();
@@ -453,42 +453,42 @@ impl Shard for StaticDownstreamShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "static_downstream_shard"
+        "static_downstream_operation"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
     fn run(
         &mut self,
         input: String,
         _: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         ctx.emit::<Vec<u8>>(input.into_bytes())
     }
 }
 
-struct StaticPartitionRelay;
-impl Relay for StaticPartitionRelay {
+struct StaticSegmentOperative;
+impl ContinuousOperative for StaticSegmentOperative {
     fn factory_id() -> &'static str {
-        "static_partition"
+        "static_segment"
     }
     fn channels(c: &mut ChannelBuilder) {
-        c.input::<String>("input").into::<StaticEntryShard>();
+        c.input::<String>("input").into::<StaticEntryOperation>();
         c.channel::<String>("hop")
-            .from::<StaticEntryShard>()
-            .into::<StaticDownstreamShard>();
+            .from::<StaticEntryOperation>()
+            .into::<StaticDownstreamOperation>();
         c.channel::<Vec<u8>>("kafka")
-            .from::<StaticDownstreamShard>()
+            .from::<StaticDownstreamOperation>()
             .to_plugin("test_kafka");
     }
 }
 
-// -- PartitioningStressRelay --------------------------------------------------
+// -- SegmentingStressOperative --------------------------------------------------
 
 const STRESS_KEYS: &[&str] = &["p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7"];
 
 #[derive(Default)]
-struct StressShardA;
-impl Shard for StressShardA {
+struct StressOperationA;
+impl Operation for StressOperationA {
     type Input = String;
     type Output = String;
     type State = ();
@@ -499,26 +499,26 @@ impl Shard for StressShardA {
         "stress_a"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
-    fn shard_keys() -> Vec<&'static str> {
+    fn operation_keys() -> Vec<&'static str> {
         STRESS_KEYS.to_vec()
     }
-    const PARTITION_FOR_OVERRIDDEN: bool = true;
-    fn partition_for(_: &String) -> Vec<&'static str> {
+    const SEGMENT_FOR_OVERRIDDEN: bool = true;
+    fn segment_for(_: &String) -> Vec<&'static str> {
         STRESS_KEYS.to_vec()
     }
     fn run(
         &mut self,
         input: String,
         _: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         ctx.emit::<String>(input)
     }
 }
 
 #[derive(Default)]
-struct StressShardB;
-impl Shard for StressShardB {
+struct StressOperationB;
+impl Operation for StressOperationB {
     type Input = String;
     type Output = String;
     type State = ();
@@ -529,26 +529,26 @@ impl Shard for StressShardB {
         "stress_b"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
-    fn shard_keys() -> Vec<&'static str> {
+    fn operation_keys() -> Vec<&'static str> {
         STRESS_KEYS.to_vec()
     }
-    const PARTITION_FOR_OVERRIDDEN: bool = true;
-    fn partition_for(_: &String) -> Vec<&'static str> {
+    const SEGMENT_FOR_OVERRIDDEN: bool = true;
+    fn segment_for(_: &String) -> Vec<&'static str> {
         vec!["p0"]
     }
     fn run(
         &mut self,
         input: String,
         _: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         ctx.emit::<String>(input)
     }
 }
 
 #[derive(Default)]
-struct StressShardC;
-impl Shard for StressShardC {
+struct StressOperationC;
+impl Operation for StressOperationC {
     type Input = String;
     type Output = String;
     type State = ();
@@ -559,26 +559,26 @@ impl Shard for StressShardC {
         "stress_c"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
-    fn shard_keys() -> Vec<&'static str> {
+    fn operation_keys() -> Vec<&'static str> {
         STRESS_KEYS.to_vec()
     }
-    const PARTITION_FOR_OVERRIDDEN: bool = true;
-    fn partition_for(_: &String) -> Vec<&'static str> {
+    const SEGMENT_FOR_OVERRIDDEN: bool = true;
+    fn segment_for(_: &String) -> Vec<&'static str> {
         vec!["p0"]
     }
     fn run(
         &mut self,
         input: String,
         _: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         ctx.emit::<String>(input)
     }
 }
 
 #[derive(Default)]
-struct StressShardD;
-impl Shard for StressShardD {
+struct StressOperationD;
+impl Operation for StressOperationD {
     type Input = String;
     type Output = Vec<u8>;
     type State = ();
@@ -589,49 +589,49 @@ impl Shard for StressShardD {
         "stress_d"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
-    fn shard_keys() -> Vec<&'static str> {
+    fn operation_keys() -> Vec<&'static str> {
         STRESS_KEYS.to_vec()
     }
-    const PARTITION_FOR_OVERRIDDEN: bool = true;
-    fn partition_for(_: &String) -> Vec<&'static str> {
+    const SEGMENT_FOR_OVERRIDDEN: bool = true;
+    fn segment_for(_: &String) -> Vec<&'static str> {
         vec!["p0"]
     }
     fn run(
         &mut self,
         input: String,
         _: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         ctx.emit::<Vec<u8>>(input.into_bytes())
     }
 }
 
-struct PartitioningStressRelay;
-impl Relay for PartitioningStressRelay {
+struct SegmentingStressOperative;
+impl ContinuousOperative for SegmentingStressOperative {
     fn factory_id() -> &'static str {
-        "partitioning_stress"
+        "segmenting_stress"
     }
     fn channels(c: &mut ChannelBuilder) {
-        c.input::<String>("input").into::<StressShardA>();
+        c.input::<String>("input").into::<StressOperationA>();
         c.channel::<String>("a_to_b")
-            .from::<StressShardA>()
-            .into::<StressShardB>();
+            .from::<StressOperationA>()
+            .into::<StressOperationB>();
         c.channel::<String>("b_to_c")
-            .from::<StressShardB>()
-            .into::<StressShardC>();
+            .from::<StressOperationB>()
+            .into::<StressOperationC>();
         c.channel::<String>("c_to_d")
-            .from::<StressShardC>()
-            .into::<StressShardD>();
+            .from::<StressOperationC>()
+            .into::<StressOperationD>();
         c.channel::<Vec<u8>>("echo")
-            .from::<StressShardD>()
-            .to_plugin("partitioning_stress_echo");
+            .from::<StressOperationD>()
+            .to_plugin("segmenting_stress_echo");
     }
 }
 
-// -- BoundedMailboxRelay ------------------------------------------------------
+// -- BoundedMailboxOperative ------------------------------------------------------
 
 #[derive(Serialize, Deserialize, Clone, Default)]
-struct BoundedShardState {
+struct BoundedOperationState {
     pub processed: u64,
 }
 
@@ -641,29 +641,29 @@ enum BoundedChange {
 }
 impl Change for BoundedChange {}
 
-fn apply_inc(state: &mut BoundedShardState, _: &BoundedChange) {
+fn apply_inc(state: &mut BoundedOperationState, _: &BoundedChange) {
     state.processed += 1;
 }
 
 #[derive(Default)]
-struct BlockTestShard;
-impl Shard for BlockTestShard {
+struct BlockTestOperation;
+impl Operation for BlockTestOperation {
     type Input = String;
     type Output = Vec<u8>;
-    type State = BoundedShardState;
+    type State = BoundedOperationState;
     type Change = BoundedChange;
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "block_test_shard"
+        "block_test_operation"
     }
     fn init_state(
         _: Option<&str>,
         _init_payload: Option<RestoreInitPayload<'_>>,
-    ) -> BoundedShardState {
-        BoundedShardState::default()
+    ) -> BoundedOperationState {
+        BoundedOperationState::default()
     }
-    fn apply_change(state: &mut BoundedShardState, change: &BoundedChange) {
+    fn apply_change(state: &mut BoundedOperationState, change: &BoundedChange) {
         apply_inc(state, change);
     }
     fn mailbox_capacity() -> usize {
@@ -674,32 +674,32 @@ impl Shard for BlockTestShard {
         &mut self,
         input: String,
         mut state: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         state.apply(BoundedChange::Inc);
         ctx.emit::<Vec<u8>>(input.into_bytes())
     }
 }
 
 #[derive(Default)]
-struct DropNewestTestShard;
-impl Shard for DropNewestTestShard {
+struct DropNewestTestOperation;
+impl Operation for DropNewestTestOperation {
     type Input = String;
     type Output = Vec<u8>;
-    type State = BoundedShardState;
+    type State = BoundedOperationState;
     type Change = BoundedChange;
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "drop_newest_test_shard"
+        "drop_newest_test_operation"
     }
     fn init_state(
         _: Option<&str>,
         _init_payload: Option<RestoreInitPayload<'_>>,
-    ) -> BoundedShardState {
-        BoundedShardState::default()
+    ) -> BoundedOperationState {
+        BoundedOperationState::default()
     }
-    fn apply_change(state: &mut BoundedShardState, change: &BoundedChange) {
+    fn apply_change(state: &mut BoundedOperationState, change: &BoundedChange) {
         apply_inc(state, change);
     }
     fn mailbox_capacity() -> usize {
@@ -710,32 +710,32 @@ impl Shard for DropNewestTestShard {
         &mut self,
         input: String,
         mut state: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         state.apply(BoundedChange::Inc);
         ctx.emit::<Vec<u8>>(input.into_bytes())
     }
 }
 
 #[derive(Default)]
-struct DropOldestTestShard;
-impl Shard for DropOldestTestShard {
+struct DropOldestTestOperation;
+impl Operation for DropOldestTestOperation {
     type Input = String;
     type Output = Vec<u8>;
-    type State = BoundedShardState;
+    type State = BoundedOperationState;
     type Change = BoundedChange;
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "drop_oldest_test_shard"
+        "drop_oldest_test_operation"
     }
     fn init_state(
         _: Option<&str>,
         _init_payload: Option<RestoreInitPayload<'_>>,
-    ) -> BoundedShardState {
-        BoundedShardState::default()
+    ) -> BoundedOperationState {
+        BoundedOperationState::default()
     }
-    fn apply_change(state: &mut BoundedShardState, change: &BoundedChange) {
+    fn apply_change(state: &mut BoundedOperationState, change: &BoundedChange) {
         apply_inc(state, change);
     }
     fn mailbox_capacity() -> usize {
@@ -746,44 +746,44 @@ impl Shard for DropOldestTestShard {
         &mut self,
         input: String,
         mut state: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         state.apply(BoundedChange::Inc);
         ctx.emit::<Vec<u8>>(input.into_bytes())
     }
 }
 
-struct BoundedMailboxRelay;
-impl Relay for BoundedMailboxRelay {
+struct BoundedMailboxOperative;
+impl ContinuousOperative for BoundedMailboxOperative {
     fn factory_id() -> &'static str {
         "bounded_mailbox"
     }
     fn channels(c: &mut ChannelBuilder) {
         c.input::<String>("block_input")
             .on_full(OverflowPolicy::Block)
-            .into::<BlockTestShard>();
+            .into::<BlockTestOperation>();
         c.channel::<Vec<u8>>("block_echo")
-            .from::<BlockTestShard>()
+            .from::<BlockTestOperation>()
             .to_plugin("bounded_mailbox_echo");
 
         c.input::<String>("drop_newest_input")
-            .into::<DropNewestTestShard>();
+            .into::<DropNewestTestOperation>();
         c.channel::<Vec<u8>>("drop_newest_echo")
-            .from::<DropNewestTestShard>()
+            .from::<DropNewestTestOperation>()
             .to_plugin("bounded_mailbox_echo");
 
         c.input::<String>("drop_oldest_input")
             .on_full(OverflowPolicy::DropOldest)
-            .into::<DropOldestTestShard>();
+            .into::<DropOldestTestOperation>();
         c.channel::<Vec<u8>>("drop_oldest_echo")
-            .from::<DropOldestTestShard>()
+            .from::<DropOldestTestOperation>()
             .to_plugin("bounded_mailbox_echo");
     }
 }
 
-// -- StatefulCounterRelay (Section 6.1) --------------------------------------
+// -- StatefulCounterOperative (Section 6.1) --------------------------------------
 //
-// One Shard `CounterShard` with `Change = CounterChange { delta: i64 }`,
+// One Operation `CounterOperation` with `Change = CounterChange { delta: i64 }`,
 // `apply_change` mutating `state.value += change.delta`, `coalesce_key()`
 // returning `None` (verbatim retention).
 
@@ -799,8 +799,8 @@ pub struct CounterChange {
 impl Change for CounterChange {}
 
 #[derive(Default)]
-struct CounterShard;
-impl Shard for CounterShard {
+struct CounterOperation;
+impl Operation for CounterOperation {
     type Input = i64;
     type Output = ();
     type State = CounterState;
@@ -808,7 +808,7 @@ impl Shard for CounterShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "counter_shard"
+        "counter_operation"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> CounterState {
         CounterState::default()
@@ -820,29 +820,29 @@ impl Shard for CounterShard {
         &mut self,
         input: i64,
         mut state: StateHandle<'_, Self>,
-        _: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        _: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         state.apply(CounterChange { delta: input });
         Ok(())
     }
 }
 
-struct StatefulCounterRelay;
-impl Relay for StatefulCounterRelay {
+struct StatefulCounterOperative;
+impl ContinuousOperative for StatefulCounterOperative {
     fn factory_id() -> &'static str {
         "stateful_counter"
     }
     fn channels(c: &mut ChannelBuilder) {
-        c.input::<String>("input").into::<CounterEntryShard>();
+        c.input::<String>("input").into::<CounterEntryOperation>();
         c.channel::<i64>("ticks")
-            .from::<CounterEntryShard>()
-            .into::<CounterShard>();
+            .from::<CounterEntryOperation>()
+            .into::<CounterOperation>();
     }
 }
 
 #[derive(Default)]
-struct CounterEntryShard;
-impl Shard for CounterEntryShard {
+struct CounterEntryOperation;
+impl Operation for CounterEntryOperation {
     type Input = String;
     type Output = i64;
     type State = ();
@@ -850,21 +850,21 @@ impl Shard for CounterEntryShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "counter_entry_shard"
+        "counter_entry_operation"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
     fn run(
         &mut self,
         input: String,
         _: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         let delta: i64 = input.parse().unwrap_or(0);
         ctx.emit::<i64>(delta)
     }
 }
 
-// -- CoalescingCounterRelay (Section 6.2) ------------------------------------
+// -- CoalescingCounterOperative (Section 6.2) ------------------------------------
 //
 // `Change = TickChange { interval: u8, ts: u64, delta: i64 }` with
 // `coalesce_key` returning `Some(CoalesceKey::from_hash(&(interval, ts)))`.
@@ -887,8 +887,8 @@ impl Change for TickChange {
 }
 
 #[derive(Default)]
-struct TickShard;
-impl Shard for TickShard {
+struct TickOperation;
+impl Operation for TickOperation {
     type Input = TickInput;
     type Output = ();
     type State = TickState;
@@ -896,7 +896,7 @@ impl Shard for TickShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "tick_shard"
+        "tick_operation"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> TickState {
         TickState::default()
@@ -908,8 +908,8 @@ impl Shard for TickShard {
         &mut self,
         input: TickInput,
         mut state: StateHandle<'_, Self>,
-        _: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        _: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         state.apply(TickChange {
             interval: input.interval,
             ts: input.ts,
@@ -927,8 +927,8 @@ pub struct TickInput {
 }
 
 #[derive(Default)]
-struct TickEntryShard;
-impl Shard for TickEntryShard {
+struct TickEntryOperation;
+impl Operation for TickEntryOperation {
     type Input = String;
     type Output = TickInput;
     type State = ();
@@ -936,15 +936,15 @@ impl Shard for TickEntryShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "tick_entry_shard"
+        "tick_entry_operation"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
     fn run(
         &mut self,
         input: String,
         _: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         // Wire format: `<interval>:<ts>:<delta>`.
         let mut parts = input.splitn(3, ':');
         let interval = parts.next().and_then(|s| s.parse::<u8>().ok()).unwrap_or(0);
@@ -964,43 +964,43 @@ impl Shard for TickEntryShard {
     }
 }
 
-struct CoalescingCounterRelay;
-impl Relay for CoalescingCounterRelay {
+struct CoalescingCounterOperative;
+impl ContinuousOperative for CoalescingCounterOperative {
     fn factory_id() -> &'static str {
         "coalescing_counter"
     }
     fn channels(c: &mut ChannelBuilder) {
-        c.input::<String>("input").into::<TickEntryShard>();
+        c.input::<String>("input").into::<TickEntryOperation>();
         c.channel::<TickInput>("ticks")
-            .from::<TickEntryShard>()
-            .into::<TickShard>();
+            .from::<TickEntryOperation>()
+            .into::<TickOperation>();
     }
 }
 
-// -- PersistenceOffRelay (Section 6.3) ---------------------------------------
+// -- PersistenceOffOperative (Section 6.3) ---------------------------------------
 //
-// Same Shard topology as `StatefulCounterRelay` but `PERSISTENCE_ENABLED`
+// Same Operation topology as `StatefulCounterOperative` but `PERSISTENCE_ENABLED`
 // is `false`. Used by integration tests to verify the toggle-off drain
 // path discards frames without invoking the wire stub.
 
-struct PersistenceOffRelay;
-impl Relay for PersistenceOffRelay {
+struct PersistenceOffOperative;
+impl ContinuousOperative for PersistenceOffOperative {
     fn factory_id() -> &'static str {
         "persistence_off_counter"
     }
     fn channels(c: &mut ChannelBuilder) {
         c.input::<String>("input")
-            .into::<PersistenceOffEntryShard>();
+            .into::<PersistenceOffEntryOperation>();
         c.channel::<i64>("ticks")
-            .from::<PersistenceOffEntryShard>()
-            .into::<PersistenceOffCounterShard>();
+            .from::<PersistenceOffEntryOperation>()
+            .into::<PersistenceOffCounterOperation>();
     }
     const PERSISTENCE_ENABLED: bool = false;
 }
 
 #[derive(Default)]
-struct PersistenceOffEntryShard;
-impl Shard for PersistenceOffEntryShard {
+struct PersistenceOffEntryOperation;
+impl Operation for PersistenceOffEntryOperation {
     type Input = String;
     type Output = i64;
     type State = ();
@@ -1008,23 +1008,23 @@ impl Shard for PersistenceOffEntryShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "persistence_off_entry_shard"
+        "persistence_off_entry_operation"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
     fn run(
         &mut self,
         input: String,
         _: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         let delta: i64 = input.parse().unwrap_or(0);
         ctx.emit::<i64>(delta)
     }
 }
 
 #[derive(Default)]
-struct PersistenceOffCounterShard;
-impl Shard for PersistenceOffCounterShard {
+struct PersistenceOffCounterOperation;
+impl Operation for PersistenceOffCounterOperation {
     type Input = i64;
     type Output = ();
     type State = CounterState;
@@ -1032,7 +1032,7 @@ impl Shard for PersistenceOffCounterShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "persistence_off_counter_shard"
+        "persistence_off_counter_operation"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> CounterState {
         CounterState::default()
@@ -1044,24 +1044,24 @@ impl Shard for PersistenceOffCounterShard {
         &mut self,
         input: i64,
         mut state: StateHandle<'_, Self>,
-        _: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        _: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         state.apply(CounterChange { delta: input });
         Ok(())
     }
 }
 
-// -- HybridChannelRelay -------------------------------------------------------
+// -- HybridChannelOperative -------------------------------------------------------
 //
-// Demonstrates `also_to_plugin_with(...)`: the producer Shard emits a
-// `u32` value that fans out to an inter-shard consumer and is also
+// Demonstrates `also_to_plugin_with(...)`: the producer Operation emits a
+// `u32` value that fans out to an inter-operation consumer and is also
 // serialized to bytes for the `hybrid_indicators` plugin. The
 // serializer panics on the sentinel `0xDEADBEEF` so an operator can
 // observe the panic-isolation guarantee end-to-end.
 
 #[derive(Default)]
-struct HybridProducerShard;
-impl Shard for HybridProducerShard {
+struct HybridProducerOperation;
+impl Operation for HybridProducerOperation {
     type Input = String;
     type Output = u32;
     type State = ();
@@ -1069,19 +1069,19 @@ impl Shard for HybridProducerShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "hybrid_producer_shard"
+        "hybrid_producer_operation"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
     fn run(
         &mut self,
         input: String,
         _: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         let n: u32 = input.parse().unwrap_or(0);
         match ctx.emit::<u32>(n) {
             Ok(()) => Ok(()),
-            Err(ShardError::PluginSerializerPanic { channel, message }) => {
+            Err(OperationError::PluginSerializerPanic { channel, message }) => {
                 eprintln!("hybrid_producer_shard: serializer panic on `{channel}`: {message}");
                 Ok(())
             }
@@ -1091,8 +1091,8 @@ impl Shard for HybridProducerShard {
 }
 
 #[derive(Default)]
-struct HybridConsumerShard;
-impl Shard for HybridConsumerShard {
+struct HybridConsumerOperation;
+impl Operation for HybridConsumerOperation {
     type Input = u32;
     type Output = ();
     type State = ();
@@ -1100,67 +1100,67 @@ impl Shard for HybridConsumerShard {
     type Clock = WallClock;
     type Config = ();
     fn name() -> &'static str {
-        "hybrid_consumer_shard"
+        "hybrid_consumer_operation"
     }
     fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
     fn run(
         &mut self,
         input: u32,
         _: StateHandle<'_, Self>,
-        _: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        _: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         println!("hybrid_consumer_shard: received {input}");
         Ok(())
     }
 }
 
-struct HybridChannelRelay;
-impl Relay for HybridChannelRelay {
+struct HybridChannelOperative;
+impl ContinuousOperative for HybridChannelOperative {
     fn factory_id() -> &'static str {
         "hybrid_channel"
     }
     fn channels(c: &mut ChannelBuilder) {
-        c.input::<String>("input").into::<HybridProducerShard>();
+        c.input::<String>("input").into::<HybridProducerOperation>();
         c.channel::<u32>("hybrid_indicator")
-            .from::<HybridProducerShard>()
+            .from::<HybridProducerOperation>()
             .also_to_plugin_with("hybrid_indicators", |v: &u32| {
                 if *v == 0xDEAD_BEEF {
                     panic!("hybrid_indicators: serializer rejected sentinel 0xDEADBEEF");
                 }
                 v.to_be_bytes().to_vec()
             })
-            .into::<HybridConsumerShard>();
+            .into::<HybridConsumerOperation>();
     }
 }
 
 // ---------------------------------------------------------------------------
 // Authoring-sugar twins (`simplify-sdk-authoring`). Each mirrors a
-// hand-written relay above to prove the macros expand to the same trait
+// hand-written operative above to prove the macros expand to the same trait
 // surface and interoperate with raw shards. See
 // `docs/sdk_authoring_contract.md`.
 // ---------------------------------------------------------------------------
 
-// Single-shard stateless sugar — twin of `DoNothingShard` / `DoNothingRelay`.
-// Auto-wires input -> shard -> plugin and auto-registers (no `register_relay`).
-#[flezha_executor::shard(id = "sugar_do_nothing", sink = "sugar_do_nothing_echo")]
+// Single-operation stateless sugar — twin of `DoNothingOperation` / `DoNothingOperative`.
+// Auto-wires input -> operation -> plugin and auto-registers (no `register_continuous`).
+#[flezha_executor::operation(id = "sugar_do_nothing", sink = "sugar_do_nothing_echo")]
 fn sugar_do_nothing(input: String) -> Vec<u8> {
     input.into_bytes()
 }
 
-// Single-shard stateful sugar with `#[derive(flezha::State)]` — twin of
-// `StoreInputShard` / `StoreInputRelay`.
+// Single-operation stateful sugar with `#[derive(flezha::State)]` — twin of
+// `StoreInputOperation` / `StoreInputOperative`.
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug, flezha_executor::State)]
 struct SugarStoreState {
     text_inputs: Vec<String>,
 }
 
-#[flezha_executor::shard(id = "sugar_store_input", sink = "sugar_store_sink")]
+#[flezha_executor::operation(id = "sugar_store_input", sink = "sugar_store_sink")]
 fn sugar_store_input(input: String, state: &mut SugarStoreState) -> String {
     state.push_text_inputs(input.clone());
     input
 }
 
-// `relay!` linear-pipeline twin of `StaticPartitionRelay`.
+// `operative!` linear-pipeline twin of `StaticSegmentOperative`.
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug, flezha_executor::State)]
 struct MacroStaticEntryState {
     seen: Vec<String>,
@@ -1175,36 +1175,36 @@ fn macro_static_part(input: &str) -> Vec<&'static str> {
     }
 }
 
-#[flezha_executor::shard(
-    id = "macro_static_entry_shard",
+#[flezha_executor::operation(
+    id = "macro_static_entry_operation",
     keys = ["a", "b", "c", "d"],
-    partition_for = macro_static_part
+    segment_for = macro_static_part
 )]
 fn macro_static_entry(input: String, state: &mut MacroStaticEntryState) -> String {
     state.push_seen(input.clone());
     input
 }
 
-#[flezha_executor::shard(id = "macro_static_downstream_shard")]
+#[flezha_executor::operation(id = "macro_static_downstream_operation")]
 fn macro_static_downstream(input: String) -> Vec<u8> {
     input.into_bytes()
 }
 
-flezha_executor::relay! {
-    id: "sugar_static_partition",
+flezha_executor::operative! {
+    id: "sugar_static_segment",
     pipeline: input::<String> -> MacroStaticEntry -> MacroStaticDownstream -> plugin::<Vec<u8>>("test_kafka")
 }
 
-// Mixed relay: one `#[flezha::shard]` shard wired to one hand-written
-// `impl Shard` shard in an explicit `channels()` body.
-#[flezha_executor::shard(id = "mixed_macro_entry_shard")]
+// Mixed operative: one `#[flezha::operation]` operation wired to one hand-written
+// `impl Operation` operation in an explicit `channels()` body.
+#[flezha_executor::operation(id = "mixed_macro_entry_operation")]
 fn mixed_macro_entry(input: String) -> String {
     input
 }
 
 #[derive(Default)]
 struct MixedHandDownstream;
-impl Shard for MixedHandDownstream {
+impl Operation for MixedHandDownstream {
     type Input = String;
     type Output = Vec<u8>;
     type State = ();
@@ -1219,16 +1219,16 @@ impl Shard for MixedHandDownstream {
         &mut self,
         input: String,
         _: StateHandle<'_, Self>,
-        ctx: &mut ShardCtx<'_>,
-    ) -> Result<(), ShardError> {
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
         ctx.emit::<Vec<u8>>(input.into_bytes())
     }
 }
 
-struct MixedRelay;
-impl Relay for MixedRelay {
+struct MixedOperative;
+impl ContinuousOperative for MixedOperative {
     fn factory_id() -> &'static str {
-        "mixed_relay"
+        "mixed_operative"
     }
     fn channels(c: &mut ChannelBuilder) {
         c.input::<String>("input").into::<MixedMacroEntry>();
@@ -1244,14 +1244,14 @@ impl Relay for MixedRelay {
 #[cfg(test)]
 mod macro_twin_tests {
     use super::*;
-    use flezha_executor::testing::ShardTestHarness;
+    use flezha_executor::testing::OperationTestHarness;
     use std::collections::{HashMap, VecDeque};
 
     // -----------------------------------------------------------------------
-    // Canonical keyed-collection reference shard (`expressive-state-journaling`,
+    // Canonical keyed-collection reference operation (`expressive-state-journaling`,
     // authoring-contract §3 / §6): a rolling per-key window. The sugared form
     // uses `#[journal(map_deque)]` + an `Option<Output>` warmup gate;
-    // `RollingWindowTwin` is the equivalent hand-written `Shard`/`Change`. The
+    // `RollingWindowTwin` is the equivalent hand-written `Operation`/`Change`. The
     // tests below assert the two are behaviourally identical and that the
     // sugared form survives `replay_equals`.
     // -----------------------------------------------------------------------
@@ -1264,7 +1264,7 @@ mod macro_twin_tests {
         window: HashMap<String, VecDeque<f64>>,
     }
 
-    #[flezha_executor::shard(id = "rolling_window")]
+    #[flezha_executor::operation(id = "rolling_window")]
     fn rolling_window(input: (String, f64), state: &mut RollingWindowState) -> Option<f64> {
         let (key, value) = input;
         state.push_back_window(key.clone(), value);
@@ -1279,7 +1279,7 @@ mod macro_twin_tests {
         Some(w.iter().sum::<f64>() / ROLLING_WINDOW_N as f64)
     }
 
-    // Hand-written twin: the exact `Shard` / `Change` impl the sugar expands to
+    // Hand-written twin: the exact `Operation` / `Change` impl the sugar expands to
     // (variant names differ; behaviour does not).
     #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
     struct RollingWindowTwinState {
@@ -1295,7 +1295,7 @@ mod macro_twin_tests {
 
     #[derive(Default)]
     struct RollingWindowTwin;
-    impl Shard for RollingWindowTwin {
+    impl Operation for RollingWindowTwin {
         type Input = (String, f64);
         type Output = f64;
         type State = RollingWindowTwinState;
@@ -1325,8 +1325,8 @@ mod macro_twin_tests {
             &mut self,
             input: (String, f64),
             mut state: StateHandle<'_, Self>,
-            ctx: &mut ShardCtx<'_>,
-        ) -> Result<(), ShardError> {
+            ctx: &mut OperationCtx<'_>,
+        ) -> Result<(), OperationError> {
             let (key, value) = input;
             state.apply(RollingWindowTwinChange::PushBack(key.clone(), value));
             let len = state.window.get(&key).map(|w| w.len()).unwrap_or(0);
@@ -1358,7 +1358,7 @@ mod macro_twin_tests {
         ticks: u64,
     }
 
-    #[flezha_executor::shard(id = "keyed_collections")]
+    #[flezha_executor::operation(id = "keyed_collections")]
     fn keyed_collections(input: (String, f64), state: &mut KeyedCollectionsState) {
         let (key, value) = input;
         state.set_last(key.clone(), value);
@@ -1371,9 +1371,9 @@ mod macro_twin_tests {
         state.set_ticks(state.ticks + 1);
     }
 
-    // `init = fn` maps the static partition key to per-partition config the
+    // `init = fn` maps the static segment key to per-segment config the
     // macro's default (`Default::default()`) cannot supply. Mirrors the market
-    // `sma`/`ohlc` shards whose window / bucket come from the shard key.
+    // `sma`/`ohlc` shards whose window / bucket come from the operation key.
     #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug, flezha_executor::State)]
     struct WindowedState {
         window: usize,
@@ -1381,9 +1381,9 @@ mod macro_twin_tests {
         closes: HashMap<String, Vec<f64>>,
     }
 
-    fn windowed_init(shard_key: Option<&str>) -> WindowedState {
+    fn windowed_init(operation_key: Option<&str>) -> WindowedState {
         WindowedState {
-            window: if shard_key == Some("win_2") { 2 } else { 3 },
+            window: if operation_key == Some("win_2") { 2 } else { 3 },
             closes: HashMap::new(),
         }
     }
@@ -1392,11 +1392,11 @@ mod macro_twin_tests {
         vec!["win_2", "win_3"]
     }
 
-    #[flezha_executor::shard(
+    #[flezha_executor::operation(
         id = "windowed",
         init = windowed_init,
         keys = ["win_2", "win_3"],
-        partition_for = windowed_part
+        segment_for = windowed_part
     )]
     fn windowed(input: (String, f64), state: &mut WindowedState) -> Option<f64> {
         let (key, value) = input;
@@ -1414,19 +1414,19 @@ mod macro_twin_tests {
     }
 
     // Cross-SDK conformance (`docs/sdk_authoring_contract.md` §6): the reference
-    // relay's shards expand to this exact associated-type mapping. A divergence
+    // operative's shards expand to this exact associated-type mapping. A divergence
     // is a compile error, not a silent drift. The Java SugarTwinTest asserts the
     // same mapping at runtime.
     fn _reference_relay_conformance()
     where
-        MacroStaticEntry: Shard<
+        MacroStaticEntry: Operation<
             Input = String,
             Output = String,
             State = MacroStaticEntryState,
             Clock = WallClock,
             Config = (),
         >,
-        MacroStaticDownstream: Shard<
+        MacroStaticDownstream: Operation<
             Input = String,
             Output = Vec<u8>,
             State = (),
@@ -1442,11 +1442,11 @@ mod macro_twin_tests {
         let inputs = vec!["alpha".to_string(), "beta".to_string()];
         let expected: Vec<Vec<u8>> = vec![b"alpha".to_vec(), b"beta".to_vec()];
 
-        let mut sugar = ShardTestHarness::<SugarDoNothing>::new();
+        let mut sugar = OperationTestHarness::<SugarDoNothing>::new();
         sugar.apply_inputs(inputs.clone());
         sugar.expect_emits(&expected);
 
-        let mut hand = ShardTestHarness::<DoNothingShard>::new();
+        let mut hand = OperationTestHarness::<DoNothingOperation>::new();
         hand.apply_inputs(inputs);
         hand.expect_emits(&expected);
     }
@@ -1455,7 +1455,7 @@ mod macro_twin_tests {
     fn sugar_store_input_journals_and_emits() {
         let inputs = vec!["one".to_string(), "two".to_string()];
 
-        let mut sugar = ShardTestHarness::<SugarStoreInput>::new();
+        let mut sugar = OperationTestHarness::<SugarStoreInput>::new();
         sugar.apply_inputs(inputs.clone());
         assert_eq!(sugar.state().text_inputs, inputs);
         sugar.replay_equals().expect("derived change replay diverged");
@@ -1464,13 +1464,13 @@ mod macro_twin_tests {
 
     #[test]
     fn macro_static_entry_partitions_and_journals() {
-        // `partition_for` routes by first char; the shard journals every input.
-        assert_eq!(MacroStaticEntry::partition_for(&"apple".to_string()), vec!["a"]);
-        assert_eq!(MacroStaticEntry::partition_for(&"zebra".to_string()), vec!["d"]);
-        assert_eq!(MacroStaticEntry::shard_keys(), vec!["a", "b", "c", "d"]);
+        // `segment_for` routes by first char; the operation journals every input.
+        assert_eq!(MacroStaticEntry::segment_for(&"apple".to_string()), vec!["a"]);
+        assert_eq!(MacroStaticEntry::segment_for(&"zebra".to_string()), vec!["d"]);
+        assert_eq!(MacroStaticEntry::operation_keys(), vec!["a", "b", "c", "d"]);
 
         let inputs = vec!["apple".to_string(), "avocado".to_string()];
-        let mut h = ShardTestHarness::<MacroStaticEntry>::new();
+        let mut h = OperationTestHarness::<MacroStaticEntry>::new();
         h.apply_inputs(inputs.clone());
         assert_eq!(h.state().seen, inputs);
         h.replay_equals().expect("derived change replay diverged");
@@ -1479,27 +1479,27 @@ mod macro_twin_tests {
 
     #[test]
     fn mixed_macro_and_hand_shards_run() {
-        // The macro entry shard passes through; the hand shard turns it to bytes.
-        let mut entry = ShardTestHarness::<MixedMacroEntry>::new();
+        // The macro entry operation passes through; the hand operation turns it to bytes.
+        let mut entry = OperationTestHarness::<MixedMacroEntry>::new();
         entry.apply_inputs(vec!["hi".to_string()]);
         entry.expect_emits(&["hi".to_string()]);
 
-        let mut down = ShardTestHarness::<MixedHandDownstream>::new();
+        let mut down = OperationTestHarness::<MixedHandDownstream>::new();
         down.apply_inputs(vec!["hi".to_string()]);
         down.expect_emits(&[b"hi".to_vec()]);
     }
 
     #[test]
     fn sugar_relays_register() {
-        // Auto-wire + `relay!` relays are harvested without `register_relay`.
-        flezha_executor::register_inventory_relays();
-        let ids = flezha_executor::relay::registry::class_factory_ids();
-        for id in ["sugar_do_nothing", "sugar_store_input", "sugar_static_partition"] {
-            assert!(ids.contains(&id), "auto-registered relay `{id}` missing");
+        // Auto-wire + `operative!` relays are harvested without `register_continuous`.
+        flezha_executor::register_inventory_operatives();
+        let ids = flezha_executor::operative::registry::class_factory_ids();
+        for id in ["sugar_do_nothing", "sugar_store_input", "sugar_static_segment"] {
+            assert!(ids.contains(&id), "auto-registered operative `{id}` missing");
         }
-        // The mixed relay registers manually, as before.
-        register_relay::<MixedRelay>();
-        assert!(flezha_executor::relay::registry::get_class("mixed_relay").is_some());
+        // The mixed operative registers manually, as before.
+        register_continuous::<MixedOperative>();
+        assert!(flezha_executor::operative::registry::get_class("mixed_operative").is_some());
     }
 
     #[test]
@@ -1514,10 +1514,10 @@ mod macro_twin_tests {
             ("b".to_string(), 30.0),
         ];
 
-        let mut sugar = ShardTestHarness::<RollingWindow>::new();
+        let mut sugar = OperationTestHarness::<RollingWindow>::new();
         sugar.apply_inputs(inputs.clone());
 
-        let mut twin = ShardTestHarness::<RollingWindowTwin>::new();
+        let mut twin = OperationTestHarness::<RollingWindowTwin>::new();
         twin.apply_inputs(inputs);
 
         // The generated journaling replays deterministically (4.3).
@@ -1541,7 +1541,7 @@ mod macro_twin_tests {
             ("x".to_string(), 4.0),
             ("y".to_string(), 9.0),
         ];
-        let mut h = ShardTestHarness::<KeyedCollections>::new();
+        let mut h = OperationTestHarness::<KeyedCollections>::new();
         h.apply_inputs(inputs);
 
         // map_set keeps the latest per key.
@@ -1558,14 +1558,14 @@ mod macro_twin_tests {
 
     #[test]
     fn shard_init_maps_partition_key_to_state() {
-        // The `init = fn` hook receives the static partition key, so each
-        // partition starts from key-derived config the macro default can't give.
+        // The `init = fn` hook receives the static segment key, so each
+        // segment starts from key-derived config the macro default can't give.
         assert_eq!(Windowed::init_state(Some("win_2"), None).window, 2);
         assert_eq!(Windowed::init_state(Some("win_3"), None).window, 3);
         // Cold-start / harness default (key absent) falls through to the else arm.
         assert_eq!(Windowed::init_state(None, None).window, 3);
 
-        // Behaviour differs per partition: window 2 emits one bar earlier than
+        // Behaviour differs per segment: window 2 emits one bar earlier than
         // window 3 for the same input stream, and replay stays deterministic.
         let inputs = vec![
             ("a".to_string(), 2.0),
@@ -1573,12 +1573,12 @@ mod macro_twin_tests {
             ("a".to_string(), 6.0),
         ];
 
-        let mut w2 = ShardTestHarness::<Windowed>::with_initial_state(windowed_init(Some("win_2")));
+        let mut w2 = OperationTestHarness::<Windowed>::with_initial_state(windowed_init(Some("win_2")));
         w2.apply_inputs(inputs.clone());
         w2.replay_equals().expect("windowed(win_2) replay diverged");
         w2.expect_emits(&[3.0_f64, 5.0]); // means of [2,4] then [4,6]
 
-        let mut w3 = ShardTestHarness::<Windowed>::with_initial_state(windowed_init(Some("win_3")));
+        let mut w3 = OperationTestHarness::<Windowed>::with_initial_state(windowed_init(Some("win_3")));
         w3.apply_inputs(inputs);
         w3.replay_equals().expect("windowed(win_3) replay diverged");
         w3.expect_emits(&[4.0_f64]); // single mean of [2,4,6]

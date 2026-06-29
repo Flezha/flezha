@@ -17,7 +17,7 @@
 # streams would silently drop on the agent side.
 #
 # Kafka offset verification is intentionally NOT performed by this script:
-# wiring an output relay + Kafka producer plugin into the dev compose
+# wiring an output operative + Kafka producer plugin into the dev compose
 # default bootstrap is out of scope for the connection-healing change. The
 # `flz cluster snapshot` smoke test (see §9.5) covers the same restart paths
 # at a higher level for manual verification.

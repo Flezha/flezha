@@ -25,7 +25,7 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
 
   test "migrate/0 leaves flat-layout WAL in place and the reader finds it" do
     root = TestHelpers.tmp_app_data_dir()
-    pid = TestHelpers.sample_partition_id()
+    pid = TestHelpers.sample_segment_id()
 
     wal = Registry.wal_path(pid)
     File.mkdir_p!(Path.dirname(wal))
@@ -40,7 +40,7 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
     refute File.exists?(Path.join(root, "_system")),
            "migrate/0 produced a _system/ layout the reader does not read"
 
-    assert pid in Registry.all_partitions()
+    assert pid in Registry.all_segments()
   end
 
   test "FLEZHA_STATE_DIR is the single source for both resolver and migrator" do
@@ -58,7 +58,7 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
 
     assert Registry.state_root() == dir
 
-    pid = TestHelpers.sample_partition_id("envdir")
+    pid = TestHelpers.sample_segment_id("envdir")
     wal = Registry.wal_path(pid)
     assert String.starts_with?(wal, dir)
 
@@ -68,6 +68,6 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
     # The migrator resolves the same root, so the WAL is found after "restart".
     _ = StatePathMigrator.migrate()
     assert File.exists?(wal)
-    assert pid in Registry.all_partitions()
+    assert pid in Registry.all_segments()
   end
 end

@@ -44,7 +44,7 @@ defmodule Flezha.AuthZTest do
     assert :ok =
              AuthZ.authorize(
                %{source: :internal},
-               :"relay.start",
+               :"operative.start",
                Scope.build("team-orders")
              )
   end
@@ -53,7 +53,7 @@ defmodule Flezha.AuthZTest do
     assert {:error, {:forbidden, :principal_not_bound}} =
              AuthZ.authorize(
                %{source: :cli, principal: nil},
-               :"relay.start",
+               :"operative.start",
                Scope.build("_system")
              )
   end
@@ -63,20 +63,20 @@ defmodule Flezha.AuthZTest do
 
     ctx = %{source: :cli, principal: "alice"}
 
-    assert :ok = AuthZ.authorize(ctx, :"relay.start", Scope.build("team-orders"))
+    assert :ok = AuthZ.authorize(ctx, :"operative.start", Scope.build("team-orders"))
 
     assert {:error, {:forbidden, :namespace_mismatch}} =
-             AuthZ.authorize(ctx, :"relay.start", Scope.build("team-payments"))
+             AuthZ.authorize(ctx, :"operative.start", Scope.build("team-payments"))
   end
 
   test "viewer denied operator actions" do
     :ok = RoleStore.bind("eve", "_system", :viewer)
     ctx = %{source: :cli, principal: "eve"}
 
-    assert :ok = AuthZ.authorize(ctx, :"relay.list", Scope.build("_system"))
+    assert :ok = AuthZ.authorize(ctx, :"operative.list", Scope.build("_system"))
 
     assert {:error, {:forbidden, :role_insufficient}} =
-             AuthZ.authorize(ctx, :"relay.start", Scope.build("_system"))
+             AuthZ.authorize(ctx, :"operative.start", Scope.build("_system"))
   end
 
   test "admin@_system can mutate other namespaces' auth state" do
@@ -108,7 +108,7 @@ defmodule Flezha.AuthZTest do
     assert :ok = AuthZ.authorize(ctx, :"executor.connect", Scope.build("team-orders"))
 
     assert {:error, {:forbidden, :role_insufficient}} =
-             AuthZ.authorize(ctx, :"relay.start", Scope.build("team-orders"))
+             AuthZ.authorize(ctx, :"operative.start", Scope.build("team-orders"))
 
     assert {:error, {:forbidden, :role_insufficient}} =
              AuthZ.authorize(ctx, :"audit.read", Scope.build("team-orders"))
@@ -126,7 +126,7 @@ defmodule Flezha.AuthZTest do
     :ok = RoleStore.bind("root", "_system", :admin)
     ctx = %{source: :cli, principal: "root"}
 
-    assert {:error, :invalid_scope} = AuthZ.authorize(ctx, :"relay.start", %{})
+    assert {:error, :invalid_scope} = AuthZ.authorize(ctx, :"operative.start", %{})
   end
 
   test "context with bound role overrides RoleStore" do
@@ -137,7 +137,7 @@ defmodule Flezha.AuthZTest do
     :ok = RoleStore.bind("alice", "_system", :viewer)
     ctx = %{source: :cli, principal: "alice", role: :operator, namespace: "_system"}
 
-    assert :ok = AuthZ.authorize(ctx, :"relay.start", Scope.build("_system"))
+    assert :ok = AuthZ.authorize(ctx, :"operative.start", Scope.build("_system"))
   end
 
   test "while :enabled is false, every call is :ok" do
@@ -147,7 +147,7 @@ defmodule Flezha.AuthZTest do
     assert :ok =
              AuthZ.authorize(
                %{source: :cli, principal: nil},
-               :"relay.start",
+               :"operative.start",
                Scope.build("anything")
              )
   end

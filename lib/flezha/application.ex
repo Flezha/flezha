@@ -52,7 +52,7 @@ defmodule Flezha.Application do
           Flezha.Plugin.Provider.Kafka.WorkerRegistry,
           Flezha.Plugin.Provider.Kafka.ProducerSup,
           Flezha.Service.PortPilot,
-          {Task.Supervisor, name: Flezha.Relay.MessageHandlerTaskSup}
+          {Task.Supervisor, name: Flezha.Operative.MessageHandlerTaskSup}
         ] ++
         Flezha.State.Supervisor.application_children() ++
         [
@@ -87,7 +87,7 @@ defmodule Flezha.Application do
     if Application.get_env(:flezha, :graceful_shutdown_enabled, true) do
       # The Coordinator owns the drain — it dispatches ProcessHub
       # `cluster_leave` (via HubManager.stop_hub_manager/0) inside its
-      # drain phase and waits for peers to claim our Relays before
+      # drain phase and waits for peers to claim our Operatives before
       # finalising. Bounded by `:flezha, :graceful_shutdown_timeout_ms`.
       try do
         _ = Flezha.Shutdown.Coordinator.shutdown(:prep_stop)

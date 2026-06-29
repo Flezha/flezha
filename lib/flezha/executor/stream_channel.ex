@@ -29,7 +29,7 @@ defmodule Flezha.Executor.StreamChannel do
         executor_id: executor_id,
         type: type,
         stream_ref: nil,
-        relay_mapping: %{},
+        operative_mapping: %{},
         name: name,
         last_seen: System.monotonic_time(:millisecond),
         liveness_ref: LivenessCounters.register_channel(executor_id, name)
@@ -68,7 +68,7 @@ defmodule Flezha.Executor.StreamChannel do
 
   @impl true
   def handle_cast(
-        {:io_in, relay_id, {_message, _metadata}},
+        {:io_in, operative_id, {_message, _metadata}},
         %{stream_ref: nil} = state
       ) do
     # Unbound channel: emit `[:flezha, :stream, :drop]` so the seam
@@ -76,23 +76,23 @@ defmodule Flezha.Executor.StreamChannel do
     # for rebind decisions; drop telemetry remains a useful operator
     # signal independent of that.
     bump_drop(state)
-    :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{relay_id: relay_id})
+    :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operative_id: operative_id})
     {:noreply, state}
   end
 
   @impl true
   def handle_cast(
-        {:io_in, relay_id, {message, metadata}},
+        {:io_in, operative_id, {message, metadata}},
         %{stream_ref: stream_ref} = state
       ) do
     bump_send(state)
-    Native.send_frame(stream_ref, relay_id, message, metadata)
+    Native.send_frame(stream_ref, operative_id, message, metadata)
     {:noreply, state}
   end
 
   @impl true
   def handle_call(
-        {:io_in, _relay_id, {_message, _metadata}},
+        {:io_in, _operative_id, {_message, _metadata}},
         _from,
         %{stream_ref: nil} = state
       ) do
@@ -102,37 +102,37 @@ defmodule Flezha.Executor.StreamChannel do
 
   @impl true
   def handle_call(
-        {:io_in, relay_id, {message, metadata}},
+        {:io_in, operative_id, {message, metadata}},
         _from,
         %{stream_ref: stream_ref} = state
       ) do
     bump_send(state)
-    Native.send_frame(stream_ref, relay_id, message, metadata)
+    Native.send_frame(stream_ref, operative_id, message, metadata)
     {:reply, :ok, state}
   end
 
   @impl true
-  def handle_call({:relay_pid_update, relay_id, updated_pids}, _from, state) do
-    relay_mapping = Map.put(state[:relay_mapping], relay_id, updated_pids)
+  def handle_call({:operative_pid_update, operative_id, updated_pids}, _from, state) do
+    operative_mapping = Map.put(state[:operative_mapping], operative_id, updated_pids)
 
-    {:reply, :ok, Map.put(state, :relay_mapping, relay_mapping)}
+    {:reply, :ok, Map.put(state, :operative_mapping, operative_mapping)}
   end
 
   @impl true
-  def handle_call({:relay_pid_remove, relay_id}, _from, state) do
-    relay_mapping = Map.delete(state[:relay_mapping], relay_id)
+  def handle_call({:operative_pid_remove, operative_id}, _from, state) do
+    operative_mapping = Map.delete(state[:operative_mapping], operative_id)
 
-    {:reply, :ok, Map.put(state, :relay_mapping, relay_mapping)}
+    {:reply, :ok, Map.put(state, :operative_mapping, operative_mapping)}
   end
 
   @impl true
-  def handle_call({:relay_bulk_insert, relays}, _from, state) do
-    relay_mapping =
-      Enum.reduce(relays, state.relay_mapping, fn {relay_id, updated_pids}, acc ->
-        Map.put(acc, relay_id, updated_pids)
+  def handle_call({:operative_bulk_insert, operatives}, _from, state) do
+    operative_mapping =
+      Enum.reduce(operatives, state.operative_mapping, fn {operative_id, updated_pids}, acc ->
+        Map.put(acc, operative_id, updated_pids)
       end)
 
-    {:reply, :ok, Map.put(state, :relay_mapping, relay_mapping)}
+    {:reply, :ok, Map.put(state, :operative_mapping, operative_mapping)}
   end
 
   # Probe used by acceptors to find rebindable channels. Returns the current
@@ -159,32 +159,32 @@ defmodule Flezha.Executor.StreamChannel do
   # Unified NIF transport message — complete parsed frame.
   #
   # Two reserved payload-ids carry persistence-bound data (see
-  # `Flezha.State.Wire`). All other payload-ids are relay outputs
-  # routed via the per-relay mapping.
+  # `Flezha.State.Wire`). All other payload-ids are operative outputs
+  # routed via the per-operative mapping.
   @impl true
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
-      when payload_id == "partition_state_change" do
-    handle_partition_state_change(state.executor_id, message)
+      when payload_id == "segment_state_change" do
+    handle_segment_state_change(state.executor_id, message)
     {:noreply, mark_seen(state)}
   end
 
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
-      when payload_id == "partition_state_snapshot" do
-    handle_partition_state_snapshot(state.executor_id, message)
+      when payload_id == "segment_state_snapshot" do
+    handle_segment_state_snapshot(state.executor_id, message)
     {:noreply, mark_seen(state)}
   end
 
   # Dynamic-mode hard-delete: the executor evicted a persistence-enabled
-  # Partition. Drop its WAL/snapshot/outbox files so a later recreate
+  # Segment. Drop its WAL/snapshot/outbox files so a later recreate
   # cold-starts. Fire-and-forget — no response frame is written back.
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
-      when payload_id == "delete_partition_state" do
-    handle_delete_partition_state(message)
+      when payload_id == "delete_segment_state" do
+    handle_delete_segment_state(message)
     {:noreply, mark_seen(state)}
   end
 
   # Data-channel heartbeat: the executor emits this every ~10s while connected,
-  # so an idle-but-healthy relay keeps the channel live without producing
+  # so an idle-but-healthy operative keeps the channel live without producing
   # output. Metadata carries the executor's dispatch-progress self-report; the
   # stall classifier compares it across ticks to catch an alive-but-wedged
   # dispatch pool (a state every heartbeat-level signal is blind to).
@@ -200,8 +200,8 @@ defmodule Flezha.Executor.StreamChannel do
     {:noreply, mark_seen(state)}
   end
 
-  def handle_info({:flz_data, _stream_id, relay_id, message, metadata}, state) do
-    case Map.get(state.relay_mapping, relay_id, []) do
+  def handle_info({:flz_data, _stream_id, operative_id, message, metadata}, state) do
+    case Map.get(state.operative_mapping, operative_id, []) do
       [] ->
         :ok
 
@@ -210,20 +210,20 @@ defmodule Flezha.Executor.StreamChannel do
 
       [first | _] = pids ->
         # Defensive: the HubManager `hook_insert_pid/2` filter should
-        # guarantee a single-pid list for any relay, but if a
+        # guarantee a single-pid list for any operative, but if a
         # regression slips that through we must NOT fan out frames to
         # every pid — that is the EVIDENCE1 §2 data-plane drain that
         # produced 22 frames/s on unchosen executors. Route to the
         # first pid only and surface the misuse via telemetry.
         Logger.error(
-          "[stream_channel] fan-out warning for relay=#{inspect(relay_id)}: " <>
+          "[stream_channel] fan-out warning for operative=#{inspect(operative_id)}: " <>
             "expected one pid, got #{length(pids)}: #{inspect(pids)}"
         )
 
         :telemetry.execute(
           [:flezha, :stream, :fanout_warning],
           %{count: 1, pid_count: length(pids)},
-          %{relay_id: relay_id, executor_id: state.executor_id}
+          %{operative_id: operative_id, executor_id: state.executor_id}
         )
 
         GenServer.cast(first, {:io_out, message, metadata})
@@ -234,7 +234,7 @@ defmodule Flezha.Executor.StreamChannel do
 
   # Periodic liveness check: a bound SECONDARY stream whose last frame
   # (heartbeat or data) is older than the threshold has missed several
-  # heartbeats and is stalled. Emit `output_stall` for each mapped relay (the
+  # heartbeats and is stalled. Emit `output_stall` for each mapped operative (the
   # signal the convergence Loop rebinds on) — but keep `stream_ref`, since the
   # rebind re-establishes it. Primary streams are send-only and never receive
   # heartbeats, so the check is meaningless there (it flagged a false
@@ -255,14 +255,14 @@ defmodule Flezha.Executor.StreamChannel do
     if not is_nil(state.stream_ref) and stale? do
       Logger.warning(
         "[stream_channel] IO stream silent past liveness threshold, flagging output_stall: " <>
-          "executor=#{inspect(state.executor_id)} relays=#{inspect(Map.keys(state.relay_mapping))}"
+          "executor=#{inspect(state.executor_id)} operatives=#{inspect(Map.keys(state.operative_mapping))}"
       )
 
-      for {relay_id, _} <- state.relay_mapping do
+      for {operative_id, _} <- state.operative_mapping do
         :telemetry.execute(
           [:flezha, :state, :output_stall],
           %{count: 1},
-          %{relay_instance: relay_id}
+          %{operative_instance: operative_id}
         )
       end
     end
@@ -277,14 +277,14 @@ defmodule Flezha.Executor.StreamChannel do
   def handle_info({:flz_closed, _stream_id, _reason}, state) do
     Logger.warning("Connection closed for IO socket.")
 
-    # Emit output_stall immediately for every relay in the mapping so the
+    # Emit output_stall immediately for every operative in the mapping so the
     # convergence Loop triggers a rebind tick rather than waiting for the
     # Watchdog's 60s grace period to detect the dead socket.
-    for {relay_id, _} <- state.relay_mapping do
+    for {operative_id, _} <- state.operative_mapping do
       :telemetry.execute(
         [:flezha, :state, :output_stall],
         %{count: 1},
-        %{relay_instance: relay_id}
+        %{operative_instance: operative_id}
       )
     end
 
@@ -297,68 +297,68 @@ defmodule Flezha.Executor.StreamChannel do
     {:noreply, state}
   end
 
-  # Persistence frames are handed to the per-partition WalWriter via a
+  # Persistence frames are handed to the per-segment WalWriter via a
   # non-blocking cast: the writer appends, drives seq-gap resync, and writes
   # snapshots (an fsync) in its own process, so disk/recovery latency never
-  # stalls this channel — which also carries the relay's output frames.
-  defp handle_partition_state_change(executor_id, frame) do
+  # stalls this channel — which also carries the operative's output frames.
+  defp handle_segment_state_change(executor_id, frame) do
     case StateWire.decode_frame(frame) do
-      {:ok, %{partition_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
-        partition_id = {rc, sh, pk}
+      {:ok, %{segment_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
+        segment_id = {rc, sh, pk}
 
-        case Flezha.State.Supervisor.find_or_start(partition_id) do
+        case Flezha.State.Supervisor.find_or_start(segment_id) do
           {:ok, pid} ->
             Flezha.State.WalWriter.append_async(pid, seq, header, body, executor_id)
 
           {:error, reason} ->
             Logger.error(
-              "[stream] partition_state_change WalWriter start failed " <>
-                "partition=#{inspect(partition_id)}: #{inspect(reason)}"
+              "[stream] segment_state_change WalWriter start failed " <>
+                "segment=#{inspect(segment_id)}: #{inspect(reason)}"
             )
         end
 
       {:error, reason} ->
-        Logger.warning("[stream] partition_state_change decode failed: #{inspect(reason)}")
+        Logger.warning("[stream] segment_state_change decode failed: #{inspect(reason)}")
     end
   end
 
-  # Writing a snapshot fsyncs and truncates the per-partition WAL (a call back
+  # Writing a snapshot fsyncs and truncates the per-segment WAL (a call back
   # into its writer), so run it in a separate process — off this channel's loop
   # and outside the writer (which would self-call).
-  defp handle_partition_state_snapshot(_executor_id, frame) do
+  defp handle_segment_state_snapshot(_executor_id, frame) do
     case StateWire.decode_frame(frame) do
-      {:ok, %{partition_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
-        partition_id = {rc, sh, pk}
-        spawn(fn -> write_snapshot(partition_id, seq, header, body) end)
+      {:ok, %{segment_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
+        segment_id = {rc, sh, pk}
+        spawn(fn -> write_snapshot(segment_id, seq, header, body) end)
 
       {:error, reason} ->
-        Logger.warning("[stream] partition_state_snapshot decode failed: #{inspect(reason)}")
+        Logger.warning("[stream] segment_state_snapshot decode failed: #{inspect(reason)}")
     end
   end
 
   # Run the file teardown off this channel's loop: it stops the writer and
   # unlinks files, which we never want to gate the output-carrying channel on.
-  defp handle_delete_partition_state(frame) do
-    case StateWire.decode_partition_id(frame) do
+  defp handle_delete_segment_state(frame) do
+    case StateWire.decode_segment_id(frame) do
       {:ok, {rc, sh, pk}} ->
-        spawn(fn -> Flezha.State.Supervisor.delete_partition({rc, sh, pk}) end)
+        spawn(fn -> Flezha.State.Supervisor.delete_segment({rc, sh, pk}) end)
 
       {:error, reason} ->
-        Logger.warning("[stream] delete_partition_state decode failed: #{inspect(reason)}")
+        Logger.warning("[stream] delete_segment_state decode failed: #{inspect(reason)}")
     end
   end
 
-  defp write_snapshot(partition_id, seq, header, body) do
-    Flezha.State.Watchdog.compaction_completed(partition_id)
+  defp write_snapshot(segment_id, seq, header, body) do
+    Flezha.State.Watchdog.compaction_completed(segment_id)
 
-    case Flezha.State.Snapshot.write_snapshot(partition_id, seq, header, body) do
+    case Flezha.State.Snapshot.write_snapshot(segment_id, seq, header, body) do
       {:ok, _path} ->
         :ok
 
       {:error, reason} ->
         Logger.error(
-          "[stream] partition_state_snapshot write failed " <>
-            "partition=#{inspect(partition_id)}: #{inspect(reason)}"
+          "[stream] segment_state_snapshot write failed " <>
+            "segment=#{inspect(segment_id)}: #{inspect(reason)}"
         )
     end
   end

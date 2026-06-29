@@ -2,10 +2,10 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   @moduledoc """
   Multi-node-safe registry access (self-healing-control-plane, Phase 3 / D9).
 
-  `get_all_relays/1`, `executor_switch/3`, and `FleetManager.executor_reroute/4`
+  `get_all_operatives/1`, `executor_switch/3`, and `FleetManager.executor_reroute/4`
   historically pattern-matched a single-element `[{_node, pid}]` registry entry,
-  raising `FunctionClauseError` the moment a relay was registered on more than
-  one node (the `flz relay list` crash). These tests exercise the shared
+  raising `FunctionClauseError` the moment a operative was registered on more than
+  one node (the `flz operative list` crash). These tests exercise the shared
   `HubManager.live_pid/1` resolver and inject a synthetic two-node registry entry
   to assert the consumers select the live/local pid instead of crashing.
   """
@@ -60,44 +60,44 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       :ok
     end
 
-    test "get_all_relays/1 returns the live/local pid for a relay registered on two nodes" do
+    test "get_all_operatives/1 returns the live/local pid for a operative registered on two nodes" do
       dead_node_pid = spawn(fn -> Process.sleep(:infinity) end)
       local_pid = self()
 
-      inject_relay(@namespace, "relay_mn", [
+      inject_operative(@namespace, "operative_mn", [
         {:dead@nohost, dead_node_pid},
         {node(), local_pid}
       ])
 
-      relays = HubManager.get_all_relays(@namespace)
+      operatives = HubManager.get_all_operatives(@namespace)
 
-      assert {"relay_mn", got_pid} = Enum.find(relays, fn {id, _} -> id == "relay_mn" end)
+      assert {"operative_mn", got_pid} = Enum.find(operatives, fn {id, _} -> id == "operative_mn" end)
       assert got_pid == local_pid
     end
 
-    test "get_all_relays/1 omits a relay that has only dead-node entries" do
-      inject_relay(@namespace, "relay_dead", [{:dead@nohost, spawn(fn -> :ok end)}])
+    test "get_all_operatives/1 omits a operative that has only dead-node entries" do
+      inject_operative(@namespace, "operative_dead", [{:dead@nohost, spawn(fn -> :ok end)}])
 
-      relays = HubManager.get_all_relays(@namespace)
+      operatives = HubManager.get_all_operatives(@namespace)
 
-      assert Enum.find(relays, fn {id, _} -> id == "relay_dead" end) == nil
+      assert Enum.find(operatives, fn {id, _} -> id == "operative_dead" end) == nil
     end
 
-    test "flz relay list (Flezha.list_relays/1) lists a multi-node relay without crashing" do
-      # Backs `flz relay list` via RelayManager.get_relay_ids → get_all_relays.
+    test "flz operative list (Flezha.list_operatives/1) lists a multi-node operative without crashing" do
+      # Backs `flz operative list` via OperativeManager.get_operative_ids → get_all_operatives.
       dead_node_pid = spawn(fn -> Process.sleep(:infinity) end)
 
-      inject_relay(@namespace, "relay_cli_mn", [
+      inject_operative(@namespace, "operative_cli_mn", [
         {:dead@nohost, dead_node_pid},
         {node(), self()}
       ])
 
-      assert {:ok, ids} = Flezha.list_relays(@namespace)
-      assert "relay_cli_mn" in ids
+      assert {:ok, ids} = Flezha.list_operatives(@namespace)
+      assert "operative_cli_mn" in ids
     end
   end
 
-  describe "relay_rows/1 health surface" do
+  describe "operative_rows/1 health surface" do
     @health_ns "mn_health_test"
 
     setup do
@@ -112,22 +112,22 @@ defmodule Flezha.Service.HubManagerRegistryTest do
     end
 
     test "reflects the Convergence Loop's classified health, not the absent metadata key" do
-      # Regression: relay_rows/1 used to read `metadata[:health]`, a key nothing
-      # ever writes, so every relay reported `:unknown` forever even while
-      # producing. It must instead read the loop's published per-relay health.
-      inject_relay(@health_ns, "relay_health", [{node(), self()}])
+      # Regression: operative_rows/1 used to read `metadata[:health]`, a key nothing
+      # ever writes, so every operative reported `:unknown` forever even while
+      # producing. It must instead read the loop's published per-operative health.
+      inject_operative(@health_ns, "operative_health", [{node(), self()}])
 
-      Snapshot.publish(%{relay_health: %{{@health_ns, "relay_health"} => :healthy}})
+      Snapshot.publish(%{operative_health: %{{@health_ns, "operative_health"} => :healthy}})
 
-      row = Enum.find(HubManager.relay_rows(@health_ns), &(&1.id == "relay_health"))
+      row = Enum.find(HubManager.operative_rows(@health_ns), &(&1.id == "operative_health"))
       assert row.health == :healthy
     end
 
-    test "a relay the loop has not yet observed reports :unknown, not a crash" do
-      inject_relay(@health_ns, "relay_unseen", [{node(), self()}])
-      Snapshot.publish(%{relay_health: %{}})
+    test "a operative the loop has not yet observed reports :unknown, not a crash" do
+      inject_operative(@health_ns, "operative_unseen", [{node(), self()}])
+      Snapshot.publish(%{operative_health: %{}})
 
-      row = Enum.find(HubManager.relay_rows(@health_ns), &(&1.id == "relay_unseen"))
+      row = Enum.find(HubManager.operative_rows(@health_ns), &(&1.id == "operative_unseen"))
       assert row.health == :unknown
     end
   end
@@ -146,7 +146,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       prev_root = Application.get_env(:flezha, :process_hub_registry_root)
       # Empty root so the unstarted-hub on-disk branch can never fire from
       # residue left by other suites — these assertions isolate the
-      # running-hub `dump`-vs-`get_all_relays` discriminator.
+      # running-hub `dump`-vs-`get_all_operatives` discriminator.
       root =
         Path.join(System.tmp_dir!(), "flezha_pending_test_#{System.unique_integer([:positive])}")
 
@@ -164,17 +164,17 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       :ok
     end
 
-    test "false when every durable relay is bound to a live pid" do
-      inject_relay(@pending_ns, "relay_bound", [{node(), self()}])
+    test "false when every durable operative is bound to a live pid" do
+      inject_operative(@pending_ns, "operative_bound", [{node(), self()}])
 
       refute HubManager.durable_registry_pending?()
     end
 
-    test "true when a durable relay has no live pid (replayed but not yet reseated)" do
+    test "true when a durable operative has no live pid (replayed but not yet reseated)" do
       # The DETS row survives a restart with a stale node entry, so `dump/1`
-      # counts it while `get_all_relays/1` (live-pid filtered) drops it — the
+      # counts it while `get_all_operatives/1` (live-pid filtered) drops it — the
       # registry-loaded-but-unbound window.
-      inject_relay(@pending_ns, "relay_unbound", [{:dead@nohost, spawn(fn -> :ok end)}])
+      inject_operative(@pending_ns, "operative_unbound", [{:dead@nohost, spawn(fn -> :ok end)}])
 
       assert HubManager.durable_registry_pending?()
     end
@@ -193,15 +193,15 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   end
 
   # Inject a synthetic registry entry with an explicit `node_pids` list so we can
-  # reproduce a multi-node relay without spinning up a real peer node + executor.
-  defp inject_relay(ns, relay_id, node_pids) do
+  # reproduce a multi-node operative without spinning up a real peer node + executor.
+  defp inject_operative(ns, operative_id, node_pids) do
     hub_id = Identificator.hub(ns)
 
     child_spec = %{
-      id: relay_id,
-      start: {Flezha.Relay.Overwatch, :start_link, [{ns, relay_id}]}
+      id: operative_id,
+      start: {Flezha.Operative.Overwatch, :start_link, [{ns, operative_id}]}
     }
 
-    :ok = ProcessRegistry.bulk_insert(hub_id, %{relay_id => {child_spec, node_pids, %{}}})
+    :ok = ProcessRegistry.bulk_insert(hub_id, %{operative_id => {child_spec, node_pids, %{}}})
   end
 end

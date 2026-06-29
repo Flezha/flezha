@@ -1,7 +1,7 @@
 defmodule Flezha.State.Recovery do
   @moduledoc """
-  Single recovery primitive for per-Partition persistence: re-run the
-  `RestoreInitState` handshake so a desynced or stalled Partition resumes
+  Single recovery primitive for per-Segment persistence: re-run the
+  `RestoreInitState` handshake so a desynced or stalled Segment resumes
   from a consistent point.
 
   Used by the three failure edges that were previously silent:
@@ -13,33 +13,33 @@ defmodule Flezha.State.Recovery do
   Telemetry for *why* a resync was triggered is emitted by the caller;
   this module owns only the resync mechanism. The dispatch can be
   redirected in tests via the `:state_resync_fun` application env (an
-  arity-2 fun `(partition_id, opts -> term)`), which lets a test simulate
+  arity-2 fun `(segment_id, opts -> term)`), which lets a test simulate
   the SDK's rewind-and-resend without a live executor.
   """
 
   require Logger
 
-  alias Flezha.Relay.Overwatch
+  alias Flezha.Operative.Overwatch
 
   @spec resync(tuple(), keyword()) :: {:ok, reference()} | {:error, term()}
-  def resync({_rc, _sh, _pk} = partition_id, opts \\ []) do
+  def resync({_rc, _sh, _pk} = segment_id, opts \\ []) do
     case Application.get_env(:flezha, :state_resync_fun) do
-      fun when is_function(fun, 2) -> fun.(partition_id, opts)
-      _ -> do_resync(partition_id, opts)
+      fun when is_function(fun, 2) -> fun.(segment_id, opts)
+      _ -> do_resync(segment_id, opts)
     end
   end
 
   @doc """
-  Bind-driven WAL replay trigger. Called by `Flezha.Relay.Overwatch`
+  Bind-driven WAL replay trigger. Called by `Flezha.Operative.Overwatch`
   from `handle_continue(:after_bind, _)` with the Overwatch's own
   `executor_id` so the replay never depends on a class→executor lookup
   in the durable registry (the lookup that failed on cold boot and
   produced the silent "resync skipped reason=:output_stall" no-op).
 
-  This is the single state-restoration trigger for non-HotSwap relays;
+  This is the single state-restoration trigger for non-HotSwap operatives;
   every Overwatch bind unconditionally invokes it. The implementation
   is intentionally trivial — the heavy lifting lives in
-  `Flezha.Relay.Overwatch.dispatch_restore_init_state/2`.
+  `Flezha.Operative.Overwatch.dispatch_restore_init_state/2`.
   """
   @spec resync_for_overwatch(pid(), binary()) :: :ok
   def resync_for_overwatch(overwatch_pid, executor_id)
@@ -49,7 +49,7 @@ defmodule Flezha.State.Recovery do
   end
 
   @doc """
-  Resolve the `executor_id` currently owning `relay_class` from the
+  Resolve the `executor_id` currently owning `operative_class` from the
   ProcessHub registry. Returns `{:ok, executor_id}` or `{:error, term}`.
 
   Retained for the CLI `flz state rotate` surface — the resync path
@@ -60,15 +60,15 @@ defmodule Flezha.State.Recovery do
     case Flezha.Service.HubManager.get_registry("default") do
       {:ok, registry} ->
         match =
-          Enum.find_value(registry, fn {_relay_id, entry} ->
+          Enum.find_value(registry, fn {_operative_id, entry} ->
             {cspec, _node_pids, metadata} = normalize_entry(entry)
             tag = Map.get(metadata, :tag)
 
-            if is_binary(tag) and relay_class(cspec) == rc, do: tag
+            if is_binary(tag) and operative_class(cspec) == rc, do: tag
           end)
 
         case match do
-          nil -> {:error, "no active executor owns relay_class=#{rc}"}
+          nil -> {:error, "no active executor owns operative_class=#{rc}"}
           eid -> {:ok, eid}
         end
 
@@ -77,13 +77,13 @@ defmodule Flezha.State.Recovery do
     end
   end
 
-  defp do_resync(partition_id, opts) do
+  defp do_resync(segment_id, opts) do
     reason = Keyword.get(opts, :reason, :unknown)
     executor_id = Keyword.get(opts, :executor_id)
 
     cond do
       is_binary(executor_id) ->
-        dispatch_resync(partition_id, executor_id, reason)
+        dispatch_resync(segment_id, executor_id, reason)
 
       true ->
         # Callers without an executor_id are only signalling "I observed
@@ -93,39 +93,39 @@ defmodule Flezha.State.Recovery do
     end
   end
 
-  defp dispatch_resync(partition_id, executor_id, reason) do
-    case Overwatch.dispatch_restore_init_state(executor_id, partition_id) do
+  defp dispatch_resync(segment_id, executor_id, reason) do
+    case Overwatch.dispatch_restore_init_state(executor_id, segment_id) do
       {:ok, _ref} = ok ->
         ok
 
       other ->
         Logger.warning(
           "[State.Recovery] resync dispatch failed reason=#{inspect(reason)} " <>
-            "partition=#{inspect(partition_id)}: #{inspect(other)}"
+            "segment=#{inspect(segment_id)}: #{inspect(other)}"
         )
 
         other
     end
   end
 
-  # The durable registry stores `{relay_id, {cspec, node_pids, metadata}}` (a
+  # The durable registry stores `{operative_id, {cspec, node_pids, metadata}}` (a
   # pre-namespace row may omit metadata). The owning executor is `metadata.tag`;
-  # the relay_class is the relay's `:relay_class` opt (default: its id), carried
-  # in the cspec's start args — mirror of `Reconciler.Probe.relay_from_cspec/1`.
+  # the operative_class is the operative's `:operative_class` opt (default: its id), carried
+  # in the cspec's start args — mirror of `Reconciler.Probe.operative_from_cspec/1`.
   defp normalize_entry({cspec, node_pids, metadata}), do: {cspec, node_pids, metadata}
   defp normalize_entry({cspec, node_pids}), do: {cspec, node_pids, %{}}
 
-  defp relay_class(%{start: {_m, _f, [arg]}}) do
+  defp operative_class(%{start: {_m, _f, [arg]}}) do
     case arg do
-      {_namespace, relay} when is_map(relay) -> relay_class_of(relay)
-      {_namespace, _executor_id, relay} when is_map(relay) -> relay_class_of(relay)
+      {_namespace, operative} when is_map(operative) -> operative_class_of(operative)
+      {_namespace, _executor_id, operative} when is_map(operative) -> operative_class_of(operative)
       _ -> nil
     end
   end
 
-  defp relay_class(_), do: nil
+  defp operative_class(_), do: nil
 
-  defp relay_class_of(relay) do
-    Keyword.get(Map.get(relay, :opts, []), :relay_class, Map.get(relay, :id))
+  defp operative_class_of(operative) do
+    Keyword.get(Map.get(operative, :opts, []), :operative_class, Map.get(operative, :id))
   end
 end

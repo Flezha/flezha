@@ -1,7 +1,7 @@
 defmodule Flezha.AuthZ.Scope do
   @moduledoc """
   An authorization scope is a map carrying at minimum a `:namespace`
-  binding and optionally a resource specifier (e.g., `:relay`,
+  binding and optionally a resource specifier (e.g., `:operative`,
   `:plugin_id`).
 
   Service callers construct one inline at every

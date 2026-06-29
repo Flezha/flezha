@@ -17,14 +17,14 @@ import org.slf4j.LoggerFactory;
 /**
  * Steady-state data-channel heartbeat. Periodically writes a bare frame on the
  * {@code data_heartbeat} payload to every secondary stream, so an
- * idle-but-healthy relay keeps the controller's per-channel liveness clock
+ * idle-but-healthy operative keeps the controller's per-channel liveness clock
  * fresh without producing real output. A silent data-plane wedge stops the
  * heartbeats and the controller flags {@code output_stall}.
  *
  * <p>Parity with the Rust SDK ({@code flz_transport::liveness} +
  * {@code spawn_data_heartbeat}): same {@code FLEZHA_DATA_HEARTBEAT_MS} knob and
  * jitter. The send goes through {@link NativeTransport#streamWrite} under the
- * JNI per-stream write lock, so it never interleaves with relay-output writes.
+ * JNI per-stream write lock, so it never interleaves with operative-output writes.
  */
 public final class DataHeartbeatSender {
 

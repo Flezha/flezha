@@ -20,14 +20,14 @@ defmodule Flezha.Convergence.StallClassifier do
     * `:executor_pool_wedged`   — executor alive (heartbeats flowing) and fed, but its
       self-reported dispatch counter is frozen — the SDK pool stopped processing
     * `:channel_not_sending`    — channel fed but not calling send_frame
-    * `:relay_not_forwarding`   — relay fed but not forwarding to its channel
+    * `:operative_not_forwarding`   — operative fed but not forwarding to its channel
 
   Each check has a built-in "is it actually being fed?" precondition (a count
-  that must be *advancing* between ticks), so an idle relay never reads as a
+  that must be *advancing* between ticks), so an idle operative never reads as a
   stall.
   """
 
-  @type snapshot :: %{drivers: [map()], channels: [map()], relays: [map()]}
+  @type snapshot :: %{drivers: [map()], channels: [map()], operatives: [map()]}
   @type verdict :: {atom(), map()} | :ok
 
   @defaults %{driver_freeze_ms: 5_000, stall_ms: 30_000, queue_high: 256}
@@ -50,7 +50,7 @@ defmodule Flezha.Convergence.StallClassifier do
       executor_not_consuming(current, previous, o) ||
       executor_pool_wedged(current, previous) ||
       channel_not_sending(current, previous) ||
-      relay_not_forwarding(current, previous) ||
+      operative_not_forwarding(current, previous) ||
       :ok
   end
 
@@ -172,11 +172,11 @@ defmodule Flezha.Convergence.StallClassifier do
     end)
   end
 
-  defp relay_not_forwarding(current, previous) do
-    prev_index = index_by(previous.relays, fn r -> r.relay_id end)
+  defp operative_not_forwarding(current, previous) do
+    prev_index = index_by(previous.operatives, fn r -> r.operative_id end)
 
-    find_first(current.relays, fn r ->
-      case Map.get(prev_index, r.relay_id) do
+    find_first(current.operatives, fn r ->
+      case Map.get(prev_index, r.operative_id) do
         nil ->
           nil
 
@@ -187,7 +187,7 @@ defmodule Flezha.Convergence.StallClassifier do
           # Fed, not forwarding, and the gap isn't explained by the on_input
           # filter dropping everything.
           if io_delta > 0 and r.forwarded == prev.forwarded and filtered_delta < io_delta do
-            {:relay_not_forwarding, %{relay_id: r.relay_id}}
+            {:operative_not_forwarding, %{operative_id: r.operative_id}}
           end
       end
     end)

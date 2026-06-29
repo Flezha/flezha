@@ -4,7 +4,7 @@
 
 Flezha uses a **shared Rust library** for all transport-level communication between the Elixir controller and language SDKs. The library handles everything needed to move bytes between the two sides — QUIC, UDS, binary framing, protobuf encoding, and TLS — but **nothing more**.
 
-Each language SDK is responsible for its own compute engine: running relays, managing state, worker pools, and command dispatch. A Python SDK runs relays in Python. A Go SDK runs them in Go. The shared library is the communication layer only.
+Each language SDK is responsible for its own compute engine: running operatives, managing state, worker pools, and command dispatch. A Python SDK runs operatives in Python. A Go SDK runs them in Go. The shared library is the communication layer only.
 
 ## Why
 
@@ -27,7 +27,7 @@ On the controller side, the same library replaces `:quicer` (MsQuic NIF) with a 
 │  (Rust, Python, Go, Java, etc.)                         │
 │                                                         │
 │  ┌─────────────┐  ┌──────────────┐  ┌────────────────┐ │
-│  │  Compute     │  │  Relay   │  │  Command       │ │
+│  │  Compute     │  │  Operative   │  │  Command       │ │
 │  │  Engine      │  │  Execution   │  │  Handlers      │ │
 │  │  Lifecycle   │  │  & State     │  │  & Dispatch    │ │
 │  └──────┬───────┘  └──────┬───────┘  └───────┬────────┘ │
@@ -74,64 +74,64 @@ On the controller side, the same library replaces `:quicer` (MsQuic NIF) with a 
 |---|---|
 | `executor/mod.rs` | ExecutorNode, message loop, worker dispatch |
 | `executor/control_unit.rs` | Control channel open (UDS/QUIC), init handshake |
-| `executor/worker_pool.rs` | Thread pool for relay execution |
+| `executor/worker_pool.rs` | Thread pool for operative execution |
 | `command/mod.rs` | Command routing and response building |
-| `command/*.rs` | Individual command handlers (assign, connect, add/rem relay, etc.) |
-| `relay/mod.rs` | Relay trait, types, factory registration |
-| `relay/executor.rs` | Relay execution and output piping |
-| `relay/factory_registry.rs` | Global factory registry, RelayHandle, `RelayRegistry` (DashMap-backed live instance map under fast-dispatch) |
-| `lib.rs` | `Flezha` struct, public API (`new`, `get_relays`) |
+| `command/*.rs` | Individual command handlers (assign, connect, add/rem operative, etc.) |
+| `operative/mod.rs` | Operative trait surface, types, factory registration |
+| `operative/executor.rs` | Operative execution and output piping |
+| `operative/factory_registry.rs` | Global factory registry, OperativeHandle, `OperativeRegistry` (DashMap-backed live instance map under fast-dispatch) |
+| `lib.rs` | `Flezha` struct, public API (`new`, `get_operatives`) |
 
 ## Rust SDK dispatch
 
 The Rust SDK (`sdk/rust/`) has two dispatch backends selected at compile
 time via the `fast-dispatch` cargo feature. Both preserve the same public
-API and sticky per-relay ordering semantics — the feature flag only
+API and sticky per-operative ordering semantics — the feature flag only
 changes the internal fast path.
 
 ### Legacy (default: `fast-dispatch` off)
 
 `executor/legacy.rs`. Every inbound message crosses the coordinator
 channel (`crossbeam::channel`) into `ExecutorNode`'s message loop,
-which performs a lock-heavy check-out: `RwLock<HashMap<relay>>` read
-→ relay `Mutex` acquire for runner type → `relay_workers` /
-`available_workers` / `relay_queues` / `pending_relays`
+which performs a lock-heavy check-out: `RwLock<HashMap<operative>>` read
+→ operative `Mutex` acquire for runner type → `operative_workers` /
+`available_workers` / `operative_queues` / `pending_operatives`
 bookkeeping → dispatch to a fixed worker over `Sender<WorkerPoolMessage>`.
-The worker runs the relay and checks back in, which triggers the next
-queued item in FIFO order. Sticky ordering comes from the `relay_workers`
-map that pins one relay to one worker at a time.
+The worker runs the operative and checks back in, which triggers the next
+queued item in FIFO order. Sticky ordering comes from the `operative_workers`
+map that pins one operative to one worker at a time.
 
-### Fast (opt-in: `fast-dispatch` on — per-relay mailboxes)
+### Fast (opt-in: `fast-dispatch` on — per-operative mailboxes)
 
 `executor/fast.rs` + `executor/mailbox.rs` +
-`executor/work_stealing_pool.rs`. Every relay owns:
-  - an `Arc<Mutex<RelayBox>>` — same inner lock as before (the
-    `Relay` trait uses `&mut self`, so a lock is required).
-  - a `Mailbox<RelayPayload>` — a `crossbeam::queue::SegQueue` plus
+`executor/work_stealing_pool.rs`. Every operative owns:
+  - an `Arc<Mutex<OperativeBox>>` — same inner lock as before (the
+    operative trait uses `&mut self`, so a lock is required).
+  - a `Mailbox<OperativePayload>` — a `crossbeam::queue::SegQueue` plus
     an `AtomicBool inflight` flag.
 
 Stream-reader threads (one per primary stream) push directly into the
-target relay's mailbox and CAS `inflight false→true`. The CAS winner
+target operative's mailbox and CAS `inflight false→true`. The CAS winner
 submits a drain closure into a **Chase-Lev work-stealing pool** built on
 `crossbeam-deque::{Injector, Worker, Stealer}`; N worker threads
 (default `num_cpus::get()`, override via `FLEZHA_WORKER_POOL_SIZE`) poll
 their own deque, the shared injector, and steal from siblings.
 
-The drain closure loops: pop one item, take the relay lock, run, pipe
-the `RelayResult` (PipeToAgent writes the secondary stream, PipeToRelay
-pushes into the target relay's mailbox, preserving downstream
+The drain closure loops: pop one item, take the operative lock, run, pipe
+the `OperativeResult` (PipeToAgent writes the secondary stream, PipeToOperative
+pushes into the target operative's mailbox, preserving downstream
 ordering). On an observed-empty queue, the drain stores `inflight = false`
 and re-checks the queue — this is the classic "re-CAS on wake miss" that
 closes the race where a concurrent push beat the store (see
 `executor/mailbox.rs` docstring for the worked case).
 
-Sticky per-relay ordering is preserved: only the CAS winner drains,
+Sticky per-operative ordering is preserved: only the CAS winner drains,
 and the inflight flag guarantees at most one drainer at a time per
-mailbox. Work-stealing provides load balance across relays; the
-inflight flag is what provides serialization within a relay.
+mailbox. Work-stealing provides load balance across operatives; the
+inflight flag is what provides serialization within an operative.
 
 The coordinator thread still exists under fast-dispatch but handles only
-control-plane traffic (`HandleCommandAction`, `ReturnRelays`,
+control-plane traffic (`HandleCommandAction`, `ReturnOperatives`,
 `Reconnect`). Under fast-dispatch, the `ExecutorMessage` enum has
 the data-plane variants (`WorkerCheckOut` / `WorkerCheckIn` /
 `WorkerInitCheckIn`) removed at the type level — attempting to send one
@@ -234,7 +234,7 @@ flezha/
 │       ├── lib.rs                # Flezha struct, public API
 │       ├── executor/       # Engine lifecycle
 │       ├── command/              # Command handlers
-│       └── relay/            # Relay trait + execution
+│       └── operative/        # Operative trait + execution
 ├── sdk/java/                     # Java SDK (Maven multi-module)
 ├── sdk/python/                   # Python SDK (future)
 ├── flz_jni/                      # JNI bindings (cdylib, re-exports flz_transport symbols)
@@ -264,7 +264,7 @@ flezha/
 │       └── version.rs                         # version() — thin wrapper over flezha_version
 └── sdk/java/
     ├── pom.xml                                # Maven parent (6 modules)
-    ├── flezha-sdk-api/                        # Public types — RelayHandler, sealed Input/Output/Result
+    ├── flezha-sdk-api/                        # Public types — OperativeHandler, sealed Input/Output/Result
     ├── flezha-sdk-protobuf/                   # Generated Java classes from protobufs/*.proto
     ├── flezha-sdk-runtime/                    # Control plane, data plane, worker pool, reconnect
     ├── flezha-sdk-native/                     # NativeTransport + NativeLibraryLoader + bundled binaries

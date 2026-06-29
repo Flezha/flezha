@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.function.BiConsumer;
 
 /**
- * Mutation chokepoint threaded into {@code Shard.run}. Reads go through
+ * Mutation chokepoint threaded into {@code Operation.run}. Reads go through
  * {@link #get()}; mutations go through {@link #apply(Change)}. There is no
  * setter — to mutate state outside {@code apply}, the user must declare a
  * Change type. That's the structural enforcement.
@@ -46,8 +46,8 @@ public final class StateHandle<State, ChangeT extends Change> {
     }
 
     /**
-     * Mutation chokepoint. Invokes {@code Shard::applyChange} on the
-     * underlying state and pushes the Change onto the per-Partition flush
+     * Mutation chokepoint. Invokes {@code Operation::applyChange} on the
+     * underlying state and pushes the Change onto the per-Segment flush
      * buffer.
      */
     public void apply(ChangeT change) {

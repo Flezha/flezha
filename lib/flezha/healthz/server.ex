@@ -7,13 +7,13 @@ defmodule Flezha.Healthz.Server do
 
   Endpoint contract:
 
-    * `GET /healthz` — JSON body carrying `bound_relays` and
-      `producing_relays` as distinct counters.
+    * `GET /healthz` — JSON body carrying `bound_operatives` and
+      `producing_operatives` as distinct counters.
       - `200 OK` `{"status":"healthy", ...}` when every namespace hub is
-        `:normal` and `producing_relays == bound_relays`.
+        `:normal` and `producing_operatives == bound_operatives`.
       - `200 OK` `{"status":"degraded", ...}` when
-        `producing_relays < bound_relays` (one or more relays output-
-        stalled). A stalled relay is NOT a restart signal — kubelet must
+        `producing_operatives < bound_operatives` (one or more operatives output-
+        stalled). A stalled operative is NOT a restart signal — kubelet must
         leave the pod alone while the Loop rebinds it.
       - `200 OK` `{"status":"recovering", ...}` when any hub is in
         `:recovery_pending | :recovering` (kubelet must NOT restart
@@ -119,11 +119,11 @@ defmodule Flezha.Healthz.Server do
   defp compute_health() do
     current = Snapshot.current()
     recovery_states = collect_recovery_states()
-    bound = Map.get(current, :bound_relays, 0)
-    intended = Map.get(current, :intended_relays, bound)
-    producing = Map.get(current, :producing_relays, 0)
-    stalled = Map.get(current, :stalled_relays, [])
-    plugin_degraded = Map.get(current, :plugin_degraded_relays, [])
+    bound = Map.get(current, :bound_operatives, 0)
+    intended = Map.get(current, :intended_operatives, bound)
+    producing = Map.get(current, :producing_operatives, 0)
+    stalled = Map.get(current, :stalled_operatives, [])
+    plugin_degraded = Map.get(current, :plugin_degraded_operatives, [])
     pending_restore = Map.get(current, :pending_restore, false)
     unmet_intent_ms = Map.get(current, :unmet_intent_ms)
     last_tick_at = Map.get(current, :last_tick_at)
@@ -158,32 +158,32 @@ defmodule Flezha.Healthz.Server do
 
       bound < intended ->
         # Declared but not all bound: recovering within the grace, degraded
-        # past it. Always 200 — a restart can't re-bind an executor-orphaned relay.
+        # past it. Always 200 — a restart can't re-bind an executor-orphaned operative.
         if is_integer(unmet_intent_ms) and unmet_intent_ms > unmet_intent_grace_ms() do
           {:degraded,
            encode_json(%{
              status: "degraded",
-             reason: "relays_unbound",
-             intended_relays: intended,
-             bound_relays: bound,
-             producing_relays: producing,
+             reason: "operatives_unbound",
+             intended_operatives: intended,
+             bound_operatives: bound,
+             producing_operatives: producing,
              unmet_intent_ms: unmet_intent_ms
            })}
         else
           {:recovering,
            encode_json(%{
              status: "recovering",
-             reason: "relays_rebinding",
-             intended_relays: intended,
-             bound_relays: bound,
-             producing_relays: producing
+             reason: "operatives_rebinding",
+             intended_operatives: intended,
+             bound_operatives: bound,
+             producing_operatives: producing
            })}
         end
 
       pending_restore ->
         # Intent is empty (intended == 0) only because hubs start lazily on
         # executor reconnect and the durable registry has not been read back
-        # since this controller (re)started — relays.dets exists on disk for a
+        # since this controller (re)started — operatives.dets exists on disk for a
         # hub that is not running yet. `bound < intended` cannot catch this
         # (0 < 0 is false), so without this the system reports vacuously
         # `healthy`. Recovering, never healthy, until the registry is loaded.
@@ -191,9 +191,9 @@ defmodule Flezha.Healthz.Server do
          encode_json(%{
            status: "recovering",
            reason: "restoring_registry",
-           intended_relays: intended,
-           bound_relays: bound,
-           producing_relays: producing
+           intended_operatives: intended,
+           bound_operatives: bound,
+           producing_operatives: producing
          })}
 
       producing < bound ->
@@ -202,10 +202,10 @@ defmodule Flezha.Healthz.Server do
            status: "degraded",
            reason: degraded_reason(stalled, plugin_degraded),
            tick_age_ms: tick_age(last_tick_at),
-           bound_relays: bound,
-           producing_relays: producing,
-           stalled_relays: stalled,
-           plugin_degraded_relays: plugin_degraded
+           bound_operatives: bound,
+           producing_operatives: producing,
+           stalled_operatives: stalled,
+           plugin_degraded_operatives: plugin_degraded
          })}
 
       true ->
@@ -213,8 +213,8 @@ defmodule Flezha.Healthz.Server do
          encode_json(%{
            status: "healthy",
            tick_age_ms: tick_age(last_tick_at),
-           bound_relays: bound,
-           producing_relays: producing
+           bound_operatives: bound,
+           producing_operatives: producing
          })}
     end
   end
@@ -245,7 +245,7 @@ defmodule Flezha.Healthz.Server do
   # pause/wake could explain. Tick age is the only authoritative liveness
   # signal: a slow-but-completing tick is alive, not wedged, so escalating it
   # would make kubelet kill a producing pod. Shorter freezes are `recovering`
-  # via the gapped grace below; a merely output-stalled relay is `degraded`.
+  # via the gapped grace below; a merely output-stalled operative is `degraded`.
   defp loop_hard_wedged?(nil), do: false
   defp loop_hard_wedged?(last_tick_at), do: now_ms() - last_tick_at > tick_ms() * 24
 

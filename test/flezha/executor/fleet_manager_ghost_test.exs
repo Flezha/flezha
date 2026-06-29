@@ -3,9 +3,9 @@ defmodule FlezhaTest.Executor.FleetManagerGhostTest do
   Regression coverage for the unbounded ghost-executor accumulation that
   appeared under rapid repeated executor kill/restart (chaos soak): a dead
   executor whose control channel closed was never removed from the active
-  set when the disconnect handler's relay-reroute side effects raised
+  set when the disconnect handler's operative-reroute side effects raised
   (`:noproc`/`ArgumentError` against a hub mid-restart), so
-  `active_executors/1` kept reporting corpses and relays got assigned to a
+  `active_executors/1` kept reporting corpses and operatives got assigned to a
   dead node.
 
   These tests drive `Flezha.Executor.FleetManager` directly with synthetic
@@ -18,7 +18,7 @@ defmodule FlezhaTest.Executor.FleetManagerGhostTest do
   use ExUnit.Case, async: false
 
   # A namespace with no running ProcessHub so the reroute side effects
-  # (`HubManager.executor_relays/2` → ETS match on an undefined table) raise,
+  # (`HubManager.executor_operatives/2` → ETS match on an undefined table) raise,
   # exercising the crash-proof eviction path.
   @namespace "ghost_test_namespace_#{System.unique_integer([:positive])}"
 

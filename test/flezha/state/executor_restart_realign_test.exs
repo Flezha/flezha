@@ -1,6 +1,6 @@
 defmodule Flezha.State.ExecutorRestartRealignTest do
   @moduledoc """
-  §16 — Per-Partition WAL realignment on executor restart.
+  §16 — Per-Segment WAL realignment on executor restart.
 
   Reproduces the production durability defect: after an executor pod restarts
   and rebuilds its state from Kafka, it reconnects under a NEW executor id and
@@ -38,9 +38,9 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
       end
     end
 
-    partition_id = TestHelpers.sample_partition_id("realign_" <> uniq())
-    {:ok, _} = Supervisor.find_or_start(partition_id)
-    {:ok, writer} = Supervisor.lookup(partition_id)
+    segment_id = TestHelpers.sample_segment_id("realign_" <> uniq())
+    {:ok, _} = Supervisor.find_or_start(segment_id)
+    {:ok, writer} = Supervisor.lookup(segment_id)
     header = TestHelpers.stub_header()
 
     parent = self()
@@ -54,7 +54,7 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
       File.rm_rf!(base)
     end)
 
-    %{partition_id: partition_id, writer: writer, header: header, parent: parent}
+    %{segment_id: segment_id, writer: writer, header: header, parent: parent}
   end
 
   test "an executor restart realigns the frozen WAL to the new executor's seq base", ctx do
@@ -65,8 +65,8 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
 
     # A pre-restart snapshot exists; realignment must discard it so a later
     # RestoreInitState ships only the new epoch (not stale snapshot + new WAL).
-    {:ok, _} = Snapshot.write_snapshot(ctx.partition_id, 3, ctx.header, "old-snap")
-    assert Snapshot.latest_snapshot(ctx.partition_id) != nil
+    {:ok, _} = Snapshot.write_snapshot(ctx.segment_id, 3, ctx.header, "old-snap")
+    assert Snapshot.latest_snapshot(ctx.segment_id) != nil
 
     # The executor pod restarts: a NEW executor id reconnects and, after its
     # Kafka rebuild, resumes from a fresh low seq base (1, 2, 3...).
@@ -76,7 +76,7 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
     # Realignment fires once on the first regressed Change, adopting the new
     # executor's epoch as the WAL's source of truth.
     assert_receive {:wal_realign, %{from_seq: 4, to_seq: 0}, meta}, 1_000
-    assert meta.relay == "TestRelay"
+    assert meta.operative == "TestOperative"
     assert meta.executor == "exec_new"
 
     # The WAL is no longer frozen at 5: it follows the new executor down to 3,
@@ -86,7 +86,7 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
     assert WalWriter.last_persisted_seq(ctx.writer) == 5
 
     # The stale pre-restart snapshot was discarded by the realignment.
-    assert Snapshot.latest_snapshot(ctx.partition_id) == nil
+    assert Snapshot.latest_snapshot(ctx.segment_id) == nil
 
     # The regression was healed by realignment — not mistaken for a forward gap.
     refute_received {:seq_gap, _, _}
@@ -102,7 +102,7 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
 
     refute_received {:wal_realign, _, _}
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
-    assert Metrics.get(Metrics.for_partition(ctx.partition_id), :dedup_drops_total) >= 1
+    assert Metrics.get(Metrics.for_segment(ctx.segment_id), :dedup_drops_total) >= 1
   end
 
   # ---------- helpers ----------
@@ -111,8 +111,8 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
     Enum.each(seqs, fn seq ->
       send(
         channel,
-        {:flz_data, 0, "partition_state_change",
-         frame(ctx.partition_id, seq, ctx.header, "s#{seq}"), %{}}
+        {:flz_data, 0, "segment_state_change",
+         frame(ctx.segment_id, seq, ctx.header, "s#{seq}"), %{}}
       )
     end)
 
@@ -130,7 +130,7 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
   end
 
   defp frame({rc, sh, pk}, seq, header, body) do
-    pid_bytes = Wire.encode_partition_id(rc, sh, pk)
+    pid_bytes = Wire.encode_segment_id(rc, sh, pk)
 
     <<byte_size(pid_bytes)::16-big, pid_bytes::binary, seq::64-big, header::binary,
       byte_size(body)::32-big, body::binary, :erlang.crc32(body)::32-big>>

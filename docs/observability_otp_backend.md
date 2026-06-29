@@ -75,12 +75,12 @@ are deferred until the NIF surfaces them in `get_stats/1`.
 
 ### `:flezha_bounded_mailbox`
 
-Registered for future per-Relay mailbox metrics. Bounded-mailbox
+Registered for future per-Operative mailbox metrics. Bounded-mailbox
 state currently lives on the Rust SDK side; until a Rust→Elixir bridge
 exposes it the source emits a single `:event
 :flezha_bounded_mailbox/:bounded_mailbox_unavailable` event on its
 first poll and no metrics. Cardinality budget `5_000` is sized for
-`~50 namespaces × ~100 relays`.
+`~50 namespaces × ~100 operatives`.
 
 ## Registering custom sources
 

@@ -10,7 +10,7 @@ defmodule Flezha.Plugin.Extension.Ctx.Msg do
           payload: binary(),
           reply_to: pid(),
           ref: reference(),
-          relay_id: String.t(),
+          operative_id: String.t(),
           namespace: atom() | String.t(),
           executor_id: String.t() | nil
         }
@@ -20,7 +20,7 @@ defmodule Flezha.Plugin.Extension.Ctx.Msg do
     :payload,
     :reply_to,
     :ref,
-    :relay_id,
+    :operative_id,
     :namespace,
     :executor_id
   ]

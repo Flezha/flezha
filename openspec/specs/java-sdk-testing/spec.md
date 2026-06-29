@@ -8,7 +8,7 @@ Defines the testing strategy for the Java SDK: unit test coverage of the protoco
 
 ### Requirement: Unit Test Coverage for Protocol Layer
 
-The Java SDK SHALL include JUnit 5 unit tests that cover every component of the protocol and runtime layer: binary framing (frame build / parse, partial reads, incomplete headers, incomplete payloads, multiple frames per read, oversized payload ids, empty metadata), metadata serialization (round-trip, boundary lengths of 0 and 255, missing metadata, the reserved `channel` key), protobuf encode/decode for every `CommandRequest` oneof and `CommandResponse` shape, command dispatch for every command variant (success and error paths, including the `RelayMessage` canonical-unsupported response), Relay registration (duplicate factoryId, missing factoryId lookup, before/after `newInstance` gating, wiring-mismatch rejection, entry-channel-type rejection, unwired-channel rejection, static-mode and dynamic-mode default-impl detection), Shard dispatch (single-mode partition allocation, static-mode partition fan-out, sticky per-partition ordering, parallel partition execution, inter-shard reference-equality, plugin-bound serialization + channel-name metadata attachment, `emitWithMeta` rejection on inter-shard channels, reserved-key drop), relay-instance lifecycle (add via `AddRelay`, remove via `RemRelay`, state serialize via `PartitionState`, migrate serialize via `MigrationSerialization`, migrate deserialize via `MigrationDeserialization`), and the reconnect state machine (intentional vs unexpected disconnect, backoff schedule).
+The Java SDK SHALL include JUnit 5 unit tests that cover every component of the protocol and runtime layer: binary framing (frame build / parse, partial reads, incomplete headers, incomplete payloads, multiple frames per read, oversized payload ids, empty metadata), metadata serialization (round-trip, boundary lengths of 0 and 255, missing metadata, the reserved `channel` key), protobuf encode/decode for every `CommandRequest` oneof and `CommandResponse` shape, command dispatch for every command variant (success and error paths, including the `OperationMessage` canonical-unsupported response), Operative registration (duplicate factoryId, missing factoryId lookup, before/after `newInstance` gating, wiring-mismatch rejection, entry-channel-type rejection, unwired-channel rejection, static-mode and dynamic-mode default-impl detection), Operation dispatch (single-mode segment allocation, static-mode segment fan-out, sticky per-segment ordering, parallel segment execution, inter-operation reference-equality, plugin-bound serialization + channel-name metadata attachment, `emitWithMeta` rejection on inter-operation channels, reserved-key drop), operative-instance lifecycle (add via `AddOperative`, remove via `RemOperative`, state serialize via `SegmentState`, migrate serialize via `MigrationSerialization`, migrate deserialize via `MigrationDeserialization`), and the reconnect state machine (intentional vs unexpected disconnect, backoff schedule).
 
 #### Scenario: Running mvn test passes the unit suite
 - **WHEN** a developer runs `mvn -f sdk/java/pom.xml test`
@@ -16,11 +16,11 @@ The Java SDK SHALL include JUnit 5 unit tests that cover every component of the 
 
 #### Scenario: Each java-sdk requirement has at least one unit test
 - **WHEN** the unit test suite is enumerated
-- **THEN** for every requirement under the `java-sdk` spec there SHALL be at least one JUnit test whose `@DisplayName` or class name references the requirement's scenario, including the new `Relay Registration`, `Shard Interface and Per-Partition Dispatch`, and `Sticky Per-Partition Ordering Under ThreadPool Dispatch` requirements
+- **THEN** for every requirement under the `java-sdk` spec there SHALL be at least one JUnit test whose `@DisplayName` or class name references the requirement's scenario, including the new `Operative Registration`, `Operation Interface and Per-Segment Dispatch`, and `Sticky Per-Segment Ordering Under ThreadPool Dispatch` requirements
 
 #### Scenario: Old API tests removed
-- **WHEN** the unit test suite is enumerated for tests referencing `RelayHandler`, `RelayRunner.THREAD_SPAWN`, `FactoryRegistry.registerFactory`, `FactoryMetadata`, `InputTransformer`, or `OutputTransformer`
-- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `Relay` / `Shard` surface
+- **WHEN** the unit test suite is enumerated for tests referencing `OperativeHandler`, `OperativeRunner.THREAD_SPAWN`, `FactoryRegistry.registerFactory`, `FactoryMetadata`, `InputTransformer`, or `OutputTransformer`
+- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `ContinuousOperative` / `Operation` surface
 
 ### Requirement: JNI Bridge Tests
 
@@ -40,19 +40,19 @@ The `flezha-sdk-native` module SHALL include dedicated JNI bridge tests that exe
 
 ### Requirement: Reference Java Compute Engine Test App
 
-The Java reference test app at `test/apps/java_executor/` SHALL implement three reference Relay classes (`DoNothingRelay`, `StoreInputRelay`, `CompareFilterRelay`) using the Java SDK's `Relay` / `Shard` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_executor`'s behavior. The factory ids registered by these Relay classes (via `Relay::factoryId`) SHALL be `"do_nothing"`, `"store_input"`, `"compare_filter"` — exactly the surviving subset that `test/apps/rust_executor/` exposes. The legacy `EchoMessageRelay` (and any other `relay-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `relay-message-handlers` ships per-Shard `handleMessage`.
+The Java reference test app at `test/apps/java_executor/` SHALL implement three reference Operative classes (`DoNothingOperative`, `StoreInputOperative`, `CompareFilterOperative`) using the Java SDK's `ContinuousOperative` / `Operation` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_executor`'s behavior. The factory ids registered by these Operative classes (via `ContinuousOperative::factoryId`) SHALL be `"do_nothing"`, `"store_input"`, `"compare_filter"` — exactly the surviving subset that `test/apps/rust_executor/` exposes. The legacy `EchoMessageOperative` (and any other `relay-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `relay-message-handlers` ships per-Operation `handleMessage`.
 
 #### Scenario: Java test app builds and runs
 - **WHEN** `mvn -f test/apps/java_executor/pom.xml package` produces `target/java_executor.jar` and `java -jar target/java_executor.jar my_namespace` is run while the agent is up
-- **THEN** the process SHALL register its three Relay classes via `Flezha.registerRelay(...)`, connect to the agent, and receive an `AssignExecutorId` without errors
+- **THEN** the process SHALL register its three Operative classes via `Flezha.registerContinuous(...)`, connect to the agent, and receive an `AssignExecutorId` without errors
 
 #### Scenario: Java test app mirrors Rust test app factory set
 - **WHEN** the list of factory ids registered by the Java test app is compared to those registered by `test/apps/rust_executor/`
 - **THEN** the two lists SHALL be equal sets (`"do_nothing"`, `"store_input"`, `"compare_filter"`); message-handler factories SHALL be absent from both
 
-#### Scenario: Java test app uses the new Shard / ShardCtx API exclusively
-- **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.RelayHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.RelaySettings`, `com.flezha.sdk.RelayResult`, `com.flezha.sdk.RelayRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
-- **THEN** zero matches SHALL be found — the test app's classes use only `Relay`, `Shard`, `ShardCtx`, `ChannelBuilder`, and `Flezha.registerRelay`
+#### Scenario: Java test app uses the new Operation / OperationCtx API exclusively
+- **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.OperativeHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.OperativeSettings`, `com.flezha.sdk.OperativeResult`, `com.flezha.sdk.OperativeRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
+- **THEN** zero matches SHALL be found — the test app's classes use only `ContinuousOperative`, `Operation`, `OperationCtx`, `ChannelBuilder`, and `Flezha.registerContinuous`
 
 ### Requirement: Elixir Integration Harness Supports Java Runtime
 
@@ -72,19 +72,19 @@ The Java reference test app at `test/apps/java_executor/` SHALL implement three 
 
 ### Requirement: Integration Test Matrix
 
-At least one ExUnit integration suite SHALL exercise the Java SDK against the unchanged Elixir agent across every combination of `{runtime: [:rust, :java]} × {transport: [:uds, :quic]}`. The matrix SHALL cover: handshake + `AssignExecutorId`, `ConnectSocket`, add-remove relay lifecycle, end-to-end data flow through a relay (`PipeToAgent`), `PipeToRelay` routing, migration (serialize + deserialize on a second node), and unexpected-disconnect auto-reconnect.
+At least one ExUnit integration suite SHALL exercise the Java SDK against the unchanged Elixir agent across every combination of `{runtime: [:rust, :java]} × {transport: [:uds, :quic]}`. The matrix SHALL cover: handshake + `AssignExecutorId`, `ConnectSocket`, add-remove operative lifecycle, end-to-end data flow through an operative (`PipeToAgent`), `PipeToOperative` routing, migration (serialize + deserialize on a second node), and unexpected-disconnect auto-reconnect.
 
 #### Scenario: Matrix suite runs under mix test
 - **WHEN** a developer runs `mix test --only java_sdk`
-- **THEN** all four combinations of the runtime×transport matrix SHALL run, and each matrix point SHALL assert that relay output received by the agent matches the expected value
+- **THEN** all four combinations of the runtime×transport matrix SHALL run, and each matrix point SHALL assert that operative output received by the agent matches the expected value
 
 #### Scenario: Java-runtime reconnect under agent restart
 - **WHEN** the integration test restarts the agent while a Java test compute engine is running
-- **THEN** the Java SDK SHALL reconnect automatically, receive a fresh compute engine id, be re-issued relay add commands, and resume correct stream I/O
+- **THEN** the Java SDK SHALL reconnect automatically, receive a fresh compute engine id, be re-issued operative add commands, and resume correct stream I/O
 
-#### Scenario: Java-runtime migration preserves relay state
-- **WHEN** a relay holding non-trivial state is migrated between two compute engines via `MigrationSerialization` + `MigrationDeserialization`
-- **THEN** the relay's JSON-serialized state on the destination SHALL be bytewise equal to the serialized state on the source
+#### Scenario: Java-runtime migration preserves operative state
+- **WHEN** an operative holding non-trivial state is migrated between two compute engines via `MigrationSerialization` + `MigrationDeserialization`
+- **THEN** the operative's JSON-serialized state on the destination SHALL be bytewise equal to the serialized state on the source
 
 ### Requirement: One-Command Local Test Entry Point
 
@@ -118,43 +118,43 @@ The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests,
 - **WHEN** the repository is grep-searched for the literal string `RELAY_MESSAGE_HANDLERS_PENDING` after this change merges
 - **THEN** the matches SHALL match the pre-change set — this change does NOT re-enable message-handler tests
 
-### Requirement: ShardTestHarness in flezha-sdk-testing artifact
+### Requirement: OperationTestHarness in flezha-sdk-testing artifact
 
-The `flezha-sdk-testing` Maven artifact SHALL export `com.flezha.sdk.testing.ShardTestHarness<Input, State, Output, Change extends com.flezha.sdk.state.Change>` as a public type. The harness SHALL support:
+The `flezha-sdk-testing` Maven artifact SHALL export `com.flezha.sdk.testing.OperationTestHarness<Input, State, Output, Change extends com.flezha.sdk.state.Change>` as a public type. The harness SHALL support:
 
-- `static <I, S, O, C extends Change> ShardTestHarness<I, S, O, C> of(Shard<I, S, O, C, ?, ?> shard)` — constructs a harness with state from `shard.initState(Optional.empty(), Optional.empty())`.
+- `static <I, S, O, C extends Change> OperationTestHarness<I, S, O, C> of(Operation<I, S, O, C, ?, ?> operation)` — constructs a harness with state from `operation.initState(Optional.empty(), Optional.empty())`.
 - `withInitialState(State state)` — explicit initial state.
-- `withPayload(Optional<String> shardKey, RestoreInitPayload payload)` — replicates the runtime's snapshot+changelog restoration flow.
-- `applyInputs(Iterable<Input> inputs)` — invokes `Shard.run` for each input on the harness's owned state, recording emits and Changes; returns `this` for chaining.
+- `withPayload(Optional<String> operationKey, RestoreInitPayload payload)` — replicates the runtime's snapshot+changelog restoration flow.
+- `applyInputs(Iterable<Input> inputs)` — invokes `Operation.run` for each input on the harness's owned state, recording emits and Changes; returns `this` for chaining.
 - `expectChanges(List<Change> expected)` — asserts equality, throws `AssertionError` with diagnostic on mismatch, returns `this`.
 - `expectEmits(Class<C> type, List<C> expected)` — asserts emits of type `C` equal expected, returns `this`.
 - `expectState(State expected)` — asserts state equality (via Kryo bytes), returns `this`.
-- `replay(State initial, List<Change> log) -> State` — folds the log via `Shard.applyChange`, returns terminal state.
+- `replay(State initial, List<Change> log) -> State` — folds the log via `Operation.applyChange`, returns terminal state.
 - `replayEquals() -> Optional<ReplayMismatch>` — replays self.recordedChanges against a re-constructed initial state and asserts byte-equality (via Kryo round-trip) with self.state. Empty optional = pass; non-empty carries `expectedBytes` and `actualBytes` for the test failure message.
 
 #### Scenario: Harness asserts on recorded Changes
 
-- **WHEN** a JUnit test runs `ShardTestHarness.of(new CounterShard()).applyInputs(List.of(new Input.Add(5), new Input.Add(3))).expectChanges(List.of(new CounterChange(5), new CounterChange(3)))`
+- **WHEN** a JUnit test runs `OperationTestHarness.of(new CounterOperation()).applyInputs(List.of(new Input.Add(5), new Input.Add(3))).expectChanges(List.of(new CounterChange(5), new CounterChange(3)))`
 - **THEN** the chain SHALL succeed with no `AssertionError` thrown; the harness's `recordedChanges` SHALL equal the expected list
 
 #### Scenario: Harness replays for determinism check
 
-- **WHEN** a JUnit test runs `ShardTestHarness.of(new CounterShard()).applyInputs(inputs).replayEquals()` against a deterministic `applyChange`
+- **WHEN** a JUnit test runs `OperationTestHarness.of(new CounterOperation()).applyInputs(inputs).replayEquals()` against a deterministic `applyChange`
 - **THEN** the result SHALL be `Optional.empty()` and the test SHALL pass
 
 #### Scenario: Harness detects non-deterministic applyChange
 
-- **WHEN** a Shard's `applyChange` reads `System.currentTimeMillis()` and uses it to seed a state field, AND the harness runs `replayEquals()`
+- **WHEN** an Operation's `applyChange` reads `System.currentTimeMillis()` and uses it to seed a state field, AND the harness runs `replayEquals()`
 - **THEN** the result SHALL be `Optional.of(new ReplayMismatch(expectedBytes, actualBytes))` whose `toString()` renders a hex-diff identifying the divergent bytes
 
 #### Scenario: Harness compiles only for testing-scope dependencies
 
-- **WHEN** a downstream Java module depends on `flezha-sdk-testing` with `<scope>test</scope>` AND attempts to use `ShardTestHarness` from `src/main/java/`
+- **WHEN** a downstream Java module depends on `flezha-sdk-testing` with `<scope>test</scope>` AND attempts to use `OperationTestHarness` from `src/main/java/`
 - **THEN** Maven SHALL fail the compile with a "package not visible at compile scope" error; the harness SHALL be visible only from `src/test/java/`
 
-### Requirement: ShardTestHarness JUnit assertions are AssertJ-style chainable
+### Requirement: OperationTestHarness JUnit assertions are AssertJ-style chainable
 
-The `ShardTestHarness` API SHALL be method-chainable (each `expect*` method returns `this`), matching the AssertJ idiom that JUnit-using Java developers expect. Failures SHALL throw `AssertionError` (or a subclass) with a descriptive message including: the expected value, the actual value, and a per-element diff for collection assertions.
+The `OperationTestHarness` API SHALL be method-chainable (each `expect*` method returns `this`), matching the AssertJ idiom that JUnit-using Java developers expect. Failures SHALL throw `AssertionError` (or a subclass) with a descriptive message including: the expected value, the actual value, and a per-element diff for collection assertions.
 
 #### Scenario: Chained assertions are evaluated in order
 
@@ -166,34 +166,34 @@ The `ShardTestHarness` API SHALL be method-chainable (each `expect*` method retu
 - **WHEN** `expectChanges(List.of(new CounterChange(5), new CounterChange(3)))` is called and the actual recorded Changes are `List.of(new CounterChange(5), new CounterChange(7))`
 - **THEN** the thrown `AssertionError`'s message SHALL include the expected list, the actual list, AND a marker pointing at index 1 (the differing element)
 
-### Requirement: ShardTestHarness uses KryoCodec for byte-equality state comparison
+### Requirement: OperationTestHarness uses KryoCodec for byte-equality state comparison
 
-`ShardTestHarness.replayEquals()` and `ShardTestHarness.expectState()` SHALL serialize both the actual and expected `State` values via `KryoCodec` (constructed from the Shard's `kryoTypes()`) and compare the resulting `byte[]` arrays via `Arrays.equals`. This avoids requiring `State` to override `equals` correctly (Java's default `equals` is reference equality; record `equals` works but user POJO `equals` is often broken).
+`OperationTestHarness.replayEquals()` and `OperationTestHarness.expectState()` SHALL serialize both the actual and expected `State` values via `KryoCodec` (constructed from the Operation's `kryoTypes()`) and compare the resulting `byte[]` arrays via `Arrays.equals`. This avoids requiring `State` to override `equals` correctly (Java's default `equals` is reference equality; record `equals` works but user POJO `equals` is often broken).
 
-The Shard's `kryoTypes()` SHALL include all classes reachable from `State` for `replayEquals` and `expectState` to work; missing types SHALL throw `StateSerializeException::UnregisteredClass(className)` from the Kryo round-trip, with a diagnostic message naming the missing class.
+The Operation's `kryoTypes()` SHALL include all classes reachable from `State` for `replayEquals` and `expectState` to work; missing types SHALL throw `StateSerializeException::UnregisteredClass(className)` from the Kryo round-trip, with a diagnostic message naming the missing class.
 
 #### Scenario: Record State works without registration of inner types
 
-- **WHEN** a Shard declares `State = OhlcState` (a record carrying primitives only) AND `kryoTypes() = List.of(OhlcState.class)`
+- **WHEN** an Operation declares `State = OhlcState` (a record carrying primitives only) AND `kryoTypes() = List.of(OhlcState.class)`
 - **THEN** `replayEquals()` SHALL succeed via Kryo bytes equality
 
 #### Scenario: State referencing un-registered class throws diagnostic
 
-- **WHEN** a Shard declares `State = OrderBookState` containing a `Map<Long, Level>` where `Level` is not in `kryoTypes()`
+- **WHEN** an Operation declares `State = OrderBookState` containing a `Map<Long, Level>` where `Level` is not in `kryoTypes()`
 - **THEN** `replayEquals()` SHALL throw `StateSerializeException::UnregisteredClass("Level")` with a clear pointer to the missing registration
 
-### Requirement: ShardTestHarness records emits without invoking the wire path
+### Requirement: OperationTestHarness records emits without invoking the wire path
 
-The harness SHALL provide a `TestShardCtx` implementation of `ShardCtx` that records `emit` and `emitWithMeta` calls into a `List<EmitRecord>` accessible via `harness.recordedEmits()`. The test ctx SHALL NOT invoke `NativeTransport.*` or any JNI bridge; the emits exist only in-memory.
+The harness SHALL provide a `TestOperationCtx` implementation of `OperationCtx` that records `emit` and `emitWithMeta` calls into a `List<EmitRecord>` accessible via `harness.recordedEmits()`. The test ctx SHALL NOT invoke `NativeTransport.*` or any JNI bridge; the emits exist only in-memory.
 
 #### Scenario: emit calls recorded but not shipped
 
-- **WHEN** a test runs `harness.applyInputs(inputs)` against a Shard that emits a `Candle` per input
+- **WHEN** a test runs `harness.applyInputs(inputs)` against an Operation that emits a `Candle` per input
 - **THEN** for each input that produced an emit, `harness.recordedEmits()` SHALL contain one `EmitRecord(channel: <name>, value: Candle, metadata: <map>)`; `NativeTransport.*` SHALL NOT be invoked
 
 #### Scenario: emitWithMeta records the metadata
 
-- **WHEN** a Shard calls `ctx.emitWithMeta(value, Map.of("trace_id", "abc"))` on a plugin-bound channel
+- **WHEN** an Operation calls `ctx.emitWithMeta(value, Map.of("trace_id", "abc"))` on a plugin-bound channel
 - **THEN** the recorded `EmitRecord.metadata` SHALL contain `{"trace_id": "abc"}` (the SDK's auto-attached `flezha.dedup_key` SHALL also be present in the metadata, because the test ctx mirrors the runtime's metadata-stamping behavior)
 
 ### Requirement: At least one harness test per java-sdk requirement scenario
@@ -220,62 +220,62 @@ The Java test compute-engine application SHALL live at `test/apps/java_executor/
 
 #### Scenario: Integration test runs from new path
 - **WHEN** the Java SDK integration matrix is run
-- **THEN** the matrix MUST locate the test app at `test/apps/java_executor/`, build it, and exercise the Controller↔Executor flow including Relay registration, Shard execution, Partition state persistence, and survive-restart behavior
+- **THEN** the matrix MUST locate the test app at `test/apps/java_executor/`, build it, and exercise the Controller↔Executor flow including Operative registration, Operation execution, Segment state persistence, and survive-restart behavior
 
 ### Requirement: Test naming reflects canonical role vocabulary
 
-Java SDK integration test class names and test descriptions SHALL use canonical vocabulary (Controller, Executor, Relay, Shard, Partition). Existing test classes whose names contain `Processor`, `Operator`, or `ComputeEngine` SHALL be renamed accordingly.
+Java SDK integration test class names and test descriptions SHALL use canonical vocabulary (Controller, Executor, Operative, Operation, Segment). Existing test classes whose names contain `Processor`, `Operator`, or `ComputeEngine` SHALL be renamed accordingly.
 
 #### Scenario: Test class names compile after rename
 - **WHEN** `mvn -f sdk/java test` is run
 - **THEN** all integration test classes SHALL compile and run; no class name SHALL contain `Processor`, `Operator`, or `ComputeEngine`
 
 
-### Requirement: Reference Java test app registers a Task
+### Requirement: Reference Java test app registers a Bounded Operative
 
-The Java reference test app at `test/apps/java_executor/` SHALL register at least one `Task` class via `Flezha.registerTask(...)`, mirroring the task that `test/apps/rust_executor/` registers (an `EchoTask` that emits its `args` as plugin output and returns success). The task SHALL be a hand-written `Task` implementation (no annotation-processor sugar in v1). Registering the task SHALL NOT disturb the test app's relay registrations or its run-until-stdin-closes behavior.
+The Java reference test app at `test/apps/java_executor/` SHALL register at least one `BoundedOperative` class via `Flezha.registerBounded(...)`, mirroring the bounded operative that `test/apps/rust_executor/` registers (an `EchoOperative` that emits its `args` as plugin output and returns success). The bounded operative SHALL be a hand-written `BoundedOperative` implementation (no annotation-processor sugar in v1). Registering the bounded operative SHALL NOT disturb the test app's continuous operative registrations or its run-until-stdin-closes behavior.
 
-#### Scenario: Java test app registers a task factory
+#### Scenario: Java test app registers a bounded operative factory
 
-- **WHEN** the Java test app starts and registers its units
-- **THEN** it SHALL call `Flezha.registerTask(EchoTask.class)`, and the handshake `factory_ids` SHALL include the task's factory id alongside the relay factory ids
+- **WHEN** the Java test app starts and registers its operatives
+- **THEN** it SHALL call `Flezha.registerBounded(EchoOperative.class)`, and the handshake `factory_ids` SHALL include the bounded operative's factory id alongside the continuous operative factory ids
 
-#### Scenario: Java and Rust test apps expose the same task factory
+#### Scenario: Java and Rust test apps expose the same bounded operative factory
 
-- **WHEN** the task factory ids registered by the Java test app are compared to those registered by `test/apps/rust_executor/`
-- **THEN** both SHALL expose the mirrored echo-task factory id, so the same `flz relay start … --kind task` exercises either runtime
+- **WHEN** the bounded operative factory ids registered by the Java test app are compared to those registered by `test/apps/rust_executor/`
+- **THEN** both SHALL expose the mirrored echo bounded-operative factory id, so the same `flz operative start … --kind bounded` exercises either runtime
 
-### Requirement: Integration matrix exercises a run-once Java task over both transports
+### Requirement: Integration matrix exercises a run-once Java bounded operative over both transports
 
-The Elixir↔Java integration suite SHALL exercise a run-once Java task against the unchanged Elixir controller across both transports (`{transport: [:uds, :quic]}`). The suite SHALL assert, per transport: the task's `run` executes exactly once with the supplied `args`; emitted output reaches a bound plugin; a `TaskCompleted{status:"ok"}` is received and the task is torn down and absent from the durable registry; and a deliberately-failing task emits `TaskCompleted{status:"error"}` with its message and is likewise deregistered without retry.
+The Elixir↔Java integration suite SHALL exercise a run-once Java bounded operative against the unchanged Elixir controller across both transports (`{transport: [:uds, :quic]}`). The suite SHALL assert, per transport: the bounded operative's `run` executes exactly once with the supplied `args`; emitted output reaches a bound plugin; a `BoundedCompleted{status:"ok"}` is received and the bounded operative is torn down and absent from the durable registry; and a deliberately-failing bounded operative emits `BoundedCompleted{status:"error"}` with its message and is likewise deregistered without retry.
 
-#### Scenario: Run-once Java task completes and is torn down over UDS
+#### Scenario: Run-once Java bounded operative completes and is torn down over UDS
 
-- **WHEN** the suite starts an `EchoTask` on a Java executor over UDS with `args="hi"` and a bound output plugin
-- **THEN** the task SHALL run once, its emitted output SHALL reach the plugin, the controller SHALL receive `TaskCompleted{status:"ok"}`, and the task SHALL be removed from the durable registry
+- **WHEN** the suite starts an `EchoOperative` on a Java executor over UDS with `args="hi"` and a bound output plugin
+- **THEN** the bounded operative SHALL run once, its emitted output SHALL reach the plugin, the controller SHALL receive `BoundedCompleted{status:"ok"}`, and the bounded operative SHALL be removed from the durable registry
 
-#### Scenario: Run-once Java task completes and is torn down over QUIC
+#### Scenario: Run-once Java bounded operative completes and is torn down over QUIC
 
 - **WHEN** the same scenario runs over QUIC
-- **THEN** the same assertions SHALL hold, exercising the full handshake + task spawn + run-once + emit + completion path on QUIC
+- **THEN** the same assertions SHALL hold, exercising the full handshake + bounded operative spawn + run-once + emit + completion path on QUIC
 
-#### Scenario: A failing Java task reports a terminal error
+#### Scenario: A failing Java bounded operative reports a terminal error
 
-- **WHEN** the suite starts a task whose `run` throws over either transport
-- **THEN** the controller SHALL receive `TaskCompleted{status:"error"}` carrying the throwable's message, the task SHALL be deregistered without retry, and no relay/task process SHALL remain
+- **WHEN** the suite starts a bounded operative whose `run` throws over either transport
+- **THEN** the controller SHALL receive `BoundedCompleted{status:"error"}` carrying the throwable's message, the bounded operative SHALL be deregistered without retry, and no operative process SHALL remain
 
-### Requirement: ShardTestHarness replayEquals replays against the captured initial snapshot
+### Requirement: OperationTestHarness replayEquals replays against the captured initial snapshot
 
-`ShardTestHarness.replayEquals()` SHALL reconstruct its replay baseline from the initial `State` captured (Kryo-serialized) at construction — whether the harness was built by `of(...)`, `withInitialState(...)`, or `withPayload(...)` — and fold the recorded Changes onto a fresh deserialization of that snapshot, matching the Rust `ShardTestHarness`. It SHALL NOT rebuild the baseline by calling `initState(Optional.empty(), Optional.empty())` afresh at replay time. This makes the harness honor a `withInitialState`/`withPayload` baseline whose `State` carries init-derived, non-journaled fields (e.g. a per-partition window length supplied via the `@InitState` hook), which the prior `initState(empty)` reconstruction would report as a false replay divergence.
+`OperationTestHarness.replayEquals()` SHALL reconstruct its replay baseline from the initial `State` captured (Kryo-serialized) at construction — whether the harness was built by `of(...)`, `withInitialState(...)`, or `withPayload(...)` — and fold the recorded Changes onto a fresh deserialization of that snapshot, matching the Rust `OperationTestHarness`. It SHALL NOT rebuild the baseline by calling `initState(Optional.empty(), Optional.empty())` afresh at replay time. This makes the harness honor a `withInitialState`/`withPayload` baseline whose `State` carries init-derived, non-journaled fields (e.g. a per-segment window length supplied via the `@InitState` hook), which the prior `initState(empty)` reconstruction would report as a false replay divergence.
 
-A stateless Shard (`Change = NoChange`) SHALL keep no replay baseline: `replayEquals()` SHALL return `Optional.empty()` without serializing the state, since nothing is journaled and the `Stateless` state is not Kryo-registered.
+A stateless Operation (`Change = NoChange`) SHALL keep no replay baseline: `replayEquals()` SHALL return `Optional.empty()` without serializing the state, since nothing is journaled and the `Stateless` state is not Kryo-registered.
 
 #### Scenario: withInitialState baseline is honored
 
-- **WHEN** a harness is built via `withInitialState(state)` for a Shard whose `State` has a key-derived field set outside the journaled Change log, inputs are applied, and `replayEquals()` runs
+- **WHEN** a harness is built via `withInitialState(state)` for an Operation whose `State` has a key-derived field set outside the journaled Change log, inputs are applied, and `replayEquals()` runs
 - **THEN** the recorded Changes are folded onto the captured `state` snapshot rather than a fresh `initState(Optional.empty(), Optional.empty())`, so the key-derived field matches and the result is `Optional.empty()`
 
-#### Scenario: Stateless Shard keeps no replay baseline
+#### Scenario: Stateless Operation keeps no replay baseline
 
-- **WHEN** `replayEquals()` runs on a harness for a `NoChange` Shard
+- **WHEN** `replayEquals()` runs on a harness for a `NoChange` Operation
 - **THEN** it returns `Optional.empty()` without serializing the stateless state, since no Changes are journaled

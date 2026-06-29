@@ -12,13 +12,13 @@ defmodule Flezha.Convergence.Probe do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.HubManager
 
-  @relay_call_timeout_ms 1_000
+  @operative_call_timeout_ms 1_000
   # Headroom above the Overwatch call for provider health probes (the
   # websocket liveness probe blocks up to 500 ms per wedged connection).
   @health_probe_budget_ms 1_500
 
   @type reality :: %{
-          relays: %{{binary(), binary()} => map()},
+          operatives: %{{binary(), binary()} => map()},
           active_executors: %{binary() => MapSet.t() | :unknown},
           recovery: %{atom() => atom()},
           tick_at: integer()
@@ -31,28 +31,28 @@ defmodule Flezha.Convergence.Probe do
     namespaces = running_namespaces()
 
     %{
-      relays: relays(namespaces),
+      operatives: operatives(namespaces),
       active_executors: active_executors(namespaces),
       recovery: Snapshot.recovery_states(),
       tick_at: System.monotonic_time(:millisecond)
     }
   end
 
-  # Probe every relay concurrently: one wedged Overwatch costs ~one timeout,
-  # not N×timeout serial in the Loop process. A relay we cannot read is
+  # Probe every operative concurrently: one wedged Overwatch costs ~one timeout,
+  # not N×timeout serial in the Loop process. A operative we cannot read is
   # recorded as `bound_executor: :unknown` so the Diff skips it — a failed
   # observation must never drive a mutating heal.
-  defp relays(namespaces) do
+  defp operatives(namespaces) do
     pairs =
       Enum.flat_map(namespaces, fn ns ->
-        Enum.map(safe_relays(ns), fn {relay_id, pid} -> {{ns, relay_id}, pid} end)
+        Enum.map(safe_operatives(ns), fn {operative_id, pid} -> {{ns, operative_id}, pid} end)
       end)
 
     pairs
     |> Task.async_stream(
-      fn {ref, pid} -> {ref, observe_relay(pid)} end,
+      fn {ref, pid} -> {ref, observe_operative(pid)} end,
       max_concurrency: System.schedulers_online() * 4,
-      timeout: @relay_call_timeout_ms + @health_probe_budget_ms,
+      timeout: @operative_call_timeout_ms + @health_probe_budget_ms,
       on_timeout: :kill_task,
       ordered: true
     )
@@ -63,8 +63,8 @@ defmodule Flezha.Convergence.Probe do
     end)
   end
 
-  defp observe_relay(pid) when is_pid(pid) do
-    case SafeCall.bounded(pid, :get_overwatch_state, @relay_call_timeout_ms) do
+  defp observe_operative(pid) when is_pid(pid) do
+    case SafeCall.bounded(pid, :get_overwatch_state, @operative_call_timeout_ms) do
       {:ok, ow} when is_map(ow) ->
         %{
           pid: pid,
@@ -80,7 +80,7 @@ defmodule Flezha.Convergence.Probe do
     end
   end
 
-  defp observe_relay(_),
+  defp observe_operative(_),
     do: %{
       pid: nil,
       bound_executor: nil,
@@ -100,7 +100,7 @@ defmodule Flezha.Convergence.Probe do
       plugin_health: %{}
     }
 
-  # The plugin ids currently subscribed in the relay's extension table.
+  # The plugin ids currently subscribed in the operative's extension table.
   defp running_plugins(ow) do
     case Map.get(ow, :extensions) do
       %{plugins: plugins} when is_map(plugins) -> Map.keys(plugins)
@@ -127,7 +127,7 @@ defmodule Flezha.Convergence.Probe do
 
   # On a failed FleetManager read we record `:unknown`, NOT an empty set:
   # the Diff must skip misbound classification for the namespace rather than
-  # mass-migrate every relay on a transient read failure.
+  # mass-migrate every operative on a transient read failure.
   defp active_executors(namespaces) do
     Enum.into(namespaces, %{}, fn ns ->
       executors =
@@ -149,8 +149,8 @@ defmodule Flezha.Convergence.Probe do
     :exit, _ -> []
   end
 
-  defp safe_relays(namespace) do
-    HubManager.get_all_relays(namespace)
+  defp safe_operatives(namespace) do
+    HubManager.get_all_operatives(namespace)
   catch
     :exit, _ -> []
   end

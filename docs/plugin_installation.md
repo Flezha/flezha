@@ -83,7 +83,7 @@ end
       provider: MyOrg.MyPlugin,
       subscriptions: [{:on_input, []}],
       default_opts: %{},
-      scope: :relay
+      scope: :operative
     }
   ],
   dependencies: []
@@ -123,7 +123,7 @@ Each `:provides` entry:
   provider: MyOrg.MyPlugin,                # MUST appear in :modules
   subscriptions: [{:on_input, []}],        # list of {extension, opts}
   default_opts: %{},                       # overridable at enable time
-  scope: :relay                        # only :relay in this release
+  scope: :operative                    # only :operative in this release
 }
 ```
 

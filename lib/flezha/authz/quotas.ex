@@ -9,8 +9,8 @@ defmodule Flezha.AuthZ.Quotas do
 
   Enforcement points:
 
-    * `RelayManager.start_relay/2`           → `:relays`, `:partitions`
-    * `State.Supervisor.open_partition/N`    → `:disk_bytes`
+    * `OperativeManager.start_operative/2`           → `:operatives`, `:segments`
+    * `State.Supervisor.open_segment/N`    → `:disk_bytes`
     * `FleetManager.connect_handler/4`       → `:executors`
     * Bounded-mailbox capacity provisioning  → `:mailbox_bytes`
 
@@ -29,8 +29,8 @@ defmodule Flezha.AuthZ.Quotas do
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters}
 
   @type kind ::
-          :max_relays
-          | :max_partitions_per_relay
+          :max_operatives
+          | :max_segments_per_operative
           | :max_mailbox_bytes_total
           | :max_message_rate_per_second
           | :max_disk_bytes_total
@@ -45,7 +45,7 @@ defmodule Flezha.AuthZ.Quotas do
   `namespace` would exceed its quota.
 
   `kind` is one of the documented atoms above. `requested` is the
-  size of the allocation (1 for a relay/partition/executor; bytes
+  size of the allocation (1 for a operative/segment/executor; bytes
   for mailbox/disk).
   """
   @spec check_allocation(binary(), atom(), non_neg_integer()) :: :ok | quota_error()
@@ -138,8 +138,8 @@ defmodule Flezha.AuthZ.Quotas do
   # Map quota fields → counter kinds. Naming kept distinct so the
   # quota field reads natural in the namespace catalog while the
   # counter kind is a short atom.
-  defp counter_for(:max_relays), do: :relays
-  defp counter_for(:max_partitions_per_relay), do: :partitions
+  defp counter_for(:max_operatives), do: :operatives
+  defp counter_for(:max_segments_per_operative), do: :segments
   defp counter_for(:max_mailbox_bytes_total), do: :mailbox_bytes
   defp counter_for(:max_message_rate_per_second), do: :messages
   defp counter_for(:max_disk_bytes_total), do: :disk_bytes

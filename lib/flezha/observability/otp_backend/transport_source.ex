@@ -16,13 +16,13 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
     * global BEAM aggregates from
       `Flezha.Transport.LivenessCounters` — `:channel_io_in_received`,
       `:channel_send_frame_calls`, `:channel_nil_drops`,
-      `:channel_flz_data_received`, `:relay_io_in_received`,
-      `:relay_forwarded`, `:relay_filtered_nil`.
+      `:channel_flz_data_received`, `:operative_io_in_received`,
+      `:operative_forwarded`, `:operative_filtered_nil`.
 
   Cardinality stays bounded: driver metrics are per transport (≤ 2);
   BEAM aggregates carry no per-entity label (the stall classifier, not
   this source, does the per-entity localisation), so the label-value set
-  never grows with executor/relay churn.
+  never grows with executor/operative churn.
 
   Default poll interval `1_000` ms; overridable via
   `:flezha, :observability, :otp_backend, :poll_intervals, :flezha_transport`.
@@ -101,20 +101,20 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
 
   # Global BEAM aggregates — no per-entity label, so cardinality is flat.
   defp poll_beam_counters() do
-    %{channels: channels, relays: relays} =
+    %{channels: channels, operatives: operatives} =
       try do
         LivenessCounters.snapshot_all()
       catch
-        _, _ -> %{channels: [], relays: []}
+        _, _ -> %{channels: [], operatives: []}
       end
 
     emit_sum(:channel_io_in_received, channels, :io_in_received)
     emit_sum(:channel_send_frame_calls, channels, :send_frame_calls)
     emit_sum(:channel_nil_drops, channels, :nil_drops)
     emit_sum(:channel_flz_data_received, channels, :flz_data_received)
-    emit_sum(:relay_io_in_received, relays, :io_in_received)
-    emit_sum(:relay_forwarded, relays, :forwarded)
-    emit_sum(:relay_filtered_nil, relays, :filtered_nil)
+    emit_sum(:operative_io_in_received, operatives, :io_in_received)
+    emit_sum(:operative_forwarded, operatives, :forwarded)
+    emit_sum(:operative_filtered_nil, operatives, :filtered_nil)
   end
 
   defp emit_sum(name, rows, key) do

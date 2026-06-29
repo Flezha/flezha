@@ -37,7 +37,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSup do
 
   A looked-up worker is reused only when it is alive and not permanently parked
   (its broker-swap recovery exhausted). A dead/parked worker is reaped first so
-  a recovered relay starts a fresh, healthy producer rather than re-attaching to
+  a recovered operative starts a fresh, healthy producer rather than re-attaching to
   one that can no longer drain.
   """
   @spec ensure_worker(keyword()) :: {:ok, pid()} | {:error, term()}

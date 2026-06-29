@@ -2,10 +2,10 @@ package com.flezha.sdk.processor;
 
 import com.flezha.sdk.authoring.InitState;
 import com.flezha.sdk.authoring.Journal;
-import com.flezha.sdk.authoring.PartitionFor;
-import com.flezha.sdk.authoring.Relay;
-import com.flezha.sdk.authoring.Shard;
-import com.flezha.sdk.authoring.ShardKey;
+import com.flezha.sdk.authoring.SegmentFor;
+import com.flezha.sdk.authoring.ContinuousOperative;
+import com.flezha.sdk.authoring.Operation;
+import com.flezha.sdk.authoring.OperationKey;
 import com.flezha.sdk.authoring.State;
 import java.io.IOException;
 import java.io.Writer;
@@ -33,21 +33,21 @@ import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 
 /**
- * Generates {@code Shard} / {@code Relay} implementations from the
- * {@code @Shard} / {@code @State} / {@code @Relay} authoring annotations,
+ * Generates {@code Operation} / {@code ContinuousOperative} implementations from the
+ * {@code @Operation} / {@code @State} / {@code @ContinuousOperative} authoring annotations,
  * mirroring the Rust SDK macros. See {@code docs/sdk_authoring_contract.md}.
  *
  * <p>Per round: {@code @State} classes generate a {@code <Name>Change}
- * (field-granular variants + {@code apply} + {@code kryoTypes}); {@code @Shard}
- * classes generate a {@code <Name>Shard} (and, with a {@code sink}, a
- * single-shard {@code <Name>Relay}); {@code @Relay} classes are collected. On
- * the final round a {@code com.flezha.generated.GeneratedRelays.registerAll()}
- * aggregator is emitted so authors register every sugared relay with one call.
+ * (field-granular variants + {@code apply} + {@code kryoTypes}); {@code @Operation}
+ * classes generate a {@code <Name>Operation} (and, with a {@code sink}, a
+ * single-operation {@code <Name>ContinuousOperative}); {@code @ContinuousOperative} classes are collected. On
+ * the final round a {@code com.flezha.generated.GeneratedContinuousOperatives.registerAll()}
+ * aggregator is emitted so authors register every sugared operative with one call.
  */
 @SupportedAnnotationTypes({
-    "com.flezha.sdk.authoring.Shard",
+    "com.flezha.sdk.authoring.Operation",
     "com.flezha.sdk.authoring.State",
-    "com.flezha.sdk.authoring.Relay"
+    "com.flezha.sdk.authoring.ContinuousOperative"
 })
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public final class FlezhaProcessor extends AbstractProcessor {
@@ -58,8 +58,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
     private Types types;
     private Filer filer;
 
-    /** Fully-qualified relay class names collected across rounds. */
-    private final List<String> relayFqns = new ArrayList<>();
+    /** Fully-qualified operative class names collected across rounds. */
+    private final List<String> operativeFqns = new ArrayList<>();
 
     private boolean aggregatorEmitted = false;
 
@@ -76,18 +76,18 @@ public final class FlezhaProcessor extends AbstractProcessor {
         for (Element e : roundEnv.getElementsAnnotatedWith(State.class)) {
             generateState((TypeElement) e);
         }
-        for (Element e : roundEnv.getElementsAnnotatedWith(Shard.class)) {
-            generateShard((TypeElement) e);
+        for (Element e : roundEnv.getElementsAnnotatedWith(Operation.class)) {
+            generateOperation((TypeElement) e);
         }
-        for (Element e : roundEnv.getElementsAnnotatedWith(Relay.class)) {
-            if (implementsRelay((TypeElement) e)) {
-                relayFqns.add(((TypeElement) e).getQualifiedName().toString());
+        for (Element e : roundEnv.getElementsAnnotatedWith(ContinuousOperative.class)) {
+            if (implementsContinuousOperative((TypeElement) e)) {
+                operativeFqns.add(((TypeElement) e).getQualifiedName().toString());
             } else {
-                error(e, "@Relay requires the class to implement com.flezha.sdk.relay.Relay");
+                error(e, "@ContinuousOperative requires the class to implement com.flezha.sdk.operative.ContinuousOperative");
             }
         }
 
-        if (roundEnv.processingOver() && !aggregatorEmitted && !relayFqns.isEmpty()) {
+        if (roundEnv.processingOver() && !aggregatorEmitted && !operativeFqns.isEmpty()) {
             emitAggregator();
             aggregatorEmitted = true;
         }
@@ -508,22 +508,22 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 + "    }\n\n";
     }
 
-    // ---- @Shard -> <Name>Shard (+ <Name>Relay) ---------------------------
+    // ---- @Operation -> <Name>Operation (+ <Name>ContinuousOperative) ---------------------------
 
-    private void generateShard(TypeElement shard) {
-        String pkg = packageOf(shard);
-        String userFqn = shard.getQualifiedName().toString();
-        String shardSimple = shard.getSimpleName() + "Shard";
-        String shardFqn = pkg.isEmpty() ? shardSimple : pkg + "." + shardSimple;
+    private void generateOperation(TypeElement operation) {
+        String pkg = packageOf(operation);
+        String userFqn = operation.getQualifiedName().toString();
+        String operationSimple = operation.getSimpleName() + "Operation";
+        String operationFqn = pkg.isEmpty() ? operationSimple : pkg + "." + operationSimple;
 
-        ExecutableElement run = findRun(shard);
+        ExecutableElement run = findRun(operation);
         if (run == null) {
-            error(shard, "@Shard requires exactly one public method named `run`");
+            error(operation, "@Operation requires exactly one public method named `run`");
             return;
         }
         List<? extends VariableElement> params = run.getParameters();
         if (params.isEmpty() || params.size() > 2) {
-            error(run, "@Shard `run` must be `Output run(Input)` or `Output run(Input, StateHandle<State, Change>)`");
+            error(run, "@Operation `run` must be `Output run(Input)` or `Output run(Input, StateHandle<State, Change>)`");
             return;
         }
 
@@ -539,7 +539,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
         } else if (isOptional(returnType)) {
             TypeMirror oe = optionalElement(returnType);
             if (oe == null) {
-                error(run, "@Shard `run` returning Optional must be parameterized as Optional<Output>");
+                error(run, "@Operation `run` returning Optional must be parameterized as Optional<Output>");
                 return;
             }
             emits = true;
@@ -553,7 +553,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
         boolean stateful = params.size() == 2;
         String stateType;
         String changeType;
-        // What the generated shard passes to the user's run as the state arg.
+        // What the generated operation passes to the user's run as the state arg.
         String handleArg = "state";
         if (stateful) {
             TypeMirror p1 = params.get(1).asType();
@@ -574,7 +574,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 if (!handleName.endsWith("Handle")) {
                     error(
                             run,
-                            "@Shard stateful `run` second parameter must be a @State-generated `<State>Handle` "
+                            "@Operation stateful `run` second parameter must be a @State-generated `<State>Handle` "
                                     + "or `StateHandle<State, Change>`");
                     return;
                 }
@@ -588,36 +588,36 @@ public final class FlezhaProcessor extends AbstractProcessor {
             changeType = "com.flezha.sdk.state.NoChange";
         }
 
-        // Partition mode: @PartitionFor (static) xor @ShardKey (dynamic).
-        ExecutableElement partitionFor = findAnnotated(shard, PartitionFor.class);
-        ExecutableElement shardKey = findAnnotated(shard, ShardKey.class);
-        if (partitionFor != null && shardKey != null) {
-            error(shard, "@PartitionFor (static) and @ShardKey (dynamic) are mutually exclusive");
+        // Segment mode: @SegmentFor (static) xor @OperationKey (dynamic).
+        ExecutableElement segmentFor = findAnnotated(operation, SegmentFor.class);
+        ExecutableElement operationKey = findAnnotated(operation, OperationKey.class);
+        if (segmentFor != null && operationKey != null) {
+            error(operation, "@SegmentFor (static) and @OperationKey (dynamic) are mutually exclusive");
             return;
         }
 
-        // Per-partition state init: @InitState maps the shard key to State.
-        ExecutableElement initState = findAnnotated(shard, InitState.class);
+        // Per-segment state init: @InitState maps the operation key to State.
+        ExecutableElement initState = findAnnotated(operation, InitState.class);
         if (initState != null && !stateful) {
             error(
-                    shard,
-                    "@InitState requires a stateful run (a @State handle parameter); a stateless shard "
+                    operation,
+                    "@InitState requires a stateful run (a @State handle parameter); a stateless operation "
                             + "has no state to initialize");
             return;
         }
 
-        Shard ann = shard.getAnnotation(Shard.class);
+        Operation ann = operation.getAnnotation(Operation.class);
         List<String> keys = List.of(ann.keys());
-        if (partitionFor != null && keys.isEmpty()) {
-            error(shard, "static partitioning requires @Shard(keys = {...}) alongside the @PartitionFor method");
+        if (segmentFor != null && keys.isEmpty()) {
+            error(operation, "static segmenting requires @Operation(keys = {...}) alongside the @SegmentFor method");
             return;
         }
-        if (!keys.isEmpty() && partitionFor == null) {
-            error(shard, "@Shard(keys = {...}) requires a @PartitionFor method");
+        if (!keys.isEmpty() && segmentFor == null) {
+            error(operation, "@Operation(keys = {...}) requires a @SegmentFor method");
             return;
         }
 
-        String id = ann.id().isEmpty() ? snake(shard.getSimpleName().toString()) : ann.id();
+        String id = ann.id().isEmpty() ? snake(operation.getSimpleName().toString()) : ann.id();
         String sink = ann.sink();
         int capacity = ann.capacity();
         String onFull = ann.onFull();
@@ -626,21 +626,21 @@ public final class FlezhaProcessor extends AbstractProcessor {
         if (!pkg.isEmpty()) {
             b.append("package ").append(pkg).append(";\n\n");
         }
-        b.append("import com.flezha.sdk.shard.Shard;\n");
-        b.append("import com.flezha.sdk.shard.ShardCtx;\n");
-        b.append("import com.flezha.sdk.shard.ShardException;\n");
+        b.append("import com.flezha.sdk.operation.Operation;\n");
+        b.append("import com.flezha.sdk.operation.OperationCtx;\n");
+        b.append("import com.flezha.sdk.operation.OperationException;\n");
         b.append("import com.flezha.sdk.state.RestoreInitPayload;\n");
         b.append("import com.flezha.sdk.state.StateHandle;\n");
         b.append("import com.flezha.sdk.state.WallClock;\n");
         b.append("import java.util.List;\n");
         b.append("import java.util.Optional;\n\n");
 
-        b.append("/** Generated by FlezhaProcessor from @Shard on ")
+        b.append("/** Generated by FlezhaProcessor from @Operation on ")
                 .append(userFqn)
                 .append(". */\n");
         b.append("public final class ")
-                .append(shardSimple)
-                .append(" implements Shard<")
+                .append(operationSimple)
+                .append(" implements Operation<")
                 .append(inputType)
                 .append(", ")
                 .append(stateType)
@@ -656,7 +656,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append("();\n\n");
 
         b.append("    @Override public String name() { return \"")
-                .append(snake(shard.getSimpleName().toString()))
+                .append(snake(operation.getSimpleName().toString()))
                 .append("\"; }\n");
         b.append("    @Override public Class<")
                 .append(inputType)
@@ -677,10 +677,10 @@ public final class FlezhaProcessor extends AbstractProcessor {
         b.append("    @Override public Class<Void> configType() { return Void.class; }\n");
 
         String initBody =
-                initState != null ? "impl." + initState.getSimpleName() + "(shardKey)" : "new " + stateType + "()";
+                initState != null ? "impl." + initState.getSimpleName() + "(operationKey)" : "new " + stateType + "()";
         b.append("    @Override public ")
                 .append(stateType)
-                .append(" initState(Optional<String> shardKey, Optional<RestoreInitPayload> initPayload) { return ")
+                .append(" initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) { return ")
                 .append(initBody)
                 .append("; }\n");
 
@@ -697,24 +697,24 @@ public final class FlezhaProcessor extends AbstractProcessor {
                     .append(".kryoTypes(); }\n");
         }
 
-        if (partitionFor != null) {
-            b.append("    @Override public List<String> shardKeys() { return List.of(")
+        if (segmentFor != null) {
+            b.append("    @Override public List<String> operationKeys() { return List.of(")
                     .append(quotedJoin(keys))
                     .append("); }\n");
-            b.append("    @Override public boolean partitionForOverridden() { return true; }\n");
-            b.append("    @Override public List<String> partitionFor(")
+            b.append("    @Override public boolean segmentForOverridden() { return true; }\n");
+            b.append("    @Override public List<String> segmentFor(")
                     .append(inputType)
                     .append(" input) { return impl.")
-                    .append(partitionFor.getSimpleName())
+                    .append(segmentFor.getSimpleName())
                     .append("(input); }\n");
         }
-        if (shardKey != null) {
-            b.append("    @Override public Optional<String> shardKey(")
+        if (operationKey != null) {
+            b.append("    @Override public Optional<String> operationKey(")
                     .append(inputType)
                     .append(" input) { return impl.")
-                    .append(shardKey.getSimpleName())
+                    .append(operationKey.getSimpleName())
                     .append("(input); }\n");
-            b.append("    @Override public boolean shardKeyOverridden() { return true; }\n");
+            b.append("    @Override public boolean operationKeyOverridden() { return true; }\n");
         }
         if (capacity > 0) {
             b.append("    @Override public int mailboxCapacity() { return ")
@@ -730,7 +730,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append(stateType)
                 .append(", ")
                 .append(changeType)
-                .append("> state, ShardCtx ctx) throws ShardException {\n");
+                .append("> state, OperationCtx ctx) throws OperationException {\n");
         String call = stateful ? "impl.run(input, " + handleArg + ")" : "impl.run(input)";
         if (!emits) {
             b.append("        ").append(call).append(";\n");
@@ -752,29 +752,29 @@ public final class FlezhaProcessor extends AbstractProcessor {
         b.append("    }\n");
         b.append("}\n");
 
-        write(shardFqn, b.toString(), shard);
+        write(operationFqn, b.toString(), operation);
 
-        // Single-shard auto-wire relay.
+        // Single-operation auto-wire operative.
         if (!sink.isEmpty()) {
             if (!emits) {
-                error(shard, "@Shard(sink = ...) requires a non-void return type to feed the plugin");
+                error(operation, "@Operation(sink = ...) requires a non-void return type to feed the plugin");
                 return;
             }
-            generateSingleShardRelay(pkg, shardSimple, id, sink, inputType.toString(), outputType, onFull, shard);
+            generateSingleOperationContinuousOperative(pkg, operationSimple, id, sink, inputType.toString(), outputType, onFull, operation);
         }
     }
 
-    private void generateSingleShardRelay(
+    private void generateSingleOperationContinuousOperative(
             String pkg,
-            String shardSimple,
+            String operationSimple,
             String id,
             String sink,
             String inputType,
             String outputType,
             String onFull,
             Element origin) {
-        String relaySimple = shardSimple.replaceFirst("Shard$", "") + "Relay";
-        String relayFqn = pkg.isEmpty() ? relaySimple : pkg + "." + relaySimple;
+        String operativeSimple = operationSimple.replaceFirst("Operation$", "") + "ContinuousOperative";
+        String operativeFqn = pkg.isEmpty() ? operativeSimple : pkg + "." + operativeSimple;
         String onFullCall = onFullCall(onFull, origin);
 
         StringBuilder b = new StringBuilder();
@@ -782,11 +782,11 @@ public final class FlezhaProcessor extends AbstractProcessor {
             b.append("package ").append(pkg).append(";\n\n");
         }
         b.append("import com.flezha.sdk.channel.ChannelBuilder;\n");
-        b.append("import com.flezha.sdk.relay.Relay;\n\n");
-        b.append("/** Generated single-shard auto-wire relay for ")
-                .append(shardSimple)
+        b.append("import com.flezha.sdk.operative.ContinuousOperative;\n\n");
+        b.append("/** Generated single-operation auto-wire operative for ")
+                .append(operationSimple)
                 .append(". */\n");
-        b.append("public final class ").append(relaySimple).append(" implements Relay {\n");
+        b.append("public final class ").append(operativeSimple).append(" implements ContinuousOperative {\n");
         b.append("    @Override public String factoryId() { return \"")
                 .append(id)
                 .append("\"; }\n");
@@ -796,43 +796,43 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append(", \"input\")")
                 .append(onFullCall)
                 .append(".into(")
-                .append(shardSimple)
+                .append(operationSimple)
                 .append(".class);\n");
         b.append("        c.channel(")
                 .append(classLit(outputType))
                 .append(", \"")
                 .append(sink)
                 .append("\").from(")
-                .append(shardSimple)
+                .append(operationSimple)
                 .append(".class).toPlugin(\"")
                 .append(sink)
                 .append("\");\n");
         b.append("    }\n}\n");
 
-        write(relayFqn, b.toString(), origin);
-        relayFqns.add(relayFqn);
+        write(operativeFqn, b.toString(), origin);
+        operativeFqns.add(operativeFqn);
     }
 
     private void emitAggregator() {
         StringBuilder b = new StringBuilder();
         b.append("package com.flezha.generated;\n\n");
-        b.append("import com.flezha.sdk.relay.RelayRegistry;\n\n");
-        b.append("/** Generated aggregator: registers every sugared relay with one call. */\n");
-        b.append("public final class GeneratedRelays {\n");
-        b.append("    private GeneratedRelays() {}\n\n");
+        b.append("import com.flezha.sdk.operative.ContinuousOperativeRegistry;\n\n");
+        b.append("/** Generated aggregator: registers every sugared operative with one call. */\n");
+        b.append("public final class GeneratedContinuousOperatives {\n");
+        b.append("    private GeneratedContinuousOperatives() {}\n\n");
         b.append("    public static void registerAll() {\n");
-        for (String fqn : relayFqns) {
-            b.append("        RelayRegistry.registerRelay(").append(fqn).append(".class);\n");
+        for (String fqn : operativeFqns) {
+            b.append("        ContinuousOperativeRegistry.registerContinuous(").append(fqn).append(".class);\n");
         }
         b.append("    }\n}\n");
-        write("com.flezha.generated.GeneratedRelays", b.toString());
+        write("com.flezha.generated.GeneratedContinuousOperatives", b.toString());
     }
 
     // ---- helpers ----------------------------------------------------------
 
-    private ExecutableElement findRun(TypeElement shard) {
+    private ExecutableElement findRun(TypeElement operation) {
         ExecutableElement found = null;
-        for (Element e : shard.getEnclosedElements()) {
+        for (Element e : operation.getEnclosedElements()) {
             if (e.getKind() == ElementKind.METHOD
                     && e.getSimpleName().contentEquals("run")
                     && e.getModifiers().contains(Modifier.PUBLIC)
@@ -846,8 +846,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
         return found;
     }
 
-    private ExecutableElement findAnnotated(TypeElement shard, Class<? extends Annotation> ann) {
-        for (Element e : shard.getEnclosedElements()) {
+    private ExecutableElement findAnnotated(TypeElement operation, Class<? extends Annotation> ann) {
+        for (Element e : operation.getEnclosedElements()) {
             if (e.getKind() == ElementKind.METHOD && e.getAnnotation(ann) != null) {
                 return (ExecutableElement) e;
             }
@@ -855,13 +855,13 @@ public final class FlezhaProcessor extends AbstractProcessor {
         return null;
     }
 
-    private boolean implementsRelay(TypeElement t) {
-        TypeElement relay = elements.getTypeElement("com.flezha.sdk.relay.Relay");
-        if (relay == null) {
+    private boolean implementsContinuousOperative(TypeElement t) {
+        TypeElement operative = elements.getTypeElement("com.flezha.sdk.operative.ContinuousOperative");
+        if (operative == null) {
             return false;
         }
         for (TypeMirror itf : t.getInterfaces()) {
-            if (types.isSameType(types.erasure(itf), types.erasure(relay.asType()))) {
+            if (types.isSameType(types.erasure(itf), types.erasure(operative.asType()))) {
                 return true;
             }
         }
@@ -880,7 +880,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                     default -> null;
                 };
         if (variant == null) {
-            error(origin, "@Shard onFull must be one of: block, drop_newest, drop_oldest");
+            error(origin, "@Operation onFull must be one of: block, drop_newest, drop_oldest");
             return "";
         }
         return ".onFull(com.flezha.sdk.channel.OverflowPolicy." + variant + ")";

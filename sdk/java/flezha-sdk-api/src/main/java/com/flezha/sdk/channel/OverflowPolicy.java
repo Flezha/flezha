@@ -2,10 +2,10 @@ package com.flezha.sdk.channel;
 
 /**
  * Per-channel backpressure policy applied at the producer-side push site
- * when the consumer Partition's bounded mailbox is full. Declared via
+ * when the consumer Segment's bounded mailbox is full. Declared via
  * {@code .onFull(...)} on the channel builder. Defaults: {@link #DROP_NEWEST}
  * for entry channels (keep the shared wire reader running),
- * {@link #BLOCK} for inter-shard channels (preserve ordering through
+ * {@link #BLOCK} for inter-operation channels (preserve ordering through
  * stateful pipelines). Plugin-bound channels carry no SDK-side mailbox so
  * the value is never consulted on the hot path.
  */

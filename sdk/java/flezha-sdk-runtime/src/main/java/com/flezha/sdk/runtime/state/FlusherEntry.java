@@ -7,13 +7,13 @@ import java.util.function.Function;
 import javax.annotation.Nonnull;
 
 /**
- * Per-Partition registration record carried by {@link PartitionFlusher}. The
+ * Per-Segment registration record carried by {@link SegmentFlusher}. The
  * flusher acquires {@code bufferLock}, drains {@code buffer}, applies coalescing,
  * builds frames via the {@code headerTemplate}, and (when
  * {@code persistenceEnabled}) sends them via {@code sendFrame}.
  *
  * <p>{@code persistenceEnabled} is the resolved toggle (executor override
- * &gt; Relay default &gt; {@code true}; frozen at {@code RelayInstance}
+ * &gt; ContinuousOperative default &gt; {@code true}; frozen at {@code ContinuousOperativeInstance}
  * construction). When {@code false}, the drain still runs (releasing the
  * buffer's memory) but no frame is built or sent.
  */
@@ -24,6 +24,6 @@ public record FlusherEntry(
         @Nonnull AtomicLong changeSeq,
         @Nonnull Function<byte[], Boolean> sendFrame,
         @Nonnull HeaderTemplate headerTemplate,
-        @Nonnull PartitionId partitionId,
+        @Nonnull SegmentId segmentId,
         int schemaVersion,
         @Nonnull KryoCodec codec) {}

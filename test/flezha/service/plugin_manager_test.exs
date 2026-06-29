@@ -19,14 +19,14 @@ defmodule Flezha.Service.PluginManagerTest do
 
   alias Flezha.Plugin
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.OperativeManager
   alias ProcessHub.Service.ProcessRegistry
 
   setup :verify_on_exit!
   setup :set_mimic_global
 
   @namespace "default"
-  @relay_id "pm_test_p1"
+  @operative_id "pm_test_p1"
 
   setup do
     {:ok, store} = Agent.start_link(fn -> base_cspec([]) end)
@@ -36,9 +36,9 @@ defmodule Flezha.Service.PluginManagerTest do
     |> Mimic.stub(:is_alive?, fn _hub_id -> true end)
 
     ProcessRegistry
-    |> Mimic.stub(:update, fn _hub_id, relay_id, fun, _opts ->
+    |> Mimic.stub(:update, fn _hub_id, operative_id, fun, _opts ->
       cond do
-        relay_id != @relay_id ->
+        operative_id != @operative_id ->
           {:error, :not_found}
 
         true ->
@@ -51,11 +51,11 @@ defmodule Flezha.Service.PluginManagerTest do
       end
     end)
 
-    RelayManager
-    |> Mimic.stub(:get_relay_pid, fn ns, pid_id ->
+    OperativeManager
+    |> Mimic.stub(:get_operative_pid, fn ns, pid_id ->
       cond do
-        ns != @namespace or pid_id != @relay_id ->
-          {:error, "relay not found"}
+        ns != @namespace or pid_id != @operative_id ->
+          {:error, "operative not found"}
 
         true ->
           {:ok, overwatch}
@@ -159,20 +159,20 @@ defmodule Flezha.Service.PluginManagerTest do
       opts: Map.new(opts),
       subscriptions: [{:on_output, []}],
       namespace: @namespace,
-      relay_id: @relay_id
+      operative_id: @operative_id
     )
   end
 
   # The cspec shape PluginManager rewrites: %{start: {m, f, [{namespace, %Builder{opts: [plugins: [...]]}}]}}
   defp base_cspec(plugins) do
     %{
-      id: @relay_id,
+      id: @operative_id,
       start:
-        {Flezha.Relay.Overwatch, :start_link,
+        {Flezha.Operative.Overwatch, :start_link,
          [
            {@namespace,
-            %Flezha.Relay.Builder{
-              id: @relay_id,
+            %Flezha.Operative.Builder{
+              id: @operative_id,
               factory_id: "do_nothing",
               init_values: %{},
               opts: [plugins: plugins]
@@ -182,7 +182,7 @@ defmodule Flezha.Service.PluginManagerTest do
   end
 
   defp read_plugins(store) do
-    %{start: {_m, _f, [{_ns, %Flezha.Relay.Builder{opts: opts}}]}} =
+    %{start: {_m, _f, [{_ns, %Flezha.Operative.Builder{opts: opts}}]}} =
       Agent.get(store, & &1)
 
     Keyword.get(opts, :plugins, [])

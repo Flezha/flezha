@@ -1,6 +1,6 @@
 defmodule Flezha.Executor.ControlChannel do
   alias Flezha.Service.HubManager
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.OperativeManager
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
   alias Flezha.Executor.FleetManager
@@ -56,7 +56,7 @@ defmodule Flezha.Executor.ControlChannel do
 
         # Propagate the transport result instead of always returning {:ok, ref}.
         # A reset/dead stream replies {:error, :no_connection_available}; the
-        # caller (ControlUnit) must then surface a clean error to the relay
+        # caller (ControlUnit) must then surface a clean error to the operative
         # rather than registering a reply ref that will never resolve.
         case GenServer.call(control_channel, {:send_control, payload}) do
           :ok -> {:ok, ref}
@@ -202,8 +202,8 @@ defmodule Flezha.Executor.ControlChannel do
         new_state = handle_executor_reconnected(state, reconnected, reference_id)
         {:noreply, new_state}
 
-      {:task_completed, %{} = completed, _reference_id} ->
-        handle_task_completed(state, completed)
+      {:bounded_completed, %{} = completed, _reference_id} ->
+        handle_bounded_completed(state, completed)
         {:noreply, state}
 
       :not_sdk_initiated ->
@@ -274,16 +274,16 @@ defmodule Flezha.Executor.ControlChannel do
       {:ok,
        %ExecutorCommands.CommandRequest{
          reference_id: ref,
-         command: {:task_completed, completed}
+         command: {:bounded_completed, completed}
        }} ->
-        {:task_completed, completed, ref}
+        {:bounded_completed, completed, ref}
 
       _ ->
         :not_sdk_initiated
     end
   end
 
-  # Apply the SDK's final state to the per-relay `Overwatch` and emit
+  # Apply the SDK's final state to the per-operative `Overwatch` and emit
   # an `ExecutorShutdownAck` so the SDK's bounded ack-wait can release.
   # The cast-not-call ordering is deliberate: the snapshot is enqueued on
   # Overwatch's mailbox before the ack flows back, so even if the controller
@@ -296,61 +296,61 @@ defmodule Flezha.Executor.ControlChannel do
   # period waiting for an ack that will never arrive.
   defp handle_executor_shutdown_notification(state, notif, reference_id) do
     %ExecutorCommands.ExecutorShutdownNotification{
-      relay_id: relay_id,
+      operative_id: operative_id,
       serialized_state: serialized_state
     } = notif
 
-    case HubManager.get_pid(state.namespace, relay_id) do
+    case HubManager.get_pid(state.namespace, operative_id) do
       {:ok, pid} when is_pid(pid) ->
         GenServer.cast(pid, {:apply_external_snapshot, serialized_state})
 
       _ ->
         Logger.warning(
           "[control_channel] Overwatch missing for shutdown notification — assumed migrated. " <>
-            "namespace=#{inspect(state.namespace)} relay_id=#{inspect(relay_id)}"
+            "namespace=#{inspect(state.namespace)} operative_id=#{inspect(operative_id)}"
         )
     end
 
-    emit_executor_shutdown_ack(state, relay_id, reference_id)
+    emit_executor_shutdown_ack(state, operative_id, reference_id)
   end
 
-  # A task-kind unit's `run` returned. Deregister-on-completion: drive the
-  # normal stop/teardown so the task leaves the durable registry and is never
+  # A bounded operative.s `run` returned. Deregister-on-completion: drive the
+  # normal stop/teardown so the operative leaves the durable registry and is never
   # replayed on boot. A terminal failure (`status = "error"`) tears down
   # identically (no retry) and is surfaced via telemetry.
-  defp handle_task_completed(state, completed) do
-    %ExecutorCommands.TaskCompleted{
-      relay_id: relay_id,
+  defp handle_bounded_completed(state, completed) do
+    %ExecutorCommands.BoundedCompleted{
+      operative_id: operative_id,
       status: status,
       error: error
     } = completed
 
     if status == "error" do
       Logger.warning(
-        "[control_channel] task #{inspect(relay_id)} failed in namespace " <>
+        "[control_channel] bounded operative #{inspect(operative_id)} failed in namespace " <>
           "#{inspect(state.namespace)}: #{inspect(error)}"
       )
 
       :telemetry.execute(
-        [:flezha, :task, :failed],
+        [:flezha, :bounded, :failed],
         %{count: 1},
-        %{namespace: state.namespace, relay_id: relay_id, error: error}
+        %{namespace: state.namespace, operative_id: operative_id, error: error}
       )
     end
 
     namespace = state.namespace
 
-    # Tear down off the control-channel process: `stop_relay` drives a
-    # RemRelay round-trip whose CommandResponse returns on THIS control
+    # Tear down off the control-channel process: `stop_operative` drives a
+    # RemOperative round-trip whose CommandResponse returns on THIS control
     # stream, so calling it inline would deadlock the reader.
     Task.start(fn ->
-      case RelayManager.stop_relay(namespace, relay_id) do
+      case OperativeManager.stop_operative(namespace, operative_id) do
         :ok ->
           :ok
 
         {:error, reason} ->
           Logger.warning(
-            "[control_channel] task #{inspect(relay_id)} teardown failed: #{inspect(reason)}"
+            "[control_channel] bounded operative #{inspect(operative_id)} teardown failed: #{inspect(reason)}"
           )
       end
     end)
@@ -360,7 +360,7 @@ defmodule Flezha.Executor.ControlChannel do
   # preserved its registry + executor_id, so the controller can either
   # leave the binding intact (common case) or — if the controller
   # reassigned during the disconnect window — issue
-  # `ReassignExecutorId` and re-publish every relay it wants bound.
+  # `ReassignExecutorId` and re-publish every operative it wants bound.
   #
   # See `executor-controller-connection-healing` capability,
   # "Controller computes binding delta on `ExecutorReconnected`".
@@ -371,7 +371,7 @@ defmodule Flezha.Executor.ControlChannel do
       reason: reason
     } = reconnected
 
-    bindings = HubManager.executor_relays(state.namespace, previous_id)
+    bindings = HubManager.executor_operatives(state.namespace, previous_id)
 
     cond do
       previous_id != state.executor_id ->
@@ -387,7 +387,7 @@ defmodule Flezha.Executor.ControlChannel do
       true ->
         # Common case: the controller still has bindings under
         # `previous_id`. The SDK preserved its registry, so the views
-        # already agree — no `AddRelay` or `RemRelay` needs to flow.
+        # already agree — no `AddOperative` or `RemOperative` needs to flow.
         # The mid-disconnect added/removed delta is an open question
         # the design defers to a follow-up; for phase 2 the optimistic
         # zero-frame path is sufficient for the recurring outage.
@@ -429,14 +429,14 @@ defmodule Flezha.Executor.ControlChannel do
         %ExecutorCommands.ReassignExecutorId{new_id: new_executor_id}
       })
 
-    # Re-publish every relay the controller currently believes belongs
+    # Re-publish every operative the controller currently believes belongs
     # on this SDK — i.e. every binding tagged with the new id (or with
     # `previous_id` after `executor_switch/3` is run, depending on the
     # caller's intent). We fetch what is bound to the current
     # `state.executor_id` so the SDK ends up with the controller's
     # authoritative view.
-    bindings = HubManager.executor_relays(namespace, state.executor_id)
-    Enum.each(bindings, &reissue_add_relay(state, &1))
+    bindings = HubManager.executor_operatives(namespace, state.executor_id)
+    Enum.each(bindings, &reissue_add_operative(state, &1))
 
     :telemetry.execute(
       [:flezha, :executor, :reconnected_reassigned],
@@ -464,9 +464,9 @@ defmodule Flezha.Executor.ControlChannel do
     state
   end
 
-  defp reissue_add_relay(_state, _binding) do
-    # The full re-issue path requires the cspec → AddRelay payload
-    # conversion that today lives in `Flezha.Service.RelayManager` /
+  defp reissue_add_operative(_state, _binding) do
+    # The full re-issue path requires the cspec → AddOperative payload
+    # conversion that today lives in `Flezha.Service.OperativeManager` /
     # the Reconciler. Phase 2 keeps the re-issue logic in those
     # callers (they fire on `:executor_connected_event`); the
     # controller-side `:reconnected_reassigned` telemetry signals
@@ -474,10 +474,10 @@ defmodule Flezha.Executor.ControlChannel do
     :ok
   end
 
-  defp emit_executor_shutdown_ack(state, relay_id, reference_id) do
+  defp emit_executor_shutdown_ack(state, operative_id, reference_id) do
     ack_request = %ExecutorCommands.CommandRequest{
       reference_id: reference_id,
-      command: {:executor_shutdown_ack, %ExecutorCommands.ExecutorShutdownAck{relay_id: relay_id}}
+      command: {:executor_shutdown_ack, %ExecutorCommands.ExecutorShutdownAck{operative_id: operative_id}}
     }
 
     {:ok, iodata, _size} = Protox.encode(ack_request)
@@ -497,7 +497,7 @@ defmodule Flezha.Executor.ControlChannel do
           {:error, reason} ->
             Logger.warning(
               "[control_channel] failed to emit ExecutorShutdownAck for " <>
-                "relay=#{inspect(relay_id)}: #{inspect(reason)}"
+                "operative=#{inspect(operative_id)}: #{inspect(reason)}"
             )
 
             :ok

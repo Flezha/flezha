@@ -14,27 +14,27 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         String namespace = args.length > 0 ? args[0] : "default";
-        registerRelays();
-        registerTasks();
+        registerContinuousOperatives();
+        registerBoundedOperatives();
         Flezha unused = Flezha.newInstance(namespace);
         // Intentionally unused — the SDK instance holds the connection open;
         // the JVM stays alive until stdin closes.
         stdKeeper();
     }
 
-    private static void registerRelays() {
-        Flezha.registerRelay(DoNothingRelay.class);
-        Flezha.registerRelay(StoreInputRelay.class);
-        Flezha.registerRelay(CompareFilterRelay.class);
-        Flezha.registerRelay(StatefulCounterRelay.class);
-        Flezha.registerRelay(CoalescingCounterRelay.class);
-        Flezha.registerRelay(PersistenceOffRelay.class);
-        Flezha.registerRelay(HybridChannelRelay.class);
-        // EchoMessageRelay is reintroduced once per-Shard `handleMessage` lands.
+    private static void registerContinuousOperatives() {
+        Flezha.registerContinuous(DoNothingContinuousOperative.class);
+        Flezha.registerContinuous(StoreInputContinuousOperative.class);
+        Flezha.registerContinuous(CompareFilterContinuousOperative.class);
+        Flezha.registerContinuous(StatefulCounterContinuousOperative.class);
+        Flezha.registerContinuous(CoalescingCounterContinuousOperative.class);
+        Flezha.registerContinuous(PersistenceOffContinuousOperative.class);
+        Flezha.registerContinuous(HybridChannelContinuousOperative.class);
+        // EchoMessageContinuousOperative is reintroduced once per-Operation `handleMessage` lands.
     }
 
-    private static void registerTasks() {
-        Flezha.registerTask(EchoTask.class);
+    private static void registerBoundedOperatives() {
+        Flezha.registerBounded(EchoBoundedOperative.class);
     }
 
     private static void stdKeeper() {

@@ -1,6 +1,6 @@
 defmodule Flezha.Service.CliManager.ClusterTest do
   @moduledoc """
-  CLI surface for `flz relay list` and `flz cluster status`. The data
+  CLI surface for `flz operative list` and `flz cluster status`. The data
   sources (`HubManager` registry access) are stubbed so the rendering
   and shaping are asserted deterministically.
 
@@ -18,32 +18,32 @@ defmodule Flezha.Service.CliManager.ClusterTest do
   alias Flezha.Service.CliManager
   alias Flezha.Service.HubManager
 
-  describe "list_relays/2 (health column)" do
-    test "json output carries per-relay health, executor, and node" do
-      stub(HubManager, :relay_rows, fn _ns ->
+  describe "list_operatives/2 (health column)" do
+    test "json output carries per-operative health, executor, and node" do
+      stub(HubManager, :operative_rows, fn _ns ->
         [
           %{id: "r1", health: :healthy, executor: "e1", node: :a@h},
           %{id: "r2", health: :failed, executor: nil, node: nil}
         ]
       end)
 
-      out = capture_io(fn -> CliManager.list_relays("shop", "json") end)
+      out = capture_io(fn -> CliManager.list_operatives("shop", "json") end)
 
       assert {:ok, decoded} = Jason.decode(out)
       assert decoded["namespace"] == "shop"
 
-      assert decoded["relays"] == [
+      assert decoded["operatives"] == [
                %{"id" => "r1", "health" => "healthy", "executor" => "e1", "node" => "a@h"},
                %{"id" => "r2", "health" => "failed", "executor" => nil, "node" => nil}
              ]
     end
 
-    test "text output shows a HEALTH column and surfaces a FAILED, unplaced relay" do
-      stub(HubManager, :relay_rows, fn _ns ->
+    test "text output shows a HEALTH column and surfaces a FAILED, unplaced operative" do
+      stub(HubManager, :operative_rows, fn _ns ->
         [%{id: "r2", health: :failed, executor: nil, node: nil}]
       end)
 
-      out = capture_io(fn -> CliManager.list_relays("shop", "text") end)
+      out = capture_io(fn -> CliManager.list_operatives("shop", "text") end)
 
       assert out =~ "HEALTH"
       assert out =~ "r2"
@@ -52,17 +52,17 @@ defmodule Flezha.Service.CliManager.ClusterTest do
     end
 
     test "empty registry renders a friendly message, not a crash" do
-      stub(HubManager, :relay_rows, fn _ns -> [] end)
-      out = capture_io(fn -> CliManager.list_relays("shop", "text") end)
-      assert out =~ "No relays found"
+      stub(HubManager, :operative_rows, fn _ns -> [] end)
+      out = capture_io(fn -> CliManager.list_operatives("shop", "text") end)
+      assert out =~ "No operatives found"
     end
   end
 
   describe "cluster_status/2" do
-    test "json reports the local node as leader, per-node relay counts, unplaced, and a health rollup" do
+    test "json reports the local node as leader, per-node operative counts, unplaced, and a health rollup" do
       stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
 
-      stub(HubManager, :relay_rows, fn _ns ->
+      stub(HubManager, :operative_rows, fn _ns ->
         [
           %{id: "r1", health: :healthy, executor: "e1", node: node()},
           %{id: "r2", health: :degraded, executor: "e2", node: node()},
@@ -78,14 +78,14 @@ defmodule Flezha.Service.CliManager.ClusterTest do
       assert {:ok, d} = Jason.decode(out)
       assert d["leader"] == to_string(node())
       assert d["is_leader"] == true
-      assert d["unplaced_relays"] == 1
-      assert d["relay_health"] == %{"healthy" => 1, "degraded" => 1, "failed" => 1}
+      assert d["unplaced_operatives"] == 1
+      assert d["operative_health"] == %{"healthy" => 1, "degraded" => 1, "failed" => 1}
     end
 
     test "text output names the local node as leader" do
       stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
 
-      stub(HubManager, :relay_rows, fn _ns ->
+      stub(HubManager, :operative_rows, fn _ns ->
         [%{id: "r1", health: :healthy, executor: "e1", node: node()}]
       end)
 
@@ -97,7 +97,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
       assert out =~ "Cluster status for namespace 'shop'"
       assert out =~ "Leader:"
       assert out =~ to_string(node())
-      assert out =~ "1 relay(s)"
+      assert out =~ "1 operative(s)"
       assert out =~ "[leader]"
       assert out =~ "healthy=1"
     end

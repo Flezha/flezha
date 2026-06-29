@@ -1,16 +1,16 @@
 defmodule Flezha.Boot.StatePathMigrator do
   @moduledoc """
-  One-shot, idempotent migration of the per-Partition state tree from the
-  legacy `app_data/state/{executor_id}/{relay_class}/{shard_id}/` layout
-  to the flat `app_data/state/{relay_class}/{shard_id}/` layout introduced
+  One-shot, idempotent migration of the per-Segment state tree from the
+  legacy `app_data/state/{executor_id}/{operative_class}/{operation_id}/` layout
+  to the flat `app_data/state/{operative_class}/{operation_id}/` layout introduced
   by the `auto-restore-on-boot` change.
 
   Runs synchronously during `Flezha.Application.start/2` BEFORE
-  `Flezha.State.Supervisor` opens any per-Partition `WalWriter`. After
+  `Flezha.State.Supervisor` opens any per-Segment `WalWriter`. After
   the first successful run, subsequent invocations are no-ops because
   the legacy directories are gone.
 
-  Collision policy: when two executor-keyed copies of the same Partition
+  Collision policy: when two executor-keyed copies of the same Segment
   exist (because the executor_id rotated and both old + new survived),
   the file with the higher last-modified time wins; the loser is
   preserved alongside as `<key>.<ext>.preserved-{old_executor_id}` so an
@@ -33,7 +33,7 @@ defmodule Flezha.Boot.StatePathMigrator do
 
     if File.dir?(root) do
       # Only the legacy executor-keyed → flat migration runs. The reader
-      # (`Flezha.State.Registry`) resolves the flat `{relay_class}/{shard}`
+      # (`Flezha.State.Registry`) resolves the flat `{operative_class}/{operation}`
       # layout, so the migrator must produce no other layout — a namespace
       # prefix added ahead of reader support would orphan state.
       do_migrate(root)
@@ -69,14 +69,14 @@ defmodule Flezha.Boot.StatePathMigrator do
   defp legacy_executor_dir?(root, name) do
     full = Path.join(root, name)
 
-    File.dir?(full) and looks_like_executor_id?(name) and contains_relay_class_subdir?(full)
+    File.dir?(full) and looks_like_executor_id?(name) and contains_operative_class_subdir?(full)
   end
 
   defp looks_like_executor_id?(name) do
     String.match?(name, ~r/^[A-Za-z0-9_-]{6,}$/)
   end
 
-  defp contains_relay_class_subdir?(dir) do
+  defp contains_operative_class_subdir?(dir) do
     case File.ls(dir) do
       {:ok, names} ->
         Enum.any?(names, fn n ->
@@ -93,16 +93,16 @@ defmodule Flezha.Boot.StatePathMigrator do
     legacy_root = Path.join(root, executor_id)
 
     File.ls!(legacy_root)
-    |> Enum.reduce(acc, fn relay_class, acc ->
-      legacy_rc = Path.join(legacy_root, relay_class)
+    |> Enum.reduce(acc, fn operative_class, acc ->
+      legacy_rc = Path.join(legacy_root, operative_class)
 
       if File.dir?(legacy_rc) do
         File.ls!(legacy_rc)
-        |> Enum.reduce(acc, fn shard_id, acc ->
-          legacy_shard = Path.join(legacy_rc, shard_id)
+        |> Enum.reduce(acc, fn operation_id, acc ->
+          legacy_operation = Path.join(legacy_rc, operation_id)
 
-          if File.dir?(legacy_shard) do
-            migrate_shard(executor_id, relay_class, shard_id, legacy_shard, root, acc)
+          if File.dir?(legacy_operation) do
+            migrate_operation(executor_id, operative_class, operation_id, legacy_operation, root, acc)
           else
             acc
           end
@@ -119,18 +119,18 @@ defmodule Flezha.Boot.StatePathMigrator do
     end)
   end
 
-  defp migrate_shard(executor_id, relay_class, shard_id, legacy_shard, root, acc) do
-    flat_shard = Path.join([root, relay_class, shard_id])
-    File.mkdir_p!(flat_shard)
+  defp migrate_operation(executor_id, operative_class, operation_id, legacy_operation, root, acc) do
+    flat_operation = Path.join([root, operative_class, operation_id])
+    File.mkdir_p!(flat_operation)
 
-    File.ls!(legacy_shard)
+    File.ls!(legacy_operation)
     |> Enum.reduce(acc, fn name, acc ->
-      from = Path.join(legacy_shard, name)
-      to = Path.join(flat_shard, name)
+      from = Path.join(legacy_operation, name)
+      to = Path.join(flat_operation, name)
       move_file(from, to, executor_id, acc)
     end)
     |> tap(fn _ ->
-      _ = remove_if_empty(legacy_shard)
+      _ = remove_if_empty(legacy_operation)
     end)
   end
 

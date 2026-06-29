@@ -1,10 +1,10 @@
 package com.flezha.test;
 
-import com.flezha.sdk.authoring.Shard;
+import com.flezha.sdk.authoring.Operation;
 import java.util.List;
 
 /** Exercises the generated {@code MAP_SET} / {@code MAP_VEC} mutators. */
-@Shard(id = "java_keyed_collections")
+@Operation(id = "java_keyed_collections")
 public class KeyedCollections {
     public void run(WindowInput input, KeyedCollectionsStateHandle state) {
         state.setLast(input.key(), input.value());

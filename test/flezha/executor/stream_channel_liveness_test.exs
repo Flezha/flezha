@@ -16,8 +16,8 @@ defmodule Flezha.Executor.StreamChannelLivenessTest do
 
     {:ok, _pid} = StreamChannel.start_link({exec, name, :primary})
 
-    GenServer.cast(name, {:io_in, "relay1", {"msg", %{}}})
-    GenServer.cast(name, {:io_in, "relay1", {"msg", %{}}})
+    GenServer.cast(name, {:io_in, "operative1", {"msg", %{}}})
+    GenServer.cast(name, {:io_in, "operative1", {"msg", %{}}})
     # Force the casts to drain before reading the counters.
     _ = :sys.get_state(name)
 

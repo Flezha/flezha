@@ -323,18 +323,18 @@ defmodule Flezha.Plugin.Installer do
   end
 
   # Wait up to 5s for in-flight :request tasks to finish. Snapshot the
-  # current children of Flezha.Relay.MessageHandlerTaskSup, monitor
+  # current children of Flezha.Operative.MessageHandlerTaskSup, monitor
   # each, then drain `:DOWN` messages — no polling. New tasks spawned
   # after the snapshot are not waited on (callers serialize plugin
   # mutations upstream, so this window is small in practice).
   defp quiesce do
-    case Process.whereis(Flezha.Relay.MessageHandlerTaskSup) do
+    case Process.whereis(Flezha.Operative.MessageHandlerTaskSup) do
       nil ->
         :ok
 
       _pid ->
         try do
-          Flezha.Relay.MessageHandlerTaskSup
+          Flezha.Operative.MessageHandlerTaskSup
           |> Task.Supervisor.children()
           |> Enum.map(&Process.monitor/1)
           |> drain_downs(System.monotonic_time(:millisecond) + 5_000)
@@ -451,7 +451,7 @@ defmodule Flezha.Plugin.Installer do
   end
 
   # PluginManager.enable_plugin/2 may crash when downstream services
-  # (RelayManager, ProcessHub) aren't running — that's a configuration
+  # (OperativeManager, ProcessHub) aren't running — that's a configuration
   # bug, not an install bug, but we owe callers a structured error.
   defp safe_enable_plugin(live_id, plugin_struct) do
     PluginManager.enable_plugin(live_id, plugin_struct)
@@ -499,7 +499,7 @@ defmodule Flezha.Plugin.Installer do
       id: provision_live_id(plugin_id, provision),
       provider: provision[:provider],
       namespace: Keyword.get(opts, :namespace) || Map.get(merged_opts, :namespace),
-      relay_id: Keyword.get(opts, :relay_id) || Map.get(merged_opts, :relay_id),
+      operative_id: Keyword.get(opts, :operative_id) || Map.get(merged_opts, :operative_id),
       opts: merged_opts,
       subscriptions: provision[:subscriptions] || []
     }

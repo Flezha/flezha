@@ -35,7 +35,7 @@ defmodule Flezha.Convergence.Loop do
 
   @default_tick_ms 5_000
   @default_output_stall_grace_ms 60_000
-  # A relay must be misbound for this many consecutive ticks before it is
+  # A operative must be misbound for this many consecutive ticks before it is
   # migrated, so a brief executor blip cannot trigger a full-namespace
   # migration + WAL replay.
   @misbound_min_ticks 2
@@ -46,13 +46,13 @@ defmodule Flezha.Convergence.Loop do
   defstruct tick_ms: @default_tick_ms,
             output_stall_grace_ms: @default_output_stall_grace_ms,
             backoff: Backoff.new(),
-            # {namespace, relay_id} => consecutive ticks observed misbound.
+            # {namespace, operative_id} => consecutive ticks observed misbound.
             misbound_streaks: %{},
-            # relay_instance => monotonic_ms when last flagged stalled.
+            # operative_instance => monotonic_ms when last flagged stalled.
             # Reported to /healthz as degraded; the Watchdog resyncs the
-            # relay in place. Entries age out after the output-stall grace.
-            stalled_relays: %{},
-            # relay_ids whose declared plugins were missing or self-reported
+            # operative in place. Entries age out after the output-stall grace.
+            stalled_operatives: %{},
+            # operative_ids whose declared plugins were missing or self-reported
             # unhealthy on the last tick. Reported to /healthz as degraded;
             # kept only to log set transitions, not steady state.
             plugin_degraded: [],
@@ -124,9 +124,9 @@ defmodule Flezha.Convergence.Loop do
     {:noreply, run_tick(state)}
   end
 
-  def handle_info({:output_stall, relay_id}, %__MODULE__{} = state) when is_binary(relay_id) do
+  def handle_info({:output_stall, operative_id}, %__MODULE__{} = state) when is_binary(operative_id) do
     now = System.monotonic_time(:millisecond)
-    state = %{state | stalled_relays: Map.put(state.stalled_relays, relay_id, now)}
+    state = %{state | stalled_operatives: Map.put(state.stalled_operatives, operative_id, now)}
     {:noreply, run_tick(state)}
   end
 
@@ -147,8 +147,8 @@ defmodule Flezha.Convergence.Loop do
 
   @doc false
   def handle_telemetry([:flezha, :state, :output_stall], _measurements, metadata, loop_pid) do
-    relay_id = Map.get(metadata, :relay_instance)
-    if is_binary(relay_id) and is_pid(loop_pid), do: send(loop_pid, {:output_stall, relay_id})
+    operative_id = Map.get(metadata, :operative_instance)
+    if is_binary(operative_id) and is_pid(loop_pid), do: send(loop_pid, {:output_stall, operative_id})
     :ok
   catch
     _, _ -> :ok
@@ -180,24 +180,24 @@ defmodule Flezha.Convergence.Loop do
     started_at = System.monotonic_time(:millisecond)
 
     # Age out stalled entries the Watchdog has stopped re-flagging: a
-    # relay that resumed producing leaves the set without a manual clear.
-    stalled = expire_stalled(state.stalled_relays, started_at, state.output_stall_grace_ms)
-    state = %{state | stalled_relays: stalled}
+    # operative that resumed producing leaves the set without a manual clear.
+    stalled = expire_stalled(state.stalled_operatives, started_at, state.output_stall_grace_ms)
+    state = %{state | stalled_operatives: stalled}
 
     intent = Intent.declared()
     reality = Probe.snapshot()
 
-    # Per-namespace recovery gate: heal only relays whose hub has finished
+    # Per-namespace recovery gate: heal only operatives whose hub has finished
     # recovery. A namespace mid-replay is skipped (no heal against a
     # half-restored registry) without blocking healing for ready namespaces.
     ready = RecoveryGate.ready_namespaces(intent)
-    heal_relays = Enum.filter(intent.relays, &MapSet.member?(ready, &1.namespace))
-    delta = Diff.compute(%Intent{relays: heal_relays}, reality)
+    heal_operatives = Enum.filter(intent.operatives, &MapSet.member?(ready, &1.namespace))
+    delta = Diff.compute(%Intent{operatives: heal_operatives}, reality)
 
     {streaks, delta} = apply_misbound_streak(state.misbound_streaks, delta)
     state = %{state | misbound_streaks: streaks}
 
-    plugin_degraded = plugin_degraded_relays(delta)
+    plugin_degraded = plugin_degraded_operatives(delta)
     maybe_log_plugin_degraded(plugin_degraded, state.plugin_degraded)
     state = %{state | plugin_degraded: plugin_degraded}
 
@@ -217,7 +217,7 @@ defmodule Flezha.Convergence.Loop do
 
     :telemetry.execute(
       [:flezha, :convergence, :tick],
-      %{relays_total: length(intent.relays), actions_issued: issued, duration_ms: elapsed},
+      %{operatives_total: length(intent.operatives), actions_issued: issued, duration_ms: elapsed},
       %{state: :ticking}
     )
 
@@ -256,7 +256,7 @@ defmodule Flezha.Convergence.Loop do
       end)
 
     # Per-executor data-stream servers (StreamAcceptor-owned) — the layer
-    # that actually carries relay traffic, invisible to get_stats/1.
+    # that actually carries operative traffic, invisible to get_stats/1.
     data_drivers =
       LivenessCounters.driver_refs()
       |> Enum.flat_map(fn {{executor_id, type}, ref} ->
@@ -266,8 +266,8 @@ defmodule Flezha.Convergence.Loop do
         end
       end)
 
-    %{channels: channels, relays: relays} = LivenessCounters.snapshot_all()
-    %{drivers: control_drivers ++ data_drivers, channels: channels, relays: relays}
+    %{channels: channels, operatives: operatives} = LivenessCounters.snapshot_all()
+    %{drivers: control_drivers ++ data_drivers, channels: channels, operatives: operatives}
   end
 
   defp maybe_emit_stall(:ok, last) when last not in [nil, :ok] do
@@ -298,16 +298,16 @@ defmodule Flezha.Convergence.Loop do
   defp tick_failed_telemetry() do
     :telemetry.execute(
       [:flezha, :convergence, :tick],
-      %{relays_total: 0, actions_issued: 0},
+      %{operatives_total: 0, actions_issued: 0},
       %{state: :error}
     )
   end
 
-  # A relay must be misbound for @misbound_min_ticks consecutive ticks before
-  # it is migrated. Relays not misbound this tick drop out of the streak map
-  # (reset), so a relay seen bound again clears immediately.
+  # A operative must be misbound for @misbound_min_ticks consecutive ticks before
+  # it is migrated. Operatives not misbound this tick drop out of the streak map
+  # (reset), so a operative seen bound again clears immediately.
   @doc false
-  def apply_misbound_streak(streaks, %Diff{misbound_relays: misbound} = delta) do
+  def apply_misbound_streak(streaks, %Diff{misbound_operatives: misbound} = delta) do
     new_streaks =
       Enum.reduce(misbound, %{}, fn {ref, _dead}, acc ->
         Map.put(acc, ref, Map.get(streaks, ref, 0) + 1)
@@ -318,17 +318,17 @@ defmodule Flezha.Convergence.Loop do
         Map.get(new_streaks, ref) >= @misbound_min_ticks
       end)
 
-    {new_streaks, %{delta | misbound_relays: ready}}
+    {new_streaks, %{delta | misbound_operatives: ready}}
   end
 
   defp expire_stalled(stalled, now, grace_ms) do
-    :maps.filter(fn _relay, since -> now - since < grace_ms end, stalled)
+    :maps.filter(fn _operative, since -> now - since < grace_ms end, stalled)
   end
 
-  # Relays whose declared plugins diverge from production reality this tick:
+  # Operatives whose declared plugins diverge from production reality this tick:
   # missing (not subscribed) or self-reported unhealthy. Sorted for a stable
   # transition compare.
-  defp plugin_degraded_relays(%Diff{} = delta) do
+  defp plugin_degraded_operatives(%Diff{} = delta) do
     missing = Enum.map(delta.missing_plugins, fn {{_ns, rid}, _id, _plugin} -> rid end)
     unhealthy = Enum.map(delta.unhealthy_plugins, fn {{_ns, rid}, _id, _plugin, _r} -> rid end)
     Enum.uniq(missing ++ unhealthy) |> Enum.sort()
@@ -342,7 +342,7 @@ defmodule Flezha.Convergence.Loop do
 
     if fresh != [] do
       Logger.warning(
-        "[convergence] plugin-degraded relays #{inspect(fresh)} — declared plugins missing or unhealthy; healing"
+        "[convergence] plugin-degraded operatives #{inspect(fresh)} — declared plugins missing or unhealthy; healing"
       )
     end
 
@@ -351,25 +351,25 @@ defmodule Flezha.Convergence.Loop do
     end
   end
 
-  # Inject backoff-filtered rebind_relay ops for stalled relays not already
+  # Inject backoff-filtered rebind_operative ops for stalled operatives not already
   # covered by the plan. Uses args.reason :output_stall so Heal skips the
-  # active-executor guard that would block a healthy-but-frozen relay.
+  # active-executor guard that would block a healthy-but-frozen operative.
   @doc false
   def inject_stall_rebinds_for_test(plan, stalled, intent, ready, backoff) do
     inject_stall_rebinds(plan, stalled, intent, ready, backoff)
   end
 
-  defp inject_stall_rebinds(plan, stalled, %Intent{relays: intent_relays}, ready, backoff) do
+  defp inject_stall_rebinds(plan, stalled, %Intent{operatives: intent_operatives}, ready, backoff) do
     covered = MapSet.new(plan, fn op -> op.target end)
-    ns_by_relay = Map.new(intent_relays, fn r -> {r.relay_id, r.namespace} end)
+    ns_by_operative = Map.new(intent_operatives, fn r -> {r.operative_id, r.namespace} end)
     now = System.monotonic_time(:millisecond)
 
     stall_ops =
       stalled
       |> Map.keys()
       |> Enum.reject(&MapSet.member?(covered, &1))
-      |> Enum.flat_map(fn relay_id ->
-        case Map.get(ns_by_relay, relay_id) do
+      |> Enum.flat_map(fn operative_id ->
+        case Map.get(ns_by_operative, operative_id) do
           nil ->
             []
 
@@ -377,9 +377,9 @@ defmodule Flezha.Convergence.Loop do
             if MapSet.member?(ready, ns) do
               [
                 %{
-                  primitive: :rebind_relay,
+                  primitive: :rebind_operative,
                   namespace: ns,
-                  target: relay_id,
+                  target: operative_id,
                   args: %{reason: :output_stall}
                 }
               ]
@@ -402,24 +402,24 @@ defmodule Flezha.Convergence.Loop do
     end)
   end
 
-  defp publish(%Intent{relays: relays}, reality, %__MODULE__{} = state) do
-    # `intended` = declared relays (what should be bound); `bound` = relays
+  defp publish(%Intent{operatives: operatives}, reality, %__MODULE__{} = state) do
+    # `intended` = declared operatives (what should be bound); `bound` = operatives
     # actually observed running on executors. After a restart the controller is
-    # up but its relays are not yet rebound (bound < intended) — that is a
+    # up but its operatives are not yet rebound (bound < intended) — that is a
     # recovery window, NOT healthy, even though nothing is "stalled".
-    intended = length(relays)
-    bound = map_size(Map.get(reality, :relays, %{}))
-    stalled = Map.keys(state.stalled_relays)
+    intended = length(operatives)
+    bound = map_size(Map.get(reality, :operatives, %{}))
+    stalled = Map.keys(state.stalled_operatives)
     non_producing = Enum.uniq(stalled ++ state.plugin_degraded)
     producing = max(bound - length(non_producing), 0)
 
-    # After a restart the durable registry may hold relays that are not yet
+    # After a restart the durable registry may hold operatives that are not yet
     # bound to a live pid — either the hub has not started (lazy on executor
     # reconnect) or it has replayed its DETS rows but the stale pids are dead.
     # In that window `Intent` is short of the durable set, so `bound < intended`
     # cannot catch it (it compares two already-shrunken counts). Surfacing the
     # registry-vs-loaded signal lets `/healthz` report `recovering` instead of
-    # vacuously `healthy` until every durable relay is reloaded and bound.
+    # vacuously `healthy` until every durable operative is reloaded and bound.
     pending_restore = HubManager.durable_registry_pending?()
 
     # Unmet-intent clock: runs while `bound < intended` and not recovering.
@@ -434,40 +434,40 @@ defmodule Flezha.Convergence.Loop do
 
     Snapshot.publish(%{
       last_tick_at: now,
-      stalled_relays: stalled,
-      plugin_degraded_relays: state.plugin_degraded,
-      intended_relays: intended,
-      bound_relays: bound,
-      producing_relays: producing,
+      stalled_operatives: stalled,
+      plugin_degraded_operatives: state.plugin_degraded,
+      intended_operatives: intended,
+      bound_operatives: bound,
+      producing_operatives: producing,
       pending_restore: pending_restore,
       unmet_intent_ms: unmet_intent_since && now - unmet_intent_since,
-      relay_health: relay_health_map(relays, reality, state)
+      operative_health: operative_health_map(operatives, reality, state)
     })
 
     %{state | unmet_intent_since: unmet_intent_since}
   end
 
-  # Per-relay health for the operator surfaces (`flz relay list`,
-  # `flz cluster status`), keyed `{namespace, relay_id}`. Derives the same
+  # Per-operative health for the operator surfaces (`flz operative list`,
+  # `flz cluster status`), keyed `{namespace, operative_id}`. Derives the same
   # authoritative reality the Diff classifies against, so the CLI sees exactly
-  # what the loop sees. A relay only appears `:unknown` here while a tick has
+  # what the loop sees. A operative only appears `:unknown` here while a tick has
   # not yet observed it or its read failed — never permanently. Mirrors the
   # bound/misbound cond in `Diff.compute/2`, extended with the produce signals.
   @doc false
-  @spec relay_health_map([Intent.relay()], map(), %__MODULE__{}) :: %{{atom(), binary()} => atom()}
-  def relay_health_map(relays, reality, %__MODULE__{} = state) do
-    observed = Map.get(reality, :relays, %{})
+  @spec operative_health_map([Intent.operative()], map(), %__MODULE__{}) :: %{{atom(), binary()} => atom()}
+  def operative_health_map(operatives, reality, %__MODULE__{} = state) do
+    observed = Map.get(reality, :operatives, %{})
     active = Map.get(reality, :active_executors, %{})
     plugin_degraded = MapSet.new(state.plugin_degraded)
 
-    Map.new(relays, fn %{namespace: ns, relay_id: rid} ->
+    Map.new(operatives, fn %{namespace: ns, operative_id: rid} ->
       obs = Map.get(observed, {ns, rid}, %{})
       bound = Map.get(obs, :bound_executor)
       live = Map.get(active, ns, MapSet.new())
 
       health =
         cond do
-          # An observation failed this tick (relay state or live-executor read);
+          # An observation failed this tick (operative state or live-executor read);
           # no authoritative signal, so report `:unknown` for this tick only.
           bound == :unknown -> :unknown
           is_nil(bound) -> :unbound
@@ -475,7 +475,7 @@ defmodule Flezha.Convergence.Loop do
           # Bound to an executor that is no longer live — the loop will rebind.
           not MapSet.member?(live, bound) -> :failed
           Map.get(obs, :parked?, false) -> :degraded
-          Map.has_key?(state.stalled_relays, rid) -> :degraded
+          Map.has_key?(state.stalled_operatives, rid) -> :degraded
           MapSet.member?(plugin_degraded, rid) -> :degraded
           true -> :healthy
         end

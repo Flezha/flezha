@@ -15,7 +15,7 @@ defmodule Flezha.AuthZ.Policy do
 
   # Read-only actions usable by viewers on the bound namespace.
   @viewer_actions [
-    :"relay.list",
+    :"operative.list",
     :"plugin.list",
     :"plugin.info",
     :"audit.read",
@@ -33,10 +33,10 @@ defmodule Flezha.AuthZ.Policy do
     :"state.at"
   ]
 
-  # Operator adds relay/plugin lifecycle, audit rotation, observability mutate.
+  # Operator adds operative/plugin lifecycle, audit rotation, observability mutate.
   @operator_extra [
-    :"relay.start",
-    :"relay.stop",
+    :"operative.start",
+    :"operative.stop",
     :"plugin.enable",
     :"plugin.disable",
     :"audit.rotate",

@@ -1,0 +1,1184 @@
+defmodule Flezha.Operative.Overwatch do
+  alias Flezha.Service.HubManager
+  alias Flezha.Service.ConfigManager
+  alias Flezha.Service.Identificator
+  alias Flezha.Service.Payloader
+  alias Flezha.Service.OperativeManager
+  alias Flezha.Executor.ControlChannel
+  alias Flezha.Executor.ControlUnit
+  alias Flezha.Executor.FleetManager
+  alias Flezha.Executor.StreamSup
+  alias Flezha.Plugin
+  alias Flezha.Plugin.Extension
+  alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.Extension.Table
+  alias Flezha.Operative.Kind
+  alias Flezha.State.{Restore, Wire}
+  alias Flezha.Transport.LivenessCounters
+
+  # Defaults for the bounded-retry governor introduced by
+  # `fix-overwatch-restart-storm`. Tuned to ~19 s aggregate so a transient
+  # control-channel rebind (raspberrypi5 cold-start hits ~5–10 s) recovers
+  # within one burst without spinning the supervisor.
+  @default_retry_backoff_ms [200, 500, 1_000, 2_000, 5_000, 10_000]
+
+  require Logger
+
+  use GenServer
+  use ProcessHub.Strategy.Migration.HotSwap
+
+  use Flezha.Plugin.Host,
+    extensions: [
+      {:on_operative_init, :fold, Flezha.Plugin.Extension.Ctx.Init},
+      {:on_input, :transform, Flezha.Plugin.Extension.Ctx.IO},
+      {:on_output, :transform, Flezha.Plugin.Extension.Ctx.IO},
+      {:on_interval, :timer, Flezha.Plugin.Extension.Ctx.Tick},
+      {:on_message, :request, Flezha.Plugin.Extension.Ctx.Msg},
+      {:on_snapshot, :fanout, Flezha.Plugin.Extension.Ctx.Snapshot},
+      {:on_terminate, :fanout, Flezha.Plugin.Extension.Ctx.Terminate}
+    ]
+
+  defstruct [
+    :id,
+    :namespace,
+    :executor_id,
+    :factory_id,
+    :channel,
+    :extensions,
+    :builder,
+    snapshot: nil,
+    init_values: %{},
+    default_input_type: "2",
+    arrived_via_hotswap?: false,
+    init_error: nil,
+    # Liveness counters ref (io_in_received / forwarded / filtered_nil) so a
+    # stall can be localised to "WS plugin stopped feeding" vs "operative stopped
+    # forwarding to the channel".
+    liveness_ref: nil,
+    # The `:executor_migrate` retry runs in a `Task.Supervisor.async_nolink/3`
+    # task so it never blocks `:stop_operative`; this field carries the in-flight
+    # task's reference + pid so `:stop_operative` can terminate it cleanly. `nil`
+    # when no migrate is in flight.
+    migrate_task: nil
+  ]
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({namespace, stale_executor_id, operative}) do
+    Process.flag(:trap_exit, true)
+
+    # IMPORTANT: init/1 must return quickly so the `dist_sup` supervisor
+    # tree (which calls us synchronously from `DistributedSupervisor.init/1`
+    # during the DETS replay) can unblock. Any GenServer.call to
+    # FleetManager / OperativeManager from inside init/1 deadlocks because
+    # FleetManager is itself waiting on :default_hub, which is waiting
+    # for dist_sup.init to complete.
+    #
+    # Defer all blocking work (executor wait, plugin subscribe, SDK
+    # start) to handle_continue — by then init has returned, dist_sup
+    # has unblocked, the hub has finished initialization, and
+    # FleetManager can answer our calls.
+    state = %__MODULE__{
+      id: operative.id,
+      namespace: namespace,
+      factory_id: operative.factory_id,
+      init_values: operative.init_values,
+      executor_id: stale_executor_id,
+      channel: nil,
+      snapshot: nil,
+      default_input_type: Keyword.get(operative.opts, :default_input_type, "2"),
+      extensions: Table.new(__extensions_catalog__()),
+      builder: operative,
+      liveness_ref: LivenessCounters.register_operative(operative.id)
+    }
+
+    {:ok, state, {:continue, {:bind_executor, stale_executor_id, operative}}}
+  end
+
+  @impl true
+  def handle_continue({:bind_executor, stale_executor_id, operative}, %__MODULE__{} = state) do
+    # Wait for an active executor in this namespace advertising
+    # `operative.factory_id`. The DETS-baked executor_id is usually stale
+    # after a restart (Identificator.unique_id/1 generates a fresh id
+    # per connect), so we re-resolve via OperativeManager.assign_executor/3
+    # — the same lookup HubManager.alter_child_data/2 performs.
+    case with_op_span(:await_executor, operative.id, fn ->
+           await_active_executor(state.namespace, operative.factory_id, operative.id, executor_wait_ms())
+         end) do
+      {:ok, executor_id} ->
+        if executor_id != stale_executor_id do
+          Logger.info(
+            "[Overwatch] operative #{operative.id} rebound from stale executor #{inspect(stale_executor_id)} to live #{inspect(executor_id)}"
+          )
+        end
+
+        case complete_init(state, executor_id, operative) do
+          {:ok, new_state} -> {:noreply, new_state}
+          {:error, reason, parked} -> {:noreply, park(parked, reason)}
+        end
+
+      {:error, :timeout} ->
+        Logger.warning(
+          "[Overwatch] no active executor in namespace #{inspect(state.namespace)} for factory #{inspect(operative.factory_id)} within #{executor_wait_ms()} ms; deferring operative #{operative.id} startup"
+        )
+
+        {:stop, :executor_not_ready, state}
+    end
+  end
+
+  defp complete_init(%__MODULE__{} = state, executor_id, operative) do
+    state = bind_to_executor(state, operative.id, executor_id)
+    plugins = Keyword.get(operative.opts, :plugins, [])
+
+    with {:ok, state} <- prepare_initial_plugins(state, plugins),
+         {:ok, state, operative} <- resolve_init_state(state, operative),
+         {:ok, final_executor_id, state} <- start_operative_sdk_with_retry(state, operative) do
+      state =
+        state
+        |> bind_to_executor(operative.id, final_executor_id)
+        |> Map.put(:init_error, nil)
+        |> activate_initial_plugins()
+
+      _ = maybe_dispatch_restore_init_state(state, operative)
+      {:ok, state}
+    else
+      {:error, reason, %__MODULE__{} = parked} -> {:error, reason, parked}
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  defp bind_to_executor(%__MODULE__{} = state, operative_id, executor_id) do
+    %__MODULE__{
+      state
+      | executor_id: executor_id,
+        channel: attach_channel(operative_id, executor_id)
+    }
+  end
+
+  # Returns `{:ok, executor_id, state}` on success or `{:error, reason,
+  # state}` on exhaustion. On every attempt the executor is re-resolved
+  # so a fresh executor that came online during a backoff window is
+  # picked up.
+  defp start_operative_sdk_with_retry(%__MODULE__{} = state, operative) do
+    do_start_with_retry(state, operative, retry_backoff_ms(), 1)
+  end
+
+  defp do_start_with_retry(state, _operative, [], _attempt) do
+    {:error, :exhausted, state}
+  end
+
+  defp do_start_with_retry(%__MODULE__{} = state, operative, [delay | rest], attempt) do
+    executor_id = resolve_executor(state.namespace, operative.factory_id, operative.id, state.executor_id)
+    state = %__MODULE__{state | executor_id: executor_id}
+
+    case attempt_ping_and_start(operative, executor_id) do
+      {:ok, _} ->
+        {:ok, executor_id, state}
+
+      {:error, reason} when rest == [] ->
+        {:error, reason, state}
+
+      {:error, reason} ->
+        Logger.warning(
+          "[Overwatch] operative #{operative.id} startup attempt #{attempt} failed: " <>
+            "#{inspect(reason)} — retrying within #{delay} ms"
+        )
+
+        wait_with_jitter(delay)
+        do_start_with_retry(state, operative, rest, attempt + 1)
+    end
+  end
+
+  # On ping failure, reset the underlying `ControlChannel`'s `stream_ref`
+  # so the SDK's next data stream can claim it via the existing rebind
+  # path (`executor-controller-connection-healing`). `:start_operative` is
+  # only issued AFTER the ping confirms the round-trip works.
+  defp attempt_ping_and_start(operative, executor_id) do
+    case ping_executor(executor_id) do
+      :ok ->
+        case start_operative_sdk(executor_id, operative) do
+          {:ok, _} = ok -> ok
+          {:error, reason} -> {:error, {:start_operative_failed, reason}}
+        end
+
+      {:error, reason} ->
+        _ = reset_control_channel(executor_id)
+        {:error, {:ping_failed, reason}}
+    end
+  end
+
+  # `:overwatch_ping_fn` / `:overwatch_reset_channel_fn` are test-only
+  # function-injection hooks (Mimic cannot stub across the dist_sup-spawned
+  # Overwatch process boundary from a test pid).
+  defp ping_executor(executor_id) do
+    cond do
+      not Application.get_env(:flezha, :overwatch_ping_enabled, true) ->
+        :ok
+
+      fun = test_hook(:overwatch_ping_fn) ->
+        normalize_ping(fun.(executor_id))
+
+      true ->
+        normalize_ping(ControlUnit.ping_executor(executor_id))
+    end
+  end
+
+  defp normalize_ping({:ok, :pong}), do: :ok
+  defp normalize_ping({:error, _} = err), do: err
+
+  defp reset_control_channel(executor_id) do
+    case test_hook(:overwatch_reset_channel_fn) do
+      nil -> FleetManager.reset_control_channel(executor_id)
+      fun -> fun.(executor_id)
+    end
+  end
+
+  defp test_hook(key) do
+    case Application.get_env(:flezha, key) do
+      fun when is_function(fun, 1) -> fun
+      _ -> nil
+    end
+  end
+
+  defp resolve_executor(namespace, factory_id, operative_id, fallback) do
+    case OperativeManager.assign_executor(namespace, factory_id, operative_id) do
+      id when is_binary(id) and byte_size(id) > 0 -> id
+      _ -> fallback
+    end
+  end
+
+  defp retry_backoff_ms,
+    do: Application.get_env(:flezha, :overwatch_retry_backoff_ms, @default_retry_backoff_ms)
+
+  # Idle the GenServer for `1..delay` ms. The empty receive consumes no
+  # mailbox messages — it only fires the `after` branch on timeout, so
+  # casts and infos arriving during the wait stay queued for the next
+  # dispatch. Equivalent to `Process.sleep/1` minus the dedicated
+  # sleep primitive.
+  defp wait_with_jitter(0), do: :ok
+
+  defp wait_with_jitter(delay) when is_integer(delay) and delay > 0 do
+    receive do
+    after
+      :rand.uniform(delay) -> :ok
+    end
+  end
+
+  # Transition the Overwatch into the parked-error state: store the failure
+  # reason and stay alive (no `:stop`, no supervisor restart). Plugins remain
+  # in `:prepared` so no upstream I/O fires while parked. The reconciler drives
+  # the event-driven un-park (`executor_migrate`) once a healthy executor for
+  # the operative's factory is available.
+  defp park(%__MODULE__{} = state, reason) do
+    Map.put(state, :init_error, reason)
+  end
+
+  # The minimal SDK operative for a running-operative migrate: the factory + the
+  # current (snapshot-derived) init_values, no plugins (the controller-side
+  # plugin table is untouched on a running migrate).
+  defp migrate_operative(%__MODULE__{} = state) do
+    init_values =
+      if state.snapshot != nil,
+        do: Payloader.json_to_map(state.snapshot),
+        else: state.init_values
+
+    %Flezha.Operative.Builder{
+      id: state.id,
+      factory_id: state.factory_id,
+      init_values: init_values,
+      opts: []
+    }
+  end
+
+  defp executor_wait_ms,
+    do: Application.get_env(:flezha, :overwatch_executor_wait_ms, 30_000)
+
+  # Poll `OperativeManager.assign_executor/3` until it returns a live
+  # executor id whose CU is registered in Flezha.Service.Identificator,
+  # or the deadline elapses. Returns `{:ok, executor_id}` or
+  # `{:error, :timeout}`.
+  defp await_active_executor(namespace, factory_id, operative_id, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_await_active_executor(namespace, factory_id, operative_id, deadline)
+  end
+
+  defp do_await_active_executor(namespace, factory_id, operative_id, deadline) do
+    case OperativeManager.assign_executor(namespace, factory_id, operative_id) do
+      executor_id when is_binary(executor_id) ->
+        if executor_ready?(executor_id) do
+          {:ok, executor_id}
+        else
+          retry_or_timeout(namespace, factory_id, operative_id, deadline)
+        end
+
+      _ ->
+        retry_or_timeout(namespace, factory_id, operative_id, deadline)
+    end
+  end
+
+  defp retry_or_timeout(namespace, factory_id, operative_id, deadline) do
+    now = System.monotonic_time(:millisecond)
+
+    cond do
+      now >= deadline ->
+        {:error, :timeout}
+
+      true ->
+        Process.sleep(50)
+        do_await_active_executor(namespace, factory_id, operative_id, deadline)
+    end
+  end
+
+  # The executor's control unit GenServer registers itself in
+  # `Flezha.Service.Identificator` as the LAST step of its supervision
+  # tree (`ExecutorSupervisor.init/1` → `ControlUnit.start_link/1`).
+  # Registration alone is NOT sufficient: a SIGKILL'd executor can leave
+  # the cu registered as a zombie (the `{:flz_closed}` disconnect never
+  # arrived), so we additionally require a fresh end-to-end ping when
+  # `:overwatch_ping_enabled` is on. Skipped in the unit suites that drive
+  # synthetic executors with no real SDK behind the cu.
+  defp executor_ready?(executor_id) do
+    case Registry.lookup(Identificator, "#{executor_id}_cu") do
+      [{_pid, _}] ->
+        if Application.get_env(:flezha, :overwatch_ping_enabled, true),
+          do: ping_executor(executor_id) == :ok,
+          else: true
+
+      _ ->
+        false
+    end
+  end
+
+  # Walk the on-disk Segment state for this operative (using `operative.id` as
+  # the operative_class) and dispatch `RestoreInitState` to the SDK for each
+  # Segment that has a non-empty payload. Skipped when the operative
+  # arrived via HotSwap — handover already delivers the state in-band.
+  # Skipped when persistence is disabled for this operative class.
+  defp maybe_dispatch_restore_init_state(%__MODULE__{arrived_via_hotswap?: true}, _operative), do: :ok
+
+  defp maybe_dispatch_restore_init_state(%__MODULE__{} = state, operative) do
+    do_dispatch_restore(state, operative.opts, state.executor_id)
+    :ok
+  end
+
+  defp do_dispatch_restore(%__MODULE__{} = state, operative_opts, executor_id) do
+    # The SDK keys per-Segment state by the operative INSTANCE id (== `state.id`),
+    # so the WAL lives under `state/{operative_id}/...`. Enumerate by the same key.
+    operative_class = Keyword.get(operative_opts, :operative_class, state.id)
+
+    # Off-process: the replay does blocking disk reads, never touches state.
+    spawn(fn -> replay_persisted_segments(operative_class, executor_id) end)
+
+    :ok
+  end
+
+  defp replay_persisted_segments(operative_class, executor_id) do
+    if Flezha.State.PersistenceResolver.persistence_enabled?(operative_class) do
+      operative_class
+      |> enumerate_persisted_segments()
+      |> Enum.each(fn segment_id ->
+        if Flezha.State.Restore.has_persisted_state?(segment_id) do
+          _ = dispatch_restore_init_state(executor_id, segment_id)
+        end
+      end)
+    end
+
+    :ok
+  end
+
+  @doc """
+  External trigger for the bind-driven per-Segment replay. Called from
+  `Flezha.State.Recovery.resync_for_overwatch/2` when a non-bind caller
+  (the convergence Loop's rebind heal) needs to re-issue the
+  `RestoreInitState` handshake for an already-bound Overwatch.
+
+  Implementation routes the work back to the Overwatch process via a
+  cast so the caller never blocks on enumeration / dispatch — the
+  Overwatch is the single owner of "enumerate my segments, dispatch
+  RestoreInitState for each".
+  """
+  @spec kick_restore_for_bound_executor(pid(), binary()) :: :ok
+  def kick_restore_for_bound_executor(overwatch_pid, executor_id)
+      when is_pid(overwatch_pid) and is_binary(executor_id) do
+    GenServer.cast(overwatch_pid, {:kick_restore, executor_id})
+  end
+
+  defp enumerate_persisted_segments(operative_class) do
+    Flezha.State.Registry.all_segments()
+    |> Enum.filter(fn {rc, _, _} -> rc == operative_class end)
+  end
+
+  # Phase 1 of the two-phase plugin lifecycle: register each plugin's
+  # GenServer + struct (`init_provider/1` runs), but do NOT activate
+  # upstream resources. Plugins enter the `:prepared` phase. Idempotent on
+  # repeat — Table.bulk_subscribe/2 rejects duplicate plugin_ids, so on a
+  # retry-driven re-entry we skip without re-init.
+  defp prepare_initial_plugins(%__MODULE__{} = state, plugins) do
+    # `operative.opts[:plugins]` accepts two shapes: bare `%Plugin{}` (the
+    # cold-start `flz operative start --plugins` path emits this) and
+    # `{plugin_id, %Plugin{}}` tuples (the cspec-persistence path written
+    # by `Flezha.Service.PluginManager` through `ProcessRegistry.update/3`
+    # after a successful `flz plugin enable`). Both normalise into the
+    # tuple form `Table.bulk_subscribe/2` expects.
+    already_prepared? =
+      state.extensions.plugins != %{} and Enum.count(state.extensions.plugins) > 0
+
+    if already_prepared? do
+      {:ok, state}
+    else
+      entries =
+        Enum.map(plugins, fn
+          {id, %Plugin{} = plugin} -> {id, plugin}
+          %Plugin{id: id} = plugin -> {id, plugin}
+        end)
+
+      case Table.bulk_subscribe(state.extensions, entries) do
+        {:ok, table} -> {:ok, %{state | extensions: table}}
+        {:error, {_plugin_id, reason}} -> {:error, reason}
+      end
+    end
+  end
+
+  # Phase 2 of the two-phase plugin lifecycle: transition every prepared
+  # plugin to `:running` by invoking its provider's optional `activate/1`
+  # callback (which is where upstream TLS connects, subscribe handshakes,
+  # and other resource-acquisition I/O happens — see
+  # `Plugin.Provider.Websocket`). Called exactly once per successful
+  # startup, immediately after `start_operative_sdk/2` returns `{:ok, _}`.
+  defp activate_initial_plugins(%__MODULE__{} = state) do
+    %__MODULE__{state | extensions: Table.bulk_activate(state.extensions)}
+  end
+
+  # Per the `operative-init-state` capability spec:
+  #   - cold start with empty init_values → chain runs
+  #   - cold start with non-empty init_values → chain MUST NOT run; inline values used as-is
+  #
+  # `init/1` is also the path for in-place restart plugin restoration: the
+  # cspec's `operative.opts[:plugins]` list is read above and re-subscribed
+  # by `subscribe_initial_plugins/2`. That path is independent of the
+  # per-Segment state-restore path (`dispatch_restore_init_state/2`),
+  # which rehydrates SDK-side WAL/snapshot state through the data plane.
+  #
+  # HotSwap migration is handled separately in `alter_handover_state/2`
+  # and never reaches this function.
+  defp resolve_init_state(%__MODULE__{} = state, %{init_values: init_values} = operative)
+       when init_values == %{} do
+    ctx = %Ctx.Init{
+      operative_id: operative.id,
+      namespace: state.namespace,
+      factory_id: operative.factory_id,
+      accumulated: operative.init_values
+    }
+
+    case Extension.run(state.extensions, :on_operative_init, ctx) do
+      {:ok, %Ctx.Init{accumulated: resolved}} ->
+        {:ok, %{state | init_values: resolved}, %{operative | init_values: resolved}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp resolve_init_state(%__MODULE__{} = state, operative) do
+    # Non-empty inline init_values bypass the chain.
+    {:ok, %{state | init_values: operative.init_values}, operative}
+  end
+
+  @impl true
+  def terminate(reason, state) do
+    unless is_nil(state.executor_id) do
+      GenServer.cast(
+        Identificator.control_unit(state.executor_id),
+        {:stop_operative_async, state.id}
+      )
+
+      fire_on_terminate(state, reason)
+      state = %{state | extensions: Table.teardown_all(state.extensions)}
+      _ = state
+    end
+
+    Logger.info(
+      "Terminating operative #{state.id} in namespace #{state.namespace}: #{inspect(reason)}"
+    )
+
+    :ok
+  end
+
+  defp fire_on_terminate(%__MODULE__{} = state, reason) do
+    ctx = %Ctx.Terminate{
+      operative_id: state.id,
+      namespace: state.namespace,
+      executor_id: state.executor_id,
+      reason: reason
+    }
+
+    Extension.run(state.extensions, :on_terminate, ctx)
+    :ok
+  end
+
+  @impl true
+  def handle_call(:registry_executor_set, _from, %__MODULE__{init_error: nil} = state) do
+    HubManager.operative_set_executor(state.namespace, state.id, state.executor_id)
+
+    {:reply, {:ok, state.executor_id}, state}
+  end
+
+  def handle_call(:registry_executor_set, _from, %__MODULE__{init_error: reason} = state) do
+    {:reply, {:error, reason}, state}
+  end
+
+  @impl true
+  def handle_call(:stop_operative, from, state) do
+    # Terminate any in-flight `:executor_migrate` task BEFORE the synchronous
+    # stop sequence so `flz operative stop r1` always returns within its normal
+    # handle_call window even mid-retry.
+    state = terminate_migrate_task(state)
+
+    case state.executor_id do
+      nil ->
+        :ok
+
+      _ ->
+        with_op_span(:stop_operative, state.id, fn ->
+          GenServer.call(
+            Identificator.control_unit(state.executor_id),
+            {:stop_operative, state.id}
+          )
+        end)
+    end
+
+    fire_on_terminate(state, :stopped)
+    table = Table.teardown_all(state.extensions)
+
+    GenServer.reply(from, :ok)
+
+    {:stop, :normal, %{state | executor_id: nil, extensions: table}}
+  end
+
+  @impl true
+  def handle_call(
+        {:plugin_subscribe, plugin_id, %Plugin{} = plugin},
+        _from,
+        %__MODULE__{} = state
+      ) do
+    case Table.subscribe(state.extensions, plugin_id, plugin) do
+      {:ok, table} ->
+        # Runtime adds: SDK is already up, so activate immediately.
+        # Boot path goes through activate_initial_plugins/1 instead.
+        {:reply, :ok, %{state | extensions: Table.bulk_activate(table)}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:plugin_unsubscribe, plugin_id}, _from, %__MODULE__{} = state) do
+    table = Table.unsubscribe(state.extensions, plugin_id)
+    {:reply, :ok, %{state | extensions: table}}
+  end
+
+  # Convergence heal for a declared plugin whose provider self-reports
+  # unhealthy: tear down (kills the owned pid) and re-subscribe from the
+  # declared manifest so `activate/1` reopens upstream resources. On a
+  # failed re-subscribe the plugin stays unsubscribed — the next tick diffs
+  # it as missing and retries via `start_plugin` under backoff.
+  @impl true
+  def handle_call({:plugin_restart, plugin_id, %Plugin{} = plugin}, _from, %__MODULE__{} = state) do
+    table = Table.unsubscribe(state.extensions, plugin_id)
+
+    case Table.subscribe(table, plugin_id, plugin) do
+      {:ok, table} ->
+        {:reply, :ok, %{state | extensions: Table.bulk_activate(table)}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, %{state | extensions: table}}
+    end
+  end
+
+  @impl true
+  def handle_call(
+        :get_executor,
+        _from,
+        %__MODULE__{executor_id: executor} = state
+      ) do
+    {:reply, executor, state}
+  end
+
+  @impl true
+  def handle_call(:get_overwatch_state, _from, state) do
+    {:reply, state, state}
+  end
+
+  @impl true
+  def handle_call(:get_segment_state, from, %__MODULE__{} = state) do
+    if Kind.capable?(state.builder.kind, :persistent_state?) do
+      # Query the executor off the GenServer loop so a slow reply can't back up
+      # the mailbox; `from` is answered when the round-trip completes.
+      operative_id = state.id
+      executor_id = state.executor_id
+
+      spawn(fn ->
+        result =
+          with_op_span(:segment_state, operative_id, fn ->
+            send_control(
+              executor_id,
+              {:segment_state, %ExecutorCommands.SegmentState{operative_id: operative_id}}
+            )
+          end)
+
+        GenServer.reply(from, result)
+      end)
+
+      {:noreply, state}
+    else
+      # The kind has no per-segment state; fail cleanly without the round-trip.
+      {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, state}
+    end
+  end
+
+  # Async `:executor_migrate` for the PARKED un-park path only — that's
+  # where the bounded retry loop (up to 19 s aggregate) actually lives,
+  # and the spec's stop-during-migrate scenario quotes "~10 s into the
+  # backoff schedule". The running-migrate path is a single ping +
+  # start round-trip; keeping it synchronous preserves the existing
+  # HotSwap handover invariants (`executor_disconnect_migrate_op` and
+  # peers) that depend on state being applied before the call returns.
+  @impl true
+  def handle_call({:executor_migrate, _}, _from, %__MODULE__{migrate_task: t} = state)
+      when t != nil do
+    {:reply, {:error, :busy}, state}
+  end
+
+  def handle_call(
+        {:executor_migrate, new_executor_id},
+        _from,
+        %__MODULE__{init_error: reason} = state
+      )
+      when reason != nil do
+    {ref, pid} = spawn_migrate_task({:unpark, state, new_executor_id})
+    {:reply, :ok, %{state | migrate_task: %{ref: ref, pid: pid, mode: :unpark}}}
+  end
+
+  def handle_call({:executor_migrate, new_executor_id}, _from, %__MODULE__{} = state) do
+    state = bind_to_executor(state, state.id, new_executor_id)
+
+    case attempt_ping_and_start(migrate_operative(state), new_executor_id) do
+      {:ok, _} -> {:reply, :ok, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call(:ping, _from, state) do
+    {:reply, :pong, state}
+  end
+
+  @impl true
+  def handle_call({:io_in, _message, _metadata}, _from, %__MODULE__{init_error: reason} = state)
+      when reason != nil do
+    {:reply, {:error, :startup_failed}, state}
+  end
+
+  @impl true
+  def handle_call({:io_in, message, metadata}, _from, state) do
+    metadata = Map.put_new(metadata, "input_type", state.default_input_type)
+    payload = run_io(state, :on_input, message, metadata)
+    record_io(state.liveness_ref, payload)
+
+    case payload do
+      nil ->
+        :ok
+
+      _ ->
+        # Count an unbound-stream drop instead of discarding the channel's
+        # `{:error, :no_stream}` reply, so the reconciler-detected stall is
+        # observable (the probe rebinds the stream).
+        case GenServer.call(state.channel, {:io_in, state.id, payload}) do
+          {:error, :no_stream} ->
+            :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operative_id: state.id})
+
+          _ ->
+            :ok
+        end
+    end
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call(:create_snapshot, _from, %__MODULE__{} = state) do
+    snapshot = create_snapshot(state.id, state.executor_id)
+
+    {:reply, {:ok, snapshot}, %__MODULE__{state | snapshot: snapshot}}
+  end
+
+  @impl true
+  def handle_call(:get_snapshot_data, _from, %__MODULE__{} = state) do
+    data = %{
+      namespace: state.namespace,
+      builder: state.builder,
+      plugins: Table.serializable_plugins(state.extensions),
+      snapshot_binary: state.snapshot
+    }
+
+    {:reply, data, state}
+  end
+
+  @impl true
+  def handle_cast({:io_in, _message, _metadata}, %__MODULE__{init_error: reason} = state)
+      when reason != nil do
+    # Parked: silently drop ingress casts. Prepared plugins do not emit
+    # `:io_in`, so the only sources are upstream operatives in a chain.
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:io_in, message, metadata}, state) do
+    metadata = Map.put_new(metadata, "input_type", state.default_input_type)
+    payload = run_io(state, :on_input, message, metadata)
+    record_io(state.liveness_ref, payload)
+
+    case payload do
+      nil -> :ok
+      _ -> GenServer.cast(state.channel, {:io_in, state.id, payload})
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:io_out, message, metadata}, state) do
+    run_io(state, :on_output, message, metadata)
+    {:noreply, state}
+  end
+
+  # Replaces `state.snapshot` with a binary supplied out-of-band by the SDK
+  # on graceful shutdown. The snapshot is consumed by HotSwap's
+  # `prepare_handover_state` so a subsequent migration ships the
+  # executor's final state. Cold-boot restart is covered by the
+  # per-Segment WAL files instead.
+  @impl true
+  def handle_cast({:apply_external_snapshot, binary}, %__MODULE__{} = state)
+      when is_binary(binary) do
+    {:noreply, %__MODULE__{state | snapshot: binary}}
+  end
+
+  # A operative that arrived via HotSwap handover already received its state
+  # in-band (`alter_handover_state` ships `MigrationDeserialization`); a WAL
+  # replay on top would apply every change a second time. Skip — same guard
+  # as the bind-time `maybe_dispatch_restore_init_state`.
+  def handle_cast({:kick_restore, _executor_id}, %__MODULE__{arrived_via_hotswap?: true} = state) do
+    {:noreply, state}
+  end
+
+  # External callers (the convergence Loop's rebind heal) trigger
+  # a fresh per-Segment replay against the Overwatch's bound
+  # executor without knowing the Overwatch's internals. The cast is
+  # the indirection point used by
+  # `Flezha.State.Recovery.resync_for_overwatch/2`.
+  def handle_cast({:kick_restore, executor_id}, %__MODULE__{} = state) do
+    do_dispatch_restore(state, state.builder.opts, executor_id)
+    {:noreply, state}
+  end
+
+  # Liveness bookkeeping for one ingress message: always an io_in, then either
+  # filtered (on_input returned nil) or forwarded to the channel.
+  defp record_io(ref, payload) do
+    LivenessCounters.bump_operative(ref, :io_in_received)
+    LivenessCounters.bump_operative(ref, if(is_nil(payload), do: :filtered_nil, else: :forwarded))
+  end
+
+  defp run_io(%__MODULE__{} = state, extension, message, metadata) do
+    ctx = %Ctx.IO{
+      operative_id: state.id,
+      namespace: state.namespace,
+      executor_id: state.executor_id,
+      message: message,
+      metadata: metadata
+    }
+
+    case Extension.run(state.extensions, extension, ctx) do
+      {:ok, %Ctx.IO{message: msg, metadata: md}} -> {msg, md}
+      {:skip, _reason} -> nil
+      {:error, _reason} -> {message, metadata}
+    end
+  end
+
+  @impl true
+  def handle_info({:extension_timer, name, plugin_id}, %__MODULE__{} = state) do
+    table = Table.fire_timer(state.extensions, name, plugin_id)
+    {:noreply, %{state | extensions: table}}
+  end
+
+  # The in-flight `:executor_migrate` task posts its result via a plain
+  # `send/2` before the task process exits, so this clause runs before the
+  # `:DOWN` cleanup. The state update happens here; the `:DOWN` message is
+  # then drained by the dedicated clause below.
+  @impl true
+  def handle_info(
+        {:migrate_task_result, _task_pid, result},
+        %__MODULE__{migrate_task: %{}} = state
+      ) do
+    {:noreply, apply_migrate_result(state, result)}
+  end
+
+  def handle_info({:migrate_task_result, _task_pid, _result}, state) do
+    # Late delivery: the task was terminated by `:stop_operative`, or a
+    # second migrate already replaced `state.migrate_task`. Drop.
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(
+        {:DOWN, ref, :process, _pid, _reason},
+        %__MODULE__{migrate_task: %{ref: ref}} = state
+      ) do
+    # The task has exited normally (or crashed before posting a result).
+    # Clear the migrate_task slot so the next migrate can spawn.
+    {:noreply, %{state | migrate_task: nil}}
+  end
+
+  # Task.Supervisor.async_nolink also sends `{ref, return_value}` from
+  # the task before it exits — we already consumed the result via the
+  # explicit `{:migrate_task_result, ...}` send/2 from inside the task
+  # body, so the auto-reply is redundant. Drop it; without this clause
+  # it crashes the Overwatch with FunctionClauseError.
+  @impl true
+  def handle_info({ref, _value}, state) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, pid, reason}, %__MODULE__{} = state) do
+    case Table.handle_down(state.extensions, ref, pid, reason) do
+      {:ok, table} ->
+        {:noreply, %{state | extensions: table}}
+
+      :ignore ->
+        Logger.error("Binding not found for pid #{inspect(pid)} with reason: #{inspect(reason)}")
+
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info({:EXIT, pid, reason}, state) do
+    case reason do
+      :normal -> Logger.info("Process #{inspect(pid)} exited normally.")
+      _ -> Logger.error("Process #{inspect(pid)} exited with reason: #{inspect(reason)}")
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:retry_plugin_restart, plugin_id}, state) do
+    table = Table.retry(state.extensions, plugin_id)
+    {:noreply, %{state | extensions: table}}
+  end
+
+  @impl true
+  def handle_info(
+        {:flezha_request, handler_key, payload, reply_to, ref},
+        %__MODULE__{} = state
+      ) do
+    ctx = %Ctx.Msg{
+      key: handler_key,
+      payload: payload,
+      reply_to: reply_to,
+      ref: ref,
+      operative_id: state.id,
+      namespace: state.namespace,
+      executor_id: state.executor_id
+    }
+
+    Extension.run(state.extensions, :on_message, ctx)
+
+    {:noreply, state}
+  end
+
+  defp create_snapshot(operative_id, executor_id) do
+    command = %ExecutorCommands.SegmentState{operative_id: operative_id}
+
+    case send_control(executor_id, {:segment_state, command}) do
+      {:ok, snapshot} -> snapshot
+      {:error, _reason} -> nil
+    end
+  end
+
+  @impl true
+  def prepare_handover_state(state) do
+    serialize_data =
+      case serialize_operative_sdk(state.executor_id, state.id) do
+        nil -> state.snapshot
+        data -> data
+      end
+
+    handover = %{
+      id: state.id,
+      namespace: state.namespace,
+      factory_id: state.factory_id,
+      init_values: state.init_values,
+      plugins: Table.serializable_plugins(state.extensions)
+    }
+
+    {handover, serialize_data}
+  end
+
+  @impl true
+  def alter_handover_state(%__MODULE__{} = state, {handover_state, pipe_serialized}) do
+    # `serialized_state` is a protobuf bytes field. When the SDK has no state
+    # to hand over (no prior snapshot, or the source executor is already gone)
+    # `pipe_serialized` is nil, and Protox.encode/1 raises on a non-binary —
+    # which crashed send_control before the deserialization command was ever
+    # sent, leaving the executor stuck "awaiting controller control-plane
+    # traffic". An empty binary means "no prior state": the operative starts fresh.
+    serialized_state = if is_binary(pipe_serialized), do: pipe_serialized, else: <<>>
+
+    command = %ExecutorCommands.MigrationDeserialization{
+      operative_id: state.id,
+      factory_id: Map.get(handover_state, :factory_id),
+      serialized_state: serialized_state
+    }
+
+    result =
+      with_op_span(:migration_deserialize, state.id, fn ->
+        send_control(state.executor_id, {:migration_deserialization, command})
+      end)
+
+    case result do
+      {:error, reason} -> Logger.error("Failed to deserialize operative: #{inspect(reason)}")
+      _else -> :ok
+    end
+
+    # Tear down existing, then rehydrate; activate so providers reconnect.
+    table = Table.teardown_all(state.extensions)
+    rehydrated = Table.rehydrate(table, Map.get(handover_state, :plugins, []))
+
+    %__MODULE__{
+      state
+      | extensions: Table.bulk_activate(rehydrated),
+        init_values: handover_state.init_values,
+        arrived_via_hotswap?: true
+    }
+  end
+
+  # Time a known-blocking operation and surface a `[Overwatch] op_slow` warning
+  # when it runs long. The last logged `op_begin` with no matching `op_end`
+  # pinpoints exactly which operation wedged the GenServer. `try/after` (never
+  # `catch`) so the span is recorded even on exit/throw while the failure still
+  # propagates unchanged (`send_control`'s own `:exit` catch must still fire).
+  defp with_op_span(op, operative_id, fun) do
+    started = System.monotonic_time(:millisecond)
+    Logger.debug("[Overwatch] op_begin op=#{op} operative=#{operative_id}")
+
+    try do
+      fun.()
+    after
+      ms = System.monotonic_time(:millisecond) - started
+
+      if ms >= op_warn_ms() do
+        Logger.warning("[Overwatch] op_slow op=#{op} operative=#{operative_id} duration_ms=#{ms}")
+      else
+        Logger.debug("[Overwatch] op_end op=#{op} operative=#{operative_id} duration_ms=#{ms}")
+      end
+    end
+  end
+
+  defp op_warn_ms,
+    do: Application.get_env(:flezha, :overwatch_op_warn_ms, 2_000)
+
+  defp send_control(executor_id, command) do
+    control_unit = Identificator.control_unit(executor_id)
+
+    case GenServer.whereis(control_unit) do
+      nil ->
+        {
+          :error,
+          "control unit not available for executor #{executor_id} with payload"
+        }
+
+      _ ->
+        # A wedged control unit (waiting on a reply the dead transport will
+        # never deliver) must surface as a clean error, never an exit that
+        # crashes this operative. The controller-side idle watchdog reaps the
+        # corpse; here we just heal/park instead of crash-looping.
+        try do
+          GenServer.call(
+            Identificator.control_unit(executor_id),
+            {:send_control, command}
+          )
+        catch
+          :exit, reason -> {:error, {:control_unit_exit, reason}}
+        end
+    end
+  end
+
+  defp start_operative_sdk(executor_id, operative) do
+    with_op_span(:start_operative, operative.id, fn ->
+      GenServer.call(
+        Identificator.control_unit(executor_id),
+        {:start_operative, operative},
+        # 8s wasn't enough when the SDK is on the Java side — Spring/JPA
+        # warmup plus the AddOperative control-channel round-trip easily
+        # exceeds that during a cold start. 30s gives Spring time to breathe
+        # without masking genuine stalls.
+        30_000
+      )
+    end)
+  end
+
+  defp attach_channel(operative_id, executor_id) do
+    operative_int = String.to_charlist(operative_id) |> Enum.sum()
+    count = ConfigManager.concurrent_channel_count()
+    channel_index = rem(operative_int, count)
+
+    StreamSup.stream_ids(executor_id, :primary) |> Enum.at(channel_index)
+  end
+
+  defp serialize_operative_sdk(executor_id, operative_id) do
+    command = %ExecutorCommands.MigrationSerialization{operative_id: operative_id}
+
+    result = send_control(executor_id, {:migration_serialization, command})
+
+    case result do
+      {:ok, serialized_data} ->
+        serialized_data
+
+      {:error, reason} ->
+        if Application.get_env(:flezha, :env) !== :test do
+          Logger.error("Failed to serialize operative: #{inspect(reason)}")
+        end
+
+        nil
+    end
+  end
+
+  # ---------- Per-Segment persistence wiring ----------
+  #
+  # Helpers used by `Flezha.State.*` and tests to ship persistence
+  # control commands to the SDK. Each takes the controller-side
+  # `executor_id` and a structured `segment_id` triple
+  # `{operative_class, operation_id, segment_key}`.
+
+  @doc """
+  Ship a `RestoreInitState` command to the SDK and return the controller's
+  freshly assembled payload. The caller is expected to await the
+  matching `RestoreInitStateResponse` over the control channel before
+  unblocking input streaming for the Segment.
+  """
+  @spec dispatch_restore_init_state(binary(), {binary(), binary(), binary()}) ::
+          {:ok, reference()} | {:error, term()}
+  def dispatch_restore_init_state(executor_id, {rc, sh, pk}) do
+    case Restore.assemble_payload({rc, sh, pk}) do
+      {:ok, payload} ->
+        segment_id_bytes = Wire.encode_segment_id(rc, sh, pk)
+
+        command =
+          {:restore_init_state,
+           %ExecutorCommands.RestoreInitState{
+             segment_id: segment_id_bytes,
+             snapshot_bytes: payload.snapshot_bytes,
+             change_log_bytes: payload.change_log_bytes
+           }}
+
+        ControlChannel.send_control(executor_id, command)
+    end
+  end
+
+  @doc """
+  Ship a `CompactSegment` command to the SDK. The SDK responds with a
+  `segment_state_snapshot` data frame (handled by
+  `Flezha.Executor.StreamChannel`) followed by a
+  `CompactSegmentResponse` control reply.
+  """
+  @spec dispatch_compact_segment(binary(), {binary(), binary(), binary()}) ::
+          {:ok, reference()} | {:error, term()}
+  def dispatch_compact_segment(executor_id, {rc, sh, pk} = segment_id) do
+    segment_id_bytes = Wire.encode_segment_id(rc, sh, pk)
+
+    command =
+      {:compact_segment, %ExecutorCommands.CompactSegment{segment_id: segment_id_bytes}}
+
+    case ControlChannel.send_control(executor_id, command) do
+      {:ok, _ref} = ok ->
+        # Bound the handshake: a snapshot that never arrives is timed out
+        # by the Watchdog rather than left to wedge persistence.
+        Flezha.State.Watchdog.compaction_started(segment_id)
+        ok
+
+      other ->
+        other
+    end
+  end
+
+  @doc """
+  Ship a `SegmentMailboxStatus` notification to the SDK so the
+  producing Operation's `OverflowPolicy` machinery can park or unpark
+  emits to this Segment. `status` is `:full` or `:open`.
+  """
+  @spec notify_segment_backpressure({binary(), binary(), binary(), binary()}, :full | :open) ::
+          :ok | {:error, term()}
+  def notify_segment_backpressure({executor_id, rc, sh, pk}, status)
+      when status in [:full, :open] do
+    segment_id_bytes = Wire.encode_segment_id(rc, sh, pk)
+
+    command =
+      {:segment_mailbox_status,
+       %ExecutorCommands.SegmentMailboxStatus{
+         segment_id: segment_id_bytes,
+         status: Atom.to_string(status)
+       }}
+
+    ControlChannel.send_control_async(executor_id, command)
+  end
+
+  # -----------------------------------------------------------------
+  # Async migrate task plumbing. Kept together so the task-spawn /
+  # terminate / result-application surface is reviewable as a single unit.
+  # -----------------------------------------------------------------
+
+  defp terminate_migrate_task(%__MODULE__{migrate_task: nil} = state), do: state
+
+  defp terminate_migrate_task(%__MODULE__{migrate_task: %{ref: ref, pid: pid}} = state) do
+    _ = Process.demonitor(ref, [:flush])
+    _ = Task.Supervisor.terminate_child(Flezha.Operative.MessageHandlerTaskSup, pid)
+    %{state | migrate_task: nil}
+  end
+
+  defp spawn_migrate_task({:unpark, state, new_executor_id}) do
+    operative = state.builder
+    parent = self()
+
+    task =
+      Task.Supervisor.async_nolink(Flezha.Operative.MessageHandlerTaskSup, fn ->
+        # complete_init is the heavy bounded-retry path; running it in
+        # a task ensures `:stop_operative` is never blocked by it.
+        case complete_init(state, new_executor_id, operative) do
+          {:ok, recovered} ->
+            send(parent, {:migrate_task_result, self(), {:unparked, recovered}})
+            :ok
+
+          {:error, err, parked} ->
+            send(parent, {:migrate_task_result, self(), {:park, parked, err}})
+            :ok
+        end
+      end)
+
+    {task.ref, task.pid}
+  end
+
+  defp apply_migrate_result(state, {:unparked, recovered}) do
+    Logger.info("[Overwatch] operative #{state.id} un-parked onto executor #{recovered.executor_id}")
+    %{recovered | migrate_task: nil}
+  end
+
+  defp apply_migrate_result(_state, {:park, parked, err}) do
+    %{park(parked, err) | migrate_task: nil}
+  end
+end

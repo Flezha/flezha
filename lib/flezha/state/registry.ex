@@ -1,27 +1,27 @@
 defmodule Flezha.State.Registry do
   @moduledoc """
-  Path resolution for per-Partition WAL, snapshot, and outbox-dedup files.
+  Path resolution for per-Segment WAL, snapshot, and outbox-dedup files.
 
   All persistence files live under
-  `<state_root>/<relay_class>/<shard_id>/` where `<state_root>` is the
+  `<state_root>/<operative_class>/<operation_id>/` where `<state_root>` is the
   `:flezha, :state_root` application env (set by tests for isolation), else
   the `FLEZHA_STATE_DIR` OS env (the operator-facing deployment knob), else
   `app_data/state`.
 
-  `partition_key` is URL-safe-base64-encoded when it contains characters
+  `segment_key` is URL-safe-base64-encoded when it contains characters
   that would be unsafe on POSIX filesystems (anything outside `[A-Za-z0-9_.-]`).
-  `decode_partition_key/1` reverses the encoding.
+  `decode_segment_key/1` reverses the encoding.
   """
 
-  @type partition_id ::
-          {relay_class :: binary(), shard_id :: binary(), partition_key :: binary()}
+  @type segment_id ::
+          {operative_class :: binary(), operation_id :: binary(), segment_key :: binary()}
 
   @type scan_result :: %{
-          wal_files: [{partition_key :: binary(), path :: binary()}],
+          wal_files: [{segment_key :: binary(), path :: binary()}],
           snapshot_files: [
-            {partition_key :: binary(), seq :: non_neg_integer(), path :: binary()}
+            {segment_key :: binary(), seq :: non_neg_integer(), path :: binary()}
           ],
-          outbox_files: [{partition_key :: binary(), path :: binary()}]
+          outbox_files: [{segment_key :: binary(), path :: binary()}]
         }
 
   @safe_chars ~r/^[A-Za-z0-9_.-]+$/
@@ -34,19 +34,19 @@ defmodule Flezha.State.Registry do
     end
   end
 
-  @spec state_dir(partition_id()) :: binary()
-  def state_dir({relay_class, shard_id, _partition_key}) do
-    Path.join([state_root(), relay_class, shard_id])
+  @spec state_dir(segment_id()) :: binary()
+  def state_dir({operative_class, operation_id, _segment_key}) do
+    Path.join([state_root(), operative_class, operation_id])
   end
 
-  @spec wal_path(partition_id()) :: binary()
-  def wal_path({_, _, partition_key} = pid) do
-    Path.join(state_dir(pid), encode_partition_key(partition_key) <> ".wal")
+  @spec wal_path(segment_id()) :: binary()
+  def wal_path({_, _, segment_key} = pid) do
+    Path.join(state_dir(pid), encode_segment_key(segment_key) <> ".wal")
   end
 
-  @spec snapshot_paths(partition_id()) :: [{non_neg_integer(), binary()}]
-  def snapshot_paths({_, _, partition_key} = pid) do
-    encoded = encode_partition_key(partition_key)
+  @spec snapshot_paths(segment_id()) :: [{non_neg_integer(), binary()}]
+  def snapshot_paths({_, _, segment_key} = pid) do
+    encoded = encode_segment_key(segment_key)
     prefix = encoded <> ".snap."
 
     pid
@@ -67,17 +67,17 @@ defmodule Flezha.State.Registry do
     |> Enum.sort_by(fn {seq, _} -> seq end)
   end
 
-  @spec outbox_dedup_path(partition_id()) :: binary()
-  def outbox_dedup_path({_, _, partition_key} = pid) do
-    Path.join(state_dir(pid), encode_partition_key(partition_key) <> ".outbox.dedup")
+  @spec outbox_dedup_path(segment_id()) :: binary()
+  def outbox_dedup_path({_, _, segment_key} = pid) do
+    Path.join(state_dir(pid), encode_segment_key(segment_key) <> ".outbox.dedup")
   end
 
   @doc """
-  Remove every on-disk file for one Partition (WAL, all snapshots, the
+  Remove every on-disk file for one Segment (WAL, all snapshots, the
   outbox-dedup file). Idempotent: missing files are ignored. Used by the
-  dynamic-mode hard-delete path (`Flezha.State.Supervisor.delete_partition/1`).
+  dynamic-mode hard-delete path (`Flezha.State.Supervisor.delete_segment/1`).
   """
-  @spec delete_files(partition_id()) :: :ok
+  @spec delete_files(segment_id()) :: :ok
   def delete_files({_, _, _} = pid) do
     [wal_path(pid), outbox_dedup_path(pid)]
     |> Enum.concat(Enum.map(snapshot_paths(pid), fn {_seq, path} -> path end))
@@ -86,23 +86,23 @@ defmodule Flezha.State.Registry do
     :ok
   end
 
-  @spec snapshot_path(partition_id(), non_neg_integer()) :: binary()
-  def snapshot_path({_, _, partition_key} = pid, seq) do
+  @spec snapshot_path(segment_id(), non_neg_integer()) :: binary()
+  def snapshot_path({_, _, segment_key} = pid, seq) do
     Path.join(
       state_dir(pid),
-      encode_partition_key(partition_key) <> ".snap." <> Integer.to_string(seq)
+      encode_segment_key(segment_key) <> ".snap." <> Integer.to_string(seq)
     )
   end
 
   @doc """
-  Enumerate Partition files under a Relay tree.
+  Enumerate Segment files under a Operative tree.
 
-  Pass `{relay_class, shard_id, ""}` to scan the whole Shard. Returns lists
-  of `{partition_key, ...}` tuples grouped by file type. Files matching
+  Pass `{operative_class, operation_id, ""}` to scan the whole Operation. Returns lists
+  of `{segment_key, ...}` tuples grouped by file type. Files matching
   `.tmp` / `.rewriting` suffixes are intentionally skipped — they
   represent crash-residue from atomic-rename workflows.
   """
-  @spec scan_dir(partition_id()) :: scan_result()
+  @spec scan_dir(segment_id()) :: scan_result()
   def scan_dir({_, _, _} = pid) do
     dir = state_dir(pid)
 
@@ -114,17 +114,17 @@ defmodule Flezha.State.Registry do
           acc
 
         String.ends_with?(name, ".wal") ->
-          key = name |> String.trim_trailing(".wal") |> decode_partition_key()
+          key = name |> String.trim_trailing(".wal") |> decode_segment_key()
           %{acc | wal_files: [{key, Path.join(dir, name)} | acc.wal_files]}
 
         String.ends_with?(name, ".outbox.dedup") ->
-          key = name |> String.trim_trailing(".outbox.dedup") |> decode_partition_key()
+          key = name |> String.trim_trailing(".outbox.dedup") |> decode_segment_key()
           %{acc | outbox_files: [{key, Path.join(dir, name)} | acc.outbox_files]}
 
         true ->
           case parse_snapshot_name(name) do
             {:ok, encoded_key, seq} ->
-              key = decode_partition_key(encoded_key)
+              key = decode_segment_key(encoded_key)
 
               %{
                 acc
@@ -139,29 +139,29 @@ defmodule Flezha.State.Registry do
   end
 
   @doc """
-  Enumerate every Partition that has any persistence file on disk under
+  Enumerate every Segment that has any persistence file on disk under
   `state_root()`. Walks the two-level directory tree
-  `<state_root>/<relay_class>/<shard_id>/`.
+  `<state_root>/<operative_class>/<operation_id>/`.
   """
-  @spec all_partitions() :: [partition_id()]
-  def all_partitions() do
+  @spec all_segments() :: [segment_id()]
+  def all_segments() do
     root = state_root()
 
     for rc <- list_dir(root),
         sh <- list_dir(Path.join(root, rc)),
-        partition_key <- partition_keys_under({rc, sh, ""}),
+        segment_key <- segment_keys_under({rc, sh, ""}),
         uniq: true,
-        do: {rc, sh, partition_key}
+        do: {rc, sh, segment_key}
   end
 
   @doc """
-  Snapshot files for a single Partition, sorted by seq ascending.
+  Snapshot files for a single Segment, sorted by seq ascending.
   """
-  @spec snapshot_files(partition_id()) :: [{seq :: non_neg_integer(), path :: binary()}]
+  @spec snapshot_files(segment_id()) :: [{seq :: non_neg_integer(), path :: binary()}]
   def snapshot_files(pid), do: snapshot_paths(pid)
 
-  @spec encode_partition_key(binary()) :: binary()
-  def encode_partition_key(key) do
+  @spec encode_segment_key(binary()) :: binary()
+  def encode_segment_key(key) do
     if Regex.match?(@safe_chars, key) and not String.starts_with?(key, "_") do
       key
     else
@@ -169,15 +169,15 @@ defmodule Flezha.State.Registry do
     end
   end
 
-  @spec decode_partition_key(binary()) :: binary()
-  def decode_partition_key("_" <> encoded) do
+  @spec decode_segment_key(binary()) :: binary()
+  def decode_segment_key("_" <> encoded) do
     case Base.url_decode64(encoded, padding: false) do
       {:ok, decoded} -> decoded
       :error -> "_" <> encoded
     end
   end
 
-  def decode_partition_key(key), do: key
+  def decode_segment_key(key), do: key
 
   defp parse_snapshot_name(name) do
     case Regex.run(~r/^(.+)\.snap\.(\d+)$/, name) do
@@ -192,7 +192,7 @@ defmodule Flezha.State.Registry do
     end
   end
 
-  defp partition_keys_under({_, _, _} = pid) do
+  defp segment_keys_under({_, _, _} = pid) do
     %{wal_files: w, snapshot_files: s, outbox_files: o} = scan_dir(pid)
     keys = Enum.map(w, &elem(&1, 0)) ++ Enum.map(s, &elem(&1, 0)) ++ Enum.map(o, &elem(&1, 0))
     Enum.uniq(keys)

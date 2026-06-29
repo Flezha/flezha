@@ -24,11 +24,11 @@ defmodule FlezhaTest do
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Executor.FleetManager
-  alias FlezhaTest.Fixtures.RelayFixture
+  alias FlezhaTest.Fixtures.OperativeFixture
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.NodeTestHelper
-  alias FlezhaTest.Helper.RelayTestHelper
+  alias FlezhaTest.Helper.OperativeTestHelper
   alias FlezhaTest.Helper.MessageTestHelper
 
   use ExUnit.Case
@@ -42,7 +42,7 @@ defmodule FlezhaTest do
   @testnet_ws_uri "ws://localhost:4500"
 
   @test_store_input_factory "store_input"
-  @test_relay_factory "do_nothing"
+  @test_operative_factory "do_nothing"
   @test_compare_filter_factory "compare_filter"
 
   # WS-dependent tests below connect to a Node.js testnet daemon at
@@ -60,13 +60,13 @@ defmodule FlezhaTest do
   end
 
   setup _context do
-    # Restore now rehydrates a relay from its WAL on (re)bind, so leftover
-    # per-Partition state from an earlier test that reused the same relay_id
-    # would leak in. Start each test from empty partitions.
-    Flezha.State.TestHelpers.reset_all_partitions()
+    # Restore now rehydrates a operative from its WAL on (re)bind, so leftover
+    # per-Segment state from an earlier test that reused the same operative_id
+    # would leak in. Start each test from empty segments.
+    Flezha.State.TestHelpers.reset_all_segments()
 
     on_exit(fn ->
-      RelayManager.stop_all_relays(@default_namespace)
+      OperativeManager.stop_all_operatives(@default_namespace)
       FleetManager.stop_namespace(@temp_namespace)
     end)
 
@@ -79,53 +79,53 @@ defmodule FlezhaTest do
     Enum.each(res, &assert(is_binary(&1)))
   end
 
-  @tag :relay_start
-  test "relay adding" do
-    relay = %Flezha.Relay.Builder{
-      id: "default_relay_test",
-      factory_id: @test_relay_factory
+  @tag :operative_start
+  test "operative adding" do
+    operative = %Flezha.Operative.Builder{
+      id: "default_operative_test",
+      factory_id: @test_operative_factory
     }
 
-    {status, info} = RelayManager.start_relay(@default_namespace, relay)
+    {status, info} = OperativeManager.start_operative(@default_namespace, operative)
 
     assert status === :ok,
-           "start_relay failed: #{inspect(info)}"
+           "start_operative failed: #{inspect(info)}"
 
-    assert info[:relay_id] === "default_relay_test"
+    assert info[:operative_id] === "default_operative_test"
     assert info[:node] === @node_name
     assert is_pid(info[:pid])
     assert is_binary(info[:executor_id])
   end
 
-  test "relay removing" do
-    relay_id = "default_relay_stop_test"
+  test "operative removing" do
+    operative_id = "default_operative_stop_test"
 
-    {:ok, %{pid: _relay_pid}} =
-      relay_id
-      |> RelayFixture.get(@test_store_input_factory)
-      |> RelayFixture.start()
+    {:ok, %{pid: _operative_pid}} =
+      operative_id
+      |> OperativeFixture.get(@test_store_input_factory)
+      |> OperativeFixture.start()
 
-    assert :ok === RelayManager.stop_relay(@default_namespace, relay_id)
+    assert :ok === OperativeManager.stop_operative(@default_namespace, operative_id)
 
     # TODO: add hook instead to listen to process removal.
     Process.sleep(100)
 
-    assert RelayManager.exist?(@default_namespace, relay_id) === false
+    assert OperativeManager.exist?(@default_namespace, operative_id) === false
   end
 
-  test "relay adding non existing factory" do
-    relay_id = "non_existing_factory_err"
+  test "operative adding non existing factory" do
+    operative_id = "non_existing_factory_err"
 
-    relay = %Flezha.Relay.Builder{
-      id: relay_id,
+    operative = %Flezha.Operative.Builder{
+      id: operative_id,
       factory_id: "non_existing_factory"
     }
 
-    {status, %{relay_id: pid, node: node, reason: reason}} =
-      RelayManager.start_relay(@default_namespace, relay)
+    {status, %{operative_id: pid, node: node, reason: reason}} =
+      OperativeManager.start_operative(@default_namespace, operative)
 
     assert status === :error
-    assert pid === relay_id
+    assert pid === operative_id
     assert node === @node_name
     assert reason === "Factory with id non_existing_factory does not exist"
   end
@@ -133,21 +133,21 @@ defmodule FlezhaTest do
   @tag :websocket_plugin
   @tag :testnet
   test "websocket plugin connection start" do
-    relay_id = "websocket_plugin_test"
+    operative_id = "websocket_plugin_test"
 
-    relay = %Flezha.Relay.Builder{
-      id: relay_id,
-      factory_id: @test_relay_factory
+    operative = %Flezha.Operative.Builder{
+      id: operative_id,
+      factory_id: @test_operative_factory
     }
 
-    {:ok, _} = RelayManager.start_relay(@default_namespace, relay)
+    {:ok, _} = OperativeManager.start_operative(@default_namespace, operative)
 
     # TODO: add failures also.
     res =
       PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin{
         id: "websocket_plugin",
         namespace: @default_namespace,
-        relay_id: relay_id,
+        operative_id: operative_id,
         provider: Flezha.Plugin.Provider.Websocket,
         opts: %{
           uri: @testnet_ws_uri,
@@ -174,20 +174,20 @@ defmodule FlezhaTest do
 
   @tag :testnet
   test "beam msg forward plugin connection start" do
-    relay_id = "beam_msg_forw_plugin_test"
+    operative_id = "beam_msg_forw_plugin_test"
 
-    relay = %Flezha.Relay.Builder{
-      id: relay_id,
-      factory_id: @test_relay_factory
+    operative = %Flezha.Operative.Builder{
+      id: operative_id,
+      factory_id: @test_operative_factory
     }
 
-    {:ok, _} = RelayManager.start_relay(@default_namespace, relay)
+    {:ok, _} = OperativeManager.start_operative(@default_namespace, operative)
 
     res =
       PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin{
         id: "beam_msg_forward",
         namespace: @default_namespace,
-        relay_id: relay_id,
+        operative_id: operative_id,
         provider: Flezha.Plugin.Provider.BeamMsgForward,
         opts: %{recv_pid: self()},
         subscriptions: [{:on_output, []}]
@@ -196,25 +196,25 @@ defmodule FlezhaTest do
     assert res === {:ok, "plugin enabled"}
   end
 
-  @tag :relay_flow_msg_forward
+  @tag :operative_flow_msg_forward
   @tag :testnet
-  test "relay flow generation -> beam msg forward" do
-    relay_id = "data_flow_test"
+  test "operative flow generation -> beam msg forward" do
+    operative_id = "data_flow_test"
 
-    relay = %Flezha.Relay.Builder{
-      id: relay_id,
+    operative = %Flezha.Operative.Builder{
+      id: operative_id,
       factory_id: @test_compare_filter_factory,
       init_values: %{
-        "compare_filter_shard" => %{"comparable" => "hello world", "inverted" => false}
+        "compare_filter_operation" => %{"comparable" => "hello world", "inverted" => false}
       }
     }
 
-    {:ok, _} = RelayManager.start_relay(@default_namespace, relay)
+    {:ok, _} = OperativeManager.start_operative(@default_namespace, operative)
 
     PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin{
       id: "beam_msg_forward",
       namespace: @default_namespace,
-      relay_id: relay_id,
+      operative_id: operative_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self()},
       subscriptions: [{:on_output, []}]
@@ -223,7 +223,7 @@ defmodule FlezhaTest do
     PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin{
       id: "websocket_plugin",
       namespace: @default_namespace,
-      relay_id: relay_id,
+      operative_id: operative_id,
       provider: Flezha.Plugin.Provider.Websocket,
       opts: %{
         uri: @testnet_ws_uri,
@@ -255,26 +255,26 @@ defmodule FlezhaTest do
     end
   end
 
-  @tag :get_partition_state
-  test "get relay state" do
-    relay_id = "get_state_test"
+  @tag :get_segment_state
+  test "get operative state" do
+    operative_id = "get_state_test"
 
-    {:ok, %{pid: _relay_pid}} =
-      relay_id
-      |> RelayFixture.get(@test_store_input_factory)
-      |> RelayFixture.start()
-      |> RelayFixture.attach_output_msg()
+    {:ok, %{pid: _operative_pid}} =
+      operative_id
+      |> OperativeFixture.get(@test_store_input_factory)
+      |> OperativeFixture.start()
+      |> OperativeFixture.attach_output_msg()
 
-    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "state_1", %{})
-    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "state_2", %{})
+    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "state_1", %{})
+    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "state_2", %{})
 
     {:ok, json_state} =
-      RelayManager.get_partition_state(@default_namespace, relay_id)
+      OperativeManager.get_segment_state(@default_namespace, operative_id)
 
-    partition_state = Flezha.Service.Payloader.json_to_map(json_state)
+    segment_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert partition_state === %{
-             "store_input_shard" => %{
+    assert segment_state === %{
+             "store_input_operation" => %{
                "binary_inputs" => [],
                "text_inputs" => ["state_1", "state_2"]
              }
@@ -283,26 +283,26 @@ defmodule FlezhaTest do
 
   # # # # TODO: add test to handle large control requests and stream requests.
 
-  @tag :relay_migration
-  test "relay migration" do
+  @tag :operative_migration
+  test "operative migration" do
     # TODO: we should spawn a new elixir node, wait till the process gets migrated there(using dynamic hooks) and
     # then get the state of the new migrated process to see if it matches the state1 string.
 
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
-    relay_id = "relay_migration_test"
+    operative_id = "operative_migration_test"
 
-    {:ok, %{pid: _relay_pid, node: pnode}} =
-      relay_id
-      |> RelayFixture.get(@test_store_input_factory)
-      |> RelayFixture.start()
-      |> RelayFixture.attach_output_msg()
+    {:ok, %{pid: _operative_pid, node: pnode}} =
+      operative_id
+      |> OperativeFixture.get(@test_store_input_factory)
+      |> OperativeFixture.start()
+      |> OperativeFixture.attach_output_msg()
 
-    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "test_state_1", %{})
-    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "test_state_2", %{})
+    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "test_state_1", %{})
+    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "test_state_2", %{})
 
     test_state = %{
-      "store_input_shard" => %{
+      "store_input_operation" => %{
         "binary_inputs" => [],
         "text_inputs" => ["test_state_1", "test_state_2"]
       }
@@ -311,21 +311,21 @@ defmodule FlezhaTest do
     PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin{
       id: "stdout_plugin",
       namespace: @default_namespace,
-      relay_id: relay_id,
+      operative_id: operative_id,
       provider: Flezha.Plugin.Provider.StdOut,
       opts: %{},
       subscriptions: [{:on_output, []}]
     })
 
     {:ok, json_state} =
-      RelayManager.get_partition_state(@default_namespace, relay_id)
+      OperativeManager.get_segment_state(@default_namespace, operative_id)
 
     {:ok, old_overwatch_state} =
-      RelayManager.get_overwatch_state(@default_namespace, relay_id)
+      OperativeManager.get_overwatch_state(@default_namespace, operative_id)
 
-    partition_state = Flezha.Service.Payloader.json_to_map(json_state)
+    segment_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert partition_state === test_state
+    assert segment_state === test_state
 
     test_pid = self()
 
@@ -359,14 +359,14 @@ defmodule FlezhaTest do
     )
 
     {:ok, json_state} =
-      RelayManager.get_partition_state(@default_namespace, relay_id)
+      OperativeManager.get_segment_state(@default_namespace, operative_id)
 
     {:ok, new_overwatch_state} =
-      RelayManager.get_overwatch_state(@default_namespace, relay_id)
+      OperativeManager.get_overwatch_state(@default_namespace, operative_id)
 
-    partition_state = Flezha.Service.Payloader.json_to_map(json_state)
+    segment_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert partition_state === test_state
+    assert segment_state === test_state
 
     old_plugins = Map.keys(old_overwatch_state.extensions.plugins) |> Enum.sort()
     new_plugins = Map.keys(new_overwatch_state.extensions.plugins) |> Enum.sort()
@@ -387,31 +387,31 @@ defmodule FlezhaTest do
   @tag :executor_disconnect_migrate_op
   test "executor disconnect migrate op" do
     namespace = @temp_namespace
-    relay_id_1 = "relay_1"
-    relay_id_2 = "relay_2"
+    operative_id_1 = "operative_1"
+    operative_id_2 = "operative_2"
 
     # Start 2 executors under the same namespace.
     executor_id_1 = NodeTestHelper.start_executor(namespace)
     executor_id_2 = NodeTestHelper.start_executor(namespace)
 
-    # Start a few relays and store some state on them.
-    {:ok, %{pid: _relay_pid_1, executor_id: pipe1_op}} =
-      relay_id_1
-      |> RelayFixture.get(@test_store_input_factory)
-      |> RelayFixture.start(namespace)
-      |> RelayFixture.attach_output_msg(namespace)
+    # Start a few operatives and store some state on them.
+    {:ok, %{pid: _operative_pid_1, executor_id: pipe1_op}} =
+      operative_id_1
+      |> OperativeFixture.get(@test_store_input_factory)
+      |> OperativeFixture.start(namespace)
+      |> OperativeFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _relay_pid_2, executor_id: _pipe2_op}} =
-      relay_id_2
-      |> RelayFixture.get(@test_store_input_factory)
-      |> RelayFixture.start(namespace)
-      |> RelayFixture.attach_output_msg(namespace)
+    {:ok, %{pid: _operative_pid_2, executor_id: _pipe2_op}} =
+      operative_id_2
+      |> OperativeFixture.get(@test_store_input_factory)
+      |> OperativeFixture.start(namespace)
+      |> OperativeFixture.attach_output_msg(namespace)
 
-    RelayTestHelper.send_sync_io(relay_id_1, namespace, "state_1", %{})
-    RelayTestHelper.send_sync_io(relay_id_2, namespace, "state_2", %{})
+    OperativeTestHelper.send_sync_io(operative_id_1, namespace, "state_1", %{})
+    OperativeTestHelper.send_sync_io(operative_id_2, namespace, "state_2", %{})
 
-    RelayManager.create_snapshot(namespace, relay_id_1)
-    RelayManager.create_snapshot(namespace, relay_id_2)
+    OperativeManager.create_snapshot(namespace, operative_id_1)
+    OperativeManager.create_snapshot(namespace, operative_id_2)
 
     active_executor =
       if pipe1_op === executor_id_1, do: executor_id_2, else: executor_id_1
@@ -419,28 +419,28 @@ defmodule FlezhaTest do
     # Trigger the executor disconnect.
     NodeTestHelper.stop_executor(namespace, pipe1_op)
 
-    # Make sure all the relays are migrated to the other executor.
-    RelayManager.relay_registry(namespace)
-    |> Enum.each(fn {_relay_id, {_cspec, _cnodes, %{tag: new_executor}}} ->
+    # Make sure all the operatives are migrated to the other executor.
+    OperativeManager.operative_registry(namespace)
+    |> Enum.each(fn {_operative_id, {_cspec, _cnodes, %{tag: new_executor}}} ->
       assert new_executor === active_executor
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = RelayManager.get_partition_state(namespace, relay_id_1)
-    {:ok, json_state_2} = RelayManager.get_partition_state(namespace, relay_id_2)
+    {:ok, json_state_1} = OperativeManager.get_segment_state(namespace, operative_id_1)
+    {:ok, json_state_2} = OperativeManager.get_segment_state(namespace, operative_id_2)
 
     assert json_state_1 ===
-             "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}}"
+             "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}}"
 
     assert json_state_2 ===
-             "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}}"
+             "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}}"
   end
 
   @tag :executor_disconnect_preserve
   test "executor disconnect preserve" do
     namespace = @temp_namespace
-    num_relays = 15
-    relay_ids = for i <- 1..num_relays, do: "relay_#{i}"
+    num_operatives = 15
+    operative_ids = for i <- 1..num_operatives, do: "operative_#{i}"
 
     # Fresh-process executor takeover (an :inactive peer's bindings
     # are migrated onto the freshly-connected executor) is driven by
@@ -464,27 +464,27 @@ defmodule FlezhaTest do
     executor_id_1 = NodeTestHelper.start_executor(namespace)
     executor_id_2 = NodeTestHelper.start_executor(namespace)
 
-    # Start relays and store some state on them.
+    # Start operatives and store some state on them.
 
-    relay_infos =
-      for relay_id <- relay_ids do
+    operative_infos =
+      for operative_id <- operative_ids do
         {:ok, info} =
-          relay_id
-          |> RelayFixture.get(@test_store_input_factory)
-          |> RelayFixture.start(namespace)
-          |> RelayFixture.attach_output_msg(namespace)
+          operative_id
+          |> OperativeFixture.get(@test_store_input_factory)
+          |> OperativeFixture.start(namespace)
+          |> OperativeFixture.attach_output_msg(namespace)
 
-        {relay_id, info}
+        {operative_id, info}
       end
 
-    # Send state to all relays
-    for {relay_id, _info} <- relay_infos do
-      RelayTestHelper.send_sync_io(relay_id, namespace, "state_#{relay_id}", %{})
+    # Send state to all operatives
+    for {operative_id, _info} <- operative_infos do
+      OperativeTestHelper.send_sync_io(operative_id, namespace, "state_#{operative_id}", %{})
     end
 
-    # Create snapshots for all relays
-    for {relay_id, _info} <- relay_infos do
-      RelayManager.create_snapshot(namespace, relay_id)
+    # Create snapshots for all operatives
+    for {operative_id, _info} <- operative_infos do
+      OperativeManager.create_snapshot(namespace, operative_id)
     end
 
     # Trigger the executor disconnect.
@@ -494,7 +494,7 @@ defmodule FlezhaTest do
     # Start a new executor under the same namespace.
     executor_id_3 = NodeTestHelper.start_executor(namespace)
 
-    # The convergence Loop reseats every relay tagged to a dead executor
+    # The convergence Loop reseats every operative tagged to a dead executor
     # onto `executor_id_3`. In production a periodic tick + the
     # `:executor_connected_event` drive this; in-suite, async tick delivery
     # and the global recovery gate are non-deterministic, so drive the real
@@ -504,33 +504,33 @@ defmodule FlezhaTest do
              fn ->
                Flezha.Convergence.Loop.tick_now()
 
-               RelayManager.relay_registry(namespace)
-               |> Enum.all?(fn {_relay_id, {_cspec, _cnodes, %{tag: tag}}} ->
+               OperativeManager.operative_registry(namespace)
+               |> Enum.all?(fn {_operative_id, {_cspec, _cnodes, %{tag: tag}}} ->
                  tag === executor_id_3
                end)
              end,
              15_000
            ),
-           "relays did not reseat to executor_id_3 within timeout"
+           "operatives did not reseat to executor_id_3 within timeout"
 
     # The rebind tag flips before the WAL restore finishes replaying the
     # change-log onto the reseated executor, so poll the migrated state
     # rather than reading it the instant the tag lands.
-    expected_state = fn relay_id ->
-      "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}}"
+    expected_state = fn operative_id ->
+      "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
     end
 
     # The convergence Loop dispatches the WAL restore once, inside the rebind
-    # heal — but once the tag is `executor_id_3` the relay is no longer
+    # heal — but once the tag is `executor_id_3` the operative is no longer
     # misbound, so a later tick won't re-dispatch. Re-drive the documented,
-    # idempotent restore re-dispatch path per relay each poll so a restore
+    # idempotent restore re-dispatch path per operative each poll so a restore
     # that raced the new executor's readiness retries until state converges.
     assert eventually(
              fn ->
-               for {relay_id, _info} <- relay_infos do
-                 case HubManager.get_pid(namespace, relay_id) do
+               for {operative_id, _info} <- operative_infos do
+                 case HubManager.get_pid(namespace, operative_id) do
                    {:ok, pid} when is_pid(pid) ->
-                     Flezha.Relay.Overwatch.kick_restore_for_bound_executor(
+                     Flezha.Operative.Overwatch.kick_restore_for_bound_executor(
                        pid,
                        executor_id_3
                      )
@@ -540,14 +540,14 @@ defmodule FlezhaTest do
                  end
                end
 
-               Enum.all?(relay_infos, fn {relay_id, _info} ->
-                 RelayManager.get_partition_state(namespace, relay_id) ===
-                   {:ok, expected_state.(relay_id)}
+               Enum.all?(operative_infos, fn {operative_id, _info} ->
+                 OperativeManager.get_segment_state(namespace, operative_id) ===
+                   {:ok, expected_state.(operative_id)}
                end)
              end,
              15_000
            ),
-           "relay states did not migrate to executor_id_3 within timeout"
+           "operative states did not migrate to executor_id_3 within timeout"
 
     # Stop the new executor.
     NodeTestHelper.stop_executor(namespace, executor_id_3)
@@ -566,8 +566,8 @@ defmodule FlezhaTest do
   @tag :executor_disconnect_migrate_hub
   test "executor disconnect migrate hub" do
     namespace = @temp_namespace
-    num_relays = 15
-    relay_ids = for i <- 1..num_relays, do: "relay_#{i}"
+    num_operatives = 15
+    operative_ids = for i <- 1..num_operatives, do: "operative_#{i}"
 
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
@@ -634,40 +634,40 @@ defmodule FlezhaTest do
       ]
     )
 
-    # Start relays and store some state on them.
-    relay_infos =
-      for relay_id <- relay_ids do
+    # Start operatives and store some state on them.
+    operative_infos =
+      for operative_id <- operative_ids do
         {:ok, info} =
-          relay_id
-          |> RelayFixture.get(@test_store_input_factory)
-          |> RelayFixture.start(namespace)
-          |> RelayFixture.attach_output_msg(namespace)
+          operative_id
+          |> OperativeFixture.get(@test_store_input_factory)
+          |> OperativeFixture.start(namespace)
+          |> OperativeFixture.attach_output_msg(namespace)
 
-        {relay_id, info}
+        {operative_id, info}
       end
 
     executor_ids =
-      Enum.map(relay_infos, fn {_id, %{executor_id: ce_id}} -> ce_id end)
+      Enum.map(operative_infos, fn {_id, %{executor_id: ce_id}} -> ce_id end)
 
-    # Make sure that atleast one of the relays is running on the remote executor.
+    # Make sure that atleast one of the operatives is running on the remote executor.
     assert Enum.any?(executor_ids, &(&1 !== executor_id_1))
 
-    # Send state to all relays
-    for {relay_id, _info} <- relay_infos do
-      RelayTestHelper.send_sync_io(relay_id, namespace, "state_#{relay_id}", %{})
+    # Send state to all operatives
+    for {operative_id, _info} <- operative_infos do
+      OperativeTestHelper.send_sync_io(operative_id, namespace, "state_#{operative_id}", %{})
     end
 
     # Check the states before executor migrations.
-    for {relay_id, _info} <- relay_infos do
-      {:ok, json_state} = RelayManager.get_partition_state(namespace, relay_id)
+    for {operative_id, _info} <- operative_infos do
+      {:ok, json_state} = OperativeManager.get_segment_state(namespace, operative_id)
 
       assert json_state ===
-               "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}}"
+               "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
     end
 
-    # Create snapshots for all relays
-    for {relay_id, _info} <- relay_infos do
-      RelayManager.create_snapshot(namespace, relay_id)
+    # Create snapshots for all operatives
+    for {operative_id, _info} <- operative_infos do
+      OperativeManager.create_snapshot(namespace, operative_id)
     end
 
     # Trigger the executor disconnect.
@@ -678,18 +678,18 @@ defmodule FlezhaTest do
     # Each :hook_insert_recv arrives when the local registry syncs a tag update.
     # We check the condition after each message — no polling, no sleeping.
     MessageTestHelper.recv_until(:hook_insert_recv, fn ->
-      RelayManager.relay_registry(namespace)
+      OperativeManager.operative_registry(namespace)
       |> Enum.all?(fn {_, {_, _, %{tag: tag}}} -> tag === executor_id_1 end)
     end)
 
     MessageTestHelper.flush(:hook_pstartup_recv)
 
     # Make sure the states have been migrated.
-    for {relay_id, _info} <- relay_infos do
-      {:ok, json_state} = RelayManager.get_partition_state(namespace, relay_id)
+    for {operative_id, _info} <- operative_infos do
+      {:ok, json_state} = OperativeManager.get_segment_state(namespace, operative_id)
 
       assert json_state ===
-               "{\"store_input_shard\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}}"
+               "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
     end
 
     assert length(HubManager.get_hub_nodes(namespace, true)) === 1
@@ -697,21 +697,21 @@ defmodule FlezhaTest do
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 
-  test "pluginless running relay re-attaches its declared plugins (2026-06-12 incident shape)" do
+  test "pluginless running operative re-attaches its declared plugins (2026-06-12 incident shape)" do
     namespace = @temp_namespace
     Flezha.Convergence.Snapshot.reset_recovery_states()
     {:ok, _} = start_supervised({Flezha.Convergence.Loop, tick_ms: 60_000})
 
     executor_id = NodeTestHelper.start_executor(namespace)
 
-    {:ok, %{relay_id: relay_id}} =
-      "self_heal_relay"
-      |> RelayFixture.get(@test_store_input_factory)
-      |> RelayFixture.start(namespace)
-      |> RelayFixture.attach_output_msg(namespace)
+    {:ok, %{operative_id: operative_id}} =
+      "self_heal_operative"
+      |> OperativeFixture.get(@test_store_input_factory)
+      |> OperativeFixture.start(namespace)
+      |> OperativeFixture.attach_output_msg(namespace)
 
-    plugin_id = relay_id <> "_output_msg_handler"
-    {:ok, ow} = HubManager.get_pid(namespace, relay_id)
+    plugin_id = operative_id <> "_output_msg_handler"
+    {:ok, ow} = HubManager.get_pid(namespace, operative_id)
     assert subscribed_plugin?(ow, plugin_id)
 
     # Direct Overwatch unsubscribe bypasses PluginManager, so the declared
@@ -739,25 +739,25 @@ defmodule FlezhaTest do
 
     executor_id = NodeTestHelper.start_executor(namespace)
 
-    {:ok, %{relay_id: relay_id}} =
-      "sick_plugin_relay"
-      |> RelayFixture.get(@test_store_input_factory)
-      |> RelayFixture.start(namespace)
+    {:ok, %{operative_id: operative_id}} =
+      "sick_plugin_operative"
+      |> OperativeFixture.get(@test_store_input_factory)
+      |> OperativeFixture.start(namespace)
 
-    plugin_id = relay_id <> "_sick"
+    plugin_id = operative_id <> "_sick"
     FlezhaTest.SickProvider.reset()
 
     {:ok, "plugin enabled"} =
       PluginManager.enable_plugin(plugin_id, %Flezha.Plugin{
         id: plugin_id,
         namespace: namespace,
-        relay_id: relay_id,
+        operative_id: operative_id,
         provider: FlezhaTest.SickProvider,
         opts: %{},
         subscriptions: [{:on_output, []}]
       })
 
-    {:ok, ow} = HubManager.get_pid(namespace, relay_id)
+    {:ok, ow} = HubManager.get_pid(namespace, operative_id)
     assert subscribed_plugin?(ow, plugin_id)
     activations_before = FlezhaTest.SickProvider.activations()
 

@@ -3,11 +3,11 @@ defmodule FlezhaTest.Executor.ControlUnitHealthTest do
   ControlUnit out-of-band recovery. A control reply left unacked past the evict
   threshold is a positive dead-executor signal: the ControlUnit fails the
   waiter, drops the ref, and synthesizes the FleetManager disconnect that evicts
-  the executor and rebinds its relays — never routing through the (possibly
-  wedged) Overwatch relay process.
+  the executor and rebinds its operatives — never routing through the (possibly
+  wedged) Overwatch operative process.
 
   Fail surfaces as: market data stops and never recovers because a silent
-  executor's relay is never rebound onto a live executor.
+  executor's operative is never rebound onto a live executor.
   """
   use ExUnit.Case, async: false
 

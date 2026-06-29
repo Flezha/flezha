@@ -1,16 +1,16 @@
 defmodule Flezha.State.Retention do
   @moduledoc """
-  Sweeper enforcing `time_travel_retention_hours` per Relay class.
+  Sweeper enforcing `time_travel_retention_hours` per Operative class.
 
-  On each pass, walks every Partition under `Registry.state_root/0` and
+  On each pass, walks every Segment under `Registry.state_root/0` and
   prunes:
 
     * Snapshots strictly older than `now - retention_hours`, keeping at
       minimum the latest snapshot.
     * WAL records whose `seq <= kept_snapshot_seq` (chunk-rewrite via
-      `partition.wal.rewriting → rename`).
+      `segment.wal.rewriting → rename`).
 
-  `retention_hours = 0` disables time-travel for that Relay class:
+  `retention_hours = 0` disables time-travel for that Operative class:
   the WAL is truncated to the latest snapshot's seq immediately on
   every pass ("compact and forget").
 
@@ -71,19 +71,19 @@ defmodule Flezha.State.Retention do
   # ---------- Sweep ----------
 
   defp sweep_all() do
-    Enum.each(Registry.all_partitions(), fn {relay_class, _, _} = pid ->
-      hours = PersistenceResolver.retention_hours(relay_class)
-      sweep_partition(pid, hours)
+    Enum.each(Registry.all_segments(), fn {operative_class, _, _} = pid ->
+      hours = PersistenceResolver.retention_hours(operative_class)
+      sweep_segment(pid, hours)
     end)
   end
 
   @doc """
-  Sweep a single Partition. Public for `flz state` debugging.
+  Sweep a single Segment. Public for `flz state` debugging.
   """
-  @spec sweep_partition(Registry.partition_id(), non_neg_integer()) :: :ok
-  def sweep_partition(partition_id, retention_hours)
+  @spec sweep_segment(Registry.segment_id(), non_neg_integer()) :: :ok
+  def sweep_segment(segment_id, retention_hours)
       when is_integer(retention_hours) and retention_hours >= 0 do
-    snaps = Registry.snapshot_paths(partition_id)
+    snaps = Registry.snapshot_paths(segment_id)
 
     case snaps do
       [] ->
@@ -96,7 +96,7 @@ defmodule Flezha.State.Retention do
           if seq < kept_seq, do: File.rm(path)
         end)
 
-        rewrite_wal_excluding_pre_seq(partition_id, kept_seq)
+        rewrite_wal_excluding_pre_seq(segment_id, kept_seq)
     end
 
     :ok
@@ -131,23 +131,23 @@ defmodule Flezha.State.Retention do
 
   @doc """
   Rewrite the WAL keeping only records with `seq > keep_above_seq`.
-  Atomic via `partition.wal.rewriting → rename`.
+  Atomic via `segment.wal.rewriting → rename`.
   """
-  @spec rewrite_wal_excluding_pre_seq(Registry.partition_id(), non_neg_integer()) :: :ok
-  def rewrite_wal_excluding_pre_seq(partition_id, keep_above_seq) do
-    case Supervisor.lookup(partition_id) do
+  @spec rewrite_wal_excluding_pre_seq(Registry.segment_id(), non_neg_integer()) :: :ok
+  def rewrite_wal_excluding_pre_seq(segment_id, keep_above_seq) do
+    case Supervisor.lookup(segment_id) do
       {:ok, pid} ->
         # Delegate through the writer so it controls its own file handle.
         WalWriter.truncate_up_to(pid, keep_above_seq)
 
       :error ->
         # No live writer — perform the rewrite in-process.
-        rewrite_offline(partition_id, keep_above_seq)
+        rewrite_offline(segment_id, keep_above_seq)
     end
   end
 
-  defp rewrite_offline(partition_id, keep_above_seq) do
-    wal_path = Registry.wal_path(partition_id)
+  defp rewrite_offline(segment_id, keep_above_seq) do
+    wal_path = Registry.wal_path(segment_id)
 
     if File.exists?(wal_path) do
       tmp_path = wal_path <> ".rewriting"
@@ -163,7 +163,7 @@ defmodule Flezha.State.Retention do
       end
 
       :ok = File.rename(tmp_path, wal_path)
-      Metrics.put(Metrics.for_partition(partition_id), :wal_size_bytes, file_size(wal_path))
+      Metrics.put(Metrics.for_segment(segment_id), :wal_size_bytes, file_size(wal_path))
     end
 
     :ok

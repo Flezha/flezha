@@ -3,7 +3,7 @@ package com.flezha.sdk.channel;
 import javax.annotation.Nonnull;
 
 /**
- * Phantom-typed channel handle. The {@code id} is the index into the Relay's
+ * Phantom-typed channel handle. The {@code id} is the index into the ContinuousOperative's
  * channel list; the {@code T} parameter exists only for compile-time wiring
  * checks via the builder methods.
  */

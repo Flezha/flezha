@@ -13,25 +13,25 @@ message CommandRequest {
     oneof command {
         AssignExecutorId assign_executor_id = 2;
         ConnectSocket connect_socket = 3;
-        AddRelay add_relay = 4;
-        RemRelay rem_relay = 5;
+        AddOperative add_operative = 4;
+        RemOperative rem_operative = 5;
         MigrationSerialization migration_serialization = 6;
         MigrationDeserialization migration_deserialization = 7;
-        PartitionState partition_state = 8;
+        SegmentState segment_state = 8;
         ExecutorDisconnect executor_disconnect = 9;
-        RelayMessage relay_message = 10;
-        PartitionApplyState partition_apply_state = 11;
+        OperationMessage operation_message = 10;
+        SegmentApplyState segment_apply_state = 11;
         ExecutorShutdownNotification executor_shutdown_notification = 12;
         ExecutorShutdownAck executor_shutdown_ack = 13;
         RestoreInitState restore_init_state = 14;
         RestoreInitStateResponse restore_init_state_response = 15;
-        CompactPartition compact_partition = 16;
-        CompactPartitionResponse compact_partition_response = 17;
-        PartitionMailboxStatus partition_mailbox_status = 18;
+        CompactSegment compact_segment = 16;
+        CompactSegmentResponse compact_segment_response = 17;
+        SegmentMailboxStatus segment_mailbox_status = 18;
         Ping ping = 19;
         ExecutorReconnected executor_reconnected = 20;
         ReassignExecutorId reassign_executor_id = 21;
-        TaskCompleted task_completed = 22;
+        BoundedCompleted bounded_completed = 22;
     }
 }
 
@@ -50,63 +50,64 @@ message ConnectSocket {
     uint32 sockets_count = 1;
 }
 
-message AddRelay {
-    string relay_id = 1;
+message AddOperative {
+    string operative_id = 1;
     string factory_id = 2;
     string init_values = 3;
-    // Compute-unit kind for this unit (e.g. "relay", "task"). Empty/absent
-    // is interpreted as "relay" so pre-change SDKs and old wire frames stay
-    // backward-compatible. Populated by the Controller from the relay's :kind.
+    // Operative kind for this unit: "continuous" or "bounded". Default
+    // (when populated by the Controller from the operative's :kind) is
+    // "continuous".
     string kind = 4;
 }
 
-message RemRelay {
-    string relay_id = 1;
+message RemOperative {
+    string operative_id = 1;
 }
 
 message MigrationSerialization {
-    string relay_id = 1;
+    string operative_id = 1;
 }
 
 message MigrationDeserialization {
-    string relay_id = 1;
+    string operative_id = 1;
     string factory_id = 2;
     bytes serialized_state = 3;
 }
 
-message PartitionState {
-    string relay_id = 1;
+message SegmentState {
+    string operative_id = 1;
 }
 
 message ExecutorDisconnect {}
 
-message RelayMessage {
-    string relay_id = 1;
+message OperationMessage {
+    string operative_id = 1;
     bytes payload = 2;
 }
 
-message RelayMessageResponse {
+message OperationMessageResponse {
     bytes payload = 1;
     string error = 2;
 }
 
-// Inverse of PartitionState. Sent by the Controller to an Executor SDK to
-// prime a freshly-spawned Relay's GenServer/struct state from a
+// Inverse of SegmentState. Sent by the Controller to an Executor SDK to
+// prime a freshly-spawned Operative's GenServer/struct state from a
 // previously-captured `state_binary`. Round-trips with the same opaque
-// SDK-internal serialization used by PartitionState. SDKs that do not
+// SDK-internal serialization used by SegmentState. SDKs that do not
 // implement Apply respond with status="error" and error[] containing the
 // canonical token "apply_state_not_supported".
-message PartitionApplyState {
-    string relay_id = 1;
+message SegmentApplyState {
+    string operative_id = 1;
     string factory_id = 2;
     bytes state_binary = 3;
 }
 
 // Sent by the SDK to the Controller on graceful shutdown (SIGTERM, Drop of
-// the SDK handle, explicit disconnect()) for each currently-running Relay.
-// Carries the Executor's freshest in-memory state binary so the Controller
-// can overwrite Overwatch.state.snapshot before the next AddRelay reissue
-// (see executor-controller-connection-healing capability).
+// the SDK handle, explicit disconnect()) for each currently-running
+// Operative. Carries the Executor's freshest in-memory state binary so the
+// Controller can overwrite Overwatch.state.snapshot before the next
+// AddOperative reissue (see executor-controller-connection-healing
+// capability).
 //
 // Direction is reversed compared to most CommandRequest variants: SDK -> Controller.
 // Wire format reuses the same CommandRequest envelope and the
@@ -117,7 +118,7 @@ message PartitionApplyState {
 // unknown-field handling; older SDKs that do not emit it fall back to the
 // periodic-snapshot freshness shipped by heal-connections-on-restart.
 message ExecutorShutdownNotification {
-    string relay_id = 1;
+    string operative_id = 1;
     bytes serialized_state = 2;
 }
 
@@ -127,60 +128,60 @@ message ExecutorShutdownNotification {
 // is enqueued on the Overwatch GenServer (not after the cast has been applied).
 //
 // Controller -> SDK direction at the wire level — same envelope as the
-// notification. The SDK awaits this with a per-Relay 2 s timeout
-// (parallelised across Relays) and exits regardless after the timeout.
+// notification. The SDK awaits this with a per-Operative 2 s timeout
+// (parallelised across Operatives) and exits regardless after the timeout.
 message ExecutorShutdownAck {
-    string relay_id = 1;
+    string operative_id = 1;
 }
 
-// Per-Partition state restore handshake: Controller ships latest snapshot
-// bytes plus tail-WAL bytes, SDK applies them to the partition's State
-// before any input is processed. See `relay-state-persistence` design.
+// Per-Segment state restore handshake: Controller ships latest snapshot
+// bytes plus tail-WAL bytes, SDK applies them to the segment's State
+// before any input is processed. See the per-segment state persistence design.
 //
-// `partition_id` is the structured byte identifier
-// `[relay_class_len: u8][relay_class][shard_id_len: u8][shard_id]
-//  [partition_key_len: u16 BE][partition_key]`. `change_log_bytes` is
+// `segment_id` is the structured byte identifier
+// `[operative_class_len: u8][operative_class][operation_id_len: u8][operation_id]
+//  [segment_key_len: u16 BE][segment_key]`. `change_log_bytes` is
 // the tail of the WAL framed `[seq: u64 BE][len: u32 BE]
 // [header: 16B][change_bytes][crc32: u32 BE]` records back-to-back.
 message RestoreInitState {
-    bytes partition_id = 1;
+    bytes segment_id = 1;
     bytes snapshot_bytes = 2;
     bytes change_log_bytes = 3;
 }
 
 // SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`
 // is the highest WAL seq folded into State; the Controller expects the next
-// `partition_state_change` to carry `seq = terminal_seq + 1`.
+// `segment_state_change` to carry `seq = terminal_seq + 1`.
 message RestoreInitStateResponse {
-    bytes partition_id = 1;
+    bytes segment_id = 1;
     uint64 terminal_seq = 2;
 }
 
-// Controller-issued compaction request. The SDK clones the partition's
+// Controller-issued compaction request. The SDK clones the segment's
 // `Self::State` under the sticky CAS, serializes it, and replies via
-// `partition_state_snapshot` then `CompactPartitionResponse`.
-message CompactPartition {
-    bytes partition_id = 1;
+// `segment_state_snapshot` then `CompactSegmentResponse`.
+message CompactSegment {
+    bytes segment_id = 1;
 }
 
-message CompactPartitionResponse {
-    bytes partition_id = 1;
+message CompactSegmentResponse {
+    bytes segment_id = 1;
     uint64 snapshot_seq = 2;
     uint64 snapshot_bytes_size = 3;
 }
 
-// Back-pressure signal: the Controller's per-Partition WAL outbox is at the
+// Back-pressure signal: the Controller's per-Segment WAL outbox is at the
 // high watermark (`status = "full"`) or has drained below the low
-// watermark (`status = "open"`). The SDK's per-Partition mailbox
+// watermark (`status = "open"`). The SDK's per-Segment mailbox
 // observer translates the signal into the channel's declared
 // `OverflowPolicy`.
-message PartitionMailboxStatus {
-    bytes partition_id = 1;
+message SegmentMailboxStatus {
+    bytes segment_id = 1;
     string status = 2;
 }
 
 // End-to-end control-channel health probe issued by the Controller before
-// `AddRelay`. The SDK responds immediately with a `CommandResponse{status:
+// `AddOperative`. The SDK responds immediately with a `CommandResponse{status:
 // "success", raw_data: PingResponse}`; the round-trip proves the
 // control channel is bound, the SDK is listening, and the reply path is
 // intact. SDKs without the handler MUST log and ignore the unknown variant
@@ -196,7 +197,7 @@ message PingResponse {
 // SDK -> Controller, emitted as the FIRST frame on every newly-established
 // control stream after `handle_reconnect` runs. Preserves the executor's
 // identity across the reconnect so the Controller can compute a binding
-// delta instead of re-issuing every relay. `reason` is one of
+// delta instead of re-issuing every operative. `reason` is one of
 // `control_stream_broken | read_error | write_error | keepalive_timeout
 // | controller_requested`. Old Controllers that do not recognise this
 // variant silently skip it; new SDKs against an old Controller therefore
@@ -216,16 +217,17 @@ message ReassignExecutorId {
     string new_id = 1;
 }
 
-// SDK -> Controller. Emitted by a task-kind unit when its run-once function
-// returns. `status` is "ok" on success or "error" on failure (with `error`
-// describing it). The Controller drives the same stop/teardown path as an
-// explicit stop (deregister-on-completion) so a finished task is removed
-// from the durable registry and never replayed on boot or misjudged by
-// convergence. Direction is reversed like ExecutorShutdownNotification:
-// SDK -> Controller over the "control_command" payload_id; old Controllers
-// ignore the unknown variant via Protox unknown-field handling.
-message TaskCompleted {
-    string relay_id = 1;
+// SDK -> Controller. Emitted by a bounded-kind operative when its run-once
+// function returns. `status` is "ok" on success or "error" on failure (with
+// `error` describing it). The Controller drives the same stop/teardown path
+// as an explicit stop (deregister-on-completion) so a finished bounded
+// operative is removed from the durable registry and never replayed on boot
+// or misjudged by convergence. Direction is reversed like
+// ExecutorShutdownNotification: SDK -> Controller over the "control_command"
+// payload_id; old Controllers ignore the unknown variant via Protox
+// unknown-field handling.
+message BoundedCompleted {
+    string operative_id = 1;
     string status = 2;
     string error = 3;
 }

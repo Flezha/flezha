@@ -10,11 +10,11 @@ defmodule Flezha.Service.PluginHelper do
   alias Flezha.Service.PluginManager
 
   @doc """
-  Enables a MonitoredIOForward plugin that streams relay I/O to `recv_pid`.
+  Enables a MonitoredIOForward plugin that streams operative I/O to `recv_pid`.
 
   Returns `{:ok, plugin_id}` on success or `{:error, reason}` on failure.
   """
-  def enable_io_listener(namespace, relay_id, io_type, recv_pid) do
+  def enable_io_listener(namespace, operative_id, io_type, recv_pid) do
     extension =
       case io_type do
         "input" -> :on_input
@@ -30,11 +30,11 @@ defmodule Flezha.Service.PluginHelper do
         id: plugin_id,
         provider: MonitoredIOForward,
         namespace: namespace,
-        relay_id: relay_id,
+        operative_id: operative_id,
         opts: %{
           recv_pid: recv_pid,
           plugin_id: plugin_id,
-          relay_id: relay_id,
+          operative_id: operative_id,
           namespace: namespace
         },
         subscriptions: [{extension, []}]

@@ -3,7 +3,7 @@
 `flz reset` clears the Controller's durable on-disk state under
 `app_data/` so the next boot starts from a clean slate. It is the
 operator-facing inverse of "first boot ever" — useful when an operator
-wants to throw away every Partition's WAL/snapshot, every ProcessHub
+wants to throw away every Segment's WAL/snapshot, every ProcessHub
 durable registry, and (optionally) the on-disk TLS material and UDS
 sockets.
 
@@ -21,7 +21,7 @@ By default clears the contents of:
 
 | Directory                | Source                                    |
 | ------------------------ | ----------------------------------------- |
-| `app_data/state/`        | per-Partition WAL/snapshot/outbox files   |
+| `app_data/state/`        | per-Segment WAL/snapshot/outbox files     |
 | `app_data/process_hub/`  | ProcessHub durable registry (`.dets`)     |
 
 Opt-in (off by default):
@@ -146,9 +146,9 @@ the right files in place.
 
 ## Out of scope
 
-- **Scoped reset while the Controller is up** (e.g. "wipe just relay
+- **Scoped reset while the Controller is up** (e.g. "wipe just operative
   X"). Different safety model; deferred to a follow-up change.
 - **Backups.** `tar -czf backup.tgz app_data/` before running.
-- **Time-travel-aware trimming.** Use `flz state retention <relay> <hours>` instead.
+- **Time-travel-aware trimming.** Use `flz state retention <operative> <hours>` instead.
 - **Cluster-wide reset.** Single-node operation; run `flz reset` per
   node.

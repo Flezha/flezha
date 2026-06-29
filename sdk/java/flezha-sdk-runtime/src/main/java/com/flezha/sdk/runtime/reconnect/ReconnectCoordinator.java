@@ -17,8 +17,8 @@ import org.slf4j.LoggerFactory;
  * <p>On unexpected disconnect (status != {@link ExecutorStatus#STOPPED}):
  * <ol>
  *   <li>Clear {@code io_streams} registry.</li>
- *   <li>Clear the live relay registry.</li>
- *   <li>Drain worker queues (via {@link com.flezha.sdk.runtime.worker.RelayDispatcher#shutdown()}).</li>
+ *   <li>Clear the live operative registry.</li>
+ *   <li>Drain worker queues (via {@link com.flezha.sdk.runtime.worker.OperationDispatcher#shutdown()}).</li>
  *   <li>Reset {@code executor_id} to {@code "undefined"}.</li>
  *   <li>Loop connect attempts with exponential backoff capped at 30 s until
  *       the handshake succeeds again.</li>
@@ -103,7 +103,7 @@ public final class ReconnectCoordinator {
 
     private void resetState() {
         ctx.streamRegistry().clear();
-        ctx.relayInstanceRegistry().clear();
+        ctx.operativeInstanceRegistry().clear();
         ctx.setExecutorId("undefined");
     }
 

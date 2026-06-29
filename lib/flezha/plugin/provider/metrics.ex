@@ -2,9 +2,9 @@ defmodule Flezha.Plugin.Provider.Metrics do
   @moduledoc """
   Persistence-counter exporter.
 
-  Exposes per-Partition WAL/snapshot counters from
+  Exposes per-Segment WAL/snapshot counters from
   `Flezha.State.Metrics` under the metric prefix
-  `flezha.partition.<RelayClass>.<ShardId>.<PartitionKey>.<counter_name>`.
+  `flezha.segment.<OperativeClass>.<OperationId>.<SegmentKey>.<counter_name>`.
 
   Consumers fetch the snapshot via `gather/0`. A future Prometheus /
   StatsD bridge can subscribe to a `:telemetry` poll loop calling
@@ -25,17 +25,17 @@ defmodule Flezha.Plugin.Provider.Metrics do
   end
 
   @doc """
-  Build the per-Partition metrics list — keyed structurally rather than
+  Build the per-Segment metrics list — keyed structurally rather than
   flattened to a metric name. Useful for the CLI (`flz state list`) and
-  the `flz relay info` extension.
+  the `flz operative info` extension.
   """
-  @spec by_partition() :: [{Registry.partition_id(), %{atom() => integer()}}]
-  def by_partition(), do: Metrics.snapshot_all()
+  @spec by_segment() :: [{Registry.segment_id(), %{atom() => integer()}}]
+  def by_segment(), do: Metrics.snapshot_all()
 
-  defp flatten({{_ce, relay_class, shard_id, partition_key}, counters}) do
+  defp flatten({{_ce, operative_class, operation_id, segment_key}, counters}) do
     prefix =
-      "flezha.partition." <>
-        relay_class <> "." <> shard_id <> "." <> Registry.encode_partition_key(partition_key)
+      "flezha.segment." <>
+        operative_class <> "." <> operation_id <> "." <> Registry.encode_segment_key(segment_key)
 
     Enum.map(counters, fn {name, value} ->
       {prefix <> "." <> Atom.to_string(name), value}

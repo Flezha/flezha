@@ -5,20 +5,20 @@ defmodule Flezha.AuthZ.PolicyTest do
 
   describe "grants?/2" do
     test "viewer has read-only verbs" do
-      for a <- [:"relay.list", :"audit.read", :"observability.query"] do
+      for a <- [:"operative.list", :"audit.read", :"observability.query"] do
         assert Policy.grants?(:viewer, a)
       end
     end
 
-    test "viewer cannot start relays or mutate" do
-      for a <- [:"relay.start", :"plugin.install", :"reset.run", :"authz.token_issue"] do
+    test "viewer cannot start operatives or mutate" do
+      for a <- [:"operative.start", :"plugin.install", :"reset.run", :"authz.token_issue"] do
         refute Policy.grants?(:viewer, a)
       end
     end
 
-    test "operator inherits viewer plus relay/plugin lifecycle and observability mutate" do
-      assert Policy.grants?(:operator, :"relay.list")
-      assert Policy.grants?(:operator, :"relay.start")
+    test "operator inherits viewer plus operative/plugin lifecycle and observability mutate" do
+      assert Policy.grants?(:operator, :"operative.list")
+      assert Policy.grants?(:operator, :"operative.start")
       assert Policy.grants?(:operator, :"plugin.enable")
       assert Policy.grants?(:operator, :"observability.enable_source")
       refute Policy.grants?(:operator, :"plugin.install")
@@ -26,7 +26,7 @@ defmodule Flezha.AuthZ.PolicyTest do
     end
 
     test "admin inherits operator plus auth-state mutation and reset" do
-      assert Policy.grants?(:admin, :"relay.start")
+      assert Policy.grants?(:admin, :"operative.start")
       assert Policy.grants?(:admin, :"plugin.install")
       assert Policy.grants?(:admin, :"authz.token_issue")
       assert Policy.grants?(:admin, :"authz.namespace_create")
@@ -38,13 +38,13 @@ defmodule Flezha.AuthZ.PolicyTest do
         assert Policy.grants?(:executor, a)
       end
 
-      for a <- [:"relay.start", :"relay.list", :"audit.read", :"observability.query"] do
+      for a <- [:"operative.start", :"operative.list", :"audit.read", :"observability.query"] do
         refute Policy.grants?(:executor, a)
       end
     end
 
     test "unknown role denies everything" do
-      refute Policy.grants?(:superuser, :"relay.start")
+      refute Policy.grants?(:superuser, :"operative.start")
     end
   end
 
@@ -58,7 +58,7 @@ defmodule Flezha.AuthZ.PolicyTest do
   test "cross_namespace_admin_action?/1 covers auth-state mutations" do
     assert Policy.cross_namespace_admin_action?(:"authz.namespace_create")
     assert Policy.cross_namespace_admin_action?(:"authz.token_issue")
-    refute Policy.cross_namespace_admin_action?(:"relay.start")
+    refute Policy.cross_namespace_admin_action?(:"operative.start")
     refute Policy.cross_namespace_admin_action?(:"audit.read")
   end
 end

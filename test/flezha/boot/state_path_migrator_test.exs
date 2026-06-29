@@ -24,7 +24,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
   end
 
   test "migrates legacy executor-keyed layout to flat layout", %{base: base} do
-    legacy = Path.join([base, "ce-aaaa1111", "MyRelay", "shard-0"])
+    legacy = Path.join([base, "ce-aaaa1111", "MyOperative", "operation-0"])
     File.mkdir_p!(legacy)
     File.write!(Path.join(legacy, "p1.wal"), "wal-bytes")
     File.write!(Path.join(legacy, "p1.snap.5"), "snap-bytes")
@@ -34,14 +34,14 @@ defmodule Flezha.Boot.StatePathMigratorTest do
     assert result.renamed == 2
     assert result.collisions == 0
 
-    flat = Path.join([base, "MyRelay", "shard-0"])
+    flat = Path.join([base, "MyOperative", "operation-0"])
     assert File.read!(Path.join(flat, "p1.wal")) == "wal-bytes"
     assert File.read!(Path.join(flat, "p1.snap.5")) == "snap-bytes"
     refute File.dir?(Path.join(base, "ce-aaaa1111"))
   end
 
   test "is idempotent on second run after the layout is already flat", %{base: base} do
-    flat_dir = Path.join([base, "MyRelay", "shard-0"])
+    flat_dir = Path.join([base, "MyOperative", "operation-0"])
     File.mkdir_p!(flat_dir)
     File.write!(Path.join(flat_dir, "p1.wal"), "wal-bytes")
 
@@ -53,8 +53,8 @@ defmodule Flezha.Boot.StatePathMigratorTest do
   end
 
   test "preserves the loser file on collision", %{base: base} do
-    legacy_a = Path.join([base, "ce-aaaa1111", "MyRelay", "shard-0"])
-    legacy_b = Path.join([base, "ce-bbbb2222", "MyRelay", "shard-0"])
+    legacy_a = Path.join([base, "ce-aaaa1111", "MyOperative", "operation-0"])
+    legacy_b = Path.join([base, "ce-bbbb2222", "MyOperative", "operation-0"])
     File.mkdir_p!(legacy_a)
     File.mkdir_p!(legacy_b)
 
@@ -66,7 +66,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
     result = StatePathMigrator.migrate()
 
     assert result.collisions == 1
-    flat_path = Path.join([base, "MyRelay", "shard-0", "p1.wal"])
+    flat_path = Path.join([base, "MyOperative", "operation-0", "p1.wal"])
     assert File.read!(flat_path) == "newer"
     assert Enum.count(result.preserved_files) == 1
     [preserved] = result.preserved_files
@@ -80,8 +80,8 @@ defmodule Flezha.Boot.StatePathMigratorTest do
   end
 
   test "leaves existing flat directories untouched", %{base: base} do
-    legacy = Path.join([base, "ce-aaaa1111", "RelayA", "shard-0"])
-    flat = Path.join([base, "RelayB", "shard-0"])
+    legacy = Path.join([base, "ce-aaaa1111", "OperativeA", "operation-0"])
+    flat = Path.join([base, "OperativeB", "operation-0"])
     File.mkdir_p!(legacy)
     File.mkdir_p!(flat)
     File.write!(Path.join(legacy, "x.wal"), "x")
@@ -90,17 +90,17 @@ defmodule Flezha.Boot.StatePathMigratorTest do
     StatePathMigrator.migrate()
 
     assert File.read!(Path.join(flat, "y.wal")) == "y"
-    assert File.read!(Path.join([base, "RelayA", "shard-0", "x.wal"])) == "x"
+    assert File.read!(Path.join([base, "OperativeA", "operation-0", "x.wal"])) == "x"
   end
 
   test "Registry.scan_dir reads the migrated layout", %{base: base} do
-    legacy = Path.join([base, "ce-aaaa1111", "MyRelay", "shard-0"])
+    legacy = Path.join([base, "ce-aaaa1111", "MyOperative", "operation-0"])
     File.mkdir_p!(legacy)
     File.write!(Path.join(legacy, "p1.wal"), "wal-bytes")
 
     StatePathMigrator.migrate()
 
-    %{wal_files: wals} = Registry.scan_dir({"MyRelay", "shard-0", ""})
+    %{wal_files: wals} = Registry.scan_dir({"MyOperative", "operation-0", ""})
     assert [{"p1", _path}] = wals
   end
 end

@@ -13,18 +13,18 @@ config :flezha,
   # ------------------------------------------------------------------------------------------------
   # Enabled plugins.
   enabled_plugins: %{
-    "relay_kafka_producer" => Flezha.Plugin.Provider.Kafka.Producer,
-    "relay_websocket" => Flezha.Plugin.Provider.Websocket,
-    "relay_beam_msg" => Flezha.Plugin.Provider.BeamMsgForward,
-    "relay_stdout" => Flezha.Plugin.Provider.StdOut,
-    "relay_io_filter" => Flezha.Plugin.Provider.Filter,
+    "operative_kafka_producer" => Flezha.Plugin.Provider.Kafka.Producer,
+    "operative_websocket" => Flezha.Plugin.Provider.Websocket,
+    "operative_beam_msg" => Flezha.Plugin.Provider.BeamMsgForward,
+    "operative_stdout" => Flezha.Plugin.Provider.StdOut,
+    "operative_io_filter" => Flezha.Plugin.Provider.Filter,
     "monitored_io_forward" => Flezha.Plugin.Provider.MonitoredIOForward,
     # `:on_message` provider that forwards a `{:flezha_request, key, payload,
-    # reply_to, ref}` envelope to the SDK-side relay via the
-    # `RelayMessage` control command. Attach at relay start with a
+    # reply_to, ref}` envelope to the SDK-side operative via the
+    # `OperationMessage` control command. Attach at operative start with a
     # subscription keyed on the handler name, e.g. `["on_message",
     # {"name": "fetch_init_state"}]`.
-    "relay_message_forward" => Flezha.Plugin.Provider.MessageForward
+    "operative_message_forward" => Flezha.Plugin.Provider.MessageForward
   },
 
   # ------------------------------------------------------------------------------------------------

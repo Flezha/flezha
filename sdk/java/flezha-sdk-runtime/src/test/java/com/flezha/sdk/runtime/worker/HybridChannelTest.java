@@ -4,19 +4,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.relay.Relay;
-import com.flezha.sdk.relay.RelayConfigurationException;
-import com.flezha.sdk.relay.RelayRegistry;
+import com.flezha.sdk.operative.ContinuousOperative;
+import com.flezha.sdk.operative.ContinuousOperativeConfigurationException;
+import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
-import com.flezha.sdk.runtime.relay.RelayClassRegistry;
-import com.flezha.sdk.runtime.relay.RelayInstance;
-import com.flezha.sdk.runtime.relay.RelayTopology;
-import com.flezha.sdk.runtime.relay.StatelessTestShard;
-import com.flezha.sdk.shard.ShardCtx;
-import com.flezha.sdk.shard.ShardException;
+import com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry;
+import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
+import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
+import com.flezha.sdk.runtime.operative.StatelessTestOperation;
+import com.flezha.sdk.operation.OperationCtx;
+import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
 import com.flezha.sdk.state.WallClock;
@@ -38,15 +38,15 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Java port of {@code sdk/rust/tests/hybrid_channel.rs}. Exercises the
- * hybrid-channel surface added by {@code relay-channel-fan-out-to-plugin-java}:
+ * hybrid-channel surface added by {@code operative-channel-fan-out-to-plugin-java}:
  * one channel fans out typed values to consumers AND publishes serialized
  * bytes to a plugin sink.
  */
 class HybridChannelTest {
 
     // Shared captures across test cases. Cleared in @BeforeEach so test order
-    // does not bleed observations. Static because the Relay/Shard pipeline
-    // re-instantiates shards reflectively (no-arg ctor), so test cases cannot
+    // does not bleed observations. Static because the ContinuousOperative/Operation pipeline
+    // re-instantiates operations reflectively (no-arg ctor), so test cases cannot
     // close over instance-level mutable state.
     private static final List<Integer> SINGLE_OBSERVED = new CopyOnWriteArrayList<>();
     private static final List<Integer> THREE_A = new CopyOnWriteArrayList<>();
@@ -75,9 +75,9 @@ class HybridChannelTest {
         PURE_OBSERVED.clear();
         PURE_EMIT_OUTCOMES.clear();
         capturedWrites.clear();
-        RelayRegistry.reset();
+        ContinuousOperativeRegistry.reset();
 
-        ShardDispatcher.setWireWriter((handle, streamId, frame) -> {
+        OperationDispatcher.setWireWriter((handle, streamId, frame) -> {
             capturedWrites.add(frame);
             return 0;
         });
@@ -90,21 +90,21 @@ class HybridChannelTest {
 
     @AfterEach
     void close() {
-        ShardDispatcher.resetWireWriter();
+        OperationDispatcher.resetWireWriter();
         if (ctx != null && ctx.workerPool() != null) {
             ctx.workerPool().shutdownNow();
         }
     }
 
-    private RelayInstance instantiate(Class<? extends Relay> relayClass, String factoryId) {
-        RelayRegistry.registerRelay(relayClass);
-        RelayTopology topology = RelayClassRegistry.getTopology(factoryId);
-        return RelayInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
+    private ContinuousOperativeInstance instantiate(Class<? extends ContinuousOperative> operativeClass, String factoryId) {
+        ContinuousOperativeRegistry.registerContinuous(operativeClass);
+        ContinuousOperativeTopology topology = ContinuousOperativeClassRegistry.getTopology(factoryId);
+        return ContinuousOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
     }
 
-    private void feed(RelayInstance instance, String producerShardName, Object input) {
-        int shardId = instance.topology().shardNameToId().get(producerShardName);
-        instance.dispatcher(shardId).fanoutPartitions(input, 100L);
+    private void feed(ContinuousOperativeInstance instance, String producerOperationName, Object input) {
+        int operationId = instance.topology().operationNameToId().get(producerOperationName);
+        instance.dispatcher(operationId).fanoutSegments(input, 100L);
     }
 
     private static boolean waitFor(java.util.function.BooleanSupplier predicate, long millis) {
@@ -141,7 +141,7 @@ class HybridChannelTest {
     @Test
     @DisplayName("hybrid single consumer receives typed value and plugin bytes")
     void hybridSingleConsumerReceivesTypedAndPluginBytes() {
-        RelayInstance instance = instantiate(SingleHybridRelay.class, "hybrid_single");
+        ContinuousOperativeInstance instance = instantiate(SingleHybridContinuousOperative.class, "hybrid_single");
         feed(instance, "hybrid_single_producer", "42");
 
         assertThat(waitFor(() -> SINGLE_OBSERVED.size() == 1 && capturedWrites.size() == 1, 5_000))
@@ -161,7 +161,7 @@ class HybridChannelTest {
     @Test
     @DisplayName("hybrid three consumers fan out + serializer runs exactly once")
     void hybridThreeConsumersSingleSerializerCall() {
-        RelayInstance instance = instantiate(ThreeHybridRelay.class, "hybrid_three");
+        ContinuousOperativeInstance instance = instantiate(ThreeHybridContinuousOperative.class, "hybrid_three");
         feed(instance, "hybrid_three_producer", "7");
 
         assertThat(waitFor(
@@ -186,7 +186,7 @@ class HybridChannelTest {
     @Test
     @DisplayName("hybrid serializer that throws surfaces as PluginSerializerFailure")
     void hybridSerializerThrowIsCaught() {
-        RelayInstance instance = instantiate(PanicHybridRelay.class, "hybrid_panic");
+        ContinuousOperativeInstance instance = instantiate(PanicHybridContinuousOperative.class, "hybrid_panic");
 
         // First input: serializer throws on 13.
         feed(instance, "hybrid_panic_producer", "13");
@@ -215,10 +215,10 @@ class HybridChannelTest {
     // ---------- duplicate plugin sink rejected at registration ----------
 
     @Test
-    @DisplayName("duplicate alsoToPluginWith on the same channel is rejected at registerRelay time")
+    @DisplayName("duplicate alsoToPluginWith on the same channel is rejected at registerContinuous time")
     void hybridDuplicatePluginSinkIsRejected() {
-        RelayConfigurationException ex = assertThrows(
-                RelayConfigurationException.class, () -> RelayRegistry.registerRelay(DuplicateSinkRelay.class));
+        ContinuousOperativeConfigurationException ex = assertThrows(
+                ContinuousOperativeConfigurationException.class, () -> ContinuousOperativeRegistry.registerContinuous(DuplicateSinkContinuousOperative.class));
         assertThat(ex.getMessage()).contains("alsoToPluginWith");
         assertThat(ex.getMessage()).contains("dup_out");
     }
@@ -228,7 +228,7 @@ class HybridChannelTest {
     @Test
     @DisplayName("emitWithMeta on hybrid channel forwards typed value to consumer and meta to plugin")
     void emitWithMetaOnHybridChannelForwardsToPluginOnly() {
-        RelayInstance instance = instantiate(MetaHybridRelay.class, "hybrid_meta");
+        ContinuousOperativeInstance instance = instantiate(MetaHybridContinuousOperative.class, "hybrid_meta");
         feed(instance, "hybrid_meta_producer", "9");
 
         assertThat(waitFor(() -> META_OBSERVED.size() == 1 && capturedWrites.size() == 1, 5_000))
@@ -242,35 +242,35 @@ class HybridChannelTest {
         assertThat(frames.get(0).metadata()).containsEntry("trace_id", "abc123").containsEntry("channel", "meta_out");
     }
 
-    // ---------- emit_with_meta on pure inter-shard channel is still rejected ----------
+    // ---------- emit_with_meta on pure inter-operation channel is still rejected ----------
 
     @Test
-    @DisplayName("emitWithMeta on a pure inter-shard channel is rejected with MetadataNotAllowedOnInterShardChannel")
-    void emitWithMetaOnPureInterShardChannelStillRejected() {
-        RelayInstance instance = instantiate(PureInterShardRelay.class, "hybrid_pure");
+    @DisplayName("emitWithMeta on a pure inter-operation channel is rejected with MetadataNotAllowedOnInterOperationChannel")
+    void emitWithMetaOnPureInterOperationChannelStillRejected() {
+        ContinuousOperativeInstance instance = instantiate(PureInterOperationContinuousOperative.class, "hybrid_pure");
         feed(instance, "hybrid_pure_producer", "1");
 
         assertThat(waitFor(() -> PURE_EMIT_OUTCOMES.size() == 1, 5_000))
                 .as("producer run did not complete")
                 .isTrue();
         String outcome = PURE_EMIT_OUTCOMES.get(0);
-        assertThat(outcome).contains("MetadataNotAllowedOnInterShardChannel");
+        assertThat(outcome).contains("MetadataNotAllowedOnInterOperationChannel");
         assertThat(outcome).contains("pure_out");
 
         // Consumer fan-out happens via emit, not the rejecting emitWithMeta;
-        // pure inter-shard channels still throw before fan-out, matching Rust.
+        // pure inter-operation channels still throw before fan-out, matching Rust.
         assertThat(PURE_OBSERVED).isEmpty();
         assertThat(capturedWrites).isEmpty();
     }
 
     // =============================================================================================
-    // Test Relay topologies + Shard impls. Each Relay is registered exactly once per test; producer
-    // Shards close over the static CopyOnWriteArrayList captures above.
+    // Test ContinuousOperative topologies + Operation impls. Each ContinuousOperative is registered exactly once per test; producer
+    // Operations close over the static CopyOnWriteArrayList captures above.
     // =============================================================================================
 
     // ---- 1 consumer ----
 
-    public static final class SingleHybridRelay implements Relay {
+    public static final class SingleHybridContinuousOperative implements ContinuousOperative {
         @Override
         public String factoryId() {
             return "hybrid_single";
@@ -286,7 +286,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class SingleProducer extends StatelessTestShard<String, Object, Integer> {
+    public static final class SingleProducer extends StatelessTestOperation<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_single_producer";
@@ -303,18 +303,18 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> shardKey) {
+        protected Object initState(Optional<String> operationKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) throws ShardException {
+        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) throws OperationException {
             int n = Integer.parseInt(input);
             ctx.emit(n);
         }
     }
 
-    public static final class SingleConsumer extends StatelessTestShard<Integer, Object, Void> {
+    public static final class SingleConsumer extends StatelessTestOperation<Integer, Object, Void> {
         @Override
         public String name() {
             return "hybrid_single_consumer";
@@ -331,19 +331,19 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> shardKey) {
+        protected Object initState(Optional<String> operationKey) {
             return new Object();
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, ShardCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
             SINGLE_OBSERVED.add(input);
         }
     }
 
     // ---- 3 consumers ----
 
-    public static final class ThreeHybridRelay implements Relay {
+    public static final class ThreeHybridContinuousOperative implements ContinuousOperative {
         @Override
         public String factoryId() {
             return "hybrid_three";
@@ -364,7 +364,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class ThreeProducer extends StatelessTestShard<String, Object, Integer> {
+    public static final class ThreeProducer extends StatelessTestOperation<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_three_producer";
@@ -381,17 +381,17 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> shardKey) {
+        protected Object initState(Optional<String> operationKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) throws ShardException {
+        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) throws OperationException {
             ctx.emit(Integer.parseInt(input));
         }
     }
 
-    private abstract static class CapturingConsumer extends StatelessTestShard<Integer, Object, Void> {
+    private abstract static class CapturingConsumer extends StatelessTestOperation<Integer, Object, Void> {
         @Override
         public Class<Integer> inputType() {
             return Integer.class;
@@ -403,7 +403,7 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> shardKey) {
+        protected Object initState(Optional<String> operationKey) {
             return new Object();
         }
     }
@@ -415,7 +415,7 @@ class HybridChannelTest {
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, ShardCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
             THREE_A.add(input);
         }
     }
@@ -427,7 +427,7 @@ class HybridChannelTest {
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, ShardCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
             THREE_B.add(input);
         }
     }
@@ -439,14 +439,14 @@ class HybridChannelTest {
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, ShardCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
             THREE_C.add(input);
         }
     }
 
     // ---- throwing serializer ----
 
-    public static final class PanicHybridRelay implements Relay {
+    public static final class PanicHybridContinuousOperative implements ContinuousOperative {
         @Override
         public String factoryId() {
             return "hybrid_panic";
@@ -467,7 +467,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class PanicProducer extends StatelessTestShard<String, Object, Integer> {
+    public static final class PanicProducer extends StatelessTestOperation<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_panic_producer";
@@ -484,23 +484,23 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> shardKey) {
+        protected Object initState(Optional<String> operationKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) {
+        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
             int n = Integer.parseInt(input);
             try {
                 ctx.emit(n);
                 PANIC_EMIT_OUTCOMES.add("ok");
-            } catch (ShardException e) {
+            } catch (OperationException e) {
                 PANIC_EMIT_OUTCOMES.add(e.getMessage());
             }
         }
     }
 
-    public static final class PanicConsumer extends StatelessTestShard<Integer, Object, Void> {
+    public static final class PanicConsumer extends StatelessTestOperation<Integer, Object, Void> {
         @Override
         public String name() {
             return "hybrid_panic_consumer";
@@ -517,19 +517,19 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> shardKey) {
+        protected Object initState(Optional<String> operationKey) {
             return new Object();
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, ShardCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
             PANIC_OBSERVED.add(input);
         }
     }
 
     // ---- duplicate plugin sink ----
 
-    public static final class DuplicateSinkRelay implements Relay {
+    public static final class DuplicateSinkContinuousOperative implements ContinuousOperative {
         @Override
         public String factoryId() {
             return "hybrid_dup";
@@ -545,7 +545,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class DupProducer extends StatelessTestShard<String, Object, Integer> {
+    public static final class DupProducer extends StatelessTestOperation<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_dup_producer";
@@ -562,17 +562,17 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> shardKey) {
+        protected Object initState(Optional<String> operationKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
     }
 
     // ---- emitWithMeta on hybrid ----
 
-    public static final class MetaHybridRelay implements Relay {
+    public static final class MetaHybridContinuousOperative implements ContinuousOperative {
         @Override
         public String factoryId() {
             return "hybrid_meta";
@@ -588,7 +588,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class MetaProducer extends StatelessTestShard<String, Object, Integer> {
+    public static final class MetaProducer extends StatelessTestOperation<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_meta_producer";
@@ -605,12 +605,12 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> shardKey) {
+        protected Object initState(Optional<String> operationKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) throws ShardException {
+        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) throws OperationException {
             int n = Integer.parseInt(input);
             Map<String, String> meta = new HashMap<>();
             meta.put("trace_id", "abc123");
@@ -619,7 +619,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class MetaConsumer extends StatelessTestShard<Integer, Object, Void> {
+    public static final class MetaConsumer extends StatelessTestOperation<Integer, Object, Void> {
         @Override
         public String name() {
             return "hybrid_meta_consumer";
@@ -636,19 +636,19 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> shardKey) {
+        protected Object initState(Optional<String> operationKey) {
             return new Object();
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, ShardCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
             META_OBSERVED.add(input);
         }
     }
 
-    // ---- emitWithMeta on pure inter-shard channel ----
+    // ---- emitWithMeta on pure inter-operation channel ----
 
-    public static final class PureInterShardRelay implements Relay {
+    public static final class PureInterOperationContinuousOperative implements ContinuousOperative {
         @Override
         public String factoryId() {
             return "hybrid_pure";
@@ -661,7 +661,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class PureProducer extends StatelessTestShard<String, Object, Integer> {
+    public static final class PureProducer extends StatelessTestOperation<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_pure_producer";
@@ -678,24 +678,24 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> shardKey) {
+        protected Object initState(Optional<String> operationKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, ShardCtx ctx) {
+        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
             Map<String, String> meta = new HashMap<>();
             meta.put("trace_id", "abc123");
             try {
                 ctx.emitWithMeta(Integer.parseInt(input), meta);
                 PURE_EMIT_OUTCOMES.add("ok");
-            } catch (ShardException e) {
+            } catch (OperationException e) {
                 PURE_EMIT_OUTCOMES.add(e.getClass().getSimpleName() + ":" + e.getMessage());
             }
         }
     }
 
-    public static final class PureConsumer extends StatelessTestShard<Integer, Object, Void> {
+    public static final class PureConsumer extends StatelessTestOperation<Integer, Object, Void> {
         @Override
         public String name() {
             return "hybrid_pure_consumer";
@@ -712,12 +712,12 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> shardKey) {
+        protected Object initState(Optional<String> operationKey) {
             return new Object();
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, ShardCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
             PURE_OBSERVED.add(input);
         }
     }

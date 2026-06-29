@@ -24,13 +24,13 @@ defmodule Flezha.Convergence.RecoveryGate do
   Returns a `MapSet` of namespace identifiers whose hubs are ready for
   healing. Includes `:normal`, `:skipped`, and `:timeout` hubs.
   A `Logger.warning` is emitted for each `:timeout` hub so operators
-  are alerted without blocking relays from recovering.
+  are alerted without blocking operatives from recovering.
   """
   @spec ready_namespaces(Intent.t()) :: MapSet.t(String.t())
-  def ready_namespaces(%Intent{relays: relays}) do
+  def ready_namespaces(%Intent{operatives: operatives}) do
     states = Snapshot.recovery_states()
 
-    relays
+    operatives
     |> Enum.map(& &1.namespace)
     |> Enum.uniq()
     |> Enum.filter(fn ns ->

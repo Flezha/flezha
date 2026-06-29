@@ -21,10 +21,10 @@ import java.util.TreeSet;
 import javax.annotation.Nonnull;
 
 /**
- * Kryo-backed serializer for per-Partition state and per-Partition Change
- * payloads. Constructed once per {@code RelayInstance}; the {@code userTypes}
- * list aggregates the {@code Shard.kryoTypes()} returns across every Shard in
- * the Relay class.
+ * Kryo-backed serializer for per-Segment state and per-Segment Change
+ * payloads. Constructed once per {@code ContinuousOperativeInstance}; the {@code userTypes}
+ * list aggregates the {@code Operation.kryoTypes()} returns across every Operation in
+ * the ContinuousOperative class.
  *
  * <p>Stable type IDs are essential for cross-version compatibility under
  * additive Change evolution: a new Change variant added in v2 ships at id
@@ -50,7 +50,7 @@ public final class KryoCodec {
 
     /**
      * Built-in registrations. Stable IDs occupy the low IDs (0-N); user types
-     * land at N+1, N+2, ... in the order returned by {@code Shard.kryoTypes()}.
+     * land at N+1, N+2, ... in the order returned by {@code Operation.kryoTypes()}.
      */
     private static void registerBuiltins(Kryo kryo) {
         // Common containers and primitives. Kryo's defaults handle primitives

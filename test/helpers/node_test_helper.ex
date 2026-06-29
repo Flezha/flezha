@@ -3,19 +3,19 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   use ExUnit.Case
 
   # TODO: remove or refactor.
-  # def test_relay(relay_id) do
-  #   relay =
-  #     FlezhaTest.Fixtures.RelayFixture.get(
-  #       relay_id,
+  # def test_operative(operative_id) do
+  #   operative =
+  #     FlezhaTest.Fixtures.OperativeFixture.get(
+  #       operative_id,
   #       @factory_increment_state
   #     )
-  #     |> FlezhaTest.Fixtures.RelayFixture.start()
+  #     |> FlezhaTest.Fixtures.OperativeFixture.start()
 
   #   on_exit(fn ->
-  #     FlezhaTest.Fixtures.RelayFixture.stop(relay.id)
+  #     FlezhaTest.Fixtures.OperativeFixture.stop(operative.id)
   #   end)
 
-  #   relay
+  #   operative
   # end
 
   def node_name() do

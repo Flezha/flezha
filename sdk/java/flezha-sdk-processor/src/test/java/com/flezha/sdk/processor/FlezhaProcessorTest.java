@@ -32,10 +32,10 @@ class FlezhaProcessorTest {
                 import com.flezha.sdk.authoring.*;
                 import java.util.List;
                 import java.util.Optional;
-                @Shard(id = "bad", keys = {"a"})
+                @Operation(id = "bad", keys = {"a"})
                 public class Bad {
-                    @PartitionFor public List<String> p(String in) { return List.of("a"); }
-                    @ShardKey public Optional<String> s(String in) { return Optional.empty(); }
+                    @SegmentFor public List<String> p(String in) { return List.of("a"); }
+                    @OperationKey public Optional<String> s(String in) { return Optional.empty(); }
                     public String run(String in) { return in; }
                 }
                 """;
@@ -43,14 +43,14 @@ class FlezhaProcessorTest {
     }
 
     @Test
-    void rejectsInitStateOnStatelessShard() {
+    void rejectsInitStateOnStatelessOperation() {
         String code =
                 """
                 package t;
                 import com.flezha.sdk.authoring.InitState;
-                import com.flezha.sdk.authoring.Shard;
+                import com.flezha.sdk.authoring.Operation;
                 import java.util.Optional;
-                @Shard(id = "bad_init")
+                @Operation(id = "bad_init")
                 public class BadInit {
                     @InitState public String initState(Optional<String> key) { return ""; }
                     public String run(String in) { return in; }
@@ -64,8 +64,8 @@ class FlezhaProcessorTest {
         String code =
                 """
                 package t;
-                import com.flezha.sdk.authoring.Shard;
-                @Shard(id = "bad2")
+                import com.flezha.sdk.authoring.Operation;
+                @Operation(id = "bad2")
                 public class Bad2 {
                     public String run(String a, String b, String c) { return a; }
                 }
@@ -128,9 +128,9 @@ class FlezhaProcessorTest {
         String code =
                 """
                 package t;
-                import com.flezha.sdk.authoring.Shard;
+                import com.flezha.sdk.authoring.Operation;
                 import java.util.Optional;
-                @Shard(id = "bad_opt")
+                @Operation(id = "bad_opt")
                 public class BadOpt {
                     @SuppressWarnings({"rawtypes", "unchecked"})
                     public Optional run(String in) { return Optional.of(in); }
@@ -151,10 +151,10 @@ class FlezhaProcessorTest {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        JavaCompiler.CompilationTask task =
+        JavaCompiler.CompilationTask bounded =
                 compiler.getTask(null, fm, diags, List.of("-proc:only"), null, List.of(new StringSource(fqn, code)));
-        task.setProcessors(List.of(new FlezhaProcessor()));
-        boolean ok = task.call();
+        bounded.setProcessors(List.of(new FlezhaProcessor()));
+        boolean ok = bounded.call();
         assertThat(ok).as("compilation should fail on a malformed annotation").isFalse();
         return diags.getDiagnostics().stream()
                 .filter(d -> d.getKind() == Diagnostic.Kind.ERROR)

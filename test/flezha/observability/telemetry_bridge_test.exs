@@ -26,7 +26,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :state, :wal, :backpressure],
       %{bytes: 1024},
-      %{relay: "r1"}
+      %{operative: "r1"}
     )
 
     signal =
@@ -40,7 +40,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert signal
     assert signal.kind == :metric
     assert signal.measurements[:bytes] == 1024
-    assert signal.metadata[:relay] == "r1"
+    assert signal.metadata[:operative] == "r1"
   end
 
   test "websocket re-subscribe event is bridged" do
@@ -77,7 +77,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :state, :output_stall],
       %{stalled_ms: 60_000, last_seq: 100},
-      %{relay: "btc_kraken", shard: "ohlc", key: "1m"}
+      %{operative: "btc_kraken", operation: "ohlc", key: "1m"}
     )
 
     stall =
@@ -86,15 +86,15 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert stall
     assert stall.measurements[:stalled_ms] == 60_000
     assert stall.measurements[:last_seq] == 100
-    assert stall.metadata[:relay] == "btc_kraken"
+    assert stall.metadata[:operative] == "btc_kraken"
 
-    :telemetry.execute([:flezha, :state, :seq_gap], %{expected: 101, got: 137}, %{relay: "r"})
+    :telemetry.execute([:flezha, :state, :seq_gap], %{expected: 101, got: 137}, %{operative: "r"})
     gap = receive_until(fn s -> s.source == :flezha_state and s.name == :seq_gap end, 500)
     assert gap
     assert gap.measurements[:expected] == 101
     assert gap.measurements[:got] == 137
 
-    :telemetry.execute([:flezha, :state, :compaction_timeout], %{waited_ms: 5_000}, %{relay: "r"})
+    :telemetry.execute([:flezha, :state, :compaction_timeout], %{waited_ms: 5_000}, %{operative: "r"})
 
     compaction =
       receive_until(fn s -> s.source == :flezha_state and s.name == :compaction_timeout end, 500)

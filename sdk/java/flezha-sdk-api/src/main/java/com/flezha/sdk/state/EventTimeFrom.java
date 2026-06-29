@@ -6,8 +6,8 @@ import java.util.function.Function;
 /**
  * Clock that extracts an {@link Instant} from each input via a user-supplied
  * function. Type ships in v1 for forward compatibility; the runtime currently
- * rejects Shards declaring this Clock with
- * {@code RelayConfigurationException.clockNotImplementedYet}.
+ * rejects Operations declaring this Clock with
+ * {@code ContinuousOperativeConfigurationException.clockNotImplementedYet}.
  */
 public final class EventTimeFrom<Input> implements Clock {
 

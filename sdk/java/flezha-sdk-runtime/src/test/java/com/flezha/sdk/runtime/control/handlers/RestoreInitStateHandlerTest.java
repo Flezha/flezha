@@ -3,23 +3,23 @@ package com.flezha.sdk.runtime.control.handlers;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.proto.AddRelay;
+import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
-import com.flezha.sdk.relay.Relay;
-import com.flezha.sdk.relay.RelayRegistry;
+import com.flezha.sdk.operative.ContinuousOperative;
+import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
-import com.flezha.sdk.runtime.partition.PartitionSlot;
+import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
-import com.flezha.sdk.runtime.state.PartitionFlusher;
-import com.flezha.sdk.runtime.state.PartitionId;
-import com.flezha.sdk.runtime.state.PartitionStateSink;
-import com.flezha.sdk.shard.Shard;
-import com.flezha.sdk.shard.ShardCtx;
-import com.flezha.sdk.shard.ShardException;
+import com.flezha.sdk.runtime.state.SegmentFlusher;
+import com.flezha.sdk.runtime.state.SegmentId;
+import com.flezha.sdk.runtime.state.SegmentStateSink;
+import com.flezha.sdk.operation.Operation;
+import com.flezha.sdk.operation.OperationCtx;
+import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -38,7 +38,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Proves a stateful Java relay resumes its accumulated state from the
+ * Proves a stateful Java operative resumes its accumulated state from the
  * controller's WAL replay after an executor restart / rebind — the Java mirror
  * of the Rust SDK's {@code resume_probe} proof. Resume must land at N (no loss),
  * never 0 (the pre-fix bug) and never 2N (double-apply).
@@ -46,36 +46,36 @@ import org.junit.jupiter.api.Test;
 class RestoreInitStateHandlerTest {
 
     private static final String FACTORY = "restore_counter";
-    private static final String SHARD = "restore_counter_shard";
+    private static final String OPERATION = "restore_counter_operation";
     private static final String INSTANCE = "inst-A";
 
     @BeforeEach
     @AfterEach
     void reset() {
-        RelayRegistry.reset();
-        PartitionFlusher.resetForTesting();
-        PartitionStateSink.resetForTesting();
+        ContinuousOperativeRegistry.reset();
+        SegmentFlusher.resetForTesting();
+        SegmentStateSink.resetForTesting();
     }
 
     @Test
     void pureReplayResumesAtN() throws Exception {
-        ExecutorContext ctx = newContextWithRelay();
-        KryoCodec codec = new KryoCodec(new CounterShard().kryoTypes());
+        ExecutorContext ctx = newContextWithContinuousOperative();
+        KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
         int n = 5;
         ByteArrayOutputStream log = new ByteArrayOutputStream();
         for (long seq = 0; seq < n; seq++) {
             byte[] body = codec.serialize(new CounterChange(1L));
-            byte[] header = template.stamp(new CounterShard().schemaVersion(), body);
+            byte[] header = template.stamp(new CounterOperation().schemaVersion(), body);
             log.writeBytes(walRecord(seq, header, body));
         }
 
-        byte[] partitionId = PartitionId.of(INSTANCE, SHARD, Optional.empty()).encodedBytes();
+        byte[] segmentId = SegmentId.of(INSTANCE, OPERATION, Optional.empty()).encodedBytes();
         CommandRequest req = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
-                        .setPartitionId(ByteString.copyFrom(partitionId))
+                        .setSegmentId(ByteString.copyFrom(segmentId))
                         .setChangeLogBytes(ByteString.copyFrom(log.toByteArray()))
                         .build())
                 .build();
@@ -84,8 +84,8 @@ class RestoreInitStateHandlerTest {
         byte[] resp = new RestoreInitStateHandler().handle(ctx, req, errors);
 
         assertThat(errors).isEmpty();
-        PartitionSlot slot = slot(ctx);
-        assertThat(((CounterShard.State) slot.state().get()).value)
+        SegmentSlot slot = slot(ctx);
+        assertThat(((CounterOperation.State) slot.state().get()).value)
                 .as("resume must land at N, not 0")
                 .isEqualTo((long) n);
         assertThat(RestoreInitStateResponse.parseFrom(resp).getTerminalSeq()).isEqualTo((long) (n - 1));
@@ -96,12 +96,12 @@ class RestoreInitStateHandlerTest {
 
     @Test
     void snapshotPlusChangeLogDoesNotDoubleApply() throws Exception {
-        ExecutorContext ctx = newContextWithRelay();
-        KryoCodec codec = new KryoCodec(new CounterShard().kryoTypes());
+        ExecutorContext ctx = newContextWithContinuousOperative();
+        KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
         long k = 3L; // snapshot already accounts for changes 0..k
-        CounterShard.State snapState = new CounterShard.State();
+        CounterOperation.State snapState = new CounterOperation.State();
         snapState.value = k;
         byte[] snapshot = codec.serialize(snapState);
 
@@ -114,11 +114,11 @@ class RestoreInitStateHandlerTest {
             log.writeBytes(walRecord(seq, header, body));
         }
 
-        byte[] partitionId = PartitionId.of(INSTANCE, SHARD, Optional.empty()).encodedBytes();
+        byte[] segmentId = SegmentId.of(INSTANCE, OPERATION, Optional.empty()).encodedBytes();
         CommandRequest req = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
-                        .setPartitionId(ByteString.copyFrom(partitionId))
+                        .setSegmentId(ByteString.copyFrom(segmentId))
                         .setSnapshotBytes(ByteString.copyFrom(snapshot))
                         .setChangeLogBytes(ByteString.copyFrom(log.toByteArray()))
                         .build())
@@ -129,14 +129,14 @@ class RestoreInitStateHandlerTest {
 
         assertThat(errors).isEmpty();
         // Snapshot REPLACES (value=k); change-log adds `extra`. No re-fold of 0..k.
-        assertThat(((CounterShard.State) slot(ctx).state().get()).value).isEqualTo(k + extra);
+        assertThat(((CounterOperation.State) slot(ctx).state().get()).value).isEqualTo(k + extra);
         assertThat(RestoreInitStateResponse.parseFrom(resp).getTerminalSeq()).isEqualTo(k + extra);
     }
 
     @Test
     void noLiveSlotValidatesAndAcksWithoutMutating() throws Exception {
-        ExecutorContext ctx = newContextWithRelay();
-        KryoCodec codec = new KryoCodec(new CounterShard().kryoTypes());
+        ExecutorContext ctx = newContextWithContinuousOperative();
+        KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
         ByteArrayOutputStream log = new ByteArrayOutputStream();
@@ -146,12 +146,12 @@ class RestoreInitStateHandlerTest {
         }
 
         // Identity for an instance that was never added — no live slot matches.
-        byte[] partitionId =
-                PartitionId.of("unknown-inst", SHARD, Optional.empty()).encodedBytes();
+        byte[] segmentId =
+                SegmentId.of("unknown-inst", OPERATION, Optional.empty()).encodedBytes();
         CommandRequest req = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
-                        .setPartitionId(ByteString.copyFrom(partitionId))
+                        .setSegmentId(ByteString.copyFrom(segmentId))
                         .setChangeLogBytes(ByteString.copyFrom(log.toByteArray()))
                         .build())
                 .build();
@@ -162,29 +162,29 @@ class RestoreInitStateHandlerTest {
         assertThat(errors).isEmpty();
         assertThat(RestoreInitStateResponse.parseFrom(resp).getTerminalSeq()).isEqualTo(1L);
         // The real (unmatched) slot stays at its cold-start value.
-        assertThat(((CounterShard.State) slot(ctx).state().get()).value).isZero();
+        assertThat(((CounterOperation.State) slot(ctx).state().get()).value).isZero();
     }
 
-    private static ExecutorContext newContextWithRelay() {
-        RelayRegistry.registerRelay(CounterRelay.class);
+    private static ExecutorContext newContextWithContinuousOperative() {
+        ContinuousOperativeRegistry.registerContinuous(CounterContinuousOperative.class);
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
         CommandRequest add = CommandRequest.newBuilder()
                 .setReferenceId("r")
-                .setAddRelay(AddRelay.newBuilder()
-                        .setRelayId(INSTANCE)
+                .setAddOperative(AddOperative.newBuilder()
+                        .setOperativeId(INSTANCE)
                         .setFactoryId(FACTORY)
                         .build())
                 .build();
-        new AddRelayHandler().handle(ctx, add, new ArrayList<>());
+        new AddOperativeHandler().handle(ctx, add, new ArrayList<>());
         return ctx;
     }
 
-    private static PartitionSlot slot(ExecutorContext ctx) {
-        return ctx.relayInstanceRegistry()
-                .getRelay(INSTANCE)
-                .partitions()
+    private static SegmentSlot slot(ExecutorContext ctx) {
+        return ctx.operativeInstanceRegistry()
+                .getContinuousOperative(INSTANCE)
+                .segments()
                 .get(0)
                 .get(0);
     }
@@ -206,9 +206,9 @@ class RestoreInitStateHandlerTest {
         }
     }
 
-    // --- Test relay: single changeful Shard whose State holds a running total. ---
+    // --- Test operative: single changeful Operation whose State holds a running total. ---
 
-    public static final class CounterRelay implements Relay {
+    public static final class CounterContinuousOperative implements ContinuousOperative {
         @Override
         public String factoryId() {
             return FACTORY;
@@ -216,14 +216,14 @@ class RestoreInitStateHandlerTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(CounterShard.class);
+            c.input(String.class, "input").into(CounterOperation.class);
         }
     }
 
     public record CounterChange(long delta) implements Change {}
 
-    public static final class CounterShard
-            implements Shard<String, CounterShard.State, Void, CounterChange, WallClock, Void> {
+    public static final class CounterOperation
+            implements Operation<String, CounterOperation.State, Void, CounterChange, WallClock, Void> {
 
         public static final class State {
             public long value;
@@ -231,7 +231,7 @@ class RestoreInitStateHandlerTest {
 
         @Override
         public String name() {
-            return SHARD;
+            return OPERATION;
         }
 
         @Override
@@ -260,7 +260,7 @@ class RestoreInitStateHandlerTest {
         }
 
         @Override
-        public State initState(Optional<String> shardKey, Optional<RestoreInitPayload> initPayload) {
+        public State initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
             return new State();
         }
 
@@ -275,7 +275,7 @@ class RestoreInitStateHandlerTest {
         }
 
         @Override
-        public void run(String input, StateHandle<State, CounterChange> state, ShardCtx ctx) throws ShardException {
+        public void run(String input, StateHandle<State, CounterChange> state, OperationCtx ctx) throws OperationException {
             try {
                 state.apply(new CounterChange(Long.parseLong(input)));
             } catch (NumberFormatException ignored) {

@@ -120,7 +120,7 @@ esac
 #   delegate to `flz controller stop`, which drives Flezha.Shutdown.Coordinator
 #   inside the BEAM (quiesce → drain via HotSwap → finalise).
 #   `snapshot-on-stop.sh` is NOT invoked — HotSwap migration replaces
-#   snapshot-driven restart-survival for steady-state Relays.
+#   snapshot-driven restart-survival for steady-state Operatives.
 #
 # Disabled branch (FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false/0/no/off):
 #   keep today's behaviour — write a snapshot, then SIGTERM the agent.

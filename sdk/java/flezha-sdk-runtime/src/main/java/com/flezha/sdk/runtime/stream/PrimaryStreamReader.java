@@ -4,12 +4,12 @@ import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
-import com.flezha.sdk.runtime.relay.ChannelDescriptor;
-import com.flezha.sdk.runtime.relay.RelayInstance;
-import com.flezha.sdk.runtime.relay.RelayTopology;
-import com.flezha.sdk.runtime.relay.TaskInstance;
-import com.flezha.sdk.runtime.relay.Unit;
-import com.flezha.sdk.runtime.worker.ShardDispatcher;
+import com.flezha.sdk.runtime.operative.ChannelDescriptor;
+import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
+import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
+import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
+import com.flezha.sdk.runtime.operative.Operative;
+import com.flezha.sdk.runtime.worker.OperationDispatcher;
 import java.nio.charset.StandardCharsets;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
@@ -19,12 +19,12 @@ import org.slf4j.LoggerFactory;
  * Per-primary-stream frame parser + dispatcher. Driven by the JNI
  * {@code onData} callback. Each incoming chunk feeds into a local
  * {@link FrameParser}; for each decoded {@link Frame} the reader looks up
- * the {@link RelayInstance} by {@code payloadId} (= relay instance id) and
- * routes the input to the consumer Shards declared on the entry channel
+ * the {@link ContinuousOperativeInstance} by {@code payloadId} (= operative instance id) and
+ * routes the input to the consumer Operations declared on the entry channel
  * named in {@code metadata["channel"]}.
  *
  * <p>If the {@code channel} metadata key is missing, the reader falls back
- * to the relay's first declared input channel (the default per
+ * to the operative's first declared input channel (the default per
  * {@code docs/sdk_protocol_spec.md} §3.4).
  */
 public final class PrimaryStreamReader {
@@ -52,44 +52,44 @@ public final class PrimaryStreamReader {
     }
 
     private void dispatch(Frame frame) {
-        String relayInstanceId = frame.payloadId();
-        Unit unit = ctx.relayInstanceRegistry().get(relayInstanceId);
-        if (unit == null) {
-            LOG.warn("dispatch: unit instance `{}` not found on stream {}", relayInstanceId, streamId);
+        String operativeInstanceId = frame.payloadId();
+        Operative operative = ctx.operativeInstanceRegistry().get(operativeInstanceId);
+        if (operative == null) {
+            LOG.warn("dispatch: operative instance `{}` not found on stream {}", operativeInstanceId, streamId);
             return;
         }
-        // Resolve the unit kind once per frame. A task has no input channel,
+        // Resolve the operative kind once per frame. A bounded has no input channel,
         // so a data frame addressed to it is a logged no-op.
-        RelayInstance instance;
-        switch (unit) {
-            case RelayInstance ri -> instance = ri;
-            case TaskInstance ignored -> {
-                LOG.warn("dispatch: data frame for task `{}` dropped (tasks have no input channel)", relayInstanceId);
+        ContinuousOperativeInstance instance;
+        switch (operative) {
+            case ContinuousOperativeInstance ri -> instance = ri;
+            case BoundedOperativeInstance ignored -> {
+                LOG.warn("dispatch: data frame for bounded `{}` dropped (boundeds have no input channel)", operativeInstanceId);
                 return;
             }
         }
-        RelayTopology topology = instance.topology();
+        ContinuousOperativeTopology topology = instance.topology();
 
         String channelName = frame.metadata().get(CHANNEL_META_KEY);
         ChannelDescriptor channel = resolveEntryChannel(topology, channelName);
         if (channel == null) {
             LOG.warn(
-                    "dispatch: no entry channel resolvable for relay `{}` (channel meta = `{}`)",
-                    relayInstanceId,
+                    "dispatch: no entry channel resolvable for operative `{}` (channel meta = `{}`)",
+                    operativeInstanceId,
                     channelName);
             return;
         }
 
         Object input = wrapInput(channel, frame.message());
-        for (int consumerShardId : channel.consumers()) {
-            ShardDispatcher dispatcher = instance.dispatcher(consumerShardId);
+        for (int consumerOperationId : channel.consumers()) {
+            OperationDispatcher dispatcher = instance.dispatcher(consumerOperationId);
             if (dispatcher != null) {
-                dispatcher.fanoutPartitions(input, streamId);
+                dispatcher.fanoutSegments(input, streamId);
             }
         }
     }
 
-    private static ChannelDescriptor resolveEntryChannel(RelayTopology topology, String channelName) {
+    private static ChannelDescriptor resolveEntryChannel(ContinuousOperativeTopology topology, String channelName) {
         if (channelName != null) {
             Integer id = topology.lookupChannelId(channelName);
             if (id != null) {

@@ -7,40 +7,40 @@ defmodule Flezha.Convergence.Diff do
   fields.
   """
 
-  @type relay_ref :: {atom(), binary()}
+  @type operative_ref :: {atom(), binary()}
 
   @type t :: %__MODULE__{
-          unbound_relays: [relay_ref()],
-          misbound_relays: [{relay_ref(), binary()}],
-          missing_plugins: [{relay_ref(), binary(), map()}],
-          extra_plugins: [{relay_ref(), binary(), pid()}],
-          unhealthy_plugins: [{relay_ref(), binary(), map(), term()}]
+          unbound_operatives: [operative_ref()],
+          misbound_operatives: [{operative_ref(), binary()}],
+          missing_plugins: [{operative_ref(), binary(), map()}],
+          extra_plugins: [{operative_ref(), binary(), pid()}],
+          unhealthy_plugins: [{operative_ref(), binary(), map(), term()}]
         }
 
-  defstruct unbound_relays: [],
-            misbound_relays: [],
+  defstruct unbound_operatives: [],
+            misbound_operatives: [],
             missing_plugins: [],
             extra_plugins: [],
             unhealthy_plugins: []
 
   @spec compute(Flezha.Convergence.Intent.t(), map()) :: t()
-  def compute(%Flezha.Convergence.Intent{relays: declared}, reality) do
+  def compute(%Flezha.Convergence.Intent{operatives: declared}, reality) do
     active = Map.get(reality, :active_executors, %{})
-    observed = Map.get(reality, :relays, %{})
+    observed = Map.get(reality, :operatives, %{})
 
     {unbound, misbound} =
-      Enum.reduce(declared, {[], []}, fn %{namespace: ns, relay_id: rid}, {unb, mis} ->
+      Enum.reduce(declared, {[], []}, fn %{namespace: ns, operative_id: rid}, {unb, mis} ->
         ref = {ns, rid}
-        observed_relay = Map.get(observed, ref, %{})
-        bound = Map.get(observed_relay, :bound_executor)
+        observed_operative = Map.get(observed, ref, %{})
+        bound = Map.get(observed_operative, :bound_executor)
         live = Map.get(active, ns, MapSet.new())
 
         cond do
-          # `:unknown` = an observation failed this tick — either the relay's
+          # `:unknown` = an observation failed this tick — either the operative's
           # own state read (`bound`) or the namespace's live-executor read
           # (`live`, Probe could not reach FleetManager). With no authoritative
           # signal we must NOT classify it: acting on an empty/failed read
-          # mass-migrates healthy relays on a transient read race.
+          # mass-migrates healthy operatives on a transient read race.
           bound == :unknown -> {unb, mis}
           is_nil(bound) -> {[ref | unb], mis}
           live == :unknown -> {unb, mis}
@@ -52,30 +52,30 @@ defmodule Flezha.Convergence.Diff do
     {missing, extra, unhealthy} = plugin_divergence(declared, observed)
 
     %__MODULE__{
-      unbound_relays: Enum.reverse(unbound),
-      misbound_relays: Enum.reverse(misbound),
+      unbound_operatives: Enum.reverse(unbound),
+      misbound_operatives: Enum.reverse(misbound),
       missing_plugins: missing,
       extra_plugins: extra,
       unhealthy_plugins: unhealthy
     }
   end
 
-  # I2: a relay's declared plugin set (durable cspec) vs the set actually
+  # I2: a operative's declared plugin set (durable cspec) vs the set actually
   # subscribed in its running extension table, plus each subscribed declared
-  # plugin's provider self-reported health. Only diffed for relays we
+  # plugin's provider self-reported health. Only diffed for operatives we
   # observed with a live pid — a plugin can only be (un)subscribed on a
-  # running relay; unbound relays are healed by binding first, which
+  # running operative; unbound operatives are healed by binding first, which
   # replays the full cspec plugin list.
   defp plugin_divergence(declared, observed) do
-    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, relay_id: rid, plugins: plugins},
+    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, operative_id: rid, plugins: plugins},
                                            {missing_acc, extra_acc, unhealthy_acc} ->
       ref = {ns, rid}
-      observed_relay = Map.get(observed, ref, %{})
-      pid = Map.get(observed_relay, :pid)
+      observed_operative = Map.get(observed, ref, %{})
+      pid = Map.get(observed_operative, :pid)
 
       if is_pid(pid) do
-        running = MapSet.new(Map.get(observed_relay, :running_plugins, []))
-        health = Map.get(observed_relay, :plugin_health, %{})
+        running = MapSet.new(Map.get(observed_operative, :running_plugins, []))
+        health = Map.get(observed_operative, :plugin_health, %{})
         declared_ids = MapSet.new(plugins, fn {id, _plugin} -> id end)
 
         missing =
@@ -90,10 +90,10 @@ defmodule Flezha.Convergence.Diff do
               match?({:unhealthy, _}, Map.get(health, id)),
               do: {ref, id, plugin, elem(Map.get(health, id), 1)}
 
-        # An empty declared set is ambiguous: a genuinely pluginless relay
+        # An empty declared set is ambiguous: a genuinely pluginless operative
         # vs a cspec read that returned nothing (Intent.declared/0 falls back
         # to [] on any read failure, and the durable cspec can lag a running
-        # relay's actual plugin set). Tearing down EVERY running plugin on
+        # operative's actual plugin set). Tearing down EVERY running plugin on
         # that basis caused a per-tick stop/re-subscribe storm. Reconcile
         # "extra" plugins only against a non-empty declaration.
         extra =
@@ -115,7 +115,7 @@ defmodule Flezha.Convergence.Diff do
   @doc "True when the delta has no divergence to heal."
   @spec empty?(t()) :: boolean()
   def empty?(%__MODULE__{} = d) do
-    d.unbound_relays == [] and d.misbound_relays == [] and
+    d.unbound_operatives == [] and d.misbound_operatives == [] and
       d.missing_plugins == [] and d.extra_plugins == [] and d.unhealthy_plugins == []
   end
 end

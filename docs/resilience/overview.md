@@ -10,7 +10,7 @@ The system has three layers:
 - **Detection** — watchdog sweeps, control-channel liveness, seq-gap detection,
   convergence probes
 - **Recovery** — convergence loop rebind/plugin-restart/evict, Overwatch retry,
-  SDK reconnect, ProcessHub cold-boot recovery, partition resync
+  SDK reconnect, ProcessHub cold-boot recovery, segment resync
 
 ---
 
@@ -28,11 +28,11 @@ Intent → Probe → Diff → Planner → Heal
 | Module | Role |
 |--------|------|
 | `Convergence.Loop` | GenServer driving the tick; owns misbound-streak state and event subscriptions |
-| `Convergence.Intent` | Reads the ProcessHub registry to know what relays and plugins _should_ exist |
-| `Convergence.Probe` | Reads live reality (active executors, relay states, hub recovery); pure observer |
-| `Convergence.Diff` | Pure function comparing intent vs reality → delta (unbound/misbound relays, missing/extra plugins) |
+| `Convergence.Intent` | Reads the ProcessHub registry to know what operatives and plugins _should_ exist |
+| `Convergence.Probe` | Reads live reality (active executors, operative states, hub recovery); pure observer |
+| `Convergence.Diff` | Pure function comparing intent vs reality → delta (unbound/misbound operatives, missing/extra plugins) |
 | `Convergence.Planner` | Turns the delta into an ordered, backoff-filtered list of ops (cap: 20/tick) |
-| `Convergence.Heal` | Executes ops via four idempotent primitives: `rebind_relay`, `start_plugin`, `stop_plugin`, `evict_executor` |
+| `Convergence.Heal` | Executes ops via four idempotent primitives: `rebind_operative`, `start_plugin`, `stop_plugin`, `evict_executor` |
 | `Convergence.Backoff` | Per-`{primitive, target}` exponential cooldown: 5 s → 30 s → 60 s → 300 s |
 | `Convergence.Snapshot` | ETS table holding the latest published health summary; read by `/healthz`, CLI, and telemetry |
 | `Convergence.RecoveryGate` | Classifies which namespaces are ready for healing based on per-hub recovery state; `:timeout` hubs are included rather than blocking all healing |
@@ -40,7 +40,7 @@ Intent → Probe → Diff → Planner → Heal
 
 **Stability guarantees built into the loop:**
 
-- A relay must be misbound for **≥ 2 consecutive ticks** before a rebind is
+- An operative must be misbound for **≥ 2 consecutive ticks** before a rebind is
   issued — a single blip cannot trigger a full-namespace migration.
 - The entire tick body is wrapped in `try/rescue`; an uncaught error becomes a
   skipped tick, not a Loop crash.
@@ -54,16 +54,16 @@ configuration reference.
 
 ---
 
-## 2. Per-Relay Overwatch
+## 2. Per-Operative Overwatch
 
-`lib/flezha/relay/overwatch.ex`
+`lib/flezha/operative/overwatch.ex`
 
-A per-relay GenServer that does the actual bind work: ping an executor, negotiate
-relay start, install plugins, and ship persisted WAL state on attach. On any
-failure it retries with jittered exponential backoff
+A per-operative GenServer that does the actual bind work: ping an executor,
+negotiate operative start, install plugins, and ship persisted WAL state on
+attach. On any failure it retries with jittered exponential backoff
 (`200 ms → 500 ms → 1 s → 2 s → 5 s → 10 s`). The convergence loop's
-`rebind_relay` primitive calls into Overwatch; Overwatch never calls back into
-the loop.
+`rebind_operative` primitive calls into Overwatch; Overwatch never calls back
+into the loop.
 
 ---
 
@@ -71,24 +71,24 @@ the loop.
 
 `lib/flezha/state/`
 
-Every relay state change is durable before the executor's output plugin fires,
-so a hard restart restores state from disk rather than losing it.
+Every operative state change is durable before the executor's output plugin
+fires, so a hard restart restores state from disk rather than losing it.
 
 | Module | Role |
 |--------|------|
-| `State.WalWriter` | Appends every state change to a per-partition WAL file |
+| `State.WalWriter` | Appends every state change to a per-segment WAL file |
 | `State.FsyncBatcher` | Coalesces all WAL writers' fsync calls into one batch every 5 ms |
 | `State.Snapshot` | Crash-safe atomic snapshots: write `.tmp` → fsync → rename |
-| `State.Outbox` | Persists the last-sent seq per partition as a dedup marker |
+| `State.Outbox` | Persists the last-sent seq per segment as a dedup marker |
 | `State.Restore` | Assembles snapshot + tail-WAL bytes to send to a reconnecting executor |
-| `State.Recovery` | Re-runs the `RestoreInitState` handshake when a partition is detected as desync'd |
+| `State.Recovery` | Re-runs the `RestoreInitState` handshake when a segment is detected as desync'd |
 | `State.Retention` | Sweeper pruning old snapshots and WAL records beyond the retention window |
 | `State.TimeTravel` | Point-in-time query: replay WAL up to a target seq or timestamp |
-| `State.Watchdog` | Detects a partition still receiving changes but whose seq stopped advancing |
-| `State.PersistenceResolver` | Resolves per-relay persistence config from executor override → relay metadata → global default |
+| `State.Watchdog` | Detects a segment still receiving changes but whose seq stopped advancing |
+| `State.PersistenceResolver` | Resolves per-operative persistence config from executor override → operative metadata → global default |
 
 **Back-pressure:** when a WAL writer's pending bytes exceed the high-watermark
-(default 16 MiB), it sends a `PartitionMailboxStatus{status: "full"}` command to
+(default 16 MiB), it sends a `SegmentMailboxStatus{status: "full"}` command to
 the SDK. The SDK's overflow policy (block/drop/replace) activates until the
 low-watermark is crossed.
 
@@ -101,13 +101,13 @@ snapshot lifecycle, crash-recovery semantics, and all configuration knobs.
 
 `lib/flezha/state/watchdog.ex`
 
-Sweeps every 10 s. For each persistence-enabled partition it checks:
+Sweeps every 10 s. For each persistence-enabled segment it checks:
 
 1. **Output staleness** — still receiving changes but seq has not advanced within
    `output_stall_timeout_ms` (default 60 s) → emits
    `[:flezha, :state, :output_stall]` and triggers `State.Recovery.resync/2`.
-   A genuinely idle partition (no changes arriving) is never flagged.
-2. **Compaction timeout** — a `CompactPartition` whose snapshot has not arrived
+   A genuinely idle segment (no changes arriving) is never flagged.
+2. **Compaction timeout** — a `CompactSegment` whose snapshot has not arrived
    within `compaction_timeout_ms` (default 30 s) → emits
    `[:flezha, :state, :compaction_timeout]` and triggers resync.
 
@@ -139,21 +139,22 @@ calls `State.Recovery.resync/2` so the SDK rewinds and resends from
 
 **ProcessHub recovery gate:** `HubManager` starts each namespace hub with a
 durable DETS registry backend and an auto-recovery window. When a hub starts on
-a fully-downed cluster, it replays the relay list from DETS (opt-in via the
+a fully-downed cluster, it replays the operative list from DETS (opt-in via the
 `cluster.healthy` marker / `flz cluster prepare-recovery`). When joining a live
 cluster it syncs from peers and discards the local DETS copy — peers are always
 authoritative. See [`process_hub_recovery_model.md`](process_hub_recovery_model.md).
 
-**Task-kind units (deferred boot-recovery gaps).** A completed `:task` unit is
-deregistered on completion, so it never reaches boot recovery. But a task still
-running (in the registry, not yet complete) when the controller restarts WILL be
-replayed from DETS and its `run` may execute again — a duplicate side-effect.
-v1 does not gate this (no `restart_on_boot?` capability). Related v1 gaps: task
-output is at-least-once with no task-specific dedup; there is no in-flight task
-visibility or cooperative cancel beyond `flz relay stop`. These are documented
-for a proper follow-up — see the `relay-task-kind` change design notes. (A
-near-instant task completing during the start RPC's confirmation window is
-handled — a clean exit there is reported as a successful start.)
+**Bounded-kind operatives (deferred boot-recovery gaps).** A completed `:bounded`
+operative is deregistered on completion, so it never reaches boot recovery. But a
+bounded operative still running (in the registry, not yet complete) when the
+controller restarts WILL be replayed from DETS and its `run` may execute again — a
+duplicate side-effect. v1 does not gate this (no `restart_on_boot?` capability).
+Related v1 gaps: bounded output is at-least-once with no bounded-specific dedup;
+there is no in-flight operative visibility or cooperative cancel beyond
+`flz operative stop`. These are documented for a proper follow-up — see the
+Bounded Operative design notes. (A near-instant bounded operative completing
+during the start RPC's confirmation window is handled — a clean exit there is
+reported as a successful start.)
 
 ---
 
@@ -163,12 +164,13 @@ handled — a clean exit there is reported as a successful start.)
 
 | Module | Role |
 |--------|------|
-| `Shutdown.Coordinator` | Three-phase shutdown: quiesce (block new relays/connections) → drain (wait for relays to migrate to peers) → finalise (flush WAL, close transports) |
+| `Shutdown.Coordinator` | Three-phase shutdown: quiesce (block new operatives/connections) → drain (wait for operatives to migrate to peers) → finalise (flush WAL, close transports) |
 | `Shutdown.SignalHandler` | Installs SIGTERM/SIGINT OS handlers in every BEAM run mode; third signal triggers `erlang.halt(143)` |
 
-The drain phase polls peer registry dumps until every locally-hosted relay is
+The drain phase polls peer registry dumps until every locally-hosted operative is
 visible on at least one peer. Solo nodes skip the wait. On graceful stop the SDK
-ships final relay state before exiting, so the WAL is consistent at the next boot.
+ships final operative state before exiting, so the WAL is consistent at the next
+boot.
 
 See [`graceful_shutdown.md`](graceful_shutdown.md).
 
@@ -183,8 +185,8 @@ HTTP `/healthz` listener (opt-in, `FLEZHA_HEALTHZ_ENABLED=true`). Reads only
 
 | Status | HTTP | Condition |
 |--------|------|-----------|
-| `healthy` | 200 | All hubs `:normal` and `producing_relays == bound_relays` |
-| `degraded` | 200 | One or more relays output-stalled (kubelet must not restart — the loop is healing) |
+| `healthy` | 200 | All hubs `:normal` and `producing_operatives == bound_operatives` |
+| `degraded` | 200 | One or more operatives output-stalled (kubelet must not restart — the loop is healing) |
 | `recovering` | 200 | Any hub in `:recovery_pending \| :recovering` |
 | `unhealthy` | 503 | Convergence loop itself is wedged (`tick_stale \| recovery_failed`) |
 
@@ -208,7 +210,7 @@ formation timeout elapses, so it still boots without hanging.
 | Module | Role |
 |--------|------|
 | `FleetManager` | Accepts new executor connections, rejects them during shutdown, and dispatches `:executor_connected_event` which triggers an immediate convergence tick |
-| `StreamChannel` | Per-stream GenServer forwarding relay output to the executor socket; detects seq gaps and triggers partition resync |
+| `StreamChannel` | Per-stream GenServer forwarding operative output to the executor socket; detects seq gaps and triggers segment resync |
 | `ControlChannel` | Reads protobuf commands from the executor's control socket and dispatches them |
 
 ---
@@ -219,12 +221,12 @@ formation timeout elapses, so it still boots without hanging.
 
 | Module | Role |
 |--------|------|
-| `shutdown.rs` | On SIGTERM/drop, serializes every running relay's final state and sends it to the controller so the next executor starts from the true last state |
+| `shutdown.rs` | On SIGTERM/drop, serializes every running operative's final state and sends it to the controller so the next executor starts from the true last state |
 | `executor/control_unit.rs` | Opens the control channel with full-jitter exponential backoff retry (cap 30 s) and reconnects automatically on disconnect or ack-timeout |
 | `executor/persistent_id.rs` | Persists the controller-assigned executor ID to disk so a restarted process can identify itself and get a clean eviction rather than leaving a ghost binding |
-| `partition/flusher.rs` | Background thread draining each partition's change buffer on a 5 ms linger and sending framed WAL records to the controller |
-| `partition/restore.rs` | Applies a `RestoreInitPayload` (snapshot + change-log) so a reconnected partition resumes from exactly its last state |
-| `executor/mailbox.rs` | Bounded lock-free per-relay mailbox with configurable overflow policy (block/drop/replace) so a slow relay cannot back-pressure the whole executor |
+| `segment/flusher.rs` | Background thread draining each segment's change buffer on a 5 ms linger and sending framed WAL records to the controller |
+| `segment/restore.rs` | Applies a `RestoreInitPayload` (snapshot + change-log) so a reconnected segment resumes from exactly its last state |
+| `executor/mailbox.rs` | Bounded lock-free per-operative mailbox with configurable overflow policy (block/drop/replace) so a slow operative cannot back-pressure the whole executor |
 
 **Control-channel liveness** (`flz_transport/src/transport/liveness.rs`, shared
 by Rust and Java SDKs):
@@ -242,10 +244,10 @@ Rust and Java SDKs): the executor writes a bare `data_heartbeat` frame on every
 secondary stream while connected. The control channel staying alive does not
 prove the data plane is — the data plane is what froze in the 21 h candle
 incident — so liveness rides the data channel directly. The controller's
-`StreamChannel` treats any inbound frame (heartbeat or relay output) as
+`StreamChannel` treats any inbound frame (heartbeat or operative output) as
 liveness and flags `[:flezha, :state, :output_stall]` only when a bound channel
 is silent past `:io_stream_liveness_threshold_ms` (default 30 s, ≈3 beats). An
-idle-but-healthy relay is therefore never mistaken for a stall.
+idle-but-healthy operative is therefore never mistaken for a stall.
 
 ---
 
@@ -266,7 +268,7 @@ idle-but-healthy relay is therefore never mistaken for a stall.
 
 Detection-only instrumentation that localizes a silent `io_in`/output stall to
 the exact layer that wedged. The output-stall watchdog (§4) tells you a stream
-went silent; this tells you **why** — was it the relay, the channel, the NIF
+went silent; this tells you **why** — was it the operative, the channel, the NIF
 command queue, the driver thread, the socket, or the executor? It adds **zero**
 data-plane behaviour and no remediation. See
 [`transport_liveness.md`](transport_liveness.md) for the full signal set,

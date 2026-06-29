@@ -1,36 +1,36 @@
 # Flezha repo notes
 
-## Per-Partition state persistence (`relay-state-persistence`)
+## Per-Segment state persistence (`relay-state-persistence`)
 
 - **Modules**: `lib/flezha/state/` — `Registry`, `Wire`, `Metrics`,
   `Outbox`, `PersistenceResolver`, `Supervisor`, `WalWriter`,
   `FsyncBatcher`, `Snapshot`, `Retention`, `Restore`, `TimeTravel`,
   `TestHelpers`.
-- **On-disk layout**: `app_data/state/{relay_class}/{shard_id}/{partition_key}.{wal,snap.{seq},outbox.dedup}` (flat — `executor_id` was dropped by `auto-restore-on-boot`; `Flezha.Boot.StatePathMigrator` handles upgrade migration).
-- **Wire payload-ids**: `partition_state_change`, `partition_state_snapshot`,
-  `delete_partition_state` (data stream); `RestoreInitState`, `RestoreInitStateResponse`,
-  `CompactPartition`, `CompactPartitionResponse`, `PartitionMailboxStatus`
-  (control channel). See `docs/sdk_protocol_spec.md` "Per-Partition
+- **On-disk layout**: `app_data/state/{operative_class}/{operation_id}/{segment_key}.{wal,snap.{seq},outbox.dedup}` (flat — `executor_id` was dropped by `auto-restore-on-boot`; `Flezha.Boot.StatePathMigrator` handles upgrade migration).
+- **Wire payload-ids**: `segment_state_change`, `segment_state_snapshot`,
+  `delete_segment_state` (data stream); `RestoreInitState`, `RestoreInitStateResponse`,
+  `CompactSegment`, `CompactSegmentResponse`, `SegmentMailboxStatus`
+  (control channel). See `docs/sdk_protocol_spec.md` "Per-Segment
   State Persistence".
-- **Dynamic partitioning (`relay-dynamic-partitioning`)**: SDK-side
-  `sdk/rust/src/partition/dynamic.rs` (`DynamicPartitionRegistry` +
-  `Reaper`). Dynamic-mode Shards (`shard_key()` overridden, empty
-  `shard_keys()`) create Partitions lazily per key. Eviction is OFF by
-  default (`partition_idle_ttl() -> None`); when a TTL is opted in, the
-  per-Shard reaper evicts idle Partitions **destructively** — it ships
-  `delete_partition_state` (SDK→controller) and the recreate cold-starts
+- **Dynamic segmentation (`relay-dynamic-partitioning`)**: SDK-side
+  `sdk/rust/src/segment/dynamic.rs` (`DynamicSegmentRegistry` +
+  `Reaper`). Dynamic-mode Operations (`operation_key()` overridden, empty
+  `operation_keys()`) create Segments lazily per key. Eviction is OFF by
+  default (`segment_idle_ttl() -> None`); when a TTL is opted in, the
+  per-Operation reaper evicts idle Segments **destructively** — it ships
+  `delete_segment_state` (SDK→controller) and the recreate cold-starts
   fresh (no restore-from-disk, by decision 2026-06-16). Controller handler:
-  `Flezha.State.Supervisor.delete_partition/1` (stops WalWriter, drops
+  `Flezha.State.Supervisor.delete_segment/1` (stops WalWriter, drops
   FsyncBatcher mark, unlinks files via `Registry.delete_files/1`).
 - **Runtime config knobs**: `:state_root` (default `app_data/state`),
   `:agent_fsync_interval_ms` (5 ms), `:wal_high_watermark_bytes`
   (16 MiB), `:wal_low_watermark_bytes` (`high / 2`),
   `:time_travel_retention_check_interval_ms` (60 s),
-  `:time_travel_retention_hours` (per-Relay map), `:relay_persistence`
-  (per-Relay map).
-- **CLI**: `flz state list <relay>`, `flz state at <relay/shard/key> <seq|ts>`,
-  `flz state rotate <relay/shard/key>`, `flz state retention <relay> <hours>`,
-  `flz state delete <relay/shard/key>`. Implemented in `cli/src/state.rs`;
+  `:time_travel_retention_hours` (per-Operative map), `:operative_persistence`
+  (per-Operative map).
+- **CLI**: `flz state list <operative>`, `flz state at <operative/operation/key> <seq|ts>`,
+  `flz state rotate <operative/operation/key>`, `flz state retention <operative> <hours>`,
+  `flz state delete <operative/operation/key>`. Implemented in `cli/src/state.rs`;
   RPCs into `Flezha.Service.CliManager.state_*/N`.
 - **Detailed notes**: `docs/resilience/state_persistence.md`.
 
@@ -76,11 +76,11 @@
   is up. See `docs/operations/reset.md`.
 - **Persistence layers**: ProcessHub durable registry at
   `app_data/process_hub/<hub_id>/registry.dets` (cspec + `opts[:plugins]`)
-  + per-Partition WAL at `app_data/state/<relay_class>/<shard_id>/...`
+  + per-Segment WAL at `app_data/state/<operative_class>/<operation_id>/...`
   (change-by-change progress) + marker file at
   `app_data/process_hub/<hub_id>/cluster.healthy` (operator gate).
 - **Plugin enable/disable** uses cspec-write-first ordering via
-  `ProcessRegistry.update/3`; `Flezha.Service.HubManager.update_relay_plugins/3`
+  `ProcessRegistry.update/3`; `Flezha.Service.HubManager.update_operative_plugins/3`
   was deleted (the persistent registry covers durability).
 - **Runtime config knobs**: `FLEZHA_PROCESS_HUB_RECOVERY_MARKER_PATH`,
   `FLEZHA_PROCESS_HUB_RECOVERY_TIMEOUT_MS` (default 30 s),
@@ -109,9 +109,9 @@
 - **Behaviour**: one tick per `convergence_tick_ms` (default 5_000).
   On init: `HubManager.await_recovery_complete/1` blocks emissions
   until every per-namespace hub reaches `:normal | :skipped`. On
-  every tick: walk `HubManager.get_all_relays/1` per running
-  namespace, classify each relay as `:healthy | :degraded | :failed
-  | :unbound`, emit at most one action per relay (`:bind`,
+  every tick: walk `HubManager.get_all_operatives/1` per running
+  namespace, classify each operative as `:healthy | :degraded | :failed
+  | :unbound`, emit at most one action per operative (`:bind`,
   `:rebind`, `:restart_plugin`, `:noop`).
 - **Output-stall → forced rebind**: subscribes to
   `[:flezha, :state, :output_stall]` (emitted by
@@ -119,7 +119,7 @@
   exponential back-off `5s/30s/60s/300s`. Single signal closes the
   silent-freeze failure class.
 - **Plugin escalation**: `handle_plugin_failure/2` tracks strikes
-  per relay-plugin and escalates to a relay restart at
+  per operative-plugin and escalates to an operative restart at
   `convergence_plugin_strike_threshold` (default 2). Emits
   `[:flezha, :convergence, :plugin_restart]` and
   `[:flezha, :convergence, :plugin_escalated]` telemetry.
@@ -148,18 +148,18 @@
   `Flezha.Convergence.Health` subscribes to that event via
   `EventManager.add_handler/1` and runs an immediate tick. The
   existing `:rebind_if_executor_available` action body — already
-  responsible for migrating relays whose `bound_executor` is no
+  responsible for migrating operatives whose `bound_executor` is no
   longer active — flips the registry tag via
-  `HubManager.relay_set_executor/3` and seeds the new executor's
-  pre-spawned `StreamChannel.relay_mapping` via
+  `HubManager.operative_set_executor/3` and seeds the new executor's
+  pre-spawned `StreamChannel.operative_mapping` via
   `HubManager.hook_insert_pid/2` (the same fan-out the
   `child_registered` hook uses), then emits
   `[:flezha, :executor, :reconnected_reassigned]` +
   `[:flezha, :executor, :reconnected]` (mode: `:reassigned`,
-  reason: `:convergence_rebind`) per reseated relay. The existing
+  reason: `:convergence_rebind`) per reseated operative. The existing
   back-off (5s/30s/60s/300s) carries the retry semantics — a
   failed Overwatch migrate leaves the registry untouched and the
-  relay stays `:degraded` for the next tick.
+  operative stays `:degraded` for the next tick.
 
 ## Data-plane liveness instrumentation (`data-plane-liveness-instrumentation`)
 
@@ -179,7 +179,7 @@
   always-on `:counters`/`:atomics` + public ETS registry (mirrors
   `Observability.Counters`). `StreamChannel` bumps `io_in_received /
   send_frame_calls / nil_drops / flz_data_received / last_send_ms`;
-  `Relay.Overwatch` bumps `io_in_received / forwarded / filtered_nil`.
+  `Operative.Overwatch` bumps `io_in_received / forwarded / filtered_nil`.
   Dead-owner entries pruned on `snapshot_all/0`.
 - **Metric emission**: `Transport.Server.get_stats/1` merges
   `Native.driver_stats`; `OtpBackend.TransportSource` (the
@@ -189,7 +189,7 @@
 - **Stall classifier**: `lib/flezha/convergence/stall_classifier.ex`
   — pure `classify(current, prev, opts)` returning one of
   `driver_loop_frozen | nif_queue_backing_up | socket_write_blocked |
-  executor_not_consuming | channel_not_sending | relay_not_forwarding
+  executor_not_consuming | channel_not_sending | operative_not_forwarding
   | :ok` (deepest-wedged-layer-wins; each verdict has an "is it being
   fed?" advancing-delta precondition). `Convergence.Loop` builds the
   snapshot per tick and emits `[:flezha, :data_plane,
@@ -216,7 +216,7 @@
   after `Flezha.Service.HubManager` (drain queries the hub).
   `prep_stop/1` calls `Coordinator.shutdown(:prep_stop)`.
 - **Hot path gating**: `Coordinator.shutting_down?/0` is an ETS-backed
-  flag (no GenServer hop). Read by `RelayManager.start_relay/2` and
+  flag (no GenServer hop). Read by `OperativeManager.start_operative/2` and
   `FleetManager.connect_handler/4`.
 - **Runtime config knobs**: `:graceful_shutdown_enabled` (default
   `true`, env `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED`),
@@ -452,9 +452,9 @@
 - **Quota engine**: `Flezha.AuthZ.Quotas.check_allocation/3` —
   one ETS lookup per call (NamespaceStore cache + QuotaCounters
   cache). `record_allocation/3` / `record_deallocation/3` apply
-  async. `RelayManager.start_relay/2` enforces `max_relays` /
-  `max_partitions_per_relay` at allocation time and records on
-  success; `stop_relay/2` decrements on stop. Mailbox / disk /
+  async. `OperativeManager.start_operative/2` enforces `max_operatives` /
+  `max_segments_per_operative` at allocation time and records on
+  success; `stop_operative/2` decrements on stop. Mailbox / disk /
   executor enforcement points land in the namespace-state
   follow-up.
 - **Bootstrap**: on first boot when no `admin@_system` binding

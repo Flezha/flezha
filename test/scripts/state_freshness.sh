@@ -5,15 +5,15 @@
 # `ship-fresh-state-on-sdk-shutdown` against the same dev compose stack
 # the connection-healing test uses, sending SIGTERM via
 # `docker compose stop` and asserting the agent's
-# `Overwatch.state.snapshot` is populated for every running relay.
+# `Overwatch.state.snapshot` is populated for every running operative.
 #
 # Two scenarios:
 #
-#   A. periodic-enabled: relay uses the agent's default
+#   A. periodic-enabled: operative uses the agent's default
 #      `overwatch_state_snapshot_interval_ms`. After SIGTERM the
 #      snapshot reflects the executor's true final state (not the
 #      up-to-interval stale periodic value).
-#   B. disabled-snapshot: relay is started with
+#   B. disabled-snapshot: operative is started with
 #      `--snapshot-interval 0`. Without the shutdown notification the
 #      agent would have no snapshot at all (nil); this scenario asserts
 #      the notification populated it anyway.
@@ -120,33 +120,33 @@ agent_eval() {
      || mix run --no-start -e '${snippet}'"
 }
 
-start_relay() {
-  local relay_id="$1"
+start_operative() {
+  local operative_id="$1"
   local snapshot_interval="$2"
 
-  note "starting relay ${relay_id} (snapshot_interval=${snapshot_interval})"
+  note "starting operative ${operative_id} (snapshot_interval=${snapshot_interval})"
 
   local snippet
   snippet=$(cat <<EOF
-builder = %Flezha.Relay.Builder{
-  id: "${relay_id}",
+builder = %Flezha.Operative.Builder{
+  id: "${operative_id}",
   factory_id: "store_input",
   init_values: %{},
   opts: [snapshot_interval: ${snapshot_interval}]
 }
-{:ok, info} = Flezha.Service.RelayManager.start_relay("${DEMO_NAMESPACE}", builder)
+{:ok, info} = Flezha.Service.OperativeManager.start_operative("${DEMO_NAMESPACE}", builder)
 IO.inspect(info, label: "started")
 EOF
 )
   agent_eval "${snippet}"
 }
 
-read_snapshot_for_relay() {
-  local relay_id="$1"
+read_snapshot_for_operative() {
+  local operative_id="$1"
 
   local snippet
   snippet=$(cat <<EOF
-{:ok, state} = Flezha.Service.RelayManager.get_overwatch_state("${DEMO_NAMESPACE}", "${relay_id}")
+{:ok, state} = Flezha.Service.OperativeManager.get_overwatch_state("${DEMO_NAMESPACE}", "${operative_id}")
 IO.puts("SNAPSHOT_BINARY_PRESENT=" <> if state.snapshot != nil and byte_size(state.snapshot) > 0, do: "yes", else: "no")
 case state.snapshot do
   bin when is_binary(bin) -> IO.puts("SNAPSHOT_BYTES=" <> Base.encode64(bin))
@@ -158,23 +158,23 @@ EOF
 }
 
 assert_snapshot_present() {
-  local relay_id="$1"
+  local operative_id="$1"
   local label="$2"
 
   local output
-  output="$(read_snapshot_for_relay "${relay_id}" 2>&1)"
+  output="$(read_snapshot_for_operative "${operative_id}" 2>&1)"
   echo "${output}"
 
   if ! echo "${output}" | grep -q "SNAPSHOT_BINARY_PRESENT=yes"; then
-    echo "[state_freshness] FAIL (${label}): relay ${relay_id} has no agent-side snapshot after SIGTERM" >&2
+    echo "[state_freshness] FAIL (${label}): operative ${operative_id} has no agent-side snapshot after SIGTERM" >&2
     "${COMPOSE[@]}" logs --tail=200 agent rust >&2 || true
     exit 1
   fi
 
-  note "PASS (${label}): relay ${relay_id} agent snapshot is populated"
+  note "PASS (${label}): operative ${operative_id} agent snapshot is populated"
 }
 
-# --- Scenario A: periodic-enabled relay ----------------------------------
+# --- Scenario A: periodic-enabled operative ----------------------------------
 
 note "bringing up dev compose stack (project=${PROJECT}, transport=${FLEZHA_TRANSPORT:-uds})"
 "${COMPOSE[@]}" up -d agent rust
@@ -184,9 +184,9 @@ INITIAL_CE_ID="$(wait_for_ce_id)"
 note "initial executor_id: ${INITIAL_CE_ID}"
 
 PROC_A="state_freshness_a_$$"
-start_relay "${PROC_A}" "60_000"
+start_operative "${PROC_A}" "60_000"
 
-# Brief settle so the relay's `start_relay_sdk` round-trip
+# Brief settle so the operative's `start_operative_sdk` round-trip
 # completes before we yank the rust container.
 sleep 2
 
@@ -204,10 +204,10 @@ assert_snapshot_present "${PROC_A}" "scenario A (periodic-enabled)"
 note "waiting for rust restart handshake"
 wait_for_ce_id >/dev/null
 
-# --- Scenario B: disabled-snapshot relay ---------------------------------
+# --- Scenario B: disabled-snapshot operative ---------------------------------
 
 PROC_B="state_freshness_b_$$"
-start_relay "${PROC_B}" "0"
+start_operative "${PROC_B}" "0"
 sleep 2
 
 note "stopping rust container with SIGTERM (scenario B)"

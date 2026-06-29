@@ -24,7 +24,7 @@ defmodule Flezha.State.RegistryTest do
   end
 
   # fails when: the controller ignores the operator-configured FLEZHA_STATE_DIR
-  # and silently writes/restores the per-Partition WAL under the default
+  # and silently writes/restores the per-Segment WAL under the default
   # app_data/state, so a deployment that mounts a dedicated state volume warm-
   # restarts from an empty tree (the prod /flezha/state vs app_data/state mismatch).
   test "state_root/0 honors FLEZHA_STATE_DIR when no explicit :state_root is set" do

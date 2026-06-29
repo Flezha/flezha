@@ -74,7 +74,7 @@ fn print_cluster_help() {
     println!();
     println!("SUBCOMMANDS:");
     println!(
-        "    status              Show nodes, leader, per-node relay counts, relay health, recovery state"
+        "    status              Show nodes, leader, per-node operative counts, operative health, recovery state"
     );
     println!(
         "    prepare-recovery    Arm a planned cluster restart by deleting the recovery marker on every node"

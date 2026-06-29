@@ -4,9 +4,9 @@ defmodule Flezha.Convergence.Planner do
   backoff-filtered list of primitive ops. Each op is a map
   `%{primitive: atom, namespace: atom, target: term, args: map}`.
 
-  Ordering rules: a relay is bound (`rebind_relay`) before its plugins
+  Ordering rules: a operative is bound (`rebind_operative`) before its plugins
   start; an executor is evicted (`evict_executor`) before another binding
-  claims its relays. Ops still inside their `Backoff` cooldown are dropped,
+  claims its operatives. Ops still inside their `Backoff` cooldown are dropped,
   and the per-tick op count is capped at `max_ops`.
 
   Adding a failure mode does NOT touch the Planner — it surfaces through
@@ -41,7 +41,7 @@ defmodule Flezha.Convergence.Planner do
       plugin_ops(d)
   end
 
-  defp eviction_ops(%Diff{misbound_relays: misbound}) do
+  defp eviction_ops(%Diff{misbound_operatives: misbound}) do
     misbound
     |> Enum.map(fn {_ref, dead_executor} -> dead_executor end)
     |> Enum.uniq()
@@ -50,15 +50,15 @@ defmodule Flezha.Convergence.Planner do
 
   defp bind_ops(%Diff{} = d) do
     rebind =
-      Enum.map(d.misbound_relays, fn {{ns, rid}, _dead} ->
-        op(:rebind_relay, ns, rid, %{})
+      Enum.map(d.misbound_operatives, fn {{ns, rid}, _dead} ->
+        op(:rebind_operative, ns, rid, %{})
       end)
 
-    # Unbound (incl. parked) relays bind via the same rebind primitive: it
+    # Unbound (incl. parked) operatives bind via the same rebind primitive: it
     # resolves an executor and sends `:executor_migrate`, which un-parks them.
     start =
-      Enum.map(d.unbound_relays, fn {ns, rid} ->
-        op(:rebind_relay, ns, rid, %{})
+      Enum.map(d.unbound_operatives, fn {ns, rid} ->
+        op(:rebind_operative, ns, rid, %{})
       end)
 
     rebind ++ start

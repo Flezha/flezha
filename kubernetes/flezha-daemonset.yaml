@@ -105,7 +105,7 @@ spec:
               # Must match FLEZHA_DATA_DIR in the ConfigMap. Hosts ProcessHub's
               # persistent registry (under
               # `FLEZHA_PROCESS_HUB_REGISTRY_ROOT=/var/lib/flezha/process_hub`)
-              # plus per-Partition WAL/snapshot files (under
+              # plus per-Segment WAL/snapshot files (under
               # `app_data/state/`) and the plugin install root. Losing this
               # volume reverts controllers to today's behaviour of empty
               # recovery on restart.
@@ -130,7 +130,7 @@ spec:
             type: DirectoryOrCreate
         - name: flezha-recovery
           # Node-local host path for ProcessHub's persistent registry +
-          # per-Partition WAL files. DaemonSet means each pod is pinned to
+          # per-Segment WAL files. DaemonSet means each pod is pinned to
           # a node, so a host path is sufficient — the same pod comes back
           # to the same node's /opt/flezha-recovery dir after a restart and
           # reads the files it wrote before going down.

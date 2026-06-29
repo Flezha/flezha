@@ -1,8 +1,8 @@
 defmodule Flezha.State.TimeTravel do
   @moduledoc """
-  Point-in-time state queries against persisted Partition data.
+  Point-in-time state queries against persisted Segment data.
 
-  `query/2` resolves a `(partition_id, target)` tuple where target is
+  `query/2` resolves a `(segment_id, target)` tuple where target is
   `{:seq, u64}` or `{:timestamp, datetime}`. It locates the latest
   snapshot at-or-before the target, then folds the WAL records up to
   the target on the SDK side via a transient `RestoreInitState`-style
@@ -12,7 +12,7 @@ defmodule Flezha.State.TimeTravel do
   v1 `query/2` returns the assembled bytes payload + the resolved
   terminal seq. The replay-on-SDK round-trip is wired by
   `Overwatch.dispatch_restore_init_state/2` and is invoked by the CLI
-  command `flz state at <relay/shard/partition> <seq | timestamp>`.
+  command `flz state at <operative/operation/segment> <seq | timestamp>`.
 
   Out-of-retention errors are returned as `%TimeTravelError{}`.
   """
@@ -51,16 +51,16 @@ defmodule Flezha.State.TimeTravel do
           terminal_seq: non_neg_integer()
         }
 
-  @spec query(Registry.partition_id(), target()) ::
+  @spec query(Registry.segment_id(), target()) ::
           {:ok, result()} | {:error, TimeTravelError.t()}
-  def query(partition_id, target) do
-    snaps = Registry.snapshot_paths(partition_id)
-    target_seq = resolve_target_seq(partition_id, target)
+  def query(segment_id, target) do
+    snaps = Registry.snapshot_paths(segment_id)
+    target_seq = resolve_target_seq(segment_id, target)
 
-    case earliest_available_seq(snaps, partition_id) do
+    case earliest_available_seq(snaps, segment_id) do
       :no_data ->
         {:error,
-         TimeTravelError.exception(kind: :no_data, message: "no persisted state for partition")}
+         TimeTravelError.exception(kind: :no_data, message: "no persisted state for segment")}
 
       earliest when target_seq < earliest ->
         {:error,
@@ -88,7 +88,7 @@ defmodule Flezha.State.TimeTravel do
         snapshot_seq = elem(snapshot || {0, nil}, 0)
 
         {change_log_bytes, terminal_seq} =
-          read_wal_in_range(partition_id, snapshot_seq, target_seq)
+          read_wal_in_range(segment_id, snapshot_seq, target_seq)
 
         {:ok,
          %{
@@ -99,17 +99,17 @@ defmodule Flezha.State.TimeTravel do
     end
   end
 
-  defp resolve_target_seq(_partition_id, {:seq, seq}) when is_integer(seq) and seq >= 0, do: seq
+  defp resolve_target_seq(_segment_id, {:seq, seq}) when is_integer(seq) and seq >= 0, do: seq
 
-  defp resolve_target_seq(partition_id, {:timestamp, ts}) when is_integer(ts) do
+  defp resolve_target_seq(segment_id, {:timestamp, ts}) when is_integer(ts) do
     # Walk WAL records and find the highest seq whose record-time is ≤ ts.
     # The on-disk header carries no per-record timestamp in v1; we fall
     # back to the WAL file's mtime as the upper bound. Refining this to
     # per-record `ts` is a follow-up once headers carry it.
-    case File.stat(Registry.wal_path(partition_id), time: :posix) do
+    case File.stat(Registry.wal_path(segment_id), time: :posix) do
       {:ok, %{mtime: file_mtime}} when ts >= file_mtime ->
         # Target is now or in the future — return the latest seq.
-        case Registry.snapshot_paths(partition_id) do
+        case Registry.snapshot_paths(segment_id) do
           [] -> 0
           paths -> elem(List.last(paths), 0)
         end
@@ -118,15 +118,15 @@ defmodule Flezha.State.TimeTravel do
         # Target is before the WAL's last write — use the latest snapshot
         # seq before/at the target as the cap. Without per-record
         # timestamps, this is a coarse approximation.
-        case pick_snapshot_by_mtime(Registry.snapshot_paths(partition_id), ts) do
+        case pick_snapshot_by_mtime(Registry.snapshot_paths(segment_id), ts) do
           nil -> 0
           {seq, _} -> seq
         end
     end
   end
 
-  defp earliest_available_seq([], partition_id) do
-    if File.exists?(Registry.wal_path(partition_id)), do: 0, else: :no_data
+  defp earliest_available_seq([], segment_id) do
+    if File.exists?(Registry.wal_path(segment_id)), do: 0, else: :no_data
   end
 
   defp earliest_available_seq([{seq, _} | _], _), do: seq
@@ -152,8 +152,8 @@ defmodule Flezha.State.TimeTravel do
     |> List.last()
   end
 
-  defp read_wal_in_range(partition_id, snapshot_seq, target_seq) do
-    path = Registry.wal_path(partition_id)
+  defp read_wal_in_range(segment_id, snapshot_seq, target_seq) do
+    path = Registry.wal_path(segment_id)
 
     if File.exists?(path) do
       {:ok, dev} = :file.open(path, [:raw, :read, :binary])

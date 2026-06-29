@@ -2,7 +2,7 @@ package com.flezha.sdk.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
-import com.flezha.sdk.runtime.relay.RelayInstanceRegistry;
+import com.flezha.sdk.runtime.operative.ContinuousOperativeInstanceRegistry;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
 import com.flezha.sdk.runtime.stream.StreamRegistry;
 import java.util.Map;
@@ -22,7 +22,7 @@ public final class ExecutorContext {
     private final FlezhaEnv.ResolvedConfig config;
     private final long nativeHandle;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final RelayInstanceRegistry relayInstanceRegistry = new RelayInstanceRegistry();
+    private final ContinuousOperativeInstanceRegistry operativeInstanceRegistry = new ContinuousOperativeInstanceRegistry();
     private final StreamRegistry streamRegistry = new StreamRegistry();
     private final Map<Long, PrimaryStreamReader> primaryReaders = new ConcurrentHashMap<>();
     private final AtomicReference<String> executorId = new AtomicReference<>("undefined");
@@ -55,8 +55,8 @@ public final class ExecutorContext {
     }
 
     @Nonnull
-    public RelayInstanceRegistry relayInstanceRegistry() {
-        return relayInstanceRegistry;
+    public ContinuousOperativeInstanceRegistry operativeInstanceRegistry() {
+        return operativeInstanceRegistry;
     }
 
     public void setWorkerPool(@Nonnull ExecutorService pool) {

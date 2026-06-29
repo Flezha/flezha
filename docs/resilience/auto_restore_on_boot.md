@@ -1,21 +1,21 @@
 # Auto-restore on boot
 
 This is the single restart-survival mechanism in Flezha. On boot, the
-controller rehydrates the relay list from the durable ProcessHub registry
-and ships the on-disk WAL + snapshot to each executor so relays resume
+controller rehydrates the operative list from the durable ProcessHub registry
+and ships the on-disk WAL + snapshot to each executor so operatives resume
 from their last persisted state.
 
 ## Two persistence layers
 
 | Layer | Path | Lifecycle owner |
 |---|---|---|
-| ProcessHub durable registry (relay specs incl. `opts[:plugins]`) | `app_data/process_hub/<hub_id>/registry.dets` | `Flezha.Service.HubManager` (configures `registry_backend: {:dets, ...}`) |
-| Per-Partition WAL + snapshots (change-by-change progress) | `app_data/state/<relay_class>/<shard_id>/<partition_key>.{wal,snap.N,outbox.dedup}` | `Flezha.State.Supervisor` and friends |
+| ProcessHub durable registry (operative specs incl. `opts[:plugins]`) | `app_data/process_hub/<hub_id>/registry.dets` | `Flezha.Service.HubManager` (configures `registry_backend: {:dets, ...}`) |
+| Per-Segment WAL + snapshots (change-by-change progress) | `app_data/state/<operative_class>/<operation_id>/<segment_key>.{wal,snap.N,outbox.dedup}` | `Flezha.State.Supervisor` and friends |
 
-The path layout is **flat in the relay_class direction** — there is
+The path layout is **flat in the operative_class direction** — there is
 no `executor_id` component. An executor pod restart that rotates
 `executor_id` finds the same persisted state on disk and the
-controller ships it to the new executor on Partition stream attach.
+controller ships it to the new executor on Segment stream attach.
 
 ## Lifecycle
 
@@ -36,12 +36,12 @@ controller ships it to the new executor on Partition stream attach.
    transitions to `:normal` within `recovery_window_ms`, this node
    skips replay; otherwise it dispatches `start_children` for the
    persistent-registry rows.
-5. Each Relay's `Overwatch.init/1` reads `relay.opts[:plugins]`
+5. Each Operative's `Overwatch.init/1` reads `operative.opts[:plugins]`
    straight from the cspec (the persistent registry already restored
-   it) and rebuilds `state.extensions`. Then `start_relay_sdk` and
+   it) and rebuilds `state.extensions`. Then `start_operative_sdk` and
    `maybe_dispatch_restore_init_state/2` ship the on-disk WAL +
-   snapshot to the SDK for each Partition belonging to this relay
-   class — unless the relay arrived via HotSwap, in which case the
+   snapshot to the SDK for each Segment belonging to this operative
+   class — unless the operative arrived via HotSwap, in which case the
    in-band handover state stands.
 6. `Flezha.BootLoader` waits for `ProcessHub.await_normal/2` per
    namespace hub before flipping `boot_ready?`.
@@ -50,19 +50,19 @@ controller ships it to the new executor on Partition stream attach.
 
 | Scenario | Replay? | Result |
 |---|---|---|
-| Cluster-wide cold boot (all controllers down, all return) | Yes (every node) | Each node calls `start_children` for its persistent rows. ProcessHub's hash ring picks the canonical owner; idempotent on duplicate `child_id`. Plugins re-subscribed via `Overwatch.init/1`; Partition state shipped via `dispatch_restore_init_state/2` on stream-attach. |
+| Cluster-wide cold boot (all controllers down, all return) | Yes (every node) | Each node calls `start_children` for its persistent rows. ProcessHub's hash ring picks the canonical owner; idempotent on duplicate `child_id`. Plugins re-subscribed via `Overwatch.init/1`; Segment state shipped via `dispatch_restore_init_state/2` on stream-attach. |
 | Single-controller restart into healthy cluster | No (returning node) | Returning node sees a `:normal` peer within the window, skips replay. ProcessHub has already redistributed its work; the durable registry on disk does not trample peer state. |
 | Rolling k8s rollout | No | Same as single-controller, repeated per pod. No stampede. |
 | Single-node deployment | Yes | Window elapses with no peer; `:recovering`; replay; `:normal`. |
 | Executor pod restart with `executor_id` rotation | N/A | Controller never went down. New `executor_id` is assigned via the existing flow; flat WAL layout means state is found and shipped via `RestoreInitState`. Zero data loss. |
-| HotSwap migration (relay moves A → B) | N/A | `prepare_handover_state` ships in-memory state in-band; `dispatch_restore_init_state/2` does NOT fire (handover delivers state). State files on A are not deleted (retention sweeper handles long-term orphans). |
+| HotSwap migration (operative moves A → B) | N/A | `prepare_handover_state` ships in-memory state in-band; `dispatch_restore_init_state/2` does NOT fire (handover delivers state). State files on A are not deleted (retention sweeper handles long-term orphans). |
 | HotSwap mid-flight crash on destination | N/A | Source state files preserved. ProcessHub retries the migration. |
 | Network partition during boot | Yes (suspect) | Brief duplicate-start window during heal; ProcessHub's `Divergence` strategy resolves. Documented limitation. Operators in fragile environments can `FLEZHA_AUTO_RESTORE_ENABLED=false`. |
 | Quorum loss (3-node cluster, 2 die) | No (returning) | Survivor authoritative; returning nodes reconcile against ProcessHub placement. |
 | Subset-rejoin (cluster down, only some nodes return) | Yes | **Single tolerated data-loss case** — rows held only on the non-rejoining nodes are lost. |
 | Mixed-version rolling upgrade | Per-node | Forward+backward-compatible row schema. |
 | Registry corruption | Empty replay | DETS rotates to `corrupt-<monotonic>`; boot continues empty. |
-| Operator restored old `relays.dets` from backup | Per-row | Eager reconcile drops rows ProcessHub doesn't claim. |
+| Operator restored old `operatives.dets` from backup | Per-row | Eager reconcile drops rows ProcessHub doesn't claim. |
 
 ## Operator surface
 
@@ -92,10 +92,10 @@ flz boot import-legacy-snapshot /path/to/snap.flz [--force]
 `pre_recovery_replay` and `post_recovery_replay` hook registration —
 ProcessHub's auto-recovery remains structurally configured but the
 state machine short-circuits to `:normal`. Durable registry writes
-still happen; mutators continue to persist relay specs and plugin
+still happen; mutators continue to persist operative specs and plugin
 subscriptions to DETS. Rollback path: flip the env var, optionally
 delete `app_data/process_hub/`, and the controller behaves like the
-pre-change version (operators must re-register relays after every
+pre-change version (operators must re-register operatives after every
 boot).
 
 ## Related modules
@@ -105,7 +105,7 @@ boot).
 | `Flezha.Service.HubManager` | Configures `registry_backend` + `auto_recovery`; calls `Flezha.Boot.RecoveryHooks.register/1` on each `start_hub/1`. |
 | `Flezha.Boot.RecoveryHooks` | Telemetry forwarders for `pre_recovery_replay` / `post_recovery_replay` lifecycle events. |
 | `Flezha.Boot.StatePathMigrator` | One-shot legacy-layout → flat-layout migration. |
-| `Flezha.Relay.Overwatch` | `arrived_via_hotswap?` gate; `maybe_dispatch_restore_init_state/2` ships `RestoreInitState` to the SDK. |
-| `Flezha.State.Registry` | Flat path resolution (`{relay_class, shard_id, partition_key}`). |
-| `Flezha.Service.RelayManager.stop_relay/2` | Only operator-driven path that deletes state directories. |
+| `Flezha.Operative.Overwatch` | `arrived_via_hotswap?` gate; `maybe_dispatch_restore_init_state/2` ships `RestoreInitState` to the SDK. |
+| `Flezha.State.Registry` | Flat path resolution (`{operative_class, operation_id, segment_key}`). |
+| `Flezha.Service.OperativeManager.stop_operative/2` | Only operator-driven path that deletes state directories. |
 | `Flezha.Service.PluginManager` | Cspec-write-first ordering: `ProcessRegistry.update/3` then runtime subscribe. |

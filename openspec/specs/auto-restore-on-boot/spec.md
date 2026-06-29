@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and executor pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks to coordinate replay with FleetManager readiness, and wires per-Partition WAL/snapshot restoration into the data-stream attach path. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
+The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and executor pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks to coordinate replay with FleetManager readiness, and wires per-Segment WAL/snapshot restoration into the data-stream attach path. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
 ## Requirements
 ### Requirement: Configure ProcessHub for durable registry and auto-recovery per namespace
 
@@ -42,7 +42,7 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 - **THEN** `ProcessHub.Initializer.setup_storage/2` returns successfully for `:default_hub`
 - **AND** `Flezha.Service.HubManager.register_handler/2` completes with `:ok`
 - **AND** the controller does not crash, the BEAM does not exit, and the agent stays Ready
-- **AND** a subsequent `bin/flz relay list` returns exit 0 (empty list on first boot)
+- **AND** a subsequent `bin/flz operative list` returns exit 0 (empty list on first boot)
 
 ### Requirement: `pre_recovery_replay` hook handler waits for FleetManager readiness
 
@@ -84,16 +84,16 @@ If the kill-switch `:flezha, :auto_restore_enabled` is `false`, the hook handler
 
 If the cspec write fails, the runtime mutation SHALL NOT be issued; the caller SHALL receive `{:error, :registry_unavailable}` (the propagated ProcessHub error).
 
-If the runtime mutation fails after a successful cspec write, the cspec is correct (claims plugin enabled); on next Relay restart, `Overwatch.init/1`'s existing `subscribe_initial_plugins/2` path subscribes the plugin from the cspec. Self-healing on next start; no operator action needed.
+If the runtime mutation fails after a successful cspec write, the cspec is correct (claims plugin enabled); on next Operative restart, `Overwatch.init/1`'s existing `subscribe_initial_plugins/2` path subscribes the plugin from the cspec. Self-healing on next start; no operator action needed.
 
 The previous self-heal-on-next-operation contract from `plugin-subscription-persistence` is no longer needed — the partial-failure window is closed by the registry-write-first ordering combined with the runtime mutation's retry-on-restart semantics.
 
 #### Scenario: Crash between cspec write and runtime subscribe self-heals on restart
 
-- **GIVEN** a relay `p1` running; `enable_plugin("kafka_p1", %Plugin{...})` succeeds in writing the cspec via `ProcessRegistry.update/3`; the controller VM crashes before the runtime `:plugin_subscribe` is issued
+- **GIVEN** a operative `p1` running; `enable_plugin("kafka_p1", %Plugin{...})` succeeds in writing the cspec via `ProcessRegistry.update/3`; the controller VM crashes before the runtime `:plugin_subscribe` is issued
 - **WHEN** the controller restarts; ProcessHub's persistent registry contains `p1` with `opts[:plugins]` including `kafka_p1`
 - **AND** `p1`'s Overwatch is restored (via ProcessHub's recovery path or peer-redistribution)
-- **THEN** `Overwatch.init/1` reads `relay.opts[:plugins]` from the cspec; `subscribe_initial_plugins/2` subscribes `kafka_p1`; the plugin is live without any operator action
+- **THEN** `Overwatch.init/1` reads `operative.opts[:plugins]` from the cspec; `subscribe_initial_plugins/2` subscribes `kafka_p1`; the plugin is live without any operator action
 
 #### Scenario: Cspec write fails — runtime mutation aborted
 
@@ -101,46 +101,46 @@ The previous self-heal-on-next-operation contract from `plugin-subscription-pers
 - **WHEN** `enable_plugin/2` is called and `ProcessRegistry.update/3` returns `{:error, _}`
 - **THEN** the call returns `{:error, :registry_unavailable}` and no `:plugin_subscribe` is issued
 
-### Requirement: Partition state restoration fires on first stream attach
+### Requirement: Segment state restoration fires on first stream attach
 
-When a Partition's data stream attaches to a `StreamChannel` AND the owning Relay has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Relay did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.Relay.Overwatch.dispatch_restore_init_state/2` for that Partition exactly once per Relay-startup BEFORE allowing input frames to flow.
+When a Segment's data stream attaches to a `StreamChannel` AND the owning Operative has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operative did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.Operative.Overwatch.dispatch_restore_init_state/2` for that Segment exactly once per Operative-startup BEFORE allowing input frames to flow.
 
-The Relay's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
+The Operative's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
 
-This works identically across: ProcessHub-driven cold-boot replay, fresh `flz relay start`, ProcessHub redistribution, AddRelay reissue after executor restart.
+This works identically across: ProcessHub-driven cold-boot replay, fresh `flz operative start`, ProcessHub redistribution, AddOperative reissue after executor restart.
 
-#### Scenario: ProcessHub replay + Partition stream attach ships RestoreInitState
+#### Scenario: ProcessHub replay + Segment stream attach ships RestoreInitState
 
-- **GIVEN** ProcessHub's persistent registry is replayed; a Relay is started; an executor connects and is assigned
-- **WHEN** the SDK opens a data stream for a Partition that has on-disk WAL records under `app_data/state/{relay_class}/{shard_id}/{partition_key}.wal`
-- **THEN** the controller ships `RestoreInitState{partition_id, snapshot_bytes, change_log_bytes}` over the control channel BEFORE forwarding any input frames
+- **GIVEN** ProcessHub's persistent registry is replayed; a Operative is started; an executor connects and is assigned
+- **WHEN** the SDK opens a data stream for a Segment that has on-disk WAL records under `app_data/state/{operative_class}/{operation_id}/{segment_key}.wal`
+- **THEN** the controller ships `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` over the control channel BEFORE forwarding any input frames
 
-#### Scenario: HotSwap-arrived Partition skips dispatch
+#### Scenario: HotSwap-arrived Segment skips dispatch
 
-- **GIVEN** a Relay arrives via HotSwap; `arrived_via_hotswap? = true`
-- **WHEN** the Partition's data stream attaches
+- **GIVEN** a Operative arrives via HotSwap; `arrived_via_hotswap? = true`
+- **WHEN** the Segment's data stream attaches
 - **THEN** `dispatch_restore_init_state/2` SHALL NOT fire; the in-band handover state is the basis for going-forward processing
 
-### Requirement: Pull-on-attach recovers WAL when ProcessHub places a Partition on a node without local state
+### Requirement: Pull-on-attach recovers WAL when ProcessHub places a Segment on a node without local state
 
-When `dispatch_restore_init_state/2` fires for a Partition AND `Restore.assemble_payload/1` returns an empty payload AND the cspec indicates a previously-running relay (i.e. ProcessHub's persistent registry held this row before today's controller boot), the controller SHALL attempt a one-shot WAL/snapshot transfer from peer controllers before falling through to cold-start `relay-init-state`.
+When `dispatch_restore_init_state/2` fires for a Segment AND `Restore.assemble_payload/1` returns an empty payload AND the cspec indicates a previously-running operative (i.e. ProcessHub's persistent registry held this row before today's controller boot), the controller SHALL attempt a one-shot WAL/snapshot transfer from peer controllers before falling through to cold-start `operative-init-state`.
 
 Protocol:
 
-1. Broadcast `Flezha.Boot.WalTransfer.query/1` Erlang-RPC to all peer controllers serving the same namespace, with the partition key `{relay_class, shard_id, partition_key}`.
+1. Broadcast `Flezha.Boot.WalTransfer.query/1` Erlang-RPC to all peer controllers serving the same namespace, with the segment key `{operative_class, operation_id, segment_key}`.
 2. Each peer responds (timeout `:flezha, :wal_transfer_query_timeout_ms`, default `2_000`) with `:none` or `{:ok, %{last_persisted_seq: N, snapshot_seq: M, file_sizes: %{}}}`.
 3. Select the highest-`last_persisted_seq` peer (lexicographic tiebreaker on node name); if all peers respond `:none`, log INFO and proceed with cold start.
-4. Stream the selected peer's `app_data/state/{relay_class}/{shard_id}/{partition_key}.{wal,snap.<latest>,outbox.dedup}` files via `WalTransfer.stream/2`. Write to `.transferring` files first, fsync, atomic rename.
+4. Stream the selected peer's `app_data/state/{operative_class}/{operation_id}/{segment_key}.{wal,snap.<latest>,outbox.dedup}` files via `WalTransfer.stream/2`. Write to `.transferring` files first, fsync, atomic rename.
 5. On peer-disconnect-mid-stream, retry against the next-best peer once; on second failure, delete `.transferring` files, log WARN, fall through to cold start.
 6. After successful transfer, re-invoke `Restore.assemble_payload/1` and continue the dispatch flow.
 7. Telemetry: `[:flezha, :boot, :wal_pulled]` on success; `[:flezha, :boot, :wal_pull_failed]` on failure.
 
-Pull-on-attach SHALL fire AT MOST ONCE per Partition per cluster lifecycle. Once local WAL exists, future restarts skip the peer query.
+Pull-on-attach SHALL fire AT MOST ONCE per Segment per cluster lifecycle. Once local WAL exists, future restarts skip the peer query.
 
 #### Scenario: Cold-boot redistribution drift recovered by pull-on-attach
 
-- **GIVEN** a 3-controller cluster; staggered graceful shutdowns; all return together; ProcessHub places relay `X` (which migrated A→B→C) back on its hash-original owner A
-- **WHEN** ProcessHub recovers, A's coordinator transitions to `:normal`, the SDK opens X's Partition stream, and `dispatch_restore_init_state/2` fires
+- **GIVEN** a 3-controller cluster; staggered graceful shutdowns; all return together; ProcessHub places operative `X` (which migrated A→B→C) back on its hash-original owner A
+- **WHEN** ProcessHub recovers, A's coordinator transitions to `:normal`, the SDK opens X's Segment stream, and `dispatch_restore_init_state/2` fires
 - **AND** A's local WAL is older than C's
 - **THEN** A broadcasts the WAL-availability query; C responds with the highest seq; A pulls C's WAL files via streaming RPC
 - **AND** A's local WAL after pull matches C's pre-shutdown state byte-for-byte
@@ -156,19 +156,19 @@ Pull-on-attach SHALL fire AT MOST ONCE per Partition per cluster lifecycle. Once
 
 - **GIVEN** the WAL files do not exist on any controller
 - **WHEN** pull-on-attach broadcasts the query
-- **THEN** all peers respond `:none`; the controller logs INFO and proceeds with `relay-init-state` cold-start chain
+- **THEN** all peers respond `:none`; the controller logs INFO and proceeds with `operative-init-state` cold-start chain
 
-### Requirement: HotSwap migration also transfers WAL files (WAL-follows-relay)
+### Requirement: HotSwap migration also transfers WAL files (WAL-follows-operative)
 
-When a HotSwap migration completes on the destination controller (`Overwatch.alter_handover_state/2` fires), the destination SHALL pull the source's WAL/snapshot files via `WalTransfer.stream/2` for each Partition, in parallel with consuming the in-memory handover state.
+When a HotSwap migration completes on the destination controller (`Overwatch.alter_handover_state/2` fires), the destination SHALL pull the source's WAL/snapshot files via `WalTransfer.stream/2` for each Segment, in parallel with consuming the in-memory handover state.
 
 Source-side WAL files SHALL NOT be deleted at HotSwap completion. The destination's `WalWriter` opens the pulled WAL file and continues appending from `last_persisted_seq + 1` going forward. Source orphans are reaped by the existing Retention sweeper.
 
-If the WAL transfer fails, the destination SHALL log ERROR with the partition_id and start with a fresh empty WAL — the in-memory handover state is authoritative; write-ahead-logging resumes from a clean slate.
+If the WAL transfer fails, the destination SHALL log ERROR with the segment_id and start with a fresh empty WAL — the in-memory handover state is authoritative; write-ahead-logging resumes from a clean slate.
 
 #### Scenario: HotSwap pulls WAL alongside in-memory handover
 
-- **GIVEN** relay `p1` running on A; HotSwap to B
+- **GIVEN** operative `p1` running on A; HotSwap to B
 - **WHEN** B's `alter_handover_state/2` consumes A's in-memory state
 - **THEN** B also streams A's WAL files into B's local `app_data/state/...`
 - **AND** B's WalWriter continues appending records starting at `seq = last_persisted_seq + 1`
@@ -176,37 +176,37 @@ If the WAL transfer fails, the destination SHALL log ERROR with the partition_id
 
 ### Requirement: `hub_migrate` SHALL invoke ProcessHub clean-leave to preserve state
 
-`Flezha.Executor.FleetManager`'s `hub_migrate` path (Branch B/C in `do_handle_executor_disconnect/2`) SHALL invoke `ProcessHub.leave/2` (or whichever ProcessHub-provided leave function honors `migration_strategy: HotSwap{handover: true}`) such that each child relay migrates to a peer controller via state-preserving handover, NOT via direct hub teardown that would orphan state on the leaving node.
+`Flezha.Executor.FleetManager`'s `hub_migrate` path (Branch B/C in `do_handle_executor_disconnect/2`) SHALL invoke `ProcessHub.leave/2` (or whichever ProcessHub-provided leave function honors `migration_strategy: HotSwap{handover: true}`) such that each child operative migrates to a peer controller via state-preserving handover, NOT via direct hub teardown that would orphan state on the leaving node.
 
 This is a verify-and-fix requirement: if the current implementation already invokes `ProcessHub.leave/2`, add a regression test. If it bypasses the migration strategy, change the implementation to honor it.
 
-#### Scenario: Controller loses all executors — relays migrate with state to peers
+#### Scenario: Controller loses all executors — operatives migrate with state to peers
 
-- **GIVEN** controller A with relay `p1` (state at seq=500); peer controller B with capacity for `p1`'s factory
+- **GIVEN** controller A with operative `p1` (state at seq=500); peer controller B with capacity for `p1`'s factory
 - **WHEN** A's executors all disconnect; FleetManager enters Branch B and invokes `hub_migrate`
 - **THEN** ProcessHub HotSwaps `p1` from A to B with handover; B's `alter_handover_state/2` receives the in-memory state; B's WalTransfer pulls the WAL from A
 - **AND** `p1` resumes on B with terminal seq=500; no data loss
 
-### Requirement: State-directory cleanup ONLY on explicit relay stop
+### Requirement: State-directory cleanup ONLY on explicit operative stop
 
-State files under `app_data/state/{relay_class}/{shard_id}/{partition_key}.{wal,snap.N,outbox.dedup}` SHALL be removed ONLY when `Flezha.Service.RelayManager.stop_relay/2` is called by an operator. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
+State files under `app_data/state/{operative_class}/{operation_id}/{segment_key}.{wal,snap.N,outbox.dedup}` SHALL be removed ONLY when `Flezha.Service.OperativeManager.stop_operative/2` is called by an operator. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
 
-`stop_relay/2` SHALL: (a) call `ProcessHub.stop_children/3` (which fires the existing hooks → cspec deletion via persistent registry); (b) on success, recursively delete `app_data/state/{relay_class}/{shard_id}/` for each shard. Skip with WARN log if any `.tmp` or `.rewriting` file is present.
+`stop_operative/2` SHALL: (a) call `ProcessHub.stop_children/3` (which fires the existing hooks → cspec deletion via persistent registry); (b) on success, recursively delete `app_data/state/{operative_class}/{operation_id}/` for each operation. Skip with WARN log if any `.tmp` or `.rewriting` file is present.
 
 The Retention sweeper handles long-term orphans via `time_travel_retention_hours`.
 
 #### Scenario: HotSwap source-side does NOT delete state files
 
-- **GIVEN** relay `p1` running on controller A with WAL files
+- **GIVEN** operative `p1` running on controller A with WAL files
 - **WHEN** ProcessHub HotSwap migrates `p1` to controller B
 - **AND** A's `child_unregistered_hook` fires after the source process terminates
 - **THEN** A's persistent-registry row is removed by ProcessHub; A's `app_data/state/...` files SHALL still exist
-- **AND** B's persistent-registry row is written by ProcessHub's `post_children_start_hook`; B's WAL is populated by WAL-follows-relay
+- **AND** B's persistent-registry row is written by ProcessHub's `post_children_start_hook`; B's WAL is populated by WAL-follows-operative
 
-#### Scenario: flz relay stop deletes state files
+#### Scenario: flz operative stop deletes state files
 
-- **WHEN** the executor runs `flz relay stop default p1`
-- **THEN** `RelayManager.stop_relay/2` calls `ProcessHub.stop_children/3`; on success, recursively deletes `app_data/state/MarketRelay/btc/...`
+- **WHEN** the executor runs `flz operative stop default p1`
+- **THEN** `OperativeManager.stop_operative/2` calls `ProcessHub.stop_children/3`; on success, recursively deletes `app_data/state/MarketOperative/btc/...`
 - **AND** if any `.tmp` or `.rewriting` file is present, deletion is skipped with a WARN log
 
 ### Requirement: Single explicitly-tolerated data-loss case
@@ -244,33 +244,33 @@ The CLI SHALL provide:
 - **WHEN** the executor runs `flz boot await --timeout=30000` while one hub is still in `:recovery_pending`
 - **THEN** the CLI blocks; once all hubs reach `:normal` (or the timeout), it returns; on timeout, exits non-zero with which hubs are still pending
 
-### Requirement: Recovery replay SHALL NOT resurrect relays onto dead nodes
+### Requirement: Recovery replay SHALL NOT resurrect operatives onto dead nodes
 
 ProcessHub recovery replay (`Flezha.Service.HubManager.alter_child_data/2`) SHALL drop
 any `{node, pid}` entries that reference nodes absent from the live cluster when it
-rewrites a relay's child-spec to an active executor, so the replayed relay is placed on a
+rewrites a operative's child-spec to an active executor, so the replayed operative is placed on a
 live node rather than being treated as "already running" on a gone node. This complements
 the generic ProcessHub `post_node_leave` reaping (see `controller-leadership`) and is
 defense-in-depth for the case where reaping has not yet fired at replay time.
 
 #### Scenario: Stale dead-node pid does not block respawn
-- **GIVEN** a relay's persisted registry entry lists a pid on a node that is no longer in the cluster
+- **GIVEN** a operative's persisted registry entry lists a pid on a node that is no longer in the cluster
 - **WHEN** recovery replay runs `alter_child_data`
-- **THEN** the dead-node entry SHALL be dropped and the relay SHALL be (re)started on a live node + live executor
-- **AND** the relay SHALL resume producing rather than remaining registered-but-silent on the dead node
+- **THEN** the dead-node entry SHALL be dropped and the operative SHALL be (re)started on a live node + live executor
+- **AND** the operative SHALL resume producing rather than remaining registered-but-silent on the dead node
 
 ### Requirement: Recovery and on-demand hub creation SHALL be gated on cluster formation
 
 Recovery-triggering hub creation SHALL occur only after the cluster is formed (or the
 bounded degrade-to-solo timeout has elapsed), so a hub is never created on a
 not-yet-clustered node and then diverge from its peers. After the gate, the reconciler
-owns post-replay convergence (re-place, rebind, reissue) so a relay that replay started
+owns post-replay convergence (re-place, rebind, reissue) so a operative that replay started
 but did not bring to production is still healed.
 
 #### Scenario: Replay on a freshly-clustered node converges
 - **GIVEN** a controller that has just joined the cluster and replayed its registry
 - **WHEN** the reconciler runs after `post_recovery_replay`
-- **THEN** every replayed relay SHALL be driven to a producing state on a live executor, or marked `FAILED` if no executor can serve it
+- **THEN** every replayed operative SHALL be driven to a producing state on a live executor, or marked `FAILED` if no executor can serve it
 
 ### Requirement: Boot ordering is gated on recovery completion, not on the replay hook
 
@@ -292,12 +292,12 @@ Registry-dependent services SHALL gate their readiness on `HubManager.await_reco
 - **THEN** the predicate treats auto-restore as enabled and returns a boolean without raising
 - **AND** the Loop tick completes normally.
 
-### Requirement: A sole-instance restart preserves relays only via recovery mode
+### Requirement: A sole-instance restart preserves operatives only via recovery mode
 
-A plain restart of the sole controller SHALL skip-replay and rebuild the relay list from executors re-announcing (the durable registry is wiped on a skip-replay boot, by design). To preserve relays across a sole-instance restart, recovery mode (the `cluster.healthy` marker removed / `flz cluster prepare-recovery`) SHALL be used so the registry replays from DETS, and `/healthz` SHALL honestly report `recovering`/`restoring_registry` until rebound.
+A plain restart of the sole controller SHALL skip-replay and rebuild the operative list from executors re-announcing (the durable registry is wiped on a skip-replay boot, by design). To preserve operatives across a sole-instance restart, recovery mode (the `cluster.healthy` marker removed / `flz cluster prepare-recovery`) SHALL be used so the registry replays from DETS, and `/healthz` SHALL honestly report `recovering`/`restoring_registry` until rebound.
 
-#### Scenario: recovery-mode restart preserves the relay list
-- **GIVEN** a sole controller has relays bound and the operator wants them preserved across a restart
+#### Scenario: recovery-mode restart preserves the operative list
+- **GIVEN** a sole controller has operatives bound and the operator wants them preserved across a restart
 - **WHEN** recovery mode is armed (marker removed / `flz cluster prepare-recovery`) and the controller restarts
-- **THEN** the registry replays from DETS, `/healthz` reports `recovering` until rebound, and the relays return without operator re-arming.
+- **THEN** the registry replays from DETS, `/healthz` reports `recovering` until rebound, and the operatives return without operator re-arming.
 

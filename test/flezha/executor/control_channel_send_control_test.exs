@@ -1,7 +1,7 @@
 defmodule Flezha.Executor.ControlChannelSendControlTest do
   @moduledoc """
   Fails when: `ControlChannel.send_control/2` swallows transport failures and
-  always returns `{:ok, ref}`, so a relay talking to a reset/dead stream
+  always returns `{:ok, ref}`, so a operative talking to a reset/dead stream
   registers a reply ref that never resolves, then blocks and crashes instead
   of receiving a clean error and healing.
   """

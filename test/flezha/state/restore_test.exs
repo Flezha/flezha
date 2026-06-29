@@ -26,11 +26,11 @@ defmodule Flezha.State.RestoreTest do
       File.rm_rf!(base)
     end)
 
-    %{base: base, partition_id: TestHelpers.sample_partition_id("rest_" <> uniq())}
+    %{base: base, segment_id: TestHelpers.sample_segment_id("rest_" <> uniq())}
   end
 
-  test "cold partition: empty snapshot, empty change_log, terminal_seq=-1 (no records)", %{
-    partition_id: pid
+  test "cold segment: empty snapshot, empty change_log, terminal_seq=-1 (no records)", %{
+    segment_id: pid
   } do
     assert {:ok, payload} = Restore.assemble_payload(pid)
     assert payload.snapshot_bytes == <<>>
@@ -39,7 +39,7 @@ defmodule Flezha.State.RestoreTest do
     refute Restore.has_persisted_state?(pid)
   end
 
-  test "snapshot only: change_log empty, terminal_seq matches snapshot seq", %{partition_id: pid} do
+  test "snapshot only: change_log empty, terminal_seq matches snapshot seq", %{segment_id: pid} do
     header = TestHelpers.stub_header()
     {:ok, _} = Snapshot.write_snapshot(pid, 50, header, "snap-bytes")
 
@@ -50,7 +50,7 @@ defmodule Flezha.State.RestoreTest do
     assert Restore.has_persisted_state?(pid)
   end
 
-  test "snapshot + tail WAL: change_log carries seq > snapshot.seq only", %{partition_id: pid} do
+  test "snapshot + tail WAL: change_log carries seq > snapshot.seq only", %{segment_id: pid} do
     header = TestHelpers.stub_header()
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, srv} = Supervisor.lookup(pid)

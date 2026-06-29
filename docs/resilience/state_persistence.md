@@ -1,11 +1,11 @@
 # Controller state persistence
 
-Implementation notes for the per-Partition WAL, snapshot, and
-time-travel infrastructure on the Elixir controller. Settles details
-deferred from `relay-state-persistence/design.md`; keep this in sync
+Implementation notes for the per-Segment WAL, snapshot, and
+time-travel infrastructure on the Elixir controller. Settles the
+details of the per-Segment WAL infrastructure; keep this in sync
 with `lib/flezha/state/`.
 
-> Per-Partition WAL persistence (this doc) is independent of and
+> Per-Segment WAL persistence (this doc) is independent of and
 > complementary to **plugin-subscription persistence** (cspec-driven;
 > see `docs/process_hub_architecture.md` "Plugin subscriptions
 > persistence" and
@@ -18,25 +18,25 @@ with `lib/flezha/state/`.
 ```
 app_data/
   state/
-    {relay_class}/
-      {shard_id}/
-        {partition_key}.wal
-        {partition_key}.snap.{seq}
-        {partition_key}.outbox.dedup
+    {operative_class}/
+      {operation_id}/
+        {segment_key}.wal
+        {segment_key}.snap.{seq}
+        {segment_key}.outbox.dedup
 ```
 
-The path triple `(relay_class, shard_id, partition_key)` uniquely
-identifies a Partition's state. Persistence does not include the
+The path triple `(operative_class, operation_id, segment_key)` uniquely
+identifies a Segment's state. Persistence does not include the
 `executor_id` — that is an addressing concern at the SDK boundary. When
 an executor pod restarts and rotates its `executor_id`, state under the
-flat layout is preserved and shipped to the new executor on Partition
+flat layout is preserved and shipped to the new executor on Segment
 attach via `RestoreInitState`. The one-time
 `Flezha.Boot.StatePathMigrator` runs at `Application.start/2` to migrate
 an older executor-keyed layout into the flat one.
 
-`partition_key` is URL-safe-base64-encoded with a leading `_` when it
+`segment_key` is URL-safe-base64-encoded with a leading `_` when it
 contains characters outside `[A-Za-z0-9_.-]`. Round-trippable via
-`Flezha.State.Registry.encode_partition_key/1` and `decode_partition_key/1`.
+`Flezha.State.Registry.encode_segment_key/1` and `decode_segment_key/1`.
 
 Configurable root via `:flezha, :state_root` (default `app_data/state`).
 
@@ -45,12 +45,12 @@ Configurable root via `:flezha, :state_root` (default `app_data/state`).
 | Module | Role |
 |---|---|
 | `Flezha.State.Registry` | Path resolution + directory enumeration. No GenServer, no I/O beyond `File.ls/1`. |
-| `Flezha.State.Wire` | Wire-frame codec for `partition_state_change` / `partition_state_snapshot` payload-ids. |
-| `Flezha.State.Metrics` | Per-Partition `:counters` references; lazy allocation in a `:ets` table. |
-| `Flezha.State.Outbox` | `last_persisted_seq` cache file (`<partition_key>.outbox.dedup`). |
-| `Flezha.State.PersistenceResolver` | Per-Relay config resolution (`relay_persistence`, `time_travel_retention_hours`, `compact_after_bytes`). |
-| `Flezha.State.Supervisor` | `DynamicSupervisor` for per-Partition `WalWriter` GenServers + a process registry for name lookup. |
-| `Flezha.State.WalWriter` | One GenServer per Partition. Owns the WAL file handle; opens it in `handle_continue/2` so creation never blocks the caller. |
+| `Flezha.State.Wire` | Wire-frame codec for `segment_state_change` / `segment_state_snapshot` payload-ids. |
+| `Flezha.State.Metrics` | Per-Segment `:counters` references; lazy allocation in a `:ets` table. |
+| `Flezha.State.Outbox` | `last_persisted_seq` cache file (`<segment_key>.outbox.dedup`). |
+| `Flezha.State.PersistenceResolver` | Per-Operative config resolution (`operative_persistence`, `time_travel_retention_hours`, `compact_after_bytes`). |
+| `Flezha.State.Supervisor` | `DynamicSupervisor` for per-Segment `WalWriter` GenServers + a process registry for name lookup. |
+| `Flezha.State.WalWriter` | One GenServer per Segment. Owns the WAL file handle; opens it in `handle_continue/2` so creation never blocks the caller. |
 | `Flezha.State.FsyncBatcher` | Single shared GenServer driving `:file.datasync/1` across dirty writers on a fixed cadence. |
 | `Flezha.State.Snapshot` | Snapshot file lifecycle (`.tmp → fsync → rename → truncate`). |
 | `Flezha.State.Retention` | Periodic sweeper enforcing `time_travel_retention_hours`. |
@@ -75,7 +75,7 @@ bytes past the last valid record are truncated.
 ## Writer startup
 
 `StreamChannel` resolves a writer with `Supervisor.find_or_start/1` on
-every `partition_state_change` frame. To keep the channel's loop off the
+every `segment_state_change` frame. To keep the channel's loop off the
 disk, `WalWriter.init/1` only builds the struct and returns
 `{:continue, :open}`; the process is already Registry-registered, so
 `find_or_start` returns in microseconds. All disk work — `mkdir`,
@@ -88,7 +88,7 @@ unchanged.
 ## fsync batching
 
 `Flezha.State.FsyncBatcher` is one GenServer (`name: __MODULE__`).
-`WalWriter.handle_call({:append, ...})` casts `mark_dirty(partition_id)`
+`WalWriter.handle_call({:append, ...})` casts `mark_dirty(segment_id)`
 after each write; the batcher coalesces casts into a single per-tick
 fsync per writer. Tick interval defaults to `5 ms` (≈ 200 Hz),
 configurable via `:flezha, :agent_fsync_interval_ms`. Legal range
@@ -97,9 +97,9 @@ configurable via `:flezha, :agent_fsync_interval_ms`. Legal range
 ## Snapshot lifecycle
 
 1. Executor (or compaction trigger) requests a snapshot — controller ships
-   `CompactPartition` to the SDK over the control channel.
+   `CompactSegment` to the SDK over the control channel.
 2. SDK clones `Self::State` under the sticky CAS, postcard-serializes
-   it, ships the bytes back via `partition_state_snapshot`.
+   it, ships the bytes back via `segment_state_snapshot`.
 3. `StreamChannel` decodes the frame and calls
    `Flezha.State.Snapshot.write_snapshot/4`:
    - opens `<key>.snap.{seq}.tmp`
@@ -118,16 +118,16 @@ already-folded WAL records is idempotent (umbrella commitment on
 
 `Flezha.State.Retention` runs every `:flezha,
 :time_travel_retention_check_interval_ms` (default 60 000 ms). For each
-Partition under `Registry.all_partitions/0`:
+Segment under `Registry.all_segments/0`:
 
-1. `retention_hours = Flezha.State.PersistenceResolver.retention_hours(relay_class)`
+1. `retention_hours = Flezha.State.PersistenceResolver.retention_hours(operative_class)`
 2. If 0: keep only the latest snapshot, truncate WAL to its seq.
 3. Otherwise: find the latest snapshot whose mtime is `≤ now -
    retention_hours * 3600`. That seq is the "oldest snapshot to keep";
    reap older snapshots and rewrite the WAL keeping records with
    `seq > kept_seq`.
 
-WAL rewrite is `partition.wal.rewriting → rename` so a mid-rewrite crash
+WAL rewrite is `segment.wal.rewriting → rename` so a mid-rewrite crash
 leaves the original WAL intact.
 
 ## Back-pressure
@@ -135,15 +135,15 @@ leaves the original WAL intact.
 `WalWriter` tracks `pending_bytes` (queued-but-not-fsynced bytes). When
 it crosses `:flezha, :wal_high_watermark_bytes` (default 16 MiB) the
 writer emits a `[:flezha, :state, :wal, :backpressure]` telemetry event
-AND calls `Flezha.Relay.Overwatch.notify_partition_backpressure/2`
-which ships a `PartitionMailboxStatus{status: "full"}` control command
+AND calls `Flezha.Operative.Overwatch.notify_segment_backpressure/2`
+which ships a `SegmentMailboxStatus{status: "full"}` control command
 to the SDK. When `pending_bytes` falls below `wal_low_watermark_bytes`
 (default `high_watermark / 2`), a corresponding `"open"` notification
 fires.
 
 The hysteresis prevents oscillation around the threshold. The SDK's
-per-Partition mailbox observer translates the signal into the channel's
-declared `OverflowPolicy` (see `relay-state-persistence-rust`).
+per-Segment mailbox observer translates the signal into the channel's
+declared `OverflowPolicy` (see the Rust SDK bounded-mailbox surface).
 
 ### Hard in-memory bound (shed)
 
@@ -155,9 +155,9 @@ strictly above the soft watermark, caps the writer's own memory:
 `4 ×` the soft watermark) **or** the writer's mailbox depth reaches
 `:flezha, :wal_pending_msg_cap` (default `5_000` — a cast flood grows
 the mailbox even when each record is tiny). Each shed increments
-`wal_shed_total` (per-Partition `Metrics` counter); the resulting seq
+`wal_shed_total` (per-Segment `Metrics` counter); the resulting seq
 gap drives the existing `Recovery.resync` handshake (once per shed
-episode), so the SDK — authoritative for partition state — re-sends the
+episode), so the SDK — authoritative for segment state — re-sends the
 missing Changes. Back-pressure sheds, never blocks: the async cast path
 stays non-blocking so a slow disk cannot stall the data-plane channel.
 This is the controller-side mirror of the SDK bounded-mailbox
@@ -167,17 +167,17 @@ OOM.
 ## Time-travel CLI
 
 ```
-flz state list <relay_class>
-flz state at <relay/shard/partition_key> <seq | iso8601-timestamp>
-flz state rotate <relay/shard/partition_key>
-flz state retention <relay_class> <hours>
-flz state delete <relay/shard/partition_key>
+flz state list <operative_class>
+flz state at <operative/operation/segment_key> <seq | iso8601-timestamp>
+flz state rotate <operative/operation/segment_key>
+flz state retention <operative_class> <hours>
+flz state delete <operative/operation/segment_key>
 ```
 
 Implemented in `cli/src/state.rs` (Rust binary) which RPCs into
 `Flezha.Service.CliManager.state_*/N` on the running controller. Path
-strings like `MarketRelay/OhlcShard/M1` are resolved against
-`Flezha.State.Registry.all_partitions/0` to confirm a Partition exists
+strings like `MarketOperative/OhlcOperation/M1` are resolved against
+`Flezha.State.Registry.all_segments/0` to confirm a Segment exists
 on disk; the live executor binding (when needed for `state rotate`) is
 looked up from the runtime ProcessHub registry.
 
@@ -187,29 +187,29 @@ JSON-serialized terminal state for human display) is wired on top of
 this engine.
 
 `flz state retention` writes via `Application.put_env(:flezha,
-:time_travel_retention_hours, %{<RelayClass> => hours}, persistent: true)`;
+:time_travel_retention_hours, %{<OperativeClass> => hours}, persistent: true)`;
 the next `Retention` tick reads the new value. Persistence across an
 Application boot requires writing it to `runtime.exs`.
 
-## Dynamic-partition hard delete
+## Dynamic-segment hard delete
 
-`relay-dynamic-partitioning` adds a destructive delete path. When a
-dynamic-mode Shard opts into an idle TTL (`partition_idle_ttl() ->
+Dynamic segmenting adds a destructive delete path. When a
+dynamic-mode Operation opts into an idle TTL (`segment_idle_ttl() ->
 Some(ttl)`; default is `None` = no eviction), the SDK reaper evicts an
-idle, persistence-enabled Partition by shipping a fire-and-forget
-`delete_partition_state` frame on the secondary stream (payload-id
-`Flezha.State.Wire.payload_id_delete_partition_state/0`; body is the bare
-structured `partition_id`). `Flezha.Executor.StreamChannel` routes it to
-`Flezha.State.Supervisor.delete_partition/1`, which stops the per-Partition
+idle, persistence-enabled Segment by shipping a fire-and-forget
+`delete_segment_state` frame on the secondary stream (payload-id
+`Flezha.State.Wire.payload_id_delete_segment_state/0`; body is the bare
+structured `segment_id`). `Flezha.Executor.StreamChannel` routes it to
+`Flezha.State.Supervisor.delete_segment/1`, which stops the per-Segment
 `WalWriter`, drops any pending `FsyncBatcher` dirty mark, and unlinks the
 `{key}.wal`, `{key}.snap.{seq}`, and `{key}.outbox.dedup` files
 (`Flezha.State.Registry.delete_files/1`). The delete is **idempotent** —
-deleting a never-seen or already-gone partition succeeds.
+deleting a never-seen or already-gone segment succeeds.
 
-A later input for the same key cold-starts a fresh Partition (new WAL from
+A later input for the same key cold-starts a fresh Segment (new WAL from
 seq 0); there is **no** restore-from-disk on recreate. The operator-driven
-counterpart, `flz state delete <relay/shard/key>`, calls the same
-`delete_partition/1` and returns a confirmation (the reaper path is
+counterpart, `flz state delete <operative/operation/key>`, calls the same
+`delete_segment/1` and returns a confirmation (the reaper path is
 fire-and-forget and reads no reply).
 
 ## Crash-recovery semantics
@@ -225,25 +225,25 @@ fire-and-forget and reads no reply).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `:flezha, :state_root` | `"app_data/state"` | Root for per-Partition files. |
+| `:flezha, :state_root` | `"app_data/state"` | Root for per-Segment files. |
 | `:flezha, :agent_fsync_interval_ms` | `5` | `FsyncBatcher` tick cadence. Range [1, 1000]. |
 | `:flezha, :wal_high_watermark_bytes` | `16 * 1024 * 1024` | Soft back-pressure trigger (signals SDK). |
 | `:flezha, :wal_low_watermark_bytes` | `high / 2` | Back-pressure release. |
 | `:flezha, :wal_hard_watermark_bytes` | `high * 4` | Hard un-fsynced-bytes bound; past it `append_async` sheds. |
 | `:flezha, :wal_pending_msg_cap` | `5_000` | Hard mailbox-depth bound; past it `append_async` sheds. |
 | `:flezha, :time_travel_retention_check_interval_ms` | `60_000` | `Retention` tick cadence. |
-| `:flezha, :time_travel_retention_hours` | `%{}` (default 6 from PersistenceResolver) | Per-Relay retention overrides. |
+| `:flezha, :time_travel_retention_hours` | `%{}` (default 6 from PersistenceResolver) | Per-Operative retention overrides. |
 | `:flezha, :default_time_travel_retention_hours` | `6` | Global default when no override. |
-| `:flezha, :default_compact_after_bytes` | `64 * 1024 * 1024` | Per-Shard compaction threshold. |
-| `:flezha, :relay_persistence` | `%{}` | Per-Relay-class executor override (`true` / `false`). |
+| `:flezha, :default_compact_after_bytes` | `64 * 1024 * 1024` | Per-Operation compaction threshold. |
+| `:flezha, :operative_persistence` | `%{}` | Per-Operative-class executor override (`true` / `false`). |
 | `:flezha, :output_watchdog_interval_ms` | `10_000` | `Watchdog` sweep cadence. Min 100 ms. |
-| `:flezha, :output_stall_timeout_ms` | `%{}` (default 60 000) | Per-Relay-class output-staleness window; `0` disables. |
+| `:flezha, :output_stall_timeout_ms` | `%{}` (default 60 000) | Per-Operative-class output-staleness window; `0` disables. |
 | `:flezha, :default_output_stall_timeout_ms` | `60_000` | Global default when no per-class override. |
-| `:flezha, :compaction_timeout_ms` | `30_000` | `CompactPartition` → snapshot handshake bound; `0` disables. |
+| `:flezha, :compaction_timeout_ms` | `30_000` | `CompactSegment` → snapshot handshake bound; `0` disables. |
 
 ### Self-healing recovery (`Flezha.State.Watchdog` + `Flezha.State.Recovery`)
 
-A live Partition's persistence/output path must not be able to stall
+A live Segment's persistence/output path must not be able to stall
 silently and permanently. Three failure edges now recover via the shared
 `RestoreInitState` resync (`Flezha.State.Recovery.resync/2`) and emit
 telemetry:
@@ -252,34 +252,34 @@ telemetry:
   a terminal `{:error, {:gap}}`; `Flezha.Executor.StreamChannel` emits
   `[:flezha, :state, :seq_gap]` and resyncs so the SDK rewinds and
   resends from `terminal_seq + 1`.
-* **Output staleness** — `Watchdog` flags a Partition that is still
+* **Output staleness** — `Watchdog` flags a Segment that is still
   receiving Changes but whose persisted seq froze past
   `output_stall_timeout_ms`, emits `[:flezha, :state, :output_stall]`,
-  and resyncs. A genuinely idle Partition (no Changes arriving) is not
+  and resyncs. A genuinely idle Segment (no Changes arriving) is not
   flagged.
-* **Compaction timeout** — a `CompactPartition` whose snapshot does not
+* **Compaction timeout** — a `CompactSegment` whose snapshot does not
   return within `compaction_timeout_ms` emits
   `[:flezha, :state, :compaction_timeout]` and resyncs; compaction stays
   retriable.
 
 ## Persisted `executor_id` is advisory across controller restarts
 
-The `executor_id` field carried in a relay-binding record (replayed
-into `Flezha.Relay.Overwatch.init/1` from ProcessHub's durable
+The `executor_id` field carried in an operative-binding record (replayed
+into `Flezha.Operative.Overwatch.init/1` from ProcessHub's durable
 registry at boot) is **advisory only**. It identifies the executor the
-relay was bound to BEFORE the current controller process started.
+operative was bound to BEFORE the current controller process started.
 
 On every cold start the Overwatch calls
-`RelayManager.assign_executor/2` inside
+`OperativeManager.assign_executor/2` inside
 `handle_continue({:bind_executor, …}, _)` to re-resolve a live
-executor for the relay's `factory_id`. The persisted value is used
+executor for the operative's `factory_id`. The persisted value is used
 for diagnostic logging only (a `rebound from stale executor X to live
 Y` line fires when the live executor differs).
 
-Control-plane calls (`AddRelay`, `:ping_executor`, `start_relay_sdk`)
+Control-plane calls (`AddOperative`, `:ping_executor`, `start_operative_sdk`)
 are issued against the re-resolved live executor, never against the
 persisted value directly. The bounded-retry governor (see
-`docs/relay_architecture.md` "Overwatch lifecycle") re-resolves on
+`docs/operative_architecture.md` "Overwatch lifecycle") re-resolves on
 every retry attempt so a fresh executor that comes online during a
 backoff window is picked up automatically.
 

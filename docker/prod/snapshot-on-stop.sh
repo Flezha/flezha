@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pre-stop hook for the flezha controller container. Writes a cluster snapshot
-# atomically (tmp + rename) so a graceful stop preserves relay + plugin
+# atomically (tmp + rename) so a graceful stop preserves operative + plugin
 # state for the next start. Invoked from two places:
 #   1. controller-entrypoint.sh's SIGTERM/SIGINT trap (docker stop, compose down).
 #   2. Kubernetes lifecycle.preStop.exec.command on the controller's pod.

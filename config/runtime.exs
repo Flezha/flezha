@@ -351,7 +351,7 @@ if config_env() != :test do
     boot_replay_timeout_ms:
       System.get_env("FLEZHA_BOOT_REPLAY_TIMEOUT_MS", "60000") |> String.to_integer(),
     auto_restore_enabled: System.get_env("FLEZHA_AUTO_RESTORE_ENABLED", "true") in ["true", "1"],
-    # Per-Partition output-stall + compaction-timeout watchdog cadence
+    # Per-Segment output-stall + compaction-timeout watchdog cadence
     # (Flezha.State.Watchdog holds its own timer after
     # `consume-recovery-mode-and-self-heal` §4 retired the
     # Flezha.Reconciler.Loop periodic sweep that previously drove it).
@@ -359,7 +359,7 @@ if config_env() != :test do
       System.get_env("FLEZHA_OUTPUT_WATCHDOG_INTERVAL_MS", "10000") |> String.to_integer(),
     time_travel_retention_check_interval_ms:
       System.get_env("FLEZHA_RETENTION_CHECK_INTERVAL_MS", "60000") |> String.to_integer(),
-    # The single convergence Loop. `:tick_ms` is the per-relay decision
+    # The single convergence Loop. `:tick_ms` is the per-operative decision
     # cadence; `:output_stall_grace_ms` is the minimum bound stability
     # window before an output-stall triggers a rebind.
     convergence_health_enabled:
@@ -369,7 +369,7 @@ if config_env() != :test do
     convergence_output_stall_grace_ms:
       System.get_env("FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS", "60000")
       |> String.to_integer(),
-    # Grace before declared-but-unbound relays flip /healthz to degraded.
+    # Grace before declared-but-unbound operatives flip /healthz to degraded.
     convergence_unmet_intent_grace_ms:
       System.get_env("FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS", "120000")
       |> String.to_integer(),

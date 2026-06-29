@@ -106,7 +106,7 @@ after handing the message to the worker's mailbox.
 
 This is the missing piece that makes the bounded-queue + drop-oldest
 contract actually work as the back-pressure boundary. With a synchronous
-chain dispatch, the host process (e.g. `Flezha.Relay.Overwatch`)
+chain dispatch, the host process (e.g. `Flezha.Operative.Overwatch`)
 blocks on every event for the full broker round-trip; under sustained
 input above the broker drain rate, the host's mailbox grows without
 bound long before the worker's queue ever sees pressure. With cast-based

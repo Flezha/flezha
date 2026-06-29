@@ -56,7 +56,7 @@ The DaemonSet mounts a node-local `hostPath` at `/opt/flezha-recovery` into
 the container at `/var/lib/flezha`. This directory holds both of the
 recovery DETS files:
 
-- `recovery.dets` — relay child specs.
+- `recovery.dets` — operative child specs.
 - `recovery_plugins.dets` — recoverable plugin bindings.
 
 A single volume carries both. `FLEZHA_DATA_DIR`, `FLEZHA_RECOVERY_ENABLED`,

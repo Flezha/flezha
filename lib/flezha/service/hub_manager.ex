@@ -4,7 +4,7 @@ defmodule Flezha.Service.HubManager do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.OperativeManager
 
   require Logger
 
@@ -212,10 +212,10 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def get_pid(namespace, relay_id) do
+  def get_pid(namespace, operative_id) do
     hub_id = Identificator.hub(namespace)
 
-    case ProcessHub.get_pids(hub_id, relay_id) do
+    case ProcessHub.get_pids(hub_id, operative_id) do
       [] ->
         {:error, "no pid found"}
 
@@ -225,7 +225,7 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
-  Resolve a relay's runnable pid from a ProcessHub `node_pids` list
+  Resolve a operative's runnable pid from a ProcessHub `node_pids` list
   (`[{node, pid}]`, with 0, 1, or many entries).
 
   Drops entries on nodes absent from the live cluster, prefers the local node's
@@ -233,9 +233,9 @@ defmodule Flezha.Service.HubManager do
   Returns `nil` when no live pid remains.
 
   This centralises the multi-node-safe access that replaced the former
-  single-element `[{_node, pid}]` matches in `get_all_relays/1`,
+  single-element `[{_node, pid}]` matches in `get_all_operatives/1`,
   `executor_switch/3`, and `Flezha.Executor.FleetManager.executor_reroute/4` —
-  any of which raised `FunctionClauseError` the moment a relay was registered on
+  any of which raised `FunctionClauseError` the moment a operative was registered on
   more than one node.
   """
   @spec live_pid([{node(), pid()}]) :: pid() | nil
@@ -264,15 +264,15 @@ defmodule Flezha.Service.HubManager do
 
   def live_pid(_), do: nil
 
-  def get_all_relays(namespace) do
+  def get_all_operatives(namespace) do
     hub_id = Identificator.hub(namespace)
 
     if ProcessHub.is_alive?(hub_id) do
       ProcessHub.process_list(hub_id, :global)
-      |> Enum.flat_map(fn {relay_id, node_pids} ->
+      |> Enum.flat_map(fn {operative_id, node_pids} ->
         case live_pid(node_pids) do
           nil -> []
-          relay_pid -> [{relay_id, relay_pid}]
+          operative_pid -> [{operative_id, operative_pid}]
         end
       end)
     else
@@ -281,7 +281,7 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
-  The live node hosting a relay from its `node_pids` (`[{node, pid}]`): the
+  The live node hosting a operative from its `node_pids` (`[{node, pid}]`): the
   local node when it holds the runnable pid, else another live cluster node,
   else `nil` (every entry is on a dead node — a FAILED placement). Sibling of
   `live_pid/1` for surfacing per-node placement in the CLI.
@@ -307,27 +307,27 @@ defmodule Flezha.Service.HubManager do
   def live_node(_), do: nil
 
   @doc """
-  Per-relay view of a namespace's durable registry for operator surfaces:
-  one row per registered relay (including FAILED ones whose only placement is
-  a dead node, which `get_all_relays/1` filters out), carrying the assigned
+  Per-operative view of a namespace's durable registry for operator surfaces:
+  one row per registered operative (including FAILED ones whose only placement is
+  a dead node, which `get_all_operatives/1` filters out), carrying the assigned
   executor and live node from the registry dump and the live health classified
-  by the Convergence Loop (`Snapshot.relay_health/2`), so the CLI sees exactly
+  by the Convergence Loop (`Snapshot.operative_health/2`), so the CLI sees exactly
   what the loop sees. A registry row the loop has not yet observed reports
   `:unknown` until the next tick covers it.
   """
-  @spec relay_rows(String.t()) :: [%{id: term(), health: atom(), executor: term(), node: term()}]
-  def relay_rows(namespace) do
+  @spec operative_rows(String.t()) :: [%{id: term(), health: atom(), executor: term(), node: term()}]
+  def operative_rows(namespace) do
     hub_id = Identificator.hub(namespace)
 
     if ProcessHub.is_alive?(hub_id) do
       hub_id
       |> ProcessRegistry.dump()
-      |> Enum.map(fn {relay_id, entry} ->
+      |> Enum.map(fn {operative_id, entry} ->
         {_cspec, node_pids, metadata} = normalize_registry_entry(entry)
 
         %{
-          id: relay_id,
-          health: Snapshot.relay_health(namespace, relay_id),
+          id: operative_id,
+          health: Snapshot.operative_health(namespace, operative_id),
           executor: Map.get(metadata, :tag),
           node: live_node(node_pids)
         }
@@ -373,7 +373,7 @@ defmodule Flezha.Service.HubManager do
     )
   end
 
-  def executor_relays(namespace, executor_id) do
+  def executor_operatives(namespace, executor_id) do
     hub_id = Identificator.hub(namespace)
 
     ProcessHub.tag_query(hub_id, executor_id)
@@ -382,11 +382,11 @@ defmodule Flezha.Service.HubManager do
   def executor_switch(namespace, old_executor_id, new_executor_id) do
     hub_id = Identificator.hub(namespace)
 
-    # Updates the executor id in the registry. Only the relay_id is needed here,
-    # so accept any node_pids arity (a multi-node relay must not crash this).
-    executor_relays(namespace, old_executor_id)
-    |> Enum.each(fn {relay_id, _node_pids} ->
-      relay_set_executor(namespace, relay_id, new_executor_id)
+    # Updates the executor id in the registry. Only the operative_id is needed here,
+    # so accept any node_pids arity (a multi-node operative must not crash this).
+    executor_operatives(namespace, old_executor_id)
+    |> Enum.each(fn {operative_id, _node_pids} ->
+      operative_set_executor(namespace, operative_id, new_executor_id)
     end)
 
     # Propagate the change to all nodes in the namespace.
@@ -395,7 +395,7 @@ defmodule Flezha.Service.HubManager do
     |> ProcessHub.Service.Synchronizer.trigger_sync()
   end
 
-  def relay_set_executor(namespace, relay_id, executor_id) do
+  def operative_set_executor(namespace, operative_id, executor_id) do
     hub_id = Identificator.hub(namespace)
 
     case ProcessHub.is_alive?(hub_id) do
@@ -404,7 +404,7 @@ defmodule Flezha.Service.HubManager do
         # executor or hook_insert_pid gates frames on a stale tag elsewhere.
         ProcessRegistry.update(
           hub_id,
-          relay_id,
+          operative_id,
           fn cspec, node_pids, metadata ->
             {cspec, node_pids, Map.put(metadata, :tag, executor_id)}
           end,
@@ -418,15 +418,15 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def hook_insert_pid(executor_id, %{child_id: relay_id} = hook_data) do
+  def hook_insert_pid(executor_id, %{child_id: operative_id} = hook_data) do
     node_pids = Map.get(hook_data, :node_pids, [])
     metadata = Map.get(hook_data, :metadata, %{})
     assigned_ce = Map.get(metadata, :tag)
 
     # Only the executor whose session id matches the registry entry's
-    # `metadata.tag` (a.k.a `assigned_ce`) should receive this relay's
+    # `metadata.tag` (a.k.a `assigned_ce`) should receive this operative's
     # frames. Pushing the pid list to every registered executor makes the
-    # non-owning executor's SDK drop each frame (`relay instance not found`),
+    # non-owning executor's SDK drop each frame (`operative instance not found`),
     # draining the data plane.
     cond do
       is_binary(assigned_ce) and assigned_ce != executor_id ->
@@ -453,7 +453,7 @@ defmodule Flezha.Service.HubManager do
             # A wedged StreamChannel must not crash the caller.
             Enum.each(stream_channels, fn
               {_, pid, _, _} when is_pid(pid) ->
-                _ = SafeCall.bounded(pid, {:relay_pid_update, relay_id, updated_pids}, 1_000)
+                _ = SafeCall.bounded(pid, {:operative_pid_update, operative_id, updated_pids}, 1_000)
 
               _ ->
                 :ok
@@ -463,15 +463,15 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
-  Clear a relay's pid mapping from every stream channel of `executor_id`.
+  Clear a operative's pid mapping from every stream channel of `executor_id`.
   Invoked directly by `Flezha.Executor.FleetManager.evict_executor/1` so a
   dead executor's stale mappings never linger; idempotent on an
   already-gone executor.
   """
-  def hook_remove_pid(executor_id, %{child_id: relay_id}) do
+  def hook_remove_pid(executor_id, %{child_id: operative_id}) do
     Enum.each(stream_channels_for_executor(executor_id), fn
       {_, pid, _, _} when is_pid(pid) ->
-        _ = SafeCall.bounded(pid, {:relay_pid_remove, relay_id}, 1_000)
+        _ = SafeCall.bounded(pid, {:operative_pid_remove, operative_id}, 1_000)
 
       _ ->
         :ok
@@ -480,20 +480,20 @@ defmodule Flezha.Service.HubManager do
     :telemetry.execute(
       [:flezha, :hub, :pid_removed],
       %{count: 1},
-      %{executor_id: executor_id, relay_id: relay_id}
+      %{executor_id: executor_id, operative_id: operative_id}
     )
 
     :ok
   end
 
   @doc """
-  Read the current plugin list embedded in a relay's child-spec
+  Read the current plugin list embedded in a operative's child-spec
   start args. Returns `{:ok, [{plugin_id, %Flezha.Plugin{}}]}` (entries
   are normalised to tuple form regardless of how they are stored).
   """
-  @spec relay_plugins(String.t(), String.t()) ::
+  @spec operative_plugins(String.t(), String.t()) ::
           {:ok, [{binary(), Plugin.t()}]} | {:error, term()}
-  def relay_plugins(namespace, relay_id) do
+  def operative_plugins(namespace, operative_id) do
     hub_id = Identificator.hub(namespace)
 
     case ProcessHub.is_alive?(hub_id) do
@@ -501,9 +501,9 @@ defmodule Flezha.Service.HubManager do
         {:error, "hub not alive"}
 
       true ->
-        case ProcessRegistry.lookup(hub_id, relay_id) do
+        case ProcessRegistry.lookup(hub_id, operative_id) do
           nil ->
-            {:error, "relay not found"}
+            {:error, "operative not found"}
 
           {%{start: {_m, _f, [arg]}}, _node_pids} ->
             {:ok, normalize_plugins(extract_plugins(arg))}
@@ -525,28 +525,28 @@ defmodule Flezha.Service.HubManager do
   def rewrite_cspec_plugins(%{start: {m, f, [arg]}} = cspec, update_fn) do
     new_arg =
       case arg do
-        {namespace, relay} ->
-          {namespace, rewrite_relay_plugins(relay, update_fn)}
+        {namespace, operative} ->
+          {namespace, rewrite_operative_plugins(operative, update_fn)}
 
-        {namespace, executor_id, relay} ->
-          {namespace, executor_id, rewrite_relay_plugins(relay, update_fn)}
+        {namespace, executor_id, operative} ->
+          {namespace, executor_id, rewrite_operative_plugins(operative, update_fn)}
       end
 
     Map.put(cspec, :start, {m, f, [new_arg]})
   end
 
-  defp rewrite_relay_plugins(relay, update_fn) do
-    current = normalize_plugins(extract_plugins({nil, relay}))
+  defp rewrite_operative_plugins(operative, update_fn) do
+    current = normalize_plugins(extract_plugins({nil, operative}))
     new_plugins = update_fn.(current)
-    new_opts = Keyword.put(relay.opts, :plugins, new_plugins)
-    %{relay | opts: new_opts}
+    new_opts = Keyword.put(operative.opts, :plugins, new_plugins)
+    %{operative | opts: new_opts}
   end
 
-  defp extract_plugins({_namespace, relay}),
-    do: Keyword.get(relay.opts, :plugins, [])
+  defp extract_plugins({_namespace, operative}),
+    do: Keyword.get(operative.opts, :plugins, [])
 
-  defp extract_plugins({_namespace, _executor_id, relay}),
-    do: Keyword.get(relay.opts, :plugins, [])
+  defp extract_plugins({_namespace, _executor_id, operative}),
+    do: Keyword.get(operative.opts, :plugins, [])
 
   defp normalize_plugins(plugins) when is_list(plugins) do
     Enum.map(plugins, fn
@@ -558,21 +558,21 @@ defmodule Flezha.Service.HubManager do
   def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do
     %{start: {m, f, [arg]}} = cs
 
-    {namespace, relay} =
+    {namespace, operative} =
       case arg do
-        {namespace, relay} ->
-          {namespace, relay}
+        {namespace, operative} ->
+          {namespace, operative}
 
-        {namespace, _existing_executor, relay} ->
-          {namespace, relay}
+        {namespace, _existing_executor, operative} ->
+          {namespace, operative}
       end
 
-    relay_id = Map.get(relay, :id)
-    factory_id = Map.get(relay, :factory_id)
-    assigned_executor = RelayManager.assign_executor(namespace, factory_id, relay_id)
+    operative_id = Map.get(operative, :id)
+    factory_id = Map.get(operative, :factory_id)
+    assigned_executor = OperativeManager.assign_executor(namespace, factory_id, operative_id)
 
     Logger.info(
-      "[hub_manager] alter_child_data relay=#{inspect(relay_id)} " <>
+      "[hub_manager] alter_child_data operative=#{inspect(operative_id)} " <>
         "factory=#{inspect(factory_id)} assigned_ce=#{inspect(assigned_executor)}"
     )
 
@@ -580,7 +580,7 @@ defmodule Flezha.Service.HubManager do
       raise "No active compute engines available in namespace #{namespace} for factory #{inspect(factory_id)}"
     end
 
-    new_args = [{namespace, assigned_executor, relay}]
+    new_args = [{namespace, assigned_executor, operative}]
 
     child_data
     |> put_in([:child_spec, :start], {m, f, new_args})
@@ -609,7 +609,7 @@ defmodule Flezha.Service.HubManager do
       },
       registry_backend: registry_backend_config(hub_id),
       auto_recovery: auto_recovery_config(hub_id),
-      # Relay startup involves multiple GenServer hops and socket communication
+      # Operative startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
       cross_node_request_timeout: 10_000,
       hooks: %{
@@ -645,12 +645,12 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
-  True when auto-restore is enabled and the durable registry holds relays
+  True when auto-restore is enabled and the durable registry holds operatives
   this (re)started controller has not loaded back into live, bound
   processes yet — closing the post-restart "vacuously healthy" hole.
   Covers both an on-disk `registry.dets` for a hub that has not started
   (`unstarted_hub_has_registry?/0`) and a running hub whose replayed DETS
-  rows outnumber the live-bound relays (`running_hub_relays_unbound?/0`).
+  rows outnumber the live-bound operatives (`running_hub_operatives_unbound?/0`).
   Used by `/healthz` to report `recovering` instead of `healthy` until the
   registry is fully reloaded and bound.
   """
@@ -660,21 +660,21 @@ defmodule Flezha.Service.HubManager do
     # Reading it as a strict boolean would crash the convergence Loop tick on
     # a non-boolean value; `!= false` keeps the default-on behaviour robust.
     Application.get_env(:flezha, :auto_restore_enabled, true) != false and
-      (running_hub_relays_unbound?() or unstarted_hub_has_registry?())
+      (running_hub_operatives_unbound?() or unstarted_hub_has_registry?())
   end
 
-  # Running hub whose durable registry declares more relays than are
-  # currently bound to a live pid — relays replayed from DETS but not yet
+  # Running hub whose durable registry declares more operatives than are
+  # currently bound to a live pid — operatives replayed from DETS but not yet
   # reseated onto a reconnected executor.
-  defp running_hub_relays_unbound?() do
+  defp running_hub_operatives_unbound?() do
     Enum.any?(list_running_hub_ids(), fn hub_id ->
       namespace = extract_namespace_from_hub(hub_id)
 
-      namespace != nil and durable_relay_count(hub_id) > length(get_all_relays(namespace))
+      namespace != nil and durable_operative_count(hub_id) > length(get_all_operatives(namespace))
     end)
   end
 
-  defp durable_relay_count(hub_id) do
+  defp durable_operative_count(hub_id) do
     map_size(ProcessRegistry.dump(hub_id))
   catch
     :exit, _ -> 0

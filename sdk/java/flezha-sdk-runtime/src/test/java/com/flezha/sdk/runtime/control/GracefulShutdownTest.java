@@ -3,19 +3,19 @@ package com.flezha.sdk.runtime.control;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.proto.AddRelay;
+import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.ExecutorShutdownNotification;
-import com.flezha.sdk.relay.Relay;
-import com.flezha.sdk.relay.RelayRegistry;
+import com.flezha.sdk.operative.ContinuousOperative;
+import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
-import com.flezha.sdk.runtime.control.handlers.AddRelayHandler;
+import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
-import com.flezha.sdk.shard.Shard;
-import com.flezha.sdk.shard.ShardCtx;
-import com.flezha.sdk.shard.ShardException;
+import com.flezha.sdk.operation.Operation;
+import com.flezha.sdk.operation.OperationCtx;
+import com.flezha.sdk.operation.OperationException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,14 +42,14 @@ class GracefulShutdownTest {
 
     @BeforeEach
     void reset() {
-        RelayRegistry.reset();
+        ContinuousOperativeRegistry.reset();
         GracefulShutdown.resetForTests();
     }
 
     @Test
-    @DisplayName("run() emits a framed ExecutorShutdownNotification per relay")
+    @DisplayName("run() emits a framed ExecutorShutdownNotification per operative")
     void emitsFramedExecutorShutdownNotification() throws Exception {
-        ExecutorContext ctx = newCtxWithRelay("p1");
+        ExecutorContext ctx = newCtxWithContinuousOperative("p1");
 
         List<byte[]> captured = new ArrayList<>();
         AtomicReference<Long> capturedStreamId = new AtomicReference<>();
@@ -70,7 +70,7 @@ class GracefulShutdownTest {
         }
 
         assertThat(captured)
-                .as("graceful shutdown emits exactly one frame for one relay")
+                .as("graceful shutdown emits exactly one frame for one operative")
                 .hasSize(1);
 
         byte[] frame = captured.get(0);
@@ -80,7 +80,7 @@ class GracefulShutdownTest {
         CommandRequest request = CommandRequest.parseFrom(parsed.message());
         assertThat(request.getCommandCase()).isEqualTo(CommandRequest.CommandCase.EXECUTOR_SHUTDOWN_NOTIFICATION);
         ExecutorShutdownNotification notif = request.getExecutorShutdownNotification();
-        assertThat(notif.getRelayId()).isEqualTo("p1");
+        assertThat(notif.getOperativeId()).isEqualTo("p1");
         assertThat(notif.getSerializedState().toByteArray())
                 .as("notification carries a non-empty serialized state binary")
                 .isNotEmpty();
@@ -95,7 +95,7 @@ class GracefulShutdownTest {
     @Test
     @DisplayName("run() returns within ~2.5s when no ack arrives")
     void returnsWithin2sWhenAckNeverArrives() {
-        ExecutorContext ctx = newCtxWithRelay("p_timeout");
+        ExecutorContext ctx = newCtxWithContinuousOperative("p_timeout");
 
         GracefulShutdown.FrameWriter neverAcking = (streamId, frame) -> 0;
         GracefulShutdown subject = new GracefulShutdown(ctx, CONTROL_STREAM_ID, neverAcking);
@@ -121,7 +121,7 @@ class GracefulShutdownTest {
     @Test
     @DisplayName("run() is idempotent across SIGTERM + close()")
     void runIsIdempotent() throws InterruptedException {
-        ExecutorContext ctx = newCtxWithRelay("p_idem");
+        ExecutorContext ctx = newCtxWithContinuousOperative("p_idem");
         CountDownLatch firstWriteSeen = new CountDownLatch(1);
         AtomicReference<String> capturedRef = new AtomicReference<>();
 
@@ -151,9 +151,9 @@ class GracefulShutdownTest {
         assertThat(elapsed).isLessThan(50L);
     }
 
-    private static ExecutorContext newCtxWithRelay(String relayId) {
-        if (RelayRegistry.factoryIds().isEmpty()) {
-            RelayRegistry.registerRelay(ShutdownTestRelay.class);
+    private static ExecutorContext newCtxWithContinuousOperative(String operativeId) {
+        if (ContinuousOperativeRegistry.factoryIds().isEmpty()) {
+            ContinuousOperativeRegistry.registerContinuous(ShutdownTestContinuousOperative.class);
         }
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
@@ -161,12 +161,12 @@ class GracefulShutdownTest {
 
         CommandRequest add = CommandRequest.newBuilder()
                 .setReferenceId("ref")
-                .setAddRelay(AddRelay.newBuilder()
-                        .setRelayId(relayId)
+                .setAddOperative(AddOperative.newBuilder()
+                        .setOperativeId(operativeId)
                         .setFactoryId(FACTORY_ID)
                         .build())
                 .build();
-        new AddRelayHandler().handle(ctx, add, new ArrayList<>());
+        new AddOperativeHandler().handle(ctx, add, new ArrayList<>());
         return ctx;
     }
 
@@ -179,7 +179,7 @@ class GracefulShutdownTest {
         throw new IllegalStateException("expected at least one frame in captured bytes");
     }
 
-    public static final class ShutdownTestRelay implements Relay {
+    public static final class ShutdownTestContinuousOperative implements ContinuousOperative {
         @Override
         public String factoryId() {
             return FACTORY_ID;
@@ -187,16 +187,16 @@ class GracefulShutdownTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(ShutdownTestShard.class);
+            c.input(String.class, "input").into(ShutdownTestOperation.class);
         }
     }
 
-    public static final class ShutdownTestShard
-            implements Shard<
+    public static final class ShutdownTestOperation
+            implements Operation<
                     String, String, String, com.flezha.sdk.state.NoChange, com.flezha.sdk.state.WallClock, Void> {
         @Override
         public String name() {
-            return "shutdown_test_shard";
+            return "shutdown_test_operation";
         }
 
         @Override
@@ -226,7 +226,7 @@ class GracefulShutdownTest {
 
         @Override
         public String initState(
-                Optional<String> shardKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
+                Optional<String> operationKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
             return "initial-state";
         }
 
@@ -234,7 +234,7 @@ class GracefulShutdownTest {
         public void run(
                 String input,
                 com.flezha.sdk.state.StateHandle<String, com.flezha.sdk.state.NoChange> state,
-                ShardCtx ctx)
-                throws ShardException {}
+                OperationCtx ctx)
+                throws OperationException {}
     }
 }

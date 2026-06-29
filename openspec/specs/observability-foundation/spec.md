@@ -11,7 +11,7 @@ The observability-foundation capability provides the Flezha Controller's first-c
 The observability subsystem SHALL define exactly one signal envelope structure used by all producers and all consumers. The structure SHALL include the fields `kind`, `source`, `name`, `measurements`, `metadata`, and `ts`. The field `kind` SHALL be one of the atoms `:metric`, `:event`, `:log`, or `:trace_span`. The structure SHALL be exposed as a module struct under the foundation namespace and SHALL be the only on-bus signal shape.
 
 #### Scenario: Constructing a metric signal
-- **WHEN** a producer constructs a signal with `kind: :metric`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements: %{count: 1, bytes: 16_384}`, `metadata: %{relay: "orders", shard: 3}`
+- **WHEN** a producer constructs a signal with `kind: :metric`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements: %{count: 1, bytes: 16_384}`, `metadata: %{operative: "orders", operation: 3}`
 - **THEN** the resulting struct SHALL be accepted by the bus without error and SHALL carry a monotonic-time `ts` field set automatically when not supplied
 
 #### Scenario: Rejecting an unknown signal kind
@@ -155,16 +155,16 @@ The foundation SHALL install a `:logger` handler at supervisor start that conver
 The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping table SHALL be defined inside the bridge module and SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_installer, :load_failed]`, `[:flezha, :plugin_installer, :store_opened]`, `[:flezha, :plugin_installer, :unsigned_install]`, `[:flezha, :ws, :idle_reconnect]`, `[:flezha, :ws, :resubscribe]`, `[:flezha, :state, :seq_gap]`, `[:flezha, :state, :output_stall]`, `[:flezha, :state, :compaction_timeout]`, `[:flezha, :state, :wal_realign]`, `[:flezha, :reconcile, :action]`, `[:flezha, :reconcile, :health]`, `[:flezha, :leadership, :transition]`, and `[:flezha, :stream, :drop]`. Existing call-sites SHALL NOT be modified.
 
 #### Scenario: Bridged event becomes a signal
-- **WHEN** code calls `:telemetry.execute([:flezha, :state, :wal, :backpressure], %{bytes: 1024}, %{relay: "r1"})`
-- **THEN** a signal with `kind: :event`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements.bytes: 1024`, `metadata.relay: "r1"` SHALL appear on the bus
+- **WHEN** code calls `:telemetry.execute([:flezha, :state, :wal, :backpressure], %{bytes: 1024}, %{operative: "r1"})`
+- **THEN** a signal with `kind: :event`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements.bytes: 1024`, `metadata.operative: "r1"` SHALL appear on the bus
 
 #### Scenario: Websocket re-subscribe event is bridged
 - **WHEN** code calls `:telemetry.execute([:flezha, :ws, :resubscribe], %{data_silence_ms: 120_000}, %{plugin_id: "wss://ws.kraken.com"})`
 - **THEN** a signal sourced from the websocket provider carrying `measurements.data_silence_ms: 120_000` and `metadata.plugin_id: "wss://ws.kraken.com"` SHALL appear on the bus
 
 #### Scenario: Persistence stall/gap events are bridged
-- **WHEN** code calls `:telemetry.execute([:flezha, :state, :output_stall], %{stalled_ms: 60_000, last_seq: 100}, %{relay: "btc_kraken", shard: "ohlc", key: "1m"})`
-- **THEN** a signal sourced from the state subsystem carrying the stalled duration, last seq, and Partition metadata SHALL appear on the bus
+- **WHEN** code calls `:telemetry.execute([:flezha, :state, :output_stall], %{stalled_ms: 60_000, last_seq: 100}, %{operative: "btc_kraken", operation: "ohlc", key: "1m"})`
+- **THEN** a signal sourced from the state subsystem carrying the stalled duration, last seq, and Segment metadata SHALL appear on the bus
 - **AND** the same bridging SHALL hold for `[:flezha, :state, :seq_gap]` and `[:flezha, :state, :compaction_timeout]`
 
 #### Scenario: Bridge failure does not crash producer
@@ -260,5 +260,5 @@ The producer-side emit function SHALL be allocation-light: it SHALL accept `meas
 - **THEN** the emit SHALL not enqueue any sink mailbox message and SHALL not insert into any ETS table
 
 #### Scenario: Emit accepts map measurements without conversion
-- **WHEN** a producer emits with `measurements: %{count: 1}` and `metadata: %{relay: "r"}`
+- **WHEN** a producer emits with `measurements: %{count: 1}` and `metadata: %{operative: "r"}`
 - **THEN** the signal SHALL be delivered without the producer being required to convert the maps to lists or keyword lists

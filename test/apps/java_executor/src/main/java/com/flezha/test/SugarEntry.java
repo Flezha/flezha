@@ -1,15 +1,15 @@
 package com.flezha.test;
 
-import com.flezha.sdk.authoring.PartitionFor;
-import com.flezha.sdk.authoring.Shard;
+import com.flezha.sdk.authoring.Operation;
+import com.flezha.sdk.authoring.SegmentFor;
 import java.util.List;
 
-/** Static-partitioned entry shard of the 2-shard reference relay. */
-@Shard(id = "sugar_static_entry_shard", keys = {"a", "b", "c", "d"})
+/** Static-segmented entry operation of the 2-operation reference operative. */
+@Operation(id = "sugar_static_entry_operation", keys = {"a", "b", "c", "d"})
 public class SugarEntry {
 
-    @PartitionFor
-    public List<String> partition(String input) {
+    @SegmentFor
+    public List<String> segmentFor(String input) {
         char c = input.isEmpty() ? ' ' : input.charAt(0);
         return switch (c) {
             case 'a' -> List.of("a");

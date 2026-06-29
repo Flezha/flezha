@@ -589,7 +589,7 @@ pub fn print_reset_help() {
     println!("    Controller is up; stop it first with `flz controller stop`.");
     println!();
     println!("    By default clears:");
-    println!("        app_data/state/         (per-Partition WAL/snapshot/outbox)");
+    println!("        app_data/state/         (per-Segment WAL/snapshot/outbox)");
     println!("        app_data/process_hub/   (ProcessHub durable registry)");
     println!();
     println!("    Opt-in clears (off by default):");

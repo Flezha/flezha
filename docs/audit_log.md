@@ -47,7 +47,7 @@ config :flezha, :audit_log,
 
 Operators reasonably expect "audit everything mutating" — the
 default list is intentionally narrow so an unwary operator does not
-fill disk; add the relay-lifecycle events listed above when you
+fill disk; add the operative-lifecycle events listed above when you
 enable the subsystem.
 
 ## On-disk layout

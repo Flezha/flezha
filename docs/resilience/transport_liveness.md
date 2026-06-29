@@ -10,8 +10,8 @@ remediation** — it is pure observability layered over the existing
 On 2026-06-07 22:14 an executor's data plane went silent for ~21 h: inbound
 `io_in` stopped reaching the executor *and* the executor produced no output —
 both directions silent, sockets open, no error, no OOM, no crash, BEAM memory
-flat. It recovered only when the relay migrated and the streams were rebuilt.
-Forensics cleared the relay GenServer, Kafka `on_output`, the WAL writers, and
+flat. It recovered only when the operative migrated and the streams were rebuilt.
+Forensics cleared the operative GenServer, Kafka `on_output`, the WAL writers, and
 the controller NIF writes, but could not separate three suspects from read-only
 post-recovery state: the BEAM `StreamChannel` stopped calling `send_frame`, vs.
 the NIF `flz-uds-driver` thread stalled, vs. the executor stopped consuming. The
@@ -22,7 +22,7 @@ the **next** occurrence self-localize.
 
 ```
 Kraken WS plugin
-  → Relay.Overwatch.handle_cast/handle_call({:io_in})   [io_in_received, forwarded, filtered_nil]
+  → Operative.Overwatch.handle_cast/handle_call({:io_in})   [io_in_received, forwarded, filtered_nil]
   → StreamChannel.handle_cast/handle_call({:io_in})      [io_in_received, send_frame_calls, nil_drops, last_send_ms]
   → Native.send_frame
   → [crossbeam unbounded command channel]                [cmd_queue_depth]
@@ -45,19 +45,19 @@ unambiguously means the thread is wedged. QUIC has no equivalent yet —
 `driver_stats/1` returns `:undefined`.
 
 **BEAM counters** (`Flezha.Transport.LivenessCounters`): always-on
-`:atomics`-backed `:counters`, one array per channel and per relay, registered in
+`:atomics`-backed `:counters`, one array per channel and per operative, registered in
 a public ETS table. Channels bump `io_in_received`, `send_frame_calls`,
 `nil_drops`, `flz_data_received`, `hb_count` and set `last_send_ms`,
-`hb_dispatches`; relays bump `io_in_received`, `forwarded`, `filtered_nil`.
+`hb_dispatches`; operatives bump `io_in_received`, `forwarded`, `filtered_nil`.
 Sub-100 ns increments, no hot-path locks or allocations. Dead-owner entries are
 pruned on the next `snapshot_all/0`. `StreamAcceptor` additionally registers its
 per-executor data-stream NIF server refs (`register_driver/3`) so the classifier
-polls the drivers that actually carry relay traffic, not just the control
+polls the drivers that actually carry operative traffic, not just the control
 channel's.
 
 **Executor dispatch self-report** (Rust SDK): every `data_heartbeat` frame
 carries `dispatches` (process-global count of payloads dispatched through
-`drain_partition`) and `blocked_parks` (Block-policy full-mailbox episodes) in
+`drain_segment`) and `blocked_parks` (Block-policy full-mailbox episodes) in
 its metadata. The heartbeat thread outlives a wedged dispatch pool, so without
 this counter an executor can look alive while processing nothing — exactly the
 2026-06-10 freeze. The secondary `StreamChannel` mirrors the values into
@@ -71,7 +71,7 @@ there produced a permanent false positive (one warning every 10 s).
 driver stats are surfaced per transport (`:driver_loop_iterations`,
 `:driver_loop_age_ms`, `:driver_cmd_queue_depth`, `:driver_write_buffer_bytes`,
 `:driver_streams`) and the BEAM counters as flat global aggregates
-(`:channel_*`, `:relay_*`). Cardinality stays bounded — no per-executor or
+(`:channel_*`, `:operative_*`). Cardinality stays bounded — no per-executor or
 per-stream label values — because the per-entity localization is the
 classifier's job, not the metrics'.
 
@@ -105,7 +105,7 @@ error in the step is swallowed so instrumentation can never break convergence.
 
 Verdicts, evaluated top-down (the deepest wedged layer wins, since it explains
 every layer above it). Each has a built-in "is it actually being fed?"
-precondition (a count that must be *advancing* between ticks), so an idle relay
+precondition (a count that must be *advancing* between ticks), so an idle operative
 never reads as a stall:
 
 | Verdict | Signature |
@@ -116,7 +116,7 @@ never reads as a stall:
 | `:executor_not_consuming` | `frames_written` advancing but `frames_read` flat, last read stale (> 30 s) |
 | `:executor_pool_wedged` | per executor: `send_frame_calls` advancing, `hb_count` advancing, self-reported `hb_dispatches` > 0 and frozen — alive but processing nothing |
 | `:channel_not_sending` | channel `io_in_received` advancing, `send_frame_calls` flat, `nil_drops` flat (stream bound) |
-| `:relay_not_forwarding` | relay `io_in_received` advancing, `forwarded` flat, the gap not explained by `filtered_nil` |
+| `:operative_not_forwarding` | operative `io_in_received` advancing, `forwarded` flat, the gap not explained by `filtered_nil` |
 
 ## Configuration
 

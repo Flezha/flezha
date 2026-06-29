@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `operator`, `admin`, `executor`) bound to principals on namespaces, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the relay/partition enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, the web UI, transport-layer cert wiring, the CLI socket handshake, and deeper namespacing of the State subsystem are explicitly out of scope.
+The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `operator`, `admin`, `executor`) bound to principals on namespaces, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/segment enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, the web UI, transport-layer cert wiring, the CLI socket handshake, and deeper namespacing of the State subsystem are explicitly out of scope.
 
 ## Requirements
 
@@ -60,7 +60,7 @@ The system SHALL expose exactly one authorization decision function `Flezha.Auth
 
 ### Requirement: Fixed role set
 
-The system SHALL define exactly four roles: `viewer`, `operator`, `admin`, `executor`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`. `viewer` SHALL grant read-only actions on the bound namespace. `operator` SHALL grant viewer plus relay/plugin lifecycle, observability mutations, and audit rotation. `admin` SHALL grant operator plus namespace/role/quota mutation; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `executor` SHALL grant only `:executor.connect`, `:executor.checkpoint`, `:executor.report` and SHALL NOT grant any operator action.
+The system SHALL define exactly four roles: `viewer`, `operator`, `admin`, `executor`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`. `viewer` SHALL grant read-only actions on the bound namespace. `operator` SHALL grant viewer plus operative/plugin lifecycle, observability mutations, and audit rotation. `admin` SHALL grant operator plus namespace/role/quota mutation; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `executor` SHALL grant only `:executor.connect`, `:executor.checkpoint`, `:executor.report` and SHALL NOT grant any operator action.
 
 #### Scenario: Admin on team-orders cannot mutate team-payments
 - **WHEN** `admin@team-orders` invokes a service call whose `scope.namespace` is `team-payments` and whose action is `:authz.token_issue`
@@ -84,11 +84,11 @@ The system SHALL define a Namespace as a hard partition for authorization scope.
 
 ### Requirement: Per-namespace quotas at allocation
 
-The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. Quota fields SHALL include `max_relays`, `max_partitions_per_relay`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_disk_bytes_total`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.RelayManager.start_relay/2` SHALL call `check_allocation/3` for `max_relays` and `max_partitions_per_relay`; `stop_relay/2` SHALL record the dealloc. Adoption at the remaining allocation sites (`State.Supervisor`, `FleetManager.connect_handler/4`, bounded-mailbox provisioning) is left for the modules' owners — one-line integration.
+The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. Quota fields SHALL include `max_operatives`, `max_segments_per_operative`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_disk_bytes_total`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.OperativeManager.start_operative/2` SHALL call `check_allocation/3` for `max_operatives` and `max_segments_per_operative`; `stop_operative/2` SHALL record the dealloc. Adoption at the remaining allocation sites (`State.Supervisor`, `FleetManager.connect_handler/4`, bounded-mailbox provisioning) is left for the modules' owners — one-line integration.
 
-#### Scenario: Max-relays denial on allocation
-- **WHEN** namespace `team-orders` has `max_relays: 5`, 5 relays already exist, and an operator invokes `Flezha.Service.RelayManager.start_relay/2` with a 6th
-- **THEN** the call SHALL return `{:error, {:quota_exceeded, :max_relays, %{current: 5, limit: 5}}}` AND the 6th Relay SHALL NOT be started
+#### Scenario: Max-operatives denial on allocation
+- **WHEN** namespace `team-orders` has `max_operatives: 5`, 5 operatives already exist, and an operator invokes `Flezha.Service.OperativeManager.start_operative/2` with a 6th
+- **THEN** the call SHALL return `{:error, {:quota_exceeded, :max_operatives, %{current: 5, limit: 5}}}` AND the 6th Operative SHALL NOT be started
 
 #### Scenario: Quota check latency budget
 - **WHEN** `check_allocation/3` runs against a warm ETS cache
@@ -128,7 +128,7 @@ The system SHALL ship the `:authn_authz, :enabled` runtime config flag with defa
 
 ### Requirement: State-path namespace prefix and migration
 
-The system SHALL move any pre-namespace top-level subtree under `app_data/state/` into `app_data/state/_system/` via a one-shot migration pass added to `Flezha.Boot.StatePathMigrator`. The migration SHALL be atomic per top-level tree (single `rename(2)` per relay-class), safe to interrupt, and idempotent. Deeper plumbing of the namespace through `Flezha.State.PersistenceResolver` / `Wire` / `WalWriter` / `Snapshot` / `Restore` (so writes go to `app_data/state/<namespace>/...` rather than the migrated `_system` prefix) is out of scope for this change.
+The system SHALL move any pre-namespace top-level subtree under `app_data/state/` into `app_data/state/_system/` via a one-shot migration pass added to `Flezha.Boot.StatePathMigrator`. The migration SHALL be atomic per top-level tree (single `rename(2)` per operative-class), safe to interrupt, and idempotent. Deeper plumbing of the namespace through `Flezha.State.PersistenceResolver` / `Wire` / `WalWriter` / `Snapshot` / `Restore` (so writes go to `app_data/state/<namespace>/...` rather than the migrated `_system` prefix) is out of scope for this change.
 
 #### Scenario: Migration moves legacy state under _system
 - **WHEN** the Controller boots with `app_data/state/orders/` existing and no `_system/` subdirectory
@@ -184,4 +184,4 @@ The system SHALL expose runtime configuration under the `:authn_authz` key with 
 
 #### Scenario: Default-namespace quotas applied when not overridden
 - **WHEN** namespace `team-orders` is created without quota overrides
-- **THEN** the namespace catalog entry SHALL store the documented default quotas (`max_relays: 100`, `max_partitions_per_relay: 1_024`, `max_mailbox_bytes_total: 268_435_456`, `max_message_rate_per_second: 100_000`, `max_disk_bytes_total: 107_374_182_400`)
+- **THEN** the namespace catalog entry SHALL store the documented default quotas (`max_operatives: 100`, `max_segments_per_operative: 1_024`, `max_mailbox_bytes_total: 268_435_456`, `max_message_rate_per_second: 100_000`, `max_disk_bytes_total: 107_374_182_400`)

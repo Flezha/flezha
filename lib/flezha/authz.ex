@@ -219,7 +219,7 @@ defmodule Flezha.AuthZ do
 
       Namespace.system?(bound_ns) and role == :admin ->
         # admin@_system can act on any namespace's non-auth-state
-        # operator actions (e.g. list relays cross-namespace for the
+        # operator actions (e.g. list operatives cross-namespace for the
         # console). Read-only actions are also covered here.
         :ok
 

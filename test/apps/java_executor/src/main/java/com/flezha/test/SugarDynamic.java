@@ -1,23 +1,23 @@
 package com.flezha.test;
 
-import com.flezha.sdk.authoring.Shard;
-import com.flezha.sdk.authoring.ShardKey;
+import com.flezha.sdk.authoring.Operation;
+import com.flezha.sdk.authoring.OperationKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
 /**
  * Dynamic-mode authoring-sugar example. The processor generates the dynamic
- * trait surface ({@code shardKeyOverridden() == true}, {@code shardKey}
- * delegation, empty {@code shardKeys()}). No {@code sink} — it is not
+ * trait surface ({@code operationKeyOverridden() == true}, {@code operationKey}
+ * delegation, empty {@code operationKeys()}). No {@code sink} — it is not
  * auto-registered, because the Java runtime has not yet landed the
- * {@code relay-dynamic-partitioning} surface ({@code partitionIdleTtl} /
- * {@code maxPartitions} methods and the dynamic dispatch path), so the
- * {@code idleTtl} / {@code maxPartitions} attributes are not yet wired.
+ * {@code operative-dynamic-segmenting} surface ({@code segmentIdleTtl} /
+ * {@code maxSegments} methods and the dynamic dispatch path), so the
+ * {@code idleTtl} / {@code maxSegments} attributes are not yet wired.
  */
-@Shard(id = "sugar_dynamic_shard")
+@Operation(id = "sugar_dynamic_operation")
 public class SugarDynamic {
 
-    @ShardKey(idleTtl = 5000, maxPartitions = 10)
+    @OperationKey(idleTtl = 5000, maxSegments = 10)
     public Optional<String> coin(String input) {
         return input.equals("drop") ? Optional.empty() : Optional.of(input.split(":")[0]);
     }

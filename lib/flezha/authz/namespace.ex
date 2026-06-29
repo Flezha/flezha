@@ -1,6 +1,6 @@
 defmodule Flezha.AuthZ.Namespace do
   @moduledoc """
-  Namespace is a hard partition: every Relay, every Shard, every
+  Namespace is a hard segment: every Operative, every Operation, every
   persisted-state path, every audit record, and every observability
   signal carries one.
 
@@ -21,8 +21,8 @@ defmodule Flezha.AuthZ.Namespace do
   @name_regex ~r/\A[a-z][a-z0-9-]{0,62}\z/
 
   @default_quotas %{
-    max_relays: 100,
-    max_partitions_per_relay: 1_024,
+    max_operatives: 100,
+    max_segments_per_operative: 1_024,
     max_mailbox_bytes_total: 268_435_456,
     max_message_rate_per_second: 100_000,
     max_disk_bytes_total: 107_374_182_400
@@ -30,8 +30,8 @@ defmodule Flezha.AuthZ.Namespace do
 
   @type name :: binary()
   @type quotas :: %{
-          required(:max_relays) => non_neg_integer(),
-          required(:max_partitions_per_relay) => non_neg_integer(),
+          required(:max_operatives) => non_neg_integer(),
+          required(:max_segments_per_operative) => non_neg_integer(),
           required(:max_mailbox_bytes_total) => non_neg_integer(),
           required(:max_message_rate_per_second) => non_neg_integer(),
           required(:max_disk_bytes_total) => non_neg_integer()

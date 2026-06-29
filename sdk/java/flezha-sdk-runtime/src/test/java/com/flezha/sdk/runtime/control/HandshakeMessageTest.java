@@ -3,7 +3,7 @@ package com.flezha.sdk.runtime.control;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.flezha.sdk.relay.RelayRegistry;
+import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,7 +20,7 @@ class HandshakeMessageTest {
     @BeforeEach
     @AfterEach
     void reset() {
-        RelayRegistry.reset();
+        ContinuousOperativeRegistry.reset();
     }
 
     @Test

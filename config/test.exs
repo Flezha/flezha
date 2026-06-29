@@ -76,7 +76,7 @@ config :flezha,
     otlp_flush_interval_ms: 10_000,
     otlp_batch_max: 512
   ],
-  # Tests bring up their own executors and relays — auto-recovery would
+  # Tests bring up their own executors and operatives — auto-recovery would
   # trigger replay against a not-yet-connected executor, cascading the
   # ProcessHub coordinator into shutdown. The persistent registry still
   # records mutations; only the at-boot replay state machine is off.
@@ -88,7 +88,7 @@ config :flezha,
   # `/healthz` is opt-in everywhere (off in prod by default too); tests
   # that exercise it bring up the listener inline.
   healthz_enabled: false,
-  # Bounded retry on top of `:start_relay` keeps test wall-clock down —
+  # Bounded retry on top of `:start_operative` keeps test wall-clock down —
   # one short attempt is enough, and the parked-retry timer is disabled
   # so a failed startup does not periodically re-fire during a test.
   overwatch_retry_backoff_ms: [10, 10, 10],

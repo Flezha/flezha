@@ -2,7 +2,7 @@ package com.flezha.test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import com.flezha.sdk.relay.RelayRegistry;
+import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,17 +13,17 @@ class FactoryIdsTest {
 
     @BeforeEach
     void reset() {
-        RelayRegistry.reset();
+        ContinuousOperativeRegistry.reset();
     }
 
     @Test
     @DisplayName("three factories match the Rust test app ids")
     void sameIds() {
-        RelayRegistry.registerRelay(DoNothingRelay.class);
-        RelayRegistry.registerRelay(StoreInputRelay.class);
-        RelayRegistry.registerRelay(CompareFilterRelay.class);
+        ContinuousOperativeRegistry.registerContinuous(DoNothingContinuousOperative.class);
+        ContinuousOperativeRegistry.registerContinuous(StoreInputContinuousOperative.class);
+        ContinuousOperativeRegistry.registerContinuous(CompareFilterContinuousOperative.class);
 
-        List<String> ids = RelayRegistry.factoryIds();
+        List<String> ids = ContinuousOperativeRegistry.factoryIds();
         Set<String> expected = Set.of("do_nothing", "store_input", "compare_filter");
         assertEquals(expected, Set.copyOf(ids));
     }

@@ -3,13 +3,13 @@
 #
 # Asserts the contract from
 # openspec/specs/plugin-subscription-persistence/spec.md: plugins
-# enabled via `flz plugin enable` after `flz relay start` SHALL
+# enabled via `flz plugin enable` after `flz operative start` SHALL
 # survive a `docker compose restart rust` without executor
 # intervention. Before the cspec-persistence change, this fails — the
 # Rust restart triggers `alter_child_data` to rewrite the cspec start
 # args with a fresh executor_id, ProcessHub stops + restarts
 # the Overwatch under the new spec, and the runtime plugin extensions
-# table boots empty (only plugins from `flz relay start
+# table boots empty (only plugins from `flz operative start
 # --plugins` are restored).
 #
 # Reuses the same dedicated compose project pattern as
@@ -29,7 +29,7 @@ HEALING_COMPOSE="${REPO_ROOT}/docker/dev/docker-compose.healing.yml"
 
 REJOIN_TIMEOUT_S="${REJOIN_TIMEOUT_S:-300}"
 DEMO_NAMESPACE="${FLEZHA_DEMO_NAMESPACE:-default}"
-PROCESSOR_ID="${FLEZHA_PERSISTENCE_PROCESSOR:-pp_test_relay}"
+PROCESSOR_ID="${FLEZHA_PERSISTENCE_PROCESSOR:-pp_test_operative}"
 PLUGIN_WS_ID="pp_test_ws"
 PLUGIN_KAFKA_ID="pp_test_kafka"
 
@@ -89,9 +89,9 @@ wait_for_new_ce_id() {
 assert_plugin_listed() {
   local plugin_id="$1"
   local stage="$2"
-  if ! flz relay info "${DEMO_NAMESPACE}" 2>/dev/null | grep -q "${plugin_id}"; then
-    echo "[plugin_persistence] FAIL (${stage}): plugin '${plugin_id}' not listed by 'flz relay info'" >&2
-    flz relay info "${DEMO_NAMESPACE}" >&2 || true
+  if ! flz operative info "${DEMO_NAMESPACE}" 2>/dev/null | grep -q "${plugin_id}"; then
+    echo "[plugin_persistence] FAIL (${stage}): plugin '${plugin_id}' not listed by 'flz operative info'" >&2
+    flz operative info "${DEMO_NAMESPACE}" >&2 || true
     return 1
   fi
   note "${stage}: plugin '${plugin_id}' present"
@@ -114,20 +114,20 @@ if [ -z "${INITIAL_CE_ID}" ]; then
 fi
 note "initial executor_id: ${INITIAL_CE_ID}"
 
-note "starting relay ${PROCESSOR_ID}"
-flz relay start "${PROCESSOR_ID}" store_input \
+note "starting operative ${PROCESSOR_ID}"
+flz operative start "${PROCESSOR_ID}" store_input \
   --init_values '{"binary_inputs": [], "text_inputs": ["FIRST"]}'
 
 note "enabling websocket plugin ${PLUGIN_WS_ID}"
-flz plugin enable "${PLUGIN_WS_ID}" relay_websocket \
-  --Xrelay_id="${PROCESSOR_ID}" \
+flz plugin enable "${PLUGIN_WS_ID}" operative_websocket \
+  --Xoperative_id="${PROCESSOR_ID}" \
   --Xtrigger="proactive" \
   --Xuri="ws://localhost:4500" \
   --Xposition=0
 
 note "enabling kafka producer plugin ${PLUGIN_KAFKA_ID}"
-flz plugin enable "${PLUGIN_KAFKA_ID}" relay_kafka_producer \
-  --Xrelay_id="${PROCESSOR_ID}" \
+flz plugin enable "${PLUGIN_KAFKA_ID}" operative_kafka_producer \
+  --Xoperative_id="${PROCESSOR_ID}" \
   --Xtrigger=on_output \
   --Xhosts=kafka:9092 \
   --Xtopic="${PROCESSOR_ID}.test.v1"

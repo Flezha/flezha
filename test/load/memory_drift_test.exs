@@ -1,7 +1,7 @@
 defmodule Flezha.Load.MemoryDriftTest do
   @moduledoc """
   Long-running load harness that measures Controller BEAM memory
-  growth under realistic WebSocket + Kafka traffic. Drives a relay
+  growth under realistic WebSocket + Kafka traffic. Drives a operative
   with a configurable WS source (synthetic testnet or live Kraken WS)
   and, optionally, a Kafka producer plugin on `:on_input` so each
   inbound frame is also published.
@@ -62,23 +62,23 @@ defmodule Flezha.Load.MemoryDriftTest do
   alias Flezha.Plugin
   alias Flezha.Service.CliManager
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.OperativeManager
 
   @artifact_dir Path.expand("artifacts", __DIR__)
 
   # The Flezha.Testnet child (test config has testnet_enabled: true)
   # spawns `npm start --prefix test/apps/testnet`, which listens on
   # ws://localhost:4500. The harness waits for it to be reachable
-  # before starting the load relay.
+  # before starting the load operative.
   @testnet_ws_uri "ws://localhost:4500"
   @testnet_port 4500
   @testnet_wait_timeout_ms 30_000
 
   @namespace "default"
-  @relay_id "memory_drift_load"
+  @operative_id "memory_drift_load"
   @ws_plugin_id "memory_drift_ws"
   @kafka_plugin_id "memory_drift_kafka"
-  @relay_factory "do_nothing"
+  @operative_factory "do_nothing"
 
   # Kraken public WS v1 book (depth) subscription on a fan-out of major
   # pairs. The `book` channel — not `trade` — is what produces sustained
@@ -115,8 +115,8 @@ defmodule Flezha.Load.MemoryDriftTest do
     if ws_source == "testnet", do: wait_for_ws_endpoint!()
     if workload in ["combined", "kafka"], do: assert_kafka_reachable!()
 
-    start_load_relay!(workload, ws_source)
-    on_exit(&stop_load_relay/0)
+    start_load_operative!(workload, ws_source)
+    on_exit(&stop_load_operative/0)
 
     ensure_reporter_started(sample_interval_ms)
 
@@ -214,17 +214,17 @@ defmodule Flezha.Load.MemoryDriftTest do
     end
   end
 
-  ## ----- relay + plugin wiring ---------------------------------------------
+  ## ----- operative + plugin wiring ---------------------------------------------
 
-  defp start_load_relay!(workload, ws_source) do
-    relay = %Flezha.Relay.Builder{id: @relay_id, factory_id: @relay_factory}
-    {:ok, _} = RelayManager.start_relay(@namespace, relay)
+  defp start_load_operative!(workload, ws_source) do
+    operative = %Flezha.Operative.Builder{id: @operative_id, factory_id: @operative_factory}
+    {:ok, _} = OperativeManager.start_operative(@namespace, operative)
 
     if workload in ["ws", "combined"], do: enable_ws_plugin!(ws_source)
     if workload in ["kafka", "combined"], do: enable_kafka_plugin!()
 
     IO.puts(
-      "[memory_drift] load relay '#{@relay_id}' up; " <>
+      "[memory_drift] load operative '#{@operative_id}' up; " <>
         "ws=#{workload in ["ws", "combined"]} (source=#{ws_source}) " <>
         "kafka=#{workload in ["kafka", "combined"]}"
     )
@@ -237,7 +237,7 @@ defmodule Flezha.Load.MemoryDriftTest do
       PluginManager.enable_plugin(@ws_plugin_id, %Plugin{
         id: @ws_plugin_id,
         namespace: @namespace,
-        relay_id: @relay_id,
+        operative_id: @operative_id,
         provider: Flezha.Plugin.Provider.Websocket,
         opts: %{
           uri: uri,
@@ -256,18 +256,18 @@ defmodule Flezha.Load.MemoryDriftTest do
       PluginManager.enable_plugin(@kafka_plugin_id, %Plugin{
         id: @kafka_plugin_id,
         namespace: @namespace,
-        relay_id: @relay_id,
+        operative_id: @operative_id,
         provider: Flezha.Plugin.Provider.Kafka.Producer,
         opts: %{
           hosts: [{@kafka_host, @kafka_port}],
           topic: topic,
-          partition: 0,
+          segment: 0,
           linger_ms: 10,
           queue_max: 10_000,
           # Dev brokers default to RF=1; the plugin default of 2 would
           # fail topic auto-creation on a single-broker cluster.
           auto_create_replication_factor: 1,
-          auto_create_partitions: 1,
+          auto_create_segments: 1,
           required_acks: -1,
           idempotent: true,
           delivery_timeout_ms: 30_000
@@ -297,7 +297,7 @@ defmodule Flezha.Load.MemoryDriftTest do
     {@testnet_ws_uri, msg}
   end
 
-  defp stop_load_relay do
+  defp stop_load_operative do
     for plugin_id <- [@ws_plugin_id, @kafka_plugin_id] do
       try do
         _ = PluginManager.disable_plugin(plugin_id)
@@ -307,7 +307,7 @@ defmodule Flezha.Load.MemoryDriftTest do
     end
 
     try do
-      _ = RelayManager.stop_relay(@namespace, @relay_id)
+      _ = OperativeManager.stop_operative(@namespace, @operative_id)
     catch
       _, _ -> :ok
     end

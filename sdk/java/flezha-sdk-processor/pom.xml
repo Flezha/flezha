@@ -13,7 +13,7 @@
     <artifactId>flezha-sdk-processor</artifactId>
     <packaging>jar</packaging>
     <name>Flezha SDK Annotation Processor</name>
-    <description>Generates Shard/Relay implementations from @Shard / @State / @Relay authoring annotations.</description>
+    <description>Generates Operation/ContinuousOperative implementations from @Operation / @State / @ContinuousOperative authoring annotations.</description>
 
     <dependencies>
         <dependency>

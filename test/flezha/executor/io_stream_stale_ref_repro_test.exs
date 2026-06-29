@@ -2,7 +2,7 @@ defmodule FlezhaTest.Executor.IoStreamStaleRefReproTest do
   @moduledoc """
   Reproduction of the flezha-market prod incident (2026-06-05): the IO data
   stream silently severs and NEVER self-heals — WS ingest keeps flowing, the
-  executor goes idle, all shard WALs/topics freeze, and only a relay recreate
+  executor goes idle, all operation WALs/topics freeze, and only a operative recreate
   (`start-asset.sh`) restores it.
 
   Root cause under test: the IO `StreamChannel` can hold a STALE non-nil
@@ -36,7 +36,7 @@ defmodule FlezhaTest.Executor.IoStreamStaleRefReproTest do
     name: name
   } do
     # 1. HEALTHY: a live NIF stream is bound — this is the 10:15→13:50 window
-    #    where data flowed and all shard WALs advanced every minute.
+    #    where data flowed and all operation WALs advanced every minute.
     :ok = GenServer.call(pid, {:bind, :stream_ref_live})
     assert GenServer.call(pid, :stream_ref_status) == :stream_ref_live
 

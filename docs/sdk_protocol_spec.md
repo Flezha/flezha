@@ -24,7 +24,7 @@
 
 ### What is Flezha?
 
-Flezha is a distributed stream-processing platform. The **Controller** (an Elixir/OTP application) orchestrates work across one or more **Compute Engines** (SDK processes). Each SDK process connects to the controller over a configurable transport (UDS or QUIC), registers relay factories, and executes data-processing logic on behalf of the controller.
+Flezha is a distributed stream-processing platform. The **Controller** (an Elixir/OTP application) orchestrates work across one or more **Compute Engines** (SDK processes). Each SDK process connects to the controller over a configurable transport (UDS or QUIC), registers operative factories, and executes data-processing logic on behalf of the controller.
 
 ### Architecture
 
@@ -47,7 +47,7 @@ The controller can run both UDS and QUIC transport servers simultaneously (confi
 | Layer | Purpose | Transport | Encoding |
 |-------|---------|-----------|----------|
 | **Control Plane** | Handshake, command dispatch, lifecycle management | Control socket | Protobuf messages wrapped in binary framing |
-| **Data Plane** | Relay input/output streaming | Primary + secondary stream sockets | Raw bytes wrapped in binary framing |
+| **Data Plane** | Operative input/output streaming | Primary + secondary stream sockets | Raw bytes wrapped in binary framing |
 
 ---
 
@@ -88,7 +88,7 @@ A single control socket serves all SDK processes. Each SDK connects here to init
 {base}/primary_stream_{executor_id}.sock
 ```
 
-The controller creates a listening socket for each primary stream after the SDK has been assigned an ID. The SDK connects to these sockets. Data flows **controller -> SDK** (the controller sends relay input to the SDK).
+The controller creates a listening socket for each primary stream after the SDK has been assigned an ID. The SDK connects to these sockets. Data flows **controller -> SDK** (the controller sends operative input to the SDK).
 
 #### Secondary Stream Sockets (per compute engine)
 
@@ -96,7 +96,7 @@ The controller creates a listening socket for each primary stream after the SDK 
 {base}/secondary_stream_{executor_id}.sock
 ```
 
-The controller creates a listening socket for each secondary stream. The SDK connects. Data flows **SDK -> controller** (the SDK sends relay output back to the controller).
+The controller creates a listening socket for each secondary stream. The SDK connects. Data flows **SDK -> controller** (the SDK sends operative output back to the controller).
 
 ### QUIC
 
@@ -169,13 +169,13 @@ Well-known payload IDs:
 | `control_command` | Protobuf command messages (controller -> SDK) |
 | `control_ping` | Control-channel keepalive ping/echo (re-arms the read-level idle watchdog) |
 | `data_heartbeat` | Data-channel heartbeat (SDK -> controller; per-channel liveness) |
-| `{relay_id}` | Stream I/O data (both directions) |
+| `{operative_id}` | Stream I/O data (both directions) |
 
 The `data_heartbeat` frame carries an empty message and empty metadata. The
 executor writes one on every secondary stream every `FLEZHA_DATA_HEARTBEAT_MS`
-(default 10 s) while connected, so an idle-but-healthy relay keeps the
+(default 10 s) while connected, so an idle-but-healthy operative keeps the
 controller's per-channel liveness clock fresh without producing real output.
-The controller treats any inbound frame (heartbeat or relay output) as
+The controller treats any inbound frame (heartbeat or operative output) as
 liveness; a bound channel silent past `:io_stream_liveness_threshold_ms`
 (default 30 s) is flagged as a stall.
 
@@ -198,28 +198,28 @@ For each (key, value) pair:
 | Key | Direction | Description |
 |---|---|---|
 | `input_type` | Controller → SDK | Wire format of the entry-channel payload — `"1"` for binary (default), `"2"` for UTF-8 text. The SDK uses this to convert the payload bytes to the entry channel's `EntryChannelType` (`Vec<u8>` or `String`). |
-| `channel` | Controller → SDK | Names the Relay's entry channel that should receive this input. If absent, the SDK falls back to the Relay's first declared input channel. |
-| `channel` | SDK → Controller | Set by `ShardCtx::emit` on plugin-bound and hybrid channels. Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka.Producer`) match on this key via their `:channel` opt to gate which channel's outputs they consume. |
+| `channel` | Controller → SDK | Names the Operative's entry channel that should receive this input. If absent, the SDK falls back to the Operative's first declared input channel. |
+| `channel` | SDK → Controller | Set by `OperationCtx::emit` on plugin-bound and hybrid channels. Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka.Producer`) match on this key via their `:channel` opt to gate which channel's outputs they consume. |
 
 The `channel` metadata key replaces the pre-`relay-mvp-rust` `plugin_group: u8` integer key. v1 sends the channel name as a UTF-8 string; an integer fast-path is reserved for a future change.
 
-Hybrid channels (declared with `also_to_plugin_with(...)` — see `docs/relay_architecture.md` "Hybrid channels: inter-shard fan-out + plugin sink") reuse this exact framing. The plugin-bytes wire frame is byte-indistinguishable from a pure-`to_plugin(...)` frame for the same plugin name and bytes; no new wire payload-id, no new metadata key.
+Hybrid channels (declared with `also_to_plugin_with(...)` — see `docs/operative_architecture.md` "Hybrid channels: inter-operation fan-out + plugin sink") reuse this exact framing. The plugin-bytes wire frame is byte-indistinguishable from a pure-`to_plugin(...)` frame for the same plugin name and bytes; no new wire payload-id, no new metadata key.
 
-#### Per-Partition mailbox is bounded; on full, the channel's `OverflowPolicy` applies
+#### Per-Segment mailbox is bounded; on full, the channel's `OverflowPolicy` applies
 
-The SDK's per-Partition mailbox is a fixed-capacity `crossbeam::queue::ArrayQueue` allocated at relay startup. When the controller dispatches a frame to a Relay whose targeted Partition's mailbox is full, the SDK applies the channel's declared `OverflowPolicy`: `Block` (producer drains the full mailbox inline when no drainer is actively running, else parks briefly and retries — no frame is lost), `DropNewest` (frame discarded, counter incremented), or `DropOldest` (consumer's mailbox evicts its oldest item and accepts the new one, counter incremented). The default entry-channel policy is `DropNewest` — **the SDK silently drops frames when a Relay's entry mailbox is saturated**, and the wire-reader thread continues servicing sibling Relays sharing the same physical connection. Under `Block` a producer never parks indefinitely: when the slot's drain exists only as a queued pool task, the producer becomes the drainer itself (parking there self-deadlocks a fully-blocked worker pool — the 2026-06-10 production freeze). `Block` requires an acyclic shard graph. See `docs/relay_architecture.md` "Backpressure and bounded mailboxes" for the full contract — capacity declaration, default policies by channel kind, and the per-Partition counter set.
+The SDK's per-Segment mailbox is a fixed-capacity `crossbeam::queue::ArrayQueue` allocated at operative startup. When the controller dispatches a frame to an Operative whose targeted Segment's mailbox is full, the SDK applies the channel's declared `OverflowPolicy`: `Block` (producer drains the full mailbox inline when no drainer is actively running, else parks briefly and retries — no frame is lost), `DropNewest` (frame discarded, counter incremented), or `DropOldest` (consumer's mailbox evicts its oldest item and accepts the new one, counter incremented). The default entry-channel policy is `DropNewest` — **the SDK silently drops frames when an Operative's entry mailbox is saturated**, and the wire-reader thread continues servicing sibling Operatives sharing the same physical connection. Under `Block` a producer never parks indefinitely: when the slot's drain exists only as a queued pool task, the producer becomes the drainer itself (parking there self-deadlocks a fully-blocked worker pool — the 2026-06-10 production freeze). `Block` requires an acyclic operation graph. See `docs/operative_architecture.md` "Backpressure and bounded mailboxes" for the full contract — capacity declaration, default policies by channel kind, and the per-Segment counter set.
 
 #### State migration JSON shape
 
-`MigrationSerialization` / `MigrationDeserialization` / `PartitionState` / `PartitionApplyState` carry a JSON blob whose shape is:
+`MigrationSerialization` / `MigrationDeserialization` / `SegmentState` / `SegmentApplyState` carry a JSON blob whose shape is:
 
-- Single-mode shards (no `shard_keys()` declared):
+- Single-mode operations (no `operation_keys()` declared):
   ```json
-  {"<shard_name>": <state>}
+  {"<operation_name>": <state>}
   ```
-- Static-mode shards (`shard_keys()` non-empty):
+- Static-mode operations (`operation_keys()` non-empty):
   ```json
-  {"<shard_name>": {"<shard_key>": <state>, ...}}
+  {"<operation_name>": {"<operation_key>": <state>, ...}}
   ```
 
 This is a wire-format break vs the pre-`relay-mvp-rust` flat `<state>` shape. State portability across the cutover is out of scope (umbrella Non-Goal 2 / `relay-state-migration`); the hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs.
@@ -258,14 +258,14 @@ message CommandRequest {
     oneof command {
         AssignExecutorId assign_executor_id = 2;
         ConnectSocket connect_socket = 3;
-        AddRelay add_relay = 4;
-        RemRelay rem_relay = 5;
+        AddOperative add_operative = 4;
+        RemOperative rem_operative = 5;
         MigrationSerialization migration_serialization = 6;
         MigrationDeserialization migration_deserialization = 7;
-        PartitionState partition_state = 8;
+        SegmentState segment_state = 8;
         ExecutorDisconnect executor_disconnect = 9;
-        RelayMessage relay_message = 10;
-        PartitionApplyState partition_apply_state = 11;
+        OperationMessage operation_message = 10;
+        SegmentApplyState segment_apply_state = 11;
         ExecutorShutdownNotification executor_shutdown_notification = 12;
         ExecutorShutdownAck executor_shutdown_ack = 13;
     }
@@ -286,66 +286,66 @@ message ConnectSocket {
     uint32 sockets_count = 1;
 }
 
-message AddRelay {
-    string relay_id = 1;
+message AddOperative {
+    string operative_id = 1;
     string factory_id = 2;
     string init_values = 3;
-    string kind = 4; // compute-unit kind; empty/absent ⇒ "relay"
+    string kind = 4; // operative kind; empty/absent ⇒ "continuous"
 }
 
-message RemRelay {
-    string relay_id = 1;
+message RemOperative {
+    string operative_id = 1;
 }
 
-// SDK -> Controller. Emitted by a task-kind unit when its run-once
+// SDK -> Controller. Emitted by a bounded-kind operative when its run-once
 // function returns ("ok" | "error"). The Controller drives the normal
 // stop/teardown path (deregister-on-completion). Old Controllers ignore
 // the unknown variant.
-message TaskCompleted {
-    string relay_id = 1;
+message BoundedCompleted {
+    string operative_id = 1;
     string status = 2;
     string error = 3;
 }
 
 message MigrationSerialization {
-    string relay_id = 1;
+    string operative_id = 1;
 }
 
 message MigrationDeserialization {
-    string relay_id = 1;
+    string operative_id = 1;
     string factory_id = 2;
     bytes serialized_state = 3;
 }
 
-message PartitionState {
-    string relay_id = 1;
+message SegmentState {
+    string operative_id = 1;
 }
 
 message ExecutorDisconnect {}
 
-message RelayMessage {
-    string relay_id = 1;
+message OperationMessage {
+    string operative_id = 1;
     bytes payload = 2;
 }
 
-message RelayMessageResponse {
+message OperationMessageResponse {
     bytes payload = 1;
     string error = 2;
 }
 
-message PartitionApplyState {
-    string relay_id = 1;
+message SegmentApplyState {
+    string operative_id = 1;
     string factory_id = 2;
     bytes state_binary = 3;
 }
 
 message ExecutorShutdownNotification {
-    string relay_id = 1;
+    string operative_id = 1;
     bytes serialized_state = 2;
 }
 
 message ExecutorShutdownAck {
-    string relay_id = 1;
+    string operative_id = 1;
 }
 ```
 
@@ -410,7 +410,7 @@ SDK                                        Controller
  │                                           │
  │         ═══ READY ═══                     │
  │                                           │
- │<─── 9. Commands (AddRelay, etc.) ────│
+ │<─── 9. Commands (AddOperative, etc.) ────│
  │──── 9. CommandResponse ──────────────────>│
  │                                           │
  │        ... stream I/O active ...          │
@@ -444,7 +444,7 @@ The SDK sends a single binary frame:
   }
   ```
   - `namespace`: A string identifying the logical group this compute engine belongs to.
-  - `factory_ids`: List of all registered relay factory IDs in this SDK process.
+  - `factory_ids`: List of all registered operative factory IDs in this SDK process.
 - **Metadata**: empty
 
 #### Step 3: Controller Processes Handshake
@@ -502,7 +502,7 @@ For each index `i` in `0..sockets_count`, the SDK:
 
 2. Connects to `{base}/secondary_stream_{executor_id}.sock`
    - This socket is used to send output data back to the controller.
-   - Stored for later use by relays.
+   - Stored for later use by operatives.
 
 #### Step 8: SDK Responds
 
@@ -544,7 +544,7 @@ SDK                                        Controller
  │
  │  SDK clears all state:
  │    - io_streams (dead)
- │    - relays (will be re-added)
+ │    - operatives (will be re-added)
  │    - work queues (stale stream refs)
  │    - executor_id → "undefined"
  │
@@ -560,7 +560,7 @@ SDK                                        Controller
  │                                           │
  │<─── 4. AssignExecutorId (new ID) ───│
  │<─── 6. ConnectSocket ────────────────────│
- │<─── 9. AddRelay (for each) ──────────│
+ │<─── 9. AddOperative (for each) ──────────│
  │                                           │
  │         ═══ READY ═══                     │
 ```
@@ -568,7 +568,7 @@ SDK                                        Controller
 **Key behaviors:**
 - The SDK distinguishes intentional disconnects (`ExecutorDisconnect` command sets status to `Stopped`) from unexpected ones (status is `Running`). Only unexpected disconnects trigger reconnection.
 - The controller treats the reconnection as a **new connection** — it assigns a fresh `executor_id` and re-sends the full command sequence.
-- Relay factories remain registered in the SDK process; the controller re-creates relay instances via `AddRelay`.
+- Operative factories remain registered in the SDK process; the controller re-creates operative instances via `AddOperative`.
 - In-flight worker work completes (writes to dead streams fail silently); workers return to the pool after reconnection.
 - Backoff schedule: 200ms, 400ms, 800ms, 1.6s, 3.2s, 6.4s, 12.8s, 25.6s, capped at 30s.
 
@@ -598,72 +598,72 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 | Response status | `"success"` |
 | Response raw_data | empty |
 
-### AddRelay
+### AddOperative
 
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `AddRelay { relay_id: string, factory_id: string, init_values: string, kind: string }` |
-| Behavior | SDK creates a new compute unit from the named factory. `kind` (empty ⇒ `"relay"`) selects the unit kind. For `"relay"`: a relay instance, deserializing non-empty `init_values` JSON into state via `json_deserialize_state()`, then `post_alter()`. For `"task"`: a task instance whose `run(ctx, args)` is scheduled once on the work pool with `args = init_values`. |
+| Proto message | `AddOperative { operative_id: string, factory_id: string, init_values: string, kind: string }` |
+| Behavior | SDK creates a new operative from the named factory. `kind` (empty ⇒ `"continuous"`) selects the operative kind. For `"continuous"`: a continuous operative instance, deserializing non-empty `init_values` JSON into state via `json_deserialize_state()`, then `post_alter()`. For `"bounded"`: a bounded operative instance whose `run(ctx, args)` is scheduled once on the work pool with `args = init_values`. |
 | Response status | `"success"` on success, `"error"` on failure |
 | Response raw_data | empty |
-| Possible errors | Factory not found (relay or task class); JSON parse failure; deserialization failure; unknown `kind` |
+| Possible errors | Factory not found (continuous or bounded class); JSON parse failure; deserialization failure; unknown `kind` |
 
-### TaskCompleted
+### BoundedCompleted
 
 | Field | Value |
 |-------|-------|
 | Direction | SDK -> Controller (same `control_command` envelope as `ExecutorReconnected`) |
-| Proto message | `TaskCompleted { relay_id: string, status: string, error: string }` |
-| Behavior | Emitted when a task-kind unit's `run` returns: `status` is `"ok"` or `"error"` (with `error`). The Controller drives the normal stop/teardown path (deregister-on-completion) so the finished task leaves the durable registry; an errored task is torn down identically (terminal — no retry) and surfaced via `[:flezha, :task, :failed]`. |
+| Proto message | `BoundedCompleted { operative_id: string, status: string, error: string }` |
+| Behavior | Emitted when a bounded-kind operative's `run` returns: `status` is `"ok"` or `"error"` (with `error`). The Controller drives the normal stop/teardown path (deregister-on-completion) so the finished operative leaves the durable registry; an errored operative is torn down identically (terminal — no retry) and surfaced via `[:flezha, :bounded, :failed]`. |
 | Response | None (one-way notification; old Controllers ignore the unknown variant) |
 
 Both SDKs are at parity on this contract: the Rust and Java SDKs each read the
-optional `AddRelay.kind` field (empty ⇒ `"relay"`) and emit `TaskCompleted`
-byte-identically, so the Controller decodes a Java task's completion exactly as a
-Rust one. A task's plugin output is a frame whose payload id is the task's
+optional `AddOperative.kind` field (empty ⇒ `"continuous"`) and emit `BoundedCompleted`
+byte-identically, so the Controller decodes a Java bounded operative's completion exactly as a
+Rust one. A bounded operative's plugin output is a frame whose payload id is the operative's
 instance id with **empty** metadata (no `channel` key), written on a secondary
 stream — identical across both SDKs.
 
-### RemRelay
+### RemOperative
 
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `RemRelay { relay_id: string }` |
-| Behavior | SDK removes the relay with the given ID from its relay registry |
-| Response status | `"success"` on success, `"error"` if relay not found |
+| Proto message | `RemOperative { operative_id: string }` |
+| Behavior | SDK removes the operative with the given ID from its operative registry |
+| Response status | `"success"` on success, `"error"` if operative not found |
 | Response raw_data | empty |
-| Possible errors | `"Relay not found"` |
+| Possible errors | `"Operative not found"` |
 
-### PartitionState
+### SegmentState
 
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `PartitionState { relay_id: string }` |
-| Behavior | SDK serializes the relay's current state using `bin_serialize_state()` and returns the JSON bytes |
-| Response status | `"success"` on success, `"error"` if relay not found |
-| Response raw_data | JSON-serialized relay state bytes |
-| Possible errors | `"Relay with id {id} not found"` |
+| Proto message | `SegmentState { operative_id: string }` |
+| Behavior | SDK serializes the operative's current state using `bin_serialize_state()` and returns the JSON bytes |
+| Response status | `"success"` on success, `"error"` if operative not found |
+| Response raw_data | JSON-serialized operative state bytes |
+| Possible errors | `"Operative with id {id} not found"` |
 
 ### MigrationSerialization
 
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `MigrationSerialization { relay_id: string }` |
-| Behavior | SDK serializes the relay's state using `json_serialize_state()`, then **removes** the relay from the registry. The serialized state is returned so the controller can migrate it to another compute engine. |
+| Proto message | `MigrationSerialization { operative_id: string }` |
+| Behavior | SDK serializes the operative's state using `json_serialize_state()`, then **removes** the operative from the registry. The serialized state is returned so the controller can migrate it to another compute engine. |
 | Response status | `"success"` |
-| Response raw_data | JSON-serialized relay state bytes |
+| Response raw_data | JSON-serialized operative state bytes |
 
 ### MigrationDeserialization
 
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `MigrationDeserialization { relay_id: string, factory_id: string, serialized_state: bytes }` |
-| Behavior | SDK creates a new relay from the factory, then deserializes the provided `serialized_state` into it via `json_deserialize_state()`. |
+| Proto message | `MigrationDeserialization { operative_id: string, factory_id: string, serialized_state: bytes }` |
+| Behavior | SDK creates a new operative from the factory, then deserializes the provided `serialized_state` into it via `json_deserialize_state()`. |
 | Response status | `"success"` |
 | Response raw_data | empty |
 
@@ -677,20 +677,20 @@ stream — identical across both SDKs.
 | Response status | `"success"` |
 | Response raw_data | empty |
 
-### RelayMessage
+### OperationMessage
 
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `RelayMessage { relay_id: string, payload: bytes }` |
-| Behavior | SDK locates the relay by id and invokes the factory's `handle_message(payload)` hook. The return value (reply bytes on success, error string on failure) is wrapped into a protobuf-encoded `RelayMessageResponse` and written as the outer `CommandResponse.raw_data`. Factories that do not override `handle_message` return the default "unsupported" error — mis-routing is loud, not silent. |
-| Response status | `"success"` when the relay was found; `"error"` only when the relay id is unknown |
-| Response raw_data | Protobuf-encoded `RelayMessageResponse { payload: bytes, error: string }` — an empty `error` means success and the controller reads `payload`; a non-empty `error` means the factory reported a failure and the controller discards `payload` |
-| Possible errors | `"Relay with id {id} not found"` (CommandResponse.errors); factory-supplied error string (RelayMessageResponse.error) |
+| Proto message | `OperationMessage { operative_id: string, payload: bytes }` |
+| Behavior | SDK locates the operative by id and invokes the factory's `handle_message(payload)` hook. The return value (reply bytes on success, error string on failure) is wrapped into a protobuf-encoded `OperationMessageResponse` and written as the outer `CommandResponse.raw_data`. Factories that do not override `handle_message` return the default "unsupported" error — mis-routing is loud, not silent. |
+| Response status | `"success"` when the operative was found; `"error"` only when the operative id is unknown |
+| Response raw_data | Protobuf-encoded `OperationMessageResponse { payload: bytes, error: string }` — an empty `error` means success and the controller reads `payload`; a non-empty `error` means the factory reported a failure and the controller discards `payload` |
+| Possible errors | `"Operative with id {id} not found"` (CommandResponse.errors); factory-supplied error string (OperationMessageResponse.error) |
 
-The controller SHALL treat a non-empty `RelayMessageResponse.error` as an
+The controller SHALL treat a non-empty `OperationMessageResponse.error` as an
 error condition regardless of `payload` contents. Used by the
-[relay-message-handlers](../docs/relay_message_handlers.md)
+[operative-message-handlers](../docs/operative_message_handlers.md)
 mechanism — specifically the first-party
 `Flezha.Plugin.Provider.MessageForward` provider — to bridge
 Elixir-side request/reply envelopes to the SDK factory. The caller side
@@ -704,11 +704,11 @@ commands — keep them small to avoid head-of-line contention.
 | Field | Value |
 |-------|-------|
 | Direction | SDK -> Controller (only SDK-initiated CommandRequest variant alongside its ack) |
-| Proto message | `ExecutorShutdownNotification { relay_id: string, serialized_state: bytes }` |
+| Proto message | `ExecutorShutdownNotification { operative_id: string, serialized_state: bytes }` |
 | When emitted | On graceful SDK shutdown only: SIGTERM, `Drop` of the SDK handle, explicit `disconnect()`. Crash paths (SIGKILL, panic) cannot emit and fall back to last periodic snapshot. |
-| Behavior | Per running relay, the SDK serializes via the same per-driver serializer used for `MigrationSerialization` and emits one notification. The controller forwards the binary to the corresponding `Overwatch.state.snapshot` and emits an `ExecutorShutdownAck` with the same `reference_id`. |
-| Ack timeout | The SDK SHALL wait at most **2 s per relay** for `ExecutorShutdownAck` (parallelised across relays). After the timeout, the SDK SHALL exit unconditionally and SHALL NOT block its container's shutdown grace period. |
-| Per-relay serializer cap | Capped at the controller's `cross_node_request_timeout` (10 s) ceiling; deployments with tighter container grace periods should override the cap via SDK config. |
+| Behavior | Per running operative, the SDK serializes via the same per-driver serializer used for `MigrationSerialization` and emits one notification. The controller forwards the binary to the corresponding `Overwatch.state.snapshot` and emits an `ExecutorShutdownAck` with the same `reference_id`. |
+| Ack timeout | The SDK SHALL wait at most **2 s per operative** for `ExecutorShutdownAck` (parallelised across operatives). After the timeout, the SDK SHALL exit unconditionally and SHALL NOT block its container's shutdown grace period. |
+| Per-operative serializer cap | Capped at the controller's `cross_node_request_timeout` (10 s) ceiling; deployments with tighter container grace periods should override the cap via SDK config. |
 | Wire format | CommandRequest envelope, payload_id = `"control_command"`, oneof tag 12. |
 
 ### ExecutorShutdownAck
@@ -716,7 +716,7 @@ commands — keep them small to avoid head-of-line contention.
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `ExecutorShutdownAck { relay_id: string }` |
+| Proto message | `ExecutorShutdownAck { operative_id: string }` |
 | Behavior | Emitted by the controller's `ControlChannel` immediately after the snapshot cast is enqueued on the `Overwatch` GenServer (NOT after the cast has been applied — the cast is in the GenServer mailbox by then and applies in microseconds). The controller emits the ack regardless of whether the Overwatch was found: a missing Overwatch (already migrated to a peer controller) still gets an ack so the SDK can proceed to exit. |
 | Wire format | CommandRequest envelope, payload_id = `"control_command"`, oneof tag 13, `reference_id` matches the originating notification. |
 
@@ -737,14 +737,14 @@ Once stream sockets are established (after `ConnectSocket`), data flows between 
 
 | Socket Type | Direction | Purpose |
 |-------------|-----------|---------|
-| Primary stream | Controller -> SDK | Controller sends input data TO SDK relays |
-| Secondary stream | SDK -> Controller | SDK sends relay output BACK to controller |
+| Primary stream | Controller -> SDK | Controller sends input data TO SDK operatives |
+| Secondary stream | SDK -> Controller | SDK sends operative output BACK to controller |
 
 ### Framing
 
 All stream messages use the same binary framing format described in Section 3.
 
-- **Payload ID**: The `relay_id` of the target relay.
+- **Payload ID**: The `operative_id` of the target operative.
 - **Message**: The input/output data bytes.
 - **Metadata**: Key-value pairs conveying type information and other attributes.
 
@@ -758,19 +758,19 @@ All stream messages use the same binary framing format described in Section 3.
 
 When the SDK receives a frame on a primary stream:
 
-1. Extract `relay_id` from the payload ID.
+1. Extract `operative_id` from the payload ID.
 2. Read `input_type` from metadata (default `"1"`).
-3. Construct a `RelayInput`:
+3. Construct an `OperativeInput`:
    - `"1"` -> `Binary(message_bytes)`
    - `"2"` -> `Text(utf8_string(message_bytes))`
-4. Dispatch to the relay's `run()` method via the worker pool.
+4. Dispatch to the operative's `run()` method via the worker pool.
 
 ### Output Processing (Secondary Streams)
 
-When a relay returns a `PipeToAgent` result:
+When an operative returns a `PipeToAgent` result:
 
 1. For each `(output, metadata)` tuple in the result:
-   - Construct a binary frame with payload_id = `relay_id`.
+   - Construct a binary frame with payload_id = `operative_id`.
    - Serialize the output:
      - `Text(s)` -> string bytes
      - `Binary(b)` -> raw bytes
@@ -793,12 +793,12 @@ When writing output to a secondary stream, the write may block (or return `Would
 2. If `WouldBlock`, register the socket for writable events and retry when the socket becomes writable.
 3. Deregister after successful write.
 
-### PipeToRelay
+### PipeToOperative
 
-When a relay returns `PipeToRelay`, the SDK routes output to another relay locally:
+When an operative returns `PipeToOperative`, the SDK routes output to another operative locally:
 
-1. Check if the target relay exists locally.
-2. If yes, convert the output to input and invoke the target relay's `run()`.
+1. Check if the target operative exists locally.
+2. If yes, convert the output to input and invoke the target operative's `run()`.
 3. If no, fall back to `pipe_to_agent()` — send it to the controller via the secondary stream so the controller can route it.
 
 ---
@@ -813,23 +813,23 @@ This section describes the recommended public-facing API surface for SDK impleme
 register_factory(factory_id, settings, initial_state, handler_generator)
 ```
 
-- **`factory_id`**: `string` — A globally unique identifier for this relay type.
+- **`factory_id`**: `string` — A globally unique identifier for this operative type.
 - **`settings`**: Configuration object containing:
-  - `input_transformer` — Converts raw `RelayInput` to the handler's expected input type.
-  - `output_transformer` — Converts the handler's output type to `RelayResult`.
-  - `relay_runner` — Execution strategy: `ThreadPool` (default, sequential per relay) or `ThreadSpawn` (new thread per invocation).
-- **`initial_state`**: The default state for new relay instances. Must be serializable to/from JSON.
-- **`handler_generator`**: A factory function `() -> RelayHandler` that creates new handler instances.
+  - `input_transformer` — Converts raw `OperativeInput` to the handler's expected input type.
+  - `output_transformer` — Converts the handler's output type to `OperativeResult`.
+  - `operative_runner` — Execution strategy: `ThreadPool` (default, sequential per operative) or `ThreadSpawn` (new thread per invocation).
+- **`initial_state`**: The default state for new operative instances. Must be serializable to/from JSON.
+- **`handler_generator`**: A factory function `() -> OperativeHandler` that creates new handler instances.
 
 Factories **must** be registered before calling `new()`.
 
-### 8.2 Relay Interface
+### 8.2 ContinuousOperative Interface
 
-SDK implementations must support relays that conform to this interface:
+SDK implementations must support operatives that conform to this interface:
 
 ```
-interface Relay:
-    run(input: RelayInput) -> Result<RelayResult, RelayError>
+interface ContinuousOperative:
+    run(input: OperativeInput) -> Result<OperativeResult, OperativeError>
     json_serialize_state() -> bytes
     json_deserialize_state(data: bytes) -> void
     get_factory_id() -> string
@@ -838,48 +838,48 @@ interface Relay:
 
 | Method | Description |
 |--------|-------------|
-| `run(input)` | Execute the relay logic on the given input. May mutate internal state. |
-| `json_serialize_state()` | Serialize the relay's current state to JSON bytes. Used for migration and state inspection. |
-| `json_deserialize_state(data)` | Restore the relay's state from JSON bytes. Used during `AddRelay` (with init_values) and `MigrationDeserialization`. |
-| `get_factory_id()` | Return the factory ID that created this relay. |
+| `run(input)` | Execute the operative logic on the given input. May mutate internal state. |
+| `json_serialize_state()` | Serialize the operative's current state to JSON bytes. Used for migration and state inspection. |
+| `json_deserialize_state(data)` | Restore the operative's state from JSON bytes. Used during `AddOperative` (with init_values) and `MigrationDeserialization`. |
+| `get_factory_id()` | Return the factory ID that created this operative. |
 | `post_alter()` | Called after state changes (initial creation, init_values application, migration). Use for derived state recomputation. |
 
-### 8.3 Relay Input/Output Types
+### 8.3 Operative Input/Output Types
 
-**RelayInput** (received from controller):
-
-| Variant | Description |
-|---------|-------------|
-| `Binary(bytes)` | Raw binary data |
-| `Text(string)` | UTF-8 text data |
-
-**RelayOutput** (sent back to controller):
+**OperativeInput** (received from controller):
 
 | Variant | Description |
 |---------|-------------|
 | `Binary(bytes)` | Raw binary data |
 | `Text(string)` | UTF-8 text data |
 
-**RelayResult** (return value of `run()`):
+**OperativeOutput** (sent back to controller):
+
+| Variant | Description |
+|---------|-------------|
+| `Binary(bytes)` | Raw binary data |
+| `Text(string)` | UTF-8 text data |
+
+**OperativeResult** (return value of `run()`):
 
 | Variant | Description |
 |---------|-------------|
 | `None` | No output; discard silently |
 | `Return(output)` | Return output to the caller (local use only, not sent to controller) |
 | `PipeToAgent(list<(output, metadata)>)` | Send one or more outputs back to the controller via secondary stream |
-| `PipeToRelay(list<(relay_id, output, metadata)>)` | Route output to another relay (local or via controller) |
+| `PipeToOperative(list<(operative_id, output, metadata)>)` | Route output to another operative (local or via controller) |
 
-### 8.4 RelayHandler Interface
+### 8.4 OperativeHandler Interface
 
-The `RelayHandler` is the user-facing trait/interface for implementing processing logic:
+The `OperativeHandler` is the user-facing trait/interface for implementing processing logic:
 
 ```
-interface RelayHandler<State, Input, Output>:
-    process(input: Input, state: &mut State) -> Result<Output, RelayError>
+interface OperativeHandler<State, Input, Output>:
+    process(input: Input, state: &mut State) -> Result<Output, OperativeError>
     post_create(state: &mut State) -> void  // optional, called after creation
 ```
 
-The SDK wraps this with input/output transformers into a full `Relay` implementation.
+The SDK wraps this with input/output transformers into a full `ContinuousOperative` implementation.
 
 ### 8.5 SDK Entry Point
 
@@ -895,7 +895,7 @@ new(namespace: string) -> SDK
 
 The returned handle provides:
 - `get_id() -> string` — Returns the assigned compute engine ID.
-- `get_relays()` — Returns the current set of active relays.
+- `get_operatives()` — Returns the current set of active operatives.
 
 ### 8.6 Configuration
 
@@ -982,7 +982,7 @@ Total frame: 32 + 4 + 31 = 67 bytes
 
 ### 9.3 Stream I/O Message (Hex Dump)
 
-Controller sends text input `"hello"` to relay `"proc_42"` with metadata `{input_type: "2"}`.
+Controller sends text input `"hello"` to operative `"proc_42"` with metadata `{input_type: "2"}`.
 
 **Logical fields**:
 - Payload ID: `"proc_42"` (7 chars, padded to 32)
@@ -1020,7 +1020,7 @@ Metadata (13 bytes):
 Total frame: 32 + 4 + 24 = 60 bytes
 ```
 
-### 9.4 Full Relay Lifecycle Sequence
+### 9.4 Full Operative Lifecycle Sequence
 
 ```
 Time  Direction    Description
@@ -1033,14 +1033,14 @@ Time  Direction    Description
  t5   SDK          Connect to primary_stream_ce_001.sock (×4, non-blocking)
       SDK          Connect to secondary_stream_ce_001.sock (×4)
  t6   SDK->Controller   CommandResponse: {ref_id:"...", status:"success"}
- t7   Controller->SDK   CommandRequest: AddRelay{relay_id:"p1", factory_id:"echo", init_values:""}
- t8   SDK          Create relay "p1" from factory "echo"
+ t7   Controller->SDK   CommandRequest: AddOperative{operative_id:"p1", factory_id:"echo", init_values:""}
+ t8   SDK          Create operative "p1" from factory "echo"
  t9   SDK->Controller   CommandResponse: {ref_id:"...", status:"success"}
 t10   Controller->SDK   [primary stream] payload_id:"p1", message:"hello", metadata:{input_type:"2"}
-t11   SDK          Relay "p1" runs: input="hello" -> output="hello"
+t11   SDK          Operative "p1" runs: input="hello" -> output="hello"
 t12   SDK->Controller   [secondary stream] payload_id:"p1", message:"hello", metadata:{}
-t13   Controller->SDK   CommandRequest: RemRelay{relay_id:"p1"}
-t14   SDK          Remove relay "p1"
+t13   Controller->SDK   CommandRequest: RemOperative{operative_id:"p1"}
+t14   SDK          Remove operative "p1"
 t15   SDK->Controller   CommandResponse: {ref_id:"...", status:"success"}
 t16   Controller->SDK   CommandRequest: ExecutorDisconnect{}
 t17   SDK->Controller   CommandResponse: {ref_id:"...", status:"success"}
@@ -1093,24 +1093,24 @@ The SDK automatically reconnects when the control channel drops unexpectedly. Se
 
 **Intentional vs unexpected disconnect:** When the controller sends `ExecutorDisconnect`, the SDK sets its status to `Stopped` and does **not** reconnect. When the connection drops without this command (controller crash, network failure), the SDK's status is still `Running`, and it enters the reconnection loop with exponential backoff.
 
-**Controller-side keepalive:** The controller preserves compute engine state for a configurable window (default 30000ms, via `FLEZHA_EXECUTOR_KEEPALIVE`) after detecting a disconnect. If a new SDK process with the same namespace connects within this window, the controller may migrate preserved relays to the new compute engine.
+**Controller-side keepalive:** The controller preserves compute engine state for a configurable window (default 30000ms, via `FLEZHA_EXECUTOR_KEEPALIVE`) after detecting a disconnect. If a new SDK process with the same namespace connects within this window, the controller may migrate preserved operatives to the new compute engine.
 
 
-## Per-Partition State Persistence
+## Per-Segment State Persistence
 
 The persistence subsystem reserves two data-stream payload-ids and five
 control commands. Both directions and all wire shapes are settled here
 and implemented in `relay-state-persistence-controller`.
 
-### Data-stream payload-id `partition_state_change`
+### Data-stream payload-id `segment_state_change`
 
-SDK → controller. Carries one Change record destined for the per-Partition
+SDK → controller. Carries one Change record destined for the per-Segment
 WAL. Frame layout (matches `Flezha.State.Wire.decode_frame/1` and
-`flezha_executor::partition::flusher::build_partition_state_change_frame`):
+`flezha_executor::segment::flusher::build_segment_state_change_frame`):
 
 ```
-[partition_id_len: u16 BE]
-[partition_id_bytes]
+[segment_id_len: u16 BE]
+[segment_id_bytes]
 [seq:              u64 BE]
 [header:           16 B  ]    <- HeaderTemplate::stamp output
 [body_len:         u32 BE]
@@ -1118,17 +1118,17 @@ WAL. Frame layout (matches `Flezha.State.Wire.decode_frame/1` and
 [crc32:            u32 BE]    <- crc32 over body
 ```
 
-`partition_id_bytes` is structured so the controller can route the record to
-the right per-Partition WAL file without a side-table mapping:
+`segment_id_bytes` is structured so the controller can route the record to
+the right per-Segment WAL file without a side-table mapping:
 
 ```
-[relay_class_len:   u8   ][relay_class]
-[shard_id_len:      u8   ][shard_id]
-[partition_key_len: u16 BE][partition_key]
+[operative_class_len: u8   ][operative_class]
+[operation_id_len:    u8   ][operation_id]
+[segment_key_len:     u16 BE][segment_key]
 ```
 
 The 16-byte header carries `sdk_lang = 1` (Rust) / `2` (Java), SDK
-version (BE u32), Shard `SCHEMA_VERSION` (BE u32), `format_id` (1 =
+version (BE u32), Operation `SCHEMA_VERSION` (BE u32), `format_id` (1 =
 postcard for Rust, 4 = Kryo for Java), reserved bytes, and a CRC32
 over the body.
 
@@ -1138,18 +1138,18 @@ a Java SDK reading a header with `sdk_lang = 1` raises
 in reverse. Both SDKs reject unknown `format_id` values via the
 matching typed error.
 
-### Data-stream payload-id `partition_state_snapshot`
+### Data-stream payload-id `segment_state_snapshot`
 
-SDK → controller. Same wire shape as `partition_state_change`; `body` is the
+SDK → controller. Same wire shape as `segment_state_change`; `body` is the
 postcard-encoded `Self::State` (full snapshot) instead of one Change.
-The controller writes the body to `<partition_key>.snap.<seq>` via the
+The controller writes the body to `<segment_key>.snap.<seq>` via the
 `.tmp → fsync → rename → truncate WAL up to seq` sequence.
 
 ### Control command `RestoreInitState` (controller → SDK)
 
 ```protobuf
 message RestoreInitState {
-    bytes partition_id      = 1;
+    bytes segment_id        = 1;
     bytes snapshot_bytes    = 2;
     bytes change_log_bytes  = 3;
 }
@@ -1166,51 +1166,51 @@ framing:
 [crc32:         u32 BE]    <- crc32 over header + change_bytes
 ```
 
-The SDK's `Shard::init_state(shard_key, Some(payload))` is invoked with
+The SDK's `Operation::init_state(operation_key, Some(payload))` is invoked with
 the payload borrowed; the runtime decodes `snapshot_bytes` (when
 non-empty) into `Self::State` and folds the change-log records via
-`Shard::apply_change`.
+`Operation::apply_change`.
 
 ### Control command `RestoreInitStateResponse` (SDK → controller)
 
 ```protobuf
 message RestoreInitStateResponse {
-    bytes  partition_id  = 1;
+    bytes  segment_id    = 1;
     uint64 terminal_seq  = 2;
 }
 ```
 
-The controller unblocks the Partition's input streaming after the response
-arrives. The next `partition_state_change` is expected to carry
+The controller unblocks the Segment's input streaming after the response
+arrives. The next `segment_state_change` is expected to carry
 `seq = terminal_seq + 1`.
 
-### Control command `CompactPartition` (controller → SDK)
+### Control command `CompactSegment` (controller → SDK)
 
 ```protobuf
-message CompactPartition {
-    bytes partition_id = 1;
+message CompactSegment {
+    bytes segment_id = 1;
 }
 ```
 
-Issued when `wal_size_bytes` exceeds `compact_after_bytes` (per-Shard,
+Issued when `wal_size_bytes` exceeds `compact_after_bytes` (per-Operation,
 default 64 MiB) or when the executor runs `flz state rotate`. The SDK
-clones `Self::State` under the partition's sticky CAS, postcard-
-serializes it, ships the bytes via `partition_state_snapshot`, then
+clones `Self::State` under the segment's sticky CAS, postcard-
+serializes it, ships the bytes via `segment_state_snapshot`, then
 replies with:
 
 ```protobuf
-message CompactPartitionResponse {
-    bytes  partition_id        = 1;
+message CompactSegmentResponse {
+    bytes  segment_id          = 1;
     uint64 snapshot_seq        = 2;
     uint64 snapshot_bytes_size = 3;
 }
 ```
 
-### Control command `PartitionMailboxStatus` (controller → SDK)
+### Control command `SegmentMailboxStatus` (controller → SDK)
 
 ```protobuf
-message PartitionMailboxStatus {
-    bytes  partition_id = 1;
+message SegmentMailboxStatus {
+    bytes  segment_id   = 1;
     string status       = 2;   // "full" | "open"
 }
 ```
@@ -1218,15 +1218,15 @@ message PartitionMailboxStatus {
 One-way notification (no `CommandResponse`). The controller's `WalWriter`
 emits `"full"` when `pending_bytes` exceeds `wal_high_watermark_bytes`
 (default 16 MiB) and `"open"` when it falls below
-`wal_low_watermark_bytes` (default `high / 2`). The SDK's per-Partition
+`wal_low_watermark_bytes` (default `high / 2`). The SDK's per-Segment
 mailbox observer translates the signal into the channel's declared
 `OverflowPolicy`.
 
 ### Plugin metadata: `flezha.dedup_key`
 
 Reserved metadata key on plugin-bound emit frames. The SDK runtime
-stamps `flezha.dedup_key = "<relay_class>/<shard_id>/<partition_key>/<seq>"`
-on every emit issued during a `state.apply(...)`-driven `Shard::run`.
+stamps `flezha.dedup_key = "<operative_class>/<operation_id>/<segment_key>/<seq>"`
+on every emit issued during a `state.apply(...)`-driven `Operation::run`.
 Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka`) honor it as the
 sink-side dedup key; user-supplied `flezha.dedup_key` is silently
 dropped by the SDK runtime.

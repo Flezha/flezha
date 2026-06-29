@@ -23,7 +23,7 @@ defmodule Flezha.Executor.ControlUnit do
   reply within `timeout_ms` (default 2 s), or `{:error, reason}` for any
   transport or decode failure.
 
-  Used by `Flezha.Relay.Overwatch.complete_init/3` before `:start_relay` to
+  Used by `Flezha.Operative.Overwatch.complete_init/3` before `:start_operative` to
   prove the control channel is end-to-end healthy. A timeout here signals a
   stale `stream_ref` that the bound `ControlChannel` cannot detect on its
   own (writes succeed against a closed transport with no failure signal).
@@ -53,42 +53,42 @@ defmodule Flezha.Executor.ControlUnit do
     do: Application.get_env(:flezha, :overwatch_ping_timeout_ms, 2_000)
 
   @doc """
-  Sends a `RelayMessage` to the SDK-side relay via the control
-  channel and returns the decoded `RelayMessageResponse`.
+  Sends a `OperationMessage` to the SDK-side operative via the control
+  channel and returns the decoded `OperationMessageResponse`.
 
-  Mirrors the `PartitionState` request/reply pattern: the compute engine's
-  reply (a protobuf-encoded `RelayMessageResponse`) is delivered by
+  Mirrors the `SegmentState` request/reply pattern: the compute engine's
+  reply (a protobuf-encoded `OperationMessageResponse`) is delivered by
   `handle_payload/2` as the `raw_data` field of the outer `CommandResponse`.
   An empty `error` string is mapped to `{:ok, payload}`; a non-empty error
   becomes `{:error, error}`. Transport-layer or encoding failures surface as
   `{:error, reason}` unchanged.
   """
-  @spec send_relay_message(binary(), binary(), binary()) ::
+  @spec send_operation_message(binary(), binary(), binary()) ::
           {:ok, binary()} | {:error, term()}
-  def send_relay_message(executor_id, relay_id, payload)
-      when is_binary(executor_id) and is_binary(relay_id) and is_binary(payload) do
-    command = %ExecutorCommands.RelayMessage{
-      relay_id: relay_id,
+  def send_operation_message(executor_id, operative_id, payload)
+      when is_binary(executor_id) and is_binary(operative_id) and is_binary(payload) do
+    command = %ExecutorCommands.OperationMessage{
+      operative_id: operative_id,
       payload: payload
     }
 
     case GenServer.call(
            Identificator.control_unit(executor_id),
-           {:send_control, {:relay_message, command}}
+           {:send_control, {:operation_message, command}}
          ) do
-      {:ok, raw_data} -> decode_relay_message_response(raw_data)
+      {:ok, raw_data} -> decode_operation_message_response(raw_data)
       {:error, _} = err -> err
     end
   catch
     :exit, reason -> {:error, {:control_unit_exit, reason}}
   end
 
-  defp decode_relay_message_response(raw_data) do
-    case ExecutorCommands.RelayMessageResponse.decode(raw_data) do
-      {:ok, %ExecutorCommands.RelayMessageResponse{error: "", payload: payload}} ->
+  defp decode_operation_message_response(raw_data) do
+    case ExecutorCommands.OperationMessageResponse.decode(raw_data) do
+      {:ok, %ExecutorCommands.OperationMessageResponse{error: "", payload: payload}} ->
         {:ok, payload}
 
-      {:ok, %ExecutorCommands.RelayMessageResponse{error: err}} ->
+      {:ok, %ExecutorCommands.OperationMessageResponse{error: err}} ->
         {:error, err}
 
       {:error, reason} ->
@@ -112,12 +112,12 @@ defmodule Flezha.Executor.ControlUnit do
   end
 
   @impl true
-  def handle_call({:get_partition_state, relay_id}, from, state) do
+  def handle_call({:get_segment_state, operative_id}, from, state) do
     case ControlChannel.send_control(
            state.executor_id,
            {
-             :get_partition_state,
-             %ExecutorCommands.PartitionState{relay_id: relay_id}
+             :get_segment_state,
+             %ExecutorCommands.SegmentState{operative_id: operative_id}
            }
          ) do
       {:ok, ref} ->
@@ -198,30 +198,30 @@ defmodule Flezha.Executor.ControlUnit do
   end
 
   @impl true
-  def handle_call({:start_relay, relay}, from, state) do
+  def handle_call({:start_operative, operative}, from, state) do
     # TODO: Not sure if we should convert to map from the beginning.
     init_values =
-      case relay.init_values !== %{} do
+      case operative.init_values !== %{} do
         true ->
-          {:ok, json_iv} = Jason.encode(relay.init_values)
+          {:ok, json_iv} = Jason.encode(operative.init_values)
           json_iv
 
         false ->
           ""
       end
 
-    # Empty kind ⇒ `:relay` on the SDK side, keeping the wire frame
+    # Empty kind ⇒ `:continuous` on the SDK side, keeping the wire frame
     # byte-identical to pre-kind builds for the default kind.
-    kind = if relay.kind in [nil, :relay], do: "", else: to_string(relay.kind)
+    kind = if operative.kind in [nil, :continuous], do: "", else: to_string(operative.kind)
 
-    command = %ExecutorCommands.AddRelay{
-      relay_id: relay.id,
-      factory_id: relay.factory_id,
+    command = %ExecutorCommands.AddOperative{
+      operative_id: operative.id,
+      factory_id: operative.factory_id,
       init_values: init_values,
       kind: kind
     }
 
-    case ControlChannel.send_control(state.executor_id, {:add_relay, command}) do
+    case ControlChannel.send_control(state.executor_id, {:add_operative, command}) do
       {:ok, ref} ->
         {:noreply, store_ref(state, ref, from)}
 
@@ -231,12 +231,12 @@ defmodule Flezha.Executor.ControlUnit do
   end
 
   @impl true
-  def handle_call({:stop_relay, relay_id}, from, state) do
+  def handle_call({:stop_operative, operative_id}, from, state) do
     case ControlChannel.send_control(
            state.executor_id,
            {
-             :rem_relay,
-             %ExecutorCommands.RemRelay{relay_id: relay_id}
+             :rem_operative,
+             %ExecutorCommands.RemOperative{operative_id: operative_id}
            }
          ) do
       {:ok, ref} ->
@@ -265,12 +265,12 @@ defmodule Flezha.Executor.ControlUnit do
   end
 
   @impl true
-  def handle_cast({:stop_relay_async, relay_id}, state) do
+  def handle_cast({:stop_operative_async, operative_id}, state) do
     ControlChannel.send_control_async(
       state.executor_id,
       {
-        :rem_relay,
-        %ExecutorCommands.RemRelay{relay_id: relay_id}
+        :rem_operative,
+        %ExecutorCommands.RemOperative{operative_id: operative_id}
       }
     )
 
@@ -363,7 +363,7 @@ defmodule Flezha.Executor.ControlUnit do
     else
       Logger.warning(
         "[ControlUnit] executor=#{state.executor_id} #{length(stuck)} control reply(s) " <>
-          "unacked >= #{evict_ms}ms — evicting executor and rebinding its relays"
+          "unacked >= #{evict_ms}ms — evicting executor and rebinding its operatives"
       )
 
       refs = fail_stuck_refs(state.response_refs, stuck)

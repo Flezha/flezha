@@ -51,7 +51,7 @@ The archive MUST NOT contain any other top-level files or directories. The archi
 - `id`: binary matching `~r/^[a-z0-9][a-z0-9_]*$/` and no longer than 64 characters
 - `version`: binary parseable by `Version.parse/1` (SemVer)
 - `modules`: non-empty list of atoms — every module the package defines
-- `provides`: list of maps, each with `id` (binary, unique within the manifest), `provider` (atom, present in `modules`), `subscriptions` (list of `{atom, keyword}`), `default_opts` (map), and `scope` (atom, `:relay` only in this release)
+- `provides`: list of maps, each with `id` (binary, unique within the manifest), `provider` (atom, present in `modules`), `subscriptions` (list of `{atom, keyword}`), `default_opts` (map), and `scope` (atom, `:operative` only in this release)
 - `dependencies`: list of `{plugin_id, constraint}` where `constraint` is a Version-compatible requirement string (e.g. `">= 1.0.0"`, `"~> 2.3"`); MAY be `[]`
 
 The manifest MUST be evaluated inside a restricted binding that disables `import`, `require`, and `use`, and its abstract syntax tree MUST contain only literal nodes (maps, lists, tuples, atoms, binaries, integers, module aliases). The installer MUST reject any manifest whose AST contains function calls or variable references.
@@ -412,24 +412,24 @@ The Installer SHALL publish the set of known installed plugin ids via a queryabl
 - **WHEN** `Recovery.PluginStore` has a row for plugin id `k` whose provider is loaded (the plugin is `:enabled` in the installer catalog)
 - **THEN** `Recovery.Coordinator` MUST re-subscribe that row exactly as it does today for compiled-in plugins
 
-### Requirement: Hook subscription names use canonical Relay vocabulary
+### Requirement: Hook subscription names use canonical Operative vocabulary
 
-Plugin installation SHALL accept subscription specs that reference extension hooks by their canonical names. The init-state hook is `:on_relay_init` (formerly `:on_processor_init`); other hook names that previously contained "processor" SHALL likewise use "relay". Settings serialization SHALL persist the new names; reading a settings file that contains `:on_processor_init` SHALL produce an explicit error suggesting the user re-author the settings (no silent translation).
+Plugin installation SHALL accept subscription specs that reference extension hooks by their canonical names. The init-state hook is `:on_operative_init` (formerly `:on_processor_init`); other hook names that previously contained "processor" SHALL likewise use "operative". Settings serialization SHALL persist the new names; reading a settings file that contains `:on_processor_init` SHALL produce an explicit error suggesting the user re-author the settings (no silent translation).
 
-#### Scenario: Plugin subscribes to on_relay_init
-- **WHEN** a plugin subscription is installed with `subscriptions: [{:on_relay_init, [position: 0]}]`
-- **THEN** the installation MUST succeed and the persisted settings file SHALL serialize the hook name as `on_relay_init`
+#### Scenario: Plugin subscribes to on_operative_init
+- **WHEN** a plugin subscription is installed with `subscriptions: [{:on_operative_init, [position: 0]}]`
+- **THEN** the installation MUST succeed and the persisted settings file SHALL serialize the hook name as `on_operative_init`
 
 #### Scenario: Settings file with legacy hook name fails loud
 - **WHEN** the settings file contains a subscription to `:on_processor_init`
-- **THEN** plugin loading MUST return `{:error, {:unknown_hook, :on_processor_init}}` and SHALL NOT fall back to `:on_relay_init` silently
+- **THEN** plugin loading MUST return `{:error, {:unknown_hook, :on_processor_init}}` and SHALL NOT fall back to `:on_operative_init` silently
 
 ### Requirement: Settings payload schema uses canonical names
 
-The plugin settings payload (the JSON serialized at `cli_manager.ex` and on disk) SHALL use field names: `relay_id`, `executor_id`, `controller_id`. Fields previously named `processor_id`, `compute_engine_id`, or `agent_id` SHALL be renamed in the schema; reading a settings file with the legacy field names SHALL return an error.
+The plugin settings payload (the JSON serialized at `cli_manager.ex` and on disk) SHALL use field names: `operative_id`, `executor_id`, `controller_id`. Fields previously named `processor_id`, `compute_engine_id`, or `agent_id` SHALL be renamed in the schema; reading a settings file with the legacy field names SHALL return an error.
 
 #### Scenario: Modern settings round-trip
-- **WHEN** a plugin is installed with payload referencing `relay_id` and `executor_id`
+- **WHEN** a plugin is installed with payload referencing `operative_id` and `executor_id`
 - **THEN** the on-disk settings file SHALL contain those exact field names; reloading the Controller MUST produce the same in-memory plugin state
 
 #### Scenario: Legacy field names rejected

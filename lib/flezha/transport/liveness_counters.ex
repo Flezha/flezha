@@ -2,14 +2,14 @@ defmodule Flezha.Transport.LivenessCounters do
   @moduledoc """
   Always-on, lock-free liveness counters for the controller data plane.
 
-  Each `StreamChannel` and `Relay.Overwatch` owns an `:atomics`-backed
+  Each `StreamChannel` and `Operative.Overwatch` owns an `:atomics`-backed
   `:counters` array and bumps slots locally (single-process, no contention).
   The ref is registered in a public ETS table so the `:flezha_transport`
   observability source and the convergence stall classifier can read every
-  channel/relay's counters in one lock-free scan.
+  channel/operative's counters in one lock-free scan.
 
   Cardinality is bounded: one entry per channel (executor + stream name) and
-  one per relay instance — never per frame. Entries whose owner process has
+  one per operative instance — never per frame. Entries whose owner process has
   died are pruned on the next `snapshot_all/0`.
 
   Counters mirror the `Flezha.Observability.Counters` pattern (sub-100ns
@@ -36,9 +36,9 @@ defmodule Flezha.Transport.LivenessCounters do
     :hb_count,
     :hb_dispatches
   ]
-  @relay_slots [:io_in_received, :forwarded, :filtered_nil]
+  @operative_slots [:io_in_received, :forwarded, :filtered_nil]
   @channel_size length(@channel_slots)
-  @relay_size length(@relay_slots)
+  @operative_size length(@operative_slots)
 
   @doc """
   Whether the ~1 Hz driver poll + stall classifier should run. The counters
@@ -92,14 +92,14 @@ defmodule Flezha.Transport.LivenessCounters do
   end
 
   @doc """
-  Register a relay's counter array, keyed by `relay_id`. Pass `self()` as the
+  Register a operative's counter array, keyed by `operative_id`. Pass `self()` as the
   owner. Returns the `:counters` ref.
   """
-  @spec register_relay(term()) :: :counters.counters_ref()
-  def register_relay(relay_id) do
+  @spec register_operative(term()) :: :counters.counters_ref()
+  def register_operative(operative_id) do
     ensure_table()
-    ref = :counters.new(@relay_size, [:atomics])
-    :ets.insert(@table, {{:relay, relay_id}, ref, self()})
+    ref = :counters.new(@operative_size, [:atomics])
+    :ets.insert(@table, {{:operative, operative_id}, ref, self()})
     ref
   end
 
@@ -151,10 +151,10 @@ defmodule Flezha.Transport.LivenessCounters do
   def set_channel(nil, _slot, _value), do: :ok
   def set_channel(ref, slot, value), do: :counters.put(ref, channel_index(slot), value)
 
-  @doc "Increment a relay counter slot by one."
-  @spec bump_relay(:counters.counters_ref() | nil, atom()) :: :ok
-  def bump_relay(nil, _slot), do: :ok
-  def bump_relay(ref, slot), do: :counters.add(ref, relay_index(slot), 1)
+  @doc "Increment a operative counter slot by one."
+  @spec bump_operative(:counters.counters_ref() | nil, atom()) :: :ok
+  def bump_operative(nil, _slot), do: :ok
+  def bump_operative(ref, slot), do: :counters.add(ref, operative_index(slot), 1)
 
   # Compile each slot atom to its 1-based `:counters` index (same perf as
   # hand-written clauses, derived from the layout so the two never drift).
@@ -162,34 +162,34 @@ defmodule Flezha.Transport.LivenessCounters do
     defp channel_index(unquote(slot)), do: unquote(idx)
   end
 
-  for {slot, idx} <- Enum.with_index(@relay_slots, 1) do
-    defp relay_index(unquote(slot)), do: unquote(idx)
+  for {slot, idx} <- Enum.with_index(@operative_slots, 1) do
+    defp operative_index(unquote(slot)), do: unquote(idx)
   end
 
   # ---------- read side ----------
 
   @doc """
-  Snapshot every live channel and relay counter array, pruning entries whose
-  owner has died. Returns `%{channels: [...], relays: [...]}`.
+  Snapshot every live channel and operative counter array, pruning entries whose
+  owner has died. Returns `%{channels: [...], operatives: [...]}`.
   """
-  @spec snapshot_all() :: %{channels: [map()], relays: [map()]}
+  @spec snapshot_all() :: %{channels: [map()], operatives: [map()]}
   def snapshot_all() do
     case :ets.whereis(@table) do
       :undefined ->
-        %{channels: [], relays: []}
+        %{channels: [], operatives: []}
 
       _ ->
         entries = :ets.tab2list(@table)
 
-        {channels, relays} =
+        {channels, operatives} =
           Enum.reduce(entries, {[], []}, fn {key, ref, owner}, {chans, rels} ->
             if Process.alive?(owner) do
               case key do
                 {:channel, executor_id, name} ->
                   {[channel_snapshot(executor_id, name, ref) | chans], rels}
 
-                {:relay, relay_id} ->
-                  {chans, [relay_snapshot(relay_id, ref) | rels]}
+                {:operative, operative_id} ->
+                  {chans, [operative_snapshot(operative_id, ref) | rels]}
 
                 # Driver server refs are polled via `driver_refs/0`, not here.
                 {:driver, _executor_id, _type} ->
@@ -201,7 +201,7 @@ defmodule Flezha.Transport.LivenessCounters do
             end
           end)
 
-        %{channels: channels, relays: relays}
+        %{channels: channels, operatives: operatives}
     end
   end
 
@@ -209,8 +209,8 @@ defmodule Flezha.Transport.LivenessCounters do
     snapshot(@channel_slots, ref, %{executor_id: executor_id, name: name})
   end
 
-  defp relay_snapshot(relay_id, ref) do
-    snapshot(@relay_slots, ref, %{relay_id: relay_id})
+  defp operative_snapshot(operative_id, ref) do
+    snapshot(@operative_slots, ref, %{operative_id: operative_id})
   end
 
   # Read every slot of `ref` into `base`, keyed by the layout's slot atoms.

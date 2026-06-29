@@ -101,7 +101,7 @@ fn handle_start(args: &[String]) {
 
 // Exit codes (per controller-graceful-shutdown spec):
 //   0 — clean shutdown
-//   1 — partial drain (timeout elapsed, some Relays still local)
+//   1 — partial drain (timeout elapsed, some Operatives still local)
 //   2 — already shutting down (or coordinator not addressable)
 //   3 — controller socket unreachable
 fn handle_stop(args: &[String]) {
@@ -319,7 +319,7 @@ fn print_stop_help() {
     println!();
     println!("EXIT CODES:");
     println!("    0   Clean shutdown (or `--force` finalised cleanly)");
-    println!("    1   Partial drain (timeout elapsed; some Relays still local)");
+    println!("    1   Partial drain (timeout elapsed; some Operatives still local)");
     println!("    2   Already shutting down (the in-flight outcome is reported)");
     println!("    3   Controller not reachable on the CLI socket");
 }

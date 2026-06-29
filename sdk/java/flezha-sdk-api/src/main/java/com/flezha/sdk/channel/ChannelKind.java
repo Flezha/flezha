@@ -1,8 +1,8 @@
 package com.flezha.sdk.channel;
 
-/** Kind of channel — entry (controller → SDK), inter-shard, or plugin-bound (SDK → plugin). */
+/** Kind of channel — entry (controller → SDK), inter-operation, or plugin-bound (SDK → plugin). */
 public enum ChannelKind {
     ENTRY,
-    INTER_SHARD,
+    INTER_OPERATION,
     PLUGIN_BOUND
 }

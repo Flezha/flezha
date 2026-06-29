@@ -116,7 +116,7 @@ audit subsystem is enabled.
 
 ## 4. Namespaces and quotas
 
-Namespaces are the hard tenancy boundary. Every Relay, persistent
+Namespaces are the hard tenancy boundary. Every Operative, persistent
 state file, audit record, and observability signal carries one.
 Name format: `[a-z][a-z0-9-]{0,62}`. `_system` is reserved.
 
@@ -126,14 +126,14 @@ $ flz ns create tenant-a
 
 # create with per-namespace caps
 $ flz ns create tenant-b \
-    --quota max_relays=20 \
-    --quota max_partitions_per_relay=128
+    --quota max_operatives=20 \
+    --quota max_segments_per_operative=128
 
 $ flz ns list
 $ flz ns show tenant-a
 
 # raise (or lower) quotas in place
-$ flz ns set-quota tenant-a max_relays=200
+$ flz ns set-quota tenant-a max_operatives=200
 
 # delete an empty namespace (counters dropped)
 $ flz ns delete tenant-a
@@ -143,8 +143,8 @@ Enforced quota kinds and their defaults:
 
 | Key                            | Default        | Enforced at                       |
 | ------------------------------ | -------------- | --------------------------------- |
-| `max_relays`                   | `100`          | `RelayManager.start_relay/2`      |
-| `max_partitions_per_relay`     | `1_024`        | `RelayManager.start_relay/2`      |
+| `max_operatives`               | `100`          | `OperativeManager.start_operative/2` |
+| `max_segments_per_operative`   | `1_024`        | `OperativeManager.start_operative/2` |
 | `max_mailbox_bytes_total`      | `256 MiB`      | follow-up (`-namespace-state`)    |
 | `max_message_rate_per_second`  | `100_000`      | follow-up (`-namespace-state`)    |
 | `max_disk_bytes_total`         | `100 GiB`      | follow-up (`-namespace-state`)    |
@@ -284,5 +284,5 @@ backup purposes. Copy it alongside `app_data/state/` and
     — module map, supervision-tree placement, internal contracts.
   * [`docs/audit_log.md`](audit_log.md) — JSONL record schema,
     `:platform_authz` subscription, principal denormalisation.
-  * `docs/glossary.md` — Controller / Executor / Relay / Shard /
-    Partition vocabulary used in role-action names.
+  * `docs/glossary.md` — Controller / Executor / Operative / Operation /
+    Segment vocabulary used in role-action names.

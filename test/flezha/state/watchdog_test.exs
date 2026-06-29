@@ -1,9 +1,9 @@
 defmodule Flezha.State.WatchdogTest do
   @moduledoc """
-  Defect B: the per-Partition output-staleness sweep and the
-  compaction-handshake timeout. A live Partition whose persisted seq
-  freezes is detected and resynced; a genuinely idle Partition is not
-  flagged; a `CompactPartition` whose snapshot never returns is timed out
+  Defect B: the per-Segment output-staleness sweep and the
+  compaction-handshake timeout. A live Segment whose persisted seq
+  freezes is detected and resynced; a genuinely idle Segment is not
+  flagged; a `CompactSegment` whose snapshot never returns is timed out
   and recovered, and stays retriable.
   """
 
@@ -36,8 +36,8 @@ defmodule Flezha.State.WatchdogTest do
 
     parent = self()
 
-    Application.put_env(:flezha, :state_resync_fun, fn partition_id, opts ->
-      send(parent, {:resync_called, partition_id, opts})
+    Application.put_env(:flezha, :state_resync_fun, fn segment_id, opts ->
+      send(parent, {:resync_called, segment_id, opts})
       {:ok, make_ref()}
     end)
 
@@ -72,7 +72,7 @@ defmodule Flezha.State.WatchdogTest do
   end
 
   defp live_writer(suffix, header) do
-    pid = TestHelpers.sample_partition_id(suffix <> uniq())
+    pid = TestHelpers.sample_segment_id(suffix <> uniq())
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
     :ok = WalWriter.append(w, 0, header, "z")
@@ -81,8 +81,8 @@ defmodule Flezha.State.WatchdogTest do
     {pid, w}
   end
 
-  test "a live partition whose seq froze is flagged and resynced", %{header: header} do
-    {partition_id, writer} = live_writer("stall_", header)
+  test "a live segment whose seq froze is flagged and resynced", %{header: header} do
+    {segment_id, writer} = live_writer("stall_", header)
 
     # Let the advance window lapse, then keep Changes arriving (duplicates)
     # without advancing the seq — the stall signature.
@@ -93,16 +93,16 @@ defmodule Flezha.State.WatchdogTest do
 
     assert_receive {:output_stall, %{stalled_ms: ms, last_seq: 2}, meta}, 1_000
     assert ms >= @stall_ms
-    # `relay_instance` is the rebind target the convergence Loop consumes;
-    # by the flezha convention it equals the on-disk `relay_class`.
-    assert meta.relay_instance == "TestRelay"
-    assert meta.relay_class == "TestRelay"
-    assert_receive {:resync_called, ^partition_id, opts}, 1_000
+    # `operative_instance` is the rebind target the convergence Loop consumes;
+    # by the flezha convention it equals the on-disk `operative_class`.
+    assert meta.operative_instance == "TestOperative"
+    assert meta.operative_class == "TestOperative"
+    assert_receive {:resync_called, ^segment_id, opts}, 1_000
     assert opts[:reason] == :output_stall
   end
 
-  test "a genuinely idle partition is not flagged", %{header: header} do
-    {_partition_id, _writer} = live_writer("idle_", header)
+  test "a genuinely idle segment is not flagged", %{header: header} do
+    {_segment_id, _writer} = live_writer("idle_", header)
 
     # No Changes arrive after the window lapses — last_change_seen_at goes
     # stale alongside last_advance_at, so this is idle, not stalled.
@@ -115,17 +115,17 @@ defmodule Flezha.State.WatchdogTest do
   end
 
   test "a stalled compaction times out, resyncs, and stays retriable" do
-    partition_id = TestHelpers.sample_partition_id("comp_" <> uniq())
+    segment_id = TestHelpers.sample_segment_id("comp_" <> uniq())
 
-    Watchdog.compaction_started(partition_id)
+    Watchdog.compaction_started(segment_id)
     Process.sleep(@compaction_ms * 2)
 
     :ok = Watchdog.sweep_now()
 
     assert_receive {:compaction_timeout, %{waited_ms: ms}, meta}, 1_000
     assert ms >= @compaction_ms
-    assert meta.relay == "TestRelay"
-    assert_receive {:resync_called, ^partition_id, opts}, 1_000
+    assert meta.operative == "TestOperative"
+    assert_receive {:resync_called, ^segment_id, opts}, 1_000
     assert opts[:reason] == :compaction_timeout
 
     # Entry was cleared on timeout — a second sweep does not re-fire, and
@@ -135,10 +135,10 @@ defmodule Flezha.State.WatchdogTest do
   end
 
   test "a compaction that completes before the bound never times out" do
-    partition_id = TestHelpers.sample_partition_id("compok_" <> uniq())
+    segment_id = TestHelpers.sample_segment_id("compok_" <> uniq())
 
-    Watchdog.compaction_started(partition_id)
-    Watchdog.compaction_completed(partition_id)
+    Watchdog.compaction_started(segment_id)
+    Watchdog.compaction_completed(segment_id)
     Process.sleep(@compaction_ms * 2)
 
     :ok = Watchdog.sweep_now()

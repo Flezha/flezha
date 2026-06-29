@@ -19,10 +19,10 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
   end
 
   describe "stream closed → output_stall telemetry" do
-    test "{:flz_closed} emits output_stall telemetry for every relay in relay_mapping",
+    test "{:flz_closed} emits output_stall telemetry for every operative in operative_mapping",
          %{pid: pid} do
-      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
-      :ok = GenServer.call(pid, {:relay_pid_update, "relay_b", [self()]})
+      :ok = GenServer.call(pid, {:operative_pid_update, "operative_a", [self()]})
+      :ok = GenServer.call(pid, {:operative_pid_update, "operative_b", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
       test_pid = self()
@@ -31,7 +31,7 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       :telemetry.attach(
         handler_id,
         [:flezha, :state, :output_stall],
-        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.relay_instance}) end,
+        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.operative_instance}) end,
         nil
       )
 
@@ -41,11 +41,11 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       # flush through mailbox
       _ = GenServer.call(pid, :stream_ref_status)
 
-      assert_receive {:output_stall, "relay_a"}
-      assert_receive {:output_stall, "relay_b"}
+      assert_receive {:output_stall, "operative_a"}
+      assert_receive {:output_stall, "operative_b"}
     end
 
-    test "{:flz_closed} with empty relay_mapping emits no output_stall telemetry",
+    test "{:flz_closed} with empty operative_mapping emits no output_stall telemetry",
          %{pid: pid} do
       test_pid = self()
       handler_id = "stall_test_empty_#{System.unique_integer([:positive])}"
@@ -53,7 +53,7 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       :telemetry.attach(
         handler_id,
         [:flezha, :state, :output_stall],
-        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.relay_instance}) end,
+        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.operative_instance}) end,
         nil
       )
 
@@ -122,7 +122,7 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       on_exit(fn -> :telemetry.detach(id) end)
 
       :ok = GenServer.cast(pid, {:io_in, "p1", {"msg", %{}}})
-      assert_receive {:drop, %{count: 1}, %{relay_id: "p1"}}
+      assert_receive {:drop, %{count: 1}, %{operative_id: "p1"}}
       assert GenServer.call(pid, :stream_ref_status) == nil
     end
   end
@@ -144,7 +144,7 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       :telemetry.attach(
         id,
         [:flezha, :state, :output_stall],
-        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.relay_instance}) end,
+        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.operative_instance}) end,
         nil
       )
 
@@ -162,8 +162,8 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       %{pid: pid, name: sec_name}
     end
 
-    test "idle relay that keeps heart-beating is never flagged", %{pid: pid} do
-      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
+    test "idle operative that keeps heart-beating is never flagged", %{pid: pid} do
+      :ok = GenServer.call(pid, {:operative_pid_update, "operative_a", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
       # No real output, but a fresh heartbeat lands right before the check.
@@ -175,9 +175,9 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       refute_receive {:output_stall, _}, 100
     end
 
-    test "relay whose heartbeats stop is flagged for every relay", %{pid: pid} do
-      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
-      :ok = GenServer.call(pid, {:relay_pid_update, "relay_b", [self()]})
+    test "operative whose heartbeats stop is flagged for every operative", %{pid: pid} do
+      :ok = GenServer.call(pid, {:operative_pid_update, "operative_a", [self()]})
+      :ok = GenServer.call(pid, {:operative_pid_update, "operative_b", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
       # Last heartbeat, then silence past the threshold.
@@ -185,12 +185,12 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       Process.sleep(@threshold_ms * 3)
       send(pid, :io_liveness_check)
 
-      assert_receive {:output_stall, "relay_a"}
-      assert_receive {:output_stall, "relay_b"}
+      assert_receive {:output_stall, "operative_a"}
+      assert_receive {:output_stall, "operative_b"}
     end
 
     test "unbound stream is never flagged", %{pid: pid} do
-      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
+      :ok = GenServer.call(pid, {:operative_pid_update, "operative_a", [self()]})
 
       Process.sleep(@threshold_ms * 3)
       send(pid, :io_liveness_check)
@@ -204,7 +204,7 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
       {:ok, pid} = StreamChannel.start_link({"ce_test", name, :primary})
       on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
 
-      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
+      :ok = GenServer.call(pid, {:operative_pid_update, "operative_a", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
       Process.sleep(@threshold_ms * 3)

@@ -37,7 +37,7 @@ services:
       # volumes so the bind-mounted source tree doesn't need to be rebuilt from
       # scratch on first `up`. Source changes are reflected immediately via the
       # bind mount (../../:/flezha) — this single bind also covers ProcessHub's
-      # persistent registry (`app_data/process_hub/`), per-Partition WAL files
+      # persistent registry (`app_data/process_hub/`), per-Segment WAL files
       # (`app_data/state/`), and the plugin install root (`app_data/plugins/`).
       - socket_data:/socket_data
       - ../../:/flezha

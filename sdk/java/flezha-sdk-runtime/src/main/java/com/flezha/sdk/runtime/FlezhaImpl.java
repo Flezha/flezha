@@ -5,7 +5,7 @@ import com.flezha.sdk.native_.FlezhaNativeException;
 import com.flezha.sdk.native_.FlezhaStatus;
 import com.flezha.sdk.native_.NativeEventDispatcher;
 import com.flezha.sdk.native_.NativeTransport;
-import com.flezha.sdk.relay.RelayRegistry;
+import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.CommandRouter;
 import com.flezha.sdk.runtime.control.ControlChannel;
@@ -15,9 +15,9 @@ import com.flezha.sdk.runtime.control.KeepaliveSender;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
-import com.flezha.sdk.runtime.state.PartitionStateSink;
+import com.flezha.sdk.runtime.state.SegmentStateSink;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
-import com.flezha.sdk.task.TaskRegistry;
+import com.flezha.sdk.bounded.BoundedOperativeRegistry;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -63,23 +63,23 @@ public final class FlezhaImpl implements Flezha {
      *
      * <p>Steps:
      * <ol>
-     *   <li>Freeze the {@link RelayRegistry}.</li>
+     *   <li>Freeze the {@link ContinuousOperativeRegistry}.</li>
      *   <li>Resolve config from env vars; log it at INFO.</li>
      *   <li>Create the native context.</li>
-     *   <li>Initialize the worker pool (consumed by every {@code RelayInstance}'s {@code ShardDispatcher}).</li>
+     *   <li>Initialize the worker pool (consumed by every {@code ContinuousOperativeInstance}'s {@code OperationDispatcher}).</li>
      *   <li>Open the control stream and send the handshake init JSON.</li>
      *   <li>Block until the controller replies with {@code AssignExecutorId}.</li>
      * </ol>
      */
     @Nonnull
     public static Flezha start(@Nonnull String namespace) {
-        if (RelayRegistry.isEmpty() && TaskRegistry.isEmpty()) {
+        if (ContinuousOperativeRegistry.isEmpty() && BoundedOperativeRegistry.isEmpty()) {
             throw new IllegalStateException(
-                    "No relay or task classes registered; call Flezha.registerRelay(MyRelay.class) "
-                            + "or Flezha.registerTask(MyTask.class) first.");
+                    "No operative or bounded classes registered; call Flezha.registerContinuous(MyContinuousOperative.class) "
+                            + "or Flezha.registerBounded(MyBoundedOperative.class) first.");
         }
-        RelayRegistry.freeze();
-        TaskRegistry.freeze();
+        ContinuousOperativeRegistry.freeze();
+        BoundedOperativeRegistry.freeze();
 
         FlezhaEnv.ResolvedConfig resolved = FlezhaEnv.resolveFromEnv();
         FlezhaEnv.logConfig(resolved);
@@ -200,7 +200,7 @@ public final class FlezhaImpl implements Flezha {
         // A broken-pipe flood on the data stream (control channel still alive)
         // drives a full control reconnect via the coordinator — the same
         // recovery path as an observed connection-lost event.
-        PartitionStateSink.installReconnectRequester(coordinator::onConnectionLost);
+        SegmentStateSink.installReconnectRequester(coordinator::onConnectionLost);
 
         NativeTransport.setDispatcher(nativeHandle, eventDispatcher);
 
@@ -228,7 +228,7 @@ public final class FlezhaImpl implements Flezha {
         keepalive.start();
 
         // Steady-state data-channel heartbeat: keeps the controller's per-channel
-        // liveness clock fresh even when a relay produces no real output.
+        // liveness clock fresh even when a operative produces no real output.
         DataHeartbeatSender dataHeartbeat = new DataHeartbeatSender(ctx);
         dataHeartbeat.start();
 
@@ -270,8 +270,8 @@ public final class FlezhaImpl implements Flezha {
 
     @Override
     @Nonnull
-    public Map<String, ?> getRelays() {
-        return ctx.relayInstanceRegistry().snapshot();
+    public Map<String, ?> getOperatives() {
+        return ctx.operativeInstanceRegistry().snapshot();
     }
 
     private static final class WorkerThreadFactory implements ThreadFactory {

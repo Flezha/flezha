@@ -1,29 +1,29 @@
 package com.flezha.test;
 
 import com.flezha.sdk.authoring.InitState;
-import com.flezha.sdk.authoring.PartitionFor;
-import com.flezha.sdk.authoring.Shard;
+import com.flezha.sdk.authoring.Operation;
+import com.flezha.sdk.authoring.SegmentFor;
 import java.util.List;
 import java.util.Optional;
 
 /**
- * Static-partitioned shard whose rolling-window length is encoded in the shard
- * key, supplied via {@code @InitState} (the macro default {@code new State()}
- * cannot derive it). Mirrors the market {@code sma}/{@code ohlc} shards and is
- * the Java parity twin of the Rust {@code Windowed} sugar shard.
+ * Static-segmented operation whose rolling-window length is encoded in the
+ * segment key, supplied via {@code @InitState} (the macro default
+ * {@code new State()} cannot derive it). Mirrors the market {@code sma}/{@code ohlc}
+ * operations and is the Java parity twin of the Rust {@code Windowed} sugar operation.
  */
-@Shard(id = "java_windowed", keys = {"win_2", "win_3"})
+@Operation(id = "java_windowed", keys = {"win_2", "win_3"})
 public class Windowed {
 
-    @PartitionFor
-    public List<String> partition(WindowInput input) {
+    @SegmentFor
+    public List<String> segmentFor(WindowInput input) {
         return List.of("win_2", "win_3");
     }
 
     @InitState
-    public WindowedState initState(Optional<String> shardKey) {
+    public WindowedState initState(Optional<String> operationKey) {
         WindowedState s = new WindowedState();
-        s.window = shardKey.equals(Optional.of("win_2")) ? 2 : 3;
+        s.window = operationKey.equals(Optional.of("win_2")) ? 2 : 3;
         return s;
     }
 

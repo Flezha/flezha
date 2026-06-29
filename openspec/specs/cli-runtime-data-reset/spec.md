@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The cli-runtime-data-reset capability defines a top-level `flz reset` CLI subcommand that clears the Controller's durable runtime state on disk (per-Partition WAL/snapshot tree, ProcessHub durable registry; optionally certs and sockets) so an operator can deterministically start fresh from a clean slate. The capability owns the filesystem walk (clear *contents* of well-known `app_data/` subdirectories, never the parent itself), a hard live-node guard that refuses to run while the Controller is up, idempotent semantics over missing directories, scriptable flags (`--yes`, `--dry-run`, `--include-certs`, `--include-sockets`, `--all`, `--app-data-root`, `--json`), the audit-trail output enumerating cleared paths and byte counts, and the stable exit-code contract that lets scripts distinguish "refused" from "bad usage" from "I/O error".
+The cli-runtime-data-reset capability defines a top-level `flz reset` CLI subcommand that clears the Controller's durable runtime state on disk (per-Segment WAL/snapshot tree, ProcessHub durable registry; optionally certs and sockets) so an operator can deterministically start fresh from a clean slate. The capability owns the filesystem walk (clear *contents* of well-known `app_data/` subdirectories, never the parent itself), a hard live-node guard that refuses to run while the Controller is up, idempotent semantics over missing directories, scriptable flags (`--yes`, `--dry-run`, `--include-certs`, `--include-sockets`, `--all`, `--app-data-root`, `--json`), the audit-trail output enumerating cleared paths and byte counts, and the stable exit-code contract that lets scripts distinguish "refused" from "bad usage" from "I/O error".
 
 ## Requirements
 
@@ -10,7 +10,7 @@ The cli-runtime-data-reset capability defines a top-level `flz reset` CLI subcom
 
 The CLI SHALL provide a top-level `flz reset` subcommand that clears the Controller's durable runtime state under `app_data/` so an operator can deterministically start fresh. By default the command SHALL clear the contents of:
 
-- `app_data/state/` — per-Partition WAL/snapshot/outbox files written by `relay-state-persistence`.
+- `app_data/state/` — per-Segment WAL/snapshot/outbox files written by `relay-state-persistence`.
 - `app_data/process_hub/` — ProcessHub durable registries written by `auto-restore-on-boot`.
 
 The command SHALL leave `app_data/certs/` and `app_data/sockets/` intact unless explicitly requested via `--include-certs`, `--include-sockets`, or `--all`.

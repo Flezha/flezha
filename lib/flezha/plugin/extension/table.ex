@@ -24,9 +24,9 @@ defmodule Flezha.Plugin.Extension.Table do
   Plugins enter the table in the `:prepared` phase: their
   `init_provider/1` has run, the GenServer is registered, but the provider
   has not been instructed to acquire upstream resources. The host transitions
-  every plugin to `:running` via `bulk_activate/1` once the relay's SDK side
+  every plugin to `:running` via `bulk_activate/1` once the operative's SDK side
   has confirmed bound — the provider's optional `activate/1` callback fires
-  exactly once per binding at that point. See the `relay-extensions`
+  exactly once per binding at that point. See the `operative-extensions`
   capability "Two-phase plugin lifecycle gated on SDK readiness".
   """
 
@@ -134,8 +134,8 @@ defmodule Flezha.Plugin.Extension.Table do
   by `:on_input` / `:on_output` and is naturally quiescent until input
   arrives). Already-running plugins are skipped.
 
-  Invoked by relay hosts after `start_relay_sdk/2` returns `{:ok, _}` — see
-  `relay-extensions` "Two-phase plugin lifecycle gated on SDK readiness".
+  Invoked by operative hosts after `start_operative_sdk/2` returns `{:ok, _}` — see
+  `operative-extensions` "Two-phase plugin lifecycle gated on SDK readiness".
 
   An `activate/1` callback that raises is logged at `:error` level; the
   plugin remains in `:prepared` and the host SHOULD treat the binding as
@@ -295,7 +295,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
       entry ->
         ctx = %Ctx.Tick{
-          relay_id: Map.get(table.plugins, plugin_id).relay_id,
+          operative_id: Map.get(table.plugins, plugin_id).operative_id,
           namespace: Map.get(table.plugins, plugin_id).namespace,
           executor_id: nil,
           plugin_id: plugin_id

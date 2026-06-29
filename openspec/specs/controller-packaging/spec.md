@@ -178,7 +178,7 @@ The image inherits the prod image's HEALTHCHECK (control-socket readiness, see t
 2. If `FLEZHA_TESTNET_WS_PORT` is set and `/flezha/testnet/dist/index.js` exists, also background the testnet WS server (no-op in `:latest`; consumed by `:latest-dev` via inheritance).
 3. If `FLEZHA_SNAPSHOT_ENABLED` is unset or truthy AND a snapshot file exists at `${FLEZHA_SNAPSHOT_DIR:-/flezha/app_data/snapshots}/latest.flz`, optionally wait up to `${FLEZHA_RESTORE_WAIT_TIMEOUT_S:-60}` seconds for an SDK socket matching `${FLEZHA_RESTORE_WAIT_SOCKET_GLOB}` (empty default = no wait), then run `flz cluster restore` against the snapshot file with `--warn-if-older-than ${FLEZHA_SNAPSHOT_STALENESS_THRESHOLD_S:-86400}s --peer-timeout-ms ${FLEZHA_SNAPSHOT_PEER_TIMEOUT_MS:-5000}`.
 4. Install a SIGTERM/SIGINT trap whose behaviour depends on `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` (default `true`):
-   - **Enabled** (default): the trap SHALL `exec /flezha/bin/flz controller stop --timeout-ms "${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}"`. The CLI's RPC drives `Flezha.Shutdown.Coordinator` inside the BEAM (quiesce → drain via HotSwap → finalise). `snapshot-on-stop.sh` is NOT invoked on this branch — HotSwap migration replaces snapshot-driven restart-survival for steady-state Relays.
+   - **Enabled** (default): the trap SHALL `exec /flezha/bin/flz controller stop --timeout-ms "${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}"`. The CLI's RPC drives `Flezha.Shutdown.Coordinator` inside the BEAM (quiesce → drain via HotSwap → finalise). `snapshot-on-stop.sh` is NOT invoked on this branch — HotSwap migration replaces snapshot-driven restart-survival for steady-state Operatives.
    - **Disabled** (`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` set to `false`/`0`/`no`/`off` case-insensitive): the trap SHALL run `/usr/local/bin/snapshot-on-stop.sh` then `kill -TERM` the agent — today's behaviour. This branch exists as the kill-switch fall-through and is removed once `auto-restore-on-boot` lands and `cluster-snapshot-restore` is deleted.
 5. `wait` on the agent PID.
 
@@ -196,13 +196,13 @@ The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_
 
 - **GIVEN** `/flezha/app_data/snapshots/latest.flz` written by a prior graceful stop with snapshot mode
 - **WHEN** the container starts
-- **THEN** the entrypoint waits for SDK readiness (if `FLEZHA_RESTORE_WAIT_SOCKET_GLOB` is set) then logs `graceful-restart: restoring from <path>` and runs `flz cluster restore`; the CLI exits 0 and the agent serves restored relays
+- **THEN** the entrypoint waits for SDK readiness (if `FLEZHA_RESTORE_WAIT_SOCKET_GLOB` is set) then logs `graceful-restart: restoring from <path>` and runs `flz cluster restore`; the CLI exits 0 and the agent serves restored operatives
 
 #### Scenario: SIGTERM with graceful shutdown enabled drives the BEAM coordinator
 
-- **GIVEN** a running container with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=true` (default), one Relay locally hosted, and a peer container reachable
+- **GIVEN** a running container with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=true` (default), one Operative locally hosted, and a peer container reachable
 - **WHEN** the orchestrator sends SIGTERM (e.g. `docker stop`)
-- **THEN** the entrypoint trap execs `/flezha/bin/flz controller stop --timeout-ms <timeout>`; the CLI streams drain progress; the BEAM exits cleanly within `stop_grace_period`; the Relay is alive on the peer; `snapshot-on-stop.sh` is NOT invoked
+- **THEN** the entrypoint trap execs `/flezha/bin/flz controller stop --timeout-ms <timeout>`; the CLI streams drain progress; the BEAM exits cleanly within `stop_grace_period`; the Operative is alive on the peer; `snapshot-on-stop.sh` is NOT invoked
 
 #### Scenario: SIGTERM with graceful shutdown disabled writes a snapshot before exit
 
@@ -233,9 +233,9 @@ Operators changing `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` MUST update `stop_grace
 
 #### Scenario: `docker compose stop` lets the BEAM drain without SIGKILL
 
-- **GIVEN** a `docker compose up` of `docker/prod/docker-compose.yml` with a controller hosting one Relay and a peer service running
+- **GIVEN** a `docker compose up` of `docker/prod/docker-compose.yml` with a controller hosting one Operative and a peer service running
 - **WHEN** the operator runs `docker compose stop`
-- **THEN** docker sends SIGTERM (per `stop_signal`); the controller drains within 60 s; the 75 s `stop_grace_period` elapses without docker escalating to SIGKILL; the controller exits cleanly; the Relay is running on the peer
+- **THEN** docker sends SIGTERM (per `stop_signal`); the controller drains within 60 s; the 75 s `stop_grace_period` elapses without docker escalating to SIGKILL; the controller exits cleanly; the Operative is running on the peer
 
 ### Requirement: K8s DaemonSet SHALL declare a preStop hook and a tuned termination grace period
 
@@ -248,9 +248,9 @@ Operators changing `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` MUST update `stop_grace
 
 #### Scenario: K8s pod deletion runs preStop, then SIGTERM, exits within grace
 
-- **GIVEN** a controller pod hosting one Relay with a peer pod available
+- **GIVEN** a controller pod hosting one Operative with a peer pod available
 - **WHEN** the operator runs `kubectl delete pod <pod>`
-- **THEN** k8s runs `flz controller stop --timeout-ms 60000` via preStop (which drives `Flezha.Shutdown.Coordinator` to drain the Relay to the peer), then sends SIGTERM (the SignalHandler observes it as a second-signal during shutdown and ignores), then waits up to 75 s; the pod exits cleanly with the Relay running on the peer
+- **THEN** k8s runs `flz controller stop --timeout-ms 60000` via preStop (which drives `Flezha.Shutdown.Coordinator` to drain the Operative to the peer), then sends SIGTERM (the SignalHandler observes it as a second-signal during shutdown and ignores), then waits up to 75 s; the pod exits cleanly with the Operative running on the peer
 
 #### Scenario: Operator-tuned timeout takes effect via configmap
 
@@ -350,6 +350,6 @@ A workflow (either `.github/workflows/elixir.yml` or a dedicated `docker.yml`) S
 
 #### Scenario: PR that doesn't touch packaging skips the gate
 
-- **GIVEN** a PR whose diff is exclusively under `lib/flezha/relay/**`
+- **GIVEN** a PR whose diff is exclusively under `lib/flezha/operative/**`
 - **WHEN** CI runs
 - **THEN** the docker-size gate is not triggered (the workflow's path filter excludes the change)

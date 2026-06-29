@@ -7,9 +7,9 @@ defmodule Flezha.Healthz.ServerTest do
   Covered scenarios match the `convergence-self-healing` capability:
     * `/` returns `pong\\n`
     * `/healthz` returns 200 healthy after a tick observation with
-      no stalled relays.
-    * `/healthz` returns 200 `degraded` when a relay is output-stalled
-      (`producing_relays < bound_relays`) — a stalled relay is the
+      no stalled operatives.
+    * `/healthz` returns 200 `degraded` when a operative is output-stalled
+      (`producing_operatives < bound_operatives`) — a stalled operative is the
       Loop's job to rebind, NOT a kubelet restart signal.
     * `/healthz` returns 503 with `reason: "tick_stale"` only when the
       Loop is wedged (ticks stopped past `tick_ms × 3`).
@@ -37,9 +37,9 @@ defmodule Flezha.Healthz.ServerTest do
       # not bleed into other suites.
       Snapshot.publish(%{
         last_tick_at: nil,
-        stalled_relays: [],
-        bound_relays: 0,
-        producing_relays: 0
+        stalled_operatives: [],
+        bound_operatives: 0,
+        producing_operatives: 0
       })
 
       Snapshot.reset_recovery_states()
@@ -53,14 +53,14 @@ defmodule Flezha.Healthz.ServerTest do
   end
 
   # Publish a convergence snapshot the way the Loop would, so the reader
-  # under test has live state to format. `producing_relays` is derived as
+  # under test has live state to format. `producing_operatives` is derived as
   # `bound - stalled`, mirroring the Loop.
   defp publish_tick(stalled, bound \\ 0) do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_relays: stalled,
-      bound_relays: bound,
-      producing_relays: max(bound - length(stalled), 0),
+      stalled_operatives: stalled,
+      bound_operatives: bound,
+      producing_operatives: max(bound - length(stalled), 0),
       tick_latency_p99_ms: 0,
       tick_breach_streak: 0
     })
@@ -104,7 +104,7 @@ defmodule Flezha.Healthz.ServerTest do
   end
 
   test "output stalled → 200 degraded (not a restart signal)", %{port: port} do
-    # One of two bound relays stalled: producing(1) < bound(2).
+    # One of two bound operatives stalled: producing(1) < bound(2).
     publish_tick(["btc_kraken"], 2)
 
     {status, _headers, body} = get(port, "/healthz")
@@ -117,20 +117,20 @@ defmodule Flezha.Healthz.ServerTest do
     else
       assert status == 200
       assert decoded["status"] == "degraded"
-      assert decoded["bound_relays"] == 2
-      assert decoded["producing_relays"] == 1
-      assert decoded["stalled_relays"] == ["btc_kraken"]
+      assert decoded["bound_operatives"] == 2
+      assert decoded["producing_operatives"] == 1
+      assert decoded["stalled_operatives"] == ["btc_kraken"]
     end
   end
 
-  test "plugin-degraded relay → 200 degraded with reason plugin_unhealthy", %{port: port} do
-    # One of two bound relays has declared plugins missing/unhealthy.
+  test "plugin-degraded operative → 200 degraded with reason plugin_unhealthy", %{port: port} do
+    # One of two bound operatives has declared plugins missing/unhealthy.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_relays: [],
-      plugin_degraded_relays: ["btc_kraken"],
-      bound_relays: 2,
-      producing_relays: 1
+      stalled_operatives: [],
+      plugin_degraded_operatives: ["btc_kraken"],
+      bound_operatives: 2,
+      producing_operatives: 1
     })
 
     {status, _headers, body} = get(port, "/healthz")
@@ -143,19 +143,19 @@ defmodule Flezha.Healthz.ServerTest do
       assert status == 200
       assert decoded["status"] == "degraded"
       assert decoded["reason"] == "plugin_unhealthy"
-      assert decoded["plugin_degraded_relays"] == ["btc_kraken"]
+      assert decoded["plugin_degraded_operatives"] == ["btc_kraken"]
     end
   end
 
-  test "relays declared but not yet bound → 200 recovering (post-restart rebind)", %{port: port} do
-    # 3 relays intended, only 1 actually bound (controller mid-rebind). Capable-
+  test "operatives declared but not yet bound → 200 recovering (post-restart rebind)", %{port: port} do
+    # 3 operatives intended, only 1 actually bound (controller mid-rebind). Capable-
     # but-not-ready must read recovering, never healthy.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_relays: [],
-      intended_relays: 3,
-      bound_relays: 1,
-      producing_relays: 1,
+      stalled_operatives: [],
+      intended_operatives: 3,
+      bound_operatives: 1,
+      producing_operatives: 1,
       tick_latency_p99_ms: 0,
       tick_breach_streak: 0
     })
@@ -164,17 +164,17 @@ defmodule Flezha.Healthz.ServerTest do
     assert status == 200
     decoded = Jason.decode!(body)
     assert decoded["status"] == "recovering"
-    assert decoded["reason"] == "relays_rebinding"
-    assert decoded["bound_relays"] == 1
-    assert decoded["intended_relays"] == 3
+    assert decoded["reason"] == "operatives_rebinding"
+    assert decoded["bound_operatives"] == 1
+    assert decoded["intended_operatives"] == 3
   end
 
-  test "relays declared but unbound PAST the grace → 200 degraded (not silent recovering)",
+  test "operatives declared but unbound PAST the grace → 200 degraded (not silent recovering)",
        %{port: port} do
-    # The silent-30h-outage gap: a relay declared but never bound must not sit
+    # The silent-30h-outage gap: a operative declared but never bound must not sit
     # at `recovering` forever. Once `unmet_intent_ms` exceeds the grace the
     # reader escalates to `degraded` so it alarms (still 200 — a restart can't
-    # re-bind an orphaned relay).
+    # re-bind an orphaned operative).
     prev = Application.get_env(:flezha, :convergence_unmet_intent_grace_ms)
     Application.put_env(:flezha, :convergence_unmet_intent_grace_ms, 100)
 
@@ -186,10 +186,10 @@ defmodule Flezha.Healthz.ServerTest do
 
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_relays: [],
-      intended_relays: 1,
-      bound_relays: 0,
-      producing_relays: 0,
+      stalled_operatives: [],
+      intended_operatives: 1,
+      bound_operatives: 0,
+      producing_operatives: 0,
       unmet_intent_ms: 5_000,
       tick_latency_p99_ms: 0,
       tick_breach_streak: 0
@@ -200,23 +200,23 @@ defmodule Flezha.Healthz.ServerTest do
     decoded = Jason.decode!(body)
     refute decoded["status"] == "healthy"
     assert decoded["status"] == "degraded"
-    assert decoded["reason"] == "relays_unbound"
-    assert decoded["intended_relays"] == 1
-    assert decoded["bound_relays"] == 0
+    assert decoded["reason"] == "operatives_unbound"
+    assert decoded["intended_operatives"] == 1
+    assert decoded["bound_operatives"] == 0
     assert decoded["unmet_intent_ms"] == 5_000
   end
 
   test "durable registry pending → 200 recovering (post-restart, registry not loaded yet)",
        %{port: port} do
     # Hubs start lazily on executor reconnect, so right after a restart Intent is
-    # empty (intended == 0) while relays.dets still sits on disk. This must read
+    # empty (intended == 0) while operatives.dets still sits on disk. This must read
     # recovering, never vacuously healthy — `bound < intended` (0 < 0) misses it.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_relays: [],
-      intended_relays: 0,
-      bound_relays: 0,
-      producing_relays: 0,
+      stalled_operatives: [],
+      intended_operatives: 0,
+      bound_operatives: 0,
+      producing_operatives: 0,
       pending_restore: true,
       tick_latency_p99_ms: 0,
       tick_breach_streak: 0
@@ -227,20 +227,20 @@ defmodule Flezha.Healthz.ServerTest do
     decoded = Jason.decode!(body)
     assert decoded["status"] == "recovering"
     assert decoded["reason"] == "restoring_registry"
-    assert decoded["intended_relays"] == 0
-    assert decoded["bound_relays"] == 0
+    assert decoded["intended_operatives"] == 0
+    assert decoded["bound_operatives"] == 0
   end
 
   test "genuinely empty, fully started system → 200 healthy", %{port: port} do
-    # No durable relays pending and nothing declared: a legitimately-empty
+    # No durable operatives pending and nothing declared: a legitimately-empty
     # controller that has finished starting must still report healthy, so the
     # restoring-registry branch never masks a steady-state empty system.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_relays: [],
-      intended_relays: 0,
-      bound_relays: 0,
-      producing_relays: 0,
+      stalled_operatives: [],
+      intended_operatives: 0,
+      bound_operatives: 0,
+      producing_operatives: 0,
       pending_restore: false,
       tick_latency_p99_ms: 0,
       tick_breach_streak: 0

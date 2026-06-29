@@ -2,7 +2,7 @@
 
 > This is the model the rest of the codebase must respect. Several controller
 > components (healthz, the convergence Snapshot's `durable_registry_pending?`)
-> were written as if **DETS** were the authority for "what relays should be
+> were written as if **DETS** were the authority for "what operatives should be
 > running." It is not. Getting this wrong causes split-brain, stale-state
 > crashes, and dishonest health reporting. Read this before touching anything
 > that reads ProcessHub registry/recovery state.
@@ -10,7 +10,7 @@
 ## The one invariant
 
 **The live, cluster-synced ProcessHub registry is ALWAYS the source of truth
-for which relays are running and on which node.** Not DETS, not the controller's
+for which operatives are running and on which node.** Not DETS, not the controller's
 own caches — the in-memory registry, kept consistent across the cluster by the
 synchronizer, is authoritative at all times.
 
@@ -38,14 +38,14 @@ changed, and then with the *sender's* cspec. A plain
 `ProcessRegistry.update/3` is therefore node-local — an edit issued on one
 node never reaches the others and is clobbered on the next pid change.
 
-Durable manifests embedded in the cspec (the relay plugin list written by
-`flz plugin enable`, the executor tag from `relay_set_executor/3`) MUST be
+Durable manifests embedded in the cspec (the operative plugin list written by
+`flz plugin enable`, the executor tag from `operative_set_executor/3`) MUST be
 written with `ProcessRegistry.update/4` `propagate: true`, which re-applies
 the same pure update function on every hub node (2 s per-peer budget,
 best-effort; a node missed while down converges on rejoin via peer sync).
 All hub nodes are assumed to run the same release — the propagated function
-must resolve on every node. This closed the 2026-06-12 outage gap where a
-relay restarted from a peer's pluginless cspec and nothing could heal it.
+must resolve on every node. This closed the 2026-06-12 outage gap where an
+operative restarted from a peer's pluginless cspec and nothing could heal it.
 
 ## Recovery from DETS — the ONE exception
 
@@ -75,12 +75,12 @@ cold-starting a dead one (trust local disk)?"
 
 - **Deployment / rolling update:** ALWAYS bring the new instance up and confirm
   it is running *before* killing the old one. The new instance syncs live state
-  from the surviving peer → zero relay-list loss, no recovery needed.
+  from the surviving peer → zero operative-list loss, no recovery needed.
 - **Manual restart, sole instance, cluster was fully down:** start in recovery
-  mode (`flz cluster prepare-recovery`) so it replays the relay list from DETS.
-- **Manual restart, accept losing the live relay list:** plain restart. The
+  mode (`flz cluster prepare-recovery`) so it replays the operative list from DETS.
+- **Manual restart, accept losing the live operative list:** plain restart. The
   registry is rebuilt from peers (if any) and from executors re-announcing their
-  relays on reconnect. Do this only when temporary loss is acceptable.
+  operatives on reconnect. Do this only when temporary loss is acceptable.
 
 ## Implications for flezha controller code (the lessons)
 
@@ -95,7 +95,7 @@ cold-starting a dead one (trust local disk)?"
   "DETS has rows the live view does not."
 - **Do not preserve/replay DETS on a rejoin to 'fix' a gap.** That forces stale
   local state onto a node that should sync from peers — split-brain, and it
-  crashes boot when stale plugin cspecs are replayed against dead relay pids.
+  crashes boot when stale plugin cspecs are replayed against dead operative pids.
 
 ## Where the code lives (ProcessHub library)
 

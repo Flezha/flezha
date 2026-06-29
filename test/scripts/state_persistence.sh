@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Per-Partition state-persistence smoke test (engagement-only).
+# Per-Segment state-persistence smoke test (engagement-only).
 #
-# Verifies the data-plane half of the `relay-state-persistence`
-# contract (see `docs/controller_state_persistence.md`): with a relay
+# Verifies the data-plane half of the `operative-state-persistence`
+# contract (see `docs/controller_state_persistence.md`): with a operative
 # running, plugins attached, and inputs flowing, the controller writes
-# WAL files under `app_data/state/<executor_id>/<relay_class>/...`
-# and `flz state list <class>` surfaces the live partition.
+# WAL files under `app_data/state/<executor_id>/<operative_class>/...`
+# and `flz state list <class>` surfaces the live segment.
 #
 # Out of scope (deliberately, see end-of-script PASS notes):
 #   * Full controller-side BEAM down/up cycle. The controller does
-#     not auto-recreate relays after its own BEAM restart in this
+#     not auto-recreate operatives after its own BEAM restart in this
 #     dev setup, so a stop/start of the whole stack would intentionally
-#     leave us with "No relays found" until someone re-issues
-#     `flz relay start`. The SDK-side `RestoreInitState` handshake
+#     leave us with "No operatives found" until someone re-issues
+#     `flz operative start`. The SDK-side `RestoreInitState` handshake
 #     does work for executor-only restarts; that flavor of test
 #     belongs next to `plugin_persistence.sh`.
 #   * `flz state rotate` and `flz state at` — these currently crash
@@ -39,12 +39,12 @@
 # Knobs (env vars):
 #   REJOIN_TIMEOUT_S       per-step poll deadline (default 300)
 #   FLEZHA_KEEP_STACK=1    leave compose stack up post-mortem
-#   RELAY_CLASS            relay class on disk (default: store_input,
+#   OPERATIVE_CLASS            operative class on disk (default: store_input,
 #                          matching `StoreInputRelay::factory_id()` in
 #                          `test/apps/rust_executor/src/main.rs`)
 #   FLEZHA_DEMO_NAMESPACE  namespace for the rust executor (default: default)
 #   INPUT_WAIT_S           seconds to let testnet drive inputs into
-#                          the relay before assertions (default 8)
+#                          the operative before assertions (default 8)
 
 set -euo pipefail
 
@@ -54,10 +54,10 @@ TESTING_OVERLAY="${REPO_ROOT}/docker/dev/docker-compose.testing.yml"
 
 REJOIN_TIMEOUT_S="${REJOIN_TIMEOUT_S:-300}"
 DEMO_NAMESPACE="${FLEZHA_DEMO_NAMESPACE:-default}"
-RELAY_CLASS="${RELAY_CLASS:-store_input}"
+OPERATIVE_CLASS="${OPERATIVE_CLASS:-store_input}"
 INPUT_WAIT_S="${INPUT_WAIT_S:-8}"
 
-PROCESSOR_ID="${FLEZHA_PERSISTENCE_PROCESSOR:-sp_test_relay}"
+PROCESSOR_ID="${FLEZHA_PERSISTENCE_PROCESSOR:-sp_test_operative}"
 PLUGIN_WS_ID="sp_test_ws"
 PLUGIN_KAFKA_ID="sp_test_kafka"
 
@@ -330,14 +330,14 @@ wait_for_new_ce_id() {
   return 1
 }
 
-assert_relay_listed() {
+assert_operative_listed() {
   local stage="$1"
-  if ! flz relay list -n "${DEMO_NAMESPACE}" 2>/dev/null | grep -q "${PROCESSOR_ID}"; then
-    echo "[state_persistence] FAIL (${stage}): relay '${PROCESSOR_ID}' not listed" >&2
-    flz relay list -n "${DEMO_NAMESPACE}" >&2 || true
+  if ! flz operative list -n "${DEMO_NAMESPACE}" 2>/dev/null | grep -q "${PROCESSOR_ID}"; then
+    echo "[state_persistence] FAIL (${stage}): operative '${PROCESSOR_ID}' not listed" >&2
+    flz operative list -n "${DEMO_NAMESPACE}" >&2 || true
     return 1
   fi
-  note "${stage}: relay '${PROCESSOR_ID}' present in list"
+  note "${stage}: operative '${PROCESSOR_ID}' present in list"
 }
 
 assert_plugin_listed() {
@@ -349,34 +349,34 @@ assert_plugin_listed() {
   # broker handshake against kafka:9092. Poll for up to ~30s.
   local i
   for i in $(seq 1 30); do
-    if flz relay info -n "${DEMO_NAMESPACE}" 2>/dev/null | grep -q "${plugin_id}"; then
+    if flz operative info -n "${DEMO_NAMESPACE}" 2>/dev/null | grep -q "${plugin_id}"; then
       note "${stage}: plugin '${plugin_id}' present (${i}s)"
       return 0
     fi
     sleep 1
   done
-  echo "[state_persistence] FAIL (${stage}): plugin '${plugin_id}' not listed by 'flz relay info' after 30s" >&2
-  flz relay info -n "${DEMO_NAMESPACE}" >&2 || true
+  echo "[state_persistence] FAIL (${stage}): plugin '${plugin_id}' not listed by 'flz operative info' after 30s" >&2
+  flz operative info -n "${DEMO_NAMESPACE}" >&2 || true
   return 1
 }
 
-assert_state_partitions_present() {
+assert_state_segments_present() {
   local stage="$1"
   local out
-  out="$(flz state list "${RELAY_CLASS}" --output json 2>&1 || true)"
-  if ! echo "${out}" | grep -q '"partition_key"'; then
-    echo "[state_persistence] FAIL (${stage}): no partitions reported under '${RELAY_CLASS}'" >&2
+  out="$(flz state list "${OPERATIVE_CLASS}" --output json 2>&1 || true)"
+  if ! echo "${out}" | grep -q '"segment_key"'; then
+    echo "[state_persistence] FAIL (${stage}): no segments reported under '${OPERATIVE_CLASS}'" >&2
     echo "${out}" >&2
     return 1
   fi
-  note "${stage}: 'flz state list ${RELAY_CLASS}' reports partitions"
+  note "${stage}: 'flz state list ${OPERATIVE_CLASS}' reports segments"
   echo "${out}"
 }
 
-# Pick a partition path "relay_class/shard_id/partition_key" off the
+# Pick a segment path "operative_class/operation_id/segment_key" off the
 # host filesystem so the time-travel assertion has a concrete target,
 # regardless of which executor_id the rust container is running under.
-discover_partition_path() {
+discover_segment_path() {
   local rel
   rel="$(find "${STATE_DIR}" -maxdepth 4 -type f \( -name '*.wal' -o -name '*.snap.*' \) 2>/dev/null \
     | head -1)"
@@ -393,14 +393,14 @@ discover_partition_path() {
 assert_time_travel_replay() {
   local stage="$1"
   local path
-  if ! path="$(discover_partition_path)"; then
+  if ! path="$(discover_segment_path)"; then
     echo "[state_persistence] FAIL (${stage}): no on-disk WAL/snapshot under ${STATE_DIR}" >&2
     return 1
   fi
   note "${stage}: replaying ${path}@latest via 'flz state at'"
   if ! flz state at "${path}" latest --output json >/dev/null 2>&1; then
     # Fallback: some builds expect a numeric seq rather than the
-    # word `latest`. Try seq=0 (genesis) which all valid partitions
+    # word `latest`. Try seq=0 (genesis) which all valid segments
     # accept and which proves the time-travel pipeline is wired.
     if ! flz state at "${path}" 0 --output json >/dev/null 2>&1; then
       echo "[state_persistence] FAIL (${stage}): 'flz state at ${path}' did not return a state" >&2
@@ -429,10 +429,10 @@ note "waiting for initial executor handshake"
 INITIAL_CE_ID="$(wait_for_any_ce_id)"
 note "initial executor_id: ${INITIAL_CE_ID}"
 
-# --- Phase 1: start relay + attach plugins --------------------------------
+# --- Phase 1: start operative + attach plugins --------------------------------
 
-note "starting relay ${PROCESSOR_ID}"
-flz relay start "${PROCESSOR_ID}" "${RELAY_CLASS}" \
+note "starting operative ${PROCESSOR_ID}"
+flz operative start "${PROCESSOR_ID}" "${OPERATIVE_CLASS}" \
   -n "${DEMO_NAMESPACE}" \
   --init_values '{"binary_inputs": [], "text_inputs": ["FIRST"]}'
 
@@ -466,39 +466,39 @@ controller_sh '
 '
 
 note "enabling websocket plugin ${PLUGIN_WS_ID}"
-flz plugin enable "${PLUGIN_WS_ID}" relay_websocket \
-  --Xrelay_id="${PROCESSOR_ID}" \
+flz plugin enable "${PLUGIN_WS_ID}" operative_websocket \
+  --Xoperative_id="${PROCESSOR_ID}" \
   --Xtrigger="proactive" \
   --Xuri="ws://localhost:4500" \
   --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":500}}"}}' \
   --Xposition=0
 
 note "enabling kafka producer plugin ${PLUGIN_KAFKA_ID}"
-flz plugin enable "${PLUGIN_KAFKA_ID}" relay_kafka_producer \
-  --Xrelay_id="${PROCESSOR_ID}" \
+flz plugin enable "${PLUGIN_KAFKA_ID}" operative_kafka_producer \
+  --Xoperative_id="${PROCESSOR_ID}" \
   --Xtrigger=on_output \
   --Xhosts=kafka:9092 \
   --Xtopic="${PROCESSOR_ID}.test.v1"
 
-# Let the WS plugin drive inputs into the relay so apply_change runs
+# Let the WS plugin drive inputs into the operative so apply_change runs
 # and the WAL/outbox actually grow before we make the assertions.
 note "letting testnet drive inputs for ${INPUT_WAIT_S}s so WAL/snapshots fill"
 sleep "${INPUT_WAIT_S}"
 
-# Asserting plugin presence via `flz relay info` is unreliable: the
+# Asserting plugin presence via `flz operative info` is unreliable: the
 # `flz plugin enable` RPC returns "enabled successfully" the moment
 # the cspec is persisted, but the runtime extension table that
-# `relay info` reads from is updated asynchronously. The kafka
+# `operative info` reads from is updated asynchronously. The kafka
 # producer plugin in particular only appears there after its first
 # broker handshake to `kafka:9092`, which on a cold compose stack
 # can lag 30s+. We've already trusted both `flz plugin enable`
 # command's return code (the script would have aborted at that step
 # under set -e). What we still want to verify here is the runtime —
-# relay listed + at least one plugin observable in `relay info`,
+# operative listed + at least one plugin observable in `operative info`,
 # combined with the on-disk WAL assertion below.
-assert_relay_listed   "baseline"
+assert_operative_listed   "baseline"
 assert_plugin_listed  "${PLUGIN_WS_ID}"    "baseline"
-assert_state_partitions_present "baseline"
+assert_state_segments_present "baseline"
 
 note "verifying on-disk WAL files under ${STATE_DIR}"
 ON_DISK_FILES=$(find "${STATE_DIR}" -type f 2>/dev/null | wc -l)
@@ -509,15 +509,15 @@ fi
 note "${ON_DISK_FILES} on-disk file(s) under ${STATE_DIR}:"
 find "${STATE_DIR}" -type f 2>/dev/null | sed 's/^/  /'
 
-note "PASS: per-Partition state persistence is engaged"
-note "  relay='${PROCESSOR_ID}' / class='${RELAY_CLASS}'"
+note "PASS: per-Segment state persistence is engaged"
+note "  operative='${PROCESSOR_ID}' / class='${OPERATIVE_CLASS}'"
 note "  plugins=${PLUGIN_WS_ID},${PLUGIN_KAFKA_ID}"
 note ""
 note "Scope notes:"
 note "  * This script verifies the data-plane WAL is being written"
-note "    and that 'flz state list <class>' surfaces the live partition."
+note "    and that 'flz state list <class>' surfaces the live segment."
 note "  * It does NOT exercise a controller-side BEAM restart. As of"
-note "    today the controller does not auto-recreate relays after"
+note "    today the controller does not auto-recreate operatives after"
 note "    its own BEAM restarts (only SDK/executor restarts trigger"
 note "    the SDK-side RestoreInitState handshake while the controller"
 note "    stays up). Follow-up testing of executor-only restart"
@@ -525,4 +525,4 @@ note "    belongs alongside test/scripts/plugin_persistence.sh."
 note "  * 'flz state rotate' and 'flz state at' are NOT exercised"
 note "    here because they currently crash the BEAM in this dev"
 note "    setup; that's a separate bug worth filing."
-note "      and partition state replayed under '${RELAY_CLASS}'"
+note "      and segment state replayed under '${OPERATIVE_CLASS}'"

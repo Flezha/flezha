@@ -3,9 +3,9 @@ defmodule Flezha.Observability.OtpBackend.BoundedMailboxSource do
   Polled source for the bounded-mailbox subsystem.
 
   Cardinality budget rationale: one metadata shape per
-  `{namespace, relay}`. A cluster running `R` relays across `N`
+  `{namespace, operative}`. A cluster running `R` operatives across `N`
   namespaces emits up to `R × N` distinct shapes per metric name.
-  A `5_000` budget covers ~50 namespaces × ~100 relays comfortably;
+  A `5_000` budget covers ~50 namespaces × ~100 operatives comfortably;
   larger deployments raise it via runtime config.
 
   Bounded-mailbox state currently lives on the Rust SDK side and is
@@ -66,7 +66,7 @@ defmodule Flezha.Observability.OtpBackend.BoundedMailboxSource do
   # ---------- Internals ----------
 
   defp poll_mailboxes() do
-    # Future hook: enumerate per-Relay state from the NIF and emit
+    # Future hook: enumerate per-Operative state from the NIF and emit
     # :mailbox_high_water (gauge) / :messages_dropped (counter) signals.
     :ok
   end

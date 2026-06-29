@@ -3,14 +3,14 @@
 #
 # Picks the SDK runtime, transport, workload shape, and dimensions.
 # Everything is optional; defaults match the merge-blocking CI gate
-# (rust + uds + regression shape, 100 relays x 100 msg).
+# (rust + uds + regression shape, 100 operatives x 100 msg).
 #
 # Quick examples:
 #   ./scripts/bench.sh                                # rust + uds, default dims
 #   ./scripts/bench.sh -r java                        # java SDK over uds
 #   ./scripts/bench.sh -t quic                        # rust SDK over quic
 #   ./scripts/bench.sh -r java -t quic -n 100 -m 1000 # java + quic, bigger run
-#   ./scripts/bench.sh --shape partitioning --pool-sizes 1,8
+#   ./scripts/bench.sh --shape segmenting --pool-sizes 1,8
 #
 # Compare two runs:
 #   ./scripts/bench.sh -r rust -n 100 -m 1000 | tee bench-rust.txt
@@ -29,8 +29,8 @@ RUNTIME="rust"
 TRANSPORT="uds"
 SHAPE=""
 POOL_SIZES=""
-NUM_RELAYS=100
-MESSAGES_PER_RELAY=100
+NUM_OPERATIVES=100
+MESSAGES_PER_OPERATIVE=100
 MIX_ENV_OVERRIDE="${MIX_ENV:-prod}"
 
 usage() {
@@ -40,23 +40,23 @@ Usage: ./scripts/bench.sh [OPTIONS]
 Options:
   -r, --runtime <rust|java>          SDK runtime (default: rust)
   -t, --transport <uds|quic>         Wire transport (default: uds)
-  -s, --shape <regression|partitioning|dynamic>
+  -s, --shape <regression|segmenting|dynamic>
                                      Bench shape (default: regression).
-                                     `partitioning` ignores -n/-m and uses the
+                                     `segmenting` ignores -n/-m and uses the
                                      8x4x8x20k stress workload. `dynamic` drives
-                                     the dynamic_partition_bench relay (lazy
-                                     per-key Partitions, 8 keys/relay), honors -n/-m.
+                                     the dynamic_segment operative (lazy
+                                     per-key Segments, 8 keys/operative), honors -n/-m.
       --pool-sizes <list>            Comma-separated worker-pool sizes for
-                                     --shape partitioning (default: 1,8)
-  -n, --num-relays <N>               Relay count for regression shape (default: 100)
-  -m, --messages-per-relay <N>       Messages per relay for regression shape
+                                     --shape segmenting (default: 1,8)
+  -n, --num-operatives <N>               Operative count for regression shape (default: 100)
+  -m, --messages-per-operative <N>       Messages per operative for regression shape
                                      (default: 100)
   -h, --help                         Show this help
 
 Switching combinations are independent:
   -r picks the SDK (rust or java)
   -t picks the wire (uds or quic)
-  -s picks the workload (regression or partitioning)
+  -s picks the workload (regression or segmenting)
 EOF
 }
 
@@ -66,8 +66,8 @@ while [[ $# -gt 0 ]]; do
         -t|--transport)       TRANSPORT="$2"; shift 2 ;;
         -s|--shape)           SHAPE="$2"; shift 2 ;;
         --pool-sizes)         POOL_SIZES="$2"; shift 2 ;;
-        -n|--num-relays)      NUM_RELAYS="$2"; shift 2 ;;
-        -m|--messages-per-relay) MESSAGES_PER_RELAY="$2"; shift 2 ;;
+        -n|--num-operatives)      NUM_OPERATIVES="$2"; shift 2 ;;
+        -m|--messages-per-operative) MESSAGES_PER_OPERATIVE="$2"; shift 2 ;;
         -h|--help)            usage; exit 0 ;;
         *) echo "Unknown option: $1"; usage; exit 1 ;;
     esac
@@ -80,20 +80,20 @@ case "$TRANSPORT" in uds|quic) ;; *)
     echo "Error: --transport must be 'uds' or 'quic', got '$TRANSPORT'"; exit 1 ;;
 esac
 if [[ -n "$SHAPE" ]]; then
-    case "$SHAPE" in regression|partitioning|dynamic) ;; *)
-        echo "Error: --shape must be 'regression', 'partitioning', or 'dynamic', got '$SHAPE'"; exit 1 ;;
+    case "$SHAPE" in regression|segmenting|dynamic) ;; *)
+        echo "Error: --shape must be 'regression', 'segmenting', or 'dynamic', got '$SHAPE'"; exit 1 ;;
     esac
 fi
 
 ARGS=(--runtime "$RUNTIME")
 [[ -n "$SHAPE" ]] && ARGS+=(--shape "$SHAPE")
 
-if [[ "$SHAPE" == "partitioning" ]]; then
+if [[ "$SHAPE" == "segmenting" ]]; then
     [[ -n "$POOL_SIZES" ]] && ARGS+=(--pool-sizes "$POOL_SIZES")
-    echo "Running bench: runtime=$RUNTIME transport=$TRANSPORT shape=partitioning pool-sizes=${POOL_SIZES:-1,8}"
+    echo "Running bench: runtime=$RUNTIME transport=$TRANSPORT shape=segmenting pool-sizes=${POOL_SIZES:-1,8}"
 else
-    ARGS+=(--num-relays "$NUM_RELAYS" --messages-per-relay "$MESSAGES_PER_RELAY")
-    echo "Running bench: runtime=$RUNTIME transport=$TRANSPORT relays=$NUM_RELAYS msg/relay=$MESSAGES_PER_RELAY"
+    ARGS+=(--num-operatives "$NUM_OPERATIVES" --messages-per-operative "$MESSAGES_PER_OPERATIVE")
+    echo "Running bench: runtime=$RUNTIME transport=$TRANSPORT operatives=$NUM_OPERATIVES msg/operative=$MESSAGES_PER_OPERATIVE"
 fi
 
 export FLEZHA_TRANSPORT="$TRANSPORT"

@@ -57,7 +57,7 @@ defmodule FlezhaTest.Executor.ControlChannelReconnectedTest do
 
   test "bindings exist → delta path emits zero re-issue frames" do
     HubManager
-    |> stub(:executor_relays, fn @namespace, "exec-a" ->
+    |> stub(:executor_operatives, fn @namespace, "exec-a" ->
       [{"r1", [{node(), self()}]}, {"r2", [{node(), self()}]}]
     end)
 
@@ -80,7 +80,7 @@ defmodule FlezhaTest.Executor.ControlChannelReconnectedTest do
 
   test "bindings empty → reassigned path mints new id + emits reassigned telemetry" do
     HubManager
-    |> stub(:executor_relays, fn
+    |> stub(:executor_operatives, fn
       @namespace, "exec-b" -> []
     end)
 
@@ -103,7 +103,7 @@ defmodule FlezhaTest.Executor.ControlChannelReconnectedTest do
 
   test "previous_id mismatch with channel's executor_id → reassigned path" do
     HubManager
-    |> stub(:executor_relays, fn @namespace, _ -> [] end)
+    |> stub(:executor_operatives, fn @namespace, _ -> [] end)
 
     {control_channel, _stream_ref} = start_control_channel("exec-c")
 

@@ -17,13 +17,13 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
   use ExUnit.Case
 
   alias Flezha.Executor.FleetManager
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :java_sdk
 
   @temp_namespace "java_sdk_matrix_namespace"
-  @test_relay_factory "do_nothing"
+  @test_operative_factory "do_nothing"
   @test_store_input_factory "store_input"
 
   setup context do
@@ -78,38 +78,38 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
         assert id in engines
       end
 
-      @tag scenario: "18.4 AddRelay + data flow"
-      test "AddRelay + send input + observe output", ctx do
+      @tag scenario: "18.4 AddOperative + data flow"
+      test "AddOperative + send input + observe output", ctx do
         _id =
           NodeTestHelper.start_executor(@temp_namespace,
             runtime: ctx.runtime,
             transport: ctx.transport
           )
 
-        relay = %Flezha.Relay.Builder{
-          id: "matrix_relay_#{ctx.runtime}_#{ctx.transport}",
-          factory_id: @test_relay_factory
+        operative = %Flezha.Operative.Builder{
+          id: "matrix_operative_#{ctx.runtime}_#{ctx.transport}",
+          factory_id: @test_operative_factory
         }
 
-        {status, info} = RelayManager.start_relay(@temp_namespace, relay)
-        assert status === :ok, "start_relay failed: #{inspect(info)}"
+        {status, info} = OperativeManager.start_operative(@temp_namespace, operative)
+        assert status === :ok, "start_operative failed: #{inspect(info)}"
       end
 
-      @tag scenario: "18.5 PipeToRelay local"
-      test "PipeToRelay routes locally when target exists", ctx do
+      @tag scenario: "18.5 PipeToOperative local"
+      test "PipeToOperative routes locally when target exists", ctx do
         _id =
           NodeTestHelper.start_executor(@temp_namespace,
             runtime: ctx.runtime,
             transport: ctx.transport
           )
 
-        for factory <- [@test_relay_factory, @test_store_input_factory] do
-          relay = %Flezha.Relay.Builder{
+        for factory <- [@test_operative_factory, @test_store_input_factory] do
+          operative = %Flezha.Operative.Builder{
             id: "pipe_#{factory}_#{ctx.runtime}_#{ctx.transport}",
             factory_id: factory
           }
 
-          {status, _} = RelayManager.start_relay(@temp_namespace, relay)
+          {status, _} = OperativeManager.start_operative(@temp_namespace, operative)
           assert status === :ok
         end
       end
@@ -171,7 +171,7 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
 
   # Task-kind cells. The Rust task path is proven by
   # test/system/task_kind_e2e_test.exs; here we prove Java parity — a run-once
-  # task spawned via `kind: :task` runs once, emits, signals `TaskCompleted`,
+  # task spawned via `kind: :bounded` runs once, emits, signals `BoundedCompleted`,
   # and is deregistered on completion — over both transports.
   for transport <- [:uds, :quic] do
     describe "task kind (runtime=java, transport=#{transport})" do
@@ -181,22 +181,22 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
       test "a run-once Java task completes and is deregistered", ctx do
         NodeTestHelper.start_executor(@temp_namespace, runtime: :java, transport: ctx.transport)
 
-        relay_id = "java_task_ok_#{ctx.transport}_#{System.unique_integer([:positive])}"
+        operative_id = "java_task_ok_#{ctx.transport}_#{System.unique_integer([:positive])}"
 
-        builder = %Flezha.Relay.Builder{
-          id: relay_id,
-          factory_id: "echo_task",
-          kind: :task,
+        builder = %Flezha.Operative.Builder{
+          id: operative_id,
+          factory_id: "echo_bounded",
+          kind: :bounded,
           init_values: %{"msg" => "hi"}
         }
 
         # A near-instant run-once unit may self-deregister before its binding
         # is observable; a clean exit during start confirmation is success.
-        assert {:ok, _info} = RelayManager.start_relay(@temp_namespace, builder)
+        assert {:ok, _info} = OperativeManager.start_operative(@temp_namespace, builder)
 
         # Deregister-on-completion: the unit drops out of the durable registry
-        # with no explicit stop — proof the run-once + TaskCompleted loop ran.
-        assert wait_until(fn -> not registered?(relay_id) end, 10_000),
+        # with no explicit stop — proof the run-once + BoundedCompleted loop ran.
+        assert wait_until(fn -> not registered?(operative_id) end, 10_000),
                "task was never deregistered after completion"
       end
 
@@ -204,27 +204,27 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
       test "a failing Java task is deregistered without retry", ctx do
         NodeTestHelper.start_executor(@temp_namespace, runtime: :java, transport: ctx.transport)
 
-        relay_id = "java_task_err_#{ctx.transport}_#{System.unique_integer([:positive])}"
+        operative_id = "java_task_err_#{ctx.transport}_#{System.unique_integer([:positive])}"
 
-        builder = %Flezha.Relay.Builder{
-          id: relay_id,
-          factory_id: "echo_task",
-          kind: :task,
+        builder = %Flezha.Operative.Builder{
+          id: operative_id,
+          factory_id: "echo_bounded",
+          kind: :bounded,
           init_values: %{"mode" => "fail"}
         }
 
-        assert {:ok, _info} = RelayManager.start_relay(@temp_namespace, builder)
+        assert {:ok, _info} = OperativeManager.start_operative(@temp_namespace, builder)
 
-        # Terminal failure: TaskCompleted{status:"error"} drives the same
+        # Terminal failure: BoundedCompleted{status:"error"} drives the same
         # teardown as success — deregistered, no retry, nothing left running.
-        assert wait_until(fn -> not registered?(relay_id) end, 10_000),
+        assert wait_until(fn -> not registered?(operative_id) end, 10_000),
                "failing task was never deregistered"
       end
     end
   end
 
-  defp registered?(relay_id) do
-    match?({:ok, pid} when is_pid(pid), Flezha.Service.HubManager.get_pid(@temp_namespace, relay_id))
+  defp registered?(operative_id) do
+    match?({:ok, pid} when is_pid(pid), Flezha.Service.HubManager.get_pid(@temp_namespace, operative_id))
   end
 
   defp wait_until(fun, timeout_ms) do

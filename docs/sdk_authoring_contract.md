@@ -3,24 +3,24 @@
 **Status:** Normative for every SDK binding (Rust, Java today; Python, Elixir next).
 
 This document is the single source of truth for the *authoring sugar* every
-SDK offers on top of the `Relay` / `Shard` / `Change` / `Channel` trait (or
-interface) surface. The sugar is **pure expansion**: a macro (Rust) or an
+SDK offers on top of the `ContinuousOperative` / `Operation` / `Change` / `Channel`
+trait (or interface) surface. The sugar is **pure expansion**: a macro (Rust) or an
 annotation processor (Java) generates exactly the trait impls a user would
 write by hand, against the unchanged runtime. There is no parallel runtime
 path, no new protobuf message, and no WAL-format change.
 
-The trait surface itself is specified elsewhere (`relay-shard-partition-model`,
-`rust-sdk-dispatch`, `java-sdk`, `relay-state-persistence`). This contract
+The trait surface itself is specified elsewhere (`operative-operation-segment-model`,
+`rust-sdk-dispatch`, `java-sdk`, `operative-state-persistence`). This contract
 governs only how a sugared declaration maps onto it.
 
 ## 1. Escape-hatch equivalence (non-negotiable)
 
-- Generated code is equivalent to a valid hand-written `Shard` / `Relay`
+- Generated code is equivalent to a valid hand-written `Operation` / `ContinuousOperative`
   implementation. It compiles and runs identically; no protocol, controller,
   or WAL change is required for it to run.
-- A relay MAY mix sugared shards and hand-written shards wired together.
-- "Ejecting" a sugared shard to a full impl is a paste of its expansion — the
-  relay behaves identically afterward with no other change.
+- An operative MAY mix sugared operations and hand-written operations wired together.
+- "Ejecting" a sugared operation to a full impl is a paste of its expansion — the
+  operative behaves identically afterward with no other change.
 
 ## 2. Signature → associated types (the inference table)
 
@@ -40,7 +40,7 @@ mutable-state parameter.
 | unspecified                                   | `type Config = ()`             |
 | `id = "…"` else the declaration name          | `name` / `factory_id`          |
 
-A mutable-state parameter is **the single signal** that a shard is stateful.
+A mutable-state parameter is **the single signal** that an operation is stateful.
 Its presence sets `State` and (unless overridden) selects the change type;
 its absence means `State = ()` and `Change = NoChange`.
 
@@ -69,7 +69,7 @@ hand-written `Change`.
 
 ### 3.1 Keyed and collection state journaling
 
-Real compute shards keep their state as a per-key map and mutate a collection
+Real compute operations keep their state as a per-key map and mutate a collection
 or computed value inside each entry. A map field annotated `#[journal(...)]`
 (Rust) / `@Journal(...)` (Java) opts that field into per-key journaling: the
 SDK generates named per-key mutators, the matching `Change` variants, and the
@@ -110,31 +110,31 @@ A logic function returning an optional output — `Option<O>` (Rust) /
 `Optional<O>` (Java) — emits when present and emits nothing when absent. This
 replaces the explicit warmup gate (`if series.len() < n { return } …
 ctx.emit(v)`): `None` / `empty` skips, `Some(v)` / present emits. The SDK
-generates the emit call, so the author never touches the shard context. The
+generates the emit call, so the author never touches the operation context. The
 unit return (`()` / `void`, no output channel) and the unconditional `O`
 return (always emit) are unchanged.
 
 ### 3.3 Single hand-written path determinism
 
-A shard that mutates state **only** through generated journaling mutators has
+An operation that mutates state **only** through generated journaling mutators has
 exactly one hand-written path — the logic function — and one generated replay
 path — the generated `apply_change`. The engine journals the recorded `Change`s
 before emit (unchanged flush-before-emit ordering) and, on warm restart,
 rebuilds state by folding those same `Change`s through the **generated**
 `apply_change`. Because that `apply_change` is generated from the same mutator
 definitions the mutators use, it cannot drift from the live path — the
-live-vs-replay divergence that `ShardTestHarness::replay_equals` /
+live-vs-replay divergence that `OperationTestHarness::replay_equals` /
 `replayEquals()` exists to catch is structurally unrepresentable for sugared
-shards. The replay-determinism harness remains the conformance gate for **all**
-shards (sugared and hand-written).
+operations. The replay-determinism harness remains the conformance gate for **all**
+operations (sugared and hand-written).
 
-A consequence: shards that hand-wrote an idempotency guard for replay safety
+A consequence: operations that hand-wrote an idempotency guard for replay safety
 (e.g. a `last_open_us` dedup that stops a re-folded input from double-counting)
 no longer need it. Journaling an idempotent `set` op means replay re-assigns the
 computed value rather than re-folding an input, so removing the guard does not
 change replay equality.
 
-## 4. Partitioning mode is an explicit opt-in, never inferred
+## 4. Segmenting mode is an explicit opt-in, never inferred
 
 The mode changes lifecycle and on-disk state layout, so it is always an
 explicit author choice — never inferred from the `run` body. Each opt-in maps
@@ -142,70 +142,70 @@ explicit author choice — never inferred from the `run` body. Each opt-in maps
 
 | Opt-in                                         | Generated trait surface |
 | ---------------------------------------------- | ----------------------- |
-| none                                           | single-partition (empty `shard_keys()`) |
-| `keys = [..]` + `partition_for` (static)       | `shard_keys()` = keys, `PARTITION_FOR_OVERRIDDEN = true`, `partition_for` delegates |
-| `shard_key` (+ `idle_ttl`, `max_partitions`)   | `SHARD_KEY_OVERRIDDEN = true`, `shard_key` delegates, `shard_keys()` empty, TTL / cap overrides |
+| none                                           | single-segment (empty `operation_keys()`) |
+| `keys = [..]` + `segment_for` (static)         | `operation_keys()` = keys, `SEGMENT_FOR_OVERRIDDEN = true`, `segment_for` delegates |
+| `operation_key` (+ `idle_ttl`, `max_segments`) | `OPERATION_KEY_OVERRIDDEN = true`, `operation_key` delegates, `operation_keys()` empty, TTL / cap overrides |
 
 Static and dynamic opt-ins are **mutually exclusive** — declaring both is a
 compile-time error (composite static×dynamic keys are out of scope). The
 dynamic opt-ins target the trait surface introduced by
-`relay-dynamic-partitioning` (`SHARD_KEY_OVERRIDDEN`, `partition_idle_ttl`,
-`max_partitions`).
+`operative-dynamic-segmenting` (`OPERATION_KEY_OVERRIDDEN`, `segment_idle_ttl`,
+`max_segments`).
 
-**Per-partition state init (`init`).** By default a stateful shard's
-`init_state` returns `State::default()`. When a partition's starting state is a
-function of its key — e.g. a statically-partitioned shard whose window length or
-bucket span is encoded in the shard key — declare an `init` opt-in naming a
-function `fn(Option<&str>) -> State` (Rust: `#[flezha::shard(init = fn)]`; Java:
-an `@InitState State initState(Optional<String> shardKey)` method on the
-authoring class). The generated `init_state` delegates to it, passing the shard
-key (absent in single-partition mode and the test-harness default). `init`
-requires a state parameter — declaring it on a stateless shard is a compile-time
+**Per-segment state init (`init`).** By default a stateful operation's
+`init_state` returns `State::default()`. When a segment's starting state is a
+function of its key — e.g. a statically-segmented operation whose window length or
+bucket span is encoded in the operation key — declare an `init` opt-in naming a
+function `fn(Option<&str>) -> State` (Rust: `#[flezha::operation(init = fn)]`; Java:
+an `@InitState State initState(Optional<String> operationKey)` method on the
+authoring class). The generated `init_state` delegates to it, passing the operation
+key (absent in single-segment mode and the test-harness default). `init`
+requires a state parameter — declaring it on a stateless operation is a compile-time
 error. The restore payload stays runtime-applied after `init_state` returns, so
 the `init` function never sees it.
 
-## 5. Single-shard auto-wiring and registration
+## 5. Single-operation auto-wiring and registration
 
-Exactly **one** topology may be auto-wired: a single shard from a controller
-input to one named sink (`input → shard → plugin(sink)`). A sugared shard that
-declares both an `id` and a `sink`, and is the sole shard, generates that relay
+Exactly **one** topology may be auto-wired: a single operation from a controller
+input to one named sink (`input → operation → plugin(sink)`). A sugared operation that
+declares both an `id` and a `sink`, and is the sole operation, generates that operative
 and registers it automatically — the user writes no registration call.
 
-- **Multi-shard topology stays explicit.** More than one shard, or any
+- **Multi-operation topology stays explicit.** More than one operation, or any
   fan-out / multi-input edge, requires an explicit topology declaration
-  (`channels()` in Rust/Java, or the linear `relay!`/pipeline sugar for a
+  (`channels()` in Rust/Java, or the linear `operative!`/pipeline sugar for a
   strictly linear chain). The SDK refuses (compile error) rather than guessing
   a graph.
 - **Auto-registration** uses a compile-time-collected registry (Rust:
-  `inventory`; Java: the processor emits the `registerRelay` call). Manual
-  `register_relay` / `RelayRegistry.registerRelay` stays valid for
-  hand-written relays.
+  `inventory`; Java: the processor emits the `registerContinuous` call). Manual
+  `register_continuous` / `OperativeRegistry.registerContinuous` stays valid for
+  hand-written operatives.
 - **Duplicate factory id fails fast.** When auto-registration and manual
-  registration would register two relays with the same `factory_id`, startup
+  registration would register two operatives with the same `factory_id`, startup
   fails with an error naming the colliding id.
 
-## 6. Canonical reference relay (cross-SDK conformance anchor)
+## 6. Canonical reference operative (cross-SDK conformance anchor)
 
-Every SDK's conformance test asserts that this one relay — the existing
-`StaticPartitionRelay` shape — expands to the same topology and associated-type
-mapping. It is a two-shard, statically-partitioned, linear relay.
+Every SDK's conformance test asserts that this one operative — the existing
+`StaticSegmentOperative` shape — expands to the same topology and associated-type
+mapping. It is a two-operation, statically-segmented, linear operative.
 
 **Authored (Rust sugar):**
 
 ```rust
-#[flezha::shard(id = "static_entry_shard", keys = ["a", "b", "c", "d"], partition_for = static_part)]
+#[flezha::operation(id = "static_entry_operation", keys = ["a", "b", "c", "d"], segment_for = static_seg)]
 fn static_entry(input: String, state: &mut StaticEntryState) -> String {
     state.push_seen(input.clone());
     input
 }
 
-#[flezha::shard]
+#[flezha::operation]
 fn static_downstream(input: String) -> Vec<u8> {
     input.into_bytes()
 }
 
-flezha::relay! {
-    id: "static_partition",
+flezha::operative! {
+    id: "static_segment",
     pipeline: input::<String> -> StaticEntry -> StaticDownstream -> plugin::<Vec<u8>>("test_kafka")
 }
 ```
@@ -215,26 +215,26 @@ flezha::relay! {
 | Channel        | Kind          | Payload   | Producer            | Consumer / sink      |
 | -------------- | ------------- | --------- | ------------------- | -------------------- |
 | `input`        | entry         | `String`  | controller          | `StaticEntry`        |
-| (hop)          | inter-shard   | `String`  | `StaticEntry`       | `StaticDownstream`   |
+| (hop)          | inter-operation | `String`  | `StaticEntry`       | `StaticDownstream`   |
 | (sink)         | plugin-bound  | `Vec<u8>` | `StaticDownstream`  | plugin `test_kafka`  |
 
 **Expected associated-type mapping:**
 
-| Shard              | Input    | Output    | State              | Change              | Mode   |
+| Operation          | Input    | Output    | State              | Change              | Mode   |
 | ------------------ | -------- | --------- | ------------------ | ------------------- | ------ |
 | `StaticEntry`      | `String` | `String`  | `StaticEntryState` | derived (`Push`/`Set`) | static (`a`,`b`,`c`,`d`) |
 | `StaticDownstream` | `String` | `Vec<u8>` | `()`               | `NoChange`          | single |
 
-`factory_id` = `static_partition`. `Clock = WallClock`, `Config = ()` for both.
+`factory_id` = `static_segment`. `Clock = WallClock`, `Config = ()` for both.
 
-### 6.1 Canonical keyed-collection reference shard
+### 6.1 Canonical keyed-collection reference operation
 
-Every SDK's conformance test also implements this one shard — a **rolling
+Every SDK's conformance test also implements this one operation — a **rolling
 per-key window** — and asserts its generated journaling matches a hand-written
 twin and survives the replay-determinism harness. It is the reference for the
 §3.1 keyed/collection rules and the §3.2 emit-or-skip return.
 
-**Before (hand-written `Shard` + `Change`):** a `Change` enum with
+**Before (hand-written `Operation` + `Change`):** a `Change` enum with
 `PushBack(key, value)` / `PopFront(key, n)`, an `apply_change` that folds each
 onto the keyed deque, and a `run` that re-derives the same two mutations before
 the warmup check and `ctx.emit`.
@@ -248,7 +248,7 @@ struct RollingWindowState {
     window: HashMap<String, VecDeque<f64>>,
 }
 
-#[flezha::shard(id = "rolling_window")]
+#[flezha::operation(id = "rolling_window")]
 fn rolling_window(input: (String, f64), state: &mut RollingWindowState) -> Option<f64> {
     let (key, value) = input;
     state.push_back_window(key.clone(), value);          // journaled
@@ -296,14 +296,14 @@ These bind the future Python and Elixir bindings to the same inference rules.
 They are targets, not built here, and adopting them must not change this
 contract.
 
-**Python (`@flezha.shard`):**
+**Python (`@flezha.operation`):**
 
 ```python
-@flezha.shard(id="do_nothing", sink="echo")
+@flezha.operation(id="do_nothing", sink="echo")
 def do_nothing(input: str) -> bytes:
     return input.encode()
 
-@flezha.shard(id="store_input", sink="sink")
+@flezha.operation(id="store_input", sink="sink")
 def store_input(input: str, state: StoreInputState) -> str:   # state param ⇒ stateful
     state.push_text_inputs(input)                              # journaled field mutator
     return input
@@ -311,14 +311,14 @@ def store_input(input: str, state: StoreInputState) -> str:   # state param ⇒ 
 
 The decorator inspects the function's type hints: first param ⇒ `Input`, the
 return annotation ⇒ `Output`, a parameter typed as a `@flezha.state` class ⇒
-`State`. `sink` triggers single-shard auto-wiring + auto-registration; multi
-shard relays use an explicit `flezha.relay([...])` topology.
+`State`. `sink` triggers single-operation auto-wiring + auto-registration; multi
+operation operatives use an explicit `flezha.operative([...])` topology.
 
-**Elixir (`use Flezha.Shard`):**
+**Elixir (`use Flezha.Operation`):**
 
 ```elixir
 defmodule DoNothing do
-  use Flezha.Shard, id: "do_nothing", sink: "echo"
+  use Flezha.Operation, id: "do_nothing", sink: "echo"
 
   @impl true
   def run(input, _state), do: {:emit, input}
@@ -329,8 +329,8 @@ defmodule StoreInput do
 end
 ```
 
-`use Flezha.Shard` injects the six type declarations and the `run` wrapper;
+`use Flezha.Operation` injects the six type declarations and the `run` wrapper;
 `run/2` returning `{:emit, value}` maps to `Output`, `:noemit` to a unit
 output. `use Flezha.State` generates the `Change` variants and `apply_change`.
-Partitioning opt-ins (`keys:` + `partition_for:`, or `shard_key:`) and the
-single-shard `sink:` auto-wire follow §4 and §5 unchanged.
+Segmenting opt-ins (`keys:` + `segment_for:`, or `operation_key:`) and the
+single-operation `sink:` auto-wire follow §4 and §5 unchanged.

@@ -68,23 +68,23 @@ The system SHALL provide a built-in process-backed source named `:flezha_transpo
 
 ### Requirement: Built-in bounded-mailbox source
 
-The system SHALL provide a built-in process-backed source named `:flezha_bounded_mailbox` that polls the bounded-mailbox subsystem and emits `:metric` signals for per-Relay mailbox high-water marks and drop counters.
+The system SHALL provide a built-in process-backed source named `:flezha_bounded_mailbox` that polls the bounded-mailbox subsystem and emits `:metric` signals for per-Operative mailbox high-water marks and drop counters.
 
-#### Scenario: Per-Relay mailbox high-water mark
-- **WHEN** a Relay named `"orders"` in namespace `"default"` has a mailbox high-water mark of `120`
-- **THEN** a `:metric` signal on source `:flezha_bounded_mailbox` with `name: :mailbox_high_water`, `measurements: %{value: 120}`, and `metadata: %{namespace: "default", relay: "orders"}` SHALL appear on the bus
+#### Scenario: Per-Operative mailbox high-water mark
+- **WHEN** a Operative named `"orders"` in namespace `"default"` has a mailbox high-water mark of `120`
+- **THEN** a `:metric` signal on source `:flezha_bounded_mailbox` with `name: :mailbox_high_water`, `measurements: %{value: 120}`, and `metadata: %{namespace: "default", operative: "orders"}` SHALL appear on the bus
 
 #### Scenario: Drop counter exposed
-- **WHEN** a Relay has dropped `5` messages due to bounded-mailbox overflow
-- **THEN** a `:metric` signal with `name: :messages_dropped`, `measurements: %{count: 5}` SHALL appear on the bus with the same `namespace` / `relay` metadata shape
+- **WHEN** a Operative has dropped `5` messages due to bounded-mailbox overflow
+- **THEN** a `:metric` signal with `name: :messages_dropped`, `measurements: %{count: 5}` SHALL appear on the bus with the same `namespace` / `operative` metadata shape
 
 ### Requirement: Cardinality budget enforcement on built-in sources
 
-Every built-in source SHALL declare its cardinality budget at registration time and SHALL be designed so that the cluster-scale label cardinality (relays × shards × partitions × executors × hubs) fits within the declared budget. Where the natural cardinality exceeds the foundation's default `1_000` budget, the source SHALL raise its budget at registration time and document the rationale in the source module's `@moduledoc`.
+Every built-in source SHALL declare its cardinality budget at registration time and SHALL be designed so that the cluster-scale label cardinality (operatives × operations × segments × executors × hubs) fits within the declared budget. Where the natural cardinality exceeds the foundation's default `1_000` budget, the source SHALL raise its budget at registration time and document the rationale in the source module's `@moduledoc`.
 
 #### Scenario: Source declares a budget at registration
 - **WHEN** the `:flezha_bounded_mailbox` source registers
-- **THEN** its `cardinality_budget` value SHALL be at least equal to the expected count of Relays × Namespaces in a typical cluster, and the value SHALL be visible in `Flezha.Observability.Registry.list_sources/0`
+- **THEN** its `cardinality_budget` value SHALL be at least equal to the expected count of Operatives × Namespaces in a typical cluster, and the value SHALL be visible in `Flezha.Observability.Registry.list_sources/0`
 
 #### Scenario: Over-budget emit triggers the foundation's budget-exceeded event
 - **WHEN** a built-in source emits `:metric` signals with more distinct metadata shapes than its declared cardinality budget allows
