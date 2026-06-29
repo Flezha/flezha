@@ -42,7 +42,7 @@ Flezha uses a transport abstraction layer to support multiple communication back
 | File | Purpose |
 |------|---------|
 | `config/runtime.exs` | Transport env vars, cert paths, QUIC listen address |
-| `test/quic_test.exs` | 5 integration tests (connect, create relay, e2e message, state, sync IO) |
+| `test/quic_test.exs` | 5 integration tests (connect, create operative, e2e message, state, sync IO) |
 | `scripts/bench.sh` | Bench script with `--transport quic` flag |
 
 ## Connection Lifecycle
@@ -56,12 +56,12 @@ Flezha uses a transport abstraction layer to support multiple communication back
 7. Agent sends `ConnectSocket{sockets_count: N}` command
 8. SDK opens 2×N bidi streams (N primary + N secondary), sends type byte on each
 9. Agent's `QuicStreamAcceptor` reads type byte, routes to `StreamChannel`s
-10. System ready for relay operations
+10. System ready for operative operations
 
 ## Stream Types & Data Flow
 
-- **Primary (0x01):** Agent → SDK (relay input)
-- **Secondary (0x02):** SDK → Agent (relay output)
+- **Primary (0x01):** Agent → SDK (operative input)
+- **Secondary (0x02):** SDK → Agent (operative output)
 - **Control:** Bidirectional protobuf commands
 
 Binary framing (all streams): `[payload_id(32)] [payload_size(4)] [message_size(4)] [message] [metadata_size(2)] [metadata]`

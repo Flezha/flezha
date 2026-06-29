@@ -100,22 +100,22 @@ The repository SHALL expose a single Mix alias `mix test.java_sdk` that (a) buil
 
 ### Requirement: CI Enforces the Full Java SDK Test Suite
 
-The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the full Java-runtime integration matrix on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_executor/**`, or `test/helpers/node_test_helper.ex`. Failures in any of these SHALL block the PR. After this change merges, every CI matrix entry, integration test, and `mix test --only java_sdk` invocation previously tagged `RELAY_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `relay-mvp-java/design.md` Decision 11). Tests tagged `RELAY_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `operative-message-handlers` ships.
+The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the full Java-runtime integration matrix on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_executor/**`, or `test/helpers/node_test_helper.ex`. Failures in any of these SHALL block the PR. After this change merges, every CI matrix entry, integration test, and `mix test --only java_sdk` invocation previously tagged `OPERATIVE_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `operative-mvp-java/design.md` Decision 11). Tests tagged `OPERATIVE_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `operative-message-handlers` ships.
 
 #### Scenario: PR touching flz_transport runs the full Java suite
 - **WHEN** a pull request modifies a file under `flz_transport/src/`
-- **THEN** CI SHALL run both the Rust SDK tests and the full Java SDK test suite (unit + JNI + integration matrix) — neither suite SHALL be skipped on the basis of `RELAY_MVP_JAVA_PENDING`
+- **THEN** CI SHALL run both the Rust SDK tests and the full Java SDK test suite (unit + JNI + integration matrix) — neither suite SHALL be skipped on the basis of `OPERATIVE_MVP_JAVA_PENDING`
 
 #### Scenario: Failing Java integration test blocks merge
 - **WHEN** any integration scenario under `--only java_sdk` fails
 - **THEN** the CI check for that workflow SHALL report a failure and the PR merge SHALL be blocked until the scenario passes
 
-#### Scenario: No RELAY_MVP_JAVA_PENDING tags remain post-merge
-- **WHEN** the repository is grep-searched for the literal string `RELAY_MVP_JAVA_PENDING` after this change merges
+#### Scenario: No OPERATIVE_MVP_JAVA_PENDING tags remain post-merge
+- **WHEN** the repository is grep-searched for the literal string `OPERATIVE_MVP_JAVA_PENDING` after this change merges
 - **THEN** zero matches SHALL be found across `.github/`, `test/`, `lib/mix/`, `mix.exs`, and `sdk/java/**`
 
-#### Scenario: RELAY_MESSAGE_HANDLERS_PENDING tags persist post-merge
-- **WHEN** the repository is grep-searched for the literal string `RELAY_MESSAGE_HANDLERS_PENDING` after this change merges
+#### Scenario: OPERATIVE_MESSAGE_HANDLERS_PENDING tags persist post-merge
+- **WHEN** the repository is grep-searched for the literal string `OPERATIVE_MESSAGE_HANDLERS_PENDING` after this change merges
 - **THEN** the matches SHALL match the pre-change set — this change does NOT re-enable message-handler tests
 
 ### Requirement: OperationTestHarness in flezha-sdk-testing artifact
@@ -198,7 +198,7 @@ The harness SHALL provide a `TestOperationCtx` implementation of `OperationCtx` 
 
 ### Requirement: At least one harness test per java-sdk requirement scenario
 
-The Java SDK test suite (`mvn -f sdk/java test`) SHALL include at least one harness-based test per scenario in the `java-sdk` capability's persistence-related requirements added by `relay-state-persistence-java`. Scenarios SHALL be enumerated from the spec's `#### Scenario:` blocks and verified at the test level.
+The Java SDK test suite (`mvn -f sdk/java test`) SHALL include at least one harness-based test per scenario in the `java-sdk` capability's persistence-related requirements added by `operative-state-persistence-java`. Scenarios SHALL be enumerated from the spec's `#### Scenario:` blocks and verified at the test level.
 
 #### Scenario: Coverage report enumerates per-scenario harness tests
 

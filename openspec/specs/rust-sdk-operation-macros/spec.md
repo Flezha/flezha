@@ -47,7 +47,7 @@ The `#[flezha::operation]` macro SHALL accept attribute opt-ins that map to the 
 #### Scenario: Dynamic-mode opt-in
 
 - **WHEN** `#[flezha::operation(id = "rsi", operation_key = coin_of)]` is used with a free function `coin_of(&Trade) -> Option<String>`, optionally with `idle_ttl` and `max_segments`
-- **THEN** the generated impl sets `OPERATION_KEY_OVERRIDDEN = true`, delegates `operation_key` to `coin_of`, leaves `operation_keys()` empty, and applies the `idle_ttl` / `max_segments` overrides — producing a valid dynamic-mode operation per `relay-dynamic-partitioning`
+- **THEN** the generated impl sets `OPERATION_KEY_OVERRIDDEN = true`, delegates `operation_key` to `coin_of`, leaves `operation_keys()` empty, and applies the `idle_ttl` / `max_segments` overrides — producing a valid dynamic-mode operation per `operative-dynamic-segmenting`
 
 #### Scenario: Static and dynamic opt-ins are mutually exclusive
 

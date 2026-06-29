@@ -5,8 +5,8 @@ work is structured inside one logical executor instance. This doc
 walks the concepts (Continuous Operative, Operation, Segment, Runner),
 the data flow end-to-end, and the public API. For the rationale, design
 decisions, and capability spec deltas, see
-`openspec/changes/relay-architecture/` (umbrella) and
-`openspec/changes/relay-mvp-rust/` (v1 cutover).
+`openspec/changes/operative-architecture/` (umbrella) and
+`openspec/changes/operative-mvp-rust/` (v1 cutover).
 
 ## Concepts at a glance
 
@@ -392,7 +392,7 @@ same shape as Rust's `state.push_field(v)`. Worked
 twins live in `test/apps/java_executor` (`SugarDoNothing`, `SugarStore`,
 `SugarEntry`/`SugarDownstream` + `SugarStaticSegmentOperative`). The dynamic-mode
 `@OperationKey` opt-in generates the dynamic surface but is not yet runnable: the
-Java runtime has not landed `relay-dynamic-partitioning` (no `segmentIdleTtl`/
+Java runtime has not landed `operative-dynamic-segmenting` (no `segmentIdleTtl`/
 `maxSegments` methods, and the v1 runtime rejects `operationKeyOverridden`).
 
 ## Hot-path lookups
@@ -426,8 +426,8 @@ this at **4 sync ops per message** on the single-segment fast path
 (registry lookup + mailbox enqueue + success counter + inflight CAS);
 static-mode fan-out adds `N × 3` ops where N is the segment fan-out
 width (try_push + counter + inflight CAS per target). The added counter
-op compared with the pre-`relay-bounded-mailbox` baseline is detailed
-in `openspec/changes/relay-bounded-mailbox/design.md` Decision 7.
+op compared with the pre-`operative-bounded-mailbox` baseline is detailed
+in `openspec/changes/operative-bounded-mailbox/design.md` Decision 7.
 
 For the recorded throughput floor and how it's measured, see
 `docs/benchmarking.md` — it documents the regression / segmentation /
@@ -566,7 +566,7 @@ four `AtomicU64` counters, all bumped under `Ordering::Relaxed`:
 
 Counters are read-only from outside the dispatch path (`segment.counters()`
 or `segment.mailbox.counters()`); export to a metrics backend (Prometheus,
-StatsD, log emit) is **out of scope** for `relay-bounded-mailbox` and
+StatsD, log emit) is **out of scope** for `operative-bounded-mailbox` and
 deferred to a separate observability change. Storing the data here keeps
 that change purely additive.
 
@@ -718,21 +718,21 @@ that the inflight CAS keeps uncontended in practice:
 
 ## What's NOT in v1
 
-The umbrella enumerates non-goals (`relay-architecture/proposal.md`
+The umbrella enumerates non-goals (`operative-architecture/proposal.md`
 §Non-Goals); v1 inherits them:
 
 - **Bounded mailboxes / cross-operation backpressure** — `crossbeam::SegQueue`
-  is unbounded. Tracked in `relay-bounded-mailbox`.
+  is unbounded. Tracked in `operative-bounded-mailbox`.
 - **Dynamic segmentation** — `Operation::operation_key` is reserved; v1 rejects
   Operatives that override it without `operation_keys()`. Tracked in
-  `relay-dynamic-partitioning`.
+  `operative-dynamic-segmenting`.
 - **Per-Operation `handle_message`** — the wire command exists, but the SDK
   side returns the canonical "unsupported" error until
   `operative-message-handlers` ships. Tests that exercise the round-trip
-  are tagged `RELAY_MESSAGE_HANDLERS_PENDING`.
+  are tagged `OPERATIVE_MESSAGE_HANDLERS_PENDING`.
 - **Java SDK** — the Java SDK is not yet ported to the new model;
-  `relay-mvp-java` does that work. Java↔controller integration tests are
-  tagged `RELAY_MVP_JAVA_PENDING`.
+  `operative-mvp-java` does that work. Java↔controller integration tests are
+  tagged `OPERATIVE_MVP_JAVA_PENDING`.
 - **flezha_market migration** — downstream executor app migrates in its
   own repo (umbrella Decision 17).
 
@@ -756,8 +756,8 @@ The umbrella enumerates non-goals (`relay-architecture/proposal.md`
 ## State persistence
 
 Per-Segment state is persisted via the `Change`-trait machinery added
-by `relay-state-persistence-rust` and wired end-to-end by
-`relay-state-persistence-controller`. The hot path is a single
+by `operative-state-persistence-rust` and wired end-to-end by
+`operative-state-persistence-controller`. The hot path is a single
 `Vec::push(change)` per `state.apply(...)` call; serialization,
 coalescing, and the wire send happen on a per-process flusher thread
 on a 5 ms linger cadence (configurable via `FLEZHA_FLUSH_LINGER_MS`).

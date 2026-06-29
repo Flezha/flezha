@@ -201,7 +201,7 @@ For each (key, value) pair:
 | `channel` | Controller → SDK | Names the Operative's entry channel that should receive this input. If absent, the SDK falls back to the Operative's first declared input channel. |
 | `channel` | SDK → Controller | Set by `OperationCtx::emit` on plugin-bound and hybrid channels. Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka.Producer`) match on this key via their `:channel` opt to gate which channel's outputs they consume. |
 
-The `channel` metadata key replaces the pre-`relay-mvp-rust` `plugin_group: u8` integer key. v1 sends the channel name as a UTF-8 string; an integer fast-path is reserved for a future change.
+The `channel` metadata key replaces the pre-`operative-mvp-rust` `plugin_group: u8` integer key. v1 sends the channel name as a UTF-8 string; an integer fast-path is reserved for a future change.
 
 Hybrid channels (declared with `also_to_plugin_with(...)` — see `docs/operative_architecture.md` "Hybrid channels: inter-operation fan-out + plugin sink") reuse this exact framing. The plugin-bytes wire frame is byte-indistinguishable from a pure-`to_plugin(...)` frame for the same plugin name and bytes; no new wire payload-id, no new metadata key.
 
@@ -222,7 +222,7 @@ The SDK's per-Segment mailbox is a fixed-capacity `crossbeam::queue::ArrayQueue`
   {"<operation_name>": {"<operation_key>": <state>, ...}}
   ```
 
-This is a wire-format break vs the pre-`relay-mvp-rust` flat `<state>` shape. State portability across the cutover is out of scope (umbrella Non-Goal 2 / `operative-state-migration`); the hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs.
+This is a wire-format break vs the pre-`operative-mvp-rust` flat `<state>` shape. State portability across the cutover is out of scope (umbrella Non-Goal 2 / `operative-state-migration`); the hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs.
 
 ### Frame Buffering
 
@@ -1100,7 +1100,7 @@ The SDK automatically reconnects when the control channel drops unexpectedly. Se
 
 The persistence subsystem reserves two data-stream payload-ids and five
 control commands. Both directions and all wire shapes are settled here
-and implemented in `relay-state-persistence-controller`.
+and implemented in `operative-state-persistence-controller`.
 
 ### Data-stream payload-id `segment_state_change`
 

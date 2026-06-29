@@ -12,7 +12,7 @@
   `CompactSegment`, `CompactSegmentResponse`, `SegmentMailboxStatus`
   (control channel). See `docs/sdk_protocol_spec.md` "Per-Segment
   State Persistence".
-- **Dynamic segmentation (`relay-dynamic-partitioning`)**: SDK-side
+- **Dynamic segmentation (`operative-dynamic-segmenting`)**: SDK-side
   `sdk/rust/src/segment/dynamic.rs` (`DynamicSegmentRegistry` +
   `Reaper`). Dynamic-mode Operations (`operation_key()` overridden, empty
   `operation_keys()`) create Segments lazily per key. Eviction is OFF by

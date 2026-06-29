@@ -56,7 +56,7 @@ The Java SDK SHALL provide `OperativeRegistry.registerContinuous(Class<? extends
 
 #### Scenario: Dynamic-mode-only declaration is rejected in v1
 - **WHEN** an Operation returns `true` from `operationKeyOverridden()` but returns an empty list from `operationKeys()`
-- **THEN** `registerContinuous` SHALL throw `OperativeConfigurationException` stating that dynamic-mode requires `operationKeys()` until `relay-dynamic-partitioning` ships
+- **THEN** `registerContinuous` SHALL throw `OperativeConfigurationException` stating that dynamic-mode requires `operationKeys()` until `operative-dynamic-segmenting` ships
 
 ### Requirement: Operation Interface and Per-Segment Dispatch
 
@@ -152,7 +152,7 @@ The Java SDK SHALL implement handlers for every `CommandRequest` variant defined
 
 #### Scenario: SegmentState returns the per-Operation / per-Segment JSON shape
 - **WHEN** the agent sends `SegmentState{operative_id:"p1"}` and `p1` exists with two Operations (`operationA` single-mode, `operationB` static-mode with keys `["1m", "1h"]`)
-- **THEN** the SDK SHALL respond with `status = "success"` and `raw_data` containing JSON of shape `{"operationA": {<state>}, "operationB": {"1m": {<state>}, "1h": {<state>}}}` (whichever exact shape the Rust SDK emits per `relay-mvp-rust/design.md` Decision 10 — the Java SDK SHALL match byte-for-byte)
+- **THEN** the SDK SHALL respond with `status = "success"` and `raw_data` containing JSON of shape `{"operationA": {<state>}, "operationB": {"1m": {<state>}, "1h": {<state>}}}` (whichever exact shape the Rust SDK emits per `operative-mvp-rust/design.md` Decision 10 — the Java SDK SHALL match byte-for-byte)
 
 #### Scenario: MigrationSerialization removes the operative instance
 - **WHEN** the agent sends `MigrationSerialization{operative_id:"p1"}` and `p1` exists
@@ -220,7 +220,7 @@ The Java SDK SHALL distinguish intentional disconnects (`ExecutorDisconnect` com
 
 ### Requirement: Worker Pool and Dispatch Throughput Floor
 
-The Java SDK SHALL operate on a single shared bounded executor sized by `FLEZHA_WORKER_POOL_SIZE` (default = `Runtime.availableOperatives()`), draining all `SegmentSlot` mailboxes work-steal-style. The SDK SHALL sustain at least the throughput floor (in messages/second) measured against the v1 implementation at merge time on the regression bench (`100 operatives × 1 operation × 1 segment × 10K msg`, no-op Operation, UDS transport, default worker-pool size; see `relay-mvp-java/design.md` Decision 7) invoked via `mix bench --runtime java --shape regression -n 100 -m 10000`. The bench-regression-java CI job is informational in v1; the literal floor value is recorded in this requirement once `mix bench --runtime java` has been measured 3× on the reference host (median, rounded down to a clean number) — until then the recorded floor is "TBD pending v1 measurement".
+The Java SDK SHALL operate on a single shared bounded executor sized by `FLEZHA_WORKER_POOL_SIZE` (default = `Runtime.availableOperatives()`), draining all `SegmentSlot` mailboxes work-steal-style. The SDK SHALL sustain at least the throughput floor (in messages/second) measured against the v1 implementation at merge time on the regression bench (`100 operatives × 1 operation × 1 segment × 10K msg`, no-op Operation, UDS transport, default worker-pool size; see `operative-mvp-java/design.md` Decision 7) invoked via `mix bench --runtime java --shape regression -n 100 -m 10000`. The bench-regression-java CI job is informational in v1; the literal floor value is recorded in this requirement once `mix bench --runtime java` has been measured 3× on the reference host (median, rounded down to a clean number) — until then the recorded floor is "TBD pending v1 measurement".
 
 #### Scenario: Reference bench meets the Java throughput floor
 - **WHEN** a developer runs `MIX_ENV=prod mix bench --runtime java --shape regression -n 100 -m 10000` on a modern 8-core x86_64 laptop with a warm JVM (≥ 30 s warmup)
@@ -367,7 +367,7 @@ The Java SDK's `Operation.initState` signature SHALL be `State initState(Optiona
 
 The Java SDK SHALL spawn at most one `SegmentFlusher` daemon thread per JVM, lazy-initialized via `AtomicReference<SegmentFlusher>` on the first `Flezha.registerContinuous(...)` call that registers an Operation with a non-`NoChange` Change. JVMs that register only `NoChange` Operations SHALL NOT spawn a flusher thread.
 
-The flusher SHALL run an infinite loop sleeping `linger_ms` (default 5; configurable via system property `flezha.flush.linger.ms` with env-var fallback `FLEZHA_FLUSH_LINGER_MS`) between iterations. Per iteration: iterate the registered Segments; for each, acquire its `bufferLock`; call `drainToFrames` (applying coalescing per `relay-state-persistence-rust/design.md` Decision 3); release the lock; for each frame, invoke `sendFrame` if `persistenceEnabled = true`, OR discard if `false`.
+The flusher SHALL run an infinite loop sleeping `linger_ms` (default 5; configurable via system property `flezha.flush.linger.ms` with env-var fallback `FLEZHA_FLUSH_LINGER_MS`) between iterations. Per iteration: iterate the registered Segments; for each, acquire its `bufferLock`; call `drainToFrames` (applying coalescing per `operative-state-persistence-rust/design.md` Decision 3); release the lock; for each frame, invoke `sendFrame` if `persistenceEnabled = true`, OR discard if `false`.
 
 #### Scenario: NoChange-only program does not spawn flusher
 
@@ -476,7 +476,7 @@ The Java SDK SHALL register command handlers for `RestoreInitState`, `CompactSeg
 
 - `RestoreInitStateHandler`: receives the request, decodes payload, invokes `Operation.initState(operationKey, Optional.of(payload))`, runs the runtime auto-restore (snapshot deserialize + change-log fold), sets the segment state, replies `RestoreInitStateResponse{segment_id, terminal_seq}`.
 - `CompactSegmentHandler`: receives the request, acquires the segment's sticky CAS, deep-copies state via Kryo, releases CAS, serializes with header stamping, ships via `NativeTransport.sendSegmentStateSnapshot`, replies `CompactSegmentResponse{segment_id, snapshot_seq, snapshot_bytes_size}`.
-- `SegmentMailboxStatusHandler`: receives the request, updates the per-Segment mailbox observer state used by the existing `OverflowPolicy` machinery (`relay-bounded-mailbox`).
+- `SegmentMailboxStatusHandler`: receives the request, updates the per-Segment mailbox observer state used by the existing `OverflowPolicy` machinery (`operative-bounded-mailbox`).
 
 #### Scenario: RestoreInitState handler restores state
 

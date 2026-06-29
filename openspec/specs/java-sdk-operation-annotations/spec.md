@@ -56,7 +56,7 @@ The Java SDK SHALL support a `@SegmentFor` method annotation and `@Operation` at
 #### Scenario: Dynamic-mode opt-in
 
 - **WHEN** an `@Operation` class marks a method `@OperationKey` returning `Optional<String>`, optionally with `idleTtl` / `maxSegments` attributes
-- **THEN** the generated `Operation` sets the dynamic-mode override, delegates `operationKey` to that method, leaves `operationKeys()` empty, and applies the TTL / cap overrides per `relay-dynamic-partitioning`
+- **THEN** the generated `Operation` sets the dynamic-mode override, delegates `operationKey` to that method, leaves `operationKeys()` empty, and applies the TTL / cap overrides per `operative-dynamic-segmenting`
 
 #### Scenario: Static and dynamic opt-ins are mutually exclusive
 

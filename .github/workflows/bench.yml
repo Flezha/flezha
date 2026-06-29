@@ -1,6 +1,6 @@
 name: Bench Regression Gate
 
-# Closes relay-mvp-rust §10 (deferred bench gate). Two jobs:
+# Closes operative-mvp-rust §10 (deferred bench gate). Two jobs:
 # - bench-regression (merge-blocking): mix bench --shape regression must
 #   sustain ≥ 0.9 × BENCH_FLOOR_MSG_PER_SEC. Pre-step: spec/doc sync check.
 # - bench-segmenting-scaling (informational): mix bench --shape
@@ -18,14 +18,14 @@ on:
       - "protobufs/**"
       - "test/apps/rust_executor/**"
       - "docs/benchmarking.md"
-      - "openspec/changes/relay-bench-harness/specs/rust-sdk-dispatch/spec.md"
+      - "openspec/changes/operative-bench-harness/specs/rust-sdk-dispatch/spec.md"
       - ".github/workflows/bench.yml"
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # 10% tolerance band per relay-bench-harness/design.md Decision 6.
+  # 10% tolerance band per operative-bench-harness/design.md Decision 6.
   REGRESSION_TOLERANCE: "0.9"
 
 jobs:
@@ -71,7 +71,7 @@ jobs:
       - name: Spec/doc floor sync check
         run: |
           set -euo pipefail
-          SPEC=openspec/changes/relay-bench-harness/specs/rust-sdk-dispatch/spec.md
+          SPEC=openspec/changes/operative-bench-harness/specs/rust-sdk-dispatch/spec.md
           DOC=docs/benchmarking.md
           # Spec literal: the first standalone integer (with optional
           # underscores) in the "at least **N messages/second**" clause.
@@ -93,7 +93,7 @@ jobs:
           if [[ "$SPEC_FLOOR" != "$DOC_FLOOR" ]]; then
             echo "::error::Spec/doc BENCH_FLOOR_MSG_PER_SEC divergence: \
               spec=$SPEC_FLOOR doc=$DOC_FLOOR. Update both in the same PR \
-              per relay-bench-harness/design.md Decision 6."
+              per operative-bench-harness/design.md Decision 6."
             exit 1
           fi
           echo "Spec/doc floor agree: $SPEC_FLOOR msg/s"
@@ -233,7 +233,7 @@ jobs:
             echo "Measured ratio (pool=8 / pool=1): **${RATIO}**"
             echo
             echo "Spec target: ≥ 4× on real 8-core hardware. CI ratio is informational"
-            echo "per relay-bench-harness/design.md Decision 9 — GitHub Actions runners"
+            echo "per operative-bench-harness/design.md Decision 9 — GitHub Actions runners"
             echo "are virtualized and don't reliably expose 8 physical cores."
           } >> "$GITHUB_STEP_SUMMARY"
 

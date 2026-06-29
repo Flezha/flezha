@@ -147,10 +147,10 @@ along with the SYSMODE coordinator GenServer that drove it.
   a previously-captured snapshot file.
 - `Flezha.Operative.InitState.Providers.Sibling` along with its
   registration in `:enabled_plugins`, its capability spec
-  (`relay-init-state-sibling`), and the `lib/flezha/operative/init_state/`
+  (`operative-init-state-sibling`), and the `lib/flezha/operative/init_state/`
   tree. Restart-survival init-state seeding is now handled by
   `flz cluster restore` priming `:initial_state_binary` directly. The
-  generic `relay-init-state` provider chain remains for non-snapshot
+  generic `operative-init-state` provider chain remains for non-snapshot
   sources (HTTP, S3, computed defaults, custom modules implementing
   `on_operative_init/2`).
 - Application env keys: `:flezha, :recovery_window_ms`,

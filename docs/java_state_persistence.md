@@ -1,6 +1,6 @@
 # Java SDK — Per-Segment State Persistence
 
-Java SDK port of `relay-state-persistence-rust`. Mirrors the Rust trait
+Java SDK port of `operative-state-persistence-rust`. Mirrors the Rust trait
 surface one-for-one within Java idioms: six-parameter `Operation` generic,
 `StateHandle<State, Change>` mutation chokepoint, `ContinuousOperative::persistenceEnabled`
 default-method, per-Segment flusher, Kryo serialization with stable
@@ -148,7 +148,7 @@ deterministic function of the Change log; otherwise returns
 
 - The six-parameter `Operation` generic is verbose. Documented; users learn
   the pattern once. The alternative (no generics, runtime type checks) is
-  worse. See `relay-state-persistence-java/design.md` Decision 1.
+  worse. See `operative-state-persistence-java/design.md` Decision 1.
 - `Kryo.setRegistrationRequired(true)` is intentional: unregistered types
   fail loud at first serialization. Users add to `Operation.kryoTypes()`.
 - The flusher's single-thread cadence is bounded by JVM GC stop-the-world

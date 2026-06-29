@@ -1,9 +1,9 @@
 # Rust SDK Operative State Persistence
 
 This doc covers the state-persistence trait surface added by the
-`relay-state-persistence-rust` change. The controller-side WAL writer,
+`operative-state-persistence-rust` change. The controller-side WAL writer,
 fsync batcher, snapshot lifecycle, retention sweeper, and time-travel
-CLI ship in `relay-state-persistence-controller`; this doc describes the
+CLI ship in `operative-state-persistence-controller`; this doc describes the
 SDK-side contract and what runs where today.
 
 For the architecture rationale and the eight Tier-1 commitments that
@@ -201,7 +201,7 @@ decoding the header.
 
 ## What ships where
 
-| Concern | This change | `relay-state-persistence-controller` |
+| Concern | This change | `operative-state-persistence-controller` |
 |---|---|---|
 | `Change` trait, `apply_change`, `StateHandle` | ✅ | — |
 | Per-Segment flusher (single OS thread) | ✅ | — |
@@ -230,6 +230,6 @@ durability lands when the controller change wires the real `send_frame`.
 ## See also
 
 - Umbrella spec: `openspec/specs/operative-state-persistence/`
-- Rust trait deltas: `openspec/changes/relay-state-persistence-rust/`
+- Rust trait deltas: `openspec/changes/operative-state-persistence-rust/`
 - Wire-format hex: `docs/sdk_protocol_spec.md`
 - Bench baselines: `docs/benchmarking.md`
