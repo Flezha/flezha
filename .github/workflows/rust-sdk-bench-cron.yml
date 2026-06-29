@@ -95,24 +95,24 @@ jobs:
             target
           key: ${{ runner.os }}-criterion-${{ hashFiles('**/Cargo.lock') }}
       - name: Criterion dispatch bench (regression group only)
-        # The partitioning_stress group can deadlock when worker count is
+        # The segmenting_stress group can deadlock when worker count is
         # comparable to the number of pipeline stages (4): every worker can
         # park inside `ctx.emit` against a full downstream mailbox under
         # the Block policy with no worker left to drain. The CI runner
         # has 2-4 cores, well inside that regime. Filter the cron to the
         # regression group, which is the trend signal we actually care
-        # about; partitioning_stress remains available for local runs.
+        # about; segmenting_stress remains available for local runs.
         run: |
           cargo bench -p flezha_executor --features bench-internals \
             --bench dispatch -- regression_ \
             --save-baseline cron-$(date +%Y%m%d)
-      - name: Criterion dynamic-partition steady-state bench
+      - name: Criterion dynamic-segment steady-state bench
         # Trend signal for the dynamic-mode hot path (lazy per-key routing:
-        # shard_key + DashMap lookup). Single relay, 1k active Partitions,
+        # operation_key + DashMap lookup). Single operative, 1k active Segments,
         # no eviction — measures routing only, not reaping.
         run: |
           cargo bench -p flezha_executor --features bench-internals \
-            --bench dynamic_partition_steady_state -- \
+            --bench dynamic_segment_steady_state -- \
             --save-baseline cron-$(date +%Y%m%d)
       - uses: actions/upload-artifact@v5
         with:

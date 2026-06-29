@@ -80,7 +80,7 @@ The 4-op invariant is an analytical bound enforced by code review, consistent wi
 
 ### Requirement: Live Registry Concurrent Access
 
-The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single shard's critical section. The registry SHALL preserve the existing public API shape: Operative classes register at startup via `register_continuous::<R: ContinuousOperative>()`; `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<ContinuousInstance>` or equivalent handle.
+The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single operation's critical section. The registry SHALL preserve the existing public API shape: Operative classes register at startup via `register_continuous::<R: ContinuousOperative>()`; `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<ContinuousInstance>` or equivalent handle.
 
 The "registry" name carries forward from the pre-change implementation; what's stored in it changes from `Arc<Mutex<ContinuousBox>>` to `Arc<ContinuousInstance>`. The concurrency guarantees are unchanged.
 

@@ -1082,7 +1082,7 @@ impl Operation for HybridProducerOperation {
         match ctx.emit::<u32>(n) {
             Ok(()) => Ok(()),
             Err(OperationError::PluginSerializerPanic { channel, message }) => {
-                eprintln!("hybrid_producer_shard: serializer panic on `{channel}`: {message}");
+                eprintln!("hybrid_producer_operation: serializer panic on `{channel}`: {message}");
                 Ok(())
             }
             Err(other) => Err(other),
@@ -1109,7 +1109,7 @@ impl Operation for HybridConsumerOperation {
         _: StateHandle<'_, Self>,
         _: &mut OperationCtx<'_>,
     ) -> Result<(), OperationError> {
-        println!("hybrid_consumer_shard: received {input}");
+        println!("hybrid_consumer_operation: received {input}");
         Ok(())
     }
 }
@@ -1136,7 +1136,7 @@ impl ContinuousOperative for HybridChannelOperative {
 // ---------------------------------------------------------------------------
 // Authoring-sugar twins (`simplify-sdk-authoring`). Each mirrors a
 // hand-written operative above to prove the macros expand to the same trait
-// surface and interoperate with raw shards. See
+// surface and interoperate with raw operations. See
 // `docs/sdk_authoring_contract.md`.
 // ---------------------------------------------------------------------------
 
@@ -1373,7 +1373,7 @@ mod macro_twin_tests {
 
     // `init = fn` maps the static segment key to per-segment config the
     // macro's default (`Default::default()`) cannot supply. Mirrors the market
-    // `sma`/`ohlc` shards whose window / bucket come from the operation key.
+    // `sma`/`ohlc` operations whose window / bucket come from the operation key.
     #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug, flezha_executor::State)]
     struct WindowedState {
         window: usize,
@@ -1414,10 +1414,10 @@ mod macro_twin_tests {
     }
 
     // Cross-SDK conformance (`docs/sdk_authoring_contract.md` §6): the reference
-    // operative's shards expand to this exact associated-type mapping. A divergence
+    // operative's operations expand to this exact associated-type mapping. A divergence
     // is a compile error, not a silent drift. The Java SugarTwinTest asserts the
     // same mapping at runtime.
-    fn _reference_relay_conformance()
+    fn _reference_operative_conformance()
     where
         MacroStaticEntry: Operation<
             Input = String,
@@ -1463,7 +1463,7 @@ mod macro_twin_tests {
     }
 
     #[test]
-    fn macro_static_entry_partitions_and_journals() {
+    fn macro_static_entry_segments_and_journals() {
         // `segment_for` routes by first char; the operation journals every input.
         assert_eq!(MacroStaticEntry::segment_for(&"apple".to_string()), vec!["a"]);
         assert_eq!(MacroStaticEntry::segment_for(&"zebra".to_string()), vec!["d"]);
@@ -1478,7 +1478,7 @@ mod macro_twin_tests {
     }
 
     #[test]
-    fn mixed_macro_and_hand_shards_run() {
+    fn mixed_macro_and_hand_operations_run() {
         // The macro entry operation passes through; the hand operation turns it to bytes.
         let mut entry = OperationTestHarness::<MixedMacroEntry>::new();
         entry.apply_inputs(vec!["hi".to_string()]);
@@ -1490,8 +1490,8 @@ mod macro_twin_tests {
     }
 
     #[test]
-    fn sugar_relays_register() {
-        // Auto-wire + `operative!` relays are harvested without `register_continuous`.
+    fn sugar_operatives_register() {
+        // Auto-wire + `operative!` operatives are harvested without `register_continuous`.
         flezha_executor::register_inventory_operatives();
         let ids = flezha_executor::operative::registry::class_factory_ids();
         for id in ["sugar_do_nothing", "sugar_store_input", "sugar_static_segment"] {
@@ -1557,7 +1557,7 @@ mod macro_twin_tests {
     }
 
     #[test]
-    fn shard_init_maps_partition_key_to_state() {
+    fn operation_init_maps_segment_key_to_state() {
         // The `init = fn` hook receives the static segment key, so each
         // segment starts from key-derived config the macro default can't give.
         assert_eq!(Windowed::init_state(Some("win_2"), None).window, 2);

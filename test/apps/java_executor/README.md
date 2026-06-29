@@ -4,19 +4,19 @@ Reference Java test app that mirrors `test/apps/rust_executor/`. Used
 by the Java↔controller integration matrix under `mix test --only java_sdk` and
 by the `mix bench --runtime java` regression bench.
 
-The app registers three Relay classes via `Flezha.registerRelay(...)`:
+The app registers three ContinuousOperative classes via `Flezha.registerContinuous(...)`:
 
-- `do_nothing` — `DoNothingRelay` + `DoNothingShard`
-- `store_input` — `StoreInputRelay` + `StoreInputShard`
-- `compare_filter` — `CompareFilterRelay` + `CompareFilterShard`
+- `do_nothing` — `DoNothingContinuousOperative` + `DoNothingOperation`
+- `store_input` — `StoreInputContinuousOperative` + `StoreInputOperation`
+- `compare_filter` — `CompareFilterContinuousOperative` + `CompareFilterOperation`
 
 The factory id list matches `test/apps/rust_executor/`'s `do_nothing` /
-`store_input` / `compare_filter` set; the `relay-message-handlers`
+`store_input` / `compare_filter` set; the `operative-message-handlers`
 factories are absent from both apps until that capability ships.
 
-It also carries authoring-sugar twins (`@Shard` / `@State` / `@Relay`, generated
-by `flezha-sdk-processor`): `SugarDoNothing`, `SugarStore`, and the 2-shard
-`SugarEntry` → `SugarDownstream` reference relay (`SugarStaticPartitionRelay`).
+It also carries authoring-sugar twins (`@Operation` / `@State` / `@ContinuousOperative`, generated
+by `flezha-sdk-processor`): `SugarDoNothing`, `SugarStore`, and the 2-operation
+`SugarEntry` → `SugarDownstream` reference operative (`SugarStaticSegmentContinuousOperative`).
 `SugarTwinTest` asserts they register and process input identically to the
 hand-written equivalents. See `docs/sdk_authoring_contract.md`.
 

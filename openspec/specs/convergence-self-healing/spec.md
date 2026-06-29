@@ -78,12 +78,12 @@ Every cross-process call inside the Loop MUST be wrapped in `Convergence.SafeCal
 
 ### Requirement: /healthz never lies
 
-The `/healthz` HTTP endpoint MUST derive `bound_relays`, `producing_relays`, and recovery state from a single `Convergence.Snapshot.current/0` reader. It MUST NOT compute these from independent paths. It returns `200 healthy`, `200 degraded` (bound ≠ producing), `200 recovering`/`restoring_registry` (planned recovery — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`) or `recovery_failed`.
+The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operatives`, and recovery state from a single `Convergence.Snapshot.current/0` reader. It MUST NOT compute these from independent paths. It returns `200 healthy`, `200 degraded` (bound ≠ producing), `200 recovering`/`restoring_registry` (planned recovery — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`) or `recovery_failed`.
 
 #### Scenario: healthz reflects reality even when bound and producing diverge
 - **GIVEN** 10 operatives are bound and 3 have not advanced output past `output_stall_grace_ms`
 - **WHEN** `/healthz` is queried
-- **THEN** the body reports `bound_relays=10`, `producing_relays=7`, and the status is `200 degraded` (not 200 healthy, not 503).
+- **THEN** the body reports `bound_operatives=10`, `producing_operatives=7`, and the status is `200 degraded` (not 200 healthy, not 503).
 
 #### Scenario: healthz does not 503 on a slow-but-live loop
 - **GIVEN** the Loop completes ticks slowly under CPU pressure but is not dead
@@ -102,10 +102,10 @@ The `/healthz` HTTP endpoint MUST derive `bound_relays`, `producing_relays`, and
 
 When `Flezha.Convergence.Loop` receives an `{:output_stall, operative_id}` message from the Watchdog telemetry handler, it SHALL:
 
-1. Record the stall timestamp in `stalled_relays` (existing behaviour — for healthz reporting).
+1. Record the stall timestamp in `stalled_operatives` (existing behaviour — for healthz reporting).
 2. Trigger an immediate convergence tick (same as `executor_connected_event`).
 
-On each tick, after `Planner.plan/2` produces its plan, the Loop SHALL inject additional `rebind_operative` ops for every operative whose `operative_id` is in `stalled_relays` and which is not already covered by the plan, using `args: %{reason: :output_stall}`. These injected ops SHALL be filtered through the standard per-target `Backoff` so a persistently stalled operative follows the 5s → 30s → 60s → 300s cooldown, not a per-tick storm.
+On each tick, after `Planner.plan/2` produces its plan, the Loop SHALL inject additional `rebind_operative` ops for every operative whose `operative_id` is in `stalled_operatives` and which is not already covered by the plan, using `args: %{reason: :output_stall}`. These injected ops SHALL be filtered through the standard per-target `Backoff` so a persistently stalled operative follows the 5s → 30s → 60s → 300s cooldown, not a per-tick storm.
 
 `Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the operative's currently-bound executor is in the live active set. The output-stall condition proves the binding is not producing; the active-executor guard exists only to avoid disrupting a healthy operative, which an output-stalled operative is not.
 
@@ -130,7 +130,7 @@ On each tick, after `Planner.plan/2` produces its plan, the Loop SHALL inject ad
 An operator-initiated rolling restart of the controller or executor workload MUST complete with no data loss, measured by kafka offset advance per declared operative. The executor presents its persisted `previous_executor_id` on reconnect so the controller evicts the stale binding and rebinds atomically.
 
 #### Scenario: rolling restart of the executor workload
-- **GIVEN** the cluster is producing `producing_relays = N`
+- **GIVEN** the cluster is producing `producing_operatives = N`
 - **WHEN** the executor pods are rolled one at a time (graceful SIGTERM, peer stays up)
 - **THEN** the new executor presents its `previous_executor_id`, the controller evicts the old binding and rebinds within a tick, and kafka offsets advance with no data loss.
 
@@ -139,7 +139,7 @@ An operator-initiated rolling restart of the controller or executor workload MUS
 The system MUST detect a wall-clock vs monotonic-clock divergence indicating sleep/hibernate and, on wake, kick reconnects across SDK control streams and producers without operator action.
 
 #### Scenario: host sleep then wake
-- **GIVEN** the system is producing `producing_relays = N`
+- **GIVEN** the system is producing `producing_operatives = N`
 - **WHEN** the host sleeps for ≥ 30 s and wakes
 - **THEN** the Loop observes the wake, reconnects affected streams/producers, and kafka offsets per operative resume advancing without an operator command.
 

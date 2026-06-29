@@ -39,8 +39,8 @@ Extend it via `:audit_log, :extra_subscriptions` in
 config :flezha, :audit_log,
   enabled: true,
   extra_subscriptions: [
-    {:flezha_relay, :start},
-    {:flezha_relay, :stop},
+    {:flezha_operative, :start},
+    {:flezha_operative, :stop},
     {:observability_export, :otlp_batch_dropped}
   ]
 ```

@@ -608,7 +608,7 @@ For a persistence-enabled operative, the SDK SHALL drain a just-applied state ch
 
 ### Requirement: Per-Segment state is deleted on dynamic-mode eviction
 
-When the SDK evicts a Segment due to dynamic-mode idle-TTL eviction (see `relay-shard-partition-model` "Per-Shard idle-TTL eviction is opt-in"), eviction SHALL be destructive. If persistence is enabled for the Operative class, the SDK SHALL ship a fire-and-forget `delete_segment_state{segment_id}` frame so the agent removes the per-Segment WAL, snapshot, and outbox files (`{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` under `app_data/state/{operative}/{operation}/`). A subsequent input for the same key SHALL cold-start a fresh Segment (new WAL from seq 0); the SDK SHALL NOT restore the evicted Segment's state from disk.
+When the SDK evicts a Segment due to dynamic-mode idle-TTL eviction (see `relay-shard-partition-model` "Per-Operation idle-TTL eviction is opt-in"), eviction SHALL be destructive. If persistence is enabled for the Operative class, the SDK SHALL ship a fire-and-forget `delete_segment_state{segment_id}` frame so the agent removes the per-Segment WAL, snapshot, and outbox files (`{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` under `app_data/state/{operative}/{operation}/`). A subsequent input for the same key SHALL cold-start a fresh Segment (new WAL from seq 0); the SDK SHALL NOT restore the evicted Segment's state from disk.
 
 #### Scenario: Eviction deletes on-disk state
 - **WHEN** a persistence-enabled dynamic-mode Segment is evicted

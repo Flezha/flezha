@@ -1,10 +1,10 @@
 # Flezha
 
 ## Description
-Distributed stateful relays. Provides static and dynamic creation of relays.
+Distributed stateful operatives. Provides static and dynamic creation of operatives.
 
 ## Features
-- Clustered, hot-swap-migratable relays
+- Clustered, hot-swap-migratable operatives
 - SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
 - Installable plugin subsystem ([`docs/plugin_installation.md`](docs/plugin_installation.md))
 - First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/kafka-producer.md`](docs/kafka-producer.md))
@@ -162,21 +162,21 @@ Stopping the node.
 _build/dev/rel/flezha/bin/flz controller stop
 ```
 
-### Starting a relay.
+### Starting an operative.
 ```bash
-_build/dev/rel/flezha/bin/flz relay start my_relay compare_filter --init_values='{
+_build/dev/rel/flezha/bin/flz operative start my_operative compare_filter --init_values='{
   "comparable": "hello world", 
   "inverted": false
 }'
 ```
 
 ```bash
-_build/dev/rel/flezha/bin/flzrelay start my_relay do_nothing
+_build/dev/rel/flezha/bin/flz operative start my_operative do_nothing
 ```
 
-### Stop a relay.
+### Stop an operative.
 ```bash
-_build/dev/rel/flezha/bin/flz relay stop my_relay
+_build/dev/rel/flezha/bin/flz operative stop my_operative
 ```
 
 ### Installable plugins
@@ -192,10 +192,10 @@ See [`docs/plugin_installation.md`](docs/plugin_installation.md) for the
 full authoring guide and [`examples/plugins/hello_world/`](examples/plugins/hello_world/)
 for a minimal copy-paste starting point.
 
-### Enabling websocket plugin for relay. 
+### Enabling websocket plugin for operative. 
 ```bash
-_build/dev/rel/flezha/bin/flz plugin enable relay_websocket  --settings='{
-  "relay_id": "my_relay",
+_build/dev/rel/flezha/bin/flz plugin enable operative_websocket  --settings='{
+  "operative_id": "my_operative",
   "trigger": "proactive",
   "uri": "ws://localhost:4500",
   "post_connect": {
@@ -208,27 +208,27 @@ _build/dev/rel/flezha/bin/flz plugin enable relay_websocket  --settings='{
 ```
 
 ```bash
-_build/dev/rel/flezha/bin/flz plugin enable relay_stdout  --settings='{
-  "relay_id": "my_relay",
+_build/dev/rel/flezha/bin/flz plugin enable operative_stdout  --settings='{
+  "operative_id": "my_operative",
   "trigger": "on_out",
 }'
 ```
 
-### Get relay state.
+### Get operative state.
 ```bash
-_build/dev/rel/flezha/bin/flz relay state my_relay
+_build/dev/rel/flezha/bin/flz operative state my_operative
 ```
 
 
 ### Performance Testing
 
 Use `./scripts/bench.sh` to measure throughput. Switching axes are independent:
-runtime (`rust`/`java`), transport (`uds`/`quic`), shape (`regression`/`partitioning`).
+runtime (`rust`/`java`), transport (`uds`/`quic`), shape (`regression`/`segmenting`).
 
 ```bash
 ./scripts/bench.sh                                # rust + uds, defaults
 ./scripts/bench.sh -r java -t quic -n 100 -m 1000 # any combination
-./scripts/bench.sh --shape partitioning --pool-sizes 1,8
+./scripts/bench.sh --shape segmenting --pool-sizes 1,8
 ./scripts/bench.sh --help
 ```
 
@@ -242,16 +242,16 @@ rolling deploy, or full cluster cold boot. Two persistence layers
 back this:
 
 1. **ProcessHub durable registry** (`app_data/process_hub/<hub_id>/registry.dets`)
-   — every relay child-spec, including `opts[:plugins]`, is persisted
+   — every operative child-spec, including `opts[:plugins]`, is persisted
    to disk through ProcessHub's `registry_backend: {:dets, ...}`. On
    boot, ProcessHub's coordinator runs the `:recovery_pending →
    :recovering | :normal` state machine: it exchanges modes with peers,
    skips replay if any peer is already `:normal` (avoiding stale-trample),
    otherwise replays the persisted registry under
    `:flezha, :recovery_window_ms` (default 10 s).
-2. **Per-Partition WAL/snapshot** (`app_data/state/<relay_class>/<shard_id>/`)
-   — change-by-change progress for every Partition. When a relay's
-   first Partition stream reattaches after restart, the controller
+2. **Per-Segment WAL/snapshot** (`app_data/state/<operative_class>/<operation_id>/`)
+   — change-by-change progress for every Segment. When an operative's
+   first Segment stream reattaches after restart, the controller
    ships the assembled WAL+snapshot via `RestoreInitState` so the SDK
    resumes at the exact pre-shutdown sequence.
 

@@ -3,8 +3,8 @@ name: Bench Regression Gate
 # Closes relay-mvp-rust §10 (deferred bench gate). Two jobs:
 # - bench-regression (merge-blocking): mix bench --shape regression must
 #   sustain ≥ 0.9 × BENCH_FLOOR_MSG_PER_SEC. Pre-step: spec/doc sync check.
-# - bench-partitioning-scaling (informational): mix bench --shape
-#   partitioning --pool-sizes 1,8 reports the ratio to the PR check
+# - bench-segmenting-scaling (informational): mix bench --shape
+#   segmenting --pool-sizes 1,8 reports the ratio to the PR check
 #   output but does not gate the merge.
 
 on:
@@ -161,7 +161,7 @@ jobs:
           path: bench-regression.log
           retention-days: 30
 
-  bench-partitioning-scaling:
+  bench-segmenting-scaling:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Informational. GitHub Actions runners are virtualized and the 4×
@@ -208,11 +208,11 @@ jobs:
       - name: Fetch Elixir deps
         run: mix deps.get
 
-      - name: Run mix bench --shape partitioning --pool-sizes 1,8
+      - name: Run mix bench --shape segmenting --pool-sizes 1,8
         id: scaling
         run: |
           set -euo pipefail
-          MIX_ENV=prod mix bench --runtime rust --shape partitioning --pool-sizes 1,8 \
+          MIX_ENV=prod mix bench --runtime rust --shape segmenting --pool-sizes 1,8 \
             2>&1 | tee bench-scaling.log
           RATIO=$(grep -oE 'ratio \(max/min\): [0-9.]+' bench-scaling.log \
             | head -1 \
@@ -228,7 +228,7 @@ jobs:
         run: |
           RATIO="${{ steps.scaling.outputs.ratio }}"
           {
-            echo "## Partitioning scaling — informational"
+            echo "## Segmenting scaling — informational"
             echo
             echo "Measured ratio (pool=8 / pool=1): **${RATIO}**"
             echo

@@ -41,7 +41,7 @@ config :flezha, :authn_authz,
   token_ttl_default_seconds: 86_400,              # CLI tokens, 1 day
   sdk_token_ttl_seconds: 2_592_000,               # SDK tokens, 30 days
   namespaces: %{
-    "tenant-a" => %{max_relays: 50, max_partitions_per_relay: 256}
+    "tenant-a" => %{max_operatives: 50, max_segments_per_operative: 256}
   }
 ```
 

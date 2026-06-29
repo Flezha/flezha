@@ -728,7 +728,7 @@ The umbrella enumerates non-goals (`relay-architecture/proposal.md`
   `relay-dynamic-partitioning`.
 - **Per-Operation `handle_message`** — the wire command exists, but the SDK
   side returns the canonical "unsupported" error until
-  `relay-message-handlers` ships. Tests that exercise the round-trip
+  `operative-message-handlers` ships. Tests that exercise the round-trip
   are tagged `RELAY_MESSAGE_HANDLERS_PENDING`.
 - **Java SDK** — the Java SDK is not yet ported to the new model;
   `relay-mvp-java` does that work. Java↔controller integration tests are

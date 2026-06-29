@@ -32,7 +32,7 @@ defmodule Flezha.MixProject do
       "test.java_sdk": ["test --only java_sdk"],
       # Build the WebSocket testnet bundle that several `mix test` cases
       # reach for over WS (`flezha_test.exs` "websocket plugin connection
-      # start", "beam msg forward plugin connection start", "relay flow
+      # start", "beam msg forward plugin connection start", "operative flow
       # generation -> beam msg forward"). The bundle output at
       # `test/apps/testnet/dist/index.js` is not in git; without this
       # alias those cases skip with a clear message rather than crash
@@ -51,7 +51,7 @@ defmodule Flezha.MixProject do
         "cmd test/scripts/plugin_persistence.sh"
       ],
       # Opt-in dev-compose smoke test for `ship-fresh-state-on-sdk-shutdown`.
-      # Boots the controller + rust executor, starts a relay, sends SIGTERM
+      # Boots the controller + rust executor, starts an operative, sends SIGTERM
       # to the rust container, then asserts the controller's
       # `Overwatch.state.snapshot` was populated by the SDK's
       # `ExecutorShutdownNotification`. Both periodic-enabled and
