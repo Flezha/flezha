@@ -124,7 +124,7 @@ The Java SDK's worker pool (sized by `FLEZHA_WORKER_POOL_SIZE`, default = `Runti
 
 The Java SDK SHALL implement handlers for every `CommandRequest` variant defined in `executor_commands.proto`: `AssignExecutorId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `SegmentState`, `MigrationSerialization`, `MigrationDeserialization`, `OperationMessage`, `ExecutorDisconnect`. Each handler MUST produce a `CommandResponse` that echoes the original `reference_id` and sets `status = "success"` or `status = "error"` with populated `errors` per `docs/sdk_protocol_spec.md` §6. `AddOperative` and `RemOperative` SHALL spawn and tear down operative instances respectively (the wire field is named `operative_id`; the SDK maps it to `operativeInstanceId`).
 
-`AddOperative` SHALL read the optional `kind` field: an empty or absent value SHALL be interpreted as `:continuous` and SHALL spawn a `ContinuousOperativeInstance` exactly as before this change; a value resolving to `:bounded` SHALL spawn a `BoundedOperativeInstance`. The per-executor instance registry SHALL hold a sealed `Operative` (provisional name) permitting the continuous-instance and bounded-instance variants, keyed by `operativeInstanceId`; the variant SHALL be resolved once per inbound frame at the dispatch boundary, leaving the operative dispatch hot path unchanged save that single per-frame branch. `RemOperative` SHALL remove either variant by instance id. `OperationMessage` SHALL respond with the canonical "unsupported" error until `relay-message-handlers` ships per-Operation `handleMessage`.
+`AddOperative` SHALL read the optional `kind` field: an empty or absent value SHALL be interpreted as `:continuous` and SHALL spawn a `ContinuousOperativeInstance` exactly as before this change; a value resolving to `:bounded` SHALL spawn a `BoundedOperativeInstance`. The per-executor instance registry SHALL hold a sealed `Operative` (provisional name) permitting the continuous-instance and bounded-instance variants, keyed by `operativeInstanceId`; the variant SHALL be resolved once per inbound frame at the dispatch boundary, leaving the operative dispatch hot path unchanged save that single per-frame branch. `RemOperative` SHALL remove either variant by instance id. `OperationMessage` SHALL respond with the canonical "unsupported" error until `operative-message-handlers` ships per-Operation `handleMessage`.
 
 #### Scenario: AddOperative spawns a continuous operative instance
 - **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market"}` and ContinuousOperative class `MarketOperative` is registered with `factoryId() == "market"`
@@ -158,7 +158,7 @@ The Java SDK SHALL implement handlers for every `CommandRequest` variant defined
 - **WHEN** the agent sends `MigrationSerialization{operative_id:"p1"}` and `p1` exists
 - **THEN** the SDK SHALL respond with `status = "success"` and `raw_data` containing the per-Operation / per-Segment JSON (same shape as `SegmentState`), AND `p1` SHALL be removed from the operative instance registry
 
-#### Scenario: OperationMessage returns canonical unsupported error pre-relay-message-handlers
+#### Scenario: OperationMessage returns canonical unsupported error pre-operative-message-handlers
 - **WHEN** the agent sends `OperationMessage{operative_id:"p1", payload:<...>}` to a v1 SDK
 - **THEN** the SDK SHALL respond with `OperationMessageResponse{ payload: "", error: "operative does not support handle_message" }`
 
@@ -351,7 +351,7 @@ The resolved value SHALL be bound to the `ContinuousOperativeInstance` and SHALL
 The Java SDK's `Operation.initState` signature SHALL be `State initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload)`. When `initPayload.isEmpty()`, `initState` SHALL behave as a fresh-start constructor. When `initPayload.isPresent()`, the user MAY inspect or ignore the payload bytes; the runtime SHALL automatically apply the payload AFTER `initState` returns:
 
 1. If `payload.snapshotBytes().length > 0`, deserialize via `KryoCodec` (after header validation) and replace the user-constructed state.
-2. If `payload.changeLogBytes().length > 0`, decode each WAL record (frame format from `relay-state-persistence`), validate header, deserialize Change via `KryoCodec`, and invoke `Operation.applyChange(state, change)` in seq order.
+2. If `payload.changeLogBytes().length > 0`, decode each WAL record (frame format from `operative-state-persistence`), validate header, deserialize Change via `KryoCodec`, and invoke `Operation.applyChange(state, change)` in seq order.
 
 #### Scenario: Cold start passes Optional.empty()
 
@@ -472,7 +472,7 @@ Reordering of `Operation.kryoTypes()` between SDK versions SHALL be an unsupport
 
 ### Requirement: Wire-protocol command handlers (Java)
 
-The Java SDK SHALL register command handlers for `RestoreInitState`, `CompactSegment`, and `SegmentMailboxStatus` per `relay-state-persistence`'s wire-protocol additions:
+The Java SDK SHALL register command handlers for `RestoreInitState`, `CompactSegment`, and `SegmentMailboxStatus` per `operative-state-persistence`'s wire-protocol additions:
 
 - `RestoreInitStateHandler`: receives the request, decodes payload, invokes `Operation.initState(operationKey, Optional.of(payload))`, runs the runtime auto-restore (snapshot deserialize + change-log fold), sets the segment state, replies `RestoreInitStateResponse{segment_id, terminal_seq}`.
 - `CompactSegmentHandler`: receives the request, acquires the segment's sticky CAS, deep-copies state via Kryo, releases CAS, serializes with header stamping, ships via `NativeTransport.sendSegmentStateSnapshot`, replies `CompactSegmentResponse{segment_id, snapshot_seq, snapshot_bytes_size}`.

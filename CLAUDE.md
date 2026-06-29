@@ -1,6 +1,6 @@
 # Flezha repo notes
 
-## Per-Segment state persistence (`relay-state-persistence`)
+## Per-Segment state persistence (`operative-state-persistence`)
 
 - **Modules**: `lib/flezha/state/` — `Registry`, `Wire`, `Metrics`,
   `Outbox`, `PersistenceResolver`, `Supervisor`, `WalWriter`,

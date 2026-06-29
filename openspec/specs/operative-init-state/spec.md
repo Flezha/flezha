@@ -52,7 +52,7 @@ The system SHALL combine each subscriber's `{:ok, ctx}` return value into the ac
 
 ### Requirement: Cold-start only, snapshot-wins on migration
 
-The system SHALL invoke the init-state plugin chain only when an operative is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `relay-state-persistence` capability. On migration (`handle_call({:executor_migrate, ...})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated operative. On reconnect of a Segment whose Operative has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` (per `relay-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for a Segment restored via `RestoreInitState`.
+The system SHALL invoke the init-state plugin chain only when an operative is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `operative-state-persistence` capability. On migration (`handle_call({:executor_migrate, ...})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated operative. On reconnect of a Segment whose Operative has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` (per `operative-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for a Segment restored via `RestoreInitState`.
 
 For Segments whose Operative has `persistence_enabled = false`, OR whose agent-side state is empty (no snapshot, no WAL records), the existing init-state capability flow runs unchanged: the init-state plugin chain runs (cold start), or the inline Builder `init_values` is used (cold start with non-empty inline values), or the migration snapshot is used (migrated operative).
 
@@ -75,8 +75,8 @@ For Segments whose Operative has `persistence_enabled = false`, OR whose agent-s
 
 #### Scenario: Segment restart via changelog
 
-- **WHEN** a Segment reconnects AND its Operative has `persistence_enabled = true` AND the agent has a non-empty WAL or snapshot under the `relay-state-persistence` capability
-- **THEN** the agent SHALL deliver state via `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}`; the init-state plugin chain MUST NOT run for that Segment; the SDK SHALL restore via `init_state(operation_key, Some(payload))` + runtime auto-snapshot-decode + change-log fold per `relay-state-persistence`
+- **WHEN** a Segment reconnects AND its Operative has `persistence_enabled = true` AND the agent has a non-empty WAL or snapshot under the `operative-state-persistence` capability
+- **THEN** the agent SHALL deliver state via `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}`; the init-state plugin chain MUST NOT run for that Segment; the SDK SHALL restore via `init_state(operation_key, Some(payload))` + runtime auto-snapshot-decode + change-log fold per `operative-state-persistence`
 
 #### Scenario: Segment restart with persistence disabled at Operative class
 

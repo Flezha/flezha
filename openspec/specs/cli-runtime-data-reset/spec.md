@@ -10,7 +10,7 @@ The cli-runtime-data-reset capability defines a top-level `flz reset` CLI subcom
 
 The CLI SHALL provide a top-level `flz reset` subcommand that clears the Controller's durable runtime state under `app_data/` so an operator can deterministically start fresh. By default the command SHALL clear the contents of:
 
-- `app_data/state/` — per-Segment WAL/snapshot/outbox files written by `relay-state-persistence`.
+- `app_data/state/` — per-Segment WAL/snapshot/outbox files written by `operative-state-persistence`.
 - `app_data/process_hub/` — ProcessHub durable registries written by `auto-restore-on-boot`.
 
 The command SHALL leave `app_data/certs/` and `app_data/sockets/` intact unless explicitly requested via `--include-certs`, `--include-sockets`, or `--all`.

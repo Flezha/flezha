@@ -713,7 +713,7 @@ that the inflight CAS keeps uncontended in practice:
   per-Operation / per-Segment JSON shape (see
   `docs/sdk_protocol_spec.md` § Metadata Serialization → State
   migration JSON shape). v1 ships the wiring; the
-  `relay-state-migration` change extends the format with
+  `operative-state-migration` change extends the format with
   segment-aware roundtrip.
 
 ## What's NOT in v1
@@ -814,7 +814,7 @@ sequence:
 2. **`handle_continue({:bind_executor, …}, _)`** waits for an active
    executor advertising the operative's `factory_id` via
    `OperativeManager.assign_executor/2`. The persisted `executor_id` is
-   advisory only — see the `relay-state-persistence` capability.
+   advisory only — see the `operative-state-persistence` capability.
 3. **`complete_init/3`** runs three phases:
    - **prepare** — `prepare_initial_plugins/2` calls each provider's
      `init_provider/1`. Providers register their GenServer and validate

@@ -1,4 +1,4 @@
-# relay-shard-partition-model Specification
+# operative-operation-segment-model Specification
 
 ## Purpose
 This capability defines the structural execution model for Operatives: bounded per-Segment mailboxes with a per-channel overflow policy, the `Operation` stage trait surface (state, change, clock, config, persistence), typed compile-checked channels, and dynamic-Operation segmenting (lazy creation, idle-TTL eviction, and soft caps).
@@ -859,7 +859,7 @@ Each dynamic-mode Operation SHALL expose the following monotonically-increasing 
 - `inputs_dropped_no_key_total` — incremented when `operation_key(&input)` returns `None`.
 - `inputs_dropped_capped_total` — incremented when an input is dropped due to the soft cap.
 
-Counters SHALL be observable via the same per-Segment / per-Operation observability surface as the bounded-mailbox counters from `relay-shard-partition-model`'s "Per-Segment mailbox is bounded with declared capacity" requirement. Export to a metrics sink is not in scope for this requirement; this requirement only mandates the data is captured.
+Counters SHALL be observable via the same per-Segment / per-Operation observability surface as the bounded-mailbox counters from `operative-operation-segment-model`'s "Per-Segment mailbox is bounded with declared capacity" requirement. Export to a metrics sink is not in scope for this requirement; this requirement only mandates the data is captured.
 
 #### Scenario: Counter shape after a churn cycle
 - **GIVEN** a dynamic-mode Operation with a TTL set

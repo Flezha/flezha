@@ -222,7 +222,7 @@ The SDK's per-Segment mailbox is a fixed-capacity `crossbeam::queue::ArrayQueue`
   {"<operation_name>": {"<operation_key>": <state>, ...}}
   ```
 
-This is a wire-format break vs the pre-`relay-mvp-rust` flat `<state>` shape. State portability across the cutover is out of scope (umbrella Non-Goal 2 / `relay-state-migration`); the hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs.
+This is a wire-format break vs the pre-`relay-mvp-rust` flat `<state>` shape. State portability across the cutover is out of scope (umbrella Non-Goal 2 / `operative-state-migration`); the hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs.
 
 ### Frame Buffering
 

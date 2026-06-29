@@ -1,8 +1,8 @@
-# relay-state-persistence Specification
+# operative-state-persistence Specification
 
 ## Purpose
 
-The relay-state-persistence capability provides agent-side, per-Segment durability for Operative state. The agent maintains an append-only write-ahead log (WAL) per Segment under `app_data/state/`, fsynced on a configurable cadence, with asynchronous size-triggered compaction into snapshot files. On Segment reconnect, the agent assembles a `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` payload and ships it to the SDK over the control channel; the SDK applies the snapshot and folds the WAL tail to recover terminal state. Persistence is per-Operative-class opt-in via runtime config or an Operative-class const, defaulting on. The agent retains pre-compaction WAL records for a configurable window to support time-travel queries via `flz state at`. The capability is additive to the existing `Overwatch` GenServer: persistence frames (`segment_state_change`, `segment_state_snapshot`) flow alongside the existing protocol; no SDK or executor code outside this capability is required.
+The operative-state-persistence capability provides agent-side, per-Segment durability for Operative state. The agent maintains an append-only write-ahead log (WAL) per Segment under `app_data/state/`, fsynced on a configurable cadence, with asynchronous size-triggered compaction into snapshot files. On Segment reconnect, the agent assembles a `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` payload and ships it to the SDK over the control channel; the SDK applies the snapshot and folds the WAL tail to recover terminal state. Persistence is per-Operative-class opt-in via runtime config or an Operative-class const, defaulting on. The agent retains pre-compaction WAL records for a configurable window to support time-travel queries via `flz state at`. The capability is additive to the existing `Overwatch` GenServer: persistence frames (`segment_state_change`, `segment_state_snapshot`) flow alongside the existing protocol; no SDK or executor code outside this capability is required.
 ## Requirements
 ### Requirement: Per-Segment append-only WAL on the agent
 
@@ -608,7 +608,7 @@ For a persistence-enabled operative, the SDK SHALL drain a just-applied state ch
 
 ### Requirement: Per-Segment state is deleted on dynamic-mode eviction
 
-When the SDK evicts a Segment due to dynamic-mode idle-TTL eviction (see `relay-shard-partition-model` "Per-Operation idle-TTL eviction is opt-in"), eviction SHALL be destructive. If persistence is enabled for the Operative class, the SDK SHALL ship a fire-and-forget `delete_segment_state{segment_id}` frame so the agent removes the per-Segment WAL, snapshot, and outbox files (`{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` under `app_data/state/{operative}/{operation}/`). A subsequent input for the same key SHALL cold-start a fresh Segment (new WAL from seq 0); the SDK SHALL NOT restore the evicted Segment's state from disk.
+When the SDK evicts a Segment due to dynamic-mode idle-TTL eviction (see `operative-operation-segment-model` "Per-Operation idle-TTL eviction is opt-in"), eviction SHALL be destructive. If persistence is enabled for the Operative class, the SDK SHALL ship a fire-and-forget `delete_segment_state{segment_id}` frame so the agent removes the per-Segment WAL, snapshot, and outbox files (`{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` under `app_data/state/{operative}/{operation}/`). A subsequent input for the same key SHALL cold-start a fresh Segment (new WAL from seq 0); the SDK SHALL NOT restore the evicted Segment's state from disk.
 
 #### Scenario: Eviction deletes on-disk state
 - **WHEN** a persistence-enabled dynamic-mode Segment is evicted

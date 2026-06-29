@@ -90,7 +90,7 @@ The "registry" name carries forward from the pre-change implementation; what's s
 
 #### Scenario: Registry preserves public registration contract
 - **WHEN** user code calls `register_continuous::<R>()` at startup and later `AddOperative` triggers an Operative instance creation
-- **THEN** the resulting `ContinuousInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `relay-shard-partition-model` capability's scenarios
+- **THEN** the resulting `ContinuousInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-operation-segment-model` capability's scenarios
 
 ### Requirement: Reconnect Semantics Preserved
 
@@ -114,19 +114,19 @@ Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_re
 
 Every `CommandRequest` variant that survives the cutover (`AssignExecutorId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `ExecutorDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise these command responses MUST NOT change.
 
-`SegmentState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `relay-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<operation_name>": <state>}` (or, for static-mode operations, `{"<operation_name>": {"<operation_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `relay-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk_protocol_spec.md`.
+`SegmentState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `relay-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<operation_name>": <state>}` (or, for static-mode operations, `{"<operation_name>": {"<operation_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `operative-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk_protocol_spec.md`.
 
-`OperationMessage` and `OperationMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `relay-message-handlers` adds per-Operation `handle_message` (see `relay-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any operative that did not implement the optional `handle_message` callback.
+`OperationMessage` and `OperationMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `operative-message-handlers` adds per-Operation `handle_message` (see `relay-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any operative that did not implement the optional `handle_message` callback.
 
 #### Scenario: AddOperative with init_values produces same response shape
 - **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_continuous::<MarketOperative>()` (post-change) or `register_factory("market", ...)` (pre-change)
-- **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Operation, see the `relay-shard-partition-model` capability)
+- **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Operation, see the `operative-operation-segment-model` capability)
 
 #### Scenario: ExecutorDisconnect closes sockets identically
 - **WHEN** `ExecutorDisconnect{}` is sent under both implementations
 - **THEN** both SDKs SHALL close their primary control stream and return identical `CommandResponse` bytes
 
-#### Scenario: OperationMessage returns canonical unsupported error pre-relay-message-handlers
+#### Scenario: OperationMessage returns canonical unsupported error pre-operative-message-handlers
 - **WHEN** an agent sends `OperationMessage{operative_id:"p1", payload:<...>}` to a v1 SDK
 - **THEN** the SDK SHALL respond with `OperationMessageResponse{ payload: "", error: "operative does not support handle_message" }`
 
@@ -134,7 +134,7 @@ Every `CommandRequest` variant that survives the cutover (`AssignExecutorId`, `C
 
 The Rust SDK SHALL spawn at most one `SegmentFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `register_continuous::<R>()` call that registers an Operation with a non-`NoChange` Change type. Programs that register only `NoChange` Operations SHALL NOT spawn a flusher thread.
 
-The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Segments; (c) for each Segment, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Segment's `send_frame` function pointer (stub in this change; agent-wired in `relay-state-persistence`).
+The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Segments; (c) for each Segment, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Segment's `send_frame` function pointer (stub in this change; agent-wired in `operative-state-persistence`).
 
 #### Scenario: NoChange-only program does not spawn flusher
 

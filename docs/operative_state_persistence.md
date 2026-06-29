@@ -8,7 +8,7 @@ SDK-side contract and what runs where today.
 
 For the architecture rationale and the eight Tier-1 commitments that
 this change implements, see the umbrella in
-`openspec/changes/relay-state-persistence/`.
+`openspec/specs/operative-state-persistence/`.
 
 ## Concepts
 
@@ -229,7 +229,7 @@ durability lands when the controller change wires the real `send_frame`.
 
 ## See also
 
-- Umbrella spec: `openspec/changes/relay-state-persistence/`
+- Umbrella spec: `openspec/specs/operative-state-persistence/`
 - Rust trait deltas: `openspec/changes/relay-state-persistence-rust/`
 - Wire-format hex: `docs/sdk_protocol_spec.md`
 - Bench baselines: `docs/benchmarking.md`
