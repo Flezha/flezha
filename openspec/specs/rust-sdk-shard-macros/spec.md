@@ -146,3 +146,17 @@ A relay SHALL be able to mix macro-generated shards and hand-written shards.
 
 - **WHEN** a shard authored with map-aware `#[derive(flezha::State)]` + `#[flezha::shard]` returning `Option<Output>` is expanded
 - **THEN** its behaviour is identical to the hand-written `Shard`/`Change` impl, and `ShardTestHarness::replay_equals` passes
+
+### Requirement: `init` opt-in on `#[flezha::shard]`
+
+`#[flezha::shard]` SHALL accept an `init = fn` argument naming a function `fn(Option<&str>) -> State`. When present, the generated `Shard::init_state` SHALL delegate to it, passing the shard key. When absent, `init_state` SHALL keep returning `State::default()` (stateful) or unit (stateless), unchanged. Declaring `init` on a stateless shard (no `&mut State` parameter) SHALL be a `compile_error!`. The restore payload SHALL NOT be passed to the init function.
+
+#### Scenario: init delegates init_state to the named function
+
+- **WHEN** a `#[flezha::shard(init = my_init)]` stateful shard is expanded
+- **THEN** its `init_state(shard_key, _)` returns `my_init(shard_key)`, so each static partition starts from key-derived state, and `ShardTestHarness::replay_equals` passes for the shard
+
+#### Scenario: init on a stateless shard fails to compile
+
+- **WHEN** `#[flezha::shard(init = …)]` is applied to a `run` with no `&mut State` parameter
+- **THEN** expansion emits a `compile_error!` stating `init` requires a state parameter

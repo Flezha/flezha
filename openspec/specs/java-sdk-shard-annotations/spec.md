@@ -122,3 +122,17 @@ The `@Shard` annotation processor SHALL accept a `run` method returning `Optiona
 
 - **WHEN** a keyed-collection shard authored with `@State` + `@Shard` returning `Optional<Output>` is processed
 - **THEN** the generated relay processes input identically to a hand-written twin and `replayEquals()` is empty
+
+### Requirement: `@InitState` method on `@Shard`
+
+The `@Shard` annotation processor SHALL recognise an `@InitState`-annotated method `State name(Optional<String> shardKey)` on the authoring class and generate a `Shard.initState(shardKey, payload)` that delegates to it, passing the shard key. When no `@InitState` method is present, the generated `initState` SHALL keep returning `new State()`, unchanged. Declaring `@InitState` on a stateless shard (no `@State` handle parameter on `run`) SHALL be a processor error. The restore payload SHALL NOT be passed to the `@InitState` method.
+
+#### Scenario: @InitState delegates initState to the method
+
+- **WHEN** a `@Shard` class with a stateful `run` declares an `@InitState State initState(Optional<String> shardKey)` method
+- **THEN** the generated shard's `initState(shardKey, payload)` returns `impl.initState(shardKey)`, so each static partition starts from key-derived state, and `ShardTestHarness.replayEquals()` is empty for the shard
+
+#### Scenario: @InitState on a stateless shard is rejected
+
+- **WHEN** `@InitState` is declared on a `@Shard` class whose `run` has no `@State` handle parameter
+- **THEN** the processor emits an error stating `@InitState` requires a stateful run, and generates no init delegation

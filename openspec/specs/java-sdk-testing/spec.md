@@ -263,3 +263,19 @@ The Elixir↔Java integration suite SHALL exercise a run-once Java task against 
 
 - **WHEN** the suite starts a task whose `run` throws over either transport
 - **THEN** the controller SHALL receive `TaskCompleted{status:"error"}` carrying the throwable's message, the task SHALL be deregistered without retry, and no relay/task process SHALL remain
+
+### Requirement: ShardTestHarness replayEquals replays against the captured initial snapshot
+
+`ShardTestHarness.replayEquals()` SHALL reconstruct its replay baseline from the initial `State` captured (Kryo-serialized) at construction — whether the harness was built by `of(...)`, `withInitialState(...)`, or `withPayload(...)` — and fold the recorded Changes onto a fresh deserialization of that snapshot, matching the Rust `ShardTestHarness`. It SHALL NOT rebuild the baseline by calling `initState(Optional.empty(), Optional.empty())` afresh at replay time. This makes the harness honor a `withInitialState`/`withPayload` baseline whose `State` carries init-derived, non-journaled fields (e.g. a per-partition window length supplied via the `@InitState` hook), which the prior `initState(empty)` reconstruction would report as a false replay divergence.
+
+A stateless Shard (`Change = NoChange`) SHALL keep no replay baseline: `replayEquals()` SHALL return `Optional.empty()` without serializing the state, since nothing is journaled and the `Stateless` state is not Kryo-registered.
+
+#### Scenario: withInitialState baseline is honored
+
+- **WHEN** a harness is built via `withInitialState(state)` for a Shard whose `State` has a key-derived field set outside the journaled Change log, inputs are applied, and `replayEquals()` runs
+- **THEN** the recorded Changes are folded onto the captured `state` snapshot rather than a fresh `initState(Optional.empty(), Optional.empty())`, so the key-derived field matches and the result is `Optional.empty()`
+
+#### Scenario: Stateless Shard keeps no replay baseline
+
+- **WHEN** `replayEquals()` runs on a harness for a `NoChange` Shard
+- **THEN** it returns `Optional.empty()` without serializing the stateless state, since no Changes are journaled

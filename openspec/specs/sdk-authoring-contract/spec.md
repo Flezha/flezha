@@ -167,3 +167,22 @@ The authoring contract SHALL state that a shard mutating state only through gene
 
 - **WHEN** a shard that previously hand-wrote an idempotency guard for replay safety migrates to map-set journaling
 - **THEN** the guard is unnecessary because replay re-assigns the computed value rather than re-folding an input, and removing it does not change replay equality
+
+### Requirement: Per-partition state init opt-in
+
+The shard authoring sugar SHALL offer an opt-in that maps a partition's shard key to its initial state, replacing the default `init_state` that returns the state's default value. The opt-in names a function of the shard key returning the state (`fn(Option<&str>) -> State` in Rust; an `@InitState`-annotated `State name(Optional<String> shardKey)` method in Java). The generated `init_state` SHALL delegate to it, passing the shard key — absent in single-partition mode and in the test-harness default construction. The opt-in is pure expansion onto the existing `Shard::init_state` trait method; it SHALL NOT receive the restore payload, which the runtime continues to apply after `init_state` returns. The opt-in SHALL require a stateful shard; declaring it on a stateless shard SHALL be a compile-time error (never silently ignored).
+
+#### Scenario: Shard key maps to per-partition state
+
+- **WHEN** a statically-partitioned sugared shard declares the init opt-in and a partition is created for a given shard key
+- **THEN** the generated `init_state` returns the state produced by the opt-in function for that key, rather than the state default
+
+#### Scenario: Key absent in single-partition and harness-default construction
+
+- **WHEN** the init opt-in function is invoked in single-partition mode or by the test harness's default construction
+- **THEN** it receives an absent shard key and returns its key-absent state
+
+#### Scenario: Init opt-in on a stateless shard is rejected
+
+- **WHEN** the init opt-in is declared on a shard with no state
+- **THEN** the SDK reports a compile-time error directing the author to remove it, and generates no init delegation

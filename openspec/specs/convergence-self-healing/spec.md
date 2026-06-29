@@ -145,7 +145,7 @@ The system MUST detect a wall-clock vs monotonic-clock divergence indicating sle
 
 ### Requirement: Plugins are durable across controller restart
 
-When `flz plugin enable <relay> <plugin>` succeeds, the plugin MUST be persisted into the relay's ProcessHub cspec start-args. On restart (recovery mode), every restored relay MUST re-instantiate its declared plugins idempotently, and the convergence I2 backstop MUST re-add a declared-but-missing plugin to a running relay.
+When `flz plugin enable <relay> <plugin>` succeeds, the plugin MUST be persisted into the relay's ProcessHub cspec start-args **on every node of the hub cluster**, regardless of which node served the CLI call. The same cluster-wide propagation MUST apply to plugin disable and to the registry executor-tag write issued by Heal rebinds. On restart (recovery mode, plain restart, or node-death redistribution from any node), every restored relay MUST re-instantiate its declared plugins idempotently, and the convergence I2 backstop MUST re-add a declared-but-missing plugin to a running relay. A peer node that is unreachable at write time MUST converge on rejoin via the peer-sync recovery path; propagation failures MUST be logged, never silently dropped.
 
 #### Scenario: plugin survives recovery-mode restart
 - **GIVEN** `flz plugin enable btc_kraken kafka-producer` was executed
@@ -156,6 +156,49 @@ When `flz plugin enable <relay> <plugin>` succeeds, the plugin MUST be persisted
 - **GIVEN** a declared plugin is force-unsubscribed at runtime while its relay stays up
 - **WHEN** the Loop ticks
 - **THEN** the Diff detects the missing plugin and the Heal re-subscribes it from the declared cspec.
+
+#### Scenario: plugin enabled via one node is declared on every node
+- **GIVEN** a two-node hub cluster with a relay registered on both nodes' registries
+- **WHEN** `flz plugin enable` is served by node B
+- **THEN** node A's registry row for the relay contains the plugin in its cspec start-args, and a relay restart driven from node A's cspec re-instantiates the plugin.
+
+#### Scenario: redistribution after node death restores a producing relay
+- **GIVEN** a relay whose plugins were enabled through any node of the cluster
+- **WHEN** the node hosting the relay's Overwatch dies and the hub redistributes the relay to a surviving node
+- **THEN** the restarted relay re-attaches its full declared plugin set without operator action.
+
+### Requirement: Unhealthy declared plugins are detected and restarted by the loop
+
+The convergence loop SHALL judge production liveness of a relay's plugins by the plugin provider's own `health/1` self-report (`Extension.Table.health/1`), never by traffic-volume proxies. A plugin that is declared, currently subscribed, and self-reports `{:unhealthy, reason}` SHALL produce a `restart_plugin` heal op routed through the extension table's existing restart machinery, subject to the loop's per-target exponential backoff. An uncertain health probe (timeout, raise, missing provider callback) SHALL be treated as healthy so the loop never escalates on uncertainty.
+
+#### Scenario: wedged kafka producer is restarted after broker recovery
+- **GIVEN** a relay with a declared kafka producer plugin and an unreachable broker long enough for the provider to self-report `{:unhealthy, :produce_stalled}`
+- **WHEN** the Loop ticks
+- **THEN** a `restart_plugin` op is executed for that plugin under backoff, and once the broker is reachable a restart attempt succeeds and the verdict clears to healthy.
+
+#### Scenario: healthy plugins are never restarted
+- **GIVEN** a relay whose declared plugins all self-report `:healthy`
+- **WHEN** the Loop ticks
+- **THEN** no `restart_plugin` op is planned for that relay.
+
+#### Scenario: uncertain probe does not escalate
+- **GIVEN** a plugin whose `health/1` raises or times out
+- **WHEN** the Loop ticks
+- **THEN** the plugin is treated as healthy and no heal op is issued.
+
+### Requirement: Plugin-degraded relays surface on /healthz and telemetry
+
+A relay with at least one declared plugin that is missing or self-reported unhealthy SHALL be published to the convergence snapshot as plugin-degraded. While any relay is plugin-degraded, `/healthz` SHALL report `degraded` with HTTP 200 and a `plugin_unhealthy` reason — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (degraded set becomes non-empty, changes membership, or clears), not steady-state.
+
+#### Scenario: pluginless running relay is degraded, not healthy
+- **GIVEN** a running relay whose declared cspec lists plugins that are not subscribed
+- **WHEN** `/healthz` is queried before the heal completes
+- **THEN** the response is HTTP 200 with status `degraded` and reason `plugin_unhealthy`.
+
+#### Scenario: verdict clears after heal
+- **GIVEN** a plugin-degraded relay
+- **WHEN** the loop re-attaches or successfully restarts the affected plugins
+- **THEN** the snapshot's plugin-degraded set empties and `/healthz` returns to `healthy` with a single transition log line.
 
 ### Requirement: Fresh-process executor takeover is atomic
 
