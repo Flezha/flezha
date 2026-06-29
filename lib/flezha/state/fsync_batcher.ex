@@ -35,9 +35,11 @@ defmodule Flezha.State.FsyncBatcher do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @spec mark_dirty(tuple()) :: :ok
-  def mark_dirty(segment_id) do
-    GenServer.cast(__MODULE__, {:mark_dirty, segment_id})
+  # `server` defaults to the shared singleton; tests pass an isolated
+  # instance to assert coalescing without the 5 ms background tick.
+  @spec mark_dirty(tuple(), GenServer.server()) :: :ok
+  def mark_dirty(segment_id, server \\ __MODULE__) do
+    GenServer.cast(server, {:mark_dirty, segment_id})
   end
 
   @doc """
@@ -45,18 +47,18 @@ defmodule Flezha.State.FsyncBatcher do
   is hard-deleted so the next tick does not try to fsync a writer that is
   being torn down.
   """
-  @spec forget(tuple()) :: :ok
-  def forget(segment_id) do
-    GenServer.cast(__MODULE__, {:forget, segment_id})
+  @spec forget(tuple(), GenServer.server()) :: :ok
+  def forget(segment_id, server \\ __MODULE__) do
+    GenServer.cast(server, {:forget, segment_id})
   end
 
   @doc """
   Force an immediate tick, primarily for tests. Idempotent and safe
   under load (the next scheduled tick is preserved).
   """
-  @spec flush_now() :: :ok
-  def flush_now() do
-    GenServer.call(__MODULE__, :flush_now)
+  @spec flush_now(GenServer.server()) :: :ok
+  def flush_now(server \\ __MODULE__) do
+    GenServer.call(server, :flush_now)
   end
 
   @doc """
@@ -64,13 +66,13 @@ defmodule Flezha.State.FsyncBatcher do
   `flush_now/0`; named separately so the graceful-shutdown
   coordinator's intent is unambiguous at the call site.
   """
-  @spec flush_all() :: :ok
-  def flush_all() do
-    GenServer.call(__MODULE__, :flush_all)
+  @spec flush_all(GenServer.server()) :: :ok
+  def flush_all(server \\ __MODULE__) do
+    GenServer.call(server, :flush_all)
   end
 
-  @spec dirty_set() :: MapSet.t()
-  def dirty_set(), do: GenServer.call(__MODULE__, :dirty_set)
+  @spec dirty_set(GenServer.server()) :: MapSet.t()
+  def dirty_set(server \\ __MODULE__), do: GenServer.call(server, :dirty_set)
 
   # ---------- GenServer ----------
 
@@ -146,11 +148,16 @@ defmodule Flezha.State.FsyncBatcher do
       end
     end)
 
-    :telemetry.execute(
-      [:flezha, :state, :fsync, :tick],
-      %{count: count},
-      %{}
-    )
+    # Only emit when work happened. An idle tick (≈200 Hz) carries no signal
+    # and its constant fan-out to the observability bus races subsystem
+    # teardown into spurious :noproc errors.
+    if count > 0 do
+      :telemetry.execute(
+        [:flezha, :state, :fsync, :tick],
+        %{count: count},
+        %{}
+      )
+    end
 
     %{state | dirty_set: MapSet.new()}
   end

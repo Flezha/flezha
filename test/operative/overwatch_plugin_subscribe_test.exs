@@ -15,6 +15,10 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
 
   use ExUnit.Case, async: false
 
+  # One case drives a handover with no control unit, which logs a deserialize
+  # error by design; capture so a green run stays quiet.
+  @moduletag :capture_log
+
   defmodule ProbeProvider do
     def init_provider(opts), do: {:ok, opts}
 

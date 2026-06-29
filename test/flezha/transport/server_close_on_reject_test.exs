@@ -13,6 +13,9 @@ defmodule Flezha.Transport.ServerCloseOnRejectTest do
   use ExUnit.Case, async: false
   use Mimic
 
+  # Drives the connect-reject path, which logs the rejection at error by design.
+  @moduletag :capture_log
+
   alias Flezha.Executor.FleetManager
   alias Flezha.Transport.Server
 

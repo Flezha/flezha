@@ -21,7 +21,7 @@ defmodule Flezha.Service.PluginManager do
   require Logger
 
   alias Flezha.Plugin
-  alias Flezha.Service.HubManager
+  alias Flezha.Service.RegistryUpdate
   alias Flezha.Service.Identificator
   alias Flezha.Service.OperativeManager
   alias ProcessHub.Service.ProcessRegistry
@@ -106,7 +106,8 @@ defmodule Flezha.Service.PluginManager do
            :ok <- write_enable_to_cspec(plugin, plugin_id),
            {:ok, pid} <- resolve_operative(plugin),
            :ok <- forward_subscribe(pid, plugin_id, plugin) do
-        {{:ok, "plugin enabled"}, Map.put(state, plugin_id, {plugin.namespace, plugin.operative_id})}
+        {{:ok, "plugin enabled"},
+         Map.put(state, plugin_id, {plugin.namespace, plugin.operative_id})}
       else
         err -> {err, state}
       end
@@ -225,20 +226,17 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  defp write_enable_to_cspec(%Plugin{namespace: ns, operative_id: operative_id} = plugin, plugin_id) do
+  defp write_enable_to_cspec(
+         %Plugin{namespace: ns, operative_id: operative_id} = plugin,
+         plugin_id
+       ) do
     stripped = Plugin.strip_transient(plugin)
 
-    update_cspec_plugins(ns, operative_id, fn plugins ->
-      plugins
-      |> Enum.reject(fn {id, _} -> id == plugin_id end)
-      |> Kernel.++([{plugin_id, stripped}])
-    end)
+    update_cspec_plugins(ns, operative_id, RegistryUpdate.add_plugin(plugin_id, stripped))
   end
 
   defp write_disable_to_cspec(namespace, operative_id, plugin_id) do
-    update_cspec_plugins(namespace, operative_id, fn plugins ->
-      Enum.reject(plugins, fn {id, _plugin} -> id == plugin_id end)
-    end)
+    update_cspec_plugins(namespace, operative_id, RegistryUpdate.remove_plugin(plugin_id))
   end
 
   defp update_cspec_plugins(namespace, operative_id, update_fn) do
@@ -260,9 +258,7 @@ defmodule Flezha.Service.PluginManager do
             ProcessRegistry.update(
               hub_id,
               operative_id,
-              fn cspec, node_pids, metadata ->
-                {HubManager.rewrite_cspec_plugins(cspec, update_fn), node_pids, metadata}
-              end,
+              RegistryUpdate.rewrite_cspec_plugins(update_fn),
               propagate: true
             )
           catch

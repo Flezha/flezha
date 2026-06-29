@@ -167,13 +167,23 @@ defmodule Flezha.Observability.Bus do
 
     class = error_class(error)
 
-    if Counters.first_seen?({:bus_dispatch, class}) do
+    # A sink that is shutting down (subsystem teardown, reconfigure) surfaces as
+    # an exit with :noproc/:shutdown/:normal — expected, not a producer fault.
+    # The counter still records it; skip the error log so it stays quiet.
+    if not benign_sink_exit?(error) and Counters.first_seen?({:bus_dispatch, class}) do
       Logger.error(
         "[observability.bus] dispatch error class=#{inspect(class)} " <>
           "error=#{inspect(error)} stack=#{Exception.format_stacktrace(stacktrace)}"
       )
     end
   end
+
+  defp benign_sink_exit?({:exit, reason}), do: benign_exit_reason?(reason)
+  defp benign_sink_exit?(_), do: false
+
+  defp benign_exit_reason?(reason) when reason in [:noproc, :normal, :shutdown], do: true
+  defp benign_exit_reason?({reason, _}) when reason in [:noproc, :normal, :shutdown], do: true
+  defp benign_exit_reason?(_), do: false
 
   defp error_class(%{__struct__: mod}), do: mod
   defp error_class({kind, _reason}) when kind in [:exit, :throw], do: kind

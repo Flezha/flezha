@@ -1,6 +1,10 @@
 defmodule Flezha.Observability.AuditLogTest do
   use ExUnit.Case, async: false
 
+  # Supervised AuditLog children log a benign "shut down abnormally (exit) normal"
+  # on teardown; capture so a green run stays quiet (logs still print on failure).
+  @moduletag :capture_log
+
   alias Flezha.Observability.{Bus, Signal}
 
   alias Flezha.Observability.AuditLog.{
@@ -585,28 +589,35 @@ defmodule Flezha.Observability.AuditLogTest do
 
     children = [Writer, Rotation, Retention, Sink]
 
-    Elixir.Supervisor.start_link(children, strategy: :one_for_one)
+    {:ok, sup} = Elixir.Supervisor.start_link(children, strategy: :one_for_one)
+    Process.put({__MODULE__, :sup}, sup)
+    {:ok, sup}
   end
 
   defp stop_audit_supervisor() do
+    # Stop the supervisor itself, not the children by name: stopping a permanent
+    # child under a live :one_for_one supervisor just makes it restart, and the
+    # lingering supervisor's later teardown logs "shut down abnormally (exit)
+    # normal". Supervisor.stop terminates the tree in order with :shutdown.
+    case Process.delete({__MODULE__, :sup}) do
+      pid when is_pid(pid) ->
+        if Process.alive?(pid), do: Elixir.Supervisor.stop(pid, :normal, 2_000)
+
+      _ ->
+        :ok
+    end
+
+    # Free any orphaned named children left by a crashed prior run.
     for mod <- [Sink, Retention, Rotation, Writer] do
       case Process.whereis(mod) do
         nil ->
           :ok
 
         pid ->
-          ref = Process.monitor(pid)
-
           try do
-            GenServer.stop(pid, :normal, 1_000)
+            GenServer.stop(pid, :shutdown, 1_000)
           catch
             _, _ -> :ok
-          end
-
-          receive do
-            {:DOWN, ^ref, :process, ^pid, _} -> :ok
-          after
-            1_500 -> :ok
           end
       end
     end

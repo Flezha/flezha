@@ -5,6 +5,7 @@ defmodule Flezha.Service.HubManager do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.RegistryUpdate
 
   require Logger
 
@@ -315,7 +316,9 @@ defmodule Flezha.Service.HubManager do
   what the loop sees. A registry row the loop has not yet observed reports
   `:unknown` until the next tick covers it.
   """
-  @spec operative_rows(String.t()) :: [%{id: term(), health: atom(), executor: term(), node: term()}]
+  @spec operative_rows(String.t()) :: [
+          %{id: term(), health: atom(), executor: term(), node: term()}
+        ]
   def operative_rows(namespace) do
     hub_id = Identificator.hub(namespace)
 
@@ -405,9 +408,7 @@ defmodule Flezha.Service.HubManager do
         ProcessRegistry.update(
           hub_id,
           operative_id,
-          fn cspec, node_pids, metadata ->
-            {cspec, node_pids, Map.put(metadata, :tag, executor_id)}
-          end,
+          RegistryUpdate.set_executor_tag(executor_id),
           propagate: true
         )
 
@@ -453,7 +454,12 @@ defmodule Flezha.Service.HubManager do
             # A wedged StreamChannel must not crash the caller.
             Enum.each(stream_channels, fn
               {_, pid, _, _} when is_pid(pid) ->
-                _ = SafeCall.bounded(pid, {:operative_pid_update, operative_id, updated_pids}, 1_000)
+                _ =
+                  SafeCall.bounded(
+                    pid,
+                    {:operative_pid_update, operative_id, updated_pids},
+                    1_000
+                  )
 
               _ ->
                 :ok

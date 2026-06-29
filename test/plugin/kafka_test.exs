@@ -18,6 +18,11 @@ defmodule FlezhaTest.Plugin.KafkaTest do
   use ExUnit.Case, async: false
   use Mimic
 
+  # Some cases start a real ProducerWorker with no broker reachable, so KafkaEx
+  # logs an :nxdomain connect error + crash report by design; capture so a green
+  # run stays quiet (logs still print on failure).
+  @moduletag :capture_log
+
   @topic "flezha_test_topic"
   @broker {"kafka", 9092}
 

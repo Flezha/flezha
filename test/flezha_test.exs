@@ -795,7 +795,7 @@ defmodule FlezhaTest do
     end
   end
 
-  defp eventually(fun, timeout \\ 2_000) do
+  defp eventually(fun, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
 
     do_eventually = fn do_self, fun, deadline ->

@@ -11,6 +11,10 @@ defmodule FlezhaTest.Executor.ControlUnitHealthTest do
   """
   use ExUnit.Case, async: false
 
+  # Asserts dead-executor / eviction paths that log at warn/error by design;
+  # capture so a green run stays quiet (logs still print on failure).
+  @moduletag :capture_log
+
   alias Flezha.Executor.ControlUnit
 
   setup do

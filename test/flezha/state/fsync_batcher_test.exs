@@ -58,6 +58,12 @@ defmodule Flezha.State.FsyncBatcherTest do
       pid = TestHelpers.sample_segment_id("batcher_one")
       {:ok, _} = Supervisor.find_or_start(pid)
 
+      # Isolated batcher with a long interval so our explicit flush is the only
+      # drain. The application's 5 ms singleton would race a background tick
+      # into the mark loop and split the batch into two fsyncs (flaky); it also
+      # stays idle here, so the global handler only sees this instance's tick.
+      {:ok, batcher} = GenServer.start_link(FsyncBatcher, interval_ms: 1000)
+
       {:ok, fakelog} = Agent.start_link(fn -> 0 end)
 
       :telemetry.attach(
@@ -67,8 +73,10 @@ defmodule Flezha.State.FsyncBatcherTest do
         nil
       )
 
-      for _ <- 1..10, do: FsyncBatcher.mark_dirty(pid)
-      :ok = FsyncBatcher.flush_now()
+      on_exit(fn -> :telemetry.detach("fsync-tick-counter") end)
+
+      for _ <- 1..10, do: FsyncBatcher.mark_dirty(pid, batcher)
+      :ok = FsyncBatcher.flush_now(batcher)
 
       :telemetry.detach("fsync-tick-counter")
       assert Agent.get(fakelog, & &1) == 1

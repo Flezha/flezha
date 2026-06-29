@@ -51,6 +51,10 @@ defmodule Flezha.State.GapRecoveryTest do
 
     on_exit(fn ->
       :telemetry.detach(handler_id)
+      # Close the writer and drop its fsync mark before deleting the dir,
+      # else the app's 5 ms batcher fsyncs a now-missing file and the writer
+      # crashes (the resync leaves seq 4/5 dirty and unflushed).
+      Supervisor.delete_segment(segment_id)
       Application.delete_env(:flezha, :state_resync_fun)
       Application.delete_env(:flezha, :state_root)
       File.rm_rf!(base)
@@ -139,8 +143,7 @@ defmodule Flezha.State.GapRecoveryTest do
 
     send(
       sc,
-      {:flz_data, 0, "segment_state_snapshot", frame(ctx.segment_id, 3, ctx.header, "snap"),
-       %{}}
+      {:flz_data, 0, "segment_state_snapshot", frame(ctx.segment_id, 3, ctx.header, "snap"), %{}}
     )
 
     # The snapshot write runs in a spawned process; poll until it lands.

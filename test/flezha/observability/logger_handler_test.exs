@@ -1,6 +1,10 @@
 defmodule Flezha.Observability.LoggerHandlerTest do
   use ExUnit.Case, async: false
 
+  # The tests emit Logger calls on purpose to drive the bridge; assertions run
+  # off the captured signal, so capturing console output changes nothing.
+  @moduletag :capture_log
+
   require Logger
 
   alias Flezha.Observability.{Counters, Registry, Signal}
