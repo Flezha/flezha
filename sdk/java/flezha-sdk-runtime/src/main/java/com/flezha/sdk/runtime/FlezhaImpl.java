@@ -211,11 +211,10 @@ public final class FlezhaImpl implements Flezha {
         ctx.streamRegistry().setControlStreamId(controlStreamId);
         shutdownRef.set(new GracefulShutdown(ctx, controlStreamId));
         try {
-            // Initial connect announces a prior process's persisted id (if any)
-            // as previous_executor_id so the controller evicts the stale
-            // binding before re-binding. Reconnects omit it (see coordinator).
-            new ControlChannel(ctx, controlStreamId)
-                    .sendHandshake(namespace, ExecutorIdStore.load().orElse(null));
+            // The handshake presents the executor's self-owned stable id (the
+            // same on initial connect and reconnect), so the controller resolves
+            // a reconnect as a binding swap.
+            new ControlChannel(ctx, controlStreamId).sendHandshake(namespace);
         } catch (Exception e) {
             LOG.warn("Initial handshake send failed: {}; driving reconnect", e.toString());
             coordinator.onConnectionLost();

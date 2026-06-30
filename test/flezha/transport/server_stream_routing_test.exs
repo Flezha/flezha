@@ -34,8 +34,7 @@ defmodule Flezha.Transport.ServerStreamRoutingTest do
     # used, and only id 7 must be removed from the pending map.
     state = %{
       transport: :uds,
-      pending_streams: %{7 => want, 9 => other},
-      quic_current_ce_id: nil
+      pending_streams: %{7 => want, 9 => other}
     }
 
     assert {:noreply, new_state} = Server.handle_info(connect_frame(7), state)
@@ -48,7 +47,7 @@ defmodule Flezha.Transport.ServerStreamRoutingTest do
       flunk("connect_handler must not be called for an unknown stream_id")
     end)
 
-    state = %{transport: :uds, pending_streams: %{1 => make_ref()}, quic_current_ce_id: nil}
+    state = %{transport: :uds, pending_streams: %{1 => make_ref()}}
 
     assert {:noreply, new_state} = Server.handle_info(connect_frame(42), state)
     assert new_state.pending_streams == state.pending_streams

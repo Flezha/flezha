@@ -1,7 +1,6 @@
 defmodule Flezha.Executor.ControlUnit do
   alias Flezha.Service.Identificator
   alias Flezha.Executor.ControlChannel
-  alias Flezha.Executor.FleetManager
   alias Flezha.Service.ConfigManager
 
   use GenServer
@@ -348,26 +347,27 @@ defmodule Flezha.Executor.ControlUnit do
     end
   end
 
-  # A control reply unacked past the evict threshold means the executor is dead:
-  # fail the waiters and evict via FleetManager (not the wedged Overwatch).
+  # Unblock callers whose control reply never came (the executor wedged or the
+  # transport dropped silently): fail the waiter with `:timeout` and drop the
+  # ref so `response_refs` cannot grow unbounded. Caller-timeout only — executor
+  # liveness/eviction is the `ControlChannel` watchdog's job, not this sweep.
   @impl true
   def handle_info(:heartbeat, state) do
     schedule_heartbeat()
 
     now = System.monotonic_time(:millisecond)
-    evict_ms = pending_evict_ms()
-    stuck = stuck_reply_refs(state.response_refs, now, evict_ms)
+    timeout_ms = pending_reply_timeout_ms()
+    stuck = stuck_reply_refs(state.response_refs, now, timeout_ms)
 
     if stuck == [] do
       {:noreply, state}
     else
       Logger.warning(
         "[ControlUnit] executor=#{state.executor_id} #{length(stuck)} control reply(s) " <>
-          "unacked >= #{evict_ms}ms — evicting executor and rebinding its operatives"
+          "unacked >= #{timeout_ms}ms — failing the stuck caller(s)"
       )
 
       refs = fail_stuck_refs(state.response_refs, stuck)
-      synthesize_disconnect(state.namespace, state.executor_id)
       {:noreply, %{state | response_refs: refs}}
     end
   end
@@ -376,10 +376,10 @@ defmodule Flezha.Executor.ControlUnit do
   def handle_info(_msg, state), do: {:noreply, state}
 
   # Deferred replies outstanding past the threshold (ping refs self-clean).
-  defp stuck_reply_refs(_refs, _now, evict_ms) when evict_ms <= 0, do: []
+  defp stuck_reply_refs(_refs, _now, timeout_ms) when timeout_ms <= 0, do: []
 
-  defp stuck_reply_refs(refs, now, evict_ms) do
-    for {ref, {:reply, _from, at}} <- refs, now - at >= evict_ms, do: ref
+  defp stuck_reply_refs(refs, now, timeout_ms) do
+    for {ref, {:reply, _from, at}} <- refs, now - at >= timeout_ms, do: ref
   end
 
   defp fail_stuck_refs(refs, stuck) do
@@ -395,19 +395,6 @@ defmodule Flezha.Executor.ControlUnit do
     end)
   end
 
-  # Fire-and-forget so the heartbeat never blocks on FleetManager.
-  defp synthesize_disconnect(namespace, executor_id) do
-    spawn(fn ->
-      try do
-        GenServer.call(FleetManager, {:executor_disconnected, namespace, executor_id})
-      catch
-        :exit, _ -> :ok
-      end
-    end)
-
-    :ok
-  end
-
   defp schedule_heartbeat() do
     interval = heartbeat_interval_ms()
     if interval > 0, do: Process.send_after(self(), :heartbeat, interval)
@@ -416,6 +403,6 @@ defmodule Flezha.Executor.ControlUnit do
   defp heartbeat_interval_ms,
     do: Application.get_env(:flezha, :control_unit_heartbeat_interval_ms, 15_000)
 
-  defp pending_evict_ms,
-    do: Application.get_env(:flezha, :control_unit_pending_evict_ms, 90_000)
+  defp pending_reply_timeout_ms,
+    do: Application.get_env(:flezha, :control_unit_pending_reply_timeout_ms, 90_000)
 end

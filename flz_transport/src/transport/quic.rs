@@ -10,8 +10,8 @@ use crossbeam::channel;
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token, Waker};
 use quinn_proto::{
-    ClientConfig, ConnectionHandle, DatagramEvent, Dir, EndpointConfig, Event, StreamEvent,
-    StreamId, Transmit,
+    ClientConfig, ConnectionHandle, DatagramEvent, Dir, EndpointConfig, Event, IdleTimeout,
+    StreamEvent, StreamId, Transmit,
 };
 
 const UDP_TOKEN: Token = Token(0);
@@ -151,6 +151,14 @@ impl QuicClient {
 
         let mut transport = quinn_proto::TransportConfig::default();
         transport.keep_alive_interval(Some(Duration::from_secs(5)));
+        // Explicit idle timeout aligned to the control-liveness window so a
+        // wedged peer is declared dead in the same window on QUIC as on UDS,
+        // instead of inheriting the quinn default. keep_alive (5s) << this, so
+        // a live connection never idles out. See transport_liveness.md.
+        if let Ok(idle) = IdleTimeout::try_from(crate::transport::liveness::control_idle_timeout())
+        {
+            transport.max_idle_timeout(Some(idle));
+        }
         transport.stream_receive_window(8_388_608u32.into());
         transport.receive_window(16_777_216u32.into());
         transport.send_window(8_388_608);

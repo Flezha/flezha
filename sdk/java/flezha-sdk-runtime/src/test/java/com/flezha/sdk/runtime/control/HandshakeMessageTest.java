@@ -9,9 +9,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * The control-init handshake announces {@code previous_executor_id} on the
- * initial connect and omits it on reconnect — byte-compatible with the Rust
- * SDK's {@code ControlInitMessage} (controller evicts the stale binding).
+ * The control-init handshake presents a non-empty {@code stable_id} on EVERY
+ * connect — the same field name and shape as the Rust SDK's
+ * {@code ControlInitMessage} (the controller resolves a reconnect from the
+ * stable id + the existing bindings, so the retired {@code previous_executor_id}
+ * field is gone).
  */
 class HandshakeMessageTest {
 
@@ -24,14 +26,10 @@ class HandshakeMessageTest {
     }
 
     @Test
-    void initialConnectAnnouncesPreviousExecutorId() throws Exception {
-        String json = mapper.writeValueAsString(HandshakeMessage.from("ns", "exec-prev-9"));
-        assertThat(json).contains("\"previous_executor_id\":\"exec-prev-9\"");
-    }
-
-    @Test
-    void reconnectOmitsPreviousExecutorId() throws Exception {
+    void handshakePresentsANonEmptyStableId() throws Exception {
         String json = mapper.writeValueAsString(HandshakeMessage.from("ns"));
+        assertThat(json).contains("\"stable_id\":\"");
+        assertThat(json).doesNotContain("\"stable_id\":\"\"");
         assertThat(json).doesNotContain("previous_executor_id");
     }
 }

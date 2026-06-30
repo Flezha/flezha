@@ -352,25 +352,6 @@ on any control-socket transport-edge event" requirement.
 - **WHEN** the Java reader receives a truncated/malformed frame
 - **THEN** it SHALL drive reconnect and SHALL NOT crash the runtime thread
 
-### Requirement: Executor liveness is transport-connection-close only
-
-Executor liveness SHALL be derived solely from transport connection state: a socket close (`executor_disconnected`) drops the executor from the active set immediately and unconditionally (wrapped so side-effect failures cannot leave a ghost). There SHALL be NO proactive liveness ping-sweep that evicts an executor for a missed periodic ping — a single missed ping on a live-but-busy executor MUST NOT trigger eviction or cascade rebind.
-
-#### Scenario: a frozen-but-connected executor is not evicted
-- **GIVEN** an executor is briefly frozen (GC / host contention) but its transport connection is open
-- **WHEN** the convergence Loop ticks
-- **THEN** no eviction or rebind is issued for it (liveness is connection-state, not ping-timeout)
-- **AND** when the same executor's connection actually closes, it is dropped from the active set immediately.
-
-### Requirement: Controller computes the binding delta on `ExecutorReconnected`
-
-On receiving `ExecutorReconnected { previous_id, new_id, reason }` the controller SHALL compute the binding delta against `previous_id`: if the SDK and controller agree on the id and bindings exist, it is a zero-frame no-op; otherwise the controller mints/uses the authoritative id, issues `ReassignExecutorId` if needed, and re-issues the operative set. On disconnect, eviction SHALL clear each operative's stale stream mapping via `HubManager.hook_remove_pid/2` so a reconnecting SDK's fresh stream binds cleanly to the nil-ref `StreamChannel`.
-
-#### Scenario: stale stream mappings are cleared on disconnect
-- **GIVEN** executor `default_X` with operatives bound to its stream channels disconnects
-- **WHEN** the controller evicts `default_X`
-- **THEN** each operative's stream mapping on `default_X` is removed (`hook_remove_pid/2`) and the channels become rebindable, so a fresh stream from a reconnecting process binds without a stale-pid conflict.
-
 ### Requirement: Convergence eviction is idempotent and safe on an active executor
 
 `FleetManager.evict_executor/1` driven by the convergence Loop SHALL be a no-op when the target executor is currently `:active` (its connection is open), and SHALL be idempotent on an unknown id. The authoritative connect-handler path (`previous_executor_id` presented by the SDK itself) remains unconditional.
@@ -379,4 +360,51 @@ On receiving `ExecutorReconnected { previous_id, new_id, reason }` the controlle
 - **GIVEN** the Diff snapshot queued `default_X` for eviction but `default_X` reconnected before the heal ran
 - **WHEN** `evict_executor(default_X)` executes
 - **THEN** FleetManager observes `default_X` is `:active` and performs no eviction, leaving its operatives producing.
+
+### Requirement: Executor liveness is session liveness, derived from one signal
+
+Executor liveness SHALL be a property of the control-channel **session**, derived from a single signal: the inbound control-frame stream. The controller's `Flezha.Executor.ControlChannel` SHALL stamp a monotonic `last_seen` on every inbound control frame — including the keepalive ping the SDK already sends (formerly echoed and discarded) — and SHALL run one jittered watchdog that treats **sustained silence past a configurable window** as a connection close, routing it through the existing `{:flz_closed}` → `Flezha.Executor.FleetManager` `{:executor_disconnected}` path. A real socket close SHALL continue to drop the executor immediately and unconditionally (wrapped so side-effect failures cannot leave a ghost).
+
+The window SHALL be **generous** (default 45 s, i.e. 3× the keepalive interval) and jittered, and the action SHALL be connection-close, NOT a redistribute sweep. There SHALL be NO controller-initiated periodic ping-sweep and NO eviction triggered by a *single* missed ping: a live-but-busy executor (whose independent keepalive timer keeps sending) and a briefly frozen executor (GC / host contention shorter than the window) MUST NOT be declared dead. The `ControlUnit` reply-watchdog SHALL NOT perform liveness eviction; its `fail_stuck_refs` behaviour MAY remain solely to unblock stuck callers.
+
+QUIC SHALL enforce the same window via an explicit `max_idle_timeout` (no longer inheriting the transport library's default), so UDS and QUIC declare death within the same configured window.
+
+#### Scenario: an idle wedged-but-connected executor is detected on the control plane
+
+- **GIVEN** an executor whose control connection is open but whose process has wedged, with no control request in flight
+- **WHEN** no inbound control frame (including keepalive ping) arrives for longer than the configured liveness window
+- **THEN** the controller's `ControlChannel` watchdog SHALL close the connection through the existing `{:executor_disconnected}` path
+- **AND** this SHALL hold on UDS as well as QUIC
+
+#### Scenario: a frozen-but-connected executor within the window is not evicted
+
+- **GIVEN** an executor briefly frozen (GC / host contention) for less than the liveness window
+- **WHEN** the watchdog ticks
+- **THEN** no close, eviction, or rebind SHALL be issued for it
+- **AND** a single missed keepalive ping SHALL NOT trigger any of these
+- **AND** when its connection actually closes, it SHALL be dropped from the active set immediately
+
+#### Scenario: the keepalive ping is the liveness signal, not a discarded echo
+
+- **GIVEN** a steady-state control channel carrying only periodic keepalive pings
+- **WHEN** a keepalive ping arrives
+- **THEN** the controller SHALL update `last_seen` for that session
+- **AND** the watchdog SHALL NOT fire while pings continue to arrive within the window
+
+### Requirement: Controller resolves a reconnect by swapping the binding, not minting-and-evicting
+
+On any executor reconnect the controller SHALL resolve identity by the executor's presented **stable identity** (see capability `executor-identity-and-session`) and SHALL re-point that stable identity's existing operative bindings at the new session, rather than minting a fresh durable id and evicting the previous one. The controller SHALL NOT perform an unconditional `previous_executor_id` pre-eviction, and the in-process-reconnect operative reissue SHALL actually re-bind operatives (it SHALL NOT be a no-op stub). On disconnect, each operative's stale stream mapping SHALL be cleared (`HubManager.hook_remove_pid/2`) so the reconnecting session's fresh streams bind cleanly to nil-ref `StreamChannel`s.
+
+#### Scenario: fresh-process restart preserves bindings without a pre-evict
+
+- **GIVEN** an executor with operatives `[r1, r2]` whose process restarts and reconnects within the keepalive window, presenting the same persisted stable identity
+- **WHEN** the controller handles the connect
+- **THEN** it SHALL swap `r1` and `r2`'s bindings onto the new session token
+- **AND** it SHALL NOT mint a new durable identity nor issue an unconditional eviction of a "previous" id
+
+#### Scenario: in-process reconnect actually re-binds operatives
+
+- **GIVEN** an executor whose control stream dropped but whose process survived, holding operatives `[r1]`
+- **WHEN** it reconnects and the controller's view and the executor's view of bindings diverge
+- **THEN** the controller SHALL re-bind `r1` onto the new session (not rely on a no-op reissue plus a later convergence tick)
 

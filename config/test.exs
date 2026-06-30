@@ -3,6 +3,14 @@ import Config
 config :flezha,
   testnet_enabled: true,
   concurrent_channel_count: 1,
+  # Control-plane liveness watchdog (unify-executor-liveness-and-identity).
+  # The window MUST stay comfortably above the SDK keepalive cadence (15 s):
+  # the long-lived default-namespace test executors only re-arm `last_seen` via
+  # their keepalive ping, so a small global window would falsely evict them and
+  # break unrelated suites. Dedicated watchdog tests drive `:liveness_tick`
+  # directly (or override this via `Application.put_env/3`) for fast assertions.
+  control_liveness_window_ms: 45_000,
+  control_liveness_interval_ms: 5_000,
   # Graceful shutdown is off in tests so `Application.stop/1` calls
   # at teardown remain fast. Dedicated integration tests under
   # `test/integration/shutdown/` exercise it explicitly.

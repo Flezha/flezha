@@ -9,8 +9,8 @@ use crossbeam::channel::{Receiver, Sender};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token, Waker};
 use quinn_proto::{
-    ConnectionHandle, DatagramEvent, Dir, EndpointConfig, Event, ServerConfig, StreamEvent,
-    StreamId, Transmit,
+    ConnectionHandle, DatagramEvent, Dir, EndpointConfig, Event, IdleTimeout, ServerConfig,
+    StreamEvent, StreamId, Transmit,
 };
 use rustler::{Encoder, LocalPid, OwnedEnv};
 
@@ -60,6 +60,13 @@ struct ConnectionState {
     streams: HashMap<StreamId, QuicStreamState>,
     /// Number of bidi streams accepted on this connection.
     stream_count: u32,
+    /// The control channel's nif stream id — a stable per-connection routing
+    /// key. Every data stream on this connection is tagged with it in
+    /// `{:flz_stream, ...}` so the controller routes by connection identity
+    /// (which owns the session token) instead of a shared "current executor"
+    /// scalar, eliminating the concurrent-connect race. Set when the first
+    /// (control) stream is accepted.
+    control_nif_id: u64,
 }
 
 /// Run the QUIC server driver loop. Called from a spawned thread.
@@ -213,6 +220,7 @@ fn driver_loop(
                                                 connection,
                                                 streams: HashMap::new(),
                                                 stream_count: 0,
+                                                control_nif_id: 0,
                                             },
                                         );
                                     }
@@ -305,6 +313,9 @@ fn driver_loop(
                             // For control channel, send connection message immediately.
                             // For data streams, defer until type bytes are read.
                             if is_control {
+                                // Tag this connection by its control stream's nif id so
+                                // every data stream on it routes by connection identity.
+                                conn_state.control_nif_id = nif_id;
                                 // Control channel — notify Elixir immediately.
                                 send_connection_msg(acceptor_pid, stream_handle);
                             } else {
@@ -345,7 +356,10 @@ fn driver_loop(
                         let mut broken: Option<(u64, LocalPid)> = None;
                         if let Some(stream_state) = conn_state.streams.get_mut(&id) {
                             if flush_quic_write(&mut conn_state.connection, id, stream_state) {
-                                broken = Some((stream_state.nif_stream_id, *stream_state.owner.lock().unwrap()));
+                                broken = Some((
+                                    stream_state.nif_stream_id,
+                                    *stream_state.owner.lock().unwrap(),
+                                ));
                             }
                         }
                         if let Some((nif_id, owner)) = broken {
@@ -406,7 +420,11 @@ fn driver_loop(
                             let mut broken: Option<LocalPid> = None;
                             if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
                                 stream_state.write_buffer.extend_from_slice(&data);
-                                if flush_quic_write(&mut conn_state.connection, qstream_id, stream_state) {
+                                if flush_quic_write(
+                                    &mut conn_state.connection,
+                                    qstream_id,
+                                    stream_state,
+                                ) {
                                     broken = Some(*stream_state.owner.lock().unwrap());
                                 }
                             }
@@ -434,7 +452,11 @@ fn driver_loop(
                             let mut broken: Option<LocalPid> = None;
                             if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
                                 stream_state.write_buffer.extend_from_slice(&frame);
-                                if flush_quic_write(&mut conn_state.connection, qstream_id, stream_state) {
+                                if flush_quic_write(
+                                    &mut conn_state.connection,
+                                    qstream_id,
+                                    stream_state,
+                                ) {
                                     broken = Some(*stream_state.owner.lock().unwrap());
                                 }
                             }
@@ -526,7 +548,11 @@ fn driver_loop(
                 for qstream_id in stream_ids {
                     if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
                         if flush_quic_write(&mut conn_state.connection, qstream_id, stream_state) {
-                            broken_streams.push((qstream_id, stream_state.nif_stream_id, *stream_state.owner.lock().unwrap()));
+                            broken_streams.push((
+                                qstream_id,
+                                stream_state.nif_stream_id,
+                                *stream_state.owner.lock().unwrap(),
+                            ));
                         }
                     }
                 }
@@ -556,6 +582,10 @@ fn drain_readable(
         Some(c) => c,
         None => return,
     };
+
+    // Per-connection routing key (the control stream's nif id), captured before
+    // the per-stream mutable borrow so data streams can carry it to Elixir.
+    let conn_id = conn_state.control_nif_id;
 
     let stream_state = match conn_state.streams.get_mut(&id) {
         Some(s) => s,
@@ -612,9 +642,9 @@ fn drain_readable(
                         };
 
                         // Type prefix consumed — deliver stream notification.
-                        // Deliver the {:flz_stream, stream_ref, type, index} message.
+                        // Deliver the {:flz_stream, stream_ref, type, index, conn_id} message.
                         if let Some(handle) = pending_data_streams.remove(&nif_id) {
-                            send_stream_msg(acceptor_pid, handle, stream_type, index);
+                            send_stream_msg(acceptor_pid, handle, stream_type, index, conn_id);
                         }
 
                         // Remaining data after the 2-byte prefix.
@@ -712,12 +742,16 @@ fn send_transmit(udp: &UdpSocket, transmit: &Transmit, buf: &[u8]) -> io::Result
 // send_data_msg / send_closed_msg / send_connection_msg live in
 // crate::driver_msg (shared with the UDS driver).
 
-/// Send {:flz_stream, stream_handle, type, index} for QUIC data streams.
+/// Send {:flz_stream, stream_handle, type, index, conn_id} for QUIC data
+/// streams. `conn_id` is the control stream's nif id — a stable per-connection
+/// routing key the controller uses to bind data streams to the connection that
+/// owns the session token (fixes the concurrent-connect race).
 fn send_stream_msg(
     acceptor: LocalPid,
     stream_handle: rustler::ResourceArc<StreamHandle>,
     stream_type: u8,
     index: u8,
+    conn_id: u64,
 ) {
     let mut env = OwnedEnv::new();
     let _ = env.send_and_clear(&acceptor, |env| {
@@ -728,6 +762,7 @@ fn send_stream_msg(
                 stream_handle.encode(env),
                 (stream_type as u64).encode(env),
                 (index as u64).encode(env),
+                conn_id.encode(env),
             ],
         )
     });
@@ -778,6 +813,15 @@ pub fn build_quic_server_config(cert_path: &str, key_path: &str) -> io::Result<S
     // Transport config matching client settings.
     let mut transport = quinn_proto::TransportConfig::default();
     transport.keep_alive_interval(Some(Duration::from_secs(5)));
+    // Explicit idle timeout aligned to the control-liveness window so a wedged
+    // peer is declared dead in the same window on QUIC as on UDS, instead of
+    // inheriting the quinn default. keep_alive (5s) << this. See
+    // docs/resilience/transport_liveness.md.
+    if let Ok(idle) =
+        IdleTimeout::try_from(flz_transport::transport::liveness::control_idle_timeout())
+    {
+        transport.max_idle_timeout(Some(idle));
+    }
     transport.stream_receive_window(8_388_608u32.into());
     transport.receive_window(16_777_216u32.into());
     transport.send_window(8_388_608);

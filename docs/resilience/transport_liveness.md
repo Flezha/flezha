@@ -1,11 +1,69 @@
-# Data-Plane Liveness Instrumentation
+# Transport Liveness
+
+Two complementary liveness signals on the controller↔executor transport: a
+**control-plane session watchdog** (is the executor session alive at all?) and
+**data-plane stall instrumentation** (which layer wedged when output went
+silent?). They cover different wedge classes — see the table below.
+
+## Control-plane session liveness (unify-executor-liveness-and-identity)
+
+`Flezha.Executor.ControlChannel` treats the inbound control-frame stream as the
+single liveness signal for the executor session. It stamps a monotonic
+`last_seen` on **every** inbound control frame — including the SDK's 15 s
+keepalive ping (formerly echoed and discarded) — and runs one jittered watchdog
+(`:liveness_tick`). Sustained silence past `control_liveness_window_ms`
+(default 45 s = 3× the keepalive; env `FLEZHA_CONTROL_LIVENESS_WINDOW_MS`, check
+interval `FLEZHA_CONTROL_LIVENESS_INTERVAL_MS`) is treated as a **connection
+close**: it routes through the existing `handle_connection_closed/1` →
+`{:executor_disconnected}` path — the same path a real socket close uses, NOT a
+parallel eviction path — and emits `[:flezha, :executor, :liveness_timeout]`.
+
+This closes the **UDS wedged-but-connected blind spot**: UDS surfaces only a hard
+socket EOF, never a half-open peer, so before this watchdog a wedged-but-
+connected executor was invisible to the control plane on the default transport.
+QUIC sets an explicit `max_idle_timeout` equal to the same window (`flz_transport`
+`quic.rs` + `flz_nif` `quic_driver.rs`, via `liveness::control_idle_timeout()` /
+`FLEZHA_CONTROL_IDLE_TIMEOUT_MS`, default 45 s; keep-alive stays 5 s) instead of
+inheriting the quinn default — so **both transports declare death in the same
+window by construction**. When tuning, pair the two window knobs
+(`FLEZHA_CONTROL_LIVENESS_WINDOW_MS` for the UDS watchdog,
+`FLEZHA_CONTROL_IDLE_TIMEOUT_MS` for the QUIC idle + the SDK-side idle watchdog).
+
+**Calibrated, not trigger-happy.** The window is multiple missed pings, jittered,
+and the action is connection-close (a cheap reconnect via the binding swap — see
+[`executor_identity.md`](executor_identity.md)), not a redistribute sweep. The
+SDK keepalive runs on an independent timer thread, so a *busy* executor keeps
+proving liveness; a single missed ping or a brief GC/host-contention pause cannot
+trip it.
+
+**Retired mechanisms** (coverage subsumed before deletion):
+
+| Retired / changed | What it caught | Subsumed by |
+|---|---|---|
+| `ControlUnit.synthesize_disconnect` (90 s stuck-reply → disconnect) | a wedged executor *with a control request in flight* | the session watchdog (fires on silence in ≤45 s, request or not). `ControlUnit.fail_stuck_refs` stays, purely to unblock stuck callers |
+| Controller echo-and-discard of the keepalive ping | nothing controller-side | the watchdog now *consumes* the same ping as `last_seen` |
+| QUIC implicit idle (quinn default) | a wedged QUIC peer | explicit `max_idle_timeout` aligned to the window |
+
+**What it catches — and what it does not.** A control-channel watchdog detects a
+process / control-channel wedge (the executor stops sending entirely). It does
+**not** detect a dispatch-pool wedge where the work pool is frozen but the
+keepalive timer thread keeps pinging (the 06-10 / 06-19 incidents) — that class
+is covered by the *data-plane* `output_stall` + the executor's
+`:executor_pool_wedged` self-report, below. Both signals are needed:
+
+| Wedge class | Caught by |
+| --- | --- |
+| Process / control-channel wedge (the UDS blind spot) | the control-plane `last_seen` watchdog (this section) |
+| Dispatch-pool wedge, keepalive thread still ticking | data-plane `output_stall` + `:executor_pool_wedged` (below) |
+
+## Data-plane stall localization
 
 Detection-only instrumentation that localizes a silent data-plane stall to the
 exact layer that wedged. **It changes no data-plane behaviour and triggers no
 remediation** — it is pure observability layered over the existing
 `Flezha.Observability` foundation and the convergence Loop.
 
-## Why this exists
+### Why this exists
 
 On 2026-06-07 22:14 an executor's data plane went silent for ~21 h: inbound
 `io_in` stopped reaching the executor *and* the executor produced no output —

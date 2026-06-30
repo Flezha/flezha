@@ -1,18 +1,17 @@
 defmodule FlezhaTest.Executor.ControlUnitHealthTest do
   @moduledoc """
-  ControlUnit out-of-band recovery. A control reply left unacked past the evict
-  threshold is a positive dead-executor signal: the ControlUnit fails the
-  waiter, drops the ref, and synthesizes the FleetManager disconnect that evicts
-  the executor and rebinds its operatives — never routing through the (possibly
-  wedged) Overwatch operative process.
+  ControlUnit stuck-caller unblocking. A control reply left unacked past the
+  threshold would otherwise hang the caller: the ControlUnit fails the waiter
+  with `:timeout` and drops the ref so `response_refs` cannot grow unbounded.
 
-  Fail surfaces as: market data stops and never recovers because a silent
-  executor's operative is never rebound onto a live executor.
+  Executor liveness/eviction is NOT this sweep's job — it is the
+  `ControlChannel` watchdog's (unify-executor-liveness-and-identity, D1). The
+  old `synthesize_disconnect` eviction role was removed from this heartbeat.
   """
   use ExUnit.Case, async: false
 
-  # Asserts dead-executor / eviction paths that log at warn/error by design;
-  # capture so a green run stays quiet (logs still print on failure).
+  # The stuck-caller sweep logs at warn by design; capture so a green run stays
+  # quiet (logs still print on failure).
   @moduletag :capture_log
 
   alias Flezha.Executor.ControlUnit
@@ -23,7 +22,7 @@ defmodule FlezhaTest.Executor.ControlUnitHealthTest do
     on_exit(fn -> Logger.configure(level: prev) end)
   end
 
-  test "heartbeat evicts the executor when a control reply is unacked past the threshold" do
+  test "heartbeat unblocks the stuck caller when a control reply is unacked past the threshold" do
     now = System.monotonic_time(:millisecond)
     reply_ref = make_ref()
 

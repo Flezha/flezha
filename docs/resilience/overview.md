@@ -209,9 +209,16 @@ formation timeout elapses, so it still boots without hanging.
 
 | Module | Role |
 |--------|------|
-| `FleetManager` | Accepts new executor connections, rejects them during shutdown, and dispatches `:executor_connected_event` which triggers an immediate convergence tick |
+| `FleetManager` | Accepts new executor connections, mints a per-connection **session token**, runs the reconnect **binding swap** keyed on the executor's durable **stable identity**, rejects connects during shutdown, and dispatches `:executor_connected_event` (immediate convergence tick) |
 | `StreamChannel` | Per-stream GenServer forwarding operative output to the executor socket; detects seq gaps and triggers segment resync |
-| `ControlChannel` | Reads protobuf commands from the executor's control socket and dispatches them |
+| `ControlChannel` | Reads protobuf commands from the executor's control socket; stamps `last_seen` on every inbound frame and runs the **control-plane session-liveness watchdog** (sustained silence → connection close) |
+
+Executor identity is two layers — a durable, SDK-owned **stable identity** (the
+binding key) and an ephemeral controller-minted **session token** (the
+routing/Registry key). Reconnect re-points the stable identity's operatives onto
+the new session token rather than minting-and-evicting, giving binding continuity
+across restart. See [`executor_identity.md`](executor_identity.md) and the
+control-plane watchdog in [`transport_liveness.md`](transport_liveness.md).
 
 ---
 
@@ -223,7 +230,7 @@ formation timeout elapses, so it still boots without hanging.
 |--------|------|
 | `shutdown.rs` | On SIGTERM/drop, serializes every running operative's final state and sends it to the controller so the next executor starts from the true last state |
 | `executor/control_unit.rs` | Opens the control channel with full-jitter exponential backoff retry (cap 30 s) and reconnects automatically on disconnect or ack-timeout |
-| `executor/persistent_id.rs` | Persists the controller-assigned executor ID to disk so a restarted process can identify itself and get a clean eviction rather than leaving a ghost binding |
+| `executor/persistent_id.rs` | Creates + persists the executor's durable **stable identity** (`<namespace>-<profile_hash8>-<rand6>`) so a restarted process re-presents it and the controller swaps its bindings onto the new session; degrades to a fresh per-boot id when the path is unwritable |
 | `segment/flusher.rs` | Background thread draining each segment's change buffer on a 5 ms linger and sending framed WAL records to the controller |
 | `segment/restore.rs` | Applies a `RestoreInitPayload` (snapshot + change-log) so a reconnected segment resumes from exactly its last state |
 | `executor/mailbox.rs` | Bounded lock-free per-operative mailbox with configurable overflow policy (block/drop/replace) so a slow operative cannot back-pressure the whole executor |

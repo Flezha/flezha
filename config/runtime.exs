@@ -178,6 +178,23 @@ config :flezha,
   executor_keepalive: System.get_env("FLEZHA_EXECUTOR_KEEPALIVE", "30000") |> String.to_integer(),
 
   # ------------------------------------------------------------------------------------------------
+  # Control-plane liveness watchdog (unify-executor-liveness-and-identity).
+  #
+  # `Flezha.Executor.ControlChannel` stamps `last_seen` on every inbound control
+  # frame — including the SDK's 15 s keepalive ping — and a jittered watchdog
+  # treats sustained silence past `window_ms` as a connection close, closing the
+  # UDS wedged-but-connected blind spot and making UDS symmetric with QUIC's
+  # explicit idle timeout. The window is generous (3× the keepalive) so a single
+  # missed ping or a brief GC/contention pause never evicts a healthy executor.
+  # Pair `window_ms` with the QUIC `max_idle_timeout` (FLEZHA_CONTROL_IDLE_TIMEOUT_MS)
+  # so both transports declare death in the same window. See
+  # `docs/resilience/transport_liveness.md`.
+  control_liveness_window_ms:
+    System.get_env("FLEZHA_CONTROL_LIVENESS_WINDOW_MS", "45000") |> String.to_integer(),
+  control_liveness_interval_ms:
+    System.get_env("FLEZHA_CONTROL_LIVENESS_INTERVAL_MS", "15000") |> String.to_integer(),
+
+  # ------------------------------------------------------------------------------------------------
   # Graceful shutdown (controller-graceful-shutdown).
   #
   # When enabled, the controller installs SIGTERM/SIGINT handlers and runs

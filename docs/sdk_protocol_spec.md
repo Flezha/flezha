@@ -440,31 +440,35 @@ The SDK sends a single binary frame:
   ```json
   {
     "namespace": "<namespace_string>",
-    "factory_ids": ["<factory_id_1>", "<factory_id_2>", ...]
+    "factory_ids": ["<factory_id_1>", "<factory_id_2>", ...],
+    "factories": [{"id": "<factory_id>", "description": null}, ...],
+    "stable_id": "<namespace>-<profile_hash8>-<rand6>"
   }
   ```
   - `namespace`: A string identifying the logical group this compute engine belongs to.
   - `factory_ids`: List of all registered operative factory IDs in this SDK process.
+  - `factories`: Per-factory metadata (id + optional description); a superset of `factory_ids`.
+  - `stable_id`: The executor's durable, self-owned **stable identity**, present on **every** connect (initial and reconnect). The controller trusts it as the operative-binding key and, on reconnect, swaps the prior session's operatives onto the new session token. See [`resilience/executor_identity.md`](resilience/executor_identity.md).
 - **Metadata**: empty
 
 #### Step 3: Controller Processes Handshake
 
 The controller:
 1. Reads the frame from the control socket (with a 5-second timeout).
-2. Parses the JSON to extract `namespace` and `factory_ids`.
-3. Generates a unique `executor_id`.
+2. Parses the JSON to extract `namespace`, `factory_ids`, and `stable_id`.
+3. Mints a fresh per-connection **session token** (the `executor_id` value below) and resolves the presented `stable_id` — on reconnect it swaps the prior session's operative bindings onto the new token instead of minting-and-evicting.
 4. Starts supervisor trees for the new compute engine (control unit, stream listeners, etc.).
 5. Starts or joins the namespace hub.
 
 #### Step 4: Controller Sends `AssignExecutorId`
 
-The controller sends a `CommandRequest` containing:
+The controller sends a `CommandRequest` carrying the minted **session token**:
 ```protobuf
 AssignExecutorId {
-    executor_id: "<generated_id>"
+    executor_id: "<session_token>"
 }
 ```
-This is Protobuf-encoded, then wrapped in a binary frame with payload_id `"control_command"`.
+This is Protobuf-encoded, then wrapped in a binary frame with payload_id `"control_command"`. The SDK stores it as its session token (it keys the per-connection data sockets) but does **not** persist it — the durable identity is the self-owned `stable_id` it already presented in the handshake.
 
 #### Step 5: SDK Responds
 
@@ -558,7 +562,7 @@ SDK                                        Controller
  │                                           │
  │     (normal lifecycle resumes from Step 3) │
  │                                           │
- │<─── 4. AssignExecutorId (new ID) ───│
+ │<─── 4. AssignExecutorId (new session token) ───│
  │<─── 6. ConnectSocket ────────────────────│
  │<─── 9. AddOperative (for each) ──────────│
  │                                           │
@@ -567,8 +571,8 @@ SDK                                        Controller
 
 **Key behaviors:**
 - The SDK distinguishes intentional disconnects (`ExecutorDisconnect` command sets status to `Stopped`) from unexpected ones (status is `Running`). Only unexpected disconnects trigger reconnection.
-- The controller treats the reconnection as a **new connection** — it assigns a fresh `executor_id` and re-sends the full command sequence.
-- Operative factories remain registered in the SDK process; the controller re-creates operative instances via `AddOperative`.
+- The controller treats the reconnection as a **new session** — it mints a fresh session token and, because the SDK re-presents its durable `stable_id`, **swaps** the prior session's operative bindings onto the new token rather than minting-and-evicting or re-issuing each operative. See [`resilience/executor_identity.md`](resilience/executor_identity.md).
+- Operative factories remain registered in the SDK process; the SDK preserves its in-memory operative registry across reconnect, so the binding swap re-points existing operatives without re-issuing `AddOperative` for each.
 - In-flight worker work completes (writes to dead streams fail silently); workers return to the pool after reconnection.
 - Backoff schedule: 200ms, 400ms, 800ms, 1.6s, 3.2s, 6.4s, 12.8s, 25.6s, capped at 30s.
 
@@ -583,8 +587,8 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `AssignExecutorId { executor_id: string }` |
-| Behavior | SDK stores the assigned compute engine ID and sets status to `Running` |
+| Proto message | `AssignExecutorId { executor_id: string }` (the value is the controller-minted **session token**) |
+| Behavior | SDK stores the session token and sets status to `Running`; the value is NOT persisted (the durable identity is the SDK-owned `stable_id` in the handshake) |
 | Response status | `"success"` |
 | Response raw_data | empty |
 

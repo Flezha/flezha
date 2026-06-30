@@ -10,6 +10,15 @@ defmodule Flezha.Executor.ControlChannel do
 
   use GenServer
 
+  # Control-plane liveness: the SDK keepalive ping (and every other inbound
+  # frame) re-arms `last_seen`; a jittered watchdog treats sustained silence
+  # past the window as a connection close — the same signal `{:flz_closed}`
+  # carries. Closes the UDS wedged-but-connected blind spot and makes UDS
+  # symmetric with QUIC's idle timeout. Mirrors the data-plane `StreamChannel`
+  # last_seen/threshold watchdog.
+  @control_liveness_window_ms 45_000
+  @control_liveness_interval_ms 15_000
+
   def start_link({namespace, executor_id, stream_ref}) do
     GenServer.start_link(__MODULE__, {namespace, executor_id, stream_ref, nil},
       name: Identificator.control_channel(executor_id)
@@ -97,13 +106,16 @@ defmodule Flezha.Executor.ControlChannel do
 
   @impl true
   def init({namespace, executor_id, stream_ref, write_fun}) do
+    schedule_liveness_check()
+
     {:ok,
      %{
        namespace: namespace,
        executor_id: executor_id,
        stream_ref: stream_ref,
        write_fun: write_fun || (&Native.send_data/2),
-       control_unit: Identificator.control_unit(executor_id)
+       control_unit: Identificator.control_unit(executor_id),
+       last_seen: System.monotonic_time(:millisecond)
      }}
   end
 
@@ -176,7 +188,7 @@ defmodule Flezha.Executor.ControlChannel do
         state.write_fun.(stream_ref, Payloader.build_from_bin("control_ping", message))
     end
 
-    {:noreply, state}
+    {:noreply, bump_last_seen(state)}
   end
 
   # Unified NIF transport message — complete parsed frame
@@ -193,14 +205,12 @@ defmodule Flezha.Executor.ControlChannel do
   # handover.
   @impl true
   def handle_info({:flz_data, _stream_id, _payload_id, message, _metadata}, state) do
+    state = bump_last_seen(state)
+
     case decode_sdk_initiated(message) do
       {:executor_shutdown_notification, %{} = notif, reference_id} ->
         handle_executor_shutdown_notification(state, notif, reference_id)
         {:noreply, state}
-
-      {:executor_reconnected, %{} = reconnected, reference_id} ->
-        new_state = handle_executor_reconnected(state, reconnected, reference_id)
-        {:noreply, new_state}
 
       {:bounded_completed, %{} = completed, _reference_id} ->
         handle_bounded_completed(state, completed)
@@ -216,6 +226,35 @@ defmodule Flezha.Executor.ControlChannel do
   @impl true
   def handle_info({:flz_closed, _stream_id, _reason}, state) do
     handle_connection_closed(state)
+  end
+
+  # Control-plane liveness watchdog. Sustained silence past the window — no
+  # inbound frame, not even the SDK keepalive ping — is a process/control-channel
+  # wedge UDS never surfaces as EOF. Route through the SAME
+  # `handle_connection_closed/1` a real socket close uses (no parallel eviction
+  # path). The window is generous (3x the keepalive) and jittered, so a brief
+  # GC/contention pause or a single missed ping never trips it.
+  @impl true
+  def handle_info(:liveness_tick, state) do
+    silent_ms = System.monotonic_time(:millisecond) - state.last_seen
+
+    if silent_ms > liveness_window_ms() do
+      Logger.warning(
+        "[control_channel] no inbound control frame for #{silent_ms}ms for " <>
+          "#{state.executor_id} on #{state.namespace}; treating as connection close"
+      )
+
+      :telemetry.execute(
+        [:flezha, :executor, :liveness_timeout],
+        %{count: 1, silent_ms: silent_ms},
+        %{executor_id: state.executor_id, namespace: state.namespace}
+      )
+
+      handle_connection_closed(state)
+    else
+      schedule_liveness_check()
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -237,6 +276,30 @@ defmodule Flezha.Executor.ControlChannel do
     })
 
     {:noreply, state}
+  end
+
+  defp bump_last_seen(state) do
+    %{state | last_seen: System.monotonic_time(:millisecond)}
+  end
+
+  defp schedule_liveness_check do
+    interval = liveness_interval_ms()
+    if interval > 0, do: Process.send_after(self(), :liveness_tick, jittered(interval))
+  end
+
+  defp liveness_window_ms,
+    do: Application.get_env(:flezha, :control_liveness_window_ms, @control_liveness_window_ms)
+
+  defp liveness_interval_ms,
+    do: Application.get_env(:flezha, :control_liveness_interval_ms, @control_liveness_interval_ms)
+
+  # Full jitter into [interval/2, interval] so a fleet's control channels do
+  # not all wake in lockstep (mirrors the SDK's `liveness::jittered`).
+  defp jittered(ms) when ms < 2, do: ms
+
+  defp jittered(ms) do
+    half = div(ms, 2)
+    half + :rand.uniform(half + 1) - 1
   end
 
   defp gen_ref() do
@@ -263,13 +326,6 @@ defmodule Flezha.Executor.ControlChannel do
          command: {:executor_shutdown_notification, notif}
        }} ->
         {:executor_shutdown_notification, notif, ref}
-
-      {:ok,
-       %ExecutorCommands.CommandRequest{
-         reference_id: ref,
-         command: {:executor_reconnected, reconnected}
-       }} ->
-        {:executor_reconnected, reconnected, ref}
 
       {:ok,
        %ExecutorCommands.CommandRequest{
@@ -354,124 +410,6 @@ defmodule Flezha.Executor.ControlChannel do
           )
       end
     end)
-  end
-
-  # Handle the SDK's first frame after `handle_reconnect`. The SDK has
-  # preserved its registry + executor_id, so the controller can either
-  # leave the binding intact (common case) or — if the controller
-  # reassigned during the disconnect window — issue
-  # `ReassignExecutorId` and re-publish every operative it wants bound.
-  #
-  # See `executor-controller-connection-healing` capability,
-  # "Controller computes binding delta on `ExecutorReconnected`".
-  defp handle_executor_reconnected(state, reconnected, _reference_id) do
-    %ExecutorCommands.ExecutorReconnected{
-      previous_id: previous_id,
-      new_id: _claimed_new_id,
-      reason: reason
-    } = reconnected
-
-    bindings = HubManager.executor_operatives(state.namespace, previous_id)
-
-    cond do
-      previous_id != state.executor_id ->
-        # Controller-side ControlChannel is keyed by the executor_id
-        # the SDK currently holds. Mismatch means the controller has
-        # already minted a fresh id (and the old ControlChannel is
-        # gone). Mint AGAIN and re-issue to be defensive.
-        do_reassign_and_reissue(state, previous_id, reason)
-
-      bindings == [] ->
-        do_reassign_and_reissue(state, previous_id, reason)
-
-      true ->
-        # Common case: the controller still has bindings under
-        # `previous_id`. The SDK preserved its registry, so the views
-        # already agree — no `AddOperative` or `RemOperative` needs to flow.
-        # The mid-disconnect added/removed delta is an open question
-        # the design defers to a follow-up; for phase 2 the optimistic
-        # zero-frame path is sufficient for the recurring outage.
-        :telemetry.execute(
-          [:flezha, :executor, :reconnected_delta],
-          %{added: 0, removed: 0, bound: length(bindings)},
-          %{executor_id: state.executor_id, namespace: state.namespace, reason: reason}
-        )
-
-        :telemetry.execute(
-          [:flezha, :executor, :reconnected],
-          %{count: 1, bound: length(bindings)},
-          %{
-            executor_id: state.executor_id,
-            namespace: state.namespace,
-            reason: reason,
-            mode: :delta
-          }
-        )
-
-        state
-    end
-  end
-
-  defp do_reassign_and_reissue(state, previous_id, reason) do
-    namespace = state.namespace
-
-    new_executor_id =
-      try do
-        Identificator.unique_id(namespace)
-      rescue
-        _ -> state.executor_id
-      end
-
-    # Tell the SDK its new identity.
-    _ =
-      send_control_async(state.executor_id, {
-        :reassign_executor_id,
-        %ExecutorCommands.ReassignExecutorId{new_id: new_executor_id}
-      })
-
-    # Re-publish every operative the controller currently believes belongs
-    # on this SDK — i.e. every binding tagged with the new id (or with
-    # `previous_id` after `executor_switch/3` is run, depending on the
-    # caller's intent). We fetch what is bound to the current
-    # `state.executor_id` so the SDK ends up with the controller's
-    # authoritative view.
-    bindings = HubManager.executor_operatives(namespace, state.executor_id)
-    Enum.each(bindings, &reissue_add_operative(state, &1))
-
-    :telemetry.execute(
-      [:flezha, :executor, :reconnected_reassigned],
-      %{count: 1, reissued: length(bindings)},
-      %{
-        executor_id: state.executor_id,
-        namespace: namespace,
-        previous_id: previous_id,
-        new_id: new_executor_id,
-        reason: reason
-      }
-    )
-
-    :telemetry.execute(
-      [:flezha, :executor, :reconnected],
-      %{count: 1, reissued: length(bindings)},
-      %{
-        executor_id: state.executor_id,
-        namespace: namespace,
-        reason: reason,
-        mode: :reassigned
-      }
-    )
-
-    state
-  end
-
-  defp reissue_add_operative(_state, _binding) do
-    # The full re-issue path requires the cspec → AddOperative payload
-    # conversion that today lives in `Flezha.Service.OperativeManager` /
-    # the Reconciler. Phase 2 keeps the re-issue logic in those
-    # callers (they fire on `:executor_connected_event`); the
-    # controller-side `:reconnected_reassigned` telemetry signals
-    # the same event so the existing rebind path observes it.
-    :ok
   end
 
   defp emit_executor_shutdown_ack(state, operative_id, reference_id) do

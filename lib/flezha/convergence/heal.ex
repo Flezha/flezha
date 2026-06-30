@@ -131,13 +131,7 @@ defmodule Flezha.Convergence.Heal do
            OperativeManager.assign_executor(namespace, factory, operative_id),
          {:ok, :ok} <- SafeCall.bounded(pid, {:executor_migrate, target}, @migrate_timeout_ms) do
       _ = HubManager.operative_set_executor(namespace, operative_id, target)
-
-      _ =
-        HubManager.hook_insert_pid(target, %{
-          child_id: operative_id,
-          node_pids: [{node(), pid}],
-          metadata: %{tag: target}
-        })
+      _ = HubManager.hook_insert_local_pid(target, operative_id, pid)
 
       # Replay the per-Segment WAL into the new binding. The `executor_migrate`
       # above is a HotSwap handover, which only carries state when the previous

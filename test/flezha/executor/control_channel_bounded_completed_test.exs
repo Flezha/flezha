@@ -5,7 +5,7 @@ defmodule FlezhaTest.Executor.ControlChannelBoundedCompletedTest do
 
   A task-kind unit emits `BoundedCompleted` when its run-once function returns.
   The controller decodes it off the `"control_command"` payload_id (same
-  envelope as `ExecutorReconnected` / `ExecutorShutdownNotification`) and
+  envelope as `ExecutorShutdownNotification`) and
   drives deregister-on-completion via `OperativeManager.stop_operative/2`. A
   terminal failure (`status = "error"`) is torn down identically and
   surfaced via `[:flezha, :bounded, :failed]` telemetry — no retry.

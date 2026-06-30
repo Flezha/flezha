@@ -150,7 +150,11 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     connect_timeout = Keyword.get(opts, :connect_timeout, 30_000)
 
     Flezha.Service.EventManager.add_handler(:executor_connected_event)
-    Flezha.Service.PortPilot.open_port(command, transport: transport)
+
+    Flezha.Service.PortPilot.open_port(command,
+      transport: transport,
+      env: Keyword.get(opts, :env, [])
+    )
 
     executor_id =
       receive do

@@ -469,6 +469,21 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
+  Convenience over `hook_insert_pid/2` for the common case: seed one operative's
+  local `pid` into `executor_id`'s pre-spawned StreamChannels so inbound
+  data-plane frames route to it. Tags the insertion with `executor_id` as the
+  owner (the `metadata.tag` gate). Used by the convergence rebind and the
+  reconnect binding swap.
+  """
+  def hook_insert_local_pid(executor_id, operative_id, pid) when is_pid(pid) do
+    hook_insert_pid(executor_id, %{
+      child_id: operative_id,
+      node_pids: [{node(), pid}],
+      metadata: %{tag: executor_id}
+    })
+  end
+
+  @doc """
   Clear a operative's pid mapping from every stream channel of `executor_id`.
   Invoked directly by `Flezha.Executor.FleetManager.evict_executor/1` so a
   dead executor's stale mappings never linger; idempotent on an

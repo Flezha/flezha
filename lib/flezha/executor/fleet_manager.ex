@@ -35,20 +35,19 @@ defmodule Flezha.Executor.FleetManager do
       {:error, :shutting_down}
     else
       factories = parse_factories(init_payload)
-      previous_executor_id = parse_previous_executor_id(init_payload)
+      stable_id = parse_stable_id(init_payload)
 
       case GenServer.call(
              __MODULE__,
-             {:executor_connect, stream_ref, namespace, factories, transport,
-              previous_executor_id},
+             {:executor_connect, stream_ref, namespace, factories, transport, stable_id},
              executor_connect_timeout()
            ) do
         {:error, reason} ->
           Logger.error("Failed to connect executor: #{inspect(reason)}")
           {:error, reason}
 
-        {:ok, {_namespace, executor_id}} ->
-          {:ok, executor_id}
+        {:ok, {_namespace, session_token}} ->
+          {:ok, session_token}
       end
     end
   end
@@ -63,8 +62,8 @@ defmodule Flezha.Executor.FleetManager do
   supervisor, drop its factory refs + operative-insertion hook, and remove it
   from `executor_namespaces`. Its operatives become misbound and rebind onto
   a live executor on the next convergence tick. Idempotent — an unknown
-  id returns `:ok`. Driven by `Flezha.Convergence.Heal.execute/1` and by
-  `connect_handler/4` when an SDK presents a `previous_executor_id`.
+  id returns `:ok`. Driven by `Flezha.Convergence.Heal.execute/1` and by the
+  reconnect binding-swap in `executor_connect` (to close the prior session).
   """
   @spec evict_executor(binary()) :: :ok
   def evict_executor(executor_id) when is_binary(executor_id) do
@@ -147,7 +146,7 @@ defmodule Flezha.Executor.FleetManager do
 
     schedule_executor_cleanup()
 
-    {:ok, %{executor_namespaces: %{}, namespace_factories: %{}}}
+    {:ok, %{executor_namespaces: %{}, namespace_factories: %{}, stable_sessions: %{}}}
   end
 
   defp boot_recovery_timeout() do
@@ -245,18 +244,15 @@ defmodule Flezha.Executor.FleetManager do
 
   @impl true
   def handle_call(
-        {:executor_connect, stream_ref, namespace, factories, transport, previous_executor_id},
+        {:executor_connect, stream_ref, namespace, factories, transport, stable_id},
         _from,
         state
       ) do
-    # When the SDK presents its persisted id from a prior process, evict
-    # that stale binding BEFORE the new bind so the old executor's operatives
-    # and stream mappings never linger as a corpse the takeover rebinds onto.
-    state = maybe_evict_previous(state, previous_executor_id)
-
-    # executor_connect/3 always returns {:ok, ...} — no controller-level error
-    # path exists. If one is added, re-introduce the {:error, reason} branch.
-    {:ok, namespace, executor_id} =
+    # executor_connect/3 mints a fresh per-connection SESSION TOKEN (the
+    # Registry/StreamChannel naming + routing key) and brings up its supervision
+    # tree. It always returns {:ok, ...} — no controller-level error path exists.
+    # If one is added, re-introduce the {:error, reason} branch.
+    {:ok, namespace, session_token} =
       executor_connect(stream_ref, namespace, transport)
 
     timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
@@ -270,23 +266,27 @@ defmodule Flezha.Executor.FleetManager do
     state =
       put_in(
         state,
-        [:executor_namespaces, namespace, executor_id],
+        [:executor_namespaces, namespace, session_token],
         {:active, timestamp}
       )
 
-    state = store_factories(state, namespace, executor_id, factories)
+    state = store_factories(state, namespace, session_token, factories)
 
-    # Fresh-process executor takeover (operatives tagged to a now-orphaned
-    # executor are reseated onto this new id) is driven by the
-    # `Flezha.Convergence.Loop`, which subscribes to this event and runs
-    # an immediate tick.
+    # Resolve the executor's durable STABLE IDENTITY: on a reconnect (or a
+    # newest-wins takeover) re-point the prior session's operative bindings onto
+    # this fresh session token and close the old session. A first connect just
+    # records the mapping; a degraded executor (no stable id) connects fresh.
+    state = resolve_stable_identity(state, namespace, stable_id, session_token)
+
+    # The convergence Loop subscribes to this and runs an immediate tick as a
+    # safety net; the binding swap above is the synchronous primary path.
     EventManager.dispatch(
       :executor_connected_event,
-      {namespace, executor_id},
+      {namespace, session_token},
       %{members: :local}
     )
 
-    {:reply, {:ok, {namespace, executor_id}}, state}
+    {:reply, {:ok, {namespace, session_token}}, state}
   end
 
   @impl true
@@ -296,8 +296,8 @@ defmodule Flezha.Executor.FleetManager do
     # a snapshot that can lag a reconnect by a tick; acting on that stale
     # view is exactly the false-eviction → cascade-rebind regression this
     # change exists to remove. The authoritative live set is the gate.
-    # (`maybe_evict_previous` is a different, authoritative path: the SDK
-    # itself presents its prior id, so that eviction stays unconditional.)
+    # (The reconnect binding-swap closes a prior session by id directly, not
+    # through this guarded path.)
     if executor_active?(state, executor_id) do
       {:reply, :ok, state}
     else
@@ -409,12 +409,46 @@ defmodule Flezha.Executor.FleetManager do
     end)
   end
 
-  defp maybe_evict_previous(state, previous_id)
-       when is_binary(previous_id) and previous_id != "" do
-    do_evict_executor(state, previous_id)
+  # Reconnect/takeover binding swap. The SDK presents the same persisted stable
+  # id on every connect; the controller keys operatives on the per-connection
+  # session token, so a reconnect re-points the prior session's bindings onto
+  # the new token (flip the Registry tag + seed the new StreamChannels — the
+  # same primitives the convergence Heal uses) and then closes the old session
+  # (newest-wins, `executor-identity-and-session` D5). A first connect just
+  # records the mapping; a degraded executor with no stable id connects fresh.
+  defp resolve_stable_identity(state, _namespace, nil, _session_token), do: state
+
+  defp resolve_stable_identity(state, namespace, stable_id, session_token) do
+    state =
+      case Map.get(state.stable_sessions, stable_id) do
+        old_session when is_binary(old_session) and old_session != session_token ->
+          swap_bindings(namespace, old_session, session_token)
+          do_evict_executor(state, old_session)
+
+        _ ->
+          state
+      end
+
+    put_in(state, [:stable_sessions, stable_id], session_token)
   end
 
-  defp maybe_evict_previous(state, _), do: state
+  # Re-tag every operative still bound to `old_session` onto `new_session` and
+  # seed the new session's pre-spawned StreamChannels so in-flight frames land
+  # without waiting for a convergence tick. `do_evict_executor/2` then tears down
+  # the old (now operative-less) session.
+  defp swap_bindings(namespace, old_session, new_session) do
+    if HubManager.hub_alive?(namespace) do
+      HubManager.executor_operatives(namespace, old_session)
+      |> Enum.each(fn {operative_id, node_pids} ->
+        HubManager.operative_set_executor(namespace, operative_id, new_session)
+
+        case HubManager.live_pid(node_pids) do
+          nil -> :ok
+          pid -> HubManager.hook_insert_local_pid(new_session, operative_id, pid)
+        end
+      end)
+    end
+  end
 
   defp do_evict_executor(state, executor_id) do
     case find_executor_namespace(state, executor_id) do
@@ -636,10 +670,12 @@ defmodule Flezha.Executor.FleetManager do
     {:ok, namespace, executor_id}
   end
 
-  # The SDK's persisted id from a prior process; used to evict the stale
-  # binding on reconnect. Absent on first connect.
-  defp parse_previous_executor_id(init_payload) do
-    case Map.get(init_payload, "previous_executor_id") do
+  # The SDK's self-owned, durable stable identity, presented on every connect.
+  # `nil` only when absent/empty (a degraded executor with no writable
+  # persistence path) — such an executor connects fresh with no binding
+  # continuity, per the identity-degradation contract.
+  defp parse_stable_id(init_payload) do
+    case Map.get(init_payload, "stable_id") do
       id when is_binary(id) and id != "" -> id
       _ -> nil
     end

@@ -172,9 +172,15 @@ defmodule Flezha.Transport.Server do
            server_ref: server_ref,
            transport: :quic,
            pending_streams: %{},
-           # QUIC routing state: most recently established executor_id.
-           # Used to route {:flz_stream, ...} data streams to the right StreamChannels.
-           quic_current_ce_id: nil
+           # QUIC routing state: a per-connection executor binding. Each executor
+           # uses ONE QUIC connection (control channel = first stream), so data
+           # streams route by the connection id the driver tags them with — NOT
+           # a shared "current executor" scalar (which misrouted on concurrent
+           # connect). `quic_conn_monitors` maps each ControlChannel monitor ref
+           # back to its conn id so the binding is dropped when the session ends,
+           # keeping the map bounded to live connections.
+           quic_conn_executors: %{},
+           quic_conn_monitors: %{}
          }}
 
       {:error, reason} ->
@@ -210,21 +216,21 @@ defmodule Flezha.Transport.Server do
   # QUIC data stream identified — route to the correct StreamChannel.
   # Sent by the QUIC driver after reading the 2-byte type+index prefix.
   @impl true
-  def handle_info({:flz_stream, stream_ref, stream_type, index}, state) do
+  def handle_info({:flz_stream, stream_ref, stream_type, index, conn_id}, state) do
     Logger.info(
-      "[Transport.Server] QUIC data stream arrived: type=#{stream_type}, index=#{index}, stream_ref=#{inspect(stream_ref)}"
+      "[Transport.Server] QUIC data stream arrived: type=#{stream_type}, index=#{index}, conn_id=#{conn_id}, stream_ref=#{inspect(stream_ref)}"
     )
 
-    ce_id = state[:quic_current_ce_id]
+    case Map.get(state.quic_conn_executors, conn_id) do
+      nil ->
+        Logger.warning(
+          "[Transport.Server] {:flz_stream} for conn_id=#{conn_id} with no executor bound yet"
+        )
 
-    if ce_id == nil do
-      Logger.warning(
-        "[Transport.Server] {:flz_stream} arrived but no compute engine established yet"
-      )
+        {:noreply, state}
 
-      {:noreply, state}
-    else
-      route_quic_data_stream(stream_ref, stream_type, index, ce_id, state)
+      executor_id ->
+        route_quic_data_stream(stream_ref, stream_type, index, executor_id, state)
     end
   end
 
@@ -252,7 +258,9 @@ defmodule Flezha.Transport.Server do
         )
 
         state = %{state | pending_streams: pending}
-        handle_new_executor(stream_ref, message, state)
+        # For QUIC, stream_id is the control stream's nif id == the conn_id the
+        # driver tags this connection's data streams with.
+        handle_new_executor(stream_ref, stream_id, message, state)
     end
   end
 
@@ -274,6 +282,20 @@ defmodule Flezha.Transport.Server do
     {:noreply, %{state | pending_streams: pending}}
   end
 
+  # A QUIC executor's ControlChannel went down — drop its per-connection data
+  # routing binding so the map stays bounded to live connections.
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    case Map.pop(Map.get(state, :quic_conn_monitors, %{}), ref) do
+      {nil, _monitors} ->
+        {:noreply, state}
+
+      {conn_id, monitors} ->
+        state = %{state | quic_conn_monitors: monitors}
+        {:noreply, update_in(state, [:quic_conn_executors], &Map.delete(&1, conn_id))}
+    end
+  end
+
   @impl true
   def handle_info(msg, state) do
     Logger.warning("[Transport.Server] Unexpected message: #{inspect(msg)}")
@@ -289,17 +311,18 @@ defmodule Flezha.Transport.Server do
     :ok
   end
 
-  defp handle_new_executor(stream_ref, init_message, state) do
+  defp handle_new_executor(stream_ref, conn_id, init_message, state) do
     init_payload = Flezha.Service.Payloader.json_to_map(init_message)
     namespace = Map.get(init_payload, "namespace")
 
     # Dispatch to FleetManager — this creates the ExecutorSupervisor.
     case FleetManager.connect_handler(stream_ref, namespace, init_payload, state.transport) do
       {:ok, executor_id} ->
-        # For QUIC, track the current executor_id for data stream routing.
+        # For QUIC, bind this connection's id to the executor so its data
+        # streams route by connection identity.
         state =
           if state.transport == :quic do
-            %{state | quic_current_ce_id: executor_id}
+            track_quic_connection(state, conn_id, executor_id)
           else
             state
           end
@@ -336,6 +359,22 @@ defmodule Flezha.Transport.Server do
   catch
     kind, reason ->
       Logger.debug("[Transport.Server] close of rejected stream #{kind}: #{inspect(reason)}")
+  end
+
+  # Bind a QUIC connection id to its executor for data-stream routing, and
+  # monitor the executor's ControlChannel so the binding is dropped when the
+  # session ends (keeping `quic_conn_executors` bounded to live connections).
+  defp track_quic_connection(state, conn_id, executor_id) do
+    state = put_in(state, [:quic_conn_executors, conn_id], executor_id)
+
+    case GenServer.whereis(Flezha.Service.Identificator.control_channel(executor_id)) do
+      pid when is_pid(pid) ->
+        ref = Process.monitor(pid)
+        put_in(state, [:quic_conn_monitors, ref], conn_id)
+
+      _ ->
+        state
+    end
   end
 
   # Route a QUIC data stream to the correct StreamChannel process. Bind to the
