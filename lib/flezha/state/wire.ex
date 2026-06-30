@@ -41,6 +41,8 @@ defmodule Flezha.State.Wire do
   @payload_id_segment_state_change "segment_state_change"
   @payload_id_segment_state_snapshot "segment_state_snapshot"
   @payload_id_delete_segment_state "delete_segment_state"
+  @payload_id_compensation_intent "compensation_intent"
+  @payload_id_compensation_done "compensation_done"
 
   @header_size 16
 
@@ -64,6 +66,19 @@ defmodule Flezha.State.Wire do
   """
   @spec payload_id_delete_segment_state() :: binary()
   def payload_id_delete_segment_state(), do: @payload_id_delete_segment_state
+
+  @doc """
+  Payload-ids reserved on the data stream for the bounded-operative saga
+  change-log (SDK → controller), same frame layout as `segment_state_change`:
+  `compensation_intent` records an operation's completion (so a crash
+  mid-compensation knows what to undo) and `compensation_done` records a
+  compensation hook's completion (so a respawn skips already-undone steps).
+  """
+  @spec payload_id_compensation_intent() :: binary()
+  def payload_id_compensation_intent(), do: @payload_id_compensation_intent
+
+  @spec payload_id_compensation_done() :: binary()
+  def payload_id_compensation_done(), do: @payload_id_compensation_done
 
   @spec header_size() :: pos_integer()
   def header_size(), do: @header_size

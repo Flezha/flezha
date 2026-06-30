@@ -14,12 +14,18 @@ defmodule Flezha.Operative.Kind do
 
   ## Capabilities
 
-    * `:persistent_state?` — the kind has per-segment durable state
-      (write-ahead log, snapshots, restore, time-travel, and per-segment
-      state introspection). Declared `true` for `:continuous`.
+    * `:persistent_state?` — durable per-Segment write-ahead log, snapshots,
+      and restore, plus per-Segment state introspection. The gate for
+      crash-resume and segment-state queries.
+    * `:time_travel?` — point-in-time state queries and retention beyond the
+      latest snapshot (gates `flz state at`).
+    * `:dynamic_segments?` — lazy per-key Segment creation and destructive
+      idle eviction with cold-start-fresh.
+    * `:output_stall_watch?` — the per-Segment output-staleness watchdog that
+      forces a rebind.
 
-  Recognised kinds: `:continuous` (fully capable) and `:bounded` (a run-once,
-  stateless job — declares no capabilities, so every flag reads `false`).
+  `:continuous` declares all four. `:bounded` is a run-once, stateless job and
+  declares none, so every flag reads `false`.
 
   ## Extension protocol
 
@@ -40,7 +46,12 @@ defmodule Flezha.Operative.Kind do
   @type capability() :: atom()
 
   @capabilities %{
-    continuous: %{persistent_state?: true},
+    continuous: %{
+      persistent_state?: true,
+      time_travel?: true,
+      dynamic_segments?: true,
+      output_stall_watch?: true
+    },
     bounded: %{}
   }
 

@@ -32,6 +32,7 @@ message CommandRequest {
         ExecutorReconnected executor_reconnected = 20;
         ReassignExecutorId reassign_executor_id = 21;
         BoundedCompleted bounded_completed = 22;
+        BoundedStop bounded_stop = 23;
     }
 }
 
@@ -217,17 +218,31 @@ message ReassignExecutorId {
     string new_id = 1;
 }
 
-// SDK -> Controller. Emitted by a bounded-kind operative when its run-once
-// function returns. `status` is "ok" on success or "error" on failure (with
-// `error` describing it). The Controller drives the same stop/teardown path
-// as an explicit stop (deregister-on-completion) so a finished bounded
-// operative is removed from the durable registry and never replayed on boot
-// or misjudged by convergence. Direction is reversed like
-// ExecutorShutdownNotification: SDK -> Controller over the "control_command"
-// payload_id; old Controllers ignore the unknown variant via Protox
-// unknown-field handling.
+// SDK -> Controller. Emitted by a bounded operative when it reaches an exit
+// trigger (chain complete, ctx.complete, loop terminal, duration, or external
+// stop). `status` is "ok" on clean completion, "error" on failure (with
+// `error` describing it), or "cancelled" on a cooperative external stop;
+// `result` carries the terminal result/error payload. The Controller drives
+// the same stop/teardown path as an explicit stop (deregister-on-completion)
+// so a finished bounded operative is removed from the durable registry and
+// never replayed on boot or misjudged by convergence. Direction is reversed
+// like ExecutorShutdownNotification: SDK -> Controller over the
+// "control_command" payload_id; old Controllers ignore the unknown variant via
+// Protox unknown-field handling.
 message BoundedCompleted {
     string operative_id = 1;
     string status = 2;
     string error = 3;
+    bytes result = 4;
+}
+
+// Controller -> SDK. Cooperative external stop for a bounded operative
+// (`flz operative stop`), distinct from the hard `RemOperative` teardown: the
+// SDK trips its cancellation token, lets in-flight work unwind, runs any saga
+// compensation, then emits the normal `BoundedCompleted` (status "cancelled")
+// that drives the single teardown path. Rides the "control_command" payload_id
+// like other CommandRequest variants; SDKs that do not recognise it skip it via
+// the protobuf decoder (degrading to no cooperative stop).
+message BoundedStop {
+    string operative_id = 1;
 }

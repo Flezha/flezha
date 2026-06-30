@@ -37,6 +37,16 @@ public final class SegmentStateSink {
     /** Data-stream payload id carrying a per-Segment change record. */
     public static final String PAYLOAD_ID_CHANGE = "segment_state_change";
 
+    /**
+     * Data-stream payload-ids reserved for the bounded-operative saga compensation
+     * change-log (SDK -&gt; controller), same frame layout as {@code segment_state_change}.
+     * {@code compensation_intent} records an operation's completion;
+     * {@code compensation_done} records a compensation hook's completion.
+     */
+    public static final String PAYLOAD_ID_COMPENSATION_INTENT = "compensation_intent";
+
+    public static final String PAYLOAD_ID_COMPENSATION_DONE = "compensation_done";
+
     /** Low-level writer wrapping the current secondary stream; returns {@code true} on a successful write. */
     @FunctionalInterface
     public interface FrameWriter {

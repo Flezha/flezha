@@ -10,10 +10,18 @@ defmodule FlezhaTest.Operative.KindTest do
   alias Flezha.Operative.Kind
   alias Flezha.Service.Validator
 
+  @persistence_flags [:persistent_state?, :time_travel?, :dynamic_segments?, :output_stall_watch?]
+
   describe "capabilities" do
-    test ":continuous declares persistent_state?" do
-      assert Kind.capable?(:continuous, :persistent_state?)
-      assert Kind.capabilities(:continuous) == %{persistent_state?: true}
+    test ":continuous declares the full persistence surface" do
+      for flag <- @persistence_flags, do: assert(Kind.capable?(:continuous, flag))
+
+      assert Kind.capabilities(:continuous) == %{
+               persistent_state?: true,
+               time_travel?: true,
+               dynamic_segments?: true,
+               output_stall_watch?: true
+             }
     end
 
     test "an undeclared capability reads false" do
@@ -25,7 +33,7 @@ defmodule FlezhaTest.Operative.KindTest do
 
     test ":bounded is stateless — declares no capabilities" do
       assert Kind.capabilities(:bounded) == %{}
-      refute Kind.capable?(:bounded, :persistent_state?)
+      for flag <- @persistence_flags, do: refute(Kind.capable?(:bounded, flag))
     end
 
     test "known?/1 accepts :continuous and :bounded, rejects others" do
