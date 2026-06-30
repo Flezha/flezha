@@ -2,6 +2,7 @@ package com.flezha.sdk.runtime.bounded;
 
 import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.bounded.BoundedOperativeConfigurationException;
+import com.flezha.sdk.bounded.RollbackMode;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.operative.ContinuousOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
@@ -30,18 +31,21 @@ public final class BoundedSpec {
     private final Optional<ContinuousOperativeTopology> topology;
     private final List<Integer> chain;
     private final Optional<Duration> maxDuration;
+    private final RollbackMode rollbackMode;
 
     private BoundedSpec(
             String factoryId,
             Class<? extends BoundedOperative> operativeClass,
             Optional<ContinuousOperativeTopology> topology,
             List<Integer> chain,
-            Optional<Duration> maxDuration) {
+            Optional<Duration> maxDuration,
+            RollbackMode rollbackMode) {
         this.factoryId = factoryId;
         this.operativeClass = operativeClass;
         this.topology = topology;
         this.chain = List.copyOf(chain);
         this.maxDuration = maxDuration;
+        this.rollbackMode = rollbackMode;
     }
 
     @Nonnull
@@ -69,6 +73,12 @@ public final class BoundedSpec {
     @Nonnull
     public Optional<Duration> maxDuration() {
         return maxDuration;
+    }
+
+    /** Saga rollback scope applied on abnormal termination. */
+    @Nonnull
+    public RollbackMode rollbackMode() {
+        return rollbackMode;
     }
 
     /** True when this spec runs the bare {@code run} body (no declared operations). */
@@ -122,11 +132,13 @@ public final class BoundedSpec {
 
         // No declared operations ⇒ run-sugar.
         if (topology.operations().isEmpty()) {
-            return new BoundedSpec(factoryId, operativeClass, Optional.empty(), List.of(), probe.maxDuration());
+            return new BoundedSpec(
+                    factoryId, operativeClass, Optional.empty(), List.of(), probe.maxDuration(), probe.rollbackMode());
         }
 
         List<Integer> chain = linearChain(factoryId, topology);
-        return new BoundedSpec(factoryId, operativeClass, Optional.of(topology), chain, probe.maxDuration());
+        return new BoundedSpec(
+                factoryId, operativeClass, Optional.of(topology), chain, probe.maxDuration(), probe.rollbackMode());
     }
 
     /**

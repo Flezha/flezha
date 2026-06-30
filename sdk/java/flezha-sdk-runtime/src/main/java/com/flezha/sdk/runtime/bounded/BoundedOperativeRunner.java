@@ -4,6 +4,7 @@ import com.flezha.sdk.bounded.BoundedLoopBody;
 import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.bounded.BoundedOperativeCtx;
 import com.flezha.sdk.bounded.BoundedOperativeException;
+import com.flezha.sdk.bounded.RollbackMode;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.native_.NativeTransport;
 import com.flezha.sdk.operation.Operation;
@@ -11,6 +12,8 @@ import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.proto.BoundedCompleted;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.bounded.BoundedCompensation.SegmentRun;
+import com.flezha.sdk.runtime.bounded.BoundedCompensation.StageRecord;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
@@ -22,6 +25,7 @@ import com.flezha.sdk.state.StateHandle;
 import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -207,24 +211,91 @@ public final class BoundedOperativeRunner {
         List<Object> batch = new ArrayList<>();
         batch.add(seed);
 
+        // Completed stages of the current (and only, in v1) pass, recorded in
+        // completion order so an abnormal exit can roll them back in reverse.
+        List<StageRecord> completed = new ArrayList<>();
+        // Non-null once the chain terminates abnormally (error / mid-chain stop).
+        Outcome abnormal = null;
+
         for (int stageIdx = 0; stageIdx < chain.size(); stageIdx++) {
+            // A cooperative stop before a stage starts is partial progress: stop
+            // advancing and roll back what completed.
             if (instance.isCancelled()) {
-                return new Outcome("cancelled", "", EMPTY);
+                abnormal = new Outcome("cancelled", "", EMPTY);
+                break;
             }
             OperationDescriptor op = topology.operation(chain.get(stageIdx));
             List<BoundedSegment> segs = stageSegments.get(stageIdx);
             List<List<Object>> partitioned = partition(op, segs, batch);
             try {
-                batch = runStageParallel(ctx, instanceId, topology, segs, partitioned);
+                StageOut stageOut = runStageParallel(ctx, instanceId, topology, segs, partitioned);
+                batch = stageOut.batch();
+                completed.add(new StageRecord(stageIdx, stageOut.segments()));
             } catch (BoundedOperativeException e) {
-                return new Outcome("error", messageOf(e), EMPTY);
+                abnormal = new Outcome("error", messageOf(e), EMPTY);
+                break;
             }
         }
 
-        if (instance.isCancelled()) {
-            return new Outcome("cancelled", "", EMPTY);
+        // Clean run to quiescence: every stage completed, so there is nothing
+        // partial to undo — a clean completion never compensates.
+        if (abnormal == null) {
+            return new Outcome("ok", "", EMPTY);
         }
-        return new Outcome("ok", "", EMPTY);
+        // Abnormal exit after partial progress: roll back the completed stages in
+        // the rollback mode's order, then report the terminal status.
+        runCompensation(ctx, topology, instanceId, chain, stageSegments, completed, spec.rollbackMode());
+        return abnormal;
+    }
+
+    /**
+     * Roll back the completed stages of an abnormally-terminated chain. Completed
+     * operations are compensated in reverse order (per
+     * {@link BoundedCompensation#planCompensation}) and, within an operation,
+     * once per segment that ran. Operations without a {@code compensate} hook are
+     * skipped. Best-effort: a failing hook is logged and the remaining steps
+     * still run, so one broken undo cannot strand the rest. Runs on the driver
+     * thread (not the work pool).
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void runCompensation(
+            ExecutorContext ctx,
+            ContinuousOperativeTopology topology,
+            String instanceId,
+            List<Integer> chain,
+            List<List<BoundedSegment>> stageSegments,
+            List<StageRecord> completed,
+            RollbackMode rollbackMode) {
+        // v1 runs a single pass, so there are no committed iterations to keep;
+        // the structured-loop follow-up threads them in and planCompensation
+        // already honours the mode difference.
+        List<StageRecord> plan = BoundedCompensation.planCompensation(rollbackMode, List.of(), completed);
+        if (plan.isEmpty()) {
+            return;
+        }
+        BoundedSegmentSink sink = new BoundedSegmentSink(ctx, instanceId);
+        for (StageRecord record : plan) {
+            List<BoundedSegment> slots = stageSegments.get(record.stageIdx());
+            // The hook flag is per operation; a hookless operation is skipped.
+            if (slots.isEmpty() || !slots.get(0).op().compensateOverridden()) {
+                continue;
+            }
+            for (SegmentRun segRun : record.segments()) {
+                BoundedSegment seg = slots.get(segRun.segmentIndex());
+                BoundedCollectAdapter adapter = new BoundedCollectAdapter(topology, seg.outputChannel(), sink);
+                Operation op = seg.op();
+                BiConsumer<Object, Change> applyChangeFn = (s, c) -> op.applyChange(s, c);
+                // Changes applied during compensation fold into in-memory state
+                // (P1); Phase-3 durability wires the WAL flush here.
+                List<Change> buffer = new ArrayList<>();
+                StateHandle<Object, Change> handle = StateHandle.create(seg.state(), buffer, applyChangeFn);
+                try {
+                    op.compensate(segRun.outputs(), handle, adapter);
+                } catch (OperationException | RuntimeException e) {
+                    LOG.warn("bounded {} compensation for op `{}` failed: {}", instanceId, op.name(), e.toString());
+                }
+            }
+        }
     }
 
     /**
@@ -301,30 +372,34 @@ public final class BoundedOperativeRunner {
      * barrier: every dispatched item is processed across all segments, with no
      * segment mid-run, before the collected output is released to the next stage.
      */
-    private static List<Object> runStageParallel(
+    private static StageOut runStageParallel(
             ExecutorContext ctx,
             String instanceId,
             ContinuousOperativeTopology topology,
             List<BoundedSegment> segs,
             List<List<Object>> partitioned)
             throws BoundedOperativeException {
-        List<Future<List<Object>>> futures = new ArrayList<>();
+        List<Future<SegmentRun>> futures = new ArrayList<>();
         for (int i = 0; i < segs.size(); i++) {
             List<Object> items = partitioned.get(i);
             if (items.isEmpty()) {
                 continue;
             }
+            final int segIdx = i;
             BoundedSegment seg = segs.get(i);
-            futures.add(ctx.workerPool().submit(() -> runSegment(topology, instanceId, ctx, seg, items)));
+            futures.add(ctx.workerPool()
+                    .submit(() -> new SegmentRun(segIdx, runSegment(topology, instanceId, ctx, seg, items))));
         }
 
         // Wait for every segment (the barrier) before returning, even on
-        // failure, so no segment is mid-run when the stage completes.
-        List<Object> outputs = new ArrayList<>();
+        // failure, so no segment is mid-run when the stage completes. Each
+        // segment's outputs are kept under its index for both the next-stage
+        // batch and saga rollback.
+        List<SegmentRun> segments = new ArrayList<>();
         BoundedOperativeException firstErr = null;
-        for (Future<List<Object>> f : futures) {
+        for (Future<SegmentRun> f : futures) {
             try {
-                outputs.addAll(f.get());
+                segments.add(f.get());
             } catch (ExecutionException ee) {
                 if (firstErr == null) {
                     firstErr = asBounded(ee.getCause());
@@ -339,7 +414,14 @@ public final class BoundedOperativeRunner {
         if (firstErr != null) {
             throw firstErr;
         }
-        return outputs;
+        // Deterministic next-stage batch: segments in index order (each segment's
+        // own item order is preserved by runSegment).
+        segments.sort(Comparator.comparingInt(SegmentRun::segmentIndex));
+        List<Object> batch = new ArrayList<>();
+        for (SegmentRun sr : segments) {
+            batch.addAll(sr.outputs());
+        }
+        return new StageOut(batch, segments);
     }
 
     /**
@@ -452,6 +534,13 @@ public final class BoundedOperativeRunner {
 
     /** Terminal outcome of a driver run: status ({@code ok | error | cancelled}), error text, result payload. */
     private record Outcome(String status, String error, byte[] result) {}
+
+    /**
+     * One stage's parallel-join result: the inter-operation {@code batch}
+     * released to the next stage, plus the per-segment record (which segments
+     * ran, with their collected outputs) retained for a possible saga rollback.
+     */
+    private record StageOut(List<Object> batch, List<SegmentRun> segments) {}
 
     /**
      * One bounded per-segment state holder (the lightweight continuous

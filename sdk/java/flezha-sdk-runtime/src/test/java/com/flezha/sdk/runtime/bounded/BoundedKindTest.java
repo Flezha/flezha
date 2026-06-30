@@ -8,6 +8,7 @@ import com.flezha.sdk.bounded.BoundedOperativeConfigurationException;
 import com.flezha.sdk.bounded.BoundedOperativeCtx;
 import com.flezha.sdk.bounded.BoundedOperativeException;
 import com.flezha.sdk.bounded.BoundedOperativeRegistry;
+import com.flezha.sdk.bounded.RollbackMode;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
@@ -65,11 +66,32 @@ class BoundedKindTest {
 
     private static final AtomicInteger EMIT_RUNS = new AtomicInteger(0);
 
+    /**
+     * Saga compensation observation log. Compensable operations append a marker
+     * so rollback order and per-segment firing are assertable without wire
+     * plumbing (a compensable inter-operation op's {@code ctx.emit} is collected,
+     * not wired).
+     */
+    private static final List<String> COMPENSATION_LOG = new CopyOnWriteArrayList<>();
+
+    /**
+     * Forced-stop handshake: {@code StopReserve} signals it has started, then
+     * parks until the test trips cancellation, so the "stop after partial
+     * progress" path is deterministic (cancel is observed before the next
+     * stage's pre-check rather than racing the fast chain).
+     */
+    private static final AtomicBoolean STAGE0_RAN = new AtomicBoolean(false);
+
+    private static final AtomicBoolean STAGE0_RELEASE = new AtomicBoolean(false);
+
     @BeforeEach
     void reset() {
         ContinuousOperativeRegistry.reset();
         BoundedOperativeRegistry.reset();
         EMIT_RUNS.set(0);
+        COMPENSATION_LOG.clear();
+        STAGE0_RAN.set(false);
+        STAGE0_RELEASE.set(false);
     }
 
     @AfterEach
@@ -416,6 +438,106 @@ class BoundedKindTest {
                 .containsExactlyInAnyOrder("inst-1/bounded_fan_op/even", "inst-1/bounded_fan_op/odd");
     }
 
+    // --- Saga compensation (Phase 2 §4 / §7b) --------------------------------
+
+    @Test
+    @DisplayName("§7b.1 a failed step rolls back completed steps in reverse, each with its own output")
+    void sagaReverseOrderRollbackOnError() throws Exception {
+        BoundedOperativeRegistry.registerBounded(SagaBoundedOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-saga-bounded", "saga-1", "X"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        BoundedCompleted done = cap.decodeCompletion();
+        assertThat(done.getStatus()).isEqualTo("error");
+        assertThat(done.getError()).contains("ship failed");
+        // reserve → charge completed; ship failed (not compensated). Undo runs
+        // reverse: charge then reserve, each receiving its own output.
+        assertThat(COMPENSATION_LOG).containsExactly("undo-charge:charged:reserved:X", "undo-reserve:reserved:X");
+    }
+
+    @Test
+    @DisplayName("§7b.2 keep-progress mode is plumbed to the driver; a single pass unwinds all-or-nothing")
+    void sagaKeepProgressModeUnwindsSinglePass() throws Exception {
+        BoundedOperativeRegistry.registerBounded(KeepProgressSagaOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-keep-progress-saga", "saga-kp", "Y"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("error");
+        assertThat(COMPENSATION_LOG).containsExactly("undo-charge:charged:reserved:Y", "undo-reserve:reserved:Y");
+    }
+
+    @Test
+    @DisplayName("§7b.1 a clean completion does not compensate")
+    void sagaCleanCompletionDoesNotCompensate() throws Exception {
+        BoundedOperativeRegistry.registerBounded(CleanSagaOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-clean-saga", "saga-ok", "Z"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        assertThat(cap.outputs(SECONDARY_STREAM)).containsExactly("echo:charged:reserved:Z");
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
+        assertThat(COMPENSATION_LOG).as("a clean ok must not compensate").isEmpty();
+    }
+
+    @Test
+    @DisplayName("§7b.1 compensation fires once per segment that ran; a hookless operation is skipped")
+    void sagaPerSegmentRollback() throws Exception {
+        BoundedOperativeRegistry.registerBounded(FanSagaOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-fan-saga", "fan-saga", "a,bb,ccc"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("error");
+        // odd segment ran "a","ccc"; even ran "bb"; the hook fires once per
+        // segment with that segment's own outputs. SplitOp (no hook) is skipped.
+        assertThat(COMPENSATION_LOG)
+                .containsExactlyInAnyOrder("undo-fan:even:[even:bb]", "undo-fan:odd:[odd:a,odd:ccc]");
+    }
+
+    @Test
+    @DisplayName("§7b.1 a cooperative stop after partial progress compensates the completed steps")
+    void sagaForcedStopCompensatesPartialProgress() throws Exception {
+        BoundedOperativeRegistry.registerBounded(StopSagaOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-stop-saga", "stop-saga", "W"), new ArrayList<>());
+
+        // Wait for stage 0 to start, then trip cancellation before stage 1.
+        while (!STAGE0_RAN.get()) {
+            Thread.sleep(5);
+        }
+        BoundedOperativeInstance instance =
+                (BoundedOperativeInstance) ctx.operativeInstanceRegistry().get("stop-saga");
+        instance.cancel();
+        STAGE0_RELEASE.set(true);
+
+        assertThat(cap.awaitCompletions()).isTrue();
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("cancelled");
+        // StopReserve completed before the stop landed; Echo never ran.
+        assertThat(COMPENSATION_LOG).containsExactly("undo-stop-reserve:reserved:W");
+    }
+
     // --- helpers -------------------------------------------------------------
 
     private ExecutorContext newCtx(Captured cap) {
@@ -725,6 +847,96 @@ class BoundedKindTest {
         }
     }
 
+    // --- saga (compensation) bounded operatives ------------------------------
+
+    /** Reserve → Charge → Ship(fails). Default all-or-nothing rollback. */
+    public static final class SagaBoundedOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-saga-bounded";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(SagaReserve.class);
+            c.channel(String.class, "c1").from(SagaReserve.class).into(SagaCharge.class);
+            c.channel(String.class, "c2").from(SagaCharge.class).into(SagaShipFails.class);
+            c.channel(String.class, "out").from(SagaShipFails.class).toPlugin("sink");
+        }
+    }
+
+    /**
+     * Same chain, keep-progress mode — for a single no-loop pass it unwinds
+     * identically (the mode only diverges with committed iterations, covered by
+     * the planner unit tests). Proves {@code rollbackMode()} is plumbed through.
+     */
+    public static final class KeepProgressSagaOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-keep-progress-saga";
+        }
+
+        @Override
+        public RollbackMode rollbackMode() {
+            return RollbackMode.KEEP_PROGRESS;
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(SagaReserve.class);
+            c.channel(String.class, "c1").from(SagaReserve.class).into(SagaCharge.class);
+            c.channel(String.class, "c2").from(SagaCharge.class).into(SagaShipFails.class);
+            c.channel(String.class, "out").from(SagaShipFails.class).toPlugin("sink");
+        }
+    }
+
+    /** Reserve → Charge → Echo(succeeds): a clean completion MUST NOT compensate. */
+    public static final class CleanSagaOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-clean-saga";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(SagaReserve.class);
+            c.channel(String.class, "c1").from(SagaReserve.class).into(SagaCharge.class);
+            c.channel(String.class, "c2").from(SagaCharge.class).into(EchoOp.class);
+            c.channel(String.class, "out").from(EchoOp.class).toPlugin("sink");
+        }
+    }
+
+    /** Split(hookless) → Fan(compensable, even/odd) → FailLast: per-segment rollback; Split is skipped. */
+    public static final class FanSagaOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-fan-saga";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(SplitOp.class);
+            c.channel(String.class, "mid").from(SplitOp.class).into(SagaFan.class);
+            c.channel(String.class, "mid2").from(SagaFan.class).into(FailLast.class);
+            c.channel(String.class, "out").from(FailLast.class).toPlugin("sink");
+        }
+    }
+
+    /** StopReserve → Echo: a cooperative stop after StopReserve compensates only it; Echo never runs. */
+    public static final class StopSagaOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-stop-saga";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(StopReserve.class);
+            c.channel(String.class, "mid").from(StopReserve.class).into(EchoOp.class);
+            c.channel(String.class, "out").from(EchoOp.class).toPlugin("sink");
+        }
+    }
+
     // --- test operations -----------------------------------------------------
 
     /** Stateless {@code String → String} base, factoring the type-handle boilerplate. */
@@ -925,6 +1137,202 @@ class BoundedKindTest {
             state.apply(new Inc());
             long n = state.get().n;
             ctx.emit(n + ":" + input);
+        }
+    }
+
+    // --- compensable (saga) operations ---------------------------------------
+
+    /** Compensable: reserves (emits {@code reserved:<arg>}); undo logs {@code undo-reserve}. */
+    public static final class SagaReserve extends StrOp {
+        @Override
+        public String name() {
+            return "saga_reserve";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            ctx.emit("reserved:" + input);
+        }
+
+        @Override
+        public boolean compensateOverridden() {
+            return true;
+        }
+
+        @Override
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+            for (String out : completedOutput) {
+                COMPENSATION_LOG.add("undo-reserve:" + out);
+            }
+        }
+    }
+
+    /** Compensable: charges (emits {@code charged:<input>}); undo logs {@code undo-charge}. */
+    public static final class SagaCharge extends StrOp {
+        @Override
+        public String name() {
+            return "saga_charge";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            ctx.emit("charged:" + input);
+        }
+
+        @Override
+        public boolean compensateOverridden() {
+            return true;
+        }
+
+        @Override
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+            for (String out : completedOutput) {
+                COMPENSATION_LOG.add("undo-charge:" + out);
+            }
+        }
+    }
+
+    /** Terminal step that always fails — triggers reverse rollback; itself never compensated. */
+    public static final class SagaShipFails extends StrOp {
+        @Override
+        public String name() {
+            return "saga_ship_fails";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            throw new OperationException("ship failed");
+        }
+    }
+
+    /** Terminal failing op for the per-segment rollback chain. */
+    public static final class FailLast extends StrOp {
+        @Override
+        public String name() {
+            return "saga_fail_last";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            throw new OperationException("fan ship failed");
+        }
+    }
+
+    /** Per-segment state holding the segment key so {@code compensate} can identify its segment. */
+    public static final class FanKeyState {
+        String key = "";
+    }
+
+    /**
+     * Static-segmented compensable op: stores its segment key in state, emits
+     * {@code <key>:<item>}, and compensates ONCE per segment (logs all that
+     * segment's outputs together) so per-segment firing is assertable.
+     */
+    public static final class SagaFan implements Operation<String, FanKeyState, String, NoChange, WallClock, Void> {
+        @Override
+        public String name() {
+            return "saga_fan";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<NoChange> changeType() {
+            return NoChange.class;
+        }
+
+        @Override
+        public Class<WallClock> clockType() {
+            return WallClock.class;
+        }
+
+        @Override
+        public Class<Void> configType() {
+            return Void.class;
+        }
+
+        @Override
+        public List<String> operationKeys() {
+            return List.of("even", "odd");
+        }
+
+        @Override
+        public boolean segmentForOverridden() {
+            return true;
+        }
+
+        @Override
+        public List<String> segmentFor(String input) {
+            return input.length() % 2 == 0 ? List.of("even") : List.of("odd");
+        }
+
+        @Override
+        public FanKeyState initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+            FanKeyState s = new FanKeyState();
+            s.key = operationKey.orElse("");
+            return s;
+        }
+
+        @Override
+        public void run(String input, StateHandle<FanKeyState, NoChange> state, OperationCtx ctx)
+                throws OperationException {
+            ctx.emit(state.get().key + ":" + input);
+        }
+
+        @Override
+        public boolean compensateOverridden() {
+            return true;
+        }
+
+        @Override
+        public void compensate(
+                List<String> completedOutput, StateHandle<FanKeyState, NoChange> state, OperationCtx ctx) {
+            COMPENSATION_LOG.add("undo-fan:" + state.get().key + ":[" + String.join(",", completedOutput) + "]");
+        }
+    }
+
+    /**
+     * Compensable stage-0 op with a handshake so a cooperative stop lands after
+     * it completes but before stage 1 (deterministic forced-stop rollback).
+     */
+    public static final class StopReserve extends StrOp {
+        @Override
+        public String name() {
+            return "saga_stop_reserve";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            STAGE0_RAN.set(true);
+            while (!STAGE0_RELEASE.get()) {
+                try {
+                    Thread.sleep(5);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            ctx.emit("reserved:" + input);
+        }
+
+        @Override
+        public boolean compensateOverridden() {
+            return true;
+        }
+
+        @Override
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+            for (String out : completedOutput) {
+                COMPENSATION_LOG.add("undo-stop-reserve:" + out);
+            }
         }
     }
 }

@@ -225,4 +225,32 @@ public interface Operation<
      */
     void run(@Nonnull Input input, @Nonnull StateHandle<State, ChangeT> state, @Nonnull OperationCtx ctx)
             throws OperationException;
+
+    /**
+     * Optional saga <strong>compensation</strong> hook (bounded operatives only).
+     * An operation whose {@link #run} commits a reversible side effect overrides
+     * this to undo it. The bounded driver fires it ONLY during abnormal-termination
+     * rollback — never on a clean completion, never for a continuous operative —
+     * once per segment that ran, in reverse completion order, handing back that
+     * segment's own collected outputs and its {@link StateHandle} so it can
+     * reverse precisely. Compensation MUST be idempotent by author contract: a
+     * crash mid-rollback may re-invoke it.
+     *
+     * <p>The default is a no-op; an operation that overrides this MUST also
+     * override {@link #compensateOverridden()} to return {@code true} so the
+     * bounded driver registers it as compensable (hookless operations are
+     * skipped during rollback).
+     */
+    default void compensate(
+            @Nonnull List<Output> completedOutput,
+            @Nonnull StateHandle<State, ChangeT> state,
+            @Nonnull OperationCtx ctx)
+            throws OperationException {
+        // No-op: an operation with no reversible effect needs no compensation.
+    }
+
+    /** Override-detection sentinel for {@link #compensate}. Default {@code false}. */
+    default boolean compensateOverridden() {
+        return false;
+    }
 }

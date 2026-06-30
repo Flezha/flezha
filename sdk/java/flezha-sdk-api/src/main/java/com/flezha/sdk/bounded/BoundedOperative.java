@@ -105,4 +105,18 @@ public interface BoundedOperative extends Computation {
     default boolean selfTerminating() {
         return true;
     }
+
+    /**
+     * Saga rollback scope, applied when the operative terminates abnormally
+     * after partial progress. Default {@link RollbackMode#ALL_OR_NOTHING} undoes
+     * every completed operation in reverse, back to the start;
+     * {@link RollbackMode#KEEP_PROGRESS} keeps each finished loop iteration and
+     * undoes only the in-flight one. The mode is irrelevant for a single-pass
+     * chain (where both behave all-or-nothing) and for an operative with no
+     * compensation hooks.
+     */
+    @Nonnull
+    default RollbackMode rollbackMode() {
+        return RollbackMode.ALL_OR_NOTHING;
+    }
 }
