@@ -186,3 +186,22 @@ The operation authoring sugar SHALL offer an opt-in that maps a segment's operat
 
 - **WHEN** the init opt-in is declared on an operation with no state
 - **THEN** the SDK reports a compile-time error directing the author to remove it, and generates no init delegation
+
+### Requirement: Continuous and bounded share a `Computation` authoring base
+
+Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rust trait / Java interface that `ContinuousOperative` and `BoundedOperative` both implement at the **authoring-trait layer**. The base's shared member SHALL be `factory_id()` (the one method both authoring traits already share); the kind-divergent surface (`channels` / persistence opt-in vs `run`) SHALL remain on the per-kind traits. The registration siblings (`register_continuous`/`register_bounded`) SHALL be generic over `Computation`. The base SHALL NOT require unifying the sealed operative *instance* enum, which stays asymmetric. Adding a future operative kind SHALL require implementing `Computation` and registering the kind, without editing the existing two authoring surfaces.
+
+#### Scenario: Both kinds implement the base
+
+- **WHEN** a continuous operative class and a bounded operative class are registered
+- **THEN** both SHALL be `Computation` implementations resolvable through the same `register_*` surface, sharing `factory_id()`
+
+#### Scenario: A future kind plugs into the base without touching existing kinds
+
+- **WHEN** a new operative kind is added by implementing `Computation` and registering it
+- **THEN** the `ContinuousOperative` and `BoundedOperative` authoring surfaces SHALL be unchanged
+
+#### Scenario: The instance enum is not forced symmetric
+
+- **WHEN** the sealed operative instance enum is renamed
+- **THEN** its variants MAY remain asymmetric (a rich continuous instance vs an id-only bounded instance), and the `Computation` base SHALL NOT require inventing a common instance type
