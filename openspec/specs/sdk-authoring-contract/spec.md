@@ -18,7 +18,7 @@ The authoring sugar in every SDK SHALL be pure expansion over the existing `Cont
 
 #### Scenario: Sugared and raw operations interoperate
 
-- **WHEN** an operative contains one sugared operation and one hand-written operation wired together
+- **WHEN** a continuous operative contains one sugared operation and one hand-written operation wired together
 - **THEN** the operative builds and runs correctly with both operations participating
 
 #### Scenario: Eject to full impl is a paste
@@ -108,11 +108,11 @@ The contract SHALL define exactly one topology that may be auto-wired — a sing
 
 ### Requirement: Contract binds all current and future SDKs
 
-The contract SHALL be the single source of truth for authoring sugar across Rust, Java, and future Python and Elixir SDKs, including non-normative target sketches for the not-yet-built bindings.
+The contract SHALL be the single source of truth for authoring sugar across Rust, Java, and future Python and Elixir SDKs, including non-normative target sketches for the not-yet-built bindings. Every SDK's continuous and bounded authoring surfaces SHALL be rooted in the shared `Computation` base (see below).
 
 #### Scenario: Reference operative expands identically across SDKs
 
-- **WHEN** the same reference operative is authored with each SDK's sugar
+- **WHEN** the same reference continuous operative is authored with each SDK's sugar
 - **THEN** each expansion produces a structurally identical topology and associated-type mapping per this contract
 
 #### Scenario: Future bindings have a documented target

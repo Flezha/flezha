@@ -371,12 +371,12 @@ On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.Sta
 
 ### Requirement: flz state CLI subcommand surface
 
-The agent SHALL expose a `flz state` CLI subcommand tree:
+The agent SHALL expose a `flz state` CLI subcommand tree, using operative vocabulary in every path argument:
 
-- `flz state at <operative/operation/segment> <seq | timestamp>` — point-in-time state query per the time-travel requirement above. Returns JSON-encoded state.
+- `flz state at <operative/operation/segment> <seq | timestamp>` — point-in-time state query per the time-travel requirement. Returns JSON-encoded state.
 - `flz state list <operative>` — for each Segment of the Operative, prints `wal_seq`, `snapshot_seq`, `wal_bytes`, `flush_latency_ms_p99`, `fsync_durability_lag_ms`. Reads `Metrics.to_map/1`.
-- `flz state rotate <operative/operation/segment>` — forces compaction by enqueuing `Overwatch.handle_continue(:compact_segment, segment_id)`. Returns immediately ("compaction queued"); the snapshot completes asynchronously.
-- `flz state retention <operative> <hours>` — sets `time_travel_retention_hours.<OperativeClass>` in runtime config (`Application.put_env(:flezha, ..., persistent: true)`); the next retention-sweeper tick reads the new value.
+- `flz state rotate <operative/operation/segment>` — forces compaction by enqueuing the per-Segment compaction continuation on the Overwatch. Returns immediately ("compaction queued"); the snapshot completes asynchronously.
+- `flz state retention <operative> <hours>` — sets `time_travel_retention_hours.<OperativeClass>` in runtime config (`persistent: true`); the next retention-sweeper tick reads the new value.
 
 #### Scenario: flz state list enumerates Segments
 
@@ -395,7 +395,7 @@ The agent SHALL expose a `flz state` CLI subcommand tree:
 
 ### Requirement: Snapshot files use flat path
 
-The Controller SHALL store snapshot files at `app_data/state/{operative_class}/{operation_id}/{segment_key}.snap.{seq}`. The on-disk path SHALL NOT include `executor_id`. The on-the-wire payload-id `segment_state_snapshot` is unchanged.
+The Controller SHALL store snapshot files at `app_data/state/{operative_class}/{operation_id}/{segment_key}.snap.{seq}`. The on-disk path SHALL NOT include `executor_id`. The on-the-wire payload-id SHALL be `segment_state_snapshot`.
 
 #### Scenario: Snapshot path is flat
 
@@ -404,7 +404,7 @@ The Controller SHALL store snapshot files at `app_data/state/{operative_class}/{
 
 ### Requirement: ProcessorApplyState renamed to SegmentApplyState
 
-The protobuf message previously named `ProcessorApplyState` SHALL be renamed `SegmentApplyState`. The field `processor_id` SHALL be renamed `operative_id`; new field `segment_id` (string) IS the canonical identifier for the targeted Segment. The on-the-wire payload-id MAY be `segment_apply_state` to align with naming.
+The protobuf message carrying inbound state application SHALL be named `SegmentApplyState`. The field naming the owning operative SHALL be `operative_id`; field `segment_id` (string) IS the canonical identifier for the targeted Segment. The on-the-wire payload-id SHALL be `segment_apply_state`. The inverse `SegmentState` message and the `segment_state_change` / `segment_state_snapshot` / `delete_segment_state` payload-ids replace the former `partition_*` names in lockstep across all SDKs.
 
 #### Scenario: Rust SDK emits SegmentApplyState
 - **WHEN** the Rust SDK applies a state change to Segment `p1` belonging to Operative `r1`
