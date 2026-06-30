@@ -1,13 +1,13 @@
 package com.flezha.sdk.runtime.bounded;
 
-import com.flezha.sdk.native_.NativeTransport;
-import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.proto.BoundedCompleted;
-import com.flezha.sdk.runtime.ExecutorContext;
-import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.bounded.BoundedOperativeCtx;
 import com.flezha.sdk.bounded.BoundedOperativeException;
+import com.flezha.sdk.native_.NativeTransport;
+import com.flezha.sdk.proto.BoundedCompleted;
+import com.flezha.sdk.proto.CommandRequest;
+import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.framing.FrameEncoder;
 import java.util.Map;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
@@ -65,7 +65,8 @@ public final class BoundedOperativeRunner {
         ctx.workerPool().execute(() -> runOnce(ctx, instanceId, boundedClass, args));
     }
 
-    private static void runOnce(ExecutorContext ctx, String instanceId, Class<? extends BoundedOperative> boundedClass, String args) {
+    private static void runOnce(
+            ExecutorContext ctx, String instanceId, Class<? extends BoundedOperative> boundedClass, String args) {
         String status = "ok";
         String error = "";
         try {
@@ -121,7 +122,8 @@ public final class BoundedOperativeRunner {
             byte[] frame = FrameEncoder.build(instanceId, value, Map.of());
             int writeStatus = wireWriter.write(ctx.nativeHandle(), secondaryStreamId, frame);
             if (writeStatus != 0) {
-                throw new BoundedOperativeException("bounded " + instanceId + " output write failed (status " + writeStatus + ")");
+                throw new BoundedOperativeException(
+                        "bounded " + instanceId + " output write failed (status " + writeStatus + ")");
             }
         }
     }

@@ -16,7 +16,8 @@ public final class MigrationSerializationHandler implements CommandHandler {
             errors.add("ContinuousOperative with id " + operativeId + " not found");
             return new byte[0];
         }
-        ContinuousOperativeInstance instance = (ContinuousOperativeInstance) ctx.operativeInstanceRegistry().remove(operativeId);
+        ContinuousOperativeInstance instance =
+                (ContinuousOperativeInstance) ctx.operativeInstanceRegistry().remove(operativeId);
         return ContinuousOperativeStateSerializer.serialize(instance);
     }
 }

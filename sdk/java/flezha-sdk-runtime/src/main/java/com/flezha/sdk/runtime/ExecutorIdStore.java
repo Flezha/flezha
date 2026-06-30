@@ -87,7 +87,8 @@ public final class ExecutorIdStore {
             LOG.warn(
                     "executor stable-id persist failed at {}: {} — using a fresh per-boot id "
                             + "(no binding continuity across restart)",
-                    path, e.toString());
+                    path,
+                    e.toString());
         }
         return id;
     }
@@ -123,9 +124,7 @@ public final class ExecutorIdStore {
         // Dependency-free entropy: clock noise mixed with the pid keeps two fresh
         // executors distinct (cryptographic randomness is not needed — the
         // persistence path already scopes uniqueness per executor).
-        long seed = System.nanoTime()
-                ^ (ProcessHandle.current().pid() << 32)
-                ^ Long.rotateLeft(System.nanoTime(), 17);
+        long seed = System.nanoTime() ^ (ProcessHandle.current().pid() << 32) ^ Long.rotateLeft(System.nanoTime(), 17);
         final String alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
         StringBuilder out = new StringBuilder(6);
         for (int i = 0; i < 6; i++) {

@@ -105,7 +105,8 @@ public final class GracefulShutdown {
             return;
         }
 
-        Map<String, ContinuousOperativeInstance> operatives = ctx.operativeInstanceRegistry().operativeSnapshot();
+        Map<String, ContinuousOperativeInstance> operatives =
+                ctx.operativeInstanceRegistry().operativeSnapshot();
         if (operatives.isEmpty()) {
             return;
         }
@@ -120,7 +121,8 @@ public final class GracefulShutdown {
             try {
                 serializedState = ContinuousOperativeStateSerializer.serialize(instance);
             } catch (Exception e) {
-                LOG.warn("Skipping shutdown notification for {} — serializeState failed: {}", operativeId, e.toString());
+                LOG.warn(
+                        "Skipping shutdown notification for {} — serializeState failed: {}", operativeId, e.toString());
                 continue;
             }
 

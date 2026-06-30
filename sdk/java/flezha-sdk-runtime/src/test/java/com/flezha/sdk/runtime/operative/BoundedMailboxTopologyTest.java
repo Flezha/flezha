@@ -5,11 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.OverflowPolicy;
+import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operative.ContinuousOperative;
 import com.flezha.sdk.operative.ContinuousOperativeConfigurationException;
 import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import com.flezha.sdk.runtime.operative.builder.ContinuousOperativeTopologyBuilder;
-import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
 import java.util.Optional;
@@ -33,7 +33,8 @@ class BoundedMailboxTopologyTest {
     @Test
     @DisplayName("default policy: entry channels DROP_NEWEST, inter-operation BLOCK")
     void defaultPoliciesByKind() {
-        ContinuousOperativeTopology topology = ContinuousOperativeTopologyBuilder.build(new TwoStageContinuousOperative());
+        ContinuousOperativeTopology topology =
+                ContinuousOperativeTopologyBuilder.build(new TwoStageContinuousOperative());
         // Channel index 0 is the entry channel "input"; index 1 is the
         // inter-operation channel "mid".
         assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.DROP_NEWEST);
@@ -43,30 +44,35 @@ class BoundedMailboxTopologyTest {
     @Test
     @DisplayName("onFull(DROP_OLDEST) overrides the per-kind default on an inter-operation channel")
     void onFullOverridesDefault() {
-        ContinuousOperativeTopology topology = ContinuousOperativeTopologyBuilder.build(new InterOperationDropOldestContinuousOperative());
+        ContinuousOperativeTopology topology =
+                ContinuousOperativeTopologyBuilder.build(new InterOperationDropOldestContinuousOperative());
         assertThat(topology.channels().get(1).overflowPolicy()).isEqualTo(OverflowPolicy.DROP_OLDEST);
     }
 
     @Test
     @DisplayName("onFull on an entry channel overrides the per-kind default")
     void onFullOnEntryChannelOverrides() {
-        ContinuousOperativeTopology topology = ContinuousOperativeTopologyBuilder.build(new EntryBlockContinuousOperative());
+        ContinuousOperativeTopology topology =
+                ContinuousOperativeTopologyBuilder.build(new EntryBlockContinuousOperative());
         assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.BLOCK);
     }
 
     @Test
     @DisplayName("Operation.mailboxCapacity() override flows into the descriptor when overridden flag is set")
     void operationOverrideHonored() {
-        ContinuousOperativeTopology topology = ContinuousOperativeTopologyBuilder.build(new BigMailboxContinuousOperative());
+        ContinuousOperativeTopology topology =
+                ContinuousOperativeTopologyBuilder.build(new BigMailboxContinuousOperative());
         int operationId = topology.operationNameToId().get("big_mailbox_operation");
         assertThat(topology.operations().get(operationId).mailboxCapacity()).isEqualTo(8192);
-        assertThat(topology.operations().get(operationId).mailboxCapacityOverridden()).isTrue();
+        assertThat(topology.operations().get(operationId).mailboxCapacityOverridden())
+                .isTrue();
     }
 
     @Test
     @DisplayName("default mailbox capacity is 1024 when no override and no env var present")
     void defaultMailboxCapacity() {
-        ContinuousOperativeTopology topology = ContinuousOperativeTopologyBuilder.build(new TwoStageContinuousOperative());
+        ContinuousOperativeTopology topology =
+                ContinuousOperativeTopologyBuilder.build(new TwoStageContinuousOperative());
         for (OperationDescriptor desc : topology.operations()) {
             assertThat(desc.mailboxCapacity()).isEqualTo(1024);
             assertThat(desc.mailboxCapacityOverridden()).isFalse();

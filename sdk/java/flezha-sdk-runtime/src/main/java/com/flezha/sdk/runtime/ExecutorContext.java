@@ -22,7 +22,8 @@ public final class ExecutorContext {
     private final FlezhaEnv.ResolvedConfig config;
     private final long nativeHandle;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final ContinuousOperativeInstanceRegistry operativeInstanceRegistry = new ContinuousOperativeInstanceRegistry();
+    private final ContinuousOperativeInstanceRegistry operativeInstanceRegistry =
+            new ContinuousOperativeInstanceRegistry();
     private final StreamRegistry streamRegistry = new StreamRegistry();
     private final Map<Long, PrimaryStreamReader> primaryReaders = new ConcurrentHashMap<>();
     private final AtomicReference<String> executorId = new AtomicReference<>("undefined");

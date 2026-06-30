@@ -4,12 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.channel.ChannelBuilder;
+import com.flezha.sdk.operation.OperationCtx;
+import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.ContinuousOperative;
 import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -80,11 +80,23 @@ class ContinuousOperativeStateSerializerTest {
         ContinuousOperativeInstance second = newInstance("mixed");
         ContinuousOperativeStateSerializer.deserialize(second, blob);
 
-        assertThat(second.segments().get(operationId(second, "a")).get(0).state().get())
+        assertThat(second.segments()
+                        .get(operationId(second, "a"))
+                        .get(0)
+                        .state()
+                        .get())
                 .isEqualTo(new OperationAState(7));
-        assertThat(second.segments().get(operationId(second, "b")).get(0).state().get())
+        assertThat(second.segments()
+                        .get(operationId(second, "b"))
+                        .get(0)
+                        .state()
+                        .get())
                 .isEqualTo(new OperationBState(11));
-        assertThat(second.segments().get(operationId(second, "b")).get(1).state().get())
+        assertThat(second.segments()
+                        .get(operationId(second, "b"))
+                        .get(1)
+                        .state()
+                        .get())
                 .isEqualTo(new OperationBState(13));
     }
 

@@ -43,28 +43,31 @@ public final class ContinuousOperativeClassRegistry {
             operative = operativeClass.getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
             throw new IllegalArgumentException(
-                    "ContinuousOperative class `" + operativeClass.getName() + "` must have a public no-arg constructor: " + e.toString(),
+                    "ContinuousOperative class `" + operativeClass.getName()
+                            + "` must have a public no-arg constructor: " + e.toString(),
                     e);
         }
 
         String factoryId = operative.factoryId();
         if (factoryId == null || factoryId.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "ContinuousOperative class `" + operativeClass.getName() + "` returned null/empty from factoryId()");
+            throw new IllegalArgumentException("ContinuousOperative class `" + operativeClass.getName()
+                    + "` returned null/empty from factoryId()");
         }
 
         if (com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry.getBoundedOperativeClass(factoryId) != null) {
-            throw new IllegalArgumentException("Duplicate factory id `" + factoryId + "` for ContinuousOperative class `"
-                    + operativeClass.getName() + "` (already registered as a BoundedOperative)");
+            throw new IllegalArgumentException(
+                    "Duplicate factory id `" + factoryId + "` for ContinuousOperative class `"
+                            + operativeClass.getName() + "` (already registered as a BoundedOperative)");
         }
 
         ContinuousOperativeTopology topology = ContinuousOperativeTopologyBuilder.build(operative);
 
         Entry existing = ENTRIES.putIfAbsent(factoryId, new Entry(operativeClass, topology));
         if (existing != null) {
-            throw new IllegalArgumentException("Duplicate factory id `" + factoryId + "` for ContinuousOperative class `"
-                    + operativeClass.getName() + "` (already registered as `"
-                    + existing.operativeClass().getName() + "`)");
+            throw new IllegalArgumentException(
+                    "Duplicate factory id `" + factoryId + "` for ContinuousOperative class `"
+                            + operativeClass.getName() + "` (already registered as `"
+                            + existing.operativeClass().getName() + "`)");
         }
         return factoryId;
     }

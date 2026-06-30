@@ -1,9 +1,9 @@
 package com.flezha.sdk;
 
-import com.flezha.sdk.operative.ContinuousOperative;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.bounded.BoundedOperativeRegistry;
+import com.flezha.sdk.operative.ContinuousOperative;
+import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import java.util.Map;
 import javax.annotation.Nonnull;
 

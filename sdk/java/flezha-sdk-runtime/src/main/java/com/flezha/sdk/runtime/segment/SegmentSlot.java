@@ -35,12 +35,16 @@ public final class SegmentSlot {
     private final List<Change> changeBuffer = new ArrayList<>();
     private final AtomicLong changeSeq = new AtomicLong(0L);
 
-    public SegmentSlot(@Nonnull OperationDispatcher dispatcher, int operationId, @Nonnull Optional<String> operationKey) {
+    public SegmentSlot(
+            @Nonnull OperationDispatcher dispatcher, int operationId, @Nonnull Optional<String> operationKey) {
         this(dispatcher, operationId, operationKey, false, 1024, OverflowPolicy.BLOCK);
     }
 
     public SegmentSlot(
-            @Nonnull OperationDispatcher dispatcher, int operationId, @Nonnull Optional<String> operationKey, boolean changeful) {
+            @Nonnull OperationDispatcher dispatcher,
+            int operationId,
+            @Nonnull Optional<String> operationKey,
+            boolean changeful) {
         this(dispatcher, operationId, operationKey, changeful, 1024, OverflowPolicy.BLOCK);
     }
 

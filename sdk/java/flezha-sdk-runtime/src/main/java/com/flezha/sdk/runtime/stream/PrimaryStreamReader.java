@@ -4,10 +4,10 @@ import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
+import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
-import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.Operative;
 import com.flezha.sdk.runtime.worker.OperationDispatcher;
 import java.nio.charset.StandardCharsets;
@@ -64,7 +64,9 @@ public final class PrimaryStreamReader {
         switch (operative) {
             case ContinuousOperativeInstance ri -> instance = ri;
             case BoundedOperativeInstance ignored -> {
-                LOG.warn("dispatch: data frame for bounded `{}` dropped (boundeds have no input channel)", operativeInstanceId);
+                LOG.warn(
+                        "dispatch: data frame for bounded `{}` dropped (boundeds have no input channel)",
+                        operativeInstanceId);
                 return;
             }
         }

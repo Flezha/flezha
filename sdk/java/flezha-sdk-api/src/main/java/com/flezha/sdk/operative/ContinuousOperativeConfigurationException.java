@@ -25,7 +25,8 @@ public class ContinuousOperativeConfigurationException extends RuntimeException 
         this.actual = null;
     }
 
-    public ContinuousOperativeConfigurationException(String channel, Class<?> expected, Class<?> actual, String message) {
+    public ContinuousOperativeConfigurationException(
+            String channel, Class<?> expected, Class<?> actual, String message) {
         super(message);
         this.channel = channel;
         this.expected = expected;
@@ -54,8 +55,9 @@ public class ContinuousOperativeConfigurationException extends RuntimeException 
      * per channel is allowed; the first call registers it, the second fails.
      */
     public static ContinuousOperativeConfigurationException duplicatePluginSink(String channel) {
-        return new ContinuousOperativeConfigurationException("channel `" + channel + "` was declared with `alsoToPluginWith(...)` "
-                + "more than once; only one plugin sink per channel is allowed");
+        return new ContinuousOperativeConfigurationException(
+                "channel `" + channel + "` was declared with `alsoToPluginWith(...)` "
+                        + "more than once; only one plugin sink per channel is allowed");
     }
 
     /**
@@ -73,8 +75,8 @@ public class ContinuousOperativeConfigurationException extends RuntimeException 
      * above {@code 1_048_576}. Capacity must be in {@code 1..=1_048_576}.
      */
     public static ContinuousOperativeConfigurationException mailboxCapacityTooLarge(String operation, long value) {
-        return new ContinuousOperativeConfigurationException(
-                "operation `" + operation + "` declared mailboxCapacity = " + value + "; capacity must be in 1..=1_048_576");
+        return new ContinuousOperativeConfigurationException("operation `" + operation + "` declared mailboxCapacity = "
+                + value + "; capacity must be in 1..=1_048_576");
     }
 
     public String channel() {

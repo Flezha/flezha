@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.flezha.sdk.channel.ChannelBuilder;
+import com.flezha.sdk.operation.OperationCtx;
+import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.ContinuousOperative;
 import com.flezha.sdk.operative.ContinuousOperativeConfigurationException;
 import com.flezha.sdk.operative.ContinuousOperativeRegistry;
@@ -15,8 +17,6 @@ import com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.StatelessTestOperation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
 import com.flezha.sdk.state.WallClock;
@@ -96,7 +96,8 @@ class HybridChannelTest {
         }
     }
 
-    private ContinuousOperativeInstance instantiate(Class<? extends ContinuousOperative> operativeClass, String factoryId) {
+    private ContinuousOperativeInstance instantiate(
+            Class<? extends ContinuousOperative> operativeClass, String factoryId) {
         ContinuousOperativeRegistry.registerContinuous(operativeClass);
         ContinuousOperativeTopology topology = ContinuousOperativeClassRegistry.getTopology(factoryId);
         return ContinuousOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
@@ -218,7 +219,8 @@ class HybridChannelTest {
     @DisplayName("duplicate alsoToPluginWith on the same channel is rejected at registerContinuous time")
     void hybridDuplicatePluginSinkIsRejected() {
         ContinuousOperativeConfigurationException ex = assertThrows(
-                ContinuousOperativeConfigurationException.class, () -> ContinuousOperativeRegistry.registerContinuous(DuplicateSinkContinuousOperative.class));
+                ContinuousOperativeConfigurationException.class,
+                () -> ContinuousOperativeRegistry.registerContinuous(DuplicateSinkContinuousOperative.class));
         assertThat(ex.getMessage()).contains("alsoToPluginWith");
         assertThat(ex.getMessage()).contains("dup_out");
     }
@@ -245,7 +247,8 @@ class HybridChannelTest {
     // ---------- emit_with_meta on pure inter-operation channel is still rejected ----------
 
     @Test
-    @DisplayName("emitWithMeta on a pure inter-operation channel is rejected with MetadataNotAllowedOnInterOperationChannel")
+    @DisplayName(
+            "emitWithMeta on a pure inter-operation channel is rejected with MetadataNotAllowedOnInterOperationChannel")
     void emitWithMetaOnPureInterOperationChannelStillRejected() {
         ContinuousOperativeInstance instance = instantiate(PureInterOperationContinuousOperative.class, "hybrid_pure");
         feed(instance, "hybrid_pure_producer", "1");
@@ -264,7 +267,8 @@ class HybridChannelTest {
     }
 
     // =============================================================================================
-    // Test ContinuousOperative topologies + Operation impls. Each ContinuousOperative is registered exactly once per test; producer
+    // Test ContinuousOperative topologies + Operation impls. Each ContinuousOperative is registered exactly once per
+    // test; producer
     // Operations close over the static CopyOnWriteArrayList captures above.
     // =============================================================================================
 

@@ -1,6 +1,7 @@
 package com.flezha.sdk.runtime.operative;
 
 import com.flezha.sdk.channel.OverflowPolicy;
+import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.FlusherEntry;
@@ -10,7 +11,6 @@ import com.flezha.sdk.runtime.state.SegmentFlusher;
 import com.flezha.sdk.runtime.state.SegmentId;
 import com.flezha.sdk.runtime.state.SegmentStateSink;
 import com.flezha.sdk.runtime.worker.OperationDispatcher;
-import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.state.NoChange;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -125,14 +125,22 @@ public final class ContinuousOperativeInstance implements Operative {
 
             if (desc.segmentKeys().isEmpty()) {
                 Operation<?, ?, ?, ?, ?, ?> operationInstance = instantiate(desc.operationClass());
-                OperationDispatcher dispatcher = new OperationDispatcher(ctx, pool, shell, topology, operationId, operationInstance);
+                OperationDispatcher dispatcher =
+                        new OperationDispatcher(ctx, pool, shell, topology, operationId, operationInstance);
                 @SuppressWarnings({"unchecked", "rawtypes"})
                 Object initial = ((Operation) operationInstance).initState(Optional.empty(), Optional.empty());
                 SegmentSlot slot =
                         new SegmentSlot(dispatcher, operationId, Optional.empty(), changeful, mailboxCapacity, policy);
                 slot.state().set(initial);
                 registerWithFlusher(
-                        instanceId, desc, operationInstance, slot, persistenceEnabled, codec, headerTemplate, sendFrame);
+                        instanceId,
+                        desc,
+                        operationInstance,
+                        slot,
+                        persistenceEnabled,
+                        codec,
+                        headerTemplate,
+                        sendFrame);
                 slots = List.of(slot);
                 dispatchers.add(dispatcher);
             } else {
@@ -202,12 +210,14 @@ public final class ContinuousOperativeInstance implements Operative {
         SegmentFlusher.getOrStart().register(segmentId, entry, desc.changeType());
     }
 
-    private static Operation<?, ?, ?, ?, ?, ?> instantiate(Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass) {
+    private static Operation<?, ?, ?, ?, ?, ?> instantiate(
+            Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass) {
         try {
             return operationClass.getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(
-                    "operation class `" + operationClass.getName() + "` must have a public no-arg constructor: " + e.toString(),
+                    "operation class `" + operationClass.getName() + "` must have a public no-arg constructor: "
+                            + e.toString(),
                     e);
         }
     }

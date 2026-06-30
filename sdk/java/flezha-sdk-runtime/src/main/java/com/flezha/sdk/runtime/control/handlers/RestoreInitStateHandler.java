@@ -1,17 +1,17 @@
 package com.flezha.sdk.runtime.control.handlers;
 
+import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
-import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
+import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.ChangeLogReader;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.runtime.state.SegmentId;
-import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.google.protobuf.ByteString;
@@ -99,7 +99,8 @@ public final class RestoreInitStateHandler implements CommandHandler {
             // already stripped the snapshot's 16-byte header), and finally the
             // change-log folds on top — so snapshot-covered changes are never
             // re-applied.
-            Object state = operation.initState(slot.operationKey(), Optional.of(new RestoreInitPayload(snapshot, changeLog)));
+            Object state =
+                    operation.initState(slot.operationKey(), Optional.of(new RestoreInitPayload(snapshot, changeLog)));
             if (snapshot.length > 0) {
                 state = codec.deserialize(snapshot, Object.class);
             }
@@ -128,8 +129,10 @@ public final class RestoreInitStateHandler implements CommandHandler {
             List<List<SegmentSlot>> segments = instance.segments();
             for (List<SegmentSlot> operationSegments : segments) {
                 for (SegmentSlot slot : operationSegments) {
-                    String operationName =
-                            instance.topology().operations().get(slot.operationId()).name();
+                    String operationName = instance.topology()
+                            .operations()
+                            .get(slot.operationId())
+                            .name();
                     byte[] identity = SegmentId.of(instance.instanceId(), operationName, slot.operationKey())
                             .encodedBytes();
                     if (Arrays.equals(identity, segmentId)) {

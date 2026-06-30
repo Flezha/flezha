@@ -1,9 +1,9 @@
 package com.flezha.sdk.testing;
 
-import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.ReplayMismatch;
@@ -49,8 +49,9 @@ public final class OperationTestHarness<Input, State, Output, ChangeT extends Ch
         this.state = initial;
         // Stateless operations journal nothing, so there is no replay baseline to capture
         // (and their `Stateless` state is not Kryo-registered).
-        this.initialStateBytes =
-                operation.changeType() == NoChange.class ? null : new KryoCodec(operation.kryoTypes()).serialize(initial);
+        this.initialStateBytes = operation.changeType() == NoChange.class
+                ? null
+                : new KryoCodec(operation.kryoTypes()).serialize(initial);
     }
 
     /**
@@ -59,7 +60,8 @@ public final class OperationTestHarness<Input, State, Output, ChangeT extends Ch
      * {@link #withInitialState(Object)} or {@link #withPayload(Optional, RestoreInitPayload)}.
      */
     @Nonnull
-    public static <I, S, O, C extends Change> OperationTestHarness<I, S, O, C> of(@Nonnull Operation<I, S, O, C, ?, ?> operation) {
+    public static <I, S, O, C extends Change> OperationTestHarness<I, S, O, C> of(
+            @Nonnull Operation<I, S, O, C, ?, ?> operation) {
         S init = operation.initState(Optional.empty(), Optional.empty());
         return new OperationTestHarness<>(operation, init);
     }

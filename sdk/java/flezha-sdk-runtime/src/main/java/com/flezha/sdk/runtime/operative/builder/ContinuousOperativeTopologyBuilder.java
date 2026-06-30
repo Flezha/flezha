@@ -8,13 +8,13 @@ import com.flezha.sdk.channel.ChannelDeclWithProducer;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.channel.EntryChannel;
 import com.flezha.sdk.channel.OverflowPolicy;
+import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operative.ContinuousOperative;
 import com.flezha.sdk.operative.ContinuousOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
-import com.flezha.sdk.runtime.operative.PluginSink;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.OperationDescriptor;
-import com.flezha.sdk.operation.Operation;
+import com.flezha.sdk.runtime.operative.PluginSink;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -179,7 +179,11 @@ public final class ContinuousOperativeTopologyBuilder implements ChannelBuilder 
         }
 
         return new ContinuousOperativeTopology(
-                factoryId, channelDescriptors, Map.copyOf(nameToId), operationDescriptors, Map.copyOf(operationNameToId));
+                factoryId,
+                channelDescriptors,
+                Map.copyOf(nameToId),
+                operationDescriptors,
+                Map.copyOf(operationNameToId));
     }
 
     // ---- Internals ----------------------------------------------------------

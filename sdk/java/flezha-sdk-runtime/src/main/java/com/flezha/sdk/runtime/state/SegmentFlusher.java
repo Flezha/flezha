@@ -85,9 +85,7 @@ public final class SegmentFlusher {
      * skipped.
      */
     public boolean register(
-            @Nonnull SegmentId segmentId,
-            @Nonnull FlusherEntry entry,
-            @Nonnull Class<? extends Change> changeType) {
+            @Nonnull SegmentId segmentId, @Nonnull FlusherEntry entry, @Nonnull Class<? extends Change> changeType) {
         if (changeType == NoChange.class) {
             return false;
         }

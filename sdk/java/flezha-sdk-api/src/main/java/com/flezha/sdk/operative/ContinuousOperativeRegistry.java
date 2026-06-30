@@ -40,8 +40,8 @@ public final class ContinuousOperativeRegistry {
 
         synchronized (LOCK) {
             if (FROZEN.get()) {
-                throw new IllegalStateException(
-                        "Cannot register operative '" + operativeClass.getName() + "' — the SDK is already initialized");
+                throw new IllegalStateException("Cannot register operative '" + operativeClass.getName()
+                        + "' — the SDK is already initialized");
             }
             // Delegate to the runtime side (which validates the topology and
             // returns the controller-facing factory id) before we record it here.

@@ -5,11 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.ChannelKind;
+import com.flezha.sdk.operation.OperationCtx;
+import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.ContinuousOperative;
 import com.flezha.sdk.operative.ContinuousOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.builder.ContinuousOperativeTopologyBuilder;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
 import java.util.List;
@@ -30,7 +30,8 @@ class ContinuousOperativeTopologyBuilderTest {
         @Test
         @DisplayName("single-mode entry channel + consumer compiles and freezes")
         void singleModeOk() {
-            ContinuousOperativeTopology topology = ContinuousOperativeTopologyBuilder.build(new SingleModeContinuousOperative());
+            ContinuousOperativeTopology topology =
+                    ContinuousOperativeTopologyBuilder.build(new SingleModeContinuousOperative());
             assertThat(topology.factoryId()).isEqualTo("single_mode");
             assertThat(topology.channels()).hasSize(1);
             assertThat(topology.channels().get(0).kind()).isEqualTo(ChannelKind.ENTRY);
@@ -41,7 +42,8 @@ class ContinuousOperativeTopologyBuilderTest {
         @Test
         @DisplayName("static-mode operation allocates one descriptor with the declared keys")
         void staticModeAllocatesSegments() {
-            ContinuousOperativeTopology topology = ContinuousOperativeTopologyBuilder.build(new StaticModeContinuousOperative());
+            ContinuousOperativeTopology topology =
+                    ContinuousOperativeTopologyBuilder.build(new StaticModeContinuousOperative());
             assertThat(topology.operations().get(0).segmentKeys()).containsExactly("a", "b", "c", "d");
             assertThat(topology.operations().get(0).segmentForOverridden()).isTrue();
         }
@@ -73,7 +75,8 @@ class ContinuousOperativeTopologyBuilderTest {
         @Test
         @DisplayName("static-mode operation without segmentForOverridden is rejected")
         void staticWithoutSegmentForOverriddenRejected() {
-            assertThatThrownBy(() -> ContinuousOperativeTopologyBuilder.build(new MissingSegmentForOverriddenContinuousOperative()))
+            assertThatThrownBy(() -> ContinuousOperativeTopologyBuilder.build(
+                            new MissingSegmentForOverriddenContinuousOperative()))
                     .isInstanceOf(ContinuousOperativeConfigurationException.class)
                     .hasMessageContaining("segmentFor");
         }
@@ -262,7 +265,8 @@ class ContinuousOperativeTopologyBuilderTest {
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) throws OperationException {}
+        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx)
+                throws OperationException {}
     }
 
     public static final class TypeMismatchContinuousOperative implements ContinuousOperative {
@@ -301,7 +305,8 @@ class ContinuousOperativeTopologyBuilderTest {
         }
     }
 
-    public static final class MissingSegmentForOverriddenOperation extends StatelessTestOperation<String, Object, String> {
+    public static final class MissingSegmentForOverriddenOperation
+            extends StatelessTestOperation<String, Object, String> {
         @Override
         public String name() {
             return "missing_pfo_operation";

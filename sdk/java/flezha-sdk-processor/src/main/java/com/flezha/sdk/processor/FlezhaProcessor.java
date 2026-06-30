@@ -1,11 +1,11 @@
 package com.flezha.sdk.processor;
 
+import com.flezha.sdk.authoring.ContinuousOperative;
 import com.flezha.sdk.authoring.InitState;
 import com.flezha.sdk.authoring.Journal;
-import com.flezha.sdk.authoring.SegmentFor;
-import com.flezha.sdk.authoring.ContinuousOperative;
 import com.flezha.sdk.authoring.Operation;
 import com.flezha.sdk.authoring.OperationKey;
+import com.flezha.sdk.authoring.SegmentFor;
 import com.flezha.sdk.authoring.State;
 import java.io.IOException;
 import java.io.Writer;
@@ -83,7 +83,9 @@ public final class FlezhaProcessor extends AbstractProcessor {
             if (implementsContinuousOperative((TypeElement) e)) {
                 operativeFqns.add(((TypeElement) e).getQualifiedName().toString());
             } else {
-                error(e, "@ContinuousOperative requires the class to implement com.flezha.sdk.operative.ContinuousOperative");
+                error(
+                        e,
+                        "@ContinuousOperative requires the class to implement com.flezha.sdk.operative.ContinuousOperative");
             }
         }
 
@@ -523,7 +525,9 @@ public final class FlezhaProcessor extends AbstractProcessor {
         }
         List<? extends VariableElement> params = run.getParameters();
         if (params.isEmpty() || params.size() > 2) {
-            error(run, "@Operation `run` must be `Output run(Input)` or `Output run(Input, StateHandle<State, Change>)`");
+            error(
+                    run,
+                    "@Operation `run` must be `Output run(Input)` or `Output run(Input, StateHandle<State, Change>)`");
             return;
         }
 
@@ -760,7 +764,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 error(operation, "@Operation(sink = ...) requires a non-void return type to feed the plugin");
                 return;
             }
-            generateSingleOperationContinuousOperative(pkg, operationSimple, id, sink, inputType.toString(), outputType, onFull, operation);
+            generateSingleOperationContinuousOperative(
+                    pkg, operationSimple, id, sink, inputType.toString(), outputType, onFull, operation);
         }
     }
 
@@ -822,7 +827,9 @@ public final class FlezhaProcessor extends AbstractProcessor {
         b.append("    private GeneratedContinuousOperatives() {}\n\n");
         b.append("    public static void registerAll() {\n");
         for (String fqn : operativeFqns) {
-            b.append("        ContinuousOperativeRegistry.registerContinuous(").append(fqn).append(".class);\n");
+            b.append("        ContinuousOperativeRegistry.registerContinuous(")
+                    .append(fqn)
+                    .append(".class);\n");
         }
         b.append("    }\n}\n");
         write("com.flezha.generated.GeneratedContinuousOperatives", b.toString());

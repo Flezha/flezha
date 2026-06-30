@@ -3,12 +3,15 @@ package com.flezha.sdk.runtime.control.handlers;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.channel.ChannelBuilder;
+import com.flezha.sdk.operation.Operation;
+import com.flezha.sdk.operation.OperationCtx;
+import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.operative.ContinuousOperative;
+import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
-import com.flezha.sdk.operative.ContinuousOperative;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.segment.SegmentSlot;
@@ -17,9 +20,6 @@ import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.runtime.state.SegmentFlusher;
 import com.flezha.sdk.runtime.state.SegmentId;
 import com.flezha.sdk.runtime.state.SegmentStateSink;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -275,7 +275,8 @@ class RestoreInitStateHandlerTest {
         }
 
         @Override
-        public void run(String input, StateHandle<State, CounterChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<State, CounterChange> state, OperationCtx ctx)
+                throws OperationException {
             try {
                 state.apply(new CounterChange(Long.parseLong(input)));
             } catch (NumberFormatException ignored) {

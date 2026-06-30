@@ -3,27 +3,27 @@ package com.flezha.sdk.runtime.bounded;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.flezha.sdk.bounded.BoundedOperative;
+import com.flezha.sdk.bounded.BoundedOperativeCtx;
+import com.flezha.sdk.bounded.BoundedOperativeException;
+import com.flezha.sdk.bounded.BoundedOperativeRegistry;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.proto.AddOperative;
-import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.proto.BoundedCompleted;
+import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operative.ContinuousOperative;
 import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.proto.AddOperative;
+import com.flezha.sdk.proto.BoundedCompleted;
+import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.framing.FrameParser;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeInstanceRegistry;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
+import com.flezha.sdk.runtime.operative.ContinuousOperativeInstanceRegistry;
 import com.flezha.sdk.runtime.operative.Operative;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.bounded.BoundedOperative;
-import com.flezha.sdk.bounded.BoundedOperativeCtx;
-import com.flezha.sdk.bounded.BoundedOperativeException;
-import com.flezha.sdk.bounded.BoundedOperativeRegistry;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -64,9 +64,11 @@ class BoundedKindTest {
     @Test
     @DisplayName("registerBounded makes the factory resolvable")
     void registerBoundedOperativeResolvable() {
-        assertThat(BoundedOperativeClassRegistry.getBoundedOperativeClass("test-emit-bounded")).isNull();
+        assertThat(BoundedOperativeClassRegistry.getBoundedOperativeClass("test-emit-bounded"))
+                .isNull();
         BoundedOperativeRegistry.registerBounded(EmitBoundedOperative.class);
-        assertThat(BoundedOperativeClassRegistry.getBoundedOperativeClass("test-emit-bounded")).isNotNull();
+        assertThat(BoundedOperativeClassRegistry.getBoundedOperativeClass("test-emit-bounded"))
+                .isNotNull();
         assertThat(BoundedOperativeRegistry.factoryIds()).contains("test-emit-bounded");
     }
 
@@ -74,7 +76,8 @@ class BoundedKindTest {
     @DisplayName("registerBounded after freeze throws IllegalStateException")
     void registerAfterFreezeRejected() {
         BoundedOperativeRegistry.freeze();
-        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(EmitBoundedOperative.class)).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(EmitBoundedOperative.class))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -95,14 +98,17 @@ class BoundedKindTest {
     // --- 5.2 Sealed Operative registry ---
 
     @Test
-    @DisplayName("the instance registry holds both variants; getContinuousOperative is empty for a bounded; RemOperative removes a bounded")
+    @DisplayName(
+            "the instance registry holds both variants; getContinuousOperative is empty for a bounded; RemOperative removes a bounded")
     void sealedUnitHoldsBothVariants() {
         ContinuousOperativeInstanceRegistry registry = new ContinuousOperativeInstanceRegistry();
         registry.add(new BoundedOperativeInstance("t1", "echo_bounded"));
 
         assertThat(registry.contains("t1")).isTrue();
         assertThat(registry.get("t1")).isInstanceOf(BoundedOperativeInstance.class);
-        assertThat(registry.getContinuousOperative("t1")).as("a bounded is not a operative").isNull();
+        assertThat(registry.getContinuousOperative("t1"))
+                .as("a bounded is not a operative")
+                .isNull();
         assertThat(registry.operativeSnapshot()).doesNotContainKey("t1");
 
         Operative removed = registry.remove("t1");
@@ -120,14 +126,16 @@ class BoundedKindTest {
         ExecutorContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
-        new AddOperativeHandler().handle(ctx, addBoundedOperative("test-emit-bounded", "bounded-ok", "hello"), new ArrayList<>());
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-emit-bounded", "bounded-ok", "hello"), new ArrayList<>());
         assertThat(cap.awaitCompletions()).isTrue();
 
         assertThat(EMIT_RUNS.get()).as("run must execute exactly once").isEqualTo(1);
         assertThat(ctx.operativeInstanceRegistry().get("bounded-ok")).isInstanceOf(BoundedOperativeInstance.class);
 
         // Duplicate AddOperative for a live id is idempotent — no re-run.
-        new AddOperativeHandler().handle(ctx, addBoundedOperative("test-emit-bounded", "bounded-ok", "hello"), new ArrayList<>());
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-emit-bounded", "bounded-ok", "hello"), new ArrayList<>());
         Thread.sleep(100);
         assertThat(EMIT_RUNS.get()).as("duplicate start must not re-run").isEqualTo(1);
     }
@@ -170,7 +178,8 @@ class BoundedKindTest {
         ExecutorContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
-        new AddOperativeHandler().handle(ctx, addBoundedOperative("test-emit-bounded", "bounded-ok", "hello"), new ArrayList<>());
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-emit-bounded", "bounded-ok", "hello"), new ArrayList<>());
         assertThat(cap.awaitCompletions()).isTrue();
 
         Frame output = cap.decodeOne(SECONDARY_STREAM);
@@ -187,14 +196,16 @@ class BoundedKindTest {
     }
 
     @Test
-    @DisplayName("failure: a thrown BoundedOperativeException reports BoundedCompleted error with the message, no output")
+    @DisplayName(
+            "failure: a thrown BoundedOperativeException reports BoundedCompleted error with the message, no output")
     void failureEmitsErrorCompletion() throws Exception {
         BoundedOperativeRegistry.registerBounded(FailBoundedOperative.class);
         Captured cap = new Captured();
         ExecutorContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
-        new AddOperativeHandler().handle(ctx, addBoundedOperative("test-fail-bounded", "bounded-err", ""), new ArrayList<>());
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-fail-bounded", "bounded-err", ""), new ArrayList<>());
         assertThat(cap.awaitCompletions()).isTrue();
 
         assertThat(cap.framesOn(SECONDARY_STREAM))

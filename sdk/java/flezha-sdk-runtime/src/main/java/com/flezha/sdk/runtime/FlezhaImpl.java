@@ -1,6 +1,7 @@
 package com.flezha.sdk.runtime;
 
 import com.flezha.sdk.Flezha;
+import com.flezha.sdk.bounded.BoundedOperativeRegistry;
 import com.flezha.sdk.native_.FlezhaNativeException;
 import com.flezha.sdk.native_.FlezhaStatus;
 import com.flezha.sdk.native_.NativeEventDispatcher;
@@ -17,7 +18,6 @@ import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
 import com.flezha.sdk.runtime.state.SegmentStateSink;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
-import com.flezha.sdk.bounded.BoundedOperativeRegistry;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;

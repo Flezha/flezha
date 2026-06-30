@@ -114,8 +114,8 @@ class SegmentStateWireTest {
         Object lock = new Object();
         List<Change> buffer = new ArrayList<>();
         AtomicLong seq = new AtomicLong(0L);
-        FlusherEntry entry = new FlusherEntry(
-                lock, buffer, true, seq, SegmentStateSink::send, new HeaderTemplate(), pid, 1, codec);
+        FlusherEntry entry =
+                new FlusherEntry(lock, buffer, true, seq, SegmentStateSink::send, new HeaderTemplate(), pid, 1, codec);
 
         SegmentFlusher flusher = SegmentFlusher.getOrStart();
         flusher.register(pid, entry, AddChange.class);

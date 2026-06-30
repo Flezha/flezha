@@ -62,7 +62,8 @@ public final class ContinuousOperativeStateSerializer {
      * state set by their {@code initState} call (forward-compat with Operations
      * added after the blob was captured).
      */
-    public static void deserialize(@Nonnull ContinuousOperativeInstance instance, @Nonnull byte[] blob) throws Exception {
+    public static void deserialize(@Nonnull ContinuousOperativeInstance instance, @Nonnull byte[] blob)
+            throws Exception {
         if (blob.length == 0) {
             return;
         }
@@ -78,7 +79,8 @@ public final class ContinuousOperativeStateSerializer {
             }
             List<SegmentSlot> segments = instance.segments().get(operationId);
             if (desc.segmentKeys().isEmpty()) {
-                Object state = decodeState(operationEntry, segments.get(0).state().get());
+                Object state =
+                        decodeState(operationEntry, segments.get(0).state().get());
                 segments.get(0).state().set(state);
             } else {
                 if (!(operationEntry instanceof Map<?, ?> perKey)) {

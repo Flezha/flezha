@@ -59,7 +59,8 @@ class OperationDefaultsTest {
                 .hasMessageContaining("does not override applyChange");
     }
 
-    public static final class StatelessOperation implements Operation<String, String, String, NoChange, WallClock, Void> {
+    public static final class StatelessOperation
+            implements Operation<String, String, String, NoChange, WallClock, Void> {
         @Override
         public String name() {
             return "stateless";

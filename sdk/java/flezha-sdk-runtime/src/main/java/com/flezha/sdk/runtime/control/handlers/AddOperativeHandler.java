@@ -1,18 +1,18 @@
 package com.flezha.sdk.runtime.control.handlers;
 
+import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
+import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner;
 import com.flezha.sdk.runtime.control.CommandHandler;
-import com.flezha.sdk.runtime.operative.InitValuesContext;
+import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeInstanceRegistry;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
-import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
-import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
-import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner;
-import com.flezha.sdk.bounded.BoundedOperative;
+import com.flezha.sdk.runtime.operative.InitValuesContext;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,7 +49,8 @@ public final class AddOperativeHandler implements CommandHandler {
 
         // Empty/"continuous" → continuous (default kind); "bounded" → bounded.
         if ("bounded".equals(cmd.getKind())) {
-            Class<? extends BoundedOperative> boundedClass = BoundedOperativeClassRegistry.getBoundedOperativeClass(factoryId);
+            Class<? extends BoundedOperative> boundedClass =
+                    BoundedOperativeClassRegistry.getBoundedOperativeClass(factoryId);
             if (boundedClass == null) {
                 errors.add("BoundedOperative class with id " + factoryId + " does not exist");
                 return new byte[0];
@@ -69,7 +70,8 @@ public final class AddOperativeHandler implements CommandHandler {
 
         InitValuesContext.set(initValues);
         try {
-            ContinuousOperativeInstance instance = ContinuousOperativeInstance.create(topology, operativeId, ctx, ctx.workerPool());
+            ContinuousOperativeInstance instance =
+                    ContinuousOperativeInstance.create(topology, operativeId, ctx, ctx.workerPool());
             registry.add(instance);
         } catch (RuntimeException e) {
             errors.add("Failed to spawn operative instance: " + e.getMessage());

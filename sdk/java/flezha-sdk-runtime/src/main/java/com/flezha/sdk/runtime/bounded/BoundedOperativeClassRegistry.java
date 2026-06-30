@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.bounded;
 
-import com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry;
 import com.flezha.sdk.bounded.BoundedOperative;
+import com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -38,7 +38,8 @@ public final class BoundedOperativeClassRegistry {
             bounded = boundedClass.getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
             throw new IllegalArgumentException(
-                    "BoundedOperative class `" + boundedClass.getName() + "` must have a public no-arg constructor: " + e.toString(),
+                    "BoundedOperative class `" + boundedClass.getName() + "` must have a public no-arg constructor: "
+                            + e.toString(),
                     e);
         }
 
