@@ -3,6 +3,7 @@ package com.flezha.sdk.runtime.control.handlers;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
+import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.Operative;
 import java.util.List;
 
@@ -21,6 +22,10 @@ public final class RemOperativeHandler implements CommandHandler {
         Operative removed = ctx.operativeInstanceRegistry().remove(operativeId);
         if (removed == null) {
             errors.add("ContinuousOperative not found");
+        } else if (removed instanceof BoundedOperativeInstance bounded) {
+            // Hard removal of a bounded: trip its cancellation token so the
+            // driver thread unwinds and emits BoundedCompleted(status="cancelled").
+            bounded.cancel();
         }
         return new byte[0];
     }

@@ -58,15 +58,17 @@ public final class PrimaryStreamReader {
             LOG.warn("dispatch: operative instance `{}` not found on stream {}", operativeInstanceId, streamId);
             return;
         }
-        // Resolve the operative kind once per frame. A bounded has no input channel,
-        // so a data frame addressed to it is a logged no-op.
+        // Resolve the operative kind once per frame. A bounded's data frame is
+        // post-start input: route it to the running driver's inbox.
         ContinuousOperativeInstance instance;
         switch (operative) {
             case ContinuousOperativeInstance ri -> instance = ri;
-            case BoundedOperativeInstance ignored -> {
-                LOG.warn(
-                        "dispatch: data frame for bounded `{}` dropped (boundeds have no input channel)",
-                        operativeInstanceId);
+            case BoundedOperativeInstance bounded -> {
+                if (!bounded.offerInbox(frame.message())) {
+                    LOG.warn(
+                            "dispatch: inbox frame for bounded `{}` dropped (inbox full / not running)",
+                            operativeInstanceId);
+                }
                 return;
             }
         }

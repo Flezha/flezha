@@ -1,11 +1,11 @@
 package com.flezha.sdk.runtime.control.handlers;
 
-import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner;
+import com.flezha.sdk.runtime.bounded.BoundedSpec;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry;
@@ -49,16 +49,17 @@ public final class AddOperativeHandler implements CommandHandler {
 
         // Empty/"continuous" → continuous (default kind); "bounded" → bounded.
         if ("bounded".equals(cmd.getKind())) {
-            Class<? extends BoundedOperative> boundedClass =
-                    BoundedOperativeClassRegistry.getBoundedOperativeClass(factoryId);
-            if (boundedClass == null) {
+            BoundedSpec spec = BoundedOperativeClassRegistry.getSpec(factoryId);
+            if (spec == null) {
                 errors.add("BoundedOperative class with id " + factoryId + " does not exist");
                 return new byte[0];
             }
-            // Register before scheduling so a duplicate AddOperative (while run is
-            // in-flight) is idempotent and never re-runs.
-            registry.add(new BoundedOperativeInstance(operativeId, factoryId));
-            BoundedOperativeRunner.start(ctx, operativeId, boundedClass, initValues);
+            // Register the instance (with its inbox + cancel token) before
+            // launching the driver, so a duplicate AddOperative is idempotent and
+            // an inbox frame / BoundedStop arriving immediately is never lost.
+            BoundedOperativeInstance instance = new BoundedOperativeInstance(operativeId, factoryId);
+            registry.add(instance);
+            BoundedOperativeRunner.spawn(ctx, instance, spec, initValues);
             return new byte[0];
         }
 

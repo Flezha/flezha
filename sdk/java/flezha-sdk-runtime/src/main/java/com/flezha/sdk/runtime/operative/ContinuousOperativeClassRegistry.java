@@ -54,7 +54,7 @@ public final class ContinuousOperativeClassRegistry {
                     + "` returned null/empty from factoryId()");
         }
 
-        if (com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry.getBoundedOperativeClass(factoryId) != null) {
+        if (com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry.getSpec(factoryId) != null) {
             throw new IllegalArgumentException(
                     "Duplicate factory id `" + factoryId + "` for ContinuousOperative class `"
                             + operativeClass.getName() + "` (already registered as a BoundedOperative)");

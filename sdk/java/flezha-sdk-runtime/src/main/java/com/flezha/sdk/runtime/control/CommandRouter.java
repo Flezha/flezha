@@ -6,6 +6,7 @@ import com.flezha.sdk.proto.CommandResponse;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
 import com.flezha.sdk.runtime.control.handlers.AssignExecutorIdHandler;
+import com.flezha.sdk.runtime.control.handlers.BoundedStopHandler;
 import com.flezha.sdk.runtime.control.handlers.CompactSegmentHandler;
 import com.flezha.sdk.runtime.control.handlers.ConnectSocketHandler;
 import com.flezha.sdk.runtime.control.handlers.ExecutorDisconnectHandler;
@@ -66,6 +67,8 @@ public final class CommandRouter {
         // Resolved reflectively because the protobuf codegen jar may lag the
         // .proto file in a partial-deploy window.
         registerCase(mut, "PING", new PingHandler());
+        // Cooperative external stop for a bounded operative (bounded-operative-functionality).
+        registerCase(mut, "BOUNDED_STOP", new BoundedStopHandler());
         this.handlers = java.util.Collections.unmodifiableMap(mut);
     }
 

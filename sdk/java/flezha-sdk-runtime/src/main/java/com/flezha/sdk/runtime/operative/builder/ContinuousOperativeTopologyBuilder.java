@@ -66,9 +66,24 @@ public final class ContinuousOperativeTopologyBuilder implements ChannelBuilder 
      */
     @Nonnull
     public static ContinuousOperativeTopology build(@Nonnull ContinuousOperative operative) {
+        return build(operative.factoryId(), operative::channels);
+    }
+
+    /**
+     * Run an authoring lambda against a fresh builder, validate, and freeze the
+     * result into a {@link ContinuousOperativeTopology}. Shared by continuous
+     * {@link ContinuousOperative#channels} authoring and bounded
+     * {@code operations(...)} authoring — both declare Operations / Channels /
+     * Segments on the same {@link ChannelBuilder}.
+     *
+     * @throws ContinuousOperativeConfigurationException if any validation rule fails.
+     */
+    @Nonnull
+    public static ContinuousOperativeTopology build(
+            @Nonnull String factoryId, @Nonnull java.util.function.Consumer<ChannelBuilder> authoring) {
         ContinuousOperativeTopologyBuilder b = new ContinuousOperativeTopologyBuilder();
-        operative.channels(b);
-        return b.build(operative.factoryId());
+        authoring.accept(b);
+        return b.build(factoryId);
     }
 
     @Override

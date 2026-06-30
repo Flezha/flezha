@@ -1,17 +1,36 @@
 package com.flezha.sdk.bounded;
 
+import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operative.Computation;
+import java.time.Duration;
+import java.util.Optional;
 import javax.annotation.Nonnull;
 
 /**
- * The <strong>bounded</strong> compute-operative kind: a stateless, run-once job.
+ * The <strong>bounded</strong> compute-operative kind: an on-demand,
+ * terminating, possibly-interactive process.
  *
- * <p>A bounded is started with {@code args}, runs its {@link #run} method
- * exactly once on the executor's worker pool, may emit output to bound
- * plugins via {@link BoundedOperativeCtx#emit}, and signals completion to the
- * controller. It has no channels, no segments, and no per-segment state
- * — it shares only the runtime plumbing (registries, executor bind, plugin
- * emit) with operatives.
+ * <p>A bounded is started with {@code args}, runs to an exit trigger, and is
+ * then torn down. It reuses the continuous <strong>building blocks</strong>
+ * (Operations, Channels, Segments, per-Segment state, {@code ctx.emit}) but
+ * drives them under a bounded <strong>lifecycle</strong>:
+ *
+ * <ul>
+ *   <li><strong>{@code run} sugar</strong> — the trivial case is a bare
+ *       {@link #run} body: a single implicit Operation/Segment.</li>
+ *   <li><strong>Structured</strong> — override {@link #operations} to author
+ *       Operations/Channels/Segments on the same {@link ChannelBuilder} a
+ *       continuous operative uses; the bounded driver runs them sequentially
+ *       in a linear chain with a per-operation count-based barrier (segments
+ *       within one operation still run in parallel).</li>
+ *   <li><strong>Exit triggers</strong> — the operative terminates on the first
+ *       of: the chain running to quiescence, {@link BoundedOperativeCtx#complete},
+ *       a loop's terminal predicate, a declared {@link #maxDuration}, or
+ *       external {@code flz operative stop}. Every trigger converges on the
+ *       single {@code BoundedCompleted} teardown.</li>
+ *   <li><strong>Inbox</strong> — a running operative receives input after it
+ *       starts via {@link BoundedOperativeCtx#recv}.</li>
+ * </ul>
  *
  * <p>Authoring is a distinct, lightweight interface (not a degenerate
  * {@code Operation}). Register a bounded with
@@ -22,7 +41,7 @@ import javax.annotation.Nonnull;
  * public final class GreetBoundedOperative implements BoundedOperative {
  *     public String factoryId() { return "greet"; }
  *     public void run(BoundedOperativeCtx ctx, String args) throws BoundedOperativeException {
- *         ctx.emit("hello " + args);
+ *         ctx.complete(("hello " + args).getBytes(StandardCharsets.UTF_8));
  *     }
  * }
  * Flezha.registerBounded(GreetBoundedOperative.class);
@@ -36,12 +55,54 @@ public interface BoundedOperative extends Computation {
     String factoryId();
 
     /**
-     * Run the job once. Emit output via {@code ctx}; return normally on
-     * success or throw {@link BoundedOperativeException} on a terminal failure (the
-     * controller tears the bounded down either way — there is no retry).
+     * Run-sugar body: the single-Operation, single-Segment case. Invoked once
+     * per started instance with {@code args} from {@code init_values}. Emit
+     * output via {@code ctx}, optionally call {@link BoundedOperativeCtx#complete}
+     * with a result, and return normally; throwing
+     * {@link BoundedOperativeException} is a terminal failure (no retry).
      *
-     * @param ctx output context bound to this bounded instance
+     * <p>The default throws — a class must implement either {@code run} or
+     * {@link #operations}. A structured operative (non-empty {@code operations})
+     * never has {@code run} invoked.
+     *
+     * @param ctx lifecycle context bound to this bounded instance
      * @param args the {@code init_values} string shipped with the start
      */
-    void run(@Nonnull BoundedOperativeCtx ctx, @Nonnull String args) throws BoundedOperativeException;
+    default void run(@Nonnull BoundedOperativeCtx ctx, @Nonnull String args) throws BoundedOperativeException {
+        throw new BoundedOperativeException(
+                "BoundedOperative `" + factoryId() + "`: neither run() nor operations() was implemented");
+    }
+
+    /**
+     * Structured form: declare a <strong>linear chain</strong> of Operations /
+     * Channels / Segments on the same {@link ChannelBuilder} a continuous
+     * operative uses. The default is empty, selecting the {@link #run}-sugar
+     * path. A non-empty declaration is run sequentially by the bounded driver
+     * (operation {@code N+1} starts only when every segment of operation
+     * {@code N} has finished). Branching is rejected at registration.
+     */
+    default void operations(@Nonnull ChannelBuilder c) {}
+
+    /**
+     * Optional wall-clock backstop. {@link Optional#empty()} (the default) means
+     * no duration bound; when present, the SDK cooperatively cancels in-flight
+     * work once it elapses.
+     */
+    @Nonnull
+    default Optional<Duration> maxDuration() {
+        return Optional.empty();
+    }
+
+    /**
+     * Self-termination guarantee, validated at registration. Default {@code true}:
+     * the operative ends on its own (a {@code run}/chain that returns, or a loop
+     * with a terminal predicate / exhausted input). An operative whose
+     * <strong>only</strong> possible exit is an external stop returns
+     * {@code false}; combined with no {@link #maxDuration} it is
+     * <strong>rejected</strong> at registration with a message directing the
+     * author to add a terminal condition.
+     */
+    default boolean selfTerminating() {
+        return true;
+    }
 }
