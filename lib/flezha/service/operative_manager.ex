@@ -7,6 +7,7 @@ defmodule Flezha.Service.OperativeManager do
 
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
+  alias Flezha.Executor.ControlUnit
   alias Flezha.Executor.FleetManager
   alias Flezha.Convergence.SafeCall
   alias Flezha.Operative.Builder, as: OperativeBuilder
@@ -67,20 +68,14 @@ defmodule Flezha.Service.OperativeManager do
       case init_operative(namespace, operative) do
         {:ok, _} = ok ->
           _ = Flezha.AuthZ.Quotas.record_allocation(namespace, :max_operatives, 1)
+          seg_count = segment_count(operative)
 
-          segment_count =
-            case Map.get(operative, :segments) do
-              ps when is_list(ps) -> length(ps)
-              n when is_integer(n) -> n
-              _ -> 0
-            end
-
-          if segment_count > 0 do
+          if seg_count > 0 do
             _ =
               Flezha.AuthZ.Quotas.record_allocation(
                 namespace,
                 :max_segments_per_operative,
-                segment_count
+                seg_count
               )
           end
 
@@ -113,12 +108,7 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp check_segment_quota(namespace, operative) do
-    requested =
-      case Map.get(operative, :segments) do
-        ps when is_list(ps) -> length(ps)
-        n when is_integer(n) -> n
-        _ -> 0
-      end
+    requested = segment_count(operative)
 
     if requested > 0 do
       case Flezha.AuthZ.Quotas.check_allocation(namespace, :max_segments_per_operative, requested) do
@@ -145,17 +135,65 @@ defmodule Flezha.Service.OperativeManager do
   defp validate_factory(_namespace, _factory_id), do: :ok
 
   @doc """
-  Removes a operative.
+  Stops `operative_id` the way its kind expects.
+
+  A bound `:bounded` operative is stopped **cooperatively**: a `BoundedStop`
+  trips the SDK's cancellation token and the operative winds down to its own
+  `BoundedCompleted` (status "cancelled"), which drives the single teardown via
+  `ControlChannel.handle_bounded_completed/2`. Everything else (`:continuous`, or
+  a bounded operative not bound to an executor) takes the hard `stop_operative/2`
+  teardown. An unreadable kind (not found / wedged) also falls back to the hard
+  stop so `flz operative stop` always attempts removal.
+
+  Returns `{:ok, :cooperative}` when a cooperative stop was signalled, `:ok` after
+  a hard teardown, or `{:error, reason}`.
+  """
+  @spec request_stop(String.t(), String.t()) ::
+          :ok | {:ok, :cooperative} | {:error, term()}
+  def request_stop(namespace, operative_id) do
+    case get_overwatch_state(namespace, operative_id) do
+      {:ok, %{builder: %{kind: :bounded}, executor_id: executor_id}}
+      when is_binary(executor_id) ->
+        case ControlUnit.bounded_stop(executor_id, operative_id) do
+          :ok -> {:ok, :cooperative}
+          # No control unit to cooperate with — fall back to the hard teardown.
+          {:error, _} -> stop_operative(namespace, operative_id)
+        end
+
+      _ ->
+        stop_operative(namespace, operative_id)
+    end
+  end
+
+  @doc """
+  Hard teardown: stop the operative, disable its plugins, delete its on-disk
+  state, and release its quota. Drives `RemOperative` (terminal) — the converged
+  teardown for both an explicit stop and a `BoundedCompleted`.
   """
   @spec stop_operative(String.t(), String.t()) :: :ok | {:error, String.t()}
   def stop_operative(namespace, operative_id) do
     case get_operative_pid(namespace, operative_id) do
       {:ok, operative_pid} ->
+        # Read the segment count before the stop tears the operative down — the
+        # operative is gone afterwards and the count is needed to release the
+        # `:max_segments_per_operative` quota symmetrically with start.
+        seg_count = operative_segment_count(namespace, operative_id)
+
         case GenServer.call(operative_pid, :stop_operative) do
           :ok ->
             _ = Flezha.Service.PluginManager.disable_operative_plugins(namespace, operative_id)
             _ = delete_operative_state_dir(operative_id)
             _ = Flezha.AuthZ.Quotas.record_deallocation(namespace, :max_operatives, 1)
+
+            if seg_count > 0 do
+              _ =
+                Flezha.AuthZ.Quotas.record_deallocation(
+                  namespace,
+                  :max_segments_per_operative,
+                  seg_count
+                )
+            end
+
             :ok
 
           {:error, reason} ->
@@ -164,6 +202,21 @@ defmodule Flezha.Service.OperativeManager do
 
       err ->
         err
+    end
+  end
+
+  defp operative_segment_count(namespace, operative_id) do
+    case get_overwatch_state(namespace, operative_id) do
+      {:ok, %{builder: builder}} -> segment_count(builder)
+      _ -> 0
+    end
+  end
+
+  defp segment_count(operative) do
+    case Map.get(operative, :segments) do
+      ps when is_list(ps) -> length(ps)
+      n when is_integer(n) -> n
+      _ -> 0
     end
   end
 

@@ -51,6 +51,9 @@ defmodule Flezha.Operative.Overwatch do
     default_input_type: "2",
     arrived_via_hotswap?: false,
     init_error: nil,
+    # Wall-clock ms at process start, for `flz operative info` uptime. Wall-clock
+    # (not monotonic) so the value stays comparable when read from another node.
+    started_at: nil,
     # Liveness counters ref (io_in_received / forwarded / filtered_nil) so a
     # stall can be localised to "WS plugin stopped feeding" vs "operative stopped
     # forwarding to the channel".
@@ -92,6 +95,7 @@ defmodule Flezha.Operative.Overwatch do
       default_input_type: Keyword.get(operative.opts, :default_input_type, "2"),
       extensions: Table.new(__extensions_catalog__()),
       builder: operative,
+      started_at: System.system_time(:millisecond),
       liveness_ref: LivenessCounters.register_operative(operative.id)
     }
 

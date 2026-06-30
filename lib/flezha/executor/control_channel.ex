@@ -370,16 +370,28 @@ defmodule Flezha.Executor.ControlChannel do
     emit_executor_shutdown_ack(state, operative_id, reference_id)
   end
 
-  # A bounded operative.s `run` returned. Deregister-on-completion: drive the
-  # normal stop/teardown so the operative leaves the durable registry and is never
-  # replayed on boot. A terminal failure (`status = "error"`) tears down
-  # identically (no retry) and is surfaced via telemetry.
+  # Converged teardown for every bounded exit trigger (quiescence, ctx.complete,
+  # loop terminal, max_duration, cooperative stop): surface the outcome + result
+  # payload, then deregister-on-completion so the operative never replays on boot.
+  # A `status = "error"` tears down identically — no retry.
   defp handle_bounded_completed(state, completed) do
     %ExecutorCommands.BoundedCompleted{
       operative_id: operative_id,
       status: status,
-      error: error
+      error: error,
+      result: result
     } = completed
+
+    :telemetry.execute(
+      [:flezha, :bounded, :completed],
+      %{count: 1},
+      %{
+        namespace: state.namespace,
+        operative_id: operative_id,
+        status: status,
+        result: result
+      }
+    )
 
     if status == "error" do
       Logger.warning(

@@ -95,6 +95,33 @@ defmodule Flezha.Executor.ControlUnit do
     end
   end
 
+  @doc """
+  Cooperative external stop for a bounded operative (`flz operative stop`).
+
+  Sends a `BoundedStop` command — distinct from the hard `RemOperative`: the SDK
+  trips the bounded driver's cancellation token, lets in-flight work unwind, runs
+  any saga compensation, then emits `BoundedCompleted` (status "cancelled") which
+  drives the single teardown via `ControlChannel.handle_bounded_completed/2`.
+
+  Fire-and-forget (mirrors `:stop_operative_async`) — the teardown is asynchronous,
+  so the caller does not wait on the SDK ack. Returns `{:error, :no_control_unit}`
+  when the executor's control unit is gone (caller falls back to a hard stop).
+  """
+  @spec bounded_stop(binary(), binary()) :: :ok | {:error, :no_control_unit}
+  def bounded_stop(executor_id, operative_id)
+      when is_binary(executor_id) and is_binary(operative_id) do
+    control_unit = Identificator.control_unit(executor_id)
+
+    case GenServer.whereis(control_unit) do
+      nil ->
+        {:error, :no_control_unit}
+
+      _ ->
+        GenServer.cast(control_unit, {:bounded_stop, operative_id})
+        :ok
+    end
+  end
+
   @impl true
   def init({namespace, executor_id}) do
     schedule_heartbeat()
@@ -270,6 +297,19 @@ defmodule Flezha.Executor.ControlUnit do
       {
         :rem_operative,
         %ExecutorCommands.RemOperative{operative_id: operative_id}
+      }
+    )
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:bounded_stop, operative_id}, state) do
+    ControlChannel.send_control_async(
+      state.executor_id,
+      {
+        :bounded_stop,
+        %ExecutorCommands.BoundedStop{operative_id: operative_id}
       }
     )
 

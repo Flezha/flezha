@@ -25,9 +25,11 @@ defmodule FlezhaTest.Executor.ControlChannelBoundedCompletedTest do
     test_pid = self()
     handler_id = "task-completed-test-#{System.unique_integer([:positive])}"
 
-    :telemetry.attach(
+    # Every exit trigger emits `:completed`; only a terminal failure also emits
+    # `:failed`. Attach both so a test can assert convergence + the result payload.
+    :telemetry.attach_many(
       handler_id,
-      [:flezha, :bounded, :failed],
+      [[:flezha, :bounded, :completed], [:flezha, :bounded, :failed]],
       fn event, measurements, metadata, _ ->
         send(test_pid, {:telemetry, event, measurements, metadata})
       end,
@@ -38,7 +40,7 @@ defmodule FlezhaTest.Executor.ControlChannelBoundedCompletedTest do
     :ok
   end
 
-  test "BoundedCompleted ok → drives stop_operative teardown, no failure telemetry" do
+  test "BoundedCompleted ok → drives stop_operative teardown + result, no failure telemetry" do
     test_pid = self()
 
     OperativeManager
@@ -49,10 +51,17 @@ defmodule FlezhaTest.Executor.ControlChannelBoundedCompletedTest do
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-a")
 
-    payload = build_bounded_completed_payload("task-1", "ok", "", "ref-1")
+    payload = build_bounded_completed_payload("task-1", "ok", "", "the-answer", "ref-1")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:stop_operative_called, "task-1"}, 500
+
+    # The terminal outcome + result payload is surfaced on `:completed`.
+    assert_receive {:telemetry, [:flezha, :bounded, :completed], %{count: 1}, meta}, 500
+    assert meta.operative_id == "task-1"
+    assert meta.status == "ok"
+    assert meta.result == "the-answer"
+
     refute_receive {:telemetry, [:flezha, :bounded, :failed], _m, _meta}, 200
   end
 
@@ -67,15 +76,44 @@ defmodule FlezhaTest.Executor.ControlChannelBoundedCompletedTest do
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-b")
 
-    payload = build_bounded_completed_payload("task-2", "error", "boom", "ref-2")
+    payload = build_bounded_completed_payload("task-2", "error", "boom", "", "ref-2")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:telemetry, [:flezha, :bounded, :failed], %{count: 1}, metadata}, 500
     assert metadata.operative_id == "task-2"
     assert metadata.error == "boom"
 
+    # Errors also emit the converged `:completed`.
+    assert_receive {:telemetry, [:flezha, :bounded, :completed], %{count: 1}, %{status: "error"}},
+                   500
+
     # Terminal failure deregisters exactly as success — no retry.
     assert_receive {:stop_operative_called, "task-2"}, 500
+  end
+
+  test "BoundedCompleted cancelled (cooperative stop) → same converged teardown + result" do
+    test_pid = self()
+
+    OperativeManager
+    |> stub(:stop_operative, fn @namespace, operative_id ->
+      send(test_pid, {:stop_operative_called, operative_id})
+      :ok
+    end)
+
+    {control_channel, _stream_ref} = start_control_channel("exec-task-c")
+
+    payload = build_bounded_completed_payload("task-3", "cancelled", "", "partial", "ref-3")
+    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+    # A cooperative external stop converges on the identical teardown path.
+    assert_receive {:stop_operative_called, "task-3"}, 500
+
+    assert_receive {:telemetry, [:flezha, :bounded, :completed], %{count: 1}, meta}, 500
+    assert meta.status == "cancelled"
+    assert meta.result == "partial"
+
+    # Cancellation is not a failure.
+    refute_receive {:telemetry, [:flezha, :bounded, :failed], _m, _meta}, 200
   end
 
   defp start_control_channel(suffix) do
@@ -98,7 +136,7 @@ defmodule FlezhaTest.Executor.ControlChannelBoundedCompletedTest do
     {pid, stream_ref}
   end
 
-  defp build_bounded_completed_payload(operative_id, status, error, reference_id) do
+  defp build_bounded_completed_payload(operative_id, status, error, result, reference_id) do
     request = %ExecutorCommands.CommandRequest{
       reference_id: reference_id,
       command:
@@ -106,7 +144,8 @@ defmodule FlezhaTest.Executor.ControlChannelBoundedCompletedTest do
          %ExecutorCommands.BoundedCompleted{
            operative_id: operative_id,
            status: status,
-           error: error
+           error: error,
+           result: result
          }}
     }
 

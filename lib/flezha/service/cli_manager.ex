@@ -217,11 +217,20 @@ defmodule Flezha.Service.CliManager do
   defp atomize_sub_opt_value(v) when is_binary(v), do: String.to_atom(v)
   defp atomize_sub_opt_value(v), do: v
 
-  @doc "Stops a operative."
+  @doc "Stops a operative (cooperatively for a bounded operative, hard otherwise)."
   def operative_stop(namespace, operative_id) do
-    case OperativeManager.stop_operative(normalize_namespace(namespace), operative_id) do
-      :ok -> IO.puts("Operative has been stopped")
-      {:error, reason} -> IO.puts("Error stopping operative: #{inspect(reason)}")
+    case OperativeManager.request_stop(normalize_namespace(namespace), operative_id) do
+      :ok ->
+        IO.puts("Operative has been stopped")
+
+      {:ok, :cooperative} ->
+        IO.puts(
+          "Cooperative stop requested for bounded operative '#{operative_id}'. " <>
+            "It will finish in-flight work, then complete (cancelled) and be removed."
+        )
+
+      {:error, reason} ->
+        IO.puts("Error stopping operative: #{inspect(reason)}")
     end
   end
 
@@ -794,6 +803,9 @@ defmodule Flezha.Service.CliManager do
               id: operative_id,
               executor_id: state.executor_id,
               namespace: state.namespace,
+              kind: operative_kind(state),
+              phase: operative_phase(state),
+              uptime_ms: operative_uptime_ms(state),
               default_input_type: state.default_input_type,
               plugins: format_plugins_json(state.extensions)
             }
@@ -824,6 +836,19 @@ defmodule Flezha.Service.CliManager do
     end)
   end
 
+  defp operative_kind(%{builder: %{kind: kind}}) when is_atom(kind), do: Atom.to_string(kind)
+  defp operative_kind(_), do: "continuous"
+
+  # Phase 1: a live operative is "running". The richer bounded phases
+  # (compensating / completing / finished) light up with the saga + retention
+  # work in later phases.
+  defp operative_phase(_state), do: "running"
+
+  defp operative_uptime_ms(%{started_at: started}) when is_integer(started),
+    do: max(0, System.system_time(:millisecond) - started)
+
+  defp operative_uptime_ms(_), do: nil
+
   defp format_plugins_json(%{plugins: plugins}) do
     Enum.map(plugins, fn {plugin_id, plugin} ->
       %{
@@ -841,8 +866,11 @@ defmodule Flezha.Service.CliManager do
 
   defp display_operative_info(operative_id, state) do
     IO.puts("Operative: #{operative_id}")
+    IO.puts("  Kind: #{operative_kind(state)}")
+    IO.puts("  Phase: #{operative_phase(state)}")
     IO.puts("  Executor ID: #{state.executor_id}")
     IO.puts("  Group ID: #{state.namespace}")
+    IO.puts("  Uptime (ms): #{operative_uptime_ms(state)}")
     IO.puts("  Default Input Type: #{state.default_input_type}")
     IO.puts("  Plugins:")
 
