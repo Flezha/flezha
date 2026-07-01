@@ -22,6 +22,8 @@ defmodule FlezhaTest.Executor.ControlChannelBoundedCompletedTest do
   setup :set_mimic_global
 
   setup do
+    # Isolate the completion record `handle_bounded_completed/2` now writes.
+    base = Flezha.State.TestHelpers.tmp_app_data_dir()
     test_pid = self()
     handler_id = "task-completed-test-#{System.unique_integer([:positive])}"
 
@@ -36,7 +38,12 @@ defmodule FlezhaTest.Executor.ControlChannelBoundedCompletedTest do
       nil
     )
 
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    on_exit(fn ->
+      :telemetry.detach(handler_id)
+      Application.delete_env(:flezha, :state_root)
+      File.rm_rf!(base)
+    end)
+
     :ok
   end
 
@@ -114,6 +121,32 @@ defmodule FlezhaTest.Executor.ControlChannelBoundedCompletedTest do
 
     # Cancellation is not a failure.
     refute_receive {:telemetry, [:flezha, :bounded, :failed], _m, _meta}, 200
+  end
+
+  test "BoundedCompleted writes a durable completion record for finished-job retention" do
+    test_pid = self()
+
+    OperativeManager
+    |> stub(:stop_operative, fn @namespace, operative_id ->
+      send(test_pid, {:stop_operative_called, operative_id})
+      :ok
+    end)
+
+    {control_channel, _stream_ref} = start_control_channel("exec-task-rec")
+
+    before = System.system_time(:second)
+    payload = build_bounded_completed_payload("task-rec", "ok", "", "the-answer", "ref-rec")
+    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+    # The record is written synchronously in `handle_bounded_completed` BEFORE the
+    # off-process teardown, so once teardown is observed the record must exist.
+    assert_receive {:stop_operative_called, "task-rec"}, 500
+
+    assert {:ok, rec} = Flezha.State.Completion.read("task-rec")
+    assert rec.namespace == @namespace
+    assert rec.status == "ok"
+    assert rec.result == "the-answer"
+    assert is_integer(rec.finished_at) and rec.finished_at >= before
   end
 
   defp start_control_channel(suffix) do

@@ -20,10 +20,23 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
+  alias Flezha.State.{Completion, Registry, TestHelpers}
 
   @namespace "op-mgr-request-stop-test"
 
   setup :set_mimic_global
+
+  setup do
+    # Isolate the on-disk state dir the teardown deletes-or-retains.
+    base = TestHelpers.tmp_app_data_dir()
+
+    on_exit(fn ->
+      Application.delete_env(:flezha, :state_root)
+      File.rm_rf!(base)
+    end)
+
+    :ok
+  end
 
   defp start_stub(state_reply), do: StubOverwatch.start_link(state_reply, self())
 
@@ -112,6 +125,56 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     assert_receive {:dealloc, :max_operatives, 1}, 500
     # A `%Builder{}` declares no segments → no segment-quota release.
     refute_received {:dealloc, :max_segments_per_operative, _}
+  end
+
+  test "stop_operative retains state + record for a finished bounded operative" do
+    op_id = unique_id()
+    {:ok, stub} = start_stub(%{builder: %{kind: :bounded}})
+    on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
+
+    HubManager |> stub(:get_pid, fn @namespace, ^op_id -> {:ok, stub} end)
+    PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^op_id -> :ok end)
+    Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
+
+    # Simulate what `handle_bounded_completed` wrote before teardown: a completion
+    # record + retained Segment state.
+    :ok =
+      Completion.write(op_id, %{
+        namespace: @namespace,
+        status: "ok",
+        error: "",
+        result: "",
+        finished_at: System.system_time(:second)
+      })
+
+    wal = Path.join([Registry.state_root(), op_id, "op0", "seg.wal"])
+    File.mkdir_p!(Path.dirname(wal))
+    File.write!(wal, "x")
+
+    assert :ok = OperativeManager.stop_operative(@namespace, op_id)
+
+    # Retain-not-delete: the record and the WAL survive teardown for the window.
+    assert Completion.exists?(op_id)
+    assert File.exists?(wal)
+  end
+
+  test "stop_operative deletes state when there is no completion record" do
+    op_id = unique_id()
+    {:ok, stub} = start_stub(%{builder: %{kind: :continuous}})
+    on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
+
+    HubManager |> stub(:get_pid, fn @namespace, ^op_id -> {:ok, stub} end)
+    PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^op_id -> :ok end)
+    Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
+
+    wal = Path.join([Registry.state_root(), op_id, "op0", "seg.wal"])
+    File.mkdir_p!(Path.dirname(wal))
+    File.write!(wal, "x")
+
+    assert :ok = OperativeManager.stop_operative(@namespace, op_id)
+
+    # No completion record → the class dir is deleted as before.
+    refute File.dir?(Path.join(Registry.state_root(), op_id))
   end
 end
 

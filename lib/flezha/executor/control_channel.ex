@@ -408,6 +408,19 @@ defmodule Flezha.Executor.ControlChannel do
 
     namespace = state.namespace
 
+    # Finished-job retention: record the terminal outcome (durably, before the
+    # teardown) so `flz operative info` can surface it and `stop_operative`
+    # retains the state instead of deleting it. `finished_at` is stamped
+    # controller-side (the wire carries no timestamp).
+    _ =
+      Flezha.State.Completion.write(operative_id, %{
+        namespace: namespace,
+        status: status,
+        error: error,
+        result: result,
+        finished_at: System.system_time(:second)
+      })
+
     # Tear down off the control-channel process: `stop_operative` drives a
     # RemOperative round-trip whose CommandResponse returns on THIS control
     # stream, so calling it inline would deadlock the reader.

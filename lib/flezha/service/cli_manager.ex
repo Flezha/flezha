@@ -770,13 +770,20 @@ defmodule Flezha.Service.CliManager do
   def operative_info(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_operatives(namespace_display) do
-      {:ok, operatives} ->
-        if Enum.empty?(operatives) do
-          handle_empty_operatives(namespace_display, output_format)
-        else
-          handle_operative_info_output(operatives, namespace_display, output_format)
-        end
+    live =
+      case Flezha.list_operatives(namespace_display) do
+        {:ok, operatives} -> operatives
+        _ -> []
+      end
+
+    # A finished bounded operative is gone from the live registry but its
+    # completion record is retained within the window — surface it too.
+    finished = finished_operatives(namespace_display, live)
+
+    if live == [] and finished == [] do
+      handle_empty_operatives(namespace_display, output_format)
+    else
+      handle_operative_info_output(live, finished, namespace_display, output_format)
     end
   end
 
@@ -794,9 +801,9 @@ defmodule Flezha.Service.CliManager do
     IO.puts("No operatives found for namespace '#{namespace_display}'.")
   end
 
-  defp handle_operative_info_output(operatives, namespace_display, "json") do
-    operative_data =
-      Enum.map(operatives, fn operative_id ->
+  defp handle_operative_info_output(live, finished, namespace_display, "json") do
+    live_data =
+      Enum.map(live, fn operative_id ->
         case OperativeManager.get_overwatch_state(namespace_display, operative_id) do
           {:ok, state} ->
             %{
@@ -815,15 +822,17 @@ defmodule Flezha.Service.CliManager do
         end
       end)
 
-    result = %{namespace: namespace_display, operatives: operative_data}
+    finished_data = Enum.map(finished, fn {id, rec} -> finished_operative_json(id, rec) end)
+
+    result = %{namespace: namespace_display, operatives: live_data ++ finished_data}
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_operative_info_output(operatives, namespace_display, _) do
+  defp handle_operative_info_output(live, finished, namespace_display, _) do
     IO.puts("Operative information for namespace '#{namespace_display}':")
     IO.puts("")
 
-    Enum.each(operatives, fn operative_id ->
+    Enum.each(live, fn operative_id ->
       case OperativeManager.get_overwatch_state(namespace_display, operative_id) do
         {:ok, state} ->
           display_operative_info(operative_id, state)
@@ -834,7 +843,72 @@ defmodule Flezha.Service.CliManager do
           IO.puts("")
       end
     end)
+
+    Enum.each(finished, fn {id, rec} -> display_finished_operative(id, rec) end)
   end
+
+  # Finished bounded operatives with a completion record still inside the
+  # retention window, keyed by the operative_class dir (== operative_id).
+  defp finished_operatives(namespace, live_ids) do
+    now = System.system_time(:second)
+    root = Flezha.State.Registry.state_root()
+
+    case File.ls(root) do
+      {:ok, class_dirs} ->
+        class_dirs
+        |> Enum.reject(&(&1 in live_ids))
+        |> Enum.flat_map(fn operative_id ->
+          case Flezha.State.Completion.read(operative_id) do
+            {:ok, %{namespace: ns, finished_at: fa} = rec}
+            when ns == namespace and is_integer(fa) ->
+              window =
+                Flezha.State.PersistenceResolver.bounded_completed_retention_hours(operative_id)
+
+              if fa + window * 3600 >= now, do: [{operative_id, rec}], else: []
+
+            _ ->
+              []
+          end
+        end)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp finished_operative_json(operative_id, rec) do
+    %{
+      id: operative_id,
+      namespace: Map.get(rec, :namespace),
+      kind: "bounded",
+      phase: "finished",
+      status: Map.get(rec, :status),
+      error: nil_if_empty(Map.get(rec, :error)),
+      result: encode_result(Map.get(rec, :result)),
+      finished_at: Map.get(rec, :finished_at)
+    }
+  end
+
+  defp display_finished_operative(operative_id, rec) do
+    IO.puts("Operative: #{operative_id}")
+    IO.puts("  Kind: bounded")
+    IO.puts("  Phase: finished")
+    IO.puts("  Status: #{Map.get(rec, :status)}")
+
+    case nil_if_empty(Map.get(rec, :error)) do
+      nil -> :ok
+      err -> IO.puts("  Error: #{err}")
+    end
+
+    IO.puts("  Finished At (unix s): #{Map.get(rec, :finished_at)}")
+    IO.puts("")
+  end
+
+  defp encode_result(r) when is_binary(r) and byte_size(r) > 0, do: Base.encode64(r)
+  defp encode_result(_), do: nil
+
+  defp nil_if_empty(s) when is_binary(s) and byte_size(s) > 0, do: s
+  defp nil_if_empty(_), do: nil
 
   defp operative_kind(%{builder: %{kind: kind}}) when is_atom(kind), do: Atom.to_string(kind)
   defp operative_kind(_), do: "continuous"

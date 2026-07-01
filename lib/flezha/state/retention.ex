@@ -14,6 +14,11 @@ defmodule Flezha.State.Retention do
   the WAL is truncated to the latest snapshot's seq immediately on
   every pass ("compact and forget").
 
+  On the same tick it also runs the **finished-job** sweep: a finished
+  bounded operative's retained state + completion record
+  (`Flezha.State.Completion`) is removed once `finished_at +
+  bounded_completed_retention_hours` is in the past.
+
   Holds its own sweep timer (`:time_travel_retention_check_interval_ms`,
   default 60 000 ms) after `consume-recovery-mode-and-self-heal` §4
   removed the `Flezha.Reconciler.Loop` periodic sweep that previously
@@ -22,7 +27,7 @@ defmodule Flezha.State.Retention do
 
   use GenServer
 
-  alias Flezha.State.{Metrics, PersistenceResolver, Registry, Supervisor, WalWriter}
+  alias Flezha.State.{Completion, Metrics, PersistenceResolver, Registry, Supervisor, WalWriter}
 
   defstruct []
 
@@ -51,6 +56,7 @@ defmodule Flezha.State.Retention do
   @impl true
   def handle_call(:sweep_now, _from, state) do
     sweep_all()
+    sweep_completed()
     {:reply, :ok, state}
   end
 
@@ -58,6 +64,7 @@ defmodule Flezha.State.Retention do
   def handle_info(:retention_tick, state) do
     schedule_sweep()
     sweep_all()
+    sweep_completed()
     {:noreply, state}
   end
 
@@ -75,6 +82,33 @@ defmodule Flezha.State.Retention do
       hours = PersistenceResolver.retention_hours(operative_class)
       sweep_segment(pid, hours)
     end)
+  end
+
+  # Finished-job retention: reclaim a finished bounded operative's retained
+  # state + completion record once `finished_at + bounded_completed_retention_hours`
+  # is in the past. A finished operative is fully torn down (no live writer), so
+  # the whole class dir is safe to remove wholesale.
+  defp sweep_completed() do
+    now = System.system_time(:second)
+    root = Registry.state_root()
+
+    Enum.each(class_dirs(root), fn operative_class ->
+      with {:ok, %{finished_at: finished_at}} when is_integer(finished_at) <-
+             Completion.read(operative_class),
+           window = PersistenceResolver.bounded_completed_retention_hours(operative_class),
+           true <- finished_at + window * 3600 < now do
+        _ = File.rm_rf(Path.join(root, operative_class))
+      else
+        _ -> :ok
+      end
+    end)
+  end
+
+  defp class_dirs(root) do
+    case File.ls(root) do
+      {:ok, names} -> Enum.filter(names, &File.dir?(Path.join(root, &1)))
+      {:error, _} -> []
+    end
   end
 
   @doc """

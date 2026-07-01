@@ -14,10 +14,23 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
 
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.{Completion, TestHelpers}
 
   @namespace "operative-info-test"
 
   setup :set_mimic_global
+
+  setup do
+    # Isolate the state root `operative_info` scans for finished-job records.
+    base = TestHelpers.tmp_app_data_dir()
+
+    on_exit(fn ->
+      Application.delete_env(:flezha, :state_root)
+      File.rm_rf!(base)
+    end)
+
+    :ok
+  end
 
   defp stub_one(state) do
     OperativeManager
@@ -64,5 +77,47 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
     out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
     %{"operatives" => [op]} = Jason.decode!(out)
     assert op["kind"] == "continuous"
+  end
+
+  test "a finished bounded operative is surfaced from its completion record" do
+    # No live operatives; the finished one comes only from its on-disk record.
+    stub(OperativeManager, :get_operative_ids, fn _ns -> {:ok, []} end)
+
+    :ok =
+      Completion.write("done-1", %{
+        namespace: @namespace,
+        status: "ok",
+        error: "",
+        result: "RES",
+        finished_at: System.system_time(:second)
+      })
+
+    out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
+    %{"operatives" => ops} = Jason.decode!(out)
+    op = Enum.find(ops, &(&1["id"] == "done-1"))
+
+    assert op["kind"] == "bounded"
+    assert op["phase"] == "finished"
+    assert op["status"] == "ok"
+    assert op["result"] == Base.encode64("RES")
+  end
+
+  test "a finished operative outside the retention window is not surfaced" do
+    stub(OperativeManager, :get_operative_ids, fn _ns -> {:ok, []} end)
+    Application.put_env(:flezha, :bounded_completed_retention_hours, %{"done-old" => 0})
+    on_exit(fn -> Application.delete_env(:flezha, :bounded_completed_retention_hours) end)
+
+    :ok =
+      Completion.write("done-old", %{
+        namespace: @namespace,
+        status: "ok",
+        error: "",
+        result: "",
+        finished_at: System.system_time(:second) - 10
+      })
+
+    out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
+    %{"operatives" => ops} = Jason.decode!(out)
+    assert Enum.find(ops, &(&1["id"] == "done-old")) == nil
   end
 end

@@ -2,6 +2,7 @@ defmodule Flezha.State.RetentionTest do
   use ExUnit.Case, async: false
 
   alias Flezha.State.{
+    Completion,
     FsyncBatcher,
     Registry,
     Retention,
@@ -29,9 +30,15 @@ defmodule Flezha.State.RetentionTest do
       {:error, {:already_started, _}} -> :ok
     end
 
+    case start_supervised(Retention) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+
     on_exit(fn ->
       Application.delete_env(:flezha, :state_root)
       Application.delete_env(:flezha, :time_travel_retention_hours)
+      Application.delete_env(:flezha, :bounded_completed_retention_hours)
       File.rm_rf!(base)
     end)
 
@@ -90,6 +97,41 @@ defmodule Flezha.State.RetentionTest do
       assert {:ok, 3, _, "y3", c1} = WalWriter.decode_record(dev, 0)
       assert {:ok, 4, _, "y4", _} = WalWriter.decode_record(dev, c1)
       :file.close(dev)
+    end
+  end
+
+  describe "finished-job retention (bounded)" do
+    test "retains a completion record within the window, reclaims it after" do
+      root = Registry.state_root()
+      now = System.system_time(:second)
+
+      # Within the (default 72h) window → retained.
+      :ok =
+        Completion.write("bnd_live", %{
+          namespace: "ns",
+          status: "ok",
+          error: "",
+          result: "r",
+          finished_at: now
+        })
+
+      # Past the window (0h retention for this class) → reclaimed wholesale.
+      Application.put_env(:flezha, :bounded_completed_retention_hours, %{"bnd_old" => 0})
+
+      :ok =
+        Completion.write("bnd_old", %{
+          namespace: "ns",
+          status: "error",
+          error: "boom",
+          result: "",
+          finished_at: now - 10
+        })
+
+      :ok = Retention.sweep_now()
+
+      assert Completion.exists?("bnd_live")
+      refute Completion.exists?("bnd_old")
+      refute File.dir?(Path.join(root, "bnd_old"))
     end
   end
 

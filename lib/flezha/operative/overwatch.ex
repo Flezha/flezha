@@ -12,8 +12,7 @@ defmodule Flezha.Operative.Overwatch do
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Operative.Kind
-  alias Flezha.State.{Restore, Wire}
+  alias Flezha.State.{PersistenceResolver, Restore, Wire}
   alias Flezha.Transport.LivenessCounters
 
   # Defaults for the bounded-retry governor introduced by
@@ -374,17 +373,20 @@ defmodule Flezha.Operative.Overwatch do
     operative_class = Keyword.get(operative_opts, :operative_class, state.id)
 
     # Off-process: the replay does blocking disk reads, never touches state.
-    spawn(fn -> replay_persisted_segments(operative_class, executor_id) end)
+    spawn(fn -> replay_persisted_segments(state.builder.kind, operative_class, executor_id) end)
 
     :ok
   end
 
-  defp replay_persisted_segments(operative_class, executor_id) do
-    if Flezha.State.PersistenceResolver.persistence_enabled?(operative_class) do
+  # Bind-time restore is capability-gated on `persistent_state?` (kind+class):
+  # `:continuous` always; a durable `:bounded` class (this IS its crash-resume)
+  # unless it opted out. A stateless kind has no WAL to replay.
+  defp replay_persisted_segments(kind, operative_class, executor_id) do
+    if PersistenceResolver.persistent_state?(kind, operative_class) do
       operative_class
       |> enumerate_persisted_segments()
       |> Enum.each(fn segment_id ->
-        if Flezha.State.Restore.has_persisted_state?(segment_id) do
+        if Restore.has_persisted_state?(segment_id) do
           _ = dispatch_restore_init_state(executor_id, segment_id)
         end
       end)
@@ -414,6 +416,11 @@ defmodule Flezha.Operative.Overwatch do
     Flezha.State.Registry.all_segments()
     |> Enum.filter(fn {rc, _, _} -> rc == operative_class end)
   end
+
+  # The operative-class identity used for per-Segment state (defaults to the
+  # instance id, per the SDK convention that segment frames carry the operative_id).
+  defp operative_class(%__MODULE__{} = state),
+    do: Keyword.get(state.builder.opts, :operative_class, state.id)
 
   # Phase 1 of the two-phase plugin lifecycle: register each plugin's
   # GenServer + struct (`init_provider/1` runs), but do NOT activate
@@ -619,7 +626,7 @@ defmodule Flezha.Operative.Overwatch do
 
   @impl true
   def handle_call(:get_segment_state, from, %__MODULE__{} = state) do
-    if Kind.capable?(state.builder.kind, :persistent_state?) do
+    if PersistenceResolver.persistent_state?(state.builder.kind, operative_class(state)) do
       # Query the executor off the GenServer loop so a slow reply can't back up
       # the mailbox; `from` is answered when the round-trip completes.
       operative_id = state.id
