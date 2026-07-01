@@ -244,7 +244,11 @@ defmodule Flezha.Executor.ControlUnit do
       operative_id: operative.id,
       factory_id: operative.factory_id,
       init_values: init_values,
-      kind: kind
+      kind: kind,
+      # Non-zero only for a durable bounded (re)bind: the SDK driver holds its
+      # first Operation until this many Segment restores land (crash-resume).
+      # Stamped on opts by `Overwatch.with_resume_segment_count/3`.
+      resume_segment_count: Keyword.get(operative.opts, :resume_segment_count, 0)
     }
 
     case ControlChannel.send_control(state.executor_id, {:add_operative, command}) do

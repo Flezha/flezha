@@ -20,11 +20,14 @@ import com.flezha.sdk.proto.BoundedCompleted;
 import com.flezha.sdk.proto.BoundedStop;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RemOperative;
+import com.flezha.sdk.proto.RestoreInitState;
+import com.flezha.sdk.proto.RestoreInitStateResponse;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
 import com.flezha.sdk.runtime.control.handlers.BoundedStopHandler;
 import com.flezha.sdk.runtime.control.handlers.RemOperativeHandler;
+import com.flezha.sdk.runtime.control.handlers.RestoreInitStateHandler;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.framing.FrameParser;
@@ -32,6 +35,9 @@ import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeInstanceRegistry;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.Operative;
+import com.flezha.sdk.runtime.state.HeaderTemplate;
+import com.flezha.sdk.runtime.state.KryoCodec;
+import com.flezha.sdk.runtime.state.SegmentId;
 import com.flezha.sdk.runtime.state.SegmentStateSink;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
 import com.flezha.sdk.state.Change;
@@ -39,6 +45,9 @@ import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
 import com.flezha.sdk.state.WallClock;
+import com.google.protobuf.ByteString;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -53,6 +62,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.zip.CRC32;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -480,6 +490,52 @@ class BoundedKindTest {
         assertThat(walFrames).as("an opt-out bounded writes nothing to the WAL").isEmpty();
     }
 
+    // --- Crash-resume (Phase 3b §5b.2) ---------------------------------------
+
+    @Test
+    @DisplayName("§5b.2 a durable bounded holds its first Operation until a Segment restore lands, then resumes it")
+    void durableBoundedResumesFromRestoreThroughGate() throws Exception {
+        BoundedOperativeRegistry.registerBounded(FanBoundedOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        // Respawn expecting one Segment restore: AddOperativeHandler builds + wires
+        // the Segments (reachable by the restore handler) before the driver spawns,
+        // and the driver parks on the resume gate — nothing runs until the restore
+        // lands.
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedResumable("test-fan-bounded", "resume-inst", "a,bb", 1), new ArrayList<>());
+
+        // Ship a WAL replay for the 'even' FanOp Segment carrying 5 Inc changes, so
+        // its counter resumes at 5 (not a cold 0). The restore handler finds the
+        // bounded Segment by wire identity, rebuilds its state, and releases the gate.
+        KryoCodec codec = new KryoCodec(new FanOp().kryoTypes());
+        HeaderTemplate template = new HeaderTemplate();
+        byte[] changeLog = incChangeLog(codec, template, 5);
+        byte[] evenId = SegmentId.of("resume-inst", "bounded_fan_op", Optional.of("even"))
+                .encodedBytes();
+        CommandRequest restore = CommandRequest.newBuilder()
+                .setReferenceId("r")
+                .setRestoreInitState(RestoreInitState.newBuilder()
+                        .setSegmentId(ByteString.copyFrom(evenId))
+                        .setChangeLogBytes(ByteString.copyFrom(changeLog))
+                        .build())
+                .build();
+        List<String> errors = new ArrayList<>();
+        byte[] resp = new RestoreInitStateHandler().handle(ctx, restore, errors);
+        assertThat(errors).isEmpty();
+        assertThat(RestoreInitStateResponse.parseFrom(resp).getTerminalSeq())
+                .as("terminal seq acked as the highest WAL seq")
+                .isEqualTo(4L);
+
+        // The gate released; the driver runs. "bb" routes to 'even' (resumed at
+        // 5 → 6), "a" to a cold 'odd' (→ 1) — proving resume-not-cold-start.
+        assertThat(cap.awaitCompletions()).isTrue();
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
+        assertThat(cap.outputs(SECONDARY_STREAM)).containsExactlyInAnyOrder("1:a", "6:bb");
+    }
+
     // --- Saga compensation (Phase 2 §4 / §7b) --------------------------------
 
     @Test
@@ -602,6 +658,43 @@ class BoundedKindTest {
                         .setKind("bounded")
                         .build())
                 .build();
+    }
+
+    private static CommandRequest addBoundedResumable(
+            String factoryId, String operativeId, String args, int resumeSegmentCount) {
+        return CommandRequest.newBuilder()
+                .setReferenceId("ref")
+                .setAddOperative(AddOperative.newBuilder()
+                        .setOperativeId(operativeId)
+                        .setFactoryId(factoryId)
+                        .setInitValues(args)
+                        .setKind("bounded")
+                        .setResumeSegmentCount(resumeSegmentCount)
+                        .build())
+                .build();
+    }
+
+    /** A change-log of {@code count} Inc records (seq 0..count-1) in the controller's WAL framing. */
+    private static byte[] incChangeLog(KryoCodec codec, HeaderTemplate template, int count) throws Exception {
+        ByteArrayOutputStream log = new ByteArrayOutputStream();
+        for (long seq = 0; seq < count; seq++) {
+            byte[] body = codec.serialize(new Inc());
+            byte[] header = template.stamp(new FanOp().schemaVersion(), body);
+            int len = 16 + body.length;
+            CRC32 crc = new CRC32();
+            crc.update(header);
+            crc.update(body);
+            try (ByteArrayOutputStream rec = new ByteArrayOutputStream();
+                    DataOutputStream out = new DataOutputStream(rec)) {
+                out.writeLong(seq);
+                out.writeInt(len);
+                out.write(header);
+                out.write(body);
+                out.writeInt((int) crc.getValue());
+                log.writeBytes(rec.toByteArray());
+            }
+        }
+        return log.toByteArray();
     }
 
     private static CommandRequest boundedStop(String operativeId) {

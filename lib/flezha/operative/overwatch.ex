@@ -110,7 +110,12 @@ defmodule Flezha.Operative.Overwatch do
     # per connect), so we re-resolve via OperativeManager.assign_executor/3
     # — the same lookup HubManager.alter_child_data/2 performs.
     case with_op_span(:await_executor, operative.id, fn ->
-           await_active_executor(state.namespace, operative.factory_id, operative.id, executor_wait_ms())
+           await_active_executor(
+             state.namespace,
+             operative.factory_id,
+             operative.id,
+             executor_wait_ms()
+           )
          end) do
       {:ok, executor_id} ->
         if executor_id != stale_executor_id do
@@ -139,6 +144,8 @@ defmodule Flezha.Operative.Overwatch do
 
     with {:ok, state} <- prepare_initial_plugins(state, plugins),
          {:ok, state, operative} <- resolve_init_state(state, operative),
+         operative =
+           with_resume_segment_count(operative, state.builder.kind, operative_class(state)),
          {:ok, final_executor_id, state} <- start_operative_sdk_with_retry(state, operative) do
       state =
         state
@@ -179,7 +186,9 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   defp do_start_with_retry(%__MODULE__{} = state, operative, [delay | rest], attempt) do
-    executor_id = resolve_executor(state.namespace, operative.factory_id, operative.id, state.executor_id)
+    executor_id =
+      resolve_executor(state.namespace, operative.factory_id, operative.id, state.executor_id)
+
     state = %__MODULE__{state | executor_id: executor_id}
 
     case attempt_ping_and_start(operative, executor_id) do
@@ -365,7 +374,8 @@ defmodule Flezha.Operative.Overwatch do
   # Segment that has a non-empty payload. Skipped when the operative
   # arrived via HotSwap — handover already delivers the state in-band.
   # Skipped when persistence is disabled for this operative class.
-  defp maybe_dispatch_restore_init_state(%__MODULE__{arrived_via_hotswap?: true}, _operative), do: :ok
+  defp maybe_dispatch_restore_init_state(%__MODULE__{arrived_via_hotswap?: true}, _operative),
+    do: :ok
 
   defp maybe_dispatch_restore_init_state(%__MODULE__{} = state, operative) do
     do_dispatch_restore(state, operative.opts, state.executor_id)
@@ -420,6 +430,38 @@ defmodule Flezha.Operative.Overwatch do
   defp enumerate_persisted_segments(operative_class) do
     Flezha.State.Registry.all_segments()
     |> Enum.filter(fn {rc, _, _} -> rc == operative_class end)
+  end
+
+  @doc """
+  Number of persisted Segments the bind-time restore path will ship a
+  `RestoreInitState` for on this (re)bind — the value threaded onto
+  `AddOperative.resume_segment_count` so a durable bounded driver holds its
+  first Operation until that many restores land (crash-resume,
+  `bounded-operative-durability`).
+
+  Non-zero only for a durable `:bounded` class with WAL state on disk; `0` for a
+  fresh spawn, a continuous operative, or an opted-out bounded one — those need
+  no restore-before-run gate. Matches the frames `replay_persisted_segments/3`
+  ships (same enumeration + `has_persisted_state?` filter).
+  """
+  @spec resume_segment_count(atom(), binary()) :: non_neg_integer()
+  def resume_segment_count(:bounded, operative_class) do
+    if PersistenceResolver.persistent_state?(:bounded, operative_class) do
+      operative_class
+      |> enumerate_persisted_segments()
+      |> Enum.count(&Restore.has_persisted_state?/1)
+    else
+      0
+    end
+  end
+
+  def resume_segment_count(_kind, _operative_class), do: 0
+
+  # Stamp `resume_segment_count/2` onto the operative's opts so `control_unit`
+  # can set the `AddOperative` field.
+  defp with_resume_segment_count(operative, kind, operative_class) do
+    count = resume_segment_count(kind, operative_class)
+    %{operative | opts: Keyword.put(operative.opts, :resume_segment_count, count)}
   end
 
   # The operative-class identity used for per-Segment state (defaults to the
@@ -1194,7 +1236,10 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   defp apply_migrate_result(state, {:unparked, recovered}) do
-    Logger.info("[Overwatch] operative #{state.id} un-parked onto executor #{recovered.executor_id}")
+    Logger.info(
+      "[Overwatch] operative #{state.id} un-parked onto executor #{recovered.executor_id}"
+    )
+
     %{recovered | migrate_task: nil}
   end
 

@@ -59,6 +59,13 @@ message AddOperative {
     // (when populated by the Controller from the operative's :kind) is
     // "continuous".
     string kind = 4;
+    // Number of persisted Segments the Controller will ship RestoreInitState
+    // for on this (re)bind. Non-zero only when re-binding a durable bounded
+    // operative that has WAL state on disk (crash-resume). A durable bounded
+    // driver holds its first Operation until this many Segment restores have
+    // landed, so a resumed run reads persisted state instead of cold-starting.
+    // 0 for a fresh spawn, a continuous operative, or an opted-out bounded one.
+    uint32 resume_segment_count = 5;
 }
 
 message RemOperative {

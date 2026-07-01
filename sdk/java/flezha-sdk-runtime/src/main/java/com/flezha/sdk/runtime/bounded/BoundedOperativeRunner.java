@@ -24,6 +24,7 @@ import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.runtime.state.SegmentFlusher;
 import com.flezha.sdk.runtime.state.SegmentId;
+import com.flezha.sdk.runtime.state.SegmentStateRestore;
 import com.flezha.sdk.runtime.state.SegmentStateSink;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.NoChange;
@@ -206,11 +207,13 @@ public final class BoundedOperativeRunner {
         List<Integer> chain = spec.chain();
         String instanceId = instance.instanceId();
 
-        // Build each stage's segments up front (per-segment state lives for the run).
-        List<List<BoundedSegment>> stageSegments = new ArrayList<>(chain.size());
-        for (int opId : chain) {
-            stageSegments.add(buildStageSegments(topology, instanceId, opId, spec.persistenceEnabled()));
-        }
+        // Segments were built + wired onto the instance by AddOperativeHandler up
+        // front (before the ACK) so the Controller's RestoreInitState frames could
+        // reach them. Hold the first Operation on the crash-resume gate until those
+        // restores have landed — so a durable respawn reads persisted state instead
+        // of cold-starting. A no-op for a fresh spawn (nothing expected).
+        List<List<BoundedSegment>> stageSegments = instance.stageSegments();
+        instance.awaitRestore();
 
         // Seed the first operation from the spawn args via the entry channel's typed wrapper.
         ChannelDescriptor entry = entryChannel(topology);
@@ -309,6 +312,26 @@ public final class BoundedOperativeRunner {
     }
 
     /**
+     * Build every stage's Segments for a structured spec, in chain order. Called
+     * synchronously by {@code AddOperativeHandler} (before the instance is
+     * registered + the driver spawns) so the Segments are reachable by the
+     * inbound {@code RestoreInitState} handler and the resume gate is armed before
+     * any restore frame — or the driver thread — runs.
+     */
+    @Nonnull
+    public static List<List<BoundedSegment>> buildAllStageSegments(
+            @Nonnull ContinuousOperativeTopology topology,
+            @Nonnull String instanceId,
+            @Nonnull List<Integer> chain,
+            boolean persistenceEnabled) {
+        List<List<BoundedSegment>> stageSegments = new ArrayList<>(chain.size());
+        for (int opId : chain) {
+            stageSegments.add(buildStageSegments(topology, instanceId, opId, persistenceEnabled));
+        }
+        return stageSegments;
+    }
+
+    /**
      * Build the segments for one stage: a single segment in single mode, one per
      * declared key in static mode. Uses the same {@link SegmentId} identity a
      * continuous operative would (real operation name + segment key, no
@@ -359,7 +382,7 @@ public final class BoundedOperativeRunner {
                     op.schemaVersion(),
                     new KryoCodec(op.kryoTypes())));
         }
-        return new BoundedSegment(operationInstance, state, identity, outputChannel, changeBuffer, flusher);
+        return new BoundedSegment(operationInstance, state, identity, key, outputChannel, changeBuffer, flusher);
     }
 
     /**
@@ -583,13 +606,22 @@ public final class BoundedOperativeRunner {
      * {@code SegmentSlot} analog): the per-segment {@link Operation} instance,
      * its in-memory state, the {@link SegmentId} identity (real op name + key),
      * and the producer-edge output channel.
+     *
+     * <p>Public so the {@code RestoreInitState} handler (a different package) can
+     * reach a durable bounded Segment by wire identity on crash-resume; its
+     * internals stay package-private. Unlike the continuous {@code SegmentSlot},
+     * {@code state} carries no lock: the driver is held on the resume gate until
+     * every restore has landed, so restore-then-run is serialized.
      */
-    static final class BoundedSegment {
+    public static final class BoundedSegment {
         @SuppressWarnings("rawtypes")
         private final Operation op;
 
-        private final Object state;
+        // Non-final: warm-restart (restore) replaces it in place.
+        private Object state;
         private final SegmentId identity;
+        // Segment key (empty in single mode), needed to seed initState on restore.
+        private final Optional<String> operationKey;
         private final Optional<ChannelDescriptor> outputChannel;
         // Per-segment flush buffer (the continuous SegmentSlot analog): the
         // StateHandle records Changes here; `flusher` (present iff the operation
@@ -602,12 +634,14 @@ public final class BoundedOperativeRunner {
                 Operation op,
                 Object state,
                 SegmentId identity,
+                Optional<String> operationKey,
                 Optional<ChannelDescriptor> outputChannel,
                 List<Change> changeBuffer,
                 Optional<FlusherEntry> flusher) {
             this.op = op;
             this.state = state;
             this.identity = identity;
+            this.operationKey = operationKey;
             this.outputChannel = outputChannel;
             this.changeBuffer = changeBuffer;
             this.flusher = flusher;
@@ -622,7 +656,8 @@ public final class BoundedOperativeRunner {
             return state;
         }
 
-        SegmentId identity() {
+        @Nonnull
+        public SegmentId identity() {
             return identity;
         }
 
@@ -636,6 +671,29 @@ public final class BoundedOperativeRunner {
 
         Optional<FlusherEntry> flusher() {
             return flusher;
+        }
+
+        /**
+         * Warm-restart this Segment in place from the controller's persisted
+         * snapshot + WAL change-log — the bounded analog of the continuous slot
+         * restore. Rebuilds the committed state via {@link SegmentStateRestore},
+         * replaces the in-memory state, and re-arms the flusher's change-seq to
+         * {@code terminal + 1} so post-resume appends stay contiguous (the
+         * controller then skips a WAL realign). Returns the terminal WAL seq
+         * (0 when the change-log is empty). Lock-free by design: the driver is
+         * held on {@code BoundedOperativeInstance.awaitRestore} until every
+         * restore has landed, so this never races the driver's read.
+         */
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        public long restore(
+                @Nonnull byte[] snapshot, @Nonnull byte[] changeLog, @Nonnull HeaderTemplate headerTemplate) {
+            KryoCodec codec = new KryoCodec(op.kryoTypes());
+            SegmentStateRestore.Rebuilt rebuilt =
+                    SegmentStateRestore.rebuild(op, codec, operationKey, snapshot, changeLog, headerTemplate);
+            this.state = rebuilt.state();
+            long terminal = rebuilt.terminalSeq();
+            flusher.ifPresent(f -> f.changeSeq().set(terminal + 1));
+            return terminal;
         }
     }
 

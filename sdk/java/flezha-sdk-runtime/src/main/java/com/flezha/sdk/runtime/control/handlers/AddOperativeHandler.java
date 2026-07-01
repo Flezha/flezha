@@ -54,10 +54,23 @@ public final class AddOperativeHandler implements CommandHandler {
                 errors.add("BoundedOperative class with id " + factoryId + " does not exist");
                 return new byte[0];
             }
-            // Register the instance (with its inbox + cancel token) before
-            // launching the driver, so a duplicate AddOperative is idempotent and
-            // an inbox frame / BoundedStop arriving immediately is never lost.
             BoundedOperativeInstance instance = new BoundedOperativeInstance(operativeId, factoryId);
+            // Build + wire the per-Segment table (structured only) BEFORE
+            // registering and spawning, so the Controller's RestoreInitState
+            // frames (which follow this ACK) reach live Segments and the driver
+            // holds its first Operation on the resume gate until
+            // resume_segment_count restores have landed. Registering before spawn
+            // also keeps a duplicate AddOperative idempotent and never loses an
+            // immediate inbox / BoundedStop. Run-sugar has no Segments.
+            if (spec.isRunSugar()) {
+                instance.wireStageSegments(List.of(), 0);
+            } else {
+                ContinuousOperativeTopology boundedTopology = spec.topology().orElseThrow();
+                instance.wireStageSegments(
+                        BoundedOperativeRunner.buildAllStageSegments(
+                                boundedTopology, operativeId, spec.chain(), spec.persistenceEnabled()),
+                        cmd.getResumeSegmentCount());
+            }
             registry.add(instance);
             BoundedOperativeRunner.spawn(ctx, instance, spec, initValues);
             return new byte[0];
