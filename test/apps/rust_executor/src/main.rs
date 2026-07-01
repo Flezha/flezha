@@ -7,7 +7,8 @@ use flezha_executor::state::{
     Change, CoalesceKey, NoChange, RestoreInitPayload, StateHandle, WallClock,
 };
 use flezha_executor::{
-    register_continuous, register_bounded, ChannelBuilder, OverflowPolicy, ContinuousOperative, BoundedOperative, BoundedCtx, BoundedError,
+    register_bounded, register_continuous, BoundedCtx, BoundedError, BoundedOperative,
+    ChannelBuilder, ContinuousOperative, OverflowPolicy,
 };
 use serde::{Deserialize, Serialize};
 
@@ -287,7 +288,10 @@ impl Operation for ResumeProbeOperation {
     fn name() -> &'static str {
         "resume_probe_operation"
     }
-    fn init_state(_: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) -> ResumeProbeState {
+    fn init_state(
+        _: Option<&str>,
+        _init_payload: Option<RestoreInitPayload<'_>>,
+    ) -> ResumeProbeState {
         // Default + change replay rebuilds the total on restore (same pattern
         // as stateful_counter); no snapshot fast-path needed.
         ResumeProbeState::default()
@@ -1243,9 +1247,11 @@ impl ContinuousOperative for MixedOperative {
 
 #[cfg(test)]
 mod macro_twin_tests {
-    use super::*;
-    use flezha_executor::testing::OperationTestHarness;
     use std::collections::{HashMap, VecDeque};
+
+    use flezha_executor::testing::OperationTestHarness;
+
+    use super::*;
 
     // -----------------------------------------------------------------------
     // Canonical keyed-collection reference operation (`expressive-state-journaling`,
@@ -1305,7 +1311,10 @@ mod macro_twin_tests {
         fn name() -> &'static str {
             "rolling_window_twin"
         }
-        fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> RollingWindowTwinState {
+        fn init_state(
+            _: Option<&str>,
+            _: Option<RestoreInitPayload<'_>>,
+        ) -> RollingWindowTwinState {
             RollingWindowTwinState::default()
         }
         fn apply_change(state: &mut RollingWindowTwinState, change: &RollingWindowTwinChange) {
@@ -1458,15 +1467,23 @@ mod macro_twin_tests {
         let mut sugar = OperationTestHarness::<SugarStoreInput>::new();
         sugar.apply_inputs(inputs.clone());
         assert_eq!(sugar.state().text_inputs, inputs);
-        sugar.replay_equals().expect("derived change replay diverged");
+        sugar
+            .replay_equals()
+            .expect("derived change replay diverged");
         sugar.expect_emits(&inputs);
     }
 
     #[test]
     fn macro_static_entry_segments_and_journals() {
         // `segment_for` routes by first char; the operation journals every input.
-        assert_eq!(MacroStaticEntry::segment_for(&"apple".to_string()), vec!["a"]);
-        assert_eq!(MacroStaticEntry::segment_for(&"zebra".to_string()), vec!["d"]);
+        assert_eq!(
+            MacroStaticEntry::segment_for(&"apple".to_string()),
+            vec!["a"]
+        );
+        assert_eq!(
+            MacroStaticEntry::segment_for(&"zebra".to_string()),
+            vec!["d"]
+        );
         assert_eq!(MacroStaticEntry::operation_keys(), vec!["a", "b", "c", "d"]);
 
         let inputs = vec!["apple".to_string(), "avocado".to_string()];
@@ -1494,8 +1511,15 @@ mod macro_twin_tests {
         // Auto-wire + `operative!` operatives are harvested without `register_continuous`.
         flezha_executor::register_inventory_operatives();
         let ids = flezha_executor::operative::registry::class_factory_ids();
-        for id in ["sugar_do_nothing", "sugar_store_input", "sugar_static_segment"] {
-            assert!(ids.contains(&id), "auto-registered operative `{id}` missing");
+        for id in [
+            "sugar_do_nothing",
+            "sugar_store_input",
+            "sugar_static_segment",
+        ] {
+            assert!(
+                ids.contains(&id),
+                "auto-registered operative `{id}` missing"
+            );
         }
         // The mixed operative registers manually, as before.
         register_continuous::<MixedOperative>();
@@ -1553,7 +1577,8 @@ mod macro_twin_tests {
         // The flat field composes into the same `Change` enum.
         assert_eq!(h.state().ticks, 5);
 
-        h.replay_equals().expect("keyed-collections replay diverged");
+        h.replay_equals()
+            .expect("keyed-collections replay diverged");
     }
 
     #[test]
@@ -1573,12 +1598,14 @@ mod macro_twin_tests {
             ("a".to_string(), 6.0),
         ];
 
-        let mut w2 = OperationTestHarness::<Windowed>::with_initial_state(windowed_init(Some("win_2")));
+        let mut w2 =
+            OperationTestHarness::<Windowed>::with_initial_state(windowed_init(Some("win_2")));
         w2.apply_inputs(inputs.clone());
         w2.replay_equals().expect("windowed(win_2) replay diverged");
         w2.expect_emits(&[3.0_f64, 5.0]); // means of [2,4] then [4,6]
 
-        let mut w3 = OperationTestHarness::<Windowed>::with_initial_state(windowed_init(Some("win_3")));
+        let mut w3 =
+            OperationTestHarness::<Windowed>::with_initial_state(windowed_init(Some("win_3")));
         w3.apply_inputs(inputs);
         w3.replay_equals().expect("windowed(win_3) replay diverged");
         w3.expect_emits(&[4.0_f64]); // single mean of [2,4,6]

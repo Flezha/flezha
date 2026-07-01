@@ -242,7 +242,12 @@ fn driver_loop(
                             let owner = *state.owner.lock().unwrap();
                             send_closed_msg(owner, stream_id, "write_error");
                         }
-                        close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
+                        close_stream_internal(
+                            stream_id,
+                            &mut streams,
+                            &mut token_to_stream,
+                            &mut poll,
+                        );
                     }
                 }
                 ServerCommand::SendFrame {
@@ -261,7 +266,12 @@ fn driver_loop(
                             let owner = *state.owner.lock().unwrap();
                             send_closed_msg(owner, stream_id, "write_error");
                         }
-                        close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
+                        close_stream_internal(
+                            stream_id,
+                            &mut streams,
+                            &mut token_to_stream,
+                            &mut poll,
+                        );
                     }
                 }
                 ServerCommand::SetActive { stream_id } => {

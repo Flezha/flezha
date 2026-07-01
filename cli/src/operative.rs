@@ -47,7 +47,8 @@ fn handle_start(args: &[String]) {
         }
     };
 
-    let kind = extract_param(&args[3..], "--kind", "--kind").unwrap_or_else(|| "continuous".to_string());
+    let kind =
+        extract_param(&args[3..], "--kind", "--kind").unwrap_or_else(|| "continuous".to_string());
 
     let mut opts: HashMap<String, String> = HashMap::new();
 
@@ -211,7 +212,10 @@ fn handle_list(args: &[String]) {
         } else {
             &namespace
         };
-        println!("Fetching operatives for namespace '{}'...", display_namespace);
+        println!(
+            "Fetching operatives for namespace '{}'...",
+            display_namespace
+        );
     }
 
     let status = Command::new(command)

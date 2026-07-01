@@ -155,11 +155,15 @@ fn print_state_help() {
     println!("    flz state <SUBCOMMAND>");
     println!();
     println!("SUBCOMMANDS:");
-    println!("    list <operative>                          List Segments under an Operative class");
+    println!(
+        "    list <operative>                          List Segments under an Operative class"
+    );
     println!("    at <operative/operation/key> <seq|ts>         Query state at a point in time");
     println!("    rotate <operative/operation/key>              Force a compaction snapshot");
     println!("    retention <operative> <hours>             Set time-travel retention");
-    println!("    delete <operative/operation/key>              Hard-delete a Segment's persisted state");
+    println!(
+        "    delete <operative/operation/key>              Hard-delete a Segment's persisted state"
+    );
     println!();
     println!("EXAMPLES:");
     println!("    flz state list MarketOperative");
