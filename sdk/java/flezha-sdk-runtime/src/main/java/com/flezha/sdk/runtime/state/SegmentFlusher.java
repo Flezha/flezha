@@ -104,7 +104,7 @@ public final class SegmentFlusher {
     /** Force a single drain pass; test-visible. */
     public void drainOnce() {
         for (FlusherEntry entry : segments.values()) {
-            drain(entry);
+            flushEntry(entry);
         }
     }
 
@@ -121,7 +121,7 @@ public final class SegmentFlusher {
             }
             for (FlusherEntry entry : segments.values()) {
                 try {
-                    drain(entry);
+                    flushEntry(entry);
                 } catch (RuntimeException e) {
                     LOG.error(
                             "flusher drain failed for segment `{}`: {}",
@@ -133,11 +133,14 @@ public final class SegmentFlusher {
     }
 
     /**
-     * Drain a Segment's buffer once. Acquires the entry's bufferLock, copies
-     * out the pending Changes, releases the lock, then (when persistence is
-     * enabled) coalesces, serializes, and ships the frame.
+     * Flush one entry's pending Changes to the WAL: acquire the bufferLock, copy
+     * out and release, then (when persistence is enabled) coalesce, serialize,
+     * and ship the frame. Static — needs no running flusher instance — so the
+     * bounded driver calls it directly for its one-shot per-segment runs (never
+     * registering with the background flusher, so nothing leaks per job); the
+     * background loop uses it too.
      */
-    void drain(FlusherEntry entry) {
+    public static void flushEntry(FlusherEntry entry) {
         List<Change> snapshot;
         synchronized (entry.bufferLock()) {
             if (entry.buffer().isEmpty()) {

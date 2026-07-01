@@ -12,6 +12,7 @@ defmodule Flezha.Operative.Overwatch do
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{PersistenceResolver, Restore, Wire}
   alias Flezha.Transport.LivenessCounters
 
@@ -145,6 +146,10 @@ defmodule Flezha.Operative.Overwatch do
         |> Map.put(:init_error, nil)
         |> activate_initial_plugins()
 
+      # Record this class's kind so the State subsystem can gate continuous-only
+      # behaviours (retention/watchdog/dynamic-evict/time-travel) for a durable
+      # bounded operative.
+      _ = ClassRegistry.put(operative_class(state), state.builder.kind)
       _ = maybe_dispatch_restore_init_state(state, operative)
       {:ok, state}
     else
@@ -500,6 +505,10 @@ defmodule Flezha.Operative.Overwatch do
 
   @impl true
   def terminate(reason, state) do
+    # Evict the in-memory kind entry; the durable sidecar stays for the
+    # process-less retention sweep over any retained finished-job state.
+    _ = ClassRegistry.delete(operative_class(state))
+
     unless is_nil(state.executor_id) do
       GenServer.cast(
         Identificator.control_unit(state.executor_id),

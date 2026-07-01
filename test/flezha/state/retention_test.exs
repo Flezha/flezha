@@ -135,5 +135,51 @@ defmodule Flezha.State.RetentionTest do
     end
   end
 
+  describe "time-travel retention gating (kind-aware)" do
+    test "a bounded class is swept as retention_hours=0 (older snapshot reaped)" do
+      header = TestHelpers.stub_header()
+      class = "bnd_ret_" <> uniq()
+      pid = {class, "op", "seg"}
+      Flezha.Operative.ClassRegistry.put(class, :bounded)
+      on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
+
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid)
+      for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x")
+      {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
+      {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
+
+      # snap@2 predates the window; a bounded class has no time-travel, so the
+      # sweep forces retention_hours=0 → only the latest snapshot survives.
+      File.touch!(Registry.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
+      Application.put_env(:flezha, :time_travel_retention_hours, %{class => 48})
+
+      :ok = Retention.sweep_now()
+
+      assert [{5, _}] = Registry.snapshot_paths(pid)
+    end
+
+    test "a continuous class keeps the older snapshot under the same window" do
+      header = TestHelpers.stub_header()
+      class = "cont_ret_" <> uniq()
+      pid = {class, "op", "seg"}
+
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid)
+      for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x")
+      {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
+      {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
+
+      # Same setup, but a (default) continuous class keeps snap@2 as the
+      # retention floor because it is older than the 48h window.
+      File.touch!(Registry.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
+      Application.put_env(:flezha, :time_travel_retention_hours, %{class => 48})
+
+      :ok = Retention.sweep_now()
+
+      assert [{2, _}, {5, _}] = Registry.snapshot_paths(pid)
+    end
+  end
+
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 end

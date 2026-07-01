@@ -231,6 +231,66 @@ defmodule FlezhaTest.Executor.StreamChannelTest do
     end
   end
 
+  describe "output_stall / delete gating (kind-aware)" do
+    setup do
+      base = Flezha.State.TestHelpers.tmp_app_data_dir()
+      Flezha.Operative.ClassRegistry.ensure_table()
+
+      on_exit(fn ->
+        Application.delete_env(:flezha, :state_root)
+        File.rm_rf!(base)
+      end)
+
+      :ok
+    end
+
+    test "a bounded operative is not flagged for output_stall on stream close", %{pid: pid} do
+      Flezha.Operative.ClassRegistry.put("bnd_op", :bounded)
+      on_exit(fn -> Flezha.Operative.ClassRegistry.delete("bnd_op") end)
+
+      :ok = GenServer.call(pid, {:operative_pid_update, "bnd_op", [self()]})
+      :ok = GenServer.call(pid, {:operative_pid_update, "cont_op", [self()]})
+      :ok = GenServer.call(pid, {:bind, :ref_g})
+
+      test_pid = self()
+      hid = "stall_gate_#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        hid,
+        [:flezha, :state, :output_stall],
+        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.operative_instance}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(hid) end)
+
+      send(pid, {:flz_closed, :ref_g, :eof})
+      _ = GenServer.call(pid, :stream_ref_status)
+
+      assert_receive {:output_stall, "cont_op"}
+      refute_receive {:output_stall, "bnd_op"}, 100
+    end
+
+    test "delete_segment_state is ignored for a bounded (non-dynamic) class", %{pid: pid} do
+      class = "bnd_del_#{System.unique_integer([:positive])}"
+      Flezha.Operative.ClassRegistry.put(class, :bounded)
+      on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
+
+      seg = {class, "op", "seg"}
+      wal = Flezha.State.Registry.wal_path(seg)
+      File.mkdir_p!(Path.dirname(wal))
+      File.write!(wal, "dummy")
+
+      frame = Flezha.State.Wire.encode_segment_id(class, "op", "seg")
+      send(pid, {:flz_data, :ref_z, "delete_segment_state", frame, %{}})
+      # Flush the frame through the channel; the (gated) delete must not spawn.
+      _ = GenServer.call(pid, :stream_ref_status)
+      Process.sleep(50)
+
+      assert File.exists?(wal)
+    end
+  end
+
   defp restore_env(key, nil), do: Application.delete_env(:flezha, key)
   defp restore_env(key, value), do: Application.put_env(:flezha, key, value)
 end

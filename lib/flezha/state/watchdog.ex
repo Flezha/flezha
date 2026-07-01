@@ -30,6 +30,7 @@ defmodule Flezha.State.Watchdog do
 
   require Logger
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{PersistenceResolver, Recovery, Registry, Supervisor, WalWriter}
 
   defstruct compactions: %{}, last_resync: %{}, catastrophic: %{}
@@ -128,20 +129,26 @@ defmodule Flezha.State.Watchdog do
       |> collect_statuses()
       |> Enum.group_by(fn {{rc, _sh, _pk}, _status} -> rc end)
       |> Enum.reduce(state, fn {rc, list}, acc ->
-        any_dead? = Enum.any?(list, fn {_pid, s} -> input_dead?(s, now, timeout) end)
-        latched? = Map.has_key?(acc.catastrophic, rc)
+        # The dataflow-stop watchdog is continuous-only: a durable :bounded
+        # operative legitimately goes quiet between stages/iterations.
+        if ClassRegistry.capable?(rc, :output_stall_watch?) do
+          any_dead? = Enum.any?(list, fn {_pid, s} -> input_dead?(s, now, timeout) end)
+          latched? = Map.has_key?(acc.catastrophic, rc)
 
-        cond do
-          any_dead? and not latched? ->
-            flag_catastrophic(rc, list, now, timeout)
-            %{acc | catastrophic: Map.put(acc.catastrophic, rc, now)}
+          cond do
+            any_dead? and not latched? ->
+              flag_catastrophic(rc, list, now, timeout)
+              %{acc | catastrophic: Map.put(acc.catastrophic, rc, now)}
 
-          not any_dead? and latched? ->
-            Logger.info("[watchdog] catastrophic data-flow recovered operative=#{inspect(rc)}")
-            %{acc | catastrophic: Map.delete(acc.catastrophic, rc)}
+            not any_dead? and latched? ->
+              Logger.info("[watchdog] catastrophic data-flow recovered operative=#{inspect(rc)}")
+              %{acc | catastrophic: Map.delete(acc.catastrophic, rc)}
 
-          true ->
-            acc
+            true ->
+              acc
+          end
+        else
+          acc
         end
       end)
     end
@@ -180,7 +187,8 @@ defmodule Flezha.State.Watchdog do
     Enum.reduce(Registry.all_segments(), state, fn {rc, _sh, _pk} = pid, acc ->
       timeout = PersistenceResolver.output_stall_timeout_ms(rc)
 
-      with true <- timeout > 0,
+      with true <- ClassRegistry.capable?(rc, :output_stall_watch?),
+           true <- timeout > 0,
            {:ok, writer} <- Supervisor.lookup(pid),
            {:ok, status} <- safe_stall_status(writer),
            true <- stalled?(status, now, timeout),

@@ -32,6 +32,7 @@ import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeInstanceRegistry;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.Operative;
+import com.flezha.sdk.runtime.state.SegmentStateSink;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.NoChange;
@@ -97,6 +98,7 @@ class BoundedKindTest {
     @AfterEach
     void restoreWriter() {
         BoundedOperativeRunner.resetWireWriter();
+        SegmentStateSink.resetForTesting();
     }
 
     // --- Registration --------------------------------------------------------
@@ -432,10 +434,50 @@ class BoundedKindTest {
         // Chain: SplitOp (single segment) → FanOp (static even/odd); FanOp is the 2nd stage.
         int fanOpId = spec.chain().get(1);
         List<BoundedOperativeRunner.BoundedSegment> segs =
-                BoundedOperativeRunner.buildStageSegments(topology, "inst-1", fanOpId);
+                BoundedOperativeRunner.buildStageSegments(topology, "inst-1", fanOpId, true);
         assertThat(segs)
                 .extracting(s -> s.identity().encoded())
                 .containsExactlyInAnyOrder("inst-1/bounded_fan_op/even", "inst-1/bounded_fan_op/odd");
+    }
+
+    // --- Durability (Phase 3 §5b.1 / §7c.1) ----------------------------------
+
+    @Test
+    @DisplayName("§5b.1/§7c.1 a durable bounded writes WAL frames; an opt-out one writes nothing")
+    void durableBoundedWritesWalOptOutWritesNothing() throws Exception {
+        BoundedOperativeRegistry.registerBounded(FanBoundedOperative.class);
+        BoundedOperativeRegistry.registerBounded(FanOptOutBoundedOperative.class);
+
+        List<byte[]> walFrames = new CopyOnWriteArrayList<>();
+        SegmentStateSink.installGlobalSink(frame -> {
+            walFrames.add(frame);
+            return true;
+        });
+
+        // FanBoundedOperative is durable-by-default; its FanOp applies a Change
+        // per item, which the driver flushes as a segment_state_change frame.
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-fan-bounded", "fan-wal", "a,bb"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
+        assertThat(walFrames)
+                .as("a durable bounded ships segment_state_change frames to the WAL")
+                .isNotEmpty();
+
+        // The opt-out twin does identical work with persistenceEnabled=false:
+        // Changes drain-and-discard, nothing reaches the WAL.
+        walFrames.clear();
+        Captured cap2 = new Captured();
+        ExecutorContext ctx2 = newCtx(cap2);
+        cap2.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx2, addBoundedOperative("test-fan-optout-bounded", "fan-optout", "a,bb"), new ArrayList<>());
+        assertThat(cap2.awaitCompletions()).isTrue();
+        assertThat(cap2.decodeCompletion().getStatus()).isEqualTo("ok");
+        assertThat(walFrames).as("an opt-out bounded writes nothing to the WAL").isEmpty();
     }
 
     // --- Saga compensation (Phase 2 §4 / §7b) --------------------------------
@@ -804,6 +846,26 @@ class BoundedKindTest {
         }
     }
 
+    /** Opt-out twin of {@link FanBoundedOperative}: identical topology, persistence disabled. */
+    public static final class FanOptOutBoundedOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-fan-optout-bounded";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(SplitOp.class);
+            c.channel(String.class, "mid").from(SplitOp.class).into(FanOp.class);
+            c.channel(String.class, "out").from(FanOp.class).toPlugin("sink");
+        }
+
+        @Override
+        public boolean persistenceEnabled() {
+            return false;
+        }
+    }
+
     public static final class HybridBoundedOperative implements BoundedOperative {
         @Override
         public String factoryId() {
@@ -1095,6 +1157,13 @@ class BoundedKindTest {
         @Override
         public Class<Inc> changeType() {
             return Inc.class;
+        }
+
+        // A durable operative must register its Change type for the Kryo codec
+        // (the flusher serializes Changes); mirrors the continuous contract.
+        @Override
+        public List<Class<?>> kryoTypes() {
+            return List.of(Inc.class);
         }
 
         @Override

@@ -32,6 +32,7 @@ public final class BoundedSpec {
     private final List<Integer> chain;
     private final Optional<Duration> maxDuration;
     private final RollbackMode rollbackMode;
+    private final boolean persistenceEnabled;
 
     private BoundedSpec(
             String factoryId,
@@ -39,13 +40,15 @@ public final class BoundedSpec {
             Optional<ContinuousOperativeTopology> topology,
             List<Integer> chain,
             Optional<Duration> maxDuration,
-            RollbackMode rollbackMode) {
+            RollbackMode rollbackMode,
+            boolean persistenceEnabled) {
         this.factoryId = factoryId;
         this.operativeClass = operativeClass;
         this.topology = topology;
         this.chain = List.copyOf(chain);
         this.maxDuration = maxDuration;
         this.rollbackMode = rollbackMode;
+        this.persistenceEnabled = persistenceEnabled;
     }
 
     @Nonnull
@@ -79,6 +82,11 @@ public final class BoundedSpec {
     @Nonnull
     public RollbackMode rollbackMode() {
         return rollbackMode;
+    }
+
+    /** Class-level persistence toggle; when true, a structured bounded's Changes are flushed to the WAL. */
+    public boolean persistenceEnabled() {
+        return persistenceEnabled;
     }
 
     /** True when this spec runs the bare {@code run} body (no declared operations). */
@@ -133,12 +141,24 @@ public final class BoundedSpec {
         // No declared operations ⇒ run-sugar.
         if (topology.operations().isEmpty()) {
             return new BoundedSpec(
-                    factoryId, operativeClass, Optional.empty(), List.of(), probe.maxDuration(), probe.rollbackMode());
+                    factoryId,
+                    operativeClass,
+                    Optional.empty(),
+                    List.of(),
+                    probe.maxDuration(),
+                    probe.rollbackMode(),
+                    probe.persistenceEnabled());
         }
 
         List<Integer> chain = linearChain(factoryId, topology);
         return new BoundedSpec(
-                factoryId, operativeClass, Optional.of(topology), chain, probe.maxDuration(), probe.rollbackMode());
+                factoryId,
+                operativeClass,
+                Optional.of(topology),
+                chain,
+                probe.maxDuration(),
+                probe.rollbackMode(),
+                probe.persistenceEnabled());
     }
 
     /**

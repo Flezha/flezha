@@ -119,4 +119,18 @@ public interface BoundedOperative extends Computation {
     default RollbackMode rollbackMode() {
         return RollbackMode.ALL_OR_NOTHING;
     }
+
+    /**
+     * Class-level persistence toggle (durable by default, mirroring
+     * {@code ContinuousOperative.persistenceEnabled()}). When {@code true}, a
+     * structured bounded operative's per-Segment Changes are written to the WAL
+     * as they apply, so a crash resumes from persisted state. When
+     * {@code false}, the per-Segment flush drains and discards Changes with no
+     * serialization or wire I/O — the operative is in-memory only (a crash
+     * re-runs from the top). The controller resolves this durable-by-default
+     * with a per-class operator opt-out.
+     */
+    default boolean persistenceEnabled() {
+        return true;
+    }
 }

@@ -19,8 +19,14 @@ import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.OperationDescriptor;
+import com.flezha.sdk.runtime.state.FlusherEntry;
+import com.flezha.sdk.runtime.state.HeaderTemplate;
+import com.flezha.sdk.runtime.state.KryoCodec;
+import com.flezha.sdk.runtime.state.SegmentFlusher;
 import com.flezha.sdk.runtime.state.SegmentId;
+import com.flezha.sdk.runtime.state.SegmentStateSink;
 import com.flezha.sdk.state.Change;
+import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
 import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
@@ -37,6 +43,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import javax.annotation.Nonnull;
@@ -202,7 +209,7 @@ public final class BoundedOperativeRunner {
         // Build each stage's segments up front (per-segment state lives for the run).
         List<List<BoundedSegment>> stageSegments = new ArrayList<>(chain.size());
         for (int opId : chain) {
-            stageSegments.add(buildStageSegments(topology, instanceId, opId));
+            stageSegments.add(buildStageSegments(topology, instanceId, opId, spec.persistenceEnabled()));
         }
 
         // Seed the first operation from the spawn args via the entry channel's typed wrapper.
@@ -285,14 +292,17 @@ public final class BoundedOperativeRunner {
                 BoundedCollectAdapter adapter = new BoundedCollectAdapter(topology, seg.outputChannel(), sink);
                 Operation op = seg.op();
                 BiConsumer<Object, Change> applyChangeFn = (s, c) -> op.applyChange(s, c);
-                // Changes applied during compensation fold into in-memory state
-                // (P1); Phase-3 durability wires the WAL flush here.
-                List<Change> buffer = new ArrayList<>();
+                // Compensation Changes record onto the segment's flush buffer and
+                // ship to the WAL (durable classes) so a crash mid-compensation
+                // leaves the undo recorded.
+                List<Change> buffer = seg.changeBuffer();
                 StateHandle<Object, Change> handle = StateHandle.create(seg.state(), buffer, applyChangeFn);
                 try {
                     op.compensate(segRun.outputs(), handle, adapter);
                 } catch (OperationException | RuntimeException e) {
                     LOG.warn("bounded {} compensation for op `{}` failed: {}", instanceId, op.name(), e.toString());
+                } finally {
+                    seg.flusher().ifPresent(SegmentFlusher::flushEntry);
                 }
             }
         }
@@ -304,17 +314,18 @@ public final class BoundedOperativeRunner {
      * continuous operative would (real operation name + segment key, no
      * sentinels), so Phase-3 durability rides the same per-Segment identity.
      */
-    static List<BoundedSegment> buildStageSegments(ContinuousOperativeTopology topology, String instanceId, int opId) {
+    static List<BoundedSegment> buildStageSegments(
+            ContinuousOperativeTopology topology, String instanceId, int opId, boolean persistenceEnabled) {
         OperationDescriptor op = topology.operation(opId);
         Optional<ChannelDescriptor> outputChannel = op.outputChannelId().isPresent()
                 ? Optional.ofNullable(topology.channel(op.outputChannelId().getAsInt()))
                 : Optional.empty();
         List<BoundedSegment> segs = new ArrayList<>();
         if (op.segmentKeys().isEmpty()) {
-            segs.add(buildSegment(instanceId, op, Optional.empty(), outputChannel));
+            segs.add(buildSegment(instanceId, op, Optional.empty(), outputChannel, persistenceEnabled));
         } else {
             for (String key : op.segmentKeys()) {
-                segs.add(buildSegment(instanceId, op, Optional.of(key), outputChannel));
+                segs.add(buildSegment(instanceId, op, Optional.of(key), outputChannel, persistenceEnabled));
             }
         }
         return segs;
@@ -325,11 +336,30 @@ public final class BoundedOperativeRunner {
             String instanceId,
             OperationDescriptor op,
             Optional<String> key,
-            Optional<ChannelDescriptor> outputChannel) {
+            Optional<ChannelDescriptor> outputChannel,
+            boolean persistenceEnabled) {
         Operation operationInstance = instantiateOperation(op.operationClass());
         Object state = operationInstance.initState(key, Optional.empty());
         SegmentId identity = SegmentId.of(instanceId, op.name(), key);
-        return new BoundedSegment(operationInstance, state, identity, outputChannel);
+
+        // A changeful segment ships its Changes to the WAL on flush; the entry
+        // carries the class-level persistence toggle (drain-and-discard when off).
+        // Reuses the continuous flusher's frame + sink path, byte-for-byte.
+        List<Change> changeBuffer = new ArrayList<>();
+        Optional<FlusherEntry> flusher = Optional.empty();
+        if (op.changeType() != NoChange.class) {
+            flusher = Optional.of(new FlusherEntry(
+                    new Object(),
+                    changeBuffer,
+                    persistenceEnabled,
+                    new AtomicLong(0L),
+                    SegmentStateSink::send,
+                    new HeaderTemplate(),
+                    identity,
+                    op.schemaVersion(),
+                    new KryoCodec(op.kryoTypes())));
+        }
+        return new BoundedSegment(operationInstance, state, identity, outputChannel, changeBuffer, flusher);
     }
 
     /**
@@ -443,18 +473,24 @@ public final class BoundedOperativeRunner {
         BoundedCollectAdapter adapter = new BoundedCollectAdapter(topology, seg.outputChannel(), sink);
         Operation op = seg.op();
         BiConsumer<Object, Change> applyChangeFn = (s, c) -> op.applyChange(s, c);
-        // Local change buffer: P1 folds Changes into in-memory state via
-        // applyChange but does not persist them (durability is Phase 3).
-        List<Change> buffer = new ArrayList<>();
-        for (Object item : items) {
-            StateHandle<Object, Change> handle = StateHandle.create(seg.state(), buffer, applyChangeFn);
-            try {
-                op.run(item, handle, adapter);
-            } catch (OperationException e) {
-                throw new BoundedOperativeException("operation `" + op.name() + "` failed: " + e.getMessage(), e);
-            } catch (RuntimeException e) {
-                throw new BoundedOperativeException("operation `" + op.name() + "` threw: " + e, e);
+        // Changes record onto the segment's flush buffer; the flush after the
+        // loop ships them to the WAL when the class is durable.
+        List<Change> buffer = seg.changeBuffer();
+        try {
+            for (Object item : items) {
+                StateHandle<Object, Change> handle = StateHandle.create(seg.state(), buffer, applyChangeFn);
+                try {
+                    op.run(item, handle, adapter);
+                } catch (OperationException e) {
+                    throw new BoundedOperativeException("operation `" + op.name() + "` failed: " + e.getMessage(), e);
+                } catch (RuntimeException e) {
+                    throw new BoundedOperativeException("operation `" + op.name() + "` threw: " + e, e);
+                }
             }
+        } finally {
+            // Flush regardless of outcome so the WAL reflects the state applied
+            // before any failure (at-least-once; the saga compensates a partial run).
+            seg.flusher().ifPresent(SegmentFlusher::flushEntry);
         }
         return sink.collected();
     }
@@ -555,13 +591,26 @@ public final class BoundedOperativeRunner {
         private final Object state;
         private final SegmentId identity;
         private final Optional<ChannelDescriptor> outputChannel;
+        // Per-segment flush buffer (the continuous SegmentSlot analog): the
+        // StateHandle records Changes here; `flusher` (present iff the operation
+        // is changeful) ships them to the WAL on flush.
+        private final List<Change> changeBuffer;
+        private final Optional<FlusherEntry> flusher;
 
         @SuppressWarnings("rawtypes")
-        BoundedSegment(Operation op, Object state, SegmentId identity, Optional<ChannelDescriptor> outputChannel) {
+        BoundedSegment(
+                Operation op,
+                Object state,
+                SegmentId identity,
+                Optional<ChannelDescriptor> outputChannel,
+                List<Change> changeBuffer,
+                Optional<FlusherEntry> flusher) {
             this.op = op;
             this.state = state;
             this.identity = identity;
             this.outputChannel = outputChannel;
+            this.changeBuffer = changeBuffer;
+            this.flusher = flusher;
         }
 
         @SuppressWarnings("rawtypes")
@@ -579,6 +628,14 @@ public final class BoundedOperativeRunner {
 
         Optional<ChannelDescriptor> outputChannel() {
             return outputChannel;
+        }
+
+        List<Change> changeBuffer() {
+            return changeBuffer;
+        }
+
+        Optional<FlusherEntry> flusher() {
+            return flusher;
         }
     }
 

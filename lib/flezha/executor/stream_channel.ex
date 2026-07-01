@@ -1,4 +1,5 @@
 defmodule Flezha.Executor.StreamChannel do
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.Wire, as: StateWire
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Native
@@ -258,13 +259,7 @@ defmodule Flezha.Executor.StreamChannel do
           "executor=#{inspect(state.executor_id)} operatives=#{inspect(Map.keys(state.operative_mapping))}"
       )
 
-      for {operative_id, _} <- state.operative_mapping do
-        :telemetry.execute(
-          [:flezha, :state, :output_stall],
-          %{count: 1},
-          %{operative_instance: operative_id}
-        )
-      end
+      emit_output_stall(state.operative_mapping)
     end
 
     {:noreply, state}
@@ -280,13 +275,7 @@ defmodule Flezha.Executor.StreamChannel do
     # Emit output_stall immediately for every operative in the mapping so the
     # convergence Loop triggers a rebind tick rather than waiting for the
     # Watchdog's 60s grace period to detect the dead socket.
-    for {operative_id, _} <- state.operative_mapping do
-      :telemetry.execute(
-        [:flezha, :state, :output_stall],
-        %{count: 1},
-        %{operative_instance: operative_id}
-      )
-    end
+    emit_output_stall(state.operative_mapping)
 
     {:noreply, %{state | stream_ref: nil}}
   end
@@ -295,6 +284,20 @@ defmodule Flezha.Executor.StreamChannel do
     Logger.warning("Unexpected message at io channel: #{inspect(msg)}")
 
     {:noreply, state}
+  end
+
+  # Emit `output_stall` for each mapped operative whose kind runs the output-stall
+  # watchdog. A kind without it (a durable bounded operative) legitimately goes
+  # silent, so flagging it would spuriously rebind.
+  defp emit_output_stall(operative_mapping) do
+    for {operative_id, _} <- operative_mapping,
+        ClassRegistry.capable?(operative_id, :output_stall_watch?) do
+      :telemetry.execute(
+        [:flezha, :state, :output_stall],
+        %{count: 1},
+        %{operative_instance: operative_id}
+      )
+    end
   end
 
   # Persistence frames are handed to the per-segment WalWriter via a
@@ -341,7 +344,14 @@ defmodule Flezha.Executor.StreamChannel do
   defp handle_delete_segment_state(frame) do
     case StateWire.decode_segment_id(frame) do
       {:ok, {rc, sh, pk}} ->
-        spawn(fn -> Flezha.State.Supervisor.delete_segment({rc, sh, pk}) end)
+        # Destructive idle-eviction is a dynamic-segmentation behaviour; ignore
+        # it for a kind without dynamic segments so a durable bounded operative's
+        # state is never dropped out from under it.
+        if ClassRegistry.capable?(rc, :dynamic_segments?) do
+          spawn(fn -> Flezha.State.Supervisor.delete_segment({rc, sh, pk}) end)
+        else
+          Logger.warning("[stream] delete_segment_state ignored for non-dynamic class #{inspect(rc)}")
+        end
 
       {:error, reason} ->
         Logger.warning("[stream] delete_segment_state decode failed: #{inspect(reason)}")

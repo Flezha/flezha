@@ -145,5 +145,43 @@ defmodule Flezha.State.WatchdogTest do
     refute_receive {:compaction_timeout, _, _}, 200
   end
 
+  test "a bounded class is not flagged for output stall or catastrophic dataflow", %{
+    header: header
+  } do
+    class = "BoundedWatch" <> uniq()
+    Flezha.Operative.ClassRegistry.put(class, :bounded)
+    on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
+
+    parent = self()
+    cat_id = {__MODULE__, :catastrophic, System.unique_integer([:positive])}
+
+    :telemetry.attach(
+      cat_id,
+      [:flezha, :state, :catastrophic_dataflow_stop],
+      fn _e, meas, meta, _ -> send(parent, {:catastrophic, meas, meta}) end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(cat_id) end)
+
+    pid = {class, "op", "seg" <> uniq()}
+    {:ok, _} = Supervisor.find_or_start(pid)
+    {:ok, w} = Supervisor.lookup(pid)
+    :ok = WalWriter.append(w, 0, header, "z")
+    :ok = WalWriter.append(w, 1, header, "a")
+    :ok = WalWriter.append(w, 2, header, "b")
+
+    # The same stall signature that flags a continuous class: window lapses,
+    # then a duplicate Change keeps it "not idle" with a frozen seq.
+    Process.sleep(@stall_ms * 2)
+    :duplicate = WalWriter.append(w, 1, header, "a")
+
+    :ok = Watchdog.sweep_now()
+
+    refute_receive {:output_stall, _, _}, 200
+    refute_receive {:resync_called, _, _}, 200
+    refute_receive {:catastrophic, _, _}, 200
+  end
+
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 end

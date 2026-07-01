@@ -60,5 +60,14 @@ defmodule Flezha.State.TimeTravelTest do
              TimeTravel.query(pid, {:seq, 50})
   end
 
+  test "rejects a query for a bounded (non-time-travel) class" do
+    class = "tt_bounded_" <> uniq()
+    :ok = Flezha.Operative.ClassRegistry.put(class, :bounded)
+    on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
+
+    assert {:error, %{kind: :unsupported_for_kind}} =
+             TimeTravel.query({class, "op", "seg"}, {:seq, 0})
+  end
+
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 end

@@ -27,6 +27,7 @@ defmodule Flezha.State.Retention do
 
   use GenServer
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{Completion, Metrics, PersistenceResolver, Registry, Supervisor, WalWriter}
 
   defstruct []
@@ -49,6 +50,9 @@ defmodule Flezha.State.Retention do
 
   @impl true
   def init(_opts) do
+    # Own the operative_class→kind table: Retention is always-on and is the
+    # process-less consumer that most needs the durable-kind resolution.
+    ClassRegistry.ensure_table()
     schedule_sweep()
     {:ok, %__MODULE__{}}
   end
@@ -79,7 +83,15 @@ defmodule Flezha.State.Retention do
 
   defp sweep_all() do
     Enum.each(Registry.all_segments(), fn {operative_class, _, _} = pid ->
-      hours = PersistenceResolver.retention_hours(operative_class)
+      hours =
+        if ClassRegistry.capable?(operative_class, :time_travel?) do
+          PersistenceResolver.retention_hours(operative_class)
+        else
+          # No time-travel for this kind (a durable :bounded operative): keep
+          # only the latest snapshot, never retain history for point-in-time.
+          0
+        end
+
       sweep_segment(pid, hours)
     end)
   end
