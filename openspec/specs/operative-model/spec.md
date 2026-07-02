@@ -3,9 +3,7 @@
 ## Purpose
 
 The operative-model capability is the canonical vocabulary and kind model for Flezha's compute workloads. It defines the **Operative** umbrella (the generic top-level unit of work an Executor runs at a Controller's direction), its two kinds today — **Continuous** (runs-forever) and **Bounded** (runs-to-completion) — and the per-Operative concepts of **Operation** (a typed stage) and **Segment** (the per-key, state-bearing slice). It mandates the no-synonyms rule (no `relay`, `shard`, `partition`, or `task` survives in any shipped surface) and the sparse, default-`false` capability descriptor model that lets new kinds and capabilities be added additively without touching existing kinds. Capabilities attach to the kind, not to user computation code; `persistent_state?` gates per-Segment state introspection. The unified `flz operative` CLI verb tree manages every kind's lifecycle.
-
 ## Requirements
-
 ### Requirement: Canonical operative vocabulary
 
 The system SHALL use exactly these terms for compute workloads, and code, modules, protobuf, wire payload-ids, CLI, config keys, env vars, documentation, and on-disk path components SHALL NOT introduce or retain the synonyms `relay`, `shard`, `partition`, or `task`:
@@ -53,12 +51,29 @@ Every Operative SHALL carry a `kind` atom. The kind SHALL be set when the operat
 
 ### Requirement: Each kind declares a sparse, default-false capability descriptor
 
-There SHALL be a single source of truth mapping a kind to a **sparse** capability descriptor — a map declaring only the capabilities the kind *has* (as `true`). The control plane SHALL read every capability with a default of `false`. Capabilities SHALL attach to the kind, not to user-authored computation code: choosing a kind SHALL be sufficient, and no SDK author SHALL be required to enumerate capability flags. The `:continuous` kind SHALL declare `persistent_state?` `true`; the `:bounded` kind SHALL NOT.
+There SHALL be a single source of truth mapping a kind to a **sparse** capability descriptor — a map declaring only the capabilities the kind *has* (as `true`). The control plane SHALL read every capability with a default of `false`. Capabilities SHALL attach to the kind, not to user-authored computation code.
 
-#### Scenario: Continuous declares persistent state
+The previously-coarse `persistent_state?` capability SHALL be **split** so that it means exactly "has durable per-Segment WAL state + restore", and the continuous-only behaviors that previously rode on it SHALL each have their own default-`false` flag:
+
+- `persistent_state?` — durable per-Segment WAL + snapshot + restore. Resolved per kind+class: `:continuous` declares it, and `:bounded` declares it **by default** unless its class opts out of persistence (see `bounded-operative-durability`).
+- `time_travel?` — point-in-time queries and retention beyond the latest snapshot (gates `flz state at`). Declared by `:continuous` only.
+- `dynamic_segments?` — lazy per-key Segment creation and destructive idle eviction with cold-start-fresh. Declared by `:continuous` only.
+- `output_stall_watch?` — the per-Segment output-staleness watchdog that forces a rebind. Declared by `:continuous` only.
+
+#### Scenario: Continuous declares the full persistence surface
 
 - **WHEN** the capability descriptor for kind `:continuous` is requested
-- **THEN** reading `persistent_state?` SHALL yield `true`
+- **THEN** `persistent_state?`, `time_travel?`, `dynamic_segments?`, and `output_stall_watch?` SHALL all read `true`
+
+#### Scenario: A durable bounded operative has durable state without continuous-only behaviors
+
+- **WHEN** a `:bounded` class that has not opted out of persistence is read
+- **THEN** `persistent_state?` SHALL read `true` while `time_travel?`, `dynamic_segments?`, and `output_stall_watch?` SHALL each read `false`
+
+#### Scenario: An opted-out bounded operative declares no durable state
+
+- **WHEN** a `:bounded` class that opted out of persistence is read
+- **THEN** `persistent_state?` SHALL read `false`
 
 #### Scenario: Undeclared capabilities read as false
 
@@ -81,17 +96,22 @@ Introducing a new operative kind OR a new capability flag SHALL be additive: it 
 
 ### Requirement: Segment-state introspection is gated by `persistent_state?`
 
-A request for an operative's per-Segment state SHALL succeed only when the operative's kind reads `persistent_state?` as `true`. When the capability is absent, the request SHALL fail with the structured error `{:error, {:unsupported_for_kind, :persistent_state}}` rather than querying a computation that has no state. The error SHALL be distinguishable from "operative not found" and from a transient failure, and SHALL surface through the CLI as a clear, non-zero outcome.
+A request for an operative's per-Segment state SHALL succeed only when the operative's kind+class reads `persistent_state?` as `true` (true for `:continuous`, and for a `:bounded` class that has not opted out of persistence). When the capability is absent, the request SHALL fail with the structured error `{:error, {:unsupported_for_kind, :persistent_state}}` rather than querying a computation that has no durable state. Point-in-time `flz state at` queries SHALL additionally require `time_travel?`, so a durable bounded operative (which does not declare `time_travel?`) SHALL expose current Segment state but SHALL reject time-travel queries.
 
-#### Scenario: Segment-state query succeeds for a stateful kind
+#### Scenario: Segment-state query succeeds for a durable operative
 
-- **WHEN** the per-Segment state of an operative whose kind has `persistent_state? = true` is requested
-- **THEN** the request SHALL return the serialized state
+- **WHEN** the per-Segment state of an operative whose kind+class declares `persistent_state? = true` is requested
+- **THEN** the request SHALL return the serialized current state
 
-#### Scenario: Segment-state query is rejected for a stateless kind
+#### Scenario: Segment-state query is rejected for a stateless operative
 
-- **WHEN** the per-Segment state of an operative whose kind has `persistent_state? = false` is requested
-- **THEN** the request SHALL return `{:error, {:unsupported_for_kind, :persistent_state}}` and SHALL NOT contact the computation for state
+- **WHEN** the per-Segment state of an operative whose kind+class reads `persistent_state? = false` is requested
+- **THEN** the request SHALL return `{:error, {:unsupported_for_kind, :persistent_state}}` and SHALL NOT contact the computation
+
+#### Scenario: Time-travel is rejected for a kind lacking `time_travel?`
+
+- **WHEN** a `flz state at` point-in-time query targets a durable bounded operative (which does not declare `time_travel?`)
+- **THEN** the query SHALL be rejected as unsupported, while a current-state query SHALL still succeed
 
 ### Requirement: Unified `flz operative` CLI verb
 
@@ -111,3 +131,4 @@ The CLI SHALL expose a single `flz operative` verb tree for lifecycle management
 
 - **WHEN** the operator runs `flz relay start`
 - **THEN** the CLI SHALL reject it as an unknown command
+
