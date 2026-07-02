@@ -108,7 +108,7 @@ public final class ContinuousOperativeInstance implements Operative {
         // sink as the send path. Each changeful Segment registers below.
         KryoCodec codec = new KryoCodec(kryoTypes);
         HeaderTemplate headerTemplate = new HeaderTemplate();
-        Function<byte[], Boolean> sendFrame = SegmentStateSink::send;
+        Function<byte[], Boolean> sendFrame = frame -> SegmentStateSink.send(SegmentStateSink.PAYLOAD_ID_CHANGE, frame);
 
         ContinuousOperativeInstance shell = new ContinuousOperativeInstance(
                 topology, instanceId, segments, segmentKeyToIdx, dispatchers, persistenceEnabled, kryoTypes);

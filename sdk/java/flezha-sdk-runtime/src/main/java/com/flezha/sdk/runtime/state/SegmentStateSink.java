@@ -47,15 +47,26 @@ public final class SegmentStateSink {
 
     public static final String PAYLOAD_ID_COMPENSATION_DONE = "compensation_done";
 
-    /** Low-level writer wrapping the current secondary stream; returns {@code true} on a successful write. */
+    /**
+     * Low-level writer wrapping the current secondary stream. The installed
+     * writer stamps {@code payloadId} on the payloader envelope, so the same
+     * reliable sink carries {@code segment_state_change} and the saga
+     * {@code compensation_*} records. Returns {@code true} on a successful write.
+     */
     @FunctionalInterface
     public interface FrameWriter {
-        boolean write(@Nonnull byte[] frame);
+        boolean write(@Nonnull String payloadId, @Nonnull byte[] frame);
     }
+
+    /**
+     * One buffered frame plus its data-stream payload-id, so a frame replayed
+     * after a reconnect is re-wrapped under its own id.
+     */
+    private record RingFrame(String payloadId, byte[] frame) {}
 
     private static final Object LOCK = new Object();
     private static FrameWriter sink;
-    private static final Deque<byte[]> ring = new ArrayDeque<>();
+    private static final Deque<RingFrame> ring = new ArrayDeque<>();
     private static final Deque<Long> failureAtMs = new ArrayDeque<>();
     private static boolean reconnectRequested;
     private static Runnable reconnectRequester;
@@ -77,7 +88,7 @@ public final class SegmentStateSink {
      * it was absent. Called at every {@code ConnectSocket}.
      */
     public static void installGlobalSink(@Nonnull FrameWriter writer) {
-        List<byte[]> replay;
+        List<RingFrame> replay;
         synchronized (LOCK) {
             sink = writer;
             reconnectRequested = false;
@@ -85,8 +96,8 @@ public final class SegmentStateSink {
             replay = new ArrayList<>(ring);
             ring.clear();
         }
-        for (byte[] frame : replay) {
-            send(frame);
+        for (RingFrame rf : replay) {
+            send(rf.payloadId(), rf.frame());
         }
     }
 
@@ -102,35 +113,47 @@ public final class SegmentStateSink {
      * sink each call; on a write failure (or while no sink is installed) the
      * frame is buffered in the reconnect ring. Never throws.
      */
-    public static boolean send(@Nonnull byte[] frame) {
+    public static boolean send(@Nonnull String payloadId, @Nonnull byte[] frame) {
         FrameWriter writer;
         synchronized (LOCK) {
             writer = sink;
         }
         if (writer == null) {
-            bufferFrame(frame, false);
+            bufferFrame(payloadId, frame, false);
             return false;
         }
         boolean ok;
         try {
-            ok = writer.write(frame);
+            ok = writer.write(payloadId, frame);
         } catch (RuntimeException e) {
             ok = false;
         }
         if (!ok) {
-            bufferFrame(frame, true);
+            bufferFrame(payloadId, frame, true);
             return false;
         }
         return true;
     }
 
-    private static void bufferFrame(byte[] frame, boolean countFailure) {
+    /**
+     * Ship one bounded-operative saga compensation marker
+     * ({@code compensation_intent} / {@code compensation_done}) for a Segment
+     * through the reliable sink. The body is empty — the record's information is
+     * the Segment identity plus the payload-id — matching the controller's
+     * {@code Flezha.State.Wire.decode_frame/1} (crc32 over an empty body is 0).
+     */
+    public static void sendCompensationRecord(@Nonnull String payloadId, @Nonnull SegmentId segmentId) {
+        byte[] frame = SegmentFlusher.buildSegmentStateChangeFrame(segmentId, 0L, new byte[16], new byte[0]);
+        send(payloadId, frame);
+    }
+
+    private static void bufferFrame(String payloadId, byte[] frame, boolean countFailure) {
         Runnable requester = null;
         synchronized (LOCK) {
             if (ring.size() >= ringCapacity()) {
                 ring.pollFirst();
             }
-            ring.addLast(frame);
+            ring.addLast(new RingFrame(payloadId, frame));
             if (countFailure && noteBrokenPipe()) {
                 requester = reconnectRequester;
             }

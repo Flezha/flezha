@@ -104,7 +104,7 @@ class SegmentStateWireTest {
     @Test
     void flusherEmitsFirstChangeAtSeqZero() {
         List<byte[]> captured = new ArrayList<>();
-        SegmentStateSink.installGlobalSink(frame -> {
+        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
             captured.add(frame);
             return true;
         });
@@ -114,8 +114,16 @@ class SegmentStateWireTest {
         Object lock = new Object();
         List<Change> buffer = new ArrayList<>();
         AtomicLong seq = new AtomicLong(0L);
-        FlusherEntry entry =
-                new FlusherEntry(lock, buffer, true, seq, SegmentStateSink::send, new HeaderTemplate(), pid, 1, codec);
+        FlusherEntry entry = new FlusherEntry(
+                lock,
+                buffer,
+                true,
+                seq,
+                frame -> SegmentStateSink.send(SegmentStateSink.PAYLOAD_ID_CHANGE, frame),
+                new HeaderTemplate(),
+                pid,
+                1,
+                codec);
 
         SegmentFlusher flusher = SegmentFlusher.getOrStart();
         flusher.register(pid, entry, AddChange.class);

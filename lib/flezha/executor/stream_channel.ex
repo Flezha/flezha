@@ -184,6 +184,17 @@ defmodule Flezha.Executor.StreamChannel do
     {:noreply, mark_seen(state)}
   end
 
+  # Bounded-operative saga compensation markers (SDK → controller). A durable
+  # bounded records each operation's forward completion (`compensation_intent`)
+  # and each compensation's completion (`compensation_done`); persisted per
+  # Segment and shipped back on the next `RestoreInitState` so a respawn finishes
+  # the remaining hooks and skips already-undone ones. Fire-and-forget.
+  def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
+      when payload_id in ["compensation_intent", "compensation_done"] do
+    handle_compensation_record(payload_id, message)
+    {:noreply, mark_seen(state)}
+  end
+
   # Data-channel heartbeat: the executor emits this every ~10s while connected,
   # so an idle-but-healthy operative keeps the channel live without producing
   # output. Metadata carries the executor's dispatch-progress self-report; the
@@ -339,6 +350,30 @@ defmodule Flezha.Executor.StreamChannel do
     end
   end
 
+  # Persist one saga compensation marker for the frame's Segment (presence is the
+  # signal; `Flezha.State.Registry.compensation_markers/1` reads it back onto
+  # `RestoreInitState`). Write off this channel's loop so a slow disk never stalls
+  # the output-carrying channel.
+  defp handle_compensation_record(payload_id, frame) do
+    case StateWire.decode_frame(frame) do
+      {:ok, %{segment_id: segment_id}} ->
+        kind = if payload_id == "compensation_intent", do: :intent, else: :done
+
+        spawn(fn ->
+          with {:error, reason} <-
+                 Flezha.State.Registry.write_compensation_marker(segment_id, kind) do
+            Logger.error(
+              "[stream] compensation marker write failed " <>
+                "segment=#{inspect(segment_id)} kind=#{kind}: #{inspect(reason)}"
+            )
+          end
+        end)
+
+      {:error, reason} ->
+        Logger.warning("[stream] #{payload_id} decode failed: #{inspect(reason)}")
+    end
+  end
+
   # Run the file teardown off this channel's loop: it stops the writer and
   # unlinks files, which we never want to gate the output-carrying channel on.
   defp handle_delete_segment_state(frame) do
@@ -350,7 +385,9 @@ defmodule Flezha.Executor.StreamChannel do
         if ClassRegistry.capable?(rc, :dynamic_segments?) do
           spawn(fn -> Flezha.State.Supervisor.delete_segment({rc, sh, pk}) end)
         else
-          Logger.warning("[stream] delete_segment_state ignored for non-dynamic class #{inspect(rc)}")
+          Logger.warning(
+            "[stream] delete_segment_state ignored for non-dynamic class #{inspect(rc)}"
+          )
         end
 
       {:error, reason} ->

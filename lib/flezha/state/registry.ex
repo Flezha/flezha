@@ -73,13 +73,57 @@ defmodule Flezha.State.Registry do
   end
 
   @doc """
+  Path of a per-Segment saga compensation marker (`bounded-operative-saga`
+  §4.3). `:intent` marks that the Segment's operation completed forward and may
+  need undo; `:done` marks that its compensation already ran. Presence is the
+  signal (empty file). Inert to `scan_dir/1` (unknown suffix), so a marker never
+  registers a phantom Segment; reclaimed with the operative-class dir on
+  retention sweep.
+  """
+  @spec compensation_marker_path(segment_id(), :intent | :done) :: binary()
+  def compensation_marker_path({_, _, segment_key} = pid, kind) when kind in [:intent, :done] do
+    suffix = if kind == :intent, do: ".comp_intent", else: ".comp_done"
+    Path.join(state_dir(pid), encode_segment_key(segment_key) <> suffix)
+  end
+
+  @doc """
+  Write one compensation marker for a Segment (presence is the signal — empty
+  body). Best-effort; returns the `File.write/2` result so the caller can log.
+  """
+  @spec write_compensation_marker(segment_id(), :intent | :done) :: :ok | {:error, term()}
+  def write_compensation_marker({_, _, _} = pid, kind) when kind in [:intent, :done] do
+    path = compensation_marker_path(pid, kind)
+    File.mkdir_p(Path.dirname(path))
+    File.write(path, "")
+  end
+
+  @doc """
+  Read a Segment's saga compensation markers, shipped back on `RestoreInitState`
+  so a respawned durable bounded driver finishes the remaining hooks: `intent` ⇒
+  its operation completed forward and may need undo; `done` ⇒ its compensation
+  already ran (skip it).
+  """
+  @spec compensation_markers(segment_id()) :: %{intent: boolean(), done: boolean()}
+  def compensation_markers({_, _, _} = pid) do
+    %{
+      intent: File.exists?(compensation_marker_path(pid, :intent)),
+      done: File.exists?(compensation_marker_path(pid, :done))
+    }
+  end
+
+  @doc """
   Remove every on-disk file for one Segment (WAL, all snapshots, the
   outbox-dedup file). Idempotent: missing files are ignored. Used by the
   dynamic-mode hard-delete path (`Flezha.State.Supervisor.delete_segment/1`).
   """
   @spec delete_files(segment_id()) :: :ok
   def delete_files({_, _, _} = pid) do
-    [wal_path(pid), outbox_dedup_path(pid)]
+    [
+      wal_path(pid),
+      outbox_dedup_path(pid),
+      compensation_marker_path(pid, :intent),
+      compensation_marker_path(pid, :done)
+    ]
     |> Enum.concat(Enum.map(snapshot_paths(pid), fn {_seq, path} -> path end))
     |> Enum.each(&File.rm/1)
 

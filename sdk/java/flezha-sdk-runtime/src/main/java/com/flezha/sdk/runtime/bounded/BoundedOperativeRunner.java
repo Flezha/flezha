@@ -215,6 +215,27 @@ public final class BoundedOperativeRunner {
         List<List<BoundedSegment>> stageSegments = instance.stageSegments();
         instance.awaitRestore();
 
+        // Crash-resume into an in-flight compensation (saga, §4.3): a non-empty
+        // reconstruction means the Controller shipped back compensation-intent
+        // markers, so the operative had terminated abnormally and (some of) its
+        // undo is outstanding. Finish the remaining hooks — skipping already-done
+        // ones — rather than re-running the forward chain, which would redo
+        // already-undone work. Empty ⇒ a fresh run / crash mid-forward, re-run below.
+        List<StageRecord> resumed = reconstructCompletedFromIntents(instance, chain, stageSegments);
+        if (!resumed.isEmpty()) {
+            runCompensation(
+                    ctx,
+                    topology,
+                    instanceId,
+                    chain,
+                    stageSegments,
+                    resumed,
+                    spec.rollbackMode(),
+                    instance,
+                    spec.persistenceEnabled());
+            return new Outcome("error", "resumed compensation after crash", EMPTY);
+        }
+
         // Seed the first operation from the spawn args via the entry channel's typed wrapper.
         ChannelDescriptor entry = entryChannel(topology);
         Object seed = entry.payloadType() == String.class ? args : args.getBytes(StandardCharsets.UTF_8);
@@ -240,6 +261,18 @@ public final class BoundedOperativeRunner {
             try {
                 StageOut stageOut = runStageParallel(ctx, instanceId, topology, segs, partitioned);
                 batch = stageOut.batch();
+                // Durable saga (§4.3): record this operation's completion — one
+                // compensation-intent marker per segment that ran — so a crash
+                // mid-compensation knows what still needs undo. Only for
+                // compensable operations (a hookless op is never rolled back).
+                if (!segs.isEmpty() && segs.get(0).op().compensateOverridden()) {
+                    for (SegmentRun segRun : stageOut.segments()) {
+                        emitCompensationRecord(
+                                SegmentStateSink.PAYLOAD_ID_COMPENSATION_INTENT,
+                                segs.get(segRun.segmentIndex()).identity(),
+                                spec.persistenceEnabled());
+                    }
+                }
                 completed.add(new StageRecord(stageIdx, stageOut.segments()));
             } catch (BoundedOperativeException e) {
                 abnormal = new Outcome("error", messageOf(e), EMPTY);
@@ -254,7 +287,16 @@ public final class BoundedOperativeRunner {
         }
         // Abnormal exit after partial progress: roll back the completed stages in
         // the rollback mode's order, then report the terminal status.
-        runCompensation(ctx, topology, instanceId, chain, stageSegments, completed, spec.rollbackMode());
+        runCompensation(
+                ctx,
+                topology,
+                instanceId,
+                chain,
+                stageSegments,
+                completed,
+                spec.rollbackMode(),
+                instance,
+                spec.persistenceEnabled());
         return abnormal;
     }
 
@@ -275,7 +317,9 @@ public final class BoundedOperativeRunner {
             List<Integer> chain,
             List<List<BoundedSegment>> stageSegments,
             List<StageRecord> completed,
-            RollbackMode rollbackMode) {
+            RollbackMode rollbackMode,
+            BoundedOperativeInstance instance,
+            boolean persistenceEnabled) {
         // v1 runs a single pass, so there are no committed iterations to keep;
         // the structured-loop follow-up threads them in and planCompensation
         // already honours the mode difference.
@@ -292,6 +336,11 @@ public final class BoundedOperativeRunner {
             }
             for (SegmentRun segRun : record.segments()) {
                 BoundedSegment seg = slots.get(segRun.segmentIndex());
+                // Crash-resume (§4.3): a segment whose compensation-done marker
+                // was shipped back already ran its undo — skip it.
+                if (instance.hasCompensationDone(seg.identity().encoded())) {
+                    continue;
+                }
                 BoundedCollectAdapter adapter = new BoundedCollectAdapter(topology, seg.outputChannel(), sink);
                 Operation op = seg.op();
                 BiConsumer<Object, Change> applyChangeFn = (s, c) -> op.applyChange(s, c);
@@ -307,7 +356,45 @@ public final class BoundedOperativeRunner {
                 } finally {
                     seg.flusher().ifPresent(SegmentFlusher::flushEntry);
                 }
+                // Durable saga (§4.3): record this compensation's completion so a
+                // later crash resumes the remainder and skips this segment.
+                emitCompensationRecord(
+                        SegmentStateSink.PAYLOAD_ID_COMPENSATION_DONE, seg.identity(), persistenceEnabled);
             }
+        }
+    }
+
+    /**
+     * Rebuild the completed-stage records to compensate on a crash-resume from
+     * the shipped-back compensation-intent markers: a Segment marked "intent"
+     * completed forward and needs undo. Outputs are empty — an operation's
+     * collected inter-operation output was never durable, so a durable
+     * compensable operation must persist its undo handle in State (which IS
+     * restored), per the at-least-once author contract. Stages are gathered in
+     * chain order; {@link BoundedCompensation#planCompensation} reverses them.
+     */
+    private static List<StageRecord> reconstructCompletedFromIntents(
+            BoundedOperativeInstance instance, List<Integer> chain, List<List<BoundedSegment>> stageSegments) {
+        List<StageRecord> completed = new ArrayList<>();
+        for (int stageIdx = 0; stageIdx < chain.size(); stageIdx++) {
+            List<BoundedSegment> slots = stageSegments.get(stageIdx);
+            List<SegmentRun> segs = new ArrayList<>();
+            for (int i = 0; i < slots.size(); i++) {
+                if (instance.hasCompensationIntent(slots.get(i).identity().encoded())) {
+                    segs.add(new SegmentRun(i, List.of()));
+                }
+            }
+            if (!segs.isEmpty()) {
+                completed.add(new StageRecord(stageIdx, segs));
+            }
+        }
+        return completed;
+    }
+
+    /** Ship one saga compensation marker — a no-op for an opted-out (non-durable) class. */
+    private static void emitCompensationRecord(String payloadId, SegmentId identity, boolean persistenceEnabled) {
+        if (persistenceEnabled) {
+            SegmentStateSink.sendCompensationRecord(payloadId, identity);
         }
     }
 
@@ -376,7 +463,7 @@ public final class BoundedOperativeRunner {
                     changeBuffer,
                     persistenceEnabled,
                     new AtomicLong(0L),
-                    SegmentStateSink::send,
+                    frame -> SegmentStateSink.send(SegmentStateSink.PAYLOAD_ID_CHANGE, frame),
                     new HeaderTemplate(),
                     identity,
                     op.schemaVersion(),

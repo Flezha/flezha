@@ -459,7 +459,7 @@ class BoundedKindTest {
         BoundedOperativeRegistry.registerBounded(FanOptOutBoundedOperative.class);
 
         List<byte[]> walFrames = new CopyOnWriteArrayList<>();
-        SegmentStateSink.installGlobalSink(frame -> {
+        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
             walFrames.add(frame);
             return true;
         });
@@ -636,7 +636,96 @@ class BoundedKindTest {
         assertThat(COMPENSATION_LOG).containsExactly("undo-stop-reserve:reserved:W");
     }
 
+    // --- Saga durable records + crash-resume (Phase 3c §4.3) -----------------
+
+    @Test
+    @DisplayName("§4.3 a durable saga records compensation_intent per completed op and compensation_done per undo")
+    void sagaDurableEmitsCompensationRecords() throws Exception {
+        BoundedOperativeRegistry.registerBounded(SagaBoundedOperative.class);
+        List<String> records = new CopyOnWriteArrayList<>();
+        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
+            records.add(payloadId);
+            return true;
+        });
+
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+        cap.expectCompletions(1);
+        // reserve + charge complete (both compensable ⇒ 2 intents); ship fails ⇒
+        // both roll back (2 dones). Hookless ship_fails never completed ⇒ no record.
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-saga-bounded", "saga-rec", "42"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("error");
+
+        long intents = records.stream()
+                .filter(SegmentStateSink.PAYLOAD_ID_COMPENSATION_INTENT::equals)
+                .count();
+        long dones = records.stream()
+                .filter(SegmentStateSink.PAYLOAD_ID_COMPENSATION_DONE::equals)
+                .count();
+        assertThat(intents).as("one intent per completed compensable segment").isEqualTo(2L);
+        assertThat(dones).as("one done per compensated segment").isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("§4.3 crash-resume finishes the remaining hooks, skipping already-done ones, no forward re-run")
+    void sagaCrashResumeSkipsDoneCompensations() throws Exception {
+        BoundedOperativeRegistry.registerBounded(ResumeSagaOperative.class);
+        List<String> records = new CopyOnWriteArrayList<>();
+        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
+            records.add(payloadId);
+            return true;
+        });
+
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+        // Respawn expecting two Segment restores (A + B); the driver parks on the gate.
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedResumable("test-resume-saga", "resume-saga", "x", 2), new ArrayList<>());
+
+        // Original run: A + B both completed (intent); B already undone before the
+        // crash (done). Resume must undo A and SKIP B, without re-running forward.
+        byte[] aId =
+                SegmentId.of("resume-saga", "resume_undo_a", Optional.empty()).encodedBytes();
+        byte[] bId =
+                SegmentId.of("resume-saga", "resume_undo_b", Optional.empty()).encodedBytes();
+        shipCompensationRestore(ctx, aId, true, false);
+        shipCompensationRestore(ctx, bId, true, true);
+
+        assertThat(cap.awaitCompletions()).isTrue();
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("error");
+        assertThat(COMPENSATION_LOG).as("A undone, B skipped").containsExactly("undo-A");
+        assertThat(cap.outputs(SECONDARY_STREAM)).as("forward ops not re-run").isEmpty();
+        long dones = records.stream()
+                .filter(SegmentStateSink.PAYLOAD_ID_COMPENSATION_DONE::equals)
+                .count();
+        long intents = records.stream()
+                .filter(SegmentStateSink.PAYLOAD_ID_COMPENSATION_INTENT::equals)
+                .count();
+        assertThat(dones)
+                .as("only A emits a fresh compensation_done; B was skipped")
+                .isEqualTo(1L);
+        assertThat(intents)
+                .as("compensation-resume records no new intent (forward chain not re-run)")
+                .isZero();
+    }
+
     // --- helpers -------------------------------------------------------------
+
+    /** Ship one bounded-Segment RestoreInitState carrying its saga compensation markers. */
+    private static void shipCompensationRestore(ExecutorContext ctx, byte[] segmentId, boolean intent, boolean done) {
+        CommandRequest restore = CommandRequest.newBuilder()
+                .setReferenceId("r")
+                .setRestoreInitState(RestoreInitState.newBuilder()
+                        .setSegmentId(ByteString.copyFrom(segmentId))
+                        .setHasCompensationIntent(intent)
+                        .setHasCompensationDone(done)
+                        .build())
+                .build();
+        new RestoreInitStateHandler().handle(ctx, restore, new ArrayList<>());
+    }
 
     private ExecutorContext newCtx(Captured cap) {
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
@@ -1045,6 +1134,22 @@ class BoundedKindTest {
         }
     }
 
+    /** A → B → ship(fails). Durable-by-default; both A and B are compensable (§4.3 resume). */
+    public static final class ResumeSagaOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-resume-saga";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(ResumeUndoA.class);
+            c.channel(String.class, "c1").from(ResumeUndoA.class).into(ResumeUndoB.class);
+            c.channel(String.class, "c2").from(ResumeUndoB.class).into(SagaShipFails.class);
+            c.channel(String.class, "out").from(SagaShipFails.class).toPlugin("sink");
+        }
+    }
+
     /** Reserve → Charge → Echo(succeeds): a clean completion MUST NOT compensate. */
     public static final class CleanSagaOperative implements BoundedOperative {
         @Override
@@ -1364,6 +1469,56 @@ class BoundedKindTest {
         @Override
         public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
             throw new OperationException("ship failed");
+        }
+    }
+
+    /**
+     * Compensable; undo logs {@code undo-A} UNCONDITIONALLY (not per output) so a
+     * crash-resume — which reconstructs completed stages with EMPTY outputs (an
+     * operation's collected output was never durable) — is still observable.
+     */
+    public static final class ResumeUndoA extends StrOp {
+        @Override
+        public String name() {
+            return "resume_undo_a";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            ctx.emit("a:" + input);
+        }
+
+        @Override
+        public boolean compensateOverridden() {
+            return true;
+        }
+
+        @Override
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+            COMPENSATION_LOG.add("undo-A");
+        }
+    }
+
+    /** Compensable twin of {@link ResumeUndoA}; undo logs {@code undo-B} unconditionally. */
+    public static final class ResumeUndoB extends StrOp {
+        @Override
+        public String name() {
+            return "resume_undo_b";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            ctx.emit("b:" + input);
+        }
+
+        @Override
+        public boolean compensateOverridden() {
+            return true;
+        }
+
+        @Override
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+            COMPENSATION_LOG.add("undo-B");
         }
     }
 

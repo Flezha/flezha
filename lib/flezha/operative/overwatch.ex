@@ -1140,13 +1140,16 @@ defmodule Flezha.Operative.Overwatch do
     case Restore.assemble_payload({rc, sh, pk}) do
       {:ok, payload} ->
         segment_id_bytes = Wire.encode_segment_id(rc, sh, pk)
+        markers = Flezha.State.Registry.compensation_markers({rc, sh, pk})
 
         command =
           {:restore_init_state,
            %ExecutorCommands.RestoreInitState{
              segment_id: segment_id_bytes,
              snapshot_bytes: payload.snapshot_bytes,
-             change_log_bytes: payload.change_log_bytes
+             change_log_bytes: payload.change_log_bytes,
+             has_compensation_intent: markers.intent,
+             has_compensation_done: markers.done
            }}
 
         ControlChannel.send_control(executor_id, command)

@@ -155,6 +155,14 @@ message RestoreInitState {
     bytes segment_id = 1;
     bytes snapshot_bytes = 2;
     bytes change_log_bytes = 3;
+    // Saga crash-resume (bounded-operative-saga): the Controller sets these
+    // from the per-Segment compensation markers it persisted for a durable
+    // bounded operative. `has_compensation_intent` ⇒ this Segment's operation
+    // completed forward and may need undo; `has_compensation_done` ⇒ its
+    // compensation already ran (skip it on resume). Both false for a
+    // continuous operative or a bounded one that never compensated.
+    bool has_compensation_intent = 4;
+    bool has_compensation_done = 5;
 }
 
 // SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`

@@ -30,12 +30,12 @@ public final class ConnectSocketHandler implements CommandHandler {
         // Resolves the live stream on each send so a reconnect's fresh stream is
         // used without re-registering segments; the sink replays any frames
         // buffered while it was absent.
-        SegmentStateSink.installGlobalSink(frame -> {
+        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
             long secondary = streams.anySecondary();
             if (secondary == 0L) {
                 return false;
             }
-            byte[] envelope = FrameEncoder.build(SegmentStateSink.PAYLOAD_ID_CHANGE, frame, Map.of());
+            byte[] envelope = FrameEncoder.build(payloadId, frame, Map.of());
             return NativeTransport.streamWrite(nativeHandle, secondary, envelope) == 0;
         });
         return new byte[0];

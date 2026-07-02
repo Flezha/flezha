@@ -2,7 +2,9 @@ package com.flezha.sdk.runtime.operative;
 
 import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner.BoundedSegment;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -61,6 +63,14 @@ public final class BoundedOperativeInstance implements Operative {
     // 0-count latch (no wait).
     private volatile List<List<BoundedSegment>> stageSegments = List.of();
     private volatile CountDownLatch restoreGate = new CountDownLatch(0);
+
+    // Saga crash-resume markers (§4.3), keyed by SegmentId.encoded(), shipped
+    // back on RestoreInitState: `intents` ⇒ the Segment's operation completed
+    // forward and may need undo; `done` ⇒ its compensation already ran (skip).
+    // Non-empty `intents` ⇒ the driver finishes the compensation instead of
+    // re-running the forward chain.
+    private final Set<String> compensationIntents = ConcurrentHashMap.newKeySet();
+    private final Set<String> compensationDone = ConcurrentHashMap.newKeySet();
 
     public BoundedOperativeInstance(@Nonnull String instanceId, @Nonnull String factoryId) {
         this.instanceId = instanceId;
@@ -133,6 +143,30 @@ public final class BoundedOperativeInstance implements Operative {
      */
     public void noteRestored() {
         restoreGate.countDown();
+    }
+
+    /**
+     * Record the shipped-back saga compensation markers for a Segment (crash-
+     * resume): {@code intent} ⇒ its operation completed forward and may need undo;
+     * {@code done} ⇒ its compensation already ran (skip it on resume).
+     */
+    public void noteCompensationMarkers(@Nonnull String segmentKey, boolean intent, boolean done) {
+        if (intent) {
+            compensationIntents.add(segmentKey);
+        }
+        if (done) {
+            compensationDone.add(segmentKey);
+        }
+    }
+
+    /** Whether this Segment completed forward and needs undo (drives which hooks a resume runs). */
+    public boolean hasCompensationIntent(@Nonnull String segmentKey) {
+        return compensationIntents.contains(segmentKey);
+    }
+
+    /** Whether this Segment's compensation already ran (skip on resume). */
+    public boolean hasCompensationDone(@Nonnull String segmentKey) {
+        return compensationDone.contains(segmentKey);
     }
 
     /**

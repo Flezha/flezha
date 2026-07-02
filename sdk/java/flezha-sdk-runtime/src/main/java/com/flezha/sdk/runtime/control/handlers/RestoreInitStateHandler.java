@@ -80,6 +80,14 @@ public final class RestoreInitStateHandler implements CommandHandler {
                 } catch (RuntimeException e) {
                     errors.add("restore_init_state: apply failed: " + e.getMessage());
                 } finally {
+                    // Saga crash-resume (§4.3): carry the per-Segment compensation
+                    // markers so the driver finishes an in-flight undo (intent) and
+                    // skips already-undone segments (done).
+                    bounded.instance()
+                            .noteCompensationMarkers(
+                                    bounded.segment().identity().encoded(),
+                                    req.getHasCompensationIntent(),
+                                    req.getHasCompensationDone());
                     bounded.instance().noteRestored();
                 }
             } else {
