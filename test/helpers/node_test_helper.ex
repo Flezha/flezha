@@ -138,6 +138,16 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   end
 
   def start_executor(namespace \\ "test_temp_namespace", opts \\ []) do
+    {_port, executor_id} = start_executor_port(namespace, opts)
+    executor_id
+  end
+
+  @doc """
+  Like `start_executor/2` but returns `{port, executor_id}`. The port is needed
+  by crash tests that must reach the executor's OS pid
+  (`:erlang.port_info(port, :os_pid)`) to `kill -KILL` it.
+  """
+  def start_executor_port(namespace \\ "test_temp_namespace", opts \\ []) do
     {:ok, current_path} = :file.get_cwd()
     transport = Keyword.get(opts, :transport, :uds)
     runtime = Keyword.get(opts, :runtime, :rust)
@@ -151,10 +161,11 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
     Flezha.Service.EventManager.add_handler(:executor_connected_event)
 
-    Flezha.Service.PortPilot.open_port(command,
-      transport: transport,
-      env: Keyword.get(opts, :env, [])
-    )
+    {port, _command} =
+      Flezha.Service.PortPilot.open_port(command,
+        transport: transport,
+        env: Keyword.get(opts, :env, [])
+      )
 
     executor_id =
       receive do
@@ -166,7 +177,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # Remove the handler to duplicate events.
     Flezha.Service.EventManager.rem_handler(:executor_connected_event)
 
-    executor_id
+    {port, executor_id}
   end
 
   # Build the command line used to launch the compute engine for a given runtime.

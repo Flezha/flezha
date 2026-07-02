@@ -144,17 +144,24 @@ a fully-downed cluster, it replays the operative list from DETS (opt-in via the
 cluster it syncs from peers and discards the local DETS copy — peers are always
 authoritative. See [`process_hub_recovery_model.md`](process_hub_recovery_model.md).
 
-**Bounded-kind operatives (deferred boot-recovery gaps).** A completed `:bounded`
-operative is deregistered on completion, so it never reaches boot recovery. But a
-bounded operative still running (in the registry, not yet complete) when the
-controller restarts WILL be replayed from DETS and its `run` may execute again — a
-duplicate side-effect. v1 does not gate this (no `restart_on_boot?` capability).
-Related v1 gaps: bounded output is at-least-once with no bounded-specific dedup;
-there is no in-flight operative visibility or cooperative cancel beyond
-`flz operative stop`. These are documented for a proper follow-up — see the
-Bounded Operative design notes. (A near-instant bounded operative completing
-during the start RPC's confirmation window is handled — a clean exit there is
-reported as a successful start.)
+**Bounded-kind operatives (durable crash-resume).** A `:bounded` operative is
+**durable by default** (opt-out per class) and crash-resumes on the shared WAL
+substrate: on an executor/controller restart it restores its committed
+per-Segment state via the bind-time restore path and **re-runs its operation
+chain** (Model A idempotent re-run — a step may repeat, so steps are idempotent
+by author contract; the `run`-sugar form re-runs from the top). A restore-before-run
+gate (`AddOperative.resume_segment_count`) holds the first operation until the
+persisted Segments are restored, so it never runs on empty state. Saga
+compensation is likewise crash-safe — compensation-intent / -done markers ride
+the restore, so a crash mid-rollback resumes the remaining hooks and skips the
+already-done ones. A completed operative is deregistered, but its final state + a
+completion record are **retained for a window** (default 3 days) for post-hoc
+inspection via `flz operative info`. Execution is **at-least-once**: a
+non-idempotent fire-and-forget job should opt out of durability so a crash
+re-runs from a clean slate rather than a partial one. See
+[`bounded_operative.md`](bounded_operative.md). (A near-instant bounded operative
+completing during the start RPC's confirmation window is handled — a clean exit
+there is reported as a successful start.)
 
 ---
 
@@ -294,6 +301,10 @@ data-freeze incidents are tracked one-entry-per-occurrence in
 | Controller graceful restart with live peer | None — peer sync | At-least-once |
 | Controller recovery-mode restart, sole instance | None — DETS replay | At-least-once |
 | Whole cluster cold boot | Recovered from DETS | n/a |
+| Bounded operative executor SIGKILL (durable) | None past last WAL fsync — restores + re-runs the chain | At-least-once |
+| Bounded operative executor SIGKILL (persistence opted out) | Full — re-runs from the top | At-least-once |
 
 For the full scenario matrix and operator playbook see
-[`data_durability.md`](data_durability.md).
+[`data_durability.md`](data_durability.md); for the bounded operative model
+(structure, lifecycle, saga, crash-resume, retention) see
+[`bounded_operative.md`](bounded_operative.md).

@@ -61,6 +61,8 @@ fn register_continuous_all() {
 
 fn register_bounded_all() {
     register_bounded::<EchoBounded>();
+    register_bounded::<CommitBlockBounded>();
+    register_bounded::<SagaBlockBounded>();
 }
 
 // -- EchoBounded -----------------------------------------------------------------
@@ -78,6 +80,169 @@ impl BoundedOperative for EchoBounded {
     fn run(ctx: &mut BoundedCtx, args: &str) -> Result<(), BoundedError> {
         ctx.emit(format!("echo:{args}").into_bytes())?;
         Ok(())
+    }
+}
+
+// -- Durable structured bounded operatives (crash-resume e2e, §7c.3) ------------
+//
+// `commit_block_bounded` and `saga_block_bounded` are durable-by-default,
+// multi-operation bounded operatives that BLOCK mid-chain on the
+// `FLEZHA_BOUNDED_E2E_RELEASE` env var so a SIGKILL of the executor lands with
+// earlier operations' Segment state already committed to the WAL. The resumed
+// executor is launched WITH the env set, so the respawned instance restores the
+// committed state (crash-resume) and runs to completion. A shared gate keeps the
+// crash window deterministic — no busy-spin, no wall-clock races.
+
+const E2E_RELEASE_ENV: &str = "FLEZHA_BOUNDED_E2E_RELEASE";
+
+fn e2e_released() -> bool {
+    env::var(E2E_RELEASE_ENV).is_ok()
+}
+
+// Park a pool worker (never the driver thread) until the release env is set.
+fn block_until_released() {
+    while !e2e_released() {
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+// SET-style Segment state: `apply` is idempotent, so re-running an operation
+// from the same args on resume is a no-op over the restored state (Model A
+// idempotent re-run). `BTreeSet` keeps snapshot bytes deterministic.
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct SeenState {
+    items: std::collections::BTreeSet<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+struct Insert(String);
+impl Change for Insert {}
+
+// A durable `String -> String` step: commits one idempotent Change to the WAL
+// (keyed by the op name, so a resume re-run is a no-op) and passes the input on.
+// With `compensate:` it declares a saga hook (the given body is the hook,
+// returning `Result`); the `commit_a` form omits it so a clean crash-resume
+// re-runs forward instead of undoing.
+macro_rules! durable_step {
+    ($ty:ident, $name:literal $(, compensate: $comp:expr)?) => {
+        #[derive(Default)]
+        struct $ty;
+        impl Operation for $ty {
+            type Input = String;
+            type Output = String;
+            type State = SeenState;
+            type Change = Insert;
+            type Clock = WallClock;
+            type Config = ();
+            fn name() -> &'static str {
+                $name
+            }
+            fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> SeenState {
+                SeenState::default()
+            }
+            fn apply_change(state: &mut SeenState, change: &Insert) {
+                state.items.insert(change.0.clone());
+            }
+            fn run(
+                &mut self,
+                input: String,
+                mut state: StateHandle<'_, Self>,
+                ctx: &mut OperationCtx<'_>,
+            ) -> Result<(), OperationError> {
+                state.apply(Insert($name.to_string()));
+                ctx.emit::<String>(input)
+            }
+            $(
+                const COMPENSATE_OVERRIDDEN: bool = true;
+                fn compensate(
+                    &mut self,
+                    _out: Vec<std::sync::Arc<String>>,
+                    _state: StateHandle<'_, Self>,
+                    _ctx: &mut OperationCtx<'_>,
+                ) -> Result<(), OperationError> {
+                    $comp
+                }
+            )?
+        }
+    };
+}
+
+// A stateless terminal `String` step whose whole behaviour is `$run` (ignores
+// input + ctx): either blocks the chain or fails it.
+macro_rules! stateless_step {
+    ($ty:ident, $name:literal, $run:expr) => {
+        #[derive(Default)]
+        struct $ty;
+        impl Operation for $ty {
+            type Input = String;
+            type Output = String;
+            type State = ();
+            type Change = NoChange;
+            type Clock = WallClock;
+            type Config = ();
+            fn name() -> &'static str {
+                $name
+            }
+            fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) {}
+            fn run(
+                &mut self,
+                _input: String,
+                _: StateHandle<'_, Self>,
+                _ctx: &mut OperationCtx<'_>,
+            ) -> Result<(), OperationError> {
+                $run
+            }
+        }
+    };
+}
+
+// `commit_block_bounded`: op A commits durable state, op B blocks until the
+// resumed executor sets the release env — so a SIGKILL lands with op A's state
+// already on the WAL and op B never finished. Completion is observed
+// controller-side via the finished-job record.
+durable_step!(CommitA, "commit_a");
+stateless_step!(BlockB, "block_b", {
+    block_until_released();
+    Ok(())
+});
+
+struct CommitBlockBounded;
+impl BoundedOperative for CommitBlockBounded {
+    fn factory_id() -> &'static str {
+        "commit_block_bounded"
+    }
+    fn operations(c: &mut ChannelBuilder) {
+        c.input::<String>("in").into::<CommitA>();
+        c.channel::<String>("mid")
+            .from::<CommitA>()
+            .into::<BlockB>();
+    }
+}
+
+// `saga_block_bounded`: SA + SB commit durable state and compensate; SC fails,
+// triggering reverse-order rollback (SB then SA). SA's compensate BLOCKS so a
+// SIGKILL lands mid-rollback with SB's done-marker already durable — the respawn
+// finishes SA and SKIPS the already-done SB.
+durable_step!(SagaA, "saga_a", compensate: {
+    block_until_released();
+    Ok(())
+});
+durable_step!(SagaB, "saga_b", compensate: Ok(()));
+stateless_step!(
+    SagaC,
+    "saga_c",
+    Err(OperationError::Custom("saga_c always fails".into()))
+);
+
+struct SagaBlockBounded;
+impl BoundedOperative for SagaBlockBounded {
+    fn factory_id() -> &'static str {
+        "saga_block_bounded"
+    }
+    fn operations(c: &mut ChannelBuilder) {
+        c.input::<String>("in").into::<SagaA>();
+        c.channel::<String>("s1").from::<SagaA>().into::<SagaB>();
+        c.channel::<String>("s2").from::<SagaB>().into::<SagaC>();
     }
 }
 

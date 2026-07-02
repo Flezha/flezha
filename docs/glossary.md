@@ -26,10 +26,20 @@ contains Segments.**
     always-on streaming unit. Implements the `ContinuousOperative` trait/interface
     and declares its Channels. This is the original Flezha workload.
 
-  - **Bounded Operative** (kind `bounded`) — a run-to-completion unit. Implements
-    the `BoundedOperative` trait/interface, does its work, signals completion, and
-    is deregistered. Both kinds share the `Computation` base trait/interface (whose
-    only shared member is `factory_id()`).
+  - **Bounded Operative** (kind `bounded`) — an on-demand, terminating,
+    possibly-interactive process. Implements the `BoundedOperative`
+    trait/interface. It authors the same Operations/Channels/Segments a continuous
+    operative does but runs them **sequentially** (a linear chain with a per-operation
+    count-based barrier; segments within an operation still run in parallel), can
+    **receive input after it starts** (an inbox), and terminates on the first exit
+    trigger — chain quiescence, `ctx.complete`, a loop's terminal predicate, a
+    `max_duration`, or an external `flz operative stop`. It may declare **saga
+    compensation** hooks (reverse-order, per-segment undo on failure) and is
+    **durable by default** (opt-out per class): it crash-resumes from the WAL and
+    its finished state is retained for a window. `run(ctx, args)` is sugar for a
+    single-Operation, single-Segment bounded operative. Both kinds share the
+    `Computation` base trait/interface (whose only shared member is `factory_id()`).
+    See [`resilience/bounded_operative.md`](resilience/bounded_operative.md).
 
 - **Operation** — a typed stage inside an Operative that processes inputs from a
   Channel. Implements the `Operation` trait/interface and declares its `Input`,

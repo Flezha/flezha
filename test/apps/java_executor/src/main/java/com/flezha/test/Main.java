@@ -35,6 +35,8 @@ public final class Main {
 
     private static void registerBoundedOperatives() {
         Flezha.registerBounded(EchoBoundedOperative.class);
+        Flezha.registerBounded(CommitBlockBoundedOperative.class);
+        Flezha.registerBounded(SagaBlockBoundedOperative.class);
     }
 
     private static void stdKeeper() {

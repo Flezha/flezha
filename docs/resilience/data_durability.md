@@ -38,6 +38,9 @@ set and the convergence loop re-adds anything missing. See
 | **Whole cluster down → cold start** | Recovered from DETS | n/a | The ONE case DETS replay is for: no peer survives, disk is the only record. |
 | **Node rejoins a live cluster** | Synced from peers; local DETS discarded | n/a | Correct — local DETS is stale; peers are authoritative. |
 | **Kafka/broker down, executors alive** | No loss | Buffered, resumes | Producer reconnects (see kafka producer recovery); offset resumes when the broker returns. |
+| **Bounded operative executor SIGKILL** (durable, the default) | **Brief best-effort loss** (async WAL lag) | At-least-once | Respawns on a new executor, restores committed Segment state via the restore-before-run gate, and **re-runs the operation chain** (Model A — completed ops are idempotent no-ops). See [`bounded_operative.md`](bounded_operative.md). |
+| **Bounded operative executor SIGKILL** (persistence opted out) | **Full — re-runs from the top** | At-least-once | No WAL to restore from; the operative re-runs its `run`/chain from `args`. Idempotent by author contract, or don't opt out. |
+| **Bounded operative SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and **skips** the already-done ones (no forward re-run). |
 
 ## Why output can briefly get ahead of state (the hard-kill gap)
 
@@ -83,6 +86,10 @@ uses the batched FsyncBatcher — per-record WAL fsync is not supported.
   keys, or DB upserts downstream.
 - **Never treat DETS as the source of truth** in code or ops — it is a cold-start backup
   only (see `docs/resilience/process_hub_recovery_model.md`).
+- **Bounded operatives are durable + at-least-once by default.** A crash re-runs the
+  operation chain over restored state, so author each operation (and compensation)
+  **idempotently**, or **opt the class out of persistence** for a fire-and-forget job that
+  must re-run from a clean slate. See [`bounded_operative.md`](bounded_operative.md).
 
 ## Common pitfalls
 
