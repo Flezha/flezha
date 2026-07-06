@@ -80,17 +80,17 @@ The 4-op invariant is an analytical bound enforced by code review, consistent wi
 
 ### Requirement: Live Registry Concurrent Access
 
-The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single operation's critical section. The registry SHALL preserve the existing public API shape: Operative classes register at startup via `register_continuous::<R: ContinuousOperative>()`; `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<ContinuousInstance>` or equivalent handle.
+The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single operation's critical section. The registry SHALL preserve the existing public API shape: Operative classes register at startup via `register_unbounded::<R: UnboundedOperative>()`; `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<UnboundedInstance>` or equivalent handle.
 
-The "registry" name carries forward from the pre-change implementation; what's stored in it changes from `Arc<Mutex<ContinuousBox>>` to `Arc<ContinuousInstance>`. The concurrency guarantees are unchanged.
+The "registry" name carries forward from the pre-change implementation; what's stored in it changes from `Arc<Mutex<UnboundedBox>>` to `Arc<UnboundedInstance>`. The concurrency guarantees are unchanged.
 
 #### Scenario: 100 reader threads do not stall on a single writer
 - **WHEN** 100 threads each perform 10,000 registry lookups while a 101st thread registers and removes Operative instances in a loop
 - **THEN** no reader thread observes a latency spike greater than 1 millisecond attributable to the writer
 
 #### Scenario: Registry preserves public registration contract
-- **WHEN** user code calls `register_continuous::<R>()` at startup and later `AddOperative` triggers an Operative instance creation
-- **THEN** the resulting `ContinuousInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-operation-segment-model` capability's scenarios
+- **WHEN** user code calls `register_unbounded::<R>()` at startup and later `AddOperative` triggers an Operative instance creation
+- **THEN** the resulting `UnboundedInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-operation-segment-model` capability's scenarios
 
 ### Requirement: Reconnect Semantics Preserved
 
@@ -119,7 +119,7 @@ Every `CommandRequest` variant that survives the cutover (`AssignExecutorId`, `C
 `OperationMessage` and `OperationMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `operative-message-handlers` adds per-Operation `handle_message` (see `operative-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any operative that did not implement the optional `handle_message` callback.
 
 #### Scenario: AddOperative with init_values produces same response shape
-- **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_continuous::<MarketOperative>()` (post-change) or `register_factory("market", ...)` (pre-change)
+- **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_unbounded::<MarketOperative>()` (post-change) or `register_factory("market", ...)` (pre-change)
 - **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Operation, see the `operative-operation-segment-model` capability)
 
 #### Scenario: ExecutorDisconnect closes sockets identically
@@ -132,18 +132,18 @@ Every `CommandRequest` variant that survives the cutover (`AssignExecutorId`, `C
 
 ### Requirement: Per-Segment flusher single-thread linger drain
 
-The Rust SDK SHALL spawn at most one `SegmentFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `register_continuous::<R>()` call that registers an Operation with a non-`NoChange` Change type. Programs that register only `NoChange` Operations SHALL NOT spawn a flusher thread.
+The Rust SDK SHALL spawn at most one `SegmentFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `register_unbounded::<R>()` call that registers an Operation with a non-`NoChange` Change type. Programs that register only `NoChange` Operations SHALL NOT spawn a flusher thread.
 
 The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Segments; (c) for each Segment, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Segment's `send_frame` function pointer (stub in this change; agent-wired in `operative-state-persistence`).
 
 #### Scenario: NoChange-only program does not spawn flusher
 
-- **WHEN** a Rust process registers `register_continuous::<R>()` for an Operative whose Operations all have `Change = NoChange`
+- **WHEN** a Rust process registers `register_unbounded::<R>()` for an Operative whose Operations all have `Change = NoChange`
 - **THEN** no `SegmentFlusher` thread SHALL be spawned, observable via thread-count assertions in the test (`std::thread::available_parallelism` baseline + assertion that no `flezha-flusher` named thread exists)
 
 #### Scenario: First non-NoChange registration starts the flusher
 
-- **WHEN** a Rust process registers `register_continuous::<R>()` for an Operative containing an Operation with `Change = MyChange`
+- **WHEN** a Rust process registers `register_unbounded::<R>()` for an Operative containing an Operation with `Change = MyChange`
 - **THEN** exactly one OS thread named `flezha-flusher` SHALL be spawned for the lifetime of the process
 
 #### Scenario: Flusher drains all non-empty buffers per tick

@@ -71,7 +71,9 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
       operatives = HubManager.get_all_operatives(@namespace)
 
-      assert {"operative_mn", got_pid} = Enum.find(operatives, fn {id, _} -> id == "operative_mn" end)
+      assert {"operative_mn", got_pid} =
+               Enum.find(operatives, fn {id, _} -> id == "operative_mn" end)
+
       assert got_pid == local_pid
     end
 
@@ -103,6 +105,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
     setup do
       {:ok, _} = ensure_hub(@health_ns)
       prev = Snapshot.current()
+
       on_exit(fn ->
         Snapshot.publish(prev)
         HubManager.stop_hub(@health_ns)

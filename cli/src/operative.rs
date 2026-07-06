@@ -28,7 +28,7 @@ pub fn handle_operative_command(args: &[String]) {
 }
 
 fn handle_start(args: &[String]) {
-    let example_usage = "Usage: flz operative start <operative_id> <factory_id> [--kind <continuous|bounded>] [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>] [--plugins <json-array>]";
+    let example_usage = "Usage: flz operative start <operative_id> <factory_id> [--kind <unbounded|bounded>] [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>] [--plugins <json-array>]";
 
     if args.len() < 3 {
         eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
@@ -48,7 +48,7 @@ fn handle_start(args: &[String]) {
     };
 
     let kind =
-        extract_param(&args[3..], "--kind", "--kind").unwrap_or_else(|| "continuous".to_string());
+        extract_param(&args[3..], "--kind", "--kind").unwrap_or_else(|| "unbounded".to_string());
 
     let mut opts: HashMap<String, String> = HashMap::new();
 

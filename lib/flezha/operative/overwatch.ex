@@ -153,7 +153,7 @@ defmodule Flezha.Operative.Overwatch do
         |> Map.put(:init_error, nil)
         |> activate_initial_plugins()
 
-      # Record this class's kind so the State subsystem can gate continuous-only
+      # Record this class's kind so the State subsystem can gate unbounded-only
       # behaviours (retention/watchdog/dynamic-evict/time-travel) for a durable
       # bounded operative.
       _ = ClassRegistry.put(operative_class(state), state.builder.kind)
@@ -394,7 +394,7 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   # Bind-time restore is capability-gated on `persistent_state?` (kind+class):
-  # `:continuous` always; a durable `:bounded` class (this IS its crash-resume)
+  # `:unbounded` always; a durable `:bounded` class (this IS its crash-resume)
   # unless it opted out. A stateless kind has no WAL to replay.
   defp replay_persisted_segments(kind, operative_class, executor_id) do
     if PersistenceResolver.persistent_state?(kind, operative_class) do
@@ -440,7 +440,7 @@ defmodule Flezha.Operative.Overwatch do
   `bounded-operative-durability`).
 
   Non-zero only for a durable `:bounded` class with WAL state on disk; `0` for a
-  fresh spawn, a continuous operative, or an opted-out bounded one — those need
+  fresh spawn, an unbounded operative, or an opted-out bounded one — those need
   no restore-before-run gate. Matches the frames `replay_persisted_segments/3`
   ships (same enumeration + `has_persisted_state?` filter).
   """

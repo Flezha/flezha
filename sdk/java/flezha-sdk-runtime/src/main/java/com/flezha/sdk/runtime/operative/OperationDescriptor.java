@@ -8,7 +8,7 @@ import java.util.OptionalInt;
 import javax.annotation.Nonnull;
 
 /**
- * Frozen runtime descriptor for one Operation inside a {@link ContinuousOperativeTopology}.
+ * Frozen runtime descriptor for one Operation inside a {@link UnboundedOperativeTopology}.
  *
  * <p>Carries the Operation's class so the runtime can instantiate one Operation per
  * Segment at operative-instance startup, plus the resolved input/output

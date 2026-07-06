@@ -9,8 +9,8 @@ import java.util.function.Function;
 import javax.annotation.Nonnull;
 
 /**
- * Frozen runtime descriptor for one channel inside a {@link ContinuousOperativeTopology}.
- * Indexed by interned channel id (the position in {@link ContinuousOperativeTopology#channels}).
+ * Frozen runtime descriptor for one channel inside a {@link UnboundedOperativeTopology}.
+ * Indexed by interned channel id (the position in {@link UnboundedOperativeTopology#channels}).
  */
 public final class ChannelDescriptor {
 

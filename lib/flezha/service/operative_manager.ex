@@ -140,7 +140,7 @@ defmodule Flezha.Service.OperativeManager do
   A bound `:bounded` operative is stopped **cooperatively**: a `BoundedStop`
   trips the SDK's cancellation token and the operative winds down to its own
   `BoundedCompleted` (status "cancelled"), which drives the single teardown via
-  `ControlChannel.handle_bounded_completed/2`. Everything else (`:continuous`, or
+  `ControlChannel.handle_bounded_completed/2`. Everything else (`:unbounded`, or
   a bounded operative not bound to an executor) takes the hard `stop_operative/2`
   teardown. An unreadable kind (not found / wedged) also falls back to the hard
   stop so `flz operative stop` always attempts removal.
@@ -419,7 +419,8 @@ defmodule Flezha.Service.OperativeManager do
               # clean exit is a successful start, not a failure; no live binding
               # remains, so `executor_id` is nil.
               :exit, {reason, _} when reason in [:normal, :noproc] ->
-                {:ok, %{operative_id: operative.id, executor_id: nil, node: operative_node, pid: pid}}
+                {:ok,
+                 %{operative_id: operative.id, executor_id: nil, node: operative_node, pid: pid}}
 
               :exit, {reason, _} ->
                 Logger.warning(

@@ -124,7 +124,8 @@ defmodule Flezha.Convergence.Loop do
     {:noreply, run_tick(state)}
   end
 
-  def handle_info({:output_stall, operative_id}, %__MODULE__{} = state) when is_binary(operative_id) do
+  def handle_info({:output_stall, operative_id}, %__MODULE__{} = state)
+      when is_binary(operative_id) do
     now = System.monotonic_time(:millisecond)
     state = %{state | stalled_operatives: Map.put(state.stalled_operatives, operative_id, now)}
     {:noreply, run_tick(state)}
@@ -148,7 +149,10 @@ defmodule Flezha.Convergence.Loop do
   @doc false
   def handle_telemetry([:flezha, :state, :output_stall], _measurements, metadata, loop_pid) do
     operative_id = Map.get(metadata, :operative_instance)
-    if is_binary(operative_id) and is_pid(loop_pid), do: send(loop_pid, {:output_stall, operative_id})
+
+    if is_binary(operative_id) and is_pid(loop_pid),
+      do: send(loop_pid, {:output_stall, operative_id})
+
     :ok
   catch
     _, _ -> :ok
@@ -217,7 +221,11 @@ defmodule Flezha.Convergence.Loop do
 
     :telemetry.execute(
       [:flezha, :convergence, :tick],
-      %{operatives_total: length(intent.operatives), actions_issued: issued, duration_ms: elapsed},
+      %{
+        operatives_total: length(intent.operatives),
+        actions_issued: issued,
+        duration_ms: elapsed
+      },
       %{state: :ticking}
     )
 
@@ -454,7 +462,9 @@ defmodule Flezha.Convergence.Loop do
   # not yet observed it or its read failed — never permanently. Mirrors the
   # bound/misbound cond in `Diff.compute/2`, extended with the produce signals.
   @doc false
-  @spec operative_health_map([Intent.operative()], map(), %__MODULE__{}) :: %{{atom(), binary()} => atom()}
+  @spec operative_health_map([Intent.operative()], map(), %__MODULE__{}) :: %{
+          {atom(), binary()} => atom()
+        }
   def operative_health_map(operatives, reality, %__MODULE__{} = state) do
     observed = Map.get(reality, :operatives, %{})
     active = Map.get(reality, :active_executors, %{})

@@ -11,7 +11,7 @@ import javax.annotation.Nonnull;
  * terminating, possibly-interactive process.
  *
  * <p>A bounded is started with {@code args}, runs to an exit trigger, and is
- * then torn down. It reuses the continuous <strong>building blocks</strong>
+ * then torn down. It reuses the unbounded <strong>building blocks</strong>
  * (Operations, Channels, Segments, per-Segment state, {@code ctx.emit}) but
  * drives them under a bounded <strong>lifecycle</strong>:
  *
@@ -20,7 +20,7 @@ import javax.annotation.Nonnull;
  *       {@link #run} body: a single implicit Operation/Segment.</li>
  *   <li><strong>Structured</strong> — override {@link #operations} to author
  *       Operations/Channels/Segments on the same {@link ChannelBuilder} a
- *       continuous operative uses; the bounded driver runs them sequentially
+ *       unbounded operative uses; the bounded driver runs them sequentially
  *       in a linear chain with a per-operation count-based barrier (segments
  *       within one operation still run in parallel).</li>
  *   <li><strong>Exit triggers</strong> — the operative terminates on the first
@@ -35,7 +35,7 @@ import javax.annotation.Nonnull;
  * <p>Authoring is a distinct, lightweight interface (not a degenerate
  * {@code Operation}). Register a bounded with
  * {@link com.flezha.sdk.Flezha#registerBounded(Class)} — the sibling of
- * {@code registerContinuous} — before {@code Flezha.newInstance(...)}:
+ * {@code registerUnbounded} — before {@code Flezha.newInstance(...)}:
  *
  * <pre>{@code
  * public final class GreetBoundedOperative implements BoundedOperative {
@@ -75,7 +75,7 @@ public interface BoundedOperative extends Computation {
 
     /**
      * Structured form: declare a <strong>linear chain</strong> of Operations /
-     * Channels / Segments on the same {@link ChannelBuilder} a continuous
+     * Channels / Segments on the same {@link ChannelBuilder} an unbounded
      * operative uses. The default is empty, selecting the {@link #run}-sugar
      * path. A non-empty declaration is run sequentially by the bounded driver
      * (operation {@code N+1} starts only when every segment of operation
@@ -122,7 +122,7 @@ public interface BoundedOperative extends Computation {
 
     /**
      * Class-level persistence toggle (durable by default, mirroring
-     * {@code ContinuousOperative.persistenceEnabled()}). When {@code true}, a
+     * {@code UnboundedOperative.persistenceEnabled()}). When {@code true}, a
      * structured bounded operative's per-Segment Changes are written to the WAL
      * as they apply, so a crash resumes from persisted state. When
      * {@code false}, the per-Segment flush drains and discards Changes with no

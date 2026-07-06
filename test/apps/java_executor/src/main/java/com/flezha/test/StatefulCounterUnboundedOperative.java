@@ -1,14 +1,14 @@
 package com.flezha.test;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.ContinuousOperative;
+import com.flezha.sdk.operative.UnboundedOperative;
 
 /**
- * Java equivalent of the Rust SDK's {@code StatefulCounterContinuousOperative}.
+ * Java equivalent of the Rust SDK's {@code StatefulCounterUnboundedOperative}.
  * One Operation ({@link CounterOperation}); each input recorded as a
  * {@link CounterChange}.
  */
-public final class StatefulCounterContinuousOperative implements ContinuousOperative {
+public final class StatefulCounterUnboundedOperative implements UnboundedOperative {
 
     @Override
     public String factoryId() {

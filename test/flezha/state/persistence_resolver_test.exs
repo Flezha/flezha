@@ -18,8 +18,8 @@ defmodule Flezha.State.PersistenceResolverTest do
   end
 
   describe "persistent_state?/3" do
-    test ":continuous is always durable" do
-      assert PersistenceResolver.persistent_state?(:continuous, "any_class")
+    test ":unbounded is always durable" do
+      assert PersistenceResolver.persistent_state?(:unbounded, "any_class")
     end
 
     test ":bounded is durable by default" do

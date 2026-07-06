@@ -19,44 +19,44 @@ The Java SDK SHALL provide `com.flezha.sdk.Flezha.newInstance(String namespace)`
 - **THEN** the SDK SHALL retry the connect with exponential backoff starting at 200 ms and capped at 30 s, and succeed once the agent becomes available
 
 #### Scenario: newInstance without any registered operative class fails fast
-- **WHEN** `Flezha.newInstance(namespace)` is called before any `OperativeRegistry.registerContinuous(...)` (or `Flezha.registerContinuous(...)`) call
+- **WHEN** `Flezha.newInstance(namespace)` is called before any `OperativeRegistry.registerUnbounded(...)` (or `Flezha.registerUnbounded(...)`) call
 - **THEN** the SDK SHALL throw an `IllegalStateException` describing the missing operative registration
 
 ### Requirement: Operative Registration
 
-The Java SDK SHALL provide `OperativeRegistry.registerContinuous(Class<? extends ContinuousOperative>)` (and a thin static `Flezha.registerContinuous(Class<? extends ContinuousOperative>)` pass-through) that MUST be called **before** `Flezha.newInstance`. For each registered ContinuousOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the agent-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel-type, type-equality between channel payload and producer/consumer Operation I/O, no unwired channels, no multi-producer, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry MUST be frozen at `Flezha.newInstance(...)` time. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
+The Java SDK SHALL provide `OperativeRegistry.registerUnbounded(Class<? extends UnboundedOperative>)` (and a thin static `Flezha.registerUnbounded(Class<? extends UnboundedOperative>)` pass-through) that MUST be called **before** `Flezha.newInstance`. For each registered UnboundedOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the agent-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel-type, type-equality between channel payload and producer/consumer Operation I/O, no unwired channels, no multi-producer, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry MUST be frozen at `Flezha.newInstance(...)` time. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
 
-#### Scenario: Registering a continuous operative class before newInstance succeeds
-- **WHEN** user code calls `Flezha.registerContinuous(MarketOperative.class)` and then `Flezha.newInstance("my_app")`
-- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperative::factoryId` returns) in `factory_ids`, and subsequent `AddOperative{factory_id:"market"}` commands SHALL succeed by spawning a `ContinuousOperativeInstance`
+#### Scenario: Registering an unbounded operative class before newInstance succeeds
+- **WHEN** user code calls `Flezha.registerUnbounded(MarketOperative.class)` and then `Flezha.newInstance("my_app")`
+- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperative::factoryId` returns) in `factory_ids`, and subsequent `AddOperative{factory_id:"market"}` commands SHALL succeed by spawning an `UnboundedOperativeInstance`
 
-#### Scenario: Registering a continuous operative class after newInstance is rejected
-- **WHEN** user code calls `OperativeRegistry.registerContinuous(...)` after `Flezha.newInstance(...)` has returned
+#### Scenario: Registering an unbounded operative class after newInstance is rejected
+- **WHEN** user code calls `OperativeRegistry.registerUnbounded(...)` after `Flezha.newInstance(...)` has returned
 - **THEN** the SDK SHALL throw an `IllegalStateException`
 
-#### Scenario: Duplicate factoryId across two continuous operative classes is rejected
-- **WHEN** two distinct ContinuousOperative classes both return `"market"` from `factoryId()` and both are registered
-- **THEN** the second `registerContinuous` call SHALL throw an `IllegalArgumentException` naming the duplicate factoryId
+#### Scenario: Duplicate factoryId across two unbounded operative classes is rejected
+- **WHEN** two distinct UnboundedOperative classes both return `"market"` from `factoryId()` and both are registered
+- **THEN** the second `registerUnbounded` call SHALL throw an `IllegalArgumentException` naming the duplicate factoryId
 
 #### Scenario: Wiring mismatch fails registration with a diagnosable error
 - **WHEN** an Operative declares `c.channel(Trade.class, "trade.parsed").from(ParseOperation.class).into(OhlcOperation.class)` but `OhlcOperation.inputType()` returns `Candle.class`
-- **THEN** `registerContinuous` SHALL throw `OperativeConfigurationException` whose message names the channel `"trade.parsed"`, the expected payload type (`Trade`), and the actual consumer-input type (`Candle`)
+- **THEN** `registerUnbounded` SHALL throw `OperativeConfigurationException` whose message names the channel `"trade.parsed"`, the expected payload type (`Trade`), and the actual consumer-input type (`Candle`)
 
 #### Scenario: Entry channel of disallowed type fails registration
 - **WHEN** an Operative declares `c.input(Trade.class, "trade.raw").into(ParseOperation.class)`
-- **THEN** `registerContinuous` SHALL throw `OperativeConfigurationException` stating that entry channels accept only `byte[]` or `String` in v1
+- **THEN** `registerUnbounded` SHALL throw `OperativeConfigurationException` stating that entry channels accept only `byte[]` or `String` in v1
 
 #### Scenario: Unwired channel fails registration
 - **WHEN** an Operative declares `c.channel(Candle.class, "ohlc.candles")` and never calls `.from(...)` on the resulting `ChannelDecl`
-- **THEN** `registerContinuous` SHALL throw `OperativeConfigurationException` naming the unwired channel
+- **THEN** `registerUnbounded` SHALL throw `OperativeConfigurationException` naming the unwired channel
 
 #### Scenario: Static-mode operation without segmentForOverridden is rejected
 - **WHEN** an Operation returns a non-empty list from `operationKeys()` but its `segmentForOverridden()` returns the default `false`
-- **THEN** `registerContinuous` SHALL throw `OperativeConfigurationException` naming the Operation and stating that static-mode operations must override `segmentFor` and `segmentForOverridden`
+- **THEN** `registerUnbounded` SHALL throw `OperativeConfigurationException` naming the Operation and stating that static-mode operations must override `segmentFor` and `segmentForOverridden`
 
 #### Scenario: Dynamic-mode-only declaration is rejected in v1
 - **WHEN** an Operation returns `true` from `operationKeyOverridden()` but returns an empty list from `operationKeys()`
-- **THEN** `registerContinuous` SHALL throw `OperativeConfigurationException` stating that dynamic-mode requires `operationKeys()` until `operative-dynamic-segmenting` ships
+- **THEN** `registerUnbounded` SHALL throw `OperativeConfigurationException` stating that dynamic-mode requires `operationKeys()` until `operative-dynamic-segmenting` ships
 
 ### Requirement: Operation Interface and Per-Segment Dispatch
 
@@ -124,11 +124,11 @@ The Java SDK's worker pool (sized by `FLEZHA_WORKER_POOL_SIZE`, default = `Runti
 
 The Java SDK SHALL implement handlers for every `CommandRequest` variant defined in `executor_commands.proto`: `AssignExecutorId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `SegmentState`, `MigrationSerialization`, `MigrationDeserialization`, `OperationMessage`, `ExecutorDisconnect`. Each handler MUST produce a `CommandResponse` that echoes the original `reference_id` and sets `status = "success"` or `status = "error"` with populated `errors` per `docs/sdk_protocol_spec.md` §6. `AddOperative` and `RemOperative` SHALL spawn and tear down operative instances respectively (the wire field is named `operative_id`; the SDK maps it to `operativeInstanceId`).
 
-`AddOperative` SHALL read the optional `kind` field: an empty or absent value SHALL be interpreted as `:continuous` and SHALL spawn a `ContinuousOperativeInstance` exactly as before this change; a value resolving to `:bounded` SHALL spawn a `BoundedOperativeInstance`. The per-executor instance registry SHALL hold a sealed `Operative` (provisional name) permitting the continuous-instance and bounded-instance variants, keyed by `operativeInstanceId`; the variant SHALL be resolved once per inbound frame at the dispatch boundary, leaving the operative dispatch hot path unchanged save that single per-frame branch. `RemOperative` SHALL remove either variant by instance id. `OperationMessage` SHALL respond with the canonical "unsupported" error until `operative-message-handlers` ships per-Operation `handleMessage`.
+`AddOperative` SHALL read the optional `kind` field: an empty or absent value SHALL be interpreted as `:unbounded` and SHALL spawn an `UnboundedOperativeInstance` exactly as before this change; a value resolving to `:bounded` SHALL spawn a `BoundedOperativeInstance`. The per-executor instance registry SHALL hold a sealed `Operative` (provisional name) permitting the unbounded-instance and bounded-instance variants, keyed by `operativeInstanceId`; the variant SHALL be resolved once per inbound frame at the dispatch boundary, leaving the operative dispatch hot path unchanged save that single per-frame branch. `RemOperative` SHALL remove either variant by instance id. `OperationMessage` SHALL respond with the canonical "unsupported" error until `operative-message-handlers` ships per-Operation `handleMessage`.
 
-#### Scenario: AddOperative spawns a continuous operative instance
-- **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market"}` and ContinuousOperative class `MarketOperative` is registered with `factoryId() == "market"`
-- **THEN** the SDK SHALL allocate a `ContinuousOperativeInstance` keyed by `"p1"`, call `initState(...)` for every Operation×Segment declared by `MarketOperative`, and respond with `status = "success"`
+#### Scenario: AddOperative spawns an unbounded operative instance
+- **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market"}` and UnboundedOperative class `MarketOperative` is registered with `factoryId() == "market"`
+- **THEN** the SDK SHALL allocate an `UnboundedOperativeInstance` keyed by `"p1"`, call `initState(...)` for every Operation×Segment declared by `MarketOperative`, and respond with `status = "success"`
 
 #### Scenario: AddOperative with init_values seeds initial-state for each segment
 - **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and `MarketOperative` declares one Operation with single-segment mode
@@ -138,16 +138,16 @@ The Java SDK SHALL implement handlers for every `CommandRequest` variant defined
 - **WHEN** the agent sends `AddOperative{factory_id:"missing"}`
 - **THEN** the SDK SHALL respond with `status = "error"` and `errors` containing a string naming the missing factory id
 
-#### Scenario: AddOperative with empty kind spawns a continuous operative (backward-compatible)
+#### Scenario: AddOperative with empty kind spawns an unbounded operative (backward-compatible)
 - **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market"}` with the `kind` field empty or absent
-- **THEN** the SDK SHALL resolve the kind to `:continuous` and spawn a `ContinuousOperativeInstance` exactly as before this change
+- **THEN** the SDK SHALL resolve the kind to `:unbounded` and spawn an `UnboundedOperativeInstance` exactly as before this change
 
 #### Scenario: AddOperative with kind bounded spawns a bounded variant
 - **WHEN** the agent sends `AddOperative{operative_id:"t1", factory_id:"greet", kind:"bounded"}` and `GreetOperative` is registered as a bounded operative with `factoryId() == "greet"`
 - **THEN** the SDK SHALL register a `BoundedOperativeInstance` keyed by `"t1"` as the bounded variant of the sealed operative registry and respond with `status = "success"`
 
 #### Scenario: RemOperative removes either operative variant
-- **WHEN** the agent sends `RemOperative{operative_id:"t1"}` for a live bounded operative instance (and likewise for a continuous operative instance)
+- **WHEN** the agent sends `RemOperative{operative_id:"t1"}` for a live bounded operative instance (and likewise for an unbounded operative instance)
 - **THEN** the SDK SHALL remove the instance from the sealed operative registry by id and respond with `status = "success"`
 
 #### Scenario: SegmentState returns the per-Operation / per-Segment JSON shape
@@ -314,37 +314,37 @@ The Java SDK's `Operation` interface SHALL declare `Clock extends com.flezha.sdk
 #### Scenario: Non-WallClock fails registration in v1
 
 - **WHEN** a Java Operation declares `Clock = LogicalClock`
-- **THEN** `Flezha.registerContinuous(...)` SHALL throw `OperativeConfigurationException` whose message contains "Clock not implemented yet: LogicalClock"
+- **THEN** `Flezha.registerUnbounded(...)` SHALL throw `OperativeConfigurationException` whose message contains "Clock not implemented yet: LogicalClock"
 
 ### Requirement: Operative declares persistenceEnabled default-method, frozen at instance start
 
-The Java SDK's `ContinuousOperative` interface SHALL declare `default boolean persistenceEnabled() { return true; }`. The runtime SHALL resolve a per-Operative-instance `persistenceEnabled: boolean` at the moment `AddOperative` is processed using:
+The Java SDK's `UnboundedOperative` interface SHALL declare `default boolean persistenceEnabled() { return true; }`. The runtime SHALL resolve a per-Operative-instance `persistenceEnabled: boolean` at the moment `AddOperative` is processed using:
 
 1. If the `AddOperative` metadata carries `operative_persistence.<OperativeClass>` with a boolean value (executor override), use that.
-2. Otherwise, use the value of `ContinuousOperative.persistenceEnabled()` (the Operative-class default).
+2. Otherwise, use the value of `UnboundedOperative.persistenceEnabled()` (the Operative-class default).
 3. If neither is overridden, the result is `true`.
 
-The resolved value SHALL be bound to the `ContinuousOperativeInstance` and SHALL be propagated to every `SegmentSlot` constructed for that instance. Subsequent changes to the executor-side metadata or to the SDK's `ContinuousOperative.persistenceEnabled()` impl (via SDK redeploy) SHALL NOT affect already-running instances.
+The resolved value SHALL be bound to the `UnboundedOperativeInstance` and SHALL be propagated to every `SegmentSlot` constructed for that instance. Subsequent changes to the executor-side metadata or to the SDK's `UnboundedOperative.persistenceEnabled()` impl (via SDK redeploy) SHALL NOT affect already-running instances.
 
 #### Scenario: Default-on with no override
 
 - **WHEN** an Operative's `persistenceEnabled()` is the default (returns `true`) AND no executor override is present
-- **THEN** `ContinuousOperativeInstance.persistenceEnabled()` SHALL return `true`
+- **THEN** `UnboundedOperativeInstance.persistenceEnabled()` SHALL return `true`
 
 #### Scenario: Code-declared opt-out is honored
 
 - **WHEN** `MarketOperative.persistenceEnabled()` returns `false` (user override) AND no executor override is present
-- **THEN** `ContinuousOperativeInstance.persistenceEnabled()` SHALL return `false`; the `SegmentFlusher` SHALL drain-and-discard for this instance's Segments; `NativeTransport.sendSegmentStateChange` SHALL NOT be invoked
+- **THEN** `UnboundedOperativeInstance.persistenceEnabled()` SHALL return `false`; the `SegmentFlusher` SHALL drain-and-discard for this instance's Segments; `NativeTransport.sendSegmentStateChange` SHALL NOT be invoked
 
 #### Scenario: Executor override takes precedence
 
 - **WHEN** `MarketOperative.persistenceEnabled()` returns `true` AND `AddOperative` metadata sets `operative_persistence.MarketOperative = false`
-- **THEN** `ContinuousOperativeInstance.persistenceEnabled()` SHALL return `false`
+- **THEN** `UnboundedOperativeInstance.persistenceEnabled()` SHALL return `false`
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** a `ContinuousOperativeInstance` is constructed with resolved `persistenceEnabled = true`, AND a subsequent executor config change sets `operative_persistence.<OperativeClass> = false`
-- **THEN** the running `ContinuousOperativeInstance` SHALL continue with `persistenceEnabled = true`; the new value SHALL take effect only on the next `stop_operative` + `start_operative` cycle for that instance
+- **WHEN** an `UnboundedOperativeInstance` is constructed with resolved `persistenceEnabled = true`, AND a subsequent executor config change sets `operative_persistence.<OperativeClass> = false`
+- **THEN** the running `UnboundedOperativeInstance` SHALL continue with `persistenceEnabled = true`; the new value SHALL take effect only on the next `stop_operative` + `start_operative` cycle for that instance
 
 ### Requirement: initState accepts optional restoration payload
 
@@ -365,18 +365,18 @@ The Java SDK's `Operation.initState` signature SHALL be `State initState(Optiona
 
 ### Requirement: Per-Segment flusher with toggle-aware drain
 
-The Java SDK SHALL spawn at most one `SegmentFlusher` daemon thread per JVM, lazy-initialized via `AtomicReference<SegmentFlusher>` on the first `Flezha.registerContinuous(...)` call that registers an Operation with a non-`NoChange` Change. JVMs that register only `NoChange` Operations SHALL NOT spawn a flusher thread.
+The Java SDK SHALL spawn at most one `SegmentFlusher` daemon thread per JVM, lazy-initialized via `AtomicReference<SegmentFlusher>` on the first `Flezha.registerUnbounded(...)` call that registers an Operation with a non-`NoChange` Change. JVMs that register only `NoChange` Operations SHALL NOT spawn a flusher thread.
 
 The flusher SHALL run an infinite loop sleeping `linger_ms` (default 5; configurable via system property `flezha.flush.linger.ms` with env-var fallback `FLEZHA_FLUSH_LINGER_MS`) between iterations. Per iteration: iterate the registered Segments; for each, acquire its `bufferLock`; call `drainToFrames` (applying coalescing per `operative-state-persistence-rust/design.md` Decision 3); release the lock; for each frame, invoke `sendFrame` if `persistenceEnabled = true`, OR discard if `false`.
 
 #### Scenario: NoChange-only program does not spawn flusher
 
-- **WHEN** a Java program calls `Flezha.registerContinuous(MyOperative.class)` for Operatives whose Operations all have `Change = NoChange`
+- **WHEN** a Java program calls `Flezha.registerUnbounded(MyOperative.class)` for Operatives whose Operations all have `Change = NoChange`
 - **THEN** no thread named `flezha-flusher` SHALL be spawned (verifiable via `Thread.getAllStackTraces().keySet().stream().anyMatch(t -> "flezha-flusher".equals(t.getName())) == false`)
 
 #### Scenario: First non-NoChange registration starts the flusher
 
-- **WHEN** a Java program calls `Flezha.registerContinuous(...)` for an Operative whose Operation has `Change = MyChange`
+- **WHEN** a Java program calls `Flezha.registerUnbounded(...)` for an Operative whose Operation has `Change = MyChange`
 - **THEN** exactly one daemon thread named `flezha-flusher` SHALL be spawned and remain alive for the JVM's lifetime
 
 #### Scenario: Toggle-off drain discards without wire I/O
@@ -507,8 +507,8 @@ The Java SDK SHALL expose handler classes whose names use canonical vocabulary: 
 
 ### Requirement: Public Operative / Operation / Segment user-facing API names
 
-The Java SDK SHALL expose user-extensible base classes/interfaces under the canonical names `ContinuousOperative`, `Operation`, `Segment`, and `Channel`. The Executor process startup hook SHALL be `Executor.start(Config)` (or equivalent factory entry point); class names referring to the SDK process itself SHALL use `Executor` as the role term, not `ComputeEngine` or `Operator`.
+The Java SDK SHALL expose user-extensible base classes/interfaces under the canonical names `UnboundedOperative`, `Operation`, `Segment`, and `Channel`. The Executor process startup hook SHALL be `Executor.start(Config)` (or equivalent factory entry point); class names referring to the SDK process itself SHALL use `Executor` as the role term, not `ComputeEngine` or `Operator`.
 
-#### Scenario: User extends ContinuousOperative
-- **WHEN** a user-defined Operative class declares `extends ContinuousOperative`
+#### Scenario: User extends UnboundedOperative
+- **WHEN** a user-defined Operative class declares `extends UnboundedOperative`
 - **THEN** the class MUST compile against the published Java SDK; declaring `extends Processor` MUST fail

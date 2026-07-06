@@ -13,8 +13,8 @@ import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
-import com.flezha.sdk.operative.ContinuousOperative;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.BoundedCompleted;
 import com.flezha.sdk.proto.BoundedStop;
@@ -32,9 +32,9 @@ import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeInstanceRegistry;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.Operative;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeInstanceRegistry;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.runtime.state.SegmentId;
@@ -97,7 +97,7 @@ class BoundedKindTest {
 
     @BeforeEach
     void reset() {
-        ContinuousOperativeRegistry.reset();
+        UnboundedOperativeRegistry.reset();
         BoundedOperativeRegistry.reset();
         EMIT_RUNS.set(0);
         COMPENSATION_LOG.clear();
@@ -133,15 +133,15 @@ class BoundedKindTest {
     @Test
     @DisplayName("a bounded factory colliding with a operative (either order) is rejected")
     void crossKindDuplicateRejected() {
-        ContinuousOperativeRegistry.registerContinuous(CollideContinuousOperative.class);
+        UnboundedOperativeRegistry.registerUnbounded(CollideUnboundedOperative.class);
         assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(CollideBoundedOperative.class))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        ContinuousOperativeRegistry.reset();
+        UnboundedOperativeRegistry.reset();
         BoundedOperativeRegistry.reset();
 
         BoundedOperativeRegistry.registerBounded(CollideBoundedOperative.class);
-        assertThatThrownBy(() -> ContinuousOperativeRegistry.registerContinuous(CollideContinuousOperative.class))
+        assertThatThrownBy(() -> UnboundedOperativeRegistry.registerUnbounded(CollideUnboundedOperative.class))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -173,14 +173,14 @@ class BoundedKindTest {
 
     @Test
     @DisplayName(
-            "the instance registry holds both variants; getContinuousOperative is empty for a bounded; RemOperative removes a bounded")
+            "the instance registry holds both variants; getUnboundedOperative is empty for a bounded; RemOperative removes a bounded")
     void sealedUnitHoldsBothVariants() {
-        ContinuousOperativeInstanceRegistry registry = new ContinuousOperativeInstanceRegistry();
+        UnboundedOperativeInstanceRegistry registry = new UnboundedOperativeInstanceRegistry();
         registry.add(new BoundedOperativeInstance("t1", "echo_bounded"));
 
         assertThat(registry.contains("t1")).isTrue();
         assertThat(registry.get("t1")).isInstanceOf(BoundedOperativeInstance.class);
-        assertThat(registry.getContinuousOperative("t1"))
+        assertThat(registry.getUnboundedOperative("t1"))
                 .as("a bounded is not a operative")
                 .isNull();
         assertThat(registry.operativeSnapshot()).doesNotContainKey("t1");
@@ -440,7 +440,7 @@ class BoundedKindTest {
     @DisplayName("bounded segments use the real {instance, operation, segment} identity — no sentinels (§2.3)")
     void structuredSegmentsUseRealIdentity() {
         BoundedSpec spec = BoundedSpec.build(FanBoundedOperative.class);
-        ContinuousOperativeTopology topology = spec.topology().orElseThrow();
+        UnboundedOperativeTopology topology = spec.topology().orElseThrow();
         // Chain: SplitOp (single segment) → FanOp (static even/odd); FanOp is the 2nd stage.
         int fanOpId = spec.chain().get(1);
         List<BoundedOperativeRunner.BoundedSegment> segs =
@@ -973,7 +973,7 @@ class BoundedKindTest {
         public void run(BoundedOperativeCtx ctx, String args) {}
     }
 
-    public static final class CollideContinuousOperative implements ContinuousOperative {
+    public static final class CollideUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "collide";
@@ -1358,7 +1358,7 @@ class BoundedKindTest {
         }
 
         // A durable operative must register its Change type for the Kryo codec
-        // (the flusher serializes Changes); mirrors the continuous contract.
+        // (the flusher serializes Changes); mirrors the unbounded contract.
         @Override
         public List<Class<?>> kryoTypes() {
             return List.of(Inc.class);

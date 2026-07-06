@@ -7,7 +7,7 @@ import java.util.function.Function;
  * Clock that extracts an {@link Instant} from each input via a user-supplied
  * function. Type ships in v1 for forward compatibility; the runtime currently
  * rejects Operations declaring this Clock with
- * {@code ContinuousOperativeConfigurationException.clockNotImplementedYet}.
+ * {@code UnboundedOperativeConfigurationException.clockNotImplementedYet}.
  */
 public final class EventTimeFrom<Input> implements Clock {
 

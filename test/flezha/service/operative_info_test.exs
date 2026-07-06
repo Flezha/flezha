@@ -71,12 +71,12 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
     assert out =~ "Uptime (ms):"
   end
 
-  test "a continuous operative reports its kind too" do
-    stub_one(%{bounded_state(0) | builder: %{kind: :continuous}})
+  test "an unbounded operative reports its kind too" do
+    stub_one(%{bounded_state(0) | builder: %{kind: :unbounded}})
 
     out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
     %{"operatives" => [op]} = Jason.decode!(out)
-    assert op["kind"] == "continuous"
+    assert op["kind"] == "unbounded"
   end
 
   test "a finished bounded operative is surfaced from its completion record" do

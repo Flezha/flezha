@@ -6,8 +6,8 @@ import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
-import com.flezha.sdk.operative.ContinuousOperative;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.runtime.ExecutorContext;
@@ -28,13 +28,39 @@ class AddOperativeHandlerTest {
 
     @BeforeEach
     void reset() {
-        ContinuousOperativeRegistry.reset();
+        UnboundedOperativeRegistry.reset();
+    }
+
+    @Test
+    @DisplayName("unknown kind literal is rejected with an error and nothing is registered")
+    void unknownKindIsRejected() {
+        UnboundedOperativeRegistry.registerUnbounded(IdempotentUnboundedOperative.class);
+
+        FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
+        ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
+        ctx.setWorkerPool(Executors.newFixedThreadPool(1));
+
+        CommandRequest request = CommandRequest.newBuilder()
+                .setReferenceId("ref")
+                .setAddOperative(AddOperative.newBuilder()
+                        .setOperativeId("kind_reject_p1")
+                        .setFactoryId(FACTORY_ID)
+                        .setKind("continuous")
+                        .build())
+                .build();
+
+        List<String> errors = new ArrayList<>();
+        new AddOperativeHandler().handle(ctx, request, errors);
+
+        assertThat(errors).hasSize(1);
+        assertThat(errors.get(0)).contains("unknown compute-unit kind 'continuous'");
+        assertThat(ctx.operativeInstanceRegistry().contains("kind_reject_p1")).isFalse();
     }
 
     @Test
     @DisplayName("duplicate AddOperative for the same operative_id is a no-op (no panic, no growth)")
-    void duplicateAddContinuousOperativeIsNoOp() {
-        ContinuousOperativeRegistry.registerContinuous(IdempotentContinuousOperative.class);
+    void duplicateAddUnboundedOperativeIsNoOp() {
+        UnboundedOperativeRegistry.registerUnbounded(IdempotentUnboundedOperative.class);
 
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
@@ -66,7 +92,7 @@ class AddOperativeHandlerTest {
                 .isEqualTo(1);
     }
 
-    public static final class IdempotentContinuousOperative implements ContinuousOperative {
+    public static final class IdempotentUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return FACTORY_ID;

@@ -17,8 +17,8 @@ import com.flezha.sdk.runtime.bounded.BoundedCompensation.StageRecord;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.OperationDescriptor;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.state.FlusherEntry;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
@@ -203,7 +203,7 @@ public final class BoundedOperativeRunner {
      */
     private static Outcome runStructured(
             ExecutorContext ctx, BoundedOperativeInstance instance, BoundedSpec spec, String args) {
-        ContinuousOperativeTopology topology = spec.topology().orElseThrow();
+        UnboundedOperativeTopology topology = spec.topology().orElseThrow();
         List<Integer> chain = spec.chain();
         String instanceId = instance.instanceId();
 
@@ -312,7 +312,7 @@ public final class BoundedOperativeRunner {
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static void runCompensation(
             ExecutorContext ctx,
-            ContinuousOperativeTopology topology,
+            UnboundedOperativeTopology topology,
             String instanceId,
             List<Integer> chain,
             List<List<BoundedSegment>> stageSegments,
@@ -407,7 +407,7 @@ public final class BoundedOperativeRunner {
      */
     @Nonnull
     public static List<List<BoundedSegment>> buildAllStageSegments(
-            @Nonnull ContinuousOperativeTopology topology,
+            @Nonnull UnboundedOperativeTopology topology,
             @Nonnull String instanceId,
             @Nonnull List<Integer> chain,
             boolean persistenceEnabled) {
@@ -421,11 +421,11 @@ public final class BoundedOperativeRunner {
     /**
      * Build the segments for one stage: a single segment in single mode, one per
      * declared key in static mode. Uses the same {@link SegmentId} identity a
-     * continuous operative would (real operation name + segment key, no
+     * unbounded operative would (real operation name + segment key, no
      * sentinels), so Phase-3 durability rides the same per-Segment identity.
      */
     static List<BoundedSegment> buildStageSegments(
-            ContinuousOperativeTopology topology, String instanceId, int opId, boolean persistenceEnabled) {
+            UnboundedOperativeTopology topology, String instanceId, int opId, boolean persistenceEnabled) {
         OperationDescriptor op = topology.operation(opId);
         Optional<ChannelDescriptor> outputChannel = op.outputChannelId().isPresent()
                 ? Optional.ofNullable(topology.channel(op.outputChannelId().getAsInt()))
@@ -454,7 +454,7 @@ public final class BoundedOperativeRunner {
 
         // A changeful segment ships its Changes to the WAL on flush; the entry
         // carries the class-level persistence toggle (drain-and-discard when off).
-        // Reuses the continuous flusher's frame + sink path, byte-for-byte.
+        // Reuses the unbounded flusher's frame + sink path, byte-for-byte.
         List<Change> changeBuffer = new ArrayList<>();
         Optional<FlusherEntry> flusher = Optional.empty();
         if (op.changeType() != NoChange.class) {
@@ -515,7 +515,7 @@ public final class BoundedOperativeRunner {
     private static StageOut runStageParallel(
             ExecutorContext ctx,
             String instanceId,
-            ContinuousOperativeTopology topology,
+            UnboundedOperativeTopology topology,
             List<BoundedSegment> segs,
             List<List<Object>> partitioned)
             throws BoundedOperativeException {
@@ -573,7 +573,7 @@ public final class BoundedOperativeRunner {
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static List<Object> runSegment(
-            ContinuousOperativeTopology topology,
+            UnboundedOperativeTopology topology,
             String instanceId,
             ExecutorContext ctx,
             BoundedSegment seg,
@@ -605,7 +605,7 @@ public final class BoundedOperativeRunner {
         return sink.collected();
     }
 
-    private static ChannelDescriptor entryChannel(ContinuousOperativeTopology topology) {
+    private static ChannelDescriptor entryChannel(UnboundedOperativeTopology topology) {
         for (ChannelDescriptor c : topology.channels()) {
             if (c.kind() == ChannelKind.ENTRY) {
                 return c;
@@ -689,14 +689,14 @@ public final class BoundedOperativeRunner {
     private record StageOut(List<Object> batch, List<SegmentRun> segments) {}
 
     /**
-     * One bounded per-segment state holder (the lightweight continuous
+     * One bounded per-segment state holder (the lightweight unbounded
      * {@code SegmentSlot} analog): the per-segment {@link Operation} instance,
      * its in-memory state, the {@link SegmentId} identity (real op name + key),
      * and the producer-edge output channel.
      *
      * <p>Public so the {@code RestoreInitState} handler (a different package) can
      * reach a durable bounded Segment by wire identity on crash-resume; its
-     * internals stay package-private. Unlike the continuous {@code SegmentSlot},
+     * internals stay package-private. Unlike the unbounded {@code SegmentSlot},
      * {@code state} carries no lock: the driver is held on the resume gate until
      * every restore has landed, so restore-then-run is serialized.
      */
@@ -710,7 +710,7 @@ public final class BoundedOperativeRunner {
         // Segment key (empty in single mode), needed to seed initState on restore.
         private final Optional<String> operationKey;
         private final Optional<ChannelDescriptor> outputChannel;
-        // Per-segment flush buffer (the continuous SegmentSlot analog): the
+        // Per-segment flush buffer (the unbounded SegmentSlot analog): the
         // StateHandle records Changes here; `flusher` (present iff the operation
         // is changeful) ships them to the WAL on flush.
         private final List<Change> changeBuffer;
@@ -762,7 +762,7 @@ public final class BoundedOperativeRunner {
 
         /**
          * Warm-restart this Segment in place from the controller's persisted
-         * snapshot + WAL change-log — the bounded analog of the continuous slot
+         * snapshot + WAL change-log — the bounded analog of the unbounded slot
          * restore. Rebuilds the committed state via {@link SegmentStateRestore},
          * replaces the in-memory state, and re-arms the flusher's change-seq to
          * {@code terminal + 1} so post-resume appends stay contiguous (the

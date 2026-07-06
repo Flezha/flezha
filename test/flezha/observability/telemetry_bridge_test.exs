@@ -94,7 +94,9 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert gap.measurements[:expected] == 101
     assert gap.measurements[:got] == 137
 
-    :telemetry.execute([:flezha, :state, :compaction_timeout], %{waited_ms: 5_000}, %{operative: "r"})
+    :telemetry.execute([:flezha, :state, :compaction_timeout], %{waited_ms: 5_000}, %{
+      operative: "r"
+    })
 
     compaction =
       receive_until(fn s -> s.source == :flezha_state and s.name == :compaction_timeout end, 500)

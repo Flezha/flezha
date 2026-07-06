@@ -6,10 +6,10 @@ import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.OperationDescriptor;
 import com.flezha.sdk.runtime.operative.PluginSink;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.StateHandle;
@@ -63,8 +63,8 @@ public final class OperationDispatcher {
 
     private final ExecutorContext ctx;
     private final ExecutorService pool;
-    private final WeakReference<ContinuousOperativeInstance> instance;
-    private final ContinuousOperativeTopology topology;
+    private final WeakReference<UnboundedOperativeInstance> instance;
+    private final UnboundedOperativeTopology topology;
     private final int operationId;
     private final OperationDescriptor operationDescriptor;
     private final Optional<ChannelDescriptor> outputChannelDescriptor;
@@ -77,8 +77,8 @@ public final class OperationDispatcher {
     public OperationDispatcher(
             @Nonnull ExecutorContext ctx,
             @Nonnull ExecutorService pool,
-            @Nonnull ContinuousOperativeInstance instance,
-            @Nonnull ContinuousOperativeTopology topology,
+            @Nonnull UnboundedOperativeInstance instance,
+            @Nonnull UnboundedOperativeTopology topology,
             int operationId,
             @Nonnull Operation<?, ?, ?, ?, ?, ?> operationInstance) {
         this.ctx = ctx;
@@ -121,7 +121,7 @@ public final class OperationDispatcher {
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     public void fanoutSegments(@Nonnull Object value, long primaryStreamId) {
-        ContinuousOperativeInstance ri = instance.get();
+        UnboundedOperativeInstance ri = instance.get();
         if (ri == null) {
             return;
         }
@@ -280,7 +280,7 @@ public final class OperationDispatcher {
     }
 
     private void fanoutInterOperation(ChannelDescriptor descriptor, Object value, long primaryStreamId) {
-        ContinuousOperativeInstance ri = instance.get();
+        UnboundedOperativeInstance ri = instance.get();
         if (ri == null) {
             return;
         }
@@ -294,7 +294,7 @@ public final class OperationDispatcher {
 
     private void emitPlugin(
             ChannelDescriptor descriptor, Object value, Map<String, String> userMeta, long primaryStreamId) {
-        ContinuousOperativeInstance ri = instance.get();
+        UnboundedOperativeInstance ri = instance.get();
         if (ri == null) {
             return;
         }
@@ -325,7 +325,7 @@ public final class OperationDispatcher {
             Map<String, String> userMeta,
             long primaryStreamId)
             throws OperationException {
-        ContinuousOperativeInstance ri = instance.get();
+        UnboundedOperativeInstance ri = instance.get();
         if (ri == null) {
             return;
         }
@@ -339,7 +339,7 @@ public final class OperationDispatcher {
     }
 
     private void writePluginFrame(
-            ContinuousOperativeInstance ri,
+            UnboundedOperativeInstance ri,
             ChannelDescriptor descriptor,
             byte[] bytes,
             Map<String, String> userMeta,

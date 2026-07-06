@@ -224,7 +224,10 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
   end
 
   defp registered?(operative_id) do
-    match?({:ok, pid} when is_pid(pid), Flezha.Service.HubManager.get_pid(@temp_namespace, operative_id))
+    match?(
+      {:ok, pid} when is_pid(pid),
+      Flezha.Service.HubManager.get_pid(@temp_namespace, operative_id)
+    )
   end
 
   defp wait_until(fun, timeout_ms) do
@@ -234,8 +237,12 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
 
   defp do_wait_until(fun, deadline) do
     cond do
-      fun.() -> true
-      System.monotonic_time(:millisecond) >= deadline -> false
+      fun.() ->
+        true
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        false
+
       true ->
         Process.sleep(25)
         do_wait_until(fun, deadline)

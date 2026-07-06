@@ -3,7 +3,7 @@
 **Status:** Normative for every SDK binding (Rust, Java today; Python, Elixir next).
 
 This document is the single source of truth for the *authoring sugar* every
-SDK offers on top of the `ContinuousOperative` / `Operation` / `Change` / `Channel`
+SDK offers on top of the `UnboundedOperative` / `Operation` / `Change` / `Channel`
 trait (or interface) surface. The sugar is **pure expansion**: a macro (Rust) or an
 annotation processor (Java) generates exactly the trait impls a user would
 write by hand, against the unchanged runtime. There is no parallel runtime
@@ -15,7 +15,7 @@ governs only how a sugared declaration maps onto it.
 
 ## 1. Escape-hatch equivalence (non-negotiable)
 
-- Generated code is equivalent to a valid hand-written `Operation` / `ContinuousOperative`
+- Generated code is equivalent to a valid hand-written `Operation` / `UnboundedOperative`
   implementation. It compiles and runs identically; no protocol, controller,
   or WAL change is required for it to run.
 - An operative MAY mix sugared operations and hand-written operations wired together.
@@ -177,8 +177,8 @@ and registers it automatically — the user writes no registration call.
   strictly linear chain). The SDK refuses (compile error) rather than guessing
   a graph.
 - **Auto-registration** uses a compile-time-collected registry (Rust:
-  `inventory`; Java: the processor emits the `registerContinuous` call). Manual
-  `register_continuous` / `OperativeRegistry.registerContinuous` stays valid for
+  `inventory`; Java: the processor emits the `registerUnbounded` call). Manual
+  `register_unbounded` / `OperativeRegistry.registerUnbounded` stays valid for
   hand-written operatives.
 - **Duplicate factory id fails fast.** When auto-registration and manual
   registration would register two operatives with the same `factory_id`, startup

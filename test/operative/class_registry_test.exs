@@ -1,10 +1,10 @@
 defmodule FlezhaTest.Operative.ClassRegistryTest do
   @moduledoc """
   §1.2: `ClassRegistry` resolves `operative_class → kind` for the State
-  subsystem — in-memory ETS → durable sidecar → default `:continuous` — so the
-  continuous-only capabilities can be gated per class. An unknown class stays
-  fully continuous (gating is only ever subtractive); a `:bounded` class reads
-  every continuous-only flag false and its kind survives ETS eviction via the
+  subsystem — in-memory ETS → durable sidecar → default `:unbounded` — so the
+  unbounded-only capabilities can be gated per class. An unknown class stays
+  fully unbounded (gating is only ever subtractive); a `:bounded` class reads
+  every unbounded-only flag false and its kind survives ETS eviction via the
   sidecar.
   """
   use ExUnit.Case, async: false
@@ -24,14 +24,14 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     %{class: "cr_" <> Integer.to_string(System.unique_integer([:positive]))}
   end
 
-  test "an unknown class defaults to :continuous and reads every flag true", %{class: class} do
-    assert ClassRegistry.get(class) == :continuous
+  test "an unknown class defaults to :unbounded and reads every flag true", %{class: class} do
+    assert ClassRegistry.get(class) == :unbounded
     assert ClassRegistry.capable?(class, :time_travel?)
     assert ClassRegistry.capable?(class, :dynamic_segments?)
     assert ClassRegistry.capable?(class, :output_stall_watch?)
   end
 
-  test "a :bounded class resolves and reads every continuous-only flag false", %{class: class} do
+  test "a :bounded class resolves and reads every unbounded-only flag false", %{class: class} do
     :ok = ClassRegistry.put(class, :bounded)
 
     assert ClassRegistry.get(class) == :bounded
@@ -40,9 +40,9 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     refute ClassRegistry.capable?(class, :output_stall_watch?)
   end
 
-  test "a :continuous put writes no sidecar; a :bounded put does", %{class: class} do
+  test "an :unbounded put writes no sidecar; a :bounded put does", %{class: class} do
     cont = class <> "_c"
-    :ok = ClassRegistry.put(cont, :continuous)
+    :ok = ClassRegistry.put(cont, :unbounded)
     refute File.exists?(sidecar(cont))
 
     :ok = ClassRegistry.put(class, :bounded)
@@ -63,7 +63,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     File.mkdir_p!(Path.join(Registry.state_root(), class))
     File.write!(sidecar(class), "definitely_not_a_kind")
 
-    assert ClassRegistry.get(class) == :continuous
+    assert ClassRegistry.get(class) == :unbounded
   end
 
   defp sidecar(class), do: Path.join([Registry.state_root(), class, "kind"])

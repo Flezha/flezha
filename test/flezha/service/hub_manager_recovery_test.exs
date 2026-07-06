@@ -88,7 +88,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     # The CLI verb is a thin wrapper around this upstream call; the
     # operator-facing rendering is covered in cli_manager_cluster_test.
-    assert {:ok, _acked} = ProcessHub.prepare_recovery_cluster(hub_id)
+    assert {:ok, _acked} = ProcessHub.Service.Recovery.prepare_recovery_cluster(hub_id)
 
     refute File.exists?(marker_path)
   end

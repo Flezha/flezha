@@ -11,8 +11,13 @@ defmodule FlezhaTest.Service.CliManagerTriggerTest do
   alias Flezha.Service.CliManager
 
   test "proactive and interval both map onto :on_interval" do
-    assert CliManager.trigger_to_subscription("proactive") == [{:on_interval, [interval_ms: 5_000]}]
-    assert CliManager.trigger_to_subscription("interval") == [{:on_interval, [interval_ms: 5_000]}]
+    assert CliManager.trigger_to_subscription("proactive") == [
+             {:on_interval, [interval_ms: 5_000]}
+           ]
+
+    assert CliManager.trigger_to_subscription("interval") == [
+             {:on_interval, [interval_ms: 5_000]}
+           ]
   end
 
   test "on_input / on_output map to their own extensions; unknown falls back to on_input" do

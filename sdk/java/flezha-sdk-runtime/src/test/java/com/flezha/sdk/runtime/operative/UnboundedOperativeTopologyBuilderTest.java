@@ -7,9 +7,9 @@ import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
-import com.flezha.sdk.operative.ContinuousOperative;
-import com.flezha.sdk.operative.ContinuousOperativeConfigurationException;
-import com.flezha.sdk.runtime.operative.builder.ContinuousOperativeTopologyBuilder;
+import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
 import java.util.List;
@@ -18,7 +18,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-class ContinuousOperativeTopologyBuilderTest {
+class UnboundedOperativeTopologyBuilderTest {
 
     public record Trade(String symbol, double price) {}
 
@@ -30,8 +30,8 @@ class ContinuousOperativeTopologyBuilderTest {
         @Test
         @DisplayName("single-mode entry channel + consumer compiles and freezes")
         void singleModeOk() {
-            ContinuousOperativeTopology topology =
-                    ContinuousOperativeTopologyBuilder.build(new SingleModeContinuousOperative());
+            UnboundedOperativeTopology topology =
+                    UnboundedOperativeTopologyBuilder.build(new SingleModeUnboundedOperative());
             assertThat(topology.factoryId()).isEqualTo("single_mode");
             assertThat(topology.channels()).hasSize(1);
             assertThat(topology.channels().get(0).kind()).isEqualTo(ChannelKind.ENTRY);
@@ -42,8 +42,8 @@ class ContinuousOperativeTopologyBuilderTest {
         @Test
         @DisplayName("static-mode operation allocates one descriptor with the declared keys")
         void staticModeAllocatesSegments() {
-            ContinuousOperativeTopology topology =
-                    ContinuousOperativeTopologyBuilder.build(new StaticModeContinuousOperative());
+            UnboundedOperativeTopology topology =
+                    UnboundedOperativeTopologyBuilder.build(new StaticModeUnboundedOperative());
             assertThat(topology.operations().get(0).segmentKeys()).containsExactly("a", "b", "c", "d");
             assertThat(topology.operations().get(0).segmentForOverridden()).isTrue();
         }
@@ -51,41 +51,41 @@ class ContinuousOperativeTopologyBuilderTest {
         @Test
         @DisplayName("entry channel of disallowed type fails registration")
         void entryChannelOfDisallowedTypeRejected() {
-            assertThatThrownBy(() -> ContinuousOperativeTopologyBuilder.build(new BadEntryTypeContinuousOperative()))
-                    .isInstanceOf(ContinuousOperativeConfigurationException.class)
+            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new BadEntryTypeUnboundedOperative()))
+                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
                     .hasMessageContaining("byte[] or String");
         }
 
         @Test
         @DisplayName("wiring mismatch fails registration with diagnosable error")
         void wiringMismatchRejected() {
-            assertThatThrownBy(() -> ContinuousOperativeTopologyBuilder.build(new TypeMismatchContinuousOperative()))
-                    .isInstanceOf(ContinuousOperativeConfigurationException.class)
+            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new TypeMismatchUnboundedOperative()))
+                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
                     .hasMessageContaining("trade.parsed");
         }
 
         @Test
         @DisplayName("unwired channel fails registration")
         void unwiredChannelRejected() {
-            assertThatThrownBy(() -> ContinuousOperativeTopologyBuilder.build(new UnwiredChannelContinuousOperative()))
-                    .isInstanceOf(ContinuousOperativeConfigurationException.class)
+            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new UnwiredChannelUnboundedOperative()))
+                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
                     .hasMessageContaining("ohlc.candles");
         }
 
         @Test
         @DisplayName("static-mode operation without segmentForOverridden is rejected")
         void staticWithoutSegmentForOverriddenRejected() {
-            assertThatThrownBy(() -> ContinuousOperativeTopologyBuilder.build(
-                            new MissingSegmentForOverriddenContinuousOperative()))
-                    .isInstanceOf(ContinuousOperativeConfigurationException.class)
+            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(
+                            new MissingSegmentForOverriddenUnboundedOperative()))
+                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
                     .hasMessageContaining("segmentFor");
         }
 
         @Test
         @DisplayName("dynamic-mode-only declaration is rejected in v1")
         void dynamicModeOnlyRejected() {
-            assertThatThrownBy(() -> ContinuousOperativeTopologyBuilder.build(new DynamicModeOnlyContinuousOperative()))
-                    .isInstanceOf(ContinuousOperativeConfigurationException.class)
+            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new DynamicModeOnlyUnboundedOperative()))
+                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
                     .hasMessageContaining("dynamic mode");
         }
     }
@@ -117,7 +117,7 @@ class ContinuousOperativeTopologyBuilderTest {
         public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
     }
 
-    public static final class SingleModeContinuousOperative implements ContinuousOperative {
+    public static final class SingleModeUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "single_mode";
@@ -169,7 +169,7 @@ class ContinuousOperativeTopologyBuilderTest {
         public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
     }
 
-    public static final class StaticModeContinuousOperative implements ContinuousOperative {
+    public static final class StaticModeUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "static_mode";
@@ -181,7 +181,7 @@ class ContinuousOperativeTopologyBuilderTest {
         }
     }
 
-    public static final class BadEntryTypeContinuousOperative implements ContinuousOperative {
+    public static final class BadEntryTypeUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "bad_entry";
@@ -269,7 +269,7 @@ class ContinuousOperativeTopologyBuilderTest {
                 throws OperationException {}
     }
 
-    public static final class TypeMismatchContinuousOperative implements ContinuousOperative {
+    public static final class TypeMismatchUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "type_mismatch";
@@ -292,7 +292,7 @@ class ContinuousOperativeTopologyBuilderTest {
         }
     }
 
-    public static final class UnwiredChannelContinuousOperative implements ContinuousOperative {
+    public static final class UnwiredChannelUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "unwired_channel";
@@ -336,7 +336,7 @@ class ContinuousOperativeTopologyBuilderTest {
         public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
     }
 
-    public static final class MissingSegmentForOverriddenContinuousOperative implements ContinuousOperative {
+    public static final class MissingSegmentForOverriddenUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "missing_pfo_operative";
@@ -383,7 +383,7 @@ class ContinuousOperativeTopologyBuilderTest {
         public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
     }
 
-    public static final class DynamicModeOnlyContinuousOperative implements ContinuousOperative {
+    public static final class DynamicModeOnlyUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "dynamic_only_operative";

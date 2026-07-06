@@ -2,7 +2,7 @@ package com.flezha.sdk.runtime.control;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.flezha.sdk.bounded.BoundedOperativeRegistry;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.ExecutorIdStore;
 import java.util.ArrayList;
 import java.util.List;
@@ -13,8 +13,8 @@ import java.util.stream.Collectors;
  * the Rust SDK's {@code ControlInitMessage} field names exactly —
  * {@code namespace}, {@code factory_ids}, {@code factories}, {@code stable_id}.
  *
- * <p>{@code factories} carries a per-ContinuousOperative description record. The
- * ContinuousOperative interface has no description hook today, so the per-id
+ * <p>{@code factories} carries a per-UnboundedOperative description record. The
+ * UnboundedOperative interface has no description hook today, so the per-id
  * description is always empty.
  *
  * <p>{@code stable_id} is the executor's self-owned, durable stable identity
@@ -30,9 +30,9 @@ public record HandshakeMessage(
     public record FactoryInfo(String id, String description) {}
 
     public static HandshakeMessage from(String namespace) {
-        // ContinuousOperative factories first, then bounded factories — both kinds are advertised
+        // UnboundedOperative factories first, then bounded factories — both kinds are advertised
         // in one combined list so the controller validates any AddOperative kind.
-        List<String> ids = new ArrayList<>(ContinuousOperativeRegistry.factoryIds());
+        List<String> ids = new ArrayList<>(UnboundedOperativeRegistry.factoryIds());
         ids.addAll(BoundedOperativeRegistry.factoryIds());
         List<FactoryInfo> infos =
                 ids.stream().map(id -> new FactoryInfo(id, "")).collect(Collectors.toList());

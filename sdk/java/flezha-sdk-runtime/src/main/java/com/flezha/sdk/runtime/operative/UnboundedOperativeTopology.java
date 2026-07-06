@@ -5,10 +5,10 @@ import java.util.Map;
 import javax.annotation.Nonnull;
 
 /**
- * Frozen, immutable per-ContinuousOperative-class topology produced by
- * {@link com.flezha.sdk.runtime.operative.builder.ContinuousOperativeTopologyBuilder} at
- * {@link com.flezha.sdk.operative.ContinuousOperativeRegistry#registerContinuous(Class) registerContinuous}
- * time. Shared across every {@link ContinuousOperativeInstance} of this ContinuousOperative class.
+ * Frozen, immutable per-UnboundedOperative-class topology produced by
+ * {@link com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder} at
+ * {@link com.flezha.sdk.operative.UnboundedOperativeRegistry#registerUnbounded(Class) registerUnbounded}
+ * time. Shared across every {@link UnboundedOperativeInstance} of this UnboundedOperative class.
  *
  * <p>The hot path (entry-channel input → consumer-operation segment) reads
  * {@link #channels} by index after one {@link #nameToId} lookup; the
@@ -16,7 +16,7 @@ import javax.annotation.Nonnull;
  * pre-cached {@code outputChannelId} stamped on the {@code OperationDispatcher}
  * at build time.
  */
-public final class ContinuousOperativeTopology {
+public final class UnboundedOperativeTopology {
 
     private final String factoryId;
     private final List<ChannelDescriptor> channels;
@@ -24,7 +24,7 @@ public final class ContinuousOperativeTopology {
     private final List<OperationDescriptor> operations;
     private final Map<String, Integer> operationNameToId;
 
-    public ContinuousOperativeTopology(
+    public UnboundedOperativeTopology(
             @Nonnull String factoryId,
             @Nonnull List<ChannelDescriptor> channels,
             @Nonnull Map<String, Integer> nameToId,

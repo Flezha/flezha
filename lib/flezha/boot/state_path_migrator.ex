@@ -102,7 +102,14 @@ defmodule Flezha.Boot.StatePathMigrator do
           legacy_operation = Path.join(legacy_rc, operation_id)
 
           if File.dir?(legacy_operation) do
-            migrate_operation(executor_id, operative_class, operation_id, legacy_operation, root, acc)
+            migrate_operation(
+              executor_id,
+              operative_class,
+              operation_id,
+              legacy_operation,
+              root,
+              acc
+            )
           else
             acc
           end

@@ -147,7 +147,9 @@ defmodule Flezha.Healthz.ServerTest do
     end
   end
 
-  test "operatives declared but not yet bound → 200 recovering (post-restart rebind)", %{port: port} do
+  test "operatives declared but not yet bound → 200 recovering (post-restart rebind)", %{
+    port: port
+  } do
     # 3 operatives intended, only 1 actually bound (controller mid-rebind). Capable-
     # but-not-ready must read recovering, never healthy.
     Snapshot.publish(%{

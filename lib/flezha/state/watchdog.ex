@@ -129,7 +129,7 @@ defmodule Flezha.State.Watchdog do
       |> collect_statuses()
       |> Enum.group_by(fn {{rc, _sh, _pk}, _status} -> rc end)
       |> Enum.reduce(state, fn {rc, list}, acc ->
-        # The dataflow-stop watchdog is continuous-only: a durable :bounded
+        # The dataflow-stop watchdog is unbounded-only: a durable :bounded
         # operative legitimately goes quiet between stages/iterations.
         if ClassRegistry.capable?(rc, :output_stall_watch?) do
           any_dead? = Enum.any?(list, fn {_pid, s} -> input_dead?(s, now, timeout) end)

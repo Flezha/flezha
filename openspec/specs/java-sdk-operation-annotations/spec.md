@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The java-sdk-operation-annotations capability is the Java realization of the SDK authoring contract. It provides an annotation processor for `@Operation` / `@State` / `@ContinuousOperative` / `@SegmentFor` (and `@OperationKey` for dynamic mode) that generates the six `*Type()` getters, `name`, `initState`, the `Operation` implementation, `applyChange`, and `OperativeRegistry.registerContinuous`. The processor mirrors the Rust SDK's signature-to-types, state, segmentation-mode, and single-operation auto-wiring inference rules so an equivalent operative expands to a structurally identical topology across both SDKs. Multi-operation topology stays explicitly declared in a `channels()` method, and all generated code targets the existing trait/interface surface with no engine, protocol, or WAL change.
+The java-sdk-operation-annotations capability is the Java realization of the SDK authoring contract. It provides an annotation processor for `@Operation` / `@State` / `@UnboundedOperative` / `@SegmentFor` (and `@OperationKey` for dynamic mode) that generates the six `*Type()` getters, `name`, `initState`, the `Operation` implementation, `applyChange`, and `OperativeRegistry.registerUnbounded`. The processor mirrors the Rust SDK's signature-to-types, state, segmentation-mode, and single-operation auto-wiring inference rules so an equivalent operative expands to a structurally identical topology across both SDKs. Multi-operation topology stays explicitly declared in a `channels()` method, and all generated code targets the existing trait/interface surface with no engine, protocol, or WAL change.
 
 ## Requirements
 
@@ -23,7 +23,7 @@ The Java SDK SHALL provide an annotation processor that generates a complete `Op
 #### Scenario: Generated operation is referenceable in channels
 
 - **WHEN** an `@Operation` class `StaticEntry` is processed
-- **THEN** its generated `Operation` type can be named in a `@ContinuousOperative` `channels()` body via `from`/`into`
+- **THEN** its generated `Operation` type can be named in a `@UnboundedOperative` `channels()` body via `from`/`into`
 
 ### Requirement: `@State` change generation
 
@@ -63,18 +63,18 @@ The Java SDK SHALL support a `@SegmentFor` method annotation and `@Operation` at
 - **WHEN** an `@Operation` declares both `@SegmentFor` (static) and `@OperationKey` (dynamic)
 - **THEN** the processor reports a compile-time error that the two modes are mutually exclusive
 
-### Requirement: `@ContinuousOperative` registration and explicit topology
+### Requirement: `@UnboundedOperative` registration and explicit topology
 
-The Java SDK SHALL support a `@ContinuousOperative` annotation that generates `OperativeRegistry.registerContinuous`, while multi-operation topology stays explicitly declared in a `channels()` method.
+The Java SDK SHALL support a `@UnboundedOperative` annotation that generates `OperativeRegistry.registerUnbounded`, while multi-operation topology stays explicitly declared in a `channels()` method.
 
 #### Scenario: Single-operation operative is auto-wired and registered
 
 - **WHEN** a single `@Operation` declares an `id` and `sink`
-- **THEN** the processor generates and registers an operative wiring input → operation → sink with no explicit `registerContinuous` call
+- **THEN** the processor generates and registers an operative wiring input → operation → sink with no explicit `registerUnbounded` call
 
 #### Scenario: Multi-operation operative keeps explicit channels
 
-- **WHEN** a `@ContinuousOperative`-annotated class declares a `channels()` method wiring multiple operations
+- **WHEN** a `@UnboundedOperative`-annotated class declares a `channels()` method wiring multiple operations
 - **THEN** the processor generates registration but preserves the author's explicit topology
 
 ### Requirement: Mirrors the Rust inference rules

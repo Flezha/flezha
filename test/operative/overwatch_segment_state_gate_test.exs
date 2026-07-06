@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Operative.OverwatchSegmentStateGateTest do
   @moduledoc """
   §5b.2: `:get_segment_state` is gated on `persistent_state?` (kind+class).
-  `:continuous` and a durable-by-default `:bounded` class proceed to query the
+  `:unbounded` and a durable-by-default `:bounded` class proceed to query the
   executor exactly as before; a `:bounded` class that opted out of persistence —
   or any stateless kind — is rejected with
   `{:error, {:unsupported_for_kind, :persistent_state}}` and never contacts the
@@ -28,8 +28,8 @@ defmodule FlezhaTest.Operative.OverwatchSegmentStateGateTest do
     }
   end
 
-  test "a :continuous kind proceeds to query the executor" do
-    state = state_for(:continuous)
+  test "an :unbounded kind proceeds to query the executor" do
+    state = state_for(:unbounded)
 
     # {:noreply, state} == the gate passed and the handler went on to contact
     # the executor off-loop (replies later via GenServer.reply), as it does today.

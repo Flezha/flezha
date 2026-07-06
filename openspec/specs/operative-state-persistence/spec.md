@@ -183,7 +183,7 @@ The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BE
 The agent SHALL resolve a per-Operative-class boolean `persistence_enabled` at the moment an Operative instance is added (`AddOperative` command processed in `Overwatch.init/1`) using the following ordered rule:
 
 1. If the agent's runtime config defines `operative_persistence.<OperativeClass>` for this Operative class, use that value.
-2. Otherwise, if the `AddOperative` metadata carries an Operative-class const value (`ContinuousOperative::PERSISTENCE_ENABLED`), use that value.
+2. Otherwise, if the `AddOperative` metadata carries an Operative-class const value (`UnboundedOperative::PERSISTENCE_ENABLED`), use that value.
 3. Otherwise, use the built-in default of `true`.
 
 The resolved value SHALL be bound to the Operative instance for its entire lifetime. Subsequent changes to the executor-side config or to the SDK's Operative-class const (via SDK redeploy) SHALL NOT affect already-running instances.
@@ -423,7 +423,7 @@ When the SDK receives a `SegmentState{operative_id}` command, it SHALL respond w
 
 The wire payload SHALL be `segment_state` payload-id with the JSON object as the message bytes. Empty Operatives (no live Segments) SHALL produce `{}`.
 
-State serialization SHALL go through a per-Operation fn pointer captured at `register_continuous::<R>()` time. The fn pointer downcasts the type-erased state held in `SegmentSlot::state` to its statically-known `SegmentState<S>` and emits `serde_json::Value` via the `S::State: Serialize` bound on the trait. No additional user-facing trait machinery is required beyond the existing `Serialize + DeserializeOwned` bounds on `Operation::State`.
+State serialization SHALL go through a per-Operation fn pointer captured at `register_unbounded::<R>()` time. The fn pointer downcasts the type-erased state held in `SegmentSlot::state` to its statically-known `SegmentState<S>` and emits `serde_json::Value` via the `S::State: Serialize` bound on the trait. No additional user-facing trait machinery is required beyond the existing `Serialize + DeserializeOwned` bounds on `Operation::State`.
 
 #### Scenario: Single-mode Operation returns its state at the operation-name key
 

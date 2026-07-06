@@ -15,7 +15,7 @@ public interface OperationCtx {
 
     /**
      * Emit a typed value on this Operation's declared output channel. The channel
-     * id was cached at {@code registerContinuous} time from
+     * id was cached at {@code registerUnbounded} time from
      * {@code c.channel(T.class, "name").from(S.class)} wiring, so this call
      * performs no name lookups.
      *

@@ -6,8 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
-import com.flezha.sdk.operative.ContinuousOperative;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import java.util.List;
@@ -27,18 +27,18 @@ import org.junit.jupiter.api.Test;
  *   static-mode operation:  {"operationName": {"operationKey": &lt;state&gt;, ...}}
  * </pre>
  */
-class ContinuousOperativeStateSerializerTest {
+class UnboundedOperativeStateSerializerTest {
 
     @BeforeEach
     void reset() {
-        ContinuousOperativeRegistry.reset();
+        UnboundedOperativeRegistry.reset();
     }
 
     @Test
     @DisplayName("serialize emits the documented per-Operation / per-Segment shape")
     void serializeShape() throws Exception {
-        ContinuousOperativeRegistry.registerContinuous(MixedContinuousOperative.class);
-        ContinuousOperativeInstance instance = newInstance("mixed");
+        UnboundedOperativeRegistry.registerUnbounded(MixedUnboundedOperative.class);
+        UnboundedOperativeInstance instance = newInstance("mixed");
 
         // Manually mutate the segment states so the test asserts the
         // serializer reads from the live AtomicReference.
@@ -46,7 +46,7 @@ class ContinuousOperativeStateSerializerTest {
         instance.segments().get(operationId(instance, "b")).get(0).state().set(new OperationBState(1));
         instance.segments().get(operationId(instance, "b")).get(1).state().set(new OperationBState(2));
 
-        byte[] blob = ContinuousOperativeStateSerializer.serialize(instance);
+        byte[] blob = UnboundedOperativeStateSerializer.serialize(instance);
         @SuppressWarnings("unchecked")
         Map<String, Object> root = new ObjectMapper().readValue(blob, Map.class);
 
@@ -69,16 +69,16 @@ class ContinuousOperativeStateSerializerTest {
     @Test
     @DisplayName("deserialize round-trips identical segment states")
     void deserializeRoundTrips() throws Exception {
-        ContinuousOperativeRegistry.registerContinuous(MixedContinuousOperative.class);
-        ContinuousOperativeInstance instance = newInstance("mixed");
+        UnboundedOperativeRegistry.registerUnbounded(MixedUnboundedOperative.class);
+        UnboundedOperativeInstance instance = newInstance("mixed");
         instance.segments().get(operationId(instance, "a")).get(0).state().set(new OperationAState(7));
         instance.segments().get(operationId(instance, "b")).get(0).state().set(new OperationBState(11));
         instance.segments().get(operationId(instance, "b")).get(1).state().set(new OperationBState(13));
 
-        byte[] blob = ContinuousOperativeStateSerializer.serialize(instance);
+        byte[] blob = UnboundedOperativeStateSerializer.serialize(instance);
 
-        ContinuousOperativeInstance second = newInstance("mixed");
-        ContinuousOperativeStateSerializer.deserialize(second, blob);
+        UnboundedOperativeInstance second = newInstance("mixed");
+        UnboundedOperativeStateSerializer.deserialize(second, blob);
 
         assertThat(second.segments()
                         .get(operationId(second, "a"))
@@ -100,15 +100,15 @@ class ContinuousOperativeStateSerializerTest {
                 .isEqualTo(new OperationBState(13));
     }
 
-    private static ContinuousOperativeInstance newInstance(String factoryId) {
+    private static UnboundedOperativeInstance newInstance(String factoryId) {
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
-        ContinuousOperativeTopology topology = ContinuousOperativeClassRegistry.getTopology(factoryId);
-        return ContinuousOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
+        UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
+        return UnboundedOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
     }
 
-    private static int operationId(ContinuousOperativeInstance instance, String operationName) {
+    private static int operationId(UnboundedOperativeInstance instance, String operationName) {
         return instance.topology().operationNameToId().get(operationName);
     }
 
@@ -189,7 +189,7 @@ class ContinuousOperativeStateSerializerTest {
                 throws OperationException {}
     }
 
-    public static final class MixedContinuousOperative implements ContinuousOperative {
+    public static final class MixedUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "mixed";

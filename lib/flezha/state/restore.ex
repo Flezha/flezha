@@ -75,7 +75,12 @@ defmodule Flezha.State.Restore do
     end
   end
 
-  defp gather_records(<<seq::64-big, len::32-big, tail::binary>> = data, snapshot_seq, acc, term_seq)
+  defp gather_records(
+         <<seq::64-big, len::32-big, tail::binary>> = data,
+         snapshot_seq,
+         acc,
+         term_seq
+       )
        when len >= @header_size and byte_size(tail) >= len + 4 do
     <<header::binary-size(@header_size), change::binary-size(len - @header_size), crc::32-big,
       _::binary>> = tail

@@ -13,7 +13,7 @@ import javax.annotation.Nonnull;
  * {@code persistenceEnabled}) sends them via {@code sendFrame}.
  *
  * <p>{@code persistenceEnabled} is the resolved toggle (executor override
- * &gt; ContinuousOperative default &gt; {@code true}; frozen at {@code ContinuousOperativeInstance}
+ * &gt; UnboundedOperative default &gt; {@code true}; frozen at {@code UnboundedOperativeInstance}
  * construction). When {@code false}, the drain still runs (releasing the
  * buffer's memory) but no frame is built or sent.
  */

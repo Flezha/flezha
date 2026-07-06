@@ -1,6 +1,6 @@
 package com.flezha.sdk.runtime.operative.builder;
 
-import com.flezha.sdk.operative.ContinuousOperativeConfigurationException;
+import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
 import javax.annotation.Nonnull;
 
 /**
@@ -14,8 +14,8 @@ import javax.annotation.Nonnull;
  * </ol>
  *
  * <p>Out-of-range values fail registration with
- * {@link ContinuousOperativeConfigurationException#mailboxCapacityZero(String)} or
- * {@link ContinuousOperativeConfigurationException#mailboxCapacityTooLarge(String, long)}.
+ * {@link UnboundedOperativeConfigurationException#mailboxCapacityZero(String)} or
+ * {@link UnboundedOperativeConfigurationException#mailboxCapacityTooLarge(String, long)}.
  * Unparseable env values fall through to the default — executors tolerate
  * typos in env values during development. Split into a pure-function core
  * so operative tests don't have to mutate the process-global env var.
@@ -38,7 +38,7 @@ public final class MailboxCapacityResolver {
      * a string that fails to parse as a positive {@code int}, in which case
      * the default is used.
      *
-     * @throws ContinuousOperativeConfigurationException if the resolved value is out of
+     * @throws UnboundedOperativeConfigurationException if the resolved value is out of
      *     range {@code [1, 1_048_576]}.
      */
     static int resolveInner(@Nonnull String operationName, int declared, boolean overridden, String envValue) {
@@ -50,10 +50,10 @@ public final class MailboxCapacityResolver {
             resolved = parsed != null ? parsed : DEFAULT_MAILBOX_CAPACITY;
         }
         if (resolved <= 0) {
-            throw ContinuousOperativeConfigurationException.mailboxCapacityZero(operationName);
+            throw UnboundedOperativeConfigurationException.mailboxCapacityZero(operationName);
         }
         if (resolved > MAX_MAILBOX_CAPACITY) {
-            throw ContinuousOperativeConfigurationException.mailboxCapacityTooLarge(operationName, resolved);
+            throw UnboundedOperativeConfigurationException.mailboxCapacityTooLarge(operationName, resolved);
         }
         return resolved;
     }

@@ -322,12 +322,8 @@ defmodule Flezha.Service.HubManagerTest do
 
       assert_receive :await_started, 1_000
 
-      # Simulate the upstream `[:process_hub, :recovery, :complete]` event.
-      :telemetry.execute(
-        [:process_hub, :recovery, :complete],
-        %{succeeded: 0, failed: 0, skipped: 0, elapsed_ms: 0, cspec_count: 0},
-        %{hub_id: hub_id}
-      )
+      # Simulate the upstream recovery_state_changed hook reaching :normal.
+      Snapshot.handle_recovery_transition(%{hub_id: hub_id, to: :normal, reason: :replay_complete})
 
       assert :ok = Task.await(task, 2_000)
     end

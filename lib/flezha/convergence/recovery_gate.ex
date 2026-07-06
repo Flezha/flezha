@@ -97,7 +97,7 @@ defmodule Flezha.Convergence.RecoveryGate do
 
   defp wait_for_normal(hub_id, timeout) do
     if ProcessHub.is_alive?(hub_id) do
-      case ProcessHub.await_normal(hub_id, timeout) do
+      case ProcessHub.Service.Recovery.await_normal(hub_id, timeout) do
         :ok -> :ok
         {:error, :timeout} -> :timeout
       end

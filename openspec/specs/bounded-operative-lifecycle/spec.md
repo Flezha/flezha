@@ -5,7 +5,7 @@ TBD - created by archiving change bounded-operative-functionality. Update Purpos
 ## Requirements
 ### Requirement: A bounded operative is spawned on demand and terminates on an exit trigger
 
-A bounded operative SHALL be spawned on demand with `args` (`init_values`), each spawn independent and representing **one job/session** (segments are internal parallelism, never multiple sessions). It SHALL terminate on the first of these exit triggers: (a) **all operations done** — its linear chain of operations has run to the final operation's completion with no loop active; (b) an explicit `ctx.complete(result)` call; (c) an internal loop's terminal predicate; (d) a declared maximum wall-clock duration elapsing; (e) an external `flz operative stop`. A continuous operative SHALL never reach a terminal trigger.
+A bounded operative SHALL be spawned on demand with `args` (`init_values`), each spawn independent and representing **one job/session** (segments are internal parallelism, never multiple sessions). It SHALL terminate on the first of these exit triggers: (a) **all operations done** — its linear chain of operations has run to the final operation's completion with no loop active; (b) an explicit `ctx.complete(result)` call; (c) an internal loop's terminal predicate; (d) a declared maximum wall-clock duration elapsing; (e) an external `flz operative stop`. An unbounded operative SHALL never reach a terminal trigger.
 
 #### Scenario: The chain running to its end terminates the operative
 

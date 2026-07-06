@@ -8,17 +8,17 @@ import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner;
 import com.flezha.sdk.runtime.bounded.BoundedSpec;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeInstanceRegistry;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.InitValuesContext;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeInstanceRegistry;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Handler for {@code AddOperative}. Spawns a {@link ContinuousOperativeInstance} keyed by
+ * Handler for {@code AddOperative}. Spawns a {@link UnboundedOperativeInstance} keyed by
  * the wire-supplied {@code operative_id}.
  *
  * <p>{@code init_values} (the JSON string from {@code AddOperative.init_values})
@@ -40,15 +40,21 @@ public final class AddOperativeHandler implements CommandHandler {
         String operativeId = cmd.getOperativeId();
         String initValues = cmd.getInitValues();
 
-        ContinuousOperativeInstanceRegistry registry = ctx.operativeInstanceRegistry();
+        UnboundedOperativeInstanceRegistry registry = ctx.operativeInstanceRegistry();
 
         if (registry.contains(operativeId)) {
             LOG.info("AddOperative: operative instance {} already registered, skipping", operativeId);
             return new byte[0];
         }
 
-        // Empty/"continuous" → continuous (default kind); "bounded" → bounded.
-        if ("bounded".equals(cmd.getKind())) {
+        // Empty/"unbounded" → unbounded (default kind); "bounded" → bounded;
+        // any other literal is rejected.
+        String kind = cmd.getKind();
+        if (!kind.isEmpty() && !"unbounded".equals(kind) && !"bounded".equals(kind)) {
+            errors.add("unknown compute-unit kind '" + kind + "' for unit " + operativeId);
+            return new byte[0];
+        }
+        if ("bounded".equals(kind)) {
             BoundedSpec spec = BoundedOperativeClassRegistry.getSpec(factoryId);
             if (spec == null) {
                 errors.add("BoundedOperative class with id " + factoryId + " does not exist");
@@ -65,7 +71,7 @@ public final class AddOperativeHandler implements CommandHandler {
             if (spec.isRunSugar()) {
                 instance.wireStageSegments(List.of(), 0);
             } else {
-                ContinuousOperativeTopology boundedTopology = spec.topology().orElseThrow();
+                UnboundedOperativeTopology boundedTopology = spec.topology().orElseThrow();
                 instance.wireStageSegments(
                         BoundedOperativeRunner.buildAllStageSegments(
                                 boundedTopology, operativeId, spec.chain(), spec.persistenceEnabled()),
@@ -76,7 +82,7 @@ public final class AddOperativeHandler implements CommandHandler {
             return new byte[0];
         }
 
-        ContinuousOperativeTopology topology = ContinuousOperativeClassRegistry.getTopology(factoryId);
+        UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
         if (topology == null) {
             errors.add("Factory with id " + factoryId + " does not exist");
             return new byte[0];
@@ -84,8 +90,8 @@ public final class AddOperativeHandler implements CommandHandler {
 
         InitValuesContext.set(initValues);
         try {
-            ContinuousOperativeInstance instance =
-                    ContinuousOperativeInstance.create(topology, operativeId, ctx, ctx.workerPool());
+            UnboundedOperativeInstance instance =
+                    UnboundedOperativeInstance.create(topology, operativeId, ctx, ctx.workerPool());
             registry.add(instance);
         } catch (RuntimeException e) {
             errors.add("Failed to spawn operative instance: " + e.getMessage());

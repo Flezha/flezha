@@ -9,7 +9,7 @@ import javax.annotation.Nonnull;
 /**
  * Process-global registry of registered {@link BoundedOperative} classes, keyed by
  * {@code factoryId()}. The public-API sibling of
- * {@link com.flezha.sdk.operative.ContinuousOperativeRegistry}; the runtime side
+ * {@link com.flezha.sdk.operative.UnboundedOperativeRegistry}; the runtime side
  * ({@code com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry}) is reached
  * reflectively at registration time so {@code flezha-sdk-api} compiles
  * standalone. Frozen at {@code Flezha.newInstance(...)} time.

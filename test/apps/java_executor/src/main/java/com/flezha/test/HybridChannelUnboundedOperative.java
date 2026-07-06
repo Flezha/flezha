@@ -4,7 +4,7 @@ import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
-import com.flezha.sdk.operative.ContinuousOperative;
+import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -14,14 +14,14 @@ import java.nio.ByteOrder;
 import java.util.Optional;
 
 /**
- * Java mirror of the Rust test app's {@code HybridChannelContinuousOperative}.
+ * Java mirror of the Rust test app's {@code HybridChannelUnboundedOperative}.
  * Demonstrates {@code alsoToPluginWith(...)}: the producer Operation emits a
  * {@code Long} value that fans out to an inter-operation consumer and is also
  * serialized to bytes for the {@code hybrid_indicators} plugin. The
  * serializer throws on the sentinel {@code 0xDEADBEEF} so an operator can
  * observe the failure-isolation guarantee end-to-end.
  */
-public final class HybridChannelContinuousOperative implements ContinuousOperative {
+public final class HybridChannelUnboundedOperative implements UnboundedOperative {
 
     @Override
     public String factoryId() {

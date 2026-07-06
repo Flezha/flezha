@@ -49,7 +49,10 @@ defmodule Flezha.State.RecoveryResolveExecutorTest do
 
   test "errors when no registered operative owns the operative_class" do
     operative = %Builder{id: "eth", factory_id: "f", opts: [operative_class: "other"]}
-    stub(HubManager, :get_registry, fn "default" -> {:ok, %{"eth" => entry(operative, "exec_1")}} end)
+
+    stub(HubManager, :get_registry, fn "default" ->
+      {:ok, %{"eth" => entry(operative, "exec_1")}}
+    end)
 
     assert {:error, msg} = Recovery.resolve_executor({"market", "0", "p1"})
     assert msg =~ "no active executor owns operative_class=market"

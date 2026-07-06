@@ -2,7 +2,7 @@
 
 Java SDK port of `operative-state-persistence-rust`. Mirrors the Rust trait
 surface one-for-one within Java idioms: six-parameter `Operation` generic,
-`StateHandle<State, Change>` mutation chokepoint, `ContinuousOperative::persistenceEnabled`
+`StateHandle<State, Change>` mutation chokepoint, `UnboundedOperative::persistenceEnabled`
 default-method, per-Segment flusher, Kryo serialization with stable
 registered type IDs.
 

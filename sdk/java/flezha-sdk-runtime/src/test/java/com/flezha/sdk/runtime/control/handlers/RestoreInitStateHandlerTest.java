@@ -6,8 +6,8 @@ import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
-import com.flezha.sdk.operative.ContinuousOperative;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RestoreInitState;
@@ -52,14 +52,14 @@ class RestoreInitStateHandlerTest {
     @BeforeEach
     @AfterEach
     void reset() {
-        ContinuousOperativeRegistry.reset();
+        UnboundedOperativeRegistry.reset();
         SegmentFlusher.resetForTesting();
         SegmentStateSink.resetForTesting();
     }
 
     @Test
     void pureReplayResumesAtN() throws Exception {
-        ExecutorContext ctx = newContextWithContinuousOperative();
+        ExecutorContext ctx = newContextWithUnboundedOperative();
         KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
@@ -96,7 +96,7 @@ class RestoreInitStateHandlerTest {
 
     @Test
     void snapshotPlusChangeLogDoesNotDoubleApply() throws Exception {
-        ExecutorContext ctx = newContextWithContinuousOperative();
+        ExecutorContext ctx = newContextWithUnboundedOperative();
         KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
@@ -135,7 +135,7 @@ class RestoreInitStateHandlerTest {
 
     @Test
     void noLiveSlotValidatesAndAcksWithoutMutating() throws Exception {
-        ExecutorContext ctx = newContextWithContinuousOperative();
+        ExecutorContext ctx = newContextWithUnboundedOperative();
         KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
@@ -165,8 +165,8 @@ class RestoreInitStateHandlerTest {
         assertThat(((CounterOperation.State) slot(ctx).state().get()).value).isZero();
     }
 
-    private static ExecutorContext newContextWithContinuousOperative() {
-        ContinuousOperativeRegistry.registerContinuous(CounterContinuousOperative.class);
+    private static ExecutorContext newContextWithUnboundedOperative() {
+        UnboundedOperativeRegistry.registerUnbounded(CounterUnboundedOperative.class);
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
@@ -183,7 +183,7 @@ class RestoreInitStateHandlerTest {
 
     private static SegmentSlot slot(ExecutorContext ctx) {
         return ctx.operativeInstanceRegistry()
-                .getContinuousOperative(INSTANCE)
+                .getUnboundedOperative(INSTANCE)
                 .segments()
                 .get(0)
                 .get(0);
@@ -208,7 +208,7 @@ class RestoreInitStateHandlerTest {
 
     // --- Test operative: single changeful Operation whose State holds a running total. ---
 
-    public static final class CounterContinuousOperative implements ContinuousOperative {
+    public static final class CounterUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return FACTORY;

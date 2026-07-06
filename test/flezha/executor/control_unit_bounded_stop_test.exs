@@ -2,7 +2,7 @@ defmodule FlezhaTest.Executor.ControlUnitBoundedStopTest do
   @moduledoc """
   §5a.1/§6.2: the cooperative external-stop send. `ControlUnit.bounded_stop/2`
   ships a `BoundedStop` command over the control channel — distinct from the hard
-  `RemOperative` the continuous stop uses. Fire-and-forget: the SDK trips its
+  `RemOperative` the unbounded stop uses. Fire-and-forget: the SDK trips its
   cancellation token and the teardown follows on `BoundedCompleted`.
   """
 

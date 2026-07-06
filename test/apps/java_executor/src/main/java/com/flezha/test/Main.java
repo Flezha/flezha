@@ -14,7 +14,7 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         String namespace = args.length > 0 ? args[0] : "default";
-        registerContinuousOperatives();
+        registerUnboundedOperatives();
         registerBoundedOperatives();
         Flezha unused = Flezha.newInstance(namespace);
         // Intentionally unused — the SDK instance holds the connection open;
@@ -22,15 +22,15 @@ public final class Main {
         stdKeeper();
     }
 
-    private static void registerContinuousOperatives() {
-        Flezha.registerContinuous(DoNothingContinuousOperative.class);
-        Flezha.registerContinuous(StoreInputContinuousOperative.class);
-        Flezha.registerContinuous(CompareFilterContinuousOperative.class);
-        Flezha.registerContinuous(StatefulCounterContinuousOperative.class);
-        Flezha.registerContinuous(CoalescingCounterContinuousOperative.class);
-        Flezha.registerContinuous(PersistenceOffContinuousOperative.class);
-        Flezha.registerContinuous(HybridChannelContinuousOperative.class);
-        // EchoMessageContinuousOperative is reintroduced once per-Operation `handleMessage` lands.
+    private static void registerUnboundedOperatives() {
+        Flezha.registerUnbounded(DoNothingUnboundedOperative.class);
+        Flezha.registerUnbounded(StoreInputUnboundedOperative.class);
+        Flezha.registerUnbounded(CompareFilterUnboundedOperative.class);
+        Flezha.registerUnbounded(StatefulCounterUnboundedOperative.class);
+        Flezha.registerUnbounded(CoalescingCounterUnboundedOperative.class);
+        Flezha.registerUnbounded(PersistenceOffUnboundedOperative.class);
+        Flezha.registerUnbounded(HybridChannelUnboundedOperative.class);
+        // EchoMessageUnboundedOperative is reintroduced once per-Operation `handleMessage` lands.
     }
 
     private static void registerBoundedOperatives() {

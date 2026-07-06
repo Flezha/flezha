@@ -4,13 +4,13 @@ import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.SegmentApplyState;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeStateSerializer;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeStateSerializer;
 import java.util.List;
 
 /**
  * Applies an opaque state blob captured by a previous snapshot to an
- * already-registered {@link ContinuousOperativeInstance} before any input is delivered.
+ * already-registered {@link UnboundedOperativeInstance} before any input is delivered.
  * Used by the controller's cluster-snapshot restore path.
  */
 public final class SegmentApplyStateHandler implements CommandHandler {
@@ -21,9 +21,9 @@ public final class SegmentApplyStateHandler implements CommandHandler {
         String operativeId = cmd.getOperativeId();
         byte[] stateBytes = cmd.getStateBinary().toByteArray();
 
-        ContinuousOperativeInstance instance = ctx.operativeInstanceRegistry().getContinuousOperative(operativeId);
+        UnboundedOperativeInstance instance = ctx.operativeInstanceRegistry().getUnboundedOperative(operativeId);
         if (instance == null) {
-            errors.add("ContinuousOperative with id " + operativeId + " not found");
+            errors.add("UnboundedOperative with id " + operativeId + " not found");
             return new byte[0];
         }
 
@@ -32,7 +32,7 @@ public final class SegmentApplyStateHandler implements CommandHandler {
         }
 
         try {
-            ContinuousOperativeStateSerializer.deserialize(instance, stateBytes);
+            UnboundedOperativeStateSerializer.deserialize(instance, stateBytes);
         } catch (Exception e) {
             errors.add("apply_state_not_supported");
         }

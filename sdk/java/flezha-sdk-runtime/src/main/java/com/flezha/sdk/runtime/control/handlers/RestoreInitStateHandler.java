@@ -8,8 +8,8 @@ import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner.BoundedSegment;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
 import com.flezha.sdk.runtime.operative.Operative;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.ChangeLogReader;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
@@ -34,9 +34,9 @@ import javax.annotation.Nonnull;
  * persisted history (the controller then skips a WAL realign). It replies with
  * {@code RestoreInitStateResponse{segment_id, terminal_seq}}.
  *
- * <p>When the continuous scan misses, it scans live <strong>bounded</strong>
+ * <p>When the unbounded scan misses, it scans live <strong>bounded</strong>
  * instances (whose Segments live on the {@link BoundedOperativeInstance}, not a
- * {@link ContinuousOperativeInstance}): a durable bounded operative that has been
+ * {@link UnboundedOperativeInstance}): a durable bounded operative that has been
  * re-added rebuilds its committed Segment state in place and releases one count
  * on the driver's crash-resume gate. Only when neither matches does it fall back
  * to validating the change-log and acking the terminal seq. There is no
@@ -111,7 +111,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
     }
 
     /**
-     * Rebuild a live continuous slot's state from snapshot + change-log and
+     * Rebuild a live unbounded slot's state from snapshot + change-log and
      * re-arm its change-seq. Returns the terminal (highest) WAL seq, 0 when the
      * change-log is empty.
      */
@@ -134,12 +134,12 @@ public final class RestoreInitStateHandler implements CommandHandler {
     }
 
     /**
-     * Scan every live continuous operative's segments for the slot whose binary
+     * Scan every live unbounded operative's segments for the slot whose binary
      * identity equals {@code segmentId}. The identity is built the same way the
      * flusher frames {@code segment_id}, so a byte-equal match is exact.
      */
     private static Located findSlot(ExecutorContext ctx, byte[] segmentId) {
-        for (ContinuousOperativeInstance instance :
+        for (UnboundedOperativeInstance instance :
                 ctx.operativeInstanceRegistry().operativeSnapshot().values()) {
             List<List<SegmentSlot>> segments = instance.segments();
             for (List<SegmentSlot> operationSegments : segments) {
@@ -161,7 +161,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
 
     /**
      * Scan live bounded instances for the Segment whose wire identity equals
-     * {@code segmentId}. The continuous {@link #findSlot} scan does not see
+     * {@code segmentId}. The unbounded {@link #findSlot} scan does not see
      * bounded Segments (they live on the {@link BoundedOperativeInstance}, in the
      * bounded package), so this closes the crash-resume reachability gap.
      */
@@ -180,7 +180,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
         return null;
     }
 
-    private record Located(ContinuousOperativeInstance instance, SegmentSlot slot) {}
+    private record Located(UnboundedOperativeInstance instance, SegmentSlot slot) {}
 
     private record BoundedLocated(BoundedOperativeInstance instance, BoundedSegment segment) {}
 }

@@ -8,7 +8,7 @@ package com.flezha.sdk.bounded;
  * linear chain (branching, a cycle, a dynamic-segment operation, a disconnected
  * operation, or no entry channel).
  *
- * <p>Unchecked, mirroring {@link com.flezha.sdk.operative.ContinuousOperativeConfigurationException}
+ * <p>Unchecked, mirroring {@link com.flezha.sdk.operative.UnboundedOperativeConfigurationException}
  * — it surfaces a programming error in the authoring, caught at registration
  * rather than at run time.
  */

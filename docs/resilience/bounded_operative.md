@@ -1,8 +1,8 @@
 # Bounded Operative — structure, lifecycle, saga & crash-resume
 
 A **Bounded Operative** (kind `bounded`) is an on-demand, terminating,
-possibly-interactive process — the counterpart to a Continuous Operative's
-always-on streaming DAG. Where a continuous operative folds an input stream
+possibly-interactive process — the counterpart to an Unbounded Operative's
+always-on streaming DAG. Where an unbounded operative folds an input stream
 forever, a bounded operative runs an **ordered workflow** to an exit trigger and
 is then torn down.
 
@@ -16,7 +16,7 @@ finished-job retention. Read it with [`data_durability.md`](data_durability.md)
 ## Structure: sequential operations, parallel segments
 
 A bounded operative authors the **same** Operations, Channels, and Segments a
-continuous operative does — the same per-segment state engine — but its
+unbounded operative does — the same per-segment state engine — but its
 operations are scheduled **sequentially**:
 
 - **Linear chain** `Op1 → Op2 → … → OpN` (no branching in v1). Each operation's
@@ -24,7 +24,7 @@ operations are scheduled **sequentially**:
   barrier**: an operation is *done* only when every one of its segments has
   finished. Because each stage chews a finite, known batch, "done" is a count,
   not a fuzzy idle guess.
-- **Within one operation, segments run in parallel** exactly as in continuous
+- **Within one operation, segments run in parallel** exactly as in unbounded
   (single / static segmenting, per-segment state + WAL).
 - The first operation is **seeded from the spawn `args`** (`init_values`); later
   operations consume the previous stage's output.
@@ -33,7 +33,7 @@ operations are scheduled **sequentially**:
   loop (below).
 
 The `{operative_class, operation_id, segment_key}` identity is the same one a
-continuous operative uses — a bounded operative genuinely has operations and
+unbounded operative uses — a bounded operative genuinely has operations and
 segments, so there are **no synthetic sentinels**.
 
 ## Lifecycle: exit triggers, inbox, one teardown
@@ -103,7 +103,7 @@ restored), and compensations must be idempotent.
 A bounded operative class is **durable by default** and MAY **opt out** per class
 (fire-and-forget) via `PERSISTENCE_ENABLED` / `persistenceEnabled()`, resolved at
 start through `PersistenceResolver` (operator override available). When durable,
-its operations/segments are WAL-backed on the **same substrate** as continuous
+its operations/segments are WAL-backed on the **same substrate** as unbounded
 (`WalWriter` framing, fsync batching, retention) under the normal identity. When
 opted out, the per-Segment flush **drains and discards** — no WAL, snapshot, or
 state files.
@@ -121,8 +121,8 @@ Execution is therefore **at-least-once** — steps and compensations must be
 terminal (compensate + status `error`, **no** platform retry); this is distinct
 from crash-resume.
 
-The continuous-only seq-gap → resync + epoch-realign machinery stays on
-`:continuous`: a resumed bounded Segment re-arms its `change_seq` to
+The unbounded-only seq-gap → resync + epoch-realign machinery stays on
+`:unbounded`: a resumed bounded Segment re-arms its `change_seq` to
 `terminal + 1`, so post-resume appends are contiguous and no realign is needed.
 
 ### How a crashed bounded operative reaches a new executor
@@ -156,12 +156,12 @@ override, env `FLEZHA_BOUNDED_RETENTION_HOURS`). During the window
 result, and finish time. An opted-out (ephemeral) operative leaves no state to
 retain; its completion record is best-effort only.
 
-## Capability split (continuous behaviour preserved)
+## Capability split (unbounded behaviour preserved)
 
-The coarse `persistent_state?` flag is split so continuous-only behaviours no
+The coarse `persistent_state?` flag is split so unbounded-only behaviours no
 longer ride on it:
 
-| Flag | Meaning | `:continuous` | `:bounded` |
+| Flag | Meaning | `:unbounded` | `:bounded` |
 |---|---|---|---|
 | `persistent_state?` | durable per-Segment WAL + restore (crash-resume, state introspection) | always | durable-by-default (per-class opt-out) |
 | `time_travel?` | point-in-time queries + retention beyond the latest snapshot (`flz state at`) | yes | no |
@@ -171,8 +171,8 @@ longer ride on it:
 `persistent_state?` is resolved per kind **and class** (in `PersistenceResolver`,
 because bounded's durability is a per-class opt-out); the other three are pure
 per-kind flags (`Flezha.Operative.Kind`) keyed off `Flezha.Operative.ClassRegistry`
-(operative_class → kind). An **unknown class defaults to `:continuous`**, so every
-gate is only ever *subtractive* — continuous behaviour is byte-for-byte
+(operative_class → kind). An **unknown class defaults to `:unbounded`**, so every
+gate is only ever *subtractive* — unbounded behaviour is byte-for-byte
 unchanged, and a durable bounded operative gets durable state + restore **without**
 inheriting time-travel, dynamic-eviction, or output-stall semantics it has no use
 for.
@@ -183,7 +183,7 @@ for.
   "send one email") can double-act on resume. Write it idempotently or **opt out
   of durability** so a crash re-runs from a clean slate rather than a partial one.
 - **Deploy executors with a graceful stop, not a kill** — the same rule as
-  continuous ([`data_durability.md`](data_durability.md)). A graceful stop lets a
+  unbounded ([`data_durability.md`](data_durability.md)). A graceful stop lets a
   running bounded operative migrate; a hard kill forces the crash-resume path.
 - **Retention grows disk for many small jobs.** Opt out for fire-and-forget, or
   tune `FLEZHA_BOUNDED_RETENTION_HOURS`. Bounded is not the high-throughput path.

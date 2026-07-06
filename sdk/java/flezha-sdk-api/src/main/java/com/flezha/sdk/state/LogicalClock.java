@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Logical clock backed by a monotonic counter exposed as an {@link Instant}
  * via {@link Instant#ofEpochMilli(long)}. Type ships in v1 for forward
  * compatibility; the runtime currently rejects Operations declaring this Clock
- * with {@code ContinuousOperativeConfigurationException.clockNotImplementedYet}.
+ * with {@code UnboundedOperativeConfigurationException.clockNotImplementedYet}.
  */
 public final class LogicalClock implements Clock {
 

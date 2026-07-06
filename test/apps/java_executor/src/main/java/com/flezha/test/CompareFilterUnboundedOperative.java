@@ -1,13 +1,13 @@
 package com.flezha.test;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.ContinuousOperative;
+import com.flezha.sdk.operative.UnboundedOperative;
 
 /**
- * Mirror of the Rust SDK's {@code CompareFilterContinuousOperative}: filters by
+ * Mirror of the Rust SDK's {@code CompareFilterUnboundedOperative}: filters by
  * comparing the input against a stored value held in the Operation's State.
  */
-public final class CompareFilterContinuousOperative implements ContinuousOperative {
+public final class CompareFilterUnboundedOperative implements UnboundedOperative {
 
     @Override
     public String factoryId() {

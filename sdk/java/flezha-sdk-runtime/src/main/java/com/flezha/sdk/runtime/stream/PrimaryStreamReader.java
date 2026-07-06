@@ -6,9 +6,9 @@ import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.Operative;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.worker.OperationDispatcher;
 import java.nio.charset.StandardCharsets;
 import javax.annotation.Nonnull;
@@ -19,7 +19,7 @@ import org.slf4j.LoggerFactory;
  * Per-primary-stream frame parser + dispatcher. Driven by the JNI
  * {@code onData} callback. Each incoming chunk feeds into a local
  * {@link FrameParser}; for each decoded {@link Frame} the reader looks up
- * the {@link ContinuousOperativeInstance} by {@code payloadId} (= operative instance id) and
+ * the {@link UnboundedOperativeInstance} by {@code payloadId} (= operative instance id) and
  * routes the input to the consumer Operations declared on the entry channel
  * named in {@code metadata["channel"]}.
  *
@@ -60,9 +60,9 @@ public final class PrimaryStreamReader {
         }
         // Resolve the operative kind once per frame. A bounded's data frame is
         // post-start input: route it to the running driver's inbox.
-        ContinuousOperativeInstance instance;
+        UnboundedOperativeInstance instance;
         switch (operative) {
-            case ContinuousOperativeInstance ri -> instance = ri;
+            case UnboundedOperativeInstance ri -> instance = ri;
             case BoundedOperativeInstance bounded -> {
                 if (!bounded.offerInbox(frame.message())) {
                     LOG.warn(
@@ -72,7 +72,7 @@ public final class PrimaryStreamReader {
                 return;
             }
         }
-        ContinuousOperativeTopology topology = instance.topology();
+        UnboundedOperativeTopology topology = instance.topology();
 
         String channelName = frame.metadata().get(CHANNEL_META_KEY);
         ChannelDescriptor channel = resolveEntryChannel(topology, channelName);
@@ -93,7 +93,7 @@ public final class PrimaryStreamReader {
         }
     }
 
-    private static ChannelDescriptor resolveEntryChannel(ContinuousOperativeTopology topology, String channelName) {
+    private static ChannelDescriptor resolveEntryChannel(UnboundedOperativeTopology topology, String channelName) {
         if (channelName != null) {
             Integer id = topology.lookupChannelId(channelName);
             if (id != null) {

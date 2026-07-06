@@ -11,7 +11,7 @@ import javax.annotation.Nonnull;
  * keyspace across compute-operative kinds — a operative instance and a bounded instance
  * never share an id, and {@code RemOperative} teardown is uniform across kinds.
  */
-public final class ContinuousOperativeInstanceRegistry {
+public final class UnboundedOperativeInstanceRegistry {
 
     private final Map<String, Operative> byId = new ConcurrentHashMap<>();
 
@@ -25,12 +25,12 @@ public final class ContinuousOperativeInstanceRegistry {
 
     /**
      * The operative variant for {@code instanceId}, or {@code null} when the id is
-     * unknown or bound to a non-operative operative (e.g. a bounded). ContinuousOperative-only callers
+     * unknown or bound to a non-operative operative (e.g. a bounded). UnboundedOperative-only callers
      * (state queries, migration) use this so a bounded id reads as "not a operative".
      */
-    public ContinuousOperativeInstance getContinuousOperative(@Nonnull String instanceId) {
+    public UnboundedOperativeInstance getUnboundedOperative(@Nonnull String instanceId) {
         Operative u = byId.get(instanceId);
-        return u instanceof ContinuousOperativeInstance ri ? ri : null;
+        return u instanceof UnboundedOperativeInstance ri ? ri : null;
     }
 
     public Operative remove(@Nonnull String instanceId) {
@@ -48,10 +48,10 @@ public final class ContinuousOperativeInstanceRegistry {
 
     /** Snapshot of the operative variants only — for state/shutdown paths that have no bounded analog. */
     @Nonnull
-    public Map<String, ContinuousOperativeInstance> operativeSnapshot() {
-        Map<String, ContinuousOperativeInstance> out = new LinkedHashMap<>();
+    public Map<String, UnboundedOperativeInstance> operativeSnapshot() {
+        Map<String, UnboundedOperativeInstance> out = new LinkedHashMap<>();
         for (Map.Entry<String, Operative> e : byId.entrySet()) {
-            if (e.getValue() instanceof ContinuousOperativeInstance ri) {
+            if (e.getValue() instanceof UnboundedOperativeInstance ri) {
                 out.put(e.getKey(), ri);
             }
         }

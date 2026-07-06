@@ -6,8 +6,8 @@ import java.nio.charset.StandardCharsets;
 /**
  * Single-operation stateless authoring-sugar twin of {@link DoNothingOperation}.
  * The annotation processor generates {@code SugarDoNothingOperation} +
- * {@code SugarDoNothingContinuousOperative} and adds the operative to
- * {@code GeneratedContinuousOperatives}.
+ * {@code SugarDoNothingUnboundedOperative} and adds the operative to
+ * {@code GeneratedUnboundedOperatives}.
  */
 @Operation(id = "java_sugar_do_nothing", sink = "java_sugar_echo")
 public class SugarDoNothing {

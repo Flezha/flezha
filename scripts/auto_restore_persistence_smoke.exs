@@ -25,8 +25,8 @@ executor_id = "smoke_executor_xyz"
 
 IO.puts("\n=== STEP 1: Start hub ===")
 {:ok, _pid} = HubManager.start_hub(namespace)
-:ok = ProcessHub.await_normal(hub_id, 5_000)
-IO.puts("hub alive? #{ProcessHub.is_alive?(hub_id)}, state=#{ProcessHub.recovery_state(hub_id)}")
+:ok = ProcessHub.Service.Recovery.await_normal(hub_id, 5_000)
+IO.puts("hub alive? #{ProcessHub.is_alive?(hub_id)}, state=#{ProcessHub.Service.Recovery.recovery_state(hub_id)}")
 
 IO.puts("\n=== STEP 2: Insert post-alter cspec (3-tuple shape, what production persists) ===")
 

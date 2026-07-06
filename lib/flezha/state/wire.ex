@@ -110,8 +110,8 @@ defmodule Flezha.State.Wire do
   """
   @spec decode_segment_id(binary()) :: {:ok, {binary(), binary(), binary()}} | {:error, term()}
   def decode_segment_id(
-        <<rc_len::8, operative_class::binary-size(rc_len), sh_len::8, operation_id::binary-size(sh_len),
-          pk_len::16-big, segment_key::binary-size(pk_len)>>
+        <<rc_len::8, operative_class::binary-size(rc_len), sh_len::8,
+          operation_id::binary-size(sh_len), pk_len::16-big, segment_key::binary-size(pk_len)>>
       ) do
     {:ok, {operative_class, operation_id, segment_key}}
   end

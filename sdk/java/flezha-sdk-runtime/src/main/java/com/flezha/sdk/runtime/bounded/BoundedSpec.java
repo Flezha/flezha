@@ -4,11 +4,11 @@ import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.bounded.BoundedOperativeConfigurationException;
 import com.flezha.sdk.bounded.RollbackMode;
 import com.flezha.sdk.channel.ChannelKind;
-import com.flezha.sdk.operative.ContinuousOperativeConfigurationException;
+import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.OperationDescriptor;
-import com.flezha.sdk.runtime.operative.builder.ContinuousOperativeTopologyBuilder;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
+import com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -28,7 +28,7 @@ public final class BoundedSpec {
 
     private final String factoryId;
     private final Class<? extends BoundedOperative> operativeClass;
-    private final Optional<ContinuousOperativeTopology> topology;
+    private final Optional<UnboundedOperativeTopology> topology;
     private final List<Integer> chain;
     private final Optional<Duration> maxDuration;
     private final RollbackMode rollbackMode;
@@ -37,7 +37,7 @@ public final class BoundedSpec {
     private BoundedSpec(
             String factoryId,
             Class<? extends BoundedOperative> operativeClass,
-            Optional<ContinuousOperativeTopology> topology,
+            Optional<UnboundedOperativeTopology> topology,
             List<Integer> chain,
             Optional<Duration> maxDuration,
             RollbackMode rollbackMode,
@@ -63,7 +63,7 @@ public final class BoundedSpec {
 
     /** Structured topology, or empty for the {@code run}-sugar form. */
     @Nonnull
-    public Optional<ContinuousOperativeTopology> topology() {
+    public Optional<UnboundedOperativeTopology> topology() {
         return topology;
     }
 
@@ -128,11 +128,11 @@ public final class BoundedSpec {
                     + "let run()/the chain complete, give the loop a terminal predicate, or declare maxDuration().");
         }
 
-        ContinuousOperativeTopology topology;
+        UnboundedOperativeTopology topology;
         try {
-            topology = ContinuousOperativeTopologyBuilder.build(factoryId, probe::operations);
-        } catch (ContinuousOperativeConfigurationException e) {
-            // A structured bounded reuses the continuous topology builder, which
+            topology = UnboundedOperativeTopologyBuilder.build(factoryId, probe::operations);
+        } catch (UnboundedOperativeConfigurationException e) {
+            // A structured bounded reuses the unbounded topology builder, which
             // rejects dynamic-segment operations and unwired channels.
             throw new BoundedOperativeConfigurationException(
                     "bounded operative `" + factoryId + "` has an invalid topology: " + e.getMessage());
@@ -168,7 +168,7 @@ public final class BoundedSpec {
      * operations). Operation ids are indices into {@code topology.operations()};
      * a channel's {@code consumers()} are downstream operation ids.
      */
-    private static List<Integer> linearChain(String factoryId, ContinuousOperativeTopology topology) {
+    private static List<Integer> linearChain(String factoryId, UnboundedOperativeTopology topology) {
         // The entry channel seeds the first operation from the spawn args.
         ChannelDescriptor entry = null;
         for (ChannelDescriptor c : topology.channels()) {

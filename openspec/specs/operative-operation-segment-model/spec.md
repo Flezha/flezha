@@ -38,7 +38,7 @@ The Controller SHALL hold the authoritative placement table. Executors SHALL reg
 
 Each SegmentSlot's mailbox SHALL have a fixed capacity declared at operative startup. The mailbox SHALL refuse a push that would exceed this capacity; the SDK then applies the source channel's `OverflowPolicy` (see "Overflow policy declared per channel"). Capacity SHALL NOT change at runtime once the operative is started.
 
-The capacity SHALL be the value returned by the consumer Operation's `mailbox_capacity()` trait method, evaluated once per Operation at `register_continuous::<R>()` time after applying the precedence rules in "Mailbox capacity precedence". Static-mode Operations SHALL apply the same capacity to every Segment declared by `operation_keys()`.
+The capacity SHALL be the value returned by the consumer Operation's `mailbox_capacity()` trait method, evaluated once per Operation at `register_unbounded::<R>()` time after applying the precedence rules in "Mailbox capacity precedence". Static-mode Operations SHALL apply the same capacity to every Segment declared by `operation_keys()`.
 
 The mailbox SHALL refuse capacity values of 0 (which would always overflow) and values strictly greater than 1_048_576 (1 MiB items). Operative startup SHALL fail with an error naming the offending Operation when `mailbox_capacity()` returns an out-of-range value.
 
@@ -68,7 +68,7 @@ The mailbox SHALL refuse capacity values of 0 (which would always overflow) and 
 
 ### Requirement: Mailbox capacity precedence
 
-The SDK SHALL resolve a Operation's mailbox capacity at `register_continuous::<R>()` time using the following ordered rule:
+The SDK SHALL resolve a Operation's mailbox capacity at `register_unbounded::<R>()` time using the following ordered rule:
 
 1. If `Operation::MAILBOX_CAPACITY_OVERRIDDEN` is `true`, use the value returned by `Operation::mailbox_capacity()`.
 2. Otherwise, if the `FLEZHA_MAILBOX_CAPACITY` environment variable is set to a non-empty string parseable as `usize`, use that value.
@@ -225,7 +225,7 @@ The Rust SDK's `Operation` trait SHALL declare an associated `type Clock: flezha
 #### Scenario: Non-WallClock fails startup in v1
 
 - **WHEN** a Rust Operation declares `type Clock = LogicalClock`
-- **THEN** `register_continuous::<R>()` SHALL fail with `OperativeStartError::ClockNotImplementedYet { clock_type: "LogicalClock" }` and the operative SHALL NOT be registered
+- **THEN** `register_unbounded::<R>()` SHALL fail with `OperativeStartError::ClockNotImplementedYet { clock_type: "LogicalClock" }` and the operative SHALL NOT be registered
 
 ### Requirement: Operation declares Config associated type with typed constructor (Rust SDK)
 
@@ -285,33 +285,33 @@ The Rust SDK's `Operation::run` SHALL receive `state: StateHandle<'_, Self>` ins
 
 ### Requirement: Operative declares PERSISTENCE_ENABLED const, frozen at instance start (Rust SDK)
 
-The Rust SDK's `ContinuousOperative` trait SHALL declare `const PERSISTENCE_ENABLED: bool = true`. The runtime SHALL resolve a per-Operative-instance `persistence_enabled: bool` at `start_operative(factory_id, instance_id)` time using:
+The Rust SDK's `UnboundedOperative` trait SHALL declare `const PERSISTENCE_ENABLED: bool = true`. The runtime SHALL resolve a per-Operative-instance `persistence_enabled: bool` at `start_operative(factory_id, instance_id)` time using:
 
 1. If the operative-start metadata from the agent contains `operative_persistence.<OperativeClass>` with a boolean value, use that.
-2. Otherwise, use the value of `ContinuousOperative::PERSISTENCE_ENABLED`.
+2. Otherwise, use the value of `UnboundedOperative::PERSISTENCE_ENABLED`.
 3. The default of the trait const is `true`.
 
-The resolved value SHALL be bound to the `ContinuousInstance` and SHALL be propagated to every `SegmentSlot` constructed for that instance. Subsequent changes to the executor-side metadata or to the `ContinuousOperative::PERSISTENCE_ENABLED` const (via SDK redeploy) SHALL NOT affect already-running instances; new values take effect on the next `stop_operative` + `start_operative` cycle for that instance.
+The resolved value SHALL be bound to the `UnboundedInstance` and SHALL be propagated to every `SegmentSlot` constructed for that instance. Subsequent changes to the executor-side metadata or to the `UnboundedOperative::PERSISTENCE_ENABLED` const (via SDK redeploy) SHALL NOT affect already-running instances; new values take effect on the next `stop_operative` + `start_operative` cycle for that instance.
 
 #### Scenario: Default const value is true
 
 - **WHEN** a Operative does not declare `PERSISTENCE_ENABLED` and no executor override is present in operative-start metadata
-- **THEN** `ContinuousInstance::persistence_enabled()` SHALL return `true`
+- **THEN** `UnboundedInstance::persistence_enabled()` SHALL return `true`
 
 #### Scenario: Const-declared opt-out is honored
 
 - **WHEN** `MarketOperative` declares `const PERSISTENCE_ENABLED: bool = false` and no executor override is present
-- **THEN** `ContinuousInstance::persistence_enabled()` SHALL return `false`; the per-Process flusher SHALL drain-and-discard for this instance's Segments; `stub_send_frame` (or its real counterpart) SHALL NOT be invoked for this instance
+- **THEN** `UnboundedInstance::persistence_enabled()` SHALL return `false`; the per-Process flusher SHALL drain-and-discard for this instance's Segments; `stub_send_frame` (or its real counterpart) SHALL NOT be invoked for this instance
 
 #### Scenario: Executor override takes precedence over const
 
 - **WHEN** `MarketOperative` declares `const PERSISTENCE_ENABLED: bool = true` AND the operative-start metadata carries `operative_persistence.MarketOperative = false`
-- **THEN** `ContinuousInstance::persistence_enabled()` SHALL return `false`
+- **THEN** `UnboundedInstance::persistence_enabled()` SHALL return `false`
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** a `ContinuousInstance` is constructed with resolved `persistence_enabled = true`, AND the executor subsequently issues a runtime config change setting `operative_persistence.<OperativeClass> = false`
-- **THEN** the running `ContinuousInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_operative(instance_id)` and a subsequent `start_operative(...)` invocation
+- **WHEN** a `UnboundedInstance` is constructed with resolved `persistence_enabled = true`, AND the executor subsequently issues a runtime config change setting `operative_persistence.<OperativeClass> = false`
+- **THEN** the running `UnboundedInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_operative(instance_id)` and a subsequent `start_operative(...)` invocation
 
 ### Requirement: init_state accepts optional restoration payload (Rust SDK)
 
@@ -352,17 +352,17 @@ For Segments whose Operation's `Change == NoChange`, the runtime SHALL NOT alloc
 
 The SDK SHALL expose a four-layer abstraction comprising Operative, Operation, Segment, and Runner. Each layer SHALL have the following exclusive responsibilities and no others SHALL be implicitly added:
 
-- **Operative** — a user-defined struct implementing the `ContinuousOperative` trait. Spawned by the agent once per `flz operative start` invocation. Owns the channel topology declaration and the registered Operations. Holds no domain state of its own.
+- **Operative** — a user-defined struct implementing the `UnboundedOperative` trait. Spawned by the agent once per `flz operative start` invocation. Owns the channel topology declaration and the registered Operations. Holds no domain state of its own.
 - **Operation** — a user-defined struct implementing the `Operation` trait. Defines a stage's typed input, typed output, state type, run logic, and segmenting strategy. Holds no runtime state of its own; acts as the template for Segments.
 - **Segment** — a runtime instance of a Operation, identified by an optional string key. Holds exactly one State value, exactly one mailbox, and exactly one `inflight` flag. Created by the SDK at operative startup; not user-instantiable.
 - **Runner** — an OS thread in the SDK's worker pool. Drains Segment mailboxes. Not user-visible at the API surface; pool size is configured via the existing `FLEZHA_WORKER_POOL_SIZE` mechanism.
 
 #### Scenario: Each layer has a distinct programmer-visible role
 - **WHEN** a developer reads the public API of the new SDK
-- **THEN** they SHALL find a `ContinuousOperative` trait, a `Operation` trait, but no `Segment` trait or `Runner` trait — Segments and Runners are runtime artifacts created by the SDK, not types the user implements
+- **THEN** they SHALL find a `UnboundedOperative` trait, a `Operation` trait, but no `Segment` trait or `Runner` trait — Segments and Runners are runtime artifacts created by the SDK, not types the user implements
 
 #### Scenario: A Operative holds no domain state
-- **WHEN** a `ContinuousOperative` impl is examined
+- **WHEN** a `UnboundedOperative` impl is examined
 - **THEN** the trait MUST NOT include a state-init or state-handle method; all stateful behavior MUST live on Operations
 
 ### Requirement: Static and single segmenting modes are supported in v1
@@ -518,17 +518,17 @@ The plugin sink SHALL be stored on the channel descriptor as a `plugin_sink: Opt
 
 #### Scenario: Hybrid wiring is accepted at registration
 - **WHEN** a Operative declares `c.channel::<SmaValue>("sma_out").from::<SmaOperation>().also_to_plugin_with("indicators", sma_to_pb_bytes).into::<BollingerOperation>()`
-- **THEN** `register_continuous::<MarketOperative>()` SHALL succeed
+- **THEN** `register_unbounded::<MarketOperative>()` SHALL succeed
 - **AND** the resulting `ChannelDescriptor` for `"sma_out"` SHALL have `kind = InterOperation`, exactly one entry in `consumers` (the `BollingerOperation` operation id), and `plugin_sink = Some(PluginSink { name: "indicators", serializer: <fn-ptr> })`
 
 #### Scenario: also_to_plugin_with chains in either order with into::<S>()
 - **WHEN** a Operative declares `c.channel::<EmaValue>("ema_out").from::<EmaOperation>().into::<MacdOperation>().also_to_plugin_with("indicators", ema_to_pb_bytes)`
-- **THEN** `register_continuous::<MarketOperative>()` SHALL succeed
+- **THEN** `register_unbounded::<MarketOperative>()` SHALL succeed
 - **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped (`.also_to_plugin_with(...).into::<MacdOperation>()`)
 
 #### Scenario: Calling also_to_plugin_with twice on the same channel is a topology error
 - **WHEN** a Operative calls `c.channel::<T>("foo").from::<S>().also_to_plugin_with("p1", f1).also_to_plugin_with("p2", f2)`
-- **THEN** `register_continuous::<R>()` SHALL panic with `BuildTopologyError::DuplicatePluginSink { channel: "foo" }`
+- **THEN** `register_unbounded::<R>()` SHALL panic with `BuildTopologyError::DuplicatePluginSink { channel: "foo" }`
 - **AND** the offending channel name SHALL appear verbatim in the error message
 
 #### Scenario: also_to_plugin_with is unreachable after to_plugin
@@ -596,11 +596,11 @@ On a pure-`InterOperation` channel with no plugin sink, `emit_with_meta` SHALL c
 
 ### Requirement: New BuildTopologyError variant — `DuplicatePluginSink`
 
-`BuildTopologyError` (in `sdk/rust/src/channel/builder.rs`) SHALL gain a `DuplicatePluginSink { channel: &'static str }` variant. The variant SHALL be raised at `register_continuous::<R>()` time when `also_to_plugin_with` is called more than once on the same channel. The first call registers the sink; the second SHALL push the error onto the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `register_continuous::<R>()` validation SHALL fail with the standard "topology rejected" message that lists every accumulated `BuildTopologyError`.
+`BuildTopologyError` (in `sdk/rust/src/channel/builder.rs`) SHALL gain a `DuplicatePluginSink { channel: &'static str }` variant. The variant SHALL be raised at `register_unbounded::<R>()` time when `also_to_plugin_with` is called more than once on the same channel. The first call registers the sink; the second SHALL push the error onto the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `register_unbounded::<R>()` validation SHALL fail with the standard "topology rejected" message that lists every accumulated `BuildTopologyError`.
 
 #### Scenario: Second also_to_plugin_with call is rejected at registration
 - **WHEN** a Operative's `channels(c)` method calls `also_to_plugin_with("p1", f1)` followed by `also_to_plugin_with("p2", f2)` on the same channel
-- **THEN** `register_continuous::<R>()` SHALL panic with the topology error including `DuplicatePluginSink { channel: "<name>" }`
+- **THEN** `register_unbounded::<R>()` SHALL panic with the topology error including `DuplicatePluginSink { channel: "<name>" }`
 - **AND** the registered topology SHALL be discarded
 
 ### Requirement: New OperationError variant — `PluginSerializerPanic`
@@ -623,12 +623,12 @@ The plugin sink SHALL be stored on the channel descriptor as `Optional<PluginSin
 
 #### Scenario: Hybrid wiring is accepted at registration (Java)
 - **WHEN** a Operative declares `c.channel(SmaValue.class, "sma_out").from(SmaOperation.class).alsoToPluginWith("indicators", SmaCodec::toBytes).into(BollingerOperation.class)`
-- **THEN** `OperativeRegistry.registerContinuous(MarketOperative.class)` SHALL succeed
+- **THEN** `OperativeRegistry.registerUnbounded(MarketOperative.class)` SHALL succeed
 - **AND** the resulting `ChannelDescriptor` for `"sma_out"` SHALL have `kind() == INTER_OPERATION`, exactly one entry in `consumers()` (the `BollingerOperation` operation id), and `pluginSink() == Optional.of(new PluginSink("indicators", <fn>))`
 
 #### Scenario: alsoToPluginWith chains in either order with into(...) (Java)
 - **WHEN** a Operative declares `c.channel(EmaValue.class, "ema_out").from(EmaOperation.class).into(MacdOperation.class).alsoToPluginWith("indicators", EmaCodec::toBytes)`
-- **THEN** `OperativeRegistry.registerContinuous(MarketOperative.class)` SHALL succeed
+- **THEN** `OperativeRegistry.registerUnbounded(MarketOperative.class)` SHALL succeed
 - **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped (`.alsoToPluginWith(...).into(MacdOperation.class)`)
 
 #### Scenario: alsoToPluginWith is unreachable after toPlugin (Java)
@@ -689,11 +689,11 @@ On a pure-`INTER_OPERATION` channel with no plugin sink, `emitWithMeta` SHALL co
 
 ### Requirement: New OperativeConfigurationException factory — `duplicatePluginSink` (Java SDK)
 
-`OperativeConfigurationException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/OperativeConfigurationException.java`) SHALL gain a static factory `duplicatePluginSink(String channel)` that produces an exception whose message names the offending channel. The factory SHALL be raised at `OperativeRegistry.registerContinuous(...)` time when `alsoToPluginWith` is called more than once on the same channel. The first call registers the sink; the second SHALL accumulate the exception into the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `OperativeRegistry.registerContinuous(...)` validation SHALL throw a `OperativeConfigurationException` listing every accumulated error with the standard "operative topology validation failed" prefix.
+`OperativeConfigurationException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/OperativeConfigurationException.java`) SHALL gain a static factory `duplicatePluginSink(String channel)` that produces an exception whose message names the offending channel. The factory SHALL be raised at `OperativeRegistry.registerUnbounded(...)` time when `alsoToPluginWith` is called more than once on the same channel. The first call registers the sink; the second SHALL accumulate the exception into the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `OperativeRegistry.registerUnbounded(...)` validation SHALL throw a `OperativeConfigurationException` listing every accumulated error with the standard "operative topology validation failed" prefix.
 
 #### Scenario: Second alsoToPluginWith call is rejected at registration (Java)
 - **WHEN** a Operative's `channels(c)` method calls `c.channel(T.class, "foo").from(S.class).alsoToPluginWith("p1", f1).alsoToPluginWith("p2", f2)`
-- **THEN** `OperativeRegistry.registerContinuous(R.class)` SHALL throw `OperativeConfigurationException` whose message contains both the verb `duplicatePluginSink` (or equivalent diagnostic phrasing) and the channel name `"foo"`
+- **THEN** `OperativeRegistry.registerUnbounded(R.class)` SHALL throw `OperativeConfigurationException` whose message contains both the verb `duplicatePluginSink` (or equivalent diagnostic phrasing) and the channel name `"foo"`
 - **AND** the registered topology SHALL be discarded
 
 ### Requirement: New OperationException subclass — `PluginSerializerFailure` (Java SDK)
@@ -754,11 +754,11 @@ The Runner pool SHALL be the existing Chase-Lev work-stealing pool implementatio
 
 ### Requirement: No coexistence with OperativeHandler API
 
-The `OperativeHandler` trait, `OperativeResult` enum, `OperativeRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `ContinuousOperative` / `Operation` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.
+The `OperativeHandler` trait, `OperativeResult` enum, `OperativeRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `UnboundedOperative` / `Operation` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.
 
 **Reason**: The library is unpublished, the only known executor-app consumer is in this monorepo and migrates atomically as part of the same change, and the user has an explicit "no legacy / backward-compat shims" policy. Coexistence would also force the new abstraction to retain dispatch-by-operative-id baggage that the new model deliberately leaves behind.
 
-**Migration**: executor apps using `OperativeHandler` rewrite to `ContinuousOperative` + one or more `Operation` impls in the same change. Concrete example: `flezha_market/market-operative/src/main.rs` and `market_computation.rs` are rewritten in the `operative-mvp-rust` change. State (formerly `Assets`) is decomposed into per-Operation state types.
+**Migration**: executor apps using `OperativeHandler` rewrite to `UnboundedOperative` + one or more `Operation` impls in the same change. Concrete example: `flezha_market/market-operative/src/main.rs` and `market_computation.rs` are rewritten in the `operative-mvp-rust` change. State (formerly `Assets`) is decomposed into per-Operation state types.
 
 #### Scenario: Old API is not importable
 - **WHEN** a Rust file attempts to `use flezha_executor::OperativeHandler` after the cutover

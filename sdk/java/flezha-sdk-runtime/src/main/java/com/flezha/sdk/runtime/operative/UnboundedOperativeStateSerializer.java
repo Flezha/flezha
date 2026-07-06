@@ -9,7 +9,7 @@ import java.util.Map;
 import javax.annotation.Nonnull;
 
 /**
- * Serializes a {@link ContinuousOperativeInstance}'s per-Operation / per-Segment state to a
+ * Serializes a {@link UnboundedOperativeInstance}'s per-Operation / per-Segment state to a
  * canonical JSON blob per {@code operative-mvp-rust/design.md} Decision 10:
  *
  * <pre>
@@ -22,20 +22,20 @@ import javax.annotation.Nonnull;
  * is configured to sort keys and avoid pretty-printing so the byte-shape
  * is stable.
  */
-public final class ContinuousOperativeStateSerializer {
+public final class UnboundedOperativeStateSerializer {
 
     private static final ObjectMapper MAPPER = JsonMapper.builder()
             .configure(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
             .build();
 
-    private ContinuousOperativeStateSerializer() {}
+    private UnboundedOperativeStateSerializer() {}
 
     /**
      * Build the per-Operation / per-Segment JSON blob. Returns an empty
      * {@code byte[]} on a serialization failure (logged by the caller).
      */
     @Nonnull
-    public static byte[] serialize(@Nonnull ContinuousOperativeInstance instance) throws Exception {
+    public static byte[] serialize(@Nonnull UnboundedOperativeInstance instance) throws Exception {
         Map<String, Object> root = new LinkedHashMap<>();
         for (int operationId = 0; operationId < instance.topology().operations().size(); operationId++) {
             OperationDescriptor desc = instance.topology().operations().get(operationId);
@@ -58,11 +58,11 @@ public final class ContinuousOperativeStateSerializer {
 
     /**
      * Apply a previously-serialized state blob to a freshly-constructed
-     * {@link ContinuousOperativeInstance}. Segments absent from the blob retain the
+     * {@link UnboundedOperativeInstance}. Segments absent from the blob retain the
      * state set by their {@code initState} call (forward-compat with Operations
      * added after the blob was captured).
      */
-    public static void deserialize(@Nonnull ContinuousOperativeInstance instance, @Nonnull byte[] blob)
+    public static void deserialize(@Nonnull UnboundedOperativeInstance instance, @Nonnull byte[] blob)
             throws Exception {
         if (blob.length == 0) {
             return;

@@ -7,33 +7,33 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nonnull;
 
 /**
- * Process-global registry of registered ContinuousOperative classes. One entry per ContinuousOperative
+ * Process-global registry of registered UnboundedOperative classes. One entry per UnboundedOperative
  * class, keyed by {@code factoryId()}. The registry is frozen at
  * {@code Flezha.newInstance(...)} time.
  *
- * <p>Acts as the public-API view of the runtime's {@code ContinuousOperativeClassRegistry}
- * (which holds the frozen {@code ContinuousOperativeTopology} produced by inspecting each
+ * <p>Acts as the public-API view of the runtime's {@code UnboundedOperativeClassRegistry}
+ * (which holds the frozen {@code UnboundedOperativeTopology} produced by inspecting each
  * registered class). The runtime side is reached reflectively at
  * registration time so {@code flezha-sdk-api} compiles standalone.
  */
-public final class ContinuousOperativeRegistry {
+public final class UnboundedOperativeRegistry {
 
     private static final Object LOCK = new Object();
-    private static final Map<String, Class<? extends ContinuousOperative>> ENTRIES = new LinkedHashMap<>();
+    private static final Map<String, Class<? extends UnboundedOperative>> ENTRIES = new LinkedHashMap<>();
     private static final AtomicBoolean FROZEN = new AtomicBoolean(false);
 
-    private ContinuousOperativeRegistry() {}
+    private UnboundedOperativeRegistry() {}
 
     /**
-     * Register a ContinuousOperative class. Must be called before {@code Flezha.newInstance}.
+     * Register an UnboundedOperative class. Must be called before {@code Flezha.newInstance}.
      *
      * @throws IllegalStateException if the registry is already frozen.
      * @throws IllegalArgumentException on duplicate factory id.
-     * @throws ContinuousOperativeConfigurationException if the class's topology declaration
+     * @throws UnboundedOperativeConfigurationException if the class's topology declaration
      *     fails the wiring constraints (entry-channel-type, type-equality,
      *     unwired-channel, multi-producer, default-impl detection).
      */
-    public static void registerContinuous(@Nonnull Class<? extends ContinuousOperative> operativeClass) {
+    public static void registerUnbounded(@Nonnull Class<? extends UnboundedOperative> operativeClass) {
         if (operativeClass == null) {
             throw new IllegalArgumentException("operativeClass must not be null");
         }
@@ -87,17 +87,17 @@ public final class ContinuousOperativeRegistry {
     }
 
     /**
-     * Reflectively call into the runtime's ContinuousOperativeClassRegistry. The runtime
+     * Reflectively call into the runtime's UnboundedOperativeClassRegistry. The runtime
      * lives in {@code flezha-sdk-runtime} so {@code flezha-sdk-api} can
      * compile standalone (mirror of how {@code FlezhaImpl} is loaded).
      */
-    private static String registerInRuntime(Class<? extends ContinuousOperative> operativeClass) {
+    private static String registerInRuntime(Class<? extends UnboundedOperative> operativeClass) {
         try {
-            Class<?> impl = Class.forName("com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry");
+            Class<?> impl = Class.forName("com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry");
             return (String) impl.getMethod("registerClass", Class.class).invoke(null, operativeClass);
         } catch (ClassNotFoundException e) {
             throw new IllegalStateException(
-                    "com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry not on the classpath. "
+                    "com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry not on the classpath. "
                             + "Make sure flezha-sdk-runtime is on the runtime classpath.",
                     e);
         } catch (ReflectiveOperationException e) {
@@ -112,7 +112,7 @@ public final class ContinuousOperativeRegistry {
 
     private static void resetRuntime() {
         try {
-            Class<?> impl = Class.forName("com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry");
+            Class<?> impl = Class.forName("com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry");
             impl.getMethod("reset").invoke(null);
         } catch (ClassNotFoundException ignored) {
             // Runtime not loaded — nothing to reset.

@@ -12,9 +12,9 @@ public interface ChannelDecl<T> {
 
     /**
      * Wire the producer Operation. The runtime verifies at
-     * {@code registerContinuous} time that the Operation's
+     * {@code registerUnbounded} time that the Operation's
      * {@link Operation#outputType()} equals {@code T}; a mismatch throws
-     * {@link com.flezha.sdk.operative.ContinuousOperativeConfigurationException} naming both
+     * {@link com.flezha.sdk.operative.UnboundedOperativeConfigurationException} naming both
      * types and the channel.
      */
     @Nonnull

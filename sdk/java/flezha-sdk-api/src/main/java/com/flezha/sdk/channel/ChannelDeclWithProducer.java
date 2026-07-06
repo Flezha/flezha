@@ -16,7 +16,7 @@ public interface ChannelDeclWithProducer<T> {
 
     /**
      * Wire an inter-operation consumer. Calling {@code .into} repeatedly is
-     * allowed (fan-out). The runtime verifies at {@code registerContinuous} time
+     * allowed (fan-out). The runtime verifies at {@code registerUnbounded} time
      * that the consumer Operation's {@link Operation#inputType()} equals {@code T}.
      */
     @Nonnull
@@ -49,8 +49,8 @@ public interface ChannelDeclWithProducer<T> {
      * already received the typed value.
      *
      * <p>Calling {@code alsoToPluginWith} more than once on the same channel
-     * is rejected at {@code registerContinuous(...)} time with
-     * {@link com.flezha.sdk.operative.ContinuousOperativeConfigurationException#duplicatePluginSink(String)}.
+     * is rejected at {@code registerUnbounded(...)} time with
+     * {@link com.flezha.sdk.operative.UnboundedOperativeConfigurationException#duplicatePluginSink(String)}.
      *
      * <p>Returns {@code this} so further {@code .into(...)} wiring chains
      * naturally; the call order of {@code alsoToPluginWith} and {@code into}

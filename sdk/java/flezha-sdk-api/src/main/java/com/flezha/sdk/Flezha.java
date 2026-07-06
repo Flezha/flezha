@@ -2,14 +2,14 @@ package com.flezha.sdk;
 
 import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.bounded.BoundedOperativeRegistry;
-import com.flezha.sdk.operative.ContinuousOperative;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import java.util.Map;
 import javax.annotation.Nonnull;
 
 /**
  * SDK entry point. Obtain an instance via {@link #newInstance(String)}
- * after calling {@link #registerContinuous(Class)} for every ContinuousOperative class the
+ * after calling {@link #registerUnbounded(Class)} for every UnboundedOperative class the
  * compute engine supports.
  *
  * <p>The concrete implementation lives in {@code flezha-sdk-runtime}; this
@@ -25,15 +25,15 @@ import javax.annotation.Nonnull;
 public interface Flezha extends AutoCloseable {
 
     /**
-     * Register a ContinuousOperative class. Pass-through to
-     * {@link ContinuousOperativeRegistry#registerContinuous(Class)}.
+     * Register an UnboundedOperative class. Pass-through to
+     * {@link UnboundedOperativeRegistry#registerUnbounded(Class)}.
      */
-    static void registerContinuous(@Nonnull Class<? extends ContinuousOperative> operativeClass) {
-        ContinuousOperativeRegistry.registerContinuous(operativeClass);
+    static void registerUnbounded(@Nonnull Class<? extends UnboundedOperative> operativeClass) {
+        UnboundedOperativeRegistry.registerUnbounded(operativeClass);
     }
 
     /**
-     * Register a {@link BoundedOperative} class. Sibling of {@link #registerContinuous(Class)};
+     * Register a {@link BoundedOperative} class. Sibling of {@link #registerUnbounded(Class)};
      * pass-through to {@link BoundedOperativeRegistry#registerBounded(Class)}. Makes the
      * bounded spawnable via {@code flz operative start <factory> --kind bounded}.
      */
@@ -46,7 +46,7 @@ public interface Flezha extends AutoCloseable {
     String getId();
 
     /**
-     * Returns a snapshot of currently-spawned ContinuousOperative instances keyed by what
+     * Returns a snapshot of currently-spawned UnboundedOperative instances keyed by what
      * the wire calls {@code operative_id}.
      */
     @Nonnull
@@ -71,16 +71,16 @@ public interface Flezha extends AutoCloseable {
      * controller sends {@code AssignExecutorId}. Thread-safe; may be called
      * at most once per JVM for a given namespace.
      *
-     * @throws IllegalStateException if no ContinuousOperative classes have been registered.
+     * @throws IllegalStateException if no UnboundedOperative classes have been registered.
      */
     @Nonnull
     static Flezha newInstance(@Nonnull String namespace) {
         if (namespace == null || namespace.isEmpty()) {
             throw new IllegalArgumentException("namespace must not be null or empty");
         }
-        if (ContinuousOperativeRegistry.isEmpty() && BoundedOperativeRegistry.isEmpty()) {
+        if (UnboundedOperativeRegistry.isEmpty() && BoundedOperativeRegistry.isEmpty()) {
             throw new IllegalStateException("Cannot start Flezha: no operative or bounded classes registered. "
-                    + "Call Flezha.registerContinuous(MyContinuousOperative.class) or Flezha.registerBounded(MyBoundedOperative.class) "
+                    + "Call Flezha.registerUnbounded(MyUnboundedOperative.class) or Flezha.registerBounded(MyBoundedOperative.class) "
                     + "before Flezha.newInstance(...).");
         }
 

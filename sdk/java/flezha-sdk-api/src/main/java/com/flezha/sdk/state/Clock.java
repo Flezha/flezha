@@ -7,7 +7,7 @@ import java.time.Instant;
  * {@code Clock} type parameter. v1 fully wires {@link WallClock}; declaring
  * {@link LogicalClock} or {@link EventTimeFrom} ships the type but the
  * runtime rejects the Operation with
- * {@code ContinuousOperativeConfigurationException.clockNotImplementedYet} until a
+ * {@code UnboundedOperativeConfigurationException.clockNotImplementedYet} until a
  * follow-up wires those clocks.
  */
 public sealed interface Clock permits WallClock, LogicalClock, EventTimeFrom {

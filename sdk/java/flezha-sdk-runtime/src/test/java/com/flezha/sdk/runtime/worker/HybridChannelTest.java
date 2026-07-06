@@ -6,17 +6,17 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
-import com.flezha.sdk.operative.ContinuousOperative;
-import com.flezha.sdk.operative.ContinuousOperativeConfigurationException;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.StatelessTestOperation;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
 import com.flezha.sdk.state.WallClock;
@@ -45,7 +45,7 @@ import org.junit.jupiter.api.Test;
 class HybridChannelTest {
 
     // Shared captures across test cases. Cleared in @BeforeEach so test order
-    // does not bleed observations. Static because the ContinuousOperative/Operation pipeline
+    // does not bleed observations. Static because the UnboundedOperative/Operation pipeline
     // re-instantiates operations reflectively (no-arg ctor), so test cases cannot
     // close over instance-level mutable state.
     private static final List<Integer> SINGLE_OBSERVED = new CopyOnWriteArrayList<>();
@@ -75,7 +75,7 @@ class HybridChannelTest {
         PURE_OBSERVED.clear();
         PURE_EMIT_OUTCOMES.clear();
         capturedWrites.clear();
-        ContinuousOperativeRegistry.reset();
+        UnboundedOperativeRegistry.reset();
 
         OperationDispatcher.setWireWriter((handle, streamId, frame) -> {
             capturedWrites.add(frame);
@@ -96,14 +96,14 @@ class HybridChannelTest {
         }
     }
 
-    private ContinuousOperativeInstance instantiate(
-            Class<? extends ContinuousOperative> operativeClass, String factoryId) {
-        ContinuousOperativeRegistry.registerContinuous(operativeClass);
-        ContinuousOperativeTopology topology = ContinuousOperativeClassRegistry.getTopology(factoryId);
-        return ContinuousOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
+    private UnboundedOperativeInstance instantiate(
+            Class<? extends UnboundedOperative> operativeClass, String factoryId) {
+        UnboundedOperativeRegistry.registerUnbounded(operativeClass);
+        UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
+        return UnboundedOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
     }
 
-    private void feed(ContinuousOperativeInstance instance, String producerOperationName, Object input) {
+    private void feed(UnboundedOperativeInstance instance, String producerOperationName, Object input) {
         int operationId = instance.topology().operationNameToId().get(producerOperationName);
         instance.dispatcher(operationId).fanoutSegments(input, 100L);
     }
@@ -142,7 +142,7 @@ class HybridChannelTest {
     @Test
     @DisplayName("hybrid single consumer receives typed value and plugin bytes")
     void hybridSingleConsumerReceivesTypedAndPluginBytes() {
-        ContinuousOperativeInstance instance = instantiate(SingleHybridContinuousOperative.class, "hybrid_single");
+        UnboundedOperativeInstance instance = instantiate(SingleHybridUnboundedOperative.class, "hybrid_single");
         feed(instance, "hybrid_single_producer", "42");
 
         assertThat(waitFor(() -> SINGLE_OBSERVED.size() == 1 && capturedWrites.size() == 1, 5_000))
@@ -162,7 +162,7 @@ class HybridChannelTest {
     @Test
     @DisplayName("hybrid three consumers fan out + serializer runs exactly once")
     void hybridThreeConsumersSingleSerializerCall() {
-        ContinuousOperativeInstance instance = instantiate(ThreeHybridContinuousOperative.class, "hybrid_three");
+        UnboundedOperativeInstance instance = instantiate(ThreeHybridUnboundedOperative.class, "hybrid_three");
         feed(instance, "hybrid_three_producer", "7");
 
         assertThat(waitFor(
@@ -187,7 +187,7 @@ class HybridChannelTest {
     @Test
     @DisplayName("hybrid serializer that throws surfaces as PluginSerializerFailure")
     void hybridSerializerThrowIsCaught() {
-        ContinuousOperativeInstance instance = instantiate(PanicHybridContinuousOperative.class, "hybrid_panic");
+        UnboundedOperativeInstance instance = instantiate(PanicHybridUnboundedOperative.class, "hybrid_panic");
 
         // First input: serializer throws on 13.
         feed(instance, "hybrid_panic_producer", "13");
@@ -216,11 +216,11 @@ class HybridChannelTest {
     // ---------- duplicate plugin sink rejected at registration ----------
 
     @Test
-    @DisplayName("duplicate alsoToPluginWith on the same channel is rejected at registerContinuous time")
+    @DisplayName("duplicate alsoToPluginWith on the same channel is rejected at registerUnbounded time")
     void hybridDuplicatePluginSinkIsRejected() {
-        ContinuousOperativeConfigurationException ex = assertThrows(
-                ContinuousOperativeConfigurationException.class,
-                () -> ContinuousOperativeRegistry.registerContinuous(DuplicateSinkContinuousOperative.class));
+        UnboundedOperativeConfigurationException ex = assertThrows(
+                UnboundedOperativeConfigurationException.class,
+                () -> UnboundedOperativeRegistry.registerUnbounded(DuplicateSinkUnboundedOperative.class));
         assertThat(ex.getMessage()).contains("alsoToPluginWith");
         assertThat(ex.getMessage()).contains("dup_out");
     }
@@ -230,7 +230,7 @@ class HybridChannelTest {
     @Test
     @DisplayName("emitWithMeta on hybrid channel forwards typed value to consumer and meta to plugin")
     void emitWithMetaOnHybridChannelForwardsToPluginOnly() {
-        ContinuousOperativeInstance instance = instantiate(MetaHybridContinuousOperative.class, "hybrid_meta");
+        UnboundedOperativeInstance instance = instantiate(MetaHybridUnboundedOperative.class, "hybrid_meta");
         feed(instance, "hybrid_meta_producer", "9");
 
         assertThat(waitFor(() -> META_OBSERVED.size() == 1 && capturedWrites.size() == 1, 5_000))
@@ -250,7 +250,7 @@ class HybridChannelTest {
     @DisplayName(
             "emitWithMeta on a pure inter-operation channel is rejected with MetadataNotAllowedOnInterOperationChannel")
     void emitWithMetaOnPureInterOperationChannelStillRejected() {
-        ContinuousOperativeInstance instance = instantiate(PureInterOperationContinuousOperative.class, "hybrid_pure");
+        UnboundedOperativeInstance instance = instantiate(PureInterOperationUnboundedOperative.class, "hybrid_pure");
         feed(instance, "hybrid_pure_producer", "1");
 
         assertThat(waitFor(() -> PURE_EMIT_OUTCOMES.size() == 1, 5_000))
@@ -267,14 +267,14 @@ class HybridChannelTest {
     }
 
     // =============================================================================================
-    // Test ContinuousOperative topologies + Operation impls. Each ContinuousOperative is registered exactly once per
+    // Test UnboundedOperative topologies + Operation impls. Each UnboundedOperative is registered exactly once per
     // test; producer
     // Operations close over the static CopyOnWriteArrayList captures above.
     // =============================================================================================
 
     // ---- 1 consumer ----
 
-    public static final class SingleHybridContinuousOperative implements ContinuousOperative {
+    public static final class SingleHybridUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "hybrid_single";
@@ -347,7 +347,7 @@ class HybridChannelTest {
 
     // ---- 3 consumers ----
 
-    public static final class ThreeHybridContinuousOperative implements ContinuousOperative {
+    public static final class ThreeHybridUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "hybrid_three";
@@ -450,7 +450,7 @@ class HybridChannelTest {
 
     // ---- throwing serializer ----
 
-    public static final class PanicHybridContinuousOperative implements ContinuousOperative {
+    public static final class PanicHybridUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "hybrid_panic";
@@ -533,7 +533,7 @@ class HybridChannelTest {
 
     // ---- duplicate plugin sink ----
 
-    public static final class DuplicateSinkContinuousOperative implements ContinuousOperative {
+    public static final class DuplicateSinkUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "hybrid_dup";
@@ -576,7 +576,7 @@ class HybridChannelTest {
 
     // ---- emitWithMeta on hybrid ----
 
-    public static final class MetaHybridContinuousOperative implements ContinuousOperative {
+    public static final class MetaHybridUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "hybrid_meta";
@@ -652,7 +652,7 @@ class HybridChannelTest {
 
     // ---- emitWithMeta on pure inter-operation channel ----
 
-    public static final class PureInterOperationContinuousOperative implements ContinuousOperative {
+    public static final class PureInterOperationUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "hybrid_pure";

@@ -1,15 +1,15 @@
 package com.flezha.test;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.ContinuousOperative;
+import com.flezha.sdk.operative.UnboundedOperative;
 
 /**
- * Same Operation as {@link StatefulCounterContinuousOperative}, but with
+ * Same Operation as {@link StatefulCounterUnboundedOperative}, but with
  * persistence disabled at the operative-class level. Used by integration tests
  * to verify the toggle-off drain discards Changes without serialization or
  * wire I/O.
  */
-public final class PersistenceOffContinuousOperative implements ContinuousOperative {
+public final class PersistenceOffUnboundedOperative implements UnboundedOperative {
 
     @Override
     public String factoryId() {

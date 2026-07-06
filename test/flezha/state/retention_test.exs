@@ -159,7 +159,7 @@ defmodule Flezha.State.RetentionTest do
       assert [{5, _}] = Registry.snapshot_paths(pid)
     end
 
-    test "a continuous class keeps the older snapshot under the same window" do
+    test "an unbounded class keeps the older snapshot under the same window" do
       header = TestHelpers.stub_header()
       class = "cont_ret_" <> uniq()
       pid = {class, "op", "seg"}
@@ -170,7 +170,7 @@ defmodule Flezha.State.RetentionTest do
       {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
       {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
 
-      # Same setup, but a (default) continuous class keeps snap@2 as the
+      # Same setup, but a (default) unbounded class keeps snap@2 as the
       # retention floor because it is older than the 48h window.
       File.touch!(Registry.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
       Application.put_env(:flezha, :time_travel_retention_hours, %{class => 48})

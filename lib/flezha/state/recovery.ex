@@ -117,9 +117,14 @@ defmodule Flezha.State.Recovery do
 
   defp operative_class(%{start: {_m, _f, [arg]}}) do
     case arg do
-      {_namespace, operative} when is_map(operative) -> operative_class_of(operative)
-      {_namespace, _executor_id, operative} when is_map(operative) -> operative_class_of(operative)
-      _ -> nil
+      {_namespace, operative} when is_map(operative) ->
+        operative_class_of(operative)
+
+      {_namespace, _executor_id, operative} when is_map(operative) ->
+        operative_class_of(operative)
+
+      _ ->
+        nil
     end
   end
 

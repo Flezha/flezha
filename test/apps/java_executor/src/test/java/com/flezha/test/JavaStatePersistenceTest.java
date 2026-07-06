@@ -6,7 +6,7 @@ import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
@@ -37,7 +37,7 @@ class JavaStatePersistenceTest {
     void resetFlusher() {
         SegmentFlusher.resetForTesting();
         SegmentStateSink.resetForTesting();
-        ContinuousOperativeRegistry.reset();
+        UnboundedOperativeRegistry.reset();
     }
 
     @Test
@@ -76,18 +76,18 @@ class JavaStatePersistenceTest {
 
     @Test
     void persistenceOffOperativeDoesNotRegisterFlusherForPersistenceCheck() {
-        // Indirect check: the toggle is read from ContinuousOperative.persistenceEnabled().
-        assertThat(new PersistenceOffContinuousOperative().persistenceEnabled()).isFalse();
-        assertThat(new StatefulCounterContinuousOperative().persistenceEnabled()).isTrue();
+        // Indirect check: the toggle is read from UnboundedOperative.persistenceEnabled().
+        assertThat(new PersistenceOffUnboundedOperative().persistenceEnabled()).isFalse();
+        assertThat(new StatefulCounterUnboundedOperative().persistenceEnabled()).isTrue();
     }
 
     @Test
     void statefulCounterOperativeResumesFromWalReplayAfterRestart() throws Exception {
         // Mirror of the Rust SDK resume_probe proof against the REAL operative used
-        // by the integration harness: a fresh StatefulCounterContinuousOperative
+        // by the integration harness: a fresh StatefulCounterUnboundedOperative
         // instance is handed the controller's persisted change-log and must resume
         // at N (not 0, the pre-fix bug; not 2N, a double-apply).
-        ContinuousOperativeRegistry.registerContinuous(StatefulCounterContinuousOperative.class);
+        UnboundedOperativeRegistry.registerUnbounded(StatefulCounterUnboundedOperative.class);
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
@@ -104,7 +104,7 @@ class JavaStatePersistenceTest {
                                 .build(),
                         new ArrayList<>());
 
-        // StatefulCounterContinuousOperative wires IntInputAdapterOperation (name
+        // StatefulCounterUnboundedOperative wires IntInputAdapterOperation (name
         // "int_input_adapter"), whose State/Change are CounterOperation.State / CounterChange.
         KryoCodec codec = new KryoCodec(List.of(CounterOperation.State.class, CounterChange.class));
         HeaderTemplate template = new HeaderTemplate();
@@ -130,7 +130,7 @@ class JavaStatePersistenceTest {
                         new ArrayList<>());
 
         SegmentSlot slot =
-                ctx.operativeInstanceRegistry().getContinuousOperative(instanceId).segments().get(0).get(0);
+                ctx.operativeInstanceRegistry().getUnboundedOperative(instanceId).segments().get(0).get(0);
         assertThat(((CounterOperation.State) slot.state().get()).value).isEqualTo((long) n);
         assertThat(RestoreInitStateResponse.parseFrom(resp).getTerminalSeq()).isEqualTo((long) (n - 1));
         assertThat(slot.changeSeq().get()).isEqualTo((long) n);

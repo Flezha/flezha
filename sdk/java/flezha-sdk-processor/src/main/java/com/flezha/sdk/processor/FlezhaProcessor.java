@@ -1,12 +1,12 @@
 package com.flezha.sdk.processor;
 
-import com.flezha.sdk.authoring.ContinuousOperative;
 import com.flezha.sdk.authoring.InitState;
 import com.flezha.sdk.authoring.Journal;
 import com.flezha.sdk.authoring.Operation;
 import com.flezha.sdk.authoring.OperationKey;
 import com.flezha.sdk.authoring.SegmentFor;
 import com.flezha.sdk.authoring.State;
+import com.flezha.sdk.authoring.UnboundedOperative;
 import java.io.IOException;
 import java.io.Writer;
 import java.lang.annotation.Annotation;
@@ -33,21 +33,21 @@ import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 
 /**
- * Generates {@code Operation} / {@code ContinuousOperative} implementations from the
- * {@code @Operation} / {@code @State} / {@code @ContinuousOperative} authoring annotations,
+ * Generates {@code Operation} / {@code UnboundedOperative} implementations from the
+ * {@code @Operation} / {@code @State} / {@code @UnboundedOperative} authoring annotations,
  * mirroring the Rust SDK macros. See {@code docs/sdk_authoring_contract.md}.
  *
  * <p>Per round: {@code @State} classes generate a {@code <Name>Change}
  * (field-granular variants + {@code apply} + {@code kryoTypes}); {@code @Operation}
  * classes generate a {@code <Name>Operation} (and, with a {@code sink}, a
- * single-operation {@code <Name>ContinuousOperative}); {@code @ContinuousOperative} classes are collected. On
- * the final round a {@code com.flezha.generated.GeneratedContinuousOperatives.registerAll()}
+ * single-operation {@code <Name>UnboundedOperative}); {@code @UnboundedOperative} classes are collected. On
+ * the final round a {@code com.flezha.generated.GeneratedUnboundedOperatives.registerAll()}
  * aggregator is emitted so authors register every sugared operative with one call.
  */
 @SupportedAnnotationTypes({
     "com.flezha.sdk.authoring.Operation",
     "com.flezha.sdk.authoring.State",
-    "com.flezha.sdk.authoring.ContinuousOperative"
+    "com.flezha.sdk.authoring.UnboundedOperative"
 })
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public final class FlezhaProcessor extends AbstractProcessor {
@@ -79,13 +79,13 @@ public final class FlezhaProcessor extends AbstractProcessor {
         for (Element e : roundEnv.getElementsAnnotatedWith(Operation.class)) {
             generateOperation((TypeElement) e);
         }
-        for (Element e : roundEnv.getElementsAnnotatedWith(ContinuousOperative.class)) {
-            if (implementsContinuousOperative((TypeElement) e)) {
+        for (Element e : roundEnv.getElementsAnnotatedWith(UnboundedOperative.class)) {
+            if (implementsUnboundedOperative((TypeElement) e)) {
                 operativeFqns.add(((TypeElement) e).getQualifiedName().toString());
             } else {
                 error(
                         e,
-                        "@ContinuousOperative requires the class to implement com.flezha.sdk.operative.ContinuousOperative");
+                        "@UnboundedOperative requires the class to implement com.flezha.sdk.operative.UnboundedOperative");
             }
         }
 
@@ -510,7 +510,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 + "    }\n\n";
     }
 
-    // ---- @Operation -> <Name>Operation (+ <Name>ContinuousOperative) ---------------------------
+    // ---- @Operation -> <Name>Operation (+ <Name>UnboundedOperative) ---------------------------
 
     private void generateOperation(TypeElement operation) {
         String pkg = packageOf(operation);
@@ -764,12 +764,12 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 error(operation, "@Operation(sink = ...) requires a non-void return type to feed the plugin");
                 return;
             }
-            generateSingleOperationContinuousOperative(
+            generateSingleOperationUnboundedOperative(
                     pkg, operationSimple, id, sink, inputType.toString(), outputType, onFull, operation);
         }
     }
 
-    private void generateSingleOperationContinuousOperative(
+    private void generateSingleOperationUnboundedOperative(
             String pkg,
             String operationSimple,
             String id,
@@ -778,7 +778,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
             String outputType,
             String onFull,
             Element origin) {
-        String operativeSimple = operationSimple.replaceFirst("Operation$", "") + "ContinuousOperative";
+        String operativeSimple = operationSimple.replaceFirst("Operation$", "") + "UnboundedOperative";
         String operativeFqn = pkg.isEmpty() ? operativeSimple : pkg + "." + operativeSimple;
         String onFullCall = onFullCall(onFull, origin);
 
@@ -787,11 +787,11 @@ public final class FlezhaProcessor extends AbstractProcessor {
             b.append("package ").append(pkg).append(";\n\n");
         }
         b.append("import com.flezha.sdk.channel.ChannelBuilder;\n");
-        b.append("import com.flezha.sdk.operative.ContinuousOperative;\n\n");
+        b.append("import com.flezha.sdk.operative.UnboundedOperative;\n\n");
         b.append("/** Generated single-operation auto-wire operative for ")
                 .append(operationSimple)
                 .append(". */\n");
-        b.append("public final class ").append(operativeSimple).append(" implements ContinuousOperative {\n");
+        b.append("public final class ").append(operativeSimple).append(" implements UnboundedOperative {\n");
         b.append("    @Override public String factoryId() { return \"")
                 .append(id)
                 .append("\"; }\n");
@@ -821,18 +821,18 @@ public final class FlezhaProcessor extends AbstractProcessor {
     private void emitAggregator() {
         StringBuilder b = new StringBuilder();
         b.append("package com.flezha.generated;\n\n");
-        b.append("import com.flezha.sdk.operative.ContinuousOperativeRegistry;\n\n");
+        b.append("import com.flezha.sdk.operative.UnboundedOperativeRegistry;\n\n");
         b.append("/** Generated aggregator: registers every sugared operative with one call. */\n");
-        b.append("public final class GeneratedContinuousOperatives {\n");
-        b.append("    private GeneratedContinuousOperatives() {}\n\n");
+        b.append("public final class GeneratedUnboundedOperatives {\n");
+        b.append("    private GeneratedUnboundedOperatives() {}\n\n");
         b.append("    public static void registerAll() {\n");
         for (String fqn : operativeFqns) {
-            b.append("        ContinuousOperativeRegistry.registerContinuous(")
+            b.append("        UnboundedOperativeRegistry.registerUnbounded(")
                     .append(fqn)
                     .append(".class);\n");
         }
         b.append("    }\n}\n");
-        write("com.flezha.generated.GeneratedContinuousOperatives", b.toString());
+        write("com.flezha.generated.GeneratedUnboundedOperatives", b.toString());
     }
 
     // ---- helpers ----------------------------------------------------------
@@ -862,8 +862,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
         return null;
     }
 
-    private boolean implementsContinuousOperative(TypeElement t) {
-        TypeElement operative = elements.getTypeElement("com.flezha.sdk.operative.ContinuousOperative");
+    private boolean implementsUnboundedOperative(TypeElement t) {
+        TypeElement operative = elements.getTypeElement("com.flezha.sdk.operative.UnboundedOperative");
         if (operative == null) {
             return false;
         }

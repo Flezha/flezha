@@ -111,8 +111,8 @@ defmodule Flezha.State.ExecutorRestartRealignTest do
     Enum.each(seqs, fn seq ->
       send(
         channel,
-        {:flz_data, 0, "segment_state_change",
-         frame(ctx.segment_id, seq, ctx.header, "s#{seq}"), %{}}
+        {:flz_data, 0, "segment_state_change", frame(ctx.segment_id, seq, ctx.header, "s#{seq}"),
+         %{}}
       )
     end)
 

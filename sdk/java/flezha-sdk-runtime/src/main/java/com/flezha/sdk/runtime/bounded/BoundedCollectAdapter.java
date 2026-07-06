@@ -3,7 +3,7 @@ package com.flezha.sdk.runtime.bounded;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
@@ -14,7 +14,7 @@ import javax.annotation.Nonnull;
  * is <strong>collected</strong> for handoff to the next stage at the barrier;
  * plugin-bound output is serialized and routed to the wire via the
  * {@link BoundedCollectSink}. Constructed fresh per operation run, so it never
- * threads through the continuous push-dispatch mailbox path (the continuous
+ * threads through the unbounded push-dispatch mailbox path (the unbounded
  * {@code OperationDispatcher.EmitContext} is the reference this forks).
  *
  * <p>Bounded output carries no per-channel metadata (it rides the instance-id
@@ -23,12 +23,12 @@ import javax.annotation.Nonnull;
  */
 final class BoundedCollectAdapter implements OperationCtx {
 
-    private final ContinuousOperativeTopology topology;
+    private final UnboundedOperativeTopology topology;
     private final Optional<ChannelDescriptor> outputChannel;
     private final BoundedCollectSink sink;
 
     BoundedCollectAdapter(
-            @Nonnull ContinuousOperativeTopology topology,
+            @Nonnull UnboundedOperativeTopology topology,
             @Nonnull Optional<ChannelDescriptor> outputChannel,
             @Nonnull BoundedCollectSink sink) {
         this.topology = topology;

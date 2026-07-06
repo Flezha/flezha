@@ -16,20 +16,20 @@ import org.junit.jupiter.api.Test;
 /**
  * Mirror of the Rust SDK's {@code OldApiNotImportable} test (per
  * {@code operative-mvp-rust/boundeds.md §9.5}). Asserts that user code importing
- * any of the deleted legacy types (e.g. {@code ContinuousOperativeHandler}) fails
+ * any of the deleted legacy types (e.g. {@code UnboundedOperativeHandler}) fails
  * to compile after the cutover.
  */
 class OldApiNotImportableTest {
 
     @Test
-    @DisplayName("user code importing ContinuousOperativeHandler fails to compile")
-    void importingContinuousOperativeHandlerFails() {
+    @DisplayName("user code importing UnboundedOperativeHandler fails to compile")
+    void importingUnboundedOperativeHandlerFails() {
         String src =
                 """
                 package nowhere;
-                import com.flezha.sdk.ContinuousOperativeHandler;
+                import com.flezha.sdk.UnboundedOperativeHandler;
                 public final class UsesLegacyApi {
-                    void foo(ContinuousOperativeHandler<?, ?, ?> h) { }
+                    void foo(UnboundedOperativeHandler<?, ?, ?> h) { }
                 }
                 """;
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
@@ -45,9 +45,9 @@ class OldApiNotImportableTest {
                 .call();
 
         assertThat(ok)
-                .as("import com.flezha.sdk.ContinuousOperativeHandler should not resolve after operative-mvp-java")
+                .as("import com.flezha.sdk.UnboundedOperativeHandler should not resolve after operative-mvp-java")
                 .isFalse();
-        assertThat(err.toString()).contains("com.flezha.sdk.ContinuousOperativeHandler");
+        assertThat(err.toString()).contains("com.flezha.sdk.UnboundedOperativeHandler");
     }
 
     @Test

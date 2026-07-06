@@ -8,8 +8,8 @@ bindings over `flz_transport`. Supports both UDS and QUIC transports.
 
 The Java SDK uses the same Operative / Operation / Channel model as the Rust SDK
 (see `docs/operative_architecture.md`). User code declares one or more
-ContinuousOperative classes, registers them via
-`Flezha.registerContinuous(MyOperative.class)`, then
+UnboundedOperative classes, registers them via
+`Flezha.registerUnbounded(MyOperative.class)`, then
 boots the SDK with `Flezha.newInstance(namespace)`.
 
 ```java
@@ -34,7 +34,7 @@ public final class EchoOperation
     }
 }
 
-public final class EchoOperative implements ContinuousOperative {
+public final class EchoOperative implements UnboundedOperative {
     @Override public String factoryId() { return "echo"; }
     @Override public void channels(ChannelBuilder c) {
         c.input(String.class, "input").into(EchoOperation.class);
@@ -44,7 +44,7 @@ public final class EchoOperative implements ContinuousOperative {
 
 public final class App {
     public static void main(String[] args) {
-        Flezha.registerContinuous(EchoOperative.class);
+        Flezha.registerUnbounded(EchoOperative.class);
         Flezha sdk = Flezha.newInstance(args[0]);
         System.out.println("assigned id: " + sdk.getId());
     }
@@ -80,7 +80,7 @@ mvn -f sdk/java/pom.xml -P host-only package
 
 | Module | Purpose |
 |---|---|
-| `flezha-sdk-api` | Public API: `Flezha`, `ContinuousOperative`, `ContinuousOperativeRegistry`, `Operation`, `OperationCtx`, `OperationException`, channel builder types. No native dependency. |
+| `flezha-sdk-api` | Public API: `Flezha`, `UnboundedOperative`, `UnboundedOperativeRegistry`, `Operation`, `OperationCtx`, `OperationException`, channel builder types. No native dependency. |
 | `flezha-sdk-protobuf` | Java classes generated from `protobufs/executor_commands.proto`. Pure generated code; no hand-written sources. |
 | `flezha-sdk-runtime` | Control plane, data plane, framing, worker pool, reconnect, command dispatch. |
 | `flezha-sdk-native` | JNI bindings (`NativeTransport`) + bundled per-OS `libflz_transport` native binaries. |

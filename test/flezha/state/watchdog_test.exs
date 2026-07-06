@@ -171,7 +171,7 @@ defmodule Flezha.State.WatchdogTest do
     :ok = WalWriter.append(w, 1, header, "a")
     :ok = WalWriter.append(w, 2, header, "b")
 
-    # The same stall signature that flags a continuous class: window lapses,
+    # The same stall signature that flags an unbounded class: window lapses,
     # then a duplicate Change keeps it "not idle" with a frozen seq.
     Process.sleep(@stall_ms * 2)
     :duplicate = WalWriter.append(w, 1, header, "a")

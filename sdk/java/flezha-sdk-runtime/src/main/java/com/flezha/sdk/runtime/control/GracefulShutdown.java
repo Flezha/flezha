@@ -5,8 +5,8 @@ import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.ExecutorShutdownNotification;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeStateSerializer;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeStateSerializer;
 import com.google.protobuf.ByteString;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,7 +40,7 @@ import org.slf4j.LoggerFactory;
  *       parallelised across operatives via {@link CompletableFuture#allOf}
  *       so total wait is bounded by 2 s (not 2N s).</li>
  *   <li>The serializer step is in-process (Jackson) and effectively
- *       constant-time; no separate cap is enforced. ContinuousOperatives with
+ *       constant-time; no separate cap is enforced. UnboundedOperatives with
  *       multi-second serializers should refactor.</li>
  *   <li>On timeout the SDK proceeds to exit unconditionally and SHALL
  *       NOT block its container's shutdown grace period.</li>
@@ -105,7 +105,7 @@ public final class GracefulShutdown {
             return;
         }
 
-        Map<String, ContinuousOperativeInstance> operatives =
+        Map<String, UnboundedOperativeInstance> operatives =
                 ctx.operativeInstanceRegistry().operativeSnapshot();
         if (operatives.isEmpty()) {
             return;
@@ -113,13 +113,13 @@ public final class GracefulShutdown {
 
         List<CompletableFuture<Void>> waits = new ArrayList<>(operatives.size());
 
-        for (Map.Entry<String, ContinuousOperativeInstance> entry : operatives.entrySet()) {
+        for (Map.Entry<String, UnboundedOperativeInstance> entry : operatives.entrySet()) {
             String operativeId = entry.getKey();
-            ContinuousOperativeInstance instance = entry.getValue();
+            UnboundedOperativeInstance instance = entry.getValue();
 
             byte[] serializedState;
             try {
-                serializedState = ContinuousOperativeStateSerializer.serialize(instance);
+                serializedState = UnboundedOperativeStateSerializer.serialize(instance);
             } catch (Exception e) {
                 LOG.warn(
                         "Skipping shutdown notification for {} — serializeState failed: {}", operativeId, e.toString());

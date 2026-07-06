@@ -2,23 +2,23 @@
 
 ## Purpose
 
-The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared operation/operative declaration to the existing `ContinuousOperative`/`Operation`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit segmenting-mode opt-ins (single/static/dynamic), single-operation input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared operations compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
+The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared operation/operative declaration to the existing `UnboundedOperative`/`Operation`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit segmenting-mode opt-ins (single/static/dynamic), single-operation input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared operations compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
 
 ## Requirements
 
 ### Requirement: Sugar expands to existing trait surface
 
-The authoring sugar in every SDK SHALL be pure expansion over the existing `ContinuousOperative`/`Operation`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
+The authoring sugar in every SDK SHALL be pure expansion over the existing `UnboundedOperative`/`Operation`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
 
 #### Scenario: Generated code equals hand-written impl
 
 - **WHEN** a sugared operation is expanded by any SDK's macro or processor
-- **THEN** the result is an `Operation`/`ContinuousOperative` implementation that compiles and runs identically to the equivalent hand-written one
+- **THEN** the result is an `Operation`/`UnboundedOperative` implementation that compiles and runs identically to the equivalent hand-written one
 - **AND** no protobuf, controller, or WAL-format change is required for it to run
 
 #### Scenario: Sugared and raw operations interoperate
 
-- **WHEN** a continuous operative contains one sugared operation and one hand-written operation wired together
+- **WHEN** an unbounded operative contains one sugared operation and one hand-written operation wired together
 - **THEN** the operative builds and runs correctly with both operations participating
 
 #### Scenario: Eject to full impl is a paste
@@ -108,11 +108,11 @@ The contract SHALL define exactly one topology that may be auto-wired — a sing
 
 ### Requirement: Contract binds all current and future SDKs
 
-The contract SHALL be the single source of truth for authoring sugar across Rust, Java, and future Python and Elixir SDKs, including non-normative target sketches for the not-yet-built bindings. Every SDK's continuous and bounded authoring surfaces SHALL be rooted in the shared `Computation` base (see below).
+The contract SHALL be the single source of truth for authoring sugar across Rust, Java, and future Python and Elixir SDKs, including non-normative target sketches for the not-yet-built bindings. Every SDK's unbounded and bounded authoring surfaces SHALL be rooted in the shared `Computation` base (see below).
 
 #### Scenario: Reference operative expands identically across SDKs
 
-- **WHEN** the same reference continuous operative is authored with each SDK's sugar
+- **WHEN** the same reference unbounded operative is authored with each SDK's sugar
 - **THEN** each expansion produces a structurally identical topology and associated-type mapping per this contract
 
 #### Scenario: Future bindings have a documented target
@@ -187,21 +187,21 @@ The operation authoring sugar SHALL offer an opt-in that maps a segment's operat
 - **WHEN** the init opt-in is declared on an operation with no state
 - **THEN** the SDK reports a compile-time error directing the author to remove it, and generates no init delegation
 
-### Requirement: Continuous and bounded share a `Computation` authoring base
+### Requirement: Unbounded and bounded share a `Computation` authoring base
 
-Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rust trait / Java interface that `ContinuousOperative` and `BoundedOperative` both implement at the **authoring-trait layer**. The base's shared member SHALL be `factory_id()` (the one method both authoring traits already share); the kind-divergent surface (`channels` / persistence opt-in vs `run`) SHALL remain on the per-kind traits. The registration siblings (`register_continuous`/`register_bounded`) SHALL be generic over `Computation`. The base SHALL NOT require unifying the sealed operative *instance* enum, which stays asymmetric. Adding a future operative kind SHALL require implementing `Computation` and registering the kind, without editing the existing two authoring surfaces.
+Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rust trait / Java interface that `UnboundedOperative` and `BoundedOperative` both implement at the **authoring-trait layer**. The base's shared member SHALL be `factory_id()` (the one method both authoring traits already share); the kind-divergent surface (`channels` / persistence opt-in vs `run`) SHALL remain on the per-kind traits. The registration siblings (`register_unbounded`/`register_bounded`) SHALL be generic over `Computation`. The base SHALL NOT require unifying the sealed operative *instance* enum, which stays asymmetric. Adding a future operative kind SHALL require implementing `Computation` and registering the kind, without editing the existing two authoring surfaces.
 
 #### Scenario: Both kinds implement the base
 
-- **WHEN** a continuous operative class and a bounded operative class are registered
+- **WHEN** an unbounded operative class and a bounded operative class are registered
 - **THEN** both SHALL be `Computation` implementations resolvable through the same `register_*` surface, sharing `factory_id()`
 
 #### Scenario: A future kind plugs into the base without touching existing kinds
 
 - **WHEN** a new operative kind is added by implementing `Computation` and registering it
-- **THEN** the `ContinuousOperative` and `BoundedOperative` authoring surfaces SHALL be unchanged
+- **THEN** the `UnboundedOperative` and `BoundedOperative` authoring surfaces SHALL be unchanged
 
 #### Scenario: The instance enum is not forced symmetric
 
 - **WHEN** the sealed operative instance enum is renamed
-- **THEN** its variants MAY remain asymmetric (a rich continuous instance vs an id-only bounded instance), and the `Computation` base SHALL NOT require inventing a common instance type
+- **THEN** its variants MAY remain asymmetric (a rich unbounded instance vs an id-only bounded instance), and the `Computation` base SHALL NOT require inventing a common instance type

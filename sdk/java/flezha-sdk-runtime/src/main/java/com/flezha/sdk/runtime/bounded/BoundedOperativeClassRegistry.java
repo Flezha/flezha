@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.bounded;
 
 import com.flezha.sdk.bounded.BoundedOperative;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -11,7 +11,7 @@ import javax.annotation.Nonnull;
  * Process-global registry of registered {@link BoundedOperative} classes keyed by
  * {@code factoryId}, each carrying its frozen {@link BoundedSpec} (the run-sugar
  * body or the validated structured linear chain). The runtime sibling of
- * {@link ContinuousOperativeClassRegistry}; reached reflectively from
+ * {@link UnboundedOperativeClassRegistry}; reached reflectively from
  * {@link com.flezha.sdk.bounded.BoundedOperativeRegistry} so {@code flezha-sdk-api}
  * compiles standalone. Looked up when an {@code AddOperative} whose kind
  * resolves to {@code :bounded} arrives.
@@ -42,9 +42,9 @@ public final class BoundedOperativeClassRegistry {
         BoundedSpec spec = BoundedSpec.build(boundedClass);
         String factoryId = spec.factoryId();
 
-        if (ContinuousOperativeClassRegistry.getTopology(factoryId) != null) {
+        if (UnboundedOperativeClassRegistry.getTopology(factoryId) != null) {
             throw new IllegalArgumentException("Duplicate factory id `" + factoryId + "` for BoundedOperative class `"
-                    + boundedClass.getName() + "` (already registered as a ContinuousOperative)");
+                    + boundedClass.getName() + "` (already registered as an UnboundedOperative)");
         }
 
         BoundedSpec existing = ENTRIES.putIfAbsent(factoryId, spec);

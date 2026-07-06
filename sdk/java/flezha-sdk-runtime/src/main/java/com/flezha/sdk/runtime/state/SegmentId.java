@@ -8,7 +8,7 @@ import javax.annotation.Nonnull;
 
 /**
  * Wire identity of a Segment. Combines the operative-instance id (= controller's
- * {@code operative_id}), the Operation's name within the ContinuousOperative, and the segment
+ * {@code operative_id}), the Operation's name within the UnboundedOperative, and the segment
  * key (empty string for single-segment mode).
  *
  * <p>The controller keys each per-Segment WAL by this identity and echoes it

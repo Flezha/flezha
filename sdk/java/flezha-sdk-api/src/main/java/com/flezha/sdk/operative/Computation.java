@@ -3,7 +3,7 @@ package com.flezha.sdk.operative;
 import javax.annotation.Nonnull;
 
 /**
- * Shared base of the two operative kinds: a {@link ContinuousOperative}
+ * Shared base of the two operative kinds: a {@link UnboundedOperative}
  * (segmented, stateful, long-running DAG) and a
  * {@link com.flezha.sdk.bounded.BoundedOperative} (stateless, run-once job).
  *

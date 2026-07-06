@@ -61,7 +61,7 @@ defmodule Flezha.State.PersistenceResolver do
   `persistent_state?` capability that gates bind-time restore (crash-resume)
   and `:get_segment_state` introspection:
 
-    * `:continuous` — always durable.
+    * `:unbounded` — always durable.
     * `:bounded` — durable **by default**, opt-out per class (same precedence
       as `persistence_enabled?/2`: operator override → instance metadata →
       default `true`).
@@ -74,7 +74,7 @@ defmodule Flezha.State.PersistenceResolver do
   @spec persistent_state?(atom(), binary(), map()) :: boolean()
   def persistent_state?(kind, operative_class, metadata \\ %{})
 
-  def persistent_state?(:continuous, _operative_class, _metadata), do: true
+  def persistent_state?(:unbounded, _operative_class, _metadata), do: true
 
   def persistent_state?(:bounded, operative_class, metadata)
       when is_binary(operative_class),

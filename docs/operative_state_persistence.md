@@ -35,7 +35,7 @@ this change implements, see the umbrella in
   key within one linger window collapse to the most recent record.
   Records returning `None` are retained verbatim.
 
-- **`ContinuousOperative::PERSISTENCE_ENABLED`** — class-level toggle.
+- **`UnboundedOperative::PERSISTENCE_ENABLED`** — class-level toggle.
   Default `true`. Executor override via operative-start metadata key
   `operative_persistence.<OperativeClass>` wins. Frozen at instance start;
   changes only take effect on the next `stop_operative` + `start_operative`
@@ -124,7 +124,7 @@ records collapse to the single 50th record at flusher-drain time.
 
 ```rust
 struct MarketOperative;
-impl ContinuousOperative for MarketOperative {
+impl UnboundedOperative for MarketOperative {
     fn factory_id() -> &'static str { "market" }
     fn channels(c: &mut ChannelBuilder) { /* ... */ }
     const PERSISTENCE_ENABLED: bool = false;
@@ -208,7 +208,7 @@ decoding the header.
 | Wire-frame builder | ✅ (stub `send_frame`) | replaces with NIF |
 | `OperationTestHarness::<S>::replay_equals` | ✅ | — |
 | 16-byte header, CRC32 validation | ✅ | — |
-| `ContinuousOperative::PERSISTENCE_ENABLED` resolution | ✅ | executor override wired |
+| `UnboundedOperative::PERSISTENCE_ENABLED` resolution | ✅ | executor override wired |
 | Per-Operation `compact_after_bytes` reported to controller | ✅ | consumes value |
 | Controller-side WAL writer + fsync batcher | — | ✅ |
 | Snapshot lifecycle + retention | — | ✅ |

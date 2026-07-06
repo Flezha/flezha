@@ -290,7 +290,7 @@ message AddOperative {
     string operative_id = 1;
     string factory_id = 2;
     string init_values = 3;
-    string kind = 4; // operative kind; empty/absent ⇒ "continuous"
+    string kind = 4; // operative kind; empty/absent ⇒ "unbounded"
 }
 
 message RemOperative {
@@ -608,10 +608,10 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 |-------|-------|
 | Direction | Controller -> SDK |
 | Proto message | `AddOperative { operative_id: string, factory_id: string, init_values: string, kind: string }` |
-| Behavior | SDK creates a new operative from the named factory. `kind` (empty ⇒ `"continuous"`) selects the operative kind. For `"continuous"`: a continuous operative instance, deserializing non-empty `init_values` JSON into state via `json_deserialize_state()`, then `post_alter()`. For `"bounded"`: a bounded operative instance whose `run(ctx, args)` is scheduled once on the work pool with `args = init_values`. |
+| Behavior | SDK creates a new operative from the named factory. `kind` (empty ⇒ `"unbounded"`) selects the operative kind. For `"unbounded"`: an unbounded operative instance, deserializing non-empty `init_values` JSON into state via `json_deserialize_state()`, then `post_alter()`. For `"bounded"`: a bounded operative instance whose `run(ctx, args)` is scheduled once on the work pool with `args = init_values`. |
 | Response status | `"success"` on success, `"error"` on failure |
 | Response raw_data | empty |
-| Possible errors | Factory not found (continuous or bounded class); JSON parse failure; deserialization failure; unknown `kind` |
+| Possible errors | Factory not found (unbounded or bounded class); JSON parse failure; deserialization failure; unknown `kind` |
 
 ### BoundedCompleted
 
@@ -623,7 +623,7 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 | Response | None (one-way notification; old Controllers ignore the unknown variant) |
 
 Both SDKs are at parity on this contract: the Rust and Java SDKs each read the
-optional `AddOperative.kind` field (empty ⇒ `"continuous"`) and emit `BoundedCompleted`
+optional `AddOperative.kind` field (empty ⇒ `"unbounded"`) and emit `BoundedCompleted`
 byte-identically, so the Controller decodes a Java bounded operative's completion exactly as a
 Rust one. A bounded operative's plugin output is a frame whose payload id is the operative's
 instance id with **empty** metadata (no `channel` key), written on a secondary
@@ -827,12 +827,12 @@ register_factory(factory_id, settings, initial_state, handler_generator)
 
 Factories **must** be registered before calling `new()`.
 
-### 8.2 ContinuousOperative Interface
+### 8.2 UnboundedOperative Interface
 
 SDK implementations must support operatives that conform to this interface:
 
 ```
-interface ContinuousOperative:
+interface UnboundedOperative:
     run(input: OperativeInput) -> Result<OperativeResult, OperativeError>
     json_serialize_state() -> bytes
     json_deserialize_state(data: bytes) -> void
@@ -883,7 +883,7 @@ interface OperativeHandler<State, Input, Output>:
     post_create(state: &mut State) -> void  // optional, called after creation
 ```
 
-The SDK wraps this with input/output transformers into a full `ContinuousOperative` implementation.
+The SDK wraps this with input/output transformers into a full `UnboundedOperative` implementation.
 
 ### 8.5 SDK Entry Point
 

@@ -16,8 +16,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Per-{@code AddOperative} runtime marker for a bounded-kind operative, carrying
  * its live <strong>control surface</strong>: a cancellation token and an inbox.
- * Unlike {@link ContinuousOperativeInstance} it spawns no segment workers and
- * holds no continuous mailboxes — the bounded's sequential driver (see
+ * Unlike {@link UnboundedOperativeInstance} it spawns no segment workers and
+ * holds no unbounded mailboxes — the bounded's sequential driver (see
  * {@code BoundedOperativeRunner}) runs on a dedicated thread and reaches this
  * instance for cancellation + post-start input.
  *
@@ -28,7 +28,7 @@ import org.slf4j.LoggerFactory;
  * all route through the live instance held in the operative instance registry,
  * which is itself cleared on reconnect.
  *
- * <p>Co-located with {@link ContinuousOperativeInstance} so the sealed
+ * <p>Co-located with {@link UnboundedOperativeInstance} so the sealed
  * {@link Operative} seal holds; the runtime bounded plumbing otherwise lives in
  * {@code com.flezha.sdk.runtime.bounded}.
  */

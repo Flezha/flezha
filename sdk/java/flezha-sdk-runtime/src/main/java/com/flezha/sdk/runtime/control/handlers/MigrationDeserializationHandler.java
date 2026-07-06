@@ -4,11 +4,11 @@ import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.MigrationDeserialization;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeClassRegistry;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeInstance;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeStateSerializer;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.InitValuesContext;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeStateSerializer;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import java.util.List;
 
 public final class MigrationDeserializationHandler implements CommandHandler {
@@ -20,16 +20,16 @@ public final class MigrationDeserializationHandler implements CommandHandler {
         String operativeId = cmd.getOperativeId();
         byte[] serializedState = cmd.getSerializedState().toByteArray();
 
-        ContinuousOperativeTopology topology = ContinuousOperativeClassRegistry.getTopology(factoryId);
+        UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
         if (topology == null) {
             errors.add("Factory with id " + factoryId + " does not exist");
             return new byte[0];
         }
 
-        ContinuousOperativeInstance instance;
+        UnboundedOperativeInstance instance;
         InitValuesContext.set(null);
         try {
-            instance = ContinuousOperativeInstance.create(topology, operativeId, ctx, ctx.workerPool());
+            instance = UnboundedOperativeInstance.create(topology, operativeId, ctx, ctx.workerPool());
         } catch (RuntimeException e) {
             errors.add("Failed to spawn operative instance: " + e.getMessage());
             return new byte[0];
@@ -39,7 +39,7 @@ public final class MigrationDeserializationHandler implements CommandHandler {
 
         if (serializedState.length > 0) {
             try {
-                ContinuousOperativeStateSerializer.deserialize(instance, serializedState);
+                UnboundedOperativeStateSerializer.deserialize(instance, serializedState);
             } catch (Exception e) {
                 errors.add("Failed to deserialize operative state: " + e.getMessage());
                 return new byte[0];

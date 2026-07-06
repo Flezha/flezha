@@ -1,16 +1,16 @@
 package com.flezha.test;
 
-import com.flezha.sdk.authoring.ContinuousOperative;
+import com.flezha.sdk.authoring.UnboundedOperative;
 import com.flezha.sdk.channel.ChannelBuilder;
 
 /**
  * Multioperation reference operative authored with explicit topology, wiring the
  * generated {@code SugarEntryOperation} -> {@code SugarDownstreamOperation} -> plugin.
- * {@code @ContinuousOperative} collects it into
- * {@code GeneratedContinuousOperatives.registerAll()}.
+ * {@code @UnboundedOperative} collects it into
+ * {@code GeneratedUnboundedOperatives.registerAll()}.
  */
-@ContinuousOperative
-public class SugarStaticSegmentContinuousOperative implements com.flezha.sdk.operative.ContinuousOperative {
+@UnboundedOperative
+public class SugarStaticSegmentUnboundedOperative implements com.flezha.sdk.operative.UnboundedOperative {
 
     @Override
     public String factoryId() {

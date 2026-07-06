@@ -85,8 +85,13 @@ defmodule FlezhaQuicTest do
       |> OperativeFixture.start(@quic_namespace)
       |> OperativeFixture.attach_output_msg(@quic_namespace)
 
-    OperativeTestHelper.send_sync_io(operative_id, @quic_namespace, "quic_state_1", %{}, timeout: :quic)
-    OperativeTestHelper.send_sync_io(operative_id, @quic_namespace, "quic_state_2", %{}, timeout: :quic)
+    OperativeTestHelper.send_sync_io(operative_id, @quic_namespace, "quic_state_1", %{},
+      timeout: :quic
+    )
+
+    OperativeTestHelper.send_sync_io(operative_id, @quic_namespace, "quic_state_2", %{},
+      timeout: :quic
+    )
 
     {:ok, json_state} =
       OperativeManager.get_segment_state(@quic_namespace, operative_id)
@@ -111,7 +116,9 @@ defmodule FlezhaQuicTest do
       |> OperativeFixture.attach_output_msg(@quic_namespace)
 
     result =
-      OperativeTestHelper.send_sync_io(operative_id, @quic_namespace, "quic_echo", %{}, timeout: :quic)
+      OperativeTestHelper.send_sync_io(operative_id, @quic_namespace, "quic_echo", %{},
+        timeout: :quic
+      )
 
     assert result === "quic_echo"
   end

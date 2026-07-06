@@ -2,7 +2,7 @@
 
 The Rust SDK exposes a small set of traits for declaring how compute
 work is structured inside one logical executor instance. This doc
-walks the concepts (Continuous Operative, Operation, Segment, Runner),
+walks the concepts (Unbounded Operative, Operation, Segment, Runner),
 the data flow end-to-end, and the public API. For the rationale, design
 decisions, and capability spec deltas, see
 `openspec/changes/operative-architecture/` (umbrella) and
@@ -32,10 +32,10 @@ decisions, and capability spec deltas, see
             └─────────────────────────────────────────┘
 ```
 
-- **Continuous Operative class** — the type-level declaration. One
-  Continuous Operative class declares its channels and the Operations
+- **Unbounded Operative class** — the type-level declaration. One
+  Unbounded Operative class declares its channels and the Operations
   that produce/consume them, exactly once per process via
-  `register_continuous::<R>()`. The topology is frozen at registration
+  `register_unbounded::<R>()`. The topology is frozen at registration
   and shared (`Arc`) by every instance of that class.
 
 - **Operative instance** — the live runtime object spawned on
@@ -68,12 +68,12 @@ decisions, and capability spec deltas, see
 ### Operative kind and capabilities (controller-side)
 
 On the controller, every operative is a **compute unit** that carries a **kind** (an
-atom, default `:continuous`, set at start and frozen for its lifetime). Each kind
+atom, default `:unbounded`, set at start and frozen for its lifetime). Each kind
 declares a **sparse,
 default-`false` capability descriptor** in `Flezha.Operative.Kind` — the single
 source of truth listing only the capabilities a kind *has* (as `true`); the
 control plane reads every flag with `Flezha.Operative.Kind.capable?/2`, so any
-capability a kind does not declare reads `false`. The `:continuous` kind declares
+capability a kind does not declare reads `false`. The `:unbounded` kind declares
 `persistent_state?` (per-segment WAL/snapshot/restore/time-travel/state
 introspection). Adding a
 capability later is a one-line extension: add the single gate that reads the
@@ -88,11 +88,11 @@ first gate is per-segment state introspection, which returns
 `:bounded` is a stateless, run-once compute unit — a job. It declares **no**
 capabilities (so `persistent_state?` reads `false`, and the state-introspection
 gate rejects `flz operative state <bounded>`), has no operations, segments, or input
-channel, and may emit output to bound plugins like a continuous operative.
+channel, and may emit output to bound plugins like an unbounded operative.
 
 Lifecycle: `flz operative start <id> <factory> --kind bounded` populates the optional
-`kind` field on the `AddOperative` wire message (empty ⇒ `:continuous`, the
-default). The SDK holds a sealed unit registry (continuous or bounded) resolved once
+`kind` field on the `AddOperative` wire message (empty ⇒ `:unbounded`, the
+default). The SDK holds a sealed unit registry (unbounded or bounded) resolved once
 per frame at the dispatch boundary; for a bounded operative it schedules the author's
 `BoundedOperative::run(ctx, args)` once on the work pool, with `args` taken from
 `init_values`. When `run` returns, the SDK emits a `BoundedCompleted`
@@ -103,7 +103,7 @@ misjudged by convergence. A `run` that errors is terminal (deregister + report
 `[:flezha, :bounded, :failed]`; no retry).
 
 Authoring (Rust SDK): a distinct lightweight trait, registered as a sibling of
-`register_continuous`:
+`register_unbounded`:
 
 ```rust
 struct Greet;
@@ -119,7 +119,7 @@ flezha_executor::register_bounded::<Greet>();
 ```
 
 Authoring (Java SDK): a distinct `com.flezha.sdk.bounded.BoundedOperative` interface, registered
-as a sibling of `Flezha.registerContinuous`:
+as a sibling of `Flezha.registerUnbounded`:
 
 ```java
 public final class GreetBounded implements BoundedOperative {
@@ -132,14 +132,14 @@ Flezha.registerBounded(GreetBounded.class);
 ```
 
 The Java runtime mirrors the Rust shape: a sealed `Operative` (provisional name)
-permits a continuous instance or a bounded instance in one per-executor registry,
+permits an unbounded instance or a bounded instance in one per-executor registry,
 resolved once per frame at `PrimaryStreamReader.dispatch`; an `AddOperative` whose
 `kind` resolves to `:bounded` schedules `BoundedOperative.run` once on the worker pool with
 `init_values` as `args`; `BoundedCtx.emit` writes an instance-id-keyed,
 empty-metadata frame on a secondary stream; and `BoundedCompleted` is emitted on
 the control stream byte-identically to the Rust SDK, so the controller drives a
 Java bounded operative's teardown unchanged. Java bounded factories are advertised on connect
-alongside continuous factories. Java v1 ships hand-written `BoundedOperative` impls only (no
+alongside unbounded factories. Java v1 ships hand-written `BoundedOperative` impls only (no
 `@BoundedOperative` annotation sugar) and no bounded test harness; it inherits the same deferred
 gaps below.
 
@@ -157,18 +157,18 @@ The full surface is small:
 
 ```rust
 use flezha_executor::{
-    register_continuous, ChannelBuilder, ContinuousOperative, Operation, OperationCtx, OperationError,
+    register_unbounded, ChannelBuilder, UnboundedOperative, Operation, OperationCtx, OperationError,
 };
 ```
 
-`register_continuous::<R: ContinuousOperative>()` is called once per Continuous Operative class at
+`register_unbounded::<R: UnboundedOperative>()` is called once per Unbounded Operative class at
 process startup. `Flezha::new(namespace)` boots the SDK; the controller
 later spawns instances by calling `flz operative start <factory_id>`.
 
 ## Authoring sugar (default path)
 
 `#[flezha::operation]`, `#[derive(flezha::State)]`, and `flezha::operative!` collapse
-the trait ceremony — they are **pure expansion** over the `ContinuousOperative`/`Operation`/
+the trait ceremony — they are **pure expansion** over the `UnboundedOperative`/`Operation`/
 `Change`/`Channel` traits below, so a sugared operation and a hand-written one
 compose in the same operative and "ejecting" a sugared operation to a full impl is a
 paste of its expansion. The single contract binding every SDK (Rust, Java, and
@@ -195,7 +195,7 @@ fn ohlc(price: f64, state: &mut OhlcState) -> Vec<u8> {
 
 fn all_tfs(_: &f64) -> Vec<&'static str> { vec!["1m", "1h", "1d", "1w"] }
 
-// Linear pipeline ⇒ no `channels()` block, auto-registered (no `register_continuous`).
+// Linear pipeline ⇒ no `channels()` block, auto-registered (no `register_unbounded`).
 flezha_executor::operative! {
     id: "market",
     pipeline: input::<String> -> Parse -> Ohlc -> plugin::<Vec<u8>>("ohlc_kafka")
@@ -203,7 +203,7 @@ flezha_executor::operative! {
 ```
 
 Single-operation `input → sink` operatives add `sink = "…"` to `#[flezha::operation]` and
-need no `operative!` and no `register_continuous`. Attribute opt-ins: `id`, `sink`,
+need no `operative!` and no `register_unbounded`. Attribute opt-ins: `id`, `sink`,
 `keys` + `segment_for` (static mode), `operation_key` + `idle_ttl` +
 `max_segments` (dynamic mode), `capacity`, `on_full`, `clock`. Static and
 dynamic opt-ins are mutually exclusive (a compile error). Anything beyond a
@@ -217,7 +217,7 @@ directly when an operative's topology is not a single operation or a linear chai
 
 ```rust
 use flezha_executor::{
-    register_continuous, ChannelBuilder, ContinuousOperative, Operation, OperationCtx, OperationError,
+    register_unbounded, ChannelBuilder, UnboundedOperative, Operation, OperationCtx, OperationError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -275,7 +275,7 @@ impl Operation for OhlcOp {
 }
 
 struct MarketOperative;
-impl ContinuousOperative for MarketOperative {
+impl UnboundedOperative for MarketOperative {
     fn factory_id() -> &'static str { "market" }
 
     fn channels(c: &mut ChannelBuilder) {
@@ -290,7 +290,7 @@ impl ContinuousOperative for MarketOperative {
 }
 
 fn main() {
-    register_continuous::<MarketOperative>();
+    register_unbounded::<MarketOperative>();
     let _ = flezha_executor::new("market_ns".to_string());
     // The controller's `flz operative start <market>` spawns an instance.
 }
@@ -305,7 +305,7 @@ The Java SDK is a port of the same model. Idiomatic differences:
   accessors so the runtime can verify wiring at registration time
   (Java's type erasure means most type bounds the Rust trait system
   enforces at compile time become runtime-checked
-  `OperativeConfigurationException`s thrown by `Flezha.registerContinuous(...)`).
+  `OperativeConfigurationException`s thrown by `Flezha.registerUnbounded(...)`).
 - `segmentForOverridden()` / `operationKeyOverridden()` boolean default
   methods replace Rust's `const SEGMENT_FOR_OVERRIDDEN: bool` /
   `const OPERATION_KEY_OVERRIDDEN: bool` sentinels.
@@ -353,7 +353,7 @@ public final class OhlcOp implements Operation<Double, OhlcState, byte[]> {
     }
 }
 
-public final class MarketOperative implements ContinuousOperative {
+public final class MarketOperative implements UnboundedOperative {
     @Override public String factoryId() { return "market"; }
     @Override public void channels(ChannelBuilder c) {
         c.input(String.class, "trade.raw").into(ParseOp.class);
@@ -368,7 +368,7 @@ public final class MarketOperative implements ContinuousOperative {
 
 public final class App {
     public static void main(String[] args) {
-        Flezha.registerContinuous(MarketOperative.class);
+        Flezha.registerUnbounded(MarketOperative.class);
         Flezha unused = Flezha.newInstance("market_ns");
         // Controller's `flz operative start <market>` spawns an instance.
     }
@@ -377,7 +377,7 @@ public final class App {
 
 #### Java authoring sugar
 
-The `@Operation` / `@State` / `@ContinuousOperative` / `@SegmentFor` annotations (annotation
+The `@Operation` / `@State` / `@UnboundedOperative` / `@SegmentFor` annotations (annotation
 processor `flezha-sdk-processor`) generate the impls above, mirroring the Rust
 macros under the same `docs/sdk_authoring_contract.md` contract. An `@Operation`
 class declares a `run` method (`Output run(Input)` or
@@ -491,7 +491,7 @@ impl Operation for OhlcOp {
 }
 ```
 
-Resolution order at `register_continuous::<R>()` time:
+Resolution order at `register_unbounded::<R>()` time:
 
 1. `Operation::mailbox_capacity()` if `MAILBOX_CAPACITY_OVERRIDDEN = true`.
 2. `FLEZHA_MAILBOX_CAPACITY` env var (parsed as `usize`).
@@ -649,7 +649,7 @@ c.channel(SmaValue.class, "sma_out")
 The Java surface mirrors Rust: `kind` stays `INTER_OPERATION`, the channel
 descriptor carries `Optional<PluginSink> pluginSink`, duplicates raise
 `OperativeConfigurationException.duplicatePluginSink(channel)` at
-`OperativeRegistry.registerContinuous(...)` time, and a serializer that throws
+`OperativeRegistry.registerUnbounded(...)` time, and a serializer that throws
 surfaces as `OperationException.PluginSerializerFailure` (Java's structured-throw
 analog of Rust's `OperationError::PluginSerializerPanic`). Wire frames produced
 by either SDK are byte-indistinguishable at the agent's plugin layer.
@@ -740,7 +740,7 @@ The umbrella enumerates non-goals (`operative-architecture/proposal.md`
 
 | Concern | File |
 |---|---|
-| Continuous Operative trait | `sdk/rust/src/operative/mod.rs` |
+| Unbounded Operative trait | `sdk/rust/src/operative/mod.rs` |
 | Operation trait + OperationCtx | `sdk/rust/src/operation/mod.rs`, `ctx.rs`, `error.rs` |
 | Channel<T> + ChannelBuilder | `sdk/rust/src/channel/mod.rs`, `builder.rs` |
 | Topology builder | `sdk/rust/src/operative/builder.rs` |
@@ -784,12 +784,12 @@ stable registered type IDs; same wire format, `sdk_lang = 2`,
 
 Decisions referenced above:
 
-- **Decision 1 (umbrella)** — Continuous Operative/Operation trait surface, sync `run`,
+- **Decision 1 (umbrella)** — Unbounded Operative/Operation trait surface, sync `run`,
   associated types over generics.
 - **Decision 2 (mvp-rust)** — Fluent channel builder with compile-time
   wiring constraints.
 - **Decision 3 (mvp-rust)** — Per-Operative channel-id table layout
-  (interned `u32` IDs frozen at `register_continuous`).
+  (interned `u32` IDs frozen at `register_unbounded`).
 - **Decision 4 (mvp-rust)** — Cached `output_channel_id` on the
   dispatcher; zero name lookups during emit.
 - **Decision 7 (umbrella)** — Single-mode is the default; static-mode

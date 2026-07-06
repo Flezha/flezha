@@ -36,7 +36,7 @@ public class OperationException extends Exception {
 
     /**
      * Thrown when an {@code emit} or {@code emitWithMeta} call references a
-     * channel name that was not declared on this ContinuousOperative's topology.
+     * channel name that was not declared on this UnboundedOperative's topology.
      */
     public static final class UnknownChannel extends OperationException {
         private final String channel;

@@ -6,8 +6,8 @@ import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
-import com.flezha.sdk.operative.ContinuousOperative;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.ExecutorShutdownNotification;
@@ -42,14 +42,14 @@ class GracefulShutdownTest {
 
     @BeforeEach
     void reset() {
-        ContinuousOperativeRegistry.reset();
+        UnboundedOperativeRegistry.reset();
         GracefulShutdown.resetForTests();
     }
 
     @Test
     @DisplayName("run() emits a framed ExecutorShutdownNotification per operative")
     void emitsFramedExecutorShutdownNotification() throws Exception {
-        ExecutorContext ctx = newCtxWithContinuousOperative("p1");
+        ExecutorContext ctx = newCtxWithUnboundedOperative("p1");
 
         List<byte[]> captured = new ArrayList<>();
         AtomicReference<Long> capturedStreamId = new AtomicReference<>();
@@ -95,7 +95,7 @@ class GracefulShutdownTest {
     @Test
     @DisplayName("run() returns within ~2.5s when no ack arrives")
     void returnsWithin2sWhenAckNeverArrives() {
-        ExecutorContext ctx = newCtxWithContinuousOperative("p_timeout");
+        ExecutorContext ctx = newCtxWithUnboundedOperative("p_timeout");
 
         GracefulShutdown.FrameWriter neverAcking = (streamId, frame) -> 0;
         GracefulShutdown subject = new GracefulShutdown(ctx, CONTROL_STREAM_ID, neverAcking);
@@ -121,7 +121,7 @@ class GracefulShutdownTest {
     @Test
     @DisplayName("run() is idempotent across SIGTERM + close()")
     void runIsIdempotent() throws InterruptedException {
-        ExecutorContext ctx = newCtxWithContinuousOperative("p_idem");
+        ExecutorContext ctx = newCtxWithUnboundedOperative("p_idem");
         CountDownLatch firstWriteSeen = new CountDownLatch(1);
         AtomicReference<String> capturedRef = new AtomicReference<>();
 
@@ -151,9 +151,9 @@ class GracefulShutdownTest {
         assertThat(elapsed).isLessThan(50L);
     }
 
-    private static ExecutorContext newCtxWithContinuousOperative(String operativeId) {
-        if (ContinuousOperativeRegistry.factoryIds().isEmpty()) {
-            ContinuousOperativeRegistry.registerContinuous(ShutdownTestContinuousOperative.class);
+    private static ExecutorContext newCtxWithUnboundedOperative(String operativeId) {
+        if (UnboundedOperativeRegistry.factoryIds().isEmpty()) {
+            UnboundedOperativeRegistry.registerUnbounded(ShutdownTestUnboundedOperative.class);
         }
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
@@ -179,7 +179,7 @@ class GracefulShutdownTest {
         throw new IllegalStateException("expected at least one frame in captured bytes");
     }
 
-    public static final class ShutdownTestContinuousOperative implements ContinuousOperative {
+    public static final class ShutdownTestUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return FACTORY_ID;

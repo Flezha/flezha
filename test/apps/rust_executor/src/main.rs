@@ -7,13 +7,13 @@ use flezha_executor::state::{
     Change, CoalesceKey, NoChange, RestoreInitPayload, StateHandle, WallClock,
 };
 use flezha_executor::{
-    register_bounded, register_continuous, BoundedCtx, BoundedError, BoundedOperative,
-    ChannelBuilder, ContinuousOperative, OverflowPolicy,
+    register_bounded, register_unbounded, BoundedCtx, BoundedError, BoundedOperative,
+    ChannelBuilder, OverflowPolicy, UnboundedOperative,
 };
 use serde::{Deserialize, Serialize};
 
 fn main() {
-    register_continuous_all();
+    register_unbounded_all();
     register_bounded_all();
 
     let _executor = flezha_executor::new(namespace());
@@ -43,20 +43,20 @@ fn std_keeper() -> thread::JoinHandle<()> {
     }
 }
 
-fn register_continuous_all() {
-    register_continuous::<DoNothingOperative>();
-    register_continuous::<StoreInputOperative>();
-    register_continuous::<CompareFilterOperative>();
-    register_continuous::<StaticSegmentOperative>();
-    register_continuous::<SegmentingStressOperative>();
-    register_continuous::<BoundedMailboxOperative>();
-    register_continuous::<StatefulCounterOperative>();
-    register_continuous::<CoalescingCounterOperative>();
-    register_continuous::<PersistenceOffOperative>();
-    register_continuous::<HybridChannelOperative>();
-    register_continuous::<ResumeProbeOperative>();
-    register_continuous::<DynamicSegmentOperative>();
-    register_continuous::<MixedOperative>();
+fn register_unbounded_all() {
+    register_unbounded::<DoNothingOperative>();
+    register_unbounded::<StoreInputOperative>();
+    register_unbounded::<CompareFilterOperative>();
+    register_unbounded::<StaticSegmentOperative>();
+    register_unbounded::<SegmentingStressOperative>();
+    register_unbounded::<BoundedMailboxOperative>();
+    register_unbounded::<StatefulCounterOperative>();
+    register_unbounded::<CoalescingCounterOperative>();
+    register_unbounded::<PersistenceOffOperative>();
+    register_unbounded::<HybridChannelOperative>();
+    register_unbounded::<ResumeProbeOperative>();
+    register_unbounded::<DynamicSegmentOperative>();
+    register_unbounded::<MixedOperative>();
 }
 
 fn register_bounded_all() {
@@ -305,7 +305,7 @@ impl Operation for DynamicSegmentOperation {
 }
 
 struct DynamicSegmentOperative;
-impl ContinuousOperative for DynamicSegmentOperative {
+impl UnboundedOperative for DynamicSegmentOperative {
     fn factory_id() -> &'static str {
         "dynamic_segment"
     }
@@ -348,7 +348,7 @@ impl Operation for DoNothingOperation {
 }
 
 struct DoNothingOperative;
-impl ContinuousOperative for DoNothingOperative {
+impl UnboundedOperative for DoNothingOperative {
     fn factory_id() -> &'static str {
         "do_nothing"
     }
@@ -409,7 +409,7 @@ impl Operation for StoreInputOperation {
 }
 
 struct StoreInputOperative;
-impl ContinuousOperative for StoreInputOperative {
+impl UnboundedOperative for StoreInputOperative {
     fn factory_id() -> &'static str {
         "store_input"
     }
@@ -480,7 +480,7 @@ impl Operation for ResumeProbeOperation {
 }
 
 struct ResumeProbeOperative;
-impl ContinuousOperative for ResumeProbeOperative {
+impl UnboundedOperative for ResumeProbeOperative {
     fn factory_id() -> &'static str {
         "resume_probe"
     }
@@ -541,7 +541,7 @@ impl Operation for CompareFilterOperation {
 }
 
 struct CompareFilterOperative;
-impl ContinuousOperative for CompareFilterOperative {
+impl UnboundedOperative for CompareFilterOperative {
     fn factory_id() -> &'static str {
         "compare_filter"
     }
@@ -636,7 +636,7 @@ impl Operation for StaticDownstreamOperation {
 }
 
 struct StaticSegmentOperative;
-impl ContinuousOperative for StaticSegmentOperative {
+impl UnboundedOperative for StaticSegmentOperative {
     fn factory_id() -> &'static str {
         "static_segment"
     }
@@ -776,7 +776,7 @@ impl Operation for StressOperationD {
 }
 
 struct SegmentingStressOperative;
-impl ContinuousOperative for SegmentingStressOperative {
+impl UnboundedOperative for SegmentingStressOperative {
     fn factory_id() -> &'static str {
         "segmenting_stress"
     }
@@ -923,7 +923,7 @@ impl Operation for DropOldestTestOperation {
 }
 
 struct BoundedMailboxOperative;
-impl ContinuousOperative for BoundedMailboxOperative {
+impl UnboundedOperative for BoundedMailboxOperative {
     fn factory_id() -> &'static str {
         "bounded_mailbox"
     }
@@ -997,7 +997,7 @@ impl Operation for CounterOperation {
 }
 
 struct StatefulCounterOperative;
-impl ContinuousOperative for StatefulCounterOperative {
+impl UnboundedOperative for StatefulCounterOperative {
     fn factory_id() -> &'static str {
         "stateful_counter"
     }
@@ -1134,7 +1134,7 @@ impl Operation for TickEntryOperation {
 }
 
 struct CoalescingCounterOperative;
-impl ContinuousOperative for CoalescingCounterOperative {
+impl UnboundedOperative for CoalescingCounterOperative {
     fn factory_id() -> &'static str {
         "coalescing_counter"
     }
@@ -1153,7 +1153,7 @@ impl ContinuousOperative for CoalescingCounterOperative {
 // path discards frames without invoking the wire stub.
 
 struct PersistenceOffOperative;
-impl ContinuousOperative for PersistenceOffOperative {
+impl UnboundedOperative for PersistenceOffOperative {
     fn factory_id() -> &'static str {
         "persistence_off_counter"
     }
@@ -1284,7 +1284,7 @@ impl Operation for HybridConsumerOperation {
 }
 
 struct HybridChannelOperative;
-impl ContinuousOperative for HybridChannelOperative {
+impl UnboundedOperative for HybridChannelOperative {
     fn factory_id() -> &'static str {
         "hybrid_channel"
     }
@@ -1310,7 +1310,7 @@ impl ContinuousOperative for HybridChannelOperative {
 // ---------------------------------------------------------------------------
 
 // Single-operation stateless sugar — twin of `DoNothingOperation` / `DoNothingOperative`.
-// Auto-wires input -> operation -> plugin and auto-registers (no `register_continuous`).
+// Auto-wires input -> operation -> plugin and auto-registers (no `register_unbounded`).
 #[flezha_executor::operation(id = "sugar_do_nothing", sink = "sugar_do_nothing_echo")]
 fn sugar_do_nothing(input: String) -> Vec<u8> {
     input.into_bytes()
@@ -1395,7 +1395,7 @@ impl Operation for MixedHandDownstream {
 }
 
 struct MixedOperative;
-impl ContinuousOperative for MixedOperative {
+impl UnboundedOperative for MixedOperative {
     fn factory_id() -> &'static str {
         "mixed_operative"
     }
@@ -1673,7 +1673,7 @@ mod macro_twin_tests {
 
     #[test]
     fn sugar_operatives_register() {
-        // Auto-wire + `operative!` operatives are harvested without `register_continuous`.
+        // Auto-wire + `operative!` operatives are harvested without `register_unbounded`.
         flezha_executor::register_inventory_operatives();
         let ids = flezha_executor::operative::registry::class_factory_ids();
         for id in [
@@ -1687,7 +1687,7 @@ mod macro_twin_tests {
             );
         }
         // The mixed operative registers manually, as before.
-        register_continuous::<MixedOperative>();
+        register_unbounded::<MixedOperative>();
         assert!(flezha_executor::operative::registry::get_class("mixed_operative").is_some());
     }
 

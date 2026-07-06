@@ -6,7 +6,7 @@ import com.flezha.sdk.native_.FlezhaNativeException;
 import com.flezha.sdk.native_.FlezhaStatus;
 import com.flezha.sdk.native_.NativeEventDispatcher;
 import com.flezha.sdk.native_.NativeTransport;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.CommandRouter;
 import com.flezha.sdk.runtime.control.ControlChannel;
@@ -63,22 +63,22 @@ public final class FlezhaImpl implements Flezha {
      *
      * <p>Steps:
      * <ol>
-     *   <li>Freeze the {@link ContinuousOperativeRegistry}.</li>
+     *   <li>Freeze the {@link UnboundedOperativeRegistry}.</li>
      *   <li>Resolve config from env vars; log it at INFO.</li>
      *   <li>Create the native context.</li>
-     *   <li>Initialize the worker pool (consumed by every {@code ContinuousOperativeInstance}'s {@code OperationDispatcher}).</li>
+     *   <li>Initialize the worker pool (consumed by every {@code UnboundedOperativeInstance}'s {@code OperationDispatcher}).</li>
      *   <li>Open the control stream and send the handshake init JSON.</li>
      *   <li>Block until the controller replies with {@code AssignExecutorId}.</li>
      * </ol>
      */
     @Nonnull
     public static Flezha start(@Nonnull String namespace) {
-        if (ContinuousOperativeRegistry.isEmpty() && BoundedOperativeRegistry.isEmpty()) {
+        if (UnboundedOperativeRegistry.isEmpty() && BoundedOperativeRegistry.isEmpty()) {
             throw new IllegalStateException(
-                    "No operative or bounded classes registered; call Flezha.registerContinuous(MyContinuousOperative.class) "
+                    "No operative or bounded classes registered; call Flezha.registerUnbounded(MyUnboundedOperative.class) "
                             + "or Flezha.registerBounded(MyBoundedOperative.class) first.");
         }
-        ContinuousOperativeRegistry.freeze();
+        UnboundedOperativeRegistry.freeze();
         BoundedOperativeRegistry.freeze();
 
         FlezhaEnv.ResolvedConfig resolved = FlezhaEnv.resolveFromEnv();

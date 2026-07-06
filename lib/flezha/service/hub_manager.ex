@@ -48,7 +48,7 @@ defmodule Flezha.Service.HubManager do
     # the lifecycle progresses; the seed only matters when a hub boots
     # straight into `:normal` (marker present + no replay) and no
     # telemetry event will follow.
-    _ = Snapshot.observe_recovery(hub_id, ProcessHub.recovery_state(hub_id))
+    _ = Snapshot.observe_recovery(hub_id, ProcessHub.Service.Recovery.recovery_state(hub_id))
   end
 
   @doc """
@@ -65,7 +65,7 @@ defmodule Flezha.Service.HubManager do
 
       true ->
         case Flezha.Convergence.Snapshot.recovery_state(hub_id) do
-          :unknown -> {:ok, ProcessHub.recovery_state(hub_id)}
+          :unknown -> {:ok, ProcessHub.Service.Recovery.recovery_state(hub_id)}
           state -> {:ok, state}
         end
     end
@@ -633,16 +633,20 @@ defmodule Flezha.Service.HubManager do
       # Operative startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
       cross_node_request_timeout: 10_000,
-      hooks: %{
-        Hook.child_data_alter() => [
-          %HookManager{
-            id: ProcessHub.Constant.Hook.child_data_alter(),
-            m: __MODULE__,
-            f: :alter_child_data,
-            a: [hub_id, :_]
-          }
-        ]
-      }
+      hooks:
+        Map.merge(
+          %{
+            Hook.child_data_alter() => [
+              %HookManager{
+                id: ProcessHub.Constant.Hook.child_data_alter(),
+                m: __MODULE__,
+                f: :alter_child_data,
+                a: [hub_id, :_]
+              }
+            ]
+          },
+          Snapshot.hook_handlers()
+        )
     })
   end
 

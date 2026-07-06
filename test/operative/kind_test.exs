@@ -13,10 +13,10 @@ defmodule FlezhaTest.Operative.KindTest do
   @persistence_flags [:persistent_state?, :time_travel?, :dynamic_segments?, :output_stall_watch?]
 
   describe "capabilities" do
-    test ":continuous declares the full persistence surface" do
-      for flag <- @persistence_flags, do: assert(Kind.capable?(:continuous, flag))
+    test ":unbounded declares the full persistence surface" do
+      for flag <- @persistence_flags, do: assert(Kind.capable?(:unbounded, flag))
 
-      assert Kind.capabilities(:continuous) == %{
+      assert Kind.capabilities(:unbounded) == %{
                persistent_state?: true,
                time_travel?: true,
                dynamic_segments?: true,
@@ -25,8 +25,8 @@ defmodule FlezhaTest.Operative.KindTest do
     end
 
     test "an undeclared capability reads false" do
-      # :continuous does not declare it, and an unknown kind declares nothing.
-      refute Kind.capable?(:continuous, :scheduled?)
+      # :unbounded does not declare it, and an unknown kind declares nothing.
+      refute Kind.capable?(:unbounded, :scheduled?)
       refute Kind.capable?(:made_up_kind, :persistent_state?)
       assert Kind.capabilities(:made_up_kind) == %{}
     end
@@ -36,20 +36,20 @@ defmodule FlezhaTest.Operative.KindTest do
       for flag <- @persistence_flags, do: refute(Kind.capable?(:bounded, flag))
     end
 
-    test "known?/1 accepts :continuous and :bounded, rejects others" do
-      assert Kind.known?(:continuous)
+    test "known?/1 accepts :unbounded and :bounded, rejects others" do
+      assert Kind.known?(:unbounded)
       assert Kind.known?(:bounded)
       refute Kind.known?(:made_up_kind)
     end
   end
 
   describe "Builder kind field" do
-    test "an unspecified kind defaults to :continuous" do
-      assert %Builder{id: "r", factory_id: "f"}.kind == :continuous
+    test "an unspecified kind defaults to :unbounded" do
+      assert %Builder{id: "r", factory_id: "f"}.kind == :unbounded
     end
 
-    test "valid_kind accepts :continuous and :bounded" do
-      assert Validator.valid_kind(:continuous) == :ok
+    test "valid_kind accepts :unbounded and :bounded" do
+      assert Validator.valid_kind(:unbounded) == :ok
       assert Validator.valid_kind(:bounded) == :ok
     end
 
@@ -62,7 +62,7 @@ defmodule FlezhaTest.Operative.KindTest do
 
   test "AddOperative protobuf carries an optional kind field" do
     assert :kind in Map.keys(ExecutorCommands.AddOperative.__struct__())
-    # Default is the empty string ⇒ interpreted as :continuous on the SDK side.
+    # Default is the empty string ⇒ interpreted as :unbounded on the SDK side.
     assert ExecutorCommands.AddOperative.__struct__().kind == ""
   end
 end

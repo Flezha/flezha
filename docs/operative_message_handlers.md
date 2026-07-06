@@ -138,10 +138,10 @@ interface. Factories that do not override it return an explicit
 ### Rust
 
 ```rust
-use flezha_executor::{ContinuousOperative, operative::OperativeError};
+use flezha_executor::{UnboundedOperative, operative::OperativeError};
 
 struct MyOperative;
-impl ContinuousOperative<MyState, String, String> for MyOperative {
+impl UnboundedOperative<MyState, String, String> for MyOperative {
     fn process(&mut self, input: String, state: &mut MyState)
         -> Result<String, OperativeError> { /* ... */ }
 
@@ -160,7 +160,7 @@ impl ContinuousOperative<MyState, String, String> for MyOperative {
 
 ```java
 public final class MyOperative
-        implements ContinuousOperative<MyState, String, String> {
+        implements UnboundedOperative<MyState, String, String> {
 
     @Override
     public String process(String input, MyState state) { /* ... */ }

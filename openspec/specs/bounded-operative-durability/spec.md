@@ -5,12 +5,12 @@ TBD - created by archiving change bounded-operative-functionality. Update Purpos
 ## Requirements
 ### Requirement: WAL persistence for a bounded operative is durable by default, opt-out per class
 
-A bounded operative class SHALL be **durable by default**; an author MAY **opt out** per class (fire-and-forget) via a flag on the operative (mirroring the continuous persistence flag), resolved at start through the existing persistence resolver, with an operator override still available. When durable, its operations/segments SHALL be WAL-backed on the **same substrate** (WalWriter framing, snapshots, fsync batching, retention) and the **same `{operative_class, operation_id, segment_key}` identity** a continuous operative uses. When opted out, a bounded operative SHALL be pure in-memory and SHALL leave no on-disk state artifacts.
+A bounded operative class SHALL be **durable by default**; an author MAY **opt out** per class (fire-and-forget) via a flag on the operative (mirroring the unbounded persistence flag), resolved at start through the existing persistence resolver, with an operator override still available. When durable, its operations/segments SHALL be WAL-backed on the **same substrate** (WalWriter framing, snapshots, fsync batching, retention) and the **same `{operative_class, operation_id, segment_key}` identity** an unbounded operative uses. When opted out, a bounded operative SHALL be pure in-memory and SHALL leave no on-disk state artifacts.
 
 #### Scenario: Durable bounded operative is WAL-backed by default
 
 - **WHEN** a bounded operative class does not opt out of persistence and writes Segment state
-- **THEN** its Segment state changes SHALL be appended to the WAL on the shared substrate exactly as a continuous operative's are
+- **THEN** its Segment state changes SHALL be appended to the WAL on the shared substrate exactly as an unbounded operative's are
 
 #### Scenario: Opted-out bounded operative writes nothing to disk
 

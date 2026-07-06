@@ -83,7 +83,9 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "empty delta when every operative is bound to a live executor" do
-      intent = %Intent{operatives: [%{namespace: :ns, operative_id: "ok", factory_id: nil, plugins: []}]}
+      intent = %Intent{
+        operatives: [%{namespace: :ns, operative_id: "ok", factory_id: nil, plugins: []}]
+      }
 
       reality = %{
         active_executors: %{ns: MapSet.new(["e_live"])},
@@ -98,7 +100,9 @@ defmodule Flezha.ConvergenceTest do
       p = plugin("declared")
 
       intent = %Intent{
-        operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"declared", p}]}]
+        operatives: [
+          %{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"declared", p}]}
+        ]
       }
 
       reality = %{
@@ -162,7 +166,9 @@ defmodule Flezha.ConvergenceTest do
       p = plugin("ws_in")
 
       intent = %Intent{
-        operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"ws_in", p}]}]
+        operatives: [
+          %{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"ws_in", p}]}
+        ]
       }
 
       reality = %{
@@ -224,7 +230,9 @@ defmodule Flezha.ConvergenceTest do
       p = plugin("declared")
 
       intent = %Intent{
-        operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"declared", p}]}]
+        operatives: [
+          %{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"declared", p}]}
+        ]
       }
 
       reality = %{
@@ -263,7 +271,9 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "skips a operative whose own state read failed (bound_executor :unknown)" do
-      intent = %Intent{operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: []}]}
+      intent = %Intent{
+        operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: []}]
+      }
 
       reality = %{
         active_executors: %{ns: MapSet.new(["e_live"])},
@@ -484,7 +494,13 @@ defmodule Flezha.ConvergenceTest do
 
       injected = Loop.inject_stall_rebinds_for_test([], stalled, intent, ready, Backoff.new())
 
-      assert [%{primitive: :rebind_operative, target: ^operative_id, args: %{reason: :output_stall}}] =
+      assert [
+               %{
+                 primitive: :rebind_operative,
+                 target: ^operative_id,
+                 args: %{reason: :output_stall}
+               }
+             ] =
                injected
     end
 
@@ -498,7 +514,13 @@ defmodule Flezha.ConvergenceTest do
 
       ready = MapSet.new([ns])
       stalled = %{operative_id => System.monotonic_time(:millisecond)}
-      existing_op = %{primitive: :rebind_operative, namespace: ns, target: operative_id, args: %{}}
+
+      existing_op = %{
+        primitive: :rebind_operative,
+        namespace: ns,
+        target: operative_id,
+        args: %{}
+      }
 
       result =
         Loop.inject_stall_rebinds_for_test([existing_op], stalled, intent, ready, Backoff.new())
@@ -574,7 +596,9 @@ defmodule Flezha.ConvergenceTest do
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_executor: nil}}, MapSet.new(["e1"]))
 
-      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{{ns, "r"} => :unbound}
+      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
+               {ns, "r"} => :unbound
+             }
     end
 
     test "a operative bound to a dead executor is :failed" do
@@ -582,7 +606,9 @@ defmodule Flezha.ConvergenceTest do
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_executor: "gone"}}, MapSet.new(["e1"]))
 
-      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{{ns, "r"} => :failed}
+      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
+               {ns, "r"} => :failed
+             }
     end
 
     test "a bound-but-stalled operative is :degraded" do
@@ -593,7 +619,10 @@ defmodule Flezha.ConvergenceTest do
         reality(ns, %{{ns, "r"} => %{bound_executor: "e1", pid: self()}}, MapSet.new(["e1"]))
 
       state = %Loop{stalled_operatives: %{"r" => System.monotonic_time(:millisecond)}}
-      assert Loop.operative_health_map(intent.operatives, reality, state) == %{{ns, "r"} => :degraded}
+
+      assert Loop.operative_health_map(intent.operatives, reality, state) == %{
+               {ns, "r"} => :degraded
+             }
     end
 
     test "a bound operative with a degraded plugin is :degraded" do
@@ -612,7 +641,9 @@ defmodule Flezha.ConvergenceTest do
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_executor: :unknown}}, MapSet.new(["e1"]))
 
-      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{{ns, "r"} => :unknown}
+      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
+               {ns, "r"} => :unknown
+             }
     end
 
     test "a operative whose namespace live-executor read failed is :unknown, not :failed" do
@@ -620,7 +651,9 @@ defmodule Flezha.ConvergenceTest do
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_executor: "e1"}}, :unknown)
 
-      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{{ns, "r"} => :unknown}
+      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
+               {ns, "r"} => :unknown
+             }
     end
   end
 

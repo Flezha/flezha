@@ -38,15 +38,15 @@ class SegmentStateWireTest {
     @Test
     void encodedBytesMatchesControllerFraming() {
         // [rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]
-        byte[] id = new SegmentId("MarketContinuousOperative", "OhlcOperation", "M1").encodedBytes();
-        assertThat(id[0]).isEqualTo((byte) 25);
-        assertThat(new String(id, 1, 25, StandardCharsets.UTF_8)).isEqualTo("MarketContinuousOperative");
-        assertThat(id[26]).isEqualTo((byte) 13);
-        assertThat(new String(id, 27, 13, StandardCharsets.UTF_8)).isEqualTo("OhlcOperation");
-        ByteBuffer pk = ByteBuffer.wrap(id, 40, 4).order(ByteOrder.BIG_ENDIAN);
+        byte[] id = new SegmentId("MarketUnboundedOperative", "OhlcOperation", "M1").encodedBytes();
+        assertThat(id[0]).isEqualTo((byte) 24);
+        assertThat(new String(id, 1, 24, StandardCharsets.UTF_8)).isEqualTo("MarketUnboundedOperative");
+        assertThat(id[25]).isEqualTo((byte) 13);
+        assertThat(new String(id, 26, 13, StandardCharsets.UTF_8)).isEqualTo("OhlcOperation");
+        ByteBuffer pk = ByteBuffer.wrap(id, 39, 4).order(ByteOrder.BIG_ENDIAN);
         assertThat(pk.getShort() & 0xFFFF).isEqualTo(2);
-        assertThat(new String(id, 42, 2, StandardCharsets.UTF_8)).isEqualTo("M1");
-        assertThat(id.length).isEqualTo(44);
+        assertThat(new String(id, 41, 2, StandardCharsets.UTF_8)).isEqualTo("M1");
+        assertThat(id.length).isEqualTo(43);
     }
 
     @Test
@@ -55,7 +55,7 @@ class SegmentStateWireTest {
         HeaderTemplate template = new HeaderTemplate();
         byte[] body = codec.serialize(new AddChange(42));
         byte[] header = template.stamp(1, body);
-        SegmentId pid = new SegmentId("MarketContinuousOperative", "OhlcOperation", "M1");
+        SegmentId pid = new SegmentId("MarketUnboundedOperative", "OhlcOperation", "M1");
 
         byte[] frame = SegmentFlusher.buildSegmentStateChangeFrame(pid, 99L, header, body);
 

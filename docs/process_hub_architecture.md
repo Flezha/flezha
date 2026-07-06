@@ -35,11 +35,11 @@ controller's `alter_child_data` hook handles executor selection at operative sta
 time.
 
 > **Note (operative-mvp-rust).** The Rust SDK now ships work as
-> `Continuous Operative` / `Operation` / `Segment` (see `docs/operative_architecture.md`).
-> Segmenting is **SDK-internal**: a single Continuous Operative instance can have many
+> `Unbounded Operative` / `Operation` / `Segment` (see `docs/operative_architecture.md`).
+> Segmenting is **SDK-internal**: a single Unbounded Operative instance can have many
 > Operations, each with many Segments running in parallel inside the
 > executor process. ProcessHub continues per-operative placement at the
-> cluster level — one Continuous Operative instance is one ProcessHub child — and is
+> cluster level — one Unbounded Operative instance is one ProcessHub child — and is
 > not aware of segments. The two-level distribution above is unchanged.
 
 ## Per-namespace ProcessHub instances

@@ -7,14 +7,14 @@ import java.lang.annotation.Target;
 
 /**
  * Marks a multioperation operative class (one that implements
- * {@link com.flezha.sdk.operative.ContinuousOperative} with an explicit {@code channels(...)}
+ * {@link com.flezha.sdk.operative.UnboundedOperative} with an explicit {@code channels(...)}
  * body) for auto-registration. The annotation processor collects every
- * {@code @ContinuousOperative} class — and every single-operation operative generated from a
- * {@link Operation} with a {@code sink} — into a {@code GeneratedContinuousOperatives.registerAll()}
+ * {@code @UnboundedOperative} class — and every single-operation operative generated from a
+ * {@link Operation} with a {@code sink} — into a {@code GeneratedUnboundedOperatives.registerAll()}
  * aggregator, so the author makes one startup call instead of N
- * {@code ContinuousOperativeRegistry.registerContinuous} calls. The author's topology is preserved
+ * {@code UnboundedOperativeRegistry.registerUnbounded} calls. The author's topology is preserved
  * verbatim. See {@code docs/sdk_authoring_contract.md} §5.
  */
 @Retention(RetentionPolicy.SOURCE)
 @Target(ElementType.TYPE)
-public @interface ContinuousOperative {}
+public @interface UnboundedOperative {}

@@ -19,7 +19,7 @@ defmodule Flezha.Service.CliManager do
         init_values,
         opts \\ [],
         plugins_json \\ "[]",
-        kind \\ "continuous"
+        kind \\ "unbounded"
       ) do
     opts_kw =
       Payloader.json_to_map(opts)
@@ -63,7 +63,7 @@ defmodule Flezha.Service.CliManager do
   # Resolve the wire kind string to its atom without minting atoms from
   # untrusted input: only already-known kinds convert; anything else stays a
   # string, which `Validator.valid_kind/1` rejects at start.
-  defp parse_kind(kind) when kind in [nil, "", "continuous"], do: :continuous
+  defp parse_kind(kind) when kind in [nil, "", "unbounded"], do: :unbounded
 
   defp parse_kind(kind) when is_binary(kind) do
     String.to_existing_atom(kind)
@@ -618,7 +618,7 @@ defmodule Flezha.Service.CliManager do
 
   @doc """
   Operator-facing CLI implementation for `flz cluster prepare-recovery`.
-  Fans `ProcessHub.prepare_recovery_cluster/1` out via the upstream
+  Fans `ProcessHub.Service.Recovery.prepare_recovery_cluster/1` out via the upstream
   library and prints one row per node. Exit code derived from the
   upstream return shape: 0 on full success, 1 on partial, 2 on error.
   """
@@ -629,7 +629,7 @@ defmodule Flezha.Service.CliManager do
     marker_path = HubManager.resolved_marker_path(hub_id)
     nodes = HubManager.get_hub_nodes(namespace_display, true)
 
-    result = ProcessHub.prepare_recovery_cluster(hub_id)
+    result = ProcessHub.Service.Recovery.prepare_recovery_cluster(hub_id)
     print_prepare_recovery_table(hub_id, marker_path, nodes, result)
     set_prepare_recovery_exit_code(result)
     :ok
@@ -911,7 +911,7 @@ defmodule Flezha.Service.CliManager do
   defp nil_if_empty(_), do: nil
 
   defp operative_kind(%{builder: %{kind: kind}}) when is_atom(kind), do: Atom.to_string(kind)
-  defp operative_kind(_), do: "continuous"
+  defp operative_kind(_), do: "unbounded"
 
   # Phase 1: a live operative is "running". The richer bounded phases
   # (compensating / completing / finished) light up with the saga + retention
@@ -1202,7 +1202,7 @@ defmodule Flezha.Service.CliManager do
 
   defp safe_recovery_state(hub_id) do
     try do
-      ProcessHub.recovery_state(hub_id)
+      ProcessHub.Service.Recovery.recovery_state(hub_id)
     catch
       _, _ -> :unknown
     end
@@ -1228,7 +1228,7 @@ defmodule Flezha.Service.CliManager do
         hub_id = Flezha.Service.Identificator.hub(namespace)
 
         try do
-          case ProcessHub.await_normal(hub_id, timeout_ms) do
+          case ProcessHub.Service.Recovery.await_normal(hub_id, timeout_ms) do
             :ok -> []
             {:error, reason} -> [{namespace, reason}]
             other -> [{namespace, other}]
@@ -1480,7 +1480,10 @@ defmodule Flezha.Service.CliManager do
         current = Application.get_env(:flezha, :time_travel_retention_hours, %{})
         updated = Map.put(current, operative_class, hours)
         Application.put_env(:flezha, :time_travel_retention_hours, updated, persistent: true)
-        IO.puts("retention[#{operative_class}] = #{hours} hours (in-memory; persist via runtime.exs)")
+
+        IO.puts(
+          "retention[#{operative_class}] = #{hours} hours (in-memory; persist via runtime.exs)"
+        )
 
       _ ->
         IO.puts(:stderr, "state retention: hours must be a non-negative integer")

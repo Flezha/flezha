@@ -5,12 +5,12 @@ TBD - created by archiving change bounded-operative-functionality. Update Purpos
 ## Requirements
 ### Requirement: A bounded operative is structured but runs its operations sequentially
 
-A bounded operative SHALL be authorable with the same Operation, Channel, and Segment surface as a continuous operative, on the same per-segment state engine. The kind difference SHALL be **scheduling**: a bounded operative's operations SHALL run **one at a time, in a linear chain** (`Op1 → Op2 → … → OpN`, no branching in v1), where each operation's output is the next operation's input. **Within a single operation, segments SHALL run in parallel** exactly as in a continuous operative (per-segment mailbox, worker, and state). The identity of a bounded operative's durable state SHALL use the same `{operative_class, operation_id, segment_key}` form — no synthetic operation/segment placeholders.
+A bounded operative SHALL be authorable with the same Operation, Channel, and Segment surface as an unbounded operative, on the same per-segment state engine. The kind difference SHALL be **scheduling**: a bounded operative's operations SHALL run **one at a time, in a linear chain** (`Op1 → Op2 → … → OpN`, no branching in v1), where each operation's output is the next operation's input. **Within a single operation, segments SHALL run in parallel** exactly as in an unbounded operative (per-segment mailbox, worker, and state). The identity of a bounded operative's durable state SHALL use the same `{operative_class, operation_id, segment_key}` form — no synthetic operation/segment placeholders.
 
 #### Scenario: A bounded operative declares operations and segments
 
 - **WHEN** a bounded operative is authored with multiple Operations chained by Channels and a Segment key on a stateful Operation
-- **THEN** each Operation SHALL run on the same per-segment engine as a continuous operative, with per-Segment state behaving identically, but the Operations SHALL execute in declared order rather than concurrently
+- **THEN** each Operation SHALL run on the same per-segment engine as an unbounded operative, with per-Segment state behaving identically, but the Operations SHALL execute in declared order rather than concurrently
 
 #### Scenario: Segments within one operation run in parallel
 

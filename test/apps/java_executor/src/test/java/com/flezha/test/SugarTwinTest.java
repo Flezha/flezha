@@ -2,8 +2,8 @@ package com.flezha.test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.flezha.generated.GeneratedContinuousOperatives;
-import com.flezha.sdk.operative.ContinuousOperativeRegistry;
+import com.flezha.generated.GeneratedUnboundedOperatives;
+import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.WallClock;
 import com.flezha.sdk.testing.OperationTestHarness;
@@ -15,7 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Asserts the {@code @Operation} / {@code @State} / {@code @ContinuousOperative}-generated
+ * Asserts the {@code @Operation} / {@code @State} / {@code @UnboundedOperative}-generated
  * operatives register and process input identically to the hand-written equivalents, and
  * that the 2-operation reference operative matches the cross-SDK authoring contract
  * (see {@code docs/sdk_authoring_contract.md} §6).
@@ -24,7 +24,7 @@ class SugarTwinTest {
 
     @BeforeEach
     void reset() {
-        ContinuousOperativeRegistry.reset();
+        UnboundedOperativeRegistry.reset();
     }
 
     @Test
@@ -62,9 +62,9 @@ class SugarTwinTest {
     }
 
     @Test
-    void generatedContinuousOperativesRegister() {
-        GeneratedContinuousOperatives.registerAll();
-        assertThat(ContinuousOperativeRegistry.factoryIds())
+    void generatedUnboundedOperativesRegister() {
+        GeneratedUnboundedOperatives.registerAll();
+        assertThat(UnboundedOperativeRegistry.factoryIds())
                 .contains("java_sugar_do_nothing", "java_sugar_store", "java_sugar_static_segment");
     }
 

@@ -440,7 +440,9 @@ defmodule Flezha.Executor.ControlChannel do
   defp emit_executor_shutdown_ack(state, operative_id, reference_id) do
     ack_request = %ExecutorCommands.CommandRequest{
       reference_id: reference_id,
-      command: {:executor_shutdown_ack, %ExecutorCommands.ExecutorShutdownAck{operative_id: operative_id}}
+      command:
+        {:executor_shutdown_ack,
+         %ExecutorCommands.ExecutorShutdownAck{operative_id: operative_id}}
     }
 
     {:ok, iodata, _size} = Protox.encode(ack_request)

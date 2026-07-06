@@ -23,7 +23,7 @@ import java.lang.annotation.Target;
  *
  * <p>When {@link #sink()} is set and the class is a sole operation, the processor
  * also generates a single-operation {@code input -> operation -> plugin(sink)} operative and
- * registers it (see {@link ContinuousOperative}).
+ * registers it (see {@link UnboundedOperative}).
  */
 @Retention(RetentionPolicy.SOURCE)
 @Target(ElementType.TYPE)

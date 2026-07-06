@@ -6,7 +6,7 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
   durable bounded driver holds its first Operation until that many restores land.
 
   Non-zero only for a durable `:bounded` class with WAL on disk; `0` for a fresh
-  spawn, a continuous operative, or an opted-out bounded one.
+  spawn, an unbounded operative, or an opted-out bounded one.
   """
   use ExUnit.Case, async: false
 
@@ -48,10 +48,10 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
     assert Overwatch.resume_segment_count(:bounded, "unseeded_class") == 0
   end
 
-  test "a continuous operative never waits for a bounded-style restore gate" do
+  test "an unbounded operative never waits for a bounded-style restore gate" do
     seed_segment("cont_class", "op", "s")
 
-    assert Overwatch.resume_segment_count(:continuous, "cont_class") == 0
+    assert Overwatch.resume_segment_count(:unbounded, "cont_class") == 0
   end
 
   test "an opted-out bounded class counts zero even with WAL on disk" do

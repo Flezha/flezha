@@ -1,14 +1,14 @@
 package com.flezha.test;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.ContinuousOperative;
+import com.flezha.sdk.operative.UnboundedOperative;
 
 /**
- * Mirror of the Rust SDK's {@code StoreInputContinuousOperative}: appends each
+ * Mirror of the Rust SDK's {@code StoreInputUnboundedOperative}: appends each
  * input to the Operation's State. No emit — the State is observable via
  * {@code SegmentState}.
  */
-public final class StoreInputContinuousOperative implements ContinuousOperative {
+public final class StoreInputUnboundedOperative implements UnboundedOperative {
 
     @Override
     public String factoryId() {

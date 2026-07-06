@@ -81,7 +81,9 @@ defmodule Flezha.AuthZ.StoresTest do
   describe "NamespaceStore" do
     test "seeds _system on first open" do
       {:ok, _} = NamespaceStore.start_link([])
-      assert {:ok, %{name: "_system", quotas: %{max_operatives: 100}}} = NamespaceStore.get("_system")
+
+      assert {:ok, %{name: "_system", quotas: %{max_operatives: 100}}} =
+               NamespaceStore.get("_system")
     end
 
     test "create / delete / set_quotas" do

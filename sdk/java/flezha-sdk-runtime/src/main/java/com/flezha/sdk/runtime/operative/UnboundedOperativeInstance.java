@@ -25,8 +25,8 @@ import javax.annotation.Nonnull;
 /**
  * Per-{@code AddOperative} runtime state. Holds:
  * <ul>
- *   <li>the shared {@link ContinuousOperativeTopology} (shared across all instances of
- *       this ContinuousOperative class),</li>
+ *   <li>the shared {@link UnboundedOperativeTopology} (shared across all instances of
+ *       this UnboundedOperative class),</li>
  *   <li>the controller-facing {@code instanceId} (= what the wire calls
  *       {@code operative_id}),</li>
  *   <li>per-Operation segment slots (one inner-list entry per Segment;
@@ -34,15 +34,15 @@ import javax.annotation.Nonnull;
  *   <li>per-Operation reverse index from segment key → segment index
  *       (empty for single-mode Operations),</li>
  *   <li>the resolved {@code persistenceEnabled} toggle (executor override
- *       &gt; ContinuousOperative default &gt; {@code true}; frozen for the instance's
+ *       &gt; UnboundedOperative default &gt; {@code true}; frozen for the instance's
  *       lifetime),</li>
- *   <li>the aggregated Kryo type list across all Operations in this ContinuousOperative class
+ *   <li>the aggregated Kryo type list across all Operations in this UnboundedOperative class
  *       (used by the per-Segment flusher and the Compact handler).</li>
  * </ul>
  */
-public final class ContinuousOperativeInstance implements Operative {
+public final class UnboundedOperativeInstance implements Operative {
 
-    private final ContinuousOperativeTopology topology;
+    private final UnboundedOperativeTopology topology;
     private final String instanceId;
     private final List<List<SegmentSlot>> segments;
     private final List<Map<String, Integer>> segmentKeyToIdx;
@@ -50,8 +50,8 @@ public final class ContinuousOperativeInstance implements Operative {
     private final boolean persistenceEnabled;
     private final List<Class<?>> kryoTypes;
 
-    private ContinuousOperativeInstance(
-            ContinuousOperativeTopology topology,
+    private UnboundedOperativeInstance(
+            UnboundedOperativeTopology topology,
             String instanceId,
             List<List<SegmentSlot>> segments,
             List<Map<String, Integer>> segmentKeyToIdx,
@@ -67,10 +67,10 @@ public final class ContinuousOperativeInstance implements Operative {
         this.kryoTypes = kryoTypes;
     }
 
-    /** Construct a fresh {@link ContinuousOperativeInstance} with persistence enabled. */
+    /** Construct a fresh {@link UnboundedOperativeInstance} with persistence enabled. */
     @Nonnull
-    public static ContinuousOperativeInstance create(
-            @Nonnull ContinuousOperativeTopology topology,
+    public static UnboundedOperativeInstance create(
+            @Nonnull UnboundedOperativeTopology topology,
             @Nonnull String instanceId,
             @Nonnull ExecutorContext ctx,
             @Nonnull ExecutorService pool) {
@@ -78,13 +78,13 @@ public final class ContinuousOperativeInstance implements Operative {
     }
 
     /**
-     * Construct a fresh {@link ContinuousOperativeInstance}, threading the resolved
+     * Construct a fresh {@link UnboundedOperativeInstance}, threading the resolved
      * {@code persistenceEnabled} toggle from {@code AddOperative} metadata.
      * Calls {@code Operation.initState} for each Operation×Segment.
      */
     @Nonnull
-    public static ContinuousOperativeInstance create(
-            @Nonnull ContinuousOperativeTopology topology,
+    public static UnboundedOperativeInstance create(
+            @Nonnull UnboundedOperativeTopology topology,
             @Nonnull String instanceId,
             @Nonnull ExecutorContext ctx,
             @Nonnull ExecutorService pool,
@@ -104,13 +104,13 @@ public final class ContinuousOperativeInstance implements Operative {
         List<Class<?>> kryoTypes = List.copyOf(kryoTypeSet);
 
         // Shared per-instance flusher inputs: one codec (stable Kryo IDs across
-        // the ContinuousOperative class), a stateless header template, and the global state
+        // the UnboundedOperative class), a stateless header template, and the global state
         // sink as the send path. Each changeful Segment registers below.
         KryoCodec codec = new KryoCodec(kryoTypes);
         HeaderTemplate headerTemplate = new HeaderTemplate();
         Function<byte[], Boolean> sendFrame = frame -> SegmentStateSink.send(SegmentStateSink.PAYLOAD_ID_CHANGE, frame);
 
-        ContinuousOperativeInstance shell = new ContinuousOperativeInstance(
+        UnboundedOperativeInstance shell = new UnboundedOperativeInstance(
                 topology, instanceId, segments, segmentKeyToIdx, dispatchers, persistenceEnabled, kryoTypes);
 
         for (int operationId = 0; operationId < operationCount; operationId++) {
@@ -223,7 +223,7 @@ public final class ContinuousOperativeInstance implements Operative {
     }
 
     @Nonnull
-    public ContinuousOperativeTopology topology() {
+    public UnboundedOperativeTopology topology() {
         return topology;
     }
 
@@ -254,7 +254,7 @@ public final class ContinuousOperativeInstance implements Operative {
         return persistenceEnabled;
     }
 
-    /** Aggregated Kryo type list across all Operations in this ContinuousOperative class. */
+    /** Aggregated Kryo type list across all Operations in this UnboundedOperative class. */
     @Nonnull
     public List<Class<?>> kryoTypes() {
         return kryoTypes;

@@ -53,7 +53,9 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
 
     operative = %Builder{id: "stop_during_migrate", factory_id: @factory, opts: []}
-    {:ok, overwatch_pid} = Flezha.Operative.Overwatch.start_link({@namespace, "stale_ce", operative})
+
+    {:ok, overwatch_pid} =
+      Flezha.Operative.Overwatch.start_link({@namespace, "stale_ce", operative})
 
     on_exit(fn ->
       if Process.alive?(overwatch_pid) do
@@ -100,7 +102,9 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
 
     operative = %Builder{id: "busy_migrate_test", factory_id: @factory, opts: []}
-    {:ok, overwatch_pid} = Flezha.Operative.Overwatch.start_link({@namespace, "stale_ce", operative})
+
+    {:ok, overwatch_pid} =
+      Flezha.Operative.Overwatch.start_link({@namespace, "stale_ce", operative})
 
     on_exit(fn ->
       if Process.alive?(overwatch_pid) do

@@ -82,7 +82,7 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
 
   defp safe_recovery_state(hub) do
     try do
-      ProcessHub.recovery_state(hub)
+      ProcessHub.Service.Recovery.recovery_state(hub)
     catch
       _, _ -> :normal
     end

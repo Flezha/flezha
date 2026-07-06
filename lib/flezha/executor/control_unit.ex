@@ -236,9 +236,9 @@ defmodule Flezha.Executor.ControlUnit do
           ""
       end
 
-    # Empty kind ⇒ `:continuous` on the SDK side, keeping the wire frame
+    # Empty kind ⇒ `:unbounded` on the SDK side, keeping the wire frame
     # byte-identical to pre-kind builds for the default kind.
-    kind = if operative.kind in [nil, :continuous], do: "", else: to_string(operative.kind)
+    kind = if operative.kind in [nil, :unbounded], do: "", else: to_string(operative.kind)
 
     command = %ExecutorCommands.AddOperative{
       operative_id: operative.id,

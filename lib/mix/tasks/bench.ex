@@ -90,9 +90,14 @@ defmodule Mix.Tasks.Bench do
     Logger.configure(level: :warning)
 
     case shape do
-      :regression -> run_default_shape(runtime, num_operatives, messages_per_operative, :regression)
-      :dynamic -> run_default_shape(runtime, num_operatives, messages_per_operative, :dynamic)
-      :segmenting -> run_segmenting_shape(num_operatives, messages_per_operative, pool_sizes)
+      :regression ->
+        run_default_shape(runtime, num_operatives, messages_per_operative, :regression)
+
+      :dynamic ->
+        run_default_shape(runtime, num_operatives, messages_per_operative, :dynamic)
+
+      :segmenting ->
+        run_segmenting_shape(num_operatives, messages_per_operative, pool_sizes)
     end
   end
 
@@ -401,11 +406,15 @@ defmodule Mix.Tasks.Bench do
         end)
       end)
 
-    IO.puts("Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(operative_infos)} operatives")
+    IO.puts(
+      "Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(operative_infos)} operatives"
+    )
 
     total_messages = length(operative_infos) * test_messages_per_operative
 
-    IO.puts("Sending #{total_messages} total messages (#{test_messages_per_operative} per operative)...")
+    IO.puts(
+      "Sending #{total_messages} total messages (#{test_messages_per_operative} per operative)..."
+    )
 
     {message_send_time, _} =
       :timer.tc(fn ->

@@ -14,7 +14,7 @@ defmodule Flezha.Operative.Builder do
       used as the on-disk persistence key under
       `app_data/state/{operative_class}/`. Defaults to `operative.id` when absent.
 
-  The `:kind` field (an atom, default `:continuous`) is the operative's compute-unit
+  The `:kind` field (an atom, default `:unbounded`) is the operative's compute-unit
   kind. It is set at start and frozen for the operative's lifetime; see
   `Flezha.Operative.Kind` for the kind/capability model.
   """
@@ -29,7 +29,7 @@ defmodule Flezha.Operative.Builder do
           opts: Keyword.t()
         }
   @enforce_keys [:id, :factory_id]
-  defstruct [:id, :factory_id, kind: :continuous, init_values: %{}, opts: []]
+  defstruct [:id, :factory_id, kind: :unbounded, init_values: %{}, opts: []]
 
   def from_json(json_str) do
     case Jason.decode!(json_str) do

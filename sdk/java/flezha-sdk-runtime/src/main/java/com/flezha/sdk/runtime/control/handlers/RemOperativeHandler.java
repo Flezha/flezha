@@ -21,7 +21,7 @@ public final class RemOperativeHandler implements CommandHandler {
         String operativeId = request.getRemOperative().getOperativeId();
         Operative removed = ctx.operativeInstanceRegistry().remove(operativeId);
         if (removed == null) {
-            errors.add("ContinuousOperative not found");
+            errors.add("UnboundedOperative not found");
         } else if (removed instanceof BoundedOperativeInstance bounded) {
             // Hard removal of a bounded: trip its cancellation token so the
             // driver thread unwinds and emits BoundedCompleted(status="cancelled").

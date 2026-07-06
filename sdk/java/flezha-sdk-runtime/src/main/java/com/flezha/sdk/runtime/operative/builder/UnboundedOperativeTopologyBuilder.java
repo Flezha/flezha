@@ -9,12 +9,12 @@ import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.channel.EntryChannel;
 import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operative.ContinuousOperative;
-import com.flezha.sdk.operative.ContinuousOperativeConfigurationException;
+import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
-import com.flezha.sdk.runtime.operative.ContinuousOperativeTopology;
 import com.flezha.sdk.runtime.operative.OperationDescriptor;
 import com.flezha.sdk.runtime.operative.PluginSink;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,7 +29,7 @@ import javax.annotation.Nonnull;
  * Implements {@link ChannelBuilder} (and the inner {@link EntryChannel} /
  * {@link ChannelDecl} / {@link ChannelDeclWithProducer} interfaces). Tracks
  * declared channels and operation registrations, validates wiring at
- * {@link #build(String)} time, and produces a frozen {@link ContinuousOperativeTopology}.
+ * {@link #build(String)} time, and produces a frozen {@link UnboundedOperativeTopology}.
  *
  * <p>Validation rules (mirror of `operative-mvp-rust/src/operative/builder.rs`):
  * <ul>
@@ -43,12 +43,12 @@ import javax.annotation.Nonnull;
  *       {@code segmentForOverridden() == false} are rejected.</li>
  *   <li>Operations with {@code operationKeyOverridden() == true} but empty
  *       {@code operationKeys()} are rejected (dynamic-mode reservation).</li>
- *   <li>Channel names must be unique within the ContinuousOperative.</li>
+ *   <li>Channel names must be unique within the UnboundedOperative.</li>
  * </ul>
  *
- * <p>All failures throw {@link ContinuousOperativeConfigurationException}.
+ * <p>All failures throw {@link UnboundedOperativeConfigurationException}.
  */
-public final class ContinuousOperativeTopologyBuilder implements ChannelBuilder {
+public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
 
     private static final Set<Class<?>> ENTRY_CHANNEL_TYPES = Set.of(byte[].class, String.class);
 
@@ -59,29 +59,29 @@ public final class ContinuousOperativeTopologyBuilder implements ChannelBuilder 
     private final List<String> errors = new ArrayList<>();
 
     /**
-     * Run the supplied {@link ContinuousOperative#channels(ChannelBuilder)} once, validate,
-     * and freeze the result into a {@link ContinuousOperativeTopology}.
+     * Run the supplied {@link UnboundedOperative#channels(ChannelBuilder)} once, validate,
+     * and freeze the result into a {@link UnboundedOperativeTopology}.
      *
-     * @throws ContinuousOperativeConfigurationException if any validation rule fails.
+     * @throws UnboundedOperativeConfigurationException if any validation rule fails.
      */
     @Nonnull
-    public static ContinuousOperativeTopology build(@Nonnull ContinuousOperative operative) {
+    public static UnboundedOperativeTopology build(@Nonnull UnboundedOperative operative) {
         return build(operative.factoryId(), operative::channels);
     }
 
     /**
      * Run an authoring lambda against a fresh builder, validate, and freeze the
-     * result into a {@link ContinuousOperativeTopology}. Shared by continuous
-     * {@link ContinuousOperative#channels} authoring and bounded
+     * result into a {@link UnboundedOperativeTopology}. Shared by unbounded
+     * {@link UnboundedOperative#channels} authoring and bounded
      * {@code operations(...)} authoring — both declare Operations / Channels /
      * Segments on the same {@link ChannelBuilder}.
      *
-     * @throws ContinuousOperativeConfigurationException if any validation rule fails.
+     * @throws UnboundedOperativeConfigurationException if any validation rule fails.
      */
     @Nonnull
-    public static ContinuousOperativeTopology build(
+    public static UnboundedOperativeTopology build(
             @Nonnull String factoryId, @Nonnull java.util.function.Consumer<ChannelBuilder> authoring) {
-        ContinuousOperativeTopologyBuilder b = new ContinuousOperativeTopologyBuilder();
+        UnboundedOperativeTopologyBuilder b = new UnboundedOperativeTopologyBuilder();
         authoring.accept(b);
         return b.build(factoryId);
     }
@@ -105,7 +105,7 @@ public final class ContinuousOperativeTopologyBuilder implements ChannelBuilder 
     }
 
     @Nonnull
-    public ContinuousOperativeTopology build(@Nonnull String factoryId) {
+    public UnboundedOperativeTopology build(@Nonnull String factoryId) {
         // Detect channels declared without `.from(...)` (still classified as
         // INTER_OPERATION with no producer).
         for (ChannelEntry entry : channels) {
@@ -141,14 +141,14 @@ public final class ContinuousOperativeTopologyBuilder implements ChannelBuilder 
             try {
                 resolvedCapacities[i] = MailboxCapacityResolver.resolve(
                         operation.name, operation.mailboxCapacityDeclared, operation.mailboxCapacityOverridden);
-            } catch (ContinuousOperativeConfigurationException e) {
+            } catch (UnboundedOperativeConfigurationException e) {
                 errors.add(e.getMessage());
                 resolvedCapacities[i] = MailboxCapacityResolver.DEFAULT_MAILBOX_CAPACITY;
             }
         }
 
         if (!errors.isEmpty()) {
-            throw new ContinuousOperativeConfigurationException(List.copyOf(errors));
+            throw new UnboundedOperativeConfigurationException(List.copyOf(errors));
         }
 
         // Materialize ChannelDescriptors.
@@ -193,7 +193,7 @@ public final class ContinuousOperativeTopologyBuilder implements ChannelBuilder 
                     entry.mailboxCapacityOverridden));
         }
 
-        return new ContinuousOperativeTopology(
+        return new UnboundedOperativeTopology(
                 factoryId,
                 channelDescriptors,
                 Map.copyOf(nameToId),
@@ -243,12 +243,12 @@ public final class ContinuousOperativeTopologyBuilder implements ChannelBuilder 
         entry.mailboxCapacityDeclared = probe.mailboxCapacity();
         entry.mailboxCapacityOverridden = probe.mailboxCapacityOverridden();
         // v1 wires only WallClock; declaring LogicalClock or EventTimeFrom
-        // fails ContinuousOperative registration loud-and-clear (per design.md Decision 4).
+        // fails UnboundedOperative registration loud-and-clear (per design.md Decision 4).
         if (entry.clockType != null
                 && entry.clockType != com.flezha.sdk.state.WallClock.class
                 && entry.clockType != com.flezha.sdk.state.Clock.class) {
             errors.add("operation `" + operationName + "`: "
-                    + ContinuousOperativeConfigurationException.clockNotImplementedYet(entry.clockType.getSimpleName())
+                    + UnboundedOperativeConfigurationException.clockNotImplementedYet(entry.clockType.getSimpleName())
                             .getMessage());
         }
         operations.add(entry);
@@ -506,7 +506,7 @@ public final class ContinuousOperativeTopologyBuilder implements ChannelBuilder 
                 @Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
             ChannelEntry entry = channels.get(channelId);
             if (entry.pluginSinkName != null) {
-                errors.add(ContinuousOperativeConfigurationException.duplicatePluginSink(entry.name)
+                errors.add(UnboundedOperativeConfigurationException.duplicatePluginSink(entry.name)
                         .getMessage());
                 return this;
             }

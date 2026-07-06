@@ -62,10 +62,10 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     refute_received {:stop_operative_received, _}
   end
 
-  test "continuous → hard teardown (RemOperative), no cooperative stop" do
+  test "unbounded → hard teardown (RemOperative), no cooperative stop" do
     test_pid = self()
     op_id = unique_id()
-    {:ok, stub} = start_stub(%{builder: %{kind: :continuous}, executor_id: "exec1"})
+    {:ok, stub} = start_stub(%{builder: %{kind: :unbounded}, executor_id: "exec1"})
     on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^op_id -> {:ok, stub} end)
@@ -160,7 +160,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
 
   test "stop_operative deletes state when there is no completion record" do
     op_id = unique_id()
-    {:ok, stub} = start_stub(%{builder: %{kind: :continuous}})
+    {:ok, stub} = start_stub(%{builder: %{kind: :unbounded}})
     on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^op_id -> {:ok, stub} end)

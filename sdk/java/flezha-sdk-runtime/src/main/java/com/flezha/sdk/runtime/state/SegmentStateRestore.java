@@ -9,7 +9,7 @@ import javax.annotation.Nonnull;
 
 /**
  * Shared warm-restart decode for a Segment's type-erased state, used by both the
- * continuous ({@code RestoreInitStateHandler}) and bounded
+ * unbounded ({@code RestoreInitStateHandler}) and bounded
  * ({@code BoundedOperativeRunner.BoundedSegment}) restore paths so the two can
  * never diverge on how persisted state is rebuilt.
  *

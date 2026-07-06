@@ -11,7 +11,7 @@ import java.util.Optional;
 import javax.annotation.Nonnull;
 
 /**
- * One Operation in a ContinuousOperative topology. Stateless dispatcher; per-Segment
+ * One Operation in an UnboundedOperative topology. Stateless dispatcher; per-Segment
  * {@code State} is held by the runtime and threaded through {@link #run} via
  * a {@link StateHandle}.
  *
@@ -37,15 +37,15 @@ import javax.annotation.Nonnull;
 public interface Operation<
         Input, State, Output, ChangeT extends Change, ClockT extends com.flezha.sdk.state.Clock, ConfigT> {
 
-    /** Stable identifier within the ContinuousOperative class. Must be unique per ContinuousOperative. */
+    /** Stable identifier within the UnboundedOperative class. Must be unique per UnboundedOperative. */
     @Nonnull
     String name();
 
-    /** Compile-time typed Input class. Used at registerContinuous time for wiring checks. */
+    /** Compile-time typed Input class. Used at registerUnbounded time for wiring checks. */
     @Nonnull
     Class<Input> inputType();
 
-    /** Compile-time typed Output class. Used at registerContinuous time for wiring checks. */
+    /** Compile-time typed Output class. Used at registerUnbounded time for wiring checks. */
     @Nonnull
     Class<Output> outputType();
 
@@ -53,7 +53,7 @@ public interface Operation<
     @Nonnull
     Class<ChangeT> changeType();
 
-    /** Compile-time typed Clock class. Drives v1 ContinuousOperativeConfigurationException for non-WallClock. */
+    /** Compile-time typed Clock class. Drives v1 UnboundedOperativeConfigurationException for non-WallClock. */
     @Nonnull
     Class<ClockT> clockType();
 
@@ -62,7 +62,7 @@ public interface Operation<
     Class<ConfigT> configType();
 
     /**
-     * Initialize state for a new Segment. Called once per Segment at ContinuousOperative
+     * Initialize state for a new Segment. Called once per Segment at UnboundedOperative
      * startup. {@code operationKey} is empty for single-segment mode; present
      * for static mode. {@code initPayload} is empty on cold start; present
      * during a {@code RestoreInitState} round-trip — the user MAY inspect the
@@ -198,7 +198,7 @@ public interface Operation<
      * {@link #mailboxCapacityOverridden()} to return {@code true} so the
      * runtime applies the Operation value over any {@code FLEZHA_MAILBOX_CAPACITY}
      * env value. Capacity must be in {@code 1..=1_048_576}; out-of-range
-     * values fail {@code ContinuousOperativeRegistry.registerContinuous(...)} with the
+     * values fail {@code UnboundedOperativeRegistry.registerUnbounded(...)} with the
      * offending Operation's name.
      */
     default int mailboxCapacity() {
@@ -230,7 +230,7 @@ public interface Operation<
      * Optional saga <strong>compensation</strong> hook (bounded operatives only).
      * An operation whose {@link #run} commits a reversible side effect overrides
      * this to undo it. The bounded driver fires it ONLY during abnormal-termination
-     * rollback — never on a clean completion, never for a continuous operative —
+     * rollback — never on a clean completion, never for an unbounded operative —
      * once per segment that ran, in reverse completion order, handing back that
      * segment's own collected outputs and its {@link StateHandle} so it can
      * reverse precisely. Compensation MUST be idempotent by author contract: a

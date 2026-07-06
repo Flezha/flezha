@@ -20,7 +20,7 @@ The Java SDK SHALL include JUnit 5 unit tests that cover every component of the 
 
 #### Scenario: Old API tests removed
 - **WHEN** the unit test suite is enumerated for tests referencing `OperativeHandler`, `OperativeRunner.THREAD_SPAWN`, `FactoryRegistry.registerFactory`, `FactoryMetadata`, `InputTransformer`, or `OutputTransformer`
-- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `ContinuousOperative` / `Operation` surface
+- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `UnboundedOperative` / `Operation` surface
 
 ### Requirement: JNI Bridge Tests
 
@@ -40,11 +40,11 @@ The `flezha-sdk-native` module SHALL include dedicated JNI bridge tests that exe
 
 ### Requirement: Reference Java Compute Engine Test App
 
-The Java reference test app at `test/apps/java_executor/` SHALL implement three reference Operative classes (`DoNothingOperative`, `StoreInputOperative`, `CompareFilterOperative`) using the Java SDK's `ContinuousOperative` / `Operation` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_executor`'s behavior. The factory ids registered by these Operative classes (via `ContinuousOperative::factoryId`) SHALL be `"do_nothing"`, `"store_input"`, `"compare_filter"` — exactly the surviving subset that `test/apps/rust_executor/` exposes. The legacy `EchoMessageOperative` (and any other `operative-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operative-message-handlers` ships per-Operation `handleMessage`.
+The Java reference test app at `test/apps/java_executor/` SHALL implement three reference Operative classes (`DoNothingOperative`, `StoreInputOperative`, `CompareFilterOperative`) using the Java SDK's `UnboundedOperative` / `Operation` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_executor`'s behavior. The factory ids registered by these Operative classes (via `UnboundedOperative::factoryId`) SHALL be `"do_nothing"`, `"store_input"`, `"compare_filter"` — exactly the surviving subset that `test/apps/rust_executor/` exposes. The legacy `EchoMessageOperative` (and any other `operative-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operative-message-handlers` ships per-Operation `handleMessage`.
 
 #### Scenario: Java test app builds and runs
 - **WHEN** `mvn -f test/apps/java_executor/pom.xml package` produces `target/java_executor.jar` and `java -jar target/java_executor.jar my_namespace` is run while the agent is up
-- **THEN** the process SHALL register its three Operative classes via `Flezha.registerContinuous(...)`, connect to the agent, and receive an `AssignExecutorId` without errors
+- **THEN** the process SHALL register its three Operative classes via `Flezha.registerUnbounded(...)`, connect to the agent, and receive an `AssignExecutorId` without errors
 
 #### Scenario: Java test app mirrors Rust test app factory set
 - **WHEN** the list of factory ids registered by the Java test app is compared to those registered by `test/apps/rust_executor/`
@@ -52,7 +52,7 @@ The Java reference test app at `test/apps/java_executor/` SHALL implement three 
 
 #### Scenario: Java test app uses the new Operation / OperationCtx API exclusively
 - **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.OperativeHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.OperativeSettings`, `com.flezha.sdk.OperativeResult`, `com.flezha.sdk.OperativeRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
-- **THEN** zero matches SHALL be found — the test app's classes use only `ContinuousOperative`, `Operation`, `OperationCtx`, `ChannelBuilder`, and `Flezha.registerContinuous`
+- **THEN** zero matches SHALL be found — the test app's classes use only `UnboundedOperative`, `Operation`, `OperationCtx`, `ChannelBuilder`, and `Flezha.registerUnbounded`
 
 ### Requirement: Elixir Integration Harness Supports Java Runtime
 
@@ -233,12 +233,12 @@ Java SDK integration test class names and test descriptions SHALL use canonical 
 
 ### Requirement: Reference Java test app registers a Bounded Operative
 
-The Java reference test app at `test/apps/java_executor/` SHALL register at least one `BoundedOperative` class via `Flezha.registerBounded(...)`, mirroring the bounded operative that `test/apps/rust_executor/` registers (an `EchoOperative` that emits its `args` as plugin output and returns success). The bounded operative SHALL be a hand-written `BoundedOperative` implementation (no annotation-processor sugar in v1). Registering the bounded operative SHALL NOT disturb the test app's continuous operative registrations or its run-until-stdin-closes behavior.
+The Java reference test app at `test/apps/java_executor/` SHALL register at least one `BoundedOperative` class via `Flezha.registerBounded(...)`, mirroring the bounded operative that `test/apps/rust_executor/` registers (an `EchoOperative` that emits its `args` as plugin output and returns success). The bounded operative SHALL be a hand-written `BoundedOperative` implementation (no annotation-processor sugar in v1). Registering the bounded operative SHALL NOT disturb the test app's unbounded operative registrations or its run-until-stdin-closes behavior.
 
 #### Scenario: Java test app registers a bounded operative factory
 
 - **WHEN** the Java test app starts and registers its operatives
-- **THEN** it SHALL call `Flezha.registerBounded(EchoOperative.class)`, and the handshake `factory_ids` SHALL include the bounded operative's factory id alongside the continuous operative factory ids
+- **THEN** it SHALL call `Flezha.registerBounded(EchoOperative.class)`, and the handshake `factory_ids` SHALL include the bounded operative's factory id alongside the unbounded operative factory ids
 
 #### Scenario: Java and Rust test apps expose the same bounded operative factory
 

@@ -6,7 +6,7 @@ defmodule Flezha.Convergence.Snapshot do
   Owns one public ETS table holding two kinds of row:
 
     * `{:recovery, hub_id} => state` — the per-hub recovery lifecycle
-      state, cached from `[:process_hub, :recovery, _]` telemetry and
+      state, cached from ProcessHub's `recovery_state_changed` hook and
       seeded by `HubManager.start_hub/1` via `observe_recovery/2`.
 
     * `:current => map` — the latest reality + health summary published
@@ -21,13 +21,6 @@ defmodule Flezha.Convergence.Snapshot do
   use GenServer
 
   @table __MODULE__
-  @recovery_events [
-    [:process_hub, :recovery, :started],
-    [:process_hub, :recovery, :complete],
-    [:process_hub, :recovery, :skipped],
-    [:process_hub, :recovery, :timeout]
-  ]
-  @handler_id {__MODULE__, :recovery_events}
 
   @default_current %{
     last_tick_at: nil,
@@ -115,43 +108,52 @@ defmodule Flezha.Convergence.Snapshot do
     end
   end
 
-  # ---------- telemetry callback ----------
+  # ---------- recovery_state_changed hook callback ----------
 
-  @doc false
-  def handle_recovery_event(event, _measurements, %{hub_id: hub_id}, _config)
+  @doc """
+  Handler for ProcessHub's `recovery_state_changed` hook. Registered per-hub by
+  `HubManager` (see `hook_handlers/0`). Maps the lifecycle transition to the
+  cached recovery state.
+  """
+  def handle_recovery_transition(%{hub_id: hub_id, to: to, reason: reason})
       when is_atom(hub_id) do
-    case List.last(event) do
-      :started -> observe_recovery(hub_id, :recovering)
-      :complete -> observe_recovery(hub_id, :normal)
-      :skipped -> observe_recovery(hub_id, :skipped)
-      :timeout -> observe_recovery(hub_id, :timeout)
-      _ -> :ok
-    end
+    state =
+      case {to, reason} do
+        {:recovering, _} -> :recovering
+        {:normal, :recovery_timeout} -> :timeout
+        {:normal, :marker_present} -> :skipped
+        {:normal, _} -> :normal
+      end
+
+    observe_recovery(hub_id, state)
   end
 
-  def handle_recovery_event(_event, _measurements, _metadata, _config), do: :ok
+  def handle_recovery_transition(_data), do: :ok
+
+  @doc """
+  Hook config injected into every `%ProcessHub{}` so this Snapshot observes the
+  recovery lifecycle. Merge into the hub's `:hooks` map.
+  """
+  @spec hook_handlers() :: map()
+  def hook_handlers do
+    %{
+      ProcessHub.Constant.Hook.recovery_state_changed() => [
+        %ProcessHub.Service.HookManager{
+          id: :flezha_snapshot_recovery,
+          m: __MODULE__,
+          f: :handle_recovery_transition,
+          a: [:_]
+        }
+      ]
+    }
+  end
 
   # ---------- GenServer ----------
 
   @impl true
   def init(_opts) do
     _ = :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
-
-    _ =
-      :telemetry.attach_many(
-        @handler_id,
-        @recovery_events,
-        &__MODULE__.handle_recovery_event/4,
-        nil
-      )
-
     {:ok, %{}}
-  end
-
-  @impl true
-  def terminate(_reason, _state) do
-    _ = :telemetry.detach(@handler_id)
-    :ok
   end
 
   # ---------- internals ----------

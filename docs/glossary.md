@@ -22,13 +22,13 @@ contains Segments.**
   An Operative is registered with a factory id; many instances of the same class
   can run across the cluster. Every Operative has a **kind**:
 
-  - **Continuous Operative** (kind `continuous`, the default) — a long-running,
-    always-on streaming unit. Implements the `ContinuousOperative` trait/interface
+  - **Unbounded Operative** (kind `unbounded`, the default) — a long-running,
+    always-on streaming unit. Implements the `UnboundedOperative` trait/interface
     and declares its Channels. This is the original Flezha workload.
 
   - **Bounded Operative** (kind `bounded`) — an on-demand, terminating,
     possibly-interactive process. Implements the `BoundedOperative`
-    trait/interface. It authors the same Operations/Channels/Segments a continuous
+    trait/interface. It authors the same Operations/Channels/Segments an unbounded
     operative does but runs them **sequentially** (a linear chain with a per-operation
     count-based barrier; segments within an operation still run in parallel), can
     **receive input after it starts** (an inbox), and terminates on the first exit

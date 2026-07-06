@@ -22,9 +22,9 @@ import javax.annotation.Nonnull;
 
 /**
  * Kryo-backed serializer for per-Segment state and per-Segment Change
- * payloads. Constructed once per {@code ContinuousOperativeInstance}; the {@code userTypes}
+ * payloads. Constructed once per {@code UnboundedOperativeInstance}; the {@code userTypes}
  * list aggregates the {@code Operation.kryoTypes()} returns across every Operation in
- * the ContinuousOperative class.
+ * the UnboundedOperative class.
  *
  * <p>Stable type IDs are essential for cross-version compatibility under
  * additive Change evolution: a new Change variant added in v2 ships at id
