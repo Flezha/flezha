@@ -90,3 +90,5 @@ sdk/java/**/target/
 stash/*
 # Local-only ops journal (per-incident prod freeze log)
 /incident_log.md
+# Local-only dev scratch: notes, brainstorms, ad-hoc files. Whole dir ignored.
+/local_dev/
