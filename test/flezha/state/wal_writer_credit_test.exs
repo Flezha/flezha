@@ -46,7 +46,7 @@ defmodule Flezha.State.WalWriterCreditTest do
     %{pid: pid, segment_id: segment_id}
   end
 
-  defp opts(n), do: %{channel: self(), session: @session, wire_size: n, credit_active: true}
+  defp opts(n), do: %{channel: self(), session: @session, wire_size: n}
 
   defp append!(pid, seq, body, credit_opts) do
     WalWriter.append_async(pid, seq, TestHelpers.stub_header(), body, "exec-1", credit_opts)

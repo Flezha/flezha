@@ -106,8 +106,8 @@ defmodule Flezha.State.WalWriter do
   and the resulting gap drives resync — back-pressure sheds, never blocks.
 
   `credit_opts` carries the credit-grant ledger attribution for a
-  credit-speaking stream: `%{channel: pid, session: id, wire_size: bytes,
-  credit_active: true}`. The writer reports every attributed byte back to
+  credit-speaking stream: `%{channel: pid, session: id, wire_size: bytes}`.
+  The writer reports every attributed byte back to
   `channel` exactly once as a `{:credit_drained, session, bytes}` message —
   on fsync for written records (durable drain, mints credit), or immediately
   for a Change that never occupies the un-fsynced buffer (dedup drop, gap
@@ -349,7 +349,7 @@ defmodule Flezha.State.WalWriter do
 
   @impl true
   def handle_cast({:append_async, seq, header, change_bytes, executor_id, credit_opts}, state) do
-    state = %{state | credit_active?: Map.get(credit_opts, :credit_active, false)}
+    state = %{state | credit_active?: Map.has_key?(credit_opts, :channel)}
 
     if over_hard_bound?(state) do
       release_credit(credit_opts)

@@ -2,6 +2,7 @@ defmodule Flezha.Executor.StreamChannel do
   alias Flezha.Executor.ControlChannel
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Service.Identificator
+  alias Flezha.State.CreditLedger
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Wire, as: StateWire
   alias Flezha.Transport.LivenessCounters
@@ -38,11 +39,10 @@ defmodule Flezha.Executor.StreamChannel do
         name: name,
         last_seen: System.monotonic_time(:millisecond),
         liveness_ref: LivenessCounters.register_channel(executor_id, name),
-        # Credit-grant flow control ledger for this state stream.
-        # `nil` until the first state-change frame triggers the
-        # `CreditWindowInit` offer; then `%{status: :offered | :active |
-        # :legacy, session, window, low, debited, drained, granted, overrun?}`.
-        # `:legacy` is terminal for the attach (pre-credit SDK / nack).
+        # Credit-grant session for this state stream, encoded in the shape:
+        # `nil` (no offer yet) -> `{:offered, %CreditLedger{}}` (handshake
+        # in flight) -> `%CreditLedger{}` (credit-speaking) or `:legacy`
+        # (pre-credit SDK / nack — terminal for the attach).
         credit: nil
       }
     }
@@ -299,49 +299,54 @@ defmodule Flezha.Executor.StreamChannel do
   # outcomes from a superseded attach and are dropped.
   def handle_info(
         {:credit_ack, session},
-        %{credit: %{status: :offered, session: session}} = state
+        %{credit: {:offered, %CreditLedger{session: session} = ledger}} = state
       ) do
-    credit = %{state.credit | status: :active}
-
     Logger.info(
       "[stream_channel] credit session established for #{state.executor_id}: " <>
-        "session=#{session} window=#{credit.window} low=#{credit.low}"
+        "session=#{session} window=#{ledger.window} low=#{ledger.low}"
     )
 
     LivenessCounters.set_channel(state.liveness_ref, :credit_active, 1)
-    put_ledger_level(state, credit)
-    {:noreply, %{state | credit: credit}}
+    put_ledger_level(state, ledger)
+    {:noreply, %{state | credit: ledger}}
   end
 
   def handle_info({:credit_ack, _session}, state), do: {:noreply, state}
 
   def handle_info(
         {:credit_nack, session},
-        %{credit: %{status: :offered, session: session}} = state
+        %{credit: {:offered, %CreditLedger{session: session}}} = state
       ) do
     Logger.debug(
       "[stream_channel] credit handshake declined for #{state.executor_id} " <>
         "(pre-credit SDK or timeout); staying on the legacy path"
     )
 
-    {:noreply, %{state | credit: %{state.credit | status: :legacy}}}
+    {:noreply, %{state | credit: :legacy}}
   end
 
   def handle_info({:credit_nack, _session}, state), do: {:noreply, state}
 
   # Durable-drain report from a WalWriter fed by this stream: `bytes` of
   # previously-debited credit are freed (fsynced, or dropped without ever
-  # occupying the un-fsynced buffer). One batched CreditGrant goes out when
-  # the freed credit brings the un-fsynced buffer below the low watermark —
-  # never per record, and a stalled fsync reports nothing so nothing is
-  # minted.
+  # occupying the un-fsynced buffer). The ledger decides the batched grant —
+  # one CreditGrant when the un-fsynced buffer falls below the low watermark,
+  # never per record; a stalled fsync reports nothing so nothing is minted.
   def handle_info(
         {:credit_drained, session, bytes},
-        %{credit: %{status: :active, session: session} = credit} = state
+        %{credit: %CreditLedger{session: session} = ledger} = state
       ) do
-    credit = maybe_grant(state, %{credit | drained: credit.drained + bytes})
-    put_ledger_level(state, credit)
-    {:noreply, %{state | credit: credit}}
+    {grant, ledger} = CreditLedger.drain(ledger, bytes)
+
+    if grant > 0 do
+      ControlChannel.send_control_async(
+        state.executor_id,
+        {:credit_grant, %ExecutorCommands.CreditGrant{stream_id: session, bytes: grant}}
+      )
+    end
+
+    put_ledger_level(state, ledger)
+    {:noreply, %{state | credit: ledger}}
   end
 
   # Drain report tagged with a superseded session (reconnect voided it) — stale.
@@ -442,34 +447,16 @@ defmodule Flezha.Executor.StreamChannel do
     end
   end
 
-  defp credit_admit(%{credit: %{status: :active} = credit} = state, _class, size) do
-    un_fsynced = credit.debited - credit.drained
+  defp credit_admit(%{credit: %CreditLedger{} = ledger} = state, _class, size) do
+    case CreditLedger.admit(ledger, size) do
+      {:ok, ledger} ->
+        put_ledger_level(state, ledger)
 
-    if un_fsynced > 0 and un_fsynced + size > credit.window do
-      credit = %{credit | overrun?: true}
-      LivenessCounters.bump_channel(state.liveness_ref, :credit_overrun_total)
+        {%{channel: self(), session: ledger.session, wire_size: size}, %{state | credit: ledger}}
 
-      :telemetry.execute(
-        [:flezha, :state, :credit_anomaly],
-        %{count: 1, un_fsynced: un_fsynced, frame_bytes: size},
-        %{kind: :overrun, executor: state.executor_id, session: credit.session}
-      )
-
-      unless state.credit.overrun? do
-        Logger.warning(
-          "[stream_channel] credit overrun: executor=#{state.executor_id} " <>
-            "session=#{credit.session} un_fsynced=#{un_fsynced} frame=#{size} " <>
-            "window=#{credit.window} — shedding (protocol violation, resync repairs)"
-        )
-      end
-
-      {:shed, %{state | credit: credit}}
-    else
-      credit = %{credit | debited: credit.debited + size, overrun?: false}
-      put_ledger_level(state, credit)
-
-      {%{channel: self(), session: credit.session, wire_size: size, credit_active: true},
-       %{state | credit: credit}}
+      {:overrun, overrun_ledger} ->
+        report_overrun(state, ledger, size)
+        {:shed, %{state | credit: overrun_ledger}}
     end
   end
 
@@ -525,45 +512,34 @@ defmodule Flezha.Executor.StreamChannel do
       end
     end)
 
-    %{
-      state
-      | credit: %{
-          status: :offered,
-          session: session,
-          window: window,
-          low: low,
-          debited: 0,
-          drained: 0,
-          granted: 0,
-          overrun?: false
-        }
-    }
+    %{state | credit: {:offered, CreditLedger.new(session, window, low)}}
   end
 
-  # One batched CreditGrant covering all freed-but-ungranted bytes, sent only
-  # when the un-fsynced buffer is below the low watermark — never per record.
-  defp maybe_grant(state, credit) do
-    if credit.debited - credit.drained < credit.low and credit.drained > credit.granted do
-      ControlChannel.send_control_async(
-        state.executor_id,
-        {:credit_grant,
-         %ExecutorCommands.CreditGrant{
-           stream_id: credit.session,
-           bytes: credit.drained - credit.granted
-         }}
-      )
+  # Overrun observability: counter always, anomaly event always, warning once
+  # per episode (`pre.overrun?` is the pre-admit flag).
+  defp report_overrun(state, pre, size) do
+    LivenessCounters.bump_channel(state.liveness_ref, :credit_overrun_total)
 
-      %{credit | granted: credit.drained}
-    else
-      credit
+    :telemetry.execute(
+      [:flezha, :state, :credit_anomaly],
+      %{count: 1, un_fsynced: pre.debited - pre.drained, frame_bytes: size},
+      %{kind: :overrun, executor: state.executor_id, session: pre.session}
+    )
+
+    unless pre.overrun? do
+      Logger.warning(
+        "[stream_channel] credit overrun: executor=#{state.executor_id} " <>
+          "session=#{pre.session} level=#{CreditLedger.level(pre)} frame=#{size} " <>
+          "window=#{pre.window} — shedding (protocol violation, resync repairs)"
+      )
     end
   end
 
-  defp put_ledger_level(state, credit) do
+  defp put_ledger_level(state, ledger) do
     LivenessCounters.set_channel(
       state.liveness_ref,
       :credit_ledger_level,
-      credit.window - (credit.debited - credit.drained)
+      CreditLedger.level(ledger)
     )
   end
 
