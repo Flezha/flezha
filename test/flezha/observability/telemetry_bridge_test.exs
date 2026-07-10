@@ -103,6 +103,22 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     assert compaction
     assert compaction.measurements[:waited_ms] == 5_000
+
+    :telemetry.execute(
+      [:flezha, :state, :stale_writer_refused],
+      %{count: 1},
+      %{operative: "r", operation: "s", key: "k", session: "sess_old"}
+    )
+
+    refused =
+      receive_until(
+        fn s -> s.source == :flezha_state and s.name == :stale_writer_refused end,
+        500
+      )
+
+    assert refused
+    assert refused.kind == :event
+    assert refused.metadata[:session] == "sess_old"
   end
 
   test "all bridged events have a mapping" do

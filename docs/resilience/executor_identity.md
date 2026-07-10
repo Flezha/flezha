@@ -36,15 +36,18 @@ On any connect the controller mints a fresh session token and brings up its
 supervision tree, then `FleetManager.resolve_stable_identity/4`:
 
 1. looks up the presented `stable_id`'s prior session token (`stable_sessions`);
-2. if found (reconnect **or** a live-session takeover), `swap_bindings/3`
-   re-points that session's operatives onto the new token — flip the Registry
-   tag via `HubManager.operative_set_executor/3` (propagates cross-node) and
-   re-seed the new session's pre-spawned `StreamChannel`s via
+2. if found (reconnect **or** a live-session takeover),
+   `fence_superseded_session/1` unbinds the old session from every Segment
+   write path **before** the new session is bound (see "The WAL binds to the
+   owner" below);
+3. `swap_bindings/3` re-points that session's operatives onto the new token —
+   flip the Registry tag via `HubManager.operative_set_executor/3` (propagates
+   cross-node) and re-seed the new session's pre-spawned `StreamChannel`s via
    `HubManager.hook_insert_pid/2` (the same primitives the convergence
    `Heal.rebind_operative` uses), so in-flight frames land without waiting for a
    tick;
-3. closes the prior session (`do_evict_executor/2`, now operative-less);
-4. records `stable_sessions[stable_id] = new_token`.
+4. closes the prior session (`do_evict_executor/2`, now operative-less);
+5. records `stable_sessions[stable_id] = new_token`.
 
 There is no `previous_executor_id` pre-eviction, no fresh-id mint for the SDK,
 and no `ExecutorReconnected` / `ReassignExecutorId` round-trip — all removed. The
@@ -59,6 +62,35 @@ path) resolve **deterministically**: the newest session swaps the bindings and
 the older is closed via the standard disconnect path. The controller never
 serves two simultaneous live sessions for one stable identity. This is the same
 `resolve_stable_identity` path as a reconnect.
+
+## The WAL binds to the owner (write-path fence)
+
+Routing-by-owning-connection closes the door, but a superseded session's frames
+can still be in flight — queued in its `StreamChannel`s or in a `WalWriter`
+mailbox — when the takeover lands. Without a fence, such a frame presenting a
+divergent seq base would trigger a WAL realign away from the rightful owner's
+lineage. The fence is a single state flip inside the takeover transaction,
+ordered unbind-old **before** bind-new, in two halves:
+
+- **Channel flip** — `FleetManager.fence_superseded_session/1` synchronously
+  calls `:fence_write_path` on each of the old session's `StreamChannel`s;
+  a fenced channel refuses every durable-write forward (`segment_state_change`,
+  `segment_state_snapshot`, `delete_segment_state`, compensation markers) at
+  the binding. The owning session's append path gains **no** per-record check.
+- **Superseded mark** — `FleetManager.mark_session_superseded/1` records the
+  old token in a public ETS set (`superseded_session?/1`), covering the frames
+  a wedged channel flushes only after the swap: `WalWriter` consults the mark
+  only when a frame's session differs from the epoch owner, refusing with
+  `{:error, :stale_writer}` instead of realigning or appending. Marks are
+  pruned after 10 minutes on the periodic executor-cleanup tick.
+
+Refusals are loud but episode-bounded: the first refusal per (Segment,
+superseded session) emits `[:flezha, :state, :stale_writer_refused]`
+(bridged onto the observability bus); the rest only increment
+`stale_writer_refused` (per-channel liveness counter) /
+`stale_writer_refused_total` (per-Segment state metric). A legitimate rapid
+restart racing its own eviction may be refused briefly — never a durability
+loss, since the new session's restore/resync handshake re-covers those frames.
 
 ## Graceful degradation without persistence
 

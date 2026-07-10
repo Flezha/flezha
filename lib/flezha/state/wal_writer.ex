@@ -15,6 +15,7 @@ defmodule Flezha.State.WalWriter do
 
   use GenServer, restart: :transient
 
+  alias Flezha.Executor.FleetManager
   alias Flezha.State.{FsyncBatcher, Metrics, Outbox, Recovery, Registry}
 
   @header_size 16
@@ -39,7 +40,8 @@ defmodule Flezha.State.WalWriter do
     :backpressured?,
     :shedding?,
     :credit_pending,
-    :credit_active?
+    :credit_active?,
+    :refused_sessions
   ]
 
   @type t :: %__MODULE__{
@@ -61,7 +63,8 @@ defmodule Flezha.State.WalWriter do
           backpressured?: boolean(),
           shedding?: boolean(),
           credit_pending: %{optional({pid(), binary()}) => pos_integer()},
-          credit_active?: boolean()
+          credit_active?: boolean(),
+          refused_sessions: MapSet.t(binary())
         }
 
   @typedoc """
@@ -87,9 +90,11 @@ defmodule Flezha.State.WalWriter do
   Append a Change at `seq`. `executor_id` identifies the executor that emitted
   it; a Change from a *different* executor than the one that wrote the current
   epoch realigns the WAL to the new executor's seq base (executor-restart
-  recovery — see `handle_call/3`). Pass `nil` (the default) to disable epoch
-  tracking — the single-executor / test path keeps the prior dedup/gap/append
-  semantics.
+  recovery — see `handle_call/3`) — unless a takeover superseded that session
+  (`Flezha.Executor.FleetManager.superseded_session?/1`), in which case the
+  frame is refused with `{:error, :stale_writer}` instead of realigning. Pass
+  `nil` (the default) to disable epoch tracking — the single-executor / test
+  path keeps the prior dedup/gap/append semantics.
   """
   @spec append(GenServer.server(), non_neg_integer(), binary(), binary(), binary() | nil) ::
           :ok | :duplicate | {:error, term()}
@@ -111,7 +116,8 @@ defmodule Flezha.State.WalWriter do
   `channel` exactly once as a `{:credit_drained, session, bytes}` message —
   on fsync for written records (durable drain, mints credit), or immediately
   for a Change that never occupies the un-fsynced buffer (dedup drop, gap
-  rejection, shed, epoch realign, truncation). The session tag lets the
+  rejection, shed, stale-writer refusal, epoch realign, truncation). The
+  session tag lets the
   channel drop reports for bytes debited under a pre-reconnect session. An
   empty map (the default) is the legacy path with zero accounting.
   """
@@ -234,7 +240,8 @@ defmodule Flezha.State.WalWriter do
       backpressured?: false,
       shedding?: false,
       credit_pending: %{},
-      credit_active?: false
+      credit_active?: false,
+      refused_sessions: MapSet.new()
     }
 
     {:ok, state, {:continue, :open}}
@@ -265,6 +272,14 @@ defmodule Flezha.State.WalWriter do
     state = %{state | last_change_seen_at: now}
 
     cond do
+      stale_writer?(state, executor_id) ->
+        # A takeover superseded this session — its channels were unbound
+        # before the new owner was bound, so this frame is late in-flight
+        # residue (typically a wedged channel flushing after the swap).
+        # Refuse instead of realigning onto the stale lineage; the owner's
+        # restore/resync handshake re-covers anything durable.
+        {:reply, {:error, :stale_writer}, refuse_stale(state, executor_id)}
+
       realign?(state, executor_id, seq) ->
         # A *different* executor than the one that wrote the current epoch is
         # emitting a non-contiguous seq — the signature of an executor pod
@@ -444,6 +459,36 @@ defmodule Flezha.State.WalWriter do
     new_state = maybe_signal_backpressure(new_state, new_pending)
 
     {:reply, :ok, new_state}
+  end
+
+  # Only a frame from a *different* session than the epoch owner consults the
+  # takeover fence; the owning session short-circuits on the first comparison
+  # (already made today for realign), so its append path gains no per-record
+  # work.
+  defp stale_writer?(state, executor_id) do
+    is_binary(executor_id) and executor_id != state.owning_executor and
+      FleetManager.superseded_session?(executor_id)
+  end
+
+  # One `stale_writer_refused` event per superseded session per writer
+  # lifetime (sessions are never reused, so the episode never re-opens);
+  # every refusal increments the counter.
+  defp refuse_stale(state, executor_id) do
+    Metrics.add(state.metrics, :stale_writer_refused_total, 1)
+
+    if MapSet.member?(state.refused_sessions, executor_id) do
+      state
+    else
+      {rc, sh, pk} = state.segment_id
+
+      :telemetry.execute(
+        [:flezha, :state, :stale_writer_refused],
+        %{count: 1},
+        %{operative: rc, operation: sh, key: pk, session: executor_id}
+      )
+
+      %{state | refused_sessions: MapSet.put(state.refused_sessions, executor_id)}
+    end
   end
 
   # An executor restart is the only way a Change's seq can diverge under a *new*

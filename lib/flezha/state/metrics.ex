@@ -13,9 +13,10 @@ defmodule Flezha.State.Metrics do
     6. `:fsync_durability_lag_ms` — gauge
 
   Plus `:dedup_drops_total`, `:wal_seq` (gauge for last persisted seq),
-  and `:wal_shed_total` (appends dropped past the hard in-memory bound),
-  for a total of 9. Allocations are lazy and stored in a module-level
-  `:ets` table keyed by `segment_id`.
+  `:wal_shed_total` (appends dropped past the hard in-memory bound), and
+  `:stale_writer_refused_total` (frames refused from a takeover-superseded
+  session), for a total of 10. Allocations are lazy and stored in a
+  module-level `:ets` table keyed by `segment_id`.
   """
 
   alias Flezha.State.Registry
@@ -31,7 +32,8 @@ defmodule Flezha.State.Metrics do
     :fsync_durability_lag_ms,
     :dedup_drops_total,
     :wal_seq,
-    :wal_shed_total
+    :wal_shed_total,
+    :stale_writer_refused_total
   ]
 
   @counter_indices @counters |> Enum.with_index(1) |> Enum.into(%{})

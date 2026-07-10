@@ -20,6 +20,16 @@ defmodule Flezha.Executor.StreamChannel do
   @io_liveness_threshold_ms 30_000
   @credit_handshake_timeout_ms 10_000
 
+  # Every payload-id this channel forwards onto a Segment's durable write path;
+  # the takeover fence (`:fence_write_path`) refuses exactly this set.
+  @segment_write_payloads [
+    "segment_state_change",
+    "segment_state_snapshot",
+    "delete_segment_state",
+    "compensation_intent",
+    "compensation_done"
+  ]
+
   @impl true
   def init({executor_id, type, name}) do
     # The executor heartbeats every SECONDARY stream every ~10s; a bound
@@ -43,7 +53,12 @@ defmodule Flezha.Executor.StreamChannel do
         # `nil` (no offer yet) -> `{:offered, %CreditLedger{}}` (handshake
         # in flight) -> `%CreditLedger{}` (credit-speaking) or `:legacy`
         # (pre-credit SDK / nack — terminal for the attach).
-        credit: nil
+        credit: nil,
+        # Takeover fence: once true (a newest-wins takeover unbound this
+        # session), durable-write forwards are refused at this binding.
+        # Terminal — the session is evicted right after, never re-bound.
+        fenced?: false,
+        refused_segments: MapSet.new()
       }
     }
   end
@@ -167,12 +182,33 @@ defmodule Flezha.Executor.StreamChannel do
     {:reply, :already_bound, state}
   end
 
+  # Takeover fence: unbind this channel from the Segment write path.
+  # Synchronous, so the takeover transaction knows that once this returns no
+  # further durable-write forward can leave this channel — the single state
+  # flip that stops a superseded session, with zero added work anywhere else.
+  @impl true
+  def handle_call(:fence_write_path, _from, state) do
+    {:reply, :ok, %{state | fenced?: true}}
+  end
+
   # Unified NIF transport message — complete parsed frame.
   #
   # Two reserved payload-ids carry persistence-bound data (see
   # `Flezha.State.Wire`). All other payload-ids are operative outputs
   # routed via the per-operative mapping.
+  #
+  # Fenced (superseded-session) channel: refuse every durable-write forward
+  # at the binding. In-flight frames from the old session die here instead of
+  # reaching a Segment's WAL/snapshot files after the takeover unbind.
   @impl true
+  def handle_info(
+        {:flz_data, _stream_id, payload_id, message, _metadata},
+        %{fenced?: true} = state
+      )
+      when payload_id in @segment_write_payloads do
+    {:noreply, refuse_stale_forward(state, payload_id, message)}
+  end
+
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id == "segment_state_change" do
     state = handle_segment_state_change(state, message)
@@ -431,6 +467,38 @@ defmodule Flezha.Executor.StreamChannel do
         Logger.warning("[stream] segment_state_change decode failed: #{inspect(reason)}")
         state
     end
+  end
+
+  # Count every refused forward; emit `stale_writer_refused` once per
+  # (Segment, superseded session) episode so a chatty zombie cannot storm the
+  # bus. A frame whose Segment cannot be decoded is still counted.
+  defp refuse_stale_forward(state, payload_id, frame) do
+    LivenessCounters.bump_channel(state.liveness_ref, :stale_writer_refused)
+
+    case frame_segment_id(payload_id, frame) do
+      {:ok, {rc, sh, pk} = segment_id} ->
+        if MapSet.member?(state.refused_segments, segment_id) do
+          state
+        else
+          :telemetry.execute(
+            [:flezha, :state, :stale_writer_refused],
+            %{count: 1},
+            %{operative: rc, operation: sh, key: pk, session: state.executor_id}
+          )
+
+          %{state | refused_segments: MapSet.put(state.refused_segments, segment_id)}
+        end
+
+      {:error, _} ->
+        state
+    end
+  end
+
+  defp frame_segment_id("delete_segment_state", frame), do: StateWire.decode_segment_id(frame)
+
+  defp frame_segment_id(_payload_id, frame) do
+    with {:ok, %{segment_id: segment_id}} <- StateWire.decode_frame(frame),
+         do: {:ok, segment_id}
   end
 
   # ---------- Credit-grant flow control ----------

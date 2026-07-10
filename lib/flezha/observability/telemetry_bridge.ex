@@ -44,6 +44,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :state, :output_stall] => {:flezha_state, :output_stall, :event},
     [:flezha, :state, :compaction_timeout] => {:flezha_state, :compaction_timeout, :event},
     [:flezha, :state, :wal_realign] => {:flezha_state, :wal_realign, :event},
+    [:flezha, :state, :stale_writer_refused] => {:flezha_state, :stale_writer_refused, :event},
     [:flezha, :leadership, :transition] => {:flezha_leadership, :transition, :event},
     [:flezha, :reconcile, :action] => {:flezha_reconcile, :action, :event},
     [:flezha, :reconcile, :health] => {:flezha_reconcile, :health, :event},

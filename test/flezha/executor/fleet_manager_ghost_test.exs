@@ -37,6 +37,28 @@ defmodule FlezhaTest.Executor.FleetManagerGhostTest do
     end)
   end
 
+  test "superseded-session marks are pruned past their TTL on the cleanup tick" do
+    fresh = "fence_fresh_#{System.unique_integer([:positive])}"
+    aged = "fence_aged_#{System.unique_integer([:positive])}"
+
+    FleetManager.mark_session_superseded(fresh)
+    FleetManager.mark_session_superseded(aged)
+
+    # Age one mark past the 10-minute TTL, then drive the periodic cleanup.
+    true =
+      :ets.update_element(
+        :flezha_superseded_sessions,
+        aged,
+        {2, :erlang.monotonic_time(:millisecond) - 700_000}
+      )
+
+    :ok = GenServer.call(FleetManager, :executor_cleanup)
+
+    refute FleetManager.superseded_session?(aged)
+    assert FleetManager.superseded_session?(fresh)
+    :ets.delete(:flezha_superseded_sessions, fresh)
+  end
+
   test "a closed executor is removed from the active set even when reroute side effects fail" do
     seed_active(["ghost_a", "ghost_b"])
     assert "ghost_a" in FleetManager.active_executors(@namespace)

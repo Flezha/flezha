@@ -153,8 +153,8 @@ ledger:
 * **Fsync mints credit** — `WalWriter` attributes each written frame's
   wire bytes to the debiting channel (`credit_pending`, session-tagged)
   and reports them back on durable drain (`{:credit_drained, session,
-  bytes}` on fsync/truncate; immediately for dedup/gap/shed/realign drops
-  that never occupy the buffer). One batched `CreditGrant` goes out when
+  bytes}` on fsync/truncate; immediately for dedup/gap/shed/realign/
+  stale-refusal drops that never occupy the buffer). One batched `CreditGrant` goes out when
   the freed credit brings the un-fsynced buffer below
   `low_watermark_bytes` — never per record; a stalled fsync mints nothing.
 * **Sender parks on exhaustion** — the SDK (`sdk/rust/src/segment/credit.rs`,
@@ -311,6 +311,30 @@ telemetry:
   return within `compaction_timeout_ms` emits
   `[:flezha, :state, :compaction_timeout]` and resyncs; compaction stays
   retriable.
+
+## Executor-restart realign is owner-bound
+
+Within one executor's lifetime the per-Segment seq is monotonic, so a
+Change from a *different* session than the one that wrote the current
+epoch, at a non-contiguous seq, signals an executor restart: the
+`WalWriter` realigns — truncates the WAL, drops snapshots, adopts the
+new seq base — and emits `[:flezha, :state, :wal_realign]`. A
+same-session low seq stays a legitimate dedup.
+
+The realign is honoured **only from the Segment's current owner
+binding**. A newest-wins takeover unbinds the superseded session from
+the write path before binding the new one (see
+`docs/resilience/executor_identity.md` "The WAL binds to the owner"):
+fenced `StreamChannel`s refuse durable-write forwards at the binding,
+and the `WalWriter` refuses frames from a session marked superseded
+(`FleetManager.superseded_session?/1`) with `{:error, :stale_writer}`
+— consulted only when the frame's session differs from the epoch
+owner, so the owning session's append path pays no per-record cost.
+Refusals emit `[:flezha, :state, :stale_writer_refused]` once per
+(Segment, superseded session) episode and count into
+`stale_writer_refused_total`; they never spawn a resync (the zombie is
+not a party worth repairing toward) and release any credit debit
+immediately.
 
 ## Persisted `executor_id` is advisory across controller restarts
 

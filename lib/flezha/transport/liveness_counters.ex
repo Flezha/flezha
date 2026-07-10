@@ -31,6 +31,8 @@ defmodule Flezha.Transport.LivenessCounters do
   # remaining credit bytes (set), `credit_overrun_total` counts frames a
   # credit-speaking sender pushed past an exhausted ledger (protocol
   # violations — any non-zero value is an anomaly, never load response).
+  # `stale_writer_refused` counts durable-write forwards refused on a fenced
+  # (takeover-superseded) channel.
   @channel_slots [
     :io_in_received,
     :send_frame_calls,
@@ -42,7 +44,8 @@ defmodule Flezha.Transport.LivenessCounters do
     :hb_credit_parked,
     :credit_active,
     :credit_ledger_level,
-    :credit_overrun_total
+    :credit_overrun_total,
+    :stale_writer_refused
   ]
   @operative_slots [:io_in_received, :forwarded, :filtered_nil]
   @channel_size length(@channel_slots)

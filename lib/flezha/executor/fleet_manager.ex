@@ -2,6 +2,7 @@ defmodule Flezha.Executor.FleetManager do
   alias Flezha.Cluster.Orchestrator
   alias Flezha.Executor.ExecutorSupervisor
   alias Flezha.Executor.FleetSupervisor
+  alias Flezha.Executor.StreamSup
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.EventManager
@@ -12,6 +13,12 @@ defmodule Flezha.Executor.FleetManager do
   require Logger
 
   use GenServer
+
+  # Takeover fence marks (see `mark_session_superseded/1`). Entries outlive
+  # eviction only long enough to cover in-flight mailbox residue; pruned on
+  # the periodic cleanup tick.
+  @superseded_table :flezha_superseded_sessions
+  @superseded_ttl_ms 600_000
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -68,6 +75,27 @@ defmodule Flezha.Executor.FleetManager do
   @spec evict_executor(binary()) :: :ok
   def evict_executor(executor_id) when is_binary(executor_id) do
     GenServer.call(__MODULE__, {:evict_executor, executor_id})
+  end
+
+  @doc """
+  Mark a session token superseded by a newest-wins takeover. The mark is the
+  WAL-side half of the write-path fence: `Flezha.State.WalWriter` refuses a
+  realign (or any append) from a marked session, closing the in-flight window
+  the channel-side flip cannot cover — a wedged `StreamChannel` that flushes
+  its queued frames only after the binding swap.
+  """
+  @spec mark_session_superseded(binary()) :: :ok
+  def mark_session_superseded(session_token) when is_binary(session_token) do
+    ensure_superseded_table()
+    :ets.insert(@superseded_table, {session_token, :erlang.monotonic_time(:millisecond)})
+    :ok
+  end
+
+  @doc "Whether a takeover superseded `session_token` (see `mark_session_superseded/1`)."
+  @spec superseded_session?(binary()) :: boolean()
+  def superseded_session?(session_token) do
+    :ets.whereis(@superseded_table) != :undefined and
+      :ets.member(@superseded_table, session_token)
   end
 
   @doc """
@@ -145,6 +173,10 @@ defmodule Flezha.Executor.FleetManager do
     end
 
     schedule_executor_cleanup()
+
+    # Own the fence table from this permanent process so marks survive the
+    # transient readers (WalWriters) that consult them.
+    ensure_superseded_table()
 
     {:ok, %{executor_namespaces: %{}, namespace_factories: %{}, stable_sessions: %{}}}
   end
@@ -342,6 +374,8 @@ defmodule Flezha.Executor.FleetManager do
   end
 
   defp executor_cleanup(state) do
+    prune_superseded_sessions()
+
     now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
     keep_alive = get_executor_keepalive()
 
@@ -422,6 +456,10 @@ defmodule Flezha.Executor.FleetManager do
     state =
       case Map.get(state.stable_sessions, stable_id) do
         old_session when is_binary(old_session) and old_session != session_token ->
+          # Unbind-old BEFORE bind-new: once the fence returns, nothing the
+          # superseded session forwards can land in any Segment WAL, so no
+          # window exists in which both sessions hold a writable binding.
+          fence_superseded_session(old_session)
           swap_bindings(namespace, old_session, session_token)
           do_evict_executor(state, old_session)
 
@@ -430,6 +468,53 @@ defmodule Flezha.Executor.FleetManager do
       end
 
     put_in(state, [:stable_sessions, stable_id], session_token)
+  end
+
+  # The write-path fence, in refusal order: mark the session superseded (the
+  # WalWriter-side gate), then synchronously flip each of its StreamChannels
+  # off the Segment write path. Bounded calls — a wedged channel must not
+  # block the connect; its late-flushed frames are refused by the mark instead.
+  defp fence_superseded_session(old_session) do
+    mark_session_superseded(old_session)
+
+    Enum.each(stream_channel_pids(old_session), fn pid ->
+      _ = SafeCall.bounded(pid, :fence_write_path, 1_000)
+    end)
+  end
+
+  # Resolve the session's fixed channel-name set (the same one `StreamSup`
+  # spawns); a dead/unregistered channel forwards nothing, so it is skipped.
+  defp stream_channel_pids(session_token) do
+    for type <- [:primary, :secondary],
+        name <- StreamSup.stream_ids(session_token, type),
+        pid = GenServer.whereis(name),
+        is_pid(pid),
+        do: pid
+  end
+
+  defp ensure_superseded_table() do
+    case :ets.whereis(@superseded_table) do
+      :undefined ->
+        try do
+          :ets.new(@superseded_table, [:set, :public, :named_table, read_concurrency: true])
+        rescue
+          ArgumentError -> :ok
+        end
+
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp prune_superseded_sessions() do
+    if :ets.whereis(@superseded_table) != :undefined do
+      cutoff = :erlang.monotonic_time(:millisecond) - @superseded_ttl_ms
+      :ets.select_delete(@superseded_table, [{{:_, :"$1"}, [{:<, :"$1", cutoff}], [true]}])
+    end
+
+    :ok
   end
 
   # Re-tag every operative still bound to `old_session` onto `new_session` and
