@@ -39,6 +39,8 @@ defmodule Flezha.State.WalWriter do
     :latency_reservoir,
     :backpressured?,
     :shedding?,
+    :awaiting_baseline?,
+    :oldest_unsnapshotted_at,
     :credit_pending,
     :credit_active?,
     :refused_sessions
@@ -62,6 +64,8 @@ defmodule Flezha.State.WalWriter do
           latency_reservoir: :queue.queue(),
           backpressured?: boolean(),
           shedding?: boolean(),
+          awaiting_baseline?: boolean(),
+          oldest_unsnapshotted_at: integer() | nil,
           credit_pending: %{optional({pid(), binary()}) => pos_integer()},
           credit_active?: boolean(),
           refused_sessions: MapSet.t(binary())
@@ -72,12 +76,17 @@ defmodule Flezha.State.WalWriter do
   moves only when `last_persisted_seq` increases; `last_change_seen_at`
   moves on every received Change frame (append, duplicate, or gap). A
   Segment is *stalled* (vs idle) when Changes are still arriving but
-  the persisted seq has stopped advancing.
+  the persisted seq has stopped advancing. `wal_size_bytes` /
+  `oldest_unsnapshotted_at` / `owning_executor` feed the Watchdog's
+  size+age compaction triggers without a second disk scan.
   """
   @type stall_status :: %{
           last_persisted_seq: integer(),
           last_advance_at: integer(),
-          last_change_seen_at: integer()
+          last_change_seen_at: integer(),
+          wal_size_bytes: non_neg_integer(),
+          oldest_unsnapshotted_at: integer() | nil,
+          owning_executor: binary() | nil
         }
 
   # ---------- Public API ----------
@@ -97,7 +106,7 @@ defmodule Flezha.State.WalWriter do
   path keeps the prior dedup/gap/append semantics.
   """
   @spec append(GenServer.server(), non_neg_integer(), binary(), binary(), binary() | nil) ::
-          :ok | :duplicate | {:error, term()}
+          :ok | :duplicate | :awaiting_baseline | {:error, term()}
   def append(server, seq, header, change_bytes, executor_id \\ nil) do
     GenServer.call(server, {:append, seq, header, change_bytes, executor_id})
   end
@@ -239,6 +248,8 @@ defmodule Flezha.State.WalWriter do
       latency_reservoir: :queue.new(),
       backpressured?: false,
       shedding?: false,
+      awaiting_baseline?: false,
+      oldest_unsnapshotted_at: nil,
       credit_pending: %{},
       credit_active?: false,
       refused_sessions: MapSet.new()
@@ -253,14 +264,20 @@ defmodule Flezha.State.WalWriter do
     {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
 
     last_seq = scan_for_last_valid_seq(file, state.wal_path)
+    size = file_size(state.wal_path)
 
     Metrics.put(state.metrics, :wal_seq, last_seq)
-    Metrics.put(state.metrics, :wal_size_bytes, file_size(state.wal_path))
+    Metrics.put(state.metrics, :wal_size_bytes, size)
 
     # Reposition for appends.
     {:ok, _} = :file.position(file, :eof)
 
-    {:noreply, %{state | file_handle: file, last_persisted_seq: last_seq}}
+    # Boot-time approximation: surviving records are at least this old, so
+    # the age trigger under-fires by at most one boot-to-sweep interval.
+    oldest = if size > 0, do: :erlang.monotonic_time(:millisecond)
+
+    {:noreply,
+     %{state | file_handle: file, last_persisted_seq: last_seq, oldest_unsnapshotted_at: oldest}}
   end
 
   @impl true
@@ -294,6 +311,13 @@ defmodule Flezha.State.WalWriter do
       seq <= state.last_persisted_seq ->
         Metrics.add(state.metrics, :dedup_drops_total, 1)
         {:reply, :duplicate, state}
+
+      seq != state.last_persisted_seq + 1 and state.last_persisted_seq == -1 ->
+        # Empty-WAL gap: a cold takeover — this controller holds no baseline
+        # for a Segment the live executor already has state for. Not a
+        # protocol violation: shed the frame and pull a full-state baseline
+        # via CompactSegment instead of disconnecting the SDK.
+        {:reply, :awaiting_baseline, await_baseline(state, seq, executor_id)}
 
       seq != state.last_persisted_seq + 1 ->
         {:reply, {:error, {:gap, expected: state.last_persisted_seq + 1, got: seq}}, state}
@@ -342,10 +366,24 @@ defmodule Flezha.State.WalWriter do
     {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
     {:ok, _} = :file.position(file, :eof)
 
-    Metrics.put(state.metrics, :wal_size_bytes, file_size(state.wal_path))
+    size = file_size(state.wal_path)
+    Metrics.put(state.metrics, :wal_size_bytes, size)
+
+    # Surviving tail records post-date the snapshot's baseline by at most the
+    # compaction round-trip, so "now" is a safe age floor for the next trigger.
+    oldest = if size > 0, do: :erlang.monotonic_time(:millisecond)
 
     state = flush_credit_pending(state)
-    {:reply, :ok, %{state | file_handle: file, pending_bytes: 0, pending_since_us: nil}}
+    state = establish_baseline(state, seq)
+
+    {:reply, :ok,
+     %{
+       state
+       | file_handle: file,
+         pending_bytes: 0,
+         pending_since_us: nil,
+         oldest_unsnapshotted_at: oldest
+     }}
   end
 
   def handle_call(:last_persisted_seq, _from, state) do
@@ -356,7 +394,10 @@ defmodule Flezha.State.WalWriter do
     status = %{
       last_persisted_seq: state.last_persisted_seq,
       last_advance_at: state.last_advance_at,
-      last_change_seen_at: state.last_change_seen_at
+      last_change_seen_at: state.last_change_seen_at,
+      wal_size_bytes: Metrics.get(state.metrics, :wal_size_bytes),
+      oldest_unsnapshotted_at: state.oldest_unsnapshotted_at,
+      owning_executor: state.owning_executor
     }
 
     {:reply, status, state}
@@ -453,7 +494,8 @@ defmodule Flezha.State.WalWriter do
         last_advance_at: now,
         owning_executor: executor_id || state.owning_executor,
         pending_bytes: new_pending,
-        pending_since_us: state.pending_since_us || System.monotonic_time(:microsecond)
+        pending_since_us: state.pending_since_us || System.monotonic_time(:microsecond),
+        oldest_unsnapshotted_at: state.oldest_unsnapshotted_at || now
     }
 
     new_state = maybe_signal_backpressure(new_state, new_pending)
@@ -532,9 +574,50 @@ defmodule Flezha.State.WalWriter do
         last_advance_at: now,
         owning_executor: executor_id,
         pending_bytes: 0,
-        pending_since_us: nil
+        pending_since_us: nil,
+        oldest_unsnapshotted_at: nil
     }
   end
+
+  # Cold-takeover shed: no baseline on this controller, so the frame can't
+  # append. Count it and, once per episode, drive a CompactSegment pull via
+  # `Recovery.resync` (routes to the pull because the Segment has no
+  # persisted state). The pulled snapshot encodes the shed deltas' effects.
+  defp await_baseline(state, seq, executor_id) do
+    Metrics.add(state.metrics, :wal_shed_total, 1)
+
+    if state.awaiting_baseline? do
+      state
+    else
+      {rc, sh, pk} = state.segment_id
+
+      :telemetry.execute(
+        [:flezha, :state, :baseline_seed],
+        %{first_seq: seq},
+        %{operative: rc, operation: sh, key: pk, executor: executor_id}
+      )
+
+      segment_id = state.segment_id
+
+      spawn(fn ->
+        Recovery.resync(segment_id, executor_id: executor_id, reason: :baseline_seed)
+      end)
+
+      %{state | awaiting_baseline?: true}
+    end
+  end
+
+  # Baseline established: the pulled snapshot's seq supersedes the shed
+  # deltas, so adopt it and let the executor's next delta append contiguously.
+  defp establish_baseline(%{awaiting_baseline?: true, last_persisted_seq: last} = state, seq)
+       when seq > last do
+    now = :erlang.monotonic_time(:millisecond)
+    Metrics.put(state.metrics, :wal_seq, seq)
+    _ = Outbox.write_last_seq(state.segment_id, seq)
+    %{state | awaiting_baseline?: false, last_persisted_seq: seq, last_advance_at: now}
+  end
+
+  defp establish_baseline(state, _seq), do: %{state | awaiting_baseline?: false}
 
   defp emit_realign({rc, sh, pk}, from_seq, to_seq, executor_id) do
     :telemetry.execute(

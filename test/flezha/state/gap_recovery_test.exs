@@ -138,6 +138,56 @@ defmodule Flezha.State.GapRecoveryTest do
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
   end
 
+  test "a fresh controller pulls a baseline from a live executor instead of wiping it", ctx do
+    # Cold takeover: this controller has no WAL/snapshot for the Segment,
+    # while the live executor keeps streaming deltas from seq 5001.
+    cold_id = TestHelpers.sample_segment_id("cold_" <> uniq())
+    {:ok, _} = Supervisor.find_or_start(cold_id)
+    {:ok, writer} = Supervisor.lookup(cold_id)
+    on_exit(fn -> Supervisor.delete_segment(cold_id) end)
+
+    parent = ctx.parent
+
+    Application.put_env(:flezha, :state_resync_fun, fn segment_id, opts ->
+      send(parent, {:seed_called, segment_id, opts})
+      {:ok, make_ref()}
+    end)
+
+    sc = start_channel("exec-cold")
+
+    deliver = fn payload_id, seq, body ->
+      send(sc, {:flz_data, 0, payload_id, frame(cold_id, seq, ctx.header, body), %{}})
+    end
+
+    deliver.("segment_state_change", 5001, "d1")
+    deliver.("segment_state_change", 5002, "d2")
+
+    # The pull is seeded exactly once; no fatal seq_gap fires.
+    assert_receive {:seed_called, ^cold_id, opts}, 1_000
+    assert opts[:reason] == :baseline_seed
+    assert opts[:executor_id] == "exec-cold"
+    refute_receive {:seed_called, ^cold_id, _}, 200
+    refute_receive {:seq_gap, _, _}, 100
+
+    # The pulled full-state snapshot lands via the real data-plane handler
+    # and becomes the Segment's baseline.
+    deliver.("segment_state_snapshot", 5005, "full")
+    assert eventually(fn -> WalWriter.last_persisted_seq(writer) == 5005 end)
+
+    # The executor's next delta appends contiguously past the baseline.
+    deliver.("segment_state_change", 5006, "d3")
+    assert eventually(fn -> WalWriter.last_persisted_seq(writer) == 5006 end)
+
+    # A controller restart restores the complete state — snapshot baseline
+    # plus the post-takeover delta, not just the deltas. `assemble_payload`
+    # is exactly what the post-restart RestoreInitState would ship.
+    :ok = WalWriter.close(writer)
+    {:ok, payload} = Flezha.State.Restore.assemble_payload(cold_id)
+    assert payload.snapshot_bytes == "full"
+    assert payload.terminal_seq_hint == 5006
+    assert byte_size(payload.change_log_bytes) > 0
+  end
+
   test "a snapshot frame is written off the channel loop", ctx do
     sc = start_channel("exec-snap")
 

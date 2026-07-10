@@ -54,12 +54,18 @@ defmodule Flezha.State.Restore do
   end
 
   @doc """
-  Whether the Segment has any persisted state to restore.
+  Whether the Segment has any persisted state to restore. A zero-byte WAL
+  (lazily created by the writer before any record landed) is no state: an
+  assembled payload from it would be empty and rebuild a live Segment to
+  `init_state`.
   """
   @spec has_persisted_state?(Registry.segment_id()) :: boolean()
   def has_persisted_state?(segment_id) do
     Snapshot.latest_snapshot(segment_id) != nil or
-      File.exists?(Registry.wal_path(segment_id))
+      match?(
+        {:ok, %{size: size}} when size > 0,
+        File.stat(Registry.wal_path(segment_id))
+      )
   end
 
   # Read the WAL once and parse records in memory; a per-record `:file.pread`

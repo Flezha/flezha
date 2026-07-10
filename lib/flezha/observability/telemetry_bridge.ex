@@ -43,6 +43,8 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :state, :credit_anomaly] => {:flezha_state, :credit_anomaly, :event},
     [:flezha, :state, :output_stall] => {:flezha_state, :output_stall, :event},
     [:flezha, :state, :compaction_timeout] => {:flezha_state, :compaction_timeout, :event},
+    [:flezha, :state, :compaction_trigger] => {:flezha_state, :compaction_trigger, :event},
+    [:flezha, :state, :baseline_seed] => {:flezha_state, :baseline_seed, :event},
     [:flezha, :state, :wal_realign] => {:flezha_state, :wal_realign, :event},
     [:flezha, :state, :stale_writer_refused] => {:flezha_state, :stale_writer_refused, :event},
     [:flezha, :leadership, :transition] => {:flezha_leadership, :transition, :event},

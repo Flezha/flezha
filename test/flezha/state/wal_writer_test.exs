@@ -114,6 +114,54 @@ defmodule Flezha.State.WalWriterTest do
     end
   end
 
+  describe "awaiting baseline (empty-WAL gap)" do
+    setup do
+      parent = self()
+
+      Application.put_env(:flezha, :state_resync_fun, fn segment_id, opts ->
+        send(parent, {:resync_called, segment_id, opts})
+        {:ok, make_ref()}
+      end)
+
+      on_exit(fn -> Application.delete_env(:flezha, :state_resync_fun) end)
+      :ok
+    end
+
+    test "sheds, seeds the pull once, and never returns a fatal gap", %{segment_id: pid} do
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid) |> ok!()
+      header = TestHelpers.stub_header()
+
+      assert :awaiting_baseline = WalWriter.append(srv, 5001, header, "d1", "exec-cold")
+
+      assert_receive {:resync_called, ^pid, opts}, 1_000
+      assert opts[:reason] == :baseline_seed
+      assert opts[:executor_id] == "exec-cold"
+
+      # Further gap frames shed without erroring; the seed fires once per episode.
+      assert :awaiting_baseline = WalWriter.append(srv, 5002, header, "d2", "exec-cold")
+      refute_receive {:resync_called, _, _}, 200
+
+      assert WalWriter.last_persisted_seq(srv) == -1
+      assert Metrics.get(Metrics.for_segment(pid), :wal_shed_total) == 2
+    end
+
+    test "the pulled snapshot establishes the baseline and appends resume", %{segment_id: pid} do
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid) |> ok!()
+      header = TestHelpers.stub_header()
+
+      assert :awaiting_baseline = WalWriter.append(srv, 5001, header, "d1", "exec-cold")
+
+      # The CompactSegment round-trip lands as a snapshot at the executor's seq.
+      assert {:ok, _path} = Flezha.State.Snapshot.write_snapshot(pid, 5005, header, "full-state")
+
+      assert WalWriter.last_persisted_seq(srv) == 5005
+      assert :ok = WalWriter.append(srv, 5006, header, "d3", "exec-cold")
+      assert WalWriter.last_persisted_seq(srv) == 5006
+    end
+  end
+
   describe "scan_for_last_valid_seq" do
     test "recovers last seq across a re-open", %{segment_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)

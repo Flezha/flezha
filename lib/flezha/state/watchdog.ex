@@ -6,7 +6,7 @@ defmodule Flezha.State.Watchdog do
   convergence `Loop` consumes the `:output_stall` telemetry the sweep
   emits.
 
-  Two sweeps run on each pass:
+  Three sweeps run on each pass:
 
     * **Output staleness.** For every persistence-enabled Segment with a
       live `WalWriter`, compare `last_change_seen_at` (any Change frame
@@ -16,6 +16,13 @@ defmodule Flezha.State.Watchdog do
       outbox has wedged while the SDK keeps emitting. A genuinely idle
       Segment (no Changes arriving) is NOT flagged, because a
       non-advancing seq is correct when nothing is being produced.
+
+    * **Compaction trigger (size + age).** A Segment whose un-snapshotted
+      WAL bytes exceed its resolved `compact_after_bytes`, or whose oldest
+      un-snapshotted record is older than `compact_after_age_ms` (`0`
+      disables age), gets a `CompactSegment` dispatched to its owning
+      executor. The in-flight `compactions` map guards re-enqueue, so size
+      and age can never double-enqueue.
 
     * **Compaction timeout.** A `CompactSegment` whose
       `segment_state_snapshot` response does not arrive within
@@ -30,7 +37,7 @@ defmodule Flezha.State.Watchdog do
 
   require Logger
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operative.{ClassRegistry, Overwatch}
   alias Flezha.State.{PersistenceResolver, Recovery, Registry, Supervisor, WalWriter}
 
   defstruct compactions: %{}, last_resync: %{}, catastrophic: %{}
@@ -113,7 +120,55 @@ defmodule Flezha.State.Watchdog do
     state
     |> sweep_output_staleness(now)
     |> sweep_catastrophic_dataflow(now)
+    |> sweep_compaction_triggers(now)
     |> sweep_compactions(now)
+  end
+
+  # The automatic snapshot trigger: size (un-snapshotted WAL bytes past the
+  # resolved `compact_after_bytes`) or age (oldest un-snapshotted record past
+  # `compact_after_age_ms`). The `compactions` in-flight map — marked here
+  # directly so a failed dispatch still backs off until the timeout sweep
+  # clears it — is the shared guard that keeps size+age to one enqueue.
+  defp sweep_compaction_triggers(state, now) do
+    age_ms = PersistenceResolver.compact_after_age_ms()
+
+    Registry.all_segments()
+    |> collect_statuses()
+    |> Enum.reduce(state, fn {{_rc, sh, _pk} = segment_id, status}, acc ->
+      with false <- Map.has_key?(acc.compactions, segment_id),
+           executor_id when is_binary(executor_id) <- status.owning_executor,
+           trigger when trigger != nil <- compaction_trigger(status, now, sh, age_ms) do
+        flag_compaction_trigger(segment_id, executor_id, status, trigger)
+        %{acc | compactions: Map.put(acc.compactions, segment_id, now)}
+      else
+        _ -> acc
+      end
+    end)
+  end
+
+  defp compaction_trigger(status, now, operation_id, age_ms) do
+    cond do
+      status.wal_size_bytes >= PersistenceResolver.compact_after_bytes(operation_id) ->
+        :size
+
+      age_ms > 0 and is_integer(status.oldest_unsnapshotted_at) and
+          now - status.oldest_unsnapshotted_at >= age_ms ->
+        :age
+
+      true ->
+        nil
+    end
+  end
+
+  defp flag_compaction_trigger({rc, sh, pk} = segment_id, executor_id, status, trigger) do
+    :telemetry.execute(
+      [:flezha, :state, :compaction_trigger],
+      %{wal_size_bytes: status.wal_size_bytes},
+      %{operative: rc, operation: sh, key: pk, trigger: trigger, executor: executor_id}
+    )
+
+    _ = Overwatch.dispatch_compact_segment(executor_id, segment_id)
+    :ok
   end
 
   # Detects a operative that produced output but received zero Change frames for the

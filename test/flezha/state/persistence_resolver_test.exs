@@ -8,10 +8,18 @@ defmodule Flezha.State.PersistenceResolverTest do
   alias Flezha.State.PersistenceResolver
 
   setup do
+    # runtime.exs seeds these two in every env (age is 0 in :test so the
+    # global Watchdog never surprise-compacts); restore them after the
+    # default-probing tests below delete/override them.
+    prev_bytes = Application.get_env(:flezha, :default_compact_after_bytes)
+    prev_age = Application.get_env(:flezha, :compact_after_age_ms)
+
     on_exit(fn ->
       Application.delete_env(:flezha, :operative_persistence)
       Application.delete_env(:flezha, :bounded_completed_retention_hours)
       Application.delete_env(:flezha, :default_bounded_completed_retention_hours)
+      Application.put_env(:flezha, :default_compact_after_bytes, prev_bytes)
+      Application.put_env(:flezha, :compact_after_age_ms, prev_age)
     end)
 
     :ok
@@ -40,6 +48,41 @@ defmodule Flezha.State.PersistenceResolverTest do
 
     test "an unknown kind is not durable" do
       refute PersistenceResolver.persistent_state?(:made_up, "x")
+    end
+  end
+
+  describe "compact_after_bytes/2" do
+    test "defaults to 8 MiB" do
+      Application.delete_env(:flezha, :default_compact_after_bytes)
+      assert PersistenceResolver.compact_after_bytes("op") == 8 * 1024 * 1024
+    end
+
+    test "global override wins over the default" do
+      Application.put_env(:flezha, :default_compact_after_bytes, 123)
+      assert PersistenceResolver.compact_after_bytes("op") == 123
+    end
+
+    test "per-Operation metadata wins over the global override" do
+      Application.put_env(:flezha, :default_compact_after_bytes, 123)
+      assert PersistenceResolver.compact_after_bytes("op", %{"compact_after_bytes" => 456}) == 456
+      assert PersistenceResolver.compact_after_bytes("op", %{compact_after_bytes: 789}) == 789
+    end
+  end
+
+  describe "compact_after_age_ms/0" do
+    test "defaults to 300_000" do
+      Application.delete_env(:flezha, :compact_after_age_ms)
+      assert PersistenceResolver.compact_after_age_ms() == 300_000
+    end
+
+    test "0 disables the age trigger" do
+      Application.put_env(:flezha, :compact_after_age_ms, 0)
+      assert PersistenceResolver.compact_after_age_ms() == 0
+    end
+
+    test "an invalid value falls back to the default" do
+      Application.put_env(:flezha, :compact_after_age_ms, -5)
+      assert PersistenceResolver.compact_after_age_ms() == 300_000
     end
   end
 

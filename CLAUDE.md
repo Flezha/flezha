@@ -27,7 +27,18 @@
   (16 MiB), `:wal_low_watermark_bytes` (`high / 2`),
   `:time_travel_retention_check_interval_ms` (60 s),
   `:time_travel_retention_hours` (per-Operative map), `:operative_persistence`
-  (per-Operative map).
+  (per-Operative map), `:default_compact_after_bytes` (8 MiB, env
+  `FLEZHA_COMPACT_AFTER_BYTES`; SDK trait default in lockstep),
+  `:compact_after_age_ms` (300 s, `0` disables — and is `0` in `:test`;
+  env `FLEZHA_COMPACT_AFTER_AGE_MS`).
+- **Snapshot baseline durability (`snapshot-baseline-durability`)**: the
+  `Watchdog` sweep auto-triggers `CompactSegment` on WAL **size or age**
+  (`[:flezha, :state, :compaction_trigger]`); a fresh controller with an
+  empty WAL for a live executor's Segment **pulls** a baseline
+  (WalWriter awaiting-baseline sheds + one `CompactSegment`,
+  `[:flezha, :state, :baseline_seed]`) instead of erroring; the resync
+  path never pushes an empty `RestoreInitState`
+  (`Restore.has_persisted_state?/1`, zero-byte WAL ≡ no state).
 - **Credit-grant flow control (`credit-grant-flow-control`)**:
   executor→controller state-stream back-pressure is credit-based — the
   `StreamChannel` offers `CreditWindowInit` on the first state frame

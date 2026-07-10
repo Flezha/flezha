@@ -234,6 +234,24 @@ config :flezha,
     data_plane_liveness:
       System.get_env("FLEZHA_DATA_PLANE_LIVENESS", "true") in ["1", "true", "yes", "on"]
   ],
+  # ------------------------------------------------------------------------------------------------
+  # Per-Segment state persistence — compaction triggers (snapshot-baseline-durability).
+  #
+  # Size: a Segment whose un-snapshotted WAL exceeds this is compacted
+  # (per-Operation override via the SDK's `compact_after_bytes()`).
+  # Age: a Segment whose oldest un-snapshotted WAL record is older than
+  # this is compacted even if it never reaches the size threshold, so
+  # low-throughput Operations still get periodic baselines. `0` disables
+  # the age trigger (default in :test so the sweep never surprises
+  # long-lived test executors; dedicated tests opt in via put_env).
+  default_compact_after_bytes:
+    System.get_env("FLEZHA_COMPACT_AFTER_BYTES", "8388608") |> String.to_integer(),
+  compact_after_age_ms:
+    System.get_env(
+      "FLEZHA_COMPACT_AFTER_AGE_MS",
+      if(config_env() == :test, do: "0", else: "300000")
+    )
+    |> String.to_integer(),
   # Credit-grant flow control on the executor→controller state stream.
   # Kill switch: `false` skips the CreditWindowInit offer entirely, reverting
   # every session to the legacy SegmentMailboxStatus + shed path.

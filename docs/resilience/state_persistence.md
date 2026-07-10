@@ -96,6 +96,22 @@ configurable via `:flezha, :agent_fsync_interval_ms`. Legal range
 
 ## Snapshot lifecycle
 
+Compaction is triggered automatically by the `Flezha.State.Watchdog`
+sweep on **size or age** (plus manually via `flz state rotate`):
+
+* **Size** — un-snapshotted WAL bytes past the resolved
+  `compact_after_bytes` (default **8 MiB**; per-Operation override via
+  the SDK's `compact_after_bytes()`, global via
+  `:flezha, :default_compact_after_bytes`).
+* **Age** — the oldest un-snapshotted WAL record is older than
+  `:flezha, :compact_after_age_ms` (default 300 000 ms; `0` disables),
+  so low-throughput Operations still get periodic baselines.
+
+Both read the `WalWriter`'s in-memory accounting (no extra disk scan),
+share the Watchdog's in-flight `compactions` map as the re-enqueue guard
+(size+age can never double-enqueue), and emit
+`[:flezha, :state, :compaction_trigger]` with `trigger: :size | :age`.
+
 1. Executor (or compaction trigger) requests a snapshot — controller ships
    `CompactSegment` to the SDK over the control channel.
 2. SDK clones `Self::State` under the sticky CAS, postcard-serializes
@@ -284,7 +300,8 @@ fire-and-forget and reads no reply).
 | `:flezha, :time_travel_retention_check_interval_ms` | `60_000` | `Retention` tick cadence. |
 | `:flezha, :time_travel_retention_hours` | `%{}` (default 6 from PersistenceResolver) | Per-Operative retention overrides. |
 | `:flezha, :default_time_travel_retention_hours` | `6` | Global default when no override. |
-| `:flezha, :default_compact_after_bytes` | `64 * 1024 * 1024` | Per-Operation compaction threshold. |
+| `:flezha, :default_compact_after_bytes` | `8 * 1024 * 1024` | Per-Operation compaction size threshold (env `FLEZHA_COMPACT_AFTER_BYTES`). |
+| `:flezha, :compact_after_age_ms` | `300_000` | Age floor for compaction; `0` disables (env `FLEZHA_COMPACT_AFTER_AGE_MS`; `0` in `:test`). |
 | `:flezha, :operative_persistence` | `%{}` | Per-Operative-class executor override (`true` / `false`). |
 | `:flezha, :output_watchdog_interval_ms` | `10_000` | `Watchdog` sweep cadence. Min 100 ms. |
 | `:flezha, :output_stall_timeout_ms` | `%{}` (default 60 000) | Per-Operative-class output-staleness window; `0` disables. |
@@ -298,8 +315,9 @@ silently and permanently. Three failure edges now recover via the shared
 `RestoreInitState` resync (`Flezha.State.Recovery.resync/2`) and emit
 telemetry:
 
-* **Seq gap** — a Change with `seq > last_persisted_seq + 1` is no longer
-  a terminal `{:error, {:gap}}`; `Flezha.Executor.StreamChannel` emits
+* **Seq gap (populated WAL)** — a Change with `seq > last_persisted_seq
+  + 1` while `last_persisted_seq >= 0` is no longer a terminal
+  `{:error, {:gap}}`; `Flezha.Executor.StreamChannel` emits
   `[:flezha, :state, :seq_gap]` and resyncs so the SDK rewinds and
   resends from `terminal_seq + 1`.
 * **Output staleness** — `Watchdog` flags a Segment that is still
@@ -311,6 +329,33 @@ telemetry:
   return within `compaction_timeout_ms` emits
   `[:flezha, :state, :compaction_timeout]` and resyncs; compaction stays
   retriable.
+
+### Baseline recovery: push vs pull
+
+The resync direction is chosen by who holds authoritative history
+(`Flezha.State.Recovery.dispatch_resync`):
+
+* **Controller holds a baseline** (snapshot and/or WAL records) →
+  **push** `RestoreInitState` (the existing handshake).
+* **Controller holds no baseline** while the executor is live → **pull**
+  a full-state snapshot via `CompactSegment`. The dispatch path never
+  ships a `RestoreInitState` whose assembled payload is empty
+  (`Restore.has_persisted_state?/1`, which treats a zero-byte WAL as no
+  state) — an empty payload would rebuild the live Segment to
+  `init_state` and wipe its accumulated state.
+
+The pull is data-plane-triggered on cold takeover: the first
+`segment_state_change` arriving with an empty WAL
+(`last_persisted_seq == -1`), `seq > 0`, and no executor-restart realign
+puts the `WalWriter` into **awaiting-baseline** — the frame is shed
+(counted in `wal_shed_total`, not an error, and the SDK is NOT
+disconnected), `[:flezha, :state, :baseline_seed]` fires once, and one
+`CompactSegment` is dispatched per episode. Further gap frames shed
+quietly until the pulled `segment_state_snapshot` lands; its seq becomes
+`last_persisted_seq` (the snapshot encodes the shed deltas' effects) and
+the executor's next delta appends contiguously. A stuck pull is bounded
+by the compaction-timeout sweep. A gap on a *populated* WAL remains a
+protocol violation (`{:error, {:gap, ...}}`).
 
 ## Executor-restart realign is owner-bound
 

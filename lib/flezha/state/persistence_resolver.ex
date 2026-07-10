@@ -21,13 +21,17 @@ defmodule Flezha.State.PersistenceResolver do
        retained; global default `:default_bounded_completed_retention_hours`
        (`72`, env `FLEZHA_BOUNDED_RETENTION_HOURS`).
     * `:compact_after_bytes` — per-Operation threshold, sourced from SDK
-       metadata first; global default `64 * 1024 * 1024`.
+       metadata first; global default `8 * 1024 * 1024`.
     * `:output_stall_timeout_ms` — `%{<OperativeClass> => non_neg_integer}`.
        Global default `60_000`. `0` disables the output-staleness
        watchdog for that Operative class.
     * `:compaction_timeout_ms` — global; the bound on the
        `CompactSegment` → `segment_state_snapshot` handshake.
        Default `30_000`. `0` disables the compaction-timeout sweep.
+    * `:compact_after_age_ms` — global; a Segment whose oldest
+       un-snapshotted WAL record is older than this is compacted even
+       if it never reaches `compact_after_bytes`. Default `300_000`.
+       `0` disables the age trigger.
     * `:credit_window_bytes` — `%{<OperativeClass> => pos_integer}`.
        Byte window offered in `CreditWindowInit` for a state stream whose
        first Change belongs to that class. Global default
@@ -36,9 +40,10 @@ defmodule Flezha.State.PersistenceResolver do
 
   @default_persistence_enabled true
   @default_retention_hours 6
-  @default_compact_after_bytes 64 * 1024 * 1024
+  @default_compact_after_bytes 8 * 1024 * 1024
   @default_output_stall_timeout_ms 60_000
   @default_compaction_timeout_ms 30_000
+  @default_compact_after_age_ms 300_000
   @default_bounded_completed_retention_hours 72
 
   @spec persistence_enabled?(binary(), map()) :: boolean()
@@ -150,10 +155,19 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @spec compaction_timeout_ms() :: non_neg_integer()
-  def compaction_timeout_ms() do
-    case Application.get_env(:flezha, :compaction_timeout_ms, @default_compaction_timeout_ms) do
+  def compaction_timeout_ms(),
+    do: global_non_neg(:compaction_timeout_ms, @default_compaction_timeout_ms)
+
+  @spec compact_after_age_ms() :: non_neg_integer()
+  def compact_after_age_ms(),
+    do: global_non_neg(:compact_after_age_ms, @default_compact_after_age_ms)
+
+  # Global (non-per-Operative) knob: app env if a valid non-negative
+  # integer, else the compile-time default.
+  defp global_non_neg(key, default) do
+    case Application.get_env(:flezha, key, default) do
       v when is_integer(v) and v >= 0 -> v
-      _ -> @default_compaction_timeout_ms
+      _ -> default
     end
   end
 

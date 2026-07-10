@@ -20,6 +20,7 @@ defmodule Flezha.State.Recovery do
   require Logger
 
   alias Flezha.Operative.Overwatch
+  alias Flezha.State.Restore
 
   @spec resync(tuple(), keyword()) :: {:ok, reference()} | {:error, term()}
   def resync({_rc, _sh, _pk} = segment_id, opts \\ []) do
@@ -93,8 +94,19 @@ defmodule Flezha.State.Recovery do
     end
   end
 
+  # Direction is chosen by who holds authoritative history: with a local
+  # baseline the controller pushes `RestoreInitState`; without one it pulls a
+  # full-state snapshot via `CompactSegment` — an empty RestoreInitState
+  # would rebuild the live Segment to `init_state` and wipe accumulated state.
   defp dispatch_resync(segment_id, executor_id, reason) do
-    case Overwatch.dispatch_restore_init_state(executor_id, segment_id) do
+    result =
+      if Restore.has_persisted_state?(segment_id) do
+        Overwatch.dispatch_restore_init_state(executor_id, segment_id)
+      else
+        Overwatch.dispatch_compact_segment(executor_id, segment_id)
+      end
+
+    case result do
       {:ok, _ref} = ok ->
         ok
 

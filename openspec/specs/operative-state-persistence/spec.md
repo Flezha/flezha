@@ -8,7 +8,10 @@ The operative-state-persistence capability provides agent-side, per-Segment dura
 
 Each Segment whose Operative has `persistence_enabled = true` and whose Operation's `Change` is not `NoChange` SHALL have a per-Segment write-ahead log on the Controller at `app_data/state/{operative_class}/{operation_id}/{segment_key}.wal`. The on-disk path SHALL NOT include `executor_id` as a path component. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
 
-`seq` SHALL be strictly monotonic per Segment and assigned by the SDK. The Controller SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Segment; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`; AND SHALL reject as a protocol violation any frame whose `seq > last_persisted_seq + 1` (returning `{:error, {:gap, expected, got}}` to the SDK).
+`seq` SHALL be strictly monotonic per Segment and assigned by the SDK. The Controller SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Segment; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`. For a frame whose `seq > last_persisted_seq + 1` the Controller SHALL distinguish two cases:
+
+- **Populated WAL** (`last_persisted_seq >= 0`) and not an executor-restart realign: a genuine protocol violation. The Controller SHALL reject the append (returning `{:error, {:gap, expected, got}}`) and the SDK SHALL treat it as a protocol violation and disconnect.
+- **Empty WAL** (`last_persisted_seq == -1`) with `seq > 0` and not an executor-restart realign: a cold-takeover where this Controller holds no baseline for a Segment the executor already has state for. The Controller SHALL NOT disconnect. It SHALL enter an **awaiting-baseline** state for the Segment, shed the frame (incrementing a `wal_shed_total`-class counter, not erroring), drive exactly one `CompactSegment` pull (see "Restart restores state via RestoreInitState handshake"), and keep shedding further gap frames without erroring until a `segment_state_snapshot` establishes the baseline.
 
 A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run at controller boot before `Flezha.State.Supervisor` starts any per-Segment `WalWriter`. The migrator SHALL walk every directory under `app_data/state/` of the form `{executor_id}/{operative_class}/{operation_id}/` and atomically move its contents into `{operative_class}/{operation_id}/`. The migration is idempotent (skips silently if the flat layout already exists) and logs each rename. After all old `{executor_id}/` directories are emptied, they are removed.
 
@@ -33,10 +36,18 @@ A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run
 - **WHEN** the SDK ships a frame with `seq = 5` for a Segment whose `last_persisted_seq = 7` (re-ship after SDK crash that lost the in-memory cursor)
 - **THEN** the agent SHALL NOT append the duplicate; the agent SHALL increment `dedup_drops_total`; the wire reply SHALL be `:ok` (so the SDK does not retry)
 
-#### Scenario: Out-of-order seq is rejected
+#### Scenario: Out-of-order seq on a populated WAL is rejected
 
-- **WHEN** the SDK ships a frame with `seq = 10` for a Segment whose `last_persisted_seq = 7`
+- **GIVEN** a Segment whose `last_persisted_seq = 7` (populated WAL)
+- **WHEN** the SDK ships a frame with `seq = 10`
 - **THEN** the agent SHALL refuse the append and reply `{:error, {:gap, expected: 8, got: 10}}`; the SDK SHALL treat this as a protocol violation and disconnect
+
+#### Scenario: Gap on an empty WAL seeds a baseline instead of disconnecting
+
+- **GIVEN** a freshly-assigned Controller with no WAL for a Segment (`last_persisted_seq = -1`) whose live executor has been producing changes and next emits `seq = 5001`, and the frame is not an executor-restart realign
+- **WHEN** the agent receives the `segment_state_change` frame
+- **THEN** the agent SHALL NOT reply with a fatal gap error and SHALL NOT disconnect the SDK; the agent SHALL shed the frame (incrementing the shed counter), mark the Segment awaiting-baseline, and dispatch exactly one `CompactSegment` to pull a full-state baseline; further gap frames arriving before the snapshot SHALL be shed without error
+- **AND** once the pulled `segment_state_snapshot{seq}` lands, `last_persisted_seq` SHALL equal that snapshot's seq and the executor's next new delta SHALL append contiguously
 
 #### Scenario: Crash-safe append via crc
 
@@ -80,7 +91,7 @@ If the agent crashes between steps 3 and 4, the next boot SHALL find both the ne
 
 ### Requirement: Asynchronous compaction triggered by per-Segment WAL size
 
-When a Segment's WAL exceeds `compact_after_bytes` (per-Operation, default 64 MiB; the SDK ships the per-Operation value to the agent in the `AddOperative` metadata), the agent SHALL trigger asynchronous compaction by enqueuing `Overwatch.handle_continue(:compact_segment, segment_id)`. The continuation SHALL ship `CompactSegment{segment_id}` to the SDK over the control channel.
+Compaction SHALL be triggered by **WAL size or age**. When a Segment's WAL exceeds `compact_after_bytes` (per-Operation, **default 8 MiB**; the SDK ships the per-Operation value to the agent in the `AddOperative` metadata, and the SDK's own advertised default SHALL be 8 MiB so it does not override the global `:flezha, :default_compact_after_bytes`), OR the Segment's oldest un-snapshotted WAL record is older than `compact_after_age_ms` (global runtime knob, default `300_000`; `0` disables the age trigger), the agent SHALL trigger asynchronous compaction by enqueuing `Overwatch.handle_continue(:compact_segment, segment_id)`. The continuation SHALL ship `CompactSegment{segment_id}` to the SDK over the control channel. The age trigger SHALL be evaluated by the existing `Flezha.State.Watchdog` periodic sweep, reusing the same continuation as the size trigger.
 
 The SDK SHALL acquire the Segment's sticky CAS, clone `Self::State`, release the CAS, serialize the clone (postcard), and ship `segment_state_snapshot{segment_id, seq, header, snapshot_bytes, crc32}` back to the agent. The agent SHALL handle the snapshot per the snapshot-lifecycle requirement above. The agent SHALL reply `CompactSegmentResponse{segment_id, snapshot_seq, snapshot_bytes_size}` to confirm.
 
@@ -88,8 +99,20 @@ The hot path SHALL pay only the brief sticky-CAS hold during the state clone —
 
 #### Scenario: Compaction triggered by size threshold
 
-- **WHEN** a Segment's `wal_size_bytes` grows past 64 MiB (the default `compact_after_bytes`)
+- **WHEN** a Segment's `wal_size_bytes` grows past 8 MiB (the default `compact_after_bytes`)
 - **THEN** the agent SHALL enqueue `:compact_segment` for that Segment without blocking new Change ingestion
+
+#### Scenario: Compaction triggered by WAL age for a low-throughput Segment
+
+- **GIVEN** `compact_after_age_ms = 300_000` and a Segment whose WAL has not reached 8 MiB but whose oldest un-snapshotted record is older than 5 minutes
+- **WHEN** the `Flezha.State.Watchdog` sweep runs
+- **THEN** the agent SHALL enqueue `:compact_segment` for that Segment so a fresh baseline is written even though the size threshold was never reached
+
+#### Scenario: Age trigger disabled
+
+- **GIVEN** `compact_after_age_ms = 0`
+- **WHEN** the `Flezha.State.Watchdog` sweep runs over a Segment with an old but small WAL
+- **THEN** the agent SHALL NOT enqueue compaction on the basis of age; only the size trigger applies
 
 #### Scenario: Per-Operation override propagated and honored
 
@@ -103,7 +126,14 @@ The hot path SHALL pay only the brief sticky-CAS hold during the state clone —
 
 ### Requirement: Restart restores state via RestoreInitState handshake
 
-On executor (re)bind, the controller SHALL drive a `RestoreInitState` handshake for each persisted Segment of the operative, and the SDK SHALL rebuild the live Segment slot from the controller's durable WAL — snapshot apply followed by change-log fold — rather than initialising empty. Restore SHALL be:
+On executor (re)bind, the controller SHALL recover each persisted Segment's state, choosing the direction by which side holds authoritative history:
+
+- **Controller holds a baseline (a snapshot and/or WAL for the Segment) → push.** The controller SHALL drive a `RestoreInitState` handshake and the SDK SHALL rebuild the live Segment slot from the controller's durable WAL — snapshot apply followed by change-log fold — rather than initialising empty.
+- **Controller holds no baseline for the Segment (no snapshot and no WAL) while the executor is live → pull.** The controller SHALL request a `CompactSegment` from the executor to obtain a full-state baseline, rather than pushing a `RestoreInitState`. Because a freshly-assigned controller cannot enumerate a live executor's Segments (its own disk is empty), the pull is data-plane-triggered by the first `segment_state_change` frame that arrives with an empty WAL (see "Per-Segment append-only WAL on the agent", empty-WAL gap).
+
+The restore/resync dispatch path SHALL NOT ship a `RestoreInitState` whose assembled payload is empty (no snapshot and no WAL). It SHALL guard with `Flezha.State.Restore.has_persisted_state?/1` — as the bind-time path already does — so an empty payload can never rebuild a live Segment to `init_state` and destroy accumulated state. An empty-WAL condition SHALL route to the pull path above instead.
+
+Restore SHALL be:
 
 1. **Unconditional on every Overwatch bind** — driven by `Flezha.State.Recovery.resync_for_overwatch/2` (not a class→executor lookup that fails on cold boot). When the operative arrived via HotSwap handover, the in-band state is authoritative and the `{:kick_restore}` path SHALL skip to avoid double-applying.
 2. **Keyed by operative instance id, not factory id** — the Segment wire identity is `[rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]` keyed by the operative *instance*, so two operatives of the same factory class never collide on one WAL.
@@ -118,6 +148,16 @@ On executor (re)bind, the controller SHALL drive a `RestoreInitState` handshake 
 - **GIVEN** an operative produced exactly one state change (seq 0) and no snapshot exists
 - **WHEN** the executor restarts and restore runs
 - **THEN** the seq-0 change is included in the restored change-log (the `-1` empty-WAL/no-snapshot sentinels keep it), not dropped as a dedup floor.
+
+#### Scenario: fresh controller pulls a baseline from a live executor
+- **GIVEN** an Operation is reassigned to a controller that has no WAL and no snapshot for its Segment, while the executor stays live holding accumulated state at seq 5000
+- **WHEN** the operative binds and the executor's next `segment_state_change` arrives
+- **THEN** the controller SHALL request a `CompactSegment` and, on receiving the `segment_state_snapshot`, write it as the Segment's baseline; the controller SHALL NOT push a `RestoreInitState` (which would carry an empty payload and reset the live Segment to `init_state`)
+
+#### Scenario: empty-payload restore is never dispatched
+- **GIVEN** a resync is triggered for a Segment whose controller has no snapshot and no WAL
+- **WHEN** the recovery path evaluates whether to ship `RestoreInitState`
+- **THEN** `has_persisted_state?/1` SHALL be false and no `RestoreInitState` SHALL be sent; the accumulated live state on the executor SHALL be preserved (not rebuilt to `init_state`)
 
 ### Requirement: Time-travel queries via WAL retention beyond latest snapshot
 
