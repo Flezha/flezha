@@ -69,6 +69,28 @@ of higher I/O pressure. Compare: the audit-log writer has a separate `:per_recor
 `:batched` fsync mode (`:per_record` is its default); WAL state persistence always
 uses the batched FsyncBatcher — per-record WAL fsync is not supported.
 
+## Output identity: making at-least-once deduplicable
+
+Output stays at-least-once, but re-emitted output no longer has to be
+*indistinguishable* from new output. Channels declared `.keyed()` in the
+Rust SDK stamp every plugin-bound frame with reserved metadata —
+`flz.segment` (emitting Segment), `flz.seq` (`<change_seq>.<emit_ordinal>`,
+derived from the durable WAL seq), and `flz.key` (the natural key supplied
+via `ctx.emit_keyed(key, value)`). Because the stamps derive only from
+replay-stable inputs, a crash-restore replay re-emits frames with
+**identical** stamps, so a downstream consumer that upserts on `flz.key`
+(candles, indicators — any changelog-shaped stream) absorbs duplicates
+exactly. The determinism contract this rests on — no ambient time, UUIDs,
+or external reads in `run`/`apply_change`/`compensate`; use `ctx.now()`
+and `ctx.stable_id()` instead — is documented on the `Operation` trait and
+verified by `OperationTestHarness::replay_emits_equal`.
+
+Boundary: `flz.seq` is **not** an exact append-only dedup handle yet
+(no-state-change invocations can collide on it); that upgrade is the
+`effectively-once-output` outbox. Non-keyed channels are byte-identical
+to before and remain plain at-least-once. See
+`docs/sdk_protocol_spec.md` "Output identity stamps".
+
 ## How to avoid loss — operator playbook
 
 - **Deploy / upgrade executors with a graceful stop, never a kill.** Send SIGTERM (or
@@ -85,7 +107,8 @@ uses the batched FsyncBatcher — per-record WAL fsync is not supported.
     it when that's acceptable.
 - **Make sinks idempotent where exactly-once matters.** Output is at-least-once and can
   be re-emitted after a rebind/restore — use Kafka keys/transactions, HTTP idempotency
-  keys, or DB upserts downstream.
+  keys, or DB upserts downstream. Declare the channel `.keyed()` so re-emits carry
+  identical `flz.key`/`flz.seq` stamps to upsert on (see "Output identity" above).
 - **Never treat DETS as the source of truth** in code or ops — it is a cold-start backup
   only (see `docs/resilience/process_hub_recovery_model.md`).
 - **Bounded operatives are durable + at-least-once by default.** A crash re-runs the

@@ -1006,12 +1006,11 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp in_flight_size(%{in_flight: %{records: r}}), do: length(r)
 
   defp build_record(msg, metadata, from, timestamp_ms) do
-    # `flezha.dedup_key` (set by the SDK runtime for any emit issued
-    # during a `state.apply(...)`-driven `Operation::run`) wins over a
-    # user-supplied `kafka_msg_key`. The contract: the framework owns
-    # the dedup key for stateful operatives so retries land on the same
-    # Kafka partition — bypass-able by users only via a different
-    # metadata key (see `operative-state-persistence-controller` §11).
+    # Framework-owned dedup key wins over a user-supplied
+    # `kafka_msg_key` so retries land on the same Kafka partition.
+    # No SDK path stamps `flezha.dedup_key` today; keyed-channel
+    # emits carry `flz.key`, which this producer adopts as the
+    # preferred key when `effectively-once-output` lands.
     key =
       Map.get(metadata, "flezha.dedup_key") ||
         Map.get(metadata, "kafka_msg_key", nil)

@@ -200,8 +200,18 @@ For each (key, value) pair:
 | `input_type` | Controller → SDK | Wire format of the entry-channel payload — `"1"` for binary (default), `"2"` for UTF-8 text. The SDK uses this to convert the payload bytes to the entry channel's `EntryChannelType` (`Vec<u8>` or `String`). |
 | `channel` | Controller → SDK | Names the Operative's entry channel that should receive this input. If absent, the SDK falls back to the Operative's first declared input channel. |
 | `channel` | SDK → Controller | Set by `OperationCtx::emit` on plugin-bound and hybrid channels. Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka.Producer`) match on this key via their `:channel` opt to gate which channel's outputs they consume. |
+| `flz.segment` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the emitting Segment as `<operative_instance_id>/<operation_name>/<segment_key>` (empty key for single-mode). Replay-stable. |
+| `flz.seq` | SDK → Controller | Output-identity stamp on `.keyed()` channels: `<change_seq>.<emit_ordinal>` — the Segment's durable change seq after the flush-before-emit drain, plus the emit's ordinal within the invocation. See "Output identity stamps" below for the exactness boundary. |
+| `flz.key` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the caller's natural key from `OperationCtx::emit_keyed(key, value)`. Replay-stable by the determinism contract. |
 
 The `channel` metadata key replaces the pre-`operative-mvp-rust` `plugin_group: u8` integer key. v1 sends the channel name as a UTF-8 string; an integer fast-path is reserved for a future change.
+
+The `flz.` prefix is a protected namespace: user-supplied metadata keys
+beginning with `flz.` are rejected at emit time with a typed
+`OperationError::ReservedMetadataKey`, on every emit variant, so runtime
+stamps can never be spoofed or clobbered. Stamps are appended after user
+metadata. Channels not declared `.keyed()` carry no stamps and their wire
+frames are byte-identical to the pre-identity layout.
 
 Hybrid channels (declared with `also_to_plugin_with(...)` — see `docs/operative_architecture.md` "Hybrid channels: inter-operation fan-out + plugin sink") reuse this exact framing. The plugin-bytes wire frame is byte-indistinguishable from a pure-`to_plugin(...)` frame for the same plugin name and bytes; no new wire payload-id, no new metadata key.
 
@@ -1292,12 +1302,33 @@ arriving on an exhausted ledger is a protocol violation: the controller
 sheds it (`credit_overrun_total`), and the existing seq-gap resync
 repairs the gap.
 
-### Plugin metadata: `flezha.dedup_key`
+### Plugin metadata: output identity stamps (`flz.*`)
 
-Reserved metadata key on plugin-bound emit frames. The SDK runtime
-stamps `flezha.dedup_key = "<operative_class>/<operation_id>/<segment_key>/<seq>"`
-on every emit issued during a `state.apply(...)`-driven `Operation::run`.
-Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka`) honor it as the
-sink-side dedup key; user-supplied `flezha.dedup_key` is silently
-dropped by the SDK runtime.
+Channels declared `.keyed()` (valid on `to_plugin` and
+`also_to_plugin_with` wires only — a keyed channel without a plugin wire
+is a build error) stamp every plugin-bound emit with three reserved
+metadata keys, appended after user metadata:
+
+| Key | Value | Stability |
+|---|---|---|
+| `flz.segment` | `<operative_instance_id>/<operation_name>/<segment_key>` | replay-stable |
+| `flz.seq` | `<change_seq>.<emit_ordinal>` — durable change seq at emit time (post flush-before-emit drain) + emit ordinal within the invocation | replay-stable while state advances |
+| `flz.key` | caller's natural key from `OperationCtx::emit_keyed(key, value)` | replay-stable by the determinism contract |
+
+On a keyed channel, plain `emit` / `emit_with_meta` fail with
+`KeyRequiredOnKeyedChannel`; on a non-keyed channel `emit_keyed` fails
+with `KeyNotAllowedOnNonKeyedChannel` — the channel declaration is the
+single source of truth for whether output identity exists. The controller
+passes the stamps through the `:on_output` plugin chain unchanged.
+
+**`flz.seq` exactness boundary**: `flz.seq` suffices for changelog-style
+consumers that upsert on `flz.key` (candles, indicators). It is NOT a
+sufficient handle for exact append-only dedup: consecutive invocations
+that apply no state change can produce colliding
+`<change_seq>.<emit_ordinal>` pairs. Do not build append-only dedup on
+`flz.seq` alone — the `effectively-once-output` capability journals
+output identity in a durable outbox and upgrades it to an exact handle.
+Sink-side adoption (e.g. the Kafka producer preferring `flz.key` as the
+message key over `kafka_msg_key`) lands with that change; today the
+producer's framework-key slot (`flezha.dedup_key`) is never stamped.
 
