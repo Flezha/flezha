@@ -117,7 +117,7 @@ defmodule Flezha.State.Registry do
   dynamic-mode hard-delete path (`Flezha.State.Supervisor.delete_segment/1`).
   """
   @spec delete_files(segment_id()) :: :ok
-  def delete_files({_, _, _} = pid) do
+  def delete_files({operative_class, _, _} = pid) do
     [
       wal_path(pid),
       outbox_dedup_path(pid),
@@ -126,6 +126,12 @@ defmodule Flezha.State.Registry do
     ]
     |> Enum.concat(Enum.map(snapshot_paths(pid), fn {_seq, path} -> path end))
     |> Enum.each(&File.rm/1)
+
+    # Prune now-empty parent dirs so deleted state stops counting as durable
+    # evidence of prior intent (intent-mismatch detection); rmdir fails
+    # harmlessly while a sibling Segment or Operation still holds files.
+    _ = File.rmdir(state_dir(pid))
+    _ = File.rmdir(Path.join(state_root(), operative_class))
 
     :ok
   end

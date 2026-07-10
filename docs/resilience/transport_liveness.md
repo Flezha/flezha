@@ -176,6 +176,21 @@ never reads as a stall:
 | `:channel_not_sending` | channel `io_in_received` advancing, `send_frame_calls` flat, `nil_drops` flat (stream bound) |
 | `:operative_not_forwarding` | operative `io_in_received` advancing, `forwarded` flat, the gap not explained by `filtered_nil` |
 
+## Producing-liveness (progress markers)
+
+The same module carries `StallClassifier.classify_producing/3` — the
+per-operative producing-liveness classifier the Loop runs at tick cadence over
+durable progress markers (`Flezha.State.Watchdog.segment_statuses/0`: WAL
+`last_change_seen_at` / `last_advance_at`, plus min-watermark / input-log /
+outbox-flush cursors once the effectively-once tier lands; absent cursors
+degrade to WAL-seq-only). It shares the deepest-verdict-wins convention and
+the fed precondition: **IDLE** (no input, flat markers) counts as producing
+and stays healthy; **STUCK** (fed but flat past the grace) degrades `/healthz`
+with detail `wal_frozen | watermark_frozen | outbox_flat`. Like the data-plane
+classifier it is report-only — healing stays on the `:output_stall → rebind`
+path. See `docs/resilience/convergence_loop.md` "Health publishing" for the
+`/healthz` contract (including the `intent_mismatch` reason).
+
 ## Configuration
 
 `:observability, :data_plane_liveness` (default `true`, env

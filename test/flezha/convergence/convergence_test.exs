@@ -8,6 +8,7 @@ defmodule Flezha.ConvergenceTest do
   """
 
   use ExUnit.Case, async: false
+  use Mimic
 
   alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, SafeCall, Snapshot}
   alias Flezha.Plugin
@@ -689,6 +690,151 @@ defmodule Flezha.ConvergenceTest do
           assert new_pick == before[r]
         end
       end
+    end
+  end
+
+  describe "Loop.intent_mismatch/2 — durable evidence vs live intent" do
+    alias Flezha.Convergence.{Intent, Loop}
+    alias Flezha.Service.HubManager
+
+    setup do
+      root =
+        Path.join(
+          System.tmp_dir!(),
+          "flezha_intent_mismatch_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(root)
+      prev = Application.get_env(:flezha, :state_root)
+      Application.put_env(:flezha, :state_root, root)
+
+      # Other suites leak hubs into the global registry; pin the durable-
+      # registry evidence to empty so only the on-disk dirs drive these tests.
+      stub(HubManager, :durable_operative_ids, fn -> MapSet.new() end)
+
+      on_exit(fn ->
+        File.rm_rf!(root)
+
+        if prev,
+          do: Application.put_env(:flezha, :state_root, prev),
+          else: Application.delete_env(:flezha, :state_root)
+      end)
+
+      {:ok, root: root}
+    end
+
+    defp seed_segment(root, operative, operation, key) do
+      dir = Path.join([root, operative, operation])
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "#{key}.wal"), <<1, 2, 3>>)
+    end
+
+    defp intent_for(ids) do
+      %Intent{
+        operatives:
+          Enum.map(ids, fn id ->
+            %{namespace: :ns, operative_id: id, factory_id: nil, plugins: []}
+          end)
+      }
+    end
+
+    test "fresh install with no durable evidence → empty mismatch" do
+      assert {[], _cache} = Loop.intent_mismatch(intent_for([]), nil)
+    end
+
+    test "wiped registry with on-disk evidence → mismatch names the operatives", %{root: root} do
+      seed_segment(root, "btc_kraken", "op", "k1")
+      seed_segment(root, "eth_kraken", "op", "k1")
+
+      assert {["btc_kraken", "eth_kraken"], cache} = Loop.intent_mismatch(intent_for([]), nil)
+
+      # Live intent covering one operative clears exactly that entry.
+      assert {["eth_kraken"], _} = Loop.intent_mismatch(intent_for(["btc_kraken"]), cache)
+    end
+
+    test "durable-registry rows without live intent also count as evidence" do
+      stub(HubManager, :durable_operative_ids, fn -> MapSet.new(["ghost_operative"]) end)
+
+      assert {["ghost_operative"], _} = Loop.intent_mismatch(intent_for([]), nil)
+    end
+
+    test "flz state delete clears the entry", %{root: root} do
+      seed_segment(root, "btc_kraken", "op", "k1")
+      assert {["btc_kraken"], cache} = Loop.intent_mismatch(intent_for([]), nil)
+
+      # The CLI `flz state delete btc_kraken/op/k1` path.
+      {:ok, _} = Flezha.State.Supervisor.delete_segment({"btc_kraken", "op", "k1"})
+
+      assert {[], _} = Loop.intent_mismatch(intent_for([]), cache)
+    end
+  end
+
+  describe "Loop.rotate_progress_history/4 — grace-window cursor baselines" do
+    alias Flezha.Convergence.Loop
+
+    test "baseline is nil until a snapshot has aged one grace window, then rotates" do
+      {baseline, h} = Loop.rotate_progress_history([], [:a], 0, 100)
+      assert baseline == nil
+
+      {baseline, h} = Loop.rotate_progress_history(h, [:b], 50, 100)
+      assert baseline == nil
+
+      {baseline, h} = Loop.rotate_progress_history(h, [:c], 100, 100)
+      assert baseline == [:a]
+
+      # Older-than-baseline entries are pruned; the newest aged one wins.
+      {baseline, h} = Loop.rotate_progress_history(h, [:d], 160, 100)
+      assert baseline == [:b]
+      refute Enum.any?(h, fn {_at, snap} -> snap == [:a] end)
+    end
+  end
+
+  describe "Loop stuck / intent-mismatch transition telemetry" do
+    alias Flezha.Convergence.Loop
+
+    setup do
+      parent = self()
+      ref = make_ref()
+      handler_id = {__MODULE__, ref}
+
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:flezha, :convergence, :operative_stuck],
+          [:flezha, :convergence, :intent_mismatch]
+        ],
+        fn event, measurements, metadata, _ ->
+          send(parent, {ref, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+      {:ok, ref: ref}
+    end
+
+    test "freshly-stuck operatives emit operative_stuck once, not on steady state", %{ref: ref} do
+      stuck = %{"btc" => %{detail: :wal_frozen, segment: "op/k1"}}
+
+      Loop.note_stuck_transitions(%{}, stuck)
+
+      assert_receive {^ref, [:flezha, :convergence, :operative_stuck], %{count: 1},
+                      %{operative_id: "btc", detail: :wal_frozen, segment: "op/k1"}}
+
+      Loop.note_stuck_transitions(stuck, stuck)
+      refute_receive {^ref, [:flezha, :convergence, :operative_stuck], _, _}, 50
+    end
+
+    test "intent-mismatch transitions emit with the named operatives", %{ref: ref} do
+      Loop.note_intent_mismatch_transition([], ["btc", "eth"])
+
+      assert_receive {^ref, [:flezha, :convergence, :intent_mismatch], %{count: 2},
+                      %{operatives: ["btc", "eth"]}}
+
+      # Unchanged and cleared transitions do not re-emit.
+      Loop.note_intent_mismatch_transition(["btc", "eth"], ["btc", "eth"])
+      Loop.note_intent_mismatch_transition(["btc", "eth"], [])
+      refute_receive {^ref, [:flezha, :convergence, :intent_mismatch], _, _}, 50
     end
   end
 

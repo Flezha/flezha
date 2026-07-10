@@ -76,16 +76,70 @@ Every cross-process call inside the Loop MUST be wrapped in `Convergence.SafeCal
 - **WHEN** the same divergence is observed on the next tick
 - **THEN** the Planner filters the repeat `rebind_operative` op under backoff and does not re-issue it until the backoff window elapses.
 
+### Requirement: Producing-liveness derives from durable progress markers with a fed precondition
+
+The convergence snapshot SHALL classify each bound operative's producing-liveness from durable progress markers compared between ticks — per-Segment WAL persisted seq always, and, when the operative runs the effectively-once tier, min-watermark advance and outbox `flushed_seq` drain. Channel state and heartbeats SHALL NOT be producing-liveness inputs.
+
+Every flat-marker verdict SHALL apply the fed precondition over the grace window: input-side evidence advancing while the progress marker is flat past the grace period classifies the operative STUCK (not producing); no input-side advance with a flat marker classifies it IDLE (producing-healthy). For tier-on operatives, an input-log tail growing while the min-watermark is flat is a STUCK verdict, and output-bearing WAL records accumulating while `outbox_flushed_seq` is flat is a STUCK verdict. When one root cause freezes multiple markers, the snapshot SHALL report the single deepest verdict for that operative.
+
+All marker reads SHALL be off-path at the convergence tick cadence, reusing counters and cursors that already advance; no per-message instrumentation is added.
+
+#### Scenario: Idle operative stays healthy
+
+- **WHEN** an operative receives no input and all its progress markers are flat across ticks
+- **THEN** it classifies IDLE and counts as producing; `/healthz` remains `200 healthy`
+
+#### Scenario: Fed but frozen operative is STUCK
+
+- **WHEN** input-side evidence for an operative advances across ticks while its WAL persisted seq stays flat past the grace period
+- **THEN** the snapshot classifies it STUCK, `producing_operatives` excludes it, and `/healthz` reports `200 degraded`
+
+#### Scenario: Frozen min-watermark with growing input-log is STUCK (tier on)
+
+- **WHEN** a tier-on operative's input-log tail grows across ticks while its min-watermark does not advance past the grace period
+- **THEN** the operative classifies STUCK with a watermark-frozen detail naming the lagging Segment
+
+#### Scenario: Outbox backlog with flat flush cursor is STUCK (tier on)
+
+- **WHEN** a tier-on operative accumulates output-bearing WAL records while `outbox_flushed_seq` stays flat past the grace period
+- **THEN** the operative classifies STUCK with a sink-path detail
+
+#### Scenario: One root cause reports one verdict
+
+- **WHEN** a frozen WAL freezes the min-watermark and the outbox cursor of the same operative
+- **THEN** the snapshot reports a single deepest verdict for that operative, not three stacked reasons
+
+### Requirement: An empty intended set with durable evidence of intent is never vacuously healthy
+
+On each tick the convergence snapshot SHALL compare the live intended set against durable evidence of prior intent (per-Operative state directories under the state root and durable-registry entries). Any operative with durable evidence but absent from the live intended set SHALL be listed as `intent_mismatch`. When the mismatch list is non-empty — including the case where the live intended set is entirely empty — `/healthz` SHALL report `200 degraded` with `reason: intent_mismatch` naming the operatives, and SHALL NOT report `200 healthy`. The condition SHALL NOT produce `503 unhealthy` (a kubelet restart cannot repair missing intent). Deleting the operative's durable state (`flz state delete`, `flz reset`) clears the mismatch.
+
+#### Scenario: Registry wipe degrades health instead of reporting healthy
+
+- **WHEN** the durable registry is wiped so the live intended set is empty, while per-Operative state directories from prior operation exist on disk
+- **THEN** `/healthz` reports `200 degraded` with `reason: intent_mismatch` listing the evidenced operatives, not `200 healthy`
+
+#### Scenario: Deliberate decommission clears the mismatch
+
+- **WHEN** an operator stops an operative and deletes its durable state
+- **THEN** the operative no longer appears in `intent_mismatch` and health returns to `200 healthy`
+
+#### Scenario: Fresh install with no evidence is healthy
+
+- **WHEN** a controller boots with an empty intended set and no durable state directories or registry entries
+- **THEN** `/healthz` reports `200 healthy`
+
 ### Requirement: /healthz never lies
 
-The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operatives`, and recovery state from a single `Convergence.Snapshot.current/0` reader. It MUST NOT compute these from independent paths. It returns `200 healthy`, `200 degraded` (bound ≠ producing), `200 recovering`/`restoring_registry` (planned recovery — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`) or `recovery_failed`.
+The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operatives`, recovery state, and the intent-mismatch list from a single `Convergence.Snapshot.current/0` reader. It MUST NOT compute these from independent paths. `producing_operatives` MUST be derived from the producing-liveness classification (durable progress markers with the fed precondition) — an IDLE operative counts as producing, a STUCK operative does not. It returns `200 healthy`, `200 degraded` (bound ≠ producing, plugin-degraded, or non-empty intent mismatch), `200 recovering`/`restoring_registry` (planned recovery — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`) or `recovery_failed`. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
 
 #### Scenario: healthz reflects reality even when bound and producing diverge
-- **GIVEN** 10 operatives are bound and 3 have not advanced output past `output_stall_grace_ms`
+
+- **GIVEN** 10 operatives are bound and 3 classify STUCK (fed but progress markers flat past `output_stall_grace_ms`)
 - **WHEN** `/healthz` is queried
 - **THEN** the body reports `bound_operatives=10`, `producing_operatives=7`, and the status is `200 degraded` (not 200 healthy, not 503).
 
 #### Scenario: healthz does not 503 on a slow-but-live loop
+
 - **GIVEN** the Loop completes ticks slowly under CPU pressure but is not dead
 - **WHEN** `/healthz` is queried
 - **THEN** the status is `200` (healthy/degraded), and `503` fires only when the loop has not ticked within the authoritative tick-age bound.
@@ -97,6 +151,12 @@ The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operativ
 - **THEN** the response is `200 recovering` with `recovery_state: "recovery_timeout"` in the body
 - **AND** the response is NOT `503 unhealthy`
 - **AND** kubelet does not restart the pod
+
+#### Scenario: idle fleet is healthy, wiped fleet is not
+
+- **GIVEN** two controllers: one with 5 intended operatives all IDLE (no input), one with an empty intended set but durable state directories for 5 operatives
+- **WHEN** `/healthz` is queried on each
+- **THEN** the idle controller reports `200 healthy` with `producing_operatives=5`, and the wiped controller reports `200 degraded` with `reason: intent_mismatch`
 
 ### Requirement: Output-stalled operatives SHALL be actively rebound, not only reported as degraded
 

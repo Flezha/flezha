@@ -1,10 +1,14 @@
 defmodule Flezha.Convergence.StallClassifier do
   @moduledoc """
-  Pure per-layer classifier for a silent data-plane stall.
+  Pure liveness classifiers for the convergence Loop: per-layer localization
+  of a silent data-plane stall (`classify/3`) and per-operative
+  producing-liveness from durable progress markers (`classify_producing/3`).
+  Both are detection-only and share the deepest-verdict-wins convention.
 
-  Given a current and previous liveness snapshot (driver self-report +
-  `Flezha.Transport.LivenessCounters`), it walks the controller→executor path
-  top-down and returns the single most-fundamental stalled layer, or `:ok`.
+  `classify/3`: given a current and previous liveness snapshot (driver
+  self-report + `Flezha.Transport.LivenessCounters`), it walks the
+  controller→executor path top-down and returns the single most-fundamental
+  stalled layer, or `:ok`.
   Detection only — it changes no behaviour and triggers no remediation; the
   convergence Loop emits its verdict as a `[:flezha, :data_plane,
   :stall_localized]` event so the *next* silent freeze self-localises instead
@@ -192,6 +196,92 @@ defmodule Flezha.Convergence.StallClassifier do
       end
     end)
   end
+
+  # ---------- producing-liveness (durable progress markers) ----------
+
+  @producing_defaults %{grace_ms: 60_000}
+
+  # Deepest first: a frozen WAL freezes the min-watermark and the outbox
+  # cursor as a consequence, so one root cause yields one verdict.
+  @stuck_rank %{wal_frozen: 3, watermark_frozen: 2, outbox_flat: 1}
+
+  @doc """
+  Per-operative producing-liveness from durable progress markers, compared at
+  the convergence tick cadence.
+
+  `current` is one map per live Segment (built by the Loop from
+  `Flezha.State.Watchdog.segment_statuses/0`): always `:operative_id`,
+  `:segment`, `:last_change_seen_at`, `:last_advance_at` (the WAL
+  fed/advance evidence), plus — when the effectively-once tier runs — the
+  cursor fields `:input_log_tail`, `:min_watermark`, `:out_pending_seq`,
+  `:outbox_flushed_seq`. `baseline` is a snapshot taken at least one grace
+  window earlier (`nil` before one has aged enough); cursor checks compare
+  against it and are skipped when it or the cursor fields are absent, so
+  classification degrades to WAL-seq-only.
+
+  Every verdict carries the fed precondition: input-side evidence advancing
+  while the progress marker is flat past the grace window is `{:stuck,
+  detail, ctx}` (detail ∈ `:wal_frozen | :watermark_frozen | :outbox_flat`,
+  ctx naming the lagging Segment); flat markers with no input is `:idle`
+  (producing-healthy). Per operative the single deepest verdict wins.
+  """
+  @spec classify_producing([map()], [map()] | nil, map()) :: %{
+          binary() => :advancing | :idle | {:stuck, atom(), map()}
+        }
+  def classify_producing(current, baseline, opts \\ %{}) do
+    o = Map.merge(@producing_defaults, opts)
+    now = Map.get_lazy(o, :now, fn -> System.monotonic_time(:millisecond) end)
+    base = index_by(baseline || [], fn m -> {m.operative_id, m.segment} end)
+
+    current
+    |> Enum.group_by(& &1.operative_id)
+    |> Map.new(fn {operative_id, markers} ->
+      verdicts =
+        Enum.map(markers, fn m ->
+          marker_verdict(m, Map.get(base, {m.operative_id, m.segment}), now, o.grace_ms)
+        end)
+
+      {operative_id, Enum.max_by(verdicts, &verdict_rank/1)}
+    end)
+  end
+
+  defp marker_verdict(m, base, now, grace_ms) do
+    fed? = now - m.last_change_seen_at < grace_ms
+    advanced? = now - m.last_advance_at < grace_ms
+
+    cond do
+      fed? and not advanced? -> {:stuck, :wal_frozen, %{segment: m.segment}}
+      watermark_frozen?(m, base) -> {:stuck, :watermark_frozen, %{segment: m.segment}}
+      outbox_flat?(m, base) -> {:stuck, :outbox_flat, %{segment: m.segment}}
+      advanced? -> :advancing
+      true -> :idle
+    end
+  end
+
+  # Tier-on: input-log tail grew over the grace window while the
+  # min-watermark did not advance.
+  defp watermark_frozen?(m, base) when is_map(base) do
+    is_integer(m[:input_log_tail]) and is_integer(base[:input_log_tail]) and
+      is_integer(m[:min_watermark]) and is_integer(base[:min_watermark]) and
+      m.input_log_tail > base.input_log_tail and m.min_watermark <= base.min_watermark
+  end
+
+  defp watermark_frozen?(_m, _base), do: false
+
+  # Tier-on: output-bearing WAL records accumulated while the outbox flush
+  # cursor stayed flat.
+  defp outbox_flat?(m, base) when is_map(base) do
+    is_integer(m[:out_pending_seq]) and is_integer(base[:out_pending_seq]) and
+      is_integer(m[:outbox_flushed_seq]) and is_integer(base[:outbox_flushed_seq]) and
+      m.out_pending_seq > base.out_pending_seq and
+      m.outbox_flushed_seq == base.outbox_flushed_seq
+  end
+
+  defp outbox_flat?(_m, _base), do: false
+
+  defp verdict_rank({:stuck, detail, _ctx}), do: {2, Map.get(@stuck_rank, detail, 0)}
+  defp verdict_rank(:advancing), do: {1, 0}
+  defp verdict_rank(:idle), do: {0, 0}
 
   # ---------- helpers ----------
 

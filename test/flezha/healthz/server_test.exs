@@ -281,6 +281,109 @@ defmodule Flezha.Healthz.ServerTest do
     end
   end
 
+  test "idle fleet counts as producing → 200 healthy", %{port: port} do
+    # 5 bound operatives with no input and flat markers classify IDLE, which
+    # the Loop counts as producing — flat-because-idle is not degraded.
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      stalled_operatives: [],
+      stuck_operatives: %{},
+      intent_mismatch: [],
+      intended_operatives: 5,
+      bound_operatives: 5,
+      producing_operatives: 5,
+      pending_restore: false
+    })
+
+    {status, _headers, body} = get(port, "/healthz")
+    decoded = Jason.decode!(body)
+
+    if decoded["status"] == "recovering" do
+      assert status == 200
+    else
+      assert status == 200
+      assert decoded["status"] == "healthy"
+      assert decoded["producing_operatives"] == 5
+    end
+  end
+
+  test "STUCK operative (fed but frozen) → 200 degraded with per-reason detail", %{port: port} do
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      stalled_operatives: [],
+      stuck_operatives: %{"btc_kraken" => %{detail: :wal_frozen, segment: "op/k1"}},
+      intent_mismatch: [],
+      intended_operatives: 2,
+      bound_operatives: 2,
+      producing_operatives: 1,
+      pending_restore: false
+    })
+
+    {status, _headers, body} = get(port, "/healthz")
+    decoded = Jason.decode!(body)
+
+    if decoded["status"] == "recovering" do
+      assert status == 200
+    else
+      assert status == 200
+      assert decoded["status"] == "degraded"
+      assert decoded["reason"] == "output_stalled"
+      assert decoded["producing_operatives"] == 1
+      assert decoded["stuck_operatives"]["btc_kraken"]["detail"] == "wal_frozen"
+      assert decoded["stuck_operatives"]["btc_kraken"]["segment"] == "op/k1"
+    end
+  end
+
+  test "registry wipe (durable evidence, empty intent) → 200 degraded intent_mismatch, never healthy",
+       %{port: port} do
+    # The 30 h outage shape: intended == bound == 0 so every per-operative
+    # check quantifies over an empty set — the mismatch list is the witness.
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      stalled_operatives: [],
+      stuck_operatives: %{},
+      intent_mismatch: ["btc_kraken", "eth_kraken"],
+      intended_operatives: 0,
+      bound_operatives: 0,
+      producing_operatives: 0,
+      pending_restore: false
+    })
+
+    {status, _headers, body} = get(port, "/healthz")
+    decoded = Jason.decode!(body)
+
+    if decoded["status"] == "recovering" do
+      assert status == 200
+    else
+      # 200, not 503 — a kubelet restart cannot repair missing intent.
+      assert status == 200
+      assert decoded["status"] == "degraded"
+      assert decoded["reason"] == "intent_mismatch"
+      assert decoded["intent_mismatch"] == ["btc_kraken", "eth_kraken"]
+    end
+  end
+
+  test "recovery state takes precedence over intent mismatch", %{port: port} do
+    hub_id = :"healthz_mismatch_recovery_hub_#{System.unique_integer([:positive])}"
+    Snapshot.observe_recovery(hub_id, :recovering)
+
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      stalled_operatives: [],
+      stuck_operatives: %{},
+      intent_mismatch: ["btc_kraken"],
+      intended_operatives: 0,
+      bound_operatives: 0,
+      producing_operatives: 0,
+      pending_restore: false
+    })
+
+    {status, _headers, body} = get(port, "/healthz")
+    assert status == 200
+    decoded = Jason.decode!(body)
+    assert decoded["status"] == "recovering"
+  end
+
   defp get(port, path), do: request(port, "GET", path)
 
   defp request(port, method, path) do

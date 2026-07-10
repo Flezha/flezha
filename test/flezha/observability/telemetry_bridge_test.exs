@@ -131,6 +131,54 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     end)
   end
 
+  test "convergence stuck / intent-mismatch verdicts are bridged" do
+    conv_sink = :"obs_tbridge_convergence_sink_#{:erlang.unique_integer([:positive])}"
+    ref = :counters.new(1, [:atomics])
+
+    {:ok, _pid} =
+      Registry.register_sink(%{
+        name: conv_sink,
+        module: Counting,
+        config: %{counter_ref: ref, parent: self(), sources: [:flezha_convergence]}
+      })
+
+    on_exit(fn -> Registry.unregister_sink(conv_sink) end)
+    drain_mailbox()
+
+    :telemetry.execute(
+      [:flezha, :convergence, :operative_stuck],
+      %{count: 1},
+      %{operative_id: "btc_kraken", detail: :wal_frozen, segment: "ohlc/1m"}
+    )
+
+    stuck =
+      receive_until(
+        fn s -> s.source == :flezha_convergence and s.name == :operative_stuck end,
+        500
+      )
+
+    assert stuck
+    assert stuck.kind == :event
+    assert stuck.metadata[:detail] == :wal_frozen
+    assert stuck.metadata[:operative_id] == "btc_kraken"
+
+    :telemetry.execute(
+      [:flezha, :convergence, :intent_mismatch],
+      %{count: 2},
+      %{operatives: ["btc_kraken", "eth_kraken"]}
+    )
+
+    mismatch =
+      receive_until(
+        fn s -> s.source == :flezha_convergence and s.name == :intent_mismatch end,
+        500
+      )
+
+    assert mismatch
+    assert mismatch.measurements[:count] == 2
+    assert mismatch.metadata[:operatives] == ["btc_kraken", "eth_kraken"]
+  end
+
   defp receive_until(_pred, timeout) when timeout <= 0, do: nil
 
   defp receive_until(pred, timeout) do

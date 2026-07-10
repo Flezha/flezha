@@ -60,6 +60,19 @@ defmodule Flezha.Convergence.Loop do
             # Detection only — the classifier never feeds a heal decision.
             prev_liveness: nil,
             last_stall_verdict: :ok,
+            # operative_id => %{detail:, segment:} producing-liveness STUCK
+            # verdicts (fed but progress markers flat past grace). Report-only:
+            # healing stays on the :output_stall → rebind path.
+            stuck_operatives: %{},
+            # [{taken_at_ms, tier-cursor markers}] — grace-window baselines for
+            # the classifier's cursor-delta checks. Holds only Segments with
+            # effectively-once tier cursors (empty until that tier lands).
+            progress_history: [],
+            # Operatives with durable state evidence but no live intent — the
+            # wiped-registry witness /healthz degrades on.
+            intent_mismatch: [],
+            # {state-root mtime, first-level dir listing} cache.
+            evidence_cache: nil,
             # Monotonic ms when `bound < intended` first held; nil while met or
             # recovering. healthz escalates recovering → degraded past its grace.
             unmet_intent_since: nil
@@ -214,6 +227,12 @@ defmodule Flezha.Convergence.Loop do
 
     state = %{state | backoff: backoff}
 
+    # Report-only /healthz inputs: producing-liveness verdicts from durable
+    # progress markers and the durable-evidence-vs-intent diff. Neither
+    # feeds a heal decision.
+    state = classify_progress(state, started_at)
+    state = detect_intent_mismatch(state, intent)
+
     # Publish health over the FULL intent so /healthz reports the true
     # intended count, not just the recovery-ready subset. Returns state with
     # the refreshed unmet-intent deadline.
@@ -302,6 +321,175 @@ defmodule Flezha.Convergence.Loop do
 
   defp verdict_key(:ok), do: :ok
   defp verdict_key({layer, _ctx}), do: layer
+
+  # Producing-liveness from durable progress markers (report-only; the
+  # Watchdog's :output_stall → rebind path stays the heal). Reads the
+  # existing WalWriter state at tick cadence; a failure here must never
+  # skip the tick's heals or publish.
+  defp classify_progress(%__MODULE__{} = state, now) do
+    markers = progress_markers()
+
+    {baseline, history} =
+      rotate_progress_history(
+        state.progress_history,
+        Enum.filter(markers, &tier_cursors?/1),
+        now,
+        state.output_stall_grace_ms
+      )
+
+    verdicts =
+      StallClassifier.classify_producing(markers, baseline, %{
+        now: now,
+        grace_ms: state.output_stall_grace_ms
+      })
+
+    stuck =
+      for {id, {:stuck, detail, ctx}} <- verdicts, into: %{} do
+        {sh, pk} = ctx.segment
+        {id, %{detail: detail, segment: "#{sh}/#{pk}"}}
+      end
+
+    note_stuck_transitions(state.stuck_operatives, stuck)
+    %{state | progress_history: history, stuck_operatives: stuck}
+  rescue
+    e ->
+      Logger.warning("[convergence] producing-liveness skipped: #{Exception.message(e)}")
+      state
+  catch
+    _, _ -> state
+  end
+
+  # Per-Segment fed/advance evidence from the existing Watchdog/WalWriter
+  # state. Cursor fields (:input_log_tail, :min_watermark, :out_pending_seq,
+  # :outbox_flushed_seq) join these maps when the effectively-once tier
+  # lands; their absence degrades classification to WAL-seq-only.
+  defp progress_markers() do
+    Flezha.State.Watchdog.segment_statuses()
+    |> Enum.map(fn {{rc, sh, pk}, s} ->
+      %{
+        operative_id: rc,
+        segment: {sh, pk},
+        last_change_seen_at: s.last_change_seen_at,
+        last_advance_at: s.last_advance_at
+      }
+    end)
+  end
+
+  defp tier_cursors?(m),
+    do: is_integer(m[:min_watermark]) or is_integer(m[:outbox_flushed_seq])
+
+  # Keep the newest snapshot at least one grace window old as the
+  # cursor-delta baseline (plus everything younger); nil until one has aged
+  # enough, so cursor checks stay off during the first grace after boot.
+  @doc false
+  def rotate_progress_history(history, snapshot, now, grace_ms) do
+    {aged, young} =
+      Enum.split_with(history ++ [{now, snapshot}], fn {at, _} -> now - at >= grace_ms end)
+
+    case List.last(aged) do
+      nil -> {nil, young}
+      {_at, baseline} = entry -> {baseline, [entry | young]}
+    end
+  end
+
+  # Telemetry + operator log on stuck-set transitions only; steady state is
+  # visible in /healthz, not re-emitted every tick.
+  @doc false
+  def note_stuck_transitions(same, same), do: :ok
+
+  def note_stuck_transitions(prev, new) do
+    fresh = Map.drop(new, Map.keys(prev))
+    cleared = Map.keys(prev) -- Map.keys(new)
+
+    Enum.each(fresh, fn {id, %{detail: detail, segment: segment}} ->
+      Logger.warning("[convergence] operative stuck: #{id} #{detail} segment=#{segment}")
+
+      :telemetry.execute(
+        [:flezha, :convergence, :operative_stuck],
+        %{count: 1},
+        %{operative_id: id, detail: detail, segment: segment}
+      )
+    end)
+
+    if cleared != [], do: Logger.info("[convergence] stuck cleared for #{inspect(cleared)}")
+    :ok
+  end
+
+  # Durable evidence of prior intent (state dirs + durable-registry rows)
+  # contradicting the live intended set — the wiped-registry witness.
+  # Report-only; an operator resumes the operative or deletes its state
+  # (`flz state delete` / `flz reset`), which clears the entry.
+  defp detect_intent_mismatch(%__MODULE__{} = state, intent) do
+    {mismatch, cache} = intent_mismatch(intent, state.evidence_cache)
+    note_intent_mismatch_transition(state.intent_mismatch, mismatch)
+    %{state | intent_mismatch: mismatch, evidence_cache: cache}
+  rescue
+    e ->
+      Logger.warning("[convergence] intent-mismatch check skipped: #{Exception.message(e)}")
+      state
+  catch
+    _, _ -> state
+  end
+
+  @doc false
+  @spec intent_mismatch(Intent.t(), term()) :: {[binary()], term()}
+  def intent_mismatch(%Intent{operatives: operatives}, cache) do
+    live = MapSet.new(operatives, & &1.operative_id)
+    {dirs, cache} = state_root_dirs(cache)
+    evidence = MapSet.union(MapSet.new(dirs), HubManager.durable_operative_ids())
+
+    {evidence |> MapSet.difference(live) |> Enum.sort(), cache}
+  end
+
+  @doc false
+  def note_intent_mismatch_transition(same, same), do: :ok
+
+  def note_intent_mismatch_transition(_prev, []) do
+    Logger.info("[convergence] intent mismatch cleared")
+  end
+
+  def note_intent_mismatch_transition(_prev, mismatch) do
+    Logger.warning(
+      "[convergence] intent mismatch — durable state evidence without live intent: #{inspect(mismatch)}"
+    )
+
+    :telemetry.execute(
+      [:flezha, :convergence, :intent_mismatch],
+      %{count: length(mismatch)},
+      %{operatives: mismatch}
+    )
+  end
+
+  # First-level state-root listing, re-read only when the root dir's mtime
+  # changes (adding/removing an operative dir touches it; deeper writes do
+  # not). A cache entry younger than 2 s is never trusted — POSIX mtime has
+  # 1 s granularity, so a same-second add+remove would otherwise pin a stale
+  # listing forever.
+  defp state_root_dirs(cache) do
+    root = Flezha.State.Registry.state_root()
+
+    case File.stat(root, time: :posix) do
+      {:ok, %File.Stat{mtime: mtime}} ->
+        now_s = System.os_time(:second)
+
+        case cache do
+          {^mtime, dirs} when now_s - mtime > 1 ->
+            {dirs, cache}
+
+          _ ->
+            dirs =
+              case File.ls(root) do
+                {:ok, entries} -> Enum.filter(entries, &File.dir?(Path.join(root, &1)))
+                _ -> []
+              end
+
+            {dirs, {mtime, dirs}}
+        end
+
+      _ ->
+        {[], nil}
+    end
+  end
 
   defp tick_failed_telemetry() do
     :telemetry.execute(
@@ -418,7 +606,8 @@ defmodule Flezha.Convergence.Loop do
     intended = length(operatives)
     bound = map_size(Map.get(reality, :operatives, %{}))
     stalled = Map.keys(state.stalled_operatives)
-    non_producing = Enum.uniq(stalled ++ state.plugin_degraded)
+    stuck = Map.keys(state.stuck_operatives)
+    non_producing = Enum.uniq(stalled ++ stuck ++ state.plugin_degraded)
     producing = max(bound - length(non_producing), 0)
 
     # After a restart the durable registry may hold operatives that are not yet
@@ -443,7 +632,9 @@ defmodule Flezha.Convergence.Loop do
     Snapshot.publish(%{
       last_tick_at: now,
       stalled_operatives: stalled,
+      stuck_operatives: state.stuck_operatives,
       plugin_degraded_operatives: state.plugin_degraded,
+      intent_mismatch: state.intent_mismatch,
       intended_operatives: intended,
       bound_operatives: bound,
       producing_operatives: producing,
@@ -486,6 +677,7 @@ defmodule Flezha.Convergence.Loop do
           not MapSet.member?(live, bound) -> :failed
           Map.get(obs, :parked?, false) -> :degraded
           Map.has_key?(state.stalled_operatives, rid) -> :degraded
+          Map.has_key?(state.stuck_operatives, rid) -> :degraded
           MapSet.member?(plugin_degraded, rid) -> :degraded
           true -> :healthy
         end

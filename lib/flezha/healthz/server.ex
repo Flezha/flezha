@@ -11,10 +11,17 @@ defmodule Flezha.Healthz.Server do
       `producing_operatives` as distinct counters.
       - `200 OK` `{"status":"healthy", ...}` when every namespace hub is
         `:normal` and `producing_operatives == bound_operatives`.
+        `producing` derives from durable progress markers with the fed
+        precondition: an IDLE operative (no input, flat markers) counts as
+        producing; a STUCK one (fed but flat past grace) does not.
       - `200 OK` `{"status":"degraded", ...}` when
-        `producing_operatives < bound_operatives` (one or more operatives output-
-        stalled). A stalled operative is NOT a restart signal — kubelet must
-        leave the pod alone while the Loop rebinds it.
+        `producing_operatives < bound_operatives` (operatives output-stalled or
+        STUCK — per-operative detail `wal_frozen | watermark_frozen |
+        outbox_flat` in `stuck_operatives`) or when `intent_mismatch` is
+        non-empty (durable state evidence for operatives absent from the
+        live intended set — a wiped registry must never read healthy).
+        Neither is a restart signal — kubelet must leave the pod alone
+        while the Loop rebinds / the operator resumes or deletes state.
       - `200 OK` `{"status":"recovering", ...}` when any hub is in
         `:recovery_pending | :recovering` (kubelet must NOT restart
         during a planned recovery).
@@ -123,7 +130,9 @@ defmodule Flezha.Healthz.Server do
     intended = Map.get(current, :intended_operatives, bound)
     producing = Map.get(current, :producing_operatives, 0)
     stalled = Map.get(current, :stalled_operatives, [])
+    stuck = Map.get(current, :stuck_operatives, %{})
     plugin_degraded = Map.get(current, :plugin_degraded_operatives, [])
+    mismatch = Map.get(current, :intent_mismatch, [])
     pending_restore = Map.get(current, :pending_restore, false)
     unmet_intent_ms = Map.get(current, :unmet_intent_ms)
     last_tick_at = Map.get(current, :last_tick_at)
@@ -196,16 +205,20 @@ defmodule Flezha.Healthz.Server do
            producing_operatives: producing
          })}
 
-      producing < bound ->
+      # Never 503 on intent mismatch: the data plane may be legitimately
+      # stopped, and a kubelet restart cannot repair missing intent.
+      producing < bound or mismatch != [] ->
         {:degraded,
          encode_json(%{
            status: "degraded",
-           reason: degraded_reason(stalled, plugin_degraded),
+           reason: degraded_reason(stalled, plugin_degraded, stuck, mismatch),
            tick_age_ms: tick_age(last_tick_at),
            bound_operatives: bound,
            producing_operatives: producing,
            stalled_operatives: stalled,
-           plugin_degraded_operatives: plugin_degraded
+           stuck_operatives: stuck,
+           plugin_degraded_operatives: plugin_degraded,
+           intent_mismatch: mismatch
          })}
 
       true ->
@@ -219,9 +232,20 @@ defmodule Flezha.Healthz.Server do
     end
   end
 
-  defp degraded_reason(_stalled, []), do: "output_stalled"
-  defp degraded_reason([], _plugin_degraded), do: "plugin_unhealthy"
-  defp degraded_reason(_stalled, _plugin_degraded), do: "output_stalled+plugin_unhealthy"
+  # One composed reason string; "output_stalled" is the fallback when a
+  # producing shortfall carries no per-operative attribution.
+  defp degraded_reason(stalled, plugin_degraded, stuck, mismatch) do
+    [
+      if(stalled != [] or map_size(stuck) > 0, do: "output_stalled"),
+      if(plugin_degraded != [], do: "plugin_unhealthy"),
+      if(mismatch != [], do: "intent_mismatch")
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> case do
+      [] -> "output_stalled"
+      parts -> Enum.join(parts, "+")
+    end
+  end
 
   defp collect_recovery_states() do
     Snapshot.recovery_states() |> Map.values()

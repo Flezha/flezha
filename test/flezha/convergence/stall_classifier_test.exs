@@ -307,4 +307,109 @@ defmodule Flezha.Convergence.StallClassifierTest do
       filtered_nil: Keyword.get(opts, :filtered_nil, 0)
     }
   end
+
+  describe "classify_producing/3 (producing-liveness from progress markers)" do
+    @grace 60_000
+    @opts %{now: @now, grace_ms: @grace}
+
+    defp marker(overrides) do
+      Map.merge(
+        %{
+          operative_id: "btc",
+          segment: {"op", "k1"},
+          last_change_seen_at: @now,
+          last_advance_at: @now
+        },
+        Map.new(overrides)
+      )
+    end
+
+    test "idle operative (no input, flat markers) classifies IDLE" do
+      m =
+        marker(
+          last_change_seen_at: @now - 2 * @grace,
+          last_advance_at: @now - 2 * @grace
+        )
+
+      assert StallClassifier.classify_producing([m], nil, @opts) == %{"btc" => :idle}
+    end
+
+    test "fed but frozen WAL past grace is STUCK wal_frozen" do
+      m = marker(last_change_seen_at: @now - 1_000, last_advance_at: @now - 2 * @grace)
+
+      assert StallClassifier.classify_producing([m], nil, @opts) ==
+               %{"btc" => {:stuck, :wal_frozen, %{segment: {"op", "k1"}}}}
+    end
+
+    test "advancing markers classify advancing; absent tier cursors degrade to WAL-only" do
+      # No cursor fields and no baseline: only the WAL check runs.
+      m = marker(last_change_seen_at: @now - 500, last_advance_at: @now - 500)
+      assert StallClassifier.classify_producing([m], nil, @opts) == %{"btc" => :advancing}
+    end
+
+    test "growing input-log with flat min-watermark is STUCK watermark_frozen (tier on)" do
+      base = marker(input_log_tail: 100, min_watermark: 40)
+      # WAL itself is fed and advancing — only the watermark cursor is wedged.
+      cur = marker(input_log_tail: 250, min_watermark: 40)
+
+      assert %{"btc" => {:stuck, :watermark_frozen, %{segment: {"op", "k1"}}}} =
+               StallClassifier.classify_producing([cur], [base], @opts)
+    end
+
+    test "output-bearing records accumulating with flat flush cursor is STUCK outbox_flat" do
+      base = marker(out_pending_seq: 10, outbox_flushed_seq: 10)
+      cur = marker(out_pending_seq: 50, outbox_flushed_seq: 10)
+
+      assert %{"btc" => {:stuck, :outbox_flat, %{segment: {"op", "k1"}}}} =
+               StallClassifier.classify_producing([cur], [base], @opts)
+    end
+
+    test "one root cause reports one deepest verdict (frozen WAL wins)" do
+      base =
+        marker(
+          input_log_tail: 100,
+          min_watermark: 40,
+          out_pending_seq: 10,
+          outbox_flushed_seq: 10
+        )
+
+      # WAL frozen while fed; the frozen watermark and flat outbox are its
+      # consequences and must not stack.
+      cur =
+        marker(
+          last_change_seen_at: @now - 1_000,
+          last_advance_at: @now - 2 * @grace,
+          input_log_tail: 250,
+          min_watermark: 40,
+          out_pending_seq: 50,
+          outbox_flushed_seq: 10
+        )
+
+      assert %{"btc" => {:stuck, :wal_frozen, _ctx}} =
+               StallClassifier.classify_producing([cur], [base], @opts)
+    end
+
+    test "multi-segment collapse: any STUCK segment wins over advancing and idle" do
+      ok = marker(segment: {"op", "healthy"})
+
+      frozen =
+        marker(
+          segment: {"op", "wedged"},
+          last_change_seen_at: @now - 1_000,
+          last_advance_at: @now - 2 * @grace
+        )
+
+      idle_other =
+        marker(
+          operative_id: "eth",
+          last_change_seen_at: @now - 2 * @grace,
+          last_advance_at: @now - 2 * @grace
+        )
+
+      assert %{
+               "btc" => {:stuck, :wal_frozen, %{segment: {"op", "wedged"}}},
+               "eth" => :idle
+             } = StallClassifier.classify_producing([ok, frozen, idle_other], nil, @opts)
+    end
+  end
 end

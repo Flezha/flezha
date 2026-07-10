@@ -57,6 +57,14 @@ defmodule Flezha.State.Watchdog do
   def sweep_now(), do: GenServer.call(__MODULE__, :sweep_now)
 
   @doc """
+  Stall/advance evidence (`WalWriter.stall_status/1`) for every Segment with
+  a live writer. Stateless read used by the sweeps here and by the
+  convergence Loop's producing-liveness classification at tick cadence.
+  """
+  @spec segment_statuses() :: [{Registry.segment_id(), WalWriter.stall_status()}]
+  def segment_statuses(), do: collect_statuses(Registry.all_segments())
+
+  @doc """
   Record that a `CompactSegment` was shipped for `segment_id` so the
   handshake is bounded by `compaction_timeout_ms`. No-op when the
   Watchdog is not running (e.g. isolated unit tests).
@@ -132,8 +140,7 @@ defmodule Flezha.State.Watchdog do
   defp sweep_compaction_triggers(state, now) do
     age_ms = PersistenceResolver.compact_after_age_ms()
 
-    Registry.all_segments()
-    |> collect_statuses()
+    segment_statuses()
     |> Enum.reduce(state, fn {{_rc, sh, _pk} = segment_id, status}, acc ->
       with false <- Map.has_key?(acc.compactions, segment_id),
            executor_id when is_binary(executor_id) <- status.owning_executor,
@@ -180,8 +187,7 @@ defmodule Flezha.State.Watchdog do
     if timeout <= 0 do
       state
     else
-      Registry.all_segments()
-      |> collect_statuses()
+      segment_statuses()
       |> Enum.group_by(fn {{rc, _sh, _pk}, _status} -> rc end)
       |> Enum.reduce(state, fn {rc, list}, acc ->
         # The dataflow-stop watchdog is unbounded-only: a durable :bounded

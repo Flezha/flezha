@@ -184,9 +184,34 @@ of its own. The published map includes:
 - `bound_operatives`, `producing_operatives` (for the `degraded` vs `healthy` split)
 - `intended_operatives` (declared count); `bound < intended` ⇒ `/healthz` is
   `recovering` (post-restart rebind window), never `healthy`
-- `stalled_operatives` and `plugin_degraded_operatives` (both subtract from
-  `producing_operatives`; `/healthz` degraded reason distinguishes
-  `output_stalled` from `plugin_unhealthy`)
+- `stalled_operatives`, `stuck_operatives`, and `plugin_degraded_operatives`
+  (all subtract from `producing_operatives`; `/healthz` composes the degraded
+  reason from `output_stalled` / `plugin_unhealthy` / `intent_mismatch`)
+- `stuck_operatives` — the producing-liveness verdicts
+  (`StallClassifier.classify_producing/3` over per-Segment durable progress
+  markers read from `Flezha.State.Watchdog.segment_statuses/0` at tick
+  cadence). Every verdict carries the fed precondition: an operative whose
+  markers are flat with no input arriving is **IDLE** and counts as
+  producing (`/healthz` stays healthy); one that is fed but whose markers
+  stay flat past `:convergence_output_stall_grace_ms` is **STUCK** and does
+  not. STUCK detail is `wal_frozen` (persisted seq frozen while Changes
+  arrive), or — once the effectively-once tier lands — `watermark_frozen`
+  (input-log tail grows, min-watermark flat) / `outbox_flat` (output-bearing
+  records accumulate, flush cursor flat); absent tier cursors degrade the
+  classification to WAL-seq-only. One root cause freezing several markers
+  yields the single deepest verdict per operative. Heartbeats and channel
+  state are never producing-liveness inputs. Report-only: healing stays on
+  the `:output_stall → rebind` path.
+- `intent_mismatch` — operatives with durable evidence of prior intent
+  (first-level `app_data/state/` directories, mtime-cached, plus
+  durable-registry rows of running hubs) that are absent from the live
+  intended set. A wiped registry cannot be detected from the live registry
+  alone — the durable evidence is the witness. Non-empty ⇒ `/healthz` is
+  `200 degraded` with reason `intent_mismatch` naming the operatives, never
+  a vacuous `200 healthy` and never 503 (a kubelet restart cannot repair
+  missing intent). A deliberate decommission clears the entry by deleting
+  the state (`flz state delete` / `flz reset`); recovery states take
+  precedence while a hub is mid-replay.
 - `unmet_intent_ms` — how long `bound < intended` has held while not
   recovering (nil otherwise). Once it exceeds
   `:convergence_unmet_intent_grace_ms`, `/healthz` escalates `recovering →
@@ -225,6 +250,11 @@ of its own. The published map includes:
 | `[:flezha, :convergence, :tick]` | `%{operatives_total, actions_issued, duration_ms}` | `%{state: :ticking \| :error}` |
 | `[:flezha, :convergence, :heal]` | `%{count}` | `%{primitive, namespace, target}` |
 | `[:flezha, :convergence, :safe_call]` | `%{count}` | `%{result, server, …probe fields}` |
+| `[:flezha, :convergence, :operative_stuck]` | `%{count: 1}` | `%{operative_id, detail, segment}` — emitted once per fresh STUCK verdict, not on steady state |
+| `[:flezha, :convergence, :intent_mismatch]` | `%{count}` | `%{operatives}` — emitted when the mismatch list changes to a non-empty value |
+
+Both new events are bridged onto the observability bus as `:flezha_convergence`
+signals by `TelemetryBridge`.
 
 A healthy cluster emits `actions_issued: 0` on most ticks. Sustained non-zero
 `actions_issued` in steady state indicates a structural problem (read race,

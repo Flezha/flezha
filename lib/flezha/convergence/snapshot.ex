@@ -25,6 +25,8 @@ defmodule Flezha.Convergence.Snapshot do
   @default_current %{
     last_tick_at: nil,
     stalled_operatives: [],
+    stuck_operatives: %{},
+    intent_mismatch: [],
     bound_operatives: 0,
     producing_operatives: 0,
     operative_health: %{}

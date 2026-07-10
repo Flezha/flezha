@@ -705,6 +705,23 @@ defmodule Flezha.Service.HubManager do
     :exit, _ -> 0
   end
 
+  @doc """
+  Operative ids present in the durable registries of running hubs — durable
+  evidence of intent consumed by the convergence intent-mismatch check.
+  """
+  @spec durable_operative_ids() :: MapSet.t()
+  def durable_operative_ids() do
+    list_running_hub_ids()
+    |> Enum.flat_map(&durable_operative_keys/1)
+    |> MapSet.new()
+  end
+
+  defp durable_operative_keys(hub_id) do
+    ProcessRegistry.dump(hub_id) |> Map.keys() |> Enum.filter(&is_binary/1)
+  catch
+    :exit, _ -> []
+  end
+
   # On-disk registry.dets for a hub that has not started yet.
   defp unstarted_hub_has_registry?() do
     running = MapSet.new(list_running_hub_ids())
