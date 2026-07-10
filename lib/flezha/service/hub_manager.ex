@@ -645,7 +645,7 @@ defmodule Flezha.Service.HubManager do
               }
             ]
           },
-          Snapshot.hook_handlers()
+          Snapshot.hook_handlers(hub_id)
         )
     })
   end

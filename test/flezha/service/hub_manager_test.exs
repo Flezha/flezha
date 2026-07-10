@@ -323,7 +323,7 @@ defmodule Flezha.Service.HubManagerTest do
       assert_receive :await_started, 1_000
 
       # Simulate the upstream recovery_state_changed hook reaching :normal.
-      Snapshot.handle_recovery_transition(%{hub_id: hub_id, to: :normal, reason: :replay_complete})
+      Snapshot.handle_recovery_transition(hub_id, %{to: :normal, reason: :replay_complete})
 
       assert :ok = Task.await(task, 2_000)
     end

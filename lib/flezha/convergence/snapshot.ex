@@ -111,12 +111,13 @@ defmodule Flezha.Convergence.Snapshot do
   # ---------- recovery_state_changed hook callback ----------
 
   @doc """
-  Handler for ProcessHub's `recovery_state_changed` hook. Registered per-hub by
-  `HubManager` (see `hook_handlers/0`). Maps the lifecycle transition to the
-  cached recovery state.
+  Handler for ProcessHub's `recovery_state_changed` hook. Registered per-hub
+  by `HubManager` (see `hook_handlers/1`). The hook payload carries only the
+  transition (`%{from, to, reason}` — no hub identity), so the hub_id is
+  bound as a literal arg at registration, the same way `alter_child_data`
+  gets its hub. Maps the lifecycle transition to the cached recovery state.
   """
-  def handle_recovery_transition(%{hub_id: hub_id, to: to, reason: reason})
-      when is_atom(hub_id) do
+  def handle_recovery_transition(hub_id, %{to: to, reason: reason}) when is_atom(hub_id) do
     state =
       case {to, reason} do
         {:recovering, _} -> :recovering
@@ -128,21 +129,21 @@ defmodule Flezha.Convergence.Snapshot do
     observe_recovery(hub_id, state)
   end
 
-  def handle_recovery_transition(_data), do: :ok
+  def handle_recovery_transition(_hub_id, _data), do: :ok
 
   @doc """
-  Hook config injected into every `%ProcessHub{}` so this Snapshot observes the
-  recovery lifecycle. Merge into the hub's `:hooks` map.
+  Hook config injected into `hub_id`'s `%ProcessHub{}` so this Snapshot
+  observes the recovery lifecycle. Merge into the hub's `:hooks` map.
   """
-  @spec hook_handlers() :: map()
-  def hook_handlers do
+  @spec hook_handlers(atom()) :: map()
+  def hook_handlers(hub_id) do
     %{
       ProcessHub.Constant.Hook.recovery_state_changed() => [
         %ProcessHub.Service.HookManager{
           id: :flezha_snapshot_recovery,
           m: __MODULE__,
           f: :handle_recovery_transition,
-          a: [:_]
+          a: [hub_id, :_]
         }
       ]
     }
