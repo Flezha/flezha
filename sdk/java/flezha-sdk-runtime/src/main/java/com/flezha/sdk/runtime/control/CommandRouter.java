@@ -9,6 +9,8 @@ import com.flezha.sdk.runtime.control.handlers.AssignExecutorIdHandler;
 import com.flezha.sdk.runtime.control.handlers.BoundedStopHandler;
 import com.flezha.sdk.runtime.control.handlers.CompactSegmentHandler;
 import com.flezha.sdk.runtime.control.handlers.ConnectSocketHandler;
+import com.flezha.sdk.runtime.control.handlers.CreditGrantHandler;
+import com.flezha.sdk.runtime.control.handlers.CreditWindowInitHandler;
 import com.flezha.sdk.runtime.control.handlers.ExecutorDisconnectHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationDeserializationHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationSerializationHandler;
@@ -69,6 +71,10 @@ public final class CommandRouter {
         registerCase(mut, "PING", new PingHandler());
         // Cooperative external stop for a bounded operative (bounded-operative-functionality).
         registerCase(mut, "BOUNDED_STOP", new BoundedStopHandler());
+        // Credit-grant flow control: the init arms the sender window and acks
+        // in its CommandResponse; grants replenish it.
+        registerCase(mut, "CREDIT_WINDOW_INIT", new CreditWindowInitHandler());
+        registerCase(mut, "CREDIT_GRANT", new CreditGrantHandler());
         this.handlers = java.util.Collections.unmodifiableMap(mut);
     }
 

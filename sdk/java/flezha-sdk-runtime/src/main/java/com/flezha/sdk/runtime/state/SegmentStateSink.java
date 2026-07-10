@@ -88,6 +88,10 @@ public final class SegmentStateSink {
      * it was absent. Called at every {@code ConnectSocket}.
      */
     public static void installGlobalSink(@Nonnull FrameWriter writer) {
+        // Credit never carries across sessions: drop the old window (waking
+        // any parked sender into the legacy path) until the controller
+        // re-offers CreditWindowInit for the fresh attach.
+        CreditWindow.disarm();
         List<RingFrame> replay;
         synchronized (LOCK) {
             sink = writer;

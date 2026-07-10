@@ -28,6 +28,10 @@ defmodule Flezha.State.PersistenceResolver do
     * `:compaction_timeout_ms` — global; the bound on the
        `CompactSegment` → `segment_state_snapshot` handshake.
        Default `30_000`. `0` disables the compaction-timeout sweep.
+    * `:credit_window_bytes` — `%{<OperativeClass> => pos_integer}`.
+       Byte window offered in `CreditWindowInit` for a state stream whose
+       first Change belongs to that class. Global default
+       `:wal_high_watermark_bytes` (16 MiB).
   """
 
   @default_persistence_enabled true
@@ -39,20 +43,10 @@ defmodule Flezha.State.PersistenceResolver do
 
   @spec persistence_enabled?(binary(), map()) :: boolean()
   def persistence_enabled?(operative_class, metadata \\ %{}) when is_binary(operative_class) do
-    case operator_override(:operative_persistence, operative_class) do
-      {:ok, value} when is_boolean(value) ->
-        value
-
-      _ ->
-        case Map.get(
-               metadata,
-               "operative_persistence_enabled",
-               Map.get(metadata, :operative_persistence_enabled)
-             ) do
-          v when is_boolean(v) -> v
-          _ -> @default_persistence_enabled
-        end
-    end
+    resolve(:operative_persistence, :operative_persistence_enabled, operative_class, metadata,
+      valid: &is_boolean/1,
+      default: fn -> @default_persistence_enabled end
+    )
   end
 
   @doc """
@@ -84,27 +78,16 @@ defmodule Flezha.State.PersistenceResolver do
 
   @spec retention_hours(binary(), map()) :: non_neg_integer()
   def retention_hours(operative_class, metadata \\ %{}) when is_binary(operative_class) do
-    case operator_override(:time_travel_retention_hours, operative_class) do
-      {:ok, value} when is_integer(value) and value >= 0 ->
-        value
-
-      _ ->
-        case Map.get(
-               metadata,
-               "time_travel_retention_hours",
-               Map.get(metadata, :time_travel_retention_hours)
-             ) do
-          v when is_integer(v) and v >= 0 ->
-            v
-
-          _ ->
-            Application.get_env(
-              :flezha,
-              :default_time_travel_retention_hours,
-              @default_retention_hours
-            )
-        end
-    end
+    resolve(:time_travel_retention_hours, :time_travel_retention_hours, operative_class, metadata,
+      valid: &non_neg_int?/1,
+      default: fn ->
+        Application.get_env(
+          :flezha,
+          :default_time_travel_retention_hours,
+          @default_retention_hours
+        )
+      end
+    )
   end
 
   @doc """
@@ -117,27 +100,20 @@ defmodule Flezha.State.PersistenceResolver do
   @spec bounded_completed_retention_hours(binary(), map()) :: non_neg_integer()
   def bounded_completed_retention_hours(operative_class, metadata \\ %{})
       when is_binary(operative_class) do
-    case operator_override(:bounded_completed_retention_hours, operative_class) do
-      {:ok, value} when is_integer(value) and value >= 0 ->
-        value
-
-      _ ->
-        case Map.get(
-               metadata,
-               "bounded_completed_retention_hours",
-               Map.get(metadata, :bounded_completed_retention_hours)
-             ) do
-          v when is_integer(v) and v >= 0 ->
-            v
-
-          _ ->
-            Application.get_env(
-              :flezha,
-              :default_bounded_completed_retention_hours,
-              @default_bounded_completed_retention_hours
-            )
-        end
-    end
+    resolve(
+      :bounded_completed_retention_hours,
+      :bounded_completed_retention_hours,
+      operative_class,
+      metadata,
+      valid: &non_neg_int?/1,
+      default: fn ->
+        Application.get_env(
+          :flezha,
+          :default_bounded_completed_retention_hours,
+          @default_bounded_completed_retention_hours
+        )
+      end
+    )
   end
 
   @spec compact_after_bytes(binary(), map()) :: pos_integer()
@@ -153,27 +129,24 @@ defmodule Flezha.State.PersistenceResolver do
 
   @spec output_stall_timeout_ms(binary(), map()) :: non_neg_integer()
   def output_stall_timeout_ms(operative_class, metadata \\ %{}) when is_binary(operative_class) do
-    case operator_override(:output_stall_timeout_ms, operative_class) do
-      {:ok, value} when is_integer(value) and value >= 0 ->
-        value
+    resolve(:output_stall_timeout_ms, :output_stall_timeout_ms, operative_class, metadata,
+      valid: &non_neg_int?/1,
+      default: fn ->
+        Application.get_env(
+          :flezha,
+          :default_output_stall_timeout_ms,
+          @default_output_stall_timeout_ms
+        )
+      end
+    )
+  end
 
-      _ ->
-        case Map.get(
-               metadata,
-               "output_stall_timeout_ms",
-               Map.get(metadata, :output_stall_timeout_ms)
-             ) do
-          v when is_integer(v) and v >= 0 ->
-            v
-
-          _ ->
-            Application.get_env(
-              :flezha,
-              :default_output_stall_timeout_ms,
-              @default_output_stall_timeout_ms
-            )
-        end
-    end
+  @spec credit_window_bytes(binary(), map()) :: pos_integer()
+  def credit_window_bytes(operative_class, metadata \\ %{}) when is_binary(operative_class) do
+    resolve(:credit_window_bytes, :credit_window_bytes, operative_class, metadata,
+      valid: &(is_integer(&1) and &1 > 0),
+      default: fn -> Application.get_env(:flezha, :wal_high_watermark_bytes, 16 * 1024 * 1024) end
+    )
   end
 
   @spec compaction_timeout_ms() :: non_neg_integer()
@@ -183,6 +156,33 @@ defmodule Flezha.State.PersistenceResolver do
       _ -> @default_compaction_timeout_ms
     end
   end
+
+  # Shared three-source cascade (moduledoc precedence): operator override
+  # map -> AddOperative instance metadata (string or atom key) -> default.
+  # `valid:` gates each source; an invalid value falls through to the next.
+  defp resolve(override_key, meta_key, operative_class, metadata, opts) do
+    valid? = Keyword.fetch!(opts, :valid)
+    default = Keyword.fetch!(opts, :default)
+
+    with :error <- validated(operator_override(override_key, operative_class), valid?),
+         :error <- validated(metadata_value(metadata, meta_key), valid?) do
+      default.()
+    else
+      {:ok, v} -> v
+    end
+  end
+
+  defp metadata_value(metadata, meta_key) do
+    case Map.get(metadata, Atom.to_string(meta_key), Map.get(metadata, meta_key)) do
+      nil -> :error
+      v -> {:ok, v}
+    end
+  end
+
+  defp validated({:ok, v}, valid?), do: if(valid?.(v), do: {:ok, v}, else: :error)
+  defp validated(:error, _valid?), do: :error
+
+  defp non_neg_int?(v), do: is_integer(v) and v >= 0
 
   defp operator_override(key, operative_class) do
     case Application.get_env(:flezha, key) do

@@ -1,5 +1,8 @@
 defmodule Flezha.Executor.StreamChannel do
+  alias Flezha.Executor.ControlChannel
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Service.Identificator
+  alias Flezha.State.PersistenceResolver
   alias Flezha.State.Wire, as: StateWire
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Native
@@ -14,6 +17,7 @@ defmodule Flezha.Executor.StreamChannel do
 
   @io_liveness_interval_ms 10_000
   @io_liveness_threshold_ms 30_000
+  @credit_handshake_timeout_ms 10_000
 
   @impl true
   def init({executor_id, type, name}) do
@@ -33,7 +37,13 @@ defmodule Flezha.Executor.StreamChannel do
         operative_mapping: %{},
         name: name,
         last_seen: System.monotonic_time(:millisecond),
-        liveness_ref: LivenessCounters.register_channel(executor_id, name)
+        liveness_ref: LivenessCounters.register_channel(executor_id, name),
+        # Credit-grant flow control ledger for this state stream.
+        # `nil` until the first state-change frame triggers the
+        # `CreditWindowInit` offer; then `%{status: :offered | :active |
+        # :legacy, session, window, low, debited, drained, granted, overrun?}`.
+        # `:legacy` is terminal for the attach (pre-credit SDK / nack).
+        credit: nil
       }
     }
   end
@@ -165,7 +175,7 @@ defmodule Flezha.Executor.StreamChannel do
   @impl true
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id == "segment_state_change" do
-    handle_segment_state_change(state.executor_id, message)
+    state = handle_segment_state_change(state, message)
     {:noreply, mark_seen(state)}
   end
 
@@ -206,6 +216,13 @@ defmodule Flezha.Executor.StreamChannel do
 
     case Integer.parse(Map.get(metadata, "dispatches", "")) do
       {dispatches, _} -> LivenessCounters.set_channel(ref, :hb_dispatches, dispatches)
+      :error -> :ok
+    end
+
+    # Credit-park self-report: advancing while dispatches freeze classifies
+    # the executor as fed-but-parked on credit, not silently frozen.
+    case Integer.parse(Map.get(metadata, "credit_parked", "")) do
+      {parked, _} -> LivenessCounters.set_channel(ref, :hb_credit_parked, parked)
       :error -> :ok
     end
 
@@ -276,6 +293,60 @@ defmodule Flezha.Executor.StreamChannel do
     {:noreply, state}
   end
 
+  # Credit handshake outcome, sent by the offer Task. The ack activates the
+  # ledger; a nack (pre-credit SDK, timeout, transport error) pins the attach
+  # to the legacy SegmentMailboxStatus path. Session mismatches are stale
+  # outcomes from a superseded attach and are dropped.
+  def handle_info(
+        {:credit_ack, session},
+        %{credit: %{status: :offered, session: session}} = state
+      ) do
+    credit = %{state.credit | status: :active}
+
+    Logger.info(
+      "[stream_channel] credit session established for #{state.executor_id}: " <>
+        "session=#{session} window=#{credit.window} low=#{credit.low}"
+    )
+
+    LivenessCounters.set_channel(state.liveness_ref, :credit_active, 1)
+    put_ledger_level(state, credit)
+    {:noreply, %{state | credit: credit}}
+  end
+
+  def handle_info({:credit_ack, _session}, state), do: {:noreply, state}
+
+  def handle_info(
+        {:credit_nack, session},
+        %{credit: %{status: :offered, session: session}} = state
+      ) do
+    Logger.debug(
+      "[stream_channel] credit handshake declined for #{state.executor_id} " <>
+        "(pre-credit SDK or timeout); staying on the legacy path"
+    )
+
+    {:noreply, %{state | credit: %{state.credit | status: :legacy}}}
+  end
+
+  def handle_info({:credit_nack, _session}, state), do: {:noreply, state}
+
+  # Durable-drain report from a WalWriter fed by this stream: `bytes` of
+  # previously-debited credit are freed (fsynced, or dropped without ever
+  # occupying the un-fsynced buffer). One batched CreditGrant goes out when
+  # the freed credit brings the un-fsynced buffer below the low watermark —
+  # never per record, and a stalled fsync reports nothing so nothing is
+  # minted.
+  def handle_info(
+        {:credit_drained, session, bytes},
+        %{credit: %{status: :active, session: session} = credit} = state
+      ) do
+    credit = maybe_grant(state, %{credit | drained: credit.drained + bytes})
+    put_ledger_level(state, credit)
+    {:noreply, %{state | credit: credit}}
+  end
+
+  # Drain report tagged with a superseded session (reconnect voided it) — stale.
+  def handle_info({:credit_drained, _session, _bytes}, state), do: {:noreply, state}
+
   # NIF transport: stream closed. Synchronous rebindability contract — once
   # this clause runs, state.stream_ref is nil and no outbound send may use
   # the dead ref. The acceptor will pick this channel up via :stream_ref_status
@@ -288,7 +359,7 @@ defmodule Flezha.Executor.StreamChannel do
     # Watchdog's 60s grace period to detect the dead socket.
     emit_output_stall(state.operative_mapping)
 
-    {:noreply, %{state | stream_ref: nil}}
+    {:noreply, %{state | stream_ref: nil} |> reset_credit()}
   end
 
   def handle_info(msg, state) do
@@ -315,25 +386,198 @@ defmodule Flezha.Executor.StreamChannel do
   # non-blocking cast: the writer appends, drives seq-gap resync, and writes
   # snapshots (an fsync) in its own process, so disk/recovery latency never
   # stalls this channel — which also carries the operative's output frames.
-  defp handle_segment_state_change(executor_id, frame) do
+  # The per-Segment queue that keeps a slow Segment from stalling siblings on
+  # this stream is each WalWriter's own mailbox: the cast demuxes here and
+  # queues there, so only the shared credit window couples Segments.
+  defp handle_segment_state_change(state, frame) do
     case StateWire.decode_frame(frame) do
       {:ok, %{segment_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
         segment_id = {rc, sh, pk}
 
         case Flezha.State.Supervisor.find_or_start(segment_id) do
           {:ok, pid} ->
-            Flezha.State.WalWriter.append_async(pid, seq, header, body, executor_id)
+            case credit_admit(state, rc, byte_size(frame)) do
+              {:shed, state} ->
+                state
+
+              {credit_opts, state} ->
+                Flezha.State.WalWriter.append_async(
+                  pid,
+                  seq,
+                  header,
+                  body,
+                  state.executor_id,
+                  credit_opts
+                )
+
+                state
+            end
 
           {:error, reason} ->
             Logger.error(
               "[stream] segment_state_change WalWriter start failed " <>
                 "segment=#{inspect(segment_id)}: #{inspect(reason)}"
             )
+
+            state
         end
 
       {:error, reason} ->
         Logger.warning("[stream] segment_state_change decode failed: #{inspect(reason)}")
+        state
     end
+  end
+
+  # ---------- Credit-grant flow control ----------
+
+  # Admit one state-change frame against the stream's credit ledger.
+  # Returns `{credit_opts_for_append, state}` or `{:shed, state}` for a
+  # frame overrunning an exhausted ledger (protocol violation — the seq gap
+  # it leaves drives the existing resync repair).
+  defp credit_admit(%{credit: nil} = state, operative_class, _size) do
+    if credit_enabled?() do
+      {%{}, offer_credit_window(state, operative_class)}
+    else
+      {%{}, state}
+    end
+  end
+
+  defp credit_admit(%{credit: %{status: :active} = credit} = state, _class, size) do
+    un_fsynced = credit.debited - credit.drained
+
+    if un_fsynced > 0 and un_fsynced + size > credit.window do
+      credit = %{credit | overrun?: true}
+      LivenessCounters.bump_channel(state.liveness_ref, :credit_overrun_total)
+
+      :telemetry.execute(
+        [:flezha, :state, :credit_anomaly],
+        %{count: 1, un_fsynced: un_fsynced, frame_bytes: size},
+        %{kind: :overrun, executor: state.executor_id, session: credit.session}
+      )
+
+      unless state.credit.overrun? do
+        Logger.warning(
+          "[stream_channel] credit overrun: executor=#{state.executor_id} " <>
+            "session=#{credit.session} un_fsynced=#{un_fsynced} frame=#{size} " <>
+            "window=#{credit.window} — shedding (protocol violation, resync repairs)"
+        )
+      end
+
+      {:shed, %{state | credit: credit}}
+    else
+      credit = %{credit | debited: credit.debited + size, overrun?: false}
+      put_ledger_level(state, credit)
+
+      {%{channel: self(), session: credit.session, wire_size: size, credit_active: true},
+       %{state | credit: credit}}
+    end
+  end
+
+  # `:offered` (handshake in flight) and `:legacy` (nack / kill switch at
+  # offer time) both admit un-metered — byte-for-byte the pre-credit path.
+  defp credit_admit(state, _class, _size), do: {%{}, state}
+
+  # Offer `CreditWindowInit` for this attach. Runs on the FIRST state-change
+  # frame rather than at stream bind so the offer is guaranteed to originate
+  # from the channel on the actual state path, and so the window can resolve
+  # per-Operative from that frame's class. The offer rides the ControlUnit's
+  # request/reply machinery in a Task: the SDK's ack comes back as the
+  # CommandResponse raw_data; a pre-credit SDK never replies and the call
+  # timeout degrades the session to `:legacy`.
+  defp offer_credit_window(state, operative_class) do
+    session = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+    window = PersistenceResolver.credit_window_bytes(operative_class)
+    low = Application.get_env(:flezha, :credit_low_watermark_bytes, div(window, 2))
+
+    parent = self()
+    executor_id = state.executor_id
+
+    Task.start(fn ->
+      init = %ExecutorCommands.CreditWindowInit{
+        stream_id: session,
+        window_bytes: window,
+        low_watermark_bytes: low
+      }
+
+      outcome =
+        try do
+          GenServer.call(
+            Identificator.control_unit(executor_id),
+            {:send_control, {:credit_window_init, init}},
+            @credit_handshake_timeout_ms
+          )
+        catch
+          :exit, _ -> {:error, :no_reply}
+        end
+
+      case outcome do
+        {:ok, raw_data} ->
+          case ExecutorCommands.CreditWindowAck.decode(raw_data) do
+            {:ok, %ExecutorCommands.CreditWindowAck{stream_id: ^session}} ->
+              send(parent, {:credit_ack, session})
+
+            _ ->
+              send(parent, {:credit_nack, session})
+          end
+
+        _ ->
+          send(parent, {:credit_nack, session})
+      end
+    end)
+
+    %{
+      state
+      | credit: %{
+          status: :offered,
+          session: session,
+          window: window,
+          low: low,
+          debited: 0,
+          drained: 0,
+          granted: 0,
+          overrun?: false
+        }
+    }
+  end
+
+  # One batched CreditGrant covering all freed-but-ungranted bytes, sent only
+  # when the un-fsynced buffer is below the low watermark — never per record.
+  defp maybe_grant(state, credit) do
+    if credit.debited - credit.drained < credit.low and credit.drained > credit.granted do
+      ControlChannel.send_control_async(
+        state.executor_id,
+        {:credit_grant,
+         %ExecutorCommands.CreditGrant{
+           stream_id: credit.session,
+           bytes: credit.drained - credit.granted
+         }}
+      )
+
+      %{credit | granted: credit.drained}
+    else
+      credit
+    end
+  end
+
+  defp put_ledger_level(state, credit) do
+    LivenessCounters.set_channel(
+      state.liveness_ref,
+      :credit_ledger_level,
+      credit.window - (credit.debited - credit.drained)
+    )
+  end
+
+  # Stream re-attach voids the session: the next state frame re-runs the
+  # handshake with a fresh session id, so grants in flight for the dead
+  # session can never apply (the SDK discards a session mismatch).
+  defp reset_credit(state) do
+    LivenessCounters.set_channel(state.liveness_ref, :credit_active, 0)
+    LivenessCounters.set_channel(state.liveness_ref, :credit_ledger_level, 0)
+    %{state | credit: nil}
+  end
+
+  defp credit_enabled?() do
+    Application.get_env(:flezha, :credit_flow_control_enabled, true)
   end
 
   # Writing a snapshot fsyncs and truncates the per-segment WAL (a call back

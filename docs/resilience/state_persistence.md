@@ -130,27 +130,72 @@ Segment under `Registry.all_segments/0`:
 WAL rewrite is `segment.wal.rewriting → rename` so a mid-rewrite crash
 leaves the original WAL intact.
 
-## Back-pressure
+## Flow control
 
-`WalWriter` tracks `pending_bytes` (queued-but-not-fsynced bytes). When
-it crosses `:flezha, :wal_high_watermark_bytes` (default 16 MiB) the
-writer emits a `[:flezha, :state, :wal, :backpressure]` telemetry event
-AND calls `Flezha.Operative.Overwatch.notify_segment_backpressure/2`
-which ships a `SegmentMailboxStatus{status: "full"}` control command
-to the SDK. When `pending_bytes` falls below `wal_low_watermark_bytes`
-(default `high_watermark / 2`), a corresponding `"open"` notification
-fires.
+### Credit-grant (primary)
 
-The hysteresis prevents oscillation around the threshold. The SDK's
-per-Segment mailbox observer translates the signal into the channel's
-declared `OverflowPolicy` (see the Rust SDK bounded-mailbox surface).
+Executor→controller flow control on the state stream is credit-based:
+park, never drop. On the first `segment_state_change` frame of a stream
+attach, the `StreamChannel` offers `CreditWindowInit{stream_id,
+window_bytes, low_watermark_bytes}` over the control channel (kill
+switch: `FLEZHA_CREDIT_FLOW_CONTROL=false` skips the offer). The window
+resolves per-Operative via `PersistenceResolver.credit_window_bytes/2`
+(`:credit_window_bytes` override map, default `wal_high_watermark_bytes`);
+the `stream_id` is an opaque session id minted fresh per attach. The SDK
+acks by returning `CreditWindowAck` as the command's response; on ack the
+session is *credit-speaking* and the channel enforces a per-stream byte
+ledger:
 
-### Hard in-memory bound (shed)
+* **Debit on receipt** — every state-change frame's wire size is debited;
+  the controller's un-fsynced buffer per stream is bounded by
+  `window_bytes` (a frame arriving on an empty buffer is admitted even if
+  larger than the window — single-frame overshoot).
+* **Fsync mints credit** — `WalWriter` attributes each written frame's
+  wire bytes to the debiting channel (`credit_pending`, session-tagged)
+  and reports them back on durable drain (`{:credit_drained, session,
+  bytes}` on fsync/truncate; immediately for dedup/gap/shed/realign drops
+  that never occupy the buffer). One batched `CreditGrant` goes out when
+  the freed credit brings the un-fsynced buffer below
+  `low_watermark_bytes` — never per record; a stalled fsync mints nothing.
+* **Sender parks on exhaustion** — the SDK (`sdk/rust/src/segment/credit.rs`,
+  `sdk/java .../state/CreditWindow.java`) debits each frame before the
+  sink write and parks the flush path (under the buffer lock, so
+  producers throttle at the buffer boundary) until the next grant. Parks
+  are bounded-wait loops; the `credit_parked` counter advances while
+  parked and ships in `data_heartbeat` metadata, so a credit-parked
+  executor classifies as fed-but-parked, not silently frozen. Grants and
+  heartbeats ride threads that never park.
+* **Reconnect resets the ledger** — a re-attach re-runs the handshake
+  with a fresh session id; drain reports and grants tagged with a dead
+  session are discarded on both sides.
+* **Overrun is an anomaly** — a frame past the exhausted ledger is a
+  protocol violation: shed at the channel (the seq gap drives the
+  existing resync repair), counted in `credit_overrun_total`, and
+  emitted as `[:flezha, :state, :credit_anomaly]`.
 
-The soft watermark only *signals* the SDK; nothing forces a
-non-cooperating SDK (or a wedged disk) to slow down. A hard bound,
-strictly above the soft watermark, caps the writer's own memory:
-`append_async/5` sheds (drops) the incoming Change when either
+Soak-proven against the 06-21 mock-Kraken load
+(`test/load/credit_soak_test.exs`, ≥1100 msg/s with a deliberately
+slowed fsync path): flat controller memory, zero sheds, zero loss,
+park/resume cycling visible in counters.
+
+### Legacy status flags (pre-credit sessions only)
+
+For sessions that never complete the credit handshake, `WalWriter`
+keeps the advisory path byte-for-byte: crossing
+`:flezha, :wal_high_watermark_bytes` (default 16 MiB) emits a
+`[:flezha, :state, :wal, :backpressure]` telemetry event AND ships
+`SegmentMailboxStatus{status: "full"}` to the SDK (routed via the
+writer's `owning_executor`); draining below `wal_low_watermark_bytes`
+(default `high_watermark / 2`) ships `"open"`. The hysteresis prevents
+oscillation. Credit-speaking sessions get the telemetry event only —
+no wire signal. SDK-side the flags are tolerated and dropped
+(compatibility shims); the send path is bounded by local mailbox
+policies plus the credit window.
+
+### Hard in-memory bound (shed — last-resort anomaly path)
+
+A hard bound, strictly above the soft watermark, caps the writer's own
+memory: `append_async/6` sheds (drops) the incoming Change when either
 `pending_bytes` reaches `:flezha, :wal_hard_watermark_bytes` (default
 `4 ×` the soft watermark) **or** the writer's mailbox depth reaches
 `:flezha, :wal_pending_msg_cap` (default `5_000` — a cast flood grows
@@ -160,9 +205,14 @@ gap drives the existing `Recovery.resync` handshake (once per shed
 episode), so the SDK — authoritative for segment state — re-sends the
 missing Changes. Back-pressure sheds, never blocks: the async cast path
 stays non-blocking so a slow disk cannot stall the data-plane channel.
-This is the controller-side mirror of the SDK bounded-mailbox
-`DropNewest` policy and bounds the blast radius of the 2026-06-19
-OOM.
+
+For pre-credit sessions this is the safety net against a slow disk or
+an SDK ignoring the status flags. For a credit-speaking session the
+ledger refuses an overrunning frame before the hard bound is reachable,
+so a conformant sender never sheds — any shed recorded against a
+credit-speaking session emits `[:flezha, :state, :credit_anomaly]`
+(kind `:shed`) and is an alerting condition, never expected
+back-pressure.
 
 ## Time-travel CLI
 

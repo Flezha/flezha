@@ -8,7 +8,9 @@
 # `:memory_drift` is the long-running load harness in
 # `test/load/memory_drift_test.exs`; it also requires
 # `MIX_RUN_MEMORY_DRIFT=1`.
-ExUnit.start(exclude: [:system, :java_sdk, :kafka_integration, :testnet, :memory_drift])
+ExUnit.start(
+  exclude: [:system, :java_sdk, :kafka_integration, :testnet, :memory_drift, :credit_soak]
+)
 
 # ProcessHub's `LoggerService.error/3` logs every `StartChildrenRequest`
 # failure at error level — useful in production, but multiple tests

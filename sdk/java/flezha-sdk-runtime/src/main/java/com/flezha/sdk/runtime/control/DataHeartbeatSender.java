@@ -68,7 +68,13 @@ public final class DataHeartbeatSender {
     }
 
     private void tick() {
-        byte[] frame = FrameEncoder.build(DATA_HEARTBEAT_PAYLOAD_ID, new byte[0], Map.of());
+        // Credit-park self-report: this scheduler thread never parks on
+        // credit, so the counter advancing while data threads are wedged
+        // classifies the executor as fed-but-parked, not silently frozen.
+        byte[] frame = FrameEncoder.build(
+                DATA_HEARTBEAT_PAYLOAD_ID,
+                new byte[0],
+                Map.of("credit_parked", Long.toString(com.flezha.sdk.runtime.state.CreditWindow.creditParked())));
         for (long sid : ctx.streamRegistry().secondaries()) {
             if (sid > 0) {
                 try {

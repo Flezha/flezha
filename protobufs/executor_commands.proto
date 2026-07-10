@@ -33,6 +33,9 @@ message CommandRequest {
         ReassignExecutorId reassign_executor_id = 21;
         BoundedCompleted bounded_completed = 22;
         BoundedStop bounded_stop = 23;
+        CreditWindowInit credit_window_init = 24;
+        CreditWindowAck credit_window_ack = 25;
+        CreditGrant credit_grant = 26;
     }
 }
 
@@ -249,6 +252,40 @@ message BoundedCompleted {
     string status = 2;
     string error = 3;
     bytes result = 4;
+}
+
+// Controller -> SDK. Offers credit-grant flow control for the executor's
+// state stream. `stream_id` is an opaque credit-session id minted fresh per
+// stream attach — grants carry it, and a reconnect re-runs the handshake with
+// a new id so grants in flight for a dead session are discardable by
+// construction. `window_bytes` is the byte budget the SDK may have un-fsynced
+// on the controller; `low_watermark_bytes` is the controller's grant-batching
+// threshold (informational to the SDK). The SDK acknowledges by returning an
+// encoded CreditWindowAck as the CommandResponse raw_data; a pre-credit SDK
+// that does not recognise the variant never acks and keeps the legacy
+// SegmentMailboxStatus behaviour.
+message CreditWindowInit {
+    string stream_id = 1;
+    uint64 window_bytes = 2;
+    uint64 low_watermark_bytes = 3;
+}
+
+// SDK -> Controller, as the CommandResponse raw_data of CreditWindowInit.
+// Echoes the offered `stream_id`; on receipt the controller marks the
+// session credit-speaking and starts enforcing the byte ledger.
+message CreditWindowAck {
+    string stream_id = 1;
+}
+
+// Controller -> SDK. Replenishes `bytes` of send credit for the session
+// identified by `stream_id`. Minted only when appended state becomes durable
+// (WAL fsync), batched by the controller's low watermark — never per record.
+// The SDK discards a grant whose `stream_id` does not match its current
+// credit session (stale grant from before a reconnect). One-way; the generic
+// CommandResponse it solicits is ignored.
+message CreditGrant {
+    string stream_id = 1;
+    uint64 bytes = 2;
 }
 
 // Controller -> SDK. Cooperative external stop for a bounded operative

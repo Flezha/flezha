@@ -75,7 +75,7 @@ snapshot, saga, durable suspension) — two profiles over one shared kernel.
 | Durable snapshot baseline (restore floor) | `snapshot-baseline-durability` |
 | Fencing at the door, newest-wins takeover | `executor-identity-and-session` spec |
 | Owner-bound WAL realign (stale-writer refusal) | `wal-owner-fencing` |
-| Credit-grant flow control (both loops) | `credit-grant-flow-control` |
+| Credit-grant flow control | `credit-grant-flow-control` — executor→controller loop **shipped** (handshake, fsync-minted batched grants, park semantics in both SDKs, soak-proven vs the 06-21 load); the source-ingestion loop awaits `effectively-once-output`'s input-log + min-watermark |
 | Poison-payload dead-letter (Unbounded) | `platform-dead-letter-queue` (umbrella slot 4) |
 | Producing-liveness health | `progress-liveness-health` (modifies `convergence-self-healing`) |
 | Bounded profile: saga, compensation, crash-resume | `bounded-operative-*` specs (archived, shipped) |

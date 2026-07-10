@@ -37,7 +37,9 @@ defmodule Flezha.State.WalWriter do
     :metrics,
     :latency_reservoir,
     :backpressured?,
-    :shedding?
+    :shedding?,
+    :credit_pending,
+    :credit_active?
   ]
 
   @type t :: %__MODULE__{
@@ -57,7 +59,9 @@ defmodule Flezha.State.WalWriter do
           metrics: :counters.counters_ref(),
           latency_reservoir: :queue.queue(),
           backpressured?: boolean(),
-          shedding?: boolean()
+          shedding?: boolean(),
+          credit_pending: %{optional({pid(), binary()}) => pos_integer()},
+          credit_active?: boolean()
         }
 
   @typedoc """
@@ -100,11 +104,27 @@ defmodule Flezha.State.WalWriter do
   drives resync itself. Past the hard in-memory bound (un-fsynced bytes or
   mailbox depth) the Change is shed (dropped, `wal_shed_total` incremented),
   and the resulting gap drives resync — back-pressure sheds, never blocks.
+
+  `credit_opts` carries the credit-grant ledger attribution for a
+  credit-speaking stream: `%{channel: pid, session: id, wire_size: bytes,
+  credit_active: true}`. The writer reports every attributed byte back to
+  `channel` exactly once as a `{:credit_drained, session, bytes}` message —
+  on fsync for written records (durable drain, mints credit), or immediately
+  for a Change that never occupies the un-fsynced buffer (dedup drop, gap
+  rejection, shed, epoch realign, truncation). The session tag lets the
+  channel drop reports for bytes debited under a pre-reconnect session. An
+  empty map (the default) is the legacy path with zero accounting.
   """
-  @spec append_async(GenServer.server(), non_neg_integer(), binary(), binary(), binary() | nil) ::
-          :ok
-  def append_async(server, seq, header, change_bytes, executor_id \\ nil) do
-    GenServer.cast(server, {:append_async, seq, header, change_bytes, executor_id})
+  @spec append_async(
+          GenServer.server(),
+          non_neg_integer(),
+          binary(),
+          binary(),
+          binary() | nil,
+          map()
+        ) :: :ok
+  def append_async(server, seq, header, change_bytes, executor_id \\ nil, credit_opts \\ %{}) do
+    GenServer.cast(server, {:append_async, seq, header, change_bytes, executor_id, credit_opts})
   end
 
   @spec fsync(GenServer.server()) :: :ok
@@ -212,7 +232,9 @@ defmodule Flezha.State.WalWriter do
       metrics: Metrics.for_segment(segment_id),
       latency_reservoir: :queue.new(),
       backpressured?: false,
-      shedding?: false
+      shedding?: false,
+      credit_pending: %{},
+      credit_active?: false
     }
 
     {:ok, state, {:continue, :open}}
@@ -289,6 +311,10 @@ defmodule Flezha.State.WalWriter do
             latency_reservoir: new_reservoir
         }
 
+        # Durable drain: report the fsynced wire bytes back to each owning
+        # stream's ledger — the only point that mints credit for written
+        # records (append alone never does).
+        new_state = flush_credit_pending(new_state)
         new_state = maybe_signal_backpressure(new_state, 0)
         {:reply, :ok, new_state}
     end
@@ -303,6 +329,7 @@ defmodule Flezha.State.WalWriter do
 
     Metrics.put(state.metrics, :wal_size_bytes, file_size(state.wal_path))
 
+    state = flush_credit_pending(state)
     {:reply, :ok, %{state | file_handle: file, pending_bytes: 0, pending_since_us: nil}}
   end
 
@@ -321,17 +348,28 @@ defmodule Flezha.State.WalWriter do
   end
 
   @impl true
-  def handle_cast({:append_async, seq, header, change_bytes, executor_id}, state) do
+  def handle_cast({:append_async, seq, header, change_bytes, executor_id, credit_opts}, state) do
+    state = %{state | credit_active?: Map.get(credit_opts, :credit_active, false)}
+
     if over_hard_bound?(state) do
+      release_credit(credit_opts)
       {:noreply, shed(state, seq, executor_id)}
     else
-      do_append_async(seq, header, change_bytes, executor_id, %{state | shedding?: false})
+      do_append_async(
+        seq,
+        header,
+        change_bytes,
+        executor_id,
+        %{state | shedding?: false},
+        credit_opts
+      )
     end
   end
 
-  defp do_append_async(seq, header, change_bytes, executor_id, state) do
+  defp do_append_async(seq, header, change_bytes, executor_id, state, credit_opts) do
     case handle_call({:append, seq, header, change_bytes, executor_id}, nil, state) do
       {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->
+        release_credit(credit_opts)
         {rc, sh, pk} = new_state.segment_id
 
         :telemetry.execute(
@@ -351,19 +389,27 @@ defmodule Flezha.State.WalWriter do
 
         {:noreply, new_state}
 
+      {:reply, :ok, new_state} ->
+        {:noreply, track_credit(new_state, credit_opts)}
+
       {:reply, _result, new_state} ->
+        release_credit(credit_opts)
         {:noreply, new_state}
     end
   end
 
   @impl true
-  def terminate(_reason, %{file_handle: file}) when not is_nil(file) do
+  def terminate(_reason, %{file_handle: file} = state) when not is_nil(file) do
     _ = :file.datasync(file)
     _ = :file.close(file)
+    _ = flush_credit_pending(state)
     :ok
   end
 
-  def terminate(_reason, _state), do: :ok
+  def terminate(_reason, state) do
+    _ = flush_credit_pending(state)
+    :ok
+  end
 
   # ---------- Append / realign ----------
 
@@ -415,6 +461,9 @@ defmodule Flezha.State.WalWriter do
   # the new executor's history: empty the WAL file and drop its snapshots, then
   # reset the seq baseline so the incoming `seq` appends contiguously.
   defp realign_epoch(state, seq, executor_id, now) do
+    # The truncated epoch's un-fsynced bytes no longer occupy the buffer;
+    # release them to the stream ledger so the window is not leaked.
+    state = flush_credit_pending(state)
     {:ok, _} = :file.position(state.file_handle, 0)
     :ok = :file.truncate(state.file_handle)
 
@@ -543,6 +592,19 @@ defmodule Flezha.State.WalWriter do
   defp shed(state, seq, executor_id) do
     Metrics.add(state.metrics, :wal_shed_total, 1)
 
+    # A conformant credit-speaking sender can never reach the hard bound
+    # (the stream ledger refuses the overrun first) — a shed here is a
+    # protocol anomaly, not back-pressure.
+    if state.credit_active? do
+      {rc, sh, pk} = state.segment_id
+
+      :telemetry.execute(
+        [:flezha, :state, :credit_anomaly],
+        %{count: 1},
+        %{kind: :shed, operative: rc, operation: sh, key: pk, executor: executor_id}
+      )
+    end
+
     if state.shedding? do
       state
     else
@@ -564,13 +626,13 @@ defmodule Flezha.State.WalWriter do
 
   defp maybe_signal_backpressure(%{backpressured?: false} = state, pending)
        when pending >= state.high_watermark do
-    emit_backpressure(state.segment_id, :full, pending)
+    emit_backpressure(state, :full, pending)
     %{state | backpressured?: true}
   end
 
   defp maybe_signal_backpressure(%{backpressured?: true} = state, pending)
        when pending <= state.low_watermark do
-    emit_backpressure(state.segment_id, :open, pending)
+    emit_backpressure(state, :open, pending)
     %{state | backpressured?: false}
   end
 
@@ -579,16 +641,60 @@ defmodule Flezha.State.WalWriter do
   # Emit the telemetry event AND ship the wire signal. The telemetry
   # event is for in-process observers (metrics, debug); the wire signal
   # routes through the producing Operation's `OverflowPolicy` machinery on
-  # the SDK side.
-  defp emit_backpressure(segment_id, status, pending) do
+  # the SDK side. A credit-speaking session gets no wire signal: its
+  # back-pressure is carried entirely by the credit ledger (the sender parks
+  # on window exhaustion), so only the telemetry event is emitted.
+  defp emit_backpressure(state, status, pending) do
     :telemetry.execute(
       [:flezha, :state, :wal, :backpressure],
       %{pending_bytes: pending},
-      %{segment_id: segment_id, status: status}
+      %{segment_id: state.segment_id, status: status}
     )
 
-    _ = Flezha.Operative.Overwatch.notify_segment_backpressure(segment_id, status)
+    # Routing needs the owning executor (`nil` until the first Change lands,
+    # in which case there is no session to signal).
+    with false <- state.credit_active?,
+         {rc, sh, pk} <- state.segment_id,
+         executor_id when is_binary(executor_id) <- state.owning_executor do
+      _ =
+        Flezha.Operative.Overwatch.notify_segment_backpressure(
+          {executor_id, rc, sh, pk},
+          status
+        )
+    end
+
     :ok
+  end
+
+  # ---------- Credit-ledger attribution ----------
+
+  # Accumulate a written record's wire bytes against the stream channel that
+  # debited them; reported back on the next durable drain (fsync/truncate).
+  defp track_credit(state, %{channel: ch, session: session, wire_size: n})
+       when is_pid(ch) and n > 0 do
+    %{state | credit_pending: Map.update(state.credit_pending, {ch, session}, n, &(&1 + n))}
+  end
+
+  defp track_credit(state, _), do: state
+
+  # A Change that will never occupy the un-fsynced buffer (dedup drop, gap
+  # rejection, shed): its debit is released immediately.
+  defp release_credit(%{channel: ch, session: session, wire_size: n})
+       when is_pid(ch) and n > 0 do
+    send(ch, {:credit_drained, session, n})
+    :ok
+  end
+
+  defp release_credit(_), do: :ok
+
+  defp flush_credit_pending(%{credit_pending: cp} = state) when map_size(cp) == 0, do: state
+
+  defp flush_credit_pending(state) do
+    Enum.each(state.credit_pending, fn {{ch, session}, bytes} ->
+      send(ch, {:credit_drained, session, bytes})
+    end)
+
+    %{state | credit_pending: %{}}
   end
 
   # ---------- Metrics helpers ----------

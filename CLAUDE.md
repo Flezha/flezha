@@ -28,6 +28,20 @@
   `:time_travel_retention_check_interval_ms` (60 s),
   `:time_travel_retention_hours` (per-Operative map), `:operative_persistence`
   (per-Operative map).
+- **Credit-grant flow control (`credit-grant-flow-control`)**:
+  executor→controller state-stream back-pressure is credit-based — the
+  `StreamChannel` offers `CreditWindowInit` on the first state frame
+  (per-Operative `:credit_window_bytes`, default `wal_high_watermark_bytes`;
+  kill switch `FLEZHA_CREDIT_FLOW_CONTROL`), debits each frame's wire size,
+  and mints one batched `CreditGrant` per fsync-drain below
+  `:credit_low_watermark_bytes` (default `window / 2`). SDK windows:
+  `sdk/rust/src/segment/credit.rs`, `sdk/java .../state/CreditWindow.java`
+  (park in the flusher under the buffer lock; `credit_parked` in
+  `data_heartbeat` metadata). Credit sessions get no `SegmentMailboxStatus`;
+  shed/overrun on one emits `[:flezha, :state, :credit_anomaly]`. Soak:
+  `test/load/credit_soak_test.exs` (`MIX_RUN_CREDIT_SOAK=1`). The
+  source-ingestion credit loop is deferred until `effectively-once-output`
+  lands (input-log + min-watermark do not exist yet).
 - **CLI**: `flz state list <operative>`, `flz state at <operative/operation/key> <seq|ts>`,
   `flz state rotate <operative/operation/key>`, `flz state retention <operative> <hours>`,
   `flz state delete <operative/operation/key>`. Implemented in `cli/src/state.rs`;

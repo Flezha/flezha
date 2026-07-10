@@ -1102,9 +1102,10 @@ The SDK automatically reconnects when the control channel drops unexpectedly. Se
 
 ## Per-Segment State Persistence
 
-The persistence subsystem reserves two data-stream payload-ids and five
+The persistence subsystem reserves two data-stream payload-ids and eight
 control commands. Both directions and all wire shapes are settled here
-and implemented in `operative-state-persistence-controller`.
+and implemented in `operative-state-persistence-controller` (credit-grant
+flow control added the three `Credit*` commands).
 
 ### Data-stream payload-id `segment_state_change`
 
@@ -1225,6 +1226,71 @@ emits `"full"` when `pending_bytes` exceeds `wal_high_watermark_bytes`
 `wal_low_watermark_bytes` (default `high / 2`). The SDK's per-Segment
 mailbox observer translates the signal into the channel's declared
 `OverflowPolicy`.
+
+Shipped only to sessions that are NOT credit-speaking (pre-credit SDKs,
+or a controller running with `FLEZHA_CREDIT_FLOW_CONTROL=false`). A
+credit-speaking session's back-pressure is carried entirely by the
+credit-grant protocol below.
+
+### Control command `CreditWindowInit` (controller → SDK)
+
+```protobuf
+message CreditWindowInit {
+    string stream_id           = 1;   // opaque credit-session id, fresh per attach
+    uint64 window_bytes        = 2;   // un-fsynced byte budget for the stream
+    uint64 low_watermark_bytes = 3;   // controller's grant-batching threshold
+}
+```
+
+Offers credit-grant flow control for the executor's state stream. Emitted
+on the first `segment_state_change` frame of a stream attach (so the
+offer originates from the channel on the actual state path, and the
+window resolves per-Operative from that frame's class —
+`:credit_window_bytes`, default `wal_high_watermark_bytes`). The SDK
+acknowledges by returning an encoded `CreditWindowAck` as the
+`CommandResponse.raw_data`; on that ack the controller marks the session
+credit-speaking, stops shipping `SegmentMailboxStatus`, and enforces the
+per-stream byte ledger. A pre-credit SDK drops the unknown variant and
+never acks — the controller times out and the session keeps the legacy
+behaviour byte-for-byte. `FLEZHA_CREDIT_FLOW_CONTROL=false` (controller)
+skips the offer entirely.
+
+### Control command `CreditWindowAck` (SDK → controller)
+
+```protobuf
+message CreditWindowAck {
+    string stream_id = 1;   // echoes the offered credit-session id
+}
+```
+
+Returned as the `CommandResponse.raw_data` of `CreditWindowInit` (not as
+a standalone `CommandRequest`). Arming the window and sending the ack
+happen on the SDK's control coordinator; from then on every
+`segment_state_change` frame debits its full wire size from the window
+before the sink write, and an exhausted window parks the sending thread
+— park, never drop.
+
+### Control command `CreditGrant` (controller → SDK)
+
+```protobuf
+message CreditGrant {
+    string stream_id = 1;   // credit-session id the grant belongs to
+    uint64 bytes     = 2;   // replenished send credit
+}
+```
+
+One-way replenishment (the generic `CommandResponse` it solicits is
+ignored). Credit is minted only when appended bytes become durable: on
+WAL fsync the controller reports the fsynced wire bytes to the stream's
+ledger and sends one batched grant when the un-fsynced buffer falls
+below `low_watermark_bytes` — never a grant per record, and a stalled
+fsync mints nothing (the sender parks; controller memory stays bounded
+by `window_bytes`). Credit never carries across sessions: a reconnect
+re-runs `CreditWindowInit` with a fresh `stream_id`, and the SDK discards
+any grant whose `stream_id` does not match its current session. A frame
+arriving on an exhausted ledger is a protocol violation: the controller
+sheds it (`credit_overrun_total`), and the existing seq-gap resync
+repairs the gap.
 
 ### Plugin metadata: `flezha.dedup_key`
 

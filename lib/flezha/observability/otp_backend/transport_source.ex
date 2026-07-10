@@ -115,6 +115,19 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
     emit_sum(:operative_io_in_received, operatives, :io_in_received)
     emit_sum(:operative_forwarded, operatives, :forwarded)
     emit_sum(:operative_filtered_nil, operatives, :filtered_nil)
+
+    # Credit-grant flow control. Any non-zero overrun is an anomaly (a
+    # credit-speaking sender violated its window), never expected load
+    # response; `credit_ledger_level` is the summed remaining window and
+    # `credit_parked` the SDKs' park self-report.
+    emit_sum(:credit_active_sessions, channels, :credit_active)
+    emit_sum(:credit_overrun_total, channels, :credit_overrun_total)
+    emit_sum(:credit_parked, channels, :hb_credit_parked)
+
+    ledger =
+      Enum.reduce(channels, 0, fn row, acc -> acc + Map.get(row, :credit_ledger_level, 0) end)
+
+    emit(:credit_ledger_level, %{value: ledger}, %{scope: :data_plane})
   end
 
   defp emit_sum(name, rows, key) do

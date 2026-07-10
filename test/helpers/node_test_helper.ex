@@ -232,4 +232,42 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
     :ok
   end
+
+  @doc """
+  Poll `fun` every 50 ms until it returns a truthy value (returned) or
+  `timeout_ms` elapses (returns the last falsy result). The shared home for
+  the wait loop every system/e2e test used to carry privately.
+  """
+  def wait_until(fun, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_until(fun, deadline)
+  end
+
+  defp do_wait_until(fun, deadline) do
+    case fun.() do
+      falsy when falsy in [nil, false] ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          falsy
+        else
+          Process.sleep(50)
+          do_wait_until(fun, deadline)
+        end
+
+      truthy ->
+        truthy
+    end
+  end
+
+  @doc "Close a spawned executor/mock port if it is still open. Idempotent."
+  def ensure_port_dead(port) do
+    if is_port(port) and Enum.member?(:erlang.ports(), port) do
+      try do
+        Port.close(port)
+      catch
+        _, _ -> :ok
+      end
+    end
+
+    :ok
+  end
 end

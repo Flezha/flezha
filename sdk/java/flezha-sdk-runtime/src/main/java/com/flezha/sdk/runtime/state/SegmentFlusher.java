@@ -133,44 +133,47 @@ public final class SegmentFlusher {
     }
 
     /**
-     * Flush one entry's pending Changes to the WAL: acquire the bufferLock, copy
-     * out and release, then (when persistence is enabled) coalesce, serialize,
-     * and ship the frame. Static — needs no running flusher instance — so the
-     * bounded driver calls it directly for its one-shot per-segment runs (never
-     * registering with the background flusher, so nothing leaks per job); the
-     * background loop uses it too.
+     * Flush one entry's pending Changes to the WAL: under the bufferLock, drain
+     * the buffer then (when persistence is enabled) coalesce, serialize, and
+     * ship the frames. The sends stay inside the lock (mirroring the Rust
+     * flusher) so the credit debit-on-send can park here with producers
+     * blocking on the lock — the emit-path park — instead of growing the
+     * buffer unboundedly while the window is exhausted. Static — needs no
+     * running flusher instance — so the bounded driver calls it directly for
+     * its one-shot per-segment runs (never registering with the background
+     * flusher, so nothing leaks per job); the background loop uses it too.
      */
     public static void flushEntry(FlusherEntry entry) {
-        List<Change> snapshot;
         synchronized (entry.bufferLock()) {
             if (entry.buffer().isEmpty()) {
                 return;
             }
-            snapshot = new ArrayList<>(entry.buffer());
+            List<Change> snapshot = new ArrayList<>(entry.buffer());
             entry.buffer().clear();
-        }
 
-        if (!entry.persistenceEnabled()) {
-            return;
-        }
+            if (!entry.persistenceEnabled()) {
+                return;
+            }
 
-        List<Change> coalesced = coalesce(snapshot);
-        for (Change change : coalesced) {
-            // 0-based per-Segment seq: the controller treats the first valid
-            // seq as 0 (last_persisted_seq starts at -1). getAndIncrement on an
-            // AtomicLong based at 0 yields 0 first, matching the Rust flusher's
-            // fetch_add from AtomicU64::new(0).
-            long seq = entry.changeSeq().getAndIncrement();
-            byte[] payload = entry.codec().serialize(change);
-            byte[] header = entry.headerTemplate().stamp(entry.schemaVersion(), payload);
-            byte[] frame = buildSegmentStateChangeFrame(entry.segmentId(), seq, header, payload);
-            try {
-                entry.sendFrame().apply(frame);
-            } catch (RuntimeException e) {
-                LOG.error(
-                        "flusher sendFrame failed for segment `{}`: {}",
-                        entry.segmentId().encoded(),
-                        e.toString());
+            List<Change> coalesced = coalesce(snapshot);
+            for (Change change : coalesced) {
+                // 0-based per-Segment seq: the controller treats the first valid
+                // seq as 0 (last_persisted_seq starts at -1). getAndIncrement on an
+                // AtomicLong based at 0 yields 0 first, matching the Rust flusher's
+                // fetch_add from AtomicU64::new(0).
+                long seq = entry.changeSeq().getAndIncrement();
+                byte[] payload = entry.codec().serialize(change);
+                byte[] header = entry.headerTemplate().stamp(entry.schemaVersion(), payload);
+                byte[] frame = buildSegmentStateChangeFrame(entry.segmentId(), seq, header, payload);
+                CreditWindow.acquire(frame.length);
+                try {
+                    entry.sendFrame().apply(frame);
+                } catch (RuntimeException e) {
+                    LOG.error(
+                            "flusher sendFrame failed for segment `{}`: {}",
+                            entry.segmentId().encoded(),
+                            e.toString());
+                }
             }
         }
     }

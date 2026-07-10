@@ -9,14 +9,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Handles the controller's {@code SegmentMailboxStatus} command. Updates the
- * per-Segment mailbox observer state used by the existing
- * {@code OverflowPolicy} machinery from {@code operative-bounded-mailbox}.
- *
- * <p>The controller ships {@code SegmentMailboxStatus} as an advisory: when a
- * Segment's mailbox depth or admission state changes, the SDK adjusts its
- * client-side admission throttling accordingly. The handler is a sink — no
- * payload is returned in the response.
+ * Legacy controller → SDK back-pressure signal, kept only for compatibility
+ * with pre-credit controllers. A credit-speaking controller never sends this
+ * (back-pressure rides the credit-grant protocol — see
+ * {@code com.flezha.sdk.runtime.state.CreditWindow}); a pre-credit
+ * controller's {@code "full"}/{@code "open"} flags are tolerated and
+ * dropped, since this SDK's send path is already bounded by its local
+ * mailbox policies. One-way — no payload is returned in the response.
  */
 public final class SegmentMailboxStatusHandler implements CommandHandler {
 
@@ -25,20 +24,7 @@ public final class SegmentMailboxStatusHandler implements CommandHandler {
     @Override
     @Nonnull
     public byte[] handle(@Nonnull ExecutorContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors) {
-        try {
-            Object req =
-                    CommandRequest.class.getMethod("getSegmentMailboxStatus").invoke(request);
-            if (req == null) {
-                errors.add("SegmentMailboxStatusHandler: payload missing");
-                return new byte[0];
-            }
-            // Wire to the OverflowPolicy observer once operative-bounded-mailbox
-            // ships the matching SDK-side admission throttler.
-            return new byte[0];
-        } catch (ReflectiveOperationException e) {
-            LOG.warn("SegmentMailboxStatusHandler reflective dispatch failed: {}", e.toString());
-            errors.add("SegmentMailboxStatus handler not yet implemented in this build");
-            return new byte[0];
-        }
+        LOG.debug("legacy segment mailbox status from a pre-credit controller (dropped)");
+        return new byte[0];
     }
 }

@@ -27,6 +27,10 @@ defmodule Flezha.Transport.LivenessCounters do
   # self-reported dispatch-progress counter carried in heartbeat metadata —
   # heartbeats advancing while hb_dispatches is frozen means the executor
   # process is alive but its dispatch pool is wedged.
+  # `credit_active` is 0/1 (set), `credit_ledger_level` is the stream's
+  # remaining credit bytes (set), `credit_overrun_total` counts frames a
+  # credit-speaking sender pushed past an exhausted ledger (protocol
+  # violations — any non-zero value is an anomaly, never load response).
   @channel_slots [
     :io_in_received,
     :send_frame_calls,
@@ -34,7 +38,11 @@ defmodule Flezha.Transport.LivenessCounters do
     :flz_data_received,
     :last_send_ms,
     :hb_count,
-    :hb_dispatches
+    :hb_dispatches,
+    :hb_credit_parked,
+    :credit_active,
+    :credit_ledger_level,
+    :credit_overrun_total
   ]
   @operative_slots [:io_in_received, :forwarded, :filtered_nil]
   @channel_size length(@channel_slots)

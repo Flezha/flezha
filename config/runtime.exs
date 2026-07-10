@@ -234,6 +234,11 @@ config :flezha,
     data_plane_liveness:
       System.get_env("FLEZHA_DATA_PLANE_LIVENESS", "true") in ["1", "true", "yes", "on"]
   ],
+  # Credit-grant flow control on the executor→controller state stream.
+  # Kill switch: `false` skips the CreditWindowInit offer entirely, reverting
+  # every session to the legacy SegmentMailboxStatus + shed path.
+  credit_flow_control_enabled:
+    System.get_env("FLEZHA_CREDIT_FLOW_CONTROL", "true") in ["1", "true", "yes", "on"],
   # ------------------------------------------------------------------------------------------------
   # Durable audit log (platform-audit-log).
   #
