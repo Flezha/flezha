@@ -592,9 +592,16 @@ of dedup-dropping the new executor's Changes as stale. A Change at or below
 `last_persisted_seq` from the *same* executor SHALL remain a legitimate dedup. A realignment
 SHALL emit `[:flezha, :state, :wal_realign]` telemetry.
 
+A realign SHALL be honoured only when the divergent Changes arrive via the Segment's
+current owner binding — the session the takeover logic most recently bound to the
+Segment's write path. Changes forwarded by a superseded session SHALL be refused at
+the binding (the superseded session's channels are unbound during takeover, before the
+new session is bound) and SHALL NOT trigger a realign; the refusal SHALL NOT add any
+per-record check to the owning session's append path.
+
 #### Scenario: A restarted executor's diverged seq base realigns the WAL
 - **GIVEN** a Segment whose WAL has advanced to seq N under executor A
-- **WHEN** executor A restarts and a new executor B resumes emitting Changes from a seq base diverged from N
+- **WHEN** executor A restarts and a new executor B, bound as the Segment's owner by takeover, resumes emitting Changes from a seq base diverged from N
 - **THEN** the WAL SHALL realign to executor B's seq base and resume advancing rather than freeze at N
 - **AND** a `[:flezha, :state, :wal_realign]` event SHALL be emitted
 
@@ -606,6 +613,11 @@ SHALL emit `[:flezha, :state, :wal_realign]` telemetry.
 #### Scenario: Output-stall resync resolves the owning executor
 - **WHEN** the Watchdog detects an output stall and triggers a resync for a Segment
 - **THEN** `Flezha.State.Recovery.resolve_executor/1` SHALL resolve the owning executor id from the durable registry entry's metadata tag, keyed by the operative's operative_class (its `:operative_class` opt, defaulting to its id)
+
+#### Scenario: A superseded session's divergent frames do not realign
+- **GIVEN** a Segment whose stable identity was taken over by a new session while the old session's frames are still in flight
+- **WHEN** the superseded session's channel forwards a Change with a divergent seq base
+- **THEN** the frame SHALL be refused at the binding, the WAL SHALL NOT realign, and a `[:flezha, :state, :stale_writer_refused]` event SHALL be emitted once for the episode
 
 ### Requirement: Output is persisted before it is emitted (flush-before-emit)
 

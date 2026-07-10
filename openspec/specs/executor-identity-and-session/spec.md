@@ -55,6 +55,29 @@ When a new session presents a stable identity that already has a currently-live 
 - **THEN** only the newest session SHALL hold `S`'s bindings; the older SHALL be closed
 - **AND** the controller SHALL NOT serve two simultaneous live sessions for the same stable identity
 
+### Requirement: The durable write path's owner binding follows takeover
+
+Newest-wins takeover SHALL update each affected Segment's durable write-path
+binding in the same transaction that re-binds the stable identity to the new
+session, ordered unbind-old-session before bind-new-session, so no window exists
+in which both sessions can forward Changes to the same Segment's WAL. A superseded
+session's forwards SHALL stop at the binding (single state flip at takeover), with no
+per-record ownership check added to the owning session's append path. The first
+refused forward per (Segment, superseded session) episode SHALL emit
+`[:flezha, :state, :stale_writer_refused]`; subsequent refusals in the episode
+SHALL only increment a counter.
+
+#### Scenario: Takeover leaves exactly one writable binding
+
+- **GIVEN** stable identity `S` bound to session `sess_old` with Changes in flight
+- **WHEN** a new session `sess_new` takes over `S`
+- **THEN** `sess_old`'s channels are unbound from every affected Segment's write path before `sess_new`'s are bound, and no Change from `sess_old` lands in any Segment WAL after the unbind
+
+#### Scenario: Refusal is episode-bounded telemetry
+
+- **WHEN** a superseded session forwards many Changes after losing its binding
+- **THEN** one `stale_writer_refused` event is emitted for the episode and a counter tracks the rest
+
 ### Requirement: Missing persistence degrades to fresh-identity-per-boot, never a hard failure
 
 When the persistence path is unavailable (unset, unwritable, or not mounted), the SDK SHALL generate a fresh stable identity for the current boot, log the condition once at `warn`, and operate normally for the lifetime of the process. A subsequent restart SHALL present a new stable identity; the prior binding SHALL age out via `FLEZHA_EXECUTOR_KEEPALIVE`. The executor SHALL NOT refuse to start, and SHALL NOT crash, due to missing persistence.
