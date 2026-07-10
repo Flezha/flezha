@@ -286,15 +286,17 @@ The counters SHALL use `Ordering::Relaxed` (the BEAM `:counters` API does not ex
 
 ### Requirement: Back-pressure via OverflowPolicy when WAL outpaces fsync
 
-The agent SHALL monitor each `WalWriter`'s `pending_bytes` (queued-but-not-fsynced bytes). When `pending_bytes >= wal_high_watermark_bytes` (default 16 MiB), the agent SHALL ship `SegmentMailboxStatus{segment_id, status: :full}` over the control channel to the SDK. When `pending_bytes` falls below `wal_low_watermark_bytes` (default `wal_high_watermark_bytes / 2`), the agent SHALL ship `SegmentMailboxStatus{segment_id, status: :open}`.
+For sessions that are NOT credit-speaking (pre-credit SDKs, or the controller running with credit flow control disabled), the agent SHALL monitor each `WalWriter`'s `pending_bytes` (queued-but-not-fsynced bytes). When `pending_bytes >= wal_high_watermark_bytes` (default 16 MiB), the agent SHALL ship `SegmentMailboxStatus{segment_id, status: :full}` over the control channel to the SDK. When `pending_bytes` falls below `wal_low_watermark_bytes` (default `wal_high_watermark_bytes / 2`), the agent SHALL ship `SegmentMailboxStatus{segment_id, status: :open}`.
 
 The SDK's per-Segment mailbox observer SHALL treat `:full` as equivalent to the existing per-Segment mailbox-full condition that drives `OverflowPolicy`; the producing Operation's `ctx.emit(...)` SHALL apply the channel's declared policy (`Block` parks the producer, `DropNewest` drops, `DropOldest` discards-oldest).
 
 The agent SHALL NOT issue `:full` more than once per Segment while the watermark is exceeded (idempotent transitions); SHALL NOT issue `:open` until `:full` was previously sent for that Segment (no spurious `:open` frames).
 
+For credit-speaking sessions the agent SHALL NOT ship `SegmentMailboxStatus` frames: back-pressure for those sessions is carried entirely by the credit-grant protocol (see the `credit-grant-flow-control` capability), which parks the sender on window exhaustion instead of signalling a status flag.
+
 #### Scenario: High-watermark triggers :full status
 
-- **WHEN** a Segment's `WalWriter` accumulates `pending_bytes = 16 MiB + 1 record`
+- **WHEN** a Segment's `WalWriter` accumulates `pending_bytes = 16 MiB + 1 record` on a non-credit-speaking session
 - **THEN** the agent SHALL ship `SegmentMailboxStatus{segment_id, status: :full}` exactly once
 
 #### Scenario: Low-watermark triggers :open status
@@ -304,29 +306,37 @@ The agent SHALL NOT issue `:full` more than once per Segment while the watermark
 
 #### Scenario: OverflowPolicy::Block parks producer under back-pressure
 
-- **WHEN** an Operation with `OverflowPolicy::Block` on its emit channel calls `ctx.emit(...)` for a Segment under `:full` status
+- **WHEN** an Operation with `OverflowPolicy::Block` on its emit channel calls `ctx.emit(...)` for a Segment under `:full` status on a non-credit-speaking session
 - **THEN** the producer SHALL park its calling thread; on receipt of `:open` status the producer SHALL unpark and the emit SHALL succeed; the producer's `Operation::run` SHALL eventually return `Ok(())`
+
+#### Scenario: Credit-speaking session receives no status flags
+
+- **WHEN** a credit-speaking SDK's Segment drives `pending_bytes` past `wal_high_watermark_bytes`
+- **THEN** no `SegmentMailboxStatus` frame is shipped; the sender is throttled by credit exhaustion instead
 
 ### Requirement: Hard in-memory bound sheds WAL appends past the watermark
 
 Each `WalWriter` SHALL enforce a hard in-memory bound on un-fsynced data —
-covering both queued-but-not-fsynced bytes and pending mailbox depth — in
-addition to the soft watermark that ships `SegmentMailboxStatus` to the SDK.
-When the hard bound is exceeded, `append_async/5` SHALL shed the incoming Change
-(drop it without writing) and increment a shed counter, rather than growing the
+covering both queued-but-not-fsynced bytes and pending mailbox depth. When the
+hard bound is exceeded, `append_async/5` SHALL shed the incoming Change (drop
+it without writing) and increment a shed counter, rather than growing the
 writer's mailbox or un-fsynced bytes without bound. The data plane SHALL NOT
 block: the shed leaves a sequence gap that the existing resync path repairs.
 
-The hard bound SHALL be strictly above the soft watermark so that normal
-back-pressure (the SDK throttling on `SegmentMailboxStatus`) takes effect
-first; shedding is the last-resort safety net for a slow disk or an
-SDK that does not honour the wire signal.
+The hard bound SHALL be strictly above the soft watermark. For non-credit-speaking
+sessions, shedding remains the last-resort safety net for a slow disk or an SDK
+that does not honour the `SegmentMailboxStatus` wire signal. For credit-speaking
+sessions, the credit ledger SHALL refuse an overrunning frame before the hard
+bound is reached, so shedding is unreachable for a conformant sender; any shed
+recorded against a credit-speaking session SHALL be surfaced as an anomaly
+(`credit_overrun_total` / `wal_shed_total`), never treated as expected
+back-pressure.
 
 #### Scenario: Appends past the hard bound are shed, not buffered
 
-- **WHEN** a `WalWriter` cannot drain (fsync stalled / writer suspended) and
-  `append_async/5` is called repeatedly until the un-fsynced bytes or pending
-  mailbox depth exceed the hard bound
+- **WHEN** a `WalWriter` serving a non-credit-speaking session cannot drain
+  (fsync stalled / writer suspended) and `append_async/5` is called repeatedly
+  until the un-fsynced bytes or pending mailbox depth exceed the hard bound
 - **THEN** further appends are dropped and a shed counter increments, and the
   writer's pending mailbox depth stays bounded instead of growing one-to-one
   with the calls
@@ -336,6 +346,12 @@ SDK that does not honour the wire signal.
 - **WHEN** a Change has been shed, leaving the next received seq non-contiguous
 - **THEN** the existing seq-gap resync handshake re-pulls the missing state from
   the SDK (the authoritative source), so no committed data is lost
+
+#### Scenario: Conformant credit-speaking sender never sheds
+
+- **WHEN** a credit-speaking SDK honours its window while the disk drains slowly
+- **THEN** the sender parks on credit exhaustion before the hard bound is
+  reached and `wal_shed_total` for its Segments does not advance
 
 ### Requirement: Crash-safe persistence on agent reboot
 
@@ -638,3 +654,4 @@ The delete is reachable via two paths:
 #### Scenario: CLI delete returns confirmation
 - **WHEN** an operator runs `flz state delete <operative/operation/key>` against a Segment with on-disk state
 - **THEN** `Flezha.State.Supervisor.delete_segment/1` SHALL remove the files and return `{:ok, %{segment_id, status: :ok}}`, and the CLI SHALL exit 0
+
