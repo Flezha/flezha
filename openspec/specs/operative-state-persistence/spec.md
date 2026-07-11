@@ -707,3 +707,77 @@ The delete is reachable via two paths:
 - **WHEN** an operator runs `flz state delete <operative/operation/key>` against a Segment with on-disk state
 - **THEN** `Flezha.State.Supervisor.delete_segment/1` SHALL remove the files and return `{:ok, %{segment_id, status: :ok}}`, and the CLI SHALL exit 0
 
+### Requirement: Atomic effect record type in the per-Segment WAL
+
+The per-Segment WAL SHALL support an additional record type carrying an
+invocation's state change(s), its outbox entries (channel, key, user metadata,
+payload, emit ordinal), and its consumed input offset as one crc-protected record
+appended and fsynced as a unit. Existing change-record and snapshot requirements
+are unchanged; at-least-once operatives never produce effect records. Restore and
+time-travel readers SHALL fold the state-change portion of effect records exactly
+as they fold plain change records.
+
+#### Scenario: Effect record replays as state
+
+- **WHEN** a Segment with effect records in its WAL is restored via the restore
+  handshake
+- **THEN** the assembled payload folds the change portions in seq order and the
+  restored state equals the pre-crash state
+
+#### Scenario: Mixed WAL stays readable
+
+- **WHEN** a WAL contains plain change records followed by effect records (tier
+  enabled mid-lifetime)
+- **THEN** restore, retention, and time-travel read the mixed sequence correctly
+
+### Requirement: Drain-time coalescing is disabled for effect records
+
+Records carrying outbox entries SHALL NOT be coalesced away or merged at drain
+time: every effect record ships and persists individually so no durable output
+can be dropped by state-change coalescing. Plain change records (no outputs)
+retain existing coalescing behaviour.
+
+#### Scenario: Output-bearing change survives coalescing window
+
+- **WHEN** two changes with the same coalesce key occur within the linger window
+  and the first one's invocation emitted an output
+- **THEN** both the first record (with its outputs) and the second record are
+  shipped and persisted
+
+### Requirement: Dedup-file writes are amortized off the append hot path
+
+The per-record WAL append SHALL NOT perform a separate dedup-file write: the
+WAL append is the only per-record durable write. The dedup file
+(`last_persisted_seq` and `outbox_flushed_seq`) is a rebuildable cache and
+SHALL be advanced at most at fsync-batch cadence, and on snapshot, rotation,
+and clean shutdown. On boot, a missing or stale dedup file SHALL be repaired
+by recomputing from the WAL itself; a stale `outbox_flushed_seq` follows the
+re-drive rule (never skip ahead).
+
+#### Scenario: Appends produce one durable write each
+
+- **WHEN** N changes are appended within one fsync batch
+- **THEN** exactly N WAL appends and at most one dedup-file update occur — no
+  per-record tmp+rename
+
+#### Scenario: Stale dedup file is rebuilt from the WAL
+
+- **WHEN** the controller crashes after appends that outran the last dedup-file
+  update
+- **THEN** boot recomputes `last_persisted_seq` from the WAL tail and dedup
+  behaviour is identical to a per-record-persisted watermark
+
+### Requirement: Outbox flush cursor lives beside the persistence watermark
+
+The per-Segment dedup file SHALL carry both the existing `last_persisted_seq`
+watermark and the new `outbox_flushed_seq` cursor, updated with the same
+atomic tmp+rename discipline. On restart, a missing or stale cursor SHALL be
+treated as "re-drive from the last known value" (never as "skip ahead").
+
+#### Scenario: Stale cursor re-drives, never skips
+
+- **WHEN** the dedup file's `outbox_flushed_seq` is older than the newest durable
+  effect record after a crash
+- **THEN** the controller re-drives all effect-record outputs above the cursor
+  and never advances the cursor past undelivered entries
+

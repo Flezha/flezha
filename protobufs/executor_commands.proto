@@ -71,6 +71,17 @@ message AddOperative {
     uint32 resume_segment_count = 5;
 }
 
+// SDK -> Controller, as the CommandResponse raw_data of AddOperative.
+// Carries the operative class's SDK-side declarations (operative metadata)
+// so the Controller resolves per-class capabilities without a parallel
+// config channel. Key "effectively_once" = "true" declares the
+// effectively-once delivery tier. The SDK returns empty raw_data when no
+// declaration is present (tier off), keeping the default wire byte-identical;
+// the Controller resolves absent/undecodable metadata to every default.
+message AddOperativeResponse {
+    map<string, string> metadata = 1;
+}
+
 message RemOperative {
     string operative_id = 1;
 }

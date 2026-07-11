@@ -61,6 +61,7 @@ defmodule Flezha.State.Retention do
   def handle_call(:sweep_now, _from, state) do
     sweep_all()
     sweep_completed()
+    sweep_input_logs()
     {:reply, :ok, state}
   end
 
@@ -69,6 +70,7 @@ defmodule Flezha.State.Retention do
     schedule_sweep()
     sweep_all()
     sweep_completed()
+    sweep_input_logs()
     {:noreply, state}
   end
 
@@ -121,6 +123,12 @@ defmodule Flezha.State.Retention do
       {:ok, names} -> Enum.filter(names, &File.dir?(Path.join(root, &1)))
       {:error, _} -> []
     end
+  end
+
+  # Effectively-once tier: truncate each operative's input-log below its
+  # min durable consumed-offset watermark (`durable-input-log`).
+  defp sweep_input_logs() do
+    Enum.each(Flezha.State.InputLog.all_classes(), &Flezha.State.InputLog.sweep/1)
   end
 
   @doc """

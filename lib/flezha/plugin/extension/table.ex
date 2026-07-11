@@ -53,7 +53,11 @@ defmodule Flezha.Plugin.Extension.Table do
             timers: %{},
             retries: %{},
             started_at: %{},
-            host_pid: nil
+            host_pid: nil,
+            # Operative-level facts resolved at bind time (currently
+            # `:effectively_once`), merged into every provider's opts at
+            # activation — including plugin-heal re-activations.
+            activation_env: %{}
 
   @type t() :: %__MODULE__{}
 
@@ -141,8 +145,12 @@ defmodule Flezha.Plugin.Extension.Table do
   plugin remains in `:prepared` and the host SHOULD treat the binding as
   unhealthy on its next teardown cycle.
   """
-  @spec bulk_activate(t()) :: t()
-  def bulk_activate(%__MODULE__{} = table) do
+  @spec bulk_activate(t(), map()) :: t()
+  def bulk_activate(%__MODULE__{} = table, activation_env \\ %{}) do
+    # Remember the env so plugin-heal re-activations (attempt_restart)
+    # re-apply it without the host re-supplying it.
+    table = %{table | activation_env: Map.merge(table.activation_env, activation_env)}
+
     Enum.reduce(table.plugins, table, fn {plugin_id, plugin}, acc ->
       case Map.get(acc.phases, plugin_id, :prepared) do
         :running ->
@@ -167,7 +175,14 @@ defmodule Flezha.Plugin.Extension.Table do
         put_phase(table, plugin_id, :running)
 
       true ->
-        invoke_activate(table, plugin_id, provider, opts || %{})
+        # Operative-level facts resolved at bind time (currently
+        # `:effectively_once`), merged last so stored opts cannot spoof them.
+        invoke_activate(
+          table,
+          plugin_id,
+          provider,
+          Map.merge(opts || %{}, table.activation_env)
+        )
     end
   end
 

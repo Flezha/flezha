@@ -63,4 +63,65 @@ defmodule Flezha.State.WireTest do
       assert {:error, :short_read} = Wire.decode_frame(<<0, 5>>)
     end
   end
+
+  describe "effect record body (effectively-once tier)" do
+    # The exact postcard bytes the Rust SDK emits for this body — pinned on
+    # the SDK side by flusher::tests::
+    # effect_record_body_postcard_bytes_are_the_cross_language_fixture.
+    @rust_fixture <<0x01, 0x01, 0xAA, 0x01, 0x03, ?o, ?u, ?t, 0x01, ?k, 0x01, 0x01, ?a, 0x01, ?b,
+                    0x02, 0x01, 0x02, 0x01, 0xE7, 0x24>>
+
+    test "decodes the Rust SDK's postcard bytes" do
+      assert {:ok, body} = Wire.decode_effect_body(@rust_fixture)
+      assert body.changes == [<<0xAA>>]
+      assert body.consumed_offset == 4711
+
+      assert [%{channel: "out", key: "k", metadata: [{"a", "b"}], payload: <<1, 2>>}] =
+               body.outputs
+    end
+
+    test "encode is the byte-exact inverse" do
+      {:ok, body} = Wire.decode_effect_body(@rust_fixture)
+      assert Wire.encode_effect_body(body) == @rust_fixture
+    end
+
+    test "round-trips empty and None fields" do
+      body = %{changes: [], outputs: [], consumed_offset: nil}
+      encoded = Wire.encode_effect_body(body)
+      assert {:ok, ^body} = Wire.decode_effect_body(encoded)
+    end
+
+    test "round-trips multi-byte varints and multiple entries" do
+      body = %{
+        changes: [<<1, 2, 3>>, :binary.copy(<<9>>, 300)],
+        outputs: [
+          %{channel: "candles", key: "BTC/1m/1720000000", metadata: [], payload: <<0>>},
+          %{
+            channel: "candles",
+            key: "ETH/1m",
+            metadata: [{"a", "b"}, {"c", "d"}],
+            payload: :binary.copy(<<7>>, 200)
+          }
+        ],
+        consumed_offset: 1_000_000_007
+      }
+
+      assert {:ok, ^body} = body |> Wire.encode_effect_body() |> Wire.decode_effect_body()
+    end
+
+    test "rejects trailing bytes and truncation" do
+      assert {:error, :trailing_bytes} = Wire.decode_effect_body(@rust_fixture <> <<0>>)
+
+      truncated = binary_part(@rust_fixture, 0, byte_size(@rust_fixture) - 1)
+      assert {:error, _} = Wire.decode_effect_body(truncated)
+    end
+
+    test "effect_record_header? keys on header byte 9" do
+      effect_header = <<1, 0, 0, 5, 3, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0>>
+      plain_header = <<1, 0, 0, 5, 3, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0>>
+      assert Wire.effect_record_header?(effect_header)
+      refute Wire.effect_record_header?(plain_header)
+      refute Wire.effect_record_header?(<<>>)
+    end
+  end
 end

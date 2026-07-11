@@ -14,10 +14,11 @@ pub fn handle_state_command(args: &[String]) {
         "rotate" => handle_rotate(args),
         "retention" => handle_retention(args),
         "delete" => handle_delete(args),
+        "outbox" => handle_outbox(args),
         "help" | "--help" | "-h" => print_state_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'list', 'at', 'rotate', 'retention', 'delete', or 'help'.",
+                "Error: Invalid argument '{}'. Use 'list', 'at', 'rotate', 'retention', 'delete', 'outbox', or 'help'.",
                 args[0]
             );
             exit(1);
@@ -148,6 +149,28 @@ fn handle_delete(args: &[String]) {
     }
 }
 
+fn handle_outbox(args: &[String]) {
+    if args.len() < 2 {
+        eprintln!("Usage: flz state outbox <operative/operation/segment_key>");
+        exit(1);
+    }
+
+    let path = &args[1];
+    let command = get_flezha_command();
+
+    let rpc_command = format!("Flezha.Service.CliManager.state_outbox(\"{}\")", path,);
+
+    let status = Command::new(command)
+        .arg("rpc")
+        .arg(rpc_command)
+        .status()
+        .expect("Failed to execute command");
+
+    if !status.success() {
+        exit(status.code().unwrap_or(1));
+    }
+}
+
 fn print_state_help() {
     println!("flz state - Per-Segment state inspection and time-travel queries");
     println!();
@@ -164,6 +187,9 @@ fn print_state_help() {
     println!(
         "    delete <operative/operation/key>              Hard-delete a Segment's persisted state"
     );
+    println!(
+        "    outbox <operative/operation/key>              Effectively-once outbox status (lag, cursor, watermark)"
+    );
     println!();
     println!("EXAMPLES:");
     println!("    flz state list MarketOperative");
@@ -172,4 +198,5 @@ fn print_state_help() {
     println!("    flz state rotate MarketOperative/OhlcOperation/M1");
     println!("    flz state retention MarketOperative 6");
     println!("    flz state delete MarketOperative/OhlcOperation/M1");
+    println!("    flz state outbox MarketOperative/OhlcOperation/M1");
 }

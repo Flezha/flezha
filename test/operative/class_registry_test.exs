@@ -66,5 +66,38 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     assert ClassRegistry.get(class) == :unbounded
   end
 
+  test "effectively_once? defaults to false for an unknown class", %{class: class} do
+    refute ClassRegistry.effectively_once?(class)
+  end
+
+  test "a tier-on put resolves true and writes the durable sidecar", %{class: class} do
+    :ok = ClassRegistry.put_effectively_once(class, true)
+
+    assert ClassRegistry.effectively_once?(class)
+    assert File.exists?(tier_sidecar(class))
+
+    # Survives ETS eviction via the sidecar, like the kind.
+    :ok = ClassRegistry.delete(class)
+    assert ClassRegistry.effectively_once?(class)
+  end
+
+  test "a tier-off put clears the entry and removes the sidecar", %{class: class} do
+    :ok = ClassRegistry.put_effectively_once(class, true)
+    :ok = ClassRegistry.put_effectively_once(class, false)
+
+    refute ClassRegistry.effectively_once?(class)
+    refute File.exists?(tier_sidecar(class))
+
+    # Stays off after eviction — no stale sidecar resurrects the tier.
+    :ok = ClassRegistry.delete(class)
+    refute ClassRegistry.effectively_once?(class)
+  end
+
+  test "a tier-on put leaves a tier-off class's on-disk layout untouched", %{class: class} do
+    :ok = ClassRegistry.put_effectively_once(class, false)
+    refute File.exists?(Path.join(Registry.state_root(), class))
+  end
+
   defp sidecar(class), do: Path.join([Registry.state_root(), class, "kind"])
+  defp tier_sidecar(class), do: Path.join([Registry.state_root(), class, "effectively_once"])
 end

@@ -203,6 +203,8 @@ For each (key, value) pair:
 | `flz.segment` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the emitting Segment as `<operative_instance_id>/<operation_name>/<segment_key>` (empty key for single-mode). Replay-stable. |
 | `flz.seq` | SDK → Controller | Output-identity stamp on `.keyed()` channels: `<change_seq>.<emit_ordinal>` — the Segment's durable change seq after the flush-before-emit drain, plus the emit's ordinal within the invocation. See "Output identity stamps" below for the exactness boundary. |
 | `flz.key` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the caller's natural key from `OperationCtx::emit_keyed(key, value)`. Replay-stable by the determinism contract. |
+| `flz.offset` | Controller → SDK | Effectively-once tier: the durable input-log offset assigned to this forwarded input. The SDK threads it through dispatch (including inter-operation emits) so the invocation's effect record carries it back as its consumed-offset. Absent outside the tier. |
+| `flz.epoch` | Controller → plugins | Effectively-once tier: the Segment's WAL realign epoch, stamped (with `flz.segment` and the durable `flz.seq` = `outbox_seq`) on every output the fsync-gated outbox flush dispatches. Its presence marks a tier output; `(flz.segment, flz.seq, flz.epoch)` is the exact dedup identity. |
 
 The `channel` metadata key replaces the pre-`operative-mvp-rust` `plugin_group: u8` integer key. v1 sends the channel name as a UTF-8 string; an integer fast-path is reserved for a future change.
 
@@ -1112,10 +1114,11 @@ The SDK automatically reconnects when the control channel drops unexpectedly. Se
 
 ## Per-Segment State Persistence
 
-The persistence subsystem reserves two data-stream payload-ids and eight
-control commands. Both directions and all wire shapes are settled here
-and implemented in `operative-state-persistence-controller` (credit-grant
-flow control added the three `Credit*` commands).
+The persistence subsystem reserves the data-stream payload-ids below and
+eight control commands. Both directions and all wire shapes are settled
+here and implemented in `operative-state-persistence-controller`
+(credit-grant flow control added the three `Credit*` commands;
+`effectively-once-output` added `segment_effect_record`).
 
 ### Data-stream payload-id `segment_state_change`
 
@@ -1152,6 +1155,38 @@ a Java SDK reading a header with `sdk_lang = 1` raises
 `StateLoadException.sdkLangMismatch`; the same applies to the Rust SDK
 in reverse. Both SDKs reject unknown `format_id` values via the
 matching typed error.
+
+### Data-stream payload-id `segment_effect_record`
+
+SDK → controller, effectively-once tier only. Same wire shape as
+`segment_state_change` with header `format_id = 2`; `body` is the postcard
+`EffectRecordBody` — one invocation's state change(s), plugin outputs, and
+consumed input-log offset, persisted by the controller as ONE WAL record
+under ONE fsync window (the atomic effect record: state, outputs, and
+progress can never tear apart):
+
+```
+EffectRecordBody {
+    changes:         Vec<Vec<u8>>,       -- postcard S::Change bytes each,
+                                            folded on restore exactly like
+                                            plain change records, in order
+    outputs:         Vec<OutputRecord>,  -- the invocation's plugin emits
+    consumed_offset: Option<u64>,        -- flz.offset of the input
+}
+OutputRecord {
+    channel:  String,
+    key:      String,                    -- emit_keyed natural key
+    metadata: Vec<(String, String)>,     -- user metadata, key-sorted
+    payload:  Vec<u8>,
+}
+```
+
+In tier mode plugin emits never ride the primary stream — the controller
+dispatches them to the `:on_output` plugin chain only after the record's
+fsync completes, stamped with the durable identity `flz.segment`,
+`flz.seq = <record WAL seq>.<emit ordinal>` (the `outbox_seq`), and
+`flz.epoch`. Effect records are never coalesced at drain time. Decoded
+controller-side by `Flezha.State.Wire.decode_effect_body/1`.
 
 ### Data-stream payload-id `segment_state_snapshot`
 

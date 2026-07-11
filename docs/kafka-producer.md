@@ -47,6 +47,39 @@ chain receives `{:error, {:delivery_failed, last_reason}}`. Chain code that
 hits `{:error, _}` from this plugin is observing a real failure, not a
 transient broker burp.
 
+## Effectively-once tier: message keys, identity headers, and the exactness contract
+
+Records produced by an `effectively_once()` operative arrive with the
+durable outbox identity stamps (`flz.segment`, `flz.seq` = the outbox seq
+`<record WAL seq>.<emit ordinal>`, `flz.epoch`). For those records the
+plugin:
+
+* uses **`flz.key`** (the `emit_keyed` natural key) as the Kafka message
+  key — stable partitioning across replays, latest-value-per-key semantics
+  on compacted topics;
+* writes the full identity as the record header
+  **`flezha.dedup_key = <flz.segment>/<outbox_seq>/<epoch>`** (e.g.
+  `MarketOperative/s1/k1/42.0/1`).
+
+Records without the tier stamps keep the pre-tier behaviour: the
+caller-supplied `kafka_msg_key` (or a caller-stamped `flezha.dedup_key`
+metadata value) is the message key and no header is written.
+
+**The exactness contract.** The Kafka client has no transactional
+producer, so the plugin does not — and cannot — claim broker-side
+exactly-once. What the tier guarantees is that a controller restart
+re-drives unflushed outputs with *identical* key, header, and partition;
+"coordination leaves your system, not the universe":
+
+* **Changelog / compacted topics** (the recommended shape for candles,
+  indicators, any latest-value stream): re-driven records upsert the same
+  message key, so compaction converges to exactly one visible value per
+  key. Consumers need nothing.
+* **Append-only topics**: a re-drive can append the same logical record
+  twice. Exact-once *consumption* requires the consumer to dedup on the
+  `flezha.dedup_key` header — the value is unique per logical output and
+  identical across every re-drive.
+
 ## Parameters
 
 | Parameter | Default | Type | Notes |

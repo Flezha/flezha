@@ -45,9 +45,10 @@ Configurable root via `:flezha, :state_root` (default `app_data/state`).
 | Module | Role |
 |---|---|
 | `Flezha.State.Registry` | Path resolution + directory enumeration. No GenServer, no I/O beyond `File.ls/1`. |
-| `Flezha.State.Wire` | Wire-frame codec for `segment_state_change` / `segment_state_snapshot` payload-ids. |
+| `Flezha.State.Wire` | Wire-frame codec for `segment_state_change` / `segment_effect_record` / `segment_state_snapshot` payload-ids (+ the postcard `EffectRecordBody` codec). |
 | `Flezha.State.Metrics` | Per-Segment `:counters` references; lazy allocation in a `:ets` table. |
-| `Flezha.State.Outbox` | `last_persisted_seq` cache file (`<segment_key>.outbox.dedup`). |
+| `Flezha.State.Outbox` | Per-Segment dedup file (`<segment_key>.outbox.dedup`): `last_persisted_seq` + `outbox_flushed_seq` + realign `epoch`. A rebuildable cache advanced at fsync-batch cadence (never per record); boot repairs it from the WAL scan. |
+| `Flezha.State.InputLog` | Effectively-once tier: per-operative durable ingest journal (`<class>/input.log`), min-watermark tracker + truncation, and the source-ingestion credit ledger. |
 | `Flezha.State.PersistenceResolver` | Per-Operative config resolution (`operative_persistence`, `time_travel_retention_hours`, `compact_after_bytes`). |
 | `Flezha.State.Supervisor` | `DynamicSupervisor` for per-Segment `WalWriter` GenServers + a process registry for name lookup. |
 | `Flezha.State.WalWriter` | One GenServer per Segment. Owns the WAL file handle; opens it in `handle_continue/2` so creation never blocks the caller. |

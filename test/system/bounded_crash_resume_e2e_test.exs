@@ -117,6 +117,75 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     end
   end
 
+  describe "effectively-once tier (rust/uds)" do
+    @describetag runtime: :rust, transport: :uds, cell: :rust_uds_tier
+
+    # §6.2: a tier bounded operative crashes mid-run and resumes; every keyed
+    # output reaches the conforming sink with the durable identity stamps, the
+    # Model-A re-run re-emits a byte-identical payload under the stable key,
+    # and the changelog upsert converges to exactly one value — never lost,
+    # never divergent.
+    test "tier bounded crash-resume converges the conforming changelog sink", ctx do
+      sink = %Flezha.Plugin{
+        id: "tier_sink",
+        namespace: nil,
+        operative_id: nil,
+        provider: Flezha.Plugin.Provider.BeamMsgForward,
+        opts: %{recv_pid: self(), include_metadata: true},
+        subscriptions: [{:on_output, []}]
+      }
+
+      _operative_id =
+        drive_crash_resume(
+          ctx,
+          "tier_commit_block_bounded",
+          "ok",
+          fn oid -> Overwatch.resume_segment_count(:bounded, oid) > 0 end,
+          plugins: [sink]
+        )
+
+      # Let the resume's final flush land before auditing everything received.
+      Process.sleep(1_000)
+      outputs = drain_tier_outputs([])
+
+      assert outputs != [], "no tier output reached the sink"
+
+      for {msg, md} <- outputs do
+        assert md["flz.key"] == "job"
+        assert md["flz.epoch"], "tier output missing its epoch stamp"
+        assert md["flz.seq"], "tier output missing its durable outbox seq"
+        assert String.starts_with?(msg, "committed:")
+      end
+
+      # Deterministic re-run: the pre-crash emit and the resume's re-emit are
+      # byte-identical, so the changelog upsert converges to one value.
+      assert outputs |> Enum.map(fn {msg, _} -> msg end) |> Enum.uniq() |> length() == 1,
+             "re-run emitted a divergent payload: #{inspect(outputs)}"
+
+      changelog =
+        Enum.reduce(outputs, %{}, fn {msg, md}, acc -> Map.put(acc, md["flz.key"], msg) end)
+
+      assert map_size(changelog) == 1
+
+      # Exact-identity dedup holds within an identity: no identity ever
+      # carries two different payloads.
+      outputs
+      |> Enum.group_by(fn {_m, md} -> {md["flz.segment"], md["flz.seq"], md["flz.epoch"]} end)
+      |> Enum.each(fn {identity, group} ->
+        payloads = group |> Enum.map(fn {m, _} -> m end) |> Enum.uniq()
+        assert length(payloads) == 1, "identity #{inspect(identity)} diverged"
+      end)
+    end
+  end
+
+  defp drain_tier_outputs(acc) do
+    receive do
+      {:message_forward, msg, md} -> drain_tier_outputs([{to_string(msg), md} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
   # --- crash-resume harness ---------------------------------------------------
 
   # Drive one operative through the full SIGKILL-mid-run → respawn → resume flow
@@ -124,7 +193,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   # id that becomes true once the durable mid-run point is reached on the first
   # executor (which never completes it — the release env is unset there).
   # Returns the operative id for scenario-specific assertions.
-  defp drive_crash_resume(ctx, factory_id, terminal_status, mid_run?) do
+  defp drive_crash_resume(ctx, factory_id, terminal_status, mid_run?, builder_opts \\ []) do
     namespace = unique("bounded_crash")
     operative_id = unique(factory_id)
     id_path = unique_id_path()
@@ -138,7 +207,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       id: operative_id,
       factory_id: factory_id,
       kind: :bounded,
-      init_values: %{"seed" => "go"}
+      init_values: %{"seed" => "go"},
+      opts: builder_opts
     }
 
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)

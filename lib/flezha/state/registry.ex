@@ -73,6 +73,16 @@ defmodule Flezha.State.Registry do
   end
 
   @doc """
+  Path of the per-operative durable input-log (effectively-once tier).
+  Lives at the class level beside the `kind` sidecar — inert to the
+  Segment scanners, which only walk `<class>/<operation_id>/` dirs.
+  """
+  @spec input_log_path(binary()) :: binary()
+  def input_log_path(operative_class) when is_binary(operative_class) do
+    Path.join([state_root(), operative_class, "input.log"])
+  end
+
+  @doc """
   Path of a per-Segment saga compensation marker (`bounded-operative-saga`
   §4.3). `:intent` marks that the Segment's operation completed forward and may
   need undo; `:done` marks that its compensation already ran. Presence is the

@@ -57,11 +57,13 @@ fn register_unbounded_all() {
     register_unbounded::<ResumeProbeOperative>();
     register_unbounded::<DynamicSegmentOperative>();
     register_unbounded::<MixedOperative>();
+    register_unbounded::<TierStoreOperative>();
 }
 
 fn register_bounded_all() {
     register_bounded::<EchoBounded>();
     register_bounded::<CommitBlockBounded>();
+    register_bounded::<TierCommitBlockBounded>();
     register_bounded::<SagaBlockBounded>();
 }
 
@@ -215,6 +217,57 @@ impl BoundedOperative for CommitBlockBounded {
         c.input::<String>("in").into::<CommitA>();
         c.channel::<String>("mid")
             .from::<CommitA>()
+            .into::<BlockB>();
+    }
+}
+
+// `tier_commit_block_bounded`: the effectively-once bounded fixture. Op A
+// commits durable state AND emits `committed:<input>` under a stable key on a
+// keyed hybrid channel (captured into the atomic effect record); op B blocks
+// until the resumed executor sets the release env. A SIGKILL lands with A's
+// effect record durable and B unfinished; the resume re-runs A (idempotent
+// change, deterministic re-emit) and completes.
+#[derive(Default)]
+struct TierCommitA;
+impl Operation for TierCommitA {
+    type Input = String;
+    type Output = String;
+    type State = SeenState;
+    type Change = Insert;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "tier_commit_a"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> SeenState {
+        SeenState::default()
+    }
+    fn apply_change(state: &mut SeenState, change: &Insert) {
+        state.items.insert(change.0.clone());
+    }
+    fn run(
+        &mut self,
+        input: String,
+        mut state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        state.apply(Insert("tier_commit_a".to_string()));
+        ctx.emit_keyed::<String>("job".to_string(), format!("committed:{input}"))
+    }
+}
+
+struct TierCommitBlockBounded;
+impl BoundedOperative for TierCommitBlockBounded {
+    fn factory_id() -> &'static str {
+        "tier_commit_block_bounded"
+    }
+    fn operations(c: &mut ChannelBuilder) {
+        c.effectively_once();
+        c.input::<String>("in").into::<TierCommitA>();
+        c.channel::<String>("mid")
+            .from::<TierCommitA>()
+            .keyed()
+            .also_to_plugin_with("tier_sink", |s: &String| s.as_bytes().to_vec())
             .into::<BlockB>();
     }
 }
@@ -418,6 +471,75 @@ impl UnboundedOperative for StoreInputOperative {
         c.channel::<String>("sink")
             .from::<StoreInputOperation>()
             .to_plugin("store_input_sink");
+    }
+}
+
+// -- TierStoreOperative (effectively-once) ----------------------------------------
+//
+// Effectively-once e2e fixture: inputs are "key:value" strings; state upserts
+// the latest value per key; every input emits `key=value` under the natural
+// key on a keyed plugin channel. Deterministic, so a crash-replay regenerates
+// byte-identical outputs and a changelog sink converges to the last value per
+// key — the §6.1 equivalence assertion.
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct TierStoreState {
+    values: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+enum TierStoreChange {
+    Set(String, String),
+}
+impl Change for TierStoreChange {}
+
+#[derive(Default)]
+struct TierStoreOperation;
+impl Operation for TierStoreOperation {
+    type Input = String;
+    type Output = String;
+    type State = TierStoreState;
+    type Change = TierStoreChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "tier_store_operation"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> TierStoreState {
+        TierStoreState::default()
+    }
+    fn apply_change(state: &mut TierStoreState, change: &TierStoreChange) {
+        match change {
+            TierStoreChange::Set(key, value) => {
+                state.values.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    fn run(
+        &mut self,
+        input: String,
+        mut state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        let (key, value) = input.split_once(':').unwrap_or((input.as_str(), ""));
+        let (key, value) = (key.to_string(), value.to_string());
+        state.apply(TierStoreChange::Set(key.clone(), value.clone()));
+        ctx.emit_keyed::<String>(key.clone(), format!("{key}={value}"))
+    }
+}
+
+struct TierStoreOperative;
+impl UnboundedOperative for TierStoreOperative {
+    fn factory_id() -> &'static str {
+        "tier_store"
+    }
+    fn channels(c: &mut ChannelBuilder) {
+        c.effectively_once();
+        c.input::<String>("input").into::<TierStoreOperation>();
+        c.channel::<String>("sink")
+            .from::<TierStoreOperation>()
+            .keyed()
+            .to_plugin("tier_sink");
     }
 }
 

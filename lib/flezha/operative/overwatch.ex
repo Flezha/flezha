@@ -13,7 +13,7 @@ defmodule Flezha.Operative.Overwatch do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{PersistenceResolver, Restore, Wire}
+  alias Flezha.State.{InputLog, PersistenceResolver, Restore, Wire}
   alias Flezha.Transport.LivenessCounters
 
   # Defaults for the bounded-retry governor introduced by
@@ -62,7 +62,10 @@ defmodule Flezha.Operative.Overwatch do
     # task so it never blocks `:stop_operative`; this field carries the in-flight
     # task's reference + pid so `:stop_operative` can terminate it cleanly. `nil`
     # when no migrate is in flight.
-    migrate_task: nil
+    migrate_task: nil,
+    # Effectively-once tier, declared by the SDK in the AddOperative response
+    # metadata. Gates the input-log journal + `flz.offset` stamp on `:io_in`.
+    effectively_once: false
   ]
 
   def start_link(args) do
@@ -146,17 +149,32 @@ defmodule Flezha.Operative.Overwatch do
          {:ok, state, operative} <- resolve_init_state(state, operative),
          operative =
            with_resume_segment_count(operative, state.builder.kind, operative_class(state)),
-         {:ok, final_executor_id, state} <- start_operative_sdk_with_retry(state, operative) do
+         {:ok, final_executor_id, add_operative_raw, state} <-
+           start_operative_sdk_with_retry(state, operative) do
+      # The SDK declares the effectively-once tier in the AddOperative
+      # response metadata; resolve it BEFORE plugin activation so source
+      # adapters pick the tier ingest mode (blocking call) from the env.
+      effectively_once = decode_effectively_once(add_operative_raw)
+
       state =
-        state
+        %{state | effectively_once: effectively_once}
         |> bind_to_executor(operative.id, final_executor_id)
         |> Map.put(:init_error, nil)
-        |> activate_initial_plugins()
+
+      # Tier: restore every persisted Segment (awaited) and re-forward the
+      # journaled input tail BEFORE sources activate, so replayed offsets
+      # reach the executor ahead of fresh ones (fold order at the SDK).
+      state = if effectively_once, do: restore_and_replay_journal(state), else: state
+
+      state = activate_initial_plugins(state)
 
       # Record this class's kind so the State subsystem can gate unbounded-only
       # behaviours (retention/watchdog/dynamic-evict/time-travel) for a durable
-      # bounded operative.
+      # bounded operative — plus the tier and this pid (the fsync-gated
+      # outbox flush dispatches `:on_output` through it).
       _ = ClassRegistry.put(operative_class(state), state.builder.kind)
+      _ = ClassRegistry.put_effectively_once(operative_class(state), effectively_once)
+      _ = ClassRegistry.put_overwatch(operative_class(state), self())
       _ = maybe_dispatch_restore_init_state(state, operative)
       {:ok, state}
     else
@@ -173,7 +191,7 @@ defmodule Flezha.Operative.Overwatch do
     }
   end
 
-  # Returns `{:ok, executor_id, state}` on success or `{:error, reason,
+  # Returns `{:ok, executor_id, add_operative_raw_data, state}` on success or `{:error, reason,
   # state}` on exhaustion. On every attempt the executor is re-resolved
   # so a fresh executor that came online during a backoff window is
   # picked up.
@@ -192,8 +210,8 @@ defmodule Flezha.Operative.Overwatch do
     state = %__MODULE__{state | executor_id: executor_id}
 
     case attempt_ping_and_start(operative, executor_id) do
-      {:ok, _} ->
-        {:ok, executor_id, state}
+      {:ok, raw_data} ->
+        {:ok, executor_id, raw_data, state}
 
       {:error, reason} when rest == [] ->
         {:error, reason, state}
@@ -377,6 +395,10 @@ defmodule Flezha.Operative.Overwatch do
   defp maybe_dispatch_restore_init_state(%__MODULE__{arrived_via_hotswap?: true}, _operative),
     do: :ok
 
+  # Tier operatives restored synchronously in `restore_and_replay_journal/1`.
+  defp maybe_dispatch_restore_init_state(%__MODULE__{effectively_once: true}, _operative),
+    do: :ok
+
   defp maybe_dispatch_restore_init_state(%__MODULE__{} = state, operative) do
     do_dispatch_restore(state, operative.opts, state.executor_id)
     :ok
@@ -397,14 +419,81 @@ defmodule Flezha.Operative.Overwatch do
   # `:unbounded` always; a durable `:bounded` class (this IS its crash-resume)
   # unless it opted out. A stateless kind has no WAL to replay.
   defp replay_persisted_segments(kind, operative_class, executor_id) do
+    Enum.each(restorable_segments(kind, operative_class), fn segment_id ->
+      _ = dispatch_restore_init_state(executor_id, segment_id)
+    end)
+  end
+
+  # Persisted, restorable Segments of this class — empty when the kind/class
+  # combination has no persistent state.
+  defp restorable_segments(kind, operative_class) do
     if PersistenceResolver.persistent_state?(kind, operative_class) do
       operative_class
       |> enumerate_persisted_segments()
-      |> Enum.each(fn segment_id ->
-        if Restore.has_persisted_state?(segment_id) do
-          _ = dispatch_restore_init_state(executor_id, segment_id)
+      |> Enum.filter(&Restore.has_persisted_state?/1)
+    else
+      []
+    end
+  end
+
+  # Effectively-once bind path: restore each persisted Segment through the
+  # awaited control round-trip (the SDK has applied state + consumed floor
+  # when the reply lands), then re-forward the journaled input tail above
+  # the min durable consumed-offset. Runs in the Overwatch process before
+  # plugin activation; Segments ahead of the min watermark skip re-forwarded
+  # offsets they already consumed (SDK `consumed_floor`).
+  defp restore_and_replay_journal(%__MODULE__{} = state) do
+    state.builder.kind
+    |> restorable_segments(operative_class(state))
+    |> Enum.each(fn segment_id ->
+      # Starting the writer replays its WAL scan: arms the outbox re-drive
+      # and repopulates the Segment's durable consumed-offset watermark.
+      _ = Flezha.State.Supervisor.find_or_start(segment_id)
+      _ = await_restore_init_state(state.executor_id, segment_id)
+    end)
+
+    replay_journaled_inputs(state)
+    state
+  end
+
+  defp await_restore_init_state(executor_id, segment_id) do
+    with {:ok, command} <- restore_command(segment_id) do
+      GenServer.call(
+        Identificator.control_unit(executor_id),
+        {:send_control, command},
+        restore_await_timeout_ms()
+      )
+    end
+  catch
+    :exit, reason ->
+      Logger.warning(
+        "[Overwatch] awaited restore failed segment=#{inspect(segment_id)}: #{inspect(reason)}"
+      )
+
+      {:error, reason}
+  end
+
+  defp restore_await_timeout_ms(),
+    do: Application.get_env(:flezha, :restore_await_timeout_ms, 15_000)
+
+  # Re-forward the retained journaled inputs above the min durable
+  # consumed-offset, stamping each record's original `flz.offset` (never
+  # re-journaling — the log already holds them, post-`:on_input`).
+  @doc false
+  def replay_journaled_inputs(%__MODULE__{} = state) do
+    operative_class = operative_class(state)
+
+    if File.exists?(Flezha.State.Registry.input_log_path(operative_class)) do
+      floor = InputLog.watermark(operative_class) || -1
+      last = InputLog.last_offset(operative_class)
+
+      if last > floor do
+        for {offset, message, metadata} <-
+              InputLog.read_range(operative_class, floor + 1, last) do
+          payload = {message, Map.put(metadata, "flz.offset", Integer.to_string(offset))}
+          GenServer.cast(state.channel, {:io_in, state.id, payload})
         end
-      end)
+      end
     end
 
     :ok
@@ -445,15 +534,8 @@ defmodule Flezha.Operative.Overwatch do
   ships (same enumeration + `has_persisted_state?` filter).
   """
   @spec resume_segment_count(atom(), binary()) :: non_neg_integer()
-  def resume_segment_count(:bounded, operative_class) do
-    if PersistenceResolver.persistent_state?(:bounded, operative_class) do
-      operative_class
-      |> enumerate_persisted_segments()
-      |> Enum.count(&Restore.has_persisted_state?/1)
-    else
-      0
-    end
-  end
+  def resume_segment_count(:bounded, operative_class),
+    do: length(restorable_segments(:bounded, operative_class))
 
   def resume_segment_count(_kind, _operative_class), do: 0
 
@@ -468,6 +550,36 @@ defmodule Flezha.Operative.Overwatch do
   # instance id, per the SDK convention that segment frames carry the operative_id).
   defp operative_class(%__MODULE__{} = state),
     do: Keyword.get(state.builder.opts, :operative_class, state.id)
+
+  # Effectively-once tier ingest point (`durable-input-log`): journal the
+  # post-`:on_input` payload before it is forwarded and stamp the assigned
+  # offset as `flz.offset` so the SDK can thread it into the effect record.
+  # Tier-off operatives pass through untouched (cost-free default).
+  @doc false
+  def journal_input(_state, nil), do: nil
+
+  def journal_input(%__MODULE__{effectively_once: true} = state, {message, metadata}) do
+    {:ok, offset} = InputLog.append(operative_class(state), message, metadata)
+    {message, Map.put(metadata, "flz.offset", Integer.to_string(offset))}
+  end
+
+  def journal_input(_state, payload), do: payload
+
+  # The SDK's AddOperative response raw_data is an `AddOperativeResponse`
+  # metadata map when the class declares SDK-side capabilities, empty
+  # otherwise (including every pre-tier or Java executor).
+  @doc false
+  def decode_effectively_once(raw_data) when is_binary(raw_data) and raw_data != "" do
+    case ExecutorCommands.AddOperativeResponse.decode(raw_data) do
+      {:ok, %ExecutorCommands.AddOperativeResponse{metadata: metadata}} ->
+        Map.get(metadata, "effectively_once") == "true"
+
+      {:error, _} ->
+        false
+    end
+  end
+
+  def decode_effectively_once(_raw_data), do: false
 
   # Phase 1 of the two-phase plugin lifecycle: register each plugin's
   # GenServer + struct (`init_provider/1` runs), but do NOT activate
@@ -507,8 +619,12 @@ defmodule Flezha.Operative.Overwatch do
   # `Plugin.Provider.Websocket`). Called exactly once per successful
   # startup, immediately after `start_operative_sdk/2` returns `{:ok, _}`.
   defp activate_initial_plugins(%__MODULE__{} = state) do
-    %__MODULE__{state | extensions: Table.bulk_activate(state.extensions)}
+    %__MODULE__{state | extensions: Table.bulk_activate(state.extensions, activation_env(state))}
   end
+
+  # Operative-level facts providers need at activation (the tier drives the
+  # source adapters' blocking-ingest mode).
+  defp activation_env(%__MODULE__{} = state), do: %{effectively_once: state.effectively_once}
 
   # Per the `operative-init-state` capability spec:
   #   - cold start with empty init_values → chain runs
@@ -630,7 +746,7 @@ defmodule Flezha.Operative.Overwatch do
       {:ok, table} ->
         # Runtime adds: SDK is already up, so activate immediately.
         # Boot path goes through activate_initial_plugins/1 instead.
-        {:reply, :ok, %{state | extensions: Table.bulk_activate(table)}}
+        {:reply, :ok, %{state | extensions: Table.bulk_activate(table, activation_env(state))}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -654,7 +770,7 @@ defmodule Flezha.Operative.Overwatch do
 
     case Table.subscribe(table, plugin_id, plugin) do
       {:ok, table} ->
-        {:reply, :ok, %{state | extensions: Table.bulk_activate(table)}}
+        {:reply, :ok, %{state | extensions: Table.bulk_activate(table, activation_env(state))}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, %{state | extensions: table}}
@@ -739,6 +855,14 @@ defmodule Flezha.Operative.Overwatch do
     {:reply, :pong, state}
   end
 
+  # Source adapters ask once (memoized) whether their ingest must be a
+  # blocking call: the effectively-once tier parks ingestion at zero source
+  # credit, which only back-pressures the source if it awaits the reply.
+  @impl true
+  def handle_call(:effectively_once?, _from, state) do
+    {:reply, state.effectively_once, state}
+  end
+
   @impl true
   def handle_call({:io_in, _message, _metadata}, _from, %__MODULE__{init_error: reason} = state)
       when reason != nil do
@@ -751,11 +875,11 @@ defmodule Flezha.Operative.Overwatch do
     payload = run_io(state, :on_input, message, metadata)
     record_io(state.liveness_ref, payload)
 
-    case payload do
+    case journal_input(state, payload) do
       nil ->
         :ok
 
-      _ ->
+      payload ->
         # Count an unbound-stream drop instead of discarding the channel's
         # `{:error, :no_stream}` reply, so the reconciler-detected stall is
         # observable (the probe rebinds the stream).
@@ -804,9 +928,9 @@ defmodule Flezha.Operative.Overwatch do
     payload = run_io(state, :on_input, message, metadata)
     record_io(state.liveness_ref, payload)
 
-    case payload do
+    case journal_input(state, payload) do
       nil -> :ok
-      _ -> GenServer.cast(state.channel, {:io_in, state.id, payload})
+      payload -> GenServer.cast(state.channel, {:io_in, state.id, payload})
     end
 
     {:noreply, state}
@@ -1024,7 +1148,7 @@ defmodule Flezha.Operative.Overwatch do
 
     %__MODULE__{
       state
-      | extensions: Table.bulk_activate(rehydrated),
+      | extensions: Table.bulk_activate(rehydrated, activation_env(state)),
         init_values: handover_state.init_values,
         arrived_via_hotswap?: true
     }
@@ -1136,23 +1260,27 @@ defmodule Flezha.Operative.Overwatch do
   """
   @spec dispatch_restore_init_state(binary(), {binary(), binary(), binary()}) ::
           {:ok, reference()} | {:error, term()}
-  def dispatch_restore_init_state(executor_id, {rc, sh, pk}) do
+  def dispatch_restore_init_state(executor_id, segment_id) do
+    case restore_command(segment_id) do
+      {:ok, command} -> ControlChannel.send_control(executor_id, command)
+    end
+  end
+
+  defp restore_command({rc, sh, pk}) do
     case Restore.assemble_payload({rc, sh, pk}) do
       {:ok, payload} ->
         segment_id_bytes = Wire.encode_segment_id(rc, sh, pk)
         markers = Flezha.State.Registry.compensation_markers({rc, sh, pk})
 
-        command =
-          {:restore_init_state,
-           %ExecutorCommands.RestoreInitState{
-             segment_id: segment_id_bytes,
-             snapshot_bytes: payload.snapshot_bytes,
-             change_log_bytes: payload.change_log_bytes,
-             has_compensation_intent: markers.intent,
-             has_compensation_done: markers.done
-           }}
-
-        ControlChannel.send_control(executor_id, command)
+        {:ok,
+         {:restore_init_state,
+          %ExecutorCommands.RestoreInitState{
+            segment_id: segment_id_bytes,
+            snapshot_bytes: payload.snapshot_bytes,
+            change_log_bytes: payload.change_log_bytes,
+            has_compensation_intent: markers.intent,
+            has_compensation_done: markers.done
+          }}}
     end
   end
 

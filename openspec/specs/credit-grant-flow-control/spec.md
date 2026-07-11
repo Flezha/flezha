@@ -91,3 +91,22 @@ Credit SHALL NOT carry across sessions. On stream re-attach (reconnect, takeover
 - **WHEN** a credit-speaking SDK reconnects after a connection loss with grants in flight
 - **THEN** `CreditWindowInit` re-establishes a full window on both sides and no stale grant is applied
 
+### Requirement: Source-ingestion credit is minted by min-watermark advance (effectively-once tier only)
+
+When an Operative runs with the effectively-once tier's durable input-log, the controller SHALL keep a per-Operative source credit ledger: dispatching a payload from the input-log to the Operative debits it by the payload's size, and the Operative's min-watermark advancing past consumed offsets credits back the corresponding bytes (batched, low/high watermark). At zero source credit the source adapter's ingest path SHALL park — stop reading its socket or pause its consumer — rather than growing the input-log without bound. When the tier is off, no source credit ledger exists and source adapters behave exactly as today.
+
+#### Scenario: Frozen watermark parks the source
+
+- **WHEN** one Segment stops advancing its consumed offset so the Operative's min-watermark freezes while ingestion continues
+- **THEN** the source credit ledger drains to zero and the source adapter parks, bounding input-log growth, until the watermark advances again
+
+#### Scenario: Tier off means no source ledger
+
+- **WHEN** an Operative runs without the effectively-once tier
+- **THEN** no source credit accounting occurs and the source adapter's behaviour is unchanged from today
+
+#### Scenario: Per-operative isolation of source park
+
+- **WHEN** an adapter feeds two Operatives and only one has a frozen min-watermark
+- **THEN** only the starved Operative's dispatch parks; the healthy Operative keeps receiving input
+

@@ -13,7 +13,10 @@ doc covers *operative state + output* durability).
    `segment_state_change` frames; the controller batches the fsync, ~5 ms).
 2. **Output** — what an operative emits on `on_output`. Output is routed **through the
    controller** (the operative sends an output frame; the controller runs the `on_output`
-   plugin chain → Kafka/HTTP/operative/etc.). Output is **at-least-once**.
+   plugin chain → Kafka/HTTP/operative/etc.). Output is **at-least-once** by default;
+   operatives that declare `effectively_once()` get the **effectively-once tier**
+   (durable input-log + atomic effect record + fsync-gated flush — see
+   "Delivery semantics" below).
 
 The core durability invariant we provide: **on a *graceful* stop, no state is lost; on a
 *hard kill*, a small best-effort window can lose the most-recent un-persisted state.**
@@ -69,11 +72,12 @@ of higher I/O pressure. Compare: the audit-log writer has a separate `:per_recor
 `:batched` fsync mode (`:per_record` is its default); WAL state persistence always
 uses the batched FsyncBatcher — per-record WAL fsync is not supported.
 
-## Output identity: making at-least-once deduplicable
+## Delivery semantics: at-least-once default, effectively-once tier
 
-Output stays at-least-once, but re-emitted output no longer has to be
-*indistinguishable* from new output. Channels declared `.keyed()` in the
-Rust SDK stamp every plugin-bound frame with reserved metadata —
+**Default (at-least-once + identity).** Output leaves on the primary
+stream as it is produced; nothing at the controller remembers what was
+delivered, so a crash-replay can re-emit. Channels declared `.keyed()` in
+the Rust SDK stamp every plugin-bound frame with reserved metadata —
 `flz.segment` (emitting Segment), `flz.seq` (`<change_seq>.<emit_ordinal>`,
 derived from the durable WAL seq), and `flz.key` (the natural key supplied
 via `ctx.emit_keyed(key, value)`). Because the stamps derive only from
@@ -83,13 +87,54 @@ replay-stable inputs, a crash-restore replay re-emits frames with
 exactly. The determinism contract this rests on — no ambient time, UUIDs,
 or external reads in `run`/`apply_change`/`compensate`; use `ctx.now()`
 and `ctx.stable_id()` instead — is documented on the `Operation` trait and
-verified by `OperationTestHarness::replay_emits_equal`.
+verified by `OperationTestHarness::replay_emits_equal`. In the default
+tier `flz.seq` is **not** an exact append-only dedup handle
+(no-state-change invocations can collide on it).
 
-Boundary: `flz.seq` is **not** an exact append-only dedup handle yet
-(no-state-change invocations can collide on it); that upgrade is the
-`effectively-once-output` outbox. Non-keyed channels are byte-identical
-to before and remain plain at-least-once. See
-`docs/sdk_protocol_spec.md` "Output identity stamps".
+**Effectively-once tier (opt-in, `effectively_once()` on the operative
+builder).** The built-in upgrade of *at-least-once delivery + deterministic
+key + idempotent sink = effectively-once*:
+
+- **Durable input-log.** The controller journals every inbound payload
+  (post-`:on_input`) into a per-operative `input.log` before forwarding,
+  stamping the offset as `flz.offset`. Retention truncates only below the
+  minimum durable consumed-offset across the operative's Segments; a
+  frozen watermark past the size threshold emits
+  `[:flezha, :state, :input_log_frozen_watermark]` instead of silently
+  accumulating.
+- **Atomic effect record.** In tier mode plugin emits leave on the
+  reliable state sink *inside* the invocation's `segment_effect_record` —
+  state change(s), outputs, and consumed offset are ONE WAL record under
+  ONE fsync. No partial combination is ever durable, and effect records
+  are never coalesced away.
+- **Fsync-gated outbox flush.** Outputs reach the `:on_output` plugin
+  chain only after their record is fsynced, stamped with the durable
+  identity `(flz.segment, outbox_seq = flz.seq, flz.epoch)` — now a
+  sufficient handle for exact append-only dedup. On restart the controller
+  re-drives every entry above the per-Segment `outbox_flushed_seq` cursor
+  in order with identical identity: outputs are **never lost, never
+  applied twice at a conforming sink** (Kafka: message key = `flz.key`,
+  header `flezha.dedup_key` — see `docs/kafka-producer.md` for the
+  changelog-vs-append contract).
+- **Source back-pressure.** Ingestion debits a per-operative source credit
+  ledger; the min-watermark advance mints it back. At zero credit the
+  source adapter's ingest call parks (the websocket stops reading its
+  socket), bounding input-log growth against a stalled Segment.
+- **Cost-free default.** Operatives without the flag keep every path
+  byte-identical — no input-log writes, no outbox, no gating. Slow or
+  unreachable sinks back the outbox up on disk (never memory) and delay
+  outputs; data is never dropped — the correct failure mode for the tier.
+- **Bounded operatives** opt in with the same per-record semantics: each
+  op's changes + keyed emits form one atomic effect record, and controller
+  re-drives carry identical identity. One boundary: a Model-A crash-resume
+  *re-runs* ops whose records are already durable, re-emitting the same key
+  and (deterministic) payload under a fresh outbox seq — changelog sinks
+  converge, but bounded append-topic header-exactness awaits the bounded
+  op-journal rework (`bounded-staged-commit-and-outbox`).
+
+Non-keyed channels are byte-identical to before and remain plain
+at-least-once. See `docs/sdk_protocol_spec.md` "Output identity stamps"
+and "segment_effect_record".
 
 ## How to avoid loss — operator playbook
 
@@ -105,10 +150,12 @@ to before and remain plain at-least-once. See
     `cluster.healthy` marker / `flz cluster prepare-recovery`) → replays from DETS.
   - Plain restart of a sole instance is "accept the operative-list rebuild window" — only do
     it when that's acceptable.
-- **Make sinks idempotent where exactly-once matters.** Output is at-least-once and can
-  be re-emitted after a rebind/restore — use Kafka keys/transactions, HTTP idempotency
-  keys, or DB upserts downstream. Declare the channel `.keyed()` so re-emits carry
-  identical `flz.key`/`flz.seq` stamps to upsert on (see "Output identity" above).
+- **Make sinks idempotent where exactly-once matters.** Output is at-least-once by
+  default and can be re-emitted after a rebind/restore — use Kafka keys/transactions,
+  HTTP idempotency keys, or DB upserts downstream. Declare the channel `.keyed()` so
+  re-emits carry identical `flz.key`/`flz.seq` stamps to upsert on — or opt the
+  operative into `effectively_once()` for the built-in tier (see "Delivery semantics"
+  above).
 - **Never treat DETS as the source of truth** in code or ops — it is a cold-start backup
   only (see `docs/resilience/process_hub_recovery_model.md`).
 - **Bounded operatives are durable + at-least-once by default.** A crash re-runs the
@@ -128,6 +175,7 @@ to before and remain plain at-least-once. See
   correct (exec-form `CMD ["./market_analyzer"]`, `runAsUser: 1000`, no `su`).
 - Plain-restarting the sole controller and expecting the operative list back instantly /
   `/healthz` to read `recovering` → use recovery mode instead.
-- Assuming output is exactly-once → it is at-least-once; dedup downstream.
+- Assuming output is exactly-once → it is at-least-once by default; dedup downstream
+  or opt the operative into the `effectively_once()` tier.
 - Forcing a node to recover from its own DETS while peers are alive → split-brain /
   stale-state crash (see the recovery-model doc).

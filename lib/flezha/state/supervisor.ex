@@ -32,8 +32,11 @@ defmodule Flezha.State.Supervisor do
   end
 
   @doc """
-  Returns the pid of the `WalWriter` for `segment_id`, starting one if
-  it is not yet running. Safe to call from many processes concurrently.
+  Returns the pid of the writer for `segment_id`, starting one if it is
+  not yet running. Safe to call from many processes concurrently. A
+  3-tuple id resolves a per-Segment `WalWriter`; the 2-tuple
+  `{operative_class, :input_log}` resolves the operative's durable
+  `InputLog` (same registry, so the shared `FsyncBatcher` drains both).
   """
   @spec find_or_start(tuple()) :: {:ok, pid()} | {:error, term()}
   def find_or_start(segment_id) do
@@ -42,7 +45,11 @@ defmodule Flezha.State.Supervisor do
         {:ok, pid}
 
       :error ->
-        spec = {WalWriter, segment_id}
+        spec =
+          case segment_id do
+            {operative_class, :input_log} -> {Flezha.State.InputLog, operative_class}
+            _ -> {WalWriter, segment_id}
+          end
 
         case DynamicSupervisor.start_child(__MODULE__, spec) do
           {:ok, pid} -> {:ok, pid}
@@ -69,6 +76,15 @@ defmodule Flezha.State.Supervisor do
 
     Flezha.State.FsyncBatcher.forget(segment_id)
     Flezha.State.Registry.delete_files(segment_id)
+
+    # A deleted Segment must stop holding the operative's input-log watermark.
+    case segment_id do
+      {operative_class, _, _} ->
+        Flezha.State.InputLog.forget_segment(operative_class, segment_id)
+
+      _ ->
+        :ok
+    end
 
     {:ok, %{segment_id: segment_id, status: :ok}}
   end

@@ -3,9 +3,7 @@
 ## Purpose
 
 The kafka-producer-plugin capability defines the production-grade contract that any Flezha Kafka producer plugin SHALL satisfy when publishing messages from an operative chain to a Kafka cluster. The contract supersedes the prior "thin `KafkaEx.produce` wrapper" behaviour, which surfaced every transient broker condition (`:not_leader_for_partition`, `:no_broker`, `:unknown_topic_or_partition`, `:network_exception`, `:request_timed_out`, `:not_enough_replicas`) directly to the chain, dropped messages on every error, spawned one `KafkaEx.Server` worker per plugin instance, and let upstream mailboxes grow unbounded during outages until the BEAM was OOM-killed. This capability specifies the retry, idempotence, batching, bounded-queue, shared-worker, active metadata refresh, auto-topic-creation, and telemetry semantics a conforming producer SHALL implement, and the configuration surface (`:retries`, `:retry_backoff_ms`, `:retry_max_backoff_ms`, `:delivery_timeout_ms`, `:linger_ms`, `:max_batch_bytes`, `:queue_max`, `:queue_overflow`, `:idempotent`, `:auto_create_topic`, `:auto_create_partitions`, `:auto_create_replication_factor`, `:required_acks`) executors tune to express durability and back-pressure trade-offs. A conforming producer SHALL never surface raw transient broker errors to the chain for messages that ultimately succeed, SHALL bound mailbox and queue growth under sustained outages, and SHALL expose every state transition as a `:telemetry` event so executors can monitor health without parsing log lines.
-
 ## Requirements
-
 ### Requirement: Producer retries every transient broker error transparently
 
 The Kafka producer plugin SHALL retry the following error classes returned by `KafkaEx.produce` (or any downstream Kafka client) without surfacing them to the chain caller, until either delivery succeeds or `:delivery_timeout_ms` is exceeded:
@@ -388,12 +386,60 @@ The bounded outbound queue SHALL be FIFO regardless of admission primitive. Reco
 
 ### Requirement: Dedup key format
 
-The Kafka producer plugin SHALL compute its dedup key as `<operative_class>/<operation_id>/<segment_key>/<seq>`. The plugin SHALL NOT use any value derived from the prior `processor_id` term in the dedup key composition; per-Operative identity in the dedup key is captured by `<operative_class>` (the Operative's module/class name) plus the operation/segment/seq tuple.
+The Kafka producer plugin SHALL compute its dedup key from the durable outbox
+identity as `<flz.segment>/<outbox_seq>/<epoch>` (where `flz.segment` is
+`operative_class/operation_id/segment_key` and `outbox_seq` is
+`<record WAL seq>.<emit ordinal>`). When outbox identity metadata is absent
+(at-least-once operatives), the plugin SHALL fall back to the caller-supplied
+`kafka_msg_key` behaviour unchanged. The plugin SHALL NOT use any value derived
+from the prior `processor_id` term in the dedup key composition; per-Operative
+identity in the dedup key is captured by `<operative_class>` (the Operative's
+module/class name) within `flz.segment`.
 
-#### Scenario: Dedup key uses operative_class
-- **WHEN** the plugin emits a record produced by Segment `k1` of Operation `s1` of Operative class `MarketOperative` at seq `42`
-- **THEN** the message MUST carry a `flezha.dedup_key` metadata header equal to `MarketOperative/s1/k1/42`
+#### Scenario: Dedup key uses outbox identity
+
+- **WHEN** the plugin emits a tier record produced by Segment `k1` of Operation
+  `s1` of Operative class `MarketOperative` with outbox seq `42.0` and epoch `1`
+- **THEN** the message MUST carry a `flezha.dedup_key` header equal to
+  `MarketOperative/s1/k1/42.0/1`
 
 #### Scenario: Backward-compat keys are not produced
+
 - **WHEN** any record is emitted by the plugin
-- **THEN** its `flezha.dedup_key` MUST NOT contain the substring `processor_` or `compute_engine_` (verifiable by a Kafka header inspection in tests)
+- **THEN** its `flezha.dedup_key` MUST NOT contain the substring `processor_` or
+  `compute_engine_` (verifiable by a Kafka header inspection in tests)
+
+### Requirement: Effectively-once mode uses the natural key as the message key
+
+For records carrying tier identity metadata, the plugin SHALL use `flz.key` as
+the Kafka message key, so compacted/changelog topics converge to the latest value
+per key and partitioning is stable across replays. The full identity
+(`flezha.dedup_key`) SHALL travel as a record header for consumer-side exact
+dedup on append-only topics.
+
+#### Scenario: Message key from flz.key
+
+- **WHEN** a tier record with `flz.key = "BTC/1m/1720000000"` is published
+- **THEN** the Kafka message key is `BTC/1m/1720000000` and the identity header
+  is present
+
+#### Scenario: Replay lands on the same partition with the same key
+
+- **WHEN** the same logical output is re-driven after a controller restart
+- **THEN** the re-published message has an identical message key, identical
+  identity header, and the same partition as the original
+
+### Requirement: Append-topic exactness contract is documented
+
+Because the Kafka client provides no transactional producer, the plugin SHALL
+document (spec + operator docs) that append-only topics achieve exact-once
+consumption via the identity header (consumer-side dedup), while
+compacted/changelog topics achieve it via message-key upsert with no consumer
+work. The plugin SHALL NOT claim broker-side exactly-once.
+
+#### Scenario: Docs state the boundary
+
+- **WHEN** an operator reads the Kafka sink documentation for the tier
+- **THEN** the changelog-vs-append exactness contract and the consumer-side
+  header check are stated explicitly
+

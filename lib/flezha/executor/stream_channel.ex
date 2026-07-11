@@ -24,6 +24,7 @@ defmodule Flezha.Executor.StreamChannel do
   # the takeover fence (`:fence_write_path`) refuses exactly this set.
   @segment_write_payloads [
     "segment_state_change",
+    "segment_effect_record",
     "segment_state_snapshot",
     "delete_segment_state",
     "compensation_intent",
@@ -209,8 +210,11 @@ defmodule Flezha.Executor.StreamChannel do
     {:noreply, refuse_stale_forward(state, payload_id, message)}
   end
 
+  # Effect records (effectively-once tier) share the state-change frame
+  # layout and append path; the `format_id = 2` header is the durable
+  # marker the WalWriter keys the fsync-gated outbox flush on.
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
-      when payload_id == "segment_state_change" do
+      when payload_id in ["segment_state_change", "segment_effect_record"] do
     state = handle_segment_state_change(state, message)
     {:noreply, mark_seen(state)}
   end

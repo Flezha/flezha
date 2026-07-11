@@ -651,7 +651,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
             offset: 0,
             key: r.key,
             value: r.value,
-            headers: []
+            headers: record_headers(r)
           }
         end)
     }
@@ -1000,29 +1000,51 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     end
   end
 
+  defp record_headers(%{dedup_key: dedup_key}) when is_binary(dedup_key) do
+    [%Kayrock.RecordBatch.RecordHeader{key: "flezha.dedup_key", value: dedup_key}]
+  end
+
+  defp record_headers(_record), do: []
+
   defp elapsed_ms(state, batch), do: state.now_fn.() - batch.first_attempt_at
 
   defp in_flight_size(%{in_flight: nil}), do: 0
   defp in_flight_size(%{in_flight: %{records: r}}), do: length(r)
 
   defp build_record(msg, metadata, from, timestamp_ms) do
-    # Framework-owned dedup key wins over a user-supplied
-    # `kafka_msg_key` so retries land on the same Kafka partition.
-    # No SDK path stamps `flezha.dedup_key` today; keyed-channel
-    # emits carry `flz.key`, which this producer adopts as the
-    # preferred key when `effectively-once-output` lands.
-    key =
-      Map.get(metadata, "flezha.dedup_key") ||
-        Map.get(metadata, "kafka_msg_key", nil)
+    {key, dedup_key} = record_identity(metadata)
 
     %{
       from: from,
       value: msg,
       key: key,
+      dedup_key: dedup_key,
       metadata: metadata,
       timestamp: timestamp_ms,
-      bytes: byte_size_or(0, msg) + byte_size_or(0, key)
+      bytes: byte_size_or(0, msg) + byte_size_or(0, key) + byte_size_or(0, dedup_key)
     }
+  end
+
+  # Effectively-once tier record (`flz.epoch` present): the natural key is
+  # the Kafka message key — stable partitioning across replays, upsert
+  # semantics on compacted/changelog topics — and the full durable identity
+  # travels as the `flezha.dedup_key` header
+  # (`<flz.segment>/<outbox_seq>/<epoch>`) for consumer-side exact dedup on
+  # append-only topics. Re-driven entries carry identical identity.
+  defp record_identity(
+         %{"flz.epoch" => epoch, "flz.segment" => segment, "flz.seq" => outbox_seq} = metadata
+       ) do
+    {Map.get(metadata, "flz.key"), "#{segment}/#{outbox_seq}/#{epoch}"}
+  end
+
+  # At-least-once records: caller-supplied key behaviour unchanged, no
+  # identity header.
+  defp record_identity(metadata) do
+    key =
+      Map.get(metadata, "flezha.dedup_key") ||
+        Map.get(metadata, "kafka_msg_key", nil)
+
+    {key, nil}
   end
 
   defp byte_size_or(_default, bin) when is_binary(bin), do: byte_size(bin)

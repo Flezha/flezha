@@ -1470,6 +1470,45 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
+  `flz state outbox <operative/operation/key>` — effectively-once outbox
+  status for one Segment: durable seq, flush cursor, epoch, undispatched
+  lag, and the operative's input-log min-watermark.
+  """
+  def state_outbox(path_string) do
+    case parse_state_path(path_string) do
+      {:ok, {rc, sh, pk} = segment_id} ->
+        status =
+          case Flezha.State.Supervisor.lookup(segment_id) do
+            {:ok, pid} ->
+              Flezha.State.WalWriter.outbox_status(pid)
+
+            :error ->
+              dedup = Flezha.State.Outbox.read(segment_id)
+
+              %{
+                last_persisted_seq: dedup.last_persisted_seq,
+                outbox_flushed_seq: dedup.outbox_flushed_seq,
+                epoch: dedup.epoch,
+                pending: nil
+              }
+          end
+
+        watermark = Flezha.State.InputLog.watermark(rc)
+
+        IO.puts("segment            #{rc}/#{sh}/#{pk}")
+        IO.puts("last_persisted_seq #{status.last_persisted_seq}")
+        IO.puts("outbox_flushed_seq #{status.outbox_flushed_seq}")
+        IO.puts("epoch              #{status.epoch}")
+        IO.puts("outbox_lag         #{status.pending || "unknown (writer not running)"}")
+        IO.puts("input_watermark    #{watermark || "none"}")
+
+      {:error, reason} ->
+        IO.puts(:stderr, "state outbox: #{reason}")
+        System.halt(1)
+    end
+  end
+
+  @doc """
   `flz state retention <operative_class> <hours>` — set runtime retention
   for `<operative_class>`. Persisted across the next Application boot only
   if the executor separately writes it to runtime.exs.

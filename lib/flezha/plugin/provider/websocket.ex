@@ -198,7 +198,8 @@ defmodule Flezha.Plugin.Provider.Websocket do
            resubscribe_after_ms:
              Map.get(opts, :resubscribe_after_ms, @default_resubscribe_after_ms),
            ignore_pattern: Map.get(opts, :ignore_pattern),
-           plugin_id: plugin_id
+           plugin_id: plugin_id,
+           sync_ingest?: Map.get(opts, :effectively_once, false)
          ) do
       {:ok, pid} ->
         Logger.info(
@@ -322,6 +323,9 @@ defmodule Flezha.Plugin.Provider.Websocket do
         idle_timeout_ms: idle_timeout_ms,
         resubscribe_after_ms: resubscribe_after_ms,
         ignore_pattern: compile_ignore_pattern(ignore_pattern),
+        # Effectively-once tier (from the activation env): ingest via a
+        # blocking call so a zero-credit park stops the socket read.
+        sync_ingest?: Keyword.get(opts, :sync_ingest?, false),
         websocket_established?: false,
         frames_seen: 0,
         last_frame_at: now,
@@ -397,7 +401,15 @@ defmodule Flezha.Plugin.Provider.Websocket do
         {type, message} = _p,
         %{overwatcher_pid: overwatcher, payload_metadata: metadata} = state
       ) do
-    GenServer.cast(overwatcher, {:io_in, message, metadata})
+    if Map.get(state, :sync_ingest?, false) do
+      # Effectively-once tier ingest: await the journal ack so a
+      # zero-credit park blocks this connection process — the socket stops
+      # being read (TCP back-pressure) instead of the input-log growing
+      # without bound.
+      _ = GenServer.call(overwatcher, {:io_in, message, metadata}, :infinity)
+    else
+      GenServer.cast(overwatcher, {:io_in, message, metadata})
+    end
 
     # One clock read and one classification per frame; `last_frame_at`
     # is set unconditionally (connection liveness) and `last_data_frame_at`

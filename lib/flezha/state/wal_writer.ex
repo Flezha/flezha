@@ -15,8 +15,11 @@ defmodule Flezha.State.WalWriter do
 
   use GenServer, restart: :transient
 
+  require Logger
+
   alias Flezha.Executor.FleetManager
-  alias Flezha.State.{FsyncBatcher, Metrics, Outbox, Recovery, Registry}
+  alias Flezha.Operative.ClassRegistry
+  alias Flezha.State.{FsyncBatcher, InputLog, Metrics, Outbox, Recovery, Registry, Wire}
 
   @header_size 16
   @reservoir_capacity 1024
@@ -43,7 +46,17 @@ defmodule Flezha.State.WalWriter do
     :oldest_unsnapshotted_at,
     :credit_pending,
     :credit_active?,
-    :refused_sessions
+    :refused_sessions,
+    # Effectively-once outbox: FIFO of effect-record entries awaiting the
+    # fsync-gated `:on_output` dispatch (`%{seq, outputs, consumed_offset}`,
+    # dispatchable once `seq <= outbox_durable_seq`), the flush cursor, the
+    # realign epoch, and the retry timer armed while the operative's
+    # Overwatch is not yet resolvable.
+    :pending_outbox,
+    :outbox_durable_seq,
+    :outbox_flushed_seq,
+    :outbox_epoch,
+    :outbox_retry_timer
   ]
 
   @type t :: %__MODULE__{
@@ -151,6 +164,10 @@ defmodule Flezha.State.WalWriter do
   @spec last_persisted_seq(GenServer.server()) :: integer()
   def last_persisted_seq(server), do: GenServer.call(server, :last_persisted_seq)
 
+  @doc "Live effectively-once outbox status (`flz state outbox`)."
+  @spec outbox_status(GenServer.server()) :: map()
+  def outbox_status(server), do: GenServer.call(server, :outbox_status)
+
   @spec stall_status(GenServer.server()) :: stall_status()
   def stall_status(server), do: GenServer.call(server, :stall_status)
 
@@ -252,7 +269,12 @@ defmodule Flezha.State.WalWriter do
       oldest_unsnapshotted_at: nil,
       credit_pending: %{},
       credit_active?: false,
-      refused_sessions: MapSet.new()
+      refused_sessions: MapSet.new(),
+      pending_outbox: :queue.new(),
+      outbox_durable_seq: -1,
+      outbox_flushed_seq: -1,
+      outbox_epoch: 0,
+      outbox_retry_timer: nil
     }
 
     {:ok, state, {:continue, :open}}
@@ -276,8 +298,29 @@ defmodule Flezha.State.WalWriter do
     # the age trigger under-fires by at most one boot-to-sweep interval.
     oldest = if size > 0, do: :erlang.monotonic_time(:millisecond)
 
-    {:noreply,
-     %{state | file_handle: file, last_persisted_seq: last_seq, oldest_unsnapshotted_at: oldest}}
+    # Restart re-drive (effectively-once): every durable effect record above
+    # the flush cursor re-enters the outbox queue with identical identity —
+    # a stale cursor widens the re-drive (sink dedup absorbs), never skips.
+    dedup = Outbox.read(state.segment_id)
+    {redrive, max_consumed} = scan_effect_records_above(file, dedup.outbox_flushed_seq)
+
+    if is_integer(max_consumed) do
+      {rc, _sh, _pk} = state.segment_id
+      InputLog.record_consumed(rc, state.segment_id, max_consumed)
+    end
+
+    state = %{
+      state
+      | file_handle: file,
+        last_persisted_seq: last_seq,
+        oldest_unsnapshotted_at: oldest,
+        outbox_flushed_seq: dedup.outbox_flushed_seq,
+        outbox_epoch: dedup.epoch,
+        outbox_durable_seq: last_seq,
+        pending_outbox: :queue.from_list(redrive)
+    }
+
+    {:noreply, try_dispatch_outbox(state)}
   end
 
   @impl true
@@ -355,6 +398,13 @@ defmodule Flezha.State.WalWriter do
         # records (append alone never does).
         new_state = flush_credit_pending(new_state)
         new_state = maybe_signal_backpressure(new_state, 0)
+
+        # Effectively-once: everything appended is now durable — dispatch
+        # the gated `:on_output` flush and advance the dedup file once per
+        # batch (never per record).
+        new_state = %{new_state | outbox_durable_seq: new_state.last_persisted_seq}
+        new_state = try_dispatch_outbox(new_state)
+        new_state = persist_dedup(new_state)
         {:reply, :ok, new_state}
     end
   end
@@ -376,18 +426,31 @@ defmodule Flezha.State.WalWriter do
     state = flush_credit_pending(state)
     state = establish_baseline(state, seq)
 
-    {:reply, :ok,
-     %{
-       state
-       | file_handle: file,
-         pending_bytes: 0,
-         pending_since_us: nil,
-         oldest_unsnapshotted_at: oldest
-     }}
+    state = %{
+      state
+      | file_handle: file,
+        pending_bytes: 0,
+        pending_since_us: nil,
+        oldest_unsnapshotted_at: oldest
+    }
+
+    # Rotation/compaction is one of the dedup file's advance points.
+    {:reply, :ok, persist_dedup(state)}
   end
 
   def handle_call(:last_persisted_seq, _from, state) do
     {:reply, state.last_persisted_seq, state}
+  end
+
+  def handle_call(:outbox_status, _from, state) do
+    status = %{
+      last_persisted_seq: state.last_persisted_seq,
+      outbox_flushed_seq: state.outbox_flushed_seq,
+      epoch: state.outbox_epoch,
+      pending: :queue.len(state.pending_outbox)
+    }
+
+    {:reply, status, state}
   end
 
   def handle_call(:stall_status, _from, state) do
@@ -454,11 +517,24 @@ defmodule Flezha.State.WalWriter do
     end
   end
 
+  # Overwatch was not yet resolvable when durable outbox entries arrived
+  # (cold-boot re-drive before the operative bound): retry the gated flush.
+  @impl true
+  def handle_info(:outbox_retry, state) do
+    before = state.outbox_flushed_seq
+    state = try_dispatch_outbox(%{state | outbox_retry_timer: nil})
+    state = if state.outbox_flushed_seq != before, do: persist_dedup(state), else: state
+    {:noreply, state}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
   @impl true
   def terminate(_reason, %{file_handle: file} = state) when not is_nil(file) do
     _ = :file.datasync(file)
     _ = :file.close(file)
     _ = flush_credit_pending(state)
+    _ = persist_dedup(state)
     :ok
   end
 
@@ -479,10 +555,10 @@ defmodule Flezha.State.WalWriter do
     Metrics.put(state.metrics, :wal_seq, seq)
     Metrics.add(state.metrics, :wal_size_bytes, size)
 
-    # Update outbox dedup file. A failure here is non-fatal: on restart
-    # `scan_for_last_valid_seq/2` recomputes from the WAL itself; the
-    # dedup file is a fast-path cache.
-    _ = Outbox.write_last_seq(state.segment_id, seq)
+    # The WAL append is the only per-record durable write; the dedup file
+    # is a rebuildable cache advanced at fsync-batch cadence (and repaired
+    # from the WAL scan on boot).
+    state = maybe_queue_effect(state, seq, header, change_bytes)
 
     FsyncBatcher.mark_dirty(state.segment_id)
 
@@ -501,6 +577,120 @@ defmodule Flezha.State.WalWriter do
     new_state = maybe_signal_backpressure(new_state, new_pending)
 
     {:reply, :ok, new_state}
+  end
+
+  # ---------- Effectively-once outbox (fsync-gated flush) ----------
+
+  # Queue an effect record's outputs for the post-fsync dispatch. Plain
+  # change records pay one header-byte check and nothing else.
+  defp maybe_queue_effect(state, seq, header, body) do
+    if Wire.effect_record_header?(header) do
+      case Wire.decode_effect_body(body) do
+        {:ok, decoded} ->
+          entry = %{seq: seq, outputs: decoded.outputs, consumed_offset: decoded.consumed_offset}
+
+          %{state | pending_outbox: :queue.in(entry, state.pending_outbox)}
+
+        {:error, reason} ->
+          {rc, sh, pk} = state.segment_id
+
+          Logger.warning(
+            "[wal] effect record body undecodable segment=#{rc}/#{sh}/#{pk} " <>
+              "seq=#{seq}: #{inspect(reason)} — outputs not flushed"
+          )
+
+          state
+      end
+    else
+      state
+    end
+  end
+
+  # Dispatch every leading durable entry, in seq order, to the operative's
+  # `:on_output` chain with the durable identity `(flz.segment, outbox_seq,
+  # epoch)`. Undispatchable (Overwatch not yet bound) → bounded retry timer;
+  # the queue is bounded by the credit window like the un-fsynced buffer.
+  defp try_dispatch_outbox(state) do
+    case :queue.peek(state.pending_outbox) do
+      :empty ->
+        state
+
+      {:value, %{seq: seq}} when seq > state.outbox_durable_seq ->
+        state
+
+      {:value, _entry} ->
+        {rc, _sh, _pk} = state.segment_id
+
+        case ClassRegistry.overwatch_pid(rc) do
+          {:ok, pid} -> dispatch_outbox_entries(state, pid)
+          :error -> schedule_outbox_retry(state)
+        end
+    end
+  end
+
+  defp dispatch_outbox_entries(state, pid) do
+    case :queue.out(state.pending_outbox) do
+      {{:value, %{seq: seq} = entry}, rest} when seq <= state.outbox_durable_seq ->
+        dispatch_one_effect(state, pid, entry)
+
+        state = %{
+          state
+          | pending_outbox: rest,
+            outbox_flushed_seq: entry.seq
+        }
+
+        dispatch_outbox_entries(state, pid)
+
+      _ ->
+        state
+    end
+  end
+
+  defp dispatch_one_effect(state, pid, entry) do
+    {rc, sh, pk} = state.segment_id
+    segment_label = "#{rc}/#{sh}/#{pk}"
+
+    entry.outputs
+    |> Enum.with_index()
+    |> Enum.each(fn {output, ordinal} ->
+      stamps = %{
+        "channel" => output.channel,
+        "flz.segment" => segment_label,
+        "flz.seq" => "#{entry.seq}.#{ordinal}",
+        "flz.epoch" => Integer.to_string(state.outbox_epoch)
+      }
+
+      stamps =
+        if output.key == "", do: stamps, else: Map.put(stamps, "flz.key", output.key)
+
+      metadata = Map.merge(Map.new(output.metadata), stamps)
+      GenServer.cast(pid, {:io_out, output.payload, metadata})
+    end)
+
+    # Durable consumed-offset: advances the input-log min-watermark.
+    if is_integer(entry.consumed_offset) do
+      InputLog.record_consumed(rc, state.segment_id, entry.consumed_offset)
+    end
+  end
+
+  defp schedule_outbox_retry(%{outbox_retry_timer: nil} = state) do
+    ref = Process.send_after(self(), :outbox_retry, 1_000)
+    %{state | outbox_retry_timer: ref}
+  end
+
+  defp schedule_outbox_retry(state), do: state
+
+  # Advance the dedup file (persistence watermark + flush cursor + epoch)
+  # with one atomic tmp+rename — at most once per fsync batch.
+  defp persist_dedup(state) do
+    _ =
+      Outbox.write(state.segment_id, %{
+        last_persisted_seq: max(state.last_persisted_seq, 0),
+        outbox_flushed_seq: state.outbox_flushed_seq,
+        epoch: state.outbox_epoch
+      })
+
+    state
   end
 
   # Only a frame from a *different* session than the epoch owner consults the
@@ -555,28 +745,31 @@ defmodule Flezha.State.WalWriter do
     :ok = :file.truncate(state.file_handle)
 
     Enum.each(Registry.snapshot_paths(state.segment_id), fn {_seq, path} -> File.rm(path) end)
-    # When the new epoch begins at seq=0, last_persisted_seq = -1; outbox stores unsigned
-    # ints so we clear the dedup file instead (absence ≡ "no records persisted yet").
-    if seq > 0 do
-      _ = Outbox.write_last_seq(state.segment_id, seq - 1)
-    else
-      _ = File.rm(Registry.outbox_dedup_path(state.segment_id))
-    end
 
     emit_realign(state.segment_id, state.last_persisted_seq, seq, executor_id)
 
     Metrics.put(state.metrics, :wal_size_bytes, 0)
     Metrics.put(state.metrics, :snapshot_seq, 0)
 
-    %{
+    # The stale lineage's undispatched outputs die with its records — the
+    # realigned executor's replay regenerates them under the new epoch. The
+    # epoch bump is persisted synchronously so re-driven identities can
+    # never collide across the realign.
+    state = %{
       state
       | last_persisted_seq: seq - 1,
         last_advance_at: now,
         owning_executor: executor_id,
         pending_bytes: 0,
         pending_since_us: nil,
-        oldest_unsnapshotted_at: nil
+        oldest_unsnapshotted_at: nil,
+        pending_outbox: :queue.new(),
+        outbox_durable_seq: seq - 1,
+        outbox_flushed_seq: -1,
+        outbox_epoch: state.outbox_epoch + 1
     }
+
+    persist_dedup(state)
   end
 
   # Cold-takeover shed: no baseline on this controller, so the frame can't
@@ -613,8 +806,8 @@ defmodule Flezha.State.WalWriter do
        when seq > last do
     now = :erlang.monotonic_time(:millisecond)
     Metrics.put(state.metrics, :wal_seq, seq)
-    _ = Outbox.write_last_seq(state.segment_id, seq)
-    %{state | awaiting_baseline?: false, last_persisted_seq: seq, last_advance_at: now}
+    state = %{state | awaiting_baseline?: false, last_persisted_seq: seq, last_advance_at: now}
+    persist_dedup(state)
   end
 
   defp establish_baseline(state, _seq), do: %{state | awaiting_baseline?: false}
@@ -665,7 +858,49 @@ defmodule Flezha.State.WalWriter do
     end
   end
 
-  defp rewrite_keep_seq_gt(wal_path, keep_above_seq) do
+  # Effect records above the flush cursor, oldest first — the restart
+  # re-drive set (already durable, dispatched once the Overwatch resolves).
+  # One pass over the WAL's effect records: the re-drive set (records above
+  # the flush cursor, oldest first, already durable) plus the highest
+  # consumed-offset across ALL effect records — the Segment's durable
+  # input-log watermark, repopulated at open (the ETS is a rebuildable cache).
+  defp scan_effect_records_above(device, cursor) do
+    collect_effect_records(device, 0, cursor, [], nil)
+  end
+
+  defp collect_effect_records(device, position, cursor, acc, max_consumed) do
+    case decode_record(device, position) do
+      {:ok, seq, header, body, consumed} ->
+        {acc, max_consumed} =
+          with true <- Wire.effect_record_header?(header),
+               {:ok, decoded} <- Wire.decode_effect_body(body) do
+            entry = %{
+              seq: seq,
+              outputs: decoded.outputs,
+              consumed_offset: decoded.consumed_offset
+            }
+
+            acc = if seq > cursor, do: [entry | acc], else: acc
+            {acc, max_offset(max_consumed, decoded.consumed_offset)}
+          else
+            _ -> {acc, max_consumed}
+          end
+
+        collect_effect_records(device, position + consumed, cursor, acc, max_consumed)
+
+      {:error, _} ->
+        {Enum.reverse(acc), max_consumed}
+    end
+  end
+
+  defp max_offset(current, nil), do: current
+  defp max_offset(nil, offset), do: offset
+  defp max_offset(current, offset), do: max(current, offset)
+
+  # Also reused by `Flezha.State.InputLog` for watermark truncation —
+  # the input-log shares this record framing.
+  @doc false
+  def rewrite_keep_seq_gt(wal_path, keep_above_seq) do
     {:ok, src} = :file.open(wal_path, [:raw, :read, :binary])
     new_path = wal_path <> ".rewriting"
     {:ok, dst} = :file.open(new_path, [:raw, :write, :binary])

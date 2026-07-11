@@ -138,6 +138,72 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     assert metadata.topic == @topic
   end
 
+  describe "effectively-once tier records (§5)" do
+    @tier_metadata %{
+      "channel" => "out",
+      "flz.segment" => "MarketOperative/s1/k1",
+      "flz.seq" => "42.0",
+      "flz.epoch" => "1",
+      "flz.key" => "BTC/1m/1720000000"
+    }
+
+    test "flz.key is the message key and the identity header rides along" do
+      {pid, _} = start_worker(script: [{:return, Fakes.ok_response(@topic, @partition)}])
+
+      assert :ok = ProducerWorker.enqueue(pid, "candle", @tier_metadata)
+      assert_receive {:send_called, request, _selector}
+      [%{data: [%{record_set: rb}]}] = request.topic_data
+      [record] = rb.records
+
+      assert record.key == "BTC/1m/1720000000"
+
+      assert [%Kayrock.RecordBatch.RecordHeader{key: "flezha.dedup_key", value: dedup}] =
+               record.headers
+
+      assert dedup == "MarketOperative/s1/k1/42.0/1"
+      refute dedup =~ "processor_"
+      refute dedup =~ "compute_engine_"
+    end
+
+    test "a re-driven record carries identical key, header, and partition" do
+      {pid, _} =
+        start_worker(
+          script: [
+            {:return, Fakes.ok_response(@topic, @partition)},
+            {:return, Fakes.ok_response(@topic, @partition)}
+          ]
+        )
+
+      assert :ok = ProducerWorker.enqueue(pid, "candle", @tier_metadata)
+      assert_receive {:send_called, req1, _}
+      # Restart re-drive re-publishes the same durable identity.
+      assert :ok = ProducerWorker.enqueue(pid, "candle", @tier_metadata)
+      assert_receive {:send_called, req2, _}
+
+      [%{data: [%{partition: p1, record_set: rb1}]}] = req1.topic_data
+      [%{data: [%{partition: p2, record_set: rb2}]}] = req2.topic_data
+      [r1] = rb1.records
+      [r2] = rb2.records
+
+      assert p1 == p2
+      assert r1.key == r2.key
+      assert r1.headers == r2.headers
+      assert r1.value == r2.value
+    end
+
+    test "at-least-once records keep the caller key and carry no headers" do
+      {pid, _} = start_worker(script: [{:return, Fakes.ok_response(@topic, @partition)}])
+
+      assert :ok = ProducerWorker.enqueue(pid, "v", %{"kafka_msg_key" => "user-key"})
+      assert_receive {:send_called, request, _}
+      [%{data: [%{record_set: rb}]}] = request.topic_data
+      [record] = rb.records
+
+      assert record.key == "user-key"
+      assert record.headers == []
+    end
+  end
+
   test "InitProducerId result is cached and used in subsequent batches" do
     pid_id = 4242
     epoch = 5
