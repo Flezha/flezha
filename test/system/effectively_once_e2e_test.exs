@@ -18,12 +18,12 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
   use ExUnit.Case, async: false
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Executor.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
-  alias Flezha.State.{InputLog, Outbox}
-  alias FlezhaTest.Helper.NodeTestHelper
+  alias Flezha.State.InputLog
 
   @moduletag :system
   @moduletag :effectively_once_e2e
@@ -152,12 +152,6 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
 
   # --- helpers ----------------------------------------------------------------
 
-  defp send_inputs(operative_id, namespace, inputs) do
-    for input <- inputs do
-      OperativeManager.send_io(operative_id, namespace, input, %{"input_type" => "2"})
-    end
-  end
-
   # Wait until the changelog built from everything received SO FAR (without
   # consuming the mailbox) covers `expected`.
   defp await_changelog(expected, timeout) do
@@ -188,96 +182,5 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
     after
       0 -> Enum.reverse(acc)
     end
-  end
-
-  defp stale_cursor_and_crash_writers(operative_id, segment_id) do
-    # Kill the writer brutally (no terminate/2 — the cursor persist at
-    # shutdown must not run) and reset the durable cursor to "nothing
-    # flushed", the crash-after-flush-before-cursor window at e2e scale.
-    case Flezha.State.Supervisor.lookup(segment_id) do
-      {:ok, pid} -> Process.exit(pid, :kill)
-      :error -> :ok
-    end
-
-    case Flezha.State.Supervisor.lookup({operative_id, :input_log}) do
-      {:ok, pid} -> Process.exit(pid, :kill)
-      :error -> :ok
-    end
-
-    dedup = Outbox.read(segment_id)
-    :ok = Outbox.write(segment_id, %{dedup | outbox_flushed_seq: -1})
-  end
-
-  defp boot_executor(namespace, id_path) do
-    {port, executor_id} =
-      NodeTestHelper.start_executor_port(namespace,
-        runtime: :rust,
-        transport: :uds,
-        env: [{"FLEZHA_EXECUTOR_ID_PATH", id_path}],
-        connect_timeout: 120_000
-      )
-
-    on_exit(fn ->
-      if is_port(port) and Enum.member?(:erlang.ports(), port) do
-        try do
-          Port.close(port)
-        catch
-          _, _ -> :ok
-        end
-      end
-    end)
-
-    {port, executor_id}
-  end
-
-  # Kill the Overwatch and wait until its supervised replacement is live —
-  # inputs sent before that would race the restart (a real source blocks or
-  # retries; `send_io` is fire-and-forget).
-  defp force_fresh_rebind(namespace, operative_id) do
-    {:ok, old_pid} = OperativeManager.get_operative_pid(namespace, operative_id)
-    Process.exit(old_pid, :kill)
-
-    assert wait_until(
-             fn ->
-               case OperativeManager.get_operative_pid(namespace, operative_id) do
-                 {:ok, pid} -> pid != old_pid and Process.alive?(pid)
-                 _ -> false
-               end
-             end,
-             60_000
-           ),
-           "no replacement Overwatch came up after the kill"
-  end
-
-  defp os_pid(port) do
-    {:os_pid, pid} = :erlang.port_info(port, :os_pid)
-    pid
-  end
-
-  defp sigkill(os_pid) do
-    {_, 0} = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
-  end
-
-  defp unique(prefix), do: prefix <> "_" <> Integer.to_string(System.unique_integer([:positive]))
-
-  defp unique_id_path() do
-    Path.join(System.tmp_dir!(), "eff_once_id_#{System.unique_integer([:positive])}")
-  end
-
-  defp cleanup(namespace, operative_id, id_path) do
-    try do
-      OperativeManager.stop_all_operatives(namespace)
-    catch
-      _, _ -> :ok
-    end
-
-    try do
-      FleetManager.stop_namespace(namespace)
-    catch
-      _, _ -> :ok
-    end
-
-    File.rm(id_path)
-    File.rm_rf(Path.join(Flezha.State.Registry.state_root(), operative_id))
   end
 end

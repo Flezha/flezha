@@ -140,6 +140,24 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   @doc """
+  Worker-reuse policy for `ProducerSup.ensure_worker/1`: alive AND not
+  permanently parked (`last_error` is `{:swap_exhausted, _}` when the
+  in-process broker-swap recovery is exhausted and the queue can no longer
+  drain). A wedged stats read errs on the side of reuse — only a
+  definitively parked/dead worker is reaped.
+  """
+  @spec reusable?(pid()) :: boolean()
+  def reusable?(pid) do
+    Process.alive?(pid) and not parked?(pid)
+  end
+
+  defp parked?(pid) do
+    match?(%{last_error: {:swap_exhausted, _}}, GenServer.call(pid, :stats, 1_000))
+  catch
+    :exit, _ -> false
+  end
+
+  @doc """
   Force a fresh broker connection now, bypassing the stall counter — an
   on-demand recovery for a producer wedged against a healthy-but-unreachable
   broker, without waiting for the next failed batch. (The automatic path is

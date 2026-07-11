@@ -97,6 +97,28 @@ services:
     networks:
       - flezha_network
 
+  # Sink target for the Postgres plugin integration tests
+  # (POSTGRES_INTEGRATION=1 mix test --include postgres_integration).
+  # Named `postgres-sink` on host port 5433: the flezha_market dev stack
+  # shares the default compose project name ("dev") and already owns a
+  # `postgres` service on 5432 — colliding with it recreates that container.
+  postgres-sink:
+    image: postgres:16
+    container_name: flezha_postgres_sink
+    environment:
+      POSTGRES_USER: flezha
+      POSTGRES_PASSWORD: flezha_test
+      POSTGRES_DB: flezha_test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flezha -d flezha_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - flezha_network
+
   rust:
     # Reuse the toolchain image — it ships with the full Rust toolchain, so
     # the executor app builds in-place from the bind-mounted source.

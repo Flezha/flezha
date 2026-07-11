@@ -116,6 +116,21 @@ key + idempotent sink = effectively-once*:
   applied twice at a conforming sink** (Kafka: message key = `flz.key`,
   header `flezha.dedup_key` — see `docs/kafka-producer.md` for the
   changelog-vs-append contract).
+- **Postgres sink (built-in conforming sink).** The `operative_postgres`
+  `io_binding` plugin (`Flezha.Plugin.Provider.Postgres`) makes the tier
+  effectively-once *into the database*: per flush batch ONE transaction
+  upserts every record into `flezha_records` (keyed by `flz.key`, falling
+  back to the durable identity for keyless tier outputs) and advances the
+  per-Segment `flezha_sink_progress` watermark row — data and progress can
+  never diverge. Every upsert is guarded by `(epoch, seq)` monotonicity,
+  so controller re-drives and stale epochs are byte-exact no-ops. An
+  unreachable database delays the flush (retry with backoff; enqueue
+  callers park past `queue_max`) — data delayed, never dropped. The schema
+  is fixed and operator-owned by default (`auto_create: false` fails
+  `health/1` with the missing tables); commit stalls past
+  `unhealthy_after_ms` surface on the same plugin-health → convergence
+  escalation path as Kafka. Unstamped (at-least-once) records become plain
+  inserts and never touch the watermark.
 - **Source back-pressure.** Ingestion debits a per-operative source credit
   ledger; the min-watermark advance mints it back. At zero credit the
   source adapter's ingest call parks (the websocket stops reading its
@@ -155,7 +170,7 @@ and "segment_effect_record".
   HTTP idempotency keys, or DB upserts downstream. Declare the channel `.keyed()` so
   re-emits carry identical `flz.key`/`flz.seq` stamps to upsert on — or opt the
   operative into `effectively_once()` for the built-in tier (see "Delivery semantics"
-  above).
+  above; the built-in Kafka and Postgres sink plugins are conforming out of the box).
 - **Never treat DETS as the source of truth** in code or ops — it is a cold-start backup
   only (see `docs/resilience/process_hub_recovery_model.md`).
 - **Bounded operatives are durable + at-least-once by default.** A crash re-runs the

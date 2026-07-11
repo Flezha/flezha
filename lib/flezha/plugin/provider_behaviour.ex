@@ -42,6 +42,32 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   @optional_callbacks health: 1
 
+  @doc """
+  Shared `convert_value/2` result helpers: CLI plugin opts arrive as
+  strings, direct (test/Elixir) opts as native types — accept both.
+  """
+  def parse_int(value, _field) when is_integer(value), do: {:ok, value}
+
+  def parse_int(value, field) when is_binary(value) do
+    case Integer.parse(value) do
+      {int_val, ""} -> {:ok, int_val}
+      _ -> {:error, "Invalid value for #{field}: #{value}"}
+    end
+  end
+
+  def parse_bool(value, _field) when is_boolean(value), do: {:ok, value}
+  def parse_bool("true", _field), do: {:ok, true}
+  def parse_bool("false", _field), do: {:ok, false}
+  def parse_bool(value, field), do: {:error, "Invalid value for #{field}: #{inspect(value)}"}
+
+  @doc "Raising variants for `init_provider/1`, where opts are pre-validated."
+  def coerce_int(v) when is_integer(v), do: v
+  def coerce_int(v) when is_binary(v), do: String.to_integer(v)
+
+  def coerce_bool(v) when is_boolean(v), do: v
+  def coerce_bool("true"), do: true
+  def coerce_bool("false"), do: false
+
   defmacro __using__(_opts) do
     quote do
       @behaviour Flezha.Plugin.ProviderBehaviour

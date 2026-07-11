@@ -9,7 +9,15 @@
 # `test/load/memory_drift_test.exs`; it also requires
 # `MIX_RUN_MEMORY_DRIFT=1`.
 ExUnit.start(
-  exclude: [:system, :java_sdk, :kafka_integration, :testnet, :memory_drift, :credit_soak]
+  exclude: [
+    :system,
+    :java_sdk,
+    :kafka_integration,
+    :postgres_integration,
+    :testnet,
+    :memory_drift,
+    :credit_soak
+  ]
 )
 
 # ProcessHub's `LoggerService.error/3` logs every `StartChildrenRequest`

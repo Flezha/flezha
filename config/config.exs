@@ -14,6 +14,7 @@ config :flezha,
   # Enabled plugins.
   enabled_plugins: %{
     "operative_kafka_producer" => Flezha.Plugin.Provider.Kafka.Producer,
+    "operative_postgres" => Flezha.Plugin.Provider.Postgres,
     "operative_websocket" => Flezha.Plugin.Provider.Websocket,
     "operative_beam_msg" => Flezha.Plugin.Provider.BeamMsgForward,
     "operative_stdout" => Flezha.Plugin.Provider.StdOut,

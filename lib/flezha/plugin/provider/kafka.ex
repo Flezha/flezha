@@ -45,6 +45,9 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     use ProviderBehaviour
 
+    import ProviderBehaviour,
+      only: [coerce_bool: 1, coerce_int: 1, parse_bool: 2, parse_int: 2]
+
     @enforce_keys [:hosts, :topic]
     defstruct @enforce_keys ++
                 [
@@ -300,29 +303,6 @@ defmodule Flezha.Plugin.Provider.Kafka do
     defp convert_value(:queue_overflow, value)
          when value in [:drop_oldest, :drop_newest, :block],
          do: {:ok, value}
-
-    defp parse_int(value, _field) when is_integer(value), do: {:ok, value}
-
-    defp parse_int(value, field) when is_binary(value) do
-      case Integer.parse(value) do
-        {int_val, ""} -> {:ok, int_val}
-        _ -> {:error, "Invalid value for #{field}: #{value}"}
-      end
-    end
-
-    defp parse_bool(true, _), do: {:ok, true}
-    defp parse_bool(false, _), do: {:ok, false}
-    defp parse_bool("true", _), do: {:ok, true}
-    defp parse_bool("false", _), do: {:ok, false}
-    defp parse_bool(value, field), do: {:error, "Invalid value for #{field}: #{inspect(value)}"}
-
-    defp coerce_int(v) when is_integer(v), do: v
-    defp coerce_int(v) when is_binary(v), do: String.to_integer(v)
-
-    defp coerce_bool(true), do: true
-    defp coerce_bool(false), do: false
-    defp coerce_bool("true"), do: true
-    defp coerce_bool("false"), do: false
 
     defp coerce_atom(v) when is_atom(v), do: v
     defp coerce_atom(v) when is_binary(v), do: String.to_existing_atom(v)
