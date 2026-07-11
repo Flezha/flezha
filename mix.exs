@@ -93,7 +93,12 @@ defmodule Flezha.MixProject do
       # to build from the local checkout (see process_hub_dep/0).
       {:process_hub, process_hub_dep()},
       {:blockade, "~> 0.2.2"},
-      {:fresh, "~> 0.4.4"},
+      # fresh 0.4.4's released mix.exs declares charlist elixirc_paths,
+      # which Mix >= 1.20 rejects; upstream is unresponsive. Pinned to
+      # José Valim's fix (bunopnu/fresh PR #5) until it is merged+released.
+      {:fresh,
+       github: "josevalim/fresh",
+       ref: "26291bc9b3d869b555785fa8fc790e8670711309"},
       {:kafka_ex, github: "alfetahe/kafka_ex", ref: "7a6de03b817e4c90e18fb8effc4293a81ae4ce77"},
       {:protox, "~> 2.0"},
       {:mimic, "~> 1.11"},
@@ -112,7 +117,6 @@ defmodule Flezha.MixProject do
     case System.get_env("FLEZHA_PROCESS_HUB_PATH") do
       path when is_binary(path) and path != "" -> [path: path]
       _ -> "~> 0.6.0"
-      # _ -> [git: "https://github.com/alfetahe/process-hub", branch: "dev"]
     end
   end
 

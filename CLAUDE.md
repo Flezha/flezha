@@ -95,10 +95,11 @@
 
 ## Auto-restore on boot (`auto-restore-on-boot` + `consume-recovery-mode-and-self-heal`)
 
-- **ProcessHub pinning**: `mix.exs` pins `process_hub` to the GitHub
-  dev branch — needed for the `durable-registry`,
-  `coordinator-bootstrap-recovery`, and `recovery-mode-opt-in`
-  capabilities.
+- **ProcessHub dependency**: `process_hub ~> 0.6.0` from hex (the
+  `durable-registry`, `coordinator-bootstrap-recovery`, and
+  `recovery-mode-opt-in` capabilities shipped in the 0.6.0 release;
+  the former GitHub dev-branch pin is gone). `FLEZHA_PROCESS_HUB_PATH`
+  still overrides with a local checkout.
 - **Modules**: `lib/flezha/boot/` — `StatePathMigrator`, `RecoveryHooks`.
   The `StatePathMigrator` runs synchronously from
   `Flezha.Application.start/2` before `Flezha.State.Supervisor`.
