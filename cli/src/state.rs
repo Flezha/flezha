@@ -15,10 +15,11 @@ pub fn handle_state_command(args: &[String]) {
         "retention" => handle_retention(args),
         "delete" => handle_delete(args),
         "outbox" => handle_outbox(args),
+        "journal" => handle_journal(args),
         "help" | "--help" | "-h" => print_state_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'list', 'at', 'rotate', 'retention', 'delete', 'outbox', or 'help'.",
+                "Error: Invalid argument '{}'. Use 'list', 'at', 'rotate', 'retention', 'delete', 'outbox', 'journal', or 'help'.",
                 args[0]
             );
             exit(1);
@@ -171,6 +172,32 @@ fn handle_outbox(args: &[String]) {
     }
 }
 
+fn handle_journal(args: &[String]) {
+    if args.len() < 2 {
+        eprintln!("Usage: flz state journal <operative/instance> [--output text|json]");
+        exit(1);
+    }
+
+    let instance = &args[1];
+    let output_format = get_output_format(&args[2..]);
+    let command = get_flezha_command();
+
+    let rpc_command = format!(
+        "Flezha.Service.CliManager.state_journal(\"{}\", \"{}\")",
+        instance, output_format,
+    );
+
+    let status = Command::new(command)
+        .arg("rpc")
+        .arg(rpc_command)
+        .status()
+        .expect("Failed to execute command");
+
+    if !status.success() {
+        exit(status.code().unwrap_or(1));
+    }
+}
+
 fn print_state_help() {
     println!("flz state - Per-Segment state inspection and time-travel queries");
     println!();
@@ -190,6 +217,9 @@ fn print_state_help() {
     println!(
         "    outbox <operative/operation/key>              Effectively-once outbox status (lag, cursor, watermark)"
     );
+    println!(
+        "    journal <operative/instance>              Bounded instance op-journal entries (committed ops)"
+    );
     println!();
     println!("EXAMPLES:");
     println!("    flz state list MarketOperative");
@@ -199,4 +229,5 @@ fn print_state_help() {
     println!("    flz state retention MarketOperative 6");
     println!("    flz state delete MarketOperative/OhlcOperation/M1");
     println!("    flz state outbox MarketOperative/OhlcOperation/M1");
+    println!("    flz state journal etl-job-42");
 }

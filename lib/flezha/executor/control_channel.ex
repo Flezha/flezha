@@ -216,6 +216,10 @@ defmodule Flezha.Executor.ControlChannel do
         handle_bounded_completed(state, completed)
         {:noreply, state}
 
+      {:op_commit, %{} = commit, reference_id} ->
+        handle_op_commit(state, commit, reference_id)
+        {:noreply, state}
+
       :not_sdk_initiated ->
         GenServer.cast(state.control_unit, {:handle_payload, message})
         {:noreply, state}
@@ -318,21 +322,13 @@ defmodule Flezha.Executor.ControlChannel do
   # because their field-2 wire types disagree (string vs nested message);
   # Protox returns `{:error, _}` in that case, which maps to
   # `:not_sdk_initiated`.
+  @sdk_initiated_commands [:executor_shutdown_notification, :bounded_completed, :op_commit]
+
   defp decode_sdk_initiated(message) do
     case ExecutorCommands.CommandRequest.decode(message) do
-      {:ok,
-       %ExecutorCommands.CommandRequest{
-         reference_id: ref,
-         command: {:executor_shutdown_notification, notif}
-       }} ->
-        {:executor_shutdown_notification, notif, ref}
-
-      {:ok,
-       %ExecutorCommands.CommandRequest{
-         reference_id: ref,
-         command: {:bounded_completed, completed}
-       }} ->
-        {:bounded_completed, completed, ref}
+      {:ok, %ExecutorCommands.CommandRequest{reference_id: ref, command: {tag, payload}}}
+      when tag in @sdk_initiated_commands ->
+        {tag, payload, ref}
 
       _ ->
         :not_sdk_initiated
@@ -438,14 +434,89 @@ defmodule Flezha.Executor.ControlChannel do
   end
 
   defp emit_executor_shutdown_ack(state, operative_id, reference_id) do
-    ack_request = %ExecutorCommands.CommandRequest{
+    emit_control_request(
+      state,
+      reference_id,
+      {:executor_shutdown_ack, %ExecutorCommands.ExecutorShutdownAck{operative_id: operative_id}},
+      "ExecutorShutdownAck operative=#{inspect(operative_id)}"
+    )
+  end
+
+  # Op-boundary commit (bounded-op-journal): append the `op_committed` entry
+  # to the instance's op-journal and fsync BEFORE replying — the ack IS the
+  # durable point the driver gates the next operation on. A failed append
+  # (disk error, oversized handoff) rides back in `error` and terminates the
+  # run abnormally on the SDK side. The append + fsync run in the journal's
+  # WalWriter process; op boundaries are coarse, so blocking this channel for
+  # one fsync round-trip is acceptable (same posture as the awaited restore).
+  defp handle_op_commit(state, commit, reference_id) do
+    %ExecutorCommands.OpCommit{
+      operative_id: operative_id,
+      op_idx: op_idx,
+      iter: iter,
+      segments_ran: segments_ran,
+      handoff: handoff
+    } = commit
+
+    result =
+      Flezha.State.OpJournal.append_op_committed(
+        operative_id,
+        op_idx,
+        iter,
+        segments_ran,
+        Enum.map(handoff, fn %ExecutorCommands.OpHandoffItem{channel_id: cid, payload: bytes} ->
+          {cid, bytes}
+        end)
+      )
+
+    error =
+      case result do
+        :ok -> ""
+        {:error, reason} -> inspect(reason)
+      end
+
+    :telemetry.execute(
+      [:flezha, :state, :op_commit],
+      %{count: 1, handoff_items: length(handoff)},
+      %{
+        namespace: state.namespace,
+        operative_id: operative_id,
+        op_idx: op_idx,
+        status: if(error == "", do: :ok, else: :error)
+      }
+    )
+
+    if error != "" do
+      Logger.warning(
+        "[control_channel] op-journal commit failed operative=#{inspect(operative_id)} " <>
+          "op_idx=#{op_idx}: #{error}"
+      )
+    end
+
+    emit_control_request(
+      state,
+      reference_id,
+      {:op_commit_response,
+       %ExecutorCommands.OpCommitResponse{
+         operative_id: operative_id,
+         op_idx: op_idx,
+         error: error
+       }},
+      "OpCommitResponse operative=#{inspect(operative_id)} op_idx=#{op_idx}"
+    )
+  end
+
+  # Reply to an SDK-initiated CommandRequest with a controller-emitted
+  # CommandRequest carrying the SAME reference_id (the SDK wakes its pending
+  # waiter on it). Best-effort: a dead stream is logged, never raised — the
+  # SDK side owns the timeout.
+  defp emit_control_request(state, reference_id, command, log_label) do
+    request = %ExecutorCommands.CommandRequest{
       reference_id: reference_id,
-      command:
-        {:executor_shutdown_ack,
-         %ExecutorCommands.ExecutorShutdownAck{operative_id: operative_id}}
+      command: command
     }
 
-    {:ok, iodata, _size} = Protox.encode(ack_request)
+    {:ok, iodata, _size} = Protox.encode(request)
 
     payload =
       Payloader.build_from_bin("control_command", IO.iodata_to_binary(iodata))
@@ -460,10 +531,7 @@ defmodule Flezha.Executor.ControlChannel do
             :ok
 
           {:error, reason} ->
-            Logger.warning(
-              "[control_channel] failed to emit ExecutorShutdownAck for " <>
-                "operative=#{inspect(operative_id)}: #{inspect(reason)}"
-            )
+            Logger.warning("[control_channel] failed to emit #{log_label}: #{inspect(reason)}")
 
             :ok
         end

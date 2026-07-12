@@ -26,6 +26,30 @@ defmodule Flezha.State.Registry do
 
   @safe_chars ~r/^[A-Za-z0-9_.-]+$/
 
+  # Reserved segment-key of a bounded instance's op-journal identity
+  # `{class, instance_id, "_op_journal"}`. Maps onto the `op.journal` file via
+  # `wal_path/1` so the WalWriter/FsyncBatcher/delete machinery treats the
+  # journal as one more per-instance file; it must never surface as a real
+  # Segment (no dedup cache is written for it, so `scan_dir/1` cannot see it).
+  @journal_segment_key "_op_journal"
+
+  @spec journal_segment_key() :: binary()
+  def journal_segment_key(), do: @journal_segment_key
+
+  @doc """
+  Reserved journal identity for a bounded instance's op-journal
+  (`bounded-op-journal`). Bounded per-instance state is keyed by the
+  instance id in the class position, so both dir levels carry it.
+  """
+  @spec journal_id(binary()) :: segment_id()
+  def journal_id(instance_id) when is_binary(instance_id),
+    do: {instance_id, instance_id, @journal_segment_key}
+
+  @doc "On-disk path of a bounded instance's op-journal."
+  @spec journal_path(binary()) :: binary()
+  def journal_path(instance_id) when is_binary(instance_id),
+    do: wal_path(journal_id(instance_id))
+
   @spec state_root() :: binary()
   def state_root() do
     case Application.fetch_env(:flezha, :state_root) do
@@ -40,6 +64,10 @@ defmodule Flezha.State.Registry do
   end
 
   @spec wal_path(segment_id()) :: binary()
+  def wal_path({_, _, @journal_segment_key} = pid) do
+    Path.join(state_dir(pid), "op.journal")
+  end
+
   def wal_path({_, _, segment_key} = pid) do
     Path.join(state_dir(pid), encode_segment_key(segment_key) <> ".wal")
   end

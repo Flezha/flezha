@@ -1279,8 +1279,30 @@ defmodule Flezha.Operative.Overwatch do
             snapshot_bytes: payload.snapshot_bytes,
             change_log_bytes: payload.change_log_bytes,
             has_compensation_intent: markers.intent,
-            has_compensation_done: markers.done
+            has_compensation_done: markers.done,
+            op_journal: op_journal_state(rc)
           }}}
+    end
+  end
+
+  # Bounded op-journal crash-resume: ship the instance's committed op state
+  # alongside the compensation markers (same restore exchange, no second
+  # round-trip). `nil` (field absent) when the instance has no journal —
+  # unbounded operatives, opted-out classes, pre-upgrade instances.
+  defp op_journal_state(instance_id) do
+    case Flezha.State.OpJournal.restore_state(instance_id) do
+      nil ->
+        nil
+
+      %{committed_op_idxs: idxs, iter: iter, handoff: handoff} ->
+        %ExecutorCommands.OpJournalState{
+          committed_op_idxs: idxs,
+          iter: iter,
+          handoff:
+            Enum.map(handoff, fn {cid, bytes} ->
+              %ExecutorCommands.OpHandoffItem{channel_id: cid, payload: bytes}
+            end)
+        }
     end
   end
 

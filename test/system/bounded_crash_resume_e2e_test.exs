@@ -87,17 +87,54 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       test "durable bounded resumes from committed Segment state after a SIGKILL", ctx do
         # Mid-run point: op A committed durable Segment state (the spec's
         # precondition); op B is then blocking, so the operative can only
-        # complete after resuming on the replacement.
+        # complete after resuming on the replacement. On rust the point also
+        # requires op A's journaled op-commit — the WAL flush and the OpCommit
+        # ack are independent, and the skip assertion below needs the journal
+        # entry durable before the SIGKILL.
+        runtime = ctx.runtime
+
         operative_id =
           drive_crash_resume(ctx, "commit_block_bounded", "ok", fn oid ->
-            Overwatch.resume_segment_count(:bounded, oid) > 0
+            journaled? =
+              runtime == :java or Flezha.State.OpJournal.restore_state(oid) != nil
+
+            Overwatch.resume_segment_count(:bounded, oid) > 0 and journaled?
           end)
 
-        # Resume-not-restart, directly: op A's WAL carries BOTH the pre-crash
-        # commit and the resume re-run's contiguous append (seq terminal+1). A
-        # cold restart that lost the committed state would leave only one record.
-        assert wal_record_count(operative_id, "commit_a") >= 2,
-               "resumed op A did not re-run over restored state (WAL was not resumed)"
+        case ctx.runtime do
+          :rust ->
+            # bounded-op-journal: op A's completion was journaled at the op
+            # barrier before the crash, so the resume SKIPS it — its WAL keeps
+            # exactly the pre-crash record (a redo would append a second one)
+            # and op B runs seeded from the journaled handoff.
+            assert wal_record_count(operative_id, "commit_a") == 1,
+                   "journaled op A was re-run on resume (redo-vs-skip broken)"
+
+            {:ok, entries} = Flezha.State.OpJournal.read(operative_id)
+            committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
+
+            assert 0 in committed, "op A's pre-crash commit is missing from the journal"
+            assert 1 in committed, "resumed op B never committed its boundary"
+
+            # Operator surface: `flz state journal <instance>` renders the entries.
+            rendered =
+              ExUnit.CaptureIO.capture_io(fn ->
+                Flezha.Service.CliManager.state_journal(operative_id)
+              end)
+
+            assert rendered =~ "op_committed"
+            assert rendered =~ "op_idx=0"
+
+          :java ->
+            # Java SDK parity is a separate follow-up: no OpCommit is sent, so
+            # resume keeps the pre-journal contract — op A re-runs over the
+            # restored state (WAL carries the pre-crash commit AND the re-run's
+            # contiguous append), and no journal exists.
+            assert wal_record_count(operative_id, "commit_a") >= 2,
+                   "resumed op A did not re-run over restored state (WAL was not resumed)"
+
+            assert {:ok, []} = Flezha.State.OpJournal.read(operative_id)
+        end
       end
 
       test "durable saga bounded resumes compensation after a SIGKILL mid-rollback", ctx do
@@ -175,6 +212,66 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
         payloads = group |> Enum.map(fn {m, _} -> m end) |> Enum.uniq()
         assert length(payloads) == 1, "identity #{inspect(identity)} diverged"
       end)
+    end
+  end
+
+  describe "opted-out class (rust/uds)" do
+    @describetag runtime: :rust, transport: :uds, cell: :rust_uds_optout
+
+    # bounded-op-journal: a `PERSISTENCE_ENABLED = false` class skips the
+    # op-commit handshake entirely — no journal, no WAL — and a crash-resume
+    # keeps the re-run-from-top contract: with nothing restored and nothing
+    # journaled, the only way the chain completes on the replacement is a
+    # fresh run of op A feeding op B. (Op A's sink marker is used only as the
+    # pre-crash mid-run signal — plain bounded outputs are best-effort during
+    # a rebind, so the resumed run's marker delivery is not asserted.)
+    test "opted-out bounded writes no journal and re-runs from the top", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+
+      sink = %Flezha.Plugin{
+        id: "optout_sink",
+        namespace: nil,
+        operative_id: nil,
+        provider: Flezha.Plugin.Provider.BeamMsgForward,
+        opts: %{recv_pid: collector, include_metadata: true},
+        subscriptions: [{:on_output, []}]
+      }
+
+      operative_id =
+        drive_crash_resume(
+          ctx,
+          "optout_commit_block",
+          "ok",
+          fn _oid ->
+            Enum.any?(collected(collector), &String.starts_with?(&1, "a-ran:"))
+          end,
+          plugins: [sink]
+        )
+
+      assert {:ok, []} = Flezha.State.OpJournal.read(operative_id)
+      refute File.exists?(Flezha.State.Registry.journal_path(operative_id))
+
+      assert [Registry.state_root(), operative_id, "**", "*.wal"]
+             |> Path.join()
+             |> Path.wildcard() == [],
+             "an opted-out class must write no WAL"
+    end
+  end
+
+  defp collect_loop(acc) do
+    receive do
+      {:message_forward, msg, _md} -> collect_loop([to_string(msg) | acc])
+      {:collected?, from} -> send(from, {:collected, acc}) && collect_loop(acc)
+    end
+  end
+
+  defp collected(collector) do
+    send(collector, {:collected?, self()})
+
+    receive do
+      {:collected, acc} -> acc
+    after
+      1_000 -> []
     end
   end
 

@@ -108,11 +108,20 @@ its operations/segments are WAL-backed on the **same substrate** as unbounded
 opted out, the per-Segment flush **drains and discards** — no WAL, snapshot, or
 state files.
 
-**Crash-resume = Model A, idempotent re-run.** On an executor/controller restart
+**Crash-resume = journal-gated redo-vs-skip.** On an executor/controller restart
 a durable bounded operative is respawned, its committed per-Segment state is
-restored via the **existing bind-time restore path**, and the chain is **re-run**
-— completed operations are idempotent no-ops over their restored state ("a step
-may repeat"). The `run`-sugar form (no segments) re-runs from the top. A
+restored via the **existing bind-time restore path**, and forward execution
+resumes **at the first operation not recorded in the op-journal**
+(`bounded-op-journal`): at every operation barrier the Rust driver ships
+`OpCommit` (op index, segments that ran, the inter-op handoff serialized through
+the channel's byte codec) and blocks until the controller has fsynced the
+`op_committed` entry into the instance's `op.journal`. On resume the journal
+state rides `RestoreInitState.op_journal`; committed operations are **skipped,
+not redone**, and the first uncommitted operation's batch is **seeded from the
+journaled handoff** instead of the entry channel. Only the operation that was
+mid-flight when the crash landed re-runs (Model A idempotent re-run applies to
+it alone). The `run`-sugar form (no segments), opted-out classes, pre-journal
+instances, and the Java SDK (parity follow-up) re-run from the top. A
 **restore-before-run gate** (`AddOperative.resume_segment_count`, the count of
 persisted Segments) holds the first operation until that many `RestoreInitState`
 frames land, so the chain never runs on empty state before the restore arrives.
@@ -120,6 +129,24 @@ Execution is therefore **at-least-once** — steps and compensations must be
 **idempotent by author contract**. An operation returning an **error** is
 terminal (compensate + status `error`, **no** platform retry); this is distinct
 from crash-resume.
+
+**Inter-op channel codec.** Every inter-operation channel of a durable
+structured class must declare a byte codec — `.codec()` for payloads with the
+standard serde derives (postcard), `.codec_with(encode, decode)` otherwise —
+so the handoff batch is journal-able; registration fails naming the codec-less
+channel. An oversized handoff (above the WAL-watermark-scale journal frame
+bound) fails the commit with a typed error: keep bulk data in Segment state
+(already WAL-durable) and hand off references. Inspect a journal with
+`flz state journal <operative/instance>`; the file shares the instance
+lifecycle (finished-job retention, `flz state delete`, `flz reset`).
+
+**Compensation precedence on resume.** A shipped compensation-**done** marker
+proves an undo pass was already in flight before the crash, so compensation
+resume wins over journal-gated forward resume; intent markers alone (which
+also accumulate during normal forward progress) do not. If a later operation
+terminates the resumed run abnormally, the skipped (journaled) operations
+still roll back — they are folded into the saga plan from their intent
+markers.
 
 The unbounded-only seq-gap → resync + epoch-realign machinery stays on
 `:unbounded`: a resumed bounded Segment re-arms its `change_seq` to
@@ -140,8 +167,8 @@ The unbounded-only seq-gap → resync + epoch-realign machinery stays on
    via `RestoreInitState`. In production this is driven by the convergence loop;
    the cross-language e2e drives it deterministically.
 4. The SDK driver holds the first operation on the restore gate until the
-   restores land, then re-runs the chain (or resumes compensation) to a terminal
-   `BoundedCompleted`.
+   restores land, then resumes the chain past the journaled operations (or
+   resumes compensation) to a terminal `BoundedCompleted`.
 
 ## Finished-job retention
 

@@ -29,6 +29,24 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
+  Override one `:flezha` application env key, returning a zero-arity restore
+  closure for the caller's `on_exit` (mirrors `tmp_app_data_dir/0`'s
+  caller-owned cleanup convention).
+  """
+  @spec override_env(atom(), term()) :: (-> :ok)
+  def override_env(key, value) do
+    previous = Application.fetch_env(:flezha, key)
+    Application.put_env(:flezha, key, value)
+
+    fn ->
+      case previous do
+        {:ok, old} -> Application.put_env(:flezha, key, old)
+        :error -> Application.delete_env(:flezha, key)
+      end
+    end
+  end
+
+  @doc """
   Reset all per-Segment state: terminate every live `WalWriter` and wipe
   the on-disk `state_root`. Integration tests reuse operative ids across cases;
   now that restore actually rehydrates a operative from its WAL on (re)bind,

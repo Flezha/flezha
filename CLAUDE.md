@@ -1,5 +1,45 @@
 # Flezha repo notes
 
+## Bounded op-journal (`bounded-op-journal`)
+
+- **Store**: `lib/flezha/state/op_journal.ex` — per-instance `op.journal` at
+  `<state_root>/<inst>/<inst>/op.journal` on the WalWriter+FsyncBatcher
+  substrate under reserved identity `Registry.journal_id/1`
+  (`{inst, inst, "_op_journal"}`); entry codec
+  `[type u8][op_idx u16][iter u32][payload]` inside normal WAL framing,
+  type 1 = `op_committed` (segments-ran + channel-tagged handoff blobs),
+  2–5 reserved (tolerated on decode). Size bound =
+  `:wal_high_watermark_bytes` → `{:error, {:oversized_handoff, ..}}`. The
+  journal writer skips the outbox dedup side-file so it never registers a
+  phantom Segment.
+- **Handshake**: SDK→controller `OpCommit` (proto tag 28) at every op
+  barrier of a durable structured bounded; ControlChannel appends +
+  fsyncs, replies `OpCommitResponse` (tag 29) under the SAME reference_id
+  (journal-then-ack); driver blocks ≤30 s (`bounded/driver.rs
+  commit_op_boundary`), failure/timeout → terminal error + compensation.
+  Telemetry `[:flezha, :state, :op_commit]`.
+- **Resume**: journal state rides `RestoreInitState.op_journal`
+  (`OpJournalState`); `drive_chain` skips committed ops and seeds the next
+  batch from the journaled handoff via the channel codec. Compensation
+  precedence: a comp-**done** marker wins (intents alone don't — they also
+  accumulate during forward progress). Skipped ops still roll back on a
+  later abnormal exit (folded from intent markers).
+- **Codec**: `.codec()` (postcard/serde) or `.codec_with(enc, dec)` on
+  inter-op channels; REQUIRED for durable structured bounded classes —
+  registration fails `MissingInterOpCodec` naming the channel. Opted-out
+  classes skip journal + handshake entirely (re-run-from-top preserved).
+- **CLI**: `flz state journal <operative/instance>`
+  (`CliManager.state_journal/2`).
+- **Java SDK**: parity is a separate follow-up — Java bounded keeps full
+  re-run-from-top (asserted per-runtime in the e2e).
+- **Tests**: `test/flezha/state/op_journal_test.exs`,
+  `test/flezha/executor/control_channel_op_commit_test.exs`, Rust
+  `bounded_driver_scenarios` (gating + resume-skip + codec validation),
+  e2e `test/system/bounded_crash_resume_e2e_test.exs` (op A NOT re-run on
+  rust; opted-out `optout_commit_block` re-runs from top).
+- **Docs**: `docs/sdk_protocol_spec.md` `OpCommit`/`OpCommitResponse`,
+  `docs/resilience/bounded_operative.md` "Durability" section.
+
 ## Dead-letter queue (`platform-dead-letter-queue`)
 
 - **SDK retry-then-park**: both dispatchers re-run a failing invocation

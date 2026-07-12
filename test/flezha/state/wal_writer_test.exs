@@ -58,7 +58,7 @@ defmodule Flezha.State.WalWriterTest do
       header = TestHelpers.stub_header()
       record = WalWriter.encode_record(1, header, "x")
       prefix_size = byte_size(record) - 1
-      <<prefix::binary-size(prefix_size), _last>> = record
+      <<prefix::binary-size(^prefix_size), _last>> = record
 
       File.write!(path, prefix <> <<0>>)
       {:ok, dev} = :file.open(path, [:raw, :read, :binary])

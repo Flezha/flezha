@@ -64,6 +64,7 @@ fn register_unbounded_all() {
 fn register_bounded_all() {
     register_bounded::<EchoBounded>();
     register_bounded::<CommitBlockBounded>();
+    register_bounded::<OptOutCommitBlockBounded>();
     register_bounded::<TierCommitBlockBounded>();
     register_bounded::<SagaBlockBounded>();
 }
@@ -217,7 +218,30 @@ impl BoundedOperative for CommitBlockBounded {
     fn operations(c: &mut ChannelBuilder) {
         c.input::<String>("in").into::<CommitA>();
         c.channel::<String>("mid")
+            .codec()
             .from::<CommitA>()
+            .into::<BlockB>();
+    }
+}
+
+// `optout_commit_block_bounded`: the opt-out twin of `commit_block_bounded`
+// with a live mid-chain signal — op A's output also reaches a plugin sink, so
+// the crash-resume e2e can observe the mid-run point without durable state
+// (there is none). A crash + resume re-runs the whole chain from the top, so
+// the sink sees op A's marker once per run and no journal/WAL file exists.
+struct OptOutCommitBlockBounded;
+impl BoundedOperative for OptOutCommitBlockBounded {
+    fn factory_id() -> &'static str {
+        "optout_commit_block"
+    }
+    const PERSISTENCE_ENABLED: bool = false;
+    fn operations(c: &mut ChannelBuilder) {
+        c.input::<String>("in").into::<CommitA>();
+        c.channel::<String>("mid")
+            .from::<CommitA>()
+            .also_to_plugin_with("optout_sink", |s: &String| {
+                format!("a-ran:{s}").into_bytes()
+            })
             .into::<BlockB>();
     }
 }
@@ -266,6 +290,7 @@ impl BoundedOperative for TierCommitBlockBounded {
         c.effectively_once();
         c.input::<String>("in").into::<TierCommitA>();
         c.channel::<String>("mid")
+            .codec()
             .from::<TierCommitA>()
             .keyed()
             .also_to_plugin_with("tier_sink", |s: &String| s.as_bytes().to_vec())
@@ -295,8 +320,14 @@ impl BoundedOperative for SagaBlockBounded {
     }
     fn operations(c: &mut ChannelBuilder) {
         c.input::<String>("in").into::<SagaA>();
-        c.channel::<String>("s1").from::<SagaA>().into::<SagaB>();
-        c.channel::<String>("s2").from::<SagaB>().into::<SagaC>();
+        c.channel::<String>("s1")
+            .codec()
+            .from::<SagaA>()
+            .into::<SagaB>();
+        c.channel::<String>("s2")
+            .codec()
+            .from::<SagaB>()
+            .into::<SagaC>();
     }
 }
 

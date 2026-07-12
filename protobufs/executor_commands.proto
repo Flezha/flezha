@@ -37,6 +37,8 @@ message CommandRequest {
         CreditWindowAck credit_window_ack = 25;
         CreditGrant credit_grant = 26;
         ParkPayloadAck park_payload_ack = 27;
+        OpCommit op_commit = 28;
+        OpCommitResponse op_commit_response = 29;
     }
 }
 
@@ -157,6 +159,54 @@ message ExecutorShutdownAck {
     string operative_id = 1;
 }
 
+// One serialized inter-operation handoff value: the payload bytes produced
+// by the channel's byte codec, tagged with the producing channel id so a
+// resume re-seeds through the same channel's decoder.
+message OpHandoffItem {
+    uint32 channel_id = 1;
+    bytes payload = 2;
+}
+
+// SDK -> Controller, at each operation barrier of a durable structured
+// bounded operative (bounded-op-journal): operation `op_idx` completed
+// forward on `segments_ran` (wire segment identities) and released the
+// serialized `handoff` batch. The Controller appends an `op_committed`
+// entry to the instance's op-journal, fsyncs, and replies
+// OpCommitResponse; the driver starts the next operation only after the
+// successful reply. Direction is reversed like ExecutorShutdownNotification:
+// SDK -> Controller over the "control_command" payload_id; old Controllers
+// ignore the unknown variant via Protox unknown-field handling. `iter` is 0
+// for the single-pass chain (the durable-loop follow-up increments it).
+message OpCommit {
+    string operative_id = 1;
+    uint32 op_idx = 2;
+    uint32 iter = 3;
+    repeated bytes segments_ran = 4;
+    repeated OpHandoffItem handoff = 5;
+}
+
+// Controller -> SDK reply to OpCommit, emitted only AFTER the journal
+// entry is durable (fsync). Carries the originating request's
+// reference_id so the SDK wakes the blocked driver. A non-empty `error`
+// (journal write/fsync failure, oversized handoff) terminates the run
+// abnormally through the existing terminal-error path.
+message OpCommitResponse {
+    string operative_id = 1;
+    uint32 op_idx = 2;
+    string error = 3;
+}
+
+// Committed op-journal state shipped back on crash-resume
+// (bounded-op-journal): the op indexes recorded `op_committed` plus the
+// latest journaled handoff batch. The driver skips committed operations
+// and seeds the first uncommitted operation from `handoff` instead of the
+// entry channel.
+message OpJournalState {
+    repeated uint32 committed_op_idxs = 1;
+    uint32 iter = 2;
+    repeated OpHandoffItem handoff = 3;
+}
+
 // Per-Segment state restore handshake: Controller ships latest snapshot
 // bytes plus tail-WAL bytes, SDK applies them to the segment's State
 // before any input is processed. See the per-segment state persistence design.
@@ -178,6 +228,13 @@ message RestoreInitState {
     // unbounded operative or a bounded one that never compensated.
     bool has_compensation_intent = 4;
     bool has_compensation_done = 5;
+    // Bounded op-journal crash-resume (bounded-op-journal): the instance's
+    // committed op indexes + latest journaled handoff, shipped in the same
+    // restore exchange as the compensation markers (no second round-trip).
+    // Absent when the instance has no journal (fresh spawn, opted-out class,
+    // unbounded operative, pre-upgrade instance) — the driver then keeps the
+    // re-run-from-top behaviour.
+    OpJournalState op_journal = 6;
 }
 
 // SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`

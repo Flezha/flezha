@@ -1244,11 +1244,20 @@ field above.
 
 ```protobuf
 message RestoreInitState {
-    bytes segment_id        = 1;
-    bytes snapshot_bytes    = 2;
-    bytes change_log_bytes  = 3;
+    bytes segment_id             = 1;
+    bytes snapshot_bytes         = 2;
+    bytes change_log_bytes       = 3;
+    bool  has_compensation_intent = 4;  // saga crash-resume markers
+    bool  has_compensation_done   = 5;
+    OpJournalState op_journal    = 6;   // bounded op-journal crash-resume
 }
 ```
+
+`op_journal` (absent unless the instance has a non-empty op-journal)
+carries the committed op indexes plus the latest journaled handoff batch
+so a resumed durable structured bounded driver skips the committed
+operations and seeds the first uncommitted one from the handoff — see
+`OpCommit` below.
 
 Each record inside `change_log_bytes` uses the controller's on-disk WAL
 framing:
@@ -1397,6 +1406,59 @@ the dispatch thread blocked in the park, drops the poison payload, and
 the segment advances to the next input. An SDK that never receives the
 ack (controller down, reconnect window) keeps the segment held and
 re-sends the park frame — delay, never loss.
+
+### Control command `OpCommit` (SDK → controller)
+
+```protobuf
+message OpHandoffItem {
+    uint32 channel_id = 1;
+    bytes  payload    = 2;   // channel codec bytes of one collected value
+}
+
+message OpCommit {
+    string operative_id           = 1;
+    uint32 op_idx                 = 2;
+    uint32 iter                   = 3;   // 0 for the single-pass chain
+    repeated bytes segments_ran   = 4;   // wire segment identities
+    repeated OpHandoffItem handoff = 5;
+}
+```
+
+Emitted at each operation barrier of a **durable structured** bounded
+operative (`bounded-op-journal`): operation `op_idx` completed forward
+and released the inter-op handoff batch, serialized through the
+producing channel's byte codec (`.codec()` / `.codec_with(...)`,
+required at registration for durable structured classes). Direction is
+reversed like `ExecutorShutdownNotification`: SDK → controller over the
+`"control_command"` payload_id. The driver **blocks** until the
+`OpCommitResponse` — the next operation must not race ahead of the
+committed record. Opted-out classes (`PERSISTENCE_ENABLED = false`)
+skip the handshake entirely.
+
+### Control command `OpCommitResponse` (controller → SDK)
+
+```protobuf
+message OpCommitResponse {
+    string operative_id = 1;
+    uint32 op_idx       = 2;
+    string error        = 3;   // empty = journaled durably
+}
+```
+
+Reply to `OpCommit` under the request's `reference_id`, emitted only
+AFTER the `op_committed` entry is fsynced in the instance's
+`op.journal` (journal-then-ack). A non-empty `error` (journal write
+failure, oversized handoff past the WAL-watermark-scale frame bound)
+terminates the run abnormally through the existing terminal-error path,
+including saga compensation. A timed-out ack (30 s) is treated as
+mid-run channel loss: the run terminates and crash-resume re-drives
+from the last committed op (the un-acked op re-runs — at-least-once).
+
+On crash-resume the journal state ships back on
+`RestoreInitState.op_journal` (`OpJournalState`): committed operations
+are skipped and the first uncommitted operation's input batch is seeded
+from the journaled handoff via the channel codec's decode half. Inspect
+a journal with `flz state journal <operative/instance>`.
 
 ### Plugin metadata: output identity stamps (`flz.*`)
 

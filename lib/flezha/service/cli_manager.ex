@@ -1507,6 +1507,70 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
+  `flz state journal <operative/instance>` — render a bounded instance's
+  op-journal entries (`bounded-op-journal`) in append order: seq, type,
+  op index, iteration, the segments that ran, and the handoff batch size.
+  """
+  def state_journal(instance_id, output_format \\ "text") do
+    {:ok, entries} = Flezha.State.OpJournal.read(instance_id)
+
+    rows = Enum.map(entries, &journal_row/1)
+
+    case output_format do
+      "json" ->
+        IO.puts(Jason.encode!(%{instance: instance_id, entries: rows}))
+
+      _ ->
+        if rows == [] do
+          IO.puts("no op-journal for instance #{instance_id}")
+        else
+          IO.puts("op-journal for instance #{instance_id}:\n")
+          Enum.each(rows, &print_journal_row/1)
+        end
+    end
+  end
+
+  defp journal_row(%{type: :op_committed, payload: payload} = entry) do
+    %{
+      seq: entry.seq,
+      type: "op_committed",
+      op_idx: entry.op_idx,
+      iter: entry.iter,
+      segments_ran: Enum.map(payload.segments_ran, &decode_journal_segment/1),
+      handoff_items: length(payload.handoff),
+      handoff_bytes: payload.handoff |> Enum.map(fn {_cid, b} -> byte_size(b) end) |> Enum.sum()
+    }
+  end
+
+  defp journal_row(entry) do
+    %{
+      seq: entry.seq,
+      type: Atom.to_string(entry.type),
+      op_idx: entry.op_idx,
+      iter: entry.iter,
+      segments_ran: [],
+      handoff_items: 0,
+      handoff_bytes: byte_size(entry.payload)
+    }
+  end
+
+  defp decode_journal_segment(identity_bytes) do
+    case Flezha.State.Wire.decode_segment_id(identity_bytes) do
+      {:ok, {rc, sh, pk}} -> "#{rc}/#{sh}/#{pk}"
+      {:error, _} -> Base.encode16(identity_bytes, case: :lower)
+    end
+  end
+
+  defp print_journal_row(row) do
+    IO.puts("  seq=#{row.seq} #{row.type} op_idx=#{row.op_idx} iter=#{row.iter}")
+
+    Enum.each(row.segments_ran, fn seg -> IO.puts("    ran: #{seg}") end)
+
+    IO.puts("    handoff: #{row.handoff_items} item(s), #{row.handoff_bytes} byte(s)")
+    IO.puts("")
+  end
+
+  @doc """
   `flz state retention <operative_class> <hours>` — set runtime retention
   for `<operative_class>`. Persisted across the next Application boot only
   if the executor separately writes it to runtime.exs.

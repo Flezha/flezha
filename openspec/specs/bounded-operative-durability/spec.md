@@ -19,12 +19,12 @@ A bounded operative class SHALL be **durable by default**; an author MAY **opt o
 
 ### Requirement: A durable bounded operative resumes from the WAL on crash, at-least-once
 
-When a durable bounded operative's executor or controller restarts mid-run, the operative SHALL be respawned and its Operation/Segment state restored from the WAL via the bind-time restore path, then execution SHALL **resume at the current operation/iteration** rather than restarting from the beginning; a per-iteration commit marker SHALL decide redo-vs-skip. For the `run`-sugar form (no segments, no checkpoints) "resume" SHALL mean re-running `run` from the top. Execution SHALL therefore be **at-least-once** — a step whose completion was not committed before the crash MAY run again on resume — so steps and compensations SHALL be idempotent by author contract. An operation returning an error SHALL remain terminal with **no automatic platform retry** (author loops own their own retry); this is distinct from crash-resume.
+When a durable bounded operative's executor or controller restarts mid-run, the operative SHALL be respawned and its Operation/Segment state restored from the WAL via the bind-time restore path, then execution SHALL **resume at the current operation/iteration** rather than restarting from the beginning; the controller-side **op-journal** decides redo-vs-skip — operations recorded `op_committed` SHALL be skipped and the first uncommitted operation SHALL be seeded from the journaled handoff batch. For the `run`-sugar form (no segments, no checkpoints) "resume" SHALL mean re-running `run` from the top; an instance with no journal (opted-out class, or created before the journal existed) SHALL also re-run from the top. Execution SHALL therefore be **at-least-once** — a step whose completion was not journaled before the crash MAY run again on resume — so steps and compensations SHALL be idempotent by author contract. An operation returning an error SHALL remain terminal with **no automatic platform retry** (author loops own their own retry); this is distinct from crash-resume.
 
 #### Scenario: Crash mid-run resumes from durable state
 
-- **WHEN** a durable bounded operative has committed Segment state and several completed operations, then its executor crashes and it is respawned
-- **THEN** it SHALL restore the committed state and continue from the next uncompleted operation, not from the beginning
+- **WHEN** a durable bounded operative has committed Segment state and journaled `op_committed` entries for several completed operations, then its executor crashes and it is respawned
+- **THEN** it SHALL restore the committed state, skip the journaled operations, and continue from the first uncommitted operation seeded with the journaled handoff — not from the beginning
 
 #### Scenario: `run`-sugar re-runs from the top on crash
 
