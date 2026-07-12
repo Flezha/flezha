@@ -1519,6 +1519,116 @@ byte-identical stamps. An undo output's `flz.seq` carries a trailing
 so it can never collide with the forward output it reverses while
 remaining a numeric dotted sequence a keyed sink can order.
 
+### Control command `IterCommit` (SDK → controller)
+
+```protobuf
+message IterCommit {
+    string operative_id            = 1;
+    uint32 iter                    = 2;
+    uint64 consumed_offset         = 3;   // durable-inbox offset this iteration consumed
+    repeated OpHandoffItem handoff = 4;   // the iteration's terminal batch
+}
+```
+
+Emitted at each **iteration** boundary of a looping durable structured
+bounded operative (`bounded-durable-loop`), after the last operation's
+`OpCommit` has been acked. A class opts into looping with
+`loop_mode()`: `PerInput` runs one iteration per inbox item (the
+chat-turn shape), `Chained` seeds each iteration from the previous one's
+terminal handoff (the refinement shape). The single-pass default
+(`Once`) never emits this frame and is byte-identical to the
+pre-loop protocol.
+
+The controller appends ONE `iter_committed(iter, consumed_offset)`
+journal entry — carrying the terminal handoff, so a crash can re-seed
+iteration `iter + 1` — fsyncs, and acks. Everything after the ack is
+cleanup the commit does not depend on: a boundary `CompactSegment` for
+each of the instance's segments (so a rehydrate loads iteration-`iter`
+state instead of replaying the WAL tail), the flush of whatever the
+iteration's operations staged, and the release of the inbox prefix at or
+below `consumed_offset`. A failure in any of them costs work, never
+correctness.
+
+Every `OpCommit` inside iteration `N` carries `iter = N`, so redo-vs-skip
+works at both the operation and the iteration granularity from one scan.
+
+### Control command `IterCommitResponse` (controller → SDK)
+
+```protobuf
+message IterCommitResponse {
+    string operative_id = 1;
+    uint32 iter         = 2;
+    string error        = 3;   // empty = journaled durably
+}
+```
+
+Reply under the request's `reference_id`, emitted only after the
+`iter_committed` entry is fsynced. Same terminal-error and 30 s-timeout
+contract as `OpCommitResponse`. The driver enters iteration `iter + 1`
+only on success, so a crash re-runs at most the whole in-flight
+iteration — never a committed one.
+
+On crash-resume `RestoreInitState.op_journal` carries `iter` (the
+iteration to resume at: the one after the highest journaled
+`iter_committed`), `committed_op_idxs` (the operations already committed
+*inside* that still-in-flight iteration, which are skipped),
+`committed_ops` (every forward op commit with its iteration — the
+compensation planner's per-iteration `committed` input, which is what
+makes `RollbackMode::KeepProgress` keep journaled iterations), and
+`consumed_offset`.
+
+### Control command `IterPark` (SDK → controller)
+
+```protobuf
+message IterPark {
+    string operative_id    = 1;
+    uint32 iter            = 2;   // the last COMMITTED iteration
+    uint64 wake_deadline_ms = 3;  // 0 = wake on input only
+}
+```
+
+A `PerInput` loop whose inbox has been empty past the idle threshold
+(`FLEZHA_BOUNDED_PARK_IDLE_MS`, default 5 s) at a **committed** iteration
+boundary tears its own run down and emits this instead of a
+`BoundedCompleted` — suspension is not a terminal outcome
+(`bounded-durable-suspension`). Parking is only ever offered at a
+committed boundary, so "suspended ⇒ resumable from a clean boundary"
+holds; a `recv` mid-iteration blocks in memory as before.
+
+The controller journals `parked(iter[, wake_deadline_ms])` — durable
+BEFORE the eviction, so a controller crash in between still rediscovers
+the suspension — then evicts the instance from its executor
+(`RemOperative`). The registry entry and its controller-side Overwatch
+stay: it is the **executor** that holds zero resources. `flz operative
+info` reports the instance `suspended`.
+
+Rehydration has one path, whichever wakes it: a new inbox append, or the
+journaled wake deadline (which the controller delivers as a synthetic
+inbox entry with an empty payload and `flz.wake = timer` metadata — a
+class declaring `wake_after()` accepts an empty entry payload as its
+tick). Both re-bind the instance through the normal bounded spawn path
+on any live executor (existing session fencing applies), restoring
+journal + iteration-boundary snapshots and delivering the undelivered
+inbox tail. Because both wake sources go through the inbox, two racing
+wakes collapse into exactly one rehydration.
+
+### Data frame metadata: durable-inbox offset (`flz.inbox_offset`)
+
+Post-start input for a **durable bounded** instance is appended to the
+instance's `inbox.wal` **before** it is forwarded, and the forwarded
+frame carries the assigned offset:
+
+| Key | Value |
+|---|---|
+| `flz.inbox_offset` | 1-based durable-inbox offset of this input (absent ⇒ not journaled: an opted-out class) |
+
+The SDK threads it back through `IterCommit.consumed_offset`, which is
+what lets the controller release the consumed prefix and what stops a
+rehydrate re-delivering it. Dedup at append is keyed on the sender's
+`flz.msg_id` metadata when present, else a payload hash; a duplicate
+inside the undelivered window is absorbed, so an at-least-once sender
+cannot produce a duplicate turn.
+
 ### Plugin metadata: output identity stamps (`flz.*`)
 
 Channels declared `.keyed()` (valid on `to_plugin` and

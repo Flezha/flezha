@@ -13,7 +13,7 @@ defmodule Flezha.Operative.Overwatch do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{InputLog, PersistenceResolver, Restore, Wire}
+  alias Flezha.State.{InputLog, OpInbox, OpJournal, PersistenceResolver, Restore, Wire}
   alias Flezha.Transport.LivenessCounters
 
   # Defaults for the bounded-retry governor introduced by
@@ -65,7 +65,17 @@ defmodule Flezha.Operative.Overwatch do
     migrate_task: nil,
     # Effectively-once tier, declared by the SDK in the AddOperative response
     # metadata. Gates the input-log journal + `flz.offset` stamp on `:io_in`.
-    effectively_once: false
+    effectively_once: false,
+    # Durable bounded class (kind + per-class persistence). Gates the durable
+    # inbox on `:io_in` and the suspension lifecycle
+    # (`bounded-durable-suspension`).
+    durable_bounded: false,
+    # Suspended at a committed iteration boundary: zero live executor resources,
+    # registry entry retained. A new inbox append — or the journaled wake
+    # deadline — rehydrates through the normal bind path.
+    suspended: false,
+    # Timer ref for the journaled wake deadline while suspended.
+    wake_timer: nil
   ]
 
   def start_link(args) do
@@ -107,6 +117,20 @@ defmodule Flezha.Operative.Overwatch do
 
   @impl true
   def handle_continue({:bind_executor, stale_executor_id, operative}, %__MODULE__{} = state) do
+    state = %__MODULE__{state | durable_bounded: durable_bounded?(state, operative)}
+
+    # Suspended instances are rediscovered from durable state alone (journal +
+    # inbox), so a controller redeploy neither binds them to an executor nor
+    # loses their suspension (`bounded-durable-suspension`). An instance with
+    # undelivered input is not suspended any more — it binds and consumes it.
+    if state.durable_bounded and suspended_on_disk?(operative.id) do
+      {:noreply, enter_suspended(state, OpJournal.restore_state(operative.id))}
+    else
+      do_bind_executor(state, stale_executor_id, operative)
+    end
+  end
+
+  defp do_bind_executor(%__MODULE__{} = state, stale_executor_id, operative) do
     # Wait for an active executor in this namespace advertising
     # `operative.factory_id`. The DETS-baked executor_id is usually stale
     # after a restart (Identificator.unique_id/1 generates a fresh id
@@ -141,7 +165,13 @@ defmodule Flezha.Operative.Overwatch do
     end
   end
 
-  defp complete_init(%__MODULE__{} = state, executor_id, operative) do
+  # `owner` is the Overwatch process itself. It is passed explicitly because the
+  # un-park path runs `complete_init` inside a task (so the heavy bounded-retry
+  # never blocks `:stop_operative`), and `self()` there is the TASK — registering
+  # it as the operative's Overwatch would point the journal's outbox flush at a
+  # process that exits moments later, silently dropping the output.
+  defp complete_init(%__MODULE__{} = state, executor_id, operative, owner \\ nil) do
+    owner = owner || self()
     state = bind_to_executor(state, operative.id, executor_id)
     plugins = Keyword.get(operative.opts, :plugins, [])
 
@@ -174,8 +204,14 @@ defmodule Flezha.Operative.Overwatch do
       # outbox flush dispatches `:on_output` through it).
       _ = ClassRegistry.put(operative_class(state), state.builder.kind)
       _ = ClassRegistry.put_effectively_once(operative_class(state), effectively_once)
-      _ = ClassRegistry.put_overwatch(operative_class(state), self())
+      _ = ClassRegistry.put_overwatch(operative_class(state), owner)
       _ = maybe_dispatch_restore_init_state(state, operative)
+
+      # A bind is also a rehydrate: whatever the durable inbox still owes is
+      # re-forwarded from the recorded consumed offset, so input that arrived
+      # while the instance was suspended, crashed, or migrating is delivered
+      # exactly here — one path for every way an instance comes back.
+      state = deliver_inbox_tail(cancel_wake_timer(%{state | suspended: false}))
       {:ok, state}
     else
       {:error, reason, %__MODULE__{} = parked} -> {:error, reason, parked}
@@ -499,15 +535,25 @@ defmodule Flezha.Operative.Overwatch do
       last = InputLog.last_offset(operative_class)
 
       if last > floor do
-        for {offset, message, metadata} <-
-              InputLog.read_range(operative_class, floor + 1, last) do
-          payload = {message, Map.put(metadata, "flz.offset", Integer.to_string(offset))}
-          GenServer.cast(state.channel, {:io_in, state.id, payload})
-        end
+        operative_class
+        |> InputLog.read_range(floor + 1, last)
+        |> Enum.map(fn {offset, message, metadata} ->
+          {message, Map.put(metadata, "flz.offset", Integer.to_string(offset))}
+        end)
+        |> then(&reforward(state, &1))
       end
     end
 
     :ok
+  end
+
+  # Re-forward already-durable payloads, stamped with the offset they were
+  # journaled at. The delivery half of both durability tiers' resume — the
+  # effectively-once input log above, and the durable bounded inbox below — and
+  # deliberately NOT an ingest: these payloads are already in their log and
+  # already ran `:on_input`, so re-journaling them would duplicate them.
+  defp reforward(%__MODULE__{} = state, payloads) do
+    Enum.each(payloads, &GenServer.cast(state.channel, {:io_in, state.id, &1}))
   end
 
   @doc """
@@ -562,10 +608,21 @@ defmodule Flezha.Operative.Overwatch do
   defp operative_class(%__MODULE__{} = state),
     do: Keyword.get(state.builder.opts, :operative_class, state.id)
 
-  # Effectively-once tier ingest point (`durable-input-log`): journal the
-  # post-`:on_input` payload before it is forwarded and stamp the assigned
-  # offset as `flz.offset` so the SDK can thread it into the effect record.
-  # Tier-off operatives pass through untouched (cost-free default).
+  # Durable ingest point — the one place an inbound payload is made durable
+  # BEFORE it is forwarded, for both durability tiers:
+  #
+  #   * effectively-once (`durable-input-log`): appended to the operative's
+  #     input log and stamped `flz.offset`, which the SDK threads into the
+  #     effect record;
+  #   * durable bounded (`bounded-durable-suspension`): appended to the
+  #     instance's `inbox.wal` and stamped `flz.inbox_offset`, which the SDK
+  #     threads into the iteration commit as the consumed offset. A duplicate
+  #     dedup id in the undelivered window is absorbed (`nil` — nothing is
+  #     forwarded), and an append that fails is NOT forwarded either: the
+  #     contract is append-before-forward, so a lost frame the sender can retry
+  #     beats an undurable one it believes was accepted.
+  #
+  # Every other operative passes through untouched (cost-free default).
   @doc false
   def journal_input(_state, nil), do: nil
 
@@ -574,7 +631,187 @@ defmodule Flezha.Operative.Overwatch do
     {message, Map.put(metadata, "flz.offset", Integer.to_string(offset))}
   end
 
+  def journal_input(%__MODULE__{durable_bounded: true} = state, {message, metadata})
+      when is_binary(message) do
+    case OpInbox.append(state.id, message, metadata) do
+      {:ok, offset} ->
+        {message, Map.put(metadata, "flz.inbox_offset", Integer.to_string(offset))}
+
+      {:duplicate, offset} ->
+        :telemetry.execute(
+          [:flezha, :state, :inbox_duplicate],
+          %{count: 1},
+          %{operative_id: state.id, offset: offset}
+        )
+
+        nil
+
+      {:error, reason} ->
+        Logger.error(
+          "[Overwatch] durable-inbox append failed for #{state.id}: #{inspect(reason)} — " <>
+            "input NOT forwarded (append-before-forward)"
+        )
+
+        nil
+    end
+  end
+
   def journal_input(_state, payload), do: payload
+
+  # ---------------------------------------------------------------
+  # Durable suspension (`bounded-durable-suspension`)
+  # ---------------------------------------------------------------
+
+  @doc """
+  Suspend a bounded instance parked at the committed boundary of iteration
+  `iter`: evict it from its executor (`RemOperative`), release the registry's
+  executor binding, and arm the journaled wake deadline. The registry entry —
+  and this process — stay, so a new input still has somewhere to land; it is the
+  **executor** that holds zero resources for a suspended operative.
+
+  Called by `ControlChannel` after the `parked` journal entry is durable.
+  """
+  @spec suspend(pid(), non_neg_integer(), non_neg_integer() | nil) :: :ok
+  def suspend(overwatch_pid, iter, wake_deadline_ms) when is_pid(overwatch_pid),
+    do: GenServer.cast(overwatch_pid, {:suspend, iter, wake_deadline_ms})
+
+  # Bind state for a suspended instance: no executor, no stream channel, the
+  # wake timer armed from the journaled deadline.
+  defp enter_suspended(%__MODULE__{} = state, journal) do
+    deadline = journal && journal.wake_deadline_ms
+
+    :telemetry.execute(
+      [:flezha, :bounded, :suspended],
+      %{count: 1},
+      %{
+        namespace: state.namespace,
+        operative_id: state.id,
+        iter: (journal && journal.iter) || 0
+      }
+    )
+
+    %__MODULE__{
+      cancel_wake_timer(state)
+      | suspended: true,
+        executor_id: nil,
+        channel: nil,
+        wake_timer: arm_wake_timer(deadline)
+    }
+  end
+
+  # The durable timer: a `parked` record's wake deadline, re-armed from the
+  # journal on every boot, so it survives a controller redeploy.
+  defp arm_wake_timer(nil), do: nil
+
+  defp arm_wake_timer(deadline_ms) do
+    Process.send_after(
+      self(),
+      :wake_deadline,
+      max(deadline_ms - System.system_time(:millisecond), 0)
+    )
+  end
+
+  defp cancel_wake_timer(%__MODULE__{wake_timer: nil} = state), do: state
+
+  defp cancel_wake_timer(%__MODULE__{wake_timer: ref} = state) do
+    _ = Process.cancel_timer(ref)
+    %__MODULE__{state | wake_timer: nil}
+  end
+
+  # The invariant that keeps a turn from being stranded: an instance with
+  # undelivered input is never left suspended. Applied wherever suspension is
+  # entered — at the park, and at boot from durable state.
+  defp rehydrate_if_pending(%__MODULE__{} = state) do
+    if OpInbox.undelivered(state.id) == [], do: state, else: rehydrate(state)
+  end
+
+  # Rehydrate a suspended instance through the normal bind path (the same
+  # `complete_init` an un-park drives), which restores journal + snapshots and
+  # re-delivers the undelivered inbox tail. Idempotent: an instance already
+  # running, or with a rehydrate already in flight, no-ops — so two wake sources
+  # racing (an inbox append and the wake deadline) rehydrate exactly once.
+  defp rehydrate(%__MODULE__{suspended: false} = state), do: state
+  defp rehydrate(%__MODULE__{migrate_task: task} = state) when task != nil, do: state
+
+  defp rehydrate(%__MODULE__{} = state) do
+    case OperativeManager.assign_executor(state.namespace, state.factory_id, state.id) do
+      nil ->
+        # No executor to rehydrate onto: stay suspended. The next input (or the
+        # convergence tick that brings an executor up) tries again.
+        Logger.warning(
+          "[Overwatch] no active executor to rehydrate suspended operative #{state.id}"
+        )
+
+        state
+
+      executor_id ->
+        :telemetry.execute(
+          [:flezha, :bounded, :rehydrating],
+          %{count: 1},
+          %{namespace: state.namespace, operative_id: state.id, executor_id: executor_id}
+        )
+
+        {ref, pid} = spawn_migrate_task({:unpark, state, executor_id})
+        %__MODULE__{state | migrate_task: %{ref: ref, pid: pid, mode: :unpark}}
+    end
+  end
+
+  # Re-forward every inbox entry above the durable consumed offset, stamped with
+  # its original offset (never re-journaling — the inbox already holds them).
+  # Runs on every bind of a durable bounded instance, which is what makes crash
+  # resume, migration, and rehydrate-from-suspension one path.
+  defp deliver_inbox_tail(%__MODULE__{durable_bounded: false} = state), do: state
+
+  defp deliver_inbox_tail(%__MODULE__{} = state) do
+    state.id
+    |> OpInbox.undelivered()
+    |> Enum.map(fn entry ->
+      {entry.message,
+       Map.put(entry.metadata, "flz.inbox_offset", Integer.to_string(entry.offset))}
+    end)
+    |> then(&reforward(state, &1))
+
+    state
+  end
+
+  # A durable bounded class: the kind that owns an op-journal and an inbox. An
+  # opted-out class keeps the memory-only inbox and re-runs from the top.
+  defp durable_bounded?(%__MODULE__{} = state, operative) do
+    state.builder.kind == :bounded and
+      PersistenceResolver.persistent_state?(
+        :bounded,
+        Keyword.get(operative.opts, :operative_class, operative.id)
+      )
+  end
+
+  # Suspended per durable state alone: the journal's last entry is a `parked`
+  # record AND no input has arrived since. Undelivered input outranks the park —
+  # the instance has work waiting, so it binds instead.
+  defp suspended_on_disk?(instance_id) do
+    case OpJournal.restore_state(instance_id) do
+      %{parked: true} -> OpInbox.undelivered(instance_id) == []
+      _ -> false
+    end
+  end
+
+  # Ingest one inbound message: type it, run the `:on_input` plugin chain, count
+  # it, and make it durable. The single pre-delivery path — every `:io_in` entry
+  # point (call, cast, suspended) runs exactly this, and the payload it answers
+  # is the one to forward (`nil` ⇒ filtered by a plugin, absorbed as a duplicate,
+  # or refused by the durable log, so there is nothing to send).
+  defp ingest(%__MODULE__{} = state, message, metadata) do
+    metadata = Map.put_new(metadata, "input_type", state.default_input_type)
+    payload = run_io(state, :on_input, message, metadata)
+    record_io(state.liveness_ref, payload)
+    journal_input(state, payload)
+  end
+
+  # Suspended: same ingest, but the forward is deferred to the rehydrating bind,
+  # which delivers the whole undelivered inbox tail.
+  defp ingest_suspended(%__MODULE__{} = state, message, metadata) do
+    _ = ingest(state, message, metadata)
+    rehydrate(state)
+  end
 
   # The SDK's AddOperative response raw_data is an `AddOperativeResponse`
   # metadata map when the class declares SDK-side capabilities, empty
@@ -679,10 +916,7 @@ defmodule Flezha.Operative.Overwatch do
     _ = ClassRegistry.delete(operative_class(state))
 
     unless is_nil(state.executor_id) do
-      GenServer.cast(
-        Identificator.control_unit(state.executor_id),
-        {:stop_operative_async, state.id}
-      )
+      ControlUnit.stop_operative_async(state.executor_id, state.id)
 
       fire_on_terminate(state, reason)
       state = %{state | extensions: Table.teardown_all(state.extensions)}
@@ -842,12 +1076,16 @@ defmodule Flezha.Operative.Overwatch do
     {:reply, {:error, :busy}, state}
   end
 
+  # Parked (a failed init) and suspended (a durable loop park) both come back
+  # through the same un-park task: `complete_init` re-binds, restores journal +
+  # segments, and delivers the undelivered inbox tail. A running operative
+  # instead migrates in place, below.
   def handle_call(
         {:executor_migrate, new_executor_id},
         _from,
-        %__MODULE__{init_error: reason} = state
+        %__MODULE__{init_error: reason, suspended: suspended} = state
       )
-      when reason != nil do
+      when reason != nil or suspended do
     {ref, pid} = spawn_migrate_task({:unpark, state, new_executor_id})
     {:reply, :ok, %{state | migrate_task: %{ref: ref, pid: pid, mode: :unpark}}}
   end
@@ -875,6 +1113,11 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   @impl true
+  def handle_call({:io_in, message, metadata}, _from, %__MODULE__{suspended: true} = state) do
+    {:reply, :ok, ingest_suspended(state, message, metadata)}
+  end
+
+  @impl true
   def handle_call({:io_in, _message, _metadata}, _from, %__MODULE__{init_error: reason} = state)
       when reason != nil do
     {:reply, {:error, :startup_failed}, state}
@@ -882,11 +1125,7 @@ defmodule Flezha.Operative.Overwatch do
 
   @impl true
   def handle_call({:io_in, message, metadata}, _from, state) do
-    metadata = Map.put_new(metadata, "input_type", state.default_input_type)
-    payload = run_io(state, :on_input, message, metadata)
-    record_io(state.liveness_ref, payload)
-
-    case journal_input(state, payload) do
+    case ingest(state, message, metadata) do
       nil ->
         :ok
 
@@ -925,6 +1164,13 @@ defmodule Flezha.Operative.Overwatch do
     {:reply, data, state}
   end
 
+  # Suspended: the input is durable in the inbox, so it is not lost by not being
+  # forwarded now — the rehydrating bind delivers the whole undelivered tail.
+  @impl true
+  def handle_cast({:io_in, message, metadata}, %__MODULE__{suspended: true} = state) do
+    {:noreply, ingest_suspended(state, message, metadata)}
+  end
+
   @impl true
   def handle_cast({:io_in, _message, _metadata}, %__MODULE__{init_error: reason} = state)
       when reason != nil do
@@ -935,11 +1181,7 @@ defmodule Flezha.Operative.Overwatch do
 
   @impl true
   def handle_cast({:io_in, message, metadata}, state) do
-    metadata = Map.put_new(metadata, "input_type", state.default_input_type)
-    payload = run_io(state, :on_input, message, metadata)
-    record_io(state.liveness_ref, payload)
-
-    case journal_input(state, payload) do
+    case ingest(state, message, metadata) do
       nil -> :ok
       payload -> GenServer.cast(state.channel, {:io_in, state.id, payload})
     end
@@ -951,6 +1193,35 @@ defmodule Flezha.Operative.Overwatch do
   def handle_cast({:io_out, message, metadata}, state) do
     run_io(state, :on_output, message, metadata)
     {:noreply, state}
+  end
+
+  # The SDK parked at a committed iteration boundary and the `parked` journal
+  # entry is durable: evict the instance from its executor and keep it
+  # `suspended` here (`bounded-durable-suspension`). Not a terminal outcome — no
+  # completion record, no state deletion.
+  @impl true
+  def handle_cast({:suspend, iter, wake_deadline_ms}, %__MODULE__{} = state) do
+    if state.executor_id do
+      ControlUnit.stop_operative_async(state.executor_id, state.id)
+    end
+
+    _ = HubManager.operative_set_executor(state.namespace, state.id, nil)
+
+    Logger.info(
+      "[Overwatch] operative #{state.id} suspended at iteration #{iter}" <>
+        if(wake_deadline_ms, do: " (wakes at #{wake_deadline_ms})", else: "")
+    )
+
+    suspended =
+      enter_suspended(state, %{iter: iter, wake_deadline_ms: wake_deadline_ms, parked: true})
+
+    # An input that landed while the loop was parking — durable, but never
+    # drained by the exiting driver — is undelivered work: rehydrate straight
+    # away rather than leaving the instance suspended until the NEXT message
+    # arrives. The park/rehydrate cycle costs a bind; stranding the turn would
+    # cost correctness. `RemOperative` is already enqueued on the control
+    # stream, so the rehydrating `AddOperative` cannot overtake it.
+    {:noreply, rehydrate_if_pending(suspended)}
   end
 
   # Replaces `state.snapshot` with a binary supplied out-of-band by the SDK
@@ -1009,6 +1280,19 @@ defmodule Flezha.Operative.Overwatch do
   def handle_info({:extension_timer, name, plugin_id}, %__MODULE__{} = state) do
     table = Table.fire_timer(state.extensions, name, plugin_id)
     {:noreply, %{state | extensions: table}}
+  end
+
+  # The journaled wake deadline elapsed (`bounded-durable-suspension`): append a
+  # timer wake to the inbox and rehydrate. Routing the wake THROUGH the inbox is
+  # what makes two racing wake sources — a message and the deadline — collapse
+  # into one rehydration: the second is a no-op on an already-rehydrating
+  # instance, and the loop simply reads whatever the inbox holds. The wake item
+  # carries an empty payload, which the class's entry channel decodes as its
+  # tick.
+  @impl true
+  def handle_info(:wake_deadline, %__MODULE__{} = state) do
+    _ = OpInbox.append(state.id, "", %{"flz.wake" => "timer"})
+    {:noreply, rehydrate(%__MODULE__{state | wake_timer: nil})}
   end
 
   # The in-flight `:executor_migrate` task posts its result via a plain
@@ -1305,14 +1589,29 @@ defmodule Flezha.Operative.Overwatch do
       nil ->
         nil
 
-      %{committed_op_idxs: idxs, iter: iter, handoff: handoff} ->
+      %{} = resume ->
         %ExecutorCommands.OpJournalState{
-          committed_op_idxs: idxs,
-          iter: iter,
+          committed_op_idxs: resume.committed_op_idxs,
+          iter: resume.iter,
           handoff:
-            Enum.map(handoff, fn {cid, bytes} ->
+            Enum.map(resume.handoff, fn {cid, bytes} ->
               %ExecutorCommands.OpHandoffItem{channel_id: cid, payload: bytes}
-            end)
+            end),
+          # Every forward op commit with its iteration: the driver folds these
+          # back into the compensation planner's per-iteration `committed` input,
+          # which is what makes a rollback span journaled iterations (and what
+          # rebuilds the in-flight iteration's completed stages on resume).
+          committed_ops:
+            Enum.map(resume.committed_ops, fn op ->
+              %ExecutorCommands.OpCommittedOp{
+                op_idx: op.op_idx,
+                iter: op.iter,
+                segments_ran: op.segments_ran
+              }
+            end),
+          consumed_offset: resume.consumed_offset,
+          parked: resume.parked,
+          wake_deadline_ms: resume.wake_deadline_ms || 0
         }
     end
   end
@@ -1385,7 +1684,7 @@ defmodule Flezha.Operative.Overwatch do
       Task.Supervisor.async_nolink(Flezha.Operative.MessageHandlerTaskSup, fn ->
         # complete_init is the heavy bounded-retry path; running it in
         # a task ensures `:stop_operative` is never blocked by it.
-        case complete_init(state, new_executor_id, operative) do
+        case complete_init(state, new_executor_id, operative, parent) do
           {:ok, recovered} ->
             send(parent, {:migrate_task_result, self(), {:unparked, recovered}})
             :ok

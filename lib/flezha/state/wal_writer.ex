@@ -23,7 +23,7 @@ defmodule Flezha.State.WalWriter do
 
   @header_size 16
   @reservoir_capacity 1024
-  @journal_segment_key Registry.journal_segment_key()
+  @reserved_segment_keys Registry.reserved_segment_keys()
 
   defstruct [
     :segment_id,
@@ -710,10 +710,12 @@ defmodule Flezha.State.WalWriter do
   defp schedule_outbox_retry(state), do: state
 
   # Advance the dedup file (persistence watermark + flush cursor + epoch)
-  # with one atomic tmp+rename — at most once per fsync batch. An op-journal
-  # writer skips it: the journal never carries effect records, and the dedup
-  # side-file would register a phantom Segment with `Registry.scan_dir/1`.
-  defp persist_dedup(%{segment_id: {_, _, @journal_segment_key}} = state), do: state
+  # with one atomic tmp+rename — at most once per fsync batch. The reserved
+  # per-instance identities (op-journal, durable inbox) skip it: neither carries
+  # effect records, and the dedup side-file would register a phantom Segment
+  # with `Registry.scan_dir/1`.
+  defp persist_dedup(%{segment_id: {_, _, key}} = state) when key in @reserved_segment_keys,
+    do: state
 
   defp persist_dedup(state) do
     _ =

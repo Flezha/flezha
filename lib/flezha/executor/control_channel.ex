@@ -224,6 +224,14 @@ defmodule Flezha.Executor.ControlChannel do
         handle_op_commit(state, commit, reference_id)
         {:noreply, state}
 
+      {:iter_commit, %{} = commit, reference_id} ->
+        handle_iter_commit(state, commit, reference_id)
+        {:noreply, state}
+
+      {:iter_park, %{} = park, _reference_id} ->
+        handle_iter_park(state, park)
+        {:noreply, state}
+
       :not_sdk_initiated ->
         GenServer.cast(state.control_unit, {:handle_payload, message})
         {:noreply, state}
@@ -335,7 +343,13 @@ defmodule Flezha.Executor.ControlChannel do
   # because their field-2 wire types disagree (string vs nested message);
   # Protox returns `{:error, _}` in that case, which maps to
   # `:not_sdk_initiated`.
-  @sdk_initiated_commands [:executor_shutdown_notification, :bounded_completed, :op_commit]
+  @sdk_initiated_commands [
+    :executor_shutdown_notification,
+    :bounded_completed,
+    :op_commit,
+    :iter_commit,
+    :iter_park
+  ]
 
   defp decode_sdk_initiated(message) do
     case ExecutorCommands.CommandRequest.decode(message) do
@@ -504,12 +518,6 @@ defmodule Flezha.Executor.ControlChannel do
         )
       end
 
-    error =
-      case result do
-        :ok -> ""
-        {:error, reason} -> inspect(reason)
-      end
-
     :telemetry.execute(
       [:flezha, :state, :op_commit],
       %{count: 1, handoff_items: length(handoff), outbox_items: length(outbox)},
@@ -518,33 +526,192 @@ defmodule Flezha.Executor.ControlChannel do
         operative_id: operative_id,
         op_idx: op_idx,
         compensating: compensating,
-        status: if(error == "", do: :ok, else: :error)
+        status: commit_status(result)
       }
     )
 
-    if error != "" do
-      Logger.warning(
-        "[control_channel] op-journal commit failed operative=#{inspect(operative_id)} " <>
-          "op_idx=#{op_idx}: #{error}"
+    durable? =
+      journal_then_ack(
+        state,
+        reference_id,
+        result,
+        "op-journal commit operative=#{inspect(operative_id)} op_idx=#{op_idx}",
+        &{:op_commit_response,
+         %ExecutorCommands.OpCommitResponse{
+           operative_id: operative_id,
+           op_idx: op_idx,
+           error: &1
+         }}
       )
-    end
-
-    emit_control_request(
-      state,
-      reference_id,
-      {:op_commit_response,
-       %ExecutorCommands.OpCommitResponse{
-         operative_id: operative_id,
-         op_idx: op_idx,
-         error: error
-       }},
-      "OpCommitResponse operative=#{inspect(operative_id)} op_idx=#{op_idx}"
-    )
 
     # Flush AFTER the ack (the durable point has passed, so the output may now
     # be seen). The next operation is free to run while this lands — the chain
     # hands data forward through the handoff, never through the sink.
-    if error == "", do: flush_op_outbox(operative_id)
+    if durable?, do: flush_op_outbox(operative_id)
+  end
+
+  # The protocol's core invariant, in one place: the reply to a durability
+  # handshake is emitted only AFTER the journal append returned, carries the
+  # append's outcome in its `error` field (empty = durable), and gates whatever
+  # post-ack work the caller owes. Answers whether the record is durable.
+  defp journal_then_ack(state, reference_id, result, label, response_fun) do
+    error =
+      case result do
+        :ok -> ""
+        {:error, reason} -> inspect(reason)
+      end
+
+    if error != "" do
+      Logger.warning("[control_channel] #{label} failed: #{error}")
+    end
+
+    emit_control_request(state, reference_id, response_fun.(error), label)
+    error == ""
+  end
+
+  defp commit_status(:ok), do: :ok
+  defp commit_status({:error, _}), do: :error
+
+  # Iteration boundary of a durable structured loop (`bounded-durable-loop`):
+  # ONE durable `iter_committed(iter, consumed_offset)` record — with the
+  # iteration's terminal handoff, so a crash can re-seed the next iteration —
+  # then the ack. Everything after the ack is cleanup the commit does not depend
+  # on: the boundary snapshot (so a rehydrate loads iteration-N state instead of
+  # replaying the WAL tail), the iteration's staged outbox, and the release of
+  # the inbox prefix it consumed. A failure in any of them costs work, never
+  # correctness — the iteration is already committed.
+  defp handle_iter_commit(state, commit, reference_id) do
+    %ExecutorCommands.IterCommit{
+      operative_id: operative_id,
+      iter: iter,
+      consumed_offset: consumed_offset,
+      handoff: handoff
+    } = commit
+
+    result =
+      Flezha.State.OpJournal.append_iter_committed(
+        operative_id,
+        iter,
+        consumed_offset,
+        Enum.map(handoff, fn %ExecutorCommands.OpHandoffItem{channel_id: cid, payload: bytes} ->
+          {cid, bytes}
+        end)
+      )
+
+    :telemetry.execute(
+      [:flezha, :state, :iter_commit],
+      %{count: 1, consumed_offset: consumed_offset},
+      %{
+        namespace: state.namespace,
+        operative_id: operative_id,
+        iter: iter,
+        status: commit_status(result)
+      }
+    )
+
+    durable? =
+      journal_then_ack(
+        state,
+        reference_id,
+        result,
+        "op-journal iteration commit operative=#{inspect(operative_id)} iter=#{iter}",
+        &{:iter_commit_response,
+         %ExecutorCommands.IterCommitResponse{
+           operative_id: operative_id,
+           iter: iter,
+           error: &1
+         }}
+      )
+
+    if durable? do
+      snapshot_iteration_boundary(state.executor_id, operative_id)
+      flush_op_outbox(operative_id)
+      if consumed_offset > 0, do: Flezha.State.OpInbox.truncate(operative_id, consumed_offset)
+    end
+  end
+
+  # Boundary snapshot: ask the SDK to compact every Segment of the instance, so a
+  # rehydrate restores iteration-N state from a snapshot instead of replaying the
+  # whole WAL.
+  #
+  # Off this process: `CompactSegment` is dispatched through `send_control`,
+  # which is a call INTO this very channel — issuing it inline would be the
+  # channel calling itself (same reason the bounded-completed teardown runs in a
+  # task). Best-effort besides: a failed or dropped compaction only means the
+  # restore falls back to WAL replay, which the Watchdog's own size/age triggers
+  # will re-attempt.
+  defp snapshot_iteration_boundary(executor_id, operative_id) do
+    segments =
+      Flezha.State.Registry.all_segments()
+      |> Enum.filter(fn {class, _, _} -> class == operative_id end)
+
+    Task.start(fn ->
+      Enum.each(segments, fn segment_id ->
+        case Flezha.Operative.Overwatch.dispatch_compact_segment(executor_id, segment_id) do
+          {:ok, _ref} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.debug(
+              "[control_channel] boundary snapshot skipped for #{inspect(segment_id)}: " <>
+                "#{inspect(reason)} — rehydrate falls back to WAL replay"
+            )
+        end
+      end)
+    end)
+  end
+
+  # The SDK's loop found its inbox empty at a committed iteration boundary and
+  # tore its run down WITHOUT a completion (`bounded-durable-suspension`). Journal
+  # the park record — durable BEFORE the eviction, so a controller crash in
+  # between still rediscovers the suspension — then hand the instance to its
+  # Overwatch, which evicts it from this executor and keeps it resumable.
+  #
+  # Off this process: the eviction drives a `RemOperative` whose response returns
+  # on THIS control stream, so doing it inline would deadlock the reader (same
+  # reason as the bounded-completed teardown).
+  defp handle_iter_park(state, park) do
+    %ExecutorCommands.IterPark{
+      operative_id: operative_id,
+      iter: iter,
+      wake_deadline_ms: wake_deadline_ms
+    } = park
+
+    deadline = if wake_deadline_ms == 0, do: nil, else: wake_deadline_ms
+
+    :telemetry.execute(
+      [:flezha, :bounded, :parked],
+      %{count: 1},
+      %{namespace: state.namespace, operative_id: operative_id, iter: iter}
+    )
+
+    namespace = state.namespace
+
+    Task.start(fn ->
+      case Flezha.State.OpJournal.append_parked(operative_id, iter, deadline) do
+        :ok ->
+          case HubManager.get_pid(namespace, operative_id) do
+            {:ok, pid} when is_pid(pid) ->
+              Flezha.Operative.Overwatch.suspend(pid, iter, deadline)
+
+            _ ->
+              # No Overwatch to suspend (already migrated / torn down). The park
+              # record is durable, so the instance is rediscovered as suspended
+              # whenever it is next started.
+              :ok
+          end
+
+        {:error, reason} ->
+          # The park is not durable, so the instance must NOT be evicted: leave
+          # it bound. Its driver has already exited, so it stays idle until the
+          # executor reconnects or convergence rebinds it — at which point it
+          # resumes from the last committed iteration and parks again.
+          Logger.warning(
+            "[control_channel] park record failed for #{inspect(operative_id)} " <>
+              "iter=#{iter}: #{inspect(reason)} — instance left bound"
+          )
+      end
+    end)
   end
 
   # Journal-driven flush: everything this instance owes, in journal order, with

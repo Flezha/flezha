@@ -8,7 +8,7 @@ use flezha_executor::state::{
 };
 use flezha_executor::{
     register_bounded, register_unbounded, BoundedCtx, BoundedError, BoundedOperative,
-    ChannelBuilder, OverflowPolicy, UnboundedOperative,
+    ChannelBuilder, LoopMode, OverflowPolicy, UnboundedOperative,
 };
 use serde::{Deserialize, Serialize};
 
@@ -69,6 +69,7 @@ fn register_bounded_all() {
     register_bounded::<SagaBlockBounded>();
     register_bounded::<OutboxBlockBounded>();
     register_bounded::<UndoOutboxBounded>();
+    register_bounded::<ChatLoopBounded>();
 }
 
 // -- EchoBounded -----------------------------------------------------------------
@@ -425,6 +426,105 @@ impl BoundedOperative for UndoOutboxBounded {
             .from::<UndoOutboxA>()
             .also_to_plugin_with("undo_sink", |s: &String| format!("out:{s}").into_bytes())
             .into::<UndoC>();
+    }
+}
+
+// `chat_loop_bounded`: the durable-loop + suspension shape
+// (`bounded-durable-loop-and-suspension`). One iteration per inbox item: op
+// TURN commits the turn to Segment state (so a resumed iteration is visible in
+// the WAL) and emits it; op REPLY emits the answer to the sink. Between turns
+// the loop finds an empty inbox at a committed boundary and PARKS — the
+// instance is evicted from the executor and rehydrated by the next message.
+//
+// The turn whose payload is `mid-crash` BLOCKS while the release env is unset,
+// so a SIGKILL lands with the earlier iterations durable and that one in flight.
+// The resumed executor (release env set) runs it through. Keying the block on the
+// payload — rather than an invocation count — keeps it deterministic across the
+// park/rehydrate cycles, which re-run the driver but not the turns.
+const CRASH_TURN: &str = "mid-crash";
+
+#[derive(Default)]
+struct ChatTurn;
+impl Operation for ChatTurn {
+    type Input = String;
+    type Output = String;
+    type State = SeenState;
+    type Change = Insert;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "chat_turn"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> SeenState {
+        SeenState::default()
+    }
+    fn apply_change(state: &mut SeenState, change: &Insert) {
+        state.items.insert(change.0.clone());
+    }
+    fn run(
+        &mut self,
+        input: String,
+        mut state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        if input == CRASH_TURN {
+            block_until_released();
+        }
+        // Keyed by the turn, so the WAL record count is the number of DISTINCT
+        // turns that ran — a re-run of a committed iteration would show up.
+        state.apply(Insert(input.clone()));
+        ctx.emit::<String>(input)
+    }
+}
+
+#[derive(Default)]
+struct ChatReply;
+impl Operation for ChatReply {
+    type Input = String;
+    type Output = String;
+    type State = ();
+    type Change = NoChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "chat_reply"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) {}
+    fn run(
+        &mut self,
+        input: String,
+        _: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        ctx.emit::<String>(format!("reply:{input}"))
+    }
+}
+
+struct ChatLoopBounded;
+impl BoundedOperative for ChatLoopBounded {
+    fn factory_id() -> &'static str {
+        "chat_loop_bounded"
+    }
+    fn loop_mode() -> LoopMode {
+        LoopMode::PerInput
+    }
+    // A chat session ends on an external stop, not on its own; the duration
+    // backstop keeps a stray e2e instance from outliving the test run.
+    fn self_terminating() -> bool {
+        false
+    }
+    fn max_duration() -> Option<Duration> {
+        Some(Duration::from_secs(600))
+    }
+    fn operations(c: &mut ChannelBuilder) {
+        c.input::<String>("in").into::<ChatTurn>();
+        c.channel::<String>("mid")
+            .codec()
+            .from::<ChatTurn>()
+            .into::<ChatReply>();
+        c.channel::<String>("out")
+            .from::<ChatReply>()
+            .to_plugin("chat_sink");
     }
 }
 

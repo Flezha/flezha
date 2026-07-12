@@ -1,5 +1,21 @@
 use std::env;
 use std::path::PathBuf;
+use std::process::{exit, Command};
+
+/// Run one `CliManager` call on the controller and propagate its exit code.
+/// Every `flz` verb is this: build the RPC expression, shell out to `flzvm rpc`,
+/// exit non-zero if it did.
+pub fn run_rpc(rpc_command: String) {
+    let status = Command::new(get_flezha_command())
+        .arg("rpc")
+        .arg(rpc_command)
+        .status()
+        .expect("Failed to execute command");
+
+    if !status.success() {
+        exit(status.code().unwrap_or(1));
+    }
+}
 
 pub fn get_flezha_command() -> String {
     let extension = get_extension();

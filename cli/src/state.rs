@@ -1,6 +1,6 @@
-use std::process::{exit, Command};
+use std::process::exit;
 
-use crate::utils::{get_flezha_command, get_output_format};
+use crate::utils::{get_output_format, run_rpc};
 
 pub fn handle_state_command(args: &[String]) {
     if args.is_empty() {
@@ -11,15 +11,16 @@ pub fn handle_state_command(args: &[String]) {
     match args[0].as_str() {
         "list" => handle_list(args),
         "at" => handle_at(args),
-        "rotate" => handle_rotate(args),
+        "rotate" => handle_segment_verb(args, "rotate", "state_rotate"),
         "retention" => handle_retention(args),
-        "delete" => handle_delete(args),
-        "outbox" => handle_outbox(args),
-        "journal" => handle_journal(args),
+        "delete" => handle_segment_verb(args, "delete", "state_delete"),
+        "outbox" => handle_segment_verb(args, "outbox", "state_outbox"),
+        "journal" => handle_instance_read(args, "journal", "state_journal"),
+        "inbox" => handle_instance_read(args, "inbox", "state_inbox"),
         "help" | "--help" | "-h" => print_state_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'list', 'at', 'rotate', 'retention', 'delete', 'outbox', 'journal', or 'help'.",
+                "Error: Invalid argument '{}'. Use 'list', 'at', 'rotate', 'retention', 'delete', 'outbox', 'journal', 'inbox', or 'help'.",
                 args[0]
             );
             exit(1);
@@ -33,24 +34,11 @@ fn handle_list(args: &[String]) {
         exit(1);
     }
 
-    let operative_class = &args[1];
-    let output_format = get_output_format(&args[2..]);
-    let command = get_flezha_command();
-
-    let rpc_command = format!(
+    run_rpc(format!(
         "Flezha.Service.CliManager.state_list(\"{}\", \"{}\")",
-        operative_class, output_format,
-    );
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
+        &args[1],
+        get_output_format(&args[2..]),
+    ));
 }
 
 fn handle_at(args: &[String]) {
@@ -59,47 +47,12 @@ fn handle_at(args: &[String]) {
         exit(1);
     }
 
-    let path = &args[1];
-    let target = &args[2];
-    let output_format = get_output_format(&args[3..]);
-    let command = get_flezha_command();
-
-    let rpc_command = format!(
+    run_rpc(format!(
         "Flezha.Service.CliManager.state_at(\"{}\", \"{}\", \"{}\")",
-        path, target, output_format,
-    );
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
-}
-
-fn handle_rotate(args: &[String]) {
-    if args.len() < 2 {
-        eprintln!("Usage: flz state rotate <operative/operation/segment_key>");
-        exit(1);
-    }
-
-    let path = &args[1];
-    let command = get_flezha_command();
-
-    let rpc_command = format!("Flezha.Service.CliManager.state_rotate(\"{}\")", path,);
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
+        &args[1],
+        &args[2],
+        get_output_format(&args[3..]),
+    ));
 }
 
 fn handle_retention(args: &[String]) {
@@ -108,94 +61,41 @@ fn handle_retention(args: &[String]) {
         exit(1);
     }
 
-    let operative_class = &args[1];
-    let hours = &args[2];
-    let command = get_flezha_command();
-
-    let rpc_command = format!(
+    run_rpc(format!(
         "Flezha.Service.CliManager.state_retention(\"{}\", \"{}\")",
-        operative_class, hours,
-    );
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
+        &args[1], &args[2],
+    ));
 }
 
-fn handle_delete(args: &[String]) {
+/// The Segment-scoped write verbs — `rotate`, `delete`, `outbox` — take one
+/// Segment path and no output format; they differ only in the CliManager
+/// function they call.
+fn handle_segment_verb(args: &[String], verb: &str, rpc_fun: &str) {
     if args.len() < 2 {
-        eprintln!("Usage: flz state delete <operative/operation/segment_key>");
+        eprintln!("Usage: flz state {verb} <operative/operation/segment_key>");
         exit(1);
     }
 
-    let path = &args[1];
-    let command = get_flezha_command();
-
-    let rpc_command = format!("Flezha.Service.CliManager.state_delete(\"{}\")", path,);
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
+    run_rpc(format!(
+        "Flezha.Service.CliManager.{}(\"{}\")",
+        rpc_fun, &args[1],
+    ));
 }
 
-fn handle_outbox(args: &[String]) {
+/// The instance-scoped read verbs — `journal` and `inbox` — differ only in the
+/// CliManager function they call.
+fn handle_instance_read(args: &[String], verb: &str, rpc_fun: &str) {
     if args.len() < 2 {
-        eprintln!("Usage: flz state outbox <operative/operation/segment_key>");
+        eprintln!("Usage: flz state {verb} <operative/instance> [--output text|json]");
         exit(1);
     }
 
-    let path = &args[1];
-    let command = get_flezha_command();
-
-    let rpc_command = format!("Flezha.Service.CliManager.state_outbox(\"{}\")", path,);
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
-}
-
-fn handle_journal(args: &[String]) {
-    if args.len() < 2 {
-        eprintln!("Usage: flz state journal <operative/instance> [--output text|json]");
-        exit(1);
-    }
-
-    let instance = &args[1];
-    let output_format = get_output_format(&args[2..]);
-    let command = get_flezha_command();
-
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.state_journal(\"{}\", \"{}\")",
-        instance, output_format,
-    );
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
+    run_rpc(format!(
+        "Flezha.Service.CliManager.{}(\"{}\", \"{}\")",
+        rpc_fun,
+        &args[1],
+        get_output_format(&args[2..]),
+    ));
 }
 
 fn print_state_help() {
@@ -218,7 +118,10 @@ fn print_state_help() {
         "    outbox <operative/operation/key>              Effectively-once outbox status (lag, cursor, watermark)"
     );
     println!(
-        "    journal <operative/instance>              Bounded instance op-journal entries (committed ops)"
+        "    journal <operative/instance>              Bounded instance op-journal (committed ops, iterations, park)"
+    );
+    println!(
+        "    inbox <operative/instance>                Bounded instance durable inbox (offsets, undelivered tail)"
     );
     println!();
     println!("EXAMPLES:");
@@ -230,4 +133,5 @@ fn print_state_help() {
     println!("    flz state delete MarketOperative/OhlcOperation/M1");
     println!("    flz state outbox MarketOperative/OhlcOperation/M1");
     println!("    flz state journal etl-job-42");
+    println!("    flz state inbox chat-session-7");
 }

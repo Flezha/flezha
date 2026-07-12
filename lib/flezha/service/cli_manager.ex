@@ -911,9 +911,11 @@ defmodule Flezha.Service.CliManager do
   defp operative_kind(%{builder: %{kind: kind}}) when is_atom(kind), do: Atom.to_string(kind)
   defp operative_kind(_), do: "unbounded"
 
-  # Phase 1: a live operative is "running". The richer bounded phases
-  # (compensating / completing / finished) light up with the saga + retention
-  # work in later phases.
+  # A live operative is "running", unless its loop is parked at a committed
+  # iteration boundary — then it is "suspended": still registered, still
+  # addressable, holding zero executor resources until an input (or its wake
+  # deadline) rehydrates it (`bounded-durable-suspension`).
+  defp operative_phase(%{suspended: true}), do: "suspended"
   defp operative_phase(_state), do: "running"
 
   defp operative_uptime_ms(%{started_at: started}) when is_integer(started),
@@ -1547,6 +1549,22 @@ defmodule Flezha.Service.CliManager do
     |> Map.put(:outbox, journal_outbox(payload.outbox))
   end
 
+  defp journal_row(%{type: :iter_committed, payload: payload} = entry) do
+    entry
+    |> base_journal_row()
+    |> Map.merge(%{
+      consumed_offset: payload.consumed_offset,
+      handoff_items: length(payload.handoff),
+      handoff_bytes: payload.handoff |> Enum.map(fn {_cid, b} -> byte_size(b) end) |> Enum.sum()
+    })
+  end
+
+  defp journal_row(%{type: :parked, payload: payload} = entry) do
+    entry
+    |> base_journal_row()
+    |> Map.put(:wake_deadline_ms, payload.wake_deadline_ms)
+  end
+
   # `for_type` names which entry's outbox this marks delivered — an operation
   # can have both a forward `op_committed` outbox and a `compensated` undo one.
   defp journal_row(%{type: :outbox_flushed, payload: %{for_type: for_type}} = entry) do
@@ -1557,11 +1575,7 @@ defmodule Flezha.Service.CliManager do
     |> Map.put(:flushes, flushes)
   end
 
-  defp journal_row(entry) do
-    entry
-    |> base_journal_row()
-    |> Map.put(:payload_bytes, byte_size(entry.payload))
-  end
+  defp journal_row(entry), do: base_journal_row(entry)
 
   defp base_journal_row(entry) do
     %{
@@ -1606,7 +1620,60 @@ defmodule Flezha.Service.CliManager do
       IO.puts("    flushes: #{flushes}")
     end
 
+    if Map.has_key?(row, :consumed_offset) do
+      IO.puts("    consumed inbox offset: #{row.consumed_offset}")
+    end
+
+    if Map.has_key?(row, :wake_deadline_ms) do
+      IO.puts("    wakes at: #{row.wake_deadline_ms || "next input"}")
+    end
+
     IO.puts("")
+  end
+
+  @doc """
+  `flz state inbox <instance>` — the durable inbox of a bounded instance
+  (`bounded-durable-suspension`): every appended input with its offset, marking
+  which are still undelivered (above the consumed offset the last committed
+  iteration recorded).
+  """
+  def state_inbox(instance_id, output_format \\ "text") do
+    entries = Flezha.State.OpInbox.read(instance_id)
+    consumed = Flezha.State.OpJournal.consumed_offset(instance_id)
+
+    rows =
+      Enum.map(entries, fn entry ->
+        %{
+          offset: entry.offset,
+          consumed: entry.offset <= consumed,
+          bytes: byte_size(entry.message),
+          channel: Map.get(entry.metadata, "channel"),
+          wake: Map.get(entry.metadata, "flz.wake")
+        }
+      end)
+
+    case output_format do
+      "json" ->
+        IO.puts(Jason.encode!(%{instance: instance_id, consumed_offset: consumed, entries: rows}))
+
+      _ ->
+        if rows == [] do
+          IO.puts("no durable inbox for instance #{instance_id}")
+        else
+          IO.puts("durable inbox for instance #{instance_id} (consumed through #{consumed}):\n")
+
+          Enum.each(rows, fn row ->
+            IO.puts(
+              "  offset=#{row.offset} #{if row.consumed, do: "consumed", else: "PENDING"} " <>
+                "#{row.bytes} byte(s)" <>
+                if(row.channel, do: " channel=#{row.channel}", else: "") <>
+                if(row.wake, do: " wake=#{row.wake}", else: "")
+            )
+          end)
+
+          IO.puts("")
+        end
+    end
   end
 
   @doc """

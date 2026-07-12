@@ -14,7 +14,7 @@ defmodule FlezhaTest.Executor.ControlChannelOpCommitTest do
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Executor.ControlChannel
-  alias Flezha.State.{OpJournal, TestHelpers, Wire}
+  alias Flezha.State.{OpInbox, OpJournal, TestHelpers, Wire}
 
   @namespace "ctrl-chan-op-commit-test"
 
@@ -176,6 +176,93 @@ defmodule FlezhaTest.Executor.ControlChannelOpCommitTest do
     assert {:ok, []} = OpJournal.read(inst)
   end
 
+  test "IterCommit journals the boundary, acks, then releases the consumed inbox" do
+    inst = "iter_inst_#{System.unique_integer([:positive])}"
+    {control_channel, stream_ref} = start_control_channel("iter")
+    ClassRegistry.put_overwatch(inst, self())
+
+    # Two turns are waiting in the durable inbox; iteration 0 consumed the first.
+    {:ok, 1} = OpInbox.append(inst, "turn-1", %{})
+    {:ok, 2} = OpInbox.append(inst, "turn-2", %{})
+
+    payload = build_iter_commit_payload(inst, 0, 1, [{4, "carry"}], "ref-iter-0")
+    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+    assert_receive {:test_writer_called, ^stream_ref, reply}, 1_000
+    response = decode_reply(reply)
+    assert response.reference_id == "ref-iter-0"
+
+    assert {:iter_commit_response, %ExecutorCommands.IterCommitResponse{error: "", iter: 0}} =
+             response.command
+
+    # The ack was emitted only after the boundary record landed.
+    assert {:ok, [entry]} = OpJournal.read(inst)
+    assert %{type: :iter_committed, iter: 0} = entry
+    assert entry.payload.consumed_offset == 1
+    assert entry.payload.handoff == [{4, "carry"}]
+    assert OpJournal.consumed_offset(inst) == 1
+
+    # Post-ack cleanup runs on the ControlChannel, so a sync call means it landed.
+    _ = :sys.get_state(control_channel)
+
+    assert Enum.map(OpInbox.read(inst), & &1.offset) == [2],
+           "the consumed turn is released; the undelivered one is kept"
+
+    assert Enum.map(OpInbox.undelivered(inst), & &1.message) == ["turn-2"]
+  end
+
+  test "the iteration boundary requests a snapshot for the instance's segments" do
+    inst = "iter_snap_#{System.unique_integer([:positive])}"
+
+    # A persisted Segment of this instance — what the boundary compacts so a
+    # rehydrate loads iteration-N state instead of replaying the WAL tail.
+    seg_id = {inst, "OpA", "s0"}
+    {:ok, writer} = Flezha.State.Supervisor.find_or_start(seg_id)
+    :ok = Flezha.State.WalWriter.append(writer, 0, <<0::128>>, "change")
+
+    test_pid = self()
+    Mimic.set_mimic_global()
+
+    Mimic.stub(ControlChannel, :send_control, fn _executor, command ->
+      send(test_pid, {:control_command, command})
+      {:ok, make_ref()}
+    end)
+
+    {control_channel, stream_ref} = start_control_channel("snap")
+
+    payload = build_iter_commit_payload(inst, 0, 0, [], "ref-iter-snap")
+    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+    assert_receive {:test_writer_called, ^stream_ref, _reply}, 1_000
+
+    expected = Wire.encode_segment_id(inst, "OpA", "s0")
+
+    assert_receive {:control_command,
+                    {:compact_segment, %ExecutorCommands.CompactSegment{segment_id: ^expected}}},
+                   1_000
+  end
+
+  test "IterPark journals the park record and suspends the instance" do
+    inst = "park_inst_#{System.unique_integer([:positive])}"
+    {control_channel, _stream_ref} = start_control_channel("park")
+
+    # Stand in as the instance's Overwatch: the suspension is cast at us. The
+    # park runs in a Task (the eviction's RemOperative reply returns on this very
+    # control stream), so the stub must be visible outside the test process.
+    test_pid = self()
+    Mimic.set_mimic_global()
+    Mimic.stub(Flezha.Service.HubManager, :get_pid, fn _ns, ^inst -> {:ok, test_pid} end)
+
+    payload = build_iter_park_payload(inst, 3, 1_800_000_000_000, "ref-park")
+    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+    assert_receive {:"$gen_cast", {:suspend, 3, 1_800_000_000_000}}, 1_000
+
+    # The park is durable BEFORE the eviction, so a controller crash in between
+    # still rediscovers the suspension.
+    assert %{parked: true, wake_deadline_ms: 1_800_000_000_000} = OpJournal.restore_state(inst)
+  end
+
   defp start_control_channel(suffix) do
     stream_ref = make_ref()
     executor_id = "#{@namespace}_#{suffix}_#{System.unique_integer([:positive])}"
@@ -189,7 +276,14 @@ defmodule FlezhaTest.Executor.ControlChannelOpCommitTest do
     {:ok, pid} = ControlChannel.start_link({@namespace, executor_id, stream_ref, write_fun})
 
     on_exit(fn ->
-      if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+      # The channel is linked to the (now exiting) test process, so it may
+      # already be on its way down — stopping it is best-effort cleanup, not an
+      # assertion.
+      try do
+        if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+      catch
+        :exit, _ -> :ok
+      end
     end)
 
     {pid, stream_ref}
@@ -225,6 +319,42 @@ defmodule FlezhaTest.Executor.ControlChannelOpCommitTest do
     }
 
     {:ok, iodata, _size} = Protox.encode(request)
+    IO.iodata_to_binary(iodata)
+  end
+
+  defp build_iter_commit_payload(operative_id, iter, consumed_offset, handoff, reference_id) do
+    encode_request(reference_id, {
+      :iter_commit,
+      %ExecutorCommands.IterCommit{
+        operative_id: operative_id,
+        iter: iter,
+        consumed_offset: consumed_offset,
+        handoff:
+          Enum.map(handoff, fn {cid, bytes} ->
+            %ExecutorCommands.OpHandoffItem{channel_id: cid, payload: bytes}
+          end)
+      }
+    })
+  end
+
+  defp build_iter_park_payload(operative_id, iter, wake_deadline_ms, reference_id) do
+    encode_request(reference_id, {
+      :iter_park,
+      %ExecutorCommands.IterPark{
+        operative_id: operative_id,
+        iter: iter,
+        wake_deadline_ms: wake_deadline_ms
+      }
+    })
+  end
+
+  defp encode_request(reference_id, command) do
+    {:ok, iodata, _size} =
+      Protox.encode(%ExecutorCommands.CommandRequest{
+        reference_id: reference_id,
+        command: command
+      })
+
     IO.iodata_to_binary(iodata)
   end
 

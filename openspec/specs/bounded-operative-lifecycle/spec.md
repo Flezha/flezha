@@ -24,17 +24,22 @@ A bounded operative SHALL be spawned on demand with `args` (`init_values`), each
 
 ### Requirement: A bounded operative may receive input after it starts
 
-A bounded operative MAY declare an entry channel and **receive input after it has started** (an inbox). The SDK dispatch path SHALL route a data frame addressed to a running bounded instance to its current operation's entry channel/segment, rather than dropping it. An operative waiting on its inbox SHALL block/sleep while idle and SHALL NOT busy-spin.
+A bounded operative MAY declare an entry channel and **receive input after it has started** (an inbox). The SDK dispatch path SHALL route a data frame addressed to a running bounded instance to its current operation's entry channel/segment, rather than dropping it. For a **durable** bounded instance, post-start input SHALL additionally be journaled to the instance's durable inbox before delivery, so input sent while the instance is suspended, crashed, or migrating SHALL NOT be lost and SHALL be delivered on rehydrate. An operative waiting on its inbox SHALL block/sleep while idle and SHALL NOT busy-spin; a **looping durable** operative waiting at a committed iteration boundary SHALL be suspended (evicted from executor memory) per the `bounded-durable-suspension` capability instead of holding live resources.
 
 #### Scenario: Input delivered after start reaches the operation
 
 - **WHEN** a bounded operative has started and a data frame is sent to it
 - **THEN** the frame SHALL be delivered to the running operation's entry channel and processed, not dropped
 
+#### Scenario: Input sent while the instance is down is not lost
+
+- **WHEN** a data frame is sent to a durable bounded instance that is suspended or crashed
+- **THEN** the frame SHALL be durably journaled and delivered when the instance rehydrates
+
 #### Scenario: An idle interactive operative does not busy-spin
 
 - **WHEN** a bounded operative is waiting for the next input with none available
-- **THEN** it SHALL sleep/block until input arrives or a cancellation (duration/external stop) trips, without consuming CPU in a spin loop
+- **THEN** it SHALL sleep/block until input arrives or a cancellation (duration/external stop) trips, without consuming CPU in a spin loop — and, for a looping durable operative at a committed iteration boundary, it SHALL be evicted from memory rather than occupying the executor
 
 ### Requirement: Internal loop with an intrinsic terminal condition
 

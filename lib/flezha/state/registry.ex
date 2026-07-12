@@ -33,8 +33,32 @@ defmodule Flezha.State.Registry do
   # Segment (no dedup cache is written for it, so `scan_dir/1` cannot see it).
   @journal_segment_key "_op_journal"
 
+  # Reserved segment-key of a bounded instance's durable inbox
+  # (`bounded-durable-suspension`). Same substrate contract as the journal.
+  @inbox_segment_key "_op_inbox"
+
+  @reserved_segment_keys [@journal_segment_key, @inbox_segment_key]
+
+  # The reserved identities' on-disk names. Kept beside the keys so the two never
+  # drift: `wal_path/1` writes these files and `scan_dir/1` must skip them.
+  @journal_file "op.journal"
+  @inbox_file "inbox.wal"
+  @reserved_files [@journal_file, @inbox_file]
+
   @spec journal_segment_key() :: binary()
   def journal_segment_key(), do: @journal_segment_key
+
+  @spec inbox_segment_key() :: binary()
+  def inbox_segment_key(), do: @inbox_segment_key
+
+  @doc """
+  The reserved per-instance segment keys — identities that ride the Segment
+  persistence substrate (WalWriter + FsyncBatcher) but are not Segments. The
+  `WalWriter` skips its outbox dedup side-file for them, which is also what
+  keeps `scan_dir/1` from ever surfacing one as a phantom Segment.
+  """
+  @spec reserved_segment_keys() :: [binary()]
+  def reserved_segment_keys(), do: @reserved_segment_keys
 
   @doc """
   Reserved journal identity for a bounded instance's op-journal
@@ -49,6 +73,19 @@ defmodule Flezha.State.Registry do
   @spec journal_path(binary()) :: binary()
   def journal_path(instance_id) when is_binary(instance_id),
     do: wal_path(journal_id(instance_id))
+
+  @doc """
+  Reserved inbox identity for a bounded instance's durable inbox
+  (`bounded-durable-suspension`) — the sibling of `journal_id/1`.
+  """
+  @spec inbox_id(binary()) :: segment_id()
+  def inbox_id(instance_id) when is_binary(instance_id),
+    do: {instance_id, instance_id, @inbox_segment_key}
+
+  @doc "On-disk path of a bounded instance's durable inbox."
+  @spec inbox_path(binary()) :: binary()
+  def inbox_path(instance_id) when is_binary(instance_id),
+    do: wal_path(inbox_id(instance_id))
 
   @spec state_root() :: binary()
   def state_root() do
@@ -65,7 +102,11 @@ defmodule Flezha.State.Registry do
 
   @spec wal_path(segment_id()) :: binary()
   def wal_path({_, _, @journal_segment_key} = pid) do
-    Path.join(state_dir(pid), "op.journal")
+    Path.join(state_dir(pid), @journal_file)
+  end
+
+  def wal_path({_, _, @inbox_segment_key} = pid) do
+    Path.join(state_dir(pid), @inbox_file)
   end
 
   def wal_path({_, _, segment_key} = pid) do
@@ -199,6 +240,12 @@ defmodule Flezha.State.Registry do
     |> Enum.reduce(%{wal_files: [], snapshot_files: [], outbox_files: []}, fn name, acc ->
       cond do
         String.ends_with?(name, ".tmp") or String.ends_with?(name, ".rewriting") ->
+          acc
+
+        # The per-instance journal and inbox ride the Segment substrate but are
+        # not Segments; `inbox.wal` would otherwise decode as a Segment named
+        # "inbox" and be shipped a `RestoreInitState`.
+        name in @reserved_files ->
           acc
 
         String.ends_with?(name, ".wal") ->

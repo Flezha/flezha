@@ -110,26 +110,91 @@ defmodule FlezhaTest.State.OpJournalTest do
     refute File.exists?(Registry.journal_path(inst))
   end
 
-  test "reserved entry types are surfaced with raw payloads; unknown types are skipped" do
+  test "an entry shape this build cannot decode is skipped, not fatal" do
     inst = instance_id()
     :ok = OpJournal.append_op_committed(inst, 0, 0, [], [])
 
     close_journal_writer(inst)
 
-    # A follow-up change's entry (type 3 = iter_committed) plus one from a
-    # future build this code does not know (type 77): tolerated, not fatal.
-    reserved = OpJournal.encode_entry(3, 2, 5, "opaque")
+    # An entry from a future build (unknown type 77) and a known type carrying a
+    # shape this build does not understand: both tolerated, neither fatal.
     unknown = OpJournal.encode_entry(77, 0, 0, "future")
+    malformed = OpJournal.encode_entry(4, 0, 5, "not-a-deadline")
     path = Registry.journal_path(inst)
-    File.write!(path, TestHelpers.build_wal_record(1, <<0::128>>, reserved), [:append])
-    File.write!(path, TestHelpers.build_wal_record(2, <<0::128>>, unknown), [:append])
+    File.write!(path, TestHelpers.build_wal_record(1, <<0::128>>, unknown), [:append])
+    File.write!(path, TestHelpers.build_wal_record(2, <<0::128>>, malformed), [:append])
 
-    assert {:ok, [committed, iter_entry]} = OpJournal.read(inst)
+    assert {:ok, [committed]} = OpJournal.read(inst)
     assert committed.type == :op_committed
-    assert %{type: :iter_committed, op_idx: 2, iter: 5, payload: "opaque"} = iter_entry
 
-    # Reserved entries do not disturb the op_committed fold.
+    # Undecodable entries do not disturb the fold.
     assert %{committed_op_idxs: [0]} = OpJournal.restore_state(inst)
+  end
+
+  test "iteration commit records the consumed offset and the terminal handoff" do
+    inst = instance_id()
+    seg = seg_identity(inst, "OpA", "s0")
+
+    assert OpJournal.consumed_offset(inst) == 0
+
+    # Iteration 0: two ops, then the boundary.
+    :ok = OpJournal.append_op_committed(inst, 0, 0, [seg], [{1, "a"}])
+    :ok = OpJournal.append_op_committed(inst, 1, 0, [], [])
+    :ok = OpJournal.append_iter_committed(inst, 0, 4, [{2, "carry"}])
+
+    assert OpJournal.consumed_offset(inst) == 4
+
+    resume = OpJournal.restore_state(inst)
+
+    assert resume.iter == 1, "resume enters the iteration AFTER the last committed one"
+    assert resume.committed_op_idxs == [], "iteration 1 has committed no operation yet"
+    assert resume.handoff == [{2, "carry"}], "a fresh iteration seeds from the terminal handoff"
+    assert resume.consumed_offset == 4
+    refute resume.parked
+
+    # Iteration 1 gets one op in before the crash: resume skips it and seeds
+    # from ITS handoff instead.
+    :ok = OpJournal.append_op_committed(inst, 0, 1, [seg], [{1, "b"}])
+
+    resume = OpJournal.restore_state(inst)
+    assert resume.iter == 1
+    assert resume.committed_op_idxs == [0]
+    assert resume.handoff == [{1, "b"}]
+
+    # Every forward commit is carried back with its iteration — the compensation
+    # planner's per-iteration `committed` input.
+    assert resume.committed_ops == [
+             %{op_idx: 0, iter: 0, segments_ran: [seg]},
+             %{op_idx: 1, iter: 0, segments_ran: []},
+             %{op_idx: 0, iter: 1, segments_ran: [seg]}
+           ]
+  end
+
+  test "park record survives as the suspension signal until the loop runs again" do
+    inst = instance_id()
+    :ok = OpJournal.append_op_committed(inst, 0, 0, [], [])
+    :ok = OpJournal.append_iter_committed(inst, 0, 2, [])
+
+    refute OpJournal.restore_state(inst).parked
+
+    :ok = OpJournal.append_parked(inst, 0, 1_800_000_000_000)
+
+    resume = OpJournal.restore_state(inst)
+    assert resume.parked, "the journal's last entry is the park"
+    assert resume.wake_deadline_ms == 1_800_000_000_000
+    assert resume.iter == 1, "a rehydrate still enters the iteration after the committed one"
+
+    # A park with no deadline waits for input alone.
+    :ok = OpJournal.append_iter_committed(inst, 1, 5, [])
+    :ok = OpJournal.append_parked(inst, 1, nil)
+    resume = OpJournal.restore_state(inst)
+    assert resume.parked
+    assert resume.wake_deadline_ms == nil
+
+    # Once the loop runs again, the instance is no longer parked: the park is
+    # only the LAST entry for as long as nothing has happened since.
+    :ok = OpJournal.append_op_committed(inst, 0, 2, [], [])
+    refute OpJournal.restore_state(inst).parked
   end
 
   test "the journal never registers a phantom Segment" do
@@ -325,7 +390,13 @@ defmodule FlezhaTest.State.OpJournalTest do
     File.mkdir_p!(Path.dirname(wal))
     File.write!(wal, TestHelpers.build_wal_record(1, <<>>))
 
-    :ok = OpJournal.append_op_committed(inst, 0, 0, [seg_identity(inst, "OpA", "s0")], [{2, "h"}])
+    seg_id = seg_identity(inst, "OpA", "s0")
+
+    # Iteration 0 committed one operation and finished; iteration 1 has one
+    # operation in before the crash. The resume must carry BOTH granularities.
+    :ok = OpJournal.append_op_committed(inst, 0, 0, [seg_id], [{2, "h0"}])
+    :ok = OpJournal.append_iter_committed(inst, 0, 3, [{2, "carry"}])
+    :ok = OpJournal.append_op_committed(inst, 0, 1, [seg_id], [{2, "h"}])
 
     test_pid = self()
 
@@ -340,9 +411,19 @@ defmodule FlezhaTest.State.OpJournalTest do
 
     assert %ExecutorCommands.OpJournalState{
              committed_op_idxs: [0],
-             iter: 0,
-             handoff: [%ExecutorCommands.OpHandoffItem{channel_id: 2, payload: "h"}]
+             iter: 1,
+             handoff: [%ExecutorCommands.OpHandoffItem{channel_id: 2, payload: "h"}],
+             consumed_offset: 3,
+             parked: false,
+             wake_deadline_ms: 0
            } = cmd.op_journal
+
+    # Every forward op commit, with its iteration — the driver's compensation
+    # input. Shipping this empty is how a rollback silently undoes nothing.
+    assert [
+             %ExecutorCommands.OpCommittedOp{op_idx: 0, iter: 0, segments_ran: [^seg_id]},
+             %ExecutorCommands.OpCommittedOp{op_idx: 0, iter: 1, segments_ran: [^seg_id]}
+           ] = cmd.op_journal.committed_ops
   end
 
   test "an instance without a journal ships no journal state" do

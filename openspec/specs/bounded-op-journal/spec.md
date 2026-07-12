@@ -136,3 +136,17 @@ typed oversized error. The `outbox_flushed` and `compensated` entry types
 
 - **WHEN** an operation's handoff plus staged outbox exceeds the journal frame bound
 - **THEN** the commit SHALL fail with the typed oversized error and the run SHALL terminate abnormally
+
+### Requirement: Iteration and park entry types are active
+
+The op-journal codec SHALL write and interpret the `iter_committed` and
+`parked` entry types (previously reserved): `iter_committed` carries the
+iteration number and the consumed inbox offset; `parked` carries the iteration
+number and an optional wake deadline. Per-op `op_committed` entries SHALL carry
+the enclosing iteration in the `iter` field (0 for a non-looping chain). The
+`flz state journal` verb SHALL render both entry types.
+
+#### Scenario: Journal reflects loop progress
+
+- **WHEN** a looping instance has committed two iterations and parked
+- **THEN** `flz state journal` SHALL show the per-op entries tagged with their iteration, two `iter_committed` entries with consumed offsets, and a final `parked` entry

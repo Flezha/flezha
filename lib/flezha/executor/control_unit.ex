@@ -110,6 +110,22 @@ defmodule Flezha.Executor.ControlUnit do
   @spec bounded_stop(binary(), binary()) :: :ok | {:error, :no_control_unit}
   def bounded_stop(executor_id, operative_id)
       when is_binary(executor_id) and is_binary(operative_id) do
+    cast_to_unit(executor_id, {:bounded_stop, operative_id})
+  end
+
+  @doc """
+  Hard, fire-and-forget `RemOperative`: remove the operative from the executor
+  without waiting for the SDK ack. The Overwatch's own teardown uses it, and so
+  does the durable-suspension eviction — a suspended instance holds zero executor
+  resources while its controller-side registry entry (and Overwatch) stay.
+  """
+  @spec stop_operative_async(binary(), binary()) :: :ok | {:error, :no_control_unit}
+  def stop_operative_async(executor_id, operative_id)
+      when is_binary(executor_id) and is_binary(operative_id) do
+    cast_to_unit(executor_id, {:stop_operative_async, operative_id})
+  end
+
+  defp cast_to_unit(executor_id, message) do
     control_unit = Identificator.control_unit(executor_id)
 
     case GenServer.whereis(control_unit) do
@@ -117,7 +133,7 @@ defmodule Flezha.Executor.ControlUnit do
         {:error, :no_control_unit}
 
       _ ->
-        GenServer.cast(control_unit, {:bounded_stop, operative_id})
+        GenServer.cast(control_unit, message)
         :ok
     end
   end

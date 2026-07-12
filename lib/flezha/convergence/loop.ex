@@ -671,6 +671,8 @@ defmodule Flezha.Convergence.Loop do
           # An observation failed this tick (operative state or live-executor read);
           # no authoritative signal, so report `:unknown` for this tick only.
           bound == :unknown -> :unknown
+          # Evicted at a committed iteration boundary, not broken.
+          Map.get(obs, :suspended?, false) -> :suspended
           is_nil(bound) -> :unbound
           live == :unknown -> :unknown
           # Bound to an executor that is no longer live — the loop will rebind.

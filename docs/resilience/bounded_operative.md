@@ -60,9 +60,64 @@ path; the convergence loop never acts on a terminal bounded operative.
 blocking front door, no busy-spin), so interactive/long-lived patterns (e.g. an
 AI session) work. A frame addressed to a running bounded instance is routed to
 its inbox instead of being dropped. **1 operative = 1 job/session**; segments are
-internal parallelism only, never multi-session hosting. Structured multi-op
-chains are seeded by `args` and run once (inbox frames buffer harmlessly during
-a structured run).
+internal parallelism only, never multi-session hosting. A structured chain is
+seeded by `args` and runs once, unless it declares a **loop** — see below, where
+input becomes durable and an idle session stops costing anything.
+
+## Durable loop and suspension
+
+A structured class declares its chain a loop with `loop_mode()`:
+
+| Mode | Each iteration is seeded by | Ends when |
+|---|---|---|
+| `Once` (default) | the spawn `args` | the chain completes — the single pass, unchanged |
+| `PerInput` | the next inbox item (a chat turn) | cancellation / `max_duration`; **parks** while idle |
+| `Chained` | the previous iteration's terminal handoff (refinement) | an iteration releases an empty batch |
+
+**Iteration = a durable boundary.** Each iteration runs the whole chain under
+the existing per-operation `OpCommit` gating and ends with an `IterCommit`: the
+controller journals `iter_committed(N, consumed_inbox_offset)` with the
+iteration's terminal handoff, snapshots the instance's segments at the boundary,
+flushes what the iteration staged, and releases the consumed inbox prefix. A
+crash resumes at the iteration **after** the last committed one — never at the
+loop start, and never re-running a committed turn. Work of an uncommitted
+in-flight iteration may re-run (at-least-once, the existing author contract).
+
+Because committed iterations are journal-backed, `RollbackMode::KeepProgress`
+finally keeps something: on an abnormal exit the planner is handed the journaled
+iterations as `committed` and undoes only the in-flight one. `AllOrNothing`
+unwinds the in-flight iteration and then every committed iteration in reverse.
+The planner itself is unchanged.
+
+**Durable inbox.** Post-start input for a durable bounded instance is appended
+to a per-instance `inbox.wal` (offset + dedup id) **before** it is forwarded, so
+input sent while the instance is suspended, crashed, or migrating is delivered
+on rehydrate rather than dropped. See `data_durability.md`.
+
+**Suspension (evict-while-waiting).** When a `PerInput` loop finds its inbox
+empty at a committed boundary and stays idle past `FLEZHA_BOUNDED_PARK_IDLE_MS`
+(default 5 s — hysteresis, so trickling input does not thrash), it tears its own
+run down **without** a terminal completion and ships `IterPark`. The controller
+journals `parked(N[, deadline])` and evicts the instance from its executor. The
+registry entry and its Overwatch stay — an idle chat session holds **zero
+executor resources** but is still addressable, and `flz operative info` reports
+it `suspended`. The convergence loop leaves it alone: it is unbound by design,
+not broken.
+
+A new inbox append — or the journaled wake deadline, which the controller
+delivers as a synthetic empty-payload inbox entry (`flz.wake = timer`, for
+classes declaring `wake_after()`) — rehydrates it through the **normal bind
+path**: respawn on any live executor, restore journal + iteration-boundary
+snapshots, deliver the undelivered inbox tail, enter iteration N+1. Both wake
+sources go through the inbox, so two racing wakes collapse into exactly one
+rehydration. Because every input is durable (journal, snapshots, inbox), a
+suspended instance is rediscovered from disk after a controller redeploy and
+rehydrates exactly as if nothing had happened.
+
+Inspect either half with `flz state journal <instance>` (per-op entries tagged
+with their iteration, the `iter_committed` records with their consumed offsets,
+and the final `parked` entry) and `flz state inbox <instance>` (offsets, and
+which are still undelivered).
 
 ## Saga: compensation on abnormal termination
 

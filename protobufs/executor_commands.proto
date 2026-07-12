@@ -39,6 +39,9 @@ message CommandRequest {
         ParkPayloadAck park_payload_ack = 27;
         OpCommit op_commit = 28;
         OpCommitResponse op_commit_response = 29;
+        IterCommit iter_commit = 30;
+        IterCommitResponse iter_commit_response = 31;
+        IterPark iter_park = 32;
     }
 }
 
@@ -218,15 +221,73 @@ message OpCommitResponse {
     string error = 3;
 }
 
+// SDK -> Controller, at each iteration boundary of a looping durable
+// structured bounded operative (bounded-durable-loop): iteration `iter`
+// finished, having consumed the durable inbox up to `consumed_offset` and
+// released `handoff` as its terminal batch. The Controller appends
+// `iter_committed(iter, consumed_offset)` to the op-journal, fsyncs, requests
+// a boundary snapshot for the instance's segments, flushes whatever the
+// iteration's operations staged, truncates the inbox below the consumed
+// offset, and replies IterCommitResponse. The driver enters iteration
+// `iter + 1` only on the successful reply — a crash before it re-runs the
+// whole iteration (at-least-once), never the ones below it.
+message IterCommit {
+    string operative_id = 1;
+    uint32 iter = 2;
+    uint64 consumed_offset = 3;
+    repeated OpHandoffItem handoff = 4;
+}
+
+// Controller -> SDK reply to IterCommit, emitted only AFTER the journal entry
+// is durable (fsync). Same reference_id / terminal-error contract as
+// OpCommitResponse.
+message IterCommitResponse {
+    string operative_id = 1;
+    uint32 iter = 2;
+    string error = 3;
+}
+
+// SDK -> Controller. A looping durable bounded operative found its inbox empty
+// at the committed boundary of iteration `iter` and past the idle threshold:
+// it has torn its own run down WITHOUT a BoundedCompleted (this is not a
+// terminal outcome). The Controller journals `parked(iter[, wake_deadline_ms])`
+// and evicts the instance from the executor; the registry keeps it `suspended`
+// until a new inbox append — or the wake deadline — rehydrates it
+// (bounded-durable-suspension). `wake_deadline_ms` is 0 when the operative
+// declared no durable timer.
+message IterPark {
+    string operative_id = 1;
+    uint32 iter = 2;
+    uint64 wake_deadline_ms = 3;
+}
+
+// One journaled forward op commit, shipped back on crash-resume so the driver
+// can rebuild `plan_compensation`'s per-iteration `committed` input from
+// durable state (bounded-durable-loop): operation `op_idx` of iteration `iter`
+// completed forward on `segments_ran`.
+message OpCommittedOp {
+    uint32 op_idx = 1;
+    uint32 iter = 2;
+    repeated bytes segments_ran = 3;
+}
+
 // Committed op-journal state shipped back on crash-resume
-// (bounded-op-journal): the op indexes recorded `op_committed` plus the
-// latest journaled handoff batch. The driver skips committed operations
-// and seeds the first uncommitted operation from `handoff` instead of the
-// entry channel.
+// (bounded-op-journal). `iter` is the iteration to resume at — the one after
+// the highest journaled `iter_committed` (0 for a non-looping chain);
+// `committed_op_idxs` are the operations already committed inside that
+// still-in-flight iteration, which the driver skips; `handoff` seeds the first
+// uncommitted one. `committed_ops` carries every forward op commit with its
+// iteration (compensation planning), `consumed_offset` the inbox offset the
+// last committed iteration consumed, and `parked` / `wake_deadline_ms` the
+// suspension record (bounded-durable-suspension).
 message OpJournalState {
     repeated uint32 committed_op_idxs = 1;
     uint32 iter = 2;
     repeated OpHandoffItem handoff = 3;
+    repeated OpCommittedOp committed_ops = 4;
+    uint64 consumed_offset = 5;
+    bool parked = 6;
+    uint64 wake_deadline_ms = 7;
 }
 
 // Per-Segment state restore handshake: Controller ships latest snapshot

@@ -44,7 +44,10 @@ set and the convergence loop re-adds anything missing. See
 | **Kafka/broker down, executors alive** | No loss | Buffered, resumes | Producer reconnects (see kafka producer recovery); offset resumes when the broker returns. |
 | **Sustained overload** (state changes outpace fsync — the 06-21 OOM shape) | **No loss** (credit-speaking SDK) | At-least-once | Credit-grant flow control: the sender's byte window (default 16 MiB) is minted back only on WAL fsync, so an exhausted window *parks* the SDK's flush path instead of growing controller memory — park, never drop. Shedding is unreachable for a conformant sender; any shed/overrun on a credit session emits `[:flezha, :state, :credit_anomaly]`. Pre-credit SDKs keep the legacy status-flag + shed/resync path. See [`state_persistence.md`](state_persistence.md) "Flow control". |
 | **Bounded operative executor SIGKILL** (durable, the default) | **Brief best-effort loss** (async WAL lag) | At-least-once | Respawns on a new executor, restores committed Segment state via the restore-before-run gate, and resumes **at the first un-journaled operation**: the op-journal (`op.journal`, one gated `OpCommit` fsync per op barrier) records each completed operation + its inter-op handoff, so committed ops are **skipped, not redone**, and the next op is seeded from the journaled handoff (Rust SDK; Java keeps the pre-journal full re-run until its parity change). Inspect with `flz state journal`. See [`bounded_operative.md`](bounded_operative.md). |
-| **Bounded operative executor SIGKILL** (persistence opted out) | **Full — re-runs from the top** | At-least-once | No WAL to restore from; the operative re-runs its `run`/chain from `args`. Idempotent by author contract, or don't opt out. |
+| **Looping bounded operative executor SIGKILL** (durable) | **Brief best-effort loss** (async WAL lag) | At-least-once | Resumes at the iteration **after** the last journaled `iter_committed` — committed turns never re-run, and the in-flight one re-runs from its own last committed op. Input it had not consumed is still in the durable inbox. See [`bounded_operative.md`](bounded_operative.md) "Durable loop and suspension". |
+| **Input sent to a suspended / crashed / migrating bounded instance** (durable) | **No loss** | n/a | The controller appends it to the instance's `inbox.wal` before forwarding, so it is delivered on rehydrate rather than dropped — and a suspended instance is *woken* by the append. Duplicates inside the undelivered window are absorbed. See "Bounded operatives: the durable inbox". |
+| **Controller redeploy while a bounded instance is suspended** | **No loss** | n/a | Suspension is durable state (`parked` journal entry + inbox + snapshots), not a live process: the instance is rediscovered from disk on boot, stays evicted, and rehydrates on the next input or its wake deadline exactly as if nothing happened. |
+| **Bounded operative executor SIGKILL** (persistence opted out) | **Full — re-runs from the top** | At-least-once | No WAL to restore from; the operative re-runs its `run`/chain from `args`, and any input in its memory-only inbox is lost. Idempotent by author contract, or don't opt out. |
 | **Bounded operative SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and **skips** the already-done ones (no forward re-run). |
 | **Poison payload** (operation fails on every retry) | **No loss** | Segment continues | Retry-then-park: after `retry_max` attempts the payload is durably parked to the DLQ store *before* the segment advances (tier off: fsync-then-ack; tier on: one atomic record with the consumed offset). Inspect/replay/drop via `flz dlq`; only retention (30 d / 4 GiB, loud) ever discards a parked payload. See "Dead-letter queue" below. |
 
@@ -196,6 +199,37 @@ with stable keys** on the re-drive window (the overlap between a delivery
 and its unwritten `outbox_flushed` marker). A dedup-capable sink absorbs
 that duplicate exactly; without one, a re-driven output can appear twice.
 Inspect what an instance owes with `flz state journal <instance>`.
+
+## Bounded operatives: the durable inbox
+
+The **input** half of the same story. A durable bounded instance's post-start
+input (a chat turn, an agent message) is appended to a per-instance
+`inbox.wal` — the same `WalWriter` + `FsyncBatcher` substrate as `op.journal`,
+living beside it under `<state_root>/<instance>/<instance>/` — **before** it is
+forwarded to the executor:
+
+- **Append-before-forward.** A crash after the append but before delivery
+  re-delivers on rehydrate: at-least-once *into* the operative, exactly-once
+  *completion* via the consumed offset. An append that fails is not forwarded
+  either — a frame the sender can retry beats an undurable one it believes was
+  accepted.
+- **Offsets and dedup.** Offsets are monotonic (1-based; `0` means "nothing
+  consumed"). The dedup id is the sender's `flz.msg_id` metadata when present,
+  else a payload hash; a duplicate inside the **undelivered window** is absorbed
+  at append, so an at-least-once sender cannot produce a duplicate turn. Two
+  legitimately identical payloads sent inside that window need a sender id.
+- **Truncation.** `iter_committed` records the offset the iteration consumed and
+  the inbox releases everything at or below it. Truncation is advisory cleanup:
+  delivery is filtered by the *same* consumed offset, so a lost truncate costs
+  disk, never correctness. Message payloads live only in `inbox.wal`, never in
+  `op.journal` — the two files have deliberately different retention.
+
+**Guarantee.** Input sent to a suspended, crashed, or migrating durable bounded
+instance is **never lost**: it is durable before it is forwarded and delivered
+when the instance next runs. Inspect with `flz state inbox <instance>`. An
+opted-out class keeps the memory-only inbox (input in flight at a crash is
+lost — that is what opting out buys). See
+[`bounded_operative.md`](bounded_operative.md) "Durable loop and suspension".
 
 ## Dead-letter queue: poison payloads park, never drop
 

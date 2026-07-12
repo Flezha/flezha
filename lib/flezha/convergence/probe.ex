@@ -71,6 +71,7 @@ defmodule Flezha.Convergence.Probe do
           bound_executor: Map.get(ow, :executor_id),
           factory_id: Map.get(ow, :factory_id),
           parked?: Map.get(ow, :init_error) != nil,
+          suspended?: Map.get(ow, :suspended, false),
           running_plugins: running_plugins(ow),
           plugin_health: plugin_health(pid, ow)
         }
@@ -86,6 +87,7 @@ defmodule Flezha.Convergence.Probe do
       bound_executor: nil,
       factory_id: nil,
       parked?: false,
+      suspended?: false,
       running_plugins: [],
       plugin_health: %{}
     }
