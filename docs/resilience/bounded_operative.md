@@ -119,6 +119,47 @@ with their iteration, the `iter_committed` records with their consumed offsets,
 and the final `parked` entry) and `flz state inbox <instance>` (offsets, and
 which are still undelivered).
 
+## Segment retry: the rung before the abort
+
+A segment error inside a **structured** operation is not immediately fatal. The
+failing segment is **retried in place** — default **3 attempts** (the first run
+plus two retries), exponential backoff with jitter (base `retry_backoff()`,
+default 500 ms, capped at 5 s) — while sibling segments that already finished
+stay buffered at the barrier and are **not** re-run. A retry that succeeds lets
+the stage quiesce and commit normally; only an exhausted ladder fails the
+operation, and the original error then takes the unchanged abnormal path below
+(no commit, compensation, status `error`).
+
+- **Author contract.** A retried segment re-runs its whole batch for that
+  operation, over the state its failed attempt already applied — the same
+  at-least-once idempotency contract crash-resume imposes. A failed attempt's
+  emits are discarded (they never reach a plugin), so only the successful
+  attempt's output is staged.
+- **Non-retryable errors.** `OperationError::non_retryable(..)` (Rust) skips the
+  ladder: a permanent failure (validation error, 4xx-class response) fails the
+  operation on its first occurrence. Every other error — including a panic, which
+  the author never got to classify — is retryable.
+- **Policy.** `retry_attempts()` / `retry_backoff()` on the class;
+  `retry_attempts() = 0` restores fail-fast (the pre-ladder behaviour). A ladder
+  declared with a zero backoff base is rejected at registration (it would re-run
+  the failing segment in a hot loop).
+- **Scope.** Structured segments only: a `run`-sugar body has no segment to scope
+  a retry to and stays terminal-on-error. Retries always happen **before** the
+  operation's `OpCommit`, so a committed operation is never retried; a crash
+  mid-ladder converges on normal crash-resume of the uncommitted operation (the
+  in-memory attempt counter resets).
+- **Observability.** Each retry logs `instance / operation / segment / attempt /
+  delay` and bumps the same retry counter the unbounded ladder feeds (shipped in
+  `data_heartbeat` metadata), so flapping is visible before it escalates.
+
+**Bounded vs unbounded escape ladders.** Both profiles retry a failing
+invocation first; they differ in what happens when the retries run out. An
+unbounded operative **parks** the poison payload to the
+[dead-letter queue](data_durability.md#dead-letter-queue) and advances (the
+stream must keep flowing). A bounded operative has no stream to advance: its
+terminal escape is **AbortAll + saga** — compensate what completed and finish
+with status `error`. Nothing bounded is ever written to the DLQ store.
+
 ## Saga: compensation on abnormal termination
 
 An operation MAY declare a **compensation hook** (`compensate(ctx,

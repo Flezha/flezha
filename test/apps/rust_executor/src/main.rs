@@ -1,4 +1,5 @@
 use std::io::{self, Read};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use std::{env, thread};
 
@@ -70,6 +71,7 @@ fn register_bounded_all() {
     register_bounded::<OutboxBlockBounded>();
     register_bounded::<UndoOutboxBounded>();
     register_bounded::<ChatLoopBounded>();
+    register_bounded::<RetryBounded>();
 }
 
 // -- EchoBounded -----------------------------------------------------------------
@@ -127,11 +129,12 @@ impl Change for Insert {}
 
 // A durable `String -> String` step: commits one idempotent Change to the WAL
 // (keyed by the op name, so a resume re-run is a no-op) and passes the input on.
-// With `compensate:` it declares a saga hook (the given body is the hook,
-// returning `Result`); the `commit_a` form omits it so a clean crash-resume
-// re-runs forward instead of undoing.
+// With `compensate: |ctx| ...` it declares a saga hook (the given body is the
+// hook, returning `Result`; naming the ctx lets an undo emit its own record);
+// the `commit_a` form omits it so a clean crash-resume re-runs forward instead
+// of undoing.
 macro_rules! durable_step {
-    ($ty:ident, $name:literal $(, compensate: $comp:expr)?) => {
+    ($ty:ident, $name:literal $(, compensate: |$ctx:ident| $comp:expr)?) => {
         #[derive(Default)]
         struct $ty;
         impl Operation for $ty {
@@ -160,12 +163,15 @@ macro_rules! durable_step {
                 ctx.emit::<String>(input)
             }
             $(
+                // A crash-resumed compensation reconstructs completed stages with
+                // EMPTY outputs (an operation's collected output was never
+                // durable), so a hook that records an undo does so unconditionally.
                 const COMPENSATE_OVERRIDDEN: bool = true;
                 fn compensate(
                     &mut self,
                     _out: Vec<std::sync::Arc<String>>,
                     _state: StateHandle<'_, Self>,
-                    _ctx: &mut OperationCtx<'_>,
+                    $ctx: &mut OperationCtx<'_>,
                 ) -> Result<(), OperationError> {
                     $comp
                 }
@@ -305,11 +311,11 @@ impl BoundedOperative for TierCommitBlockBounded {
 // triggering reverse-order rollback (SB then SA). SA's compensate BLOCKS so a
 // SIGKILL lands mid-rollback with SB's done-marker already durable — the respawn
 // finishes SA and SKIPS the already-done SB.
-durable_step!(SagaA, "saga_a", compensate: {
+durable_step!(SagaA, "saga_a", compensate: |_ctx| {
     block_until_released();
     Ok(())
 });
-durable_step!(SagaB, "saga_b", compensate: Ok(()));
+durable_step!(SagaB, "saga_b", compensate: |_ctx| Ok(()));
 stateless_step!(
     SagaC,
     "saga_c",
@@ -366,47 +372,10 @@ impl BoundedOperative for OutboxBlockBounded {
 // when the SIGKILL lands — proving staged undo output cannot leak. The resumed
 // executor re-runs the outstanding hook (its done marker never landed) and the
 // undo is delivered exactly once, under its comp-marked key.
-#[derive(Default)]
-struct UndoOutboxA;
-impl Operation for UndoOutboxA {
-    type Input = String;
-    type Output = String;
-    type State = SeenState;
-    type Change = Insert;
-    type Clock = WallClock;
-    type Config = ();
-    fn name() -> &'static str {
-        "undo_outbox_a"
-    }
-    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> SeenState {
-        SeenState::default()
-    }
-    fn apply_change(state: &mut SeenState, change: &Insert) {
-        state.items.insert(change.0.clone());
-    }
-    fn run(
-        &mut self,
-        input: String,
-        mut state: StateHandle<'_, Self>,
-        ctx: &mut OperationCtx<'_>,
-    ) -> Result<(), OperationError> {
-        state.apply(Insert("undo_outbox_a".to_string()));
-        ctx.emit::<String>(input)
-    }
-    const COMPENSATE_OVERRIDDEN: bool = true;
-    // A crash-resumed compensation reconstructs completed stages with EMPTY
-    // outputs (an operation's collected output was never durable), so the undo
-    // record is emitted unconditionally rather than per completed output.
-    fn compensate(
-        &mut self,
-        _out: Vec<std::sync::Arc<String>>,
-        _state: StateHandle<'_, Self>,
-        ctx: &mut OperationCtx<'_>,
-    ) -> Result<(), OperationError> {
-        block_until_released();
-        ctx.emit::<String>("undone".to_string())
-    }
-}
+durable_step!(UndoOutboxA, "undo_outbox_a", compensate: |ctx| {
+    block_until_released();
+    ctx.emit::<String>("undone".to_string())
+});
 
 stateless_step!(
     UndoC,
@@ -426,6 +395,75 @@ impl BoundedOperative for UndoOutboxBounded {
             .from::<UndoOutboxA>()
             .also_to_plugin_with("undo_sink", |s: &String| format!("out:{s}").into_bytes())
             .into::<UndoC>();
+    }
+}
+
+// `retry_bounded`: the per-segment retry ladder (`bounded-segment-retry`). Op RA
+// commits durable state, forwards on a hybrid channel, and compensates by
+// emitting an undo record; op `retry_flaky` fails its first
+// `FLEZHA_BOUNDED_RETRY_FAILS` attempts (0 by default — the env is what each
+// scenario arms) and then emits `attempt:<n>:<input>`. One armed failure is
+// absorbed by the ladder (the run completes `ok`, the sink sees attempt 2);
+// arming more failures than the ladder has attempts exhausts it — RA rolls back
+// and the run reports `error`.
+const RETRY_FAILS_ENV: &str = "FLEZHA_BOUNDED_RETRY_FAILS";
+
+// Attempts the flaky operation has made in this process (a retry re-runs it in
+// place, so an in-memory counter is the whole ladder's view).
+static RETRY_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+
+fn armed_failures() -> usize {
+    env::var(RETRY_FAILS_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
+
+durable_step!(RetryA, "retry_a", compensate: |ctx| ctx
+    .emit::<String>("undone".to_string()));
+
+#[derive(Default)]
+struct RetryFlaky;
+impl Operation for RetryFlaky {
+    type Input = String;
+    type Output = String;
+    type State = ();
+    type Change = NoChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "retry_flaky"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) {}
+    fn run(
+        &mut self,
+        input: String,
+        _state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        let attempt = RETRY_ATTEMPTS.fetch_add(1, Ordering::SeqCst) + 1;
+        if attempt <= armed_failures() {
+            return Err(OperationError::Custom(format!("flaky attempt {attempt}")));
+        }
+        ctx.emit::<String>(format!("attempt:{attempt}:{input}"))
+    }
+}
+
+struct RetryBounded;
+impl BoundedOperative for RetryBounded {
+    fn factory_id() -> &'static str {
+        "retry_bounded"
+    }
+    fn operations(c: &mut ChannelBuilder) {
+        c.input::<String>("in").into::<RetryA>();
+        c.channel::<String>("mid")
+            .codec()
+            .from::<RetryA>()
+            .also_to_plugin_with("retry_sink", |s: &String| format!("res:{s}").into_bytes())
+            .into::<RetryFlaky>();
+        c.channel::<String>("out")
+            .from::<RetryFlaky>()
+            .to_plugin("retry_sink");
     }
 }
 

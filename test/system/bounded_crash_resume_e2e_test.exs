@@ -533,15 +533,11 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
           extra_env: [{"FLEZHA_BOUNDED_PARK_IDLE_MS", "700"}]
         )
 
-      builder = %Builder{
-        id: operative_id,
-        factory_id: "chat_loop_bounded",
-        kind: :bounded,
-        init_values: %{"seed" => "go"},
-        opts: [plugins: [forward_sink("chat_sink", collector)]]
-      }
+      info =
+        start_bounded(namespace, operative_id, "chat_loop_bounded",
+          plugins: [forward_sink("chat_sink", collector)]
+        )
 
-      assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
       assert info.executor_id == exec_a
 
       # --- 1. two turns → two committed iterations, then a park ---
@@ -664,15 +660,9 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
           extra_env: [{"FLEZHA_BOUNDED_PARK_IDLE_MS", "700"}]
         )
 
-      builder = %Builder{
-        id: operative_id,
-        factory_id: "chat_loop_bounded",
-        kind: :bounded,
-        init_values: %{"seed" => "go"},
-        opts: [plugins: [forward_sink("chat_sink", collector)]]
-      }
-
-      assert {:ok, _} = OperativeManager.start_operative(namespace, builder)
+      start_bounded(namespace, operative_id, "chat_loop_bounded",
+        plugins: [forward_sink("chat_sink", collector)]
+      )
 
       send_turn(namespace, operative_id, "one")
 
@@ -694,6 +684,75 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
       assert replies(collector, 2) == ["reply:one", "reply:two"]
     end
+  end
+
+  describe "segment retry (rust/uds)" do
+    @describetag runtime: :rust, transport: :uds, cell: :rust_uds_retry
+
+    # `bounded-segment-retry` on a live executor: `retry_flaky` fails its first
+    # attempt, the per-segment ladder re-runs it in place, and the operation
+    # commits normally — nothing compensates and the run reports `ok`.
+    test "a transient segment failure is retried and the run completes", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+
+      operative_id = drive_retry_run(ctx, collector, "1", "ok")
+
+      # `res:...` is op A's forward output; the terminal marker names the attempt
+      # the flaky segment finally succeeded on — 2 ⇒ the ladder absorbed the
+      # first failure.
+      assert [{~s(res:{"seed":"go"}), _}, {marker, _}] = await_outputs(collector, 2)
+      assert marker == ~s(attempt:2:{"seed":"go"})
+
+      {:ok, entries} = OpJournal.read(operative_id)
+      committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
+      assert committed == [0, 1], "the retried operation must still commit its boundary"
+
+      refute Enum.any?(entries, &(&1.type == :compensated)),
+             "a recovered retry must not compensate"
+    end
+
+    # Arming more failures than the ladder has attempts exhausts it: the original
+    # error is terminal, op A rolls back (its undo record is journaled + flushed),
+    # and the run reports `error` — the pre-change failure path, unchanged.
+    test "a persistent segment failure exhausts the ladder, compensates and errors", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+
+      operative_id = drive_retry_run(ctx, collector, "99", "error")
+
+      assert [{~s(res:{"seed":"go"}), _}, {"res:undone", _}] = await_outputs(collector, 2)
+
+      {:ok, entries} = OpJournal.read(operative_id)
+
+      assert [%{type: :compensated, op_idx: 0}] = Enum.filter(entries, &(&1.type == :compensated)),
+             "the exhausted ladder did not run the saga rollback"
+
+      committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
+      assert committed == [0], "the failing operation must never commit"
+    end
+  end
+
+  # Start `retry_bounded` on a fresh executor with `failures` armed on the flaky
+  # segment, and wait for the run's terminal status.
+  defp drive_retry_run(ctx, collector, failures, terminal_status) do
+    namespace = unique("bounded_retry")
+    operative_id = unique("retry_bounded")
+    id_path = unique_id_path()
+
+    on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+    {_port, _exec} =
+      boot_executor(namespace, ctx, id_path,
+        release?: false,
+        extra_env: [{"FLEZHA_BOUNDED_RETRY_FAILS", failures}]
+      )
+
+    start_bounded(namespace, operative_id, "retry_bounded",
+      plugins: [forward_sink("retry_sink", collector)]
+    )
+
+    await_status(operative_id, terminal_status, 30_000)
+
+    operative_id
   end
 
   # --- durable-loop helpers ---------------------------------------------------
@@ -742,15 +801,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     # Executor A (no release env): the operative commits, then blocks mid-chain.
     {port_a, exec_a} = boot_executor(namespace, ctx, id_path, release?: false)
 
-    builder = %Builder{
-      id: operative_id,
-      factory_id: factory_id,
-      kind: :bounded,
-      init_values: %{"seed" => "go"},
-      opts: builder_opts
-    }
-
-    assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+    info = start_bounded(namespace, operative_id, factory_id, builder_opts)
     assert info.executor_id == exec_a
 
     assert wait_until(fn -> mid_run?.(operative_id) end, 30_000),
@@ -777,11 +828,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     force_fresh_rebind(namespace, operative_id)
 
     # The resumed operative completes with the expected terminal status.
-    assert wait_until(
-             fn -> match?({:ok, %{status: ^terminal_status}}, Completion.read(operative_id)) end,
-             60_000
-           ),
-           "resumed operative never completed with status #{inspect(terminal_status)}"
+    await_status(operative_id, terminal_status, 60_000)
 
     assert wait_until(fn -> not registered?(namespace, operative_id) end),
            "completed operative was never deregistered"
@@ -790,6 +837,31 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   end
 
   # --- helpers ----------------------------------------------------------------
+
+  # Start one bounded operative of `factory_id` on `namespace`, returning the
+  # start info (every bounded scenario here seeds the same args and differs only
+  # in its class and its plugins).
+  defp start_bounded(namespace, operative_id, factory_id, opts \\ []) do
+    builder = %Builder{
+      id: operative_id,
+      factory_id: factory_id,
+      kind: :bounded,
+      init_values: %{"seed" => "go"},
+      opts: opts
+    }
+
+    assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+    info
+  end
+
+  # Wait for the run's terminal completion record to carry `status`.
+  defp await_status(operative_id, status, timeout_ms) do
+    assert wait_until(
+             fn -> match?({:ok, %{status: ^status}}, Completion.read(operative_id)) end,
+             timeout_ms
+           ),
+           "run never completed with status #{inspect(status)}"
+  end
 
   defp boot_executor(namespace, ctx, id_path, opts) do
     env =

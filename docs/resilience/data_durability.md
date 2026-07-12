@@ -263,11 +263,15 @@ more restrictive wins); a retention deletion discards already-parked data
 and is deliberately loud (`dlq_dropped_by_retention_total` + a dedicated
 event naming the entry).
 
-**Bounded equivalence:** the DLQ applies to Unbounded operatives only. A
-permanently-failing Bounded segment already has its escape — the
-operation fails, AbortAll fires, and saga compensation unwinds — so
-nothing is written to the DLQ store; configurable `on_segment_failure`
-policies (DeadLetter | MinSuccess) remain deferred.
+**Bounded equivalence:** the DLQ applies to Unbounded operatives only.
+A Bounded segment runs the same first rung — its error is retried in
+place (default 3 attempts, jittered exponential backoff, non-retryable
+errors skipping the ladder; see
+[Segment retry](bounded_operative.md#segment-retry-the-rung-before-the-abort))
+— but its terminal escape is not a park: the operation fails, AbortAll
+fires, and saga compensation unwinds, so nothing is written to the DLQ
+store. Configurable `on_segment_failure` policies (DeadLetter |
+MinSuccess) remain deferred.
 
 ## How to avoid loss — operator playbook
 

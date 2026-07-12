@@ -631,7 +631,7 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 |-------|-------|
 | Direction | SDK -> Controller (same `control_command` envelope as `ExecutorReconnected`) |
 | Proto message | `BoundedCompleted { operative_id: string, status: string, error: string }` |
-| Behavior | Emitted when a bounded-kind operative's `run` returns: `status` is `"ok"` or `"error"` (with `error`). The Controller drives the normal stop/teardown path (deregister-on-completion) so the finished operative leaves the durable registry; an errored operative is torn down identically (terminal — no retry) and surfaced via `[:flezha, :bounded, :failed]`. |
+| Behavior | Emitted when a bounded-kind operative's `run` returns: `status` is `"ok"` or `"error"` (with `error`). The Controller drives the normal stop/teardown path (deregister-on-completion) so the finished operative leaves the durable registry; an errored operative is torn down identically (terminal — the platform never re-runs the operative; a structured chain's per-segment retry ladder runs *inside* the run, before this) and surfaced via `[:flezha, :bounded, :failed]`. |
 | Response | None (one-way notification; old Controllers ignore the unknown variant) |
 
 Both SDKs are at parity on this contract: the Rust and Java SDKs each read the

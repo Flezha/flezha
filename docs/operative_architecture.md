@@ -148,8 +148,10 @@ RPC confirms the unit's binding; that clean exit is reported as a successful
 start (`{:ok, …}` with no live `executor_id`), not a failure.
 
 Deferred for a later change (v1 known gaps): mid-run controller reboot may
-replay an in-flight bounded operative from the durable registry; no retry/backoff,
-exactly-once dedup, or in-flight visibility/cancel.
+replay an in-flight bounded operative from the durable registry; no exactly-once
+dedup or in-flight visibility/cancel. (A failing *segment* of a structured chain
+does retry with backoff — see
+`docs/resilience/bounded_operative.md` "Segment retry".)
 
 ## Public API
 

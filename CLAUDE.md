@@ -1,5 +1,45 @@
 # Flezha repo notes
 
+## Bounded segment retry (`bounded-segment-retry`)
+
+- **Ladder (SDK, Rust)**: `run_segment_retrying` in `bounded/driver.rs` wraps the
+  pool task — only the FAILING segment re-runs its batch (siblings stay buffered
+  at the barrier), fresh sink per attempt (a failed attempt's staged output is
+  dropped, never double-emitted). Backoff REUSES `dispatcher::retry_backoff`
+  (the unbounded DLQ ladder's helper: `base × 2^(n-1)` ±50% jitter, capped
+  `RETRY_BACKOFF_MAX_MS` = 5 s) and the wait is cancellation-aware
+  (`sleep_cancellable`, ≤200 ms poll → a stop/`max_duration` ends it at once).
+  Retries count into `segment::park::RETRIES_TOTAL` (same `data_heartbeat`
+  metric as unbounded).
+- **Policy**: `BoundedOperative::retry_attempts()` (default 3 TOTAL attempts) +
+  `retry_backoff()` (default 500 ms base) → resolved onto the SHARED
+  `channel::RetryPolicy` in `BoundedSpec.retry`; `0` collapses to one attempt
+  (fail-fast); `attempts > 1` with a zero backoff is rejected at registration
+  (`BuildBoundedError::ZeroRetryBackoff`).
+- **Classification**: `BoundedError { message, non_retryable }` (was a tuple
+  struct); `BoundedError::non_retryable/1`, `From<String>/<&str>` stay
+  retryable. An operation body classifies with the EXISTING
+  `OperationError::non_retryable` — `run_collecting` carries `is_non_retryable()`
+  through to the ladder. A panic stays retryable (author never classified it).
+- **Boundaries**: retry is strictly PRE-commit (a journaled op is never
+  retried); a crash mid-ladder resumes as a normal uncommitted-op re-run
+  (attempt counter resets). `run`-sugar has no segments → terminal on first Err.
+  A stage error while the cancel token is set now reports `cancelled` (was
+  `error`) — `run_stage_parallel`'s caller folds it through `abnormal_status`.
+- **Tests**: `bounded_driver_scenarios` (recover / exhaust+compensate /
+  non-retryable / attempts=0 / stop-interrupts-backoff / run-sugar counted
+  once), `retry_policy_is_resolved_and_validated`, e2e "segment retry (rust/uds)"
+  in `test/system/bounded_crash_resume_e2e_test.exs` (fixture `retry_bounded`,
+  failures armed via `FLEZHA_BOUNDED_RETRY_FAILS`). GOTCHA: an e2e/unit scenario
+  must never busy-wait on the main test thread — it is the fake controller and
+  must stay in `drain` to ack `OpCommit`, else the driver's 30 s ack timeout
+  fires (cancel from a helper thread instead).
+- **Docs**: `docs/resilience/bounded_operative.md` "Segment retry: the rung
+  before the abort" (incl. the bounded-vs-unbounded escape-ladder split),
+  `docs/resilience/data_durability.md` DLQ "Bounded equivalence".
+- **Java SDK**: parity is a separate follow-up (Java bounded still fails on the
+  first segment error).
+
 ## Bounded durable loop + suspension (`bounded-durable-loop-and-suspension`)
 
 - **Loop (SDK)**: `BoundedOperative::loop_mode()` → `Once` (default, the
