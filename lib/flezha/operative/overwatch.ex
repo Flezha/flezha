@@ -181,10 +181,11 @@ defmodule Flezha.Operative.Overwatch do
            with_resume_segment_count(operative, state.builder.kind, operative_class(state)),
          {:ok, final_executor_id, add_operative_raw, state} <-
            start_operative_sdk_with_retry(state, operative) do
-      # The SDK declares the effectively-once tier in the AddOperative
-      # response metadata; resolve it BEFORE plugin activation so source
-      # adapters pick the tier ingest mode (blocking call) from the env.
-      effectively_once = decode_effectively_once(add_operative_raw)
+      # The class's SDK-side declarations ride the AddOperative response; resolve
+      # them BEFORE plugin activation so source adapters pick the tier ingest mode
+      # (blocking call) from the env.
+      %{effectively_once: effectively_once, compensable_ops: compensable_ops} =
+        decode_declarations(add_operative_raw)
 
       state =
         %{state | effectively_once: effectively_once}
@@ -200,10 +201,13 @@ defmodule Flezha.Operative.Overwatch do
 
       # Record this class's kind so the State subsystem can gate unbounded-only
       # behaviours (retention/watchdog/dynamic-evict/time-travel) for a durable
-      # bounded operative — plus the tier and this pid (the fsync-gated
-      # outbox flush dispatches `:on_output` through it).
+      # bounded operative — plus the declarations and this pid (the fsync-gated
+      # outbox flush dispatches `:on_output` through it). `compensable_ops` is
+      # durable because a rewind is refused or allowed on it while the instance
+      # may be suspended, with no executor to ask.
       _ = ClassRegistry.put(operative_class(state), state.builder.kind)
       _ = ClassRegistry.put_effectively_once(operative_class(state), effectively_once)
+      _ = ClassRegistry.put_compensable_ops(operative_class(state), compensable_ops)
       _ = ClassRegistry.put_overwatch(operative_class(state), owner)
       _ = maybe_dispatch_restore_init_state(state, operative)
 
@@ -675,11 +679,59 @@ defmodule Flezha.Operative.Overwatch do
   def suspend(overwatch_pid, iter, wake_deadline_ms) when is_pid(overwatch_pid),
     do: GenServer.cast(overwatch_pid, {:suspend, iter, wake_deadline_ms})
 
+  @doc """
+  Rewind a bounded loop to the committed boundary of iteration `to_iter`: journal
+  the rewind — which bumps the epoch and un-commits every iteration above it —
+  then evict the instance from its executor and rehydrate it.
+
+  The rehydrating bind ships the folded journal back, so the driver undoes the
+  unwound operations through the ordinary compensation planner and resumes the
+  loop at `to_iter + 1`, with the inbox items those iterations consumed
+  undelivered again. The marker is durable before the eviction, so a crash
+  mid-rewind resumes as a rewind rather than as a partially unwound loop.
+
+  The caller (`CliManager`) has already refused an uncommitted target and an
+  iteration whose plugin output cannot be compensated.
+  """
+  @spec rewind(pid(), non_neg_integer()) :: :ok | {:error, term()}
+  def rewind(overwatch_pid, to_iter) when is_pid(overwatch_pid),
+    do: GenServer.call(overwatch_pid, {:rewind, to_iter}, 30_000)
+
+  # Refuse a rewind before it changes anything: an uncommitted target, or an
+  # unwound operation whose plugin output cannot be undone.
+  defp rewind_guard(%__MODULE__{} = state, to_iter) do
+    committed = OpJournal.committed_iterations(state.id)
+
+    cond do
+      to_iter not in committed ->
+        {:error, {:uncommitted_iteration, committed}}
+
+      (uncovered = uncovered_channels(state, to_iter)) != [] ->
+        {:error, {:uncovered, uncovered}}
+
+      true ->
+        :ok
+    end
+  end
+
+  # A bounded operative's staged plugin output carries no natural key, so a
+  # re-run's output cannot be relied on to overwrite the original at every sink.
+  # The only undo the engine can guarantee is the operation's own `compensate`
+  # hook — so an unwound operation that emitted and declares none blocks the
+  # rewind, naming the channels it wrote. An operation that emitted nothing needs
+  # no coverage.
+  defp uncovered_channels(%__MODULE__{} = state, to_iter) do
+    compensable = ClassRegistry.compensable_ops(operative_class(state)) || []
+
+    for {op_idx, channel} <- OpJournal.staged_channels_above(state.id, to_iter),
+        op_idx not in compensable,
+        uniq: true,
+        do: channel
+  end
+
   # Bind state for a suspended instance: no executor, no stream channel, the
   # wake timer armed from the journaled deadline.
   defp enter_suspended(%__MODULE__{} = state, journal) do
-    deadline = journal && journal.wake_deadline_ms
-
     :telemetry.execute(
       [:flezha, :bounded, :suspended],
       %{count: 1},
@@ -690,6 +742,13 @@ defmodule Flezha.Operative.Overwatch do
       }
     )
 
+    evict_executor(state, journal && journal.wake_deadline_ms)
+  end
+
+  # Release every executor-side resource but keep the process and the registry
+  # entry, so a new input still has somewhere to land. Shared by suspension (a
+  # park, with its wake timer) and rewind (a rebind, with none).
+  defp evict_executor(%__MODULE__{} = state, deadline) do
     %__MODULE__{
       cancel_wake_timer(state)
       | suspended: true,
@@ -813,21 +872,48 @@ defmodule Flezha.Operative.Overwatch do
     rehydrate(state)
   end
 
-  # The SDK's AddOperative response raw_data is an `AddOperativeResponse`
-  # metadata map when the class declares SDK-side capabilities, empty
-  # otherwise (including every pre-tier or Java executor).
-  @doc false
-  def decode_effectively_once(raw_data) when is_binary(raw_data) and raw_data != "" do
-    case ExecutorCommands.AddOperativeResponse.decode(raw_data) do
-      {:ok, %ExecutorCommands.AddOperativeResponse{metadata: metadata}} ->
-        Map.get(metadata, "effectively_once") == "true"
+  @typedoc """
+  A class's SDK-side declarations, as resolved from the `AddOperative` response.
 
-      {:error, _} ->
-        false
+  `compensable_ops` is the chain positions whose operation declares a `compensate`
+  hook, or `nil` when the class declares nothing (run-sugar, unbounded, or a Java
+  executor) — which a rewind reads as "no coverage information", not as "nothing
+  is compensable".
+  """
+  @type declarations :: %{
+          effectively_once: boolean(),
+          compensable_ops: [non_neg_integer()] | nil
+        }
+
+  @doc """
+  Resolve a class's SDK-side declarations from the `AddOperative` response
+  raw_data — an `AddOperativeResponse` metadata map when the class declares
+  anything, empty otherwise (including every pre-tier or Java executor). The one
+  place the wire form is decoded, so a new declared capability is added here and
+  nowhere else.
+  """
+  @spec decode_declarations(binary() | nil) :: declarations()
+  def decode_declarations(raw_data) do
+    metadata = decode_metadata(raw_data)
+
+    %{
+      effectively_once: Map.get(metadata, "effectively_once") == "true",
+      compensable_ops: parse_ops(Map.get(metadata, "compensable_ops"))
+    }
+  end
+
+  defp decode_metadata(raw_data) when is_binary(raw_data) and raw_data != "" do
+    case ExecutorCommands.AddOperativeResponse.decode(raw_data) do
+      {:ok, %ExecutorCommands.AddOperativeResponse{metadata: metadata}} -> metadata
+      {:error, _} -> %{}
     end
   end
 
-  def decode_effectively_once(_raw_data), do: false
+  defp decode_metadata(_raw_data), do: %{}
+
+  defp parse_ops(nil), do: nil
+  defp parse_ops(""), do: []
+  defp parse_ops(csv), do: csv |> String.split(",") |> Enum.map(&String.to_integer/1)
 
   # Phase 1 of the two-phase plugin lifecycle: register each plugin's
   # GenServer + struct (`init_provider/1` runs), but do NOT activate
@@ -1162,6 +1248,33 @@ defmodule Flezha.Operative.Overwatch do
     }
 
     {:reply, data, state}
+  end
+
+  @impl true
+  def handle_call({:rewind, to_iter}, _from, %__MODULE__{} = state) do
+    with :ok <- rewind_guard(state, to_iter),
+         :ok <- OpJournal.append_rewound(state.id, to_iter) do
+      if state.executor_id do
+        ControlUnit.stop_operative_async(state.executor_id, state.id)
+      end
+
+      _ = HubManager.operative_set_executor(state.namespace, state.id, nil)
+
+      :telemetry.execute(
+        [:flezha, :bounded, :rewind],
+        %{count: 1, epoch: OpJournal.current_epoch(state.id)},
+        %{namespace: state.namespace, operative_id: state.id, to_iter: to_iter}
+      )
+
+      Logger.info("[Overwatch] operative #{state.id} rewound to iteration #{to_iter}")
+
+      # A rewind is a rebind, not a park: no `parked` entry, no wake timer, and
+      # the rehydrate is unconditional — the loop must come back up to undo the
+      # iterations the marker unwound even with no input waiting on it.
+      {:reply, :ok, rehydrate(evict_executor(state, nil))}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   # Suspended: the input is durable in the inbox, so it is not lost by not being
@@ -1601,19 +1714,24 @@ defmodule Flezha.Operative.Overwatch do
           # back into the compensation planner's per-iteration `committed` input,
           # which is what makes a rollback span journaled iterations (and what
           # rebuilds the in-flight iteration's completed stages on resume).
-          committed_ops:
-            Enum.map(resume.committed_ops, fn op ->
-              %ExecutorCommands.OpCommittedOp{
-                op_idx: op.op_idx,
-                iter: op.iter,
-                segments_ran: op.segments_ran
-              }
-            end),
+          committed_ops: Enum.map(resume.committed_ops, &committed_op/1),
+          # The operations a rewind unwound and nothing has compensated yet. The
+          # driver plans these through the ordinary compensation planner before
+          # resuming forward.
+          rewind_undo: Enum.map(resume.rewind_undo, &committed_op/1),
           consumed_offset: resume.consumed_offset,
           parked: resume.parked,
           wake_deadline_ms: resume.wake_deadline_ms || 0
         }
     end
+  end
+
+  defp committed_op(op) do
+    %ExecutorCommands.OpCommittedOp{
+      op_idx: op.op_idx,
+      iter: op.iter,
+      segments_ran: op.segments_ran
+    }
   end
 
   @doc """

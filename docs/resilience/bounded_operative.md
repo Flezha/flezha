@@ -160,6 +160,55 @@ stream must keep flowing). A bounded operative has no stream to advance: its
 terminal escape is **AbortAll + saga** — compensate what completed and finish
 with status `error`. Nothing bounded is ever written to the DLQ store.
 
+## Rewind: taking a loop back to a committed iteration
+
+A bad turn is not permanent. `flz operative rewind <instance> --to-iteration N`
+takes a looping bounded operative back to the committed boundary of iteration
+`N`: the operations of every iteration above it are compensated in reverse
+(reverse iteration, reverse chain position), the inter-op handoff and the
+consumed inbox offset return to `N`, the epoch is bumped, and the loop resumes
+at `N + 1`.
+
+The journal is append-only, so the rewind is a **marker**, not a truncation: one
+`rewound(N)` entry, written *before* any compensation runs and carrying
+`epoch + 1`. Every fold applies it — on `rewound(N)`, entries accumulated so far
+with `iter > N` are purged, while entries appended after it (the undo records,
+and the re-run) accumulate normally. So a rewound iteration is not merely skipped
+on resume: **its unflushed outbox ceases to be owed**, and it can never leak.
+
+Because the marker is durable first, a crash mid-rewind resumes *as a rewind*.
+The outstanding undo is derived, not marked: it is the unwound operations minus
+those that already have a `compensated` entry. Crash after undoing iteration 5
+but before 4, and the resumed rewind undoes only 4.
+
+**What a rewind does and does not undo.**
+
+- **Plugin output** is undone by the operation's `compensate` hook, and the undo
+  is journaled and flushed on the same transactional-outbox path as forward
+  output.
+- **Segment State** is returned to the boundary by those same hooks — the saga
+  contract, in which an operation that needs its effect undone reverses its own
+  State change. The engine does not truncate the state WAL. An operation that
+  declares no hook leaves its State change in place, exactly as under an
+  `AllOrNothing` crash rollback.
+- **Input is not replayed.** A committed iteration's input is not retained past
+  its commit (the durable inbox is truncated to the consumed offset at each
+  boundary), so a rewind is *undo-and-continue*, not replay: the loop resumes
+  waiting, and the next message it receives becomes iteration `N + 1`. This is
+  the chat "rewind and say it differently" shape.
+
+**The coverage guard.** A rewind is refused — before anything durable changes,
+naming the channels — when an unwound operation staged plugin output and
+declares no `compensate` hook. A bounded operative's staged output carries no
+natural key, so whether a later emit would overwrite it depends on the sink
+(Postgres upserts on the synthetic `<segment>/<seq>` key; Kafka without a message
+key appends). The engine cannot know, so it insists on the one undo it *can*
+guarantee: a semantic one. An operation that emits nothing needs no coverage,
+which is the common case — turn state is pure.
+
+**Refusals.** A target that has not committed is refused with the committed
+range. Neither refusal touches the journal.
+
 ## Saga: compensation on abnormal termination
 
 An operation MAY declare a **compensation hook** (`compensate(ctx,

@@ -185,8 +185,14 @@ escape before that operation is durable.
 - **Keys.** Each flushed frame carries `flz.segment`, `flz.seq`
   (`<op_idx>.<seq_in_op>`) and `flz.epoch` — the effectively-once output
   identity shape, minted from the journal, so a keyed sink adapter applies
-  unchanged. The epoch is `0` at first start and stable across crash
-  re-drives (only a future rewind bumps it).
+  unchanged.
+- **The epoch rule.** The epoch is `0` at first start. A crash re-drive keeps
+  it, so the re-driven output keys identically to its original delivery and a
+  dedup sink absorbs it. A **deliberate** rewind bumps it
+  ([loop rewind](bounded_operative.md#rewind-taking-a-loop-back-to-a-committed-iteration)),
+  so what the resumed loop emits is *newer* than what the unwound iterations
+  emitted, and a `(epoch, seq)`-guarded sink overwrites rather than dedups.
+  One rule, both kinds: **crash keeps the epoch, rewind bumps it.**
 - **Compensation undo-effects ride the same path.** A `compensate` hook's
   plugin output is staged per segment, journaled in a `compensated` entry,
   and flushed after that fsync with a comp-marked key (a trailing `.1` seq

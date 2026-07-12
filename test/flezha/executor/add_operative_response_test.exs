@@ -1,30 +1,50 @@
 defmodule FlezhaTest.Executor.AddOperativeResponseTest do
   @moduledoc """
-  §1.2: the SDK declares the effectively-once tier in the `AddOperative`
-  response metadata (`AddOperativeResponse.raw_data`); the controller
-  resolves absent, empty, or undecodable metadata to the tier-off default.
+  The SDK declares its class-level capabilities in the `AddOperative` response
+  metadata (`AddOperativeResponse.raw_data`) — the effectively-once tier and the
+  chain positions that can compensate. The controller resolves absent, empty, or
+  undecodable metadata to the defaults.
   """
   use ExUnit.Case, async: true
 
   alias Flezha.Operative.Overwatch
 
+  defp declarations(metadata), do: Overwatch.decode_declarations(encode(metadata))
+
   test "tier declaration in the response metadata resolves true" do
-    raw = encode(%{"effectively_once" => "true"})
-    assert Overwatch.decode_effectively_once(raw)
+    assert declarations(%{"effectively_once" => "true"}).effectively_once
   end
 
   test "metadata without the tier key resolves false" do
-    refute Overwatch.decode_effectively_once(encode(%{"other" => "x"}))
-    refute Overwatch.decode_effectively_once(encode(%{"effectively_once" => "false"}))
+    refute declarations(%{"other" => "x"}).effectively_once
+    refute declarations(%{"effectively_once" => "false"}).effectively_once
   end
 
-  test "empty raw_data (pre-tier or Java executor) resolves false" do
-    refute Overwatch.decode_effectively_once("")
-    refute Overwatch.decode_effectively_once(nil)
+  test "empty raw_data (pre-tier or Java executor) resolves the defaults" do
+    for raw <- ["", nil] do
+      assert Overwatch.decode_declarations(raw) == %{
+               effectively_once: false,
+               compensable_ops: nil
+             }
+    end
   end
 
-  test "undecodable raw_data resolves false" do
-    refute Overwatch.decode_effectively_once(<<255, 255, 255, 1>>)
+  test "undecodable raw_data resolves the defaults" do
+    assert Overwatch.decode_declarations(<<255, 255, 255, 1>>) == %{
+             effectively_once: false,
+             compensable_ops: nil
+           }
+  end
+
+  test "compensable chain positions resolve to a list" do
+    assert declarations(%{"compensable_ops" => "0,2,3"}).compensable_ops == [0, 2, 3]
+  end
+
+  test "a declared-but-empty compensable list is not the same as an absent one" do
+    # "" = a structured chain, none of it compensable (a rewind of an emitting op
+    # is refused); absent = the class declares nothing at all (no information).
+    assert declarations(%{"compensable_ops" => ""}).compensable_ops == []
+    assert declarations(%{"other" => "x"}).compensable_ops == nil
   end
 
   defp encode(metadata) do

@@ -71,6 +71,7 @@ fn register_bounded_all() {
     register_bounded::<OutboxBlockBounded>();
     register_bounded::<UndoOutboxBounded>();
     register_bounded::<ChatLoopBounded>();
+    register_bounded::<ChatRewindBounded>();
     register_bounded::<RetryBounded>();
 }
 
@@ -535,6 +536,100 @@ impl Operation for ChatReply {
         ctx: &mut OperationCtx<'_>,
     ) -> Result<(), OperationError> {
         ctx.emit::<String>(format!("reply:{input}"))
+    }
+}
+
+// -- ChatRewindBounded ----------------------------------------------------------
+//
+// `bounded-loop-rewind`: the same chat loop, but its replying operation can be
+// undone. The undo handle lives in Segment State — a rewind's compensation is
+// rebuilt from the journal and is handed NO retained outputs (the at-least-once
+// author contract) — so the hook reads the last thing it said, retracts it, and
+// pops it. Unwinding in reverse iteration order therefore retracts the turns in
+// reverse.
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct ReplyLog {
+    said: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+enum ReplyChange {
+    Said(String),
+    Retracted,
+}
+impl Change for ReplyChange {}
+
+#[derive(Default)]
+struct ChatReplyUndoable;
+impl Operation for ChatReplyUndoable {
+    type Input = String;
+    type Output = String;
+    type State = ReplyLog;
+    type Change = ReplyChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "chat_reply_undoable"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> ReplyLog {
+        ReplyLog::default()
+    }
+    fn apply_change(state: &mut ReplyLog, change: &ReplyChange) {
+        match change {
+            ReplyChange::Said(turn) => state.said.push(turn.clone()),
+            ReplyChange::Retracted => {
+                state.said.pop();
+            }
+        }
+    }
+    fn run(
+        &mut self,
+        input: String,
+        mut state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        state.apply(ReplyChange::Said(input.clone()));
+        ctx.emit::<String>(format!("reply:{input}"))
+    }
+    const COMPENSATE_OVERRIDDEN: bool = true;
+    fn compensate(
+        &mut self,
+        _completed_output: Vec<std::sync::Arc<String>>,
+        mut state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        let Some(turn) = state.said.last().cloned() else {
+            return Ok(());
+        };
+        state.apply(ReplyChange::Retracted);
+        ctx.emit::<String>(format!("retract:{turn}"))
+    }
+}
+
+struct ChatRewindBounded;
+impl BoundedOperative for ChatRewindBounded {
+    fn factory_id() -> &'static str {
+        "chat_rewind_bounded"
+    }
+    fn loop_mode() -> LoopMode {
+        LoopMode::PerInput
+    }
+    fn self_terminating() -> bool {
+        false
+    }
+    fn max_duration() -> Option<Duration> {
+        Some(Duration::from_secs(600))
+    }
+    fn operations(c: &mut ChannelBuilder) {
+        c.input::<String>("in").into::<ChatTurn>();
+        c.channel::<String>("mid")
+            .codec()
+            .from::<ChatTurn>()
+            .into::<ChatReplyUndoable>();
+        c.channel::<String>("out")
+            .from::<ChatReplyUndoable>()
+            .to_plugin("chat_sink");
     }
 }
 

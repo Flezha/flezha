@@ -1489,6 +1489,18 @@ are skipped and the first uncommitted operation's input batch is seeded
 from the journaled handoff via the channel codec's decode half. Inspect
 a journal with `flz state journal <operative/instance>`.
 
+`OpJournalState.rewind_undo` (`repeated OpCommittedOp`, tag 8) carries the
+operations a **rewind** unwound that nothing has compensated yet
+(`bounded-loop-rewind`). The driver runs them through the ordinary compensation
+planner — reverse iteration, reverse chain position — before resuming forward at
+`iter`, which the journal has already folded back to the rewound-to iteration.
+Each undo journals a `compensated` entry (an empty one for a hookless operation),
+so the list shrinks across a crash and re-planning never double-compensates. An
+empty list means no rewind is pending. The rewind itself is a `rewound` journal
+entry (type 6, target = the entry's `iter`), appended with `epoch + 1`; it never
+crosses the wire as a command — the controller writes it and rebinds the
+instance, and the folded journal is what the SDK sees.
+
 **Outbox flush.** The response is the durable point past which the
 operation's staged output may be seen, so the controller flushes it
 immediately AFTER emitting the ack, in journal order, through the same

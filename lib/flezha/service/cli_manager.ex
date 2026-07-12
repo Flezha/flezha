@@ -5,6 +5,7 @@ defmodule Flezha.Service.CliManager do
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
+  alias Flezha.Operative.Overwatch
   alias Flezha.Service.ConfigManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.Payloader
@@ -232,6 +233,53 @@ defmodule Flezha.Service.CliManager do
       {:error, reason} ->
         IO.puts("Error stopping operative: #{inspect(reason)}")
     end
+  end
+
+  @doc """
+  Rewind a bounded loop to the committed boundary of iteration `to_iter`: the
+  iterations above it are compensated in reverse, state and handoff return to
+  that boundary, the epoch is bumped so re-run output supersedes the unwound
+  run's at a guarded sink, and the inbox items those iterations consumed are
+  re-delivered.
+
+  Refused, changing nothing, when the target has not committed or when an unwound
+  operation emitted plugin output it cannot compensate.
+  """
+  def operative_rewind(namespace, operative_id, to_iter) do
+    case OperativeManager.get_operative_pid(normalize_namespace(namespace), operative_id) do
+      {:ok, pid} -> print_rewind(operative_id, to_iter, Overwatch.rewind(pid, to_iter))
+      _ -> IO.puts("Error: operative '#{operative_id}' not found")
+    end
+  end
+
+  defp print_rewind(operative_id, to_iter, :ok) do
+    IO.puts(
+      "Operative '#{operative_id}' rewound to iteration #{to_iter}. " <>
+        "Iterations above it were compensated; the loop resumes at #{to_iter + 1}."
+    )
+  end
+
+  defp print_rewind(_operative_id, _to_iter, {:error, {:uncommitted_iteration, []}}) do
+    IO.puts("Error: this operative has no committed iterations to rewind to")
+  end
+
+  defp print_rewind(_operative_id, to_iter, {:error, {:uncommitted_iteration, committed}}) do
+    IO.puts(
+      "Error: iteration #{to_iter} has not committed. " <>
+        "Committed iterations: #{Enum.min(committed)}..#{Enum.max(committed)}"
+    )
+  end
+
+  defp print_rewind(_operative_id, _to_iter, {:error, {:uncovered, channels}}) do
+    IO.puts(
+      "Error: refusing to rewind — these channels were written by an unwound " <>
+        "operation that declares no `compensate` hook, so the output cannot be " <>
+        "undone: #{Enum.join(channels, ", ")}"
+    )
+  end
+
+  defp print_rewind(_operative_id, _to_iter, {:error, reason}) do
+    IO.puts("Error rewinding operative: #{inspect(reason)}")
   end
 
   @doc "Get operative state."
@@ -1575,6 +1623,14 @@ defmodule Flezha.Service.CliManager do
     |> Map.put(:flushes, flushes)
   end
 
+  # A `rewound` entry's `iter` IS the iteration it rewound to; spell that out
+  # rather than leaving the reader to infer it from a bare `iter=` column.
+  defp journal_row(%{type: :rewound} = entry) do
+    entry
+    |> base_journal_row()
+    |> Map.put(:rewound_to, entry.iter)
+  end
+
   defp journal_row(entry), do: base_journal_row(entry)
 
   defp base_journal_row(entry) do
@@ -1626,6 +1682,10 @@ defmodule Flezha.Service.CliManager do
 
     if Map.has_key?(row, :wake_deadline_ms) do
       IO.puts("    wakes at: #{row.wake_deadline_ms || "next input"}")
+    end
+
+    if Map.has_key?(row, :rewound_to) do
+      IO.puts("    rewound to iteration: #{row.rewound_to}")
     end
 
     IO.puts("")

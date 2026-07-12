@@ -445,4 +445,115 @@ defmodule FlezhaTest.State.OpJournalTest do
     assert_receive {:captured, {:restore_init_state, cmd}}
     assert cmd.op_journal == nil
   end
+
+  # ---------- bounded-loop-rewind ----------
+
+  # Three committed iterations (0, 1, 2), each one op that ran on `seg` and
+  # staged one output — the shape every rewind test below rewinds out of.
+  defp three_committed_iterations(inst, seg) do
+    for iter <- 0..2 do
+      :ok = OpJournal.append_op_committed(inst, 0, iter, [seg], [], [outbox_item(seg, iter)])
+      :ok = OpJournal.append_iter_committed(inst, iter, iter + 1, [{1, "carry#{iter}"}])
+    end
+  end
+
+  defp outbox_item(seg, seq_in_op),
+    do: %{segment_id: seg, seq_in_op: seq_in_op, channel: "out", payload: "v#{seq_in_op}"}
+
+  test "a rewind bumps the epoch, and every later append inherits it" do
+    inst = instance_id()
+    :ok = OpJournal.append_op_committed(inst, 0, 0, [], [])
+    :ok = OpJournal.append_iter_committed(inst, 0, 1, [])
+    assert OpJournal.current_epoch(inst) == 0
+
+    :ok = OpJournal.append_rewound(inst, 0)
+    assert OpJournal.current_epoch(inst) == 1
+
+    :ok = OpJournal.append_op_committed(inst, 0, 1, [], [])
+    assert OpJournal.current_epoch(inst) == 1
+
+    :ok = OpJournal.append_rewound(inst, 0)
+    assert OpJournal.current_epoch(inst) == 2
+  end
+
+  test "a rewind folds the resume point, handoff and consumed offset back" do
+    inst = instance_id()
+    seg = seg_identity(inst, "OpA", "s0")
+    three_committed_iterations(inst, seg)
+
+    assert %{iter: 3, consumed_offset: 3, handoff: [{1, "carry2"}]} =
+             OpJournal.restore_state(inst)
+
+    :ok = OpJournal.append_rewound(inst, 1)
+
+    resume = OpJournal.restore_state(inst)
+    assert resume.iter == 2
+    assert resume.consumed_offset == 2
+    assert resume.handoff == [{1, "carry1"}]
+    # Iteration 2's op is no longer committed progress — it is outstanding undo.
+    assert Enum.map(resume.committed_ops, & &1.iter) == [0, 1]
+    assert [%{op_idx: 0, iter: 2}] = resume.rewind_undo
+
+    # The inbox floor moved back with it, which is what re-delivers the rewound
+    # turn's input.
+    assert OpJournal.consumed_offset(inst) == 2
+    assert OpJournal.committed_iterations(inst) == [0, 1]
+  end
+
+  test "a rewound iteration's unflushed outbox is no longer owed" do
+    inst = instance_id()
+    seg = seg_identity(inst, "OpA", "s0")
+    three_committed_iterations(inst, seg)
+
+    assert Enum.map(OpJournal.pending_entries(inst), & &1.iter) == [0, 1, 2]
+
+    :ok = OpJournal.append_rewound(inst, 0)
+
+    assert Enum.map(OpJournal.pending_entries(inst), & &1.iter) == [0]
+  end
+
+  test "rewind_undo drains as compensations land, and never double-plans" do
+    inst = instance_id()
+    seg = seg_identity(inst, "OpA", "s0")
+    three_committed_iterations(inst, seg)
+    :ok = OpJournal.append_rewound(inst, 0)
+
+    assert [%{iter: 1}, %{iter: 2}] = OpJournal.restore_state(inst).rewind_undo
+
+    # A crash after compensating iteration 2 only: iteration 1 is what remains.
+    :ok = OpJournal.append_compensated(inst, 0, 2, [])
+    assert [%{op_idx: 0, iter: 1}] = OpJournal.restore_state(inst).rewind_undo
+
+    :ok = OpJournal.append_compensated(inst, 0, 1, [])
+    assert OpJournal.restore_state(inst).rewind_undo == []
+  end
+
+  test "a re-run of a rewound iteration folds normally, and can be rewound again" do
+    inst = instance_id()
+    seg = seg_identity(inst, "OpA", "s0")
+    three_committed_iterations(inst, seg)
+    :ok = OpJournal.append_rewound(inst, 0)
+    :ok = OpJournal.append_compensated(inst, 0, 1, [])
+    :ok = OpJournal.append_compensated(inst, 0, 2, [])
+
+    # Iteration 1 re-runs under the bumped epoch and commits.
+    :ok = OpJournal.append_op_committed(inst, 0, 1, [seg], [], [outbox_item(seg, 9)])
+    :ok = OpJournal.append_iter_committed(inst, 1, 2, [{1, "redone"}])
+
+    resume = OpJournal.restore_state(inst)
+    assert resume.iter == 2
+    assert resume.handoff == [{1, "redone"}]
+    assert resume.rewind_undo == []
+    assert OpJournal.committed_iterations(inst) == [0, 1]
+
+    # Only the re-run's output is owed — the unwound run's is gone for good.
+    assert [%{iter: 0}, %{iter: 1}] = OpJournal.pending_entries(inst)
+
+    # A second rewind unwinds the re-run, not the undone original: the original's
+    # `compensated` entry is newer than its commit, the re-run's commit is newer
+    # than that compensation.
+    :ok = OpJournal.append_rewound(inst, 0)
+    assert [%{op_idx: 0, iter: 1}] = OpJournal.restore_state(inst).rewind_undo
+    assert OpJournal.current_epoch(inst) == 2
+  end
 end

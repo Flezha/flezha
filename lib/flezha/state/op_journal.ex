@@ -23,8 +23,10 @@ defmodule Flezha.State.OpJournal do
   consumed plus its terminal handoff — `bounded-durable-loop`),
   `4 = parked` (the loop is suspended at a committed boundary, with an
   optional wake deadline — `bounded-durable-suspension`), `5 = compensated`
-  (a compensation hook's undo outbox). Torn tails are truncated by the
-  `WalWriter` open scan; the read path stops at the first invalid record.
+  (a compensation hook's undo outbox), `6 = rewound` (the loop was rewound to
+  the iteration in this entry's `iter` field — `bounded-loop-rewind`). Torn
+  tails are truncated by the `WalWriter` open scan; the read path stops at the
+  first invalid record.
 
   Payloads:
 
@@ -36,6 +38,7 @@ defmodule Flezha.State.OpJournal do
   parked:         [wake_deadline_ms: u64 BE]   # 0 = no deadline
   compensated:    [outbox]
   outbox_flushed: [for_type: u8]   # which entry type's outbox was flushed
+  rewound:        <empty>          # the target iteration is the `iter` field
   handoff:        [n: u32 BE] n × ([channel_id: u32 BE][len: u32 BE][payload])
   outbox:         [n: u32 BE] n × ([len: u16 BE][segment_identity][seq_in_op: u32 BE]
                                    [len: u16 BE][channel][len: u32 BE][payload])
@@ -44,6 +47,24 @@ defmodule Flezha.State.OpJournal do
   The `iter` field of every entry is the enclosing loop iteration (0 for a
   non-looping chain), so redo-vs-skip works at both the operation and the
   iteration granularity from one scan.
+
+  ## Rewind
+
+  The journal is append-only, so a rewind to iteration N is a `rewound` marker,
+  not a truncation. Every fold runs over `live_entries/1`, which replays the
+  markers: on `rewound(N)`, entries accumulated so far with `iter > N` are
+  purged. Entries appended *after* a marker (the undo records, and the re-run of
+  the iterations that were unwound) accumulate normally — "purge what came
+  before the marker, keep what came after" is exact, because a pre-rewind
+  iteration is journaled before it and its re-run after it.
+
+  So a rewound iteration is not merely skipped on resume: its unflushed outbox
+  ceases to be owed (`pending_entries/1` folds the same way) and the inbox items
+  it consumed become undelivered again (`consumed_offset/1` folds the same way,
+  and `OpInbox.undelivered/1` is a pure function of it). The marker carries
+  `current_epoch + 1`, and since `current_epoch/1` reads the last record's
+  header, every post-rewind append inherits the bumped epoch — which is what
+  makes a re-run's output supersede the unwound run's at a guarded sink.
 
   ## Flush
 
@@ -68,12 +89,14 @@ defmodule Flezha.State.OpJournal do
   @type_iter_committed 3
   @type_parked 4
   @type_compensated 5
+  @type_rewound 6
   @entry_types %{
     @type_op_committed => :op_committed,
     @type_outbox_flushed => :outbox_flushed,
     @type_iter_committed => :iter_committed,
     @type_parked => :parked,
-    @type_compensated => :compensated
+    @type_compensated => :compensated,
+    @type_rewound => :rewound
   }
 
   @type outbox_entry :: %{
@@ -88,7 +111,13 @@ defmodule Flezha.State.OpJournal do
   @type entry :: %{
           seq: non_neg_integer(),
           epoch: non_neg_integer(),
-          type: :op_committed | :outbox_flushed | :iter_committed | :parked | :compensated,
+          type:
+            :op_committed
+            | :outbox_flushed
+            | :iter_committed
+            | :parked
+            | :compensated
+            | :rewound,
           op_idx: non_neg_integer(),
           iter: non_neg_integer(),
           payload:
@@ -97,6 +126,13 @@ defmodule Flezha.State.OpJournal do
             | %{wake_deadline_ms: non_neg_integer() | nil}
             | %{outbox: [outbox_entry()]}
             | %{for_type: non_neg_integer()}
+            | %{}
+        }
+
+  @type committed_op :: %{
+          op_idx: non_neg_integer(),
+          iter: non_neg_integer(),
+          segments_ran: [binary()]
         }
 
   @doc """
@@ -167,6 +203,22 @@ defmodule Flezha.State.OpJournal do
   end
 
   @doc """
+  Append one `rewound` entry — the loop is rewound to the committed boundary of
+  iteration `to_iter` — bumping the epoch. Durable *before* any compensation
+  runs, so a crash mid-rewind resumes as a rewind rather than as a partially
+  unwound loop.
+
+  Every fold honours the marker (see `live_entries/1`), so this one append both
+  un-commits the iterations above `to_iter` and re-keys everything the instance
+  emits from here on.
+  """
+  @spec append_rewound(binary(), non_neg_integer()) :: :ok | {:error, term()}
+  def append_rewound(instance_id, to_iter)
+      when is_binary(instance_id) and is_integer(to_iter) and to_iter >= 0 do
+    append(instance_id, @type_rewound, 0, to_iter, <<>>, current_epoch(instance_id) + 1)
+  end
+
+  @doc """
   Deliver every journaled outbox entry this instance still owes, in journal
   order, and record each delivery with an `outbox_flushed` entry.
 
@@ -202,11 +254,11 @@ defmodule Flezha.State.OpJournal do
   @doc """
   The entries whose outbox is journaled but not yet recorded flushed, in
   journal order. An entry carrying no output needs no delivery and is not
-  pending.
+  pending, and a rewound entry's outbox is no longer owed at all.
   """
   @spec pending_entries(binary()) :: [entry()]
   def pending_entries(instance_id) when is_binary(instance_id) do
-    {:ok, entries} = read(instance_id)
+    entries = live(instance_id)
 
     flushed =
       for %{type: :outbox_flushed, op_idx: op_idx, iter: iter, payload: %{for_type: for_type}} <-
@@ -251,28 +303,38 @@ defmodule Flezha.State.OpJournal do
   handoff-chained loop feeds its next iteration). `committed_ops` carries every
   forward op commit with its iteration, which is what the driver folds into
   `plan_compensation`'s per-iteration `committed` input.
+
+  A rewind folds into the same shape — the resume point simply lands back at the
+  rewound-to iteration — plus `rewind_undo`: the operations the rewind unwound
+  that have not been compensated yet. The driver runs those through the ordinary
+  compensation planner before resuming forward. Each undo journals its own
+  `compensated` entry, which shrinks `rewind_undo` on the next fold, so a crash
+  mid-rewind resumes with exactly the outstanding work and no double
+  compensation. An empty list means no rewind is pending.
   """
   @spec restore_state(binary()) ::
           %{
             committed_op_idxs: [non_neg_integer()],
             iter: non_neg_integer(),
             handoff: [handoff_item()],
-            committed_ops: [
-              %{op_idx: non_neg_integer(), iter: non_neg_integer(), segments_ran: [binary()]}
-            ],
+            committed_ops: [committed_op()],
+            rewind_undo: [committed_op()],
             parked: boolean(),
             wake_deadline_ms: non_neg_integer() | nil,
             consumed_offset: non_neg_integer()
           }
           | nil
   def restore_state(instance_id) do
-    {:ok, entries} = read(instance_id)
+    # The one fold that needs BOTH views: the forward resume state comes from the
+    # live entries, the outstanding undo from what the marker purged.
+    {:ok, raw} = read(instance_id)
 
-    case entries do
+    case raw do
       [] ->
         nil
 
       _ ->
+        entries = live_entries(raw)
         last_iter = latest_iter_committed(entries)
         resume_iter = if last_iter, do: last_iter.iter + 1, else: 0
 
@@ -283,10 +345,8 @@ defmodule Flezha.State.OpJournal do
           committed_op_idxs: in_flight |> Enum.map(& &1.op_idx) |> Enum.uniq() |> Enum.sort(),
           iter: resume_iter,
           handoff: resume_handoff(in_flight, last_iter),
-          committed_ops:
-            for %{type: :op_committed} = e <- entries do
-              %{op_idx: e.op_idx, iter: e.iter, segments_ran: e.payload.segments_ran}
-            end,
+          committed_ops: for(%{type: :op_committed} = e <- entries, do: committed_op(e)),
+          rewind_undo: rewind_undo(raw),
           parked: match?(%{type: :parked}, List.last(entries)),
           wake_deadline_ms: wake_deadline(List.last(entries)),
           consumed_offset: consumed_offset_of(last_iter)
@@ -296,14 +356,97 @@ defmodule Flezha.State.OpJournal do
 
   @doc """
   The inbox offset this instance has durably consumed — the one recorded by the
-  latest `iter_committed`, `0` before the first iteration commits. The floor for
-  both inbox truncation and rehydrate delivery.
+  latest live `iter_committed`, `0` before the first iteration commits. The floor
+  for both inbox truncation and rehydrate delivery.
+
+  A rewind moves it back with the rest of the fold, but it does NOT resurrect the
+  rewound iterations' inputs: the inbox was truncated to this offset when they
+  committed, so those entries are already gone. A rewind is undo-and-continue —
+  the loop resumes waiting, and the next input becomes iteration N+1.
   """
   @spec consumed_offset(binary()) :: non_neg_integer()
   def consumed_offset(instance_id) when is_binary(instance_id) do
-    {:ok, entries} = read(instance_id)
-    entries |> latest_iter_committed() |> consumed_offset_of()
+    instance_id |> live() |> latest_iter_committed() |> consumed_offset_of()
   end
+
+  @doc """
+  The loop iterations this instance has committed, ascending — the valid targets
+  of a rewind, and the range the CLI reports when refusing one.
+  """
+  @spec committed_iterations(binary()) :: [non_neg_integer()]
+  def committed_iterations(instance_id) when is_binary(instance_id) do
+    for %{type: :iter_committed, iter: iter} <- live(instance_id),
+        uniq: true,
+        do: iter
+  end
+
+  @doc """
+  The plugin channels the operations above `to_iter` staged output on, each with
+  the operation that staged it — everything a rewind to `to_iter` would have to
+  undo. The rewind guard refuses when one of these operations cannot compensate.
+  """
+  @spec staged_channels_above(binary(), non_neg_integer()) ::
+          [{non_neg_integer(), binary()}]
+  def staged_channels_above(instance_id, to_iter) when is_binary(instance_id) do
+    for %{type: :op_committed, iter: iter, op_idx: op_idx, payload: payload} <-
+          live(instance_id),
+        iter > to_iter,
+        item <- payload.outbox,
+        uniq: true,
+        do: {op_idx, item.channel}
+  end
+
+  # The journal as every fold sees it: read, with the rewind markers applied.
+  defp live(instance_id) do
+    {:ok, entries} = read(instance_id)
+    live_entries(entries)
+  end
+
+  # The journal with its rewind markers applied: on `rewound(N)`, every entry
+  # accumulated so far whose `iter` exceeds N is dropped. Entries appended after a
+  # marker — the undo records, and the re-run of the unwound iterations — are
+  # kept, which is what makes "purge before, keep after" exact.
+  #
+  # Every fold that answers "what does this instance still owe / where does it
+  # resume" runs over this, so a rewind is a single append rather than a
+  # truncation plus a set of special cases.
+  defp live_entries(entries) do
+    entries
+    |> Enum.reduce([], fn
+      %{type: :rewound, iter: to_iter} = marker, acc ->
+        [marker | Enum.reject(acc, &(&1.iter > to_iter))]
+
+      entry, acc ->
+        [entry | acc]
+    end)
+    |> Enum.reverse()
+  end
+
+  # The operations the latest rewind unwound (journaled before its marker, above
+  # its target) that no `compensated` entry has undone yet. A `compensated` entry
+  # always follows the op it undoes, so "undone" is "some compensation for this
+  # (op_idx, iter) appended after this commit" — which stays right across a
+  # re-run (the re-run's commit is newer than the old undo) and across a second
+  # rewind (the first rewind's undo records are not re-planned).
+  defp rewind_undo(raw) do
+    case raw |> Enum.filter(&(&1.type == :rewound)) |> List.last() do
+      nil ->
+        []
+
+      %{seq: marker_seq, iter: to_iter} ->
+        undone = for %{type: :compensated} = c <- raw, do: {c.op_idx, c.iter, c.seq}
+
+        for %{type: :op_committed} = e <- raw,
+            e.seq < marker_seq and e.iter > to_iter,
+            not Enum.any?(undone, fn {op, iter, seq} ->
+              op == e.op_idx and iter == e.iter and seq > e.seq
+            end),
+            do: committed_op(e)
+    end
+  end
+
+  defp committed_op(%{op_idx: op_idx, iter: iter, payload: %{segments_ran: segments_ran}}),
+    do: %{op_idx: op_idx, iter: iter, segments_ran: segments_ran}
 
   defp latest_iter_committed(entries) do
     entries
@@ -503,6 +646,9 @@ defmodule Flezha.State.OpJournal do
   end
 
   defp decode_payload(:outbox_flushed, <<for_type::8>>), do: {:ok, %{for_type: for_type}}
+
+  # The rewind target is the entry's own `iter` field — no payload to carry.
+  defp decode_payload(:rewound, <<>>), do: {:ok, %{}}
 
   defp decode_payload(_name, _payload), do: {:error, :bad_payload}
 

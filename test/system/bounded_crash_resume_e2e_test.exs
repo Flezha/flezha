@@ -686,6 +686,95 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     end
   end
 
+  describe "loop rewind (rust/uds)" do
+    @describetag runtime: :rust, transport: :uds, cell: :rust_uds_rewind
+
+    # `bounded-loop-rewind`, end to end on a real executor: three chat turns
+    # commit, the operator rewinds to iteration 0, and
+    #
+    #   * iterations 2 and 1 are compensated in that order — the reply operation's
+    #     undo handle is in Segment State, so it retracts the turns in reverse;
+    #   * the loop resumes waiting at iteration 1, and the next message sent is
+    #     processed as that iteration (a rewind is undo-and-continue: a committed
+    #     turn's input is not retained past its commit);
+    #   * everything emitted after the rewind carries a bumped epoch, so a guarded
+    #     sink takes the post-rewind output as newer than the unwound run's.
+    test "rewind compensates back, resumes at the rewound-to iteration, and bumps the epoch",
+         ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+      namespace = unique("bounded_rewind")
+      operative_id = unique("chat_rewind_bounded")
+      id_path = unique_id_path()
+
+      on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+      {_port, _exec} = boot_executor(namespace, ctx, id_path, release?: false)
+
+      start_bounded(namespace, operative_id, "chat_rewind_bounded",
+        plugins: [forward_sink("chat_sink", collector)]
+      )
+
+      # --- three turns → three committed iterations ---
+      for turn <- ~w(alpha beta gamma), do: send_turn(namespace, operative_id, turn)
+
+      assert wait_until(fn -> committed_iters(operative_id) == [0, 1, 2] end, 60_000),
+             "the loop did not commit one iteration per turn: " <>
+               inspect(committed_iters(operative_id))
+
+      assert replies(collector, 3) == ["reply:alpha", "reply:beta", "reply:gamma"]
+      assert OpJournal.current_epoch(operative_id) == 0
+      assert consumed_offsets(operative_id) == [1, 2, 3]
+
+      # --- rewind to iteration 0 ---
+      rewind_out =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Flezha.Service.CliManager.operative_rewind(namespace, operative_id, 0)
+        end)
+
+      assert rewind_out =~ "rewound to iteration 0"
+
+      # The journal folded back: only iteration 0 is committed, and the epoch is
+      # bumped so everything from here on supersedes what the unwound turns wrote.
+      assert wait_until(fn -> OpJournal.current_epoch(operative_id) == 1 end, 20_000)
+
+      # --- the loop unwinds the two turns above the target ---
+      # Only iteration 0 remains committed; iterations 2 and 1 are undone.
+      assert wait_until(
+               fn -> OpJournal.committed_iterations(operative_id) == [0] end,
+               60_000
+             ),
+             "the journal did not fold back to the rewound-to iteration"
+
+      assert wait_until(fn -> length(collected(collector)) >= 5 end, 90_000),
+             "the rewound iterations were never compensated"
+
+      # --- the next message is processed as iteration 1 ---
+      send_turn(namespace, operative_id, "delta")
+
+      assert wait_until(
+               fn -> OpJournal.committed_iterations(operative_id) == [0, 1] end,
+               90_000
+             ),
+             "the resumed loop did not run the next message as iteration 1"
+
+      outputs = await_outputs(collector, 6)
+
+      # Undo runs in reverse iteration order (gamma, then beta), and only then
+      # does the loop resume forward. The epoch rule, on the wire: everything the
+      # unwound run emitted carries epoch 0; every undo and everything the resumed
+      # loop emits carries epoch 1, so a guarded sink takes it as the newer value.
+      assert Enum.map(outputs, fn {payload, md} -> {payload, Map.get(md, "flz.epoch")} end) ==
+               [
+                 {"reply:alpha", "0"},
+                 {"reply:beta", "0"},
+                 {"reply:gamma", "0"},
+                 {"retract:gamma", "1"},
+                 {"retract:beta", "1"},
+                 {"reply:delta", "1"}
+               ]
+    end
+  end
+
   describe "segment retry (rust/uds)" do
     @describetag runtime: :rust, transport: :uds, cell: :rust_uds_retry
 
@@ -841,7 +930,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   # Start one bounded operative of `factory_id` on `namespace`, returning the
   # start info (every bounded scenario here seeds the same args and differs only
   # in its class and its plugins).
-  defp start_bounded(namespace, operative_id, factory_id, opts \\ []) do
+  defp start_bounded(namespace, operative_id, factory_id, opts) do
     builder = %Builder{
       id: operative_id,
       factory_id: factory_id,

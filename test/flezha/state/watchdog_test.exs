@@ -136,16 +136,18 @@ defmodule Flezha.State.WatchdogTest do
 
     :ok = Watchdog.sweep_now()
 
-    assert_receive {:compaction_timeout, %{waited_ms: ms}, meta}, 1_000
+    # Scoped to this test's operative: the Watchdog is a singleton, so a sweep
+    # here also sees compactions another test left pending, and an unscoped match
+    # would pick one up.
+    assert_receive {:compaction_timeout, %{waited_ms: ms}, %{operative: "TestOperative"}}, 1_000
     assert ms >= @compaction_ms
-    assert meta.operative == "TestOperative"
     assert_receive {:resync_called, ^segment_id, opts}, 1_000
     assert opts[:reason] == :compaction_timeout
 
     # Entry was cleared on timeout — a second sweep does not re-fire, and
     # compaction is eligible to retry on a later trigger.
     :ok = Watchdog.sweep_now()
-    refute_receive {:compaction_timeout, _, _}, 200
+    refute_receive {:compaction_timeout, _, %{operative: "TestOperative"}}, 200
   end
 
   test "a compaction that completes before the bound never times out" do
@@ -161,68 +163,71 @@ defmodule Flezha.State.WatchdogTest do
 
   # An owned writer (executor_id on append) is the trigger sweeps' subject;
   # writers without an owning executor are skipped (no session to ask).
+  # Returns the segment KEY: the Watchdog is a singleton whose sweep walks every
+  # registered segment, so every assertion here must be scoped to its own — any
+  # other test's WAL (an op-journal, say) triggers the same telemetry.
   defp owned_writer(suffix, header, body) do
-    pid = TestHelpers.sample_segment_id(suffix <> uniq())
+    {_rc, _op, key} = pid = TestHelpers.sample_segment_id(suffix <> uniq())
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
     :ok = WalWriter.append(w, 0, header, body, "exec-trig")
     # A triggered segment sits in the shared Watchdog's in-flight map; clear
     # it so it cannot expire as compaction_timeout noise in a later test.
     on_exit(fn -> Watchdog.compaction_completed(pid) end)
-    {pid, w}
+    {key, w}
   end
 
   test "a WAL past compact_after_bytes triggers a size compaction once", %{header: header} do
     Application.put_env(:flezha, :default_compact_after_bytes, 16)
-    {_pid, _w} = owned_writer("size_", header, "0123456789abcdef")
+    {key, _w} = owned_writer("size_", header, "0123456789abcdef")
 
     :ok = Watchdog.sweep_now()
 
-    assert_receive {:compaction_trigger, %{wal_size_bytes: bytes}, meta}, 1_000
+    assert_receive {:compaction_trigger, %{wal_size_bytes: bytes}, %{key: ^key} = meta}, 1_000
     assert bytes >= 16
     assert meta.trigger == :size
     assert meta.executor == "exec-trig"
 
     # In-flight guard: the next sweep does not re-enqueue.
     :ok = Watchdog.sweep_now()
-    refute_receive {:compaction_trigger, _, _}, 200
+    refute_receive {:compaction_trigger, _, %{key: ^key}}, 200
   end
 
   test "a small-but-old WAL triggers an age compaction", %{header: header} do
     Application.put_env(:flezha, :compact_after_age_ms, 30)
-    {_pid, _w} = owned_writer("age_", header, "x")
+    {key, _w} = owned_writer("age_", header, "x")
 
     Process.sleep(60)
     :ok = Watchdog.sweep_now()
 
-    assert_receive {:compaction_trigger, _meas, meta}, 1_000
+    assert_receive {:compaction_trigger, _meas, %{key: ^key} = meta}, 1_000
     assert meta.trigger == :age
   end
 
   test "age trigger is disabled at 0", %{header: header} do
     Application.put_env(:flezha, :compact_after_age_ms, 0)
-    {_pid, _w} = owned_writer("age0_", header, "x")
+    {key, _w} = owned_writer("age0_", header, "x")
 
     Process.sleep(60)
     :ok = Watchdog.sweep_now()
 
-    refute_receive {:compaction_trigger, _, _}, 200
+    refute_receive {:compaction_trigger, _, %{key: ^key}}, 200
   end
 
   test "size and age never double-enqueue across consecutive ticks", %{header: header} do
     Application.put_env(:flezha, :default_compact_after_bytes, 16)
     Application.put_env(:flezha, :compact_after_age_ms, 30)
-    {_pid, _w} = owned_writer("both_", header, "0123456789abcdef")
+    {key, _w} = owned_writer("both_", header, "0123456789abcdef")
 
     Process.sleep(60)
     :ok = Watchdog.sweep_now()
 
     # Both conditions hold, but the shared in-flight guard yields ONE enqueue.
-    assert_receive {:compaction_trigger, _meas, %{trigger: :size}}, 1_000
-    refute_receive {:compaction_trigger, _, _}, 200
+    assert_receive {:compaction_trigger, _meas, %{key: ^key, trigger: :size}}, 1_000
+    refute_receive {:compaction_trigger, _, %{key: ^key}}, 200
 
     :ok = Watchdog.sweep_now()
-    refute_receive {:compaction_trigger, _, _}, 200
+    refute_receive {:compaction_trigger, _, %{key: ^key}}, 200
   end
 
   test "a bounded class is not flagged for output stall or catastrophic dataflow", %{

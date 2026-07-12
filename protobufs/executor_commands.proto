@@ -280,6 +280,13 @@ message OpCommittedOp {
 // iteration (compensation planning), `consumed_offset` the inbox offset the
 // last committed iteration consumed, and `parked` / `wake_deadline_ms` the
 // suspension record (bounded-durable-suspension).
+//
+// `rewind_undo` carries the operations a rewind unwound that have not been
+// compensated yet (bounded-loop-rewind). The driver runs them through the
+// ordinary compensation planner before resuming forward at `iter`, which the
+// journal has already folded back to the rewound-to iteration. Each undo
+// journals a `compensated` entry, so the list shrinks across a crash and
+// re-planning never double-compensates. Empty = no rewind pending.
 message OpJournalState {
     repeated uint32 committed_op_idxs = 1;
     uint32 iter = 2;
@@ -288,6 +295,7 @@ message OpJournalState {
     uint64 consumed_offset = 5;
     bool parked = 6;
     uint64 wake_deadline_ms = 7;
+    repeated OpCommittedOp rewind_undo = 8;
 }
 
 // Per-Segment state restore handshake: Controller ships latest snapshot

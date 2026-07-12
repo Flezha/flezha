@@ -16,10 +16,11 @@ pub fn handle_operative_command(args: &[String]) {
         "list" => handle_list(args),
         "info" => handle_info(args),
         "io_listen" => handle_io_listen(args),
+        "rewind" => handle_rewind(args),
         "help" | "--help" | "-h" => print_operative_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', 'info', 'io_listen', or 'help'.",
+                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', 'info', 'io_listen', 'rewind', or 'help'.",
                 args[0]
             );
             exit(1);
@@ -167,6 +168,53 @@ fn handle_stop(args: &[String]) {
         Ok(status) if status.success() => println!("Operative stopped successfully."),
         Ok(_) => eprintln!("Unknown status returned."),
         Err(e) => eprintln!("Failed to stop operative: {}", e),
+    }
+}
+
+/// `flz operative rewind <instance> --to-iteration N` — take a bounded loop back
+/// to a committed iteration: the ones above it are compensated in reverse, state
+/// returns to that boundary, and the epoch is bumped so the re-run's output
+/// supersedes the unwound run's at a guarded sink.
+fn handle_rewind(args: &[String]) {
+    if args.len() < 2 {
+        eprintln!(
+            "Error: Invalid number of arguments. \
+             Usage: flz operative rewind <operative_id> --to-iteration <N>"
+        );
+        exit(1);
+    }
+
+    let operative_id = &args[1];
+    let namespace = get_namespace(&args[2..]);
+
+    let to_iter = match extract_param(&args[2..], "--to-iteration", "-i") {
+        Some(value) => match value.parse::<u32>() {
+            Ok(n) => n,
+            Err(_) => {
+                eprintln!("Error: --to-iteration must be a non-negative integer, got '{value}'");
+                exit(1);
+            }
+        },
+        None => {
+            eprintln!("Error: --to-iteration <N> is required.");
+            exit(1);
+        }
+    };
+
+    let rpc_command = format!(
+        "Flezha.Service.CliManager.operative_rewind(\"{}\", \"{}\", {})",
+        namespace, operative_id, to_iter,
+    );
+
+    let status = Command::new(get_flezha_command())
+        .arg("rpc")
+        .arg(rpc_command)
+        .status();
+
+    match status {
+        Ok(status) if status.success() => {}
+        Ok(_) => eprintln!("Unknown status returned."),
+        Err(e) => eprintln!("Failed to rewind operative: {}", e),
     }
 }
 
@@ -328,7 +376,11 @@ fn print_operative_help() {
     println!("    list        List operatives");
     println!("    info        Get operative info");
     println!("    io_listen   Listen to operative I/O");
+    println!("    rewind      Rewind a bounded loop to a committed iteration");
     println!("    help        Show this help message");
+    println!();
+    println!("EXAMPLES:");
+    println!("    flz operative rewind chat-1 --to-iteration 3");
     println!();
     println!("Use 'flz operative <COMMAND> --help' for more information on a specific command.");
 }

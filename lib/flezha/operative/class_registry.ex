@@ -36,6 +36,7 @@ defmodule Flezha.Operative.ClassRegistry do
   @default_kind :unbounded
   @sidecar "kind"
   @tier_sidecar "effectively_once"
+  @compensable_sidecar "compensable_ops"
 
   # ---------- table lifecycle ----------
 
@@ -94,6 +95,54 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   @doc """
+  Record which of `operative_class`'s chain operations declare a `compensate`
+  hook, as declared by the SDK in the `AddOperative` response metadata. `nil`
+  clears it (a class that declares nothing).
+
+  Durable in the same sidecar shape as the tier, because a rewind is refused or
+  allowed on this evidence while the instance may be suspended with no executor
+  to ask.
+  """
+  @spec put_compensable_ops(binary(), [non_neg_integer()] | nil) :: :ok
+  def put_compensable_ops(operative_class, ops) when is_binary(operative_class) do
+    ensure_table()
+
+    if is_list(ops) do
+      :ets.insert(@table, {{operative_class, :compensable_ops}, ops})
+      write_sidecar_file(operative_class, @compensable_sidecar, Enum.join(ops, ","))
+    else
+      if :ets.whereis(@table) != :undefined do
+        :ets.delete(@table, {operative_class, :compensable_ops})
+      end
+
+      _ = File.rm(sidecar_path(operative_class, @compensable_sidecar))
+      :ok
+    end
+  end
+
+  @doc """
+  Resolve which of `operative_class`'s chain operations declare a `compensate`
+  hook: ETS → durable sidecar → `nil` (the class declared nothing).
+  """
+  @spec compensable_ops(binary()) :: [non_neg_integer()] | nil
+  def compensable_ops(operative_class) when is_binary(operative_class) do
+    case ets_lookup({operative_class, :compensable_ops}) do
+      {:ok, ops} ->
+        ops
+
+      :error ->
+        case File.read(sidecar_path(operative_class, @compensable_sidecar)) do
+          {:ok, ""} -> []
+          {:ok, csv} -> csv |> String.trim() |> parse_ops()
+          {:error, _} -> nil
+        end
+    end
+  end
+
+  defp parse_ops(""), do: []
+  defp parse_ops(csv), do: csv |> String.split(",") |> Enum.map(&String.to_integer/1)
+
+  @doc """
   Record the live Overwatch pid for `operative_class` (called at bind, from
   the Overwatch process). The State subsystem's fsync-gated outbox flush
   resolves the `:on_output` dispatch target through this — no registry scan.
@@ -127,6 +176,7 @@ defmodule Flezha.Operative.ClassRegistry do
     if :ets.whereis(@table) != :undefined do
       :ets.delete(@table, operative_class)
       :ets.delete(@table, {operative_class, :effectively_once})
+      :ets.delete(@table, {operative_class, :compensable_ops})
       :ets.delete(@table, {operative_class, :overwatch})
     end
 

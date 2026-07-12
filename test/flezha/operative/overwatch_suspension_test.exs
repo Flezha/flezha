@@ -5,13 +5,17 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   timer, exactly one rehydration when both wake sources race, and rediscovery of
   a suspended instance from durable state alone after a controller redeploy.
 
+  Plus `bounded-loop-rewind`, which rides the same evict → rehydrate path: the
+  refusals (uncommitted target, uncompensable output) and the durable effect of
+  the ones that go through.
+
   The callbacks are driven directly on a struct (no live GenServer), the way
   `overwatch_restore_async_test` does — the state machine is the unit here.
   """
   use ExUnit.Case, async: false
   use Mimic
 
-  alias Flezha.Operative.{Builder, Overwatch}
+  alias Flezha.Operative.{Builder, ClassRegistry, Overwatch}
   alias Flezha.Plugin.Extension.Table
   alias Flezha.State.{OpInbox, OpJournal, TestHelpers}
 
@@ -201,5 +205,89 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     assert {:stop, :executor_not_ready, _} =
              Overwatch.handle_continue({:bind_executor, "stale-executor", builder}, fresh),
            "it takes the normal bind path (which fails here only for lack of an executor)"
+  end
+
+  # ---------- bounded-loop-rewind ----------
+
+  # The rewind rides the same evict → rehydrate path a park does, so the same
+  # stubs stand in for the executor side.
+  defp stub_rebind() do
+    stub(Flezha.Executor.ControlUnit, :stop_operative_async, fn _, _ -> :ok end)
+    stub(Flezha.Service.HubManager, :operative_set_executor, fn _, _, _ -> :ok end)
+    stub(Flezha.Service.OperativeManager, :assign_executor, fn _, _, _ -> "ex_2" end)
+  end
+
+  defp commit_turns(inst, count, outbox) do
+    for iter <- 0..(count - 1) do
+      :ok = OpJournal.append_op_committed(inst, 0, iter, [], [], outbox)
+      :ok = OpJournal.append_iter_committed(inst, iter, iter + 1, [])
+    end
+  end
+
+  defp emitting_outbox(),
+    do: [%{segment_id: "seg", seq_in_op: 0, channel: "replies", payload: "hi"}]
+
+  test "rewind journals the marker, evicts, and rehydrates" do
+    inst = instance_id()
+    stub_rebind()
+    commit_turns(inst, 3, [])
+
+    {:reply, :ok, state} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
+
+    # The marker is durable, the epoch bumped, and the loop folded back to
+    # iteration 2 with iteration 2's op outstanding as undo.
+    assert OpJournal.current_epoch(inst) == 1
+    assert OpJournal.committed_iterations(inst) == [0, 1]
+    assert [%{op_idx: 0, iter: 2}] = OpJournal.restore_state(inst).rewind_undo
+
+    # A rewind is a rebind, not a park: the instance comes straight back up and
+    # nothing was journaled as `parked`.
+    assert state.migrate_task != nil
+    {:ok, entries} = OpJournal.read(inst)
+    refute Enum.any?(entries, &(&1.type == :parked))
+  end
+
+  test "rewind to an uncommitted iteration is refused, changing nothing" do
+    inst = instance_id()
+    commit_turns(inst, 3, [])
+
+    assert {:reply, {:error, {:uncommitted_iteration, [0, 1, 2]}}, _} =
+             Overwatch.handle_call({:rewind, 7}, self(), state(inst))
+
+    assert OpJournal.current_epoch(inst) == 0
+    {:ok, entries} = OpJournal.read(inst)
+    refute Enum.any?(entries, &(&1.type == :rewound))
+  end
+
+  test "rewind is refused when an unwound operation emitted and cannot compensate" do
+    inst = instance_id()
+    commit_turns(inst, 3, emitting_outbox())
+
+    # No `compensate` hook declared on op 0 — its output cannot be undone.
+    :ok = ClassRegistry.put_compensable_ops(inst, [])
+
+    assert {:reply, {:error, {:uncovered, ["replies"]}}, _} =
+             Overwatch.handle_call({:rewind, 1}, self(), state(inst))
+
+    assert OpJournal.current_epoch(inst) == 0, "refused before anything durable changed"
+  end
+
+  test "an emitting operation that declares compensate rewinds" do
+    inst = instance_id()
+    stub_rebind()
+    commit_turns(inst, 3, emitting_outbox())
+    :ok = ClassRegistry.put_compensable_ops(inst, [0])
+
+    assert {:reply, :ok, _} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
+    assert OpJournal.current_epoch(inst) == 1
+  end
+
+  test "iterations that emitted nothing need no coverage" do
+    inst = instance_id()
+    stub_rebind()
+    commit_turns(inst, 3, [])
+    :ok = ClassRegistry.put_compensable_ops(inst, [])
+
+    assert {:reply, :ok, _} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
   end
 end
