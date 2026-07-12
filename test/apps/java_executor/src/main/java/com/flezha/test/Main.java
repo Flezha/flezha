@@ -30,6 +30,7 @@ public final class Main {
         Flezha.registerUnbounded(CoalescingCounterUnboundedOperative.class);
         Flezha.registerUnbounded(PersistenceOffUnboundedOperative.class);
         Flezha.registerUnbounded(HybridChannelUnboundedOperative.class);
+        Flezha.registerUnbounded(PoisonProbeUnboundedOperative.class);
         // EchoMessageUnboundedOperative is reintroduced once per-Operation `handleMessage` lands.
     }
 

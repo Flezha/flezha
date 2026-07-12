@@ -587,7 +587,12 @@ defmodule Flezha.State.WalWriter do
     if Wire.effect_record_header?(header) do
       case Wire.decode_effect_body(body) do
         {:ok, decoded} ->
-          entry = %{seq: seq, outputs: decoded.outputs, consumed_offset: decoded.consumed_offset}
+          entry = %{
+            seq: seq,
+            outputs: decoded.outputs,
+            consumed_offset: decoded.consumed_offset,
+            dlq: decoded.dlq
+          }
 
           %{state | pending_outbox: :queue.in(entry, state.pending_outbox)}
 
@@ -666,6 +671,30 @@ defmodule Flezha.State.WalWriter do
       metadata = Map.merge(Map.new(output.metadata), stamps)
       GenServer.cast(pid, {:io_out, output.payload, metadata})
     end)
+
+    # Materialize a dead-letter park BEFORE the consumed-offset advance:
+    # the watermark move can truncate the poison input out of the
+    # input-log, so the DLQ store entry must be durable first (synchronous
+    # — the append is fsynced and idempotent, so a boot re-drive of the
+    # same record is a no-op). Parks are rare; the hot path pays one nil
+    # check.
+    case Map.get(entry, :dlq) do
+      nil ->
+        :ok
+
+      dlq ->
+        {:ok, _ref} =
+          Flezha.Dlq.Store.append(%{
+            operative_class: rc,
+            operation_id: sh,
+            segment_key: pk,
+            channel: dlq.channel,
+            origin_offset: entry.consumed_offset,
+            error: dlq.error,
+            attempts: dlq.attempts,
+            payload: dlq.payload
+          })
+    end
 
     # Durable consumed-offset: advances the input-log min-watermark.
     if is_integer(entry.consumed_offset) do
@@ -877,7 +906,8 @@ defmodule Flezha.State.WalWriter do
             entry = %{
               seq: seq,
               outputs: decoded.outputs,
-              consumed_offset: decoded.consumed_offset
+              consumed_offset: decoded.consumed_offset,
+              dlq: decoded.dlq
             }
 
             acc = if seq > cursor, do: [entry | acc], else: acc

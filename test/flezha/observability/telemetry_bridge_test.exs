@@ -179,6 +179,72 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert mismatch.metadata[:operatives] == ["btc_kraken", "eth_kraken"]
   end
 
+  test "DLQ park / retention / usage counters reach the bus through the real store" do
+    dlq_sink = :"obs_tbridge_dlq_sink_#{:erlang.unique_integer([:positive])}"
+    ref = :counters.new(1, [:atomics])
+
+    {:ok, _pid} =
+      Registry.register_sink(%{
+        name: dlq_sink,
+        module: Counting,
+        config: %{counter_ref: ref, parent: self(), sources: [:flezha_dlq]}
+      })
+
+    dir = Path.join(System.tmp_dir!(), "flezha_dlq_obs_#{System.unique_integer([:positive])}")
+    original = Application.get_env(:flezha, :dlq, [])
+    Application.put_env(:flezha, :dlq, Keyword.merge(original, dir: dir, retention_seconds: 0))
+
+    on_exit(fn ->
+      Registry.unregister_sink(dlq_sink)
+      Application.put_env(:flezha, :dlq, original)
+      File.rm_rf!(dir)
+    end)
+
+    drain_mailbox()
+
+    {:ok, _ref} =
+      Flezha.Dlq.Store.append(%{
+        operative_class: "ObsOperative",
+        operation_id: "op",
+        segment_key: "k",
+        channel: "input",
+        origin_offset: nil,
+        error: "boom",
+        attempts: 3,
+        payload: "poison"
+      })
+
+    parked =
+      receive_until(fn s -> s.source == :flezha_dlq and s.name == :dlq_parked_total end, 1_000)
+
+    assert parked
+    assert parked.kind == :metric
+    assert parked.measurements[:count] == 1
+    assert parked.metadata[:operative_class] == "ObsOperative"
+    assert parked.metadata[:channel] == "input"
+
+    usage = receive_until(fn s -> s.source == :flezha_dlq and s.name == :dlq_usage end, 1_000)
+    assert usage
+    assert usage.measurements[:entries] == 1
+    assert usage.measurements[:bytes] > 0
+
+    # retention_seconds = 0: the sweep drops the just-parked entry, loudly.
+    Process.sleep(5)
+    :ok = Flezha.Dlq.Store.sweep()
+
+    dropped =
+      receive_until(
+        fn s -> s.source == :flezha_dlq and s.name == :dlq_dropped_by_retention_total end,
+        1_000
+      )
+
+    assert dropped
+    assert dropped.measurements[:count] == 1
+    assert dropped.measurements[:bytes] > 0
+    assert dropped.metadata[:reason] == :age
+    assert dropped.metadata[:operative_class] == "ObsOperative"
+  end
+
   defp receive_until(_pred, timeout) when timeout <= 0, do: nil
 
   defp receive_until(pred, timeout) do

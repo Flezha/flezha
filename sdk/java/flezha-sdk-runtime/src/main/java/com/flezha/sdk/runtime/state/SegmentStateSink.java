@@ -66,12 +66,25 @@ public final class SegmentStateSink {
 
     private static final Object LOCK = new Object();
     private static FrameWriter sink;
+    private static boolean everInstalled;
     private static final Deque<RingFrame> ring = new ArrayDeque<>();
     private static final Deque<Long> failureAtMs = new ArrayDeque<>();
     private static boolean reconnectRequested;
     private static Runnable reconnectRequester;
 
     private SegmentStateSink() {}
+
+    /**
+     * Whether a global sink has ever been installed. {@code false} only for
+     * transport-less runs (unit tests, standalone); a reconnect window
+     * ({@link #clearSink()}) still reports {@code true} — frames buffer in
+     * the ring and replay on the next install.
+     */
+    public static boolean everInstalled() {
+        synchronized (LOCK) {
+            return everInstalled;
+        }
+    }
 
     /**
      * Install the hook used to drive a control reconnect when a broken-pipe
@@ -95,6 +108,7 @@ public final class SegmentStateSink {
         List<RingFrame> replay;
         synchronized (LOCK) {
             sink = writer;
+            everInstalled = true;
             reconnectRequested = false;
             failureAtMs.clear();
             replay = new ArrayList<>(ring);

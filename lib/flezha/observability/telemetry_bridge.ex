@@ -53,7 +53,13 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :stream, :drop] => {:flezha_stream, :drop, :metric},
     [:flezha, :data_plane, :stall_localized] => {:flezha_data_plane, :stall_localized, :event},
     [:flezha, :convergence, :operative_stuck] => {:flezha_convergence, :operative_stuck, :event},
-    [:flezha, :convergence, :intent_mismatch] => {:flezha_convergence, :intent_mismatch, :event}
+    [:flezha, :convergence, :intent_mismatch] => {:flezha_convergence, :intent_mismatch, :event},
+    [:flezha, :dlq, :parked] => {:flezha_dlq, :dlq_parked_total, :metric},
+    [:flezha, :dlq, :retention_dropped] =>
+      {:flezha_dlq, :dlq_dropped_by_retention_total, :metric},
+    [:flezha, :dlq, :usage] => {:flezha_dlq, :dlq_usage, :metric},
+    [:flezha, :dlq, :operator_drop] => {:flezha_dlq, :operator_drop, :event},
+    [:flezha, :dlq, :operator_replay] => {:flezha_dlq, :operator_replay, :event}
   }
 
   # ---------- Public API ----------

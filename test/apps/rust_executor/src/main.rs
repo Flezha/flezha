@@ -58,6 +58,7 @@ fn register_unbounded_all() {
     register_unbounded::<DynamicSegmentOperative>();
     register_unbounded::<MixedOperative>();
     register_unbounded::<TierStoreOperative>();
+    register_unbounded::<PoisonProbeOperative>();
 }
 
 fn register_bounded_all() {
@@ -523,6 +524,12 @@ impl Operation for TierStoreOperation {
     ) -> Result<(), OperationError> {
         let (key, value) = input.split_once(':').unwrap_or((input.as_str(), ""));
         let (key, value) = (key.to_string(), value.to_string());
+        // Dead-letter e2e: a "poison" value fails every attempt, exhausting
+        // the retry budget so the tier-on atomic park advances the segment
+        // past it (and the min-watermark with it).
+        if value == "poison" {
+            return Err(OperationError::Custom("poison value".into()));
+        }
         state.apply(TierStoreChange::Set(key.clone(), value.clone()));
         ctx.emit_keyed::<String>(key.clone(), format!("{key}={value}"))
     }
@@ -535,11 +542,69 @@ impl UnboundedOperative for TierStoreOperative {
     }
     fn channels(c: &mut ChannelBuilder) {
         c.effectively_once();
-        c.input::<String>("input").into::<TierStoreOperation>();
+        // 300 ms backoff base keeps the min-watermark freeze observable
+        // (~0.9 s from first failure to park) in the DLQ e2e.
+        c.input::<String>("input")
+            .retry_backoff_ms(300)
+            .into::<TierStoreOperation>();
         c.channel::<String>("sink")
             .from::<TierStoreOperation>()
             .keyed()
             .to_plugin("tier_sink");
+    }
+}
+
+// -- PoisonProbeOperative (platform-dead-letter-queue e2e) -------------------
+//
+// Tier-off retry-then-park probe: `run` fails on the input "poison" until an
+// "antidote" input flips a process-global flag. The e2e parks the poison
+// payload (durable DLQ entry, segment continues), sends the antidote, then
+// replays the parked entry — which now succeeds and removes it.
+
+static POISON_ANTIDOTE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[derive(Default)]
+struct PoisonProbeOperation;
+impl Operation for PoisonProbeOperation {
+    type Input = String;
+    type Output = String;
+    type State = ();
+    type Change = NoChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "poison_probe_operation"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) {}
+    fn run(
+        &mut self,
+        input: String,
+        _state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        if input == "antidote" {
+            POISON_ANTIDOTE.store(true, std::sync::atomic::Ordering::SeqCst);
+        } else if input == "poison" && !POISON_ANTIDOTE.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(OperationError::Custom("poison payload".into()));
+        }
+        ctx.emit(format!("ok:{input}"))
+    }
+}
+
+struct PoisonProbeOperative;
+impl UnboundedOperative for PoisonProbeOperative {
+    fn factory_id() -> &'static str {
+        "poison_probe"
+    }
+    fn channels(c: &mut ChannelBuilder) {
+        // Small backoff keeps the park fast in the e2e; the budget stays
+        // at the default 3 attempts.
+        c.input::<String>("input")
+            .retry_backoff_ms(25)
+            .into::<PoisonProbeOperation>();
+        c.channel::<String>("out")
+            .from::<PoisonProbeOperation>()
+            .to_plugin("probe_sink");
     }
 }
 

@@ -46,7 +46,11 @@ defmodule Flezha.Observability.AuditLog.Sink do
     # `:platform_authz`; the audit log subscribes by default so every
     # token issue/revoke, role bind/unbind, namespace create/delete,
     # bootstrap completion, and forbidden decision is durably recorded.
-    {:platform_authz, :any}
+    {:platform_authz, :any},
+    # Operator-driven DLQ mutations (`flz dlq replay | drop`) discard or
+    # re-drive parked data; both are durably recorded.
+    {:flezha_dlq, :operator_drop},
+    {:flezha_dlq, :operator_replay}
   ]
 
   # ---------- Sink behaviour ----------

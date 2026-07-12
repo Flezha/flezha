@@ -1179,7 +1179,22 @@ OutputRecord {
     metadata: Vec<(String, String)>,     -- user metadata, key-sorted
     payload:  Vec<u8>,
 }
+DlqEntryBody {                           -- Some only for a parked poison payload
+    channel:  String,                    -- the consumer's input channel
+    error:    String,
+    attempts: u32,
+    payload:  Option<Vec<u8>>,           -- None when not byte-representable
+}
 ```
+
+`EffectRecordBody` carries a trailing `dlq: Option<DlqEntryBody>` (after
+`consumed_offset`). A tier-on dead-letter park rides the SAME atomic
+record as its consumed-offset advance — typically `{no state change, dlq
+entry, consumed offset}` — so a crash can never advance the offset while
+losing the park. The controller materializes the DLQ store entry from
+the record after its fsync (idempotent on `segment_key@consumed_offset`)
+and never sends a `ParkPayloadAck` for it: input-log crash-replay
+already guarantees the poison payload re-parks.
 
 In tier mode plugin emits never ride the primary stream — the controller
 dispatches them to the `:on_output` plugin chain only after the record's
@@ -1194,6 +1209,36 @@ SDK → controller. Same wire shape as `segment_state_change`; `body` is the
 postcard-encoded `Self::State` (full snapshot) instead of one Change.
 The controller writes the body to `<segment_key>.snap.<seq>` via the
 `.tmp → fsync → rename → truncate WAL up to seq` sequence.
+
+### Data-stream payload-id `park_payload` (SDK → controller)
+
+Dead-letter park for tier-off sessions (`platform-dead-letter-queue`).
+When an operation invocation exhausts its input channel's retry budget
+(`retry_max`, default 3 total attempts, exponential backoff + jitter) —
+or returns a non-retryable error — the SDK ships this frame and holds
+the segment until the controller acks the park as durable
+(`ParkPayloadAck` below), re-sending on a 2 s cadence: park-then-advance,
+never a drop. Same outer frame layout as `segment_state_change` with a
+zero header; `body` is the postcard `ParkBody`:
+
+```
+ParkBody {
+    park_id:       String,          -- SDK-minted ack-correlation id
+    origin_offset: Option<u64>,     -- input-log offset when the tier provides one
+    entry:         DlqEntryBody,    -- the same {channel, error, attempts, payload}
+                                    -- record a tier-on park embeds in its
+                                    -- effect record (see above)
+}
+```
+
+The controller appends the entry to the durable DLQ store
+(`app_data/dlq/<operative_class>/<operation_id>/`), fsyncs, and only
+then sends the ack. Appends are idempotent on origin identity
+(`channel:sha256(payload)` for tier-off parks), so ack-lost re-sends
+never duplicate an entry. Decoded controller-side by
+`Flezha.State.Wire.decode_park_body/1`. Effectively-once sessions do
+not use this frame — their park rides the atomic effect record's `dlq`
+field above.
 
 ### Control command `RestoreInitState` (controller → SDK)
 
@@ -1336,6 +1381,22 @@ any grant whose `stream_id` does not match its current session. A frame
 arriving on an exhausted ledger is a protocol violation: the controller
 sheds it (`credit_overrun_total`), and the existing seq-gap resync
 repairs the gap.
+
+### Control command `ParkPayloadAck` (controller → SDK)
+
+```protobuf
+message ParkPayloadAck {
+    string park_id = 1;   // echoes the ParkBody.park_id
+}
+```
+
+One-way durability ack for a `park_payload` data-stream frame (the
+generic `CommandResponse` it solicits is ignored). Sent only after the
+dead-letter entry is fsynced in the DLQ store; on receipt the SDK wakes
+the dispatch thread blocked in the park, drops the poison payload, and
+the segment advances to the next input. An SDK that never receives the
+ack (controller down, reconnect window) keeps the segment held and
+re-sends the park frame — delay, never loss.
 
 ### Plugin metadata: output identity stamps (`flz.*`)
 

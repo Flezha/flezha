@@ -28,7 +28,8 @@ defmodule Flezha.Executor.StreamChannel do
     "segment_state_snapshot",
     "delete_segment_state",
     "compensation_intent",
-    "compensation_done"
+    "compensation_done",
+    "park_payload"
   ]
 
   @impl true
@@ -242,6 +243,16 @@ defmodule Flezha.Executor.StreamChannel do
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id in ["compensation_intent", "compensation_done"] do
     handle_compensation_record(payload_id, message)
+    {:noreply, mark_seen(state)}
+  end
+
+  # Dead-letter park (SDK → controller, tier-off sessions): append the
+  # poison payload to the durable DLQ store. The ParkPayloadAck control
+  # command fires only after the entry is fsynced — park-then-advance, so
+  # the parked segment never advances past a payload the controller could
+  # still lose.
+  def handle_info({:flz_data, _stream_id, "park_payload", message, _metadata}, state) do
+    handle_park_payload(state, message)
     {:noreply, mark_seen(state)}
   end
 
@@ -470,6 +481,39 @@ defmodule Flezha.Executor.StreamChannel do
       {:error, reason} ->
         Logger.warning("[stream] segment_state_change decode failed: #{inspect(reason)}")
         state
+    end
+  end
+
+  # The DLQ append (an fsync) runs in the store process, never here — this
+  # channel also carries the operative's output frames. The ack closure
+  # runs in the store process after the fsync; `send_control_async` is a
+  # cast, so it cannot block the store either.
+  defp handle_park_payload(state, frame) do
+    with {:ok, %{segment_id: {rc, sh, pk}, body: body}} <- StateWire.decode_frame(frame),
+         {:ok, park} <- StateWire.decode_park_body(body) do
+      executor_id = state.executor_id
+
+      Flezha.Dlq.Store.append_async(
+        %{
+          operative_class: rc,
+          operation_id: sh,
+          segment_key: pk,
+          channel: park.channel,
+          origin_offset: park.origin_offset,
+          error: park.error,
+          attempts: park.attempts,
+          payload: park.payload,
+          park_id: park.park_id
+        },
+        fn _entry_ref ->
+          ControlChannel.send_control_async(
+            executor_id,
+            {:park_payload_ack, %ExecutorCommands.ParkPayloadAck{park_id: park.park_id}}
+          )
+        end
+      )
+    else
+      err -> Logger.warning("[stream] park_payload decode failed: #{inspect(err)}")
     end
   end
 

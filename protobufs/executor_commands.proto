@@ -36,6 +36,7 @@ message CommandRequest {
         CreditWindowInit credit_window_init = 24;
         CreditWindowAck credit_window_ack = 25;
         CreditGrant credit_grant = 26;
+        ParkPayloadAck park_payload_ack = 27;
     }
 }
 
@@ -297,6 +298,14 @@ message CreditWindowAck {
 message CreditGrant {
     string stream_id = 1;
     uint64 bytes = 2;
+}
+
+// Controller -> SDK. Durable ack for a `park_payload` data-stream frame:
+// the dead-letter entry identified by `park_id` is fsynced in the DLQ
+// store, so the parked segment may drop the poison payload and advance.
+// One-way; the generic CommandResponse it solicits is ignored.
+message ParkPayloadAck {
+    string park_id = 1;
 }
 
 // Controller -> SDK. Cooperative external stop for a bounded operative

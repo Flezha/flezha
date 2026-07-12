@@ -288,6 +288,20 @@ config :flezha,
     extra_subscriptions: []
   ],
   # ------------------------------------------------------------------------------------------------
+  # Dead-letter queue (platform-dead-letter-queue): durable store for
+  # retry-exhausted poison payloads. Retention deletes already-parked data,
+  # so the caps default generous (30 d / 4 GiB, audit-log precedent).
+  dlq: [
+    dir: System.get_env("FLEZHA_DLQ_DIR", "app_data/dlq"),
+    retention_seconds:
+      case System.get_env("FLEZHA_DLQ_RETENTION_DAYS") do
+        nil -> 30 * 86_400
+        val -> String.to_integer(val) * 86_400
+      end,
+    max_total_bytes: 4_294_967_296,
+    retention_check_interval_ms: 3_600_000
+  ],
+  # ------------------------------------------------------------------------------------------------
   # Authentication and authorization (platform-authn-authz).
   #
   # `enabled` defaults `false` so upgrades do not brick existing

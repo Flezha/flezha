@@ -57,15 +57,27 @@ defmodule Flezha.State.WalWriterOutboxTest do
       _ = File.rm_rf(base)
     end)
 
-    %{rc: rc, segment_id: segment_id}
+    %{rc: rc, segment_id: segment_id, base: base}
   end
 
   # Header byte 9 is the format id: 2 marks an effect record.
   defp effect_header(), do: <<1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0>>
   defp plain_header(), do: <<1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0>>
 
-  defp effect_body(outputs, offset) do
-    Wire.encode_effect_body(%{changes: [<<1>>], outputs: outputs, consumed_offset: offset})
+  defp effect_body(outputs, offset, dlq \\ nil) do
+    Wire.encode_effect_body(%{
+      changes: [<<1>>],
+      outputs: outputs,
+      consumed_offset: offset,
+      dlq: dlq
+    })
+  end
+
+  # Point the global DLQ store at a per-test tmp dir.
+  defp redirect_dlq_dir(base) do
+    original = Application.get_env(:flezha, :dlq, [])
+    Application.put_env(:flezha, :dlq, Keyword.put(original, :dir, Path.join(base, "dlq")))
+    on_exit(fn -> Application.put_env(:flezha, :dlq, original) end)
   end
 
   defp output(key, payload, metadata \\ []) do
@@ -274,6 +286,122 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     assert offline =~ "unknown (writer not running)"
     assert offline =~ "epoch              0"
+  end
+
+  test "tier-on park: DLQ entry materializes after fsync and the watermark resumes", %{
+    rc: rc,
+    segment_id: segment_id,
+    base: base
+  } do
+    redirect_dlq_dir(base)
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(segment_id)
+
+    # A healthy invocation at offset 10, then the poison payload's park
+    # record at offset 11: {no outputs, dlq entry, consumed offset}.
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "good")], 10))
+
+    :ok =
+      WalWriter.append(
+        pid,
+        1,
+        effect_header(),
+        effect_body([], 11, %{channel: "in", error: "kaboom", attempts: 3, payload: "poison"})
+      )
+
+    # Between append and fsync nothing is durable: no DLQ entry yet.
+    assert Flezha.Dlq.Store.list(rc) == []
+
+    :ok = WalWriter.fsync(pid)
+    assert_receive {:"$gen_cast", {:io_out, "good", _}}
+
+    assert [entry] = Flezha.Dlq.Store.list(rc)
+    assert entry["channel"] == "in"
+    assert entry["error"] == "kaboom"
+    assert entry["attempts"] == 3
+    assert entry["origin_offset"] == 11
+    assert entry["segment_key"] == "k1"
+
+    assert {:ok, _entry, "poison"} = Flezha.Dlq.Store.get("#{rc}/op/#{entry["id"]}")
+
+    # Parking un-froze the min-watermark: the segment's consumed offset
+    # advanced PAST the poison payload.
+    assert InputLog.watermark(rc) == 11
+  end
+
+  test "re-drive of a park record is idempotent: no duplicate DLQ entry", %{
+    rc: rc,
+    segment_id: segment_id,
+    base: base
+  } do
+    redirect_dlq_dir(base)
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(segment_id)
+
+    :ok =
+      WalWriter.append(
+        pid,
+        0,
+        effect_header(),
+        effect_body([], 5, %{channel: "in", error: "kaboom", attempts: 3, payload: "poison"})
+      )
+
+    # A marker record AFTER the park: in-order dispatch means receiving its
+    # output proves the park record was (re-)processed.
+    :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "marker")], 6))
+
+    :ok = WalWriter.fsync(pid)
+    assert_receive {:"$gen_cast", {:io_out, "marker", _}}
+    assert [_entry] = Flezha.Dlq.Store.list(rc)
+    close_writer(pid, segment_id)
+
+    # Crash window: the park materialized but the outbox cursor write never
+    # landed. The reopen re-drives both records; the park is idempotent on
+    # origin identity, so exactly one entry survives.
+    dedup = Outbox.read(segment_id)
+    :ok = Outbox.write(segment_id, %{dedup | outbox_flushed_seq: -1})
+
+    pid = start_writer(segment_id)
+    _ = WalWriter.last_persisted_seq(pid)
+
+    assert_receive {:"$gen_cast", {:io_out, "marker", _}}, 2_000
+    assert [_exactly_one] = Flezha.Dlq.Store.list(rc)
+  end
+
+  test "crash-tear: a torn park record loses neither offset nor park, together", %{
+    rc: rc,
+    segment_id: segment_id,
+    base: base
+  } do
+    redirect_dlq_dir(base)
+    ClassRegistry.put_overwatch(rc, self())
+
+    body = effect_body([], 9, %{channel: "in", error: "e", attempts: 1, payload: "p"})
+    effect = WalWriter.encode_record(0, effect_header(), body)
+    wal_path = Registry.wal_path(segment_id)
+    File.mkdir_p!(Path.dirname(wal_path))
+
+    # Torn mid-record: the record is discarded entirely — the consumed
+    # offset cannot advance while the park is lost (they are one record).
+    File.write!(wal_path, binary_part(effect, 0, byte_size(effect) - 3))
+    pid = start_writer(segment_id)
+    _ = WalWriter.last_persisted_seq(pid)
+    assert Flezha.Dlq.Store.list(rc) == []
+    assert InputLog.watermark(rc) == nil
+    :ok = WalWriter.close(pid)
+    File.rm!(wal_path)
+    File.rm(Registry.outbox_dedup_path(segment_id))
+
+    # Complete record: park AND offset recover together.
+    File.write!(wal_path, effect)
+    pid = start_writer(segment_id)
+    _ = WalWriter.last_persisted_seq(pid)
+
+    assert wait_until(fn -> Flezha.Dlq.Store.list(rc) != [] end, 2_000),
+           "park never materialized from the re-drive"
+
+    assert InputLog.watermark(rc) == 9
+    :ok = WalWriter.close(pid)
   end
 
   test "crash-tear: a torn effect record recovers all-or-nothing", %{

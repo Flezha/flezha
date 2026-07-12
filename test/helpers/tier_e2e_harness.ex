@@ -44,10 +44,10 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     :ok = Outbox.write(segment_id, %{dedup | outbox_flushed_seq: -1})
   end
 
-  def boot_executor(namespace, id_path) do
+  def boot_executor(namespace, id_path, opts \\ []) do
     {port, executor_id} =
       NodeTestHelper.start_executor_port(namespace,
-        runtime: :rust,
+        runtime: Keyword.get(opts, :runtime, :rust),
         transport: :uds,
         env: [{"FLEZHA_EXECUTOR_ID_PATH", id_path}],
         connect_timeout: 120_000

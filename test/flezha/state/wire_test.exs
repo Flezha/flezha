@@ -69,12 +69,13 @@ defmodule Flezha.State.WireTest do
     # the SDK side by flusher::tests::
     # effect_record_body_postcard_bytes_are_the_cross_language_fixture.
     @rust_fixture <<0x01, 0x01, 0xAA, 0x01, 0x03, ?o, ?u, ?t, 0x01, ?k, 0x01, 0x01, ?a, 0x01, ?b,
-                    0x02, 0x01, 0x02, 0x01, 0xE7, 0x24>>
+                    0x02, 0x01, 0x02, 0x01, 0xE7, 0x24, 0x00>>
 
     test "decodes the Rust SDK's postcard bytes" do
       assert {:ok, body} = Wire.decode_effect_body(@rust_fixture)
       assert body.changes == [<<0xAA>>]
       assert body.consumed_offset == 4711
+      assert body.dlq == nil
 
       assert [%{channel: "out", key: "k", metadata: [{"a", "b"}], payload: <<1, 2>>}] =
                body.outputs
@@ -86,9 +87,23 @@ defmodule Flezha.State.WireTest do
     end
 
     test "round-trips empty and None fields" do
-      body = %{changes: [], outputs: [], consumed_offset: nil}
+      body = %{changes: [], outputs: [], consumed_offset: nil, dlq: nil}
       encoded = Wire.encode_effect_body(body)
       assert {:ok, ^body} = Wire.decode_effect_body(encoded)
+    end
+
+    test "round-trips a dead-letter park entry (atomic tier-on park)" do
+      body = %{
+        changes: [],
+        outputs: [],
+        consumed_offset: 99,
+        dlq: %{channel: "in", error: "boom", attempts: 3, payload: <<1, 2>>}
+      }
+
+      assert {:ok, ^body} = body |> Wire.encode_effect_body() |> Wire.decode_effect_body()
+
+      byteless = %{body | dlq: %{channel: "in", error: "boom", attempts: 1, payload: nil}}
+      assert {:ok, ^byteless} = byteless |> Wire.encode_effect_body() |> Wire.decode_effect_body()
     end
 
     test "round-trips multi-byte varints and multiple entries" do
@@ -103,7 +118,8 @@ defmodule Flezha.State.WireTest do
             payload: :binary.copy(<<7>>, 200)
           }
         ],
-        consumed_offset: 1_000_000_007
+        consumed_offset: 1_000_000_007,
+        dlq: nil
       }
 
       assert {:ok, ^body} = body |> Wire.encode_effect_body() |> Wire.decode_effect_body()
@@ -114,6 +130,31 @@ defmodule Flezha.State.WireTest do
 
       truncated = binary_part(@rust_fixture, 0, byte_size(@rust_fixture) - 1)
       assert {:error, _} = Wire.decode_effect_body(truncated)
+    end
+
+    test "decodes the SDKs' ParkBody postcard bytes (cross-language fixture)" do
+      # Pinned on the SDK sides by park.rs
+      # `park_body_postcard_bytes_are_the_cross_language_fixture` and the
+      # Java DlqRetryTest fixture.
+      fixture =
+        <<0x03, ?s, ?#, ?0, 0x01, 0x07, 0x02, ?i, ?n, 0x04, ?b, ?o, ?o, ?m, 0x03, 0x01, 0x02,
+          0x01, 0x02>>
+
+      assert {:ok, park} = Wire.decode_park_body(fixture)
+      assert park.park_id == "s#0"
+      assert park.channel == "in"
+      assert park.origin_offset == 7
+      assert park.error == "boom"
+      assert park.attempts == 3
+      assert park.payload == <<1, 2>>
+
+      byteless = <<0x01, ?x, 0x00, 0x02, ?i, ?n, 0x01, ?e, 0x01, 0x00>>
+      assert {:ok, park} = Wire.decode_park_body(byteless)
+      assert park.origin_offset == nil
+      assert park.payload == nil
+
+      assert {:error, :trailing_bytes} = Wire.decode_park_body(fixture <> <<0>>)
+      assert {:error, _} = Wire.decode_park_body(binary_part(fixture, 0, 5))
     end
 
     test "effect_record_header? keys on header byte 9" do

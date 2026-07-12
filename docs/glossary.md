@@ -53,6 +53,16 @@ contains Segments.**
   points (input from outside), internal (Operation → Operation), or sink (output
   back to the Controller / pipe to another Operative).
 
+- **Dead-letter queue (DLQ)** — the Controller's durable store for poison
+  payloads: inputs an Unbounded Operation failed on every retry
+  (`app_data/dlq/{operative_class}/{operation_id}/`). A payload is parked
+  durably *before* its Segment advances, keeping the min-watermark moving
+  without ever silently dropping data; operators inspect/replay/drop entries
+  via `flz dlq`. Bounded operatives don't use it — their escape is AbortAll +
+  saga compensation. See
+  [`resilience/data_durability.md`](resilience/data_durability.md)
+  "Dead-letter queue".
+
 ## Disambiguating "Operator"
 
 The word "Operator" used to mean "the SDK process" in older Flezha code and

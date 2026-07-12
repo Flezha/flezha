@@ -1,5 +1,6 @@
 package com.flezha.sdk.runtime.worker;
 
+import com.flezha.sdk.channel.RetryPolicy;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
@@ -11,6 +12,8 @@ import com.flezha.sdk.runtime.operative.PluginSink;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.segment.SegmentSlot;
+import com.flezha.sdk.runtime.state.DlqPark;
+import com.flezha.sdk.runtime.state.SegmentId;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.StateHandle;
 import java.lang.ref.WeakReference;
@@ -19,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.concurrent.ExecutorService;
 import java.util.function.BiConsumer;
 import javax.annotation.Nonnull;
@@ -69,6 +73,10 @@ public final class OperationDispatcher {
     private final OperationDescriptor operationDescriptor;
     private final Optional<ChannelDescriptor> outputChannelDescriptor;
     private final OptionalInt outputChannelId;
+    /** Retry-then-park policy of the input channel (defaults when unwired). */
+    private final RetryPolicy retryPolicy;
+    /** Input-channel name stamped on dead-letter entries. */
+    private final String inputChannelName;
 
     @SuppressWarnings("rawtypes")
     private final Operation operationInstance;
@@ -91,6 +99,11 @@ public final class OperationDispatcher {
         this.outputChannelDescriptor = outputChannelId.isPresent()
                 ? Optional.ofNullable(topology.channel(outputChannelId.getAsInt()))
                 : Optional.empty();
+        OptionalInt inputChannelId = operationDescriptor.inputChannelId();
+        ChannelDescriptor inputChannel =
+                inputChannelId.isPresent() ? topology.channel(inputChannelId.getAsInt()) : null;
+        this.retryPolicy = inputChannel == null ? RetryPolicy.DEFAULT : inputChannel.retry();
+        this.inputChannelName = inputChannel == null ? "<unwired>" : inputChannel.name();
         this.operationInstance = operationInstance;
     }
 
@@ -191,23 +204,93 @@ public final class OperationDispatcher {
                 bufferView = slot.changeBuffer();
             }
             StateHandle<Object, Change> handle = StateHandle.create(state, bufferView, applyChangeFn);
-            try {
-                operationInstance.run(input, handle, ctxImpl);
-            } catch (OperationException e) {
+
+            // Retry-then-park loop (platform-dead-letter-queue): a failing
+            // invocation is re-run up to the input channel's retryMax with
+            // exponential backoff + jitter; a NonRetryable skips the
+            // remaining budget. Panic-parity with the Rust dispatcher:
+            // OperationException and RuntimeException share one policy.
+            int maxAttempts = Math.max(1, retryPolicy.maxAttempts());
+            int attempt = 0;
+            String parkError = null;
+            while (true) {
+                attempt++;
+                boolean isFinal = attempt >= maxAttempts;
+                String error;
+                boolean retryable;
+                try {
+                    operationInstance.run(input, handle, ctxImpl);
+                    break;
+                } catch (OperationException e) {
+                    error = e.getMessage();
+                    retryable = !(e instanceof OperationException.NonRetryable);
+                } catch (RuntimeException e) {
+                    error = e.toString();
+                    retryable = true;
+                }
+                if (!retryable || isFinal) {
+                    parkError = error;
+                    break;
+                }
+                DlqPark.RETRIES_TOTAL.incrementAndGet();
                 LOG.warn(
-                        "operation `{}` segment `{}` threw OperationException: {}",
+                        "operation `{}` segment `{}` attempt {}/{} failed (retrying): {}",
                         operationDescriptor.name(),
                         slot.operationKey().orElse("<single>"),
-                        e.getMessage());
-            } catch (RuntimeException e) {
-                LOG.error(
-                        "operation `{}` segment `{}` threw RuntimeException: {}",
-                        operationDescriptor.name(),
-                        slot.operationKey().orElse("<single>"),
-                        e.toString());
+                        attempt,
+                        maxAttempts,
+                        error);
+                sleepQuietly(retryBackoffMs(retryPolicy.backoffBaseMs(), attempt));
+            }
+            if (parkError != null) {
+                parkPoison(slot, input, parkError, attempt);
             }
         } finally {
             slot.stateLock().unlock();
+        }
+    }
+
+    /**
+     * Durably park an exhausted poison payload to the controller's DLQ and
+     * hold the drain thread until the park is acked — park-then-advance,
+     * never a drop.
+     */
+    private void parkPoison(SegmentSlot slot, Object input, String error, int attempts) {
+        DlqPark.PARKED_TOTAL.incrementAndGet();
+        UnboundedOperativeInstance ri = instance.get();
+        String instanceId = ri == null ? "<gone>" : ri.instanceId();
+        SegmentId segmentId = SegmentId.of(instanceId, operationDescriptor.name(), slot.operationKey());
+        LOG.error(
+                "operation `{}` segment `{}` parking poison payload to DLQ after {} attempt(s): {}",
+                operationDescriptor.name(),
+                slot.operationKey().orElse("<single>"),
+                attempts,
+                error);
+        DlqPark.parkBlocking(
+                segmentId,
+                new DlqPark.ParkBody(
+                        DlqPark.mintParkId(segmentId.encoded()),
+                        OptionalLong.empty(),
+                        new DlqPark.DlqEntry(inputChannelName, error, attempts, DlqPark.extractPayloadBytes(input))));
+    }
+
+    /**
+     * Exponential retry backoff with ±50% jitter: {@code base * 2^(attempt-1)},
+     * jitter included, capped at {@link RetryPolicy#RETRY_BACKOFF_MAX_MS}.
+     * Mirrors the Rust dispatcher's {@code retry_backoff}.
+     */
+    static long retryBackoffMs(long baseMs, int attempt) {
+        long exp = Math.min(Math.max(baseMs, 1) << Math.min(attempt - 1, 16), RetryPolicy.RETRY_BACKOFF_MAX_MS);
+        long jittered =
+                exp / 2 + java.util.concurrent.ThreadLocalRandom.current().nextLong(Math.max(exp, 1));
+        return Math.min(jittered, RetryPolicy.RETRY_BACKOFF_MAX_MS);
+    }
+
+    private static void sleepQuietly(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

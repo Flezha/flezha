@@ -33,4 +33,18 @@ public interface EntryChannel<T> {
      */
     @Nonnull
     EntryChannel<T> onFull(@Nonnull OverflowPolicy policy);
+
+    /**
+     * Override the consumer-side retry budget (total attempts, default 3)
+     * applied before a failing payload is parked to the dead-letter queue.
+     */
+    @Nonnull
+    EntryChannel<T> retryMax(int maxAttempts);
+
+    /**
+     * Override the exponential-backoff base (milliseconds, default 50)
+     * slept between failed attempts.
+     */
+    @Nonnull
+    EntryChannel<T> retryBackoffMs(long baseMs);
 }

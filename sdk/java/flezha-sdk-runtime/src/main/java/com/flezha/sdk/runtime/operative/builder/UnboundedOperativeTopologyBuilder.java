@@ -166,7 +166,8 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                     entry.payloadType,
                     Optional.ofNullable(entry.pluginSerializer),
                     pluginSink,
-                    entry.overflowPolicy));
+                    entry.overflowPolicy,
+                    new com.flezha.sdk.channel.RetryPolicy(entry.retryMaxAttempts, entry.retryBackoffBaseMs)));
         }
 
         // Materialize OperationDescriptors.
@@ -383,6 +384,23 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         String pluginSinkName;
         Function<Object, byte[]> pluginSinkSerializer;
         OverflowPolicy overflowPolicy;
+        int retryMaxAttempts = com.flezha.sdk.channel.RetryPolicy.DEFAULT.maxAttempts();
+        long retryBackoffBaseMs = com.flezha.sdk.channel.RetryPolicy.DEFAULT.backoffBaseMs();
+    }
+
+    /**
+     * Apply a {@code .retryMax(...)} declaration, rejecting a zero budget at
+     * registration time like every other declaration error.
+     */
+    private void setRetryMax(int channelId, int maxAttempts) {
+        ChannelEntry entry = channels.get(channelId);
+        if (maxAttempts <= 0) {
+            errors.add("channel `" + entry.name + "` declared retryMax = " + maxAttempts
+                    + "; at least one attempt is required (throw OperationException.NonRetryable"
+                    + " to park without retries)");
+            return;
+        }
+        entry.retryMaxAttempts = maxAttempts;
     }
 
     private static OverflowPolicy defaultPolicyForKind(ChannelKind kind) {
@@ -436,6 +454,20 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
             channels.get(channelId).overflowPolicy = policy;
             return this;
         }
+
+        @Override
+        @Nonnull
+        public EntryChannel<T> retryMax(int maxAttempts) {
+            setRetryMax(channelId, maxAttempts);
+            return this;
+        }
+
+        @Override
+        @Nonnull
+        public EntryChannel<T> retryBackoffMs(long baseMs) {
+            channels.get(channelId).retryBackoffBaseMs = baseMs;
+            return this;
+        }
     }
 
     private final class ChannelDeclImpl<T> implements ChannelDecl<T> {
@@ -460,6 +492,20 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         @Nonnull
         public ChannelDecl<T> onFull(@Nonnull OverflowPolicy policy) {
             channels.get(channelId).overflowPolicy = policy;
+            return this;
+        }
+
+        @Override
+        @Nonnull
+        public ChannelDecl<T> retryMax(int maxAttempts) {
+            setRetryMax(channelId, maxAttempts);
+            return this;
+        }
+
+        @Override
+        @Nonnull
+        public ChannelDecl<T> retryBackoffMs(long baseMs) {
+            channels.get(channelId).retryBackoffBaseMs = baseMs;
             return this;
         }
     }
@@ -521,6 +567,20 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         @Nonnull
         public ChannelDeclWithProducer<T> onFull(@Nonnull OverflowPolicy policy) {
             channels.get(channelId).overflowPolicy = policy;
+            return this;
+        }
+
+        @Override
+        @Nonnull
+        public ChannelDeclWithProducer<T> retryMax(int maxAttempts) {
+            setRetryMax(channelId, maxAttempts);
+            return this;
+        }
+
+        @Override
+        @Nonnull
+        public ChannelDeclWithProducer<T> retryBackoffMs(long baseMs) {
+            channels.get(channelId).retryBackoffBaseMs = baseMs;
             return this;
         }
     }

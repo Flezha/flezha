@@ -1,0 +1,512 @@
+defmodule Flezha.Dlq.Store do
+  @moduledoc """
+  Durable dead-letter store (`platform-dead-letter-queue`).
+
+  One controller-wide GenServer owning `app_data/dlq/<operative_class>/<operation_id>/`:
+  a JSONL metadata index (`entries.jsonl`, one record per parked payload)
+  with payload bytes in adjacent `<entry_id>.bin` blob files. Appends are
+  fsynced before the caller's durable-ack callback fires — the SDK holds
+  the poison payload until then, so a park is never acked before it is
+  crash-safe.
+
+  Idempotence rides the entry id, a hash of the park's origin identity:
+  `segment_key@origin_offset` when the effectively-once tier provides an
+  offset, else `channel:sha256(payload)` — so ack-lost re-sends and
+  crash-replay re-parks land on the existing entry instead of duplicating
+  it. A re-park that arrives while the entry is `replaying` (an operator
+  replay that failed again) increments `generation` instead.
+
+  Retention is bounded by age AND total size (more restrictive wins,
+  audit-log precedent); deleting an entry by retention is genuine loss of
+  already-parked data, so each deletion logs loudly and emits
+  `[:flezha, :dlq, :retention_dropped]`.
+  """
+
+  use GenServer
+
+  require Logger
+
+  @entries_file "entries.jsonl"
+
+  @default_retention_seconds 30 * 86_400
+  @default_max_total_bytes 4_294_967_296
+  @default_sweep_interval_ms 3_600_000
+
+  # ---------- public API ----------
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
+  end
+
+  @doc """
+  Durably append a parked payload. `entry` carries `:operative_class`,
+  `:operation_id`, `:segment_key`, `:channel`, `:origin_offset` (nil
+  outside the tier), `:error`, `:attempts`, `:payload` (binary or nil).
+  Returns `{:ok, entry_ref}` after the index line (and blob) are fsynced;
+  idempotent on origin identity.
+  """
+  @spec append(pid() | atom(), map()) :: {:ok, String.t()} | {:error, term()}
+  def append(server \\ __MODULE__, entry), do: GenServer.call(server, {:append, entry}, 30_000)
+
+  @doc """
+  Non-blocking append for the data-channel path: `on_durable.(entry_ref)`
+  runs in the store process once the entry is fsynced (the ParkPayloadAck
+  send site).
+  """
+  @spec append_async(pid() | atom(), map(), (String.t() -> any())) :: :ok
+  def append_async(server \\ __MODULE__, entry, on_durable),
+    do: GenServer.cast(server, {:append, entry, on_durable})
+
+  @doc """
+  List parked entries, nearest-to-expiry (oldest) first. `operative_class`
+  narrows to one class; `nil` lists everything.
+  """
+  @spec list(pid() | atom(), String.t() | nil) :: [map()]
+  def list(server \\ __MODULE__, operative_class),
+    do: GenServer.call(server, {:list, operative_class}, 30_000)
+
+  @doc "Fetch one entry (with payload bytes) by `<class>/<operation>/<id>` ref."
+  @spec get(pid() | atom(), String.t()) :: {:ok, map(), binary() | nil} | {:error, term()}
+  def get(server \\ __MODULE__, entry_ref), do: GenServer.call(server, {:get, entry_ref}, 30_000)
+
+  @doc "Delete one entry and its payload blob. Idempotent."
+  @spec drop(pid() | atom(), String.t()) :: :ok | {:error, term()}
+  def drop(server \\ __MODULE__, entry_ref),
+    do: GenServer.call(server, {:drop, entry_ref}, 30_000)
+
+  @doc """
+  Mark an entry as being replayed. A subsequent re-park of the same origin
+  identity increments `generation`; a `resolve/2` removes it.
+  """
+  @spec mark_replaying(pid() | atom(), String.t()) :: :ok | {:error, term()}
+  def mark_replaying(server \\ __MODULE__, entry_ref),
+    do: GenServer.call(server, {:mark_replaying, entry_ref}, 30_000)
+
+  @doc "Remove an entry whose replay succeeded."
+  @spec resolve(pid() | atom(), String.t()) :: :ok | {:error, term()}
+  def resolve(server \\ __MODULE__, entry_ref), do: drop(server, entry_ref)
+
+  @doc "Per-operation usage: `[%{operative_class, operation_id, entries, bytes}]`."
+  @spec stats(pid() | atom()) :: [map()]
+  def stats(server \\ __MODULE__), do: GenServer.call(server, :stats, 30_000)
+
+  @doc "Run a retention sweep now (tests / CLI)."
+  @spec sweep(pid() | atom()) :: :ok
+  def sweep(server \\ __MODULE__), do: GenServer.call(server, :sweep, 60_000)
+
+  defp root() do
+    config()[:dir] || "app_data/dlq"
+  end
+
+  defp config(), do: Application.get_env(:flezha, :dlq, [])
+
+  # ---------- GenServer ----------
+
+  @impl true
+  def init(_opts) do
+    schedule_sweep()
+    {:ok, %{}}
+  end
+
+  @impl true
+  def handle_call({:append, entry}, _from, state) do
+    {:reply, do_append(entry), state}
+  end
+
+  def handle_call({:list, operative_class}, _from, state) do
+    entries =
+      list_operation_dirs(operative_class)
+      |> Enum.flat_map(fn {rc, sh} -> load_entries(rc, sh) end)
+      |> Enum.sort_by(& &1["ts_ms"])
+
+    {:reply, entries, state}
+  end
+
+  def handle_call({:get, entry_ref}, _from, state) do
+    reply =
+      with {:ok, rc, sh, id} <- parse_ref(entry_ref),
+           {:ok, entry} <- find_entry(rc, sh, id) do
+        payload =
+          case File.read(blob_path(rc, sh, id)) do
+            {:ok, bytes} -> bytes
+            {:error, _} -> nil
+          end
+
+        {:ok, entry, payload}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:drop, entry_ref}, _from, state) do
+    reply =
+      with {:ok, rc, sh, id} <- parse_ref(entry_ref) do
+        remove_entry(rc, sh, id)
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:mark_replaying, entry_ref}, _from, state) do
+    reply =
+      with {:ok, rc, sh, id} <- parse_ref(entry_ref),
+           {:ok, _entry} <- find_entry(rc, sh, id) do
+        rewrite_entries(rc, sh, fn e ->
+          if e["id"] == id, do: Map.put(e, "status", "replaying"), else: e
+        end)
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call(:stats, _from, state) do
+    stats =
+      list_operation_dirs(nil)
+      |> Enum.map(fn {rc, sh} ->
+        entries = load_entries(rc, sh)
+
+        %{
+          operative_class: rc,
+          operation_id: sh,
+          entries: length(entries),
+          bytes: dir_bytes(rc, sh)
+        }
+      end)
+
+    {:reply, stats, state}
+  end
+
+  def handle_call(:sweep, _from, state) do
+    do_sweep()
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_cast({:append, entry, on_durable}, state) do
+    case do_append(entry) do
+      {:ok, ref} ->
+        on_durable.(ref)
+
+      {:error, reason} ->
+        Logger.error("[dlq] durable append failed (no ack sent): #{inspect(reason)}")
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:sweep, state) do
+    do_sweep()
+    schedule_sweep()
+    {:noreply, state}
+  end
+
+  # ---------- append ----------
+
+  defp do_append(entry) do
+    rc = Map.fetch!(entry, :operative_class)
+    sh = Map.fetch!(entry, :operation_id)
+    id = entry_id(entry)
+    payload = Map.get(entry, :payload)
+
+    case find_entry(rc, sh, id) do
+      {:ok, %{"status" => "replaying"} = existing} ->
+        bump_generation(rc, sh, existing, entry)
+
+      {:ok, _existing} ->
+        # Idempotent re-park (ack-lost re-send or crash-replay): the entry
+        # is already durable — re-acking is all the caller needs.
+        {:ok, ref(rc, sh, id)}
+
+      {:error, :not_found} ->
+        write_new_entry(rc, sh, id, entry, payload)
+    end
+  end
+
+  defp write_new_entry(rc, sh, id, entry, payload) do
+    dir = op_dir(rc, sh)
+    File.mkdir_p!(dir)
+
+    if payload do
+      blob = blob_path(rc, sh, id)
+      File.write!(blob, payload, [:binary])
+      fsync_file(blob)
+    end
+
+    record = %{
+      "id" => id,
+      "ts_ms" => System.system_time(:millisecond),
+      "operative_class" => rc,
+      "operation_id" => sh,
+      "segment_key" => Map.get(entry, :segment_key, ""),
+      "channel" => Map.get(entry, :channel, ""),
+      "origin_offset" => Map.get(entry, :origin_offset),
+      "error" => Map.get(entry, :error, ""),
+      "attempts" => Map.get(entry, :attempts, 0),
+      "generation" => 1,
+      "status" => "parked",
+      "payload_bytes" => if(payload, do: byte_size(payload), else: nil)
+    }
+
+    append_line(rc, sh, record)
+
+    :telemetry.execute([:flezha, :dlq, :parked], %{count: 1}, %{
+      operative_class: rc,
+      operation_id: sh,
+      segment_key: record["segment_key"],
+      channel: record["channel"],
+      generation: record["generation"]
+    })
+
+    emit_usage(rc, sh)
+    {:ok, ref(rc, sh, id)}
+  rescue
+    e -> {:error, e}
+  end
+
+  defp bump_generation(rc, sh, existing, entry) do
+    id = existing["id"]
+
+    :ok =
+      rewrite_entries(rc, sh, fn e ->
+        if e["id"] == id do
+          e
+          |> Map.put("status", "parked")
+          |> Map.put("generation", (e["generation"] || 1) + 1)
+          |> Map.put("attempts", Map.get(entry, :attempts, e["attempts"]))
+          |> Map.put("error", Map.get(entry, :error, e["error"]))
+          |> Map.put("ts_ms", System.system_time(:millisecond))
+        else
+          e
+        end
+      end)
+
+    :telemetry.execute([:flezha, :dlq, :parked], %{count: 1}, %{
+      operative_class: rc,
+      operation_id: sh,
+      segment_key: existing["segment_key"],
+      channel: existing["channel"],
+      generation: (existing["generation"] || 1) + 1
+    })
+
+    {:ok, ref(rc, sh, id)}
+  end
+
+  # Origin identity: tier-on parks carry the input-log offset (stable
+  # across crash-replays); tier-off parks key on content so ack-lost
+  # re-sends and failed-replay re-parks correlate. A byteless tier-off
+  # park falls back to its park_id (unique per park attempt).
+  defp entry_id(entry) do
+    key =
+      case {Map.get(entry, :origin_offset), Map.get(entry, :payload)} do
+        {offset, _} when is_integer(offset) ->
+          "#{Map.get(entry, :segment_key, "")}@#{offset}"
+
+        {nil, payload} when is_binary(payload) ->
+          "#{Map.get(entry, :channel, "")}:#{Base.encode16(:crypto.hash(:sha256, payload))}"
+
+        {nil, nil} ->
+          "park:#{Map.get(entry, :park_id, "")}"
+      end
+
+    :crypto.hash(:sha256, key) |> Base.encode16(case: :lower) |> binary_part(0, 16)
+  end
+
+  # ---------- retention (age AND total size, more restrictive wins) ----------
+
+  defp do_sweep() do
+    cfg = config()
+    retention_s = cfg[:retention_seconds] || @default_retention_seconds
+    max_bytes = cfg[:max_total_bytes] || @default_max_total_bytes
+    cutoff_ms = System.system_time(:millisecond) - retention_s * 1000
+
+    all =
+      list_operation_dirs(nil)
+      |> Enum.flat_map(fn {rc, sh} -> load_entries(rc, sh) end)
+      |> Enum.sort_by(& &1["ts_ms"])
+
+    {expired, fresh} = Enum.split_with(all, &(&1["ts_ms"] < cutoff_ms))
+    Enum.each(expired, &retention_drop(&1, :age))
+
+    total = Enum.sum(Enum.map(fresh, &entry_bytes/1))
+    shrink_to_cap(fresh, total, max_bytes)
+  end
+
+  defp shrink_to_cap(_entries, total, cap) when total <= cap, do: :ok
+
+  defp shrink_to_cap([oldest | rest], total, cap) do
+    retention_drop(oldest, :size)
+    shrink_to_cap(rest, total - entry_bytes(oldest), cap)
+  end
+
+  defp shrink_to_cap([], _total, _cap), do: :ok
+
+  defp retention_drop(entry, reason) do
+    rc = entry["operative_class"]
+    sh = entry["operation_id"]
+    bytes = entry_bytes(entry)
+
+    Logger.warning(
+      "[dlq] RETENTION DROP (#{reason}): discarding parked payload " <>
+        "#{ref(rc, sh, entry["id"])} channel=#{entry["channel"]} " <>
+        "segment=#{entry["segment_key"]} error=#{inspect(entry["error"])} — " <>
+        "this data was never replayed and is now permanently lost"
+    )
+
+    :telemetry.execute([:flezha, :dlq, :retention_dropped], %{count: 1, bytes: bytes}, %{
+      operative_class: rc,
+      operation_id: sh,
+      segment_key: entry["segment_key"],
+      channel: entry["channel"],
+      entry_id: entry["id"],
+      reason: reason
+    })
+
+    remove_entry(rc, sh, entry["id"])
+  end
+
+  defp entry_bytes(entry) do
+    (entry["payload_bytes"] || 0) + 256
+  end
+
+  defp schedule_sweep() do
+    interval = config()[:retention_check_interval_ms] || @default_sweep_interval_ms
+    Process.send_after(self(), :sweep, interval)
+  end
+
+  # ---------- index file plumbing ----------
+
+  defp op_dir(rc, sh), do: Path.join([root(), safe(rc), safe(sh)])
+
+  defp entries_path(rc, sh), do: Path.join(op_dir(rc, sh), @entries_file)
+
+  defp blob_path(rc, sh, id), do: Path.join(op_dir(rc, sh), id <> ".bin")
+
+  defp ref(rc, sh, id), do: "#{rc}/#{sh}/#{id}"
+
+  defp parse_ref(entry_ref) do
+    case String.split(entry_ref, "/") do
+      [rc, sh, id] when rc != "" and sh != "" and id != "" -> {:ok, rc, sh, id}
+      _ -> {:error, :bad_entry_ref}
+    end
+  end
+
+  # Path-safety: identity segments come off the wire; never let them climb
+  # out of the DLQ root.
+  defp safe(component) do
+    String.replace(component, ~r/[^A-Za-z0-9._-]/, "_")
+  end
+
+  defp list_operation_dirs(operative_class) do
+    classes =
+      case operative_class do
+        nil -> File.ls(root()) |> ok_or([])
+        rc -> [safe(rc)]
+      end
+
+    Enum.flat_map(classes, fn rc ->
+      Path.join(root(), rc)
+      |> File.ls()
+      |> ok_or([])
+      |> Enum.filter(&File.dir?(Path.join([root(), rc, &1])))
+      |> Enum.map(&{rc, &1})
+    end)
+  end
+
+  defp ok_or({:ok, value}, _default), do: value
+  defp ok_or({:error, _}, default), do: default
+
+  defp load_entries(rc, sh) do
+    case File.read(entries_path(rc, sh)) do
+      {:ok, content} ->
+        content
+        |> String.split("\n", trim: true)
+        |> Enum.flat_map(fn line ->
+          # A torn trailing line (crash mid-append) is skipped, not fatal.
+          case Jason.decode(line) do
+            {:ok, %{"id" => _} = entry} -> [entry]
+            _ -> []
+          end
+        end)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp find_entry(rc, sh, id) do
+    case Enum.find(load_entries(rc, sh), &(&1["id"] == id)) do
+      nil -> {:error, :not_found}
+      entry -> {:ok, entry}
+    end
+  end
+
+  defp append_line(rc, sh, record) do
+    path = entries_path(rc, sh)
+    line = Jason.encode!(record) <> "\n"
+    {:ok, io} = :file.open(path, [:append, :raw, :binary])
+
+    try do
+      :ok = :file.write(io, line)
+      :ok = :file.datasync(io)
+    after
+      :file.close(io)
+    end
+  end
+
+  defp rewrite_entries(rc, sh, map_fun) do
+    entries = load_entries(rc, sh) |> Enum.map(map_fun) |> Enum.reject(&is_nil/1)
+    path = entries_path(rc, sh)
+    tmp = path <> ".tmp"
+    content = Enum.map_join(entries, "", &(Jason.encode!(&1) <> "\n"))
+    File.write!(tmp, content, [:binary])
+    fsync_file(tmp)
+    File.rename!(tmp, path)
+    :ok
+  end
+
+  defp remove_entry(rc, sh, id) do
+    case find_entry(rc, sh, id) do
+      {:ok, _entry} ->
+        :ok = rewrite_entries(rc, sh, fn e -> if e["id"] == id, do: nil, else: e end)
+        File.rm(blob_path(rc, sh, id))
+        emit_usage(rc, sh)
+        :ok
+
+      {:error, :not_found} ->
+        :ok
+    end
+  end
+
+  defp dir_bytes(rc, sh) do
+    dir = op_dir(rc, sh)
+
+    File.ls(dir)
+    |> ok_or([])
+    |> Enum.map(fn f ->
+      case File.stat(Path.join(dir, f)) do
+        {:ok, %{size: size}} -> size
+        _ -> 0
+      end
+    end)
+    |> Enum.sum()
+  end
+
+  defp emit_usage(rc, sh) do
+    :telemetry.execute(
+      [:flezha, :dlq, :usage],
+      %{entries: length(load_entries(rc, sh)), bytes: dir_bytes(rc, sh)},
+      %{operative_class: rc, operation_id: sh}
+    )
+  end
+
+  defp fsync_file(path) do
+    {:ok, io} = :file.open(path, [:read, :write, :raw, :binary])
+
+    try do
+      :ok = :file.datasync(io)
+    after
+      :file.close(io)
+    end
+  end
+end

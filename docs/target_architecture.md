@@ -76,7 +76,7 @@ snapshot, saga, durable suspension) — two profiles over one shared kernel.
 | Fencing at the door, newest-wins takeover | `executor-identity-and-session` spec |
 | Owner-bound WAL realign (stale-writer refusal) | `wal-owner-fencing` |
 | Credit-grant flow control | `credit-grant-flow-control` — executor→controller loop **shipped** (handshake, fsync-minted batched grants, park semantics in both SDKs, soak-proven vs the 06-21 load); the source-ingestion loop awaits `effectively-once-output`'s input-log + min-watermark |
-| Poison-payload dead-letter (Unbounded) | `platform-dead-letter-queue` (umbrella slot 4) |
+| Poison-payload dead-letter (Unbounded) | `platform-dead-letter-queue` (umbrella slot 4) — **shipped**: per-channel retry-then-park in both SDKs (`retry_max` 3, backoff + jitter, `NonRetryable` classification), durable DLQ store with ack-gated tier-off parks and atomic tier-on park records, `flz dlq list/show/replay/drop` |
 | Producing-liveness health | `progress-liveness-health` (modifies `convergence-self-healing`) — **shipped**: WAL-marker IDLE/STUCK classification with the fed precondition, intent-mismatch (durable evidence vs empty intent) degrading `/healthz`, `stuck_operatives`/`intent_mismatch` detail in the body; watermark/outbox marker inputs activate when `effectively-once-output` lands |
 | Bounded profile: saga, compensation, crash-resume | `bounded-operative-*` specs (archived, shipped) |
 | Controller→executor send-buffer bound | `controller-send-buffer-bound` spec |

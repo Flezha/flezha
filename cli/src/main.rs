@@ -2,6 +2,7 @@ mod audit;
 mod boot;
 mod cluster;
 mod controller;
+mod dlq;
 mod executor;
 mod namespace;
 mod observe;
@@ -34,6 +35,7 @@ fn main() {
         "reset" => reset::handle_reset_command(&args[2..]),
         "observe" => observe::handle_observe_command(&args[2..]),
         "audit" => audit::handle_audit_command(&args[2..]),
+        "dlq" => dlq::handle_dlq_command(&args[2..]),
         "help" | "--help" | "-h" => print_help(),
         _ => {
             eprintln!("Error: Unknown command '{}'", args[1]);
@@ -61,6 +63,7 @@ fn print_help() {
     println!("    reset          Clear Controller durable runtime data on disk (controller must be stopped)");
     println!("    observe        Observability foundation inspection (sources, sinks, tail)");
     println!("    audit          Durable audit log inspection (list, read, tail, stats, rotate)");
+    println!("    dlq            Dead-letter queue: inspect, replay, or drop parked payloads");
     println!("    help           Show this help message");
     println!();
     println!("Use 'flz <COMMAND> help' for more information on a specific command.");

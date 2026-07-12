@@ -44,6 +44,7 @@ defmodule Flezha.State.Wire do
   @payload_id_delete_segment_state "delete_segment_state"
   @payload_id_compensation_intent "compensation_intent"
   @payload_id_compensation_done "compensation_done"
+  @payload_id_park_payload "park_payload"
 
   @header_size 16
 
@@ -94,6 +95,17 @@ defmodule Flezha.State.Wire do
 
   @spec payload_id_compensation_done() :: binary()
   def payload_id_compensation_done(), do: @payload_id_compensation_done
+
+  @doc """
+  Payload-id for a dead-letter park (SDK → controller, tier-off sessions):
+  a poison payload whose retry budget is exhausted, shipped with its error
+  context for the durable DLQ store. Same frame layout as
+  `segment_state_change` (zero header); the body is the postcard `ParkBody`
+  decoded by `decode_park_body/1`. The controller answers with a
+  `ParkPayloadAck` control command once the entry is fsynced.
+  """
+  @spec payload_id_park_payload() :: binary()
+  def payload_id_park_payload(), do: @payload_id_park_payload
 
   @spec header_size() :: pos_integer()
   def header_size(), do: @header_size
@@ -192,6 +204,7 @@ defmodule Flezha.State.Wire do
   changes:         Vec<Vec<u8>>            — postcard S::Change bytes each
   outputs:         Vec<OutputRecord>       — {channel, key, metadata, payload}
   consumed_offset: Option<u64>
+  dlq:             Option<DlqEntryBody>    — {channel, error, attempts, payload}
   ```
 
   Postcard encodes `Vec`/`String` as a LEB128 varint length + contents,
@@ -209,14 +222,16 @@ defmodule Flezha.State.Wire do
                  payload: binary()
                }
              ],
-             consumed_offset: non_neg_integer() | nil
+             consumed_offset: non_neg_integer() | nil,
+             dlq: map() | nil
            }}
           | {:error, term()}
   def decode_effect_body(body) when is_binary(body) do
     with {:ok, changes, rest} <- decode_vec(body, &decode_bytes/1),
          {:ok, outputs, rest} <- decode_vec(rest, &decode_output/1),
-         {:ok, consumed_offset, <<>>} <- decode_option_varint(rest) do
-      {:ok, %{changes: changes, outputs: outputs, consumed_offset: consumed_offset}}
+         {:ok, consumed_offset, rest} <- decode_option(rest, &decode_varint/1),
+         {:ok, dlq, <<>>} <- decode_option(rest, &decode_dlq_entry/1) do
+      {:ok, %{changes: changes, outputs: outputs, consumed_offset: consumed_offset, dlq: dlq}}
     else
       {:ok, _, _trailing} -> {:error, :trailing_bytes}
       {:error, _} = err -> err
@@ -239,12 +254,50 @@ defmodule Flezha.State.Wire do
           ],
           consumed_offset: non_neg_integer() | nil
         }) :: binary()
-  def encode_effect_body(%{changes: changes, outputs: outputs, consumed_offset: offset}) do
+  def encode_effect_body(%{changes: changes, outputs: outputs, consumed_offset: offset} = body) do
     IO.iodata_to_binary([
       encode_vec(changes, &encode_bytes/1),
       encode_vec(outputs, &encode_output/1),
-      encode_option_varint(offset)
+      encode_option(offset, &encode_varint/1),
+      encode_option(Map.get(body, :dlq), &encode_dlq_entry/1)
     ])
+  end
+
+  @doc """
+  Decode a postcard `ParkBody` (the body of a `park_payload` frame,
+  tier-off dead-letter park):
+
+  ```
+  park_id:       String              — SDK-minted ack-correlation id
+  origin_offset: Option<u64>
+  entry:         DlqEntryBody        — {channel, error, attempts, payload},
+                                       the same record a tier-on park embeds
+                                       in its effect record
+  ```
+
+  Returned flattened (`park_id` + `origin_offset` merged into the entry
+  map) — the store consumes one shape for both park paths.
+  """
+  @spec decode_park_body(binary()) ::
+          {:ok,
+           %{
+             park_id: binary(),
+             channel: binary(),
+             origin_offset: non_neg_integer() | nil,
+             error: binary(),
+             attempts: non_neg_integer(),
+             payload: binary() | nil
+           }}
+          | {:error, term()}
+  def decode_park_body(body) when is_binary(body) do
+    with {:ok, park_id, rest} <- decode_bytes(body),
+         {:ok, origin_offset, rest} <- decode_option(rest, &decode_varint/1),
+         {:ok, entry, <<>>} <- decode_dlq_entry(rest) do
+      {:ok, Map.merge(entry, %{park_id: park_id, origin_offset: origin_offset})}
+    else
+      {:ok, _, _trailing} -> {:error, :trailing_bytes}
+      {:error, _} = err -> err
+    end
   end
 
   # ---------- postcard primitives ----------
@@ -291,16 +344,30 @@ defmodule Flezha.State.Wire do
     end
   end
 
-  defp decode_option_varint(<<0, rest::binary>>), do: {:ok, nil, rest}
-
-  defp decode_option_varint(<<1, rest::binary>>) do
-    case decode_varint(rest) do
-      {:ok, value, rest} -> {:ok, value, rest}
-      err -> err
+  defp decode_dlq_entry(bin) do
+    with {:ok, channel, rest} <- decode_bytes(bin),
+         {:ok, error, rest} <- decode_bytes(rest),
+         {:ok, attempts, rest} <- decode_varint(rest),
+         {:ok, payload, rest} <- decode_option(rest, &decode_bytes/1) do
+      {:ok, %{channel: channel, error: error, attempts: attempts, payload: payload}, rest}
     end
   end
 
-  defp decode_option_varint(_), do: {:error, :bad_option}
+  defp encode_dlq_entry(%{channel: channel, error: error, attempts: attempts, payload: payload}) do
+    [
+      encode_bytes(channel),
+      encode_bytes(error),
+      encode_varint(attempts),
+      encode_option(payload, &encode_bytes/1)
+    ]
+  end
+
+  defp decode_option(<<0, rest::binary>>, _item_fun), do: {:ok, nil, rest}
+  defp decode_option(<<1, rest::binary>>, item_fun), do: item_fun.(rest)
+  defp decode_option(_, _), do: {:error, :bad_option}
+
+  defp encode_option(nil, _item_fun), do: <<0>>
+  defp encode_option(value, item_fun), do: [<<1>>, item_fun.(value)]
 
   defp decode_varint(bin, shift \\ 0, acc \\ 0)
 
@@ -325,9 +392,6 @@ defmodule Flezha.State.Wire do
       encode_bytes(payload)
     ]
   end
-
-  defp encode_option_varint(nil), do: <<0>>
-  defp encode_option_varint(value), do: [<<1>>, encode_varint(value)]
 
   defp encode_varint(n) when n < 128, do: <<n>>
 

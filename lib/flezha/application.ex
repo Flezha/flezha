@@ -59,7 +59,8 @@ defmodule Flezha.Application do
         [
           Flezha.State.FsyncBatcher,
           Flezha.State.Retention,
-          Flezha.State.Watchdog
+          Flezha.State.Watchdog,
+          Flezha.Dlq.Store
         ] ++
         convergence_loop_children() ++
         healthz_children() ++

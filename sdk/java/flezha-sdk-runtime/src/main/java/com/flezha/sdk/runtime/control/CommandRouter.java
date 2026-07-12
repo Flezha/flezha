@@ -15,6 +15,7 @@ import com.flezha.sdk.runtime.control.handlers.ExecutorDisconnectHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationDeserializationHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationSerializationHandler;
 import com.flezha.sdk.runtime.control.handlers.OperationMessageHandler;
+import com.flezha.sdk.runtime.control.handlers.ParkPayloadAckHandler;
 import com.flezha.sdk.runtime.control.handlers.PingHandler;
 import com.flezha.sdk.runtime.control.handlers.RemOperativeHandler;
 import com.flezha.sdk.runtime.control.handlers.RestoreInitStateHandler;
@@ -75,6 +76,9 @@ public final class CommandRouter {
         // in its CommandResponse; grants replenish it.
         registerCase(mut, "CREDIT_WINDOW_INIT", new CreditWindowInitHandler());
         registerCase(mut, "CREDIT_GRANT", new CreditGrantHandler());
+        // Dead-letter park durability ack: wakes the dispatch thread parked
+        // in DlqPark.parkBlocking.
+        registerCase(mut, "PARK_PAYLOAD_ACK", new ParkPayloadAckHandler());
         this.handlers = java.util.Collections.unmodifiableMap(mut);
     }
 

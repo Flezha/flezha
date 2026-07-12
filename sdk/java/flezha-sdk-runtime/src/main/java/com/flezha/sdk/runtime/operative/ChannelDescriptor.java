@@ -2,6 +2,7 @@ package com.flezha.sdk.runtime.operative;
 
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.channel.OverflowPolicy;
+import com.flezha.sdk.channel.RetryPolicy;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -23,6 +24,7 @@ public final class ChannelDescriptor {
     private final Optional<Function<Object, byte[]>> pluginSerializer;
     private final Optional<PluginSink> pluginSink;
     private final OverflowPolicy overflowPolicy;
+    private final RetryPolicy retry;
 
     public ChannelDescriptor(
             @Nonnull String name,
@@ -33,7 +35,8 @@ public final class ChannelDescriptor {
             @Nonnull Class<?> payloadType,
             @Nonnull Optional<Function<Object, byte[]>> pluginSerializer,
             @Nonnull Optional<PluginSink> pluginSink,
-            @Nonnull OverflowPolicy overflowPolicy) {
+            @Nonnull OverflowPolicy overflowPolicy,
+            @Nonnull RetryPolicy retry) {
         this.name = name;
         this.kind = kind;
         this.producer = producer;
@@ -43,6 +46,7 @@ public final class ChannelDescriptor {
         this.pluginSerializer = pluginSerializer;
         this.pluginSink = pluginSink;
         this.overflowPolicy = overflowPolicy;
+        this.retry = retry;
     }
 
     @Nonnull
@@ -98,5 +102,14 @@ public final class ChannelDescriptor {
     @Nonnull
     public OverflowPolicy overflowPolicy() {
         return overflowPolicy;
+    }
+
+    /**
+     * Retry-then-park policy applied by this channel's consumer dispatchers.
+     * Plugin-bound channels have no SDK-side consumer and ignore this value.
+     */
+    @Nonnull
+    public RetryPolicy retry() {
+        return retry;
     }
 }

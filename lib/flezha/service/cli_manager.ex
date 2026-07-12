@@ -2732,4 +2732,197 @@ defmodule Flezha.Service.CliManager do
     IO.puts(:stderr, "error: #{inspect(reason)}")
     System.halt(1)
   end
+
+  # ---------- Dead-letter queue (platform-dead-letter-queue) ----------
+
+  # How long `dlq replay` waits for a re-park before declaring the replay
+  # successful and removing the entry. A re-park after the grace window
+  # simply creates a fresh entry (same content identity, generation 1).
+  defp dlq_replay_grace_ms() do
+    Application.get_env(:flezha, :dlq, [])[:replay_grace_ms] || 5_000
+  end
+
+  @doc """
+  `flz dlq list [operative]` — parked entries, nearest-to-expiry (oldest)
+  first.
+  """
+  def dlq_list(operative_class \\ "") do
+    filter = if operative_class == "", do: nil, else: operative_class
+    entries = Flezha.Dlq.Store.list(filter)
+
+    if entries == [] do
+      IO.puts("dead-letter queue is empty")
+    else
+      IO.puts(
+        String.pad_trailing("ENTRY", 60) <>
+          String.pad_trailing("SEGMENT", 16) <>
+          String.pad_trailing("CHANNEL", 12) <>
+          String.pad_trailing("GEN", 5) <>
+          String.pad_trailing("AGE", 10) <> "ERROR"
+      )
+
+      Enum.each(entries, fn e ->
+        ref = "#{e["operative_class"]}/#{e["operation_id"]}/#{e["id"]}"
+        age_s = div(System.system_time(:millisecond) - (e["ts_ms"] || 0), 1000)
+
+        IO.puts(
+          String.pad_trailing(ref, 60) <>
+            String.pad_trailing(e["segment_key"] || "", 16) <>
+            String.pad_trailing(e["channel"] || "", 12) <>
+            String.pad_trailing(Integer.to_string(e["generation"] || 1), 5) <>
+            String.pad_trailing("#{age_s}s", 10) <> String.slice(e["error"] || "", 0, 60)
+        )
+      end)
+    end
+  end
+
+  @doc """
+  `flz dlq show <operative/operation/id>` — entry metadata + payload preview.
+  """
+  def dlq_show(entry_ref) do
+    case Flezha.Dlq.Store.get(entry_ref) do
+      {:ok, entry, payload} ->
+        Enum.each(
+          ~w(id operative_class operation_id segment_key channel origin_offset error attempts generation status ts_ms payload_bytes),
+          fn key ->
+            IO.puts(String.pad_trailing(key, 18) <> to_string(inspect(entry[key])))
+          end
+        )
+
+        case payload do
+          nil ->
+            IO.puts("payload            <not byte-representable; entry is not replayable>")
+
+          bytes ->
+            preview = binary_part(bytes, 0, min(byte_size(bytes), 256))
+
+            rendered =
+              if String.printable?(preview),
+                do: preview,
+                else: Base.encode16(preview, case: :lower)
+
+            IO.puts("payload            #{rendered}")
+        end
+
+      {:error, reason} ->
+        render_dlq_error(reason)
+    end
+  end
+
+  @doc """
+  `flz dlq replay <operative/operation/id>` — re-dispatch a parked payload
+  to its operative through the ordinary input path. A successful replay
+  removes the entry; a failing one re-parks it with `generation`
+  incremented (the store correlates on content identity). Replay identity
+  is fresh by construction: the re-drive enters as a NEW input, so a
+  tier-on invocation records fresh WAL seqs — downstream sinks see new
+  `flz.seq` under the current epoch.
+  """
+  def dlq_replay(entry_ref) do
+    with {:ok, entry, payload} <- Flezha.Dlq.Store.get(entry_ref),
+         :ok <- replayable(payload),
+         {:ok, overwatch} <- resolve_overwatch(entry["operative_class"]) do
+      generation_before = entry["generation"] || 1
+      :ok = Flezha.Dlq.Store.mark_replaying(entry_ref)
+
+      :telemetry.execute([:flezha, :dlq, :operator_replay], %{count: 1}, %{
+        entry: entry_ref,
+        channel: entry["channel"],
+        generation: generation_before,
+        caller_source: :cli
+      })
+
+      GenServer.cast(overwatch, {:io_in, payload, %{"channel" => entry["channel"]}})
+      await_replay_outcome(entry_ref, generation_before, dlq_replay_grace_ms())
+    else
+      {:error, reason} -> render_dlq_error(reason)
+    end
+  end
+
+  @doc """
+  `flz dlq drop <operative/operation/id>` — discard a parked entry and its
+  payload. Audited: the drop is deliberate data loss.
+  """
+  def dlq_drop(entry_ref) do
+    case Flezha.Dlq.Store.get(entry_ref) do
+      {:ok, entry, _payload} ->
+        :ok = Flezha.Dlq.Store.drop(entry_ref)
+
+        :telemetry.execute([:flezha, :dlq, :operator_drop], %{count: 1}, %{
+          entry: entry_ref,
+          channel: entry["channel"],
+          segment_key: entry["segment_key"],
+          error: entry["error"],
+          caller_source: :cli
+        })
+
+        IO.puts("dropped #{entry_ref}")
+
+      {:error, reason} ->
+        render_dlq_error(reason)
+    end
+  end
+
+  defp replayable(nil), do: {:error, :payload_not_replayable}
+  defp replayable(_payload), do: :ok
+
+  defp resolve_overwatch(operative_class) do
+    case Flezha.Operative.ClassRegistry.overwatch_pid(operative_class) do
+      {:ok, pid} -> {:ok, pid}
+      :error -> {:error, :operative_not_running}
+    end
+  end
+
+  # Poll for the re-park (generation bump) until the grace window closes;
+  # no re-park within it means the replay processed cleanly.
+  defp await_replay_outcome(entry_ref, _generation_before, remaining_ms)
+       when remaining_ms <= 0 do
+    :ok = Flezha.Dlq.Store.resolve(entry_ref)
+    IO.puts("replay succeeded; #{entry_ref} removed")
+  end
+
+  defp await_replay_outcome(entry_ref, generation_before, remaining_ms) do
+    Process.sleep(100)
+
+    case Flezha.Dlq.Store.get(entry_ref) do
+      {:ok, %{"status" => "parked", "generation" => gen}, _payload}
+      when gen > generation_before ->
+        IO.puts("replay failed; #{entry_ref} re-parked with generation #{gen}")
+
+      {:ok, _entry, _payload} ->
+        await_replay_outcome(entry_ref, generation_before, remaining_ms - 100)
+
+      {:error, :not_found} ->
+        IO.puts("replay succeeded; #{entry_ref} removed")
+    end
+  end
+
+  defp render_dlq_error(:not_found) do
+    IO.puts(:stderr, "error: DLQ entry not found")
+    System.halt(1)
+  end
+
+  defp render_dlq_error(:bad_entry_ref) do
+    IO.puts(:stderr, "error: expected <operative>/<operation>/<entry-id>")
+    System.halt(1)
+  end
+
+  defp render_dlq_error(:payload_not_replayable) do
+    IO.puts(
+      :stderr,
+      "error: entry carries no payload bytes (inter-operation input); inspect or drop it"
+    )
+
+    System.halt(1)
+  end
+
+  defp render_dlq_error(:operative_not_running) do
+    IO.puts(:stderr, "error: the entry's operative is not running; start it before replaying")
+    System.halt(1)
+  end
+
+  defp render_dlq_error(reason) do
+    IO.puts(:stderr, "error: #{inspect(reason)}")
+    System.halt(1)
+  end
 end

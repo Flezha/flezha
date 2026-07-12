@@ -46,6 +46,7 @@ set and the convergence loop re-adds anything missing. See
 | **Bounded operative executor SIGKILL** (durable, the default) | **Brief best-effort loss** (async WAL lag) | At-least-once | Respawns on a new executor, restores committed Segment state via the restore-before-run gate, and **re-runs the operation chain** (Model A — completed ops are idempotent no-ops). See [`bounded_operative.md`](bounded_operative.md). |
 | **Bounded operative executor SIGKILL** (persistence opted out) | **Full — re-runs from the top** | At-least-once | No WAL to restore from; the operative re-runs its `run`/chain from `args`. Idempotent by author contract, or don't opt out. |
 | **Bounded operative SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and **skips** the already-done ones (no forward re-run). |
+| **Poison payload** (operation fails on every retry) | **No loss** | Segment continues | Retry-then-park: after `retry_max` attempts the payload is durably parked to the DLQ store *before* the segment advances (tier off: fsync-then-ack; tier on: one atomic record with the consumed offset). Inspect/replay/drop via `flz dlq`; only retention (30 d / 4 GiB, loud) ever discards a parked payload. See "Dead-letter queue" below. |
 
 ## Why output can briefly get ahead of state (the hard-kill gap)
 
@@ -150,6 +151,44 @@ key + idempotent sink = effectively-once*:
 Non-keyed channels are byte-identical to before and remain plain
 at-least-once. See `docs/sdk_protocol_spec.md` "Output identity stamps"
 and "segment_effect_record".
+
+## Dead-letter queue: poison payloads park, never drop
+
+A permanently-failing (poison) payload in an Unbounded operative is never
+silently discarded (`platform-dead-letter-queue`). A failing invocation —
+returned error or panic/exception, same policy in both SDKs — is retried
+up to the input channel's `retry_max` (default 3 total attempts,
+exponential backoff + jitter; authors classify errors non-retryable via
+`OperationError::non_retryable` / `OperationException.NonRetryable` to
+park immediately). After exhaustion the payload is **durably parked** to
+the controller's DLQ store (`app_data/dlq/<operative_class>/<operation_id>/`,
+JSONL index + payload blobs) and only then does the segment advance:
+
+- **Tier off:** the SDK ships a `park_payload` frame and holds the
+  segment until the controller fsyncs the entry and acks
+  (`ParkPayloadAck`) — park-then-advance, re-sending until acked.
+- **Tier on:** the park rides the invocation's atomic effect record
+  (`{no state change, dlq entry, consumed offset}`), so a crash can never
+  advance the offset while losing the park; the entry materializes from
+  the record after fsync, idempotent on origin identity. Parking advances
+  the consumed offset past the poison payload, so the **min-watermark
+  resumes** — input-log retention proceeds and a credit-parked source
+  loop resumes granting.
+
+Operator surface: `flz dlq list | show | replay | drop`. Replay is
+explicit-only and re-enters the ordinary input path (fresh output
+identity by construction — the replay journals as a new input); a failing
+replay re-parks with `generation` incremented; `drop` is audited.
+Retention bounds the store by age AND total size (defaults 30 d / 4 GiB,
+more restrictive wins); a retention deletion discards already-parked data
+and is deliberately loud (`dlq_dropped_by_retention_total` + a dedicated
+event naming the entry).
+
+**Bounded equivalence:** the DLQ applies to Unbounded operatives only. A
+permanently-failing Bounded segment already has its escape — the
+operation fails, AbortAll fires, and saga compensation unwinds — so
+nothing is written to the DLQ store; configurable `on_segment_failure`
+policies (DeadLetter | MinSuccess) remain deferred.
 
 ## How to avoid loss — operator playbook
 
