@@ -67,6 +67,8 @@ fn register_bounded_all() {
     register_bounded::<OptOutCommitBlockBounded>();
     register_bounded::<TierCommitBlockBounded>();
     register_bounded::<SagaBlockBounded>();
+    register_bounded::<OutboxBlockBounded>();
+    register_bounded::<UndoOutboxBounded>();
 }
 
 // -- EchoBounded -----------------------------------------------------------------
@@ -328,6 +330,101 @@ impl BoundedOperative for SagaBlockBounded {
             .codec()
             .from::<SagaB>()
             .into::<SagaC>();
+    }
+}
+
+// `outbox_block_bounded`: the transactional-outbox fixture
+// (`bounded-staged-commit-and-outbox`). Op A commits durable state AND emits
+// plugin-bound output on a hybrid channel — STAGED, so it reaches the sink only
+// after the controller has journaled and fsynced A's `op_committed` entry (with
+// the output inside it) and flushed the outbox. Op B blocks, so a SIGKILL lands
+// with A committed + flushed and B unfinished.
+struct OutboxBlockBounded;
+impl BoundedOperative for OutboxBlockBounded {
+    fn factory_id() -> &'static str {
+        "outbox_block_bounded"
+    }
+    fn operations(c: &mut ChannelBuilder) {
+        c.input::<String>("in").into::<CommitA>();
+        c.channel::<String>("mid")
+            .codec()
+            .from::<CommitA>()
+            .also_to_plugin_with("outbox_sink", |s: &String| {
+                format!("a-out:{s}").into_bytes()
+            })
+            .into::<BlockB>();
+    }
+}
+
+// `undo_outbox_bounded`: the compensation half of the transactional outbox. Op
+// UA commits, emits its forward output on a hybrid plugin channel, and declares
+// a `compensate` hook that EMITS an undo record — plugin-bound, so it is staged
+// and rides a `compensated` journal entry rather than the wire. Op C fails
+// immediately, so the chain always rolls back; the hook BLOCKS until the release
+// env is set, so on the first executor the undo is emitted-but-never-journaled
+// when the SIGKILL lands — proving staged undo output cannot leak. The resumed
+// executor re-runs the outstanding hook (its done marker never landed) and the
+// undo is delivered exactly once, under its comp-marked key.
+#[derive(Default)]
+struct UndoOutboxA;
+impl Operation for UndoOutboxA {
+    type Input = String;
+    type Output = String;
+    type State = SeenState;
+    type Change = Insert;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "undo_outbox_a"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> SeenState {
+        SeenState::default()
+    }
+    fn apply_change(state: &mut SeenState, change: &Insert) {
+        state.items.insert(change.0.clone());
+    }
+    fn run(
+        &mut self,
+        input: String,
+        mut state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        state.apply(Insert("undo_outbox_a".to_string()));
+        ctx.emit::<String>(input)
+    }
+    const COMPENSATE_OVERRIDDEN: bool = true;
+    // A crash-resumed compensation reconstructs completed stages with EMPTY
+    // outputs (an operation's collected output was never durable), so the undo
+    // record is emitted unconditionally rather than per completed output.
+    fn compensate(
+        &mut self,
+        _out: Vec<std::sync::Arc<String>>,
+        _state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        block_until_released();
+        ctx.emit::<String>("undone".to_string())
+    }
+}
+
+stateless_step!(
+    UndoC,
+    "undo_outbox_c",
+    Err(OperationError::Custom("undo_outbox_c always fails".into()))
+);
+
+struct UndoOutboxBounded;
+impl BoundedOperative for UndoOutboxBounded {
+    fn factory_id() -> &'static str {
+        "undo_outbox_bounded"
+    }
+    fn operations(c: &mut ChannelBuilder) {
+        c.input::<String>("in").into::<UndoOutboxA>();
+        c.channel::<String>("mid")
+            .codec()
+            .from::<UndoOutboxA>()
+            .also_to_plugin_with("undo_sink", |s: &String| format!("out:{s}").into_bytes())
+            .into::<UndoC>();
     }
 }
 

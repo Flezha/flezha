@@ -408,9 +408,12 @@ defmodule Flezha.Operative.Overwatch do
     # The SDK keys per-Segment state by the operative INSTANCE id (== `state.id`),
     # so the WAL lives under `state/{operative_id}/...`. Enumerate by the same key.
     operative_class = Keyword.get(operative_opts, :operative_class, state.id)
+    overwatch = self()
 
     # Off-process: the replay does blocking disk reads, never touches state.
-    spawn(fn -> replay_persisted_segments(state.builder.kind, operative_class, executor_id) end)
+    spawn(fn ->
+      replay_persisted_segments(state.builder.kind, operative_class, executor_id, overwatch)
+    end)
 
     :ok
   end
@@ -418,7 +421,15 @@ defmodule Flezha.Operative.Overwatch do
   # Bind-time restore is capability-gated on `persistent_state?` (kind+class):
   # `:unbounded` always; a durable `:bounded` class (this IS its crash-resume)
   # unless it opted out. A stateless kind has no WAL to replay.
-  defp replay_persisted_segments(kind, operative_class, executor_id) do
+  defp replay_persisted_segments(kind, operative_class, executor_id, overwatch) do
+    # Transactional outbox re-drive (bounded-transactional-outbox): an operation
+    # journaled `op_committed` (or `compensated`) whose outbox never reached the
+    # plugins owes that output. Re-drive it — with the original keys — before the
+    # resumed run advances, so a crash between commit and flush loses nothing.
+    if kind == :bounded do
+      _ = Flezha.State.OpJournal.flush_pending(operative_class, overwatch)
+    end
+
     Enum.each(restorable_segments(kind, operative_class), fn segment_id ->
       _ = dispatch_restore_init_state(executor_id, segment_id)
     end)

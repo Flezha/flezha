@@ -140,6 +140,22 @@ bound) fails the commit with a typed error: keep bulk data in Segment state
 `flz state journal <operative/instance>`; the file shares the instance
 lifecycle (finished-job retention, `flz state delete`, `flz reset`).
 
+**Staged output + transactional outbox.** A durable structured operation's
+plugin-bound output does not reach the wire as it is emitted: each segment
+**stages** it, and it travels in the same `OpCommit` request as the handoff, so
+`op_committed` carries progress AND output in one durable write. The controller
+flushes it to the plugins only after that fsync, stamped with the deterministic
+key `(flz.segment, flz.seq = <op_idx>.<seq_in_op>, flz.epoch)`, and records an
+`outbox_flushed` entry. Consequences: a failed or aborted operation leaks
+**nothing**; a crash between commit and flush re-drives the delivery with
+identical keys on restore (at-least-once with stable keys — a dedup-capable sink
+absorbs it exactly); an already-flushed op is never re-delivered. A
+`compensate` hook's output rides the same path via a `compensated` entry, keyed
+with a trailing `.1` seq component so an undo never collides with the forward
+output it reverses. Full contract:
+`docs/resilience/data_durability.md` "Bounded operatives: staged commit and the
+transactional outbox".
+
 **Compensation precedence on resume.** A shipped compensation-**done** marker
 proves an undo pass was already in flight before the crash, so compensation
 resume wins over journal-gated forward resume; intent markers alone (which

@@ -142,15 +142,60 @@ key + idempotent sink = effectively-once*:
   outputs; data is never dropped — the correct failure mode for the tier.
 - **Bounded operatives** opt in with the same per-record semantics: each
   op's changes + keyed emits form one atomic effect record, and controller
-  re-drives carry identical identity. One boundary: a Model-A crash-resume
-  *re-runs* ops whose records are already durable, re-emitting the same key
-  and (deterministic) payload under a fresh outbox seq — changelog sinks
-  converge, but bounded append-topic header-exactness awaits the bounded
-  op-journal rework (`bounded-staged-commit-and-outbox`).
+  re-drives carry identical identity. Without the tier, a durable
+  structured bounded gets the op-boundary guarantee below instead.
 
 Non-keyed channels are byte-identical to before and remain plain
 at-least-once. See `docs/sdk_protocol_spec.md` "Output identity stamps"
 and "segment_effect_record".
+
+## Bounded operatives: staged commit and the transactional outbox
+
+A **durable structured** bounded operative (operations declared, the
+default `PERSISTENCE_ENABLED`) never lets an operation's plugin output
+escape before that operation is durable.
+
+- **Staged, not emitted.** Inside a structured operation `ctx.emit` does
+  not reach the wire: each segment buffers its serialized plugin-bound
+  output. A failed, aborted, or cancelled operation therefore leaks
+  **nothing** — the staged bytes die with the run. (The `run`-sugar form
+  has no operations, hence no barrier to stage against and no journal
+  entry to gate a flush on; it keeps the direct at-least-once wire path,
+  as do opted-out classes.)
+- **One durable write.** At the barrier the staged outbox travels to the
+  controller inside the `OpCommit` request and is journaled with the
+  operation's completion in ONE `op_committed` record in the instance's
+  `op.journal` (fsynced before the ack). Progress and output cannot tear
+  apart.
+- **Flush after the durable point.** Only once that fsync lands does the
+  controller deliver the entries — in journal order, through the same
+  plugin fan-out live bounded output uses — then record an
+  `outbox_flushed` entry. A delivery that cannot happen yet (operative not
+  bound) is retried; entries are never silently dropped. Compute progress
+  is not coupled to sink health: the next operation runs while the flush
+  lands, because the chain hands data forward through the handoff, never
+  through the sink.
+- **Crash before flush re-drives.** On restore, every `op_committed` (and
+  `compensated`) entry with no matching `outbox_flushed` is re-delivered
+  with its **original keys** before the resumed run advances. An op whose
+  flush IS recorded is never re-delivered.
+- **Keys.** Each flushed frame carries `flz.segment`, `flz.seq`
+  (`<op_idx>.<seq_in_op>`) and `flz.epoch` — the effectively-once output
+  identity shape, minted from the journal, so a keyed sink adapter applies
+  unchanged. The epoch is `0` at first start and stable across crash
+  re-drives (only a future rewind bumps it).
+- **Compensation undo-effects ride the same path.** A `compensate` hook's
+  plugin output is staged per segment, journaled in a `compensated` entry,
+  and flushed after that fsync with a comp-marked key (a trailing `.1` seq
+  component), so an undo can never collide with the forward output it
+  reverses. The per-segment intent/done markers still decide which hooks
+  run on resume.
+
+**Guarantee.** Never lost, never leaked before commit — and **at-least-once
+with stable keys** on the re-drive window (the overlap between a delivery
+and its unwritten `outbox_flushed` marker). A dedup-capable sink absorbs
+that duplicate exactly; without one, a re-driven output can appear twice.
+Inspect what an instance owes with `flz state journal <instance>`.
 
 ## Dead-letter queue: poison payloads park, never drop
 

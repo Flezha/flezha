@@ -59,3 +59,23 @@ For a durable bounded operative, the completion of each operation SHALL be durab
 - **WHEN** a durable bounded operative is compensating C → B → A, crashes after C's compensation is recorded, and is respawned
 - **THEN** it SHALL resume by compensating B then A, and SHALL NOT re-run C's compensation
 
+### Requirement: Compensation undo-effects are delivered durably and keyed
+
+Plugin-bound output emitted by a `compensate` hook SHALL NOT be delivered
+best-effort from the executor for a durable bounded operative; it SHALL be
+staged and delivered through the journal-gated transactional outbox
+(`bounded-transactional-outbox`), so that a crash between a compensation's
+completion and its undo-output delivery re-drives the delivery with stable,
+comp-marked keys. The existing per-segment compensation intent/done markers
+SHALL remain the sole mechanism deciding which hooks run on resume.
+
+#### Scenario: Undo delivery survives a crash
+
+- **WHEN** a compensation hook completes and the process crashes before its undo output reaches the plugin
+- **THEN** after respawn the undo output SHALL be delivered (not lost), with the same comp-marked key, and the hook itself SHALL NOT re-run
+
+#### Scenario: Markers still gate hook execution
+
+- **WHEN** a respawned instance resumes a partially-complete compensation pass
+- **THEN** which hooks run SHALL be decided by the per-segment intent/done markers exactly as before this change
+

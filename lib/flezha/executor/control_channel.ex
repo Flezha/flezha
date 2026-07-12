@@ -19,6 +19,10 @@ defmodule Flezha.Executor.ControlChannel do
   @control_liveness_window_ms 45_000
   @control_liveness_interval_ms 15_000
 
+  # Re-attempt cadence for a journaled outbox whose operative is not bound yet
+  # (mirrors the unbounded outbox's `:outbox_retry` in `Flezha.State.WalWriter`).
+  @op_outbox_retry_ms 1_000
+
   def start_link({namespace, executor_id, stream_ref}) do
     GenServer.start_link(__MODULE__, {namespace, executor_id, stream_ref, nil},
       name: Identificator.control_channel(executor_id)
@@ -232,6 +236,15 @@ defmodule Flezha.Executor.ControlChannel do
     handle_connection_closed(state)
   end
 
+  # Retry a journaled outbox whose operative was not bound when the flush was
+  # first attempted. The journal is the source of truth, so the retry simply
+  # re-runs the same flush; it stops when nothing is owed.
+  @impl true
+  def handle_info({:op_outbox_retry, operative_id}, state) do
+    flush_op_outbox(operative_id)
+    {:noreply, state}
+  end
+
   # Control-plane liveness watchdog. Sustained silence past the window — no
   # inbound frame, not even the SDK keepalive ping — is a process/control-channel
   # wedge UDS never surfaces as EOF. Route through the SAME
@@ -442,32 +455,54 @@ defmodule Flezha.Executor.ControlChannel do
     )
   end
 
-  # Op-boundary commit (bounded-op-journal): append the `op_committed` entry
-  # to the instance's op-journal and fsync BEFORE replying — the ack IS the
-  # durable point the driver gates the next operation on. A failed append
-  # (disk error, oversized handoff) rides back in `error` and terminates the
-  # run abnormally on the SDK side. The append + fsync run in the journal's
+  # Op-boundary commit (bounded-op-journal + bounded-transactional-outbox):
+  # append the `op_committed` entry — segments ran, handoff, AND the operation's
+  # staged outbox in ONE record — and fsync BEFORE replying. The ack IS the
+  # durable point the driver gates the next operation on, and the point past
+  # which the staged output may finally be delivered. A failed append (disk
+  # error, oversized payload) rides back in `error` and terminates the run
+  # abnormally on the SDK side. The append + fsync run in the journal's
   # WalWriter process; op boundaries are coarse, so blocking this channel for
   # one fsync round-trip is acceptable (same posture as the awaited restore).
+  #
+  # `compensating` marks the undo twin: the same handshake carrying a
+  # compensation hook's staged undo output, journaled as a `compensated` entry.
   defp handle_op_commit(state, commit, reference_id) do
     %ExecutorCommands.OpCommit{
       operative_id: operative_id,
       op_idx: op_idx,
       iter: iter,
       segments_ran: segments_ran,
-      handoff: handoff
+      handoff: handoff,
+      outbox: outbox,
+      compensating: compensating
     } = commit
 
+    outbox =
+      Enum.map(outbox, fn %ExecutorCommands.OpOutboxItem{} = item ->
+        %{
+          segment_id: item.segment_id,
+          seq_in_op: item.seq_in_op,
+          channel: item.channel,
+          payload: item.payload
+        }
+      end)
+
     result =
-      Flezha.State.OpJournal.append_op_committed(
-        operative_id,
-        op_idx,
-        iter,
-        segments_ran,
-        Enum.map(handoff, fn %ExecutorCommands.OpHandoffItem{channel_id: cid, payload: bytes} ->
-          {cid, bytes}
-        end)
-      )
+      if compensating do
+        Flezha.State.OpJournal.append_compensated(operative_id, op_idx, iter, outbox)
+      else
+        Flezha.State.OpJournal.append_op_committed(
+          operative_id,
+          op_idx,
+          iter,
+          segments_ran,
+          Enum.map(handoff, fn %ExecutorCommands.OpHandoffItem{channel_id: cid, payload: bytes} ->
+            {cid, bytes}
+          end),
+          outbox
+        )
+      end
 
     error =
       case result do
@@ -477,11 +512,12 @@ defmodule Flezha.Executor.ControlChannel do
 
     :telemetry.execute(
       [:flezha, :state, :op_commit],
-      %{count: 1, handoff_items: length(handoff)},
+      %{count: 1, handoff_items: length(handoff), outbox_items: length(outbox)},
       %{
         namespace: state.namespace,
         operative_id: operative_id,
         op_idx: op_idx,
+        compensating: compensating,
         status: if(error == "", do: :ok, else: :error)
       }
     )
@@ -504,6 +540,26 @@ defmodule Flezha.Executor.ControlChannel do
        }},
       "OpCommitResponse operative=#{inspect(operative_id)} op_idx=#{op_idx}"
     )
+
+    # Flush AFTER the ack (the durable point has passed, so the output may now
+    # be seen). The next operation is free to run while this lands — the chain
+    # hands data forward through the handoff, never through the sink.
+    if error == "", do: flush_op_outbox(operative_id)
+  end
+
+  # Journal-driven flush: everything this instance owes, in journal order, with
+  # the `outbox_flushed` marker written per entry after delivery. An unbound
+  # operative (cold-boot re-drive before the bind lands) retries on a timer;
+  # the journal still owes the entries, so nothing is dropped either way.
+  defp flush_op_outbox(operative_id) do
+    case Flezha.State.OpJournal.flush_pending(operative_id) do
+      :ok ->
+        :ok
+
+      {:error, :no_overwatch} ->
+        Process.send_after(self(), {:op_outbox_retry, operative_id}, @op_outbox_retry_ms)
+        :ok
+    end
   end
 
   # Reply to an SDK-initiated CommandRequest with a controller-emitted

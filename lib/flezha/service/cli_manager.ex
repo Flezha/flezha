@@ -1531,42 +1531,81 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp journal_row(%{type: :op_committed, payload: payload} = entry) do
-    %{
-      seq: entry.seq,
-      type: "op_committed",
-      op_idx: entry.op_idx,
-      iter: entry.iter,
-      segments_ran: Enum.map(payload.segments_ran, &decode_journal_segment/1),
+    entry
+    |> base_journal_row()
+    |> Map.merge(%{
+      segments_ran: Enum.map(payload.segments_ran, &Flezha.State.Wire.segment_label/1),
       handoff_items: length(payload.handoff),
-      handoff_bytes: payload.handoff |> Enum.map(fn {_cid, b} -> byte_size(b) end) |> Enum.sum()
-    }
+      handoff_bytes: payload.handoff |> Enum.map(fn {_cid, b} -> byte_size(b) end) |> Enum.sum(),
+      outbox: journal_outbox(payload.outbox)
+    })
+  end
+
+  defp journal_row(%{type: :compensated, payload: payload} = entry) do
+    entry
+    |> base_journal_row()
+    |> Map.put(:outbox, journal_outbox(payload.outbox))
+  end
+
+  # `for_type` names which entry's outbox this marks delivered — an operation
+  # can have both a forward `op_committed` outbox and a `compensated` undo one.
+  defp journal_row(%{type: :outbox_flushed, payload: %{for_type: for_type}} = entry) do
+    flushes = if for_type == 5, do: "compensated", else: "op_committed"
+
+    entry
+    |> base_journal_row()
+    |> Map.put(:flushes, flushes)
   end
 
   defp journal_row(entry) do
+    entry
+    |> base_journal_row()
+    |> Map.put(:payload_bytes, byte_size(entry.payload))
+  end
+
+  defp base_journal_row(entry) do
     %{
       seq: entry.seq,
       type: Atom.to_string(entry.type),
       op_idx: entry.op_idx,
       iter: entry.iter,
-      segments_ran: [],
-      handoff_items: 0,
-      handoff_bytes: byte_size(entry.payload)
+      epoch: entry.epoch
     }
   end
 
-  defp decode_journal_segment(identity_bytes) do
-    case Flezha.State.Wire.decode_segment_id(identity_bytes) do
-      {:ok, {rc, sh, pk}} -> "#{rc}/#{sh}/#{pk}"
-      {:error, _} -> Base.encode16(identity_bytes, case: :lower)
-    end
+  defp journal_outbox(outbox) do
+    Enum.map(outbox, fn item ->
+      %{
+        segment: Flezha.State.Wire.segment_label(item.segment_id),
+        seq_in_op: item.seq_in_op,
+        channel: item.channel,
+        bytes: byte_size(item.payload)
+      }
+    end)
   end
 
   defp print_journal_row(row) do
-    IO.puts("  seq=#{row.seq} #{row.type} op_idx=#{row.op_idx} iter=#{row.iter}")
+    IO.puts(
+      "  seq=#{row.seq} #{row.type} op_idx=#{row.op_idx} iter=#{row.iter} epoch=#{row.epoch}"
+    )
 
-    Enum.each(row.segments_ran, fn seg -> IO.puts("    ran: #{seg}") end)
+    Enum.each(Map.get(row, :segments_ran, []), fn seg -> IO.puts("    ran: #{seg}") end)
 
-    IO.puts("    handoff: #{row.handoff_items} item(s), #{row.handoff_bytes} byte(s)")
+    if Map.has_key?(row, :handoff_items) do
+      IO.puts("    handoff: #{row.handoff_items} item(s), #{row.handoff_bytes} byte(s)")
+    end
+
+    Enum.each(Map.get(row, :outbox, []), fn item ->
+      IO.puts(
+        "    outbox: #{item.segment} seq_in_op=#{item.seq_in_op} " <>
+          "channel=#{item.channel} #{item.bytes} byte(s)"
+      )
+    end)
+
+    if flushes = Map.get(row, :flushes) do
+      IO.puts("    flushes: #{flushes}")
+    end
+
     IO.puts("")
   end
 

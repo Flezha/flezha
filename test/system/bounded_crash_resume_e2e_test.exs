@@ -54,6 +54,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
+  alias Flezha.State.OpJournal
   alias Flezha.State.Registry
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -181,9 +182,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
           plugins: [sink]
         )
 
-      # Let the resume's final flush land before auditing everything received.
-      Process.sleep(1_000)
-      outputs = drain_tier_outputs([])
+      # The run is already complete; only the final flush's casts are in flight.
+      outputs = await_tier_outputs(1)
 
       assert outputs != [], "no tier output reached the sink"
 
@@ -258,28 +258,248 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     end
   end
 
+  describe "transactional outbox (rust/uds)" do
+    @describetag runtime: :rust, transport: :uds, cell: :rust_uds_outbox
+
+    # The chain's args are the serialized `init_values` the harness starts with.
+    @a_out ~s(a-out:{"seed":"go"})
+    @undo_forward ~s(out:{"seed":"go"})
+
+    # bounded-transactional-outbox: op A's plugin output is STAGED — it reaches
+    # the sink only after the controller journaled A's `op_committed` entry (with
+    # the output inside it) and fsynced. A crash after that flush must not
+    # re-deliver it: the `outbox_flushed` marker gates the restore re-drive.
+    test "staged output is flushed once after its commit and never re-delivered", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+
+      operative_id =
+        drive_crash_resume(
+          ctx,
+          "outbox_block_bounded",
+          "ok",
+          &committed_and_flushed?/1,
+          plugins: [forward_sink("outbox_sink", collector)]
+        )
+
+      delivered = await_outputs(collector, 1)
+
+      assert [{@a_out, md}] = delivered,
+             "op A's staged output must reach the sink exactly once: #{inspect(delivered)}"
+
+      # Minted from the journal: producing segment, op index + per-op sequence,
+      # instance epoch — the effectively-once output-identity shape.
+      assert md["flz.segment"] == "#{operative_id}/commit_a/"
+      assert md["flz.seq"] == "0.0"
+      assert md["flz.epoch"] == "0"
+      assert md["channel"] == "mid"
+
+      assert OpJournal.pending_entries(operative_id) == [],
+             "the instance still owes outbox entries after completing"
+
+      {:ok, entries} = OpJournal.read(operative_id)
+
+      assert Enum.any?(
+               entries,
+               &match?(%{type: :outbox_flushed, op_idx: 0, payload: %{for_type: 1}}, &1)
+             ),
+             "op A's flush was never recorded"
+
+      # Operator surface: the journal renders the outbox and its flush marker.
+      rendered =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Flezha.Service.CliManager.state_journal(operative_id)
+        end)
+
+      assert rendered =~ "outbox: #{operative_id}/commit_a/ seq_in_op=0 channel=mid"
+      assert rendered =~ "flushes: op_committed"
+    end
+
+    # The crash-before-flush window: the `op_committed` record (output inside)
+    # is durable, its `outbox_flushed` marker never landed — exactly what a
+    # controller crash between the commit fsync and the flush leaves behind.
+    # Restore must re-drive the delivery with the ORIGINAL keys.
+    test "a commit whose flush never landed re-drives on restore with identical keys", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+
+      operative_id =
+        drive_crash_resume(
+          ctx,
+          "outbox_block_bounded",
+          "ok",
+          &committed_and_flushed?/1,
+          plugins: [forward_sink("outbox_sink", collector)],
+          before_rebind: &drop_flush_markers/1
+        )
+
+      delivered = await_outputs(collector, 2)
+
+      assert [{@a_out, first}, {@a_out, second}] = delivered,
+             "the un-flushed commit was not re-driven on restore: #{inspect(delivered)}"
+
+      # The key is a pure function of the journal, so the re-drive is byte-exact:
+      # a dedup-capable sink absorbs it, an append sink sees at-least-once.
+      assert identity(first) == identity(second)
+      assert identity(second)["flz.seq"] == "0.0"
+
+      # The re-drive recorded its own flush marker, so it is owed no more.
+      assert OpJournal.pending_entries(operative_id) == []
+    end
+
+    # bounded-operative-saga + outbox: a `compensate` hook's plugin output is
+    # staged too. On the first executor the hook emits and then BLOCKS, so the
+    # SIGKILL lands with the undo emitted but never journaled — it must not leak.
+    # The resumed executor re-runs the outstanding hook (its done marker never
+    # landed), journals the undo in a `compensated` entry, and flushes it once
+    # under a comp-marked key that cannot collide with the forward output.
+    test "a compensation's undo output is staged, journaled, and delivered once", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+
+      operative_id =
+        drive_crash_resume(
+          ctx,
+          "undo_outbox_bounded",
+          "error",
+          &committed_and_flushed?/1,
+          plugins: [forward_sink("undo_sink", collector)]
+        )
+
+      delivered = await_outputs(collector, 2)
+
+      assert [{@undo_forward, forward}, {"out:undone", undo}] = delivered,
+             "expected the forward output then exactly one undo: #{inspect(delivered)}"
+
+      # Same segment, same operation, same per-op sequence — only the comp
+      # marker keeps the undo's key off the forward output it reverses.
+      assert identity(forward)["flz.seq"] == "0.0"
+      assert identity(undo)["flz.seq"] == "0.0.1"
+      assert identity(undo)["flz.segment"] == identity(forward)["flz.segment"]
+
+      {:ok, entries} = OpJournal.read(operative_id)
+
+      assert [%{type: :compensated, op_idx: 0, payload: %{outbox: [_]}}] =
+               Enum.filter(entries, &(&1.type == :compensated)),
+             "the undo output was not journaled exactly once"
+
+      assert Enum.any?(entries, &match?(%{type: :outbox_flushed, payload: %{for_type: 5}}, &1)),
+             "the undo flush was never recorded"
+
+      assert comp_done_count(operative_id) == 1, "the hook ran for exactly one segment"
+      assert OpJournal.pending_entries(operative_id) == []
+    end
+  end
+
+  # The durable mid-run point for the outbox scenarios: op A's boundary is
+  # journaled AND its outbox is recorded flushed (the two are separate records,
+  # so waiting on the commit alone would race the flush).
+  defp committed_and_flushed?(operative_id) do
+    OpJournal.restore_state(operative_id) != nil and
+      OpJournal.pending_entries(operative_id) == []
+  end
+
+  # Roll the journal back to the bytes it held before its first `outbox_flushed`
+  # record: the commit is durable, the flush marker is not. Truncating at a
+  # record boundary is precisely what a crash produces. The live journal writer
+  # is closed first so it does not append past the truncation point.
+  defp drop_flush_markers(operative_id) do
+    {:ok, pid} = Flezha.State.Supervisor.find_or_start(Registry.journal_id(operative_id))
+    Flezha.State.WalWriter.close(pid)
+
+    path = Registry.journal_path(operative_id)
+    bytes = File.read!(path)
+    kept = truncate_at_flush_marker(bytes, 0)
+
+    assert kept < byte_size(bytes), "no outbox_flushed record to drop — the flush never happened"
+    File.write!(path, binary_part(bytes, 0, kept))
+  end
+
+  # Byte offset of the first `outbox_flushed` (entry type 2) record. WAL framing
+  # is `<<seq::64, len::32, body::len, crc::32>>`; the body is a 16-byte header
+  # followed by the journal entry, whose first byte is the type.
+  defp truncate_at_flush_marker(
+         <<_seq::64-big, len::32-big, body::binary-size(len), _crc::32-big, rest::binary>>,
+         offset
+       ) do
+    case body do
+      <<_header::binary-size(16), 2::8, _::binary>> -> offset
+      _ -> truncate_at_flush_marker(rest, offset + 8 + 4 + len + 4)
+    end
+  end
+
+  defp truncate_at_flush_marker(_, offset), do: offset
+
   defp collect_loop(acc) do
     receive do
-      {:message_forward, msg, _md} -> collect_loop([to_string(msg) | acc])
+      {:message_forward, msg, md} -> collect_loop([{to_string(msg), md} | acc])
       {:collected?, from} -> send(from, {:collected, acc}) && collect_loop(acc)
     end
   end
 
-  defp collected(collector) do
+  defp collected(collector), do: collector |> collected_with_meta() |> Enum.map(&elem(&1, 0))
+
+  # Everything the sink received, oldest first, with the frame metadata (the
+  # `flz.*` identity stamps a flushed outbox entry carries).
+  defp collected_with_meta(collector) do
     send(collector, {:collected?, self()})
 
     receive do
-      {:collected, acc} -> acc
+      {:collected, acc} -> Enum.reverse(acc)
     after
       1_000 -> []
     end
   end
+
+  defp forward_sink(id, collector) do
+    %Flezha.Plugin{
+      id: id,
+      namespace: nil,
+      operative_id: nil,
+      provider: Flezha.Plugin.Provider.BeamMsgForward,
+      opts: %{recv_pid: collector, include_metadata: true},
+      subscriptions: [{:on_output, []}]
+    }
+  end
+
+  # The identity a flushed outbox entry is keyed by.
+  defp identity(md), do: Map.take(md, ["flz.segment", "flz.seq", "flz.epoch", "channel"])
 
   defp drain_tier_outputs(acc) do
     receive do
       {:message_forward, msg, md} -> drain_tier_outputs([{to_string(msg), md} | acc])
     after
       0 -> Enum.reverse(acc)
+    end
+  end
+
+  # Wait for the sink to receive at least `count` frames, then settle briefly and
+  # take everything. `drive_crash_resume` already waited for the terminal
+  # completion, so only the final flush's casts are in flight — but under a loaded
+  # box that can take longer than any fixed sleep. The settle window means an
+  # unexpected EXTRA delivery still fails the exact-count assertions.
+  defp await_outputs(collector, count) do
+    wait_until(fn -> length(collected(collector)) >= count end, 30_000)
+    Process.sleep(500)
+    collected_with_meta(collector)
+  end
+
+  # Same deadline-then-settle wait for the tier sink, which forwards into this
+  # process's mailbox rather than a collector.
+  defp await_tier_outputs(count) do
+    deadline = System.monotonic_time(:millisecond) + 30_000
+    await_tier_outputs(drain_tier_outputs([]), count, deadline)
+  end
+
+  defp await_tier_outputs(acc, count, deadline) do
+    cond do
+      length(acc) >= count ->
+        Process.sleep(500)
+        acc ++ drain_tier_outputs([])
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        acc
+
+      true ->
+        Process.sleep(100)
+        await_tier_outputs(acc ++ drain_tier_outputs([]), count, deadline)
     end
   end
 
@@ -290,7 +510,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   # id that becomes true once the durable mid-run point is reached on the first
   # executor (which never completes it — the release env is unset there).
   # Returns the operative id for scenario-specific assertions.
-  defp drive_crash_resume(ctx, factory_id, terminal_status, mid_run?, builder_opts \\ []) do
+  defp drive_crash_resume(ctx, factory_id, terminal_status, mid_run?, opts \\ []) do
+    {before_rebind, builder_opts} = Keyword.pop(opts, :before_rebind)
     namespace = unique("bounded_crash")
     operative_id = unique(factory_id)
     id_path = unique_id_path()
@@ -327,6 +548,10 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
     assert wait_until(fn -> exec_a not in FleetManager.active_executors(namespace) end),
            "dead executor was never evicted after the replacement connected"
+
+    # Scenario hook on the durable state the crash left, before the rebind
+    # (which is what triggers the restore).
+    if before_rebind, do: before_rebind.(operative_id)
 
     force_fresh_rebind(namespace, operative_id)
 

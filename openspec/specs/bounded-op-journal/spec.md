@@ -116,3 +116,23 @@ decoded journal entries.
 
 - **WHEN** an operator runs `flz state journal <operative/instance>` for an instance with journaled commits
 - **THEN** the CLI SHALL list the decoded entries (seq, type, op index, iteration) in order
+
+### Requirement: The op-commit payload carries staged outbox entries
+
+The `OpCommit` request and the `op_committed` journal entry SHALL carry the
+operation's staged outbox entries (`{segment_key, seq_in_op, payload,
+plugin_route}`) in addition to the segments-ran set and the handoff batch. The
+journal frame size guard SHALL apply to the combined payload, with the same
+typed oversized error. The `outbox_flushed` and `compensated` entry types
+(previously reserved) SHALL be written and interpreted as defined by the
+`bounded-transactional-outbox` capability.
+
+#### Scenario: Commit and outbox arrive as one request
+
+- **WHEN** a structured operation with staged outputs reaches its barrier
+- **THEN** a single `OpCommit` request SHALL carry both the handoff batch and the outbox entries, journaled in one `op_committed` entry
+
+#### Scenario: Oversized combined payload is rejected with a typed error
+
+- **WHEN** an operation's handoff plus staged outbox exceeds the journal frame bound
+- **THEN** the commit SHALL fail with the typed oversized error and the run SHALL terminate abnormally

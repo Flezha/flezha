@@ -1415,12 +1415,21 @@ message OpHandoffItem {
     bytes  payload    = 2;   // channel codec bytes of one collected value
 }
 
+message OpOutboxItem {
+    bytes  segment_id = 1;   // wire identity of the producing segment
+    uint32 seq_in_op  = 2;   // that segment's emit order within the operation
+    string channel    = 3;   // producing plugin channel's name
+    bytes  payload    = 4;   // serialized plugin-bound output
+}
+
 message OpCommit {
-    string operative_id           = 1;
-    uint32 op_idx                 = 2;
-    uint32 iter                   = 3;   // 0 for the single-pass chain
-    repeated bytes segments_ran   = 4;   // wire segment identities
+    string operative_id            = 1;
+    uint32 op_idx                  = 2;
+    uint32 iter                    = 3;   // 0 for the single-pass chain
+    repeated bytes segments_ran    = 4;   // wire segment identities
     repeated OpHandoffItem handoff = 5;
+    repeated OpOutboxItem outbox   = 6;   // staged plugin output
+    bool compensating              = 7;   // undo record, not forward progress
 }
 ```
 
@@ -1434,6 +1443,26 @@ reversed like `ExecutorShutdownNotification`: SDK → controller over the
 `OpCommitResponse` — the next operation must not race ahead of the
 committed record. Opted-out classes (`PERSISTENCE_ENABLED = false`)
 skip the handshake entirely.
+
+`outbox` carries the operation's **staged** plugin-bound output
+(`bounded-transactional-outbox`). Inside a structured operation
+`ctx.emit` does not reach the wire: each segment buffers its serialized
+plugin output and it travels here, so a failed or aborted operation
+leaks nothing. The controller journals handoff AND outbox in ONE
+`op_committed` record (they cannot tear apart), and flushes the outbox
+to the bound plugins only after that fsync — see `OpCommitResponse`. The
+frame bound applies to the combined payload: an oversized handoff+outbox
+is refused with the same typed error. The `run`-sugar form (no
+operations, hence no barrier and no journal entry to gate on) keeps the
+direct at-least-once wire path, as do opted-out classes.
+
+`compensating = true` marks the undo twin: a `compensate` hook's staged
+output for the already-committed operation `op_idx`, journaled as a
+`compensated` entry and flushed with comp-marked keys. It is shipped
+BEFORE that segment's `compensation_done` marker, so a crash between the
+two re-runs the (idempotent) hook rather than losing its undo output. The
+per-segment compensation markers remain the sole mechanism deciding
+which hooks run on resume.
 
 ### Control command `OpCommitResponse` (controller → SDK)
 
@@ -1459,6 +1488,36 @@ On crash-resume the journal state ships back on
 are skipped and the first uncommitted operation's input batch is seeded
 from the journaled handoff via the channel codec's decode half. Inspect
 a journal with `flz state journal <operative/instance>`.
+
+**Outbox flush.** The response is the durable point past which the
+operation's staged output may be seen, so the controller flushes it
+immediately AFTER emitting the ack, in journal order, through the same
+`:on_output` plugin fan-out live bounded output uses — stamping each
+frame with the identity below. A successful flush appends an
+`outbox_flushed` entry; a delivery that cannot happen yet (the operative
+is not bound) is retried, never dropped. The next operation is free to
+run while the flush lands: the chain hands data forward through the
+handoff, never through the sink. On restore, every `op_committed` /
+`compensated` entry without a matching `outbox_flushed` is re-driven with
+its original keys before the resumed run advances — so a crash between
+commit and flush duplicates at worst (at-least-once with stable keys) and
+loses nothing.
+
+**Bounded output identity.** Every flushed outbox frame carries the same
+`flz.*` shape the effectively-once tier stamps, minted from the journal:
+
+| Key | Value |
+|---|---|
+| `flz.segment` | `<instance_id>/<operation_name>/<segment_key>` of the producing segment |
+| `flz.seq` | `<op_idx>.<seq_in_op>` — the operation index and the segment's emit order within it |
+| `flz.epoch` | per-instance journal epoch; `0` at first start, carried verbatim across crash re-drives (only a future rewind bumps it) |
+| `channel` | the producing plugin channel's name |
+
+The tuple is a pure function of the journal, so a re-drive replays
+byte-identical stamps. An undo output's `flz.seq` carries a trailing
+`.1` component (`<op_idx>.<seq_in_op>.1`) — the compensation marker —
+so it can never collide with the forward output it reverses while
+remaining a numeric dotted sequence a keyed sink can order.
 
 ### Plugin metadata: output identity stamps (`flz.*`)
 

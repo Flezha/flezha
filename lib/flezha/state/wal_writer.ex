@@ -655,20 +655,18 @@ defmodule Flezha.State.WalWriter do
 
   defp dispatch_one_effect(state, pid, entry) do
     {rc, sh, pk} = state.segment_id
-    segment_label = "#{rc}/#{sh}/#{pk}"
 
     entry.outputs
     |> Enum.with_index()
     |> Enum.each(fn {output, ordinal} ->
-      stamps = %{
-        "channel" => output.channel,
-        "flz.segment" => segment_label,
-        "flz.seq" => "#{entry.seq}.#{ordinal}",
-        "flz.epoch" => Integer.to_string(state.outbox_epoch)
-      }
-
       stamps =
-        if output.key == "", do: stamps, else: Map.put(stamps, "flz.key", output.key)
+        Wire.output_stamps(%{
+          segment: state.segment_id,
+          seq: "#{entry.seq}.#{ordinal}",
+          epoch: state.outbox_epoch,
+          channel: output.channel,
+          key: output.key
+        })
 
       metadata = Map.merge(Map.new(output.metadata), stamps)
       GenServer.cast(pid, {:io_out, output.payload, metadata})

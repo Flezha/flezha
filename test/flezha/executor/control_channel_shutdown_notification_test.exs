@@ -146,7 +146,7 @@ defmodule FlezhaTest.Executor.ControlChannelShutdownNotificationTest do
     <<_payload_id::binary-size(32), _payload_size::32, message_size::32, rest::binary>> =
       framed_payload
 
-    <<message::binary-size(message_size), _metadata_size::16, _metadata::binary>> = rest
+    <<message::binary-size(^message_size), _metadata_size::16, _metadata::binary>> = rest
 
     {:ok, %ExecutorCommands.CommandRequest{} = req} =
       ExecutorCommands.CommandRequest.decode(message)

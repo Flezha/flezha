@@ -146,6 +146,57 @@ defmodule Flezha.State.Wire do
   def decode_segment_id(_), do: {:error, :bad_segment_id}
 
   @doc """
+  Canonical label of a Segment identity — `<operative_class>/<operation_id>/<segment_key>`,
+  the value carried by the `flz.segment` output stamp. Accepts the decoded triple
+  or the on-wire identity bytes (undecodable bytes fall back to lowercase hex, so a
+  corrupt identity is still traceable rather than fatal).
+  """
+  @spec segment_label({binary(), binary(), binary()} | binary()) :: binary()
+  def segment_label({operative_class, operation_id, segment_key}),
+    do: "#{operative_class}/#{operation_id}/#{segment_key}"
+
+  def segment_label(segment_id) when is_binary(segment_id) do
+    case decode_segment_id(segment_id) do
+      {:ok, segment} -> segment_label(segment)
+      {:error, _} -> Base.encode16(segment_id, case: :lower)
+    end
+  end
+
+  @doc """
+  The reserved output-identity metadata stamped on every durable output as it
+  reaches the `:on_output` plugin chain — the ONE definition of the contract a
+  conforming sink deduplicates on (`Flezha.Plugin.Provider.Postgres`,
+  `Flezha.Plugin.Provider.Kafka`).
+
+  Both durable outbox flushes mint it: the unbounded effectively-once tier
+  (`Flezha.State.WalWriter`, `seq` = `<change_seq>.<emit_ordinal>`) and the
+  bounded transactional outbox (`Flezha.State.OpJournal`, `seq` =
+  `<op_idx>.<seq_in_op>`, an undo carrying a trailing `.1`). `seq` is a numeric
+  dotted sequence so a sink can order it; `key` is omitted when the output
+  carries no natural key.
+  """
+  @spec output_stamps(%{
+          required(:segment) => {binary(), binary(), binary()} | binary(),
+          required(:seq) => binary(),
+          required(:epoch) => non_neg_integer(),
+          required(:channel) => binary(),
+          optional(:key) => binary()
+        }) :: %{binary() => binary()}
+  def output_stamps(identity) do
+    stamps = %{
+      "channel" => identity.channel,
+      "flz.segment" => segment_label(identity.segment),
+      "flz.seq" => identity.seq,
+      "flz.epoch" => Integer.to_string(identity.epoch)
+    }
+
+    case Map.get(identity, :key) do
+      key when is_binary(key) and key != "" -> Map.put(stamps, "flz.key", key)
+      _ -> stamps
+    end
+  end
+
+  @doc """
   Decode an inbound `segment_state_change` / `segment_state_snapshot`
   frame.
 

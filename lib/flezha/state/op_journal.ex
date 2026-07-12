@@ -1,88 +1,189 @@
 defmodule Flezha.State.OpJournal do
   @moduledoc """
   Per-instance append-only op-progress journal for durable structured
-  bounded operatives (`bounded-op-journal`).
+  bounded operatives (`bounded-op-journal`) and their transactional outbox
+  (`bounded-transactional-outbox`).
 
   One `op.journal` per instance at
   `<state_root>/<instance_id>/<instance_id>/op.journal`, written through the
   existing `WalWriter` framing + `FsyncBatcher` path under the reserved
   identity `Registry.journal_id/1` — no parallel persistence machinery. Each
-  WAL record's change-bytes carry one typed journal entry:
+  WAL record's change-bytes carry one typed journal entry, and its 16-byte
+  record header carries the instance epoch:
 
   ```
-  [type: u8][op_idx: u16 BE][iter: u32 BE][payload]
+  header: [epoch: u32 BE][0: 96 bits]
+  body:   [type: u8][op_idx: u16 BE][iter: u32 BE][payload]
   ```
 
-  Shipped entry type: `1 = op_committed` (payload = wire segment identities
-  that ran + the serialized inter-op handoff batch). Types `2..5`
-  (`outbox_flushed`, `iter_committed`, `parked`, `compensated`) are reserved
-  for the staged-commit / durable-loop follow-ups: the decoder surfaces them
-  with a raw payload instead of crashing. Torn tails are truncated by the
-  `WalWriter` open scan; the read path stops at the first invalid record.
+  Entry types: `1 = op_committed` (the segments that ran, the serialized
+  inter-op handoff, and the operation's staged outbox — ONE durable write),
+  `2 = outbox_flushed` (that outbox reached the plugins), `5 = compensated`
+  (a compensation hook's undo outbox). Types `3..4` (`iter_committed`,
+  `parked`) stay reserved for the durable-loop follow-up: the decoder
+  surfaces them with a raw payload instead of crashing. Torn tails are
+  truncated by the `WalWriter` open scan; the read path stops at the first
+  invalid record.
 
-  `op_committed` payload:
+  Payloads:
 
   ```
-  [n_segments: u16 BE] n × ([len: u16 BE][segment_identity_bytes])
-  [n_items: u32 BE]    n × ([channel_id: u32 BE][len: u32 BE][payload_bytes])
+  op_committed:   [n_segments: u16 BE] n × ([len: u16 BE][segment_identity])
+                  [n_items: u32 BE]    n × ([channel_id: u32 BE][len: u32 BE][payload])
+                  [outbox]
+  compensated:    [outbox]
+  outbox_flushed: [for_type: u8]   # which entry type's outbox was flushed
+  outbox:         [n: u32 BE] n × ([len: u16 BE][segment_identity][seq_in_op: u32 BE]
+                                   [len: u16 BE][channel][len: u32 BE][payload])
   ```
+
+  ## Flush
+
+  An operation's plugin-bound output is staged in the executor and journaled
+  WITH its commit, so progress and outbox cannot tear apart. Delivery happens
+  only after that fsync, through the same `:on_output` fan-out an unbounded
+  operative's effectively-once outbox uses, stamped with the deterministic key
+  `(segment, op_idx, seq_in_op, epoch)`. `flush_pending/1` is the single flush
+  path — driven post-ack by the `ControlChannel` and again on restore, it reads
+  the journal, delivers every entry with no matching `outbox_flushed`, and
+  records the flush. Journal state (not memory) decides what is owed, so a
+  crash between commit and flush re-drives with identical keys.
   """
 
-  alias Flezha.State.{Registry, Supervisor, WalWriter}
+  require Logger
+
+  alias Flezha.Operative.ClassRegistry
+  alias Flezha.State.{Registry, Supervisor, WalWriter, Wire}
 
   @type_op_committed 1
+  @type_outbox_flushed 2
+  @type_compensated 5
   @reserved_types %{
-    2 => :outbox_flushed,
     3 => :iter_committed,
-    4 => :parked,
-    5 => :compensated
+    4 => :parked
+  }
+  @entry_types %{
+    @type_op_committed => :op_committed,
+    @type_outbox_flushed => :outbox_flushed,
+    @type_compensated => :compensated
   }
 
-  @zero_header <<0::128>>
+  @type outbox_entry :: %{
+          segment_id: binary(),
+          seq_in_op: non_neg_integer(),
+          channel: binary(),
+          payload: binary()
+        }
 
   @type handoff_item :: {channel_id :: non_neg_integer(), payload :: binary()}
 
   @type entry :: %{
           seq: non_neg_integer(),
+          epoch: non_neg_integer(),
           type: :op_committed | :outbox_flushed | :iter_committed | :parked | :compensated,
           op_idx: non_neg_integer(),
           iter: non_neg_integer(),
           payload:
-            %{segments_ran: [binary()], handoff: [handoff_item()]}
+            %{segments_ran: [binary()], handoff: [handoff_item()], outbox: [outbox_entry()]}
+            | %{outbox: [outbox_entry()]}
+            | %{for_type: non_neg_integer()}
             | binary()
         }
 
   @doc """
-  Append one `op_committed` entry and make it durable (fsync) before
-  returning — the caller replies `OpCommitResponse` only on `:ok`. An entry
-  whose encoded body exceeds `max_entry_bytes/0` is refused with
-  `{:error, {:oversized_handoff, size, max}}` (keep bulk data in Segment
-  state, which is already WAL-durable, and hand off references).
+  Append one `op_committed` entry — segments ran, inter-op handoff, and the
+  operation's staged outbox in ONE record — and make it durable (fsync) before
+  returning; the caller replies `OpCommitResponse` only on `:ok`. An entry whose
+  encoded body exceeds `max_entry_bytes/0` is refused with
+  `{:error, {:oversized_handoff, size, max}}` (keep bulk data in Segment state,
+  which is already WAL-durable, and hand off references).
   """
   @spec append_op_committed(
           binary(),
           non_neg_integer(),
           non_neg_integer(),
           [binary()],
-          [handoff_item()]
+          [handoff_item()],
+          [outbox_entry()]
         ) :: :ok | {:error, term()}
-  def append_op_committed(instance_id, op_idx, iter, segments_ran, handoff)
+  def append_op_committed(instance_id, op_idx, iter, segments_ran, handoff, outbox \\ [])
       when is_binary(instance_id) and is_integer(op_idx) and op_idx >= 0 do
-    body = encode_entry(@type_op_committed, op_idx, iter, encode_payload(segments_ran, handoff))
-    max = max_entry_bytes()
+    append(
+      instance_id,
+      @type_op_committed,
+      op_idx,
+      iter,
+      [encode_committed_payload(segments_ran, handoff), encode_outbox(outbox)]
+    )
+  end
 
-    if byte_size(body) > max do
-      {:error, {:oversized_handoff, byte_size(body), max}}
-    else
-      with {:ok, pid} <- Supervisor.find_or_start(Registry.journal_id(instance_id)),
-           seq = WalWriter.last_persisted_seq(pid) + 1,
-           :ok <- WalWriter.append(pid, seq, @zero_header, body) do
-        WalWriter.fsync(pid)
-      else
-        {:error, _} = err -> err
-        other -> {:error, {:journal_append_failed, other}}
-      end
+  @doc """
+  Append one `compensated` entry carrying a compensation hook's undo outbox,
+  durable before the reply. Its outputs are flushed with comp-marked keys, so
+  an undo can never collide with the forward output it reverses.
+  """
+  @spec append_compensated(binary(), non_neg_integer(), non_neg_integer(), [outbox_entry()]) ::
+          :ok | {:error, term()}
+  def append_compensated(instance_id, op_idx, iter, outbox) when is_binary(instance_id) do
+    append(instance_id, @type_compensated, op_idx, iter, encode_outbox(outbox))
+  end
+
+  @doc """
+  Deliver every journaled outbox entry this instance still owes, in journal
+  order, and record each delivery with an `outbox_flushed` entry.
+
+  Idempotent and driven purely by journal state: an entry whose flush is already
+  recorded is never re-delivered, and one whose flush is not is re-driven with
+  the original keys. Returns `{:error, :no_overwatch}` when the instance is not
+  (yet) bound — the caller retries; nothing is dropped. `overwatch` may be
+  supplied by a caller that already holds the pid (the restore re-drive, which
+  runs off the Overwatch itself).
+  """
+  @spec flush_pending(binary(), pid() | nil) :: :ok | {:error, term()}
+  def flush_pending(instance_id, overwatch \\ nil) when is_binary(instance_id) do
+    case pending_entries(instance_id) do
+      [] ->
+        :ok
+
+      pending ->
+        with {:ok, pid} <- resolve_overwatch(instance_id, overwatch) do
+          Enum.each(pending, &flush_entry(instance_id, pid, &1))
+        end
     end
+  end
+
+  defp resolve_overwatch(_instance_id, pid) when is_pid(pid), do: {:ok, pid}
+
+  defp resolve_overwatch(instance_id, nil) do
+    case ClassRegistry.overwatch_pid(instance_id) do
+      {:ok, pid} -> {:ok, pid}
+      :error -> {:error, :no_overwatch}
+    end
+  end
+
+  @doc """
+  The entries whose outbox is journaled but not yet recorded flushed, in
+  journal order. An entry carrying no output needs no delivery and is not
+  pending.
+  """
+  @spec pending_entries(binary()) :: [entry()]
+  def pending_entries(instance_id) when is_binary(instance_id) do
+    {:ok, entries} = read(instance_id)
+
+    flushed =
+      for %{type: :outbox_flushed, op_idx: op_idx, iter: iter, payload: %{for_type: for_type}} <-
+            entries,
+          into: MapSet.new(),
+          do: {for_type, op_idx, iter}
+
+    Enum.filter(entries, fn entry ->
+      entry.type in [:op_committed, :compensated] and
+        entry.payload.outbox != [] and
+        not MapSet.member?(
+          flushed,
+          {entry_type_code(entry.type), entry.op_idx, entry.iter}
+        )
+    end)
   end
 
   @doc """
@@ -138,12 +239,116 @@ defmodule Flezha.State.OpJournal do
   end
 
   @doc """
+  The instance's current epoch — part of every flushed output's dedup key.
+  `0` until a rewind bumps it; carried verbatim across crash re-drives, so a
+  re-driven output keys identically to its original delivery.
+  """
+  @spec current_epoch(binary()) :: non_neg_integer()
+  def current_epoch(instance_id) when is_binary(instance_id) do
+    {:ok, entries} = read(instance_id)
+
+    case entries do
+      [] -> 0
+      _ -> List.last(entries).epoch
+    end
+  end
+
+  @doc """
   Journal entry size bound — the WAL soft watermark scale
-  (`:wal_high_watermark_bytes`, default 16 MiB).
+  (`:wal_high_watermark_bytes`, default 16 MiB). Covers the combined
+  handoff + outbox payload.
   """
   @spec max_entry_bytes() :: pos_integer()
   def max_entry_bytes() do
     Application.get_env(:flezha, :wal_high_watermark_bytes, 16 * 1024 * 1024)
+  end
+
+  # ---------- Append ----------
+
+  # `epoch` defaults to the instance's current one (a journal read); a caller
+  # already holding the entry it is marking passes that entry's epoch instead,
+  # which both saves the read and pins the marker to the epoch it flushed.
+  defp append(instance_id, type, op_idx, iter, payload, epoch \\ nil) do
+    body = encode_entry(type, op_idx, iter, payload)
+    max = max_entry_bytes()
+
+    if byte_size(body) > max do
+      {:error, {:oversized_handoff, byte_size(body), max}}
+    else
+      # The epoch rides every record's header, so it survives compaction of any
+      # single entry and is readable without interpreting a payload.
+      header = <<epoch || current_epoch(instance_id)::32-big, 0::96>>
+
+      with {:ok, pid} <- Supervisor.find_or_start(Registry.journal_id(instance_id)),
+           seq = WalWriter.last_persisted_seq(pid) + 1,
+           :ok <- WalWriter.append(pid, seq, header, body) do
+        WalWriter.fsync(pid)
+      else
+        {:error, _} = err -> err
+        other -> {:error, {:journal_append_failed, other}}
+      end
+    end
+  end
+
+  # ---------- Flush ----------
+
+  # Deliver one journaled entry's outbox through the operative's `:on_output`
+  # chain — the same fan-out `StreamChannel` uses for live bounded output and
+  # `WalWriter` uses for the unbounded effectively-once outbox — then record the
+  # flush. The marker is written only after delivery, so a crash in between
+  # re-drives (at-least-once with identical keys) rather than losing output.
+  defp flush_entry(instance_id, pid, entry) do
+    comp? = entry.type == :compensated
+
+    Enum.each(entry.payload.outbox, fn item ->
+      # An undo output's seq carries a trailing `.1` — the compensation marker —
+      # so it can never collide with the forward output it reverses while staying
+      # a numeric dotted sequence a keyed sink can order.
+      seq = "#{entry.op_idx}.#{item.seq_in_op}"
+
+      stamps =
+        Wire.output_stamps(%{
+          segment: item.segment_id,
+          seq: if(comp?, do: seq <> ".1", else: seq),
+          epoch: entry.epoch,
+          channel: item.channel
+        })
+
+      GenServer.cast(pid, {:io_out, item.payload, stamps})
+    end)
+
+    :telemetry.execute(
+      [:flezha, :state, :op_outbox_flush],
+      %{count: 1, entries: length(entry.payload.outbox)},
+      %{
+        operative_id: instance_id,
+        op_idx: entry.op_idx,
+        epoch: entry.epoch,
+        compensating: comp?
+      }
+    )
+
+    case append(
+           instance_id,
+           @type_outbox_flushed,
+           entry.op_idx,
+           entry.iter,
+           <<entry_type_code(entry.type)::8>>,
+           entry.epoch
+         ) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        # The outbox reached the plugins but the marker did not land: a restore
+        # re-drives this entry. Duplicate delivery with an identical key is the
+        # documented at-least-once posture; losing the marker write silently is
+        # not.
+        Logger.warning(
+          "[op_journal] outbox_flushed append failed instance=#{inspect(instance_id)} " <>
+            "op_idx=#{entry.op_idx}: #{inspect(reason)} — entry will re-drive on restore"
+        )
+    end
   end
 
   # ---------- Entry codec ----------
@@ -156,27 +361,60 @@ defmodule Flezha.State.OpJournal do
   end
 
   @doc false
-  @spec decode_entry(non_neg_integer(), binary()) :: {:ok, entry()} | {:error, term()}
-  def decode_entry(seq, <<type::8, op_idx::16-big, iter::32-big, payload::binary>>) do
-    entry = %{seq: seq, op_idx: op_idx, iter: iter}
+  @spec decode_entry(non_neg_integer(), binary(), non_neg_integer()) ::
+          {:ok, entry()} | {:error, term()}
+  def decode_entry(seq, body, epoch \\ 0)
 
-    cond do
-      type == @type_op_committed ->
-        with {:ok, decoded} <- decode_payload(payload) do
-          {:ok, Map.merge(entry, %{type: :op_committed, payload: decoded})}
-        end
+  def decode_entry(seq, <<type::8, op_idx::16-big, iter::32-big, payload::binary>>, epoch) do
+    entry = %{seq: seq, epoch: epoch, op_idx: op_idx, iter: iter}
 
-      Map.has_key?(@reserved_types, type) ->
-        {:ok, Map.merge(entry, %{type: @reserved_types[type], payload: payload})}
-
-      true ->
-        {:error, {:unknown_entry_type, type}}
+    with {:ok, name} <- entry_type(type),
+         {:ok, decoded} <- decode_payload(name, payload) do
+      {:ok, Map.merge(entry, %{type: name, payload: decoded})}
     end
   end
 
-  def decode_entry(_seq, _short), do: {:error, :short_entry}
+  def decode_entry(_seq, _short, _epoch), do: {:error, :short_entry}
 
-  defp encode_payload(segments_ran, handoff) do
+  defp entry_type(type) do
+    cond do
+      Map.has_key?(@entry_types, type) -> {:ok, @entry_types[type]}
+      Map.has_key?(@reserved_types, type) -> {:ok, @reserved_types[type]}
+      true -> {:error, {:unknown_entry_type, type}}
+    end
+  end
+
+  defp entry_type_code(:op_committed), do: @type_op_committed
+  defp entry_type_code(:compensated), do: @type_compensated
+
+  defp decode_payload(:op_committed, <<n_segments::16-big, rest::binary>>) do
+    with {:ok, segments, rest} <- decode_segments(rest, n_segments, []),
+         <<n_items::32-big, rest::binary>> <- rest,
+         {:ok, handoff, rest} <- decode_handoff(rest, n_items, []),
+         {:ok, outbox, <<>>} <- decode_outbox(rest) do
+      {:ok, %{segments_ran: segments, handoff: handoff, outbox: outbox}}
+    else
+      {:error, _} = err -> err
+      _ -> {:error, :bad_payload}
+    end
+  end
+
+  defp decode_payload(:compensated, payload) do
+    case decode_outbox(payload) do
+      {:ok, outbox, <<>>} -> {:ok, %{outbox: outbox}}
+      _ -> {:error, :bad_payload}
+    end
+  end
+
+  defp decode_payload(:outbox_flushed, <<for_type::8>>), do: {:ok, %{for_type: for_type}}
+
+  # Reserved types (and any shape this build does not know) surface raw.
+  defp decode_payload(name, payload) when name in [:iter_committed, :parked],
+    do: {:ok, payload}
+
+  defp decode_payload(_name, _payload), do: {:error, :bad_payload}
+
+  defp encode_committed_payload(segments_ran, handoff) do
     [
       <<length(segments_ran)::16-big>>,
       Enum.map(segments_ran, fn id -> [<<byte_size(id)::16-big>>, id] end),
@@ -187,18 +425,21 @@ defmodule Flezha.State.OpJournal do
     ]
   end
 
-  defp decode_payload(<<n_segments::16-big, rest::binary>>) do
-    with {:ok, segments, rest} <- decode_segments(rest, n_segments, []),
-         <<n_items::32-big, rest::binary>> <- rest,
-         {:ok, handoff, <<>>} <- decode_handoff(rest, n_items, []) do
-      {:ok, %{segments_ran: segments, handoff: handoff}}
-    else
-      {:error, _} = err -> err
-      _ -> {:error, :bad_payload}
-    end
+  defp encode_outbox(outbox) do
+    [
+      <<length(outbox)::32-big>>,
+      Enum.map(outbox, fn item ->
+        [
+          <<byte_size(item.segment_id)::16-big>>,
+          item.segment_id,
+          <<item.seq_in_op::32-big, byte_size(item.channel)::16-big>>,
+          item.channel,
+          <<byte_size(item.payload)::32-big>>,
+          item.payload
+        ]
+      end)
+    ]
   end
-
-  defp decode_payload(_), do: {:error, :bad_payload}
 
   defp decode_segments(rest, 0, acc), do: {:ok, Enum.reverse(acc), rest}
 
@@ -218,12 +459,36 @@ defmodule Flezha.State.OpJournal do
 
   defp decode_handoff(_, _, _), do: {:error, :bad_payload}
 
+  defp decode_outbox(<<n::32-big, rest::binary>>), do: decode_outbox_items(rest, n, [])
+  defp decode_outbox(_), do: {:error, :bad_payload}
+
+  defp decode_outbox_items(rest, 0, acc), do: {:ok, Enum.reverse(acc), rest}
+
+  defp decode_outbox_items(
+         <<seg_len::16-big, segment_id::binary-size(seg_len), seq_in_op::32-big, chan_len::16-big,
+           channel::binary-size(chan_len), payload_len::32-big, payload::binary-size(payload_len),
+           rest::binary>>,
+         n,
+         acc
+       ) do
+    item = %{
+      segment_id: segment_id,
+      seq_in_op: seq_in_op,
+      channel: channel,
+      payload: payload
+    }
+
+    decode_outbox_items(rest, n - 1, [item | acc])
+  end
+
+  defp decode_outbox_items(_, _, _), do: {:error, :bad_payload}
+
   # ---------- Read scan ----------
 
   defp read_entries(device, position, acc) do
     case WalWriter.decode_record(device, position) do
-      {:ok, seq, _header, body, consumed} ->
-        case decode_entry(seq, body) do
+      {:ok, seq, <<epoch::32-big, _::96>>, body, consumed} ->
+        case decode_entry(seq, body, epoch) do
           {:ok, entry} -> read_entries(device, position + consumed, [entry | acc])
           # An undecodable body is skipped, not fatal: forward-compatibility
           # with entry shapes this build does not know.
