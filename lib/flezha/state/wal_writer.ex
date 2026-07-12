@@ -207,10 +207,10 @@ defmodule Flezha.State.WalWriter do
     with {:ok, <<seq::64-big, len::32-big>>} <- pread(device, position, 12),
          true <- len >= @header_size or {:error, :bad_len},
          {:ok, payload_and_crc} <- pread(device, position + 12, len + 4) do
-      payload_size = len
+      change_len = len - @header_size
 
-      <<header::binary-size(@header_size), change_bytes::binary-size(payload_size - @header_size),
-        crc::32-big>> = payload_and_crc
+      <<header::binary-size(@header_size), change_bytes::binary-size(^change_len), crc::32-big>> =
+        payload_and_crc
 
       computed = :erlang.crc32(<<header::binary, change_bytes::binary>>)
 
@@ -220,9 +220,10 @@ defmodule Flezha.State.WalWriter do
         {:error, :crc_mismatch}
       end
     else
+      # `len >= @header_size or {:error, :bad_len}` yields `true` or the
+      # error tuple, so the tuple clause carries :bad_len too.
       :eof -> {:error, :short_read}
       {:error, _} = err -> err
-      false -> {:error, :bad_len}
     end
   end
 

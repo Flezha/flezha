@@ -16,8 +16,6 @@ defmodule Flezha.AuthZ.AuthState do
 
   use GenServer
 
-  require Logger
-
   alias Flezha.AuthZ.{Config, Store}
 
   @table :flz_authz_state

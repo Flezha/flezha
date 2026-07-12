@@ -18,8 +18,6 @@ defmodule Flezha.Service.PluginManager do
 
   use GenServer
 
-  require Logger
-
   alias Flezha.Plugin
   alias Flezha.Service.RegistryUpdate
   alias Flezha.Service.Identificator

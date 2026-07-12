@@ -12,8 +12,6 @@ defmodule Flezha.Plugin.Installer.Compiler do
   installer's job after it accepts the compile output.
   """
 
-  require Logger
-
   @type beam :: {module(), binary()}
   @type compile_error ::
           {:compile_failed, Path.t(), term()}

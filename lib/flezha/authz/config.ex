@@ -77,5 +77,4 @@ defmodule Flezha.AuthZ.Config do
 
   defp env_truthy?(""), do: false
   defp env_truthy?(v) when is_binary(v), do: String.downcase(v) in ["1", "true", "yes", "on"]
-  defp env_truthy?(_), do: false
 end

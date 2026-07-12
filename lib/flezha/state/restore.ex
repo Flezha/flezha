@@ -88,12 +88,15 @@ defmodule Flezha.State.Restore do
          term_seq
        )
        when len >= @header_size and byte_size(tail) >= len + 4 do
-    <<header::binary-size(@header_size), change::binary-size(len - @header_size), crc::32-big,
+    change_len = len - @header_size
+
+    <<header::binary-size(@header_size), change::binary-size(^change_len), crc::32-big,
       _::binary>> = tail
 
     if :erlang.crc32(<<header::binary, change::binary>>) == crc do
       # Keep the on-disk bytes verbatim rather than re-framing them.
-      <<record::binary-size(12 + len + 4), rest::binary>> = data
+      record_len = 12 + len + 4
+      <<record::binary-size(^record_len), rest::binary>> = data
       acc = if seq > snapshot_seq, do: [record | acc], else: acc
       gather_records(rest, snapshot_seq, acc, max(term_seq, seq))
     else

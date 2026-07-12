@@ -14,8 +14,6 @@ defmodule Flezha.Plugin.Installer.Signature do
   `allow_unsigned`) and emits telemetry for accepted unsigned installs.
   """
 
-  require Logger
-
   @type key :: binary() | String.t()
 
   @doc """

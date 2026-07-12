@@ -78,13 +78,8 @@ defmodule Flezha.State.Supervisor do
     Flezha.State.Registry.delete_files(segment_id)
 
     # A deleted Segment must stop holding the operative's input-log watermark.
-    case segment_id do
-      {operative_class, _, _} ->
-        Flezha.State.InputLog.forget_segment(operative_class, segment_id)
-
-      _ ->
-        :ok
-    end
+    {operative_class, _, _} = segment_id
+    Flezha.State.InputLog.forget_segment(operative_class, segment_id)
 
     {:ok, %{segment_id: segment_id, status: :ok}}
   end

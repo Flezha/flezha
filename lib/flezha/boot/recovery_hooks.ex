@@ -18,8 +18,6 @@ defmodule Flezha.Boot.RecoveryHooks do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
 
-  require Logger
-
   @spec register(atom()) :: :ok
   def register(hub_id) when is_atom(hub_id) do
     case Application.get_env(:flezha, :auto_restore_enabled, true) do

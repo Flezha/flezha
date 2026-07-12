@@ -24,8 +24,6 @@ defmodule Flezha.Plugin.Extension do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
 
-  require Logger
-
   @type run_result :: {:ok, struct()} | {:skip, term()} | {:error, term()} | :ok
 
   @message_handler_task_sup Flezha.Operative.MessageHandlerTaskSup

@@ -48,7 +48,7 @@ defmodule Flezha.Plugin.Provider.Filter do
     cond do
       matches? and inverted -> {:skip, :normal}
       matches? -> {:ok, ctx}
-      not matches? and inverted -> {:ok, ctx}
+      inverted -> {:ok, ctx}
       true -> {:skip, :normal}
     end
   end

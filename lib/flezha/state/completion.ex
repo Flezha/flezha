@@ -19,7 +19,7 @@ defmodule Flezha.State.Completion do
 
   @filename "completion.record"
 
-  @type record :: %{
+  @type t :: %{
           namespace: binary(),
           status: binary(),
           error: binary(),
@@ -39,7 +39,7 @@ defmodule Flezha.State.Completion do
   sees a partial record). Best-effort: logs and returns `:ok` on failure so a
   teardown never crashes on a record write.
   """
-  @spec write(binary(), record()) :: :ok
+  @spec write(binary(), t()) :: :ok
   def write(operative_class, %{} = record) when is_binary(operative_class) do
     dir = Path.join(Registry.state_root(), operative_class)
     final = Path.join(dir, @filename)
@@ -61,7 +61,7 @@ defmodule Flezha.State.Completion do
     end
   end
 
-  @spec read(binary()) :: {:ok, record()} | :error
+  @spec read(binary()) :: {:ok, t()} | :error
   def read(operative_class) when is_binary(operative_class) do
     case File.read(path(operative_class)) do
       {:ok, bin} ->

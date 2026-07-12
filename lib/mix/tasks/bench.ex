@@ -1,6 +1,5 @@
 defmodule Mix.Tasks.Bench do
   use Mix.Task
-  require Logger
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Flezha.Executor.FleetManager

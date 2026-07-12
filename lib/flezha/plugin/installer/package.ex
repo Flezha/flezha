@@ -14,8 +14,6 @@ defmodule Flezha.Plugin.Installer.Package do
   so staging never ends up with a file we're about to refuse later.
   """
 
-  require Logger
-
   @allowed_roots ~w(manifest.exs src CHECKSUMS.sha256 signature.sig)
 
   @type extract_error ::

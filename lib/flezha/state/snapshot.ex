@@ -77,7 +77,7 @@ defmodule Flezha.State.Snapshot do
       {:ok, body} when byte_size(body) >= @header_size + 4 ->
         payload_size = byte_size(body) - @header_size - 4
 
-        <<header::binary-size(@header_size), bytes::binary-size(payload_size), crc::32-big>> =
+        <<header::binary-size(@header_size), bytes::binary-size(^payload_size), crc::32-big>> =
           body
 
         if :erlang.crc32(<<header::binary, bytes::binary>>) == crc do

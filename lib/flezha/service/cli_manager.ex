@@ -371,8 +371,6 @@ defmodule Flezha.Service.CliManager do
     end)
   end
 
-  defp atomize_keys(other), do: other
-
   defp atomize_keyword(map) when is_map(map) do
     Enum.map(map, fn {k, v} -> {(is_binary(k) && String.to_atom(k)) || k, v} end)
   end

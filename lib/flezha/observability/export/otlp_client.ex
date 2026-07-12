@@ -15,8 +15,6 @@ defmodule Flezha.Observability.Export.OtlpClient do
 
   use GenServer
 
-  require Logger
-
   @backoffs_ms [250, 500, 1_000, 2_000, 4_000]
   @max_attempts 5
 

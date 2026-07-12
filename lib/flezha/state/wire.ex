@@ -164,7 +164,7 @@ defmodule Flezha.State.Wire do
           | {:error, term()}
   def decode_frame(<<segment_id_len::16-big, rest::binary>>) do
     case rest do
-      <<segment_id_bytes::binary-size(segment_id_len), seq::64-big,
+      <<segment_id_bytes::binary-size(^segment_id_len), seq::64-big,
         header::binary-size(@header_size), body_len::32-big, body::binary-size(body_len),
         crc::32-big>> ->
         if :erlang.crc32(body) == crc do
@@ -320,7 +320,7 @@ defmodule Flezha.State.Wire do
 
   defp decode_bytes(bin) do
     with {:ok, len, rest} <- decode_varint(bin),
-         <<bytes::binary-size(len), rest::binary>> <- rest do
+         <<bytes::binary-size(^len), rest::binary>> <- rest do
       {:ok, bytes, rest}
     else
       {:error, _} = err -> err
