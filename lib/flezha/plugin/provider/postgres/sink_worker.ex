@@ -338,16 +338,26 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
   # ---------- record decoding ----------
 
-  # Effectively-once tier records carry the durable identity stamps; upsert
-  # key = `flz.key`, falling back to the identity itself for keyless tier
-  # outputs. Unstamped (at-least-once) records get a unique synthetic key —
-  # plain inserts, the monotonicity guard never fires for them.
+  # A record earns the guarded upsert by carrying a replay-stable identity —
+  # a segment and a numeric seq — NOT by carrying an epoch. A `.keyed()` channel
+  # without the effectively-once tier is stamped by the SDK, which cannot mint an
+  # epoch (only the controller's outbox lineage owns one), so gating on the epoch
+  # would drop those records into the unidentified branch with a stable key but no
+  # seq, where the monotonicity guard can never admit a second write for that key.
+  #
+  # An absent epoch is epoch 0, not a sentinel: the outbox lineage starts at 0 and
+  # only a controller-side path (realign, correction, replay) bumps it — and every
+  # one of those stamps the epoch. So seq alone orders a tier-off record correctly.
+  #
+  # Upsert key = `flz.key`, falling back to the identity itself for keyless tier
+  # outputs. Fully unstamped records get a unique synthetic key — plain inserts,
+  # the monotonicity guard never fires for them.
   defp decode_record(msg, metadata) do
     segment = Map.get(metadata, "flz.segment", "")
     seq = Map.get(metadata, "flz.seq", "")
-    epoch = parse_epoch(Map.get(metadata, "flz.epoch"))
+    epoch = parse_epoch(Map.get(metadata, "flz.epoch")) || 0
 
-    if valid_seq?(seq) and segment != "" and is_integer(epoch) do
+    if valid_seq?(seq) and segment != "" do
       key = Map.get(metadata, "flz.key") || "#{segment}/#{seq}"
 
       %{

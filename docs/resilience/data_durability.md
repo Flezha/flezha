@@ -95,6 +95,16 @@ verified by `OperationTestHarness::replay_emits_equal`. In the default
 tier `flz.seq` is **not** an exact append-only dedup handle
 (no-state-change invocations can collide on it).
 
+The SDK cannot mint `flz.epoch` — the epoch belongs to the controller's
+durable outbox lineage — so a keyed record without the tier carries
+`flz.segment`, `flz.seq` and `flz.key` and no epoch. A conforming sink reads
+that as epoch `0` and orders the record by `flz.seq` alone, which is exactly
+the changelog upsert those stamps exist to enable. The one thing it cannot do
+is survive a **regressing** sequence: a Segment that cold-starts without
+pulling a baseline restarts its `change_seq`, and the sink correctly refuses
+the lower identity rather than guess. The epoch — which a WAL realign bumps —
+is what resolves that, and it exists only under the tier.
+
 **Effectively-once tier (opt-in, `effectively_once()` on the operative
 builder).** The built-in upgrade of *at-least-once delivery + deterministic
 key + idempotent sink = effectively-once*:

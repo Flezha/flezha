@@ -37,7 +37,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     %{db: db}
   end
 
-  defp base_opts(extra \\ %{}) do
+  defp base_opts(extra) do
     conn_opts()
     |> Map.new()
     |> Map.merge(%{
@@ -62,6 +62,12 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   defp stamps(segment, seq, epoch, key) do
     %{"flz.segment" => segment, "flz.seq" => seq, "flz.epoch" => epoch, "flz.key" => key}
+  end
+
+  # A `.keyed()` channel WITHOUT the effectively-once tier: the SDK stamps the
+  # identity but cannot mint an epoch — only the controller's outbox lineage owns one.
+  defp keyed_stamps(segment, seq, key) do
+    %{"flz.segment" => segment, "flz.seq" => seq, "flz.key" => key}
   end
 
   test "batch of 3 records commits rows and progress atomically", %{db: db} do
@@ -128,6 +134,82 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
     assert wait_until(fn -> length(rows(db)) == 2 end, 10_000)
     assert progress(db) == []
+  end
+
+  test "a keyed record without the tier updates its row on every emit", %{db: db} do
+    {opts, _pid} = start_provider()
+    segment = "op/keyed_op/BTC-USD"
+
+    emit(opts, "candle-v1", keyed_stamps(segment, "4.0", "k1"))
+    assert wait_until(fn -> rows(db) != [] end, 10_000)
+
+    emit(opts, "candle-v2", keyed_stamps(segment, "5.0", "k1"))
+
+    assert wait_until(fn -> match?([["k1", ^segment, "5.0", 0, "candle-v2", _]], rows(db)) end,
+             10_000
+           ),
+           "a second, newer keyed emit must UPDATE the row — an absent epoch is epoch 0, " <>
+             "not a reason to strip the seq and freeze the row forever"
+
+    # The identity is complete, so the Segment's sink progress advances with it.
+    assert progress(db) == [[segment, "5.0", 0]]
+  end
+
+  test "a keyed record without the tier is still guarded against regression", %{db: db} do
+    {opts, pid} = start_provider()
+    segment = "op/keyed_op/BTC-USD"
+
+    emit(opts, "newer", keyed_stamps(segment, "5.0", "k1"))
+    assert wait_until(fn -> progress(db) == [[segment, "5.0", 0]] end, 10_000)
+    first = {rows(db), progress(db)}
+
+    emit(opts, "older", keyed_stamps(segment, "4.0", "k1"))
+    assert wait_until(fn -> SinkWorker.stats(pid).buffer_len == 0 end, 10_000)
+
+    assert {rows(db), progress(db)} == first,
+           "the monotonicity guard must still refuse a lower seq within epoch 0"
+  end
+
+  test "a tier record outranks a tier-off record for the same key", %{db: db} do
+    {opts, _pid} = start_provider()
+    segment = "op/keyed_op/BTC-USD"
+
+    emit(opts, "tier-off", keyed_stamps(segment, "9.0", "k1"))
+    assert wait_until(fn -> progress(db) == [[segment, "9.0", 0]] end, 10_000)
+
+    # Epoch 1 beats epoch 0 whatever the seq — the operative turned the tier on.
+    emit(opts, "tier-on", stamps(segment, "1.0", "1", "k1"))
+
+    assert wait_until(fn -> match?([["k1", ^segment, "1.0", 1, "tier-on", _]], rows(db)) end,
+             10_000
+           ),
+           "a higher epoch must admit and overwrite regardless of seq"
+  end
+
+  test "a row left degenerate by the epoch gate self-heals on the next emit", %{db: db} do
+    {opts, _pid} = start_provider()
+    segment = "op/keyed_op/BTC-USD"
+
+    # The tables are created on the first flush, so seed one before writing directly.
+    emit(opts, "seed", %{})
+    assert wait_until(fn -> length(rows(db)) == 1 end, 10_000)
+
+    # Exactly what the old classification wrote for a tier-off keyed record: the
+    # stable key, but no segment and no seq — a row nothing could ever update.
+    Postgrex.query!(
+      db,
+      "INSERT INTO flezha_records (key, segment, seq, epoch, payload, updated_at) " <>
+        "VALUES ('k1', '', '', 0, 'stale', now())",
+      []
+    )
+
+    emit(opts, "fresh", keyed_stamps(segment, "1.0", "k1"))
+
+    assert wait_until(
+             fn -> Enum.any?(rows(db), &match?(["k1", ^segment, "1.0", 0, "fresh", _], &1)) end,
+             10_000
+           ),
+           "a non-empty seq array outranks the empty one, so a degenerate row heals itself"
   end
 
   test "auto_create off + missing tables fails health, then retries without loss", %{db: db} do

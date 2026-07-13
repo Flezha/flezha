@@ -4,9 +4,7 @@
 
 Transactional upsert + watermark PostgreSQL sink adapter consuming the
 effectively-once tier (`Flezha.Plugin.Provider.Postgres`).
-
 ## Requirements
-
 ### Requirement: PostgreSQL sink plugin with transactional upsert + watermark
 
 The controller SHALL provide a `postgres` `io_binding` sink plugin
@@ -78,3 +76,60 @@ convergence escalation path covers the sink.
 - **WHEN** no flush transaction has committed within the configured unhealthy
   threshold while batches are pending
 - **THEN** `health/1` reports unhealthy with the failure reason
+
+### Requirement: Record identity is the admission test, not the epoch
+
+A record SHALL be admitted to the identified (guarded) upsert path when it carries a
+**replay-stable identity** — a non-empty `flz.segment` and a numeric dotted
+`flz.seq`. The presence of `flz.epoch` SHALL NOT be part of that test.
+
+An absent `flz.epoch` SHALL resolve to epoch `0`. Zero is the base epoch of the
+controller's outbox lineage, and nothing bumps it outside the effectively-once
+tier, so a record with no epoch is correctly ordered against every other record of
+its key by `seq` alone under the existing `(epoch, seq)` guard.
+
+This admits records emitted on a `.keyed()` channel **without** the effectively-once
+tier — which the SDK stamps with `flz.segment`, `flz.seq` and `flz.key` but not
+`flz.epoch` — into the changelog upsert those stamps exist to enable.
+
+A record carrying neither a segment nor a sequence remains unidentified and SHALL be
+inserted under a unique synthetic key, unchanged.
+
+#### Scenario: A tier-off keyed record updates its row on every emit
+
+- **WHEN** an operative on a `.keyed()` channel without the effectively-once tier
+  emits twice for the same `flz.key`, stamped `flz.seq` `"4.0"` then `"5.0"`, with
+  no `flz.epoch`
+- **THEN** the row for that key holds the second record's payload and `seq = "5.0"`
+
+#### Scenario: A tier-off keyed record is still guarded against regression
+
+- **WHEN** a record stamped `flz.seq` `"4.0"` with no `flz.epoch` arrives for a key
+  whose stored row already holds `seq = "5.0"` at epoch `0`
+- **THEN** the stored row is unchanged
+
+#### Scenario: A tier-on record still outranks a tier-off record for the same key
+
+- **WHEN** a record stamped `flz.epoch = 1` arrives for a key whose stored row holds
+  epoch `0`
+- **THEN** the stored row is overwritten, regardless of either record's `flz.seq`
+
+#### Scenario: A fully unstamped record is still a plain insert
+
+- **WHEN** a record with no `flz.segment` and no `flz.seq` is delivered
+- **THEN** it is inserted under a unique synthetic key and no existing row is
+  touched
+
+#### Scenario: An identified record advances its Segment's progress row
+
+- **WHEN** a tier-off keyed record carrying `flz.segment` and `flz.seq` is committed
+- **THEN** the `flezha_sink_progress` row for that Segment advances to its
+  `(epoch, seq)`, under the same monotonicity guard as the record rows
+
+#### Scenario: A row left degenerate by the epoch gate heals itself
+
+- **WHEN** a row written before this change holds a stable key with an empty segment
+  and an empty seq, and a new identified record arrives for that key
+- **THEN** the row is overwritten, because a non-empty sequence outranks an empty
+  one — no backfill or migration is required
+
