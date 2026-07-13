@@ -3,6 +3,7 @@ package com.flezha.sdk.testing;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.operation.StableId;
 import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.NoChange;
@@ -38,6 +39,18 @@ public final class OperationTestHarness<Input, State, Output, ChangeT extends Ch
 
     private final List<ChangeT> recordedChanges = new ArrayList<>();
     private final List<Object> recordedEmits = new ArrayList<>();
+    private final List<EmitRecord> emitRecords = new ArrayList<>();
+
+    /** Injected clock values, one per successive invocation; empty = ambient wall clock. */
+    private final List<Long> clockScript = new ArrayList<>();
+
+    private int invocation;
+
+    /**
+     * One recorded emit: what was emitted, on which channel, under which key (empty
+     * for a non-keyed emit), with which user metadata.
+     */
+    public record EmitRecord(String channel, String key, Object value, Map<String, String> metadata) {}
 
     private OperationTestHarness(Operation<Input, State, Output, ChangeT, ?, ?> operation, State initialState) {
         this.operation = operation;
@@ -84,7 +97,8 @@ public final class OperationTestHarness<Input, State, Output, ChangeT extends Ch
     public OperationTestHarness<Input, State, Output, ChangeT> applyInputs(@Nonnull Iterable<Input> inputs) {
         for (Input input : inputs) {
             StateHandle<State, ChangeT> handle = StateHandle.create(state, recordedChanges, operation::applyChange);
-            TestOperationCtx ctx = new TestOperationCtx(recordedEmits);
+            TestOperationCtx ctx = new TestOperationCtx(recordedEmits, emitRecords, clockAt(invocation));
+            invocation++;
             try {
                 operation.run(input, handle, ctx);
             } catch (OperationException e) {
@@ -194,33 +208,167 @@ public final class OperationTestHarness<Input, State, Output, ChangeT extends Ch
         return List.copyOf(recordedEmits);
     }
 
+    /** Structured emit log: channel, key, value and metadata per emit. */
+    @Nonnull
+    public List<EmitRecord> emitRecords() {
+        return List.copyOf(emitRecords);
+    }
+
+    /** Pin {@code ctx.now()} to a constant for every invocation. */
+    @Nonnull
+    public OperationTestHarness<Input, State, Output, ChangeT> withWallClock(long fixedMillis) {
+        clockScript.clear();
+        clockScript.add(fixedMillis);
+        return this;
+    }
+
+    /** Serve one clock value per successive invocation; the last value repeats if inputs outrun it. */
+    @Nonnull
+    public OperationTestHarness<Input, State, Output, ChangeT> withWallClockScript(long... millis) {
+        clockScript.clear();
+        for (long m : millis) {
+            clockScript.add(m);
+        }
+        return this;
+    }
+
+    private long clockAt(int n) {
+        if (clockScript.isEmpty()) {
+            return System.currentTimeMillis();
+        }
+        return clockScript.get(Math.min(n, clockScript.size() - 1));
+    }
+
+    /**
+     * Output-side determinism gate — the sibling of {@link #replayEquals()}.
+     *
+     * <p>Re-runs the recorded inputs against a fresh baseline and compares the
+     * resulting emit sequence. Equal emits mean the Operation's OUTPUT is a
+     * deterministic function of its inputs — which {@code replayEquals} alone does
+     * not prove: an Operation can rebuild identical state while emitting a
+     * different key or timestamp each run, and only a keyed sink's idempotence
+     * depends on that not happening.
+     *
+     * <p>An Operation that reads {@code System.currentTimeMillis()} or
+     * {@code UUID.randomUUID()} instead of {@code ctx.now()} / {@code ctx.stableId()}
+     * is exactly what this catches.
+     *
+     * @return empty when the replayed emits match, else a diagnostic
+     */
+    @Nonnull
+    public Optional<String> replayEmitsEqual(@Nonnull Iterable<Input> inputs) {
+        List<EmitRecord> original = List.copyOf(emitRecords);
+
+        // Replay against a fresh baseline, with the clock served identically.
+        List<Object> replayEmits = new ArrayList<>();
+        List<EmitRecord> replayRecords = new ArrayList<>();
+        State fresh = operation.initState(Optional.empty(), Optional.empty());
+        List<ChangeT> replayChanges = new ArrayList<>();
+        int n = 0;
+        for (Input input : inputs) {
+            StateHandle<State, ChangeT> handle = StateHandle.create(fresh, replayChanges, operation::applyChange);
+            TestOperationCtx ctx = new TestOperationCtx(replayEmits, replayRecords, clockAt(n++));
+            try {
+                operation.run(input, handle, ctx);
+            } catch (OperationException e) {
+                // Mirror applyInputs: record what happened and keep going.
+            }
+        }
+
+        if (original.size() != replayRecords.size()) {
+            return Optional.of(
+                    "emit count diverged on replay: original " + original.size() + ", replay " + replayRecords.size());
+        }
+        for (int i = 0; i < original.size(); i++) {
+            if (!original.get(i).equals(replayRecords.get(i))) {
+                return Optional.of(
+                        "emit " + i + " diverged on replay:\n  original: " + original.get(i)
+                                + "\n  replay:   " + replayRecords.get(i)
+                                + "\n(does the Operation read ambient time or randomness instead of ctx.now() / ctx.stableId()?)");
+            }
+        }
+        return Optional.empty();
+    }
+
     /** Internal {@link OperationCtx} that records emits without invoking the wire path. */
     static final class TestOperationCtx implements OperationCtx {
 
-        private final List<Object> recorded;
+        /** Stand-in Segment identity: the harness runs one Operation on one Segment. */
+        private static final byte[] IDENTITY = "harness/op/key".getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
-        TestOperationCtx(List<Object> recorded) {
+        private final List<Object> recorded;
+        private final List<EmitRecord> records;
+        private final long now;
+        private int stableIdOrdinal;
+
+        TestOperationCtx(List<Object> recorded, List<EmitRecord> records, long now) {
             this.recorded = recorded;
+            this.records = records;
+            this.now = now;
+        }
+
+        private void record(String channel, String key, Object value, Map<String, String> meta) {
+            recorded.add(value);
+            records.add(new EmitRecord(channel, key, value, meta == null ? Map.of() : Map.copyOf(meta)));
+        }
+
+        @Override
+        public long now() {
+            return now;
+        }
+
+        /** No-op: the harness drives one Operation directly, with no durable interval to close. */
+        @Override
+        public void checkpoint() {}
+
+        @Override
+        @Nonnull
+        public StableId stableId() {
+            return StableId.derive(IDENTITY, 0L, stableIdOrdinal++);
         }
 
         @Override
         public <C> void emit(@Nonnull C value) {
-            recorded.add(value);
+            record("", "", value, Map.of());
         }
 
         @Override
         public <C> void emit(@Nonnull String channel, @Nonnull C value) {
-            recorded.add(value);
+            record(channel, "", value, Map.of());
         }
 
         @Override
-        public <C> void emitWithMeta(@Nonnull C value, @Nonnull Map<String, String> meta) {
-            recorded.add(value);
+        public <C> void emitWithMeta(@Nonnull C value, @Nonnull Map<String, String> meta) throws OperationException {
+            rejectReserved(meta);
+            record("", "", value, meta);
         }
 
         @Override
-        public <C> void emitWithMeta(@Nonnull String channel, @Nonnull C value, @Nonnull Map<String, String> meta) {
-            recorded.add(value);
+        public <C> void emitWithMeta(@Nonnull String channel, @Nonnull C value, @Nonnull Map<String, String> meta)
+                throws OperationException {
+            rejectReserved(meta);
+            record(channel, "", value, meta);
+        }
+
+        @Override
+        public <C> void emitKeyed(@Nonnull String key, @Nonnull C value) {
+            record("", key, value, Map.of());
+        }
+
+        @Override
+        public <C> void emitKeyedWithMeta(@Nonnull String key, @Nonnull C value, @Nonnull Map<String, String> meta)
+                throws OperationException {
+            rejectReserved(meta);
+            record("", key, value, meta);
+        }
+
+        /** Mirror the runtime: a user key in the runtime's namespace is refused, not dropped. */
+        private static void rejectReserved(Map<String, String> meta) throws OperationException {
+            for (String k : meta.keySet()) {
+                if (k.startsWith(OperationCtx.RESERVED_METADATA_PREFIX)) {
+                    throw new OperationException.ReservedMetadataKey(k);
+                }
+            }
         }
     }
 

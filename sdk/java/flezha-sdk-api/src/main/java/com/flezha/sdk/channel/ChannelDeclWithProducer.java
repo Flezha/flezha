@@ -70,6 +70,42 @@ public interface ChannelDeclWithProducer<T> {
     ChannelDeclWithProducer<T> onFull(@Nonnull OverflowPolicy policy);
 
     /**
+     * Declare that emits on this channel carry a natural key, supplied via
+     * {@code ctx.emitKeyed(key, value)}. The runtime stamps {@code flz.key} on
+     * the plugin frame, which is what lets a keyed sink absorb a replayed emit
+     * as an idempotent upsert rather than a duplicate row.
+     *
+     * <p>Requires a plugin wire ({@code toPlugin} or {@code alsoToPluginWith}) —
+     * a key has nowhere to ride on a pure inter-operation channel, so declaring
+     * one is rejected at {@code registerUnbounded(...)} time with
+     * {@link com.flezha.sdk.operative.UnboundedOperativeConfigurationException#keyedChannelWithoutPluginWire(String)}.
+     *
+     * <p>Once declared, a plain {@code ctx.emit(...)} on this channel throws
+     * {@link com.flezha.sdk.operation.OperationException.KeyRequiredOnKeyedChannel}:
+     * the declaration is the single source of truth for whether a key is required.
+     */
+    @Nonnull
+    ChannelDeclWithProducer<T> keyed();
+
+    /**
+     * Declare a codec for this inter-operation channel's payload, using the
+     * SDK's default JSON serialization.
+     *
+     * <p><b>Required</b> on every inter-operation channel of a durable structured
+     * bounded Operative: the handoff between two operations is journaled at the
+     * op barrier, and a crash-resumed run re-seeds the next operation FROM that
+     * journaled blob. Without a codec there is nothing to journal, so the resume
+     * would have to re-run the whole chain from the top. Registration fails with
+     * {@code MissingInterOpCodec} naming the channel.
+     */
+    @Nonnull
+    ChannelDeclWithProducer<T> codec();
+
+    /** {@link #codec()} with an explicit encoder/decoder pair. */
+    @Nonnull
+    ChannelDeclWithProducer<T> codecWith(@Nonnull Function<T, byte[]> encoder, @Nonnull Function<byte[], T> decoder);
+
+    /**
      * Override the consumer-side retry budget (total attempts, default 3)
      * applied before a failing payload is parked to the dead-letter queue.
      */

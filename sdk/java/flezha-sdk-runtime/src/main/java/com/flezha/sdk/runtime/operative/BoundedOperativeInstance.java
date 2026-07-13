@@ -34,6 +34,17 @@ import org.slf4j.LoggerFactory;
  */
 public final class BoundedOperativeInstance implements Operative {
 
+    private volatile com.flezha.sdk.proto.OpJournalState opJournal;
+
+    /**
+     * Offset of the last inbox item the controller journaled for THIS instance
+     * ({@code flz.inbox_offset}). Per-instance by necessity: a process-global
+     * counter would let two concurrent looping instances journal each other's
+     * offsets, so a resumed loop would skip or re-consume inbox items.
+     */
+    private final java.util.concurrent.atomic.AtomicLong consumedInboxOffset =
+            new java.util.concurrent.atomic.AtomicLong();
+
     private static final Logger LOG = LoggerFactory.getLogger(BoundedOperativeInstance.class);
 
     /** Inbox capacity — post-start input frames beyond this are dropped (best-effort). */
@@ -141,6 +152,30 @@ public final class BoundedOperativeInstance implements Operative {
      * gate advances even when an individual apply fails (the frame landed
      * regardless), and never stalls on a corrupt record.
      */
+    /**
+     * The op-journal the controller shipped on {@code RestoreInitState}. Present
+     * only on a crash-resume of a durable structured class; it is what lets the
+     * driver SKIP already-committed operations instead of re-running the chain
+     * from the top.
+     */
+    @Nonnull
+    public java.util.Optional<com.flezha.sdk.proto.OpJournalState> opJournal() {
+        return java.util.Optional.ofNullable(opJournal);
+    }
+
+    public void setOpJournal(@Nonnull com.flezha.sdk.proto.OpJournalState journal) {
+        this.opJournal = journal;
+    }
+
+    /** Record the inbox offset the controller stamped on an inbound loop message. */
+    public void noteInboxOffset(long offset) {
+        consumedInboxOffset.set(offset);
+    }
+
+    public long consumedInboxOffset() {
+        return consumedInboxOffset.get();
+    }
+
     public void noteRestored() {
         restoreGate.countDown();
     }

@@ -1,5 +1,71 @@
 # Flezha repo notes
 
+## Java SDK parity (`java-sdk-parity`)
+
+- **The Java SDK is now at functional parity with Rust.** Every capability an end
+  user can author in Rust — the effectively-once tier, checkpoint ack, late-input
+  correction, the full bounded durable stack (op-journal, staged outbox, durable
+  loop + suspension, segment retry, loop rewind, branching), dynamic segmentation,
+  and the determinism contract — is available in Java. The e2e matrix no longer
+  branches per runtime; there is ONE contract.
+- **The unblocker was `AddOperativeHandler` returning `new byte[0]`.**
+  `AddOperativeResponse.metadata` is the ONE seam `Overwatch.decode_declarations/1`
+  reads. With it empty the controller could not be TOLD a Java class is
+  `effectively_once` / has a `correction_window` / an `ack_granularity` /
+  `compensable_ops` / `leaf_ops` — so every declaration-gated capability was
+  blocked, including ones not yet written. `Declarations.java` builds it now. A
+  class declaring nothing still encodes to **zero bytes** (= "declared nothing"),
+  which is what keeps existing classes byte-identical.
+- **Two codecs coexist by design.** `EffectRecordBody` is postcard (the controller
+  decodes it) but its `changes` elements are the SDK's own bytes — **Kryo** in
+  Java, postcard in Rust — because the controller stores them opaquely and
+  re-ships them on restore. `format_id` discriminates the FRAME kind (2 = effect
+  record), not the change codec.
+- **`Postcard.java`** is the ONE postcard implementation (extracted from
+  `DlqPark`'s private encoder). **`AckRegistry.java`** is the ONE ack rendezvous
+  (`ExecutorShutdownAck`, `ParkPayloadAck`, `OpCommitResponse`,
+  `IterCommitResponse`). Callers MUST register before sending — that ordering is
+  what makes it race-free.
+- **`StableId`** is two longs, not `BigInteger`: the FNV prime is `2^88 + 0x13b`,
+  so the 128-bit multiply is one shift + one `Math.unsignedMultiplyHigh` —
+  allocation-free, which matters on a path called inside `run`. Pinned
+  cross-language on BOTH sides (`determinism.rs` +
+  `StableIdTest`).
+- **Clocks are type-level markers.** `Clock.now()` was deleted — `WallClock.now()`
+  returned ambient `Instant.now()`, an ambient-time trap inside the very type
+  meant to prevent one. The runtime evaluates the declared clock ONCE per
+  invocation via `clockType()` and serves it from `ctx.now()`.
+- **Erasure ⇒ registration-time refusals.** What Rust rejects at compile time (a
+  `TimeExtractor<Input>` bound, `UnservableClock`) Java rejects at registration,
+  with the same error names. Permanent asymmetry, equal safety.
+- **GOTCHA — the topology builder throws its accumulated `errors` BEFORE the
+  descriptor-materialization loop.** A refusal added to that loop is added after
+  the throw point and never fires. Put new refusals in the validation phase.
+- **GOTCHA — never assert on `SegmentSlot.effectBuffer()`.** The background
+  flusher drains it within a ~5 ms linger tick, so such a test passes alone and
+  flakes under load. Use `EffectRecordCapture` (test helper) which captures what
+  actually SHIPPED. `stagedChanges()` IS safe — the flusher deliberately never
+  drains it (an open interval is not flushable).
+- **GOTCHA — a bounded unit test's `WireWriter` IS the controller.** It must (a)
+  `AckRegistry.complete()` every `OpCommit`/`IterCommit` (the driver BLOCKS at each
+  barrier; a silent fake controller hangs it for 30 s), (b) FLUSH each commit's
+  outbox onto the secondary stream (output is staged now — the SDK no longer ships
+  it, so every emit assertion depends on this), and (c) count its completion latch
+  only on `BOUNDED_COMPLETED`.
+- **GOTCHA — classify beyond-window at ADMISSION, not dispatch.** Dispatch is async
+  on the pool, so folding the event-time high-water there means a burst classifies
+  against a mark that has not moved yet.
+- **A park is SUSPENSION, not completion**: `IterPark` exits WITHOUT
+  `BoundedCompleted`. Emitting one would tear the instance down and lose the
+  iteration it parked at.
+- **Branching needed NO planner change**: BFS numbering already makes completion
+  order topological and `planCompensation` already reverses it. What it DID need is
+  per-op input routing — a fan-in must **accumulate** both producers' output, not
+  overwrite.
+- **`data_heartbeat` now carries `dispatches` + `blocked_parks`** (was
+  `credit_parked` only). This was a LIVE operational gap: a wedged Java executor
+  looked healthy to the controller's `StallClassifier`.
+
 ## Checkpoint ack-granularity (`effectively-once-checkpoint-granularity`)
 
 - **The kernel was already checkpoint-capable.** `EffectRecordBody.consumed_offset`
@@ -53,8 +119,8 @@
   catastrophic refute was vacuous: `:catastrophic_dataflow_timeout_ms` defaults to
   60 s and no test armed it), e2e `effectively_once_checkpoint_e2e_test.exs`
   (fixture `checkpoint_store`, `commit:` closes the interval).
-- **Java SDK**: no parity work — it has no effect-record encoder, so it cannot run
-  the tier at all.
+- **Java SDK**: AT PARITY (`java-sdk-parity`) — `EffectRecord` encoder + `c.checkpointAck()`
+  + `ctx.checkpoint()` + the staged interval.
 
 ## Unbounded late-input correction (`unbounded-late-input-correction`)
 
@@ -129,7 +195,7 @@
   reuses `WalWriter.rewrite_keep_seq_gt/2` instead of its own byte-copy.
 - **CLI**: `flz operative replay <operative/operation/key> --from <seq|ts>`.
   Telemetry `[:flezha, :correction, :completed|:refused]`, `[:flezha, :state, :wal_rewind]`.
-- **Java SDK**: no effect-record encoder at all, so no parity work.
+- **Java SDK**: AT PARITY (`java-sdk-parity`) — `c.correctionWindow(ms)` + event-time slice.
 
 ## Bounded loop rewind (`bounded-loop-rewind`)
 
@@ -242,8 +308,7 @@
 - **Docs**: `docs/resilience/bounded_operative.md` "Segment retry: the rung
   before the abort" (incl. the bounded-vs-unbounded escape-ladder split),
   `docs/resilience/data_durability.md` DLQ "Bounded equivalence".
-- **Java SDK**: parity is a separate follow-up (Java bounded still fails on the
-  first segment error).
+- **Java SDK**: AT PARITY (`java-sdk-parity`) — `retryAttempts()` / `retryBackoff()` ladder.
 
 ## Bounded durable loop + suspension (`bounded-durable-loop-and-suspension`)
 
@@ -300,8 +365,7 @@
   hysteresis), `BoundedOperative::wake_after()`.
 - **CLI**: `flz state inbox <instance>`; `flz state journal` renders
   `iter_committed`/`parked`.
-- **Java SDK**: parity is a separate follow-up (Java bounded stays
-  single-pass, no loop/park).
+- **Java SDK**: AT PARITY (`java-sdk-parity`) — `loopMode()` / `wakeAfter()` / `IterCommit` / `IterPark`.
 - **Tests**: `bounded_driver_scenarios` (loop turns → iteration commits +
   park + resume-at-iteration; journal-backed KeepProgress/AllOrNothing),
   `loop_authoring_is_validated`, `test/flezha/state/op_inbox_test.exs`,
@@ -356,7 +420,7 @@
   re-drive with identical keys = truncate journal back to pre-flush bytes),
   `control_channel_op_commit_test.exs` (sync on `:sys.get_state(channel)` —
   the marker append lands after the `:io_out` cast).
-- **Java SDK**: parity is a separate follow-up (still re-runs from top).
+- **Java SDK**: AT PARITY (`java-sdk-parity`) — staged commit + `OpCommit` outbox.
 - **Docs**: `docs/sdk_protocol_spec.md` `OpCommit`/`OpCommitResponse`,
   `docs/resilience/data_durability.md` "Bounded operatives: staged commit
   and the transactional outbox".
@@ -391,8 +455,8 @@
   classes skip journal + handshake entirely (re-run-from-top preserved).
 - **CLI**: `flz state journal <operative/instance>`
   (`CliManager.state_journal/2`).
-- **Java SDK**: parity is a separate follow-up — Java bounded keeps full
-  re-run-from-top (asserted per-runtime in the e2e).
+- **Java SDK**: AT PARITY (`java-sdk-parity`) — `OpCommit` handshake + journal-gated
+  resume-skip. The e2e no longer branches per runtime.
 - **Tests**: `test/flezha/state/op_journal_test.exs`,
   `test/flezha/executor/control_channel_op_commit_test.exs`, Rust
   `bounded_driver_scenarios` (gating + resume-skip + codec validation),

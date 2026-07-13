@@ -33,6 +33,9 @@ public final class BoundedSpec {
     private final Optional<Duration> maxDuration;
     private final RollbackMode rollbackMode;
     private final boolean persistenceEnabled;
+    private final com.flezha.sdk.bounded.LoopMode loopMode;
+    private final com.flezha.sdk.channel.RetryPolicy retry;
+    private final Optional<Duration> wakeAfter;
 
     private BoundedSpec(
             String factoryId,
@@ -41,7 +44,13 @@ public final class BoundedSpec {
             List<Integer> chain,
             Optional<Duration> maxDuration,
             RollbackMode rollbackMode,
-            boolean persistenceEnabled) {
+            boolean persistenceEnabled,
+            com.flezha.sdk.bounded.LoopMode loopMode,
+            Optional<Duration> wakeAfter,
+            com.flezha.sdk.channel.RetryPolicy retry) {
+        this.retry = retry;
+        this.loopMode = loopMode;
+        this.wakeAfter = wakeAfter;
         this.factoryId = factoryId;
         this.operativeClass = operativeClass;
         this.topology = topology;
@@ -85,6 +94,28 @@ public final class BoundedSpec {
     }
 
     /** Class-level persistence toggle; when true, a structured bounded's Changes are flushed to the WAL. */
+    /**
+     * The failing-segment retry ladder. Resolved onto the SAME
+     * {@link com.flezha.sdk.channel.RetryPolicy} the unbounded dead-letter ladder
+     * uses, so both share one backoff implementation.
+     */
+    @Nonnull
+    public com.flezha.sdk.channel.RetryPolicy retry() {
+        return retry;
+    }
+
+    /** How many times this class runs its chain. */
+    @Nonnull
+    public com.flezha.sdk.bounded.LoopMode loopMode() {
+        return loopMode;
+    }
+
+    /** How long a parked instance sleeps before the controller wakes it. */
+    @Nonnull
+    public Optional<Duration> wakeAfter() {
+        return wakeAfter;
+    }
+
     public boolean persistenceEnabled() {
         return persistenceEnabled;
     }
@@ -140,6 +171,12 @@ public final class BoundedSpec {
 
         // No declared operations ⇒ run-sugar.
         if (topology.operations().isEmpty()) {
+            // A loop iterates the CHAIN. Run-sugar has no chain — its `run` body
+            // owns its own control flow, so a declared loop mode has nothing to
+            // iterate and is a contradiction, not a no-op.
+            if (probe.loopMode() != com.flezha.sdk.bounded.LoopMode.ONCE) {
+                throw BoundedOperativeConfigurationException.loopWithoutChain(factoryId);
+            }
             return new BoundedSpec(
                     factoryId,
                     operativeClass,
@@ -147,10 +184,42 @@ public final class BoundedSpec {
                     List.of(),
                     probe.maxDuration(),
                     probe.rollbackMode(),
-                    probe.persistenceEnabled());
+                    probe.persistenceEnabled(),
+                    com.flezha.sdk.bounded.LoopMode.ONCE,
+                    java.util.Optional.empty(),
+                    resolveRetry(factoryId, probe));
         }
 
         List<Integer> chain = linearChain(factoryId, topology);
+
+        // A durable class journals its inter-op handoff at every op barrier, so
+        // every inter-op channel needs a codec. An opted-out class re-runs from
+        // the top by design and needs none.
+        if (probe.persistenceEnabled()) {
+            for (ChannelDescriptor channel : topology.channels()) {
+                boolean interOp = channel.kind() == com.flezha.sdk.channel.ChannelKind.INTER_OPERATION
+                        && !channel.consumers().isEmpty();
+                if (interOp && channel.interOpCodec().isEmpty()) {
+                    throw BoundedOperativeConfigurationException.missingInterOpCodec(factoryId, channel.name());
+                }
+            }
+        }
+
+        // A durable CHAINED loop re-seeds each iteration from the terminal op's
+        // journaled handoff. With no codec there it would re-seed EMPTY on a
+        // crash-resume — which the loop reads as "converged" and stops, silently
+        // truncating the run. Refuse it at registration instead.
+        if (probe.loopMode() == com.flezha.sdk.bounded.LoopMode.CHAINED && probe.persistenceEnabled()) {
+            int terminalOp = chain.get(chain.size() - 1);
+            boolean terminalHasCodec = topology.channels().stream()
+                    .anyMatch(c -> c.producer().isPresent()
+                            && c.producer().getAsInt() == terminalOp
+                            && c.interOpCodec().isPresent());
+            if (!terminalHasCodec) {
+                throw BoundedOperativeConfigurationException.loopTerminalWithoutCodec(factoryId);
+            }
+        }
+
         return new BoundedSpec(
                 factoryId,
                 operativeClass,
@@ -158,7 +227,20 @@ public final class BoundedSpec {
                 chain,
                 probe.maxDuration(),
                 probe.rollbackMode(),
-                probe.persistenceEnabled());
+                probe.persistenceEnabled(),
+                probe.loopMode(),
+                probe.wakeAfter(),
+                resolveRetry(factoryId, probe));
+    }
+
+    /** Resolve the retry ladder, rejecting a hot-spinning zero backoff. */
+    private static com.flezha.sdk.channel.RetryPolicy resolveRetry(String factoryId, BoundedOperative probe) {
+        int attempts = Math.max(1, probe.retryAttempts());
+        long backoffMs = probe.retryBackoff().toMillis();
+        if (attempts > 1 && backoffMs <= 0) {
+            throw BoundedOperativeConfigurationException.zeroRetryBackoff(factoryId);
+        }
+        return new com.flezha.sdk.channel.RetryPolicy(attempts, backoffMs);
     }
 
     /**
@@ -169,7 +251,7 @@ public final class BoundedSpec {
      * a channel's {@code consumers()} are downstream operation ids.
      */
     private static List<Integer> linearChain(String factoryId, UnboundedOperativeTopology topology) {
-        // The entry channel seeds the first operation from the spawn args.
+        // The entry channel seeds the first operation(s) from the spawn args.
         ChannelDescriptor entry = null;
         for (ChannelDescriptor c : topology.channels()) {
             if (c.kind() == ChannelKind.ENTRY) {
@@ -182,22 +264,29 @@ public final class BoundedSpec {
                     + "` declares operations but no entry channel; a structured bounded must declare one input "
                     + "channel (c.input(...)) to seed its first operation");
         }
-        if (entry.consumers().size() != 1) {
-            throw branching(factoryId, "entry channel `" + entry.name() + "`");
+        if (entry.consumers().isEmpty()) {
+            throw new BoundedOperativeConfigurationException(
+                    "bounded operative `" + factoryId + "` declares an entry channel with no consumer");
         }
 
-        List<Integer> chain = new ArrayList<>(topology.operations().size());
+        // Breadth-first from the entry. BFS order IS topological here — an
+        // operation is only enqueued once every producer feeding it has been
+        // visited — which is why branching needs NO change to the compensation
+        // planner: completion order is already topological, and the planner
+        // already reverses it.
+        List<Integer> order = new ArrayList<>(topology.operations().size());
         Set<Integer> seen = new HashSet<>();
-        int current = entry.consumers().get(0);
+        java.util.Deque<Integer> queue = new java.util.ArrayDeque<>(entry.consumers());
 
-        while (true) {
+        while (!queue.isEmpty()) {
+            int current = queue.poll();
             if (!seen.add(current)) {
-                // Re-visiting an operation ⇒ a cycle: not a linear chain.
-                OperationDescriptor op = topology.operation(current);
-                String name = op == null ? "<unknown>" : op.name();
-                throw branching(factoryId, "operation `" + name + "` (cycle)");
+                // Fan-in: two producers feed this operation. Not an error — it just
+                // means it was already scheduled. (Silently OVERWRITING such an edge
+                // is the bug branching has to avoid.)
+                continue;
             }
-            chain.add(current);
+            order.add(current);
 
             OperationDescriptor op = topology.operation(current);
             // Bounded has no dynamic-segments capability.
@@ -207,25 +296,20 @@ public final class BoundedSpec {
                         + "`; bounded operatives do not support dynamic segmentation");
             }
 
-            Integer next = null;
             if (op.outputChannelId().isPresent()) {
                 ChannelDescriptor ch = topology.channel(op.outputChannelId().getAsInt());
                 if (ch != null) {
-                    if (ch.consumers().size() > 1) {
-                        throw branching(factoryId, "operation `" + op.name() + "`");
-                    }
-                    if (!ch.consumers().isEmpty()) {
-                        next = ch.consumers().get(0);
+                    for (int consumer : ch.consumers()) {
+                        if (consumer == current) {
+                            throw branching(factoryId, "operation `" + op.name() + "` (self-cycle)");
+                        }
+                        queue.add(consumer);
                     }
                 }
             }
-            if (next == null) {
-                break;
-            }
-            current = next;
         }
 
-        if (chain.size() != topology.operations().size()) {
+        if (order.size() != topology.operations().size()) {
             String disconnected = "<unknown>";
             for (int i = 0; i < topology.operations().size(); i++) {
                 if (!seen.contains(i)) {
@@ -235,10 +319,10 @@ public final class BoundedSpec {
             }
             throw new BoundedOperativeConfigurationException("bounded operative `" + factoryId
                     + "` declares operation `" + disconnected
-                    + "` that is not reachable from the entry channel; bounded v1 requires one connected linear chain");
+                    + "` that is not reachable from the entry channel");
         }
 
-        return chain;
+        return order;
     }
 
     private static BoundedOperativeConfigurationException branching(String factoryId, String at) {

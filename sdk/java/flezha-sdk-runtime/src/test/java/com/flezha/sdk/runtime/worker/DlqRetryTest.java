@@ -3,6 +3,7 @@ package com.flezha.sdk.runtime.worker;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.channel.ChannelBuilder;
+import com.flezha.sdk.channel.RetryPolicy;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
@@ -200,11 +201,11 @@ class DlqRetryTest {
     @DisplayName("backoff grows exponentially with jitter and respects the cap")
     void backoffGrowsExponentiallyWithJitterAndCap() {
         for (int i = 0; i < 100; i++) {
-            long first = OperationDispatcher.retryBackoffMs(50, 1);
+            long first = new RetryPolicy(3, 50).backoffFor(1);
             assertThat(first).isBetween(25L, 75L);
-            long second = OperationDispatcher.retryBackoffMs(50, 2);
+            long second = new RetryPolicy(3, 50).backoffFor(2);
             assertThat(second).isBetween(50L, 150L);
-            long capped = OperationDispatcher.retryBackoffMs(5_000, 10);
+            long capped = new RetryPolicy(3, 5_000).backoffFor(10);
             assertThat(capped).isLessThanOrEqualTo(5_000L);
         }
     }

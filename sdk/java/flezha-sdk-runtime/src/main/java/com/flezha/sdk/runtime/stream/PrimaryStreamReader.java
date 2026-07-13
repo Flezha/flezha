@@ -11,6 +11,7 @@ import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.worker.OperationDispatcher;
 import java.nio.charset.StandardCharsets;
+import java.util.OptionalLong;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +32,30 @@ public final class PrimaryStreamReader {
 
     private static final Logger LOG = LoggerFactory.getLogger(PrimaryStreamReader.class);
     private static final String CHANNEL_META_KEY = "channel";
+
+    /** Offset of this input in the controller's durable input log (tier only). */
+    private static final String OFFSET_META_KEY = "flz.offset";
+
+    /** Marks an input as a member of a correction replay slice. */
+    private static final String REPLAY_META_KEY = "flz.replay";
+
+    /** Durable inbox offset of a looping bounded operative's message. */
+    private static final String INBOX_OFFSET_META_KEY = "flz.inbox_offset";
+
+    /** Payload-less broadcast closing an open replay slice on every Segment. */
+    private static final String REPLAY_END_META_KEY = "flz.replay_end";
+
+    private static OptionalLong parseOffset(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return OptionalLong.empty();
+        }
+        try {
+            return OptionalLong.of(Long.parseLong(raw));
+        } catch (NumberFormatException e) {
+            LOG.warn("dispatch: unparseable {} `{}`; treating the input as unjournaled", OFFSET_META_KEY, raw);
+            return OptionalLong.empty();
+        }
+    }
 
     private final ExecutorContext ctx;
     private final long streamId;
@@ -64,6 +89,10 @@ public final class PrimaryStreamReader {
         switch (operative) {
             case UnboundedOperativeInstance ri -> instance = ri;
             case BoundedOperativeInstance bounded -> {
+                // The controller stamps the durable inbox offset on a looping
+                // bounded's message; the driver journals it at the iteration
+                // boundary, so a resumed loop does not re-consume it.
+                parseOffset(frame.metadata().get(INBOX_OFFSET_META_KEY)).ifPresent(bounded::noteInboxOffset);
                 if (!bounded.offerInbox(frame.message())) {
                     LOG.warn(
                             "dispatch: inbox frame for bounded `{}` dropped (inbox full / not running)",
@@ -73,6 +102,21 @@ public final class PrimaryStreamReader {
             }
         }
         UnboundedOperativeTopology topology = instance.topology();
+
+        // `flz.replay_end` is a payload-less BROADCAST, intercepted before any
+        // channel lookup. It cannot ride on the last input of the slice: an input
+        // routes to exactly ONE Segment by key, so a marker carried that way would
+        // close one Segment's slice and strand the slice every other Segment
+        // buffered.
+        if (frame.metadata().containsKey(REPLAY_END_META_KEY)) {
+            for (int operationId = 0; operationId < topology.operations().size(); operationId++) {
+                OperationDispatcher dispatcher = instance.dispatcher(operationId);
+                if (dispatcher != null) {
+                    dispatcher.endReplaySliceAllSegments();
+                }
+            }
+            return;
+        }
 
         String channelName = frame.metadata().get(CHANNEL_META_KEY);
         ChannelDescriptor channel = resolveEntryChannel(topology, channelName);
@@ -85,10 +129,16 @@ public final class PrimaryStreamReader {
         }
 
         Object input = wrapInput(channel, frame.message());
+        // The controller stamps `flz.offset` on an input it journaled to the
+        // durable input log. The effectively-once tier acknowledges it in the
+        // same WAL record as the invocation's state and output, which is what
+        // makes the offset advance and the effect atomic.
+        OptionalLong offset = parseOffset(frame.metadata().get(OFFSET_META_KEY));
+        boolean replay = frame.metadata().containsKey(REPLAY_META_KEY);
         for (int consumerOperationId : channel.consumers()) {
             OperationDispatcher dispatcher = instance.dispatcher(consumerOperationId);
             if (dispatcher != null) {
-                dispatcher.fanoutSegments(input, streamId);
+                dispatcher.fanoutSegments(input, streamId, offset, replay);
             }
         }
     }

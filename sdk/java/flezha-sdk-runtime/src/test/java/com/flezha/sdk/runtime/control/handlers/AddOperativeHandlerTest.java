@@ -58,6 +58,33 @@ class AddOperativeHandlerTest {
     }
 
     @Test
+    @DisplayName("an unbounded class declaring nothing replies with zero bytes (pre-declaration behaviour)")
+    void classDeclaringNothingRepliesWithZeroBytes() {
+        UnboundedOperativeRegistry.registerUnbounded(IdempotentUnboundedOperative.class);
+
+        FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
+        ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
+        ctx.setWorkerPool(Executors.newFixedThreadPool(1));
+
+        CommandRequest request = CommandRequest.newBuilder()
+                .setReferenceId("ref")
+                .setAddOperative(AddOperative.newBuilder()
+                        .setOperativeId("declares_nothing_p1")
+                        .setFactoryId(FACTORY_ID)
+                        .build())
+                .build();
+
+        List<String> errors = new ArrayList<>();
+        byte[] rawData = new AddOperativeHandler().handle(ctx, request, errors);
+
+        assertThat(errors).isEmpty();
+        // The controller reads zero bytes as "declared nothing" — a class that
+        // opts into no capability must stay byte-identical to a pre-declaration
+        // build, so turning the map on changes nothing for existing classes.
+        assertThat(rawData).isEmpty();
+    }
+
+    @Test
     @DisplayName("duplicate AddOperative for the same operative_id is a no-op (no panic, no growth)")
     void duplicateAddUnboundedOperativeIsNoOp() {
         UnboundedOperativeRegistry.registerUnbounded(IdempotentUnboundedOperative.class);

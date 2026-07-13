@@ -54,6 +54,16 @@ public final class RestoreInitStateHandler implements CommandHandler {
             return new byte[0];
         }
         RestoreInitState req = request.getRestoreInitState();
+        // The op-journal rides the restore for a durable structured bounded
+        // class. Stash it on the instance BEFORE releasing the resume gate: the
+        // driver reads it to skip already-committed operations, and a driver that
+        // started without it would re-run the chain from the top.
+        if (req.hasOpJournal()) {
+            BoundedLocated owner = findBoundedSegment(ctx, req.getSegmentId().toByteArray());
+            if (owner != null) {
+                owner.instance().setOpJournal(req.getOpJournal());
+            }
+        }
         byte[] segmentId = req.getSegmentId().toByteArray();
         byte[] snapshot = req.getSnapshotBytes().toByteArray();
         byte[] changeLog = req.getChangeLogBytes().toByteArray();
@@ -127,6 +137,13 @@ public final class RestoreInitStateHandler implements CommandHandler {
                     operation, codec, slot.operationKey(), snapshot, changeLog, headerTemplate);
             slot.state().set(rebuilt.state());
             slot.changeSeq().set(rebuilt.terminalSeq() + 1);
+            // Discard any open checkpoint interval: it belongs to a past that no
+            // longer exists. Its inputs were never acknowledged, so the
+            // controller re-forwards them and the interval is rebuilt from
+            // scratch — keeping it would double-apply them.
+            synchronized (slot.changeBufferLock()) {
+                slot.stagedChanges().clear();
+            }
             return rebuilt.terminalSeq();
         } finally {
             slot.stateLock().unlock();

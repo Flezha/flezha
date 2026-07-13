@@ -109,7 +109,12 @@ public final class CommandRouter {
         // SDK is the sender of. Both short-circuit the response write.
         switch (request.getCommandCase()) {
             case EXECUTOR_SHUTDOWN_ACK:
-                GracefulShutdown.signalAck(request.getReferenceId());
+                // The bounded driver blocks on these at its op / iteration barriers;
+                // they carry the originating request's reference_id so the right
+                // waiter wakes.
+            case OP_COMMIT_RESPONSE:
+            case ITER_COMMIT_RESPONSE:
+                AckRegistry.complete(request.getReferenceId());
                 return;
             case EXECUTOR_SHUTDOWN_NOTIFICATION:
                 LOG.warn(

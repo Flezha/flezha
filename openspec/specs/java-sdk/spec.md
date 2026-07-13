@@ -3,9 +3,7 @@
 ## Purpose
 
 Defines the Java SDK for Flezha compute engines: the public API, protocol layer, command dispatch, transport selection, reconnection, the Operative / Operation / Segment runtime, and the JNI bridge to `flz_transport`. Conforms to `docs/sdk_protocol_spec.md`.
-
 ## Requirements
-
 ### Requirement: Java SDK Entry Point
 
 The Java SDK SHALL provide `com.flezha.sdk.Flezha.newInstance(String namespace)` as the single entry point for starting a Flezha compute engine. The call MUST connect to the agent's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2, wait for `AssignExecutorId`, and return a handle exposing `getId()` and `getOperatives()` (where `getOperatives()` returns a snapshot of currently-spawned Operative instances keyed by what the wire calls `operative_id` — see the `Operative Registration` requirement below for naming).
@@ -25,6 +23,10 @@ The Java SDK SHALL provide `com.flezha.sdk.Flezha.newInstance(String namespace)`
 ### Requirement: Operative Registration
 
 The Java SDK SHALL provide `OperativeRegistry.registerUnbounded(Class<? extends UnboundedOperative>)` (and a thin static `Flezha.registerUnbounded(Class<? extends UnboundedOperative>)` pass-through) that MUST be called **before** `Flezha.newInstance`. For each registered UnboundedOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the agent-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel-type, type-equality between channel payload and producer/consumer Operation I/O, no unwired channels, no multi-producer, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry MUST be frozen at `Flezha.newInstance(...)` time. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
+
+Dynamic segmentation SHALL be supported: an Operation that overrides `operationKey(Input)` (signalled by `operationKeyOverridden()` returning `true`) and returns an empty list from `operationKeys()` SHALL register successfully and create Segments lazily per key at dispatch time, per the `operative-state-persistence` dynamic-segmenting behaviour. Eviction SHALL be off by default (`segmentIdleTtl()` returns `Optional.empty()`); when a TTL is declared, the per-Operation reaper SHALL evict idle Segments destructively by shipping `delete_segment_state`, and a recreated Segment SHALL cold-start fresh rather than restore from disk.
+
+Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at registration time, throwing `OperativeConfigurationException` whose message carries the same diagnostic content and the same error name as the corresponding Rust `BuildTopologyError` variant.
 
 #### Scenario: Registering an unbounded operative class before newInstance succeeds
 - **WHEN** user code calls `Flezha.registerUnbounded(MarketOperative.class)` and then `Flezha.newInstance("my_app")`
@@ -54,31 +56,43 @@ The Java SDK SHALL provide `OperativeRegistry.registerUnbounded(Class<? extends 
 - **WHEN** an Operation returns a non-empty list from `operationKeys()` but its `segmentForOverridden()` returns the default `false`
 - **THEN** `registerUnbounded` SHALL throw `OperativeConfigurationException` naming the Operation and stating that static-mode operations must override `segmentFor` and `segmentForOverridden`
 
-#### Scenario: Dynamic-mode-only declaration is rejected in v1
-- **WHEN** an Operation returns `true` from `operationKeyOverridden()` but returns an empty list from `operationKeys()`
-- **THEN** `registerUnbounded` SHALL throw `OperativeConfigurationException` stating that dynamic-mode requires `operationKeys()` until `operative-dynamic-segmenting` ships
+#### Scenario: Dynamic-mode operation registers and creates segments lazily
+- **WHEN** an Operation returns `true` from `operationKeyOverridden()` and an empty list from `operationKeys()`, and two inputs arrive whose `operationKey(input)` returns `"BTC"` and `"ETH"`
+- **THEN** `registerUnbounded` SHALL succeed, and the runtime SHALL lazily allocate exactly two Segments keyed `"BTC"` and `"ETH"`, each constructed with `initState(Optional.of(key), Optional.empty())`
+
+#### Scenario: Idle dynamic segment is evicted destructively when a TTL is declared
+- **WHEN** an Operation declares `segmentIdleTtl()` returning `Optional.of(Duration.ofSeconds(30))` and a dynamic Segment receives no input for longer than that TTL
+- **THEN** the reaper SHALL ship `delete_segment_state` for that Segment and drop it; a later input for the same key SHALL cold-start a fresh Segment via `initState(Optional.of(key), Optional.empty())` without restoring prior state
 
 ### Requirement: Operation Interface and Per-Segment Dispatch
 
-The Java SDK SHALL expose a generic `Operation<Input, State, Output>` interface in `com.flezha.sdk.operation`. Implementers SHALL provide `name()`, `inputType() → Class<Input>`, `outputType() → Class<Output>`, `initState(Optional<String> operationKey) → State`, and `run(Input, State, OperationCtx) throws OperationException`. The default-method overrides `operationKeys()`, `segmentFor(Input)`, `segmentForOverridden()`, `operationKey(Input)`, and `operationKeyOverridden()` declare the segmentation mode (single by default; static when `operationKeys()` non-empty + `segmentForOverridden()` true; dynamic mode reserved for the future change). The runtime SHALL invoke `run` on a per-segment basis with sticky ordering (see the Sticky Per-Segment Ordering requirement) and SHALL pass each input to all segments returned by `segmentFor(input)` for static-mode operations (single-mode operations skip the call and route to segment index 0).
+The Java SDK SHALL expose a generic `Operation<Input, State, Output, Change, Clock, Config>` interface in `com.flezha.sdk.operation`. Implementers SHALL provide `name()`, `inputType() → Class<Input>`, `outputType() → Class<Output>`, `initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) → State`, and `run(Input, StateHandle<State, Change>, OperationCtx) throws OperationException`. The default-method overrides `operationKeys()`, `segmentFor(Input)`, `segmentForOverridden()`, `operationKey(Input)`, and `operationKeyOverridden()` declare the segmentation mode (single by default; static when `operationKeys()` non-empty + `segmentForOverridden()` true; dynamic when `operationKeyOverridden()` true with empty `operationKeys()`). The runtime SHALL invoke `run` on a per-segment basis with sticky ordering (see the Sticky Per-Segment Ordering requirement) and SHALL pass each input to all segments returned by `segmentFor(input)` for static-mode operations (single-mode operations skip the call and route to segment index 0).
 
-The `OperationCtx` parameter SHALL provide `emit(value)` for inter-operation or plugin-bound outputs, `emit(channel, value)` for explicit channel selection, and `emitWithMeta(value, meta)` / `emitWithMeta(channel, value, meta)` for plugin-bound outputs with user-attached metadata. `emitWithMeta` on inter-operation channels SHALL throw `OperationException.MetadataNotAllowedOnInterOperationChannel` naming the channel.
+The `OperationCtx` parameter SHALL provide:
+
+- `emit(value)` for inter-operation or plugin-bound outputs, `emit(channel, value)` for explicit channel selection, and `emitWithMeta(value, meta)` / `emitWithMeta(channel, value, meta)` for plugin-bound outputs with user-attached metadata. `emitWithMeta` on inter-operation channels SHALL throw `OperationException.MetadataNotAllowedOnInterOperationChannel` naming the channel.
+- `emitKeyed(key, value)` and `emitKeyedWithMeta(key, value, meta)` for channels declared `.keyed()`. Emitting **without** a key on a `.keyed()` channel SHALL throw `OperationException.KeyRequiredOnKeyedChannel`; emitting **with** a key on a channel not declared `.keyed()` SHALL throw `OperationException.KeyNotAllowedOnNonKeyedChannel`. Both name the channel.
+- `long now()` — the invocation's time value, computed **once** by the runtime from the Operation's declared `Clock` before `run` executes, and returning that same value for every call within the invocation. This is the determinism-contract replacement for `System.currentTimeMillis()`.
+- `StableId stableId()` — a deterministic, replay-stable 128-bit identifier derived from the Segment identity, the invocation's durable change seq, and a per-invocation call ordinal. Repeated calls within one invocation differ; the n-th call of a replayed invocation SHALL equal the n-th call of the original. This is the determinism-contract replacement for `UUID.randomUUID()`.
+- `void checkpoint()` — see the checkpoint ack-granularity requirement.
+
+The runtime SHALL stamp `flz.segment`, `flz.seq`, and (on keyed emits) `flz.key` onto plugin-bound frames. User-supplied metadata keys in the reserved `flz.` namespace SHALL be **rejected** with `OperationException.ReservedMetadataKey` naming the key, so that identity stamps can neither be spoofed nor clobbered.
 
 #### Scenario: Single-mode Operation runs on a single segment
 - **WHEN** an Operation whose `operationKeys()` returns an empty list is registered as the consumer of an entry channel, and one input arrives on that channel
-- **THEN** the SDK SHALL invoke the Operation's `run` once on the single allocated segment (segment index 0), with `state` argument equal to the value `initState(Optional.empty())` returned at operative startup
+- **THEN** the SDK SHALL invoke the Operation's `run` once on the single allocated segment (segment index 0), with `state` argument equal to the value `initState(Optional.empty(), Optional.empty())` returned at operative startup
 
 #### Scenario: Static-mode Operation creates one segment per operationKey
 - **WHEN** an Operation's `operationKeys()` returns `["1m", "1h", "1d", "1w"]` and `segmentForOverridden()` returns `true`
-- **THEN** at operative startup the SDK SHALL allocate exactly four `SegmentSlot` instances for that Operation, each constructed with `initState(Optional.of(key))` for its corresponding key
+- **THEN** at operative startup the SDK SHALL allocate exactly four `SegmentSlot` instances for that Operation, each constructed with `initState(Optional.of(key), Optional.empty())` for its corresponding key
 
 #### Scenario: Static-mode segmentFor fan-out enqueues input on each named segment
 - **WHEN** an Operation's `segmentFor(input)` returns `["1m", "1h"]` for a given input
 - **THEN** the SDK SHALL enqueue that input on the segments identified by `"1m"` and `"1h"` (each receives its own `run` invocation), and SHALL NOT enqueue it on `"1d"` or `"1w"`
 
 #### Scenario: Run throwing OperationException logs and continues
-- **WHEN** `Operation.run(...)` throws `OperationException` on a given input
-- **THEN** the SDK SHALL log the exception with `(operativeInstanceId, operationName, segmentKey)` context, SHALL discard any partial `ctx.emit(...)` calls made during this invocation, and SHALL continue dispatching subsequent inputs on the same segment
+- **WHEN** `Operation.run(...)` throws `OperationException` on a given input and the input channel's retry budget is exhausted
+- **THEN** the SDK SHALL log the exception with `(operativeInstanceId, operationName, segmentKey)` context, SHALL discard any partial `ctx.emit(...)` calls made during this invocation, SHALL park the payload to the dead-letter queue, and SHALL continue dispatching subsequent inputs on the same segment
 
 #### Scenario: Run throwing arbitrary RuntimeException logs and continues
 - **WHEN** `Operation.run(...)` throws a non-`OperationException` `RuntimeException`
@@ -94,15 +108,35 @@ The `OperationCtx` parameter SHALL provide `emit(value)` for inter-operation or 
 
 #### Scenario: Plugin-bound emit attaches the channel name as metadata on the wire
 - **WHEN** an Operation whose declared output is a plugin-bound channel `"ohlc.candles"` calls `ctx.emit(candle)`
-- **THEN** the SDK SHALL serialize `candle` via the channel's serializer, frame the bytes with `metadata = {"channel": "ohlc.candles"}`, and send the frame on the operative's secondary stream
+- **THEN** the SDK SHALL serialize `candle` via the channel's serializer, frame the bytes with `metadata` containing `"channel" -> "ohlc.candles"` plus the runtime's `flz.segment` and `flz.seq` identity stamps, and send the frame on the operative's secondary stream
 
 #### Scenario: Plugin-bound emitWithMeta appends user metadata after the channel key
 - **WHEN** an Operation calls `ctx.emitWithMeta(candle, Map.of("trace_id", "abc"))` on a plugin-bound channel `"ohlc.candles"`
-- **THEN** the SDK SHALL frame the bytes with `metadata` containing both `"channel" -> "ohlc.candles"` and `"trace_id" -> "abc"`
+- **THEN** the SDK SHALL frame the bytes with `metadata` containing `"channel" -> "ohlc.candles"`, `"trace_id" -> "abc"`, and the runtime identity stamps
 
-#### Scenario: Reserved metadata key in user map is silently dropped
-- **WHEN** an Operation calls `ctx.emitWithMeta(candle, Map.of("channel", "user_value", "k", "v"))` on a plugin-bound channel `"ohlc.candles"`
-- **THEN** the SDK SHALL frame the bytes with `metadata` containing exactly `"channel" -> "ohlc.candles"` and `"k" -> "v"`, dropping the user-supplied `"channel"` entry without raising
+#### Scenario: Reserved flz. metadata key in user map is rejected
+- **WHEN** an Operation calls `ctx.emitWithMeta(candle, Map.of("flz.key", "spoofed"))` on a plugin-bound channel
+- **THEN** the SDK SHALL throw `OperationException.ReservedMetadataKey` naming `"flz.key"`, and SHALL NOT emit the frame
+
+#### Scenario: now() is constant within one invocation
+- **WHEN** an Operation's `run` calls `ctx.now()` three times
+- **THEN** all three calls SHALL return the identical value — the one the runtime computed from the declared `Clock` before entering `run`
+
+#### Scenario: stableId() is replay-stable and ordinal-distinct
+- **WHEN** an Operation's `run` calls `ctx.stableId()` twice for a given input, and the same input is later replayed at the same durable change seq
+- **THEN** the two calls within one invocation SHALL return different ids, AND the n-th call of the replayed invocation SHALL return an id byte-equal to the n-th call of the original
+
+#### Scenario: stableId() is byte-identical to the Rust SDK
+- **WHEN** the Java SDK derives a `StableId` from segment identity `s`, change seq `q`, and ordinal `n`
+- **THEN** the resulting 128-bit value SHALL equal the Rust SDK's `StableId::derive(s, q, n)` (FNV-1a-128 over `s ‖ big-endian q ‖ big-endian n`), and its 32-hex-digit rendering SHALL match Rust's `{:032x}`
+
+#### Scenario: emitKeyed on a non-keyed channel is rejected
+- **WHEN** an Operation calls `ctx.emitKeyed("BTC", candle)` on a channel not declared `.keyed()`
+- **THEN** the SDK SHALL throw `OperationException.KeyNotAllowedOnNonKeyedChannel` naming the channel
+
+#### Scenario: Keyed emit stamps flz.key on the wire
+- **WHEN** an Operation calls `ctx.emitKeyed("BTC", candle)` on a channel declared `.keyed()`
+- **THEN** the plugin frame's metadata SHALL carry `flz.key -> "BTC"`, `flz.segment -> "<instance>/<operation>/<segmentKey>"`, and `flz.seq -> "<changeSeq>.<emitOrdinal>"`
 
 ### Requirement: Sticky Per-Segment Ordering Under ThreadPool Dispatch
 
@@ -122,45 +156,49 @@ The Java SDK's worker pool (sized by `FLEZHA_WORKER_POOL_SIZE`, default = `Runti
 
 ### Requirement: Command Dispatch
 
-The Java SDK SHALL implement handlers for every `CommandRequest` variant defined in `executor_commands.proto`: `AssignExecutorId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `SegmentState`, `MigrationSerialization`, `MigrationDeserialization`, `OperationMessage`, `ExecutorDisconnect`. Each handler MUST produce a `CommandResponse` that echoes the original `reference_id` and sets `status = "success"` or `status = "error"` with populated `errors` per `docs/sdk_protocol_spec.md` §6. `AddOperative` and `RemOperative` SHALL spawn and tear down operative instances respectively (the wire field is named `operative_id`; the SDK maps it to `operativeInstanceId`).
+The Java SDK SHALL implement handlers for every `CommandRequest` variant defined in `executor_commands.proto` that the Rust SDK handles, including `AssignExecutorId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `SegmentState`, `MigrationSerialization`, `MigrationDeserialization`, `OperationMessage`, `ExecutorDisconnect`, `RestoreInitState`, `CompactSegment`, `SegmentMailboxStatus`, `Ping`, `BoundedStop`, `CreditWindowInit`, `CreditGrant`, `ParkPayloadAck`, `OpCommitResponse` (tag 29), and `IterCommitResponse` (tag 31). Each handler MUST produce a `CommandResponse` that echoes the original `reference_id` and sets `status = "success"` or `status = "error"` with populated `errors` per `docs/sdk_protocol_spec.md` §6.
 
-`AddOperative` SHALL read the optional `kind` field: an empty or absent value SHALL be interpreted as `:unbounded` and SHALL spawn an `UnboundedOperativeInstance` exactly as before this change; a value resolving to `:bounded` SHALL spawn a `BoundedOperativeInstance`. The per-executor instance registry SHALL hold a sealed `Operative` (provisional name) permitting the unbounded-instance and bounded-instance variants, keyed by `operativeInstanceId`; the variant SHALL be resolved once per inbound frame at the dispatch boundary, leaving the operative dispatch hot path unchanged save that single per-frame branch. `RemOperative` SHALL remove either variant by instance id. `OperationMessage` SHALL respond with the canonical "unsupported" error until `operative-message-handlers` ships per-Operation `handleMessage`.
+The SDK SHALL originate the executor→controller commands `ExecutorShutdownNotification`, `BoundedCompleted`, `OpCommit` (tag 28), `IterCommit` (tag 30), and `IterPark` (tag 32).
+
+`AddOperative` SHALL read the optional `kind` field: an empty or absent value SHALL be interpreted as `:unbounded`; a value resolving to `:bounded` SHALL spawn a `BoundedOperativeInstance`. `RemOperative` SHALL remove either variant by instance id.
+
+**`AddOperative` SHALL respond with a populated `AddOperativeResponse` whose `metadata` map declares the registered class's capabilities**, so that the controller's `Overwatch.decode_declarations/1` learns what the class supports. The map SHALL carry, when and only when the class declares them: `effectively_once`, `ack_granularity` (`"checkpoint"`), `correction_window_ms`, `beyond_window_policy`, `compensable_ops` (comma-separated op indices), and `leaf_ops`. A class that declares none of these SHALL respond with an empty map, which the controller reads as "declared nothing" — the pre-change behaviour.
 
 #### Scenario: AddOperative spawns an unbounded operative instance
 - **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market"}` and UnboundedOperative class `MarketOperative` is registered with `factoryId() == "market"`
 - **THEN** the SDK SHALL allocate an `UnboundedOperativeInstance` keyed by `"p1"`, call `initState(...)` for every Operation×Segment declared by `MarketOperative`, and respond with `status = "success"`
 
-#### Scenario: AddOperative with init_values seeds initial-state for each segment
-- **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and `MarketOperative` declares one Operation with single-segment mode
-- **THEN** the SDK SHALL pass the JSON string into the Operation's `initState(Optional.empty())` (the runtime makes the JSON available via a per-operative context), invoke `run` only after `initState` returns, and respond with `status = "success"`
-
 #### Scenario: AddOperative with unknown factory_id returns error
 - **WHEN** the agent sends `AddOperative{factory_id:"missing"}`
 - **THEN** the SDK SHALL respond with `status = "error"` and `errors` containing a string naming the missing factory id
 
-#### Scenario: AddOperative with empty kind spawns an unbounded operative (backward-compatible)
-- **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market"}` with the `kind` field empty or absent
-- **THEN** the SDK SHALL resolve the kind to `:unbounded` and spawn an `UnboundedOperativeInstance` exactly as before this change
-
 #### Scenario: AddOperative with kind bounded spawns a bounded variant
 - **WHEN** the agent sends `AddOperative{operative_id:"t1", factory_id:"greet", kind:"bounded"}` and `GreetOperative` is registered as a bounded operative with `factoryId() == "greet"`
-- **THEN** the SDK SHALL register a `BoundedOperativeInstance` keyed by `"t1"` as the bounded variant of the sealed operative registry and respond with `status = "success"`
+- **THEN** the SDK SHALL register a `BoundedOperativeInstance` keyed by `"t1"` and respond with `status = "success"`
 
 #### Scenario: RemOperative removes either operative variant
 - **WHEN** the agent sends `RemOperative{operative_id:"t1"}` for a live bounded operative instance (and likewise for an unbounded operative instance)
 - **THEN** the SDK SHALL remove the instance from the sealed operative registry by id and respond with `status = "success"`
 
-#### Scenario: SegmentState returns the per-Operation / per-Segment JSON shape
-- **WHEN** the agent sends `SegmentState{operative_id:"p1"}` and `p1` exists with two Operations (`operationA` single-mode, `operationB` static-mode with keys `["1m", "1h"]`)
-- **THEN** the SDK SHALL respond with `status = "success"` and `raw_data` containing JSON of shape `{"operationA": {<state>}, "operationB": {"1m": {<state>}, "1h": {<state>}}}` (whichever exact shape the Rust SDK emits per `operative-mvp-rust/design.md` Decision 10 — the Java SDK SHALL match byte-for-byte)
+#### Scenario: AddOperative declaring the effectively-once tier populates the response metadata
+- **WHEN** the agent sends `AddOperative{factory_id:"tier"}` for a class whose channel declaration calls `c.effectivelyOnce()`
+- **THEN** the SDK's `CommandResponse.raw_data` SHALL decode as an `AddOperativeResponse` whose `metadata` contains `"effectively_once" -> "true"`
 
-#### Scenario: MigrationSerialization removes the operative instance
-- **WHEN** the agent sends `MigrationSerialization{operative_id:"p1"}` and `p1` exists
-- **THEN** the SDK SHALL respond with `status = "success"` and `raw_data` containing the per-Operation / per-Segment JSON (same shape as `SegmentState`), AND `p1` SHALL be removed from the operative instance registry
+#### Scenario: AddOperative declaring a correction window populates window and policy
+- **WHEN** a registered class declares `c.correctionWindow(60_000)` and `c.beyondWindowPolicy(DROP)`
+- **THEN** the response `metadata` SHALL contain `"correction_window_ms" -> "60000"` and `"beyond_window_policy" -> "drop"`
 
-#### Scenario: OperationMessage returns canonical unsupported error pre-operative-message-handlers
-- **WHEN** the agent sends `OperationMessage{operative_id:"p1", payload:<...>}` to a v1 SDK
-- **THEN** the SDK SHALL respond with `OperationMessageResponse{ payload: "", error: "operative does not support handle_message" }`
+#### Scenario: AddOperative declaring checkpoint ack granularity populates ack_granularity
+- **WHEN** a registered class declares `c.effectivelyOnce()` and `c.checkpointAck()`
+- **THEN** the response `metadata` SHALL contain `"ack_granularity" -> "checkpoint"`
+
+#### Scenario: AddOperative for a bounded class declares its compensable ops and leaves
+- **WHEN** a bounded class registers a chain whose ops at index 0 and 2 override `compensate` and whose op tree has leaves `[2]`
+- **THEN** the response `metadata` SHALL contain `"compensable_ops" -> "0,2"` and `"leaf_ops" -> "2"`
+
+#### Scenario: A class declaring nothing responds with an empty metadata map
+- **WHEN** a registered class declares no tier, no correction window, no checkpoint ack, and is unbounded
+- **THEN** the response `metadata` SHALL be empty, and the controller SHALL treat the class exactly as it did before this change
 
 #### Scenario: ExecutorDisconnect halts the reconnect loop
 - **WHEN** the agent sends `ExecutorDisconnect{}`
@@ -304,17 +342,38 @@ The Java SDK's `Operation.run` signature SHALL be `void run(Input input, StateHa
 
 ### Requirement: Operation declares Clock generic parameter with default WallClock
 
-The Java SDK's `Operation` interface SHALL declare `Clock extends com.flezha.sdk.state.Clock` as a generic parameter, defaulting to `com.flezha.sdk.state.WallClock`. `Clock` SHALL be a sealed Java interface with `permits WallClock, LogicalClock, EventTimeFrom`. v1 of the Java SDK SHALL fully wire only `WallClock`; Operations declaring `LogicalClock` or `EventTimeFrom` SHALL fail Operative registration with `OperativeConfigurationException::ClockNotImplementedYet(String clockTypeName)` until a follow-up change wires the remaining clocks.
+The Java SDK's `Operation` interface SHALL declare `Clock extends com.flezha.sdk.state.Clock` as a generic parameter, defaulting to `com.flezha.sdk.state.WallClock`. `Clock` SHALL be a sealed Java interface with `permits WallClock, LogicalClock, EventTimeFrom`. The runtime SHALL evaluate the declared clock **once per invocation**, before entering `run`, and serve that single value from `ctx.now()`:
+
+- `WallClock` — epoch milliseconds at dispatch entry.
+- `EventTimeFrom` — the event time extracted from the current input. Because Java's erasure precludes Rust's compile-enforced `TimeExtractor<Input>` bound, an Operation declaring `EventTimeFrom` SHALL override `default OptionalLong eventTime(Input input)`; failing to do so SHALL fail Operative registration with `OperativeConfigurationException` naming the Operation and the missing override.
+- `LogicalClock` — the raw durable `change_seq`, re-armed to `terminal + 1` on restore. An Operation declaring `LogicalClock` with `Change = NoChange` SHALL fail registration with `OperativeConfigurationException` carrying the Rust error name `UnservableClock`, since there is no durable seq to serve.
+
+`OperativeConfigurationException::ClockNotImplementedYet` SHALL NOT be thrown for any member of the sealed hierarchy.
 
 #### Scenario: Default Clock is WallClock
 
 - **WHEN** a Java Operation does not declare its `Clock` parameter
-- **THEN** `Operation.clockType() == WallClock.class` AND Operative registration SHALL succeed
+- **THEN** `Operation.clockType() == WallClock.class` AND Operative registration SHALL succeed AND `ctx.now()` SHALL return epoch milliseconds sampled once at dispatch entry
 
-#### Scenario: Non-WallClock fails registration in v1
+#### Scenario: EventTimeFrom serves the extracted input time
 
-- **WHEN** a Java Operation declares `Clock = LogicalClock`
-- **THEN** `Flezha.registerUnbounded(...)` SHALL throw `OperativeConfigurationException` whose message contains "Clock not implemented yet: LogicalClock"
+- **WHEN** a Java Operation declares `Clock = EventTimeFrom` and overrides `eventTime(input)` to return the input's timestamp field
+- **THEN** registration SHALL succeed AND `ctx.now()` SHALL return that extracted timestamp for the invocation
+
+#### Scenario: EventTimeFrom without an eventTime override fails registration
+
+- **WHEN** a Java Operation declares `Clock = EventTimeFrom` but does not override `eventTime(Input)`
+- **THEN** `registerUnbounded(...)` SHALL throw `OperativeConfigurationException` naming the Operation and the missing `eventTime` override
+
+#### Scenario: LogicalClock serves the durable change seq and re-arms on restore
+
+- **WHEN** a Java Operation declares `Clock = LogicalClock` and a non-`NoChange` Change, and the Segment is restored from a change log whose terminal seq is 41
+- **THEN** registration SHALL succeed AND the first post-restore invocation's `ctx.now()` SHALL return `42`
+
+#### Scenario: LogicalClock with NoChange fails registration
+
+- **WHEN** a Java Operation declares `Clock = LogicalClock` and `Change = NoChange`
+- **THEN** `registerUnbounded(...)` SHALL throw `OperativeConfigurationException` whose message carries the error name `UnservableClock`
 
 ### Requirement: Operative declares persistenceEnabled default-method, frozen at instance start
 
@@ -512,3 +571,264 @@ The Java SDK SHALL expose user-extensible base classes/interfaces under the cano
 #### Scenario: User extends UnboundedOperative
 - **WHEN** a user-defined Operative class declares `extends UnboundedOperative`
 - **THEN** the class MUST compile against the published Java SDK; declaring `extends Processor` MUST fail
+
+### Requirement: Java SDK implements the effectively-once output tier
+
+The Java SDK SHALL implement the `effectively-once-output` capability. A channel declaration SHALL support `c.effectivelyOnce()`; the runtime SHALL then, for each invocation, buffer the invocation's state changes, plugin outputs, consumed input offset, and (on a dead-letter park) its DLQ entry into ONE `segment_effect_record` frame rather than separate change and output frames.
+
+The frame SHALL carry the 16-byte state header with `format_id = 2` and `sdk_lang = 2`, and its body SHALL be the postcard encoding of `EffectRecordBody { changes: Vec<Vec<u8>>, outputs: Vec<OutputRecord>, consumed_offset: Option<u64>, dlq: Option<DlqEntryBody>, event_time: u64 }` in exactly that field order, byte-identical to the Rust SDK. The `changes` elements SHALL be the SDK's own change bytes (Kryo, as a Java plain change record carries) — the controller stores and re-ships them without decoding.
+
+The runtime SHALL read the inbound `flz.offset` metadata key to learn the input's offset, and SHALL re-forward replayed inputs on restore. A dead-letter park under the tier SHALL ride inside the effect record rather than emitting a separate `park_payload` frame, so that the park and the consumed-offset advance are one atomic record.
+
+Declaring `.keyed()` SHALL be required on every plugin-bound channel of a tier-enabled class; a non-keyed plugin channel SHALL fail registration.
+
+#### Scenario: A tier invocation ships one effect record, not separate frames
+
+- **WHEN** a tier-enabled Operation's `run` applies two Changes and emits one keyed output for an input carrying `flz.offset = 7`
+- **THEN** the SDK SHALL ship exactly one `segment_effect_record` frame whose decoded body has `changes.length == 2`, `outputs.length == 1`, and `consumed_offset == 7`; and SHALL NOT ship any `segment_state_change` frame for that invocation
+
+#### Scenario: Effect-record bytes are byte-identical to the Rust encoder
+
+- **WHEN** the Java SDK encodes an `EffectRecordBody` with the same field values as a Rust fixture
+- **THEN** the produced bytes SHALL equal the Rust `postcard::to_allocvec(EffectRecordBody)` fixture bytes exactly
+
+#### Scenario: A poisoned tier invocation parks inside the effect record
+
+- **WHEN** a tier-enabled Operation exhausts its retry budget on a poison input at offset 9
+- **THEN** the SDK SHALL ship one `segment_effect_record` whose body carries `dlq = Some(entry)` AND `consumed_offset == 9`, and SHALL NOT ship a separate `park_payload` frame
+
+#### Scenario: A tier class with a non-keyed plugin channel fails registration
+
+- **WHEN** a class declares `c.effectivelyOnce()` and a plugin-bound channel without `.keyed()`
+- **THEN** registration SHALL throw `OperativeConfigurationException` naming the channel
+
+### Requirement: Java SDK implements checkpoint ack granularity
+
+The Java SDK SHALL implement the `effectively-once-checkpoint-granularity` capability. A channel declaration SHALL support `c.checkpointAck()`, valid only together with `c.effectivelyOnce()` — declaring it alone SHALL fail registration with `CheckpointAckWithoutTier`. `OperationCtx.checkpoint()` SHALL mark the invocation as closing the current interval.
+
+The per-Segment flush buffer SHALL carry a third `staged` list holding the open interval's changes. `drainToFrames` and `isEmpty` SHALL deliberately **ignore** `staged` — an open interval is not flushable, and draining it alone would put state ahead of its offset. An invocation SHALL emit an effect record carrying `{staged, consumedOffset}` when it checkpointed or parked to the DLQ; otherwise it SHALL emit `{[], outputs, null}` only if it produced outputs. A dead-letter park SHALL close the interval. A restore SHALL discard the open interval.
+
+#### Scenario: An open interval holds the consumed offset
+
+- **WHEN** a checkpoint-ack Operation processes three inputs without calling `ctx.checkpoint()`
+- **THEN** no effect record carrying a non-null `consumed_offset` SHALL be shipped, and the staged changes SHALL remain unflushed
+
+#### Scenario: checkpoint() closes the interval and acknowledges the offset
+
+- **WHEN** the Operation's fourth invocation calls `ctx.checkpoint()` for an input at offset 3
+- **THEN** the SDK SHALL ship one effect record whose `changes` are the four invocations' staged changes and whose `consumed_offset == 3`
+
+#### Scenario: checkpointAck without the tier is refused
+
+- **WHEN** a class declares `c.checkpointAck()` without `c.effectivelyOnce()`
+- **THEN** registration SHALL throw `OperativeConfigurationException` carrying the error name `CheckpointAckWithoutTier`
+
+#### Scenario: A park closes the open interval
+
+- **WHEN** a checkpoint-ack Operation has staged two invocations' changes and the third input is poison and exhausts its retries
+- **THEN** the shipped effect record SHALL carry the staged changes, the DLQ entry, and the poison input's `consumed_offset` — so the replay resumes after the poison offset
+
+#### Scenario: A restore discards the open interval
+
+- **WHEN** a Segment with a non-empty `staged` list is restored via `RestoreInitState`
+- **THEN** the staged list SHALL be cleared, since it belongs to a past that no longer exists
+
+### Requirement: Java SDK implements unbounded late-input correction
+
+The Java SDK SHALL implement the `unbounded-correction` capability. A channel declaration SHALL support `c.correctionWindow(millis)` and `c.beyondWindowPolicy(policy)` where policy is `PROCESS_AS_ARRIVAL` (the default, today's behaviour) or `DROP`. Declaring a correction window SHALL require the effectively-once tier, an `EventTimeFrom` clock, and all channels keyed; violating any of these SHALL fail registration.
+
+Every effect record SHALL carry the invocation's `event_time`. The runtime SHALL maintain a per-Segment event-time high-water mark, and SHALL classify an input whose event time is below the high-water by more than the declared window as beyond-window. A replay slice SHALL be recognised via the `flz.replay` metadata key and terminated by a payload-less `flz.replay_end` **broadcast** frame (intercepted before channel lookup, since an input routes to only one segment by key); the buffered slice SHALL be dispatched in **event-time order**, and a closed slice SHALL flush before any live input popped behind it.
+
+A replay SHALL NOT lower the event-time high-water mark.
+
+#### Scenario: A replayed slice dispatches in event-time order
+
+- **WHEN** a replay slice delivers inputs with event times `[30, 10, 20]` followed by an `flz.replay_end` broadcast
+- **THEN** the Operation's `run` SHALL be invoked for them in event-time order `10, 20, 30`
+
+#### Scenario: A closed slice flushes before a live input behind it
+
+- **WHEN** a live input is popped from the mailbox behind a just-closed replay slice
+- **THEN** the slice SHALL dispatch in full before the live input, so the live input cannot jump ahead of the inputs being re-ordered
+
+#### Scenario: A replay does not lower the event-time high-water
+
+- **WHEN** a Segment restored to an event-time high-water of `500` replays an unconsumed tail whose maximum event time is `300`
+- **THEN** the high-water SHALL remain `500`, and a subsequent input at event time `320` SHALL still be classified as late
+
+#### Scenario: A correction window without the tier is refused
+
+- **WHEN** a class declares `c.correctionWindow(60_000)` without `c.effectivelyOnce()`
+- **THEN** registration SHALL throw `OperativeConfigurationException` naming the missing tier declaration
+
+#### Scenario: Beyond-window default is process-as-arrival
+
+- **WHEN** a class declares `c.correctionWindow(60_000)` without declaring a policy, and an input arrives whose event time is older than the window
+- **THEN** the input SHALL be processed as an arrival (not dropped), since declaring a window must never silently start dropping data
+
+### Requirement: Java SDK implements the bounded op-journal and OpCommit handshake
+
+The Java SDK SHALL implement the `bounded-op-journal` capability. At every op barrier of a durable structured bounded class, the SDK SHALL ship `OpCommit` (tag 28) carrying the ops that ran and the channel-tagged handoff blobs, and SHALL block on the controller's `OpCommitResponse` (tag 29) under the same `reference_id` for up to 30 seconds. A failure or timeout SHALL produce a terminal error and trigger compensation.
+
+Inter-op channels of a durable structured bounded class SHALL declare a codec; a missing codec SHALL fail registration with `MissingInterOpCodec` naming the channel. Classes that opt out of persistence SHALL skip the journal and the handshake entirely, preserving re-run-from-top.
+
+On resume, the SDK SHALL read the journal state shipped on `RestoreInitState.op_journal`, SHALL **skip** ops already recorded as committed, and SHALL seed the next op's batch from the journaled handoff via the channel codec.
+
+#### Scenario: A committed op is skipped on resume, not re-run
+
+- **WHEN** a durable bounded class commits op A, then the executor is SIGKILLed, then the operative is rebound with a journal recording op A as committed
+- **THEN** op A's `run` SHALL NOT be invoked again, and op B SHALL run seeded from op A's journaled handoff
+
+#### Scenario: A missing inter-op codec fails registration
+
+- **WHEN** a durable structured bounded class declares an inter-op channel without a codec
+- **THEN** registration SHALL throw `BoundedOperativeConfigurationException` carrying the error name `MissingInterOpCodec` and naming the channel
+
+#### Scenario: An opted-out class re-runs from the top
+
+- **WHEN** a bounded class declares `persistenceEnabled() == false` and is resumed after a crash
+- **THEN** the SDK SHALL ship no `OpCommit`, and every op SHALL re-run from the top
+
+#### Scenario: A commit timeout triggers compensation
+
+- **WHEN** the controller does not answer an `OpCommit` within 30 seconds
+- **THEN** the SDK SHALL treat the op as terminally failed and SHALL run the compensation plan
+
+### Requirement: Java SDK implements bounded staged commit and the transactional outbox
+
+The Java SDK SHALL implement the `bounded-transactional-outbox` capability. Inside a structured op of a durable bounded class, `ctx.emit` SHALL NOT reach the wire: `BoundedCollectSink` SHALL buffer `(channel, bytes)` and the buffered outputs SHALL ride the same `OpCommit` as the journal record, in the `outbox` field (`OpOutboxItem{segment_id, seq_in_op, channel, payload}`). A failing stage SHALL drop its staged bytes together with the error, so nothing leaks. `run`-sugar classes (no barrier to stage against) and transport-less runs SHALL keep the direct-emit path.
+
+Compensation output SHALL ride the same handshake with `compensating` set.
+
+#### Scenario: An op's emits are staged, not shipped, until the barrier
+
+- **WHEN** a structured op of a durable bounded class calls `ctx.emit(v)` twice and then reaches its op barrier
+- **THEN** no plugin frame SHALL be sent during the op body, and the `OpCommit` at the barrier SHALL carry both outputs in its `outbox`
+
+#### Scenario: A failing stage leaks no staged output
+
+- **WHEN** a stage emits once and then throws
+- **THEN** the staged bytes SHALL be dropped with the error and SHALL NOT appear in any subsequent `OpCommit`
+
+#### Scenario: run-sugar keeps the direct path
+
+- **WHEN** a bounded class authored with `run`-sugar calls `ctx.emit(v)`
+- **THEN** the frame SHALL be sent directly, as before this change
+
+### Requirement: Java SDK implements the bounded durable loop and suspension
+
+The Java SDK SHALL implement the `bounded-durable-loop` and `bounded-durable-suspension` capabilities. `BoundedOperative` SHALL declare `loopMode()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), plus `wakeAfter()`.
+
+At every iteration boundary the SDK SHALL ship `IterCommit` (tag 30) carrying the iteration index, the consumed inbox offset, and the terminal handoff, and SHALL await `IterCommitResponse` (tag 31). Registration SHALL reject a loop on `run`-sugar (`LoopWithoutChain`) and a durable `CHAINED` loop whose terminal op has no codec'd output channel (`LoopTerminalWithoutCodec`).
+
+When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) and exit **without** `BoundedCompleted`, yielding a parked outcome. The SDK SHALL read its inbox offset from the inbound `flz.inbox_offset` metadata key.
+
+#### Scenario: Each loop iteration commits at its boundary
+
+- **WHEN** a `PER_INPUT` bounded class processes three inbox items
+- **THEN** the SDK SHALL ship three `IterCommit` commands, each carrying its iteration index and consumed inbox offset, and SHALL await each response before starting the next iteration
+
+#### Scenario: An idle loop parks instead of completing
+
+- **WHEN** a durable looping bounded class has no inbox item for longer than the park hysteresis
+- **THEN** the SDK SHALL ship `IterPark` and exit without shipping `BoundedCompleted`
+
+#### Scenario: A resumed loop restarts at the journaled iteration
+
+- **WHEN** a looping bounded class committed iteration 2 and is then rebound after a crash
+- **THEN** the SDK SHALL resume at iteration 3, seeded (for `CHAINED`) from iteration 2's journaled terminal handoff
+
+#### Scenario: A loop on run-sugar is refused
+
+- **WHEN** a bounded class authored with `run`-sugar declares a non-`ONCE` `loopMode()`
+- **THEN** registration SHALL throw `BoundedOperativeConfigurationException` carrying the error name `LoopWithoutChain`
+
+#### Scenario: A durable chained loop whose terminal op has no codec is refused
+
+- **WHEN** a durable `CHAINED` bounded class's terminal op has no codec'd output channel
+- **THEN** registration SHALL throw `BoundedOperativeConfigurationException` carrying the error name `LoopTerminalWithoutCodec`
+
+### Requirement: Java SDK implements the bounded segment retry ladder
+
+The Java SDK SHALL implement the `bounded-segment-retry` capability. `BoundedOperative` SHALL declare `retryAttempts()` (default 3 total attempts) and `retryBackoff()` (default 500 ms base). Only the failing segment SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh sink so a failed attempt's staged output is dropped rather than double-emitted.
+
+Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled op SHALL never be retried. `retryAttempts() == 0` SHALL collapse to a single attempt; `attempts > 1` with a zero backoff SHALL be rejected at registration with `ZeroRetryBackoff`. A `BoundedException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
+
+#### Scenario: A transient segment failure recovers on retry
+
+- **WHEN** a bounded segment's batch throws on its first attempt and succeeds on its second
+- **THEN** the operative SHALL complete successfully, only the failing segment SHALL have re-run, and its first attempt's staged output SHALL NOT be emitted
+
+#### Scenario: An exhausted ladder compensates
+
+- **WHEN** a bounded segment fails all three attempts
+- **THEN** the operative SHALL abort and run the compensation plan
+
+#### Scenario: A non-retryable error skips the ladder
+
+- **WHEN** a segment throws `BoundedException.nonRetryable("bad record")`
+- **THEN** the SDK SHALL NOT retry and SHALL proceed directly to the abort path
+
+#### Scenario: attempts > 1 with a zero backoff is refused
+
+- **WHEN** a bounded class declares `retryAttempts() == 3` and `retryBackoff() == Duration.ZERO`
+- **THEN** registration SHALL throw `BoundedOperativeConfigurationException` carrying the error name `ZeroRetryBackoff`
+
+### Requirement: Java SDK implements bounded loop rewind
+
+The Java SDK SHALL implement the `bounded-loop-rewind` capability. On restore, the SDK SHALL read `OpJournalState.rewind_undo` (the ops the controller's rewind marker determined are still owed an undo) and, before entering the forward loop, SHALL run those undos in reverse order under a **forced** all-or-nothing rollback mode — whatever the class's declared `rollbackMode()` says — since a rewind unwinds committed iterations by definition.
+
+The SDK SHALL journal exactly one `compensated` record per undone op, **including an empty one for an op with no compensate hook**, since that record is what drains `rewind_undo`. The undo pass SHALL NOT consult the per-segment crash-resume done markers, which are per segment and would wrongly suppress an op that ran in two rewound iterations.
+
+A rewind SHALL NOT replay inputs: the controller truncates the inbox at each iteration commit, so a rewind is undo-and-continue — the loop resumes waiting and the next message becomes the following iteration.
+
+#### Scenario: A rewind undoes committed iterations in reverse order
+
+- **WHEN** the controller rewinds a looping bounded class to iteration 1 and the class committed iterations 2 and 3
+- **THEN** on rebind the SDK SHALL run the compensate hooks for iterations 3 and 2's ops in reverse order before resuming the forward loop
+
+#### Scenario: A hookless op still drains the rewind undo
+
+- **WHEN** an op owed a rewind undo declares no compensate hook
+- **THEN** the SDK SHALL journal an empty `compensated` record for it, so it is not re-offered on the next restore
+
+#### Scenario: A rewind does not re-deliver consumed inputs
+
+- **WHEN** a looping bounded class is rewound to iteration 1
+- **THEN** the inputs consumed by iterations 2 and 3 SHALL NOT be re-delivered; the loop SHALL resume waiting, and the next inbound message SHALL become the next iteration
+
+### Requirement: Java SDK implements bounded branching
+
+The Java SDK SHALL implement the `bounded-branching` capability. `BoundedSpec` SHALL model the op graph as a tree (`order` plus `children`) rather than the current `List<Integer> chain`; a linear chain SHALL be the degenerate single-child case. `BoundedSpec.linearChain()`'s refusal of any non-linear graph SHALL be removed and replaced with validation over the tree.
+
+The SDK SHALL declare the tree's leaf ops to the controller via the `leaf_ops` key of `AddOperativeResponse.metadata`. Fan-in SHALL NOT silently overwrite an edge. Compensation SHALL run in reverse-topological order, which the existing BFS numbering already yields — the compensation planner SHALL NOT be changed.
+
+#### Scenario: A branching chain runs its branches and joins
+
+- **WHEN** a bounded class declares op 0 feeding both op 1 and op 2, which both feed op 3
+- **THEN** ops 1 and 2 SHALL each run seeded from op 0's handoff, and op 3 SHALL run once both have committed
+
+#### Scenario: Compensation runs in reverse-topological order
+
+- **WHEN** the branching class above aborts after op 3 commits
+- **THEN** the compensate hooks SHALL run in the order 3, then 2 and 1, then 0
+
+#### Scenario: Fan-in does not overwrite an edge
+
+- **WHEN** two ops both feed the same downstream op on the same channel
+- **THEN** both edges SHALL be recorded, and neither SHALL silently replace the other
+
+### Requirement: Java SDK data heartbeat reports dispatch progress
+
+The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK ships: `dispatches`, `blocked_parks`, and `credit_parked`. Reporting only `credit_parked` leaves the controller's `StallClassifier` unable to distinguish a live-but-wedged Java executor from a healthy idle one, so the omission is a liveness defect, not a cosmetic gap.
+
+#### Scenario: The heartbeat carries dispatch progress
+
+- **WHEN** a Java executor has dispatched 100 inputs since the previous heartbeat
+- **THEN** the next `data_heartbeat` frame's metadata SHALL carry a `dispatches` count reflecting that progress, alongside `blocked_parks` and `credit_parked`
+
+#### Scenario: A wedged Java executor is distinguishable from an idle one
+
+- **WHEN** a Java executor stops making dispatch progress while inputs continue to arrive
+- **THEN** the heartbeat's `dispatches` count SHALL stop advancing while the executor keeps sending heartbeats, giving the controller the signal it needs to localize the stall
+

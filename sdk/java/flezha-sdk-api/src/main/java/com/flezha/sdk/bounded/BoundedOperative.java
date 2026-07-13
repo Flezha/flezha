@@ -107,6 +107,46 @@ public interface BoundedOperative extends Computation {
     }
 
     /**
+     * How many times this Operative runs its chain. Defaults to
+     * {@link LoopMode#ONCE} — one pass, byte-identical to the pre-loop behaviour.
+     */
+    @Nonnull
+    default LoopMode loopMode() {
+        return LoopMode.ONCE;
+    }
+
+    /**
+     * How long a parked (suspended) instance sleeps before the controller wakes
+     * it, even with no inbound message. Empty = wake only on a message.
+     */
+    @Nonnull
+    default Optional<Duration> wakeAfter() {
+        return Optional.empty();
+    }
+
+    /**
+     * Total attempts for a failing segment's batch, including the first (default
+     * 3). {@code 0} or {@code 1} collapses to fail-fast.
+     *
+     * <p>Retry is strictly PRE-commit: a journaled op is never retried. Only the
+     * failing segment re-runs — its siblings stay buffered at the barrier — and
+     * each attempt gets a fresh sink, so a failed attempt's staged output is
+     * dropped rather than double-emitted.
+     */
+    default int retryAttempts() {
+        return 3;
+    }
+
+    /**
+     * Exponential-backoff base between attempts (default 500 ms). A zero backoff
+     * with more than one attempt is rejected at registration: it would hot-spin.
+     */
+    @Nonnull
+    default Duration retryBackoff() {
+        return Duration.ofMillis(500);
+    }
+
+    /**
      * Saga rollback scope, applied when the operative terminates abnormally
      * after partial progress. Default {@link RollbackMode#ALL_OR_NOTHING} undoes
      * every completed operation in reverse, back to the start;
@@ -115,7 +155,6 @@ public interface BoundedOperative extends Computation {
      * chain (where both behave all-or-nothing) and for an operative with no
      * compensation hooks.
      */
-    @Nonnull
     default RollbackMode rollbackMode() {
         return RollbackMode.ALL_OR_NOTHING;
     }

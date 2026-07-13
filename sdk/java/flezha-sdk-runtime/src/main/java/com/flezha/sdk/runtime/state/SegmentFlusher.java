@@ -145,6 +145,10 @@ public final class SegmentFlusher {
      */
     public static void flushEntry(FlusherEntry entry) {
         synchronized (entry.bufferLock()) {
+            if (!entry.effects().isEmpty()) {
+                flushEffects(entry);
+                return;
+            }
             if (entry.buffer().isEmpty()) {
                 return;
             }
@@ -165,16 +169,52 @@ public final class SegmentFlusher {
                 byte[] payload = entry.codec().serialize(change);
                 byte[] header = entry.headerTemplate().stamp(entry.schemaVersion(), payload);
                 byte[] frame = buildSegmentStateChangeFrame(entry.segmentId(), seq, header, payload);
-                CreditWindow.acquire(frame.length);
-                try {
-                    entry.sendFrame().apply(frame);
-                } catch (RuntimeException e) {
-                    LOG.error(
-                            "flusher sendFrame failed for segment `{}`: {}",
-                            entry.segmentId().encoded(),
-                            e.toString());
-                }
+                ship(entry, SegmentStateSink.PAYLOAD_ID_CHANGE, frame);
             }
+        }
+    }
+
+    /**
+     * Drain the effectively-once buffer: one {@code segment_effect_record} frame
+     * per invocation, in emission order.
+     *
+     * <p><b>Never coalesced.</b> Coalescing collapses same-key changes to the
+     * latest — which for an effect record would silently discard the collapsed
+     * record's plugin outputs AND its consumed offset. The tier's whole promise
+     * is that those three travel together in one WAL record; dropping any of
+     * them here would break it in the least visible way possible. (Rust pins the
+     * same rule in {@code effect_records_are_never_coalesced_at_drain}.)
+     *
+     * <p>Caller holds {@code bufferLock}.
+     */
+    private static void flushEffects(FlusherEntry entry) {
+        List<EffectRecord> snapshot = new ArrayList<>(entry.effects());
+        entry.effects().clear();
+
+        if (!entry.persistenceEnabled()) {
+            return;
+        }
+
+        for (EffectRecord record : snapshot) {
+            long seq = entry.changeSeq().getAndIncrement();
+            byte[] payload = record.encode();
+            byte[] header = entry.headerTemplate()
+                    .stamp(entry.schemaVersion(), HeaderTemplate.FORMAT_ID_EFFECT_RECORD, payload);
+            byte[] frame = buildSegmentStateChangeFrame(entry.segmentId(), seq, header, payload);
+            ship(entry, SegmentStateSink.PAYLOAD_ID_EFFECT_RECORD, frame);
+        }
+    }
+
+    /** Debit the credit window, then send. Caller holds {@code bufferLock}. */
+    private static void ship(FlusherEntry entry, String payloadId, byte[] frame) {
+        CreditWindow.acquire(frame.length);
+        try {
+            entry.sendFrame().apply(payloadId, frame);
+        } catch (RuntimeException e) {
+            LOG.error(
+                    "flusher sendFrame failed for segment `{}`: {}",
+                    entry.segmentId().encoded(),
+                    e.toString());
         }
     }
 

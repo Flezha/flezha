@@ -23,18 +23,60 @@ public final class UnboundedOperativeTopology {
     private final Map<String, Integer> nameToId;
     private final List<OperationDescriptor> operations;
     private final Map<String, Integer> operationNameToId;
+    private final boolean effectivelyOnce;
+    private final boolean checkpointAck;
+    private final long correctionWindowMs;
+    private final com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy;
 
     public UnboundedOperativeTopology(
             @Nonnull String factoryId,
             @Nonnull List<ChannelDescriptor> channels,
             @Nonnull Map<String, Integer> nameToId,
             @Nonnull List<OperationDescriptor> operations,
-            @Nonnull Map<String, Integer> operationNameToId) {
+            @Nonnull Map<String, Integer> operationNameToId,
+            boolean effectivelyOnce,
+            boolean checkpointAck,
+            long correctionWindowMs,
+            @Nonnull com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy) {
+        this.effectivelyOnce = effectivelyOnce;
+        this.checkpointAck = checkpointAck;
+        this.correctionWindowMs = correctionWindowMs;
+        this.beyondWindowPolicy = beyondWindowPolicy;
         this.factoryId = factoryId;
         this.channels = List.copyOf(channels);
         this.nameToId = Map.copyOf(nameToId);
         this.operations = List.copyOf(operations);
         this.operationNameToId = Map.copyOf(operationNameToId);
+    }
+
+    /**
+     * Whether this Operative opted into the effectively-once output tier. Rides
+     * the {@code effectively_once} key of the declaration map, which is how the
+     * controller learns to run the tier for it.
+     */
+    public boolean effectivelyOnce() {
+        return effectivelyOnce;
+    }
+
+    /**
+     * Whether the consumed offset is acknowledged only at an explicit
+     * {@code ctx.checkpoint()}. Rides the {@code ack_granularity} declaration —
+     * the controller needs it because a checkpoint Segment's silence between
+     * boundaries is its steady state, not a stall.
+     */
+    public boolean checkpointAck() {
+        return checkpointAck;
+    }
+
+    /** The declared late-input correction window in millis; {@code 0} = none. */
+    public long correctionWindowMs() {
+        return correctionWindowMs;
+    }
+
+    /** What to do with an input older than {@link #correctionWindowMs()}. */
+    @Nonnull
+    public com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy() {
+        return beyondWindowPolicy;
     }
 
     @Nonnull

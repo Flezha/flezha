@@ -253,4 +253,44 @@ public interface Operation<
     default boolean compensateOverridden() {
         return false;
     }
+
+    /**
+     * Extract the event time (epoch millis) carried by an input. Required when
+     * the Operation declares {@code Clock = EventTimeFrom}: that clock has no
+     * value to serve without an extractor, and {@code ctx.now()} returns what
+     * this method reports.
+     *
+     * <p>Rust binds the extractor at compile time via
+     * {@code EventTimeFrom<F: TimeExtractor<Input>>}. Java's erasure precludes
+     * that, so declaring {@code EventTimeFrom} without overriding this fails
+     * Operative registration — the same defect, caught before any input is
+     * served.
+     *
+     * <p>An operation that overrides this MUST also override
+     * {@link #eventTimeOverridden()} to return {@code true}.
+     */
+    default long eventTime(@Nonnull Input input) {
+        throw new UnsupportedOperationException(
+                "operation `" + name() + "` declares EventTimeFrom but does not override eventTime(Input)");
+    }
+
+    /**
+     * How long a dynamic Segment may sit idle before it is evicted. Empty (the
+     * default) means eviction is OFF: a dynamic Operation keeps every Segment it
+     * ever created.
+     *
+     * <p>Eviction is <b>destructive</b>: it ships {@code delete_segment_state} and
+     * a later input for the same key cold-starts a fresh Segment rather than
+     * restoring the old one. Declare a TTL only where re-accumulating from scratch
+     * is acceptable — a key that reappears does not get its history back.
+     */
+    @Nonnull
+    default java.util.Optional<java.time.Duration> segmentIdleTtl() {
+        return java.util.Optional.empty();
+    }
+
+    /** Override-detection sentinel for {@link #eventTime}. Default {@code false}. */
+    default boolean eventTimeOverridden() {
+        return false;
+    }
 }

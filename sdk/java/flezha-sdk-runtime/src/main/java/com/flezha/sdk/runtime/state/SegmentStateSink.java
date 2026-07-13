@@ -38,6 +38,20 @@ public final class SegmentStateSink {
     public static final String PAYLOAD_ID_CHANGE = "segment_state_change";
 
     /**
+     * Data-stream payload id carrying an effectively-once effect record: one
+     * invocation's changes, outputs, consumed offset and (on a park) its DLQ
+     * entry, which the controller persists as ONE WAL record under ONE fsync.
+     */
+    public static final String PAYLOAD_ID_EFFECT_RECORD = "segment_effect_record";
+
+    /**
+     * Destructive eviction of an idle dynamic Segment: the controller unlinks its
+     * WAL and snapshots. A recreated Segment cold-starts fresh — this is not a
+     * cache flush, the history is gone.
+     */
+    public static final String PAYLOAD_ID_DELETE_SEGMENT_STATE = "delete_segment_state";
+
+    /**
      * Data-stream payload-ids reserved for the bounded-operative saga compensation
      * change-log (SDK -&gt; controller), same frame layout as {@code segment_state_change}.
      * {@code compensation_intent} records an operation's completion;

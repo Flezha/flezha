@@ -1,9 +1,11 @@
 package com.flezha.sdk.runtime.worker;
 
+import com.flezha.sdk.channel.BeyondWindowPolicy;
 import com.flezha.sdk.channel.RetryPolicy;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.operation.StableId;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
@@ -13,10 +15,13 @@ import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.DlqPark;
+import com.flezha.sdk.runtime.state.EffectRecord;
+import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.runtime.state.SegmentId;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.StateHandle;
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -78,6 +83,23 @@ public final class OperationDispatcher {
     /** Input-channel name stamped on dead-letter entries. */
     private final String inputChannelName;
 
+    /** Whether this Operation creates its Segments lazily, one per key seen. */
+    private final boolean dynamic;
+
+    /** Whether this Operative opted into the effectively-once output tier. */
+    private final boolean tier;
+
+    /** Whether the consumed offset is withheld until an explicit ctx.checkpoint(). */
+    private final boolean checkpointAck;
+
+    /** Declared late-input correction window; 0 = corrections are off. */
+    private final long correctionWindowMs;
+
+    private final BeyondWindowPolicy beyondWindowPolicy;
+
+    /** Serializes Changes into an effect record's opaque change bytes (tier only). */
+    private final KryoCodec codec;
+
     @SuppressWarnings("rawtypes")
     private final Operation operationInstance;
 
@@ -105,6 +127,13 @@ public final class OperationDispatcher {
         this.retryPolicy = inputChannel == null ? RetryPolicy.DEFAULT : inputChannel.retry();
         this.inputChannelName = inputChannel == null ? "<unwired>" : inputChannel.name();
         this.operationInstance = operationInstance;
+        this.dynamic = operationDescriptor.operationKeyOverridden()
+                && operationDescriptor.segmentKeys().isEmpty();
+        this.tier = topology.effectivelyOnce();
+        this.checkpointAck = topology.checkpointAck();
+        this.correctionWindowMs = topology.correctionWindowMs();
+        this.beyondWindowPolicy = topology.beyondWindowPolicy();
+        this.codec = new KryoCodec(operationInstance.kryoTypes());
     }
 
     public int operationId() {
@@ -132,16 +161,46 @@ public final class OperationDispatcher {
      * and route to segment index 0; static-mode operations call
      * {@code segmentFor} and fan out across the matching segments.
      */
-    @SuppressWarnings({"unchecked", "rawtypes"})
     public void fanoutSegments(@Nonnull Object value, long primaryStreamId) {
+        fanoutSegments(value, primaryStreamId, OptionalLong.empty());
+    }
+
+    /**
+     * {@code offset} is the input's position in the controller's durable input
+     * log, present only on an entry-channel input under the effectively-once
+     * tier. A value derived downstream carries none — it was never journaled,
+     * so there is nothing for it to acknowledge.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public void fanoutSegments(@Nonnull Object value, long primaryStreamId, @Nonnull OptionalLong offset) {
+        fanoutSegments(value, primaryStreamId, offset, false);
+    }
+
+    /** {@code replay} marks an input that belongs to a correction replay slice. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public void fanoutSegments(
+            @Nonnull Object value, long primaryStreamId, @Nonnull OptionalLong offset, boolean replay) {
         UnboundedOperativeInstance ri = instance.get();
         if (ri == null) {
             return;
         }
         List<SegmentSlot> segments = ri.segments().get(operationId);
+        // Dynamic mode: one Segment per key the input stream actually carries,
+        // created on first sight rather than declared up front.
+        if (dynamic) {
+            Optional<String> key = operationInstance.operationKey(value);
+            if (key.isEmpty()) {
+                LOG.warn(
+                        "operation `{}`: dynamic operationKey() returned empty; dropping input",
+                        operationDescriptor.name());
+                return;
+            }
+            int idx = ri.getOrCreateDynamicSegment(operationId, key.get());
+            enqueue(ri.segments().get(operationId).get(idx), value, primaryStreamId, offset, replay);
+            return;
+        }
         if (operationDescriptor.segmentKeys().isEmpty()) {
-            SegmentSlot slot = segments.get(0);
-            enqueue(slot, value, primaryStreamId);
+            enqueue(segments.get(0), value, primaryStreamId, offset, replay);
             return;
         }
         // Operation.Input is erased at this boundary; topology wiring guarantees value's runtime type matches.
@@ -150,15 +209,84 @@ public final class OperationDispatcher {
         for (String key : keys) {
             Integer idx = keyToIdx.get(key);
             if (idx != null) {
-                enqueue(segments.get(idx), value, primaryStreamId);
+                enqueue(segments.get(idx), value, primaryStreamId, offset, replay);
             }
         }
     }
 
-    private void enqueue(SegmentSlot slot, Object value, long primaryStreamId) {
-        boolean shouldDrain = slot.mailbox().push(new InputEnvelope(value, primaryStreamId));
+    private void enqueue(SegmentSlot slot, Object value, long primaryStreamId, OptionalLong offset) {
+        enqueue(slot, value, primaryStreamId, offset, false);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void enqueue(SegmentSlot slot, Object value, long primaryStreamId, OptionalLong offset, boolean replay) {
+        if (correctionWindowMs > 0) {
+            long eventTime = operationInstance.eventTime(value);
+            if (slot.bufferIfSliceOpen(
+                    new SegmentSlot.PendingInput(value, primaryStreamId, offset, eventTime, replay))) {
+                return;
+            }
+            if (isBeyondWindow(slot, eventTime) && beyondWindowPolicy == BeyondWindowPolicy.DROP) {
+                LOG.warn(
+                        "operation `{}`: dropping input at event time {} — beyond the {} ms correction window",
+                        operationDescriptor.name(),
+                        eventTime,
+                        correctionWindowMs);
+                return;
+            }
+            // Fold the mark when the input is ADMITTED, not when it runs: dispatch
+            // is asynchronous, so classifying against a mark that only moves at
+            // dispatch time would race every burst.
+            slot.observeEventTime(eventTime);
+        }
+        admit(slot, new InputEnvelope(value, primaryStreamId, offset));
+    }
+
+    private void admit(SegmentSlot slot, InputEnvelope envelope) {
+        slot.touch();
+        boolean shouldDrain = slot.mailbox().push(envelope);
         if (shouldDrain) {
             pool.execute(() -> drain(slot));
+        }
+    }
+
+    /** Older than the high-water by more than the window: the past it would repair is gone. */
+    private boolean isBeyondWindow(SegmentSlot slot, long eventTime) {
+        long highWater = slot.eventTimeHighWater();
+        return highWater != Long.MIN_VALUE && eventTime < highWater - correctionWindowMs;
+    }
+
+    /**
+     * Close the correction replay slice: dispatch its members in <b>event-time
+     * order</b> — the whole point of the correction — and only then the live
+     * inputs that arrived behind it, in arrival order.
+     *
+     * <p>That ordering is load-bearing. A live input released ahead of the slice
+     * would jump in front of the very inputs being re-ordered, and the corrected
+     * state would be wrong in a way nothing detects.
+     */
+    public void endReplaySlice(SegmentSlot slot) {
+        for (SegmentSlot.PendingInput p : slot.closeReplaySlice()) {
+            push(slot, p);
+        }
+    }
+
+    private void push(SegmentSlot slot, SegmentSlot.PendingInput p) {
+        // Max-only: a replayed input's event time can be BELOW the mark (that is
+        // what makes it late), and lowering the mark would make a genuinely late
+        // input read as on-time.
+        slot.observeEventTime(p.eventTime());
+        admit(slot, new InputEnvelope(p.input(), p.primaryStreamId(), p.offset()));
+    }
+
+    /** Close any open slice on every Segment of this Operation. */
+    public void endReplaySliceAllSegments() {
+        UnboundedOperativeInstance ri = instance.get();
+        if (ri == null) {
+            return;
+        }
+        for (SegmentSlot slot : ri.segments().get(operationId)) {
+            endReplaySlice(slot);
         }
     }
 
@@ -168,7 +296,7 @@ public final class OperationDispatcher {
                 Object item = slot.mailbox().pop();
                 while (item != null) {
                     InputEnvelope env = (InputEnvelope) item;
-                    runOnce(slot, env.input, env.primaryStreamId);
+                    runOnce(slot, env.input, env.primaryStreamId, env.offset);
                     item = slot.mailbox().pop();
                 }
                 slot.mailbox().releaseInflight();
@@ -187,21 +315,57 @@ public final class OperationDispatcher {
         }
     }
 
+    /**
+     * Evaluate the Operation's declared {@code Clock} for this invocation. The
+     * runtime does this once, before {@code run}; {@code ctx.now()} then serves
+     * the single value. Mirrors the Rust dispatcher's {@code ClockFor<Input>}
+     * evaluation — which the type system binds there, and registration
+     * validation binds here.
+     */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private void runOnce(SegmentSlot slot, Object input, long primaryStreamId) {
+    private long evaluateClock(Object input, long invocationSeq) {
+        Class<?> clock = operationDescriptor.clockType();
+        if (clock == com.flezha.sdk.state.EventTimeFrom.class) {
+            return operationInstance.eventTime(input);
+        }
+        if (clock == com.flezha.sdk.state.LogicalClock.class) {
+            return invocationSeq;
+        }
+        return System.currentTimeMillis();
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void runOnce(SegmentSlot slot, Object input, long primaryStreamId, OptionalLong offset) {
         slot.stateLock().lock();
         try {
             Object state = slot.state().get();
-            EmitContext ctxImpl = new EmitContext(primaryStreamId, slot);
+            UnboundedOperativeInstance ri = instance.get();
+            SegmentId segmentId =
+                    SegmentId.of(ri == null ? "" : ri.instanceId(), operationDescriptor.name(), slot.operationKey());
+            // The declared Clock is evaluated ONCE, before run: ctx.now() then
+            // serves that single value for the whole invocation. The change seq
+            // is the replay-stable half of ctx.stableId().
+            long invocationSeq = slot.changeSeq().get();
+            long clockValue = evaluateClock(input, invocationSeq);
+            EmitContext ctxImpl = new EmitContext(primaryStreamId, slot, segmentId, clockValue, invocationSeq);
             // Build a StateHandle that records Changes onto the Segment's
             // flush buffer under the bufferLock. The runtime's flusher owns
             // the buffer's drain cadence; here we just append.
+            //
+            // Under the tier, changes go to a PER-INVOCATION list instead: they
+            // ship inside this invocation's effect record, alongside its outputs
+            // and its consumed offset, so the controller persists all three in
+            // one WAL record under one fsync.
             BiConsumer<Object, Change> applyChangeFn = (s, c) -> {
                 operationInstance.applyChange(s, c);
             };
             List<Change> bufferView;
-            synchronized (slot.changeBufferLock()) {
-                bufferView = slot.changeBuffer();
+            if (tier) {
+                bufferView = new ArrayList<>();
+            } else {
+                synchronized (slot.changeBufferLock()) {
+                    bufferView = slot.changeBuffer();
+                }
             }
             StateHandle<Object, Change> handle = StateHandle.create(state, bufferView, applyChangeFn);
 
@@ -240,13 +404,84 @@ public final class OperationDispatcher {
                         attempt,
                         maxAttempts,
                         error);
-                sleepQuietly(retryBackoffMs(retryPolicy.backoffBaseMs(), attempt));
+                sleepQuietly(retryPolicy.backoffFor(attempt));
             }
-            if (parkError != null) {
+            if (tier) {
+                stageEffectRecord(slot, input, bufferView, ctxImpl, offset, parkError, attempt);
+            } else if (parkError != null) {
                 parkPoison(slot, input, parkError, attempt);
             }
         } finally {
+            // Progress, whatever the outcome: the invocation ran. A frozen pool is
+            // exactly the case where this stops advancing.
+            com.flezha.sdk.runtime.segment.SegmentCounters.noteDispatch();
             slot.stateLock().unlock();
+        }
+    }
+
+    /**
+     * Stage this invocation's effect record: its changes, its plugin outputs,
+     * the offset of the input it consumed, and — if the input was poison and the
+     * retry budget is spent — its dead-letter entry.
+     *
+     * <p>The park rides <b>inside</b> the record rather than as a separate
+     * {@code park_payload} frame. That is what keeps the park and the
+     * consumed-offset advance atomic: a crash between two frames could otherwise
+     * acknowledge the poison input while losing the evidence of why.
+     */
+    private void stageEffectRecord(
+            SegmentSlot slot,
+            Object input,
+            List<Change> changes,
+            EmitContext ec,
+            OptionalLong offset,
+            String parkError,
+            int attempts) {
+        Optional<DlqPark.DlqEntry> dlq = Optional.empty();
+        if (parkError != null) {
+            DlqPark.PARKED_TOTAL.incrementAndGet();
+            LOG.error(
+                    "operation `{}` segment `{}` parking poison payload inside its effect record"
+                            + " after {} attempt(s): {}",
+                    operationDescriptor.name(),
+                    slot.operationKey().orElse("<single>"),
+                    attempts,
+                    parkError);
+            dlq = Optional.of(
+                    new DlqPark.DlqEntry(inputChannelName, parkError, attempts, DlqPark.extractPayloadBytes(input)));
+        }
+
+        List<byte[]> changeBytes = new ArrayList<>(changes.size());
+        for (Change change : changes) {
+            changeBytes.add(codec.serialize(change));
+        }
+
+        synchronized (slot.changeBufferLock()) {
+            if (!checkpointAck) {
+                slot.effectBuffer().add(new EffectRecord(changeBytes, ec.collected, offset, dlq, ec.now()));
+                return;
+            }
+
+            // Checkpoint ack-granularity. The interval accumulates changes and
+            // only CLOSES on an explicit ctx.checkpoint() — or on a park, which
+            // must close it: otherwise the poison offset would be acknowledged
+            // while the state built before it is still not durable.
+            slot.stagedChanges().addAll(changeBytes);
+            boolean closing = ec.checkpointed || dlq.isPresent();
+
+            if (closing) {
+                List<byte[]> interval = new ArrayList<>(slot.stagedChanges());
+                slot.stagedChanges().clear();
+                slot.effectBuffer().add(new EffectRecord(interval, ec.collected, offset, dlq, ec.now()));
+            } else if (!ec.collected.isEmpty()) {
+                // Mid-interval emits flush immediately, carrying NO offset: the
+                // interval's inputs are re-forwarded on replay, so the outputs
+                // are re-emitted either way, and the keyed sink absorbs that.
+                // Holding them back would buy nothing.
+                slot.effectBuffer()
+                        .add(new EffectRecord(
+                                List.of(), ec.collected, OptionalLong.empty(), Optional.empty(), ec.now()));
+            }
         }
     }
 
@@ -274,18 +509,6 @@ public final class OperationDispatcher {
                         new DlqPark.DlqEntry(inputChannelName, error, attempts, DlqPark.extractPayloadBytes(input))));
     }
 
-    /**
-     * Exponential retry backoff with ±50% jitter: {@code base * 2^(attempt-1)},
-     * jitter included, capped at {@link RetryPolicy#RETRY_BACKOFF_MAX_MS}.
-     * Mirrors the Rust dispatcher's {@code retry_backoff}.
-     */
-    static long retryBackoffMs(long baseMs, int attempt) {
-        long exp = Math.min(Math.max(baseMs, 1) << Math.min(attempt - 1, 16), RetryPolicy.RETRY_BACKOFF_MAX_MS);
-        long jittered =
-                exp / 2 + java.util.concurrent.ThreadLocalRandom.current().nextLong(Math.max(exp, 1));
-        return Math.min(jittered, RetryPolicy.RETRY_BACKOFF_MAX_MS);
-    }
-
     private static void sleepQuietly(long ms) {
         try {
             Thread.sleep(ms);
@@ -294,7 +517,7 @@ public final class OperationDispatcher {
         }
     }
 
-    private record InputEnvelope(Object input, long primaryStreamId) {}
+    private record InputEnvelope(Object input, long primaryStreamId, OptionalLong offset) {}
 
     /**
      * Per-invocation {@link OperationCtx}. Single allocation per Operation.run call.
@@ -304,31 +527,81 @@ public final class OperationDispatcher {
     private final class EmitContext implements OperationCtx {
         private final long primaryStreamId;
         private final SegmentSlot slot;
+        private final SegmentId segmentId;
 
-        EmitContext(long primaryStreamId, SegmentSlot slot) {
+        /** The declared Clock's value, evaluated once before {@code run}. */
+        private final long now;
+
+        /** The invocation's durable change seq — the replay-stable half of {@link #stableId}. */
+        private final long invocationSeq;
+
+        private byte[] identityBytes;
+        private int stableIdOrdinal;
+        private int emitOrdinal;
+
+        /** Tier only: outputs staged into this invocation's effect record instead of shipped. */
+        private final List<EffectRecord.OutputRecord> collected = new ArrayList<>();
+
+        /** Set by {@code ctx.checkpoint()}: this invocation closes the interval. */
+        private boolean checkpointed;
+
+        @Override
+        public void checkpoint() {
+            checkpointed = true;
+        }
+
+        EmitContext(long primaryStreamId, SegmentSlot slot, SegmentId segmentId, long now, long invocationSeq) {
             this.primaryStreamId = primaryStreamId;
             this.slot = slot;
+            this.segmentId = segmentId;
+            this.now = now;
+            this.invocationSeq = invocationSeq;
+        }
+
+        @Override
+        public long now() {
+            return now;
+        }
+
+        @Override
+        @Nonnull
+        public StableId stableId() {
+            if (identityBytes == null) {
+                identityBytes = segmentId.encodedBytes();
+            }
+            return StableId.derive(identityBytes, invocationSeq, stableIdOrdinal++);
         }
 
         @Override
         public <C> void emit(@Nonnull C value) throws OperationException {
-            doEmit(outputChannelDescriptor.orElse(null), value, null);
+            doEmit(outputChannelDescriptor.orElse(null), value, null, null);
         }
 
         @Override
         public <C> void emit(@Nonnull String channelName, @Nonnull C value) throws OperationException {
-            doEmit(resolveChannel(channelName), value, null);
+            doEmit(resolveChannel(channelName), value, null, null);
         }
 
         @Override
         public <C> void emitWithMeta(@Nonnull C value, @Nonnull Map<String, String> meta) throws OperationException {
-            doEmit(outputChannelDescriptor.orElse(null), value, meta);
+            doEmit(outputChannelDescriptor.orElse(null), value, meta, null);
         }
 
         @Override
         public <C> void emitWithMeta(@Nonnull String channelName, @Nonnull C value, @Nonnull Map<String, String> meta)
                 throws OperationException {
-            doEmit(resolveChannel(channelName), value, meta);
+            doEmit(resolveChannel(channelName), value, meta, null);
+        }
+
+        @Override
+        public <C> void emitKeyed(@Nonnull String key, @Nonnull C value) throws OperationException {
+            doEmit(outputChannelDescriptor.orElse(null), value, null, key);
+        }
+
+        @Override
+        public <C> void emitKeyedWithMeta(@Nonnull String key, @Nonnull C value, @Nonnull Map<String, String> meta)
+                throws OperationException {
+            doEmit(outputChannelDescriptor.orElse(null), value, meta, key);
         }
 
         private ChannelDescriptor resolveChannel(String name) throws OperationException {
@@ -339,10 +612,28 @@ public final class OperationDispatcher {
             return topology.channel(id);
         }
 
-        private void doEmit(ChannelDescriptor descriptor, Object value, Map<String, String> meta)
+        /**
+         * The single emit funnel: enforces the keyed-channel contract (the
+         * declaration is the source of truth for whether a key is required),
+         * rejects reserved {@code flz.} metadata keys, then routes by shape.
+         */
+        private void doEmit(ChannelDescriptor descriptor, Object value, Map<String, String> meta, String key)
                 throws OperationException {
             if (descriptor == null) {
                 throw new OperationException.UnknownChannel("<no output channel declared on this operation>");
+            }
+            if (descriptor.keyed() && key == null) {
+                throw new OperationException.KeyRequiredOnKeyedChannel(descriptor.name());
+            }
+            if (!descriptor.keyed() && key != null) {
+                throw new OperationException.KeyNotAllowedOnNonKeyedChannel(descriptor.name());
+            }
+            if (meta != null) {
+                for (String k : meta.keySet()) {
+                    if (k.startsWith(OperationCtx.RESERVED_METADATA_PREFIX)) {
+                        throw new OperationException.ReservedMetadataKey(k);
+                    }
+                }
             }
             switch (descriptor.kind()) {
                 case INTER_OPERATION -> {
@@ -352,10 +643,10 @@ public final class OperationDispatcher {
                     }
                     fanoutInterOperation(descriptor, value, primaryStreamId);
                     if (sink.isPresent()) {
-                        emitPluginSink(descriptor, sink.get(), value, meta, primaryStreamId);
+                        emitPluginSink(descriptor, sink.get(), value, meta, key, this);
                     }
                 }
-                case PLUGIN_BOUND -> emitPlugin(descriptor, value, meta, primaryStreamId);
+                case PLUGIN_BOUND -> emitPlugin(descriptor, value, meta, key, this);
                 case ENTRY -> throw new OperationException(
                         "cannot emit on entry channel `" + descriptor.name() + "` from a operation");
             }
@@ -370,13 +661,13 @@ public final class OperationDispatcher {
         for (int consumerOperationId : descriptor.consumers()) {
             OperationDispatcher consumer = ri.dispatcher(consumerOperationId);
             if (consumer != null) {
-                consumer.fanoutSegments(value, primaryStreamId);
+                consumer.fanoutSegments(value, primaryStreamId, OptionalLong.empty());
             }
         }
     }
 
     private void emitPlugin(
-            ChannelDescriptor descriptor, Object value, Map<String, String> userMeta, long primaryStreamId) {
+            ChannelDescriptor descriptor, Object value, Map<String, String> userMeta, String key, EmitContext ec) {
         UnboundedOperativeInstance ri = instance.get();
         if (ri == null) {
             return;
@@ -398,7 +689,32 @@ public final class OperationDispatcher {
             return;
         }
 
-        writePluginFrame(ri, descriptor, bytes, userMeta, primaryStreamId);
+        if (!stageOutput(descriptor, bytes, userMeta, key, ec)) {
+            writePluginFrame(ri, descriptor, bytes, userMeta, key, ec);
+        }
+    }
+
+    /**
+     * Under the tier, a plugin output is STAGED into the invocation's effect
+     * record rather than shipped: the controller derives the identity stamps
+     * when it flushes the record, so none ride here. Returns {@code true} when
+     * the output was staged and must not also be written to the wire.
+     */
+    private boolean stageOutput(
+            ChannelDescriptor descriptor, byte[] bytes, Map<String, String> userMeta, String key, EmitContext ec) {
+        if (!tier) {
+            return false;
+        }
+        List<Map.Entry<String, String>> meta = new ArrayList<>();
+        if (userMeta != null) {
+            for (Map.Entry<String, String> e : userMeta.entrySet()) {
+                if (!"channel".equals(e.getKey())) {
+                    meta.add(Map.entry(e.getKey(), e.getValue()));
+                }
+            }
+        }
+        ec.collected.add(new EffectRecord.OutputRecord(descriptor.name(), key == null ? "" : key, meta, bytes));
+        return true;
     }
 
     private void emitPluginSink(
@@ -406,7 +722,8 @@ public final class OperationDispatcher {
             PluginSink sink,
             Object value,
             Map<String, String> userMeta,
-            long primaryStreamId)
+            String key,
+            EmitContext ec)
             throws OperationException {
         UnboundedOperativeInstance ri = instance.get();
         if (ri == null) {
@@ -418,7 +735,9 @@ public final class OperationDispatcher {
         } catch (RuntimeException | Error e) {
             throw new OperationException.PluginSerializerFailure(descriptor.name(), e.toString(), e);
         }
-        writePluginFrame(ri, descriptor, bytes, userMeta, primaryStreamId);
+        if (!stageOutput(descriptor, bytes, userMeta, key, ec)) {
+            writePluginFrame(ri, descriptor, bytes, userMeta, key, ec);
+        }
     }
 
     private void writePluginFrame(
@@ -426,7 +745,8 @@ public final class OperationDispatcher {
             ChannelDescriptor descriptor,
             byte[] bytes,
             Map<String, String> userMeta,
-            long primaryStreamId) {
+            String key,
+            EmitContext ec) {
         Map<String, String> metadata = new LinkedHashMap<>();
         if (userMeta != null) {
             for (Map.Entry<String, String> e : userMeta.entrySet()) {
@@ -437,12 +757,23 @@ public final class OperationDispatcher {
         }
         metadata.put("channel", descriptor.name());
 
-        long secondaryStreamId = ctx.streamRegistry().secondaryFor(primaryStreamId);
+        // Identity stamps are appended AFTER user metadata so they can never be
+        // clobbered (a user `flz.` key is already refused at the emit funnel).
+        // A non-keyed channel gets no stamps at all, keeping its frame
+        // byte-identical to the pre-change layout.
+        if (descriptor.keyed()) {
+            metadata.put("flz.segment", ec.segmentId.encoded());
+            metadata.put("flz.seq", ec.slot.changeSeq().get() + "." + ec.emitOrdinal);
+            metadata.put("flz.key", key);
+        }
+        ec.emitOrdinal++;
+
+        long secondaryStreamId = ctx.streamRegistry().secondaryFor(ec.primaryStreamId);
         if (secondaryStreamId == 0L) {
             LOG.warn(
                     "plugin emit on `{}`: no secondary stream paired with primary {}",
                     descriptor.name(),
-                    primaryStreamId);
+                    ec.primaryStreamId);
             return;
         }
 

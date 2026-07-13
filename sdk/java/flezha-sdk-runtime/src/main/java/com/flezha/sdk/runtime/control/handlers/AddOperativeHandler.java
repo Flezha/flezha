@@ -8,6 +8,7 @@ import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner;
 import com.flezha.sdk.runtime.bounded.BoundedSpec;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
+import com.flezha.sdk.runtime.operative.Declarations;
 import com.flezha.sdk.runtime.operative.InitValuesContext;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
@@ -79,7 +80,7 @@ public final class AddOperativeHandler implements CommandHandler {
             }
             registry.add(instance);
             BoundedOperativeRunner.spawn(ctx, instance, spec, initValues);
-            return new byte[0];
+            return Declarations.forBounded(spec);
         }
 
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
@@ -99,6 +100,6 @@ public final class AddOperativeHandler implements CommandHandler {
         } finally {
             InitValuesContext.clear();
         }
-        return new byte[0];
+        return Declarations.forUnbounded(topology);
     }
 }

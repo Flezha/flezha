@@ -21,4 +21,19 @@ public record RetryPolicy(int maxAttempts, long backoffBaseMs) {
 
     /** Cap on the per-attempt retry backoff, jitter included. */
     public static final long RETRY_BACKOFF_MAX_MS = 5_000L;
+
+    /**
+     * Backoff before {@code attempt} (1-based): {@code base × 2^(attempt-1)} with
+     * ±50% jitter, capped at {@link #RETRY_BACKOFF_MAX_MS}.
+     *
+     * <p>Lives here because BOTH retry ladders — the unbounded dead-letter one and
+     * the bounded segment one — resolve onto this policy, so they share one
+     * backoff curve rather than two that can drift apart.
+     */
+    public long backoffFor(int attempt) {
+        long exp = Math.min(Math.max(backoffBaseMs, 1) << Math.min(attempt - 1, 16), RETRY_BACKOFF_MAX_MS);
+        long jittered =
+                exp / 2 + java.util.concurrent.ThreadLocalRandom.current().nextLong(Math.max(exp, 1));
+        return Math.min(jittered, RETRY_BACKOFF_MAX_MS);
+    }
 }

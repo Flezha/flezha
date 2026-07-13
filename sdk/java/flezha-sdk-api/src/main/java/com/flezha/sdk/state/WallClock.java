@@ -1,12 +1,7 @@
 package com.flezha.sdk.state;
 
-import java.time.Instant;
-
-/** Real-time wall clock backed by {@link Instant#now()}. Fully supported in v1. */
-public final class WallClock implements Clock {
-
-    @Override
-    public Instant now() {
-        return Instant.now();
-    }
-}
+/**
+ * The default {@link Clock}: {@code ctx.now()} serves epoch milliseconds
+ * sampled once at dispatch entry, before {@code run} executes.
+ */
+public final class WallClock implements Clock {}

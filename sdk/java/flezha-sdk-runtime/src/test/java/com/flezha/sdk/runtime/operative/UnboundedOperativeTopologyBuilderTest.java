@@ -82,11 +82,16 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Test
-        @DisplayName("dynamic-mode-only declaration is rejected in v1")
-        void dynamicModeOnlyRejected() {
-            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new DynamicModeOnlyUnboundedOperative()))
-                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
-                    .hasMessageContaining("dynamic mode");
+        @DisplayName("a dynamic-mode-only declaration builds (Segments are created per key at dispatch)")
+        void dynamicModeOnlyBuilds() {
+            // Formerly refused ("dynamic mode is reserved … and rejected in v1").
+            // Dynamic Operations now register and allocate their Segments lazily,
+            // one per key the input stream carries.
+            UnboundedOperativeTopology topology =
+                    UnboundedOperativeTopologyBuilder.build(new DynamicModeOnlyUnboundedOperative());
+            assertThat(topology.operations()).hasSize(1);
+            assertThat(topology.operations().get(0).operationKeyOverridden()).isTrue();
+            assertThat(topology.operations().get(0).segmentKeys()).isEmpty();
         }
     }
 

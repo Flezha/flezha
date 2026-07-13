@@ -13,6 +13,16 @@ interface BoundedCollectSink {
     /** Collect an inter-operation output value for the next stage's input batch. */
     void collect(Object value);
 
-    /** Forward an already-serialized plugin-bound output to the operative's wire (best-effort, at-least-once). */
-    void emitPluginBytes(byte[] bytes);
+    /**
+     * Hand an already-serialized plugin-bound output to the sink.
+     *
+     * <p>A durable structured class <b>stages</b> it: the bytes ride the next
+     * {@code OpCommit}'s outbox, so the output becomes durable in the SAME record
+     * as the op that produced it. An opted-out or transport-less class forwards
+     * direct, as before.
+     *
+     * <p>The channel name is carried because a staged output has to be replayable
+     * — the controller flushes the outbox by channel.
+     */
+    void emitPluginBytes(String channel, byte[] bytes);
 }

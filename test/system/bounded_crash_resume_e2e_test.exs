@@ -94,50 +94,33 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
         # requires op A's journaled op-commit — the WAL flush and the OpCommit
         # ack are independent, and the skip assertion below needs the journal
         # entry durable before the SIGKILL.
-        runtime = ctx.runtime
-
         operative_id =
           drive_crash_resume(ctx, "commit_block_bounded", "ok", fn oid ->
-            journaled? =
-              runtime == :java or Flezha.State.OpJournal.restore_state(oid) != nil
-
-            Overwatch.resume_segment_count(:bounded, oid) > 0 and journaled?
+            Overwatch.resume_segment_count(:bounded, oid) > 0 and
+              Flezha.State.OpJournal.restore_state(oid) != nil
           end)
 
-        case ctx.runtime do
-          :rust ->
-            # bounded-op-journal: op A's completion was journaled at the op
-            # barrier before the crash, so the resume SKIPS it — its WAL keeps
-            # exactly the pre-crash record (a redo would append a second one)
-            # and op B runs seeded from the journaled handoff.
-            assert wal_record_count(operative_id, "commit_a") == 1,
-                   "journaled op A was re-run on resume (redo-vs-skip broken)"
+        # bounded-op-journal: op A's completion was journaled at the op barrier
+        # before the crash, so the resume SKIPS it — its WAL keeps exactly the
+        # pre-crash record (a redo would append a second one) and op B runs
+        # seeded from the journaled handoff. Both SDKs honour this contract.
+        assert wal_record_count(operative_id, "commit_a") == 1,
+               "journaled op A was re-run on resume (redo-vs-skip broken)"
 
-            {:ok, entries} = Flezha.State.OpJournal.read(operative_id)
-            committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
+        {:ok, entries} = Flezha.State.OpJournal.read(operative_id)
+        committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
 
-            assert 0 in committed, "op A's pre-crash commit is missing from the journal"
-            assert 1 in committed, "resumed op B never committed its boundary"
+        assert 0 in committed, "op A's pre-crash commit is missing from the journal"
+        assert 1 in committed, "resumed op B never committed its boundary"
 
-            # Operator surface: `flz state journal <instance>` renders the entries.
-            rendered =
-              ExUnit.CaptureIO.capture_io(fn ->
-                Flezha.Service.CliManager.state_journal(operative_id)
-              end)
+        # Operator surface: `flz state journal <instance>` renders the entries.
+        rendered =
+          ExUnit.CaptureIO.capture_io(fn ->
+            Flezha.Service.CliManager.state_journal(operative_id)
+          end)
 
-            assert rendered =~ "op_committed"
-            assert rendered =~ "op_idx=0"
-
-          :java ->
-            # Java SDK parity is a separate follow-up: no OpCommit is sent, so
-            # resume keeps the pre-journal contract — op A re-runs over the
-            # restored state (WAL carries the pre-crash commit AND the re-run's
-            # contiguous append), and no journal exists.
-            assert wal_record_count(operative_id, "commit_a") >= 2,
-                   "resumed op A did not re-run over restored state (WAL was not resumed)"
-
-            assert {:ok, []} = Flezha.State.OpJournal.read(operative_id)
-        end
+        assert rendered =~ "op_committed"
+        assert rendered =~ "op_idx=0"
       end
 
       test "durable saga bounded resumes compensation after a SIGKILL mid-rollback", ctx do

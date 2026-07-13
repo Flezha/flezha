@@ -57,6 +57,10 @@ public final class SegmentMailbox<T> {
         switch (policy) {
             case BLOCK -> {
                 try {
+                    // Count only a real park: an offer that fits is not back-pressure.
+                    if (queue.remainingCapacity() == 0) {
+                        SegmentCounters.noteBlockedPark();
+                    }
                     queue.put(item);
                     accepted = true;
                 } catch (InterruptedException e) {

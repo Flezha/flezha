@@ -57,6 +57,11 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
     private final List<OperationEntry> operations = new ArrayList<>();
     private final Map<String, Integer> operationNameToId = new LinkedHashMap<>();
     private final List<String> errors = new ArrayList<>();
+    private boolean effectivelyOnce;
+    private boolean checkpointAck;
+    private long correctionWindowMs;
+    private com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy =
+            com.flezha.sdk.channel.BeyondWindowPolicy.PROCESS_AS_ARRIVAL;
 
     /**
      * Run the supplied {@link UnboundedOperative#channels(ChannelBuilder)} once, validate,
@@ -104,6 +109,26 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         return new ChannelDeclImpl<>(id, type, name);
     }
 
+    @Override
+    public void effectivelyOnce() {
+        this.effectivelyOnce = true;
+    }
+
+    @Override
+    public void checkpointAck() {
+        this.checkpointAck = true;
+    }
+
+    @Override
+    public void correctionWindow(long windowMs) {
+        this.correctionWindowMs = windowMs;
+    }
+
+    @Override
+    public void beyondWindowPolicy(@Nonnull com.flezha.sdk.channel.BeyondWindowPolicy policy) {
+        this.beyondWindowPolicy = policy;
+    }
+
     @Nonnull
     public UnboundedOperativeTopology build(@Nonnull String factoryId) {
         // Detect channels declared without `.from(...)` (still classified as
@@ -120,12 +145,6 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                 errors.add("operation `" + operation.name
                         + "` declares non-empty operationKeys() but does not override segmentFor "
                         + "(set segmentForOverridden() to return true)");
-            }
-            if (operation.operationKeyOverridden && operation.segmentKeys.isEmpty()) {
-                errors.add("operation `" + operation.name
-                        + "` overrides operationKey() (dynamic-mode marker) without declaring "
-                        + "operationKeys(); dynamic mode is reserved for "
-                        + "`operative-dynamic-segmenting` and rejected in v1");
             }
             if (operation.segmentForOverridden && operation.segmentKeys.isEmpty()) {
                 errors.add("operation `" + operation.name
@@ -144,6 +163,49 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
             } catch (UnboundedOperativeConfigurationException e) {
                 errors.add(e.getMessage());
                 resolvedCapacities[i] = MailboxCapacityResolver.DEFAULT_MAILBOX_CAPACITY;
+            }
+        }
+
+        if (correctionWindowMs > 0) {
+            if (!effectivelyOnce) {
+                errors.add(UnboundedOperativeConfigurationException.correctionWindowRequires("`effectivelyOnce()`")
+                        .getMessage());
+            }
+            boolean anyEventTime =
+                    operations.stream().anyMatch(o -> o.clockType == com.flezha.sdk.state.EventTimeFrom.class);
+            if (!anyEventTime) {
+                errors.add(UnboundedOperativeConfigurationException.correctionWindowRequires(
+                                "an `EventTimeFrom` clock on at least one operation")
+                        .getMessage());
+            }
+            boolean allKeyed = channels.stream()
+                    .filter(c -> c.pluginName != null || c.pluginSinkName != null)
+                    .allMatch(c -> c.keyed);
+            if (!allKeyed) {
+                errors.add(UnboundedOperativeConfigurationException.correctionWindowRequires(
+                                "every plugin-bound channel to be `.keyed()`")
+                        .getMessage());
+            }
+        }
+
+        if (checkpointAck && !effectivelyOnce) {
+            errors.add(UnboundedOperativeConfigurationException.checkpointAckWithoutTier()
+                    .getMessage());
+        }
+
+        for (ChannelEntry entry : channels) {
+            boolean pluginWired = entry.pluginName != null || entry.pluginSinkName != null;
+            // A key rides as a `flz.key` stamp on a plugin frame; a pure
+            // inter-operation channel has nowhere to carry it.
+            if (entry.keyed && !pluginWired) {
+                errors.add(UnboundedOperativeConfigurationException.keyedChannelWithoutPluginWire(entry.name)
+                        .getMessage());
+            }
+            // The tier's replay re-emits outputs; only a keyed sink can absorb
+            // that as an idempotent upsert rather than a duplicate row.
+            if (effectivelyOnce && pluginWired && !entry.keyed) {
+                errors.add(UnboundedOperativeConfigurationException.tierChannelNotKeyed(entry.name)
+                        .getMessage());
             }
         }
 
@@ -167,7 +229,12 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                     Optional.ofNullable(entry.pluginSerializer),
                     pluginSink,
                     entry.overflowPolicy,
-                    new com.flezha.sdk.channel.RetryPolicy(entry.retryMaxAttempts, entry.retryBackoffBaseMs)));
+                    new com.flezha.sdk.channel.RetryPolicy(entry.retryMaxAttempts, entry.retryBackoffBaseMs),
+                    entry.keyed,
+                    entry.interOpEncoder == null
+                            ? Optional.empty()
+                            : Optional.of(
+                                    new ChannelDescriptor.InterOpCodec(entry.interOpEncoder, entry.interOpDecoder))));
         }
 
         // Materialize OperationDescriptors.
@@ -191,7 +258,9 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                     entry.schemaVersion,
                     entry.compactAfterBytes,
                     resolvedCapacities[i],
-                    entry.mailboxCapacityOverridden));
+                    entry.mailboxCapacityOverridden,
+                    entry.compensateOverridden,
+                    entry.segmentIdleTtl));
         }
 
         return new UnboundedOperativeTopology(
@@ -199,7 +268,11 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                 channelDescriptors,
                 Map.copyOf(nameToId),
                 operationDescriptors,
-                Map.copyOf(operationNameToId));
+                Map.copyOf(operationNameToId),
+                effectivelyOnce,
+                checkpointAck,
+                correctionWindowMs,
+                beyondWindowPolicy);
     }
 
     // ---- Internals ----------------------------------------------------------
@@ -243,14 +316,20 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         entry.compactAfterBytes = probe.compactAfterBytes();
         entry.mailboxCapacityDeclared = probe.mailboxCapacity();
         entry.mailboxCapacityOverridden = probe.mailboxCapacityOverridden();
-        // v1 wires only WallClock; declaring LogicalClock or EventTimeFrom
-        // fails UnboundedOperative registration loud-and-clear (per design.md Decision 4).
-        if (entry.clockType != null
-                && entry.clockType != com.flezha.sdk.state.WallClock.class
-                && entry.clockType != com.flezha.sdk.state.Clock.class) {
-            errors.add("operation `" + operationName + "`: "
-                    + UnboundedOperativeConfigurationException.clockNotImplementedYet(entry.clockType.getSimpleName())
-                            .getMessage());
+        entry.compensateOverridden = probe.compensateOverridden();
+        entry.segmentIdleTtl = probe.segmentIdleTtl();
+        // Every clock in the sealed hierarchy is wired. What Rust rejects at
+        // compile time (a `TimeExtractor<Input>` bound, an unservable clock) is
+        // rejected here instead — erasure precludes the compile-time form, so
+        // the same defect is caught at registration.
+        if (entry.clockType == com.flezha.sdk.state.EventTimeFrom.class && !probe.eventTimeOverridden()) {
+            errors.add(UnboundedOperativeConfigurationException.eventTimeExtractorMissing(operationName)
+                    .getMessage());
+        }
+        if (entry.clockType == com.flezha.sdk.state.LogicalClock.class
+                && entry.changeType == com.flezha.sdk.state.NoChange.class) {
+            errors.add(UnboundedOperativeConfigurationException.unservableClock(operationName)
+                    .getMessage());
         }
         operations.add(entry);
         operationNameToId.put(operationName, id);
@@ -386,6 +465,9 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         OverflowPolicy overflowPolicy;
         int retryMaxAttempts = com.flezha.sdk.channel.RetryPolicy.DEFAULT.maxAttempts();
         long retryBackoffBaseMs = com.flezha.sdk.channel.RetryPolicy.DEFAULT.backoffBaseMs();
+        boolean keyed;
+        Function<Object, byte[]> interOpEncoder;
+        Function<byte[], Object> interOpDecoder;
     }
 
     /**
@@ -426,6 +508,8 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         Integer outputChannelId;
         int mailboxCapacityDeclared;
         boolean mailboxCapacityOverridden;
+        boolean compensateOverridden;
+        java.util.Optional<java.time.Duration> segmentIdleTtl = java.util.Optional.empty();
     }
 
     // ---- Builder phantom types ---------------------------------------------
@@ -530,6 +614,33 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
 
         @Override
         @Nonnull
+        public ChannelDeclWithProducer<T> keyed() {
+            channels.get(channelId).keyed = true;
+            return this;
+        }
+
+        @Override
+        @Nonnull
+        @SuppressWarnings("unchecked")
+        public ChannelDeclWithProducer<T> codec() {
+            // Reuse the SDK's default JSON serialization — the same Jackson
+            // mapper a plugin-bound channel falls back to.
+            return codecWith(defaultSerializer(payloadType), defaultDeserializer(payloadType));
+        }
+
+        @Override
+        @Nonnull
+        @SuppressWarnings("unchecked")
+        public ChannelDeclWithProducer<T> codecWith(
+                @Nonnull Function<T, byte[]> encoder, @Nonnull Function<byte[], T> decoder) {
+            ChannelEntry entry = channels.get(channelId);
+            entry.interOpEncoder = value -> encoder.apply((T) value);
+            entry.interOpDecoder = bytes -> decoder.apply(bytes);
+            return this;
+        }
+
+        @Override
+        @Nonnull
         public Channel<T> toPlugin(@Nonnull String pluginName) {
             return toPlugin(pluginName, defaultSerializer(payloadType));
         }
@@ -590,6 +701,25 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
      * {@code String} is UTF-8 encoded; everything else goes through Jackson
      * JSON ({@code design.md} Open Question 4).
      */
+    /** Mirror of {@link #defaultSerializer}: the decode half of a default {@code codec()}. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static <T> Function<byte[], T> defaultDeserializer(Class<T> payloadType) {
+        if (payloadType == byte[].class) {
+            return (Function) (Function<byte[], byte[]>) (b -> b);
+        }
+        if (payloadType == String.class) {
+            return (Function) (Function<byte[], String>) (b -> new String(b, java.nio.charset.StandardCharsets.UTF_8));
+        }
+        ObjectMapper mapper = new ObjectMapper();
+        return bytes -> {
+            try {
+                return mapper.readValue(bytes, payloadType);
+            } catch (Exception e) {
+                throw new RuntimeException("inter-op codec (Jackson) decode failed: " + e.getMessage(), e);
+            }
+        };
+    }
+
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static <T> Function<T, byte[]> defaultSerializer(Class<T> payloadType) {
         if (payloadType == byte[].class) {

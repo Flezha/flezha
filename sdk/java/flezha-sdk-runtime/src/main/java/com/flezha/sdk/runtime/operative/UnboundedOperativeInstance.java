@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 import javax.annotation.Nonnull;
 
 /**
@@ -108,7 +108,7 @@ public final class UnboundedOperativeInstance implements Operative {
         // sink as the send path. Each changeful Segment registers below.
         KryoCodec codec = new KryoCodec(kryoTypes);
         HeaderTemplate headerTemplate = new HeaderTemplate();
-        Function<byte[], Boolean> sendFrame = frame -> SegmentStateSink.send(SegmentStateSink.PAYLOAD_ID_CHANGE, frame);
+        BiFunction<String, byte[], Boolean> sendFrame = SegmentStateSink::send;
 
         UnboundedOperativeInstance shell = new UnboundedOperativeInstance(
                 topology, instanceId, segments, segmentKeyToIdx, dispatchers, persistenceEnabled, kryoTypes);
@@ -123,7 +123,15 @@ public final class UnboundedOperativeInstance implements Operative {
                     ? topology.channel(desc.inputChannelId().getAsInt()).overflowPolicy()
                     : OverflowPolicy.BLOCK;
 
-            if (desc.segmentKeys().isEmpty()) {
+            boolean dynamicMode =
+                    desc.operationKeyOverridden() && desc.segmentKeys().isEmpty();
+            if (dynamicMode) {
+                // No Segments up front: a dynamic Operation's keys are whatever the
+                // input stream turns out to carry, so each is created on first sight.
+                Operation<?, ?, ?, ?, ?, ?> operationInstance = instantiate(desc.operationClass());
+                dispatchers.add(new OperationDispatcher(ctx, pool, shell, topology, operationId, operationInstance));
+                slots = new ArrayList<>();
+            } else if (desc.segmentKeys().isEmpty()) {
                 Operation<?, ?, ?, ?, ?, ?> operationInstance = instantiate(desc.operationClass());
                 OperationDispatcher dispatcher =
                         new OperationDispatcher(ctx, pool, shell, topology, operationId, operationInstance);
@@ -171,10 +179,99 @@ public final class UnboundedOperativeInstance implements Operative {
                 }
                 slots = List.copyOf(slots);
             }
-            segments.add(slots);
-            segmentKeyToIdx.add(Map.copyOf(keyMap));
+            // A dynamic-mode Operation creates its Segments lazily, one per key
+            // seen, so its slot table must stay mutable.
+            segments.add(dynamicMode ? new java.util.concurrent.CopyOnWriteArrayList<>(slots) : slots);
+            segmentKeyToIdx.add(
+                    dynamicMode ? new java.util.concurrent.ConcurrentHashMap<>(keyMap) : Map.copyOf(keyMap));
         }
         return shell;
+    }
+
+    /**
+     * Evict dynamic Segments idle past their declared TTL.
+     *
+     * <p><b>Destructive</b>: ships {@code delete_segment_state}, so the
+     * controller unlinks the Segment's WAL and snapshots. A later input for the
+     * same key cold-starts a FRESH Segment — it does not read the old state back.
+     * That is why eviction is off unless a TTL is declared.
+     *
+     * @return how many Segments were evicted
+     */
+    public int reapIdleDynamicSegments() {
+        int evicted = 0;
+        for (int operationId = 0; operationId < topology.operations().size(); operationId++) {
+            OperationDescriptor desc = topology.operation(operationId);
+            if (!desc.operationKeyOverridden() || !desc.segmentKeys().isEmpty()) {
+                continue;
+            }
+            Optional<java.time.Duration> ttl = desc.segmentIdleTtl();
+            if (ttl.isEmpty()) {
+                continue; // eviction is opt-in
+            }
+            long ttlMs = ttl.get().toMillis();
+            Map<String, Integer> keyMap = segmentKeyToIdx.get(operationId);
+            List<SegmentSlot> slots = segments.get(operationId);
+
+            synchronized (keyMap) {
+                for (Map.Entry<String, Integer> e : List.copyOf(keyMap.entrySet())) {
+                    SegmentSlot slot = slots.get(e.getValue());
+                    if (slot.idleMs() < ttlMs || !slot.mailbox().isEmpty()) {
+                        continue;
+                    }
+                    SegmentStateSink.send(
+                            SegmentStateSink.PAYLOAD_ID_DELETE_SEGMENT_STATE,
+                            SegmentFlusher.buildSegmentStateChangeFrame(
+                                    SegmentId.of(instanceId, desc.name(), Optional.of(e.getKey())),
+                                    0L,
+                                    new byte[16],
+                                    new byte[0]));
+                    keyMap.remove(e.getKey());
+                    evicted++;
+                }
+            }
+        }
+        return evicted;
+    }
+
+    /**
+     * Resolve a dynamic-mode Segment by key, creating it on first sight.
+     *
+     * <p>Cold-starts fresh: a dynamic Segment's state is built by
+     * {@code initState(key)}, not restored — which is also why an evicted one may
+     * be recreated without reading anything back from disk.
+     */
+    public int getOrCreateDynamicSegment(int operationId, @Nonnull String key) {
+        Map<String, Integer> keyMap = segmentKeyToIdx.get(operationId);
+        Integer existing = keyMap.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        synchronized (keyMap) {
+            Integer raced = keyMap.get(key);
+            if (raced != null) {
+                return raced;
+            }
+            List<SegmentSlot> slots = segments.get(operationId);
+            OperationDescriptor desc = topology.operation(operationId);
+            OperationDispatcher dispatcher = dispatchers.get(operationId);
+            Operation<?, ?, ?, ?, ?, ?> operationInstance = dispatcher.operationInstance();
+
+            int idx = slots.size();
+            SegmentSlot slot = new SegmentSlot(
+                    dispatcher,
+                    operationId,
+                    Optional.of(key),
+                    desc.changeType() != com.flezha.sdk.state.NoChange.class,
+                    desc.mailboxCapacity(),
+                    desc.inputChannelId().isPresent()
+                            ? topology.channel(desc.inputChannelId().getAsInt()).overflowPolicy()
+                            : OverflowPolicy.BLOCK);
+            slot.state().set(operationInstance.initState(Optional.of(key), Optional.empty()));
+            slots.add(slot);
+            keyMap.put(key, idx);
+            return idx;
+        }
     }
 
     /**
@@ -192,7 +289,7 @@ public final class UnboundedOperativeInstance implements Operative {
             boolean persistenceEnabled,
             KryoCodec codec,
             HeaderTemplate headerTemplate,
-            Function<byte[], Boolean> sendFrame) {
+            BiFunction<String, byte[], Boolean> sendFrame) {
         if (!slot.changeful()) {
             return;
         }
@@ -200,6 +297,7 @@ public final class UnboundedOperativeInstance implements Operative {
         FlusherEntry entry = new FlusherEntry(
                 slot.changeBufferLock(),
                 slot.changeBuffer(),
+                slot.effectBuffer(),
                 persistenceEnabled,
                 slot.changeSeq(),
                 sendFrame,

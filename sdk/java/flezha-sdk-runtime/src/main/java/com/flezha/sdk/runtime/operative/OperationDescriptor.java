@@ -34,6 +34,8 @@ public final class OperationDescriptor {
     private final long compactAfterBytes;
     private final int mailboxCapacity;
     private final boolean mailboxCapacityOverridden;
+    private final boolean compensateOverridden;
+    private final java.util.Optional<java.time.Duration> segmentIdleTtl;
 
     public OperationDescriptor(
             @Nonnull String name,
@@ -52,7 +54,11 @@ public final class OperationDescriptor {
             int schemaVersion,
             long compactAfterBytes,
             int mailboxCapacity,
-            boolean mailboxCapacityOverridden) {
+            boolean mailboxCapacityOverridden,
+            boolean compensateOverridden,
+            @Nonnull java.util.Optional<java.time.Duration> segmentIdleTtl) {
+        this.segmentIdleTtl = segmentIdleTtl;
+        this.compensateOverridden = compensateOverridden;
         this.name = name;
         this.operationClass = operationClass;
         this.segmentKeys = List.copyOf(segmentKeys);
@@ -117,6 +123,22 @@ public final class OperationDescriptor {
 
     public boolean segmentForOverridden() {
         return segmentForOverridden;
+    }
+
+    /**
+     * Whether the Operation declares a {@code compensate} hook. Read by the
+     * declaration map's {@code compensable_ops}: the controller refuses to
+     * rewind an operation whose plugin output is not semantically undoable, so
+     * it needs this before it wakes the instance.
+     */
+    public boolean compensateOverridden() {
+        return compensateOverridden;
+    }
+
+    /** Idle TTL for a dynamic Segment; empty = eviction off. */
+    @Nonnull
+    public java.util.Optional<java.time.Duration> segmentIdleTtl() {
+        return segmentIdleTtl;
     }
 
     public boolean operationKeyOverridden() {

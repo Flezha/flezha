@@ -87,7 +87,7 @@ class GracefulShutdownTest {
         assertThat(request.getReferenceId()).isNotEmpty();
         assertThat(capturedStreamId.get()).isEqualTo(CONTROL_STREAM_ID);
 
-        GracefulShutdown.signalAck(request.getReferenceId());
+        AckRegistry.complete(request.getReferenceId());
         runThread.join(Duration.ofSeconds(3).toMillis());
         assertThat(runThread.isAlive()).isFalse();
     }
@@ -113,9 +113,9 @@ class GracefulShutdownTest {
     }
 
     @Test
-    @DisplayName("signalAck() for an unknown reference does not throw")
+    @DisplayName("an ack for an unknown reference does not throw")
     void signalAckForUnknownReferenceIsBenign() {
-        GracefulShutdown.signalAck("never-registered-ref");
+        AckRegistry.complete("never-registered-ref");
     }
 
     @Test
@@ -142,7 +142,7 @@ class GracefulShutdownTest {
         firstRun.start();
 
         assertThat(firstWriteSeen.await(2, TimeUnit.SECONDS)).isTrue();
-        GracefulShutdown.signalAck(capturedRef.get());
+        AckRegistry.complete(capturedRef.get());
         firstRun.join(Duration.ofSeconds(3).toMillis());
 
         long started = System.currentTimeMillis();

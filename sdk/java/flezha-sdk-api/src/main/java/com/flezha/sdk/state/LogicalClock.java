@@ -1,24 +1,12 @@
 package com.flezha.sdk.state;
 
-import java.time.Instant;
-import java.util.concurrent.atomic.AtomicLong;
-
 /**
- * Logical clock backed by a monotonic counter exposed as an {@link Instant}
- * via {@link Instant#ofEpochMilli(long)}. Type ships in v1 for forward
- * compatibility; the runtime currently rejects Operations declaring this Clock
- * with {@code UnboundedOperativeConfigurationException.clockNotImplementedYet}.
+ * {@link Clock} serving the Segment's durable change seq, re-armed to
+ * {@code terminal + 1} on restore — so a replayed invocation observes the same
+ * value it did originally.
+ *
+ * <p>Requires a non-{@code NoChange} Change: a stateless Operation has no
+ * durable seq to serve, and declaring this clock without one fails Operative
+ * registration with {@code UnservableClock}.
  */
-public final class LogicalClock implements Clock {
-
-    private final AtomicLong counter;
-
-    public LogicalClock(AtomicLong counter) {
-        this.counter = counter;
-    }
-
-    @Override
-    public Instant now() {
-        throw new UnsupportedOperationException("Clock not implemented yet");
-    }
-}
+public final class LogicalClock implements Clock {}

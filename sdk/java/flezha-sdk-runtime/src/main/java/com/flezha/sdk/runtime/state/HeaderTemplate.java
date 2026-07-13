@@ -33,19 +33,32 @@ public final class HeaderTemplate {
     public static final byte SDK_LANG_JAVA = 2;
     public static final byte FORMAT_ID_KRYO = 4;
 
+    /**
+     * An effectively-once {@code segment_effect_record}: the body is postcard
+     * (the controller decodes it), even though its inner change bytes stay
+     * Kryo. The format id discriminates the FRAME kind, not the change codec.
+     */
+    public static final byte FORMAT_ID_EFFECT_RECORD = 2;
+
     private static final int SDK_VERSION = parseVersion();
 
-    /** Stamp a header for the given schema version and Change payload bytes. */
+    /** Stamp a Kryo change/snapshot header. */
     @Nonnull
     public byte[] stamp(int schemaVersion, @Nonnull byte[] changeBytes) {
+        return stamp(schemaVersion, FORMAT_ID_KRYO, changeBytes);
+    }
+
+    /** Stamp a header for the given schema version, format id, and payload bytes. */
+    @Nonnull
+    public byte[] stamp(int schemaVersion, byte formatId, @Nonnull byte[] payloadBytes) {
         ByteBuffer buf = ByteBuffer.allocate(HEADER_SIZE).order(ByteOrder.BIG_ENDIAN);
         buf.put(SDK_LANG_JAVA);
         buf.putInt(SDK_VERSION);
         buf.putInt(schemaVersion);
-        buf.put(FORMAT_ID_KRYO);
+        buf.put(formatId);
         buf.put((byte) 0);
         buf.put((byte) 0);
-        buf.putInt(crc32(changeBytes));
+        buf.putInt(crc32(payloadBytes));
         return buf.array();
     }
 

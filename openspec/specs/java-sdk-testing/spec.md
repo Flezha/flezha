@@ -3,9 +3,7 @@
 ## Purpose
 
 Defines the testing strategy for the Java SDK: unit test coverage of the protocol layer, JNI bridge tests, the reference Java compute engine test app, the Elixir integration harness that launches the Java runtime, the full runtime×transport integration matrix, the one-command local entry point, and CI enforcement.
-
 ## Requirements
-
 ### Requirement: Unit Test Coverage for Protocol Layer
 
 The Java SDK SHALL include JUnit 5 unit tests that cover every component of the protocol and runtime layer: binary framing (frame build / parse, partial reads, incomplete headers, incomplete payloads, multiple frames per read, oversized payload ids, empty metadata), metadata serialization (round-trip, boundary lengths of 0 and 255, missing metadata, the reserved `channel` key), protobuf encode/decode for every `CommandRequest` oneof and `CommandResponse` shape, command dispatch for every command variant (success and error paths, including the `OperationMessage` canonical-unsupported response), Operative registration (duplicate factoryId, missing factoryId lookup, before/after `newInstance` gating, wiring-mismatch rejection, entry-channel-type rejection, unwired-channel rejection, static-mode and dynamic-mode default-impl detection), Operation dispatch (single-mode segment allocation, static-mode segment fan-out, sticky per-segment ordering, parallel segment execution, inter-operation reference-equality, plugin-bound serialization + channel-name metadata attachment, `emitWithMeta` rejection on inter-operation channels, reserved-key drop), operative-instance lifecycle (add via `AddOperative`, remove via `RemOperative`, state serialize via `SegmentState`, migrate serialize via `MigrationSerialization`, migrate deserialize via `MigrationDeserialization`), and the reconnect state machine (intentional vs unexpected disconnect, backoff schedule).
@@ -230,7 +228,6 @@ Java SDK integration test class names and test descriptions SHALL use canonical 
 - **WHEN** `mvn -f sdk/java test` is run
 - **THEN** all integration test classes SHALL compile and run; no class name SHALL contain `Processor`, `Operator`, or `ComputeEngine`
 
-
 ### Requirement: Reference Java test app registers a Bounded Operative
 
 The Java reference test app at `test/apps/java_executor/` SHALL register at least one `BoundedOperative` class via `Flezha.registerBounded(...)`, mirroring the bounded operative that `test/apps/rust_executor/` registers (an `EchoOperative` that emits its `args` as plugin output and returns success). The bounded operative SHALL be a hand-written `BoundedOperative` implementation (no annotation-processor sugar in v1). Registering the bounded operative SHALL NOT disturb the test app's unbounded operative registrations or its run-until-stdin-closes behavior.
@@ -279,3 +276,48 @@ A stateless Operation (`Change = NoChange`) SHALL keep no replay baseline: `repl
 
 - **WHEN** `replayEquals()` runs on a harness for a `NoChange` Operation
 - **THEN** it returns `Optional.empty()` without serializing the stateless state, since no Changes are journaled
+
+### Requirement: OperationTestHarness verifies the determinism contract on the output side
+
+The Java `OperationTestHarness` SHALL provide `replayEmitsEqual()` — the output-side sibling of `replayEquals()` — which re-runs the recorded inputs against a fresh baseline and compares the resulting emit sequence (channel, key, metadata, and serialized payload) to the original. It SHALL return `Optional.empty()` when the replayed emits match, and a diagnostic describing the first divergence otherwise.
+
+This is what lets a Java author verify the determinism contract (`ctx.now()` / `ctx.stableId()` instead of `System.currentTimeMillis()` / `UUID.randomUUID()`) the same way a Rust author does with `OperationTestHarness::replay_emits_equal`.
+
+#### Scenario: A deterministic Operation replays identical emits
+
+- **WHEN** an Operation derives its emitted key from `ctx.stableId()` and its timestamp from `ctx.now()`, and `replayEmitsEqual()` runs after applying inputs
+- **THEN** it SHALL return `Optional.empty()`
+
+#### Scenario: An Operation reading ambient time is caught
+
+- **WHEN** an Operation emits a value derived from `System.currentTimeMillis()` rather than `ctx.now()`, and `replayEmitsEqual()` runs
+- **THEN** it SHALL return a non-empty diagnostic naming the diverging emit
+
+### Requirement: OperationTestHarness supports injectable clocks
+
+The `OperationTestHarness` SHALL support driving the Operation's declared `Clock` from the test rather than from the ambient system clock: `withWallClock(long fixedMillis)` SHALL pin `ctx.now()` to a constant, and `withWallClockScript(long... millis)` SHALL serve one value per successive invocation. For an `EventTimeFrom` Operation the harness SHALL serve the value the Operation's `eventTime(input)` extractor returns; for a `LogicalClock` Operation it SHALL serve the harness's durable change seq.
+
+#### Scenario: A fixed wall clock makes now() constant across invocations
+
+- **WHEN** a harness built with `withWallClock(1_700_000_000_000L)` applies three inputs
+- **THEN** every invocation's `ctx.now()` SHALL return `1700000000000`
+
+#### Scenario: A scripted wall clock advances per invocation
+
+- **WHEN** a harness built with `withWallClockScript(1000L, 2000L, 3000L)` applies three inputs
+- **THEN** the invocations' `ctx.now()` SHALL return `1000`, `2000`, and `3000` respectively
+
+### Requirement: OperationTestHarness asserts keyed emits and identity stamps
+
+The harness's `EmitRecord` SHALL expose the emit's key (empty for a non-keyed emit) and its metadata, so tests can assert `emitKeyed` behaviour and the runtime's `flz.segment` / `flz.seq` / `flz.key` identity stamps without invoking the wire path. The harness SHALL support declaring a channel keyed, so that the keyed-channel refusals (`KeyRequiredOnKeyedChannel`, `KeyNotAllowedOnNonKeyedChannel`) are assertable in a unit test.
+
+#### Scenario: A keyed emit records its key
+
+- **WHEN** an Operation calls `ctx.emitKeyed("BTC", candle)` on a channel the harness declared keyed
+- **THEN** `harness.recordedEmits()` SHALL contain one record whose key is `"BTC"` and whose metadata carries the `flz.key` stamp
+
+#### Scenario: A reserved metadata key is rejected in the harness too
+
+- **WHEN** an Operation calls `ctx.emitWithMeta(value, Map.of("flz.seq", "1.0"))` under the harness
+- **THEN** the harness ctx SHALL throw `OperationException.ReservedMetadataKey`, matching the runtime's behaviour
+

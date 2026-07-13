@@ -2,8 +2,10 @@ package com.flezha.sdk.runtime.bounded;
 
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.operation.StableId;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
+import com.flezha.sdk.runtime.state.SegmentId;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
@@ -26,14 +28,60 @@ final class BoundedCollectAdapter implements OperationCtx {
     private final UnboundedOperativeTopology topology;
     private final Optional<ChannelDescriptor> outputChannel;
     private final BoundedCollectSink sink;
+    private final SegmentId identity;
+
+    /** The wall clock, sampled once — the adapter is constructed fresh per operation run. */
+    private final long now = System.currentTimeMillis();
+
+    private int stableIdOrdinal;
 
     BoundedCollectAdapter(
             @Nonnull UnboundedOperativeTopology topology,
             @Nonnull Optional<ChannelDescriptor> outputChannel,
-            @Nonnull BoundedCollectSink sink) {
+            @Nonnull BoundedCollectSink sink,
+            @Nonnull SegmentId identity) {
         this.topology = topology;
         this.outputChannel = outputChannel;
         this.sink = sink;
+        this.identity = identity;
+    }
+
+    @Override
+    public long now() {
+        return now;
+    }
+
+    /** No-op: a bounded operative's durability boundary is the op commit, not a checkpoint. */
+    @Override
+    public void checkpoint() {}
+
+    /**
+     * Derived at invocation seq 0: a bounded operative that re-runs from the top
+     * re-derives the same ids, which is exactly what makes its re-emitted output
+     * idempotent under at-least-once.
+     */
+    @Override
+    @Nonnull
+    public StableId stableId() {
+        return StableId.derive(identity.encodedBytes(), 0L, stableIdOrdinal++);
+    }
+
+    /**
+     * Bounded plugin output rides the instance-id frame and carries no
+     * per-channel metadata, so a {@code flz.key} stamp has nowhere to go —
+     * a keyed emit is refused rather than silently unkeyed. Matches the Rust
+     * SDK, which rejects keyed emits on bounded operatives for the same reason.
+     */
+    @Override
+    public <C> void emitKeyed(@Nonnull String key, @Nonnull C value) throws OperationException {
+        throw new OperationException.KeyNotAllowedOnNonKeyedChannel(
+                outputChannel.map(ChannelDescriptor::name).orElse("<no output channel>"));
+    }
+
+    @Override
+    public <C> void emitKeyedWithMeta(@Nonnull String key, @Nonnull C value, @Nonnull Map<String, String> meta)
+            throws OperationException {
+        emitKeyed(key, value);
     }
 
     @Override
@@ -100,6 +148,6 @@ final class BoundedCollectAdapter implements OperationCtx {
         } catch (RuntimeException | Error e) {
             throw new OperationException.PluginSerializerFailure(channelName, e.toString(), e);
         }
-        sink.emitPluginBytes(bytes);
+        sink.emitPluginBytes(channelName, bytes);
     }
 }

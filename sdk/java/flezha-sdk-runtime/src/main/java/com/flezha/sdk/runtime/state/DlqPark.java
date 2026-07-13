@@ -1,11 +1,10 @@
 package com.flezha.sdk.runtime.state;
 
-import java.io.ByteArrayOutputStream;
+import com.flezha.sdk.runtime.control.AckRegistry;
 import java.nio.charset.StandardCharsets;
-import java.util.HashSet;
 import java.util.Optional;
 import java.util.OptionalLong;
-import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
@@ -35,9 +34,6 @@ public final class DlqPark {
 
     /** Monotonic nonce making park ids unique within a process. */
     private static final AtomicLong PARK_SEQ = new AtomicLong();
-
-    private static final Object ACK_LOCK = new Object();
-    private static final Set<String> acked = new HashSet<>();
 
     private static final long ACK_RESEND_INTERVAL_MS = 2_000L;
     private static final long WARN_EVERY_RESENDS = 5L;
@@ -69,14 +65,10 @@ public final class DlqPark {
 
     /**
      * Record a controller ack for {@code parkId} and wake the parked
-     * dispatcher. Called from the {@code ParkPayloadAck} control handler;
-     * unknown ids are retained (the ack can race ahead of the waiter).
+     * dispatcher. Called from the {@code ParkPayloadAck} control handler.
      */
     public static void completeAck(@Nonnull String parkId) {
-        synchronized (ACK_LOCK) {
-            acked.add(parkId);
-            ACK_LOCK.notifyAll();
-        }
+        AckRegistry.complete(parkId);
     }
 
     /**
@@ -97,31 +89,29 @@ public final class DlqPark {
     }
 
     /**
-     * Postcard encoding of a {@link ParkBody}: LEB128 varint lengths/ints,
-     * UTF-8 strings, {@code Option} as {@code 0x00}/{@code 0x01}+value.
-     * Byte-identical to the Rust SDK's {@code postcard::to_allocvec(ParkBody)}.
+     * Postcard encoding of a {@link ParkBody}, byte-identical to the Rust
+     * SDK's {@code postcard::to_allocvec(ParkBody)}. Field order is the wire
+     * contract.
      */
     @Nonnull
     public static byte[] encodeParkBody(@Nonnull ParkBody body) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        writeString(out, body.parkId());
-        if (body.originOffset().isPresent()) {
-            out.write(1);
-            writeVarint(out, body.originOffset().getAsLong());
-        } else {
-            out.write(0);
-        }
-        DlqEntry entry = body.entry();
-        writeString(out, entry.channel());
-        writeString(out, entry.error());
-        writeVarint(out, Integer.toUnsignedLong(entry.attempts()));
-        if (entry.payload().isPresent()) {
-            out.write(1);
-            writeBytes(out, entry.payload().get());
-        } else {
-            out.write(0);
-        }
-        return out.toByteArray();
+        Postcard.Writer w = new Postcard.Writer();
+        w.string(body.parkId()).optionalVarint(body.originOffset());
+        encodeDlqEntry(w, body.entry());
+        return w.toBytes();
+    }
+
+    /**
+     * Postcard encoding of a {@link DlqEntry} (Rust {@code DlqEntryBody}).
+     * Shared with the effectively-once tier, whose effect record embeds the
+     * same entry so that a park and its consumed-offset advance stay one
+     * atomic WAL record.
+     */
+    public static void encodeDlqEntry(@Nonnull Postcard.Writer w, @Nonnull DlqEntry entry) {
+        w.string(entry.channel())
+                .string(entry.error())
+                .varint(Integer.toUnsignedLong(entry.attempts()))
+                .optionalBytes(entry.payload());
     }
 
     /**
@@ -145,27 +135,18 @@ public final class DlqPark {
         byte[] frame = SegmentFlusher.buildSegmentStateChangeFrame(
                 segmentId, PARK_SEQ.get(), new byte[16], encodeParkBody(body));
 
+        // Register before the first send: the ack can then never outrun the
+        // waiter, which is what lets the shared registry stay race-free.
+        CompletableFuture<Void> ack = AckRegistry.register(body.parkId());
         long resends = 0;
         while (true) {
             SegmentStateSink.send(PAYLOAD_ID_PARK, frame);
-            long deadline = System.currentTimeMillis() + ACK_RESEND_INTERVAL_MS;
-            synchronized (ACK_LOCK) {
-                while (true) {
-                    if (acked.remove(body.parkId())) {
-                        return;
-                    }
-                    long remaining = deadline - System.currentTimeMillis();
-                    if (remaining <= 0) {
-                        break;
-                    }
-                    try {
-                        ACK_LOCK.wait(remaining);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        LOG.error("DLQ park wait interrupted before ack; park `{}` may not be durable", body.parkId());
-                        return;
-                    }
-                }
+            if (AckRegistry.await(body.parkId(), ack, ACK_RESEND_INTERVAL_MS)) {
+                return;
+            }
+            if (Thread.currentThread().isInterrupted()) {
+                LOG.error("DLQ park wait interrupted before ack; park `{}` may not be durable", body.parkId());
+                return;
             }
             resends++;
             if (resends % WARN_EVERY_RESENDS == 0) {
@@ -176,23 +157,5 @@ public final class DlqPark {
                         resends);
             }
         }
-    }
-
-    private static void writeVarint(ByteArrayOutputStream out, long value) {
-        long v = value;
-        while ((v & ~0x7FL) != 0) {
-            out.write((int) ((v & 0x7F) | 0x80));
-            v >>>= 7;
-        }
-        out.write((int) v);
-    }
-
-    private static void writeBytes(ByteArrayOutputStream out, byte[] bytes) {
-        writeVarint(out, bytes.length);
-        out.write(bytes, 0, bytes.length);
-    }
-
-    private static void writeString(ByteArrayOutputStream out, String s) {
-        writeBytes(out, s.getBytes(StandardCharsets.UTF_8));
     }
 }

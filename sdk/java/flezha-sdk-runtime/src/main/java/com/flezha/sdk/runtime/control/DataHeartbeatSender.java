@@ -5,6 +5,7 @@ import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
+import com.flezha.sdk.runtime.segment.SegmentCounters;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -68,13 +69,20 @@ public final class DataHeartbeatSender {
     }
 
     private void tick() {
-        // Credit-park self-report: this scheduler thread never parks on
-        // credit, so the counter advancing while data threads are wedged
-        // classifies the executor as fed-but-parked, not silently frozen.
+        // Dispatch-progress self-report: this scheduler thread stays alive even
+        // when the dispatch pool is wedged, so the heartbeat alone proves only
+        // that the process exists. These counters are what let the controller
+        // tell "alive but frozen" apart from "healthy and idle".
         byte[] frame = FrameEncoder.build(
                 DATA_HEARTBEAT_PAYLOAD_ID,
                 new byte[0],
-                Map.of("credit_parked", Long.toString(com.flezha.sdk.runtime.state.CreditWindow.creditParked())));
+                Map.of(
+                        "dispatches",
+                        Long.toString(SegmentCounters.dispatchesCompleted()),
+                        "blocked_parks",
+                        Long.toString(SegmentCounters.blockedParkEpisodes()),
+                        "credit_parked",
+                        Long.toString(com.flezha.sdk.runtime.state.CreditWindow.creditParked())));
         for (long sid : ctx.streamRegistry().secondaries()) {
             if (sid > 0) {
                 try {

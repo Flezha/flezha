@@ -35,6 +35,58 @@ public class OperationException extends Exception {
     }
 
     /**
+     * Thrown when a plain {@code emit} is called on a channel declared
+     * {@code .keyed()}. The declaration is the single source of truth for
+     * whether a key is required — use {@code ctx.emitKeyed(...)}.
+     */
+    public static final class KeyRequiredOnKeyedChannel extends OperationException {
+        private final String channel;
+
+        public KeyRequiredOnKeyedChannel(String channel) {
+            super("channel `" + channel + "` is declared keyed; use emitKeyed(key, value)");
+            this.channel = channel;
+        }
+
+        public String channel() {
+            return channel;
+        }
+    }
+
+    /** Thrown when {@code ctx.emitKeyed(...)} targets a channel not declared {@code .keyed()}. */
+    public static final class KeyNotAllowedOnNonKeyedChannel extends OperationException {
+        private final String channel;
+
+        public KeyNotAllowedOnNonKeyedChannel(String channel) {
+            super("channel `" + channel + "` is not declared keyed; use emit(value)");
+            this.channel = channel;
+        }
+
+        public String channel() {
+            return channel;
+        }
+    }
+
+    /**
+     * Thrown when user metadata carries a key in the reserved {@code flz.}
+     * namespace. The runtime's identity stamps ({@code flz.segment},
+     * {@code flz.seq}, {@code flz.key}) live there, so a user key is rejected
+     * rather than dropped — otherwise a stamp could be spoofed or clobbered.
+     */
+    public static final class ReservedMetadataKey extends OperationException {
+        private final String key;
+
+        public ReservedMetadataKey(String key) {
+            super("metadata key `" + key + "` is reserved: the `" + OperationCtx.RESERVED_METADATA_PREFIX
+                    + "` namespace belongs to the runtime");
+            this.key = key;
+        }
+
+        public String key() {
+            return key;
+        }
+    }
+
+    /**
      * Thrown when an {@code emit} or {@code emitWithMeta} call references a
      * channel name that was not declared on this UnboundedOperative's topology.
      */

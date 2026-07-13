@@ -28,8 +28,8 @@ public final class SagaBlockBoundedOperative implements BoundedOperative {
     @Override
     public void operations(ChannelBuilder c) {
         c.input(String.class, "in").into(SagaA.class);
-        c.channel(String.class, "s1").from(SagaA.class).into(SagaB.class);
-        c.channel(String.class, "s2").from(SagaB.class).into(SagaC.class);
+        c.channel(String.class, "s1").from(SagaA.class).codec().into(SagaB.class);
+        c.channel(String.class, "s2").from(SagaB.class).codec().into(SagaC.class);
     }
 
     /**

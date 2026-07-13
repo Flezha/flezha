@@ -19,11 +19,14 @@ import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.BoundedCompleted;
 import com.flezha.sdk.proto.BoundedStop;
 import com.flezha.sdk.proto.CommandRequest;
+import com.flezha.sdk.proto.OpCommittedOp;
+import com.flezha.sdk.proto.OpJournalState;
 import com.flezha.sdk.proto.RemOperative;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
 import com.flezha.sdk.runtime.ExecutorContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
+import com.flezha.sdk.runtime.control.AckRegistry;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
 import com.flezha.sdk.runtime.control.handlers.BoundedStopHandler;
 import com.flezha.sdk.runtime.control.handlers.RemOperativeHandler;
@@ -154,11 +157,23 @@ class BoundedKindTest {
     }
 
     @Test
-    @DisplayName("a branching structured topology is rejected at registration")
-    void branchingTopologyRejected() {
-        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(BranchingBoundedOperative.class))
-                .isInstanceOf(BoundedOperativeConfigurationException.class)
-                .hasMessageContaining("branching");
+    @DisplayName("a branching structured topology registers, and both branches run")
+    void branchingTopologyRunsBothBranches() throws Exception {
+        // Formerly rejected outright ("branching"). One producer now feeds two
+        // downstream operations, and BFS order keeps completion topological — which
+        // is why the compensation planner needed no change at all.
+        BoundedOperativeRegistry.registerBounded(BranchingBoundedOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-branching-bounded", "branch-1", "x"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
+        // Both branches were fed from the shared producer's output.
+        assertThat(cap.committedOpIdxs()).hasSize(3);
     }
 
     @Test
@@ -488,6 +503,471 @@ class BoundedKindTest {
         assertThat(cap2.awaitCompletions()).isTrue();
         assertThat(cap2.decodeCompletion().getStatus()).isEqualTo("ok");
         assertThat(walFrames).as("an opt-out bounded writes nothing to the WAL").isEmpty();
+    }
+
+    // --- Op-journal (bounded-op-journal) -------------------------------------
+
+    @Test
+    @DisplayName("a durable chain journals an OpCommit at every op barrier")
+    void durableChainJournalsEveryOpBoundary() throws Exception {
+        BoundedOperativeRegistry.registerBounded(ChainBoundedOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-chain-bounded", "journal-1", "x"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        // One commit per operation, in chain order — the durability boundary the
+        // resume later reads to decide what NOT to re-run.
+        assertThat(cap.committedOpIdxs()).containsExactly(0, 1);
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
+    }
+
+    @Test
+    @DisplayName("an opted-out class journals nothing (it re-runs from the top by design)")
+    void optedOutClassJournalsNothing() throws Exception {
+        BoundedOperativeRegistry.registerBounded(FanOptOutBoundedOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(
+                        ctx,
+                        addBoundedOperative("test-fan-optout-bounded", "journal-optout", "a,bb"),
+                        new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        assertThat(cap.committedOpIdxs())
+                .as("persistence opted out ⇒ no journal, no handshake")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("a durable structured class with a codec-less inter-op channel is refused")
+    void missingInterOpCodecIsRefused() {
+        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(NoCodecBoundedOperative.class))
+                .isInstanceOf(com.flezha.sdk.bounded.BoundedOperativeConfigurationException.class)
+                .hasMessageContaining("MissingInterOpCodec")
+                .hasMessageContaining("mid");
+    }
+
+    /** Durable + structured, but its inter-op handoff has no codec to journal. */
+    public static final class NoCodecBoundedOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-no-codec-bounded";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(Stage1.class);
+            c.channel(String.class, "mid").from(Stage1.class).into(Stage2.class);
+            c.channel(String.class, "out").from(Stage2.class).toPlugin("sink");
+        }
+    }
+
+    // --- Staged commit + transactional outbox (bounded-transactional-outbox) --
+
+    @Test
+    @DisplayName("a durable op STAGES its output onto the barrier's outbox instead of shipping it")
+    void durableOpStagesOutputOntoTheOutbox() throws Exception {
+        BoundedOperativeRegistry.registerBounded(ChainBoundedOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-chain-bounded", "outbox-1", "x"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        // The terminal op's emit rode its OpCommit's outbox — the SDK never wrote
+        // it to the wire itself.
+        List<String> staged = cap.outboxPayloads();
+        assertThat(staged).containsExactly("x-1-2");
+    }
+
+    @Test
+    @DisplayName("a failing stage leaks no staged output")
+    void failingStageLeaksNoStagedOutput() throws Exception {
+        BoundedOperativeRegistry.registerBounded(EmitThenFailBoundedOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-emit-then-fail", "outbox-fail", "x"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        // The op emitted and THEN threw. Its staged bytes die with the exception:
+        // they never reach a barrier, so they never become durable.
+        assertThat(cap.outboxPayloads()).isEmpty();
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("error");
+    }
+
+    /** Emits, then throws — the leak-nothing case. */
+    public static final class EmitThenFailBoundedOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-emit-then-fail";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(EmitThenFail.class);
+            c.channel(String.class, "out").from(EmitThenFail.class).toPlugin("sink");
+        }
+    }
+
+    public static final class EmitThenFail extends StrOp {
+        @Override
+        public String name() {
+            return "emit_then_fail";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            ctx.emit("leaked:" + input);
+            throw new OperationException("boom after emit");
+        }
+    }
+
+    // --- Durable loop + suspension (bounded-durable-loop / -suspension) -------
+
+    @Test
+    @DisplayName("a PER_INPUT loop commits one iteration per inbox item, then PARKS when idle")
+    void perInputLoopCommitsPerIterationThenParks() throws Exception {
+        BoundedOperativeRegistry.registerBounded(LoopingBoundedOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-looping-bounded", "loop-1", "seed"), new ArrayList<>());
+
+        BoundedOperativeInstance instance =
+                (BoundedOperativeInstance) ctx.operativeInstanceRegistry().get("loop-1");
+        instance.offerInbox("turn-a".getBytes(UTF8));
+        instance.offerInbox("turn-b".getBytes(UTF8));
+
+        // The loop parks once idle past the hysteresis; that IS its terminal act.
+        assertThat(cap.awaitPark()).isTrue();
+
+        // One iteration commit per inbox item.
+        assertThat(cap.committedIterations()).containsExactly(0, 1);
+
+        // A park is SUSPENSION, not completion: emitting BoundedCompleted would
+        // tear the instance down and lose the iteration it parked at.
+        assertThat(cap.hasCompletion()).isFalse();
+    }
+
+    @Test
+    @DisplayName("a loop on run-sugar is refused (there is no chain to iterate)")
+    void loopOnRunSugarIsRefused() {
+        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(LoopingSugarOperative.class))
+                .isInstanceOf(com.flezha.sdk.bounded.BoundedOperativeConfigurationException.class)
+                .hasMessageContaining("LoopWithoutChain");
+    }
+
+    @Test
+    @DisplayName("a durable CHAINED loop whose terminal op has no codec is refused")
+    void chainedLoopWithoutTerminalCodecIsRefused() {
+        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(ChainedNoCodecOperative.class))
+                .isInstanceOf(com.flezha.sdk.bounded.BoundedOperativeConfigurationException.class)
+                .hasMessageContaining("LoopTerminalWithoutCodec");
+    }
+
+    /** One iteration per inbox turn; parks when the turns stop. */
+    public static final class LoopingBoundedOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-looping-bounded";
+        }
+
+        @Override
+        public com.flezha.sdk.bounded.LoopMode loopMode() {
+            return com.flezha.sdk.bounded.LoopMode.PER_INPUT;
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(Stage1.class);
+            c.channel(String.class, "out").from(Stage1.class).codec().toPlugin("sink");
+        }
+    }
+
+    /** run-sugar + a loop mode: nothing to iterate. */
+    public static final class LoopingSugarOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-looping-sugar";
+        }
+
+        @Override
+        public com.flezha.sdk.bounded.LoopMode loopMode() {
+            return com.flezha.sdk.bounded.LoopMode.PER_INPUT;
+        }
+
+        @Override
+        public void run(BoundedOperativeCtx ctx, String args) {}
+    }
+
+    /** Durable CHAINED, but the terminal op's output has no codec to re-seed from. */
+    public static final class ChainedNoCodecOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-chained-no-codec";
+        }
+
+        @Override
+        public com.flezha.sdk.bounded.LoopMode loopMode() {
+            return com.flezha.sdk.bounded.LoopMode.CHAINED;
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(Stage1.class);
+            c.channel(String.class, "out").from(Stage1.class).toPlugin("sink");
+        }
+    }
+
+    // --- Segment retry ladder (bounded-segment-retry) -------------------------
+
+    /** Attempt counter for the retry fixtures; reset per test. */
+    private static final AtomicInteger RETRY_ATTEMPTS = new AtomicInteger();
+
+    @Test
+    @DisplayName("a transient segment failure recovers on retry, and emits its output ONCE")
+    void transientSegmentFailureRecoversOnRetry() throws Exception {
+        RETRY_ATTEMPTS.set(0);
+        BoundedOperativeRegistry.registerBounded(FlakyBoundedOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-flaky-bounded", "retry-1", "x"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
+        assertThat(RETRY_ATTEMPTS.get())
+                .as("first attempt failed, second succeeded")
+                .isEqualTo(2);
+
+        // The failed attempt's staged output died with its sink: the recovered
+        // segment emits once, not once per attempt.
+        assertThat(cap.outboxPayloads()).containsExactly("flaky:x");
+    }
+
+    @Test
+    @DisplayName("a non-retryable failure skips the ladder entirely")
+    void nonRetryableFailureSkipsTheLadder() throws Exception {
+        RETRY_ATTEMPTS.set(0);
+        BoundedOperativeRegistry.registerBounded(PoisonBoundedOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-poison-bounded", "retry-poison", "x"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("error");
+        assertThat(RETRY_ATTEMPTS.get())
+                .as("a non-retryable error is not re-run")
+                .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("retryAttempts > 1 with a zero backoff is refused (it would hot-spin)")
+    void zeroRetryBackoffIsRefused() {
+        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(ZeroBackoffOperative.class))
+                .isInstanceOf(com.flezha.sdk.bounded.BoundedOperativeConfigurationException.class)
+                .hasMessageContaining("ZeroRetryBackoff");
+    }
+
+    /** Fails once, then succeeds — the recover case. */
+    public static final class FlakyBoundedOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-flaky-bounded";
+        }
+
+        @Override
+        public java.time.Duration retryBackoff() {
+            return java.time.Duration.ofMillis(10);
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(FlakyOp.class);
+            c.channel(String.class, "out").from(FlakyOp.class).toPlugin("sink");
+        }
+    }
+
+    public static final class PoisonBoundedOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-poison-bounded";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(PoisonOp.class);
+            c.channel(String.class, "out").from(PoisonOp.class).toPlugin("sink");
+        }
+    }
+
+    public static final class ZeroBackoffOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-zero-backoff";
+        }
+
+        @Override
+        public java.time.Duration retryBackoff() {
+            return java.time.Duration.ZERO;
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(Stage1.class);
+            c.channel(String.class, "out").from(Stage1.class).toPlugin("sink");
+        }
+    }
+
+    /** Emits, then fails on the FIRST attempt only — proving the staged emit is dropped with it. */
+    public static final class FlakyOp extends StrOp {
+        @Override
+        public String name() {
+            return "flaky_op";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            ctx.emit("flaky:" + input);
+            if (RETRY_ATTEMPTS.incrementAndGet() == 1) {
+                throw new OperationException("transient");
+            }
+        }
+    }
+
+    public static final class PoisonOp extends StrOp {
+        @Override
+        public String name() {
+            return "retry_poison_op";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            RETRY_ATTEMPTS.incrementAndGet();
+            throw new OperationException.NonRetryable("bad record");
+        }
+    }
+
+    // --- Loop rewind (bounded-loop-rewind) -----------------------------------
+
+    /** Undo hooks that fired, in order. */
+    private static final List<String> REWIND_UNDO_LOG = new CopyOnWriteArrayList<>();
+
+    @Test
+    @DisplayName("a rewind unwinds the owed ops in reverse, and a HOOKLESS op still journals its drain")
+    void rewindUnwindsOwedOpsInReverseAndDrainsHooklessOnes() throws Exception {
+        REWIND_UNDO_LOG.clear();
+        BoundedOperativeRegistry.registerBounded(RewindSagaOperative.class);
+        Captured cap = new Captured();
+        ExecutorContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedResumable("test-rewind-saga", "rewind-1", "x", 1), new ArrayList<>());
+
+        // The controller's rewind marker says ops 0 (compensable) and 1 (HOOKLESS)
+        // of a rewound iteration are still owed an undo.
+        OpJournalState journal = OpJournalState.newBuilder()
+                .addRewindUndo(OpCommittedOp.newBuilder().setOpIdx(0).setIter(1).build())
+                .addRewindUndo(OpCommittedOp.newBuilder().setOpIdx(1).setIter(1).build())
+                .build();
+        byte[] segId =
+                SegmentId.of("rewind-1", "rewind_reserve", Optional.empty()).encodedBytes();
+        CommandRequest restore = CommandRequest.newBuilder()
+                .setReferenceId("r")
+                .setRestoreInitState(RestoreInitState.newBuilder()
+                        .setSegmentId(ByteString.copyFrom(segId))
+                        .setOpJournal(journal)
+                        .build())
+                .build();
+        new RestoreInitStateHandler().handle(ctx, restore, new ArrayList<>());
+
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        // Reverse order: the later op is undone first.
+        assertThat(REWIND_UNDO_LOG).containsExactly("undo-charge", "undo-reserve");
+
+        // TWO compensating commits — one per undone op, INCLUDING the hookless one.
+        // That empty record is what drains it from rewind_undo; without it the
+        // controller would re-offer that op on every later restore, forever.
+        assertThat(cap.compensatingCommits()).isEqualTo(2);
+    }
+
+    /** op0 compensable (RewindReserve) → op1 compensable (RewindCharge) → op2 HOOKLESS. */
+    public static final class RewindSagaOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-rewind-saga";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.input(String.class, "in").into(RewindReserve.class);
+            c.channel(String.class, "r1").from(RewindReserve.class).codec().into(RewindCharge.class);
+            c.channel(String.class, "out").from(RewindCharge.class).toPlugin("sink");
+        }
+    }
+
+    public static final class RewindReserve extends StrOp {
+        @Override
+        public String name() {
+            return "rewind_reserve";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            ctx.emit("reserved:" + input);
+        }
+
+        @Override
+        public boolean compensateOverridden() {
+            return true;
+        }
+
+        @Override
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+            REWIND_UNDO_LOG.add("undo-reserve");
+        }
+    }
+
+    public static final class RewindCharge extends StrOp {
+        @Override
+        public String name() {
+            return "rewind_charge";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            ctx.emit("charged:" + input);
+        }
+
+        @Override
+        public boolean compensateOverridden() {
+            return true;
+        }
+
+        @Override
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+            REWIND_UNDO_LOG.add("undo-charge");
+        }
     }
 
     // --- Crash-resume (Phase 3b §5b.2) ---------------------------------------
@@ -824,10 +1304,52 @@ class BoundedKindTest {
         public int write(long handle, long streamId, byte[] frame) {
             meta.add(new long[] {streamId});
             frames.add(frame);
-            if (streamId == CONTROL_STREAM && completions != null) {
-                completions.countDown();
+            if (streamId == CONTROL_STREAM) {
+                handleControlFrame(frame);
             }
             return 0;
+        }
+
+        /**
+         * Stand in for the controller on the control stream.
+         *
+         * <p>An {@code OpCommit} is acked under its own reference_id, as the
+         * controller does after its journal fsync — the driver BLOCKS at every op
+         * barrier waiting for it, so a fake controller that stayed silent would
+         * hang the run until the 30 s timeout and fail it as un-journaled.
+         *
+         * <p>Only a {@code BoundedCompleted} counts down the completion latch: the
+         * control stream now carries op commits too, and counting those would
+         * release the test mid-chain.
+         */
+        private void handleControlFrame(byte[] frame) {
+            try {
+                FrameParser parser = new FrameParser();
+                for (Frame f : parser.feed(frame)) {
+                    CommandRequest request = CommandRequest.parseFrom(f.message());
+                    switch (request.getCommandCase()) {
+                        case OP_COMMIT -> {
+                            // The real controller journals the commit, fsyncs, acks,
+                            // and THEN flushes the outbox — the op's plugin output
+                            // becomes durable with the op itself. Stand in for that
+                            // flush so the output assertions still observe the
+                            // emits, now arriving via the transactional outbox.
+                            flushOutbox(request.getOpCommit());
+                            AckRegistry.complete(request.getReferenceId());
+                        }
+                        case ITER_COMMIT -> AckRegistry.complete(request.getReferenceId());
+                        case ITER_PARK -> parked.countDown();
+                        case BOUNDED_COMPLETED -> {
+                            if (completions != null) {
+                                completions.countDown();
+                            }
+                        }
+                        default -> {}
+                    }
+                }
+            } catch (Exception ignored) {
+                // Not a decodable control frame — nothing to do.
+            }
         }
 
         List<byte[]> framesOn(long streamId) {
@@ -856,10 +1378,116 @@ class BoundedKindTest {
             return out;
         }
 
+        /**
+         * The run's terminal {@code BoundedCompleted}. The control stream also
+         * carries an {@code OpCommit} per op barrier now, so this selects the
+         * completion rather than assuming a single frame.
+         */
         BoundedCompleted decodeCompletion() throws Exception {
-            Frame f = decodeOne(CONTROL_STREAM);
-            assertThat(f.payloadId()).isEqualTo("control_command");
-            return CommandRequest.parseFrom(f.message()).getBoundedCompleted();
+            for (byte[] raw : framesOn(CONTROL_STREAM)) {
+                for (Frame f : new FrameParser().feed(raw)) {
+                    assertThat(f.payloadId()).isEqualTo("control_command");
+                    CommandRequest request = CommandRequest.parseFrom(f.message());
+                    if (request.getCommandCase() == CommandRequest.CommandCase.BOUNDED_COMPLETED) {
+                        return request.getBoundedCompleted();
+                    }
+                }
+            }
+            throw new AssertionError("no BoundedCompleted was emitted on the control stream");
+        }
+
+        /**
+         * Replay a committed op's outbox onto the secondary stream, exactly as the
+         * controller's post-ack flush does. Without this the staged output would
+         * never reach the wire in a unit test and every emit assertion would fail
+         * — which is precisely the point of the transactional outbox: the output
+         * is no longer the SDK's to ship.
+         */
+        private void flushOutbox(com.flezha.sdk.proto.OpCommit commit) {
+            for (com.flezha.sdk.proto.OpOutboxItem item : commit.getOutboxList()) {
+                meta.add(new long[] {SECONDARY_STREAM});
+                frames.add(FrameEncoder.build(
+                        commit.getOperativeId(), item.getPayload().toByteArray(), Map.of()));
+            }
+        }
+
+        private final java.util.concurrent.CountDownLatch parked = new java.util.concurrent.CountDownLatch(1);
+
+        /** Wait for the loop to suspend. */
+        boolean awaitPark() throws InterruptedException {
+            return parked.await(15, TimeUnit.SECONDS);
+        }
+
+        /** The iterations the driver journaled, in commit order. */
+        List<Integer> committedIterations() throws Exception {
+            List<Integer> out = new ArrayList<>();
+            for (byte[] raw : framesOn(CONTROL_STREAM)) {
+                for (Frame f : new FrameParser().feed(raw)) {
+                    CommandRequest request = CommandRequest.parseFrom(f.message());
+                    if (request.getCommandCase() == CommandRequest.CommandCase.ITER_COMMIT) {
+                        out.add(request.getIterCommit().getIter());
+                    }
+                }
+            }
+            return out;
+        }
+
+        boolean hasCompletion() throws Exception {
+            for (byte[] raw : framesOn(CONTROL_STREAM)) {
+                for (Frame f : new FrameParser().feed(raw)) {
+                    if (CommandRequest.parseFrom(f.message()).getCommandCase()
+                            == CommandRequest.CommandCase.BOUNDED_COMPLETED) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /** Every payload the driver staged onto an OpCommit's outbox, in commit order. */
+        List<String> outboxPayloads() throws Exception {
+            List<String> out = new ArrayList<>();
+            for (byte[] raw : framesOn(CONTROL_STREAM)) {
+                for (Frame f : new FrameParser().feed(raw)) {
+                    CommandRequest request = CommandRequest.parseFrom(f.message());
+                    if (request.getCommandCase() == CommandRequest.CommandCase.OP_COMMIT) {
+                        for (com.flezha.sdk.proto.OpOutboxItem item :
+                                request.getOpCommit().getOutboxList()) {
+                            out.add(new String(item.getPayload().toByteArray(), UTF8));
+                        }
+                    }
+                }
+            }
+            return out;
+        }
+
+        /** How many compensating (undo) commits the driver journaled. */
+        int compensatingCommits() throws Exception {
+            int n = 0;
+            for (byte[] raw : framesOn(CONTROL_STREAM)) {
+                for (Frame f : new FrameParser().feed(raw)) {
+                    CommandRequest request = CommandRequest.parseFrom(f.message());
+                    if (request.getCommandCase() == CommandRequest.CommandCase.OP_COMMIT
+                            && request.getOpCommit().getCompensating()) {
+                        n++;
+                    }
+                }
+            }
+            return n;
+        }
+
+        /** The op indices the driver journaled, in commit order. */
+        List<Integer> committedOpIdxs() throws Exception {
+            List<Integer> out = new ArrayList<>();
+            for (byte[] raw : framesOn(CONTROL_STREAM)) {
+                for (Frame f : new FrameParser().feed(raw)) {
+                    CommandRequest request = CommandRequest.parseFrom(f.message());
+                    if (request.getCommandCase() == CommandRequest.CommandCase.OP_COMMIT) {
+                        out.add(request.getOpCommit().getOpIdx());
+                    }
+                }
+            }
+            return out;
         }
     }
 
@@ -1009,7 +1637,7 @@ class BoundedKindTest {
         @Override
         public void operations(ChannelBuilder c) {
             c.input(String.class, "in").into(Stage1.class);
-            c.channel(String.class, "mid").from(Stage1.class).into(Stage2.class);
+            c.channel(String.class, "mid").from(Stage1.class).codec().into(Stage2.class);
             c.channel(String.class, "out").from(Stage2.class).toPlugin("sink");
         }
     }
@@ -1023,7 +1651,7 @@ class BoundedKindTest {
         @Override
         public void operations(ChannelBuilder c) {
             c.input(String.class, "in").into(SplitOp.class);
-            c.channel(String.class, "mid").from(SplitOp.class).into(FanOp.class);
+            c.channel(String.class, "mid").from(SplitOp.class).codec().into(FanOp.class);
             c.channel(String.class, "out").from(FanOp.class).toPlugin("sink");
         }
     }
@@ -1038,7 +1666,7 @@ class BoundedKindTest {
         @Override
         public void operations(ChannelBuilder c) {
             c.input(String.class, "in").into(SplitOp.class);
-            c.channel(String.class, "mid").from(SplitOp.class).into(FanOp.class);
+            c.channel(String.class, "mid").from(SplitOp.class).codec().into(FanOp.class);
             c.channel(String.class, "out").from(FanOp.class).toPlugin("sink");
         }
 
@@ -1059,6 +1687,7 @@ class BoundedKindTest {
             c.input(String.class, "in").into(HybridStage1.class);
             c.channel(String.class, "mid")
                     .from(HybridStage1.class)
+                    .codec()
                     .alsoToPluginWith("midsink", (String s) -> ("mid:" + s).getBytes(UTF8))
                     .into(HybridStage2.class);
             c.channel(String.class, "out").from(HybridStage2.class).toPlugin("out");
@@ -1073,9 +1702,15 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            // One channel feeding two downstream operations = branching.
+            // One producer feeding TWO downstream operations: a branch.
             c.input(String.class, "in").into(Stage1.class);
-            c.channel(String.class, "mid").from(Stage1.class).into(Stage2.class).into(EchoOp.class);
+            c.channel(String.class, "mid")
+                    .from(Stage1.class)
+                    .codec()
+                    .into(Stage2.class)
+                    .into(EchoOp.class);
+            c.channel(String.class, "out2").from(Stage2.class).toPlugin("sink");
+            c.channel(String.class, "out3").from(EchoOp.class).toPlugin("sink");
         }
     }
 
@@ -1103,8 +1738,8 @@ class BoundedKindTest {
         @Override
         public void operations(ChannelBuilder c) {
             c.input(String.class, "in").into(SagaReserve.class);
-            c.channel(String.class, "c1").from(SagaReserve.class).into(SagaCharge.class);
-            c.channel(String.class, "c2").from(SagaCharge.class).into(SagaShipFails.class);
+            c.channel(String.class, "c1").from(SagaReserve.class).codec().into(SagaCharge.class);
+            c.channel(String.class, "c2").from(SagaCharge.class).codec().into(SagaShipFails.class);
             c.channel(String.class, "out").from(SagaShipFails.class).toPlugin("sink");
         }
     }
@@ -1128,8 +1763,8 @@ class BoundedKindTest {
         @Override
         public void operations(ChannelBuilder c) {
             c.input(String.class, "in").into(SagaReserve.class);
-            c.channel(String.class, "c1").from(SagaReserve.class).into(SagaCharge.class);
-            c.channel(String.class, "c2").from(SagaCharge.class).into(SagaShipFails.class);
+            c.channel(String.class, "c1").from(SagaReserve.class).codec().into(SagaCharge.class);
+            c.channel(String.class, "c2").from(SagaCharge.class).codec().into(SagaShipFails.class);
             c.channel(String.class, "out").from(SagaShipFails.class).toPlugin("sink");
         }
     }
@@ -1144,8 +1779,8 @@ class BoundedKindTest {
         @Override
         public void operations(ChannelBuilder c) {
             c.input(String.class, "in").into(ResumeUndoA.class);
-            c.channel(String.class, "c1").from(ResumeUndoA.class).into(ResumeUndoB.class);
-            c.channel(String.class, "c2").from(ResumeUndoB.class).into(SagaShipFails.class);
+            c.channel(String.class, "c1").from(ResumeUndoA.class).codec().into(ResumeUndoB.class);
+            c.channel(String.class, "c2").from(ResumeUndoB.class).codec().into(SagaShipFails.class);
             c.channel(String.class, "out").from(SagaShipFails.class).toPlugin("sink");
         }
     }
@@ -1160,8 +1795,8 @@ class BoundedKindTest {
         @Override
         public void operations(ChannelBuilder c) {
             c.input(String.class, "in").into(SagaReserve.class);
-            c.channel(String.class, "c1").from(SagaReserve.class).into(SagaCharge.class);
-            c.channel(String.class, "c2").from(SagaCharge.class).into(EchoOp.class);
+            c.channel(String.class, "c1").from(SagaReserve.class).codec().into(SagaCharge.class);
+            c.channel(String.class, "c2").from(SagaCharge.class).codec().into(EchoOp.class);
             c.channel(String.class, "out").from(EchoOp.class).toPlugin("sink");
         }
     }
@@ -1176,8 +1811,8 @@ class BoundedKindTest {
         @Override
         public void operations(ChannelBuilder c) {
             c.input(String.class, "in").into(SplitOp.class);
-            c.channel(String.class, "mid").from(SplitOp.class).into(SagaFan.class);
-            c.channel(String.class, "mid2").from(SagaFan.class).into(FailLast.class);
+            c.channel(String.class, "mid").from(SplitOp.class).codec().into(SagaFan.class);
+            c.channel(String.class, "mid2").from(SagaFan.class).codec().into(FailLast.class);
             c.channel(String.class, "out").from(FailLast.class).toPlugin("sink");
         }
     }
@@ -1192,7 +1827,7 @@ class BoundedKindTest {
         @Override
         public void operations(ChannelBuilder c) {
             c.input(String.class, "in").into(StopReserve.class);
-            c.channel(String.class, "mid").from(StopReserve.class).into(EchoOp.class);
+            c.channel(String.class, "mid").from(StopReserve.class).codec().into(EchoOp.class);
             c.channel(String.class, "out").from(EchoOp.class).toPlugin("sink");
         }
     }

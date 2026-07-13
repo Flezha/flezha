@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -61,9 +60,6 @@ public final class GracefulShutdown {
 
     /** Wire-level payload_id reused from the existing controller -> SDK CommandRequest flow. */
     private static final String SHUTDOWN_PAYLOAD_ID = "control_command";
-
-    /** Pending acks keyed by reference_id. The router pushes completion via {@link #signalAck}. */
-    private static final Map<String, CompletableFuture<Void>> PENDING_ACKS = new ConcurrentHashMap<>();
 
     /** Pluggable wire writer so tests can capture frames without a real native context. */
     @FunctionalInterface
@@ -138,12 +134,12 @@ public final class GracefulShutdown {
 
             byte[] frameBytes = FrameEncoder.build(SHUTDOWN_PAYLOAD_ID, request.toByteArray(), Map.of());
 
-            CompletableFuture<Void> ackFuture = registerPendingAck(referenceId);
+            CompletableFuture<Void> ackFuture = AckRegistry.register(referenceId);
 
             int writeStatus = writer.write(controlStreamId, frameBytes);
             if (writeStatus != 0) {
                 LOG.warn("Failed to write ExecutorShutdownNotification for {} (status={})", operativeId, writeStatus);
-                PENDING_ACKS.remove(referenceId);
+                AckRegistry.forget(referenceId);
                 continue;
             }
 
@@ -156,7 +152,7 @@ public final class GracefulShutdown {
                         } else {
                             LOG.warn("ExecutorShutdownAck wait failed for {}: {}", pidForLog, throwable.toString());
                         }
-                        PENDING_ACKS.remove(referenceId);
+                        AckRegistry.forget(referenceId);
                         return null;
                     });
 
@@ -181,32 +177,8 @@ public final class GracefulShutdown {
         }
     }
 
-    /**
-     * Wakes the per-operative wait registered by {@link #run}. Called
-     * from {@code CommandRouter} when an
-     * {@link com.flezha.sdk.proto.ExecutorShutdownAck} arrives. Missing
-     * entries — i.e. the wait already timed out — are logged and
-     * dropped without panic.
-     */
-    public static void signalAck(@Nonnull String referenceId) {
-        CompletableFuture<Void> future = PENDING_ACKS.remove(referenceId);
-        if (future == null) {
-            LOG.debug(
-                    "ExecutorShutdownAck for unknown reference_id {} — either timed out or never registered",
-                    referenceId);
-            return;
-        }
-        future.complete(null);
-    }
-
     /** Test-only: drains the pending-acks map so independent tests do not interfere. */
     static void resetForTests() {
-        PENDING_ACKS.clear();
-    }
-
-    private static CompletableFuture<Void> registerPendingAck(String referenceId) {
-        CompletableFuture<Void> future = new CompletableFuture<>();
-        PENDING_ACKS.put(referenceId, future);
-        return future;
+        AckRegistry.resetForTests();
     }
 }

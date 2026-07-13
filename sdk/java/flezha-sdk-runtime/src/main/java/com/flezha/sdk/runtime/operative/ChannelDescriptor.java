@@ -25,6 +25,8 @@ public final class ChannelDescriptor {
     private final Optional<PluginSink> pluginSink;
     private final OverflowPolicy overflowPolicy;
     private final RetryPolicy retry;
+    private final boolean keyed;
+    private final Optional<InterOpCodec> interOpCodec;
 
     public ChannelDescriptor(
             @Nonnull String name,
@@ -36,7 +38,10 @@ public final class ChannelDescriptor {
             @Nonnull Optional<Function<Object, byte[]>> pluginSerializer,
             @Nonnull Optional<PluginSink> pluginSink,
             @Nonnull OverflowPolicy overflowPolicy,
-            @Nonnull RetryPolicy retry) {
+            @Nonnull RetryPolicy retry,
+            boolean keyed,
+            @Nonnull Optional<InterOpCodec> interOpCodec) {
+        this.interOpCodec = interOpCodec;
         this.name = name;
         this.kind = kind;
         this.producer = producer;
@@ -47,7 +52,31 @@ public final class ChannelDescriptor {
         this.pluginSink = pluginSink;
         this.overflowPolicy = overflowPolicy;
         this.retry = retry;
+        this.keyed = keyed;
     }
+
+    /**
+     * Whether emits on this channel carry a natural key ({@code .keyed()}).
+     * The declaration is the single source of truth: a plain emit on a keyed
+     * channel is refused, and a keyed emit on a non-keyed channel likewise.
+     */
+    public boolean keyed() {
+        return keyed;
+    }
+
+    /**
+     * Codec for this inter-operation channel's payload, when declared. The
+     * bounded op-journal encodes the handoff between two operations with it, so a
+     * crash-resumed run can re-seed the next operation instead of re-running the
+     * chain from the top.
+     */
+    @Nonnull
+    public Optional<InterOpCodec> interOpCodec() {
+        return interOpCodec;
+    }
+
+    /** Encoder/decoder pair for an inter-operation handoff payload. */
+    public record InterOpCodec(@Nonnull Function<Object, byte[]> encoder, @Nonnull Function<byte[], Object> decoder) {}
 
     @Nonnull
     public String name() {
