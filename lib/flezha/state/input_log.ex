@@ -199,6 +199,31 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc """
+  Producing-liveness cursors: the log's last offset and the durable consumed
+  offset of every Segment that has reported one. `nil` when no log is live —
+  the operative is not on the effectively-once tier and has none.
+
+  Lookup-only on purpose. `last_offset/1` goes through `find_or_start/1`, and
+  polling THAT from the convergence tick would create an input log — a file, a
+  process, and a permanently frozen watermark the retention sweep would then warn
+  about — for every operative that never asked for one.
+  """
+  @spec cursors(binary()) ::
+          %{tail: integer(), consumed: %{tuple() => non_neg_integer()}} | nil
+  def cursors(operative_class) do
+    case Supervisor.lookup({operative_class, :input_log}) do
+      {:ok, pid} ->
+        %{
+          tail: GenServer.call(pid, :last_offset),
+          consumed: Map.new(segment_offsets(operative_class))
+        }
+
+      :error ->
+        nil
+    end
+  end
+
+  @doc """
   Retention-sweep entry point: truncate the operative's input-log strictly
   below `min(watermark, now - hold_window)` and emit the frozen-watermark
   warning when the log grows past the size threshold without the watermark

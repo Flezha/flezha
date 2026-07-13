@@ -57,7 +57,13 @@ defmodule Flezha.State.WalWriter do
     :outbox_durable_seq,
     :outbox_flushed_seq,
     :outbox_epoch,
-    :outbox_retry_timer
+    :outbox_retry_timer,
+    # Highest seq of an OUTPUT-BEARING effect record queued. Producing-liveness
+    # compares it against `outbox_flushed_seq` to see an outbox that accumulates
+    # without draining. It must count only output-bearing records:
+    # `outbox_durable_seq` advances on every fsynced record, so a Segment that
+    # persists state but emits nothing would read as a frozen outbox forever.
+    :outbox_last_seq
   ]
 
   @type t :: %__MODULE__{
@@ -100,7 +106,9 @@ defmodule Flezha.State.WalWriter do
           last_change_seen_at: integer(),
           wal_size_bytes: non_neg_integer(),
           oldest_unsnapshotted_at: integer() | nil,
-          owning_executor: binary() | nil
+          owning_executor: binary() | nil,
+          out_pending_seq: integer(),
+          outbox_flushed_seq: integer()
         }
 
   # ---------- Public API ----------
@@ -327,7 +335,8 @@ defmodule Flezha.State.WalWriter do
       outbox_durable_seq: -1,
       outbox_flushed_seq: -1,
       outbox_epoch: 0,
-      outbox_retry_timer: nil
+      outbox_retry_timer: nil,
+      outbox_last_seq: -1
     }
 
     {:ok, state, {:continue, :open}}
@@ -370,10 +379,20 @@ defmodule Flezha.State.WalWriter do
         outbox_flushed_seq: dedup.outbox_flushed_seq,
         outbox_epoch: dedup.epoch,
         outbox_durable_seq: last_seq,
-        pending_outbox: :queue.from_list(redrive)
+        pending_outbox: :queue.from_list(redrive),
+        outbox_last_seq: redrive_last_seq(redrive, dedup.outbox_flushed_seq)
     }
 
     {:noreply, try_dispatch_outbox(state)}
+  end
+
+  # Seed the producing-liveness cursor from what the re-drive owes. Starting it at
+  # -1 would make the first re-driven record read as a jump from nothing, which the
+  # classifier would see as an outbox that suddenly grew.
+  defp redrive_last_seq(redrive, flushed_seq) do
+    redrive
+    |> Enum.filter(&(&1.outputs != []))
+    |> Enum.reduce(flushed_seq, fn entry, acc -> max(acc, entry.seq) end)
   end
 
   @impl true
@@ -578,7 +597,9 @@ defmodule Flezha.State.WalWriter do
       last_change_seen_at: state.last_change_seen_at,
       wal_size_bytes: Metrics.get(state.metrics, :wal_size_bytes),
       oldest_unsnapshotted_at: state.oldest_unsnapshotted_at,
-      owning_executor: state.owning_executor
+      owning_executor: state.owning_executor,
+      out_pending_seq: state.outbox_last_seq,
+      outbox_flushed_seq: state.outbox_flushed_seq
     }
 
     {:reply, status, state}
@@ -712,7 +733,13 @@ defmodule Flezha.State.WalWriter do
             dlq: decoded.dlq
           }
 
-          %{state | pending_outbox: :queue.in(entry, state.pending_outbox)}
+          last = if decoded.outputs == [], do: state.outbox_last_seq, else: seq
+
+          %{
+            state
+            | pending_outbox: :queue.in(entry, state.pending_outbox),
+              outbox_last_seq: max(state.outbox_last_seq, last)
+          }
 
         {:error, reason} ->
           {rc, sh, pk} = state.segment_id

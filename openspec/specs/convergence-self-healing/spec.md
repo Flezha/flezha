@@ -78,9 +78,13 @@ Every cross-process call inside the Loop MUST be wrapped in `Convergence.SafeCal
 
 ### Requirement: Producing-liveness derives from durable progress markers with a fed precondition
 
-The convergence snapshot SHALL classify each bound operative's producing-liveness from durable progress markers compared between ticks — per-Segment WAL persisted seq always, and, when the operative runs the effectively-once tier, min-watermark advance and outbox `flushed_seq` drain. Channel state and heartbeats SHALL NOT be producing-liveness inputs.
+The convergence snapshot SHALL classify each bound operative's producing-liveness from durable progress markers compared between ticks — per-Segment WAL persisted seq always, and, when the operative runs the effectively-once tier, per-Segment durable consumed-offset advance and outbox `flushed_seq` drain. Channel state and heartbeats SHALL NOT be producing-liveness inputs.
 
-Every flat-marker verdict SHALL apply the fed precondition over the grace window: input-side evidence advancing while the progress marker is flat past the grace period classifies the operative STUCK (not producing); no input-side advance with a flat marker classifies it IDLE (producing-healthy). For tier-on operatives, an input-log tail growing while the min-watermark is flat is a STUCK verdict, and output-bearing WAL records accumulating while `outbox_flushed_seq` is flat is a STUCK verdict. When one root cause freezes multiple markers, the snapshot SHALL report the single deepest verdict for that operative.
+The tier cursors SHALL be read per Segment. A Segment's durable consumed offset is the offset the controller has fsynced for it, and the minimum across an operative's Segments is that operative's watermark — so a single frozen Segment freezes the operative's verdict while the verdict still names the Segment responsible.
+
+Every flat-marker verdict SHALL apply the fed precondition over the grace window: input-side evidence advancing while the progress marker is flat past the grace period classifies the operative STUCK (not producing); no input-side advance with a flat marker classifies it IDLE (producing-healthy). For tier-on operatives, an input-log tail growing while a Segment's durable consumed offset is flat is a STUCK verdict, and output-bearing WAL records accumulating while `outbox_flushed_seq` is flat is a STUCK verdict. When one root cause freezes multiple markers, the snapshot SHALL report the single deepest verdict for that operative.
+
+Cursor reads SHALL NOT create or resurrect durable state for an operative that has none: an operative without a live input log SHALL yield no cursor fields, and its classification SHALL degrade to WAL-seq-only rather than fail or default.
 
 All marker reads SHALL be off-path at the convergence tick cadence, reusing counters and cursors that already advance; no per-message instrumentation is added.
 
@@ -94,20 +98,25 @@ All marker reads SHALL be off-path at the convergence tick cadence, reusing coun
 - **WHEN** input-side evidence for an operative advances across ticks while its WAL persisted seq stays flat past the grace period
 - **THEN** the snapshot classifies it STUCK, `producing_operatives` excludes it, and `/healthz` reports `200 degraded`
 
-#### Scenario: Frozen min-watermark with growing input-log is STUCK (tier on)
+#### Scenario: Frozen consumed offset with growing input-log is STUCK (tier on)
 
-- **WHEN** a tier-on operative's input-log tail grows across ticks while its min-watermark does not advance past the grace period
-- **THEN** the operative classifies STUCK with a watermark-frozen detail naming the lagging Segment
+- **WHEN** a tier-on operative's input-log tail grows across ticks while one of its Segments' durable consumed offset does not advance past the grace period
+- **THEN** the operative classifies STUCK with a watermark-frozen detail naming that Segment
 
-#### Scenario: Outbox backlog with flat flush cursor is STUCK (tier on)
+#### Scenario: A checkpoint-ack operative that stops consuming is STUCK
 
-- **WHEN** a tier-on operative accumulates output-bearing WAL records while `outbox_flushed_seq` stays flat past the grace period
-- **THEN** the operative classifies STUCK with a sink-path detail
+- **WHEN** a checkpoint-ack operative's input-log tail grows across ticks while its Segments' durable consumed offsets stay flat past the grace period
+- **THEN** the operative classifies STUCK, even though its WAL persisted seq is legitimately flat between checkpoints and it is exempt from the catastrophic-dataflow sweep
 
-#### Scenario: One root cause reports one verdict
+#### Scenario: Undrained outbox with accumulating output records is STUCK (tier on)
 
-- **WHEN** a frozen WAL freezes the min-watermark and the outbox cursor of the same operative
-- **THEN** the snapshot reports a single deepest verdict for that operative, not three stacked reasons
+- **WHEN** output-bearing WAL records accumulate for a Segment across ticks while its `outbox_flushed_seq` stays flat past the grace period
+- **THEN** the operative classifies STUCK with an outbox-flat detail naming that Segment
+
+#### Scenario: A tier-off operative is classified on the WAL seq alone
+
+- **WHEN** an operative that has not declared the effectively-once tier is classified
+- **THEN** no cursor fields are present on its markers, no input log is created for it, and its verdict is derived from WAL fed/advance evidence only
 
 ### Requirement: An empty intended set with durable evidence of intent is never vacuously healthy
 

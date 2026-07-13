@@ -212,9 +212,9 @@ defmodule Flezha.Convergence.StallClassifier do
   `current` is one map per live Segment (built by the Loop from
   `Flezha.State.Watchdog.segment_statuses/0`): always `:operative_id`,
   `:segment`, `:last_change_seen_at`, `:last_advance_at` (the WAL
-  fed/advance evidence), plus — when the effectively-once tier runs — the
-  cursor fields `:input_log_tail`, `:min_watermark`, `:out_pending_seq`,
-  `:outbox_flushed_seq`. `baseline` is a snapshot taken at least one grace
+  fed/advance evidence), `:out_pending_seq` and `:outbox_flushed_seq`, plus —
+  when the effectively-once tier runs — `:input_log_tail` and this Segment's
+  durable `:consumed_offset`. `baseline` is a snapshot taken at least one grace
   window earlier (`nil` before one has aged enough); cursor checks compare
   against it and are skipped when it or the cursor fields are absent, so
   classification degrades to WAL-seq-only.
@@ -258,12 +258,15 @@ defmodule Flezha.Convergence.StallClassifier do
     end
   end
 
-  # Tier-on: input-log tail grew over the grace window while the
-  # min-watermark did not advance.
+  # Tier-on: the input-log tail grew over the grace window while THIS Segment's
+  # durable consumed offset did not advance. Read per Segment, not as the
+  # operative's min-watermark: the minimum across Segments IS that watermark, so
+  # any frozen Segment still freezes the operative's verdict — and the verdict
+  # names the Segment actually responsible, which a class-wide scalar cannot.
   defp watermark_frozen?(m, base) when is_map(base) do
     is_integer(m[:input_log_tail]) and is_integer(base[:input_log_tail]) and
-      is_integer(m[:min_watermark]) and is_integer(base[:min_watermark]) and
-      m.input_log_tail > base.input_log_tail and m.min_watermark <= base.min_watermark
+      is_integer(m[:consumed_offset]) and is_integer(base[:consumed_offset]) and
+      m.input_log_tail > base.input_log_tail and m.consumed_offset <= base.consumed_offset
   end
 
   defp watermark_frozen?(_m, _base), do: false

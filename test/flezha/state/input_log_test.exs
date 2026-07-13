@@ -303,6 +303,50 @@ defmodule Flezha.State.InputLogTest do
     end
   end
 
+  describe "producing-liveness cursors (§8)" do
+    test "a class with no live log yields nil and no log is created" do
+      class = "cursorless-#{System.unique_integer([:positive])}"
+
+      assert InputLog.cursors(class) == nil
+
+      # Lookup-only: polling this from the convergence tick must never conjure a
+      # file, a process, or a watermark for an operative that never asked for one.
+      assert Supervisor.lookup({class, :input_log}) == :error
+      refute File.exists?(Registry.input_log_path(class))
+    end
+
+    test "a live log yields its tail and each Segment's own consumed offset" do
+      class = "cursors-#{System.unique_integer([:positive])}"
+      seg_a = {class, "op", "a"}
+      seg_b = {class, "op", "b"}
+
+      {:ok, 0} = InputLog.append(class, "i0", %{})
+      {:ok, 1} = InputLog.append(class, "i1", %{})
+      {:ok, 2} = InputLog.append(class, "i2", %{})
+
+      InputLog.record_consumed(class, seg_a, 2)
+      InputLog.record_consumed(class, seg_b, 1)
+
+      assert %{tail: 2, consumed: consumed} = InputLog.cursors(class)
+
+      # Per Segment, NOT the min across them — the classifier needs to name the
+      # Segment that is actually lagging, which the min cannot do.
+      assert consumed[seg_a] == 2
+      assert consumed[seg_b] == 1
+
+      # The min IS the watermark, derived rather than pre-computed.
+      assert InputLog.watermark(class) == 1
+    end
+
+    test "a Segment that has reported nothing is absent from consumed" do
+      class = "cursors-quiet-#{System.unique_integer([:positive])}"
+      {:ok, 0} = InputLog.append(class, "i0", %{})
+
+      assert %{tail: 0, consumed: consumed} = InputLog.cursors(class)
+      assert consumed == %{}
+    end
+  end
+
   defp stop_log(class) do
     {:ok, pid} = Supervisor.lookup({class, :input_log})
     :ok = GenServer.stop(pid)

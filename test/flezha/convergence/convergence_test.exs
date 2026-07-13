@@ -769,6 +769,118 @@ defmodule Flezha.ConvergenceTest do
     end
   end
 
+  describe "Loop.progress_markers/0 — the tier cursors reach the classifier" do
+    alias Flezha.Convergence.{Loop, StallClassifier}
+    alias Flezha.Operative.ClassRegistry
+    alias Flezha.State.{FsyncBatcher, InputLog, Supervisor, TestHelpers, WalWriter, Wire}
+
+    setup do
+      base = TestHelpers.tmp_app_data_dir()
+      ClassRegistry.ensure_table()
+
+      for child <- [
+            {Elixir.Registry, keys: :unique, name: Supervisor.registry_name()},
+            Supervisor,
+            FsyncBatcher,
+            Flezha.State.Watchdog
+          ] do
+        case start_supervised(child) do
+          {:ok, _} -> :ok
+          {:error, {:already_started, _}} -> :ok
+        end
+      end
+
+      on_exit(fn -> File.rm_rf(base) end)
+      :ok
+    end
+
+    defp effect(outputs, offset) do
+      Wire.encode_effect_body(%{
+        changes: [<<1>>],
+        outputs: outputs,
+        consumed_offset: offset,
+        dlq: nil
+      })
+    end
+
+    defp effect_hdr(), do: <<1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0>>
+
+    test "a tier-on Segment's markers carry its OWN consumed offset and the log tail" do
+      rc = "tiered-#{System.unique_integer([:positive])}"
+      seg = {rc, "op", "k1"}
+      ClassRegistry.put_overwatch(rc, self())
+
+      {:ok, 0} = InputLog.append(rc, "i0", %{})
+      {:ok, 1} = InputLog.append(rc, "i1", %{})
+
+      {:ok, pid} = Supervisor.find_or_start(seg)
+      :ok = WalWriter.append(pid, 0, effect_hdr(), effect([], 0))
+      :ok = WalWriter.fsync(pid)
+
+      marker = Enum.find(Loop.progress_markers(), &(&1.operative_id == rc))
+
+      assert marker.segment == {"op", "k1"}
+      assert marker.input_log_tail == 1
+      assert marker.consumed_offset == 0, "the Segment's own offset, not the class-wide min"
+
+      # The record was dispatched (its consumed offset landed), so the flush cursor
+      # advanced past it — but it bore no outputs, so out_pending_seq did NOT move.
+      # That asymmetry is precisely what keeps `outbox_flat?` from firing on a
+      # Segment that persists state and emits nothing.
+      assert marker.out_pending_seq == -1
+      assert marker.outbox_flushed_seq == 0
+
+      :ok = WalWriter.close(pid)
+    end
+
+    test "a tier-off Segment gets no cursor fields and no input log is created" do
+      rc = "plain-#{System.unique_integer([:positive])}"
+      seg = {rc, "op", "k1"}
+
+      {:ok, pid} = Supervisor.find_or_start(seg)
+      :ok = WalWriter.append(pid, 0, <<1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0>>, "change")
+      :ok = WalWriter.fsync(pid)
+
+      marker = Enum.find(Loop.progress_markers(), &(&1.operative_id == rc))
+
+      refute Map.has_key?(marker, :input_log_tail)
+      refute Map.has_key?(marker, :consumed_offset)
+
+      assert Supervisor.lookup({rc, :input_log}) == :error,
+             "polling markers must never conjure an input log for a tier-off operative"
+
+      :ok = WalWriter.close(pid)
+    end
+
+    test "a Segment that stops consuming while the log grows classifies STUCK, naming it" do
+      rc = "stalling-#{System.unique_integer([:positive])}"
+      seg = {rc, "op", "poisoned"}
+      ClassRegistry.put_overwatch(rc, self())
+
+      {:ok, 0} = InputLog.append(rc, "i0", %{})
+      {:ok, pid} = Supervisor.find_or_start(seg)
+      :ok = WalWriter.append(pid, 0, effect_hdr(), effect([], 0))
+      :ok = WalWriter.fsync(pid)
+
+      baseline = Enum.filter(Loop.progress_markers(), &(&1.operative_id == rc))
+
+      # The source keeps feeding, but this Segment never consumes another offset —
+      # a poison payload mid-retry, or an operation wedged on it.
+      {:ok, 1} = InputLog.append(rc, "i1", %{})
+      {:ok, 2} = InputLog.append(rc, "i2", %{})
+
+      current = Enum.filter(Loop.progress_markers(), &(&1.operative_id == rc))
+
+      assert %{^rc => {:stuck, :watermark_frozen, %{segment: {"op", "poisoned"}}}} =
+               StallClassifier.classify_producing(current, baseline, %{
+                 now: System.monotonic_time(:millisecond),
+                 grace_ms: 60_000
+               })
+
+      :ok = WalWriter.close(pid)
+    end
+  end
+
   describe "Loop.rotate_progress_history/4 — grace-window cursor baselines" do
     alias Flezha.Convergence.Loop
 

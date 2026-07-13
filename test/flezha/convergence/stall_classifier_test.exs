@@ -347,10 +347,10 @@ defmodule Flezha.Convergence.StallClassifierTest do
       assert StallClassifier.classify_producing([m], nil, @opts) == %{"btc" => :advancing}
     end
 
-    test "growing input-log with flat min-watermark is STUCK watermark_frozen (tier on)" do
-      base = marker(input_log_tail: 100, min_watermark: 40)
+    test "growing input-log with a flat consumed offset is STUCK watermark_frozen (tier on)" do
+      base = marker(input_log_tail: 100, consumed_offset: 40)
       # WAL itself is fed and advancing — only the watermark cursor is wedged.
-      cur = marker(input_log_tail: 250, min_watermark: 40)
+      cur = marker(input_log_tail: 250, consumed_offset: 40)
 
       assert %{"btc" => {:stuck, :watermark_frozen, %{segment: {"op", "k1"}}}} =
                StallClassifier.classify_producing([cur], [base], @opts)
@@ -368,7 +368,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       base =
         marker(
           input_log_tail: 100,
-          min_watermark: 40,
+          consumed_offset: 40,
           out_pending_seq: 10,
           outbox_flushed_seq: 10
         )
@@ -380,7 +380,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
           last_change_seen_at: @now - 1_000,
           last_advance_at: @now - 2 * @grace,
           input_log_tail: 250,
-          min_watermark: 40,
+          consumed_offset: 40,
           out_pending_seq: 50,
           outbox_flushed_seq: 10
         )

@@ -359,24 +359,48 @@ defmodule Flezha.Convergence.Loop do
     _, _ -> state
   end
 
-  # Per-Segment fed/advance evidence from the existing Watchdog/WalWriter
-  # state. Cursor fields (:input_log_tail, :min_watermark, :out_pending_seq,
-  # :outbox_flushed_seq) join these maps when the effectively-once tier
-  # lands; their absence degrades classification to WAL-seq-only.
-  defp progress_markers() do
+  # Per-Segment fed/advance evidence from the existing Watchdog/WalWriter state,
+  # plus the tier cursors when the operative runs the effectively-once tier. The
+  # input-log read is per OPERATIVE, not per Segment — an operative with 200
+  # Segments costs one lookup per tick, not 200. A tier-off operative yields no
+  # cursor fields, and classification degrades to WAL-seq-only.
+  @doc false
+  def progress_markers() do
     Flezha.State.Watchdog.segment_statuses()
-    |> Enum.map(fn {{rc, sh, pk}, s} ->
-      %{
-        operative_id: rc,
-        segment: {sh, pk},
-        last_change_seen_at: s.last_change_seen_at,
-        last_advance_at: s.last_advance_at
-      }
+    |> Enum.group_by(fn {{rc, _sh, _pk}, _s} -> rc end)
+    |> Enum.flat_map(fn {rc, statuses} ->
+      cursors = Flezha.State.InputLog.cursors(rc)
+
+      Enum.map(statuses, fn {{_rc, sh, pk} = segment_id, s} ->
+        %{
+          operative_id: rc,
+          segment: {sh, pk},
+          last_change_seen_at: s.last_change_seen_at,
+          last_advance_at: s.last_advance_at,
+          out_pending_seq: s.out_pending_seq,
+          outbox_flushed_seq: s.outbox_flushed_seq
+        }
+        |> merge_input_cursors(cursors, segment_id)
+      end)
     end)
   end
 
+  # A Segment that has never reported a consumed offset has no entry, so no key is
+  # merged and the watermark guard stays false — a Segment with no durable progress
+  # has nothing to freeze.
+  defp merge_input_cursors(marker, nil, _segment_id), do: marker
+
+  defp merge_input_cursors(marker, %{tail: tail, consumed: consumed}, segment_id) do
+    marker = Map.put(marker, :input_log_tail, tail)
+
+    case Map.fetch(consumed, segment_id) do
+      {:ok, offset} -> Map.put(marker, :consumed_offset, offset)
+      :error -> marker
+    end
+  end
+
   defp tier_cursors?(m),
-    do: is_integer(m[:min_watermark]) or is_integer(m[:outbox_flushed_seq])
+    do: is_integer(m[:consumed_offset]) or is_integer(m[:outbox_flushed_seq])
 
   # Keep the newest snapshot at least one grace window old as the
   # cursor-delta baseline (plus everything younger); nil until one has aged

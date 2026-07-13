@@ -472,4 +472,57 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert InputLog.watermark(rc) == 9
     :ok = WalWriter.close(pid)
   end
+
+  test "stall_status reports the outbox cursors producing-liveness compares", %{
+    rc: rc,
+    segment_id: segment_id
+  } do
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(segment_id)
+
+    assert %{out_pending_seq: -1, outbox_flushed_seq: -1} = WalWriter.stall_status(pid)
+
+    # An effect record carrying NO outputs must not move out_pending_seq. This is
+    # the whole reason it exists rather than reusing outbox_durable_seq, which
+    # advances on every fsynced record: a Segment that persists state but emits
+    # nothing would otherwise read as an outbox frozen forever.
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body([], 100))
+    :ok = WalWriter.fsync(pid)
+
+    assert %{out_pending_seq: -1} = WalWriter.stall_status(pid)
+
+    # An output-bearing record does move it — and the flush cursor follows it.
+    :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "v")], 101))
+    :ok = WalWriter.fsync(pid)
+
+    assert_receive {:"$gen_cast", {:io_out, "v", _}}, 2_000
+
+    assert %{out_pending_seq: 1, outbox_flushed_seq: 1} = WalWriter.stall_status(pid)
+
+    :ok = WalWriter.close(pid)
+  end
+
+  test "stall_status cursors survive a restart re-drive without a phantom jump", %{
+    rc: rc,
+    segment_id: segment_id
+  } do
+    ClassRegistry.put_overwatch(rc, self())
+
+    # Two output-bearing records land durably, but the flush cursor never advances
+    # (crash before flush): the re-drive owes both.
+    plain = WalWriter.encode_record(0, effect_header(), effect_body([output("k", "a")], 1))
+    second = WalWriter.encode_record(1, effect_header(), effect_body([output("k", "b")], 2))
+
+    wal_path = Registry.wal_path(segment_id)
+    File.mkdir_p!(Path.dirname(wal_path))
+    File.write!(wal_path, plain <> second)
+
+    pid = start_writer(segment_id)
+
+    # Seeded from what the re-drive owes, NOT from -1 — otherwise the first tick
+    # after a restart would read as an outbox that suddenly grew from nothing.
+    assert %{out_pending_seq: 1} = WalWriter.stall_status(pid)
+
+    :ok = WalWriter.close(pid)
+  end
 end

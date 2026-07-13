@@ -180,16 +180,31 @@ never reads as a stall:
 
 The same module carries `StallClassifier.classify_producing/3` — the
 per-operative producing-liveness classifier the Loop runs at tick cadence over
-durable progress markers (`Flezha.State.Watchdog.segment_statuses/0`: WAL
-`last_change_seen_at` / `last_advance_at`, plus min-watermark / input-log /
-outbox-flush cursors once the effectively-once tier lands; absent cursors
-degrade to WAL-seq-only). It shares the deepest-verdict-wins convention and
-the fed precondition: **IDLE** (no input, flat markers) counts as producing
-and stays healthy; **STUCK** (fed but flat past the grace) degrades `/healthz`
-with detail `wal_frozen | watermark_frozen | outbox_flat`. Like the data-plane
-classifier it is report-only — healing stays on the `:output_stall → rebind`
-path. See `docs/resilience/convergence_loop.md` "Health publishing" for the
-`/healthz` contract (including the `intent_mismatch` reason).
+durable progress markers. `Flezha.Convergence.Loop.progress_markers/0` builds
+them from `Flezha.State.Watchdog.segment_statuses/0` (WAL
+`last_change_seen_at` / `last_advance_at`, plus the `out_pending_seq` /
+`outbox_flushed_seq` outbox cursors) joined with `Flezha.State.InputLog.cursors/1`
+(the log tail and each Segment's durable consumed offset) — one input-log read
+per operative per tick, not per Segment. A tier-off operative has no input log,
+yields no cursor fields, and degrades to WAL-seq-only.
+
+It shares the deepest-verdict-wins convention and the fed precondition:
+**IDLE** (no input, flat markers) counts as producing and stays healthy;
+**STUCK** (fed but flat past the grace) degrades `/healthz` with detail
+`wal_frozen | watermark_frozen | outbox_flat`.
+
+Each detail carries its own fed precondition, so an idle operative cannot trip
+one: `watermark_frozen` requires the **input-log tail to have grown** while the
+Segment's consumed offset stood still, and `outbox_flat` requires
+**output-bearing records to have accumulated** while the flush cursor stood
+still. `out_pending_seq` deliberately counts only output-bearing records —
+`outbox_durable_seq` advances on every fsynced record, so reusing it would read a
+Segment that persists state but emits nothing as a permanently frozen outbox.
+
+Like the data-plane classifier it is report-only — healing stays on the
+`:output_stall → rebind` path. See `docs/resilience/convergence_loop.md`
+"Health publishing" for the `/healthz` contract (including the
+`intent_mismatch` reason).
 
 ## Configuration
 
