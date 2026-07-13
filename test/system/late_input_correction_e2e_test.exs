@@ -33,23 +33,10 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
   @factory "candle"
   @operation "candle_operation"
 
-  setup do
-    # Correction's two controller-side prerequisites. Without them the operative
-    # is refused at start — the retained past would not reach across its own
-    # window, and an operative that runs happily and then cannot correct when
-    # asked is the failure this refusal exists to prevent.
-    hold = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
-    age = Application.get_env(:flezha, :compact_after_age_ms, 0)
-    Application.put_env(:flezha, :input_log_hold_window_ms, 600_000)
-    Application.put_env(:flezha, :compact_after_age_ms, 600_000)
-
-    on_exit(fn ->
-      Application.put_env(:flezha, :input_log_hold_window_ms, hold)
-      Application.put_env(:flezha, :compact_after_age_ms, age)
-    end)
-
-    :ok
-  end
+  # No retention setup. The class's declared `correction_window` derives its own
+  # input-log hold window and snapshot age floor — that IS the test. If the
+  # derivation ever regresses, this suite is the first thing that breaks: the
+  # replayed slice would have been truncated away.
 
   test "a late trade inside the window is folded back into event-time order" do
     namespace = unique("correction")

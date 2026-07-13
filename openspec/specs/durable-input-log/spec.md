@@ -60,18 +60,30 @@ without affecting earlier records.
 
 The controller SHALL track the minimum durable consumed-offset across all
 Segments of the operative (the watermark) and SHALL truncate the input-log only
-strictly below `min(watermark, now − hold_window)`, with `hold_window` defaulting
-to zero. A Segment that has consumed nothing holds the watermark at the log
-start.
+strictly below `min(watermark, now − hold_window)`. A Segment that has consumed
+nothing holds the watermark at the log start.
+
+`hold_window` SHALL resolve **per operative** as the greater of the operator-configured
+value and the operative's own declared `correction_window`. It SHALL default to zero
+for an operative that declares no correction window and for which the operator has
+configured none, so a non-correcting operative truncates at its watermark exactly as it
+does with no hold window at all.
 
 #### Scenario: Truncation respects the slowest segment
 
 - **WHEN** segment A has durably consumed to offset 4711 and segment B to 4710
 - **THEN** truncation removes only offsets below 4710
 
-#### Scenario: Frozen watermark is surfaced, not silently accumulating
+#### Scenario: A declared correction window holds the log
 
-- **WHEN** the watermark has not advanced while the log grows past a configured
-  size threshold
-- **THEN** a telemetry warning is emitted identifying the lagging Segment
+- **WHEN** an operative declares `correction_window(60_000)`, every Segment has
+  consumed to offset 4711, and offset 4711 was appended 10 s ago
+- **THEN** offset 4711 is retained, because it is newer than the derived 60 s hold
+  window
+
+#### Scenario: An operative with no correction window has no hold
+
+- **WHEN** an operative declares no correction window, the operator configures no hold
+  window, and every Segment has consumed to offset 4711
+- **THEN** truncation removes every offset below 4711 immediately
 

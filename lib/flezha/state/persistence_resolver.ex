@@ -38,6 +38,8 @@ defmodule Flezha.State.PersistenceResolver do
        `:wal_high_watermark_bytes` (16 MiB).
   """
 
+  alias Flezha.Operative.ClassRegistry
+
   @default_persistence_enabled true
   @default_retention_hours 6
   @default_compact_after_bytes 8 * 1024 * 1024
@@ -164,9 +166,14 @@ defmodule Flezha.State.PersistenceResolver do
   Per-operative rather than global because it stopped being a tuning knob: a
   correction rewinds inside its declared window, and compaction truncates the
   WAL below each snapshot — so an age-floor shorter than the correction window
-  destroys the very history the rewind needs a baseline inside. Operative start
-  refuses that combination, which it can only do if the value is resolvable per
-  operative. `0` disables age-triggered compaction entirely.
+  destroys the very history the rewind needs a baseline inside. A declared
+  correction window therefore RAISES this floor to at least itself.
+
+  `0` disables age-triggered compaction entirely — WAL history is then retained
+  without an age bound, which already satisfies any window, so `0` is preserved
+  rather than raised. The polarity is the opposite of the input-log hold window's
+  and conflating the two is the one way to get this wrong: raising `0` here would
+  *enable* compaction and make retention worse.
   """
   @spec compact_after_age_ms(binary(), map()) :: non_neg_integer()
   def compact_after_age_ms(operative_class \\ nil, metadata \\ %{})
@@ -175,6 +182,19 @@ defmodule Flezha.State.PersistenceResolver do
     do: global_non_neg(:compact_after_age_ms, @default_compact_after_age_ms)
 
   def compact_after_age_ms(operative_class, metadata) when is_binary(operative_class) do
+    case configured_compact_after_age_ms(operative_class, metadata) do
+      0 -> 0
+      n -> max(n, ClassRegistry.correction_window_ms(operative_class) || 0)
+    end
+  end
+
+  @doc """
+  The age floor BEFORE a declared correction window raises it — what the operator
+  actually configured. Used to announce a derivation, never to compact against.
+  """
+  @spec configured_compact_after_age_ms(binary(), map()) :: non_neg_integer()
+  def configured_compact_after_age_ms(operative_class, metadata \\ %{})
+      when is_binary(operative_class) do
     resolve(:compact_after_age_ms, :compact_after_age_ms, operative_class, metadata,
       valid: &(is_integer(&1) and &1 >= 0),
       default: fn -> global_non_neg(:compact_after_age_ms, @default_compact_after_age_ms) end

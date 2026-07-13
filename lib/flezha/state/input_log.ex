@@ -27,6 +27,7 @@ defmodule Flezha.State.InputLog do
 
   use GenServer
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{CreditLedger, FsyncBatcher, Registry, Supervisor, WalWriter}
 
   # Input-log records reuse the WalWriter framing, so they carry its 16-byte
@@ -499,7 +500,7 @@ defmodule Flezha.State.InputLog do
   defp truncation_floor(_operative_class, nil), do: nil
 
   defp truncation_floor(operative_class, watermark) do
-    case hold_window_ms() do
+    case hold_window_ms(operative_class) do
       0 ->
         watermark
 
@@ -511,7 +512,21 @@ defmodule Flezha.State.InputLog do
     end
   end
 
-  defp hold_window_ms(), do: Application.get_env(:flezha, :input_log_hold_window_ms, 0)
+  @doc """
+  The operative's input-log hold window: the greater of the operator-configured
+  floor and the operative's own declared correction window.
+
+  A correction over a 60 s window MEANS retaining 60 s of input log — that is the
+  definition of the declaration, not a policy to be negotiated with an operator.
+  So the declaration derives it, and an operator who configures a longer floor
+  still gets theirs.
+  """
+  @spec hold_window_ms(binary()) :: non_neg_integer()
+  def hold_window_ms(operative_class) when is_binary(operative_class) do
+    configured = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
+    declared = ClassRegistry.correction_window_ms(operative_class) || 0
+    max(configured, declared)
+  end
 
   defp frozen_size_threshold(),
     do: Application.get_env(:flezha, :wal_high_watermark_bytes, 16 * 1024 * 1024)

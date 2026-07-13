@@ -303,6 +303,60 @@ defmodule Flezha.State.InputLogTest do
     end
   end
 
+  describe "the hold window derives from the declared correction window" do
+    alias Flezha.Operative.ClassRegistry
+
+    setup do
+      ClassRegistry.ensure_table()
+      prev = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
+      on_exit(fn -> Application.put_env(:flezha, :input_log_hold_window_ms, prev) end)
+      :ok
+    end
+
+    test "a declared window becomes the hold window on default config" do
+      class = "corrector-#{System.unique_integer([:positive])}"
+      Application.put_env(:flezha, :input_log_hold_window_ms, 0)
+      :ok = ClassRegistry.put_correction_window(class, 60_000)
+
+      # This is the whole point: correction used to be unreachable, because the
+      # operator-configured floor defaults to 0 and start was refused against it.
+      assert InputLog.hold_window_ms(class) == 60_000
+    end
+
+    test "a more generous operator floor wins" do
+      class = "corrector-#{System.unique_integer([:positive])}"
+      Application.put_env(:flezha, :input_log_hold_window_ms, 300_000)
+      :ok = ClassRegistry.put_correction_window(class, 60_000)
+
+      assert InputLog.hold_window_ms(class) == 300_000
+    end
+
+    test "a class declaring no window has no hold" do
+      class = "plain-#{System.unique_integer([:positive])}"
+      Application.put_env(:flezha, :input_log_hold_window_ms, 0)
+      :ok = ClassRegistry.put_correction_window(class, nil)
+
+      assert InputLog.hold_window_ms(class) == 0
+    end
+
+    test "a declared window holds a fully-consumed tail against truncation" do
+      class = "held-#{System.unique_integer([:positive])}"
+      Application.put_env(:flezha, :input_log_hold_window_ms, 0)
+      :ok = ClassRegistry.put_correction_window(class, 600_000)
+
+      {:ok, 0} = InputLog.append(class, "i0", %{})
+      {:ok, 1} = InputLog.append(class, "i1", %{})
+      InputLog.record_consumed(class, {class, "op", "a"}, 1)
+
+      # Everything is consumed, so the watermark alone would truncate it all —
+      # but it is newer than the derived 10-minute window, so it stays.
+      :ok = InputLog.sweep(class)
+
+      assert InputLog.read_range(class, 0, 1) |> length() == 2,
+             "a declared correction window must hold the inputs it would replay"
+    end
+  end
+
   describe "producing-liveness cursors (§8)" do
     test "a class with no live log yields nil and no log is created" do
       class = "cursorless-#{System.unique_integer([:positive])}"

@@ -139,13 +139,15 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
         effectively_once: true,
         checkpoint_ack: true,
         compensable_ops: [0, 2],
-        leaf_ops: [1, 2]
+        leaf_ops: [1, 2],
+        correction_window_ms: 60_000
       })
 
     assert ClassRegistry.effectively_once?(class)
     assert ClassRegistry.checkpoint_ack?(class)
     assert ClassRegistry.compensable_ops(class) == [0, 2]
     assert ClassRegistry.leaf_ops(class) == [1, 2]
+    assert ClassRegistry.correction_window_ms(class) == 60_000
 
     # A class that rebinds having dropped its declarations must not read the
     # previous bind's — every sidecar goes with the claim.
@@ -154,13 +156,48 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
         effectively_once: false,
         checkpoint_ack: false,
         compensable_ops: nil,
-        leaf_ops: nil
+        leaf_ops: nil,
+        correction_window_ms: nil
       })
 
     refute ClassRegistry.effectively_once?(class)
     refute ClassRegistry.checkpoint_ack?(class)
     refute ClassRegistry.compensable_ops(class)
     refute ClassRegistry.leaf_ops(class)
+    refute ClassRegistry.correction_window_ms(class)
+  end
+
+  describe "correction window declaration" do
+    test "round-trips through ETS and survives eviction via the sidecar" do
+      class = "corrector-#{System.unique_integer([:positive])}"
+
+      :ok = ClassRegistry.put_correction_window(class, 60_000)
+      assert ClassRegistry.correction_window_ms(class) == 60_000
+
+      # The retention sweeps that derive from this have no Overwatch to ask and
+      # may run before the class is ever bound — so it must outlive the table.
+      :ets.delete(:flezha_operative_class_registry, {class, :correction_window_ms})
+      assert File.exists?(correction_sidecar(class))
+      assert ClassRegistry.correction_window_ms(class) == 60_000
+    end
+
+    test "an undeclaring class reads nil and writes no sidecar" do
+      class = "plain-#{System.unique_integer([:positive])}"
+
+      :ok = ClassRegistry.put_correction_window(class, nil)
+      assert ClassRegistry.correction_window_ms(class) == nil
+      refute File.exists?(correction_sidecar(class))
+    end
+
+    test "a class that drops the declaration on rebind stops reading the old one" do
+      class = "dropper-#{System.unique_integer([:positive])}"
+
+      :ok = ClassRegistry.put_correction_window(class, 60_000)
+      :ok = ClassRegistry.put_correction_window(class, nil)
+
+      assert ClassRegistry.correction_window_ms(class) == nil
+      refute File.exists?(correction_sidecar(class))
+    end
   end
 
   defp sidecar(class), do: Path.join([Registry.state_root(), class, "kind"])
@@ -168,4 +205,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
 
   defp checkpoint_sidecar(class),
     do: Path.join([Registry.state_root(), class, "checkpoint_ack"])
+
+  defp correction_sidecar(class),
+    do: Path.join([Registry.state_root(), class, "correction_window_ms"])
 end

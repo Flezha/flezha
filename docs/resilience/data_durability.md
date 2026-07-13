@@ -377,20 +377,36 @@ fn channels(c: &mut ChannelBuilder) {
 }
 ```
 
-Five prerequisites, all **hard refusals at start** rather than warnings — an
-operative that runs happily and then cannot correct when asked is the worst
-outcome:
+Three prerequisites are **authoring facts the engine cannot repair**, and all
+three are hard refusals at SDK build time — an operative that runs happily and
+then cannot correct when asked is the worst outcome:
 
-| Prerequisite | Why | Refused by |
-|---|---|---|
-| `effectively_once()` | append-before-forward is what puts the late input in the log at all | SDK build |
-| an `EventTimeFrom` clock | nothing else yields a time to order a replayed slice by | SDK build |
-| every plugin channel `.keyed()` | a bumped epoch overwrites *by key*; an unkeyed append channel would duplicate, not correct | SDK build (already implied by the tier) |
-| `input_log_hold_window_ms >= correction_window` | you cannot replay inputs you did not retain | controller, at start |
-| `compact_after_age_ms >= correction_window` | compaction truncates the WAL below each snapshot, destroying the history a rewind needs a baseline inside | controller, at start |
+| Prerequisite | Why |
+|---|---|
+| `effectively_once()` | append-before-forward is what puts the late input in the log at all |
+| an `EventTimeFrom` clock | nothing else yields a time to order a replayed slice by |
+| every plugin channel `.keyed()` | a bumped epoch overwrites *by key*; an unkeyed append channel would duplicate, not correct (already implied by the tier) |
 
-The last one is why `compact_after_age_ms` is resolved **per operative**: it
-stopped being a tuning knob and became a correctness constraint.
+**Retention is not a prerequisite — the declaration derives it.** A correction
+over a 10-minute window *means* retaining 10 minutes of input log and 10 minutes
+of WAL history; that is what the declaration says, not something an operator has
+to guess separately. So:
+
+- `InputLog.hold_window_ms/1` resolves to `max(:input_log_hold_window_ms, the
+  declared window)` — truncation never removes an input the correction would
+  replay.
+- `PersistenceResolver.compact_after_age_ms/1` is never shorter than the declared
+  window — compaction always leaves a baseline the rewind can land on. This is why
+  it is resolved **per operative**: it stopped being a tuning knob and became a
+  correctness constraint. An age floor of `0` disables age-triggered compaction
+  entirely, which retains WAL history without an age bound and already satisfies
+  any window, so `0` is preserved rather than raised.
+
+An operator-configured floor that is already more generous wins. Because a
+one-line declaration can commit the controller to real disk, a floor that had to
+be raised is logged once and emitted as
+`[:flezha, :correction, :retention_derived]` at bind, naming the floor, its
+configured value, and its derived value.
 
 ### What happens
 

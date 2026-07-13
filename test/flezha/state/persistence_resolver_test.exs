@@ -108,4 +108,51 @@ defmodule Flezha.State.PersistenceResolverTest do
              }) == 3
     end
   end
+
+  describe "compact_after_age_ms/2 — a declared correction window raises the floor" do
+    alias Flezha.Operative.ClassRegistry
+
+    setup do
+      ClassRegistry.ensure_table()
+      :ok
+    end
+
+    test "a floor shorter than the window is raised to it" do
+      class = "corrector-#{System.unique_integer([:positive])}"
+      Application.put_env(:flezha, :compact_after_age_ms, 60_000)
+      :ok = ClassRegistry.put_correction_window(class, 300_000)
+
+      assert PersistenceResolver.configured_compact_after_age_ms(class) == 60_000
+
+      assert PersistenceResolver.compact_after_age_ms(class) == 300_000,
+             "compaction must never collapse the WAL history the rewind needs a baseline inside"
+    end
+
+    test "a floor longer than the window is left alone" do
+      class = "generous-#{System.unique_integer([:positive])}"
+      Application.put_env(:flezha, :compact_after_age_ms, 600_000)
+      :ok = ClassRegistry.put_correction_window(class, 60_000)
+
+      assert PersistenceResolver.compact_after_age_ms(class) == 600_000
+    end
+
+    test "a floor of 0 stays 0 — the polarity trap" do
+      class = "unbounded-hist-#{System.unique_integer([:positive])}"
+      Application.put_env(:flezha, :compact_after_age_ms, 0)
+      :ok = ClassRegistry.put_correction_window(class, 60_000)
+
+      # 0 DISABLES age compaction, i.e. WAL history is retained without an age
+      # bound — which already satisfies any window. A naive max(0, window) would
+      # ENABLE compaction at the window and make retention strictly worse.
+      assert PersistenceResolver.compact_after_age_ms(class) == 0
+    end
+
+    test "a class declaring no window is untouched" do
+      class = "plain-#{System.unique_integer([:positive])}"
+      Application.put_env(:flezha, :compact_after_age_ms, 60_000)
+      :ok = ClassRegistry.put_correction_window(class, nil)
+
+      assert PersistenceResolver.compact_after_age_ms(class) == 60_000
+    end
+  end
 end

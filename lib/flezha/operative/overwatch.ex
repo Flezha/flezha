@@ -187,8 +187,7 @@ defmodule Flezha.Operative.Overwatch do
          operative =
            with_resume_segment_count(operative, state.builder.kind, operative_class(state)),
          {:ok, final_executor_id, add_operative_raw, state} <-
-           start_operative_sdk_with_retry(state, operative),
-         :ok <- check_correction_prerequisites(state, add_operative_raw) do
+           start_operative_sdk_with_retry(state, operative) do
       # The class's SDK-side declarations ride the AddOperative response; resolve
       # them BEFORE plugin activation so source adapters pick the tier ingest mode
       # (blocking call) from the env.
@@ -214,6 +213,14 @@ defmodule Flezha.Operative.Overwatch do
       _ = ClassRegistry.put(operative_class(state), state.builder.kind)
       _ = ClassRegistry.put_declarations(operative_class(state), declarations)
       _ = ClassRegistry.put_overwatch(operative_class(state), owner)
+
+      # The declaration is durable now, so the retention floors it needs resolve
+      # from it. Announce any it had to raise — a one-line declaration must not
+      # commit the controller to disk silently.
+      if correction_window_ms do
+        announce_derived_retention(operative_class(state), correction_window_ms)
+      end
+
       _ = maybe_dispatch_restore_init_state(state, operative)
 
       # A bind is also a rehydrate: whatever the durable inbox still owes is
@@ -882,13 +889,6 @@ defmodule Flezha.Operative.Overwatch do
     end
   end
 
-  defp check_correction_prerequisites(state, add_operative_raw) do
-    case decode_declarations(add_operative_raw) do
-      %{correction_window_ms: nil} -> :ok
-      %{correction_window_ms: ms} -> correction_prerequisites(operative_class(state), ms)
-    end
-  end
-
   # A bounded operative's staged plugin output carries no natural key, so a
   # re-run's output cannot be relied on to overwrite the original at every sink.
   # The only undo the engine can guarantee is the operation's own `compensate`
@@ -1094,45 +1094,56 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   @doc """
-  Refuse to start a correction-declaring operative whose retention cannot reach
-  back across its own window.
+  Announce the retention a declared correction window derived for itself.
 
-  The SDK enforces what it can see — the tier, the event-time clock, keyed
-  channels. These two it cannot: they are controller-side retention settings,
-  and both are load-bearing. Without the input-log hold window the inputs a
-  correction replays have already been truncated away; without the snapshot
-  age-floor, compaction has already collapsed the WAL history the rewind needs a
-  baseline inside. In both cases the operative would run happily and then fail
-  to correct precisely when asked to — so this is a refusal at start, not a
-  warning.
+  Retention is not a prerequisite an operator negotiates — a correction over a
+  60 s window MEANS holding 60 s of input log and 60 s of WAL history, so the
+  declaration derives both floors (`InputLog.hold_window_ms/1`,
+  `PersistenceResolver.compact_after_age_ms/1`). But an SDK author's one line can
+  commit the controller to real disk, so a floor RAISED above its configured value
+  is logged and emitted once, at bind. Nothing is announced when nothing was
+  raised.
   """
-  @spec correction_prerequisites(binary(), pos_integer()) :: :ok | {:error, term()}
-  def correction_prerequisites(operative_class, window_ms) do
-    hold_window = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
-    age_floor = PersistenceResolver.compact_after_age_ms(operative_class)
+  @spec announce_derived_retention(binary(), pos_integer()) :: :ok
+  def announce_derived_retention(operative_class, window_ms) do
+    configured_hold = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
+    derived_hold = InputLog.hold_window_ms(operative_class)
 
-    cond do
-      hold_window < window_ms ->
-        {:error,
-         {:correction_window_exceeds_retention,
-          %{
-            correction_window_ms: window_ms,
-            input_log_hold_window_ms: hold_window,
-            fix: "raise :input_log_hold_window_ms to at least the correction window"
-          }}}
-
-      age_floor != 0 and age_floor < window_ms ->
-        {:error,
-         {:correction_window_exceeds_snapshot_floor,
-          %{
-            correction_window_ms: window_ms,
-            compact_after_age_ms: age_floor,
-            fix: "raise :compact_after_age_ms to at least the correction window"
-          }}}
-
-      true ->
-        :ok
+    if derived_hold > configured_hold do
+      emit_retention_derived(operative_class, :input_log_hold_window_ms, configured_hold,
+        derived: derived_hold,
+        window_ms: window_ms
+      )
     end
+
+    # `0` means "no age-triggered compaction", which already retains everything the
+    # window needs — the resolver satisfies it rather than raising it.
+    configured_age = PersistenceResolver.configured_compact_after_age_ms(operative_class)
+    derived_age = PersistenceResolver.compact_after_age_ms(operative_class)
+
+    if derived_age > configured_age do
+      emit_retention_derived(operative_class, :compact_after_age_ms, configured_age,
+        derived: derived_age,
+        window_ms: window_ms
+      )
+    end
+
+    :ok
+  end
+
+  defp emit_retention_derived(operative_class, floor, configured, opts) do
+    derived = Keyword.fetch!(opts, :derived)
+
+    Logger.info(
+      "[Overwatch] #{operative_class} declares a #{Keyword.fetch!(opts, :window_ms)}ms " <>
+        "correction window: #{floor} raised #{configured} -> #{derived}"
+    )
+
+    :telemetry.execute(
+      [:flezha, :correction, :retention_derived],
+      %{count: 1, configured: configured, derived: derived},
+      %{operative: operative_class, floor: floor}
+    )
   end
 
   defp decode_metadata(raw_data) when is_binary(raw_data) and raw_data != "" do

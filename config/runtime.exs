@@ -252,6 +252,17 @@ config :flezha,
       if(config_env() == :test, do: "0", else: "300000")
     )
     |> String.to_integer(),
+  # Input-log retention floor: how long a consumed input is held before
+  # truncation may remove it. `0` truncates at the min-watermark.
+  #
+  # This is a FLOOR, not the whole answer: an operative that declares a
+  # `correction_window` derives its own hold window from it (the greater of the
+  # two wins), so correction works without touching this. Raise it only to hold
+  # MORE than every declaration asks for — e.g. to give an operator-driven
+  # `flz operative replay` room to reach further back than any automatic
+  # correction would.
+  input_log_hold_window_ms:
+    System.get_env("FLEZHA_INPUT_LOG_HOLD_WINDOW_MS", "0") |> String.to_integer(),
   # Credit-grant flow control on the executor→controller state stream.
   # Kill switch: `false` skips the CreditWindowInit offer entirely, reverting
   # every session to the legacy SegmentMailboxStatus + shed path.

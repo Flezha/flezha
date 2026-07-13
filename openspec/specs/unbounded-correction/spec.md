@@ -3,29 +3,55 @@
 ## Purpose
 
 The unbounded-correction capability lets an unbounded operative fix the past when a source sends a late or corrected event: an operative with the effectively-once tier, an `EventTimeFrom` clock, and keyed plugin channels may declare a `correction_window`, and an input that lands behind the Segment's event-time high-water but inside that window triggers an automatic restore-and-replay of the input-log slice above a rewound baseline, event-time-ordered, under a bumped epoch — so conforming sinks overwrite the stale rows by natural key and converge on the corrected values. Inputs are journaled before they are forwarded, so the late input is already in the log at its arrival offset and the slice contains it by construction. Beyond-window inputs follow a declared policy, bursts of late inputs coalesce into one correction per Segment, and the same transaction backs the operator verb `flz operative replay`.
-
 ## Requirements
-
 ### Requirement: Correction window declaration with validated prerequisites
 
 An unbounded operative MAY declare a `correction_window`. Declaration SHALL
 require the effectively-once tier, an `EventTimeFrom` clock, and keyed plugin
-channels; operative start SHALL validate that the input-log hold window covers
-the correction window and that the snapshot age-floor guarantees a baseline
-inside it, refusing start with a typed error naming the missing prerequisite
-otherwise.
+channels, and SHALL be refused with a typed error naming the missing prerequisite
+otherwise. Those three are authoring errors the engine cannot repair.
+
+Retention SHALL NOT be a prerequisite. A declared `correction_window` SHALL instead
+**derive** the retention it needs: the operative's input-log hold window SHALL resolve
+to at least the declared window, and its snapshot age floor SHALL guarantee a baseline
+inside the declared window. An operator-configured value that is already more generous
+SHALL be preserved. Operative start SHALL NOT be refused on retention grounds.
+
+A derivation that raises a retention floor above its configured value SHALL be
+observable: it SHALL log once for that operative and emit telemetry naming the floor,
+its configured value, and its derived value — the disk a declaration commits must
+never be committed silently.
 
 #### Scenario: Declaration without event time refused
 
 - **WHEN** an operative declares `correction_window` with `type Clock = WallClock`
 - **THEN** operative start fails with a typed error naming the clock requirement
 
-#### Scenario: Missing snapshot floor refused
+#### Scenario: Declaration derives its own hold window
 
-- **WHEN** `correction_window` is declared but no snapshot age-floor is
-  configured for the operative
-- **THEN** operative start fails with a typed error naming the retention
-  prerequisite
+- **WHEN** an operative declares `correction_window(60_000)` and no input-log hold
+  window is configured
+- **THEN** the operative starts, its input-log hold window resolves to 60 000 ms, and
+  truncation never removes an offset newer than that window
+
+#### Scenario: Declaration derives its own snapshot floor
+
+- **WHEN** an operative declares `correction_window(60_000)` and the resolved snapshot
+  age floor is shorter than the window
+- **THEN** the operative starts and its age floor resolves to at least the window, so
+  compaction always leaves a baseline the rewind can land on
+
+#### Scenario: A more generous operator setting wins
+
+- **WHEN** an operative declares `correction_window(60_000)` and the operator has
+  configured an input-log hold window of 300 000 ms
+- **THEN** the resolved hold window stays 300 000 ms
+
+#### Scenario: A raised floor is announced
+
+- **WHEN** a declared window raises a retention floor above its configured value
+- **THEN** the raise is logged once for that operative and emitted as telemetry naming
+  the floor, its configured value, and its derived value
 
 ### Requirement: Late inputs inside the window trigger automatic correction
 
@@ -142,3 +168,4 @@ with an empty splice. Targets older than retention SHALL be refused with an
   available target
 </content>
 </invoke>
+

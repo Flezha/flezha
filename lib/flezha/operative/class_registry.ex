@@ -39,11 +39,18 @@ defmodule Flezha.Operative.ClassRegistry do
   @compensable_sidecar "compensable_ops"
   @leaf_sidecar "leaf_ops"
   @checkpoint_sidecar "checkpoint_ack"
+  @correction_sidecar "correction_window_ms"
 
   # Every per-class SDK declaration, keyed `{operative_class, key}` in the ETS
   # table. `delete/1` evicts them all, so a class that rebinds without a
   # declaration cannot read a stale one.
-  @declaration_keys [:effectively_once, :checkpoint_ack, :compensable_ops, :leaf_ops]
+  @declaration_keys [
+    :effectively_once,
+    :checkpoint_ack,
+    :compensable_ops,
+    :leaf_ops,
+    :correction_window_ms
+  ]
 
   # ---------- table lifecycle ----------
 
@@ -98,6 +105,21 @@ defmodule Flezha.Operative.ClassRegistry do
     put_checkpoint_ack(operative_class, declarations.checkpoint_ack)
     put_compensable_ops(operative_class, declarations.compensable_ops)
     put_leaf_ops(operative_class, declarations.leaf_ops)
+    put_correction_window(operative_class, declarations.correction_window_ms)
+  end
+
+  @doc """
+  Record `operative_class`'s declared correction window in milliseconds, or `nil`
+  when it declares none.
+
+  Durable in the same sidecar shape as the tier, because the retention that a
+  correction window REQUIRES is derived from it by two background sweeps — the
+  input-log truncation and the snapshot age floor — neither of which has an
+  Overwatch to ask, and both of which may run before the class is ever bound.
+  """
+  @spec put_correction_window(binary(), pos_integer() | nil) :: :ok
+  def put_correction_window(operative_class, window_ms) when is_binary(operative_class) do
+    put_declaration(operative_class, :correction_window_ms, @correction_sidecar, window_ms)
   end
 
   @doc """
@@ -244,6 +266,17 @@ defmodule Flezha.Operative.ClassRegistry do
     declaration(operative_class, :checkpoint_ack, @checkpoint_sidecar, &(&1 == "true")) == true
   end
 
+  @doc """
+  Resolve `operative_class`'s declared correction window in milliseconds: ETS →
+  durable sidecar → `nil` (the class declared none). The retention floors it
+  requires are derived from this — see `Flezha.State.InputLog.hold_window_ms/1`
+  and `Flezha.State.PersistenceResolver.compact_after_age_ms/1`.
+  """
+  @spec correction_window_ms(binary()) :: pos_integer() | nil
+  def correction_window_ms(operative_class) when is_binary(operative_class) do
+    declaration(operative_class, :correction_window_ms, @correction_sidecar, &parse_window/1)
+  end
+
   # ---------- internals ----------
 
   # A declared boolean: ETS while the class is bound, a sidecar that exists
@@ -289,9 +322,17 @@ defmodule Flezha.Operative.ClassRegistry do
 
   defp encode_declaration(true), do: "true"
   defp encode_declaration(ops) when is_list(ops), do: Enum.join(ops, ",")
+  defp encode_declaration(ms) when is_integer(ms), do: Integer.to_string(ms)
 
   defp parse_ops(""), do: []
   defp parse_ops(csv), do: csv |> String.split(",") |> Enum.map(&String.to_integer/1)
+
+  defp parse_window(text) do
+    case Integer.parse(text) do
+      {ms, ""} when ms > 0 -> ms
+      _ -> nil
+    end
+  end
 
   defp ets_lookup(operative_class) do
     case :ets.whereis(@table) do
