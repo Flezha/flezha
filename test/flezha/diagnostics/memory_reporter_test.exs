@@ -1,8 +1,6 @@
 defmodule Flezha.Diagnostics.MemoryReporterTest do
   use ExUnit.Case, async: false
 
-  require Logger
-
   import ExUnit.CaptureLog
 
   alias Flezha.Diagnostics.MemoryReporter

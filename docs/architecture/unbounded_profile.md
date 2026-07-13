@@ -274,23 +274,30 @@ default — today's behaviour, and declaring a window must never silently start 
 
 ### Declaring it, and what it refuses
 
-Correction has hard preconditions, and every one of them is enforced rather than warned about.
+Three preconditions are **authoring facts the engine cannot repair**, and all three are refused
+at SDK build time:
 
-| Refused | Where | Why |
-| --- | --- | --- |
-| `correction_window()` without `effectively_once()` | SDK build | there is no durable input log to replay from |
-| an operation whose clock is not `EventTimeFrom` | SDK build | "late" is meaningless without an event time carried by the input |
-| a plugin channel that is not `.keyed()` | SDK build | a corrected output must be able to overwrite the stale one by natural key |
-| the input-log hold window is shorter than the correction window | controller, **at start** | the inputs a correction replays would already be truncated away |
-| the snapshot age floor is shorter than the correction window | controller, **at start** | compaction would already have collapsed the WAL history the rewind needs a baseline inside |
+| Refused | Why |
+| --- | --- |
+| `correction_window()` without `effectively_once()` | there is no durable input log to replay from |
+| an operation whose clock is not `EventTimeFrom` | "late" is meaningless without an event time carried by the input |
+| a plugin channel that is not `.keyed()` | a corrected output must be able to overwrite the stale one by natural key |
 
-The last two are controller-side retention settings the SDK cannot see, and both are
-load-bearing: without them the operative would run happily and then fail to correct precisely
-when asked to. So they are a refusal at start, not a warning.
+**Retention is not one of them — it is derived.** A correction over a 60 s window *means*
+holding 60 s of input log and 60 s of WAL history; that is the definition of the declaration,
+not a policy to negotiate with an operator. So a declared window raises both retention floors to
+meet itself:
 
-> The input-log hold window defaults to `0` and is not set in any shipped config file. Enabling
-> correction therefore means setting `:input_log_hold_window_ms` to at least the declared window
-> — otherwise the operative refuses to start, naming the fix.
+- the **input-log hold window** becomes `max(configured, declared window)`, so truncation never
+  removes an input the correction would replay;
+- the **snapshot age floor** is never shorter than the window, so compaction always leaves a
+  baseline the rewind can land on. (An age floor of `0` disables age-triggered compaction
+  entirely — WAL history is then unbounded, which already satisfies any window, so `0` stays
+  `0`.)
+
+An operator who configures a *longer* floor keeps it. Because a one-line declaration can commit
+the controller to real disk, a floor that had to be raised is logged and emitted as
+`[:flezha, :correction, :retention_derived]` at bind, naming the floor and both values.
 
 ### Operator replay
 

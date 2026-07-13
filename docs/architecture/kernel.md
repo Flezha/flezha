@@ -669,10 +669,20 @@ change frame (the *fed* signal, and it moves even for a duplicate or a gap), and
 `last_advance_at` moves only when the persisted sequence actually increases (the *progress*
 signal). Comparing two timestamps per segment per tick costs nothing on the hot path.
 
-> **Producing-liveness classifies on the WAL sequence.** The tier's minimum watermark and outbox
-> drain cursor are not among the markers the classifier receives, so a stuck verdict is always
-> `wal_frozen`. A frozen watermark surfaces on its own channel instead — the retention sweeper's
-> `input_log_frozen_watermark` event, which names the lagging segment.
+Under the effectively-once tier, two more markers join, and a stuck verdict names which one
+froze — the deepest wins, because one root cause freezes the shallower markers as a consequence:
+
+| Verdict | Fires when |
+| --- | --- |
+| `wal_frozen` | change frames arrive, but the persisted sequence does not advance |
+| `watermark_frozen` | the input log grows, but this segment's durable consumed offset does not advance |
+| `outbox_flat` | output-bearing records accumulate, but the outbox flush cursor does not advance |
+
+Each carries its own *is it being fed?* precondition — the input log must have *grown*, the
+output records must have *accumulated* — so an idle segment can never read as stuck. The
+consumed offset is read **per segment**, not as the operative's minimum: the minimum across
+segments *is* that watermark, so any frozen segment still freezes the operative's verdict, and
+the verdict names the segment actually responsible.
 
 The `State.Watchdog` sweeps every 10 s and runs four checks, of which the first two are the
 liveness pair:
