@@ -80,11 +80,11 @@ the stage id is `operation_id`.
 
 ## See also
 
+- `docs/architecture/` — The architectural map: the durable-compute kernel, the
+  two profiles, and the diagrams.
 - `docs/operative_architecture.md` — Operative/Operation/Segment deep dive.
 - `docs/sdk_protocol_spec.md` — Wire protocol between Executors and the
   Controller.
 - `docs/process_hub_architecture.md` — Two-level distribution (ProcessHub picks
   a Controller node; the Controller picks an Executor).
 - `docs/resilience/state_persistence.md` — Per-Segment WAL/snapshot/retention.
-</content>
-</invoke>

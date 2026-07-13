@@ -1,11 +1,14 @@
 # Operative Init-State Providers
 
 > **Note:** the `Flezha.Operative.InitState.Providers.Sibling` provider has
-> been **removed**. Use `flz cluster restore` for restart-survival seeding
-> — see [`cluster-snapshot.md`](cluster-snapshot.md). The broader
-> provider-chain mechanism documented below remains in place for
-> non-snapshot init-state sources (HTTP, S3, defaults, etc.); custom
-> providers can be added by implementing `on_operative_init/2`.
+> been **removed**. Restart-survival is no longer an init-state concern: a
+> Segment's state is restored from its own WAL and snapshot on bind, and the
+> operative set is replayed from the durable registry on a cold boot — see
+> [`resilience/state_persistence.md`](resilience/state_persistence.md) and
+> [`resilience/auto_restore_on_boot.md`](resilience/auto_restore_on_boot.md).
+> The broader provider-chain mechanism documented below remains in place for
+> genuine init-state sources (HTTP, S3, defaults, etc.); custom providers can
+> be added by implementing `on_operative_init/2`.
 
 Init-state providers hydrate an operative's initial state at startup from
 sources external to the builder (database, HTTP, computed defaults, etc.).

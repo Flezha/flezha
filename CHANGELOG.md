@@ -118,7 +118,8 @@ along with the SYSMODE coordinator GenServer that drove it.
   `flz cluster restore <file>` for explicit, executor-driven cluster-wide
   state capture and restore. Both commands accept `--namespace NS` for
   per-namespace operations; default behaviour without the flag is
-  cluster-wide. See [`docs/cluster-snapshot.md`](docs/cluster-snapshot.md).
+  cluster-wide. (Both verbs were later removed; `flz boot
+  import-legacy-snapshot` reads the format they produced.)
 - `Flezha.Cluster.Snapshot` and `Flezha.Cluster.Snapshot.Coordinator`
   Elixir modules implementing the gather/apply RPC fan-out and the
   atomic ETF file write.

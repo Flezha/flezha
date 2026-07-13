@@ -4,6 +4,10 @@ This document maps every mechanism in Flezha that prevents data loss, detects
 failures, and restores the system to a healthy state. It is the entry point;
 each section links to the dedicated doc for its subsystem.
 
+For the architectural model these mechanisms compose into — the durable-compute
+kernel, the two profiles, and the diagrams — start at
+[`../architecture/`](../architecture/README.md).
+
 The system has three layers:
 
 - **Prevention** — bound mailboxes, WAL durability, graceful drain
@@ -94,6 +98,11 @@ low-watermark is crossed.
 
 See [`state_persistence.md`](state_persistence.md) for the WAL record format,
 snapshot lifecycle, crash-recovery semantics, and all configuration knobs.
+
+An operative may upgrade this to **effectively-once** delivery — a durable input
+log, one atomic record per invocation, and an fsync-gated outbox flush. That tier
+and the two mechanisms it unlocks (the dead-letter queue and late-input
+correction) are covered in §14.
 
 ---
 
@@ -289,6 +298,35 @@ data-plane behaviour and no remediation. See
 verdict decision tree, and the zero-code `/proc` fallback. Production
 data-freeze incidents are tracked one-entry-per-occurrence in
 `incident_log.md` at the repo root (local-only, gitignored).
+
+---
+
+## 14. Delivery Semantics, Dead-Letter Queue, and Correction
+
+`lib/flezha/state/input_log.ex`, `lib/flezha/dlq/store.ex`
+
+The default is **at-least-once**: output leaves as it is produced, and a
+crash-replay can re-emit it. An operative declaring `effectively_once()` gets a
+durable input log (every inbound payload journaled with an offset *before* it is
+forwarded), one **atomic effect record** per invocation carrying `{state changes,
+outputs, consumed offset, dead-letter entry, event time}` under one fsync, and an
+**fsync-gated** outbox flush stamped with a replay-stable identity — so a
+conforming sink (the built-in Postgres and Kafka bindings) deduplicates the
+repeats a crash produces.
+
+| Mechanism | Role |
+|--------|------|
+| Durable input log | Offset-addressable journal per operative class. Retention truncates below the minimum durable consumed-offset across its Segments. |
+| `Flezha.Dlq.Store` | A payload that fails every retry is **parked durably** and its Segment advances — the minimum watermark keeps moving, and nothing is silently dropped. `flz dlq list \| show \| replay \| drop`. |
+| Late-input correction | An event arriving behind the high-water mark but inside a declared window rewinds the Segment to a baseline, replays the slice in event-time order, and republishes under a bumped epoch — the keyed sink overwrites the stale rows. |
+| Checkpoint ack-granularity | An operative that folds many inputs into one coherent state push acknowledges at `ctx.checkpoint()` rather than per input. |
+
+Bounded operatives do not use the DLQ — their escape is AbortAll + saga
+compensation (§6).
+
+See [`data_durability.md`](data_durability.md) for the semantics and the operator
+playbook, and [`../architecture/unbounded_profile.md`](../architecture/unbounded_profile.md)
+for the model and diagrams.
 
 ---
 

@@ -3,12 +3,19 @@
 ## Description
 Distributed stateful operatives. Provides static and dynamic creation of operatives.
 
+**Start here:** [`docs/architecture/`](docs/architecture/README.md) — the durable-compute
+kernel, the two operative profiles, and the diagrams. Vocabulary:
+[`docs/glossary.md`](docs/glossary.md).
+
 ## Features
 - Clustered, hot-swap-migratable operatives
 - SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
+- Per-Segment durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/resilience/state_persistence.md`](docs/resilience/state_persistence.md))
+- Opt-in effectively-once delivery — durable input log, atomic effect record, fsync-gated outbox ([`docs/architecture/kernel.md`](docs/architecture/kernel.md))
+- Bounded operatives — an operation tree with saga compensation, a durable loop, and suspension ([`docs/architecture/bounded_profile.md`](docs/architecture/bounded_profile.md))
 - Installable plugin subsystem ([`docs/plugin_installation.md`](docs/plugin_installation.md))
 - First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/kafka-producer.md`](docs/kafka-producer.md))
-- Cluster-wide snapshot & restore via `flz cluster` ([`docs/cluster-snapshot.md`](docs/cluster-snapshot.md))
+- Transactional Postgres sink — upsert + progress watermark in one transaction ([`docs/resilience/data_durability.md`](docs/resilience/data_durability.md))
 
 ## Image size and supported architectures
 
@@ -102,7 +109,7 @@ direct-stop behaviour.
 | `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`  | `60000` | Coordinator drain timeout             |
 
 Full operator playbook (run modes, telemetry, exit-code semantics,
-the third-SIGTERM escape hatch): [`docs/operations/graceful_shutdown.md`](docs/operations/graceful_shutdown.md).
+the third-SIGTERM escape hatch): [`docs/resilience/graceful_shutdown.md`](docs/resilience/graceful_shutdown.md).
 
 ## Wiping runtime data
 
@@ -270,8 +277,8 @@ Disable the auto-replay state machine (registry mutations still
 persist) with `FLEZHA_AUTO_RESTORE_ENABLED=false`. The single tolerated
 data-loss case: cluster shut down, then only a strict subset of nodes
 returns — rows held only on the missing nodes are lost. See
-[`docs/auto_restore_on_boot.md`](docs/auto_restore_on_boot.md) for the
-full safety table.
+[`docs/resilience/auto_restore_on_boot.md`](docs/resilience/auto_restore_on_boot.md)
+for the full safety table.
 
 ### Development
 Run the application inside the docker containers.

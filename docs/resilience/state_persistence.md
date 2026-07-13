@@ -19,10 +19,17 @@ with `lib/flezha/state/`.
 app_data/
   state/
     {operative_class}/
+      input.log                        # durable input log (effectively-once tier)
+      effectively_once                 # declaration sidecars, written once at bind
+      checkpoint_ack
       {operation_id}/
         {segment_key}.wal
         {segment_key}.snap.{seq}
         {segment_key}.outbox.dedup
+    {instance_id}/
+      {instance_id}/
+        op.journal                     # bounded step progress
+        inbox.wal                      # bounded durable inbox
 ```
 
 The path triple `(operative_class, operation_id, segment_key)` uniquely
@@ -37,6 +44,12 @@ an older executor-keyed layout into the flat one.
 `segment_key` is URL-safe-base64-encoded with a leading `_` when it
 contains characters outside `[A-Za-z0-9_.-]`. Round-trippable via
 `Flezha.State.Registry.encode_segment_key/1` and `decode_segment_key/1`.
+
+A bounded instance's `op.journal` and `inbox.wal` ride the **same**
+WalWriter + FsyncBatcher substrate as a Segment, under two reserved
+segment keys (`_op_journal`, `_op_inbox`). They write no dedup side-file,
+which is what keeps `Registry.scan_dir/1` from ever surfacing one as a
+phantom Segment.
 
 Configurable root via `:flezha, :state_root` (default `app_data/state`).
 
