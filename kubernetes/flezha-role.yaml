@@ -3,6 +3,13 @@ kind: Role
 metadata:
   namespace: flezha
   name: pod-reader
+  labels:
+    app.kubernetes.io/name: flezha
+    app.kubernetes.io/instance: flezha
+    app.kubernetes.io/part-of: flezha
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/version: "0.2.0"
+    app.kubernetes.io/component: rbac
 rules:
 - apiGroups: [""]
   resources: ["pods"]

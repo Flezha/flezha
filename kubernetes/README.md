@@ -3,17 +3,26 @@
 These files can be used as a reference for deploying the Flezha controller to a Kubernetes cluster.
 They create a namespace, role, service account, role binding, and a daemonset.
 
-## Docker Images
+## Image and registry
 
-The Flezha controller is available as a multi-architecture Docker image on Docker Hub:
+The Flezha controller is a multi-architecture (`linux/amd64`, `linux/arm64`) Docker
+image on Docker Hub.
 
-- **Image**: `alfetahe/flezha:latest` (or `alfetahe/flezha:0.0.1` for specific version)
-- **Platforms**: `linux/amd64`, `linux/arm64`
-- **Pull Policy**: The daemonset uses `imagePullPolicy: IfNotPresent` by default
+The DaemonSet pins an **immutable version tag** — `alfetahe/flezha:0.2.0` — not
+`:latest`. This is deliberate: the pull policy is `IfNotPresent`, so a mutable tag
+means a node that already has a layer cached keeps running the controller it pulled
+weeks ago, and two nodes silently run different code. **Bump the tag on every
+controller release**; `scripts/publish-image.sh` publishes the version tag (read from
+`mix.exs`) alongside `:latest`.
 
-### Using Private Images
+### Registry credentials
 
-If using a private Docker registry, create an image pull secret:
+The image is public: `kubectl apply -f kubernetes/` works on any cluster with Docker Hub
+egress, with **no pull secret to create first**. `imagePullSecrets` is left commented out
+in `flezha-daemonset.yaml` and `service-template.yaml`.
+
+Only when you mirror the image into a **private** registry do you need a secret —
+create it and uncomment the `imagePullSecrets` block in both manifests:
 
 ```bash
 kubectl create secret docker-registry dockerhub-secret \
@@ -22,8 +31,6 @@ kubectl create secret docker-registry dockerhub-secret \
   --docker-password=<your-password> \
   -n flezha
 ```
-
-The daemonset is already configured to use `dockerhub-secret` via `imagePullSecrets`.
 
 ### Building Custom Images
 
@@ -50,20 +57,124 @@ See `docker/prod/README.md` for details.
 - Apply the daemonset for the flezha controllers: `kubectl apply -f kubernetes/flezha-daemonset.yaml`
 - Apply the deployments for X(executors) services: `kubectl apply -f kubernetes/service-template.yaml`
 
-## Failure recovery volume
+## Resources
 
-The DaemonSet mounts a node-local `hostPath` at `/opt/flezha-recovery` into
-the container at `/var/lib/flezha`. This directory holds both of the
-recovery DETS files:
+The controller container declares CPU and memory requests and limits. **These are
+starting points, not tuned numbers** — they exist so the pod schedules predictably and
+a runaway controller cannot starve a node, and you are expected to size them to your
+workload:
 
-- `recovery.dets` — operative child specs.
-- `recovery_plugins.dets` — recoverable plugin bindings.
+| | requests | limits |
+|---|---|---|
+| cpu | `250m` | `2` |
+| memory | `512Mi` | `2Gi` |
 
-A single volume carries both. `FLEZHA_DATA_DIR`, `FLEZHA_RECOVERY_ENABLED`,
-and `FLEZHA_RECOVERY_WINDOW_MS` are set via `flezha-configmap.yaml`. See
-the top-level [README.md](../README.md#failure-recovery) for the
-per-provider recoverability table and the semantics of the recovery
-window.
+The BEAM's steady-state footprint scales with the number of bound operatives and the
+per-Segment WAL write rate. Symptoms of limits set too low:
+
+- **Memory too low** → the container is `OOMKilled` (`kubectl describe pod` shows
+  `Reason: OOMKilled`, and the restart is abrupt — no graceful drain, so in-flight
+  work falls back to WAL recovery). Raise the memory limit; do not rely on the
+  liveness probe to catch this, the kernel kills the process first.
+- **CPU too low** → CPU throttling shows up as latency, not as an error: outputs lag,
+  and a badly throttled controller can trip the `output_stall` watchdog and get itself
+  rebound. Check `container_cpu_cfs_throttled_seconds_total` before raising anything
+  else.
+
+## Health probes
+
+The controller serves `GET /healthz` on port `9569` (`Flezha.Healthz.Server`, enabled
+via `FLEZHA_HEALTHZ_ENABLED` in the ConfigMap and bound to `0.0.0.0` so the kubelet can
+reach it on the pod IP). The DaemonSet uses it for all three probes:
+
+- `startupProbe` — 30 × 10s = **5 minutes** for boot plus the auto-restore replay.
+  Slow-booting clusters should raise `failureThreshold`, not the liveness thresholds.
+- `livenessProbe` — restarts a genuinely wedged controller.
+- `readinessProbe` — gates readiness-dependent endpoints.
+
+The endpoint returns `503` **only** on a real wedge. A planned recovery reports
+`recovering` with a `200` precisely so the kubelet does not restart the pod mid-replay,
+and an operative that cannot bind because its executor is gone reports `degraded` with a
+`200` — restarting the controller would not re-bind it. Do not "fix" a `degraded`
+controller by tightening the liveness probe.
+
+## Security profile
+
+Pod and container run non-root (uid/gid 1000) with `allowPrivilegeEscalation: false`,
+all capabilities dropped, `seccompProfile: RuntimeDefault`, and
+`readOnlyRootFilesystem: true`.
+
+Under a read-only root filesystem every path the controller writes must be an explicit
+mount. Those are:
+
+| path | volume | why |
+|---|---|---|
+| `/flezha/sockets` | hostPath | UDS transport (`FLEZHA_SOCKET_FILES_PATH`) |
+| `/flezha/app_data/certs` | hostPath | certs auto-generated on first run |
+| `/var/log/flezha` | hostPath | log file (`FLEZHA_LOG_PATH`) |
+| `/var/lib/flezha` | hostPath | all durable state (see below) |
+| `/flezha/tmp` | emptyDir | `RELEASE_TMP` — the Mix release materialises its merged runtime config here on **every** boot; without it the controller does not start |
+| `/tmp` | emptyDir | general scratch |
+
+Anything whose path defaults to `app_data/*` (relative to the image working dir)
+therefore has to be redirected onto the persistent volume, which is what
+`FLEZHA_STATE_DIR`, `FLEZHA_DLQ_DIR` and `FLEZHA_SNAPSHOT_DIR` in the ConfigMap do. **If
+you enable the audit log, authn/authz, or the plugin installer, point their directories
+at `/var/lib/flezha` too** (`FLEZHA_AUDIT_DIR`, `FLEZHA_AUTHZ_DIR`, the plugin install
+root) — otherwise they land on the read-only rootfs.
+
+### Pod Security Standards
+
+The default manifests use `hostPath` volumes, which **no** Pod Security Standard above
+`privileged` permits. They also need the root `fix-permissions` init container, for one
+reason only: `hostPath` ignores `fsGroup`, so the mounted directories come up root-owned
+and the non-root controller would hit `EACCES` on its first write.
+
+Both facts have the same fix. Switch the persistent volumes to an **`fsGroup`-honoring**
+type — a CSI volume or a `local` PersistentVolume — and the kubelet chowns the mount to
+`fsGroup: 1000` for you. Then:
+
+1. delete the `fix-permissions` init container, and
+2. uncomment `pod-security.kubernetes.io/enforce: restricted` in
+   `flezha-namespace.yaml`.
+
+The pod is admitted under `restricted` with no other change; the `securityContext` is
+already compliant. The `preStop` `flz controller stop` exec keeps working — it runs the
+release's own binary, which needs no write access to the rootfs.
+
+## Persistent state
+
+The DaemonSet mounts a node-local volume at `/var/lib/flezha` (`FLEZHA_DATA_DIR`). It
+carries **everything the controller must not lose**:
+
+- ProcessHub's persistent registry (`FLEZHA_PROCESS_HUB_REGISTRY_ROOT`) — the recovery
+  DETS files, i.e. operative child specs and recoverable plugin bindings.
+- Per-Segment WAL + snapshot files (`FLEZHA_STATE_DIR`) — operative state.
+- The dead-letter queue store (`FLEZHA_DLQ_DIR`).
+
+Losing this volume reverts a controller to an empty recovery on restart. See the
+top-level [README.md](../README.md#failure-recovery) for the per-provider
+recoverability table and the semantics of the recovery window
+(`FLEZHA_RECOVERY_WINDOW_MS`).
+
+### hostPath vs a PersistentVolume
+
+A DaemonSet cannot use `volumeClaimTemplates`, so node-local storage is the pragmatic
+default — each pod is pinned to a node, comes back to that same node, and reads the
+files it wrote before going down.
+
+- **`hostPath` (the default)** — zero setup, works on bare metal and single-node
+  clusters. Costs: it is not `fsGroup`-aware (hence the root init container), it blocks
+  the `restricted` and `baseline` PSS profiles, and the data is invisible to the cluster
+  — if the node dies, the state dies with it.
+- **A `local` PersistentVolume or a CSI volume** — the portable choice for a cloud
+  cluster. Honors `fsGroup` (removes the init container, unlocks `restricted`), and a
+  networked CSI volume additionally survives the node. Costs: a PV/PVC per node to
+  provision, and a networked volume puts the WAL's fsync path on the network — measure
+  before adopting it for a write-heavy controller.
+
+Swap the `flezha-recovery` volume in `flezha-daemonset.yaml`; the commented
+`persistentVolumeClaim` block there shows the shape.
 
 ## Logs
 

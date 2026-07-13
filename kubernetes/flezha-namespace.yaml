@@ -2,3 +2,18 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: flezha
+  labels:
+    app.kubernetes.io/name: flezha
+    app.kubernetes.io/instance: flezha
+    app.kubernetes.io/part-of: flezha
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/version: "0.2.0"
+    app.kubernetes.io/component: controller
+    # Pod Security Standards. The default DaemonSet uses hostPath volumes,
+    # which no profile above `privileged` permits — so the label below is
+    # commented out. Switch the persistent volumes to a PVC and delete the
+    # fix-permissions init container (see README "Security profile") and the
+    # pod is admitted under `restricted`; then uncomment:
+    #
+    # pod-security.kubernetes.io/enforce: restricted
+    # pod-security.kubernetes.io/enforce-version: latest

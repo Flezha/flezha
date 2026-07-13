@@ -9,11 +9,16 @@
 # updates the amd64 variant and building on arm64 updates the arm64 variant,
 # and neither overwrites the other.
 #
+# A prod build additionally publishes the immutable version tag taken from
+# mix.exs (`:<version>-<arch>` + the `:<version>` manifest). That is the tag
+# kubernetes/flezha-daemonset.yaml pins — `:latest` is for convenience only and
+# must never be what a cluster runs.
+#
 # process_hub is fetched from its GitHub `dev` branch at build time
 # (mix.exs default), so a plain git checkout is all the build context needs.
 #
 # Usage (logged in as alfetahe — `docker login -u alfetahe`):
-#   scripts/publish-image.sh            # prod (default): :latest-<arch> + :latest manifest
+#   scripts/publish-image.sh            # prod (default): :<version> + :latest manifests
 #   scripts/publish-image.sh --prod     # same as default
 #   scripts/publish-image.sh --dev      # dev: :latest-dev-<arch> + :latest-dev manifest
 #
@@ -43,37 +48,46 @@ case "$(uname -m)" in
   *) echo "ERROR: unsupported architecture $(uname -m)" >&2; exit 1 ;;
 esac
 
+cd "$(dirname "$0")/.."
+
 if [ "$mode" = "prod" ]; then
   dockerfile="docker/prod/Dockerfile.controller"
-  arch_tag="$IMAGE:latest-$arch"
-  manifest_tag="$IMAGE:latest"
-  variants=("$IMAGE:latest-amd64" "$IMAGE:latest-arm64")
+  version=$(sed -n 's/^ *version: *"\([^"]*\)".*/\1/p' mix.exs | head -1)
+  [ -n "$version" ] || { echo "ERROR: could not read version from mix.exs" >&2; exit 1; }
+  # The immutable version tag first: it is what the k8s manifests pin.
+  families=("$version" "latest")
 else
   dockerfile="docker/dev/Dockerfile.runtime"
-  arch_tag="$IMAGE:latest-dev-$arch"
-  manifest_tag="$IMAGE:latest-dev"
-  variants=("$IMAGE:latest-dev-amd64" "$IMAGE:latest-dev-arm64")
+  families=("latest-dev")
 fi
 
-cd "$(dirname "$0")/.."
 [ -f "$dockerfile" ] || { echo "ERROR: $dockerfile not found (run from the flezha repo)" >&2; exit 1; }
 
-echo "==> Building $arch_tag ($mode, native $arch)"
-DOCKER_BUILDKIT=1 docker build --pull --provenance=false --sbom=false ${NO_CACHE:+--no-cache} -f "$dockerfile" -t "$arch_tag" .
-echo "    size: $(docker image inspect "$arch_tag" --format '{{.Size}}' | awk '{printf "%.1f MiB", $1/1024/1024}')"
+build_tag="$IMAGE:${families[0]}-$arch"
 
-echo "==> Pushing $arch_tag"
-docker push "$arch_tag"
+echo "==> Building $build_tag ($mode, native $arch)"
+DOCKER_BUILDKIT=1 docker build --pull --provenance=false --sbom=false ${NO_CACHE:+--no-cache} -f "$dockerfile" -t "$build_tag" .
+echo "    size: $(docker image inspect "$build_tag" --format '{{.Size}}' | awk '{printf "%.1f MiB", $1/1024/1024}')"
 
-echo "==> Rebuilding manifest $manifest_tag from published per-arch tags"
-members=()
-for v in "${variants[@]}"; do
-  if docker manifest inspect "$v" >/dev/null 2>&1; then
-    members+=("$v")
-    echo "    include $v"
-  fi
+for family in "${families[@]}"; do
+  arch_tag="$IMAGE:$family-$arch"
+  manifest_tag="$IMAGE:$family"
+
+  docker tag "$build_tag" "$arch_tag"
+  echo "==> Pushing $arch_tag"
+  docker push "$arch_tag"
+
+  echo "==> Rebuilding manifest $manifest_tag from published per-arch tags"
+  members=()
+  for a in amd64 arm64; do
+    v="$IMAGE:$family-$a"
+    if docker manifest inspect "$v" >/dev/null 2>&1; then
+      members+=("$v")
+      echo "    include $v"
+    fi
+  done
+  docker manifest rm "$manifest_tag" >/dev/null 2>&1 || true
+  docker manifest create "$manifest_tag" "${members[@]}"
+  docker manifest push "$manifest_tag"
+  echo "Done. $manifest_tag → ${members[*]}"
 done
-docker manifest rm "$manifest_tag" >/dev/null 2>&1 || true
-docker manifest create "$manifest_tag" "${members[@]}"
-docker manifest push "$manifest_tag"
-echo "Done. $manifest_tag → ${members[*]}"

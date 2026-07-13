@@ -3,6 +3,13 @@ kind: ConfigMap
 metadata:
   name: flezha-config
   namespace: flezha
+  labels:
+    app.kubernetes.io/name: flezha
+    app.kubernetes.io/instance: flezha
+    app.kubernetes.io/part-of: flezha
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/version: "0.2.0"
+    app.kubernetes.io/component: controller
 data:
   FLEZHA_TRANSPORT: "uds"
   FLEZHA_CLUSTER_DISCOVERY: "k8s_pod_discovery"
@@ -27,6 +34,18 @@ data:
   FLEZHA_WAL_TRANSFER_QUERY_TIMEOUT_MS: "5000"
   FLEZHA_PROCESS_HUB_REGISTRY_ROOT: "/var/lib/flezha/process_hub"
   FLEZHA_DATA_DIR: "/var/lib/flezha"
+  # Every durable path must live on the mounted volume. These default to
+  # `app_data/*` relative to the image's working dir, which under
+  # `readOnlyRootFilesystem: true` is unwritable — and, before that, was
+  # merely ephemeral: state written there was silently lost on every restart.
+  FLEZHA_STATE_DIR: "/var/lib/flezha/state"
+  FLEZHA_DLQ_DIR: "/var/lib/flezha/dlq"
+  FLEZHA_SNAPSHOT_DIR: "/var/lib/flezha/snapshots"
+  # Health endpoint backing the DaemonSet's startup/liveness/readiness probes.
+  # Must bind 0.0.0.0: the kubelet probes the pod IP, not loopback.
+  FLEZHA_HEALTHZ_ENABLED: "true"
+  FLEZHA_HEALTHZ_PORT: "9569"
+  FLEZHA_HEALTHZ_BIND: "0.0.0.0"
   # Graceful shutdown (controller-graceful-shutdown).
   # MUST stay paired with `terminationGracePeriodSeconds` in the
   # DaemonSet (timeout_ms / 1000 + 15s headroom). Bumping this value

@@ -3,6 +3,14 @@ kind: DaemonSet
 metadata:
   name: flezha-daemonset
   namespace: flezha
+  labels:
+    app: flezha
+    app.kubernetes.io/name: flezha
+    app.kubernetes.io/instance: flezha
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: flezha
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/version: "0.2.0"
 spec:
   selector:
     matchLabels:
@@ -10,15 +18,33 @@ spec:
   template:
     metadata:
       labels:
+        # `app: flezha` is load-bearing: the pod-discovery selector
+        # (FLEZHA_K8S_SELECTOR) and FLEZHA_K8S_SERVICE_NAME both read it.
         app: flezha
+        app.kubernetes.io/name: flezha
+        app.kubernetes.io/instance: flezha
+        app.kubernetes.io/component: controller
+        app.kubernetes.io/part-of: flezha
+        app.kubernetes.io/managed-by: kubectl
+        app.kubernetes.io/version: "0.2.0"
     spec:
       serviceAccountName: flezha-reader
-      imagePullSecrets:
-        - name: dockerhub-secret
+      # The controller image is public, so a stock apply needs no registry
+      # secret. Uncomment only when mirroring into a private registry — see
+      # README "Image and registry".
+      #
+      # imagePullSecrets:
+      #   - name: dockerhub-secret
       securityContext:
+        runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
+        # hostPath volumes ignore fsGroup — see the fix-permissions init
+        # container below. fsGroup is what makes an fsGroup-honoring volume
+        # (CSI / local PV) writable without that root init container.
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       # Graceful shutdown: preStop runs `flz controller stop` (drives
       # Flezha.Shutdown.Coordinator) BEFORE k8s sends SIGTERM. The
       # grace period is the configmap timeout (60s) + 15s headroom for
@@ -26,6 +52,12 @@ spec:
       # FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS.
       terminationGracePeriodSeconds: 75
       initContainers:
+        # Runs as root ONLY because the volumes below are hostPath, which
+        # ignores fsGroup — the mounted dirs would otherwise be root-owned and
+        # the non-root controller would hit EACCES on first write. Swapping the
+        # volumes for an fsGroup-honoring type (CSI / local PersistentVolume)
+        # removes this container entirely and makes the pod admissible under the
+        # `restricted` Pod Security Standard. See README "Security profile".
         - name: fix-permissions
           image: busybox:1.35
           command:
@@ -36,7 +68,21 @@ spec:
               chown -R 1000:1000 /flezha/sockets /flezha/data /flezha/certs /var/log/flezha /var/lib/flezha && \
               chmod -R 755 /flezha/sockets /flezha/data /flezha/certs /var/log/flezha /var/lib/flezha
           securityContext:
+            runAsNonRoot: false
             runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              # chown/chmod of the hostPath mounts is the container's only job.
+              add: ["CHOWN", "FOWNER", "DAC_OVERRIDE"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
           volumeMounts:
             - name: flezha-sockets
               mountPath: /flezha/sockets
@@ -51,7 +97,10 @@ spec:
       containers:
         - name: flezha
           # Multi-arch image published by scripts/publish-image.sh.
-          image: alfetahe/flezha:latest
+          # Pinned, never `:latest` — with imagePullPolicy: IfNotPresent a
+          # mutable tag silently leaves a node running a stale controller.
+          # Bump on every controller release (see docker/prod/README.md).
+          image: alfetahe/flezha:0.2.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: epmd
@@ -60,6 +109,44 @@ spec:
             - name: quic
               containerPort: 4433
               protocol: UDP
+            - name: healthz
+              containerPort: 9569
+              protocol: TCP
+          # Starting points, not tuned numbers. The BEAM's steady-state
+          # footprint scales with the number of bound operatives and the
+          # per-Segment WAL write rate — tune to your workload and watch for
+          # the symptoms documented in README "Resources".
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          # Self-contained checks: /healthz is served by the controller itself
+          # (Flezha.Healthz.Server) and reaches no service outside the pod.
+          # It returns 503 ONLY on a genuine wedge — a planned recovery reports
+          # `recovering` with a 200 so the kubelet does not restart mid-replay.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: healthz
+            periodSeconds: 10
+            failureThreshold: 30 # 5 min for boot + auto-restore replay
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: healthz
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: healthz
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           # Pull env vars from ConfigMap (flezha-configmap.yaml)
           envFrom:
             - configMapRef:
@@ -83,6 +170,11 @@ spec:
               value: "app=flezha"
             - name: FLEZHA_SOCKET_FILES_PATH
               value: "/flezha/sockets"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           lifecycle:
             preStop:
               exec:
@@ -106,10 +198,18 @@ spec:
               # persistent registry (under
               # `FLEZHA_PROCESS_HUB_REGISTRY_ROOT=/var/lib/flezha/process_hub`)
               # plus per-Segment WAL/snapshot files (under
-              # `app_data/state/`) and the plugin install root. Losing this
-              # volume reverts controllers to today's behaviour of empty
-              # recovery on restart.
+              # `FLEZHA_STATE_DIR=/var/lib/flezha/state`), the DLQ store and the
+              # plugin install root. Losing this volume reverts controllers to
+              # empty recovery on restart.
               mountPath: /var/lib/flezha
+            # readOnlyRootFilesystem: true — the two paths the BEAM writes that
+            # are NOT persistent state. RELEASE_TMP (<release_root>/tmp) is
+            # where the Mix release materialises the merged runtime config on
+            # every boot; without it the controller cannot start.
+            - name: release-tmp
+              mountPath: /flezha/tmp
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: flezha-sockets
           hostPath:
@@ -129,11 +229,24 @@ spec:
             path: /opt/flezha-logs
             type: DirectoryOrCreate
         - name: flezha-recovery
-          # Node-local host path for ProcessHub's persistent registry +
-          # per-Segment WAL files. DaemonSet means each pod is pinned to
-          # a node, so a host path is sufficient — the same pod comes back
-          # to the same node's /opt/flezha-recovery dir after a restart and
-          # reads the files it wrote before going down.
+          # Persistent controller state: ProcessHub's registry, per-Segment WAL
+          # files, the DLQ store. A DaemonSet pins each pod to a node, so a
+          # node-local volume is sufficient — the pod comes back to the same
+          # node and reads the files it wrote before going down.
+          #
+          # hostPath is the bare-metal/single-node default. On a cloud cluster
+          # swap it for an fsGroup-honoring volume, which also lets you delete
+          # the fix-permissions init container above:
+          #
+          #   - name: flezha-recovery
+          #     persistentVolumeClaim:
+          #       claimName: flezha-recovery
+          #
+          # See README "Persistent state" for the trade-offs.
           hostPath:
             path: /opt/flezha-recovery
             type: DirectoryOrCreate
+        - name: release-tmp
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

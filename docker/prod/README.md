@@ -6,9 +6,17 @@ Run the following commands from the **flezha project root** directory.
 
 | Tag                                | Built from                          | Notes |
 |------------------------------------|-------------------------------------|-------|
-| `alfetahe/flezha:latest`           | `docker/prod/Dockerfile.controller`      | Prod runtime. Default entrypoint = graceful-restart wrapper. |
+| `alfetahe/flezha:<version>`        | `docker/prod/Dockerfile.controller` | Prod runtime, immutable. Version comes from `mix.exs`. **This is what clusters run.** |
+| `alfetahe/flezha:latest`           | `docker/prod/Dockerfile.controller` | Same build, mutable convenience tag. Never pin a cluster to it. |
 | `alfetahe/flezha:latest-dev`       | `docker/dev/Dockerfile.runtime`     | `FROM :latest` + Node.js + pre-built testnet WS server. |
 | `alfetahe/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted). |
+
+**On every controller release**: bump `version:` in `mix.exs`, run
+`scripts/publish-image.sh` on each architecture, then bump the pinned tag in
+`kubernetes/flezha-daemonset.yaml` (`image:` and the
+`app.kubernetes.io/version` labels) to match. The reference manifests must never
+point at `:latest` — with `imagePullPolicy: IfNotPresent`, a mutable tag leaves nodes
+running whatever they happened to cache.
 
 ## Image layout
 
@@ -73,7 +81,7 @@ checkout — a plain git clone is all the build context needs.
 docker login -u alfetahe
 
 # Run on each architecture host (e.g. an arm64 Pi, and amd64 moon):
-scripts/publish-image.sh           # prod  → pushes :latest-<arch>, rebuilds :latest
+scripts/publish-image.sh           # prod  → pushes :<version>-<arch> + :latest-<arch>, rebuilds both manifests
 scripts/publish-image.sh --dev     # dev   → pushes :latest-dev-<arch>, rebuilds :latest-dev
 ```
 
