@@ -149,14 +149,6 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
            "a beyond-window input must be processed as an arrival, not dropped"
   end
 
-  defp drain_outputs(acc) do
-    receive do
-      {:message_forward, msg, md} -> drain_outputs([{to_string(msg), md} | acc])
-    after
-      0 -> Enum.reverse(acc)
-    end
-  end
-
   # The Segment's fold order, read straight out of the live state. This is the
   # assertion surface: the change is about ORDER, so the test looks at order.
   defp folded(namespace, operative_id) do

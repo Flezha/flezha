@@ -118,4 +118,64 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     File.rm(id_path)
     File.rm_rf(Path.join(Flezha.State.Registry.state_root(), operative_id))
   end
+
+  @doc """
+  Every keyed output the `BeamMsgForward` sink has forwarded to this process,
+  as `{payload, metadata}` — WITHOUT consuming the mailbox, so a poll can be
+  retried and the full history audited afterwards with `drain_outputs/0`.
+  """
+  def peek_outputs() do
+    {:messages, messages} = Process.info(self(), :messages)
+
+    for {:message_forward, msg, md} <- messages do
+      {to_string(msg), md}
+    end
+  end
+
+  @doc "Consume and return every forwarded output, in arrival order."
+  def drain_outputs(acc \\ []) do
+    receive do
+      {:message_forward, msg, md} -> drain_outputs([{to_string(msg), md} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  @doc """
+  Wait until the changelog built by upserting everything received so far on
+  `flz.key` covers `expected`. This is the sink contract the tier exists to
+  serve: duplicates collapse, the last value per key wins.
+  """
+  def await_changelog(expected, timeout) do
+    wait_until(
+      fn -> Map.take(changelog(peek_outputs()), Map.keys(expected)) == expected end,
+      timeout
+    )
+  end
+
+  @doc "Upsert `{payload, metadata}` outputs into a changelog keyed by `flz.key`."
+  def changelog(outputs) do
+    Enum.reduce(outputs, %{}, fn {msg, md}, acc -> Map.put(acc, md["flz.key"], msg) end)
+  end
+
+  @doc """
+  Group outputs by their durable output identity `(flz.segment, flz.seq,
+  flz.epoch)`. The tier's dedup contract is that one identity never carries two
+  different payloads — a controller re-drive repeats an identity byte-for-byte.
+  """
+  def by_identity(outputs) do
+    Enum.group_by(
+      outputs,
+      fn {_msg, md} -> {md["flz.segment"], md["flz.seq"], md["flz.epoch"]} end,
+      fn {msg, _md} -> msg end
+    )
+  end
+
+  @doc "Assert no output identity ever delivered two different payloads."
+  def assert_identities_are_consistent(outputs) do
+    for {identity, payloads} <- by_identity(outputs) do
+      assert length(Enum.uniq(payloads)) == 1,
+             "identity #{inspect(identity)} delivered divergent payloads: #{inspect(payloads)}"
+    end
+  end
 end

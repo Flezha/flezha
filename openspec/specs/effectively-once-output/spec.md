@@ -26,17 +26,36 @@ fail with a typed error.
 
 ### Requirement: Atomic effect record — state, outputs, and offset in one durable write
 
-In tier mode the SDK SHALL ship each invocation's state change(s), plugin emits,
+In tier mode the SDK SHALL ship an invocation's state change(s), plugin emits,
 and consumed input offset as ONE `segment_effect_record` on the reliable state
 sink, and the controller SHALL persist it as ONE WAL record covered by ONE fsync
-window. No partial combination (state without outputs, outputs without offset)
-SHALL ever be durable.
+window.
+
+State and offset are the pair that SHALL never tear: no record SHALL make a
+state change durable without the offset that acknowledges the input producing
+it, and none SHALL advance the offset without that state. Under the default
+per-input granularity the record's offset is the invocation's own input; under
+`checkpoint` ack-granularity it is the offset of the input that closed the
+interval, and the record carries every change the interval accumulated.
+
+Outputs are not part of that pair. A record MAY carry outputs with no offset —
+which is how a checkpoint-mode operative's mid-interval emits reach their
+plugins without acknowledging an input whose state is not durable yet. Such
+outputs are emitted again when the interval replays, and the keyed-sink dedup
+the tier requires absorbs them.
 
 #### Scenario: Record cannot tear
 
 - **WHEN** the controller crashes at any point while handling an effect record
 - **THEN** after restart either the change, its outputs, and its offset are all
   durable, or none of them are
+
+#### Scenario: State is never durable ahead of its offset
+
+- **WHEN** a checkpoint-mode Segment applies changes for offsets 4701..4710
+  without checkpointing
+- **THEN** no durable record contains those changes, and the durable offset
+  stays at the last checkpoint
 
 #### Scenario: Emits leave the primary stream in tier mode
 

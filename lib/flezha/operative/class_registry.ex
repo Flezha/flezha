@@ -37,6 +37,12 @@ defmodule Flezha.Operative.ClassRegistry do
   @sidecar "kind"
   @tier_sidecar "effectively_once"
   @compensable_sidecar "compensable_ops"
+  @checkpoint_sidecar "checkpoint_ack"
+
+  # Every per-class SDK declaration, keyed `{operative_class, key}` in the ETS
+  # table. `delete/1` evicts them all, so a class that rebinds without a
+  # declaration cannot read a stale one.
+  @declaration_keys [:effectively_once, :checkpoint_ack, :compensable_ops]
 
   # ---------- table lifecycle ----------
 
@@ -74,24 +80,44 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   @doc """
-  Record whether `operative_class` runs the effectively-once delivery tier,
-  as declared by the SDK in the `AddOperative` response metadata. Same
-  ETS + durable-sidecar shape as the kind: the sidecar exists only while
-  the tier is on, so a tier-off class's on-disk layout is unchanged and a
-  class that drops the declaration stops journaling on the next bind.
+  Persist every SDK-declared capability for `operative_class`, as decoded from
+  the `AddOperative` response by `Flezha.Operative.Overwatch.decode_declarations/1`.
+
+  Each rides an ETS entry plus a durable sidecar, so a process-less `Retention`
+  sweep — or a bind that happens while the instance is suspended — resolves it
+  with no executor to ask. A declaration a class drops is cleared on its next
+  bind, so the sidecar never outlives the claim.
+
+  Together with `decode_declarations/1` this is the whole recipe for a new
+  SDK-declared capability: decode it there, persist it here.
+  """
+  @spec put_declarations(binary(), map()) :: :ok
+  def put_declarations(operative_class, declarations) when is_binary(operative_class) do
+    put_effectively_once(operative_class, declarations.effectively_once)
+    put_checkpoint_ack(operative_class, declarations.checkpoint_ack)
+    put_compensable_ops(operative_class, declarations.compensable_ops)
+  end
+
+  @doc """
+  Record whether `operative_class` runs the effectively-once delivery tier.
+  The sidecar exists only while the tier is on, so a tier-off class's on-disk
+  layout is unchanged and a class that drops the declaration stops journaling
+  on the next bind.
   """
   @spec put_effectively_once(binary(), boolean()) :: :ok
   def put_effectively_once(operative_class, tier?)
       when is_binary(operative_class) and is_boolean(tier?) do
-    ensure_table()
-    :ets.insert(@table, {{operative_class, :effectively_once}, tier?})
+    put_flag(operative_class, :effectively_once, @tier_sidecar, tier?)
+  end
 
-    if tier? do
-      write_sidecar_file(operative_class, @tier_sidecar, "true")
-    else
-      _ = File.rm(sidecar_path(operative_class, @tier_sidecar))
-      :ok
-    end
+  @doc """
+  Record whether `operative_class` acknowledges its inputs only at an explicit
+  checkpoint. Same ETS + durable-sidecar shape as the tier.
+  """
+  @spec put_checkpoint_ack(binary(), boolean()) :: :ok
+  def put_checkpoint_ack(operative_class, checkpoint?)
+      when is_binary(operative_class) and is_boolean(checkpoint?) do
+    put_flag(operative_class, :checkpoint_ack, @checkpoint_sidecar, checkpoint?)
   end
 
   @doc """
@@ -175,9 +201,11 @@ defmodule Flezha.Operative.ClassRegistry do
   def delete(operative_class) when is_binary(operative_class) do
     if :ets.whereis(@table) != :undefined do
       :ets.delete(@table, operative_class)
-      :ets.delete(@table, {operative_class, :effectively_once})
-      :ets.delete(@table, {operative_class, :compensable_ops})
       :ets.delete(@table, {operative_class, :overwatch})
+
+      for key <- @declaration_keys do
+        :ets.delete(@table, {operative_class, key})
+      end
     end
 
     :ok
@@ -206,13 +234,42 @@ defmodule Flezha.Operative.ClassRegistry do
   """
   @spec effectively_once?(binary()) :: boolean()
   def effectively_once?(operative_class) when is_binary(operative_class) do
-    case ets_lookup({operative_class, :effectively_once}) do
-      {:ok, tier?} -> tier?
-      :error -> File.exists?(sidecar_path(operative_class, @tier_sidecar))
-    end
+    flag?(operative_class, :effectively_once, @tier_sidecar)
+  end
+
+  @doc """
+  Resolve `operative_class`'s checkpoint ack-granularity: ETS → durable
+  sidecar → `false` (the per-input default).
+  """
+  @spec checkpoint_ack?(binary()) :: boolean()
+  def checkpoint_ack?(operative_class) when is_binary(operative_class) do
+    flag?(operative_class, :checkpoint_ack, @checkpoint_sidecar)
   end
 
   # ---------- internals ----------
+
+  # A declared boolean: ETS while the class is bound, a sidecar that exists
+  # only while the flag is on (so an undeclaring class's on-disk layout is
+  # unchanged, and one that drops the declaration reverts on the next bind).
+  defp put_flag(operative_class, key, sidecar, true) do
+    ensure_table()
+    :ets.insert(@table, {{operative_class, key}, true})
+    write_sidecar_file(operative_class, sidecar, "true")
+  end
+
+  defp put_flag(operative_class, key, sidecar, false) do
+    ensure_table()
+    :ets.insert(@table, {{operative_class, key}, false})
+    _ = File.rm(sidecar_path(operative_class, sidecar))
+    :ok
+  end
+
+  defp flag?(operative_class, key, sidecar) do
+    case ets_lookup({operative_class, key}) do
+      {:ok, on?} -> on?
+      :error -> File.exists?(sidecar_path(operative_class, sidecar))
+    end
+  end
 
   defp ets_lookup(operative_class) do
     case :ets.whereis(@table) do

@@ -24,6 +24,7 @@ defmodule FlezhaTest.Executor.AddOperativeResponseTest do
     for raw <- ["", nil] do
       assert Overwatch.decode_declarations(raw) == %{
                effectively_once: false,
+               checkpoint_ack: false,
                compensable_ops: nil,
                correction_window_ms: nil
              }
@@ -33,6 +34,7 @@ defmodule FlezhaTest.Executor.AddOperativeResponseTest do
   test "undecodable raw_data resolves the defaults" do
     assert Overwatch.decode_declarations(<<255, 255, 255, 1>>) == %{
              effectively_once: false,
+             checkpoint_ack: false,
              compensable_ops: nil,
              correction_window_ms: nil
            }
@@ -44,6 +46,13 @@ defmodule FlezhaTest.Executor.AddOperativeResponseTest do
     assert declarations(%{"other" => "x"}).correction_window_ms == nil
     assert declarations(%{"correction_window_ms" => "0"}).correction_window_ms == nil
     assert declarations(%{"correction_window_ms" => "nope"}).correction_window_ms == nil
+  end
+
+  test "checkpoint ack-granularity resolves from the metadata; anything else is per-input" do
+    assert declarations(%{"ack_granularity" => "checkpoint"}).checkpoint_ack
+    # Per-input is the tier's default granularity — an undeclaring class keeps it.
+    refute declarations(%{"effectively_once" => "true"}).checkpoint_ack
+    refute declarations(%{"ack_granularity" => "per_input"}).checkpoint_ack
   end
 
   test "compensable chain positions resolve to a list" do

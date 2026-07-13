@@ -9,6 +9,7 @@ defmodule Flezha.State.WatchdogTest do
 
   use ExUnit.Case, async: false
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{Supervisor, TestHelpers, Watchdog, WalWriter}
 
   @stall_ms 50
@@ -238,8 +239,8 @@ defmodule Flezha.State.WatchdogTest do
     header: header
   } do
     class = "BoundedWatch" <> uniq()
-    Flezha.Operative.ClassRegistry.put(class, :bounded)
-    on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
+    ClassRegistry.put(class, :bounded)
+    on_exit(fn -> ClassRegistry.delete(class) end)
 
     parent = self()
     cat_id = {__MODULE__, :catastrophic, System.unique_integer([:positive])}
@@ -267,9 +268,59 @@ defmodule Flezha.State.WatchdogTest do
 
     :ok = Watchdog.sweep_now()
 
-    refute_receive {:output_stall, _, _}, 200
-    refute_receive {:resync_called, _, _}, 200
-    refute_receive {:catastrophic, _, _}, 200
+    # Scoped to THIS test's class and segment. The Watchdog is a singleton whose
+    # sweep walks every registered segment, so an unscoped refute also matches a
+    # sibling test's resync (a compaction timeout on its own WAL, say).
+    refute_receive {:output_stall, _, %{operative_class: ^class}}, 200
+    refute_receive {:resync_called, ^pid, _}, 200
+    refute_receive {:catastrophic, _, %{operative_class: ^class}}, 200
+  end
+
+  test "a checkpoint-ack class's quiet interval is not a dead data-flow", %{header: header} do
+    # The dataflow-stop detector reads "produced output before, silent since"
+    # as a dead feed. For a checkpoint-ack class that silence is the steady
+    # state: it makes nothing durable until the interval closes.
+    prev = Application.get_env(:flezha, :catastrophic_dataflow_timeout_ms)
+    Application.put_env(:flezha, :catastrophic_dataflow_timeout_ms, @stall_ms)
+
+    per_input = "PerInputWatch" <> uniq()
+    checkpoint = "CheckpointWatch" <> uniq()
+    ClassRegistry.put_checkpoint_ack(checkpoint, true)
+
+    on_exit(fn ->
+      Application.put_env(:flezha, :catastrophic_dataflow_timeout_ms, prev)
+      ClassRegistry.delete(per_input)
+      ClassRegistry.delete(checkpoint)
+    end)
+
+    parent = self()
+    cat_id = {__MODULE__, :cp_catastrophic, System.unique_integer([:positive])}
+
+    :telemetry.attach(
+      cat_id,
+      [:flezha, :state, :catastrophic_dataflow_stop],
+      fn _e, _meas, meta, _ -> send(parent, {:catastrophic, meta.operative_class}) end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(cat_id) end)
+
+    for class <- [per_input, checkpoint] do
+      pid = {class, "op", "seg" <> uniq()}
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, w} = Supervisor.lookup(pid)
+      :ok = WalWriter.append(w, 0, header, "z")
+      :ok = WalWriter.append(w, 1, header, "a")
+    end
+
+    # Both go silent past the timeout, with output behind them.
+    Process.sleep(@stall_ms * 2)
+    :ok = Watchdog.sweep_now()
+
+    # The control proves the detector is armed and this signature trips it...
+    assert_receive {:catastrophic, ^per_input}, 1_000
+    # ...and that the checkpoint-ack class is exempt, not merely unobserved.
+    refute_receive {:catastrophic, ^checkpoint}, 200
   end
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))

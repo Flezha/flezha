@@ -192,11 +192,8 @@ defmodule Flezha.Operative.Overwatch do
       # The class's SDK-side declarations ride the AddOperative response; resolve
       # them BEFORE plugin activation so source adapters pick the tier ingest mode
       # (blocking call) from the env.
-      %{
-        effectively_once: effectively_once,
-        compensable_ops: compensable_ops,
-        correction_window_ms: correction_window_ms
-      } = decode_declarations(add_operative_raw)
+      %{effectively_once: effectively_once, correction_window_ms: correction_window_ms} =
+        declarations = decode_declarations(add_operative_raw)
 
       state =
         %{state | effectively_once: effectively_once, correction_window_ms: correction_window_ms}
@@ -212,13 +209,10 @@ defmodule Flezha.Operative.Overwatch do
 
       # Record this class's kind so the State subsystem can gate unbounded-only
       # behaviours (retention/watchdog/dynamic-evict/time-travel) for a durable
-      # bounded operative — plus the declarations and this pid (the fsync-gated
-      # outbox flush dispatches `:on_output` through it). `compensable_ops` is
-      # durable because a rewind is refused or allowed on it while the instance
-      # may be suspended, with no executor to ask.
+      # bounded operative — plus every SDK declaration and this pid (the
+      # fsync-gated outbox flush dispatches `:on_output` through it).
       _ = ClassRegistry.put(operative_class(state), state.builder.kind)
-      _ = ClassRegistry.put_effectively_once(operative_class(state), effectively_once)
-      _ = ClassRegistry.put_compensable_ops(operative_class(state), compensable_ops)
+      _ = ClassRegistry.put_declarations(operative_class(state), declarations)
       _ = ClassRegistry.put_overwatch(operative_class(state), owner)
       _ = maybe_dispatch_restore_init_state(state, operative)
 
@@ -1063,14 +1057,17 @@ defmodule Flezha.Operative.Overwatch do
   """
   @type declarations :: %{
           effectively_once: boolean(),
-          compensable_ops: [non_neg_integer()] | nil
+          checkpoint_ack: boolean(),
+          compensable_ops: [non_neg_integer()] | nil,
+          correction_window_ms: pos_integer() | nil
         }
 
   @doc """
   Resolve a class's SDK-side declarations from the `AddOperative` response
   raw_data — an `AddOperativeResponse` metadata map when the class declares
   anything, empty otherwise (including every pre-tier or Java executor). The one
-  place the wire form is decoded, so a new declared capability is added here and
+  place the wire form is decoded; `ClassRegistry.put_declarations/2` is the one
+  place it is persisted. A new declared capability is added in those two and
   nowhere else.
   """
   @spec decode_declarations(binary() | nil) :: declarations()
@@ -1079,6 +1076,7 @@ defmodule Flezha.Operative.Overwatch do
 
     %{
       effectively_once: Map.get(metadata, "effectively_once") == "true",
+      checkpoint_ack: Map.get(metadata, "ack_granularity") == "checkpoint",
       compensable_ops: parse_ops(Map.get(metadata, "compensable_ops")),
       correction_window_ms: parse_window(Map.get(metadata, "correction_window_ms"))
     }

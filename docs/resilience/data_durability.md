@@ -152,6 +152,55 @@ Non-keyed channels are byte-identical to before and remain plain
 at-least-once. See `docs/sdk_protocol_spec.md` "Output identity stamps"
 and "segment_effect_record".
 
+### Ack granularity: per input, or per checkpoint
+
+The tier acknowledges an input by making its state durable — that is what
+one atomic record per invocation buys. But some operatives fold *many*
+inputs into one state push: a window that only closes on its boundary, a
+batch that only means something complete. Pushing per input is not merely
+expensive for them, it is incoherent — the offset would advance with state
+they did not mean to publish, and a restore would resume past inputs the
+restored state never saw.
+
+Such an operative declares `checkpoint_ack()` alongside `effectively_once()`
+and calls `ctx.checkpoint()` where its state is genuinely coherent:
+
+- **The consumed-offset advances only at the checkpoint.** Changes applied
+  in between are held in the Segment's flush buffer and are not durable on
+  their own. The checkpoint ships the whole interval's changes together with
+  the offset of the input that closed it — one record, one fsync. State and
+  offset advance together or not at all.
+- **Emits still flush as they happen.** Checkpointing moves the
+  *acknowledgement*, not the output: a mid-interval emit ships in a record
+  carrying no offset, and reaches its plugin as soon as that record is
+  fsynced.
+- **A park closes the interval.** An input that exhausts its retries is
+  acknowledged into the dead-letter queue along with the interval's state,
+  so a later replay starts *after* the poison rather than re-tripping it.
+- **Recovery replays the interval.** The Segment is restored to its last
+  checkpoint and the controller re-forwards every input after it — the same
+  crash-resume re-forward the tier already does, just over a longer tail. The
+  epoch is unchanged (only a deliberate rewind bumps it), the interval's
+  outputs are emitted again, and the keyed-sink dedup the tier already
+  requires absorbs them.
+
+**The interval is the knob you size the system with.** It is simultaneously
+the input-log retention floor (truncation never crosses the last checkpoint),
+the recovery work after a crash, and the granularity at which source credit is
+minted — grants arrive in bursts at checkpoint cadence, and the source parks in
+between if it exhausts them. Checkpoint rarely and you pay in disk and recovery
+time; checkpoint often and you approach the per-input default. An operative that
+*never* checkpoints stops truncating its input log and eventually parks its own
+source — the same back-pressure any non-consuming Segment gets.
+
+Per-input remains the default and is byte-identical to a tier operative that
+never heard of the mode. `checkpoint_ack()` without `effectively_once()` is
+refused at build time (there is no durable offset to hold back, and no durable
+input log to replay from); the keyed-channel requirement is already enforced for
+the whole tier. Because such an operative deliberately makes nothing durable for
+a whole interval, the controller's dataflow-stop watchdog skips it — silence
+between checkpoints is its steady state, not a dead feed.
+
 ## Bounded operatives: staged commit and the transactional outbox
 
 A **durable structured** bounded operative (operations declared, the

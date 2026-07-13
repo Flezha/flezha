@@ -138,6 +138,34 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert Outbox.read(segment_id).outbox_flushed_seq == 0
   end
 
+  test "checkpoint granularity: a mid-interval record flushes outputs without acking", %{
+    rc: rc,
+    segment_id: segment_id
+  } do
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(segment_id)
+
+    # Mid-interval: the invocation emitted, but the state it emitted from is
+    # not durable yet, so the record acknowledges nothing.
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k1", "v1")], nil))
+    :ok = WalWriter.fsync(pid)
+
+    assert_receive {:"$gen_cast", {:io_out, "v1", md}}
+    assert md["flz.key"] == "k1"
+
+    refute InputLog.watermark(rc),
+           "a record with no consumed-offset must not advance the watermark"
+
+    # The checkpoint closes the interval: state and offset in one record.
+    :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k2", "v2")], 4710))
+    :ok = WalWriter.fsync(pid)
+
+    assert_receive {:"$gen_cast", {:io_out, "v2", _}}
+
+    assert InputLog.watermark(rc) == 4710,
+           "the checkpoint must advance the watermark to the interval's closing offset"
+  end
+
   test "N appends produce no dedup-file writes until the fsync batch", %{
     segment_id: segment_id
   } do

@@ -112,10 +112,7 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
     Process.sleep(1_000)
     outputs = drain_outputs([])
 
-    changelog =
-      Enum.reduce(outputs, %{}, fn {msg, md}, acc -> Map.put(acc, md["flz.key"], msg) end)
-
-    assert changelog == expected_final,
+    assert changelog(outputs) == expected_final,
            "changelog upsert diverged from the no-crash final state"
 
     for {msg, md} <- outputs do
@@ -127,19 +124,9 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
 
     # Exact dedup contract: one identity never carries two different
     # payloads, and every logical output appears under at least one identity.
-    by_identity =
-      Enum.group_by(
-        outputs,
-        fn {_msg, md} -> {md["flz.segment"], md["flz.seq"], md["flz.epoch"]} end,
-        fn {msg, _md} -> msg end
-      )
+    assert_identities_are_consistent(outputs)
 
-    for {identity, payloads} <- by_identity do
-      assert length(Enum.uniq(payloads)) == 1,
-             "identity #{inspect(identity)} delivered divergent payloads: #{inspect(payloads)}"
-    end
-
-    duplicates = Enum.count(by_identity, fn {_id, payloads} -> length(payloads) > 1 end)
+    duplicates = Enum.count(by_identity(outputs), fn {_id, payloads} -> length(payloads) > 1 end)
 
     assert duplicates > 0,
            "the staled cursor must force at least one identity-identical re-drive"
@@ -148,39 +135,5 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
     # six inputs durably consumed → retention can truncate).
     assert wait_until(fn -> (InputLog.watermark(operative_id) || -1) >= 5 end, 30_000),
            "min watermark never caught up to the consumed inputs"
-  end
-
-  # --- helpers ----------------------------------------------------------------
-
-  # Wait until the changelog built from everything received SO FAR (without
-  # consuming the mailbox) covers `expected`.
-  defp await_changelog(expected, timeout) do
-    wait_until(
-      fn ->
-        outputs = peek_outputs()
-
-        changelog =
-          Enum.reduce(outputs, %{}, fn {msg, md}, acc -> Map.put(acc, md["flz.key"], msg) end)
-
-        Map.take(changelog, Map.keys(expected)) == expected
-      end,
-      timeout
-    )
-  end
-
-  defp peek_outputs() do
-    {:messages, messages} = Process.info(self(), :messages)
-
-    for {:message_forward, msg, md} <- messages do
-      {to_string(msg), md}
-    end
-  end
-
-  defp drain_outputs(acc) do
-    receive do
-      {:message_forward, msg, md} -> drain_outputs([{to_string(msg), md} | acc])
-    after
-      0 -> Enum.reverse(acc)
-    end
   end
 end

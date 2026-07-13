@@ -98,6 +98,70 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     refute File.exists?(Path.join(Registry.state_root(), class))
   end
 
+  test "checkpoint_ack? defaults to false — per-input is the tier's granularity",
+       %{class: class} do
+    refute ClassRegistry.checkpoint_ack?(class)
+
+    :ok = ClassRegistry.put_effectively_once(class, true)
+
+    refute ClassRegistry.checkpoint_ack?(class),
+           "declaring the tier must not imply checkpoint granularity"
+  end
+
+  test "a checkpoint-ack put resolves true and survives ETS eviction", %{class: class} do
+    :ok = ClassRegistry.put_checkpoint_ack(class, true)
+
+    assert ClassRegistry.checkpoint_ack?(class)
+    assert File.read!(checkpoint_sidecar(class)) == "true"
+
+    # The durable sidecar answers after the in-memory entry is evicted — the
+    # process-less Retention sweep and a fresh bind both read it.
+    :ok = ClassRegistry.delete(class)
+    assert ClassRegistry.checkpoint_ack?(class)
+  end
+
+  test "a class that drops the declaration reverts to per-input", %{class: class} do
+    :ok = ClassRegistry.put_checkpoint_ack(class, true)
+    :ok = ClassRegistry.put_checkpoint_ack(class, false)
+
+    refute ClassRegistry.checkpoint_ack?(class)
+    refute File.exists?(checkpoint_sidecar(class))
+
+    :ok = ClassRegistry.delete(class)
+    refute ClassRegistry.checkpoint_ack?(class)
+  end
+
+  test "put_declarations persists every declaration, and a rebind clears what was dropped",
+       %{class: class} do
+    # The bind path writes the whole decoded map in one call.
+    :ok =
+      ClassRegistry.put_declarations(class, %{
+        effectively_once: true,
+        checkpoint_ack: true,
+        compensable_ops: [0, 2]
+      })
+
+    assert ClassRegistry.effectively_once?(class)
+    assert ClassRegistry.checkpoint_ack?(class)
+    assert ClassRegistry.compensable_ops(class) == [0, 2]
+
+    # A class that rebinds having dropped its declarations must not read the
+    # previous bind's — every sidecar goes with the claim.
+    :ok =
+      ClassRegistry.put_declarations(class, %{
+        effectively_once: false,
+        checkpoint_ack: false,
+        compensable_ops: nil
+      })
+
+    refute ClassRegistry.effectively_once?(class)
+    refute ClassRegistry.checkpoint_ack?(class)
+    refute ClassRegistry.compensable_ops(class)
+  end
+
   defp sidecar(class), do: Path.join([Registry.state_root(), class, "kind"])
   defp tier_sidecar(class), do: Path.join([Registry.state_root(), class, "effectively_once"])
+
+  defp checkpoint_sidecar(class),
+    do: Path.join([Registry.state_root(), class, "checkpoint_ack"])
 end

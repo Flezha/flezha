@@ -195,8 +195,11 @@ defmodule Flezha.State.Watchdog do
       |> Enum.group_by(fn {{rc, _sh, _pk}, _status} -> rc end)
       |> Enum.reduce(state, fn {rc, list}, acc ->
         # The dataflow-stop watchdog is unbounded-only: a durable :bounded
-        # operative legitimately goes quiet between stages/iterations.
-        if ClassRegistry.capable?(rc, :output_stall_watch?) do
+        # operative legitimately goes quiet between stages/iterations — and so
+        # does a checkpoint-ack one between checkpoints, where making nothing
+        # durable for a whole interval is the steady state, not a dead feed.
+        if ClassRegistry.capable?(rc, :output_stall_watch?) and
+             not ClassRegistry.checkpoint_ack?(rc) do
           any_dead? = Enum.any?(list, fn {_pid, s} -> input_dead?(s, now, timeout) end)
           latched? = Map.has_key?(acc.catastrophic, rc)
 

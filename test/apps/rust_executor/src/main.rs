@@ -61,6 +61,7 @@ fn register_unbounded_all() {
     register_unbounded::<DynamicSegmentOperative>();
     register_unbounded::<MixedOperative>();
     register_unbounded::<TierStoreOperative>();
+    register_unbounded::<CheckpointStoreOperative>();
     register_unbounded::<PoisonProbeOperative>();
     register_unbounded::<CandleOperative>();
 }
@@ -913,6 +914,69 @@ impl UnboundedOperative for TierStoreOperative {
             .into::<TierStoreOperation>();
         c.channel::<String>("sink")
             .from::<TierStoreOperation>()
+            .keyed()
+            .to_plugin("tier_sink");
+    }
+}
+
+// -- CheckpointStoreOperative (effectively-once-checkpoint-granularity e2e) --
+//
+// Same store as TierStoreOperative, but acknowledging only at an explicit
+// checkpoint: a `commit:` input closes the interval, every other input folds
+// into it. Emits still flush as they happen, so the sink sees an interval's
+// outputs long before its offsets are acknowledged — which is exactly what the
+// e2e crashes in the middle of.
+
+#[derive(Default)]
+struct CheckpointStoreOperation;
+impl Operation for CheckpointStoreOperation {
+    type Input = String;
+    type Output = String;
+    type State = TierStoreState;
+    type Change = TierStoreChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "checkpoint_store_operation"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> TierStoreState {
+        TierStoreState::default()
+    }
+    fn apply_change(state: &mut TierStoreState, change: &TierStoreChange) {
+        match change {
+            TierStoreChange::Set(key, value) => {
+                state.values.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    fn run(
+        &mut self,
+        input: String,
+        mut state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        let (key, value) = input.split_once(':').unwrap_or((input.as_str(), ""));
+        let (key, value) = (key.to_string(), value.to_string());
+        if key == "commit" {
+            ctx.checkpoint();
+            return Ok(());
+        }
+        state.apply(TierStoreChange::Set(key.clone(), value.clone()));
+        ctx.emit_keyed::<String>(key.clone(), format!("{key}={value}"))
+    }
+}
+
+struct CheckpointStoreOperative;
+impl UnboundedOperative for CheckpointStoreOperative {
+    fn factory_id() -> &'static str {
+        "checkpoint_store"
+    }
+    fn channels(c: &mut ChannelBuilder) {
+        c.effectively_once();
+        c.checkpoint_ack();
+        c.input::<String>("input").into::<CheckpointStoreOperation>();
+        c.channel::<String>("sink")
+            .from::<CheckpointStoreOperation>()
             .keyed()
             .to_plugin("tier_sink");
     }

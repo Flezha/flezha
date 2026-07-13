@@ -134,7 +134,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
     # Let the full outbox re-drive land, then audit the final table state.
     Process.sleep(2_000)
 
-    assert changelog(db) == expected_final,
+    assert db_changelog(db) == expected_final,
            "the row set diverged from the no-crash final state"
 
     # Every row carries the durable identity under the tier's live epoch;
@@ -164,12 +164,14 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
 
   defp await_rows(db, expected, timeout) do
     wait_until(
-      fn -> Map.take(changelog(db), Map.keys(expected)) == expected end,
+      fn -> Map.take(db_changelog(db), Map.keys(expected)) == expected end,
       timeout
     )
   end
 
-  defp changelog(db) do
+  # The changelog as the sink TABLE holds it (the harness's `changelog/1` builds
+  # one from what the plugin forwarded).
+  defp db_changelog(db) do
     Map.new(rows(db), fn [key, _seg, _seq, _epoch, payload, _at] -> {key, payload} end)
   end
 
