@@ -150,3 +150,27 @@ the enclosing iteration in the `iter` field (0 for a non-looping chain). The
 
 - **WHEN** a looping instance has committed two iterations and parked
 - **THEN** `flz state journal` SHALL show the per-op entries tagged with their iteration, two `iter_committed` entries with consumed offsets, and a final `parked` entry
+
+### Requirement: The crash-resume state ships every in-flight op's handoff
+
+The op-journal restore state SHALL carry the journaled handoff of **every**
+operation committed in the in-flight iteration, keyed by its `op_idx`, so that
+each uncommitted child branch re-seeds from exactly its own parent's edge —
+filtered to the channel that child consumes. The restore state's iteration-level
+handoff SHALL carry the previous iteration's terminal batch, which re-seeds a
+handoff-chained loop. The existing frame-size guard SHALL apply unchanged to
+each journaled entry.
+
+The SDK SHALL declare its leaf operations in the `AddOperative` response
+metadata, and the controller SHALL derive operative completion (every leaf
+operation committed in the in-flight iteration) from the journal alone.
+
+#### Scenario: Each branch re-seeds from its own parent
+
+- **WHEN** operation A with children B and C commits, and the instance later resumes with only B committed
+- **THEN** C SHALL be seeded from A's journaled handoff, and B SHALL NOT re-run
+
+#### Scenario: Controller derives DONE from the journal
+
+- **WHEN** the journal holds `op_committed` entries covering every declared leaf operation of the in-flight iteration
+- **THEN** the controller SHALL report the operative complete from the journal alone

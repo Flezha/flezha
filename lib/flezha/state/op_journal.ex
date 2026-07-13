@@ -297,12 +297,13 @@ defmodule Flezha.State.OpJournal do
 
   The resume point is the iteration **after** the highest `iter_committed`:
   `committed_op_idxs` are the operations already committed inside that
-  still-in-flight iteration (skipped on resume) and `handoff` seeds the first
-  uncommitted one — falling back, when the iteration has not committed an
-  operation yet, to the previous iteration's terminal handoff (what a
-  handoff-chained loop feeds its next iteration). `committed_ops` carries every
-  forward op commit with its iteration, which is what the driver folds into
-  `plan_compensation`'s per-iteration `committed` input.
+  still-in-flight iteration (skipped on resume) and `op_handoffs` what each of
+  them released, so every uncommitted child branch re-seeds from exactly its own
+  parent's edge (`bounded-branching`). `handoff` is the previous iteration's
+  terminal handoff — what a handoff-chained loop feeds its next iteration.
+  `committed_ops` carries every forward op commit with its iteration, which is
+  what the driver folds into `plan_compensation`'s per-iteration `committed`
+  input.
 
   A rewind folds into the same shape — the resume point simply lands back at the
   rewound-to iteration — plus `rewind_undo`: the operations the rewind unwound
@@ -317,6 +318,7 @@ defmodule Flezha.State.OpJournal do
             committed_op_idxs: [non_neg_integer()],
             iter: non_neg_integer(),
             handoff: [handoff_item()],
+            op_handoffs: [%{op_idx: non_neg_integer(), handoff: [handoff_item()]}],
             committed_ops: [committed_op()],
             rewind_undo: [committed_op()],
             parked: boolean(),
@@ -336,6 +338,7 @@ defmodule Flezha.State.OpJournal do
       _ ->
         entries = live_entries(raw)
         last_iter = latest_iter_committed(entries)
+        # The iteration in flight: the one after the highest committed, 0 before any.
         resume_iter = if last_iter, do: last_iter.iter + 1, else: 0
 
         in_flight =
@@ -344,7 +347,8 @@ defmodule Flezha.State.OpJournal do
         %{
           committed_op_idxs: in_flight |> Enum.map(& &1.op_idx) |> Enum.uniq() |> Enum.sort(),
           iter: resume_iter,
-          handoff: resume_handoff(in_flight, last_iter),
+          handoff: iter_handoff(last_iter),
+          op_handoffs: op_handoffs(in_flight),
           committed_ops: for(%{type: :op_committed} = e <- entries, do: committed_op(e)),
           rewind_undo: rewind_undo(raw),
           parked: match?(%{type: :parked}, List.last(entries)),
@@ -367,6 +371,28 @@ defmodule Flezha.State.OpJournal do
   @spec consumed_offset(binary()) :: non_neg_integer()
   def consumed_offset(instance_id) when is_binary(instance_id) do
     instance_id |> live() |> latest_iter_committed() |> consumed_offset_of()
+  end
+
+  @doc """
+  Whether the instance's in-flight iteration has committed every **leaf**
+  operation of its tree — the completion rule of a branching bounded operative
+  (`bounded-branching`), derived from the journal alone.
+
+  `leaf_ops` is the class's declared leaf set (`ClassRegistry.leaf_ops/1`, from
+  the SDK's `AddOperative` response). `nil` — a class that declared none
+  (run-sugar, unbounded, an SDK without the declaration) — is not derivable, so
+  the answer is `nil` rather than a guess. An empty journal is not complete.
+  """
+  @spec complete?(binary(), [non_neg_integer()] | nil) :: boolean() | nil
+  def complete?(_instance_id, nil), do: nil
+
+  def complete?(instance_id, leaf_ops) when is_binary(instance_id) and is_list(leaf_ops) do
+    # `restore_state/1` already folds the journal down to the operations the
+    # in-flight iteration has committed — which is exactly the question.
+    case restore_state(instance_id) do
+      nil -> false
+      %{committed_op_idxs: committed} -> Enum.all?(leaf_ops, &(&1 in committed))
+    end
   end
 
   @doc """
@@ -463,15 +489,22 @@ defmodule Flezha.State.OpJournal do
   defp wake_deadline(%{type: :parked, payload: %{wake_deadline_ms: ms}}), do: ms
   defp wake_deadline(_), do: nil
 
-  # Seed for the resumed operation: the latest op commit of the in-flight
-  # iteration, else the previous iteration's terminal handoff (a fresh
-  # iteration's input for a handoff-chained loop; ignored by an inbox-driven
-  # one, which re-seeds from the undelivered inbox tail).
-  defp resume_handoff([], nil), do: []
-  defp resume_handoff([], %{payload: %{handoff: handoff}}), do: handoff
+  # Seed for a fresh iteration: the previous iteration's terminal handoff (a
+  # handoff-chained loop's input; ignored by an inbox-driven one, which re-seeds
+  # from the undelivered inbox tail).
+  defp iter_handoff(nil), do: []
+  defp iter_handoff(%{payload: %{handoff: handoff}}), do: handoff
 
-  defp resume_handoff(in_flight, _last_iter),
-    do: in_flight |> Enum.max_by(& &1.seq) |> Map.fetch!(:payload) |> Map.fetch!(:handoff)
+  # Seed for each resumed branch: what its parent released. Keyed by the
+  # committing operation, so a child takes its own parent's edge and never a
+  # sibling's. The last commit of an op_idx wins — a re-run supersedes the
+  # commit it replaced.
+  defp op_handoffs(in_flight) do
+    in_flight
+    |> Enum.sort_by(& &1.seq)
+    |> Map.new(&{&1.op_idx, &1.payload.handoff})
+    |> Enum.map(fn {op_idx, handoff} -> %{op_idx: op_idx, handoff: handoff} end)
+  end
 
   @doc """
   The instance's current epoch — part of every flushed output's dedup key.

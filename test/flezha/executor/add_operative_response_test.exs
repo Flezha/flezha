@@ -26,6 +26,7 @@ defmodule FlezhaTest.Executor.AddOperativeResponseTest do
                effectively_once: false,
                checkpoint_ack: false,
                compensable_ops: nil,
+               leaf_ops: nil,
                correction_window_ms: nil
              }
     end
@@ -36,6 +37,7 @@ defmodule FlezhaTest.Executor.AddOperativeResponseTest do
              effectively_once: false,
              checkpoint_ack: false,
              compensable_ops: nil,
+             leaf_ops: nil,
              correction_window_ms: nil
            }
   end
@@ -64,6 +66,16 @@ defmodule FlezhaTest.Executor.AddOperativeResponseTest do
     # is refused); absent = the class declares nothing at all (no information).
     assert declarations(%{"compensable_ops" => ""}).compensable_ops == []
     assert declarations(%{"other" => "x"}).compensable_ops == nil
+  end
+
+  test "leaf positions resolve to a list — the tree's completion rule" do
+    # A→(B,C): the operative is done when ops 1 and 2 have committed.
+    assert declarations(%{"leaf_ops" => "1,2"}).leaf_ops == [1, 2]
+    # A linear chain's single terminal is the degenerate case.
+    assert declarations(%{"leaf_ops" => "1"}).leaf_ops == [1]
+    # Absent = run-sugar / unbounded / an SDK that does not declare it — the
+    # controller cannot derive completion and must not guess.
+    assert declarations(%{"other" => "x"}).leaf_ops == nil
   end
 
   defp encode(metadata) do

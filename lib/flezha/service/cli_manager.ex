@@ -1619,10 +1619,19 @@ defmodule Flezha.Service.CliManager do
     {:ok, entries} = Flezha.State.OpJournal.read(instance_id)
 
     rows = Enum.map(entries, &journal_row/1)
+    leaf_ops = Flezha.Operative.ClassRegistry.leaf_ops(instance_id)
+    complete = Flezha.State.OpJournal.complete?(instance_id, leaf_ops)
 
     case output_format do
       "json" ->
-        IO.puts(Jason.encode!(%{instance: instance_id, entries: rows}))
+        IO.puts(
+          Jason.encode!(%{
+            instance: instance_id,
+            entries: rows,
+            leaf_ops: leaf_ops,
+            complete: complete
+          })
+        )
 
       _ ->
         if rows == [] do
@@ -1630,17 +1639,26 @@ defmodule Flezha.Service.CliManager do
         else
           IO.puts("op-journal for instance #{instance_id}:\n")
           Enum.each(rows, &print_journal_row/1)
+          print_journal_completion(leaf_ops, complete)
         end
     end
   end
 
+  # The leaf set is what "done" means for a tree-shaped chain: the operative is
+  # complete when the in-flight iteration has committed every leaf. A class that
+  # declared none (run-sugar, unbounded, an older SDK) leaves it underivable.
+  defp print_journal_completion(nil, _complete),
+    do: IO.puts("\n  complete: unknown (class declares no leaf operations)")
+
+  defp print_journal_completion(leaf_ops, complete),
+    do: IO.puts("\n  leaves: #{Enum.join(leaf_ops, ",")}  complete: #{complete}")
+
   defp journal_row(%{type: :op_committed, payload: payload} = entry) do
     entry
     |> base_journal_row()
+    |> Map.merge(journal_handoff(payload.handoff))
     |> Map.merge(%{
       segments_ran: Enum.map(payload.segments_ran, &Flezha.State.Wire.segment_label/1),
-      handoff_items: length(payload.handoff),
-      handoff_bytes: payload.handoff |> Enum.map(fn {_cid, b} -> byte_size(b) end) |> Enum.sum(),
       outbox: journal_outbox(payload.outbox)
     })
   end
@@ -1654,11 +1672,8 @@ defmodule Flezha.Service.CliManager do
   defp journal_row(%{type: :iter_committed, payload: payload} = entry) do
     entry
     |> base_journal_row()
-    |> Map.merge(%{
-      consumed_offset: payload.consumed_offset,
-      handoff_items: length(payload.handoff),
-      handoff_bytes: payload.handoff |> Enum.map(fn {_cid, b} -> byte_size(b) end) |> Enum.sum()
-    })
+    |> Map.merge(journal_handoff(payload.handoff))
+    |> Map.put(:consumed_offset, payload.consumed_offset)
   end
 
   defp journal_row(%{type: :parked, payload: payload} = entry) do
@@ -1697,6 +1712,25 @@ defmodule Flezha.Service.CliManager do
     }
   end
 
+  # A handoff is per-edge: each item carries the channel it was released on,
+  # which is what routes it to the branch consuming that channel. The totals are
+  # the edges summed, so one grouping answers both.
+  defp journal_handoff(handoff) do
+    edges =
+      handoff
+      |> Enum.group_by(fn {cid, _} -> cid end, fn {_, bytes} -> byte_size(bytes) end)
+      |> Enum.sort()
+      |> Enum.map(fn {cid, sizes} ->
+        %{channel_id: cid, items: length(sizes), bytes: Enum.sum(sizes)}
+      end)
+
+    %{
+      handoff_items: edges |> Enum.map(& &1.items) |> Enum.sum(),
+      handoff_bytes: edges |> Enum.map(& &1.bytes) |> Enum.sum(),
+      handoff_edges: edges
+    }
+  end
+
   defp journal_outbox(outbox) do
     Enum.map(outbox, fn item ->
       %{
@@ -1718,6 +1752,12 @@ defmodule Flezha.Service.CliManager do
     if Map.has_key?(row, :handoff_items) do
       IO.puts("    handoff: #{row.handoff_items} item(s), #{row.handoff_bytes} byte(s)")
     end
+
+    Enum.each(Map.get(row, :handoff_edges, []), fn edge ->
+      IO.puts(
+        "      edge: channel_id=#{edge.channel_id} #{edge.items} item(s), #{edge.bytes} byte(s)"
+      )
+    end)
 
     Enum.each(Map.get(row, :outbox, []), fn item ->
       IO.puts(

@@ -50,6 +50,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
   alias Flezha.Executor.FleetManager
   alias Flezha.Operative.Builder
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Overwatch
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
@@ -817,6 +818,112 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
       committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
       assert committed == [0], "the failing operation must never commit"
+    end
+  end
+
+  describe "branching tree (rust/uds)" do
+    @describetag runtime: :rust, transport: :uds, cell: :rust_uds_branch
+
+    # The chain's args are the serialized `init_values` the harness starts with.
+    @seed ~s({"seed":"go"})
+
+    # `bounded-branching` on a live executor. BranchA fans out to BranchB and
+    # BranchC; BranchB feeds BranchD, which blocks. The SIGKILL therefore lands
+    # with A, B and C committed and only D's subtree outstanding — and the
+    # respawn must re-run D ALONE, seeded from B's journaled edge.
+    test "a fan-out runs to DONE, and a crash re-runs only the uncommitted subtree", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+
+      operative_id =
+        drive_crash_resume(
+          ctx,
+          "branch_bounded",
+          "ok",
+          &branch_fanned_out?/1,
+          plugins: [forward_sink("branch_sink", collector)]
+        )
+
+      delivered = collector |> await_outputs(4) |> Enum.map(&elem(&1, 0))
+
+      assert Enum.sort(delivered) == [
+               "a:#{@seed}",
+               "b:#{@seed}",
+               "c:#{@seed}",
+               "d:#{@seed}"
+             ]
+
+      assert Enum.count(delivered, &(&1 == "c:#{@seed}")) == 1,
+             "the sibling branch had already committed: it must not re-run"
+
+      {:ok, entries} = OpJournal.read(operative_id)
+      committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
+
+      assert committed == [0, 1, 2, 3],
+             "each operation commits exactly once across the crash: #{inspect(committed)}"
+
+      # The SDK declares the leaf set, so the controller derives DONE from the
+      # journal alone — no executor to ask.
+      leaf_ops = ClassRegistry.leaf_ops(operative_id)
+      assert leaf_ops == [2, 3], "BranchC and BranchD are the tree's leaves"
+      assert OpJournal.complete?(operative_id, leaf_ops)
+
+      rendered =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Flezha.Service.CliManager.state_journal(operative_id)
+        end)
+
+      assert rendered =~ "leaves: 2,3  complete: true"
+      assert rendered =~ "edge: channel_id="
+    end
+
+    # A failure under one branch, after BOTH branches committed: the rollback is
+    # reverse-topological — the sibling leaf and the failing branch's committed
+    # operation unwind before the root they share.
+    test "a failure under one branch unwinds both branches before their parent", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+
+      namespace = unique("bounded_branch")
+      operative_id = unique("branch_bounded")
+      id_path = unique_id_path()
+
+      on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+      boot_executor(namespace, ctx, id_path,
+        release?: true,
+        extra_env: [{"FLEZHA_BRANCH_FAIL", "1"}]
+      )
+
+      start_bounded(namespace, operative_id, "branch_bounded",
+        plugins: [forward_sink("branch_sink", collector)]
+      )
+
+      await_status(operative_id, "error", 30_000)
+
+      # Forward output of the three completed operations, then their undo — the
+      # deepest first, the shared root last.
+      delivered = collector |> await_outputs(6) |> Enum.map(&elem(&1, 0))
+
+      assert Enum.drop(delivered, 3) == ["undo-c", "b:undo-b", "a:undo-a"],
+             "descendants before ancestors: #{inspect(delivered)}"
+
+      {:ok, entries} = OpJournal.read(operative_id)
+      committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
+      assert committed == [0, 1, 2], "the failing leaf never commits"
+
+      compensated = for %{type: :compensated, op_idx: idx} <- entries, do: idx
+      assert Enum.sort(compensated) == [0, 1, 2]
+
+      refute OpJournal.complete?(operative_id, ClassRegistry.leaf_ops(operative_id)),
+             "a leaf that never committed leaves the operative incomplete"
+    end
+  end
+
+  # The crash point of `branch_bounded`: the root and BOTH its branches have
+  # committed, and only the blocked grandchild is outstanding.
+  defp branch_fanned_out?(operative_id) do
+    case OpJournal.restore_state(operative_id) do
+      %{committed_op_idxs: [0, 1, 2]} -> true
+      _ -> false
     end
   end
 

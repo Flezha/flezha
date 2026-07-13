@@ -138,12 +138,14 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
       ClassRegistry.put_declarations(class, %{
         effectively_once: true,
         checkpoint_ack: true,
-        compensable_ops: [0, 2]
+        compensable_ops: [0, 2],
+        leaf_ops: [1, 2]
       })
 
     assert ClassRegistry.effectively_once?(class)
     assert ClassRegistry.checkpoint_ack?(class)
     assert ClassRegistry.compensable_ops(class) == [0, 2]
+    assert ClassRegistry.leaf_ops(class) == [1, 2]
 
     # A class that rebinds having dropped its declarations must not read the
     # previous bind's — every sidecar goes with the claim.
@@ -151,12 +153,14 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
       ClassRegistry.put_declarations(class, %{
         effectively_once: false,
         checkpoint_ack: false,
-        compensable_ops: nil
+        compensable_ops: nil,
+        leaf_ops: nil
       })
 
     refute ClassRegistry.effectively_once?(class)
     refute ClassRegistry.checkpoint_ack?(class)
     refute ClassRegistry.compensable_ops(class)
+    refute ClassRegistry.leaf_ops(class)
   end
 
   defp sidecar(class), do: Path.join([Registry.state_root(), class, "kind"])

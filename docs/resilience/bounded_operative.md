@@ -13,24 +13,72 @@ finished-job retention. Read it with [`data_durability.md`](data_durability.md)
 (where state is lost vs. not) and [`state_persistence.md`](state_persistence.md)
 (the shared WAL substrate both kinds use).
 
-## Structure: sequential operations, parallel segments
+## Structure: a tree of operations, parallel segments
 
 A bounded operative authors the **same** Operations, Channels, and Segments a
 unbounded operative does — the same per-segment state engine — but its
-operations are scheduled **sequentially**:
+operations are scheduled **topologically**:
 
-- **Linear chain** `Op1 → Op2 → … → OpN` (no branching in v1). Each operation's
-  collected output is the next operation's input, handed over at a **count-based
-  barrier**: an operation is *done* only when every one of its segments has
-  finished. Because each stage chews a finite, known batch, "done" is a count,
-  not a fuzzy idle guess.
+- **Operation tree** — the linear chain `Op1 → Op2 → … → OpN` is the
+  single-branch case; an operation MAY also **fan out**. Each operation's
+  collected output is its downstream operations' input, handed over at a
+  **count-based barrier**: an operation is *done* only when every one of its
+  segments has finished. Because each stage chews a finite, known batch, "done"
+  is a count, not a fuzzy idle guess.
 - **Within one operation, segments run in parallel** exactly as in unbounded
   (single / static segmenting, per-segment state + WAL).
-- The first operation is **seeded from the spawn `args`** (`init_values`); later
-  operations consume the previous stage's output.
+- The root operation is **seeded from the spawn `args`** (`init_values`); every
+  other operation consumes its parent's output.
 - `run(ctx, args)` is **sugar** for a single-Operation, single-Segment bounded
   operative — the simplest case, and the only form with an interactive inbox
   loop (below).
+
+### Branching: fan-out, not fan-in
+
+An **edge** is *(an operation's output channel, one of that channel's
+consumers)*. An `Operation` has a single `Output` type and therefore one output
+channel, so a fan-out is simply that channel declaring several consumers:
+
+```rust
+fn operations(c: &mut ChannelBuilder) {
+    c.input::<Job>("in").into::<Extract>();
+    // One channel, two consumers: Enrich and Archive are independent branches.
+    c.channel::<Record>("records")
+        .codec()
+        .from::<Extract>()
+        .into::<Enrich>()
+        .into::<Archive>();
+    c.channel::<Enriched>("out").from::<Enrich>().to_plugin("sink");
+    c.channel::<Record>("cold").from::<Archive>().to_plugin("glacier");
+}
+```
+
+Routing is **per channel**: a downstream operation receives exactly the values
+released on the channel it consumes. Branches are **independent** by
+construction — there is no cross-branch data exchange, and siblings that need
+each other's output are one operation. Registration refuses anything that is not
+a tree, naming the node:
+
+| Shape | Refusal |
+| --- | --- |
+| Two channels feed one operation (**fan-in / join**) | `FanIn` |
+| One operation produces two channels | `MultipleOutputChannels` |
+| The entry channel feeds ≠ 1 operation | `EntryRoot` |
+| An operation unreachable from the entry channel | `Disconnected` |
+| `LoopMode::Chained` over a branching tree | `BranchingChainedLoop` |
+
+**Scheduling.** A child becomes runnable only once its parent's commit is
+acknowledged. Every currently-runnable node is submitted to the work-stealing
+pool **together** — sibling branches are independent subtrees, so they interleave
+freely — and joined on one barrier before the level commits. The operative is
+`ok` exactly when every **leaf** operation has committed; the controller derives
+the same fact from the journal, because the SDK declares its leaf set at
+`AddOperative`.
+
+A handoff-chained loop (`LoopMode::Chained`) seeds iteration N+1 from iteration
+N's terminal batch, which a tree with several leaves does not define — hence the
+`BranchingChainedLoop` refusal. `Once` and `PerInput` classes may branch freely;
+one iteration is one pass of the whole tree.
 
 The `{operative_class, operation_id, segment_key}` identity is the same one a
 unbounded operative uses — a bounded operative genuinely has operations and
@@ -215,9 +263,24 @@ An operation MAY declare a **compensation hook** (`compensate(ctx,
 completed_output, state)`) describing how to undo its committed effect. On
 **abnormal** termination — an operation returns an error, or a cooperative stop
 lands after ≥1 stage completed — the driver fires the completed operations'
-hooks in **reverse order, once per segment** that had an effect, inside the
-**same single teardown** (not a parallel path). Operations with no hook are
-skipped; a clean `ok` **never** compensates.
+hooks in **reverse topological order, once per segment** that had an effect,
+inside the **same single teardown** (not a parallel path). Operations with no
+hook are skipped; a clean `ok` **never** compensates.
+
+**Reverse topological** means no operation is undone before its compensated
+descendants; independent sibling subtrees unwind in an unspecified relative
+order (the same rule per-segment compensation already follows). For a linear
+chain it degenerates to the exact reverse of the chain. In an `A → (B, C)` tree
+where a failure lands under `B` after all three completed, the rollback runs
+`C` and `B` — in either order — and only then `A`:
+
+```
+        A                          undo C ─┐
+      ↙   ↘        failure  ⇒              ├─▶ undo A
+     B     C       under B      undo B ─┘
+     ↓
+   (fails)
+```
 
 Two author-selected rollback modes (`rollback_mode()` / `rollbackMode()`):
 

@@ -1263,10 +1263,39 @@ message RestoreInitState {
 ```
 
 `op_journal` (absent unless the instance has a non-empty op-journal)
-carries the committed op indexes plus the latest journaled handoff batch
-so a resumed durable structured bounded driver skips the committed
-operations and seeds the first uncommitted one from the handoff — see
-`OpCommit` below.
+carries the committed op indexes so a resumed durable structured bounded
+driver skips the operations already committed in the in-flight iteration,
+plus two handoff views:
+
+```protobuf
+message OpEdgeHandoff {
+    uint32 op_idx                  = 1;
+    repeated OpHandoffItem handoff = 2;
+}
+
+message OpJournalState {
+    repeated uint32 committed_op_idxs  = 1;
+    uint32 iter                        = 2;
+    repeated OpHandoffItem handoff     = 3;  // previous iteration's terminal batch
+    repeated OpCommittedOp committed_ops = 4;
+    uint64 consumed_offset             = 5;
+    bool   parked                      = 6;
+    uint64 wake_deadline_ms            = 7;
+    repeated OpCommittedOp rewind_undo = 8;
+    repeated OpEdgeHandoff op_handoffs = 9;  // in-flight iteration, per op
+}
+```
+
+- `op_handoffs` — what **each** operation committed in the in-flight
+  iteration released, keyed by its `op_idx`. An operation tree
+  (`bounded-branching`) re-seeds every uncommitted child branch from its
+  own parent's edge, filtered to the channel that child consumes, so the
+  latest commit's handoff alone would strand a sibling.
+- `handoff` — the previous iteration's **terminal** batch, which re-seeds
+  iteration N+1 of a handoff-chained loop.
+
+Both are channel-id-tagged codec bytes, decoded by the producing channel's
+inter-op codec at seed time — see `OpCommit` below.
 
 Each record inside `change_log_bytes` uses the controller's on-disk WAL
 framing:

@@ -231,6 +231,16 @@ escape before that operation is durable.
   `compensated`) entry with no matching `outbox_flushed` is re-delivered
   with its **original keys** before the resumed run advances. An op whose
   flush IS recorded is never re-delivered.
+- **Branches resume independently.** The operation topology is a tree
+  (`bounded-branching`), so the restore state carries each in-flight
+  commit's handoff under its own `op_idx`: a respawn re-runs exactly the
+  **uncommitted subtrees**, seeding each from its own parent's edge, and
+  a branch that already committed neither re-runs nor re-emits. The
+  operative is complete when every **leaf** operation has committed — a
+  fact the controller derives from the journal alone, against the leaf
+  set the SDK declares at `AddOperative`. A rollback runs in **reverse
+  topological** order: no operation is undone before its compensated
+  descendants (see `docs/resilience/bounded_operative.md`).
 - **Keys.** Each flushed frame carries `flz.segment`, `flz.seq`
   (`<op_idx>.<seq_in_op>`) and `flz.epoch` — the effectively-once output
   identity shape, minted from the journal, so a keyed sink adapter applies

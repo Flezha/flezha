@@ -37,12 +37,13 @@ defmodule Flezha.Operative.ClassRegistry do
   @sidecar "kind"
   @tier_sidecar "effectively_once"
   @compensable_sidecar "compensable_ops"
+  @leaf_sidecar "leaf_ops"
   @checkpoint_sidecar "checkpoint_ack"
 
   # Every per-class SDK declaration, keyed `{operative_class, key}` in the ETS
   # table. `delete/1` evicts them all, so a class that rebinds without a
   # declaration cannot read a stale one.
-  @declaration_keys [:effectively_once, :checkpoint_ack, :compensable_ops]
+  @declaration_keys [:effectively_once, :checkpoint_ack, :compensable_ops, :leaf_ops]
 
   # ---------- table lifecycle ----------
 
@@ -96,6 +97,7 @@ defmodule Flezha.Operative.ClassRegistry do
     put_effectively_once(operative_class, declarations.effectively_once)
     put_checkpoint_ack(operative_class, declarations.checkpoint_ack)
     put_compensable_ops(operative_class, declarations.compensable_ops)
+    put_leaf_ops(operative_class, declarations.leaf_ops)
   end
 
   @doc """
@@ -107,7 +109,7 @@ defmodule Flezha.Operative.ClassRegistry do
   @spec put_effectively_once(binary(), boolean()) :: :ok
   def put_effectively_once(operative_class, tier?)
       when is_binary(operative_class) and is_boolean(tier?) do
-    put_flag(operative_class, :effectively_once, @tier_sidecar, tier?)
+    put_declaration(operative_class, :effectively_once, @tier_sidecar, tier?)
   end
 
   @doc """
@@ -117,7 +119,7 @@ defmodule Flezha.Operative.ClassRegistry do
   @spec put_checkpoint_ack(binary(), boolean()) :: :ok
   def put_checkpoint_ack(operative_class, checkpoint?)
       when is_binary(operative_class) and is_boolean(checkpoint?) do
-    put_flag(operative_class, :checkpoint_ack, @checkpoint_sidecar, checkpoint?)
+    put_declaration(operative_class, :checkpoint_ack, @checkpoint_sidecar, checkpoint?)
   end
 
   @doc """
@@ -131,19 +133,18 @@ defmodule Flezha.Operative.ClassRegistry do
   """
   @spec put_compensable_ops(binary(), [non_neg_integer()] | nil) :: :ok
   def put_compensable_ops(operative_class, ops) when is_binary(operative_class) do
-    ensure_table()
+    put_declaration(operative_class, :compensable_ops, @compensable_sidecar, ops)
+  end
 
-    if is_list(ops) do
-      :ets.insert(@table, {{operative_class, :compensable_ops}, ops})
-      write_sidecar_file(operative_class, @compensable_sidecar, Enum.join(ops, ","))
-    else
-      if :ets.whereis(@table) != :undefined do
-        :ets.delete(@table, {operative_class, :compensable_ops})
-      end
-
-      _ = File.rm(sidecar_path(operative_class, @compensable_sidecar))
-      :ok
-    end
+  @doc """
+  Record which of `operative_class`'s tree operations are **leaves** — the set
+  whose commits mean the operative is done (`bounded-branching`). Same ETS +
+  durable-sidecar shape as the compensable set, and read on the same evidence:
+  the journal answers "complete?" with no executor to ask.
+  """
+  @spec put_leaf_ops(binary(), [non_neg_integer()] | nil) :: :ok
+  def put_leaf_ops(operative_class, ops) when is_binary(operative_class) do
+    put_declaration(operative_class, :leaf_ops, @leaf_sidecar, ops)
   end
 
   @doc """
@@ -152,21 +153,18 @@ defmodule Flezha.Operative.ClassRegistry do
   """
   @spec compensable_ops(binary()) :: [non_neg_integer()] | nil
   def compensable_ops(operative_class) when is_binary(operative_class) do
-    case ets_lookup({operative_class, :compensable_ops}) do
-      {:ok, ops} ->
-        ops
-
-      :error ->
-        case File.read(sidecar_path(operative_class, @compensable_sidecar)) do
-          {:ok, ""} -> []
-          {:ok, csv} -> csv |> String.trim() |> parse_ops()
-          {:error, _} -> nil
-        end
-    end
+    declaration(operative_class, :compensable_ops, @compensable_sidecar, &parse_ops/1)
   end
 
-  defp parse_ops(""), do: []
-  defp parse_ops(csv), do: csv |> String.split(",") |> Enum.map(&String.to_integer/1)
+  @doc """
+  Resolve `operative_class`'s leaf operations: ETS → durable sidecar → `nil`
+  (the class declared nothing — run-sugar, unbounded, or an SDK without the
+  declaration).
+  """
+  @spec leaf_ops(binary()) :: [non_neg_integer()] | nil
+  def leaf_ops(operative_class) when is_binary(operative_class) do
+    declaration(operative_class, :leaf_ops, @leaf_sidecar, &parse_ops/1)
+  end
 
   @doc """
   Record the live Overwatch pid for `operative_class` (called at bind, from
@@ -234,7 +232,7 @@ defmodule Flezha.Operative.ClassRegistry do
   """
   @spec effectively_once?(binary()) :: boolean()
   def effectively_once?(operative_class) when is_binary(operative_class) do
-    flag?(operative_class, :effectively_once, @tier_sidecar)
+    declaration(operative_class, :effectively_once, @tier_sidecar, &(&1 == "true")) == true
   end
 
   @doc """
@@ -243,7 +241,7 @@ defmodule Flezha.Operative.ClassRegistry do
   """
   @spec checkpoint_ack?(binary()) :: boolean()
   def checkpoint_ack?(operative_class) when is_binary(operative_class) do
-    flag?(operative_class, :checkpoint_ack, @checkpoint_sidecar)
+    declaration(operative_class, :checkpoint_ack, @checkpoint_sidecar, &(&1 == "true")) == true
   end
 
   # ---------- internals ----------
@@ -251,25 +249,49 @@ defmodule Flezha.Operative.ClassRegistry do
   # A declared boolean: ETS while the class is bound, a sidecar that exists
   # only while the flag is on (so an undeclaring class's on-disk layout is
   # unchanged, and one that drops the declaration reverts on the next bind).
-  defp put_flag(operative_class, key, sidecar, true) do
+  # ONE shape for every SDK declaration: an ETS entry plus a durable sidecar that
+  # outlives the process. An undeclared capability — `false` for a flag, `nil` for
+  # an operation set — CLEARS both, so a class that rebinds having dropped a
+  # declaration can never read the previous bind's, and a flag-off class's on-disk
+  # layout stays exactly as it was before the flag existed. The only
+  # per-capability code is the codec pair.
+  defp put_declaration(operative_class, key, sidecar, undeclared)
+       when undeclared in [nil, false] do
     ensure_table()
-    :ets.insert(@table, {{operative_class, key}, true})
-    write_sidecar_file(operative_class, sidecar, "true")
-  end
-
-  defp put_flag(operative_class, key, sidecar, false) do
-    ensure_table()
-    :ets.insert(@table, {{operative_class, key}, false})
+    # Cached as undeclared rather than evicted: a bound class answers from ETS
+    # either way, so the read path never stats a sidecar that is not there.
+    :ets.insert(@table, {{operative_class, key}, undeclared})
     _ = File.rm(sidecar_path(operative_class, sidecar))
     :ok
   end
 
-  defp flag?(operative_class, key, sidecar) do
+  defp put_declaration(operative_class, key, sidecar, value) do
+    ensure_table()
+    :ets.insert(@table, {{operative_class, key}, value})
+    write_sidecar_file(operative_class, sidecar, encode_declaration(value))
+  end
+
+  # ETS → durable sidecar → `nil` (undeclared). `decode` turns the sidecar's text
+  # back into the declared value; an empty operation set decodes to `[]`, which is
+  # meaningful ("a tree, none of it selected") and is NOT undeclared.
+  defp declaration(operative_class, key, sidecar, decode) do
     case ets_lookup({operative_class, key}) do
-      {:ok, on?} -> on?
-      :error -> File.exists?(sidecar_path(operative_class, sidecar))
+      {:ok, value} ->
+        value
+
+      :error ->
+        case File.read(sidecar_path(operative_class, sidecar)) do
+          {:ok, text} -> decode.(String.trim(text))
+          {:error, _} -> nil
+        end
     end
   end
+
+  defp encode_declaration(true), do: "true"
+  defp encode_declaration(ops) when is_list(ops), do: Enum.join(ops, ",")
+
+  defp parse_ops(""), do: []
+  defp parse_ops(csv), do: csv |> String.split(",") |> Enum.map(&String.to_integer/1)
 
   defp ets_lookup(operative_class) do
     case :ets.whereis(@table) do

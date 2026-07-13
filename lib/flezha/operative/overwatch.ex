@@ -1059,6 +1059,7 @@ defmodule Flezha.Operative.Overwatch do
           effectively_once: boolean(),
           checkpoint_ack: boolean(),
           compensable_ops: [non_neg_integer()] | nil,
+          leaf_ops: [non_neg_integer()] | nil,
           correction_window_ms: pos_integer() | nil
         }
 
@@ -1078,6 +1079,7 @@ defmodule Flezha.Operative.Overwatch do
       effectively_once: Map.get(metadata, "effectively_once") == "true",
       checkpoint_ack: Map.get(metadata, "ack_granularity") == "checkpoint",
       compensable_ops: parse_ops(Map.get(metadata, "compensable_ops")),
+      leaf_ops: parse_ops(Map.get(metadata, "leaf_ops")),
       correction_window_ms: parse_window(Map.get(metadata, "correction_window_ms"))
     }
   end
@@ -1958,9 +1960,18 @@ defmodule Flezha.Operative.Overwatch do
         %ExecutorCommands.OpJournalState{
           committed_op_idxs: resume.committed_op_idxs,
           iter: resume.iter,
-          handoff:
-            Enum.map(resume.handoff, fn {cid, bytes} ->
-              %ExecutorCommands.OpHandoffItem{channel_id: cid, payload: bytes}
+          # The previous iteration's terminal batch — what re-seeds iteration
+          # N+1 of a handoff-chained loop.
+          handoff: handoff_items(resume.handoff),
+          # What each operation of the in-flight iteration released. A branching
+          # tree re-seeds every uncommitted child from its own parent's edge, so
+          # each in-flight commit's handoff travels, not just the latest one's.
+          op_handoffs:
+            Enum.map(resume.op_handoffs, fn %{op_idx: op_idx, handoff: handoff} ->
+              %ExecutorCommands.OpEdgeHandoff{
+                op_idx: op_idx,
+                handoff: handoff_items(handoff)
+              }
             end),
           # Every forward op commit with its iteration: the driver folds these
           # back into the compensation planner's per-iteration `committed` input,
@@ -1984,6 +1995,12 @@ defmodule Flezha.Operative.Overwatch do
       iter: op.iter,
       segments_ran: op.segments_ran
     }
+  end
+
+  defp handoff_items(handoff) do
+    Enum.map(handoff, fn {cid, bytes} ->
+      %ExecutorCommands.OpHandoffItem{channel_id: cid, payload: bytes}
+    end)
   end
 
   @doc """

@@ -77,6 +77,7 @@ fn register_bounded_all() {
     register_bounded::<ChatLoopBounded>();
     register_bounded::<ChatRewindBounded>();
     register_bounded::<RetryBounded>();
+    register_bounded::<BranchBounded>();
 }
 
 // -- EchoBounded -----------------------------------------------------------------
@@ -400,6 +401,133 @@ impl BoundedOperative for UndoOutboxBounded {
             .from::<UndoOutboxA>()
             .also_to_plugin_with("undo_sink", |s: &String| format!("out:{s}").into_bytes())
             .into::<UndoC>();
+    }
+}
+
+// `branch_bounded`: the operation TREE (`bounded-branching`).
+//
+//     BranchA ─┬─▶ BranchB ─▶ BranchD
+//              └─▶ BranchC
+//
+// Every operation commits durable state and compensates by emitting an undo
+// record, so both tree behaviours are observable at one sink:
+//
+//   * crash-resume — BranchD BLOCKS until the resumed executor sets the release
+//     env, so the SIGKILL lands with A, B and C committed and only D's subtree
+//     outstanding. The respawn re-runs D alone, seeded from B's journaled edge;
+//     the sibling branch's `c:` marker must therefore appear exactly ONCE across
+//     both runs.
+//   * compensation — with `FLEZHA_BRANCH_FAIL` armed, BranchD fails instead of
+//     blocking. A, B and C have all completed, so the rollback must unwind the
+//     two branches before the root they share: `undo-c`, `undo-b`, `undo-a`.
+//
+// The inter-op channels are hybrid (`also_to_plugin_with`), which is what makes
+// a non-leaf operation's forward and undo output visible at the sink.
+const BRANCH_FAIL_ENV: &str = "FLEZHA_BRANCH_FAIL";
+
+durable_step!(BranchA, "branch_a", compensate: |ctx| ctx
+    .emit::<String>("undo-a".to_string()));
+durable_step!(BranchB, "branch_b", compensate: |ctx| ctx
+    .emit::<String>("undo-b".to_string()));
+
+// The sibling leaf: emits straight to the sink, and its undo does too.
+#[derive(Default)]
+struct BranchC;
+impl Operation for BranchC {
+    type Input = String;
+    type Output = String;
+    type State = SeenState;
+    type Change = Insert;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "branch_c"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> SeenState {
+        SeenState::default()
+    }
+    fn apply_change(state: &mut SeenState, change: &Insert) {
+        state.items.insert(change.0.clone());
+    }
+    fn run(
+        &mut self,
+        input: String,
+        mut state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        state.apply(Insert("branch_c".to_string()));
+        ctx.emit::<String>(format!("c:{input}"))
+    }
+    const COMPENSATE_OVERRIDDEN: bool = true;
+    fn compensate(
+        &mut self,
+        _out: Vec<std::sync::Arc<String>>,
+        _state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        ctx.emit::<String>("undo-c".to_string())
+    }
+}
+
+// The deep leaf under BranchB: blocks (crash-resume), or fails (compensation).
+#[derive(Default)]
+struct BranchD;
+impl Operation for BranchD {
+    type Input = String;
+    type Output = String;
+    type State = ();
+    type Change = NoChange;
+    type Clock = WallClock;
+    type Config = ();
+    fn name() -> &'static str {
+        "branch_d"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) {}
+    fn run(
+        &mut self,
+        input: String,
+        _state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        if env::var(BRANCH_FAIL_ENV).is_ok() {
+            return Err(OperationError::Custom("branch_d failed".into()));
+        }
+        block_until_released();
+        ctx.emit::<String>(format!("d:{input}"))
+    }
+}
+
+struct BranchBounded;
+impl BoundedOperative for BranchBounded {
+    fn factory_id() -> &'static str {
+        "branch_bounded"
+    }
+    // Fail fast: the compensation scenario is about the rollback order, not the
+    // ladder that precedes it.
+    fn retry_attempts() -> u32 {
+        0
+    }
+    fn operations(c: &mut ChannelBuilder) {
+        c.input::<String>("in").into::<BranchA>();
+        // One channel, two consumers: THE fan-out. Both branches read exactly
+        // what BranchA released on it.
+        c.channel::<String>("mid")
+            .codec()
+            .from::<BranchA>()
+            .also_to_plugin_with("branch_sink", |s: &String| format!("a:{s}").into_bytes())
+            .into::<BranchB>()
+            .into::<BranchC>();
+        c.channel::<String>("bmid")
+            .codec()
+            .from::<BranchB>()
+            .also_to_plugin_with("branch_sink", |s: &String| format!("b:{s}").into_bytes())
+            .into::<BranchD>();
+        c.channel::<String>("c_out")
+            .from::<BranchC>()
+            .to_plugin("branch_sink");
+        c.channel::<String>("d_out")
+            .from::<BranchD>()
+            .to_plugin("branch_sink");
     }
 }
 
@@ -974,7 +1102,8 @@ impl UnboundedOperative for CheckpointStoreOperative {
     fn channels(c: &mut ChannelBuilder) {
         c.effectively_once();
         c.checkpoint_ack();
-        c.input::<String>("input").into::<CheckpointStoreOperation>();
+        c.input::<String>("input")
+            .into::<CheckpointStoreOperation>();
         c.channel::<String>("sink")
             .from::<CheckpointStoreOperation>()
             .keyed()

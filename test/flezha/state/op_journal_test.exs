@@ -64,7 +64,7 @@ defmodule FlezhaTest.State.OpJournalTest do
     assert File.exists?(Registry.journal_path(inst))
   end
 
-  test "restore_state folds committed indexes and the latest handoff" do
+  test "restore_state folds committed indexes and every in-flight op's own handoff" do
     inst = instance_id()
 
     assert OpJournal.restore_state(inst) == nil
@@ -72,8 +72,38 @@ defmodule FlezhaTest.State.OpJournalTest do
     :ok = OpJournal.append_op_committed(inst, 0, 0, [], [{1, "a"}])
     :ok = OpJournal.append_op_committed(inst, 1, 0, [], [{2, "b"}])
 
-    assert %{committed_op_idxs: [0, 1], iter: 0, handoff: [{2, "b"}]} =
-             OpJournal.restore_state(inst)
+    # Each committed operation's handoff travels under its own op_idx, so a
+    # branching tree re-seeds every uncommitted child from ITS parent's edge and
+    # never from a sibling's (`bounded-branching`). The iteration-level handoff
+    # is the previous iteration's terminal batch — none here.
+    assert %{
+             committed_op_idxs: [0, 1],
+             iter: 0,
+             handoff: [],
+             op_handoffs: [
+               %{op_idx: 0, handoff: [{1, "a"}]},
+               %{op_idx: 1, handoff: [{2, "b"}]}
+             ]
+           } = OpJournal.restore_state(inst)
+  end
+
+  test "complete? derives DONE from the declared leaf set" do
+    inst = instance_id()
+
+    # A→(B,C): leaves are ops 1 and 2.
+    assert OpJournal.complete?(inst, [1, 2]) == false, "an empty journal is not complete"
+    assert OpJournal.complete?(inst, nil) == nil, "a class declaring no leaves is not derivable"
+
+    :ok = OpJournal.append_op_committed(inst, 0, 0, [], [{1, "a"}])
+    :ok = OpJournal.append_op_committed(inst, 1, 0, [], [])
+    refute OpJournal.complete?(inst, [1, 2]), "one leaf short"
+
+    :ok = OpJournal.append_op_committed(inst, 2, 0, [], [])
+    assert OpJournal.complete?(inst, [1, 2]), "every leaf of the in-flight iteration committed"
+
+    # A new iteration starts uncommitted: the leaves must commit again.
+    :ok = OpJournal.append_iter_committed(inst, 0, 1, [])
+    refute OpJournal.complete?(inst, [1, 2])
   end
 
   test "torn tail is discarded; complete prior entries remain readable" do
@@ -159,7 +189,10 @@ defmodule FlezhaTest.State.OpJournalTest do
     resume = OpJournal.restore_state(inst)
     assert resume.iter == 1
     assert resume.committed_op_idxs == [0]
-    assert resume.handoff == [{1, "b"}]
+    assert resume.op_handoffs == [%{op_idx: 0, handoff: [{1, "b"}]}]
+
+    assert resume.handoff == [{2, "carry"}],
+           "the iteration-level handoff stays the previous iteration's terminal batch"
 
     # Every forward commit is carried back with its iteration — the compensation
     # planner's per-iteration `committed` input.
@@ -412,7 +445,16 @@ defmodule FlezhaTest.State.OpJournalTest do
     assert %ExecutorCommands.OpJournalState{
              committed_op_idxs: [0],
              iter: 1,
-             handoff: [%ExecutorCommands.OpHandoffItem{channel_id: 2, payload: "h"}],
+             # The previous iteration's terminal batch (a chained loop's seed) …
+             handoff: [%ExecutorCommands.OpHandoffItem{channel_id: 2, payload: "carry"}],
+             # … and what the in-flight iteration's committed op released, keyed
+             # by op_idx, which is what re-seeds its children.
+             op_handoffs: [
+               %ExecutorCommands.OpEdgeHandoff{
+                 op_idx: 0,
+                 handoff: [%ExecutorCommands.OpHandoffItem{channel_id: 2, payload: "h"}]
+               }
+             ],
              consumed_offset: 3,
              parked: false,
              wake_deadline_ms: 0
