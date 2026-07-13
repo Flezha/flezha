@@ -29,9 +29,26 @@ defmodule Flezha.State.InputLog do
 
   alias Flezha.State.{CreditLedger, FsyncBatcher, Registry, Supervisor, WalWriter}
 
-  # Input-log records carry no wire header; the 16 zero bytes keep the
-  # WalWriter record framing (and its scan/rewrite helpers) reusable as-is.
-  @zero_header <<0::unit(8)-size(16)>>
+  # Input-log records reuse the WalWriter framing, so they carry its 16-byte
+  # header slot. The wire never fills it, which leaves it free for the append
+  # wall-time — the column that turns `hold_window` into a real retention
+  # window and lets a correction find the offset a point in time sits at.
+  #
+  #   0..7   ts_ms  u64 BE — append wall-time
+  #   8      version u8    — 0 = pre-timestamp record ("unknown time")
+  #   9..15  zero
+  #
+  # Byte 9 stays zero on purpose: it is the segment WAL's `format_id`, so a
+  # zero there means an input record can never decode as an effect record if
+  # one is ever fed to the wrong reader.
+  @header_version 1
+
+  defp record_header(ts_ms), do: <<ts_ms::64-big, @header_version::8, 0::8, 0::48>>
+
+  # `nil` for a pre-timestamp record — it predates the hold window's existence,
+  # so it can only be held by the watermark, never by time.
+  defp header_time(<<ts_ms::64-big, @header_version::8, _::binary>>), do: ts_ms
+  defp header_time(_), do: nil
 
   @watermarks :flezha_input_log_watermarks
 
@@ -125,6 +142,39 @@ defmodule Flezha.State.InputLog do
     end
 
     :ok
+  end
+
+  @doc """
+  Move a Segment's consumed-offset *backwards* after a correction rewound its
+  WAL — the records that reported the old, higher offset no longer exist.
+
+  Distinct from `record_consumed/3` only in intent, and that is the point: a
+  watermark that could silently move either way would be a bug waiting to
+  happen, while a rewind that quietly left it high would let the next sweep
+  truncate the very inputs the correction is about to replay.
+  """
+  @spec rewind_consumed(binary(), tuple(), non_neg_integer() | -1) :: :ok
+  def rewind_consumed(operative_class, segment_id, offset) do
+    ensure_watermark_table()
+
+    if offset < 0 do
+      :ets.delete(@watermarks, {operative_class, segment_id})
+    else
+      :ets.insert(@watermarks, {{operative_class, segment_id}, offset})
+    end
+
+    :ok
+  end
+
+  @doc """
+  Highest offset appended strictly before `ts_ms`, or `nil` when no retained
+  record is that old. Pre-timestamp records are never eligible — an unknown age
+  cannot be judged against a window.
+  """
+  @spec offset_before_time(binary(), integer()) :: non_neg_integer() | nil
+  def offset_before_time(operative_class, ts_ms) do
+    {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
+    GenServer.call(pid, {:offset_before_time, ts_ms})
   end
 
   @doc "Drop a hard-deleted Segment's watermark entry so it stops holding truncation."
@@ -241,7 +291,11 @@ defmodule Flezha.State.InputLog do
   end
 
   def handle_call({:read_range, from, to}, _from, state) do
-    {:reply, collect_range(state.file_handle, 0, from, to, []), state}
+    {:reply, collect_range(state.file_handle, from, to), state}
+  end
+
+  def handle_call({:offset_before_time, ts_ms}, _from, state) do
+    {:reply, scan_offset_before(state.file_handle, ts_ms), state}
   end
 
   def handle_call({:truncate_below, floor}, _from, state) do
@@ -285,7 +339,8 @@ defmodule Flezha.State.InputLog do
 
   defp write_journal(state, body) do
     offset = state.next_offset
-    :ok = :file.write(state.file_handle, WalWriter.encode_record(offset, @zero_header, body))
+    header = record_header(System.system_time(:millisecond))
+    :ok = :file.write(state.file_handle, WalWriter.encode_record(offset, header, body))
     FsyncBatcher.mark_dirty({state.operative_class, :input_log})
 
     {offset,
@@ -338,28 +393,49 @@ defmodule Flezha.State.InputLog do
     {:via, Elixir.Registry, {Supervisor.registry_name(), {operative_class, :input_log}}}
   end
 
-  defp collect_range(device, position, from, to, acc) do
-    case WalWriter.decode_record(device, position) do
-      {:ok, seq, _header, body, consumed} ->
-        acc =
-          if seq >= from and seq <= to do
-            {message, metadata} = :erlang.binary_to_term(body)
-            [{seq, message, metadata} | acc]
-          else
-            acc
-          end
+  # Offsets are strictly monotonic, so the walk is done the moment it passes
+  # `to` — without that halt this ran to EOF on every call, inside the log's own
+  # GenServer, blocking every append behind it.
+  defp collect_range(device, from, to) do
+    device
+    |> WalWriter.fold_records([], fn {seq, _header, body}, acc ->
+      cond do
+        seq > to ->
+          {:halt, acc}
 
-        collect_range(device, position + consumed, from, to, acc)
+        seq >= from ->
+          {message, metadata} = :erlang.binary_to_term(body)
+          {:cont, [{seq, message, metadata} | acc]}
 
-      {:error, _} ->
-        Enum.reverse(acc)
-    end
+        true ->
+          {:cont, acc}
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  # Highest offset whose append-time is strictly before `ts_ms`, or `nil` when
+  # every retained record is at or after it (nothing has aged out). Records with
+  # no timestamp are never eligible — an unknown age cannot be judged against a
+  # window.
+  defp scan_offset_before(device, ts_ms) do
+    WalWriter.fold_records(device, nil, fn {seq, header, _body}, found ->
+      case header_time(header) do
+        ts when is_integer(ts) and ts < ts_ms -> {:cont, seq}
+        _ -> {:cont, found}
+      end
+    end)
   end
 
   defp do_sweep(operative_class, path) do
     watermark = watermark(operative_class)
-    floor = truncation_floor(watermark)
-    advanced? = watermark != last_sweep_watermark(operative_class)
+    floor = truncation_floor(operative_class, watermark)
+
+    # The *floor* decides whether there is work, not the watermark: under a hold
+    # window the floor advances with the clock even while every Segment's
+    # consumed-offset stands still, and gating on the watermark would mean a
+    # fully-consumed, fully-aged-out log is never reclaimed.
+    advanced? = floor != last_sweep_floor(operative_class)
 
     if is_integer(floor) and floor > 0 and advanced? do
       {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
@@ -368,28 +444,46 @@ defmodule Flezha.State.InputLog do
       maybe_warn_frozen(operative_class, path, watermark)
     end
 
-    remember_sweep(operative_class, watermark)
+    remember_sweep(operative_class, watermark, floor)
     :ok
   end
 
-  defp last_sweep_watermark(operative_class) do
+  defp last_sweep_floor(operative_class), do: last_sweep(operative_class, :last_sweep_floor)
+
+  defp last_sweep_watermark(operative_class),
+    do: last_sweep(operative_class, :last_sweep_watermark)
+
+  defp last_sweep(operative_class, key) do
     ensure_watermark_table()
 
-    case :ets.lookup(@watermarks, {operative_class, :last_sweep_watermark}) do
-      [{_, watermark}] -> watermark
+    case :ets.lookup(@watermarks, {operative_class, key}) do
+      [{_, value}] -> value
       [] -> :none
     end
   end
 
-  # `min(watermark, now - hold_window)` in offset terms. With the default
-  # `hold_window = 0` the time bound is "now", which every retained record
-  # predates — the watermark alone decides. A raised hold window (the
-  # rewind/correction hook) needs a time→offset mapping the log does not
-  # carry yet, so it conservatively holds everything.
-  defp truncation_floor(nil), do: nil
+  # `min(watermark, now - hold_window)` in offset terms — a consumed record is
+  # only reclaimable once it has also aged out of the hold window, because a
+  # correction replays consumed inputs.
+  #
+  # With the default `hold_window = 0` the time bound is "now", which every
+  # retained record predates, so the watermark alone decides. A raised window
+  # holds the tail: `nil` from the scan means nothing has aged out yet, which is
+  # "hold everything" — but now as a bounded, self-clearing state rather than
+  # the permanent one it used to be.
+  defp truncation_floor(_operative_class, nil), do: nil
 
-  defp truncation_floor(watermark) do
-    if hold_window_ms() > 0, do: nil, else: watermark
+  defp truncation_floor(operative_class, watermark) do
+    case hold_window_ms() do
+      0 ->
+        watermark
+
+      hold_window ->
+        case offset_before_time(operative_class, System.system_time(:millisecond) - hold_window) do
+          nil -> nil
+          aged_out -> min(watermark, aged_out)
+        end
+    end
   end
 
   defp hold_window_ms(), do: Application.get_env(:flezha, :input_log_hold_window_ms, 0)
@@ -421,8 +515,12 @@ defmodule Flezha.State.InputLog do
     :ok
   end
 
-  defp remember_sweep(operative_class, watermark) do
+  # Two memos, two questions: the floor answers "is there anything left to
+  # reclaim?" (it moves with the clock under a hold window); the watermark
+  # answers "is a Segment refusing to consume?" (the frozen-watermark warning).
+  defp remember_sweep(operative_class, watermark, floor) do
     ensure_watermark_table()
+    :ets.insert(@watermarks, {{operative_class, :last_sweep_floor}, floor})
     :ets.insert(@watermarks, {{operative_class, :last_sweep_watermark}, watermark})
   end
 

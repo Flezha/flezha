@@ -256,6 +256,15 @@ defmodule Flezha.Executor.StreamChannel do
     {:noreply, mark_seen(state)}
   end
 
+  # Late-input correction (SDK → controller): a Segment saw an input behind its
+  # event-time high-water but inside the declared window. Only the SDK can know
+  # that — the event time comes from user code — so detection is its half and
+  # orchestration is the Overwatch's.
+  def handle_info({:flz_data, _stream_id, "correction_request", message, _metadata}, state) do
+    handle_correction_request(message)
+    {:noreply, mark_seen(state)}
+  end
+
   # Data-channel heartbeat: the executor emits this every ~10s while connected,
   # so an idle-but-healthy operative keeps the channel live without producing
   # output. Metadata carries the executor's dispatch-progress self-report; the
@@ -488,6 +497,18 @@ defmodule Flezha.Executor.StreamChannel do
   # channel also carries the operative's output frames. The ack closure
   # runs in the store process after the fsync; `send_control_async` is a
   # cast, so it cannot block the store either.
+  defp handle_correction_request(frame) do
+    with {:ok, %{segment_id: {operative_class, _, _} = segment_id, body: body}} <-
+           StateWire.decode_frame(frame),
+         {:ok, target} <- StateWire.decode_correction_request(body),
+         {:ok, overwatch} <- ClassRegistry.overwatch_pid(operative_class) do
+      Flezha.Operative.Overwatch.request_correction(overwatch, segment_id, target)
+    else
+      other ->
+        Logger.warning("[stream] undecodable correction_request: #{inspect(other)}")
+    end
+  end
+
   defp handle_park_payload(state, frame) do
     with {:ok, %{segment_id: {rc, sh, pk}, body: body}} <- StateWire.decode_frame(frame),
          {:ok, park} <- StateWire.decode_park_body(body) do

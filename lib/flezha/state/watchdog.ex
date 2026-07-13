@@ -138,13 +138,11 @@ defmodule Flezha.State.Watchdog do
   # directly so a failed dispatch still backs off until the timeout sweep
   # clears it — is the shared guard that keeps size+age to one enqueue.
   defp sweep_compaction_triggers(state, now) do
-    age_ms = PersistenceResolver.compact_after_age_ms()
-
     segment_statuses()
-    |> Enum.reduce(state, fn {{_rc, sh, _pk} = segment_id, status}, acc ->
+    |> Enum.reduce(state, fn {{rc, sh, _pk} = segment_id, status}, acc ->
       with false <- Map.has_key?(acc.compactions, segment_id),
            executor_id when is_binary(executor_id) <- status.owning_executor,
-           trigger when trigger != nil <- compaction_trigger(status, now, sh, age_ms) do
+           trigger when trigger != nil <- compaction_trigger(status, now, rc, sh) do
         flag_compaction_trigger(segment_id, executor_id, status, trigger)
         %{acc | compactions: Map.put(acc.compactions, segment_id, now)}
       else
@@ -153,7 +151,13 @@ defmodule Flezha.State.Watchdog do
     end)
   end
 
-  defp compaction_trigger(status, now, operation_id, age_ms) do
+  # The age floor resolves per operative (a correction-declaring class must not
+  # compact away the history inside its own window), so it is read here rather
+  # than hoisted out of the loop. The size floor already resolved per segment,
+  # so this adds no new cost class.
+  defp compaction_trigger(status, now, operative_class, operation_id) do
+    age_ms = PersistenceResolver.compact_after_age_ms(operative_class)
+
     cond do
       status.wal_size_bytes >= PersistenceResolver.compact_after_bytes(operation_id) ->
         :size

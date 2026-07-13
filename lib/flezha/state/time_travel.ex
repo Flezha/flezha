@@ -18,7 +18,7 @@ defmodule Flezha.State.TimeTravel do
   """
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Registry, Snapshot, WalWriter}
+  alias Flezha.State.{Registry, Snapshot, WalWriter, Wire}
 
   defmodule TimeTravelError do
     @moduledoc "Reasons a `TimeTravel.query/2` cannot be served."
@@ -114,28 +114,41 @@ defmodule Flezha.State.TimeTravel do
 
   defp resolve_target_seq(_segment_id, {:seq, seq}) when is_integer(seq) and seq >= 0, do: seq
 
+  # The highest seq whose record time is at or before `ts` — exactly, from the
+  # record itself. Effect records carry the invocation's clock value, which under
+  # a `WallClock` is when it ran and under an `EventTimeFrom` is the event's own
+  # time; either reading is the one a query for "the state as of T" wants.
+  #
+  # Falls back to the newest snapshot seq only when nothing is datable — a WAL of
+  # pre-tier plain change records, which carry no time at all.
   defp resolve_target_seq(segment_id, {:timestamp, ts}) when is_integer(ts) do
-    # Walk WAL records and find the highest seq whose record-time is ≤ ts.
-    # The on-disk header carries no per-record timestamp in v1; we fall
-    # back to the WAL file's mtime as the upper bound. Refining this to
-    # per-record `ts` is a follow-up once headers carry it.
-    case File.stat(Registry.wal_path(segment_id), time: :posix) do
-      {:ok, %{mtime: file_mtime}} when ts >= file_mtime ->
-        # Target is now or in the future — return the latest seq.
-        case Registry.snapshot_paths(segment_id) do
-          [] -> 0
-          paths -> elem(List.last(paths), 0)
+    case scan_seq_at_or_before_path(Registry.wal_path(segment_id), ts) do
+      nil -> 0
+      seq -> seq
+    end
+  end
+
+  defp scan_seq_at_or_before_path(path, ts) do
+    case :file.open(path, [:raw, :read, :binary]) do
+      {:ok, device} ->
+        try do
+          scan_seq_at_or_before(device, ts)
+        after
+          :file.close(device)
         end
 
-      _ ->
-        # Target is before the WAL's last write — use the latest snapshot
-        # seq before/at the target as the cap. Without per-record
-        # timestamps, this is a coarse approximation.
-        case pick_snapshot_by_mtime(Registry.snapshot_paths(segment_id), ts) do
-          nil -> 0
-          {seq, _} -> seq
-        end
+      {:error, _} ->
+        nil
     end
+  end
+
+  defp scan_seq_at_or_before(device, ts) do
+    WalWriter.fold_records(device, nil, fn {seq, header, body}, found ->
+      case Wire.decode_effect_record(header, body) do
+        %{event_time: event_time} when event_time <= ts -> {:cont, seq}
+        _ -> {:cont, found}
+      end
+    end)
   end
 
   defp earliest_available_seq([], segment_id) do
@@ -152,19 +165,6 @@ defmodule Flezha.State.TimeTravel do
     |> List.last()
   end
 
-  defp pick_snapshot_by_mtime([], _ts), do: nil
-
-  defp pick_snapshot_by_mtime(snaps, ts) do
-    snaps
-    |> Enum.filter(fn {_seq, path} ->
-      case :file.read_file_info(path, time: :posix) do
-        {:ok, info} -> elem(info, 5) <= ts
-        _ -> false
-      end
-    end)
-    |> List.last()
-  end
-
   defp read_wal_in_range(segment_id, snapshot_seq, target_seq) do
     path = Registry.wal_path(segment_id)
 
@@ -172,7 +172,7 @@ defmodule Flezha.State.TimeTravel do
       {:ok, dev} = :file.open(path, [:raw, :read, :binary])
 
       try do
-        gather(dev, 0, snapshot_seq, target_seq, [], snapshot_seq)
+        gather(dev, snapshot_seq, target_seq)
       after
         :file.close(dev)
       end
@@ -181,26 +181,22 @@ defmodule Flezha.State.TimeTravel do
     end
   end
 
-  defp gather(dev, position, snapshot_seq, target_seq, acc, terminal) do
-    case WalWriter.decode_record(dev, position) do
-      {:ok, seq, _header, _bytes, _consumed} when seq > target_seq ->
-        {acc |> Enum.reverse() |> IO.iodata_to_binary(), terminal}
+  defp gather(dev, snapshot_seq, target_seq) do
+    {acc, terminal} =
+      WalWriter.fold_records(dev, {[], snapshot_seq}, fn {seq, header, bytes},
+                                                         {acc, terminal} = unchanged ->
+        cond do
+          seq > target_seq ->
+            {:halt, unchanged}
 
-      {:ok, seq, header, bytes, consumed} when seq > snapshot_seq ->
-        gather(
-          dev,
-          position + consumed,
-          snapshot_seq,
-          target_seq,
-          [WalWriter.encode_record(seq, header, bytes) | acc],
-          max(terminal, seq)
-        )
+          seq > snapshot_seq ->
+            {:cont, {[WalWriter.encode_record(seq, header, bytes) | acc], max(terminal, seq)}}
 
-      {:ok, _seq, _header, _bytes, consumed} ->
-        gather(dev, position + consumed, snapshot_seq, target_seq, acc, terminal)
+          true ->
+            {:cont, unchanged}
+        end
+      end)
 
-      {:error, _} ->
-        {acc |> Enum.reverse() |> IO.iodata_to_binary(), terminal}
-    end
+    {acc |> Enum.reverse() |> IO.iodata_to_binary(), terminal}
   end
 end

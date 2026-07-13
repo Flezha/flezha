@@ -162,6 +162,57 @@ defmodule Flezha.State.WalWriter do
   @spec truncate_up_to(GenServer.server(), non_neg_integer()) :: :ok
   def truncate_up_to(server, seq), do: GenServer.call(server, {:truncate_up_to, seq})
 
+  @doc """
+  Rewind the Segment to `seq` under `epoch`: keep the records at or below it,
+  drop the snapshots above it, and re-seat the outbox on the survivors.
+
+  The non-destructive sibling of the realign wipe. A realign discards a stale
+  executor's whole lineage; a rewind discards only the history above a boundary
+  the controller means to rebuild, which is what a late-input correction needs.
+
+  `epoch` is explicit rather than `current + 1` so that re-running an
+  interrupted correction re-asserts the epoch it already committed to. A
+  correction that crashed after this call and before its replay finished resumes
+  by rewinding to the same boundary under the same epoch — a no-op on the WAL,
+  and crucially not a second bump, which would make the replay's outputs miss
+  the rows the first attempt already wrote.
+  """
+  @spec rewind_to(GenServer.server(), non_neg_integer(), non_neg_integer()) :: :ok
+  def rewind_to(server, seq, epoch), do: GenServer.call(server, {:rewind_to, seq, epoch})
+
+  @doc "Current outbox epoch — the base a deliberate correction bumps from."
+  @spec outbox_epoch(GenServer.server()) :: non_neg_integer()
+  def outbox_epoch(server), do: GenServer.call(server, :outbox_epoch)
+
+  @doc """
+  Where a correction for `target_event_time` must rewind to: the last seq whose
+  history entirely precedes that event time, plus the input offset consumed as
+  of that seq.
+
+  The boundary is the record *before the first one at or after the target* — not
+  the last record whose own event time precedes it. The difference matters
+  exactly when the WAL already holds an out-of-order straggler (a beyond-window
+  input processed as an arrival): scanning backwards for the first earlier event
+  time would stop at the straggler and leave the records that overtook the late
+  input in place, correcting nothing. Scanning forward folds the straggler into
+  the replay too, which is what re-ordering it means.
+
+  `{:error, :nothing_to_correct}` when no record is at or after the target —
+  the input is not actually late for this Segment.
+  """
+  @spec correction_baseline(GenServer.server(), non_neg_integer()) ::
+          {:ok, %{seq: integer(), consumed_offset: integer()}} | {:error, :nothing_to_correct}
+  def correction_baseline(server, target_event_time),
+    do: GenServer.call(server, {:correction_baseline, target_event_time})
+
+  @doc """
+  Highest input-log offset consumed at or below `seq` (`-1` when none) — the
+  point an operator replay from that baseline must re-forward the input log
+  from.
+  """
+  @spec consumed_offset_at(GenServer.server(), non_neg_integer()) :: integer()
+  def consumed_offset_at(server, seq), do: GenServer.call(server, {:consumed_offset_at, seq})
+
   @spec last_persisted_seq(GenServer.server()) :: integer()
   def last_persisted_seq(server), do: GenServer.call(server, :last_persisted_seq)
 
@@ -411,6 +462,59 @@ defmodule Flezha.State.WalWriter do
     end
   end
 
+  def handle_call({:rewind_to, seq, epoch}, _from, state) do
+    :ok = :file.close(state.file_handle)
+    new_path = rewrite_keep_seq_lte(state.wal_path, seq)
+    :ok = File.rename(new_path, state.wal_path)
+    {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
+    {:ok, _} = :file.position(file, :eof)
+
+    # Only the snapshots ABOVE the boundary die. The ones at or below it are
+    # exactly the baselines a restore to `seq` needs — dropping them all, as a
+    # realign does, would be a wipe, not a rewind.
+    Enum.each(Registry.snapshot_paths(state.segment_id), fn {snap_seq, path} ->
+      if snap_seq > seq, do: File.rm(path)
+    end)
+
+    state = flush_credit_pending(state)
+
+    # Records at or below the boundary are untouched history: those already
+    # flushed stay flushed (re-emitting them under the new epoch would be churn
+    # that overwrites each row with itself). Only what the boundary left
+    # un-flushed is still owed. Re-derive it from the rewritten file rather than
+    # filtering the in-memory queue — the file is the authority on what survived,
+    # and the same scan yields the consumed-offset the input-log watermark must
+    # fall back to.
+    flushed = min(state.outbox_flushed_seq, seq)
+    {surviving, max_consumed} = scan_effect_records_above(file, flushed)
+    rewind_input_watermark(state, max_consumed)
+
+    size = file_size(state.wal_path)
+    now = :erlang.monotonic_time(:millisecond)
+    Metrics.put(state.metrics, :wal_size_bytes, size)
+    Metrics.put(state.metrics, :wal_seq, seq)
+    Metrics.put(state.metrics, :snapshot_seq, highest_snapshot_seq(state.segment_id))
+    emit_rewind(state.segment_id, state.last_persisted_seq, seq, epoch)
+
+    state = %{
+      state
+      | file_handle: file,
+        last_persisted_seq: seq,
+        last_advance_at: now,
+        pending_bytes: 0,
+        pending_since_us: nil,
+        oldest_unsnapshotted_at: if(size > 0, do: now)
+    }
+
+    {:reply, :ok,
+     bump_epoch(state, %{
+       pending: :queue.from_list(surviving),
+       durable_seq: seq,
+       flushed_seq: flushed,
+       epoch: epoch
+     })}
+  end
+
   def handle_call({:truncate_up_to, seq}, _from, state) do
     :ok = :file.close(state.file_handle)
     new_path = rewrite_keep_seq_gt(state.wal_path, seq)
@@ -442,6 +546,18 @@ defmodule Flezha.State.WalWriter do
 
   def handle_call(:last_persisted_seq, _from, state) do
     {:reply, state.last_persisted_seq, state}
+  end
+
+  def handle_call(:outbox_epoch, _from, state) do
+    {:reply, state.outbox_epoch, state}
+  end
+
+  def handle_call({:correction_baseline, target}, _from, state) do
+    {:reply, scan_correction_baseline(state.file_handle, target), state}
+  end
+
+  def handle_call({:consumed_offset_at, seq}, _from, state) do
+    {:reply, scan_consumed_at(state.file_handle, seq), state}
   end
 
   def handle_call(:outbox_status, _from, state) do
@@ -787,9 +903,7 @@ defmodule Flezha.State.WalWriter do
     Metrics.put(state.metrics, :snapshot_seq, 0)
 
     # The stale lineage's undispatched outputs die with its records — the
-    # realigned executor's replay regenerates them under the new epoch. The
-    # epoch bump is persisted synchronously so re-driven identities can
-    # never collide across the realign.
+    # realigned executor's replay regenerates them under the new epoch.
     state = %{
       state
       | last_persisted_seq: seq - 1,
@@ -797,11 +911,35 @@ defmodule Flezha.State.WalWriter do
         owning_executor: executor_id,
         pending_bytes: 0,
         pending_since_us: nil,
-        oldest_unsnapshotted_at: nil,
-        pending_outbox: :queue.new(),
-        outbox_durable_seq: seq - 1,
-        outbox_flushed_seq: -1,
-        outbox_epoch: state.outbox_epoch + 1
+        oldest_unsnapshotted_at: nil
+    }
+
+    # A realign discards the whole lineage, so nothing in the new one has been
+    # flushed and nothing is queued.
+    bump_epoch(state, %{
+      pending: :queue.new(),
+      durable_seq: seq - 1,
+      flushed_seq: -1,
+      epoch: state.outbox_epoch + 1
+    })
+  end
+
+  # The half a realign and a rewind share: re-seat the outbox cursors on the new
+  # lineage and persist the epoch bump **synchronously**. That `persist_dedup`
+  # is the commit point of both operations — it is what stops an output
+  # regenerated above the boundary from colliding with its own pre-boundary
+  # delivery, because the two now key under different epochs.
+  #
+  # `epoch` is passed rather than derived so a caller resuming an interrupted
+  # boundary re-asserts the epoch it already committed to instead of bumping a
+  # second time.
+  defp bump_epoch(state, %{pending: pending, durable_seq: durable, flushed_seq: flushed, epoch: e}) do
+    state = %{
+      state
+      | pending_outbox: pending,
+        outbox_durable_seq: durable,
+        outbox_flushed_seq: flushed,
+        outbox_epoch: e
     }
 
     persist_dedup(state)
@@ -855,7 +993,101 @@ defmodule Flezha.State.WalWriter do
     )
   end
 
+  # Walk forward to the first record at or after `target`; everything before it
+  # is the baseline. A record with no event time (a plain change record from
+  # pre-tier history) belongs to the baseline — it cannot be placed on the event
+  # -time axis, so it cannot be said to come after the target.
+  defp scan_correction_baseline(device, target) do
+    # `{-1, -1}` = no baseline seen yet; a first record already at or after the
+    # target means the rewind would have to go below the retained history.
+    fold_records(device, {-1, -1}, fn {seq, header, body}, {seq_acc, offset_acc} ->
+      case Wire.decode_effect_record(header, body) do
+        %{event_time: event_time} when event_time >= target ->
+          {:halt, baseline_result(seq_acc, offset_acc)}
+
+        effect ->
+          {:cont, {seq, max(offset_acc, consumed_offset_of(effect))}}
+      end
+    end)
+    |> case do
+      {:ok, _} = ok -> ok
+      {:error, _} = err -> err
+      # The fold ran off the end: nothing is at or after the target, so the input
+      # is not actually late for this Segment.
+      {_seq, _offset} -> {:error, :nothing_to_correct}
+    end
+  end
+
+  defp baseline_result(seq, _offset) when seq < 0, do: {:error, :nothing_to_correct}
+  defp baseline_result(seq, offset), do: {:ok, %{seq: seq, consumed_offset: offset}}
+
+  defp scan_consumed_at(device, upto) do
+    fold_records(device, -1, fn {seq, header, body}, acc ->
+      if seq > upto,
+        do: {:halt, acc},
+        else: {:cont, max(acc, consumed_offset_of(Wire.decode_effect_record(header, body)))}
+    end)
+  end
+
+  # `-1` for a plain change record, or an effect record that consumed nothing.
+  defp consumed_offset_of(nil), do: -1
+  defp consumed_offset_of(%{consumed_offset: nil}), do: -1
+  defp consumed_offset_of(%{consumed_offset: offset}), do: offset
+
+  defp emit_rewind({rc, sh, pk}, from_seq, to_seq, epoch) do
+    :telemetry.execute(
+      [:flezha, :state, :wal_rewind],
+      %{from_seq: from_seq, to_seq: to_seq},
+      %{operative: rc, operation: sh, key: pk, epoch: epoch}
+    )
+  end
+
+  defp highest_snapshot_seq(segment_id) do
+    case Registry.snapshot_paths(segment_id) do
+      [] -> 0
+      paths -> paths |> List.last() |> elem(0)
+    end
+  end
+
+  # The rewound records are the ones that reported this Segment's consumed
+  # offsets, so the input-log watermark it advanced is now a claim about inputs
+  # nothing has consumed. Lower it, or the next retention sweep truncates away
+  # the very inputs the correction is about to replay.
+  defp rewind_input_watermark(state, max_consumed) do
+    {operative_class, _, _} = state.segment_id
+    InputLog.rewind_consumed(operative_class, state.segment_id, max_consumed || -1)
+  end
+
   # ---------- Scan / rewrite helpers ----------
+
+  @doc """
+  Reduce over a WAL file's framed records, oldest first.
+
+  `fun.({seq, header, body}, acc)` returns `{:cont, acc}` or `{:halt, acc}`; the
+  walk also stops at the first undecodable record, which is the torn-tail
+  contract every reader here shares.
+
+  The one place the `decode_record/2` recursion lives. The framing is shared by
+  the Segment WAL, the input log, the op-journal and the retention rewriter, and
+  each of them used to carry its own copy of this loop.
+  """
+  @spec fold_records(:file.io_device(), acc, ({non_neg_integer(), binary(), binary()}, acc ->
+                                                {:cont, acc} | {:halt, acc})) :: acc
+        when acc: term()
+  def fold_records(device, acc, fun), do: fold_records(device, 0, acc, fun)
+
+  defp fold_records(device, position, acc, fun) do
+    case decode_record(device, position) do
+      {:ok, seq, header, body, consumed} ->
+        case fun.({seq, header, body}, acc) do
+          {:cont, acc} -> fold_records(device, position + consumed, acc, fun)
+          {:halt, acc} -> acc
+        end
+
+      {:error, _} ->
+        acc
+    end
+  end
 
   @doc """
   Walk the WAL from offset 0, returning the seq of the last record
@@ -900,33 +1132,26 @@ defmodule Flezha.State.WalWriter do
   # consumed-offset across ALL effect records — the Segment's durable
   # input-log watermark, repopulated at open (the ETS is a rebuildable cache).
   defp scan_effect_records_above(device, cursor) do
-    collect_effect_records(device, 0, cursor, [], nil)
-  end
+    {acc, max_consumed} =
+      fold_records(device, {[], nil}, fn {seq, header, body}, {acc, max_consumed} = unchanged ->
+        case Wire.decode_effect_record(header, body) do
+          nil ->
+            {:cont, unchanged}
 
-  defp collect_effect_records(device, position, cursor, acc, max_consumed) do
-    case decode_record(device, position) do
-      {:ok, seq, header, body, consumed} ->
-        {acc, max_consumed} =
-          with true <- Wire.effect_record_header?(header),
-               {:ok, decoded} <- Wire.decode_effect_body(body) do
+          effect ->
             entry = %{
               seq: seq,
-              outputs: decoded.outputs,
-              consumed_offset: decoded.consumed_offset,
-              dlq: decoded.dlq
+              outputs: effect.outputs,
+              consumed_offset: effect.consumed_offset,
+              dlq: effect.dlq
             }
 
             acc = if seq > cursor, do: [entry | acc], else: acc
-            {acc, max_offset(max_consumed, decoded.consumed_offset)}
-          else
-            _ -> {acc, max_consumed}
-          end
+            {:cont, {acc, max_offset(max_consumed, effect.consumed_offset)}}
+        end
+      end)
 
-        collect_effect_records(device, position + consumed, cursor, acc, max_consumed)
-
-      {:error, _} ->
-        {Enum.reverse(acc), max_consumed}
-    end
+    {Enum.reverse(acc), max_consumed}
   end
 
   defp max_offset(current, nil), do: current
@@ -937,12 +1162,28 @@ defmodule Flezha.State.WalWriter do
   # the input-log shares this record framing.
   @doc false
   def rewrite_keep_seq_gt(wal_path, keep_above_seq) do
+    rewrite_keep(wal_path, &(&1 > keep_above_seq))
+  end
+
+  # Suffix-drop: keep the records at or below `seq`. The mirror image of
+  # `rewrite_keep_seq_gt/2` — compaction drops the prefix a snapshot subsumes,
+  # a correction drops the suffix a rewind invalidates.
+  @doc false
+  def rewrite_keep_seq_lte(wal_path, keep_below_seq) do
+    rewrite_keep(wal_path, &(&1 <= keep_below_seq))
+  end
+
+  # Copy the records `keep?` accepts into `<path>.rewriting`, fsync, and return
+  # the new path. The caller renames — the two-step is what makes a crash
+  # mid-rewrite leave the original intact (`Registry.scan_dir/1` skips
+  # `.rewriting` residue).
+  defp rewrite_keep(wal_path, keep?) do
     {:ok, src} = :file.open(wal_path, [:raw, :read, :binary])
     new_path = wal_path <> ".rewriting"
     {:ok, dst} = :file.open(new_path, [:raw, :write, :binary])
 
     try do
-      copy_keep_seq_gt(src, dst, 0, keep_above_seq)
+      copy_keep(src, dst, keep?)
       :ok = :file.sync(dst)
     after
       _ = :file.close(src)
@@ -952,18 +1193,11 @@ defmodule Flezha.State.WalWriter do
     new_path
   end
 
-  defp copy_keep_seq_gt(src, dst, position, keep_above_seq) do
-    case decode_record(src, position) do
-      {:ok, seq, header, change_bytes, consumed} ->
-        if seq > keep_above_seq do
-          :ok = :file.write(dst, encode_record(seq, header, change_bytes))
-        end
-
-        copy_keep_seq_gt(src, dst, position + consumed, keep_above_seq)
-
-      {:error, _} ->
-        :ok
-    end
+  defp copy_keep(src, dst, keep?) do
+    fold_records(src, :ok, fn {seq, header, change_bytes}, :ok ->
+      if keep?.(seq), do: :ok = :file.write(dst, encode_record(seq, header, change_bytes))
+      {:cont, :ok}
+    end)
   end
 
   # ---------- Hard bound (shed) ----------

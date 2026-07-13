@@ -24,7 +24,8 @@ defmodule FlezhaTest.Executor.AddOperativeResponseTest do
     for raw <- ["", nil] do
       assert Overwatch.decode_declarations(raw) == %{
                effectively_once: false,
-               compensable_ops: nil
+               compensable_ops: nil,
+               correction_window_ms: nil
              }
     end
   end
@@ -32,8 +33,17 @@ defmodule FlezhaTest.Executor.AddOperativeResponseTest do
   test "undecodable raw_data resolves the defaults" do
     assert Overwatch.decode_declarations(<<255, 255, 255, 1>>) == %{
              effectively_once: false,
-             compensable_ops: nil
+             compensable_ops: nil,
+             correction_window_ms: nil
            }
+  end
+
+  test "a correction window resolves from the metadata; absent or invalid is nil" do
+    assert declarations(%{"correction_window_ms" => "600000"}).correction_window_ms == 600_000
+    # A class that declares nothing never corrects — the cost-free default.
+    assert declarations(%{"other" => "x"}).correction_window_ms == nil
+    assert declarations(%{"correction_window_ms" => "0"}).correction_window_ms == nil
+    assert declarations(%{"correction_window_ms" => "nope"}).correction_window_ms == nil
   end
 
   test "compensable chain positions resolve to a list" do

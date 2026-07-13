@@ -256,7 +256,11 @@ defmodule Flezha.State.Wire do
   outputs:         Vec<OutputRecord>       — {channel, key, metadata, payload}
   consumed_offset: Option<u64>
   dlq:             Option<DlqEntryBody>    — {channel, error, attempts, payload}
+  event_time:      u64                     — the invocation's declared clock value
   ```
+
+  `event_time` is the extracted event time under an `EventTimeFrom` clock —
+  the column a late-input correction resolves its baseline seq against.
 
   Postcard encodes `Vec`/`String` as a LEB128 varint length + contents,
   tuples/structs as concatenated fields, and `Option` as `0x00 | 0x01 ++ T`.
@@ -274,15 +278,24 @@ defmodule Flezha.State.Wire do
                }
              ],
              consumed_offset: non_neg_integer() | nil,
-             dlq: map() | nil
+             dlq: map() | nil,
+             event_time: non_neg_integer()
            }}
           | {:error, term()}
   def decode_effect_body(body) when is_binary(body) do
     with {:ok, changes, rest} <- decode_vec(body, &decode_bytes/1),
          {:ok, outputs, rest} <- decode_vec(rest, &decode_output/1),
          {:ok, consumed_offset, rest} <- decode_option(rest, &decode_varint/1),
-         {:ok, dlq, <<>>} <- decode_option(rest, &decode_dlq_entry/1) do
-      {:ok, %{changes: changes, outputs: outputs, consumed_offset: consumed_offset, dlq: dlq}}
+         {:ok, dlq, rest} <- decode_option(rest, &decode_dlq_entry/1),
+         {:ok, event_time, <<>>} <- decode_varint(rest) do
+      {:ok,
+       %{
+         changes: changes,
+         outputs: outputs,
+         consumed_offset: consumed_offset,
+         dlq: dlq,
+         event_time: event_time
+       }}
     else
       {:ok, _, _trailing} -> {:error, :trailing_bytes}
       {:error, _} = err -> err
@@ -294,8 +307,8 @@ defmodule Flezha.State.Wire do
   `decode_effect_body/1`). Used by tests and the WAL crash-tear fixtures.
   """
   @spec encode_effect_body(%{
-          changes: [binary()],
-          outputs: [
+          required(:changes) => [binary()],
+          required(:outputs) => [
             %{
               channel: binary(),
               key: binary(),
@@ -303,14 +316,17 @@ defmodule Flezha.State.Wire do
               payload: binary()
             }
           ],
-          consumed_offset: non_neg_integer() | nil
+          required(:consumed_offset) => non_neg_integer() | nil,
+          optional(:dlq) => map() | nil,
+          optional(:event_time) => non_neg_integer()
         }) :: binary()
   def encode_effect_body(%{changes: changes, outputs: outputs, consumed_offset: offset} = body) do
     IO.iodata_to_binary([
       encode_vec(changes, &encode_bytes/1),
       encode_vec(outputs, &encode_output/1),
       encode_option(offset, &encode_varint/1),
-      encode_option(Map.get(body, :dlq), &encode_dlq_entry/1)
+      encode_option(Map.get(body, :dlq), &encode_dlq_entry/1),
+      encode_varint(Map.get(body, :event_time, 0))
     ])
   end
 
@@ -346,6 +362,39 @@ defmodule Flezha.State.Wire do
          {:ok, entry, <<>>} <- decode_dlq_entry(rest) do
       {:ok, Map.merge(entry, %{park_id: park_id, origin_offset: origin_offset})}
     else
+      {:ok, _, _trailing} -> {:error, :trailing_bytes}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Decode a WAL record as an effect record, or `nil` when it is not one (a plain
+  change record, or a body this build cannot read).
+
+  The header check and the body decode always travel together — every reader
+  that wants an effect record's fields wants exactly this — so they live here,
+  beside the codec they belong to, rather than being re-paired at each call site.
+  """
+  @spec decode_effect_record(binary(), binary()) :: map() | nil
+  def decode_effect_record(header, body) do
+    with true <- effect_record_header?(header),
+         {:ok, decoded} <- decode_effect_body(body) do
+      decoded
+    else
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Decode a postcard `CorrectionRequestBody` (the body of a `correction_request`
+  frame): a single `target_event_time: u64`. The Segment identity rides the
+  frame envelope, so the body carries nothing else — the controller re-reads the
+  input-log range itself, because the late input is already in it.
+  """
+  @spec decode_correction_request(binary()) :: {:ok, non_neg_integer()} | {:error, term()}
+  def decode_correction_request(body) when is_binary(body) do
+    case decode_varint(body) do
+      {:ok, target, <<>>} -> {:ok, target}
       {:ok, _, _trailing} -> {:error, :trailing_bytes}
       {:error, _} = err -> err
     end

@@ -116,7 +116,7 @@ defmodule Flezha.State.WatchdogTest do
   end
 
   test "a genuinely idle segment is not flagged", %{header: header} do
-    {_segment_id, _writer} = live_writer("idle_", header)
+    {{_, _, key} = segment_id, _writer} = live_writer("idle_", header)
 
     # No Changes arrive after the window lapses — last_change_seen_at goes
     # stale alongside last_advance_at, so this is idle, not stalled.
@@ -124,22 +124,26 @@ defmodule Flezha.State.WatchdogTest do
 
     :ok = Watchdog.sweep_now()
 
-    refute_receive {:output_stall, _, _}, 200
-    refute_receive {:resync_called, _, _}, 200
+    # Scoped to THIS test's segment key. The Watchdog is a singleton and every
+    # test in this file uses the operative class "TestOperative", so an unscoped
+    # refute — or one scoped only to the operative — matches a sibling test's
+    # message and fails whenever the suite interleaves.
+    refute_receive {:output_stall, _, %{key: ^key}}, 200
+    refute_receive {:resync_called, ^segment_id, _}, 200
   end
 
   test "a stalled compaction times out, resyncs, and stays retriable" do
-    segment_id = TestHelpers.sample_segment_id("comp_" <> uniq())
+    {_, _, key} = segment_id = TestHelpers.sample_segment_id("comp_" <> uniq())
 
     Watchdog.compaction_started(segment_id)
     Process.sleep(@compaction_ms * 2)
 
     :ok = Watchdog.sweep_now()
 
-    # Scoped to this test's operative: the Watchdog is a singleton, so a sweep
-    # here also sees compactions another test left pending, and an unscoped match
-    # would pick one up.
-    assert_receive {:compaction_timeout, %{waited_ms: ms}, %{operative: "TestOperative"}}, 1_000
+    # Scoped to this test's segment KEY, not its operative: the Watchdog is a
+    # singleton and every test here shares the class "TestOperative", so a sweep
+    # also sees compactions a sibling test left pending.
+    assert_receive {:compaction_timeout, %{waited_ms: ms}, %{key: ^key}}, 1_000
     assert ms >= @compaction_ms
     assert_receive {:resync_called, ^segment_id, opts}, 1_000
     assert opts[:reason] == :compaction_timeout
@@ -147,7 +151,7 @@ defmodule Flezha.State.WatchdogTest do
     # Entry was cleared on timeout — a second sweep does not re-fire, and
     # compaction is eligible to retry on a later trigger.
     :ok = Watchdog.sweep_now()
-    refute_receive {:compaction_timeout, _, %{operative: "TestOperative"}}, 200
+    refute_receive {:compaction_timeout, _, %{key: ^key}}, 200
   end
 
   test "a compaction that completes before the bound never times out" do

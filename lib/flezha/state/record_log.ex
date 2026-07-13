@@ -54,7 +54,7 @@ defmodule Flezha.State.RecordLog do
     case :file.open(path, [:raw, :read, :binary]) do
       {:ok, device} ->
         try do
-          fold(device, 0, decode, [])
+          fold(device, decode, [])
         after
           :file.close(device)
         end
@@ -64,19 +64,14 @@ defmodule Flezha.State.RecordLog do
     end
   end
 
-  defp fold(device, position, decode, acc) do
-    case WalWriter.decode_record(device, position) do
-      {:ok, seq, header, body, consumed} ->
-        acc =
-          case decode.(seq, header, body) do
-            {:ok, entry} -> [entry | acc]
-            {:error, _} -> acc
-          end
-
-        fold(device, position + consumed, decode, acc)
-
-      {:error, _} ->
-        Enum.reverse(acc)
-    end
+  defp fold(device, decode, acc) do
+    device
+    |> WalWriter.fold_records(acc, fn {seq, header, body}, acc ->
+      case decode.(seq, header, body) do
+        {:ok, entry} -> {:cont, [entry | acc]}
+        {:error, _} -> {:cont, acc}
+      end
+    end)
+    |> Enum.reverse()
   end
 end

@@ -1557,6 +1557,60 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
+  `flz operative replay <operative/operation/key> --from <seq|ts>` — re-run a
+  Segment's retained inputs from a point in the past through the current code.
+
+  The same transaction a late input triggers automatically, with the operator
+  choosing the baseline instead of a late event: rewind the Segment there, bump
+  the epoch, and replay the input log forward. A conforming keyed sink overwrites
+  the stale rows by natural key, which is what makes "deploy a fix, heal the
+  recent past" a single verb rather than a migration.
+  """
+  def operative_replay(namespace, path_string, from_string) do
+    with {:ok, {operative_class, _, _} = segment_id} <- parse_state_path(path_string),
+         {:ok, overwatch} <- resolve_replay_overwatch(namespace, operative_class),
+         {:ok, target_seq} <- resolve_replay_seq(segment_id, from_string) do
+      Overwatch.replay_from(overwatch, segment_id, target_seq)
+
+      IO.puts(
+        "Replaying #{path_string} from seq #{target_seq}. Outputs republish under a " <>
+          "bumped epoch; a keyed sink overwrites the stale rows by natural key."
+      )
+    else
+      {:error, %{kind: :outside_retention, earliest_available: earliest}} ->
+        IO.puts(
+          :stderr,
+          "replay: outside_retention — the earliest replayable point for " <>
+            "#{path_string} is seq #{inspect(earliest)}"
+        )
+
+        System.halt(1)
+
+      {:error, reason} ->
+        IO.puts(:stderr, "replay: #{inspect(reason)}")
+        System.halt(1)
+    end
+  end
+
+  defp resolve_replay_overwatch(namespace, operative_class) do
+    _ = normalize_namespace(namespace)
+
+    case Flezha.Operative.ClassRegistry.overwatch_pid(operative_class) do
+      {:ok, pid} -> {:ok, pid}
+      :error -> {:error, {:not_running, operative_class}}
+    end
+  end
+
+  # A `--from` is a WAL seq or a point in time; the same `TimeTravel` resolution
+  # `flz state at` uses, which is now exact rather than an mtime approximation.
+  defp resolve_replay_seq(segment_id, from_string) do
+    case Flezha.State.TimeTravel.query(segment_id, parse_state_target(from_string)) do
+      {:ok, %{terminal_seq: seq}} -> {:ok, seq}
+      {:error, err} -> {:error, err}
+    end
+  end
+
+  @doc """
   `flz state journal <operative/instance>` — render a bounded instance's
   op-journal entries (`bounded-op-journal`) in append order: seq, type,
   op index, iteration, the segments that ran, and the handoff batch size.

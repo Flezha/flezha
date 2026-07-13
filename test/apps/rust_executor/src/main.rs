@@ -3,7 +3,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use std::{env, thread};
 
-use flezha_executor::operation::{Operation, OperationCtx, OperationError};
+use flezha_executor::operation::{
+    EventTimeFrom, Operation, OperationCtx, OperationError, TimeExtractor,
+};
 use flezha_executor::state::{
     Change, CoalesceKey, NoChange, RestoreInitPayload, StateHandle, WallClock,
 };
@@ -60,6 +62,7 @@ fn register_unbounded_all() {
     register_unbounded::<MixedOperative>();
     register_unbounded::<TierStoreOperative>();
     register_unbounded::<PoisonProbeOperative>();
+    register_unbounded::<CandleOperative>();
 }
 
 fn register_bounded_all() {
@@ -910,6 +913,96 @@ impl UnboundedOperative for TierStoreOperative {
             .into::<TierStoreOperation>();
         c.channel::<String>("sink")
             .from::<TierStoreOperation>()
+            .keyed()
+            .to_plugin("tier_sink");
+    }
+}
+
+// -- CandleOperative (unbounded-late-input-correction e2e) -------------------
+//
+// A trade stream keyed by an EVENT time carried in the input itself
+// ("<event_time>:<price>"), with a declared correction window. State records the
+// event times in the order they were folded — which is the whole point of the
+// change: a late trade must end up folded in event-time order, not arrival
+// order, and the only way to prove that is to look at the order.
+//
+// Send 100, 300, then the late 200. Without correction the fold order is
+// [100, 300, 200] and the candle is permanently wrong. With it, the engine
+// rewinds behind 200, replays the retained input log sorted by event time, and
+// the fold order becomes [100, 200, 300].
+
+#[derive(Default, Serialize, Deserialize, Clone)]
+struct CandleState {
+    /// Event times in fold order. The assertion surface.
+    folded: Vec<u64>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+enum CandleChange {
+    Fold(u64),
+}
+
+impl Change for CandleChange {}
+
+struct TradeEventTime;
+impl TimeExtractor<String> for TradeEventTime {
+    fn extract(input: &String) -> u64 {
+        input
+            .split_once(':')
+            .map(|(ts, _)| ts)
+            .unwrap_or(input.as_str())
+            .parse()
+            .unwrap_or(0)
+    }
+}
+
+#[derive(Default)]
+struct CandleOperation;
+impl Operation for CandleOperation {
+    type Input = String;
+    type Output = String;
+    type State = CandleState;
+    type Change = CandleChange;
+    type Clock = EventTimeFrom<TradeEventTime>;
+    type Config = ();
+    fn name() -> &'static str {
+        "candle_operation"
+    }
+    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> CandleState {
+        CandleState::default()
+    }
+    fn apply_change(state: &mut CandleState, change: &CandleChange) {
+        match change {
+            CandleChange::Fold(event_time) => state.folded.push(*event_time),
+        }
+    }
+    fn run(
+        &mut self,
+        input: String,
+        mut state: StateHandle<'_, Self>,
+        ctx: &mut OperationCtx<'_>,
+    ) -> Result<(), OperationError> {
+        // `ctx.now()` IS the extracted event time under an EventTimeFrom clock.
+        let event_time = ctx.now();
+        state.apply(CandleChange::Fold(event_time));
+        // One row per candle bucket, so a corrected replay overwrites by key
+        // rather than appending a second row.
+        let bucket = event_time / 1_000;
+        ctx.emit_keyed::<String>(format!("candle/{bucket}"), format!("{bucket}={input}"))
+    }
+}
+
+struct CandleOperative;
+impl UnboundedOperative for CandleOperative {
+    fn factory_id() -> &'static str {
+        "candle"
+    }
+    fn channels(c: &mut ChannelBuilder) {
+        c.effectively_once();
+        c.correction_window(600_000);
+        c.input::<String>("input").into::<CandleOperation>();
+        c.channel::<String>("sink")
+            .from::<CandleOperation>()
             .keyed()
             .to_plugin("tier_sink");
     }

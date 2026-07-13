@@ -279,6 +279,129 @@ fires, and saga compensation unwinds, so nothing is written to the DLQ
 store. Configurable `on_segment_failure` policies (DeadLetter |
 MinSuccess) remain deferred.
 
+## Late-input correction: fix the past, and the sinks fix themselves
+
+An exchange sends a trade five seconds late. It lands after the candle it
+belongs to has already closed and published. Without correction, that candle
+is permanently wrong — and so is every indicator downstream of it.
+
+Correction is **recovery with a re-ordered input sequence**. It reuses the
+recovery machinery wholesale: rewind the Segment to a baseline *behind* the
+late event, restore the executor there, and re-forward the retained input log —
+except ordered by event time rather than by arrival. Outputs republish under a
+bumped epoch, so a keyed changelog sink overwrites the stale rows by natural
+key. One machine, two triggers: a late input, or an operator.
+
+**There is nothing to splice.** Inputs are journaled *before* they are
+forwarded (`Overwatch.journal_input/2`), so a late input is already durably in
+the input log at its arrival offset by the time anything knows it is late.
+Re-reading the range already contains it. Only the *order* was ever wrong.
+
+### Declaring it
+
+```rust
+fn channels(c: &mut ChannelBuilder) {
+    c.effectively_once();
+    c.correction_window(600_000);          // repair up to 10 minutes of past
+    c.beyond_window_policy(BeyondWindowPolicy::Drop);   // optional; default below
+    ...
+}
+```
+
+Five prerequisites, all **hard refusals at start** rather than warnings — an
+operative that runs happily and then cannot correct when asked is the worst
+outcome:
+
+| Prerequisite | Why | Refused by |
+|---|---|---|
+| `effectively_once()` | append-before-forward is what puts the late input in the log at all | SDK build |
+| an `EventTimeFrom` clock | nothing else yields a time to order a replayed slice by | SDK build |
+| every plugin channel `.keyed()` | a bumped epoch overwrites *by key*; an unkeyed append channel would duplicate, not correct | SDK build (already implied by the tier) |
+| `input_log_hold_window_ms >= correction_window` | you cannot replay inputs you did not retain | controller, at start |
+| `compact_after_age_ms >= correction_window` | compaction truncates the WAL below each snapshot, destroying the history a rewind needs a baseline inside | controller, at start |
+
+The last one is why `compact_after_age_ms` is resolved **per operative**: it
+stopped being a tuning knob and became a correctness constraint.
+
+### What happens
+
+1. The SDK extracts the event time (only it can — the extractor is user code)
+   and compares it to the Segment's event-time high-water. Behind it, but inside
+   the window → the input is **not dispatched**. It is already durable in the
+   log; running it now would fold it into the state at the wrong position, which
+   is the exact mistake the correction undoes. A `correction_request` goes to the
+   controller instead.
+2. Requests coalesce per Segment (debounced) into the one replay that reaches
+   furthest back. Five late trades are one restore-replay cycle, not five.
+3. The controller picks the baseline: the last seq whose history entirely
+   precedes the target. It scans *forward* to the first record at or after the
+   target — scanning backwards for the first earlier event time would stop at an
+   out-of-order straggler and leave the records that overtook the late input in
+   place, correcting nothing.
+4. `WalWriter.rewind_to(seq, epoch)` keeps the records at or below the baseline
+   and drops only the snapshots above it. This is **not** the realign primitive,
+   which truncates the WAL to zero and deletes every snapshot — that is a
+   cold-takeover wipe. The `persist_dedup` at the rewind's tail is the **commit
+   point**: the epoch bump is durable before any output can be re-emitted under
+   it.
+5. `RestoreInitState` re-seats the executor on the baseline (blocking — the
+   restore rides the control channel while the replay rides the data channel, and
+   without the fence they race). The Segment clears its mailbox: every queued
+   input is already a member of the slice by append-before-forward, so keeping it
+   would double-apply it *and* apply it after the sorted slice, reintroducing the
+   mis-ordering.
+6. The input-log range above the baseline's consumed offset is re-forwarded,
+   marked `flz.replay`. The Segment holds the whole slice, orders it by extracted
+   event time (stably, tie-broken by ascending offset), and only then dispatches.
+7. Outputs flush through the normal outbox under the new epoch. Kafka key-upserts
+   and the Postgres `(epoch, seq)` guard both admit the higher epoch and overwrite.
+
+### Crash mid-correction needs no marker
+
+That falls out of the design rather than being bolted on:
+
+- **Before the rewind commits**, nothing durable changed. The late input is still
+  in the log, still unconsumed. The ordinary resume re-forwards it, the SDK
+  re-classifies it as late, and the correction runs again.
+- **After the rewind commits**, the on-disk state *is* the baseline and the
+  watermark was lowered to match — so the ordinary resume replay **is** the
+  correction.
+
+Hence: for a correction-declaring operative, *every* journaled replay is marked
+and event-time-ordered. Crash recovery and deliberate correction are one path.
+The epoch is passed to `rewind_to` explicitly rather than derived, so a re-run
+re-asserts the epoch it already committed to instead of bumping a second time —
+a second bump would strand the first attempt's rows at an epoch nothing
+overwrites.
+
+### Beyond the window
+
+An input later than the window follows the declared policy:
+`process_as_arrival` (the **default** — it is what the engine does today, so
+declaring a window never silently starts discarding data) or `drop`. Both emit
+`[:flezha, :correction, :beyond_window]` so the lateness is visible and the
+operator can widen the window deliberately.
+
+### Operator replay
+
+`flz operative replay <operative/operation/key> --from <seq|timestamp>` runs the
+same transaction with the baseline chosen instead of derived: deploy a fix,
+heal the recent past. A target older than retention is refused with
+`outside_retention`, naming the earliest available point.
+
+### Limits worth knowing
+
+- **A correction overwrites the keys it re-emits; it does not retract keys it no
+  longer emits.** If the stale run published a row under a key the corrected run
+  never produces, that row survives. For event-time-bucketed keys (candles,
+  windowed aggregates) this cannot happen — the key is a function of the event
+  time. For key schemes where it can, treat the sink as append-with-overwrite,
+  not as a mirror.
+- **No cross-operative cascade.** A downstream operative sees corrected outputs
+  as ordinary keyed updates; it does not itself rewind.
+- **The window is bounded by retention, by construction.** There is no
+  unbounded-history correction.
+
 ## How to avoid loss — operator playbook
 
 - **Deploy / upgrade executors with a graceful stop, never a kill.** Send SIGTERM (or

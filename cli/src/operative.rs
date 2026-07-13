@@ -17,10 +17,11 @@ pub fn handle_operative_command(args: &[String]) {
         "info" => handle_info(args),
         "io_listen" => handle_io_listen(args),
         "rewind" => handle_rewind(args),
+        "replay" => handle_replay(args),
         "help" | "--help" | "-h" => print_operative_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', 'info', 'io_listen', 'rewind', or 'help'.",
+                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', 'info', 'io_listen', 'rewind', 'replay', or 'help'.",
                 args[0]
             );
             exit(1);
@@ -218,6 +219,53 @@ fn handle_rewind(args: &[String]) {
     }
 }
 
+/// `flz operative replay <operative/operation/key> --from <seq|ts>` — re-run a
+/// Segment's retained inputs from a point in the past through the current code,
+/// republishing under a bumped epoch so a guarded sink overwrites the stale rows
+/// by natural key. "Deploy a fix, heal the recent past."
+///
+/// The same transaction a late input triggers automatically; here the operator
+/// picks the baseline instead of a late event.
+fn handle_replay(args: &[String]) {
+    if args.len() < 2 {
+        eprintln!(
+            "Error: Invalid number of arguments. \
+             Usage: flz operative replay <operative/operation/key> --from <seq|timestamp>"
+        );
+        exit(1);
+    }
+
+    let segment = &args[1];
+    let namespace = get_namespace(&args[2..]);
+
+    let from = match extract_param(&args[2..], "--from", "-f") {
+        Some(value) => value,
+        None => {
+            eprintln!(
+                "Error: --from <seq|timestamp> is required. \
+                 Pass a WAL seq, or epoch-millis / RFC3339 for a point in time."
+            );
+            exit(1);
+        }
+    };
+
+    let rpc_command = format!(
+        "Flezha.Service.CliManager.operative_replay(\"{}\", \"{}\", \"{}\")",
+        namespace, segment, from,
+    );
+
+    let status = Command::new(get_flezha_command())
+        .arg("rpc")
+        .arg(rpc_command)
+        .status();
+
+    match status {
+        Ok(status) if status.success() => {}
+        Ok(_) => eprintln!("Unknown status returned."),
+        Err(e) => eprintln!("Failed to replay segment: {}", e),
+    }
+}
+
 fn handle_state(args: &[String]) {
     if args.len() < 2 {
         eprintln!("Error: Invalid number of arguments. Usage: flz operative state <operative_id>");
@@ -377,10 +425,12 @@ fn print_operative_help() {
     println!("    info        Get operative info");
     println!("    io_listen   Listen to operative I/O");
     println!("    rewind      Rewind a bounded loop to a committed iteration");
+    println!("    replay      Re-run a Segment's retained inputs from a point in the past");
     println!("    help        Show this help message");
     println!();
     println!("EXAMPLES:");
     println!("    flz operative rewind chat-1 --to-iteration 3");
+    println!("    flz operative replay candles/aggregate/BTC --from 1720000000000");
     println!();
     println!("Use 'flz operative <COMMAND> --help' for more information on a specific command.");
 }

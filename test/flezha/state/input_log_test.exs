@@ -86,6 +86,60 @@ defmodule Flezha.State.InputLogTest do
     assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [4, 5, 6, 7, 8, 9]
   end
 
+  describe "the hold window (unbounded-late-input-correction G4)" do
+    setup do
+      original = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
+      on_exit(fn -> Application.put_env(:flezha, :input_log_hold_window_ms, original) end)
+      :ok
+    end
+
+    test "records carry their append time", %{class: class} do
+      before = System.system_time(:millisecond)
+      for i <- 0..2, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      later = System.system_time(:millisecond)
+
+      # Nothing was appended before `before`, and everything was appended before
+      # `later` — so the time→offset lookup brackets the whole log.
+      assert InputLog.offset_before_time(class, before) == nil
+      assert InputLog.offset_before_time(class, later + 1) == 2
+    end
+
+    test "a consumed record is held until it also ages out of the window", %{class: class} do
+      for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      InputLog.record_consumed(class, {class, "op", "a"}, 9)
+
+      # A correction replays CONSUMED inputs, so the watermark alone must not be
+      # allowed to reclaim them. An hour-long window holds everything just written.
+      Application.put_env(:flezha, :input_log_hold_window_ms, 3_600_000)
+      :ok = InputLog.sweep(class)
+      assert InputLog.read_range(class, 0, 9) |> length() == 10
+
+      # This is the property that used to be missing entirely: `truncation_floor/1`
+      # returned nil for ANY non-zero hold window, i.e. it held everything
+      # forever. A window the records have aged out of must actually reclaim them
+      # (down to the floor, which is retained — the existing conservative
+      # keep-at-or-above-the-floor contract).
+      Application.put_env(:flezha, :input_log_hold_window_ms, 1)
+      Process.sleep(5)
+      :ok = InputLog.sweep(class)
+      assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [9]
+    end
+
+    test "the window never reclaims past the watermark", %{class: class} do
+      for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      # A lagging Segment has only consumed up to 4.
+      InputLog.record_consumed(class, {class, "op", "b"}, 4)
+
+      # Every record has aged out, but an unconsumed input must never be dropped:
+      # the floor is min(watermark, aged_out), not the age bound alone.
+      Application.put_env(:flezha, :input_log_hold_window_ms, 1)
+      Process.sleep(5)
+      :ok = InputLog.sweep(class)
+
+      assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [4, 5, 6, 7, 8, 9]
+    end
+  end
+
   test "no reported consumed-offset holds the watermark at the log start", %{class: class} do
     for i <- 0..4, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
 

@@ -200,41 +200,18 @@ defmodule Flezha.State.Retention do
     end
   end
 
+  # No live writer, so the rewrite happens in-process — but through the same
+  # primitive the writer uses, not a second copy of it.
   defp rewrite_offline(segment_id, keep_above_seq) do
     wal_path = Registry.wal_path(segment_id)
 
     if File.exists?(wal_path) do
-      tmp_path = wal_path <> ".rewriting"
-      {:ok, src} = :file.open(wal_path, [:raw, :read, :binary])
-      {:ok, dst} = :file.open(tmp_path, [:raw, :write, :binary])
-
-      try do
-        copy_keep_seq_gt(src, dst, 0, keep_above_seq)
-        :ok = :file.sync(dst)
-      after
-        _ = :file.close(src)
-        _ = :file.close(dst)
-      end
-
+      tmp_path = WalWriter.rewrite_keep_seq_gt(wal_path, keep_above_seq)
       :ok = File.rename(tmp_path, wal_path)
       Metrics.put(Metrics.for_segment(segment_id), :wal_size_bytes, file_size(wal_path))
     end
 
     :ok
-  end
-
-  defp copy_keep_seq_gt(src, dst, position, keep_above_seq) do
-    case WalWriter.decode_record(src, position) do
-      {:ok, seq, header, change_bytes, consumed} ->
-        if seq > keep_above_seq do
-          :ok = :file.write(dst, WalWriter.encode_record(seq, header, change_bytes))
-        end
-
-        copy_keep_seq_gt(src, dst, position + consumed, keep_above_seq)
-
-      {:error, _} ->
-        :ok
-    end
   end
 
   defp mtime_seconds(path) do

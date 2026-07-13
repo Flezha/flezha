@@ -158,9 +158,28 @@ defmodule Flezha.State.PersistenceResolver do
   def compaction_timeout_ms(),
     do: global_non_neg(:compaction_timeout_ms, @default_compaction_timeout_ms)
 
-  @spec compact_after_age_ms() :: non_neg_integer()
-  def compact_after_age_ms(),
+  @doc """
+  WAL age at which the Watchdog triggers a compaction, per operative.
+
+  Per-operative rather than global because it stopped being a tuning knob: a
+  correction rewinds inside its declared window, and compaction truncates the
+  WAL below each snapshot — so an age-floor shorter than the correction window
+  destroys the very history the rewind needs a baseline inside. Operative start
+  refuses that combination, which it can only do if the value is resolvable per
+  operative. `0` disables age-triggered compaction entirely.
+  """
+  @spec compact_after_age_ms(binary(), map()) :: non_neg_integer()
+  def compact_after_age_ms(operative_class \\ nil, metadata \\ %{})
+
+  def compact_after_age_ms(nil, _metadata),
     do: global_non_neg(:compact_after_age_ms, @default_compact_after_age_ms)
+
+  def compact_after_age_ms(operative_class, metadata) when is_binary(operative_class) do
+    resolve(:compact_after_age_ms, :compact_after_age_ms, operative_class, metadata,
+      valid: &(is_integer(&1) and &1 >= 0),
+      default: fn -> global_non_neg(:compact_after_age_ms, @default_compact_after_age_ms) end
+    )
+  end
 
   # Global (non-per-Operative) knob: app env if a valid non-negative
   # integer, else the compile-time default.

@@ -75,7 +75,14 @@ defmodule Flezha.Operative.Overwatch do
     # deadline — rehydrates through the normal bind path.
     suspended: false,
     # Timer ref for the journaled wake deadline while suspended.
-    wake_timer: nil
+    wake_timer: nil,
+    # Late-input correction window (ms), declared by the SDK. `nil` = the class
+    # never corrects. Gates lateness handling and the event-time-ordered replay.
+    correction_window_ms: nil,
+    # Segments with a correction in flight, and the oldest event time each was
+    # asked to correct back to. Concurrent requests for one Segment coalesce
+    # into the one replay that reaches furthest back.
+    corrections: %{}
   ]
 
   def start_link(args) do
@@ -180,15 +187,19 @@ defmodule Flezha.Operative.Overwatch do
          operative =
            with_resume_segment_count(operative, state.builder.kind, operative_class(state)),
          {:ok, final_executor_id, add_operative_raw, state} <-
-           start_operative_sdk_with_retry(state, operative) do
+           start_operative_sdk_with_retry(state, operative),
+         :ok <- check_correction_prerequisites(state, add_operative_raw) do
       # The class's SDK-side declarations ride the AddOperative response; resolve
       # them BEFORE plugin activation so source adapters pick the tier ingest mode
       # (blocking call) from the env.
-      %{effectively_once: effectively_once, compensable_ops: compensable_ops} =
-        decode_declarations(add_operative_raw)
+      %{
+        effectively_once: effectively_once,
+        compensable_ops: compensable_ops,
+        correction_window_ms: correction_window_ms
+      } = decode_declarations(add_operative_raw)
 
       state =
-        %{state | effectively_once: effectively_once}
+        %{state | effectively_once: effectively_once, correction_window_ms: correction_window_ms}
         |> bind_to_executor(operative.id, final_executor_id)
         |> Map.put(:init_error, nil)
 
@@ -539,17 +550,180 @@ defmodule Flezha.Operative.Overwatch do
       last = InputLog.last_offset(operative_class)
 
       if last > floor do
-        operative_class
-        |> InputLog.read_range(floor + 1, last)
-        |> Enum.map(fn {offset, message, metadata} ->
-          {message, Map.put(metadata, "flz.offset", Integer.to_string(offset))}
-        end)
-        |> then(&reforward(state, &1))
+        replay_slice(state, operative_class, floor + 1, last)
       end
     end
 
     :ok
   end
+
+  # The one re-forward path, shared by crash recovery and deliberate correction
+  # — which is the whole point. A correction leaves the on-disk state at a
+  # rewound baseline with the input-log watermark lowered to match, and from
+  # there the ordinary resume replay *is* the correction. The two differ only in
+  # how the baseline was chosen.
+  #
+  # For a correction-declaring class every replayed slice is marked, and the
+  # SDK holds it to the end marker so it can order it by event time before
+  # dispatching any of it. Re-forwarding in arrival order would put the late
+  # input back after the inputs that overtook it and recompute the same wrong
+  # answer.
+  defp replay_slice(%__MODULE__{} = state, operative_class, from, to) do
+    case InputLog.read_range(operative_class, from, to) do
+      [] ->
+        :ok
+
+      payloads ->
+        marks = if state.correction_window_ms, do: %{"flz.replay" => "1"}, else: %{}
+
+        payloads
+        |> Enum.map(fn {offset, message, metadata} ->
+          {message,
+           metadata
+           |> Map.put("flz.offset", Integer.to_string(offset))
+           |> Map.merge(marks)}
+        end)
+        |> then(&reforward(state, &1))
+
+        # Close the slice. A broadcast rather than a flag on the last input:
+        # an input reaches exactly one Segment (routed by key), so a marker
+        # riding one would strand the slice every *other* Segment buffered.
+        if state.correction_window_ms do
+          reforward(state, [{"", %{"flz.replay_end" => "1"}}])
+        end
+
+        :ok
+    end
+  end
+
+  # ---------- Late-input correction ----------
+
+  @doc """
+  A Segment reported an input behind its event-time high-water but inside the
+  correction window. Coalesce it; the debounce fires the replay.
+  """
+  @spec request_correction(pid(), tuple(), non_neg_integer()) :: :ok
+  def request_correction(overwatch, segment_id, target_event_time),
+    do: GenServer.cast(overwatch, {:correction_request, segment_id, target_event_time})
+
+  @doc """
+  Operator replay (`flz operative replay`): rewind a Segment to `baseline_seq`
+  and re-run its retained inputs from there through the current code.
+
+  The same transaction a late input drives, with the baseline chosen rather than
+  derived. Synchronous, so the CLI reports the outcome rather than a hopeful
+  "queued".
+  """
+  @spec replay_from(pid(), tuple(), non_neg_integer()) :: :ok | {:error, term()}
+  def replay_from(overwatch, segment_id, baseline_seq),
+    do: GenServer.call(overwatch, {:replay_from, segment_id, baseline_seq}, 60_000)
+
+  # Concurrent late inputs for one Segment collapse into the one replay that
+  # reaches furthest back — a burst of five late trades is one restore-replay
+  # cycle, not five. The debounce is what gives the burst time to arrive; the
+  # `Map.has_key?` guard is what keeps it a single timer.
+  defp note_correction(%__MODULE__{} = state, segment_id, target) do
+    pending = state.corrections
+
+    if Map.has_key?(pending, segment_id) do
+      %{state | corrections: Map.update!(pending, segment_id, &min(&1, target))}
+    else
+      Process.send_after(self(), {:run_correction, segment_id}, correction_debounce_ms())
+      %{state | corrections: Map.put(pending, segment_id, target)}
+    end
+  end
+
+  # The correction transaction. Runs synchronously in the Overwatch process,
+  # which is what makes it safe: the Overwatch is also the only thing that
+  # journals and forwards input for this operative, so while it is in here no
+  # new input can be journaled and the slice's upper bound cannot move.
+  #
+  # A crash anywhere in here needs no marker to recover. Before the rewind
+  # commits, nothing durable has changed: the late input is still in the log,
+  # still unconsumed, and the ordinary resume re-forwards it, the SDK
+  # re-classifies it, and we end up back here. After the rewind commits, the
+  # on-disk state *is* the baseline and the watermark was lowered to match — so
+  # the ordinary resume replay IS this replay. That is why crash recovery and
+  # deliberate correction share one path.
+  defp run_correction(%__MODULE__{} = state, segment_id, target) do
+    result =
+      with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(segment_id),
+           {:ok, %{seq: baseline_seq, consumed_offset: consumed}} <-
+             Flezha.State.WalWriter.correction_baseline(writer, target) do
+        rewind_and_replay(state, segment_id, writer, baseline_seq, consumed)
+      end
+
+    log_correction(state, segment_id, target, result)
+    state
+  end
+
+  # The operator's half: the baseline is given, so only the consumed offset has
+  # to be looked up. Everything downstream is the same transaction.
+  defp run_replay(%__MODULE__{} = state, segment_id, baseline_seq) do
+    result =
+      with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(segment_id) do
+        consumed = Flezha.State.WalWriter.consumed_offset_at(writer, baseline_seq)
+        rewind_and_replay(state, segment_id, writer, baseline_seq, consumed)
+      end
+
+    log_correction(state, segment_id, baseline_seq, result)
+    if match?({:ok, _}, result), do: :ok, else: result
+  end
+
+  defp rewind_and_replay(state, segment_id, writer, baseline_seq, consumed) do
+    operative_class = operative_class(state)
+    started = System.monotonic_time(:millisecond)
+
+    # Explicit, not `current + 1` inside the writer: a re-run of an interrupted
+    # correction must re-assert the epoch it already committed to, never bump a
+    # second time — a second bump would leave the first attempt's rows behind at
+    # an epoch nothing overwrites.
+    epoch = Flezha.State.WalWriter.outbox_epoch(writer) + 1
+    :ok = Flezha.State.WalWriter.rewind_to(writer, baseline_seq, epoch)
+
+    # Blocking: the restore rides the control channel while the replay rides the
+    # data channel, and without this fence they race — the executor could fold
+    # slice inputs into the very state the rewind was about to replace.
+    _ = await_restore_init_state(state.executor_id, segment_id)
+
+    last = InputLog.last_offset(operative_class)
+    if last > consumed, do: replay_slice(state, operative_class, consumed + 1, last)
+
+    {:ok,
+     %{
+       baseline_seq: baseline_seq,
+       epoch: epoch,
+       replayed: max(last - consumed, 0),
+       duration_ms: System.monotonic_time(:millisecond) - started
+     }}
+  end
+
+  defp log_correction(state, segment_id, _target, {:ok, measurements}) do
+    emit_correction(:completed, operative_class(state), segment_id, measurements)
+    :ok
+  end
+
+  defp log_correction(state, segment_id, target, {:error, reason}) do
+    Logger.warning(
+      "[Overwatch] correction refused segment=#{inspect(segment_id)} " <>
+        "target=#{target}: #{inspect(reason)}"
+    )
+
+    emit_correction(:refused, operative_class(state), segment_id, %{reason: reason})
+  end
+
+  defp emit_correction(event, operative_class, {_, operation, key}, measurements) do
+    {reason, measurements} = Map.pop(measurements, :reason)
+
+    :telemetry.execute(
+      [:flezha, :correction, event],
+      Map.put_new(measurements, :count, 1),
+      %{operative: operative_class, operation: operation, key: key, reason: reason}
+    )
+  end
+
+  defp correction_debounce_ms(),
+    do: Application.get_env(:flezha, :correction_debounce_ms, 200)
 
   # Re-forward already-durable payloads, stamped with the offset they were
   # journaled at. The delivery half of both durability tiers' resume — the
@@ -711,6 +885,13 @@ defmodule Flezha.Operative.Overwatch do
 
       true ->
         :ok
+    end
+  end
+
+  defp check_correction_prerequisites(state, add_operative_raw) do
+    case decode_declarations(add_operative_raw) do
+      %{correction_window_ms: nil} -> :ok
+      %{correction_window_ms: ms} -> correction_prerequisites(operative_class(state), ms)
     end
   end
 
@@ -898,8 +1079,60 @@ defmodule Flezha.Operative.Overwatch do
 
     %{
       effectively_once: Map.get(metadata, "effectively_once") == "true",
-      compensable_ops: parse_ops(Map.get(metadata, "compensable_ops"))
+      compensable_ops: parse_ops(Map.get(metadata, "compensable_ops")),
+      correction_window_ms: parse_window(Map.get(metadata, "correction_window_ms"))
     }
+  end
+
+  defp parse_window(nil), do: nil
+
+  defp parse_window(raw) do
+    case Integer.parse(raw) do
+      {ms, ""} when ms > 0 -> ms
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Refuse to start a correction-declaring operative whose retention cannot reach
+  back across its own window.
+
+  The SDK enforces what it can see — the tier, the event-time clock, keyed
+  channels. These two it cannot: they are controller-side retention settings,
+  and both are load-bearing. Without the input-log hold window the inputs a
+  correction replays have already been truncated away; without the snapshot
+  age-floor, compaction has already collapsed the WAL history the rewind needs a
+  baseline inside. In both cases the operative would run happily and then fail
+  to correct precisely when asked to — so this is a refusal at start, not a
+  warning.
+  """
+  @spec correction_prerequisites(binary(), pos_integer()) :: :ok | {:error, term()}
+  def correction_prerequisites(operative_class, window_ms) do
+    hold_window = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
+    age_floor = PersistenceResolver.compact_after_age_ms(operative_class)
+
+    cond do
+      hold_window < window_ms ->
+        {:error,
+         {:correction_window_exceeds_retention,
+          %{
+            correction_window_ms: window_ms,
+            input_log_hold_window_ms: hold_window,
+            fix: "raise :input_log_hold_window_ms to at least the correction window"
+          }}}
+
+      age_floor != 0 and age_floor < window_ms ->
+        {:error,
+         {:correction_window_exceeds_snapshot_floor,
+          %{
+            correction_window_ms: window_ms,
+            compact_after_age_ms: age_floor,
+            fix: "raise :compact_after_age_ms to at least the correction window"
+          }}}
+
+      true ->
+        :ok
+    end
   end
 
   defp decode_metadata(raw_data) when is_binary(raw_data) and raw_data != "" do
@@ -1251,6 +1484,11 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   @impl true
+  def handle_call({:replay_from, segment_id, baseline_seq}, _from, %__MODULE__{} = state) do
+    {:reply, run_replay(state, segment_id, baseline_seq), state}
+  end
+
+  @impl true
   def handle_call({:rewind, to_iter}, _from, %__MODULE__{} = state) do
     with :ok <- rewind_guard(state, to_iter),
          :ok <- OpJournal.append_rewound(state.id, to_iter) do
@@ -1306,6 +1544,11 @@ defmodule Flezha.Operative.Overwatch do
   def handle_cast({:io_out, message, metadata}, state) do
     run_io(state, :on_output, message, metadata)
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:correction_request, segment_id, target}, state) do
+    {:noreply, note_correction(state, segment_id, target)}
   end
 
   # The SDK parked at a committed iteration boundary and the `parked` journal
@@ -1387,6 +1630,17 @@ defmodule Flezha.Operative.Overwatch do
       {:skip, _reason} -> nil
       {:error, _reason} -> {message, metadata}
     end
+  end
+
+  @impl true
+  def handle_info({:run_correction, segment_id}, %__MODULE__{} = state) do
+    {target, corrections} = Map.pop(state.corrections, segment_id)
+    state = %{state | corrections: corrections}
+
+    # At most one correction per Segment is ever in flight, by construction: the
+    # transaction runs to completion inside this handler, so a request arriving
+    # during it simply waits in the mailbox and debounces into the next one.
+    {:noreply, if(target, do: run_correction(state, segment_id, target), else: state)}
   end
 
   @impl true

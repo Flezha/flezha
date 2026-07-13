@@ -1172,6 +1172,8 @@ EffectRecordBody {
                                             plain change records, in order
     outputs:         Vec<OutputRecord>,  -- the invocation's plugin emits
     consumed_offset: Option<u64>,        -- flz.offset of the input
+    dlq:             Option<DlqEntryBody>,
+    event_time:      u64,                -- the invocation's declared clock value
 }
 OutputRecord {
     channel:  String,
@@ -1187,8 +1189,15 @@ DlqEntryBody {                           -- Some only for a parked poison payloa
 }
 ```
 
-`EffectRecordBody` carries a trailing `dlq: Option<DlqEntryBody>` (after
-`consumed_offset`). A tier-on dead-letter park rides the SAME atomic
+`event_time` is the value the Operation's declared `Clock` evaluated to for that
+invocation — the extracted event time under `EventTimeFrom`, wall-clock ms under
+`WallClock`, the change seq under `LogicalClock`. It is what makes the
+controller's event-time → seq → input-offset lookup a *read*: late-input
+correction resolves its rewind baseline against it, and `TimeTravel`'s
+`{:timestamp, ts}` target resolves per-record against it instead of
+approximating from the WAL file's mtime.
+
+A tier-on dead-letter park rides the SAME atomic
 record as its consumed-offset advance — typically `{no state change, dlq
 entry, consumed offset}` — so a crash can never advance the offset while
 losing the park. The controller materializes the DLQ store entry from
@@ -1640,6 +1649,56 @@ rehydrate re-delivering it. Dedup at append is keyed on the sender's
 `flz.msg_id` metadata when present, else a payload hash; a duplicate
 inside the undelivered window is absorbed, so an at-least-once sender
 cannot produce a duplicate turn.
+
+### Data payload `correction_request` (SDK → controller)
+
+Late-input correction (`unbounded-late-input-correction`). A Segment saw an
+input whose extracted event time is behind its event-time high-water but inside
+the declared `correction_window`. Only the SDK can know that — the event time
+comes from the user's `TimeExtractor` — so detection is the SDK's half and
+orchestration is the controller's.
+
+Same outer frame as `park_payload` (a zero 16-byte header, a postcard body); the
+Segment identity rides the frame envelope.
+
+```rust
+struct CorrectionRequestBody {
+    target_event_time: u64,
+}
+```
+
+Nothing else is needed. Inputs are journaled **before** they are forwarded, so
+the late input is already in the durable input log at its arrival offset — the
+controller re-reads the range and finds it there. There is no offset to send and
+no slice to splice.
+
+Fire-and-forget: the controller coalesces concurrent requests per Segment into
+one replay, so a duplicate costs nothing, and a lost one is re-raised the moment
+the input is re-delivered (it is still in the log, still unconsumed). A
+transport-less run has nobody to ask and falls back to processing the input as
+an arrival.
+
+### Data frame metadata: replayed slice (`flz.replay`, `flz.replay_end`)
+
+The controller marks every input of a re-forwarded slice so the Segment can hold
+it, order it by event time, and only then dispatch — an arrival-ordered replay
+would put the late input back after the inputs that overtook it and recompute
+the same wrong answer.
+
+| Key | Value |
+|---|---|
+| `flz.replay` | `"1"` on each input of a replayed slice |
+| `flz.replay_end` | `"1"` on a **payload-less broadcast frame** that closes the slice |
+
+`flz.replay_end` is a broadcast, not a flag on the slice's last input, and it has
+to be: an input routes to exactly one Segment by key, so a marker riding the last
+one would reach one Segment and leave every *other* Segment that buffered slice
+members holding them forever. The broadcast frame carries no payload, never
+reaches an Operation, and arrives after every frame of the slice.
+
+A `RestoreInitState` clears any half-filled replay buffer, so an abandoned slice
+(controller crash mid-replay) cannot strand a Segment — every replay is preceded
+by a restore.
 
 ### Plugin metadata: output identity stamps (`flz.*`)
 
