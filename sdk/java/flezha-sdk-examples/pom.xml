@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.flezha</groupId>
+        <artifactId>flezha-sdk-parent</artifactId>
+        <version>0.1.0</version>
+    </parent>
+
+    <artifactId>flezha-sdk-examples</artifactId>
+    <name>Flezha SDK Examples</name>
+    <description>
+        Worked examples for every operative shape the SDK supports. Part of the
+        reactor on purpose: an example that stops compiling against the SDK is a
+        broken example, and the build says so.
+    </description>
+
+    <properties>
+        <!-- Nothing here is published; these exist to be read and to be compiled. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.flezha</groupId>
+            <artifactId>flezha-sdk-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.flezha</groupId>
+            <artifactId>flezha-sdk-runtime</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.flezha</groupId>
+            <artifactId>flezha-sdk-testing</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

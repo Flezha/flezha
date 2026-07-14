@@ -51,6 +51,7 @@
         <module>flezha-sdk-runtime</module>
         <module>flezha-sdk-native</module>
         <module>flezha-sdk-testing</module>
+        <module>flezha-sdk-examples</module>
         <module>flezha-sdk</module>
     </modules>
 
