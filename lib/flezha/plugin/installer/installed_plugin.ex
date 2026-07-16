@@ -1,7 +1,7 @@
 defmodule Flezha.Plugin.Installer.InstalledPlugin do
   @moduledoc """
   Return shape of `Flezha.Plugin.Installer.list/0` and `info/1`. Projects
-  the DETS catalog row plus the subset of manifest fields executors want
+  the DETS catalog row plus the subset of manifest fields runners want
   to see on the CLI / UI.
   """
 

@@ -1,7 +1,7 @@
 defmodule Flezha do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.Service.ExecutorManager
+  alias Flezha.Service.RunnerManager
   alias Flezha.Service.PluginManager
 
   @moduledoc """
@@ -19,13 +19,13 @@ defmodule Flezha do
 
   defdelegate list_namespaces(), to: HubManager, as: :get_running_namespaces
 
-  defdelegate list_executors(namespace),
-    to: ExecutorManager,
-    as: :get_global_executors
+  defdelegate list_runners(namespace),
+    to: RunnerManager,
+    as: :get_global_runners
 
   defdelegate list_operatives(namespace), to: OperativeManager, as: :get_operative_ids
 
-  defdelegate list_factories(namespace), to: Flezha.Executor.FleetManager
+  defdelegate list_factories(namespace), to: Flezha.Runner.FleetManager
 
   defdelegate enable_plugin(plugin_id, plugin), to: PluginManager
 

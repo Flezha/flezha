@@ -2,8 +2,8 @@ package com.flezha.sdk.runtime.control;
 
 import com.flezha.sdk.native_.NativeTransport;
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.proto.ExecutorShutdownNotification;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.proto.RunnerShutdownNotification;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeStateSerializer;
@@ -26,10 +26,10 @@ import org.slf4j.LoggerFactory;
  * {@code Flezha.close()}, or JVM exit via the registered shutdown hook —
  * the SDK serializes each currently-running operative's state via the
  * same per-driver path used for {@code MigrationSerialization} and
- * emits one {@link ExecutorShutdownNotification} per operative on the
+ * emits one {@link RunnerShutdownNotification} per operative on the
  * control channel. The controller overwrites its
  * {@code Overwatch.state.snapshot} with the supplied binary so the next
- * reconnecting executor picks up the executor's true final state — see
+ * reconnecting runner picks up the runner's true final state — see
  * ship-fresh-state-on-sdk-shutdown.
  *
  * <h2>Timing contract</h2>
@@ -68,12 +68,12 @@ public final class GracefulShutdown {
         int write(long streamId, byte[] frame);
     }
 
-    private final ExecutorContext ctx;
+    private final RunnerContext ctx;
     private final long controlStreamId;
     private final FrameWriter writer;
     private final AtomicBoolean shutdownStarted = new AtomicBoolean(false);
 
-    public GracefulShutdown(@Nonnull ExecutorContext ctx, long controlStreamId) {
+    public GracefulShutdown(@Nonnull RunnerContext ctx, long controlStreamId) {
         this(
                 ctx,
                 controlStreamId,
@@ -85,7 +85,7 @@ public final class GracefulShutdown {
      * module can inject a capturing writer. Production callers go through
      * the 2-argument form, which forwards to {@link NativeTransport#streamWrite}.
      */
-    GracefulShutdown(@Nonnull ExecutorContext ctx, long controlStreamId, @Nonnull FrameWriter writer) {
+    GracefulShutdown(@Nonnull RunnerContext ctx, long controlStreamId, @Nonnull FrameWriter writer) {
         this.ctx = ctx;
         this.controlStreamId = controlStreamId;
         this.writer = writer;
@@ -126,7 +126,7 @@ public final class GracefulShutdown {
 
             CommandRequest request = CommandRequest.newBuilder()
                     .setReferenceId(referenceId)
-                    .setExecutorShutdownNotification(ExecutorShutdownNotification.newBuilder()
+                    .setRunnerShutdownNotification(RunnerShutdownNotification.newBuilder()
                             .setOperativeId(operativeId)
                             .setSerializedState(ByteString.copyFrom(serializedState))
                             .build())
@@ -138,7 +138,7 @@ public final class GracefulShutdown {
 
             int writeStatus = writer.write(controlStreamId, frameBytes);
             if (writeStatus != 0) {
-                LOG.warn("Failed to write ExecutorShutdownNotification for {} (status={})", operativeId, writeStatus);
+                LOG.warn("Failed to write RunnerShutdownNotification for {} (status={})", operativeId, writeStatus);
                 AckRegistry.forget(referenceId);
                 continue;
             }
@@ -148,9 +148,9 @@ public final class GracefulShutdown {
                     .orTimeout(ACK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                     .exceptionally(throwable -> {
                         if (throwable instanceof TimeoutException || throwable.getCause() instanceof TimeoutException) {
-                            LOG.warn("ExecutorShutdownAck timeout for {}", pidForLog);
+                            LOG.warn("RunnerShutdownAck timeout for {}", pidForLog);
                         } else {
-                            LOG.warn("ExecutorShutdownAck wait failed for {}: {}", pidForLog, throwable.toString());
+                            LOG.warn("RunnerShutdownAck wait failed for {}: {}", pidForLog, throwable.toString());
                         }
                         AckRegistry.forget(referenceId);
                         return null;

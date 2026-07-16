@@ -62,7 +62,7 @@ state reproduces identical stamp values.
 
 #### Scenario: Stamps present and replay-stable
 
-- **WHEN** a keyed-channel emit is produced, the executor crashes, state is
+- **WHEN** a keyed-channel emit is produced, the runner crashes, state is
   restored, and the same input is replayed
 - **THEN** the re-emitted frame carries `flz.segment`, `flz.seq`, and `flz.key`
   values identical to the original emission

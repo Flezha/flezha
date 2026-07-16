@@ -4,7 +4,7 @@
 # Verifies the data-plane half of the `operative-state-persistence`
 # contract (see `docs/controller_state_persistence.md`): with a operative
 # running, plugins attached, and inputs flowing, the controller writes
-# WAL files under `app_data/state/<executor_id>/<operative_class>/...`
+# WAL files under `app_data/state/<runner_id>/<operative_class>/...`
 # and `flz state list <class>` surfaces the live segment.
 #
 # Out of scope (deliberately, see end-of-script PASS notes):
@@ -13,7 +13,7 @@
 #     dev setup, so a stop/start of the whole stack would intentionally
 #     leave us with "No operatives found" until someone re-issues
 #     `flz operative start`. The SDK-side `RestoreInitState` handshake
-#     does work for executor-only restarts; that flavor of test
+#     does work for runner-only restarts; that flavor of test
 #     belongs next to `plugin_persistence.sh`.
 #   * `flz state rotate` and `flz state at` — these currently crash
 #     the BEAM in this dev setup (`:noconnection` after one call).
@@ -24,12 +24,12 @@
 #     dev stack a developer might already have running
 #   * uses `docker/dev/docker-compose.yml` plus a small testing-only
 #     overlay (`docker-compose.testing.yml`) that adds `stdin_open: true`
-#     to the rust service so the executor's `std_keeper` doesn't EOF
+#     to the rust service so the runner's `std_keeper` doesn't EOF
 #   * starts the BEAM by `docker compose exec -d controller bash -c
 #     '... mix run --no-halt'`, with explicit `-name`/`-setcookie`
 #     ERL_FLAGS so `flz` (which shells out to `flzvm rpc`) can reach
 #     the running BEAM via Erlang distribution
-#   * pulls executor_id from the UDS socket name in `app_data/sockets/`
+#   * pulls runner_id from the UDS socket name in `app_data/sockets/`
 #
 # Usage:
 #   test/scripts/state_persistence.sh
@@ -41,8 +41,8 @@
 #   FLEZHA_KEEP_STACK=1    leave compose stack up post-mortem
 #   OPERATIVE_CLASS            operative class on disk (default: store_input,
 #                          matching `StoreInputRelay::factory_id()` in
-#                          `test/apps/rust_executor/src/main.rs`)
-#   FLEZHA_DEMO_NAMESPACE  namespace for the rust executor (default: default)
+#                          `test/apps/rust_runner/src/main.rs`)
+#   FLEZHA_DEMO_NAMESPACE  namespace for the rust runner (default: default)
 #   INPUT_WAIT_S           seconds to let testnet drive inputs into
 #                          the operative before assertions (default 8)
 
@@ -74,7 +74,7 @@ cd "${REPO_ROOT}/docker/dev"
 
 # `docker/dev/docker-compose.yml` pins hardcoded container_name values
 # (flezha_controller_dev, flezha_zookeeper, flezha_kafka, flezha_kafka_ui,
-# flezha_rust_executor). Those names are global on the Docker daemon —
+# flezha_rust_runner). Those names are global on the Docker daemon —
 # `docker compose down` only removes containers labelled with this
 # script's project name, so a leftover from a previous interrupted run
 # (or from a parallel project name) collides on `up` with
@@ -85,7 +85,7 @@ KNOWN_CONTAINER_NAMES=(
   flezha_zookeeper
   flezha_kafka
   flezha_kafka_ui
-  flezha_rust_executor
+  flezha_rust_runner
 )
 
 force_remove_known_containers() {
@@ -96,7 +96,7 @@ force_remove_known_containers() {
 
 # Stale UDS socket files from a previous interrupted run linger on
 # the host bind-mount (`app_data/sockets/`). The rust container's
-# wait-loop watches for `executor_control_channel.sock` to exist and
+# wait-loop watches for `runner_control_channel.sock` to exist and
 # would race straight past it on next boot — exiting wait-loop before
 # our `fix_volume_permissions` runs, then crashing on cargo
 # permission errors. Wipe sockets pre-flight (per CLAUDE.md memory:
@@ -117,8 +117,8 @@ clean_persisted_state() {
 # but the toolchain image runs services as `flezha` (uid 1000, see
 # `docker/dev/Dockerfile.toolchain`). Without chown'ing them, both
 # `mix run` and `cargo run` fail with `Permission denied` inside
-# their respective containers — symptom: rust executor hangs the
-# script at "waiting for initial executor handshake" while logging
+# their respective containers — symptom: rust runner hangs the
+# script at "waiting for initial runner handshake" while logging
 #   error: failed to create directory `/flezha/target/debug`
 #   Caused by: Permission denied (os error 13)
 # The healing compose handles this implicitly in its `command:` block;
@@ -129,7 +129,7 @@ fix_volume_permissions() {
   local deadline=$(( $(date +%s) + 30 ))
   while [ "$(date +%s)" -lt "${deadline}" ]; do
     [ "$(docker inspect -f '{{.State.Status}}' flezha_controller_dev 2>/dev/null)" = "running" ] \
-      && [ "$(docker inspect -f '{{.State.Status}}' flezha_rust_executor 2>/dev/null)" = "running" ] \
+      && [ "$(docker inspect -f '{{.State.Status}}' flezha_rust_runner 2>/dev/null)" = "running" ] \
       && break
     sleep 1
   done
@@ -146,12 +146,12 @@ fix_volume_permissions() {
   ' || {
     echo "[state_persistence] WARN: chown via controller failed (state=$(docker inspect -f '{{.State.Status}}' flezha_controller_dev 2>/dev/null))" >&2
   }
-  docker exec -u 0 flezha_rust_executor sh -c '
+  docker exec -u 0 flezha_rust_runner sh -c '
     chown -R 1000:1000 /flezha/target 2>/dev/null
     chown -R 1000:1000 /socket_data 2>/dev/null
     true
   ' || {
-    echo "[state_persistence] WARN: chown via rust failed (state=$(docker inspect -f '{{.State.Status}}' flezha_rust_executor 2>/dev/null))" >&2
+    echo "[state_persistence] WARN: chown via rust failed (state=$(docker inspect -f '{{.State.Status}}' flezha_rust_runner 2>/dev/null))" >&2
   }
 }
 
@@ -159,10 +159,10 @@ fix_volume_permissions() {
 # permission error). Keeps the script from sitting on a 300s timeout.
 assert_rust_running() {
   local state
-  state="$(docker inspect -f '{{.State.Status}}' flezha_rust_executor 2>/dev/null || echo missing)"
+  state="$(docker inspect -f '{{.State.Status}}' flezha_rust_runner 2>/dev/null || echo missing)"
   if [ "${state}" != "running" ]; then
     echo "[state_persistence] FAIL: rust container is not running (state=${state})" >&2
-    docker logs --tail=80 flezha_rust_executor 2>&1 | sed 's/^/  rust> /' >&2 || true
+    docker logs --tail=80 flezha_rust_runner 2>&1 | sed 's/^/  rust> /' >&2 || true
     exit 1
   fi
 }
@@ -198,7 +198,7 @@ controller_sh() {
 
 SOCKETS_DIR="${REPO_ROOT}/app_data/sockets"
 STATE_DIR="${REPO_ROOT}/app_data/state"
-CONTROL_SOCKET="${SOCKETS_DIR}/executor_control_channel.sock"
+CONTROL_SOCKET="${SOCKETS_DIR}/runner_control_channel.sock"
 
 # The regular dev compose does NOT auto-start the BEAM — its controller
 # service just keeps the container alive (see `pgrep -f 'beam.smp\|tail'`
@@ -302,13 +302,13 @@ wait_for_any_ce_id() {
     local now
     now="$(date +%s)"
     if [ $(( now - last_diag )) -ge 30 ]; then
-      echo "[state_persistence] still waiting for handshake (rust last log line: $(docker logs --tail=1 flezha_rust_executor 2>&1 | tr -d '\r' | tail -1))" >&2
+      echo "[state_persistence] still waiting for handshake (rust last log line: $(docker logs --tail=1 flezha_rust_runner 2>&1 | tr -d '\r' | tail -1))" >&2
       last_diag="${now}"
     fi
     sleep 5
   done
-  echo "[state_persistence] timed out waiting for executor_id" >&2
-  docker logs --tail=80 flezha_rust_executor 2>&1 | sed 's/^/  rust> /' >&2 || true
+  echo "[state_persistence] timed out waiting for runner_id" >&2
+  docker logs --tail=80 flezha_rust_runner 2>&1 | sed 's/^/  rust> /' >&2 || true
   return 1
 }
 
@@ -325,8 +325,8 @@ wait_for_new_ce_id() {
     fi
     sleep 5
   done
-  echo "[state_persistence] timed out waiting for fresh executor_id (last: '${current}')" >&2
-  docker logs --tail=80 flezha_rust_executor 2>&1 | sed 's/^/  rust> /' >&2 || true
+  echo "[state_persistence] timed out waiting for fresh runner_id (last: '${current}')" >&2
+  docker logs --tail=80 flezha_rust_runner 2>&1 | sed 's/^/  rust> /' >&2 || true
   return 1
 }
 
@@ -375,7 +375,7 @@ assert_state_segments_present() {
 
 # Pick a segment path "operative_class/operation_id/segment_key" off the
 # host filesystem so the time-travel assertion has a concrete target,
-# regardless of which executor_id the rust container is running under.
+# regardless of which runner_id the rust container is running under.
 discover_segment_path() {
   local rel
   rel="$(find "${STATE_DIR}" -maxdepth 4 -type f \( -name '*.wal' -o -name '*.snap.*' \) 2>/dev/null \
@@ -425,9 +425,9 @@ docker network inspect flezha_network >/dev/null 2>&1 \
 
 start_beam
 
-note "waiting for initial executor handshake"
+note "waiting for initial runner handshake"
 INITIAL_CE_ID="$(wait_for_any_ce_id)"
-note "initial executor_id: ${INITIAL_CE_ID}"
+note "initial runner_id: ${INITIAL_CE_ID}"
 
 # --- Phase 1: start operative + attach plugins --------------------------------
 
@@ -518,9 +518,9 @@ note "  * This script verifies the data-plane WAL is being written"
 note "    and that 'flz state list <class>' surfaces the live segment."
 note "  * It does NOT exercise a controller-side BEAM restart. As of"
 note "    today the controller does not auto-recreate operatives after"
-note "    its own BEAM restarts (only SDK/executor restarts trigger"
+note "    its own BEAM restarts (only SDK/runner restarts trigger"
 note "    the SDK-side RestoreInitState handshake while the controller"
-note "    stays up). Follow-up testing of executor-only restart"
+note "    stays up). Follow-up testing of runner-only restart"
 note "    belongs alongside test/scripts/plugin_persistence.sh."
 note "  * 'flz state rotate' and 'flz state at' are NOT exercised"
 note "    here because they currently crash the BEAM in this dev"

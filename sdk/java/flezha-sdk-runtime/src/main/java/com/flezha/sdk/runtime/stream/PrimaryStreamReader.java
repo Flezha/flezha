@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.stream;
 
 import com.flezha.sdk.channel.ChannelKind;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
@@ -57,11 +57,11 @@ public final class PrimaryStreamReader {
         }
     }
 
-    private final ExecutorContext ctx;
+    private final RunnerContext ctx;
     private final long streamId;
     private final FrameParser parser = new FrameParser();
 
-    public PrimaryStreamReader(@Nonnull ExecutorContext ctx, long streamId) {
+    public PrimaryStreamReader(@Nonnull RunnerContext ctx, long streamId) {
         this.ctx = ctx;
         this.streamId = streamId;
     }

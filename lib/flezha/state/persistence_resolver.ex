@@ -3,7 +3,7 @@ defmodule Flezha.State.PersistenceResolver do
   Resolves per-Operative persistence configuration from three sources, in
   order of precedence:
 
-    1. Executor runtime override:
+    1. Runner runtime override:
        `Application.get_env(:flezha, <key>) :: %{<OperativeClass> => value}`
     2. Per-instance metadata shipped with `AddOperative`
        (passed in as the `metadata` argument).

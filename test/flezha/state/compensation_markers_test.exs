@@ -10,7 +10,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
 
   import Mimic
 
-  alias Flezha.Executor.{ControlChannel, StreamChannel}
+  alias Flezha.Runner.{ControlChannel, StreamChannel}
   alias Flezha.Operative.Overwatch
   alias Flezha.State.{Registry, TestHelpers, Wire}
 

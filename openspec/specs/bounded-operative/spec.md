@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The bounded-operative capability is the contract for the **Bounded Operative** kind — the operative that runs once to completion and finishes (formerly "Task"). It defines the `BoundedOperative` authoring surface (a single run-once `run(ctx, args)` with no channels, segment keys, or per-segment state), the `register_bounded` entrypoint sibling to `register_unbounded`, the bounded-kind spawn path through one sealed per-executor operative registry, and the terminal `BoundedCompleted` control message that drives standard teardown with no retry and no convergence action. Behaviour is identical to the former task kind; only the contract's names change. Because the bounded kind does not declare `persistent_state?`, per-Segment state queries against a bounded operative are rejected through the kind-unsupported gate. Duration bounds, self/external stop, internal loops, and retry/replay are out of scope.
+The bounded-operative capability is the contract for the **Bounded Operative** kind — the operative that runs once to completion and finishes (formerly "Task"). It defines the `BoundedOperative` authoring surface (a single run-once `run(ctx, args)` with no channels, segment keys, or per-segment state), the `register_bounded` entrypoint sibling to `register_unbounded`, the bounded-kind spawn path through one sealed per-runner operative registry, and the terminal `BoundedCompleted` control message that drives standard teardown with no retry and no convergence action. Behaviour is identical to the former task kind; only the contract's names change. Because the bounded kind does not declare `persistent_state?`, per-Segment state queries against a bounded operative are rejected through the kind-unsupported gate. Duration bounds, self/external stop, internal loops, and retry/replay are out of scope.
 ## Requirements
 ### Requirement: A bounded operative is authored with a distinct run-once trait
 
@@ -10,7 +10,7 @@ The SDK SHALL expose a `BoundedOperative` authoring surface distinct from the un
 
 #### Scenario: A registered bounded operative is spawnable by factory id
 
-- **WHEN** a bounded class is registered with the SDK before the executor starts
+- **WHEN** a bounded class is registered with the SDK before the runner starts
 - **THEN** its `factory_id` SHALL be resolvable, and an `AddOperative` naming that `factory_id` with the bounded kind SHALL spawn a bounded instance
 
 #### Scenario: The bounded trait scales from `run` to operations
@@ -20,7 +20,7 @@ The SDK SHALL expose a `BoundedOperative` authoring surface distinct from the un
 
 ### Requirement: Starting an operative with the bounded kind spawns a bounded instance
 
-When the Controller issues `AddOperative` with `kind` resolving to `:bounded`, the SDK SHALL spawn a **bounded** instance for the named `factory_id`; when `kind` resolves to `:unbounded` (the default), it SHALL spawn an unbounded instance. The two variants SHALL be held in one sealed per-executor operative registry whose entry is resolved once per inbound frame at the routing boundary. Spawning SHALL be idempotent on a duplicate instance id.
+When the Controller issues `AddOperative` with `kind` resolving to `:bounded`, the SDK SHALL spawn a **bounded** instance for the named `factory_id`; when `kind` resolves to `:unbounded` (the default), it SHALL spawn an unbounded instance. The two variants SHALL be held in one sealed per-runner operative registry whose entry is resolved once per inbound frame at the routing boundary. Spawning SHALL be idempotent on a duplicate instance id.
 
 #### Scenario: Bounded kind spawns a bounded instance
 

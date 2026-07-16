@@ -6,11 +6,11 @@ Defines the Java SDK for Flezha compute engines: the public API, protocol layer,
 ## Requirements
 ### Requirement: Java SDK Entry Point
 
-The Java SDK SHALL provide `com.flezha.sdk.Flezha.newInstance(String namespace)` as the single entry point for starting a Flezha compute engine. The call MUST connect to the agent's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2, wait for `AssignExecutorId`, and return a handle exposing `getId()` and `getOperatives()` (where `getOperatives()` returns a snapshot of currently-spawned Operative instances keyed by what the wire calls `operative_id` — see the `Operative Registration` requirement below for naming).
+The Java SDK SHALL provide `com.flezha.sdk.Flezha.newInstance(String namespace)` as the single entry point for starting a Flezha compute engine. The call MUST connect to the agent's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2, wait for `AssignRunnerId`, and return a handle exposing `getId()` and `getOperatives()` (where `getOperatives()` returns a snapshot of currently-spawned Operative instances keyed by what the wire calls `operative_id` — see the `Operative Registration` requirement below for naming).
 
 #### Scenario: Successful connection returns an assigned id
 - **WHEN** an SDK user calls `Flezha.newInstance("my_app")` with the agent running and at least one Operative class registered
-- **THEN** the call blocks until the agent responds with `AssignExecutorId`, and the returned handle's `getId()` returns the assigned id (non-null, non-empty)
+- **THEN** the call blocks until the agent responds with `AssignRunnerId`, and the returned handle's `getId()` returns the assigned id (non-null, non-empty)
 
 #### Scenario: Agent unavailable triggers exponential backoff retries
 - **WHEN** an SDK user calls `Flezha.newInstance("my_app")` and the agent's control socket is not yet listening
@@ -156,9 +156,9 @@ The Java SDK's worker pool (sized by `FLEZHA_WORKER_POOL_SIZE`, default = `Runti
 
 ### Requirement: Command Dispatch
 
-The Java SDK SHALL implement handlers for every `CommandRequest` variant defined in `executor_commands.proto` that the Rust SDK handles, including `AssignExecutorId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `SegmentState`, `MigrationSerialization`, `MigrationDeserialization`, `OperationMessage`, `ExecutorDisconnect`, `RestoreInitState`, `CompactSegment`, `SegmentMailboxStatus`, `Ping`, `BoundedStop`, `CreditWindowInit`, `CreditGrant`, `ParkPayloadAck`, `OpCommitResponse` (tag 29), and `IterCommitResponse` (tag 31). Each handler MUST produce a `CommandResponse` that echoes the original `reference_id` and sets `status = "success"` or `status = "error"` with populated `errors` per `docs/sdk_protocol_spec.md` §6.
+The Java SDK SHALL implement handlers for every `CommandRequest` variant defined in `runner_commands.proto` that the Rust SDK handles, including `AssignRunnerId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `SegmentState`, `MigrationSerialization`, `MigrationDeserialization`, `OperationMessage`, `RunnerDisconnect`, `RestoreInitState`, `CompactSegment`, `SegmentMailboxStatus`, `Ping`, `BoundedStop`, `CreditWindowInit`, `CreditGrant`, `ParkPayloadAck`, `OpCommitResponse` (tag 29), and `IterCommitResponse` (tag 31). Each handler MUST produce a `CommandResponse` that echoes the original `reference_id` and sets `status = "success"` or `status = "error"` with populated `errors` per `docs/sdk_protocol_spec.md` §6.
 
-The SDK SHALL originate the executor→controller commands `ExecutorShutdownNotification`, `BoundedCompleted`, `OpCommit` (tag 28), `IterCommit` (tag 30), and `IterPark` (tag 32).
+The SDK SHALL originate the runner→controller commands `RunnerShutdownNotification`, `BoundedCompleted`, `OpCommit` (tag 28), `IterCommit` (tag 30), and `IterPark` (tag 32).
 
 `AddOperative` SHALL read the optional `kind` field: an empty or absent value SHALL be interpreted as `:unbounded`; a value resolving to `:bounded` SHALL spawn a `BoundedOperativeInstance`. `RemOperative` SHALL remove either variant by instance id.
 
@@ -200,8 +200,8 @@ The SDK SHALL originate the executor→controller commands `ExecutorShutdownNoti
 - **WHEN** a registered class declares no tier, no correction window, no checkpoint ack, and is unbounded
 - **THEN** the response `metadata` SHALL be empty, and the controller SHALL treat the class exactly as it did before this change
 
-#### Scenario: ExecutorDisconnect halts the reconnect loop
-- **WHEN** the agent sends `ExecutorDisconnect{}`
+#### Scenario: RunnerDisconnect halts the reconnect loop
+- **WHEN** the agent sends `RunnerDisconnect{}`
 - **THEN** the SDK SHALL set status to `Stopped`, respond with `status = "success"`, close all sockets, and NOT attempt to reconnect
 
 ### Requirement: Binary Framing and Metadata Codec
@@ -222,9 +222,9 @@ The Java SDK SHALL implement a frame codec that produces and parses the binary f
 
 ### Requirement: Protobuf Codec
 
-The Java SDK SHALL use `protobuf-java` to encode `CommandResponse` and decode `CommandRequest` messages generated from the existing `executor_commands.proto` (no new proto definitions, no hand-written wire-format code).
+The Java SDK SHALL use `protobuf-java` to encode `CommandResponse` and decode `CommandRequest` messages generated from the existing `runner_commands.proto` (no new proto definitions, no hand-written wire-format code).
 
-#### Scenario: Encoding AssignExecutorId response matches protocol
+#### Scenario: Encoding AssignRunnerId response matches protocol
 - **WHEN** the SDK encodes `CommandResponse{reference_id:"#Ref<0.1.2.3>", status:"success"}`
 - **THEN** the produced bytes SHALL be valid protobuf decodable by the Elixir agent's `CommandResponse` parser
 
@@ -238,7 +238,7 @@ The Java SDK SHALL honor the `FLEZHA_TRANSPORT` environment variable (`uds` or `
 
 #### Scenario: Default transport is UDS
 - **WHEN** `FLEZHA_TRANSPORT` is unset and `Flezha.newInstance(...)` is called
-- **THEN** the SDK SHALL connect to `{FLEZHA_SOCKET_FILES_PATH or app_data/sockets}/executor_control_channel.sock`
+- **THEN** the SDK SHALL connect to `{FLEZHA_SOCKET_FILES_PATH or app_data/sockets}/runner_control_channel.sock`
 
 #### Scenario: QUIC transport uses configured address and cert paths
 - **WHEN** `FLEZHA_TRANSPORT=quic` and `FLEZHA_QUIC_ADDRESS=127.0.0.1:4433`
@@ -246,19 +246,19 @@ The Java SDK SHALL honor the `FLEZHA_TRANSPORT` environment variable (`uds` or `
 
 ### Requirement: Auto-Reconnect on Unexpected Disconnect
 
-The Java SDK SHALL distinguish intentional disconnects (`ExecutorDisconnect` command handled → status `Stopped`) from unexpected ones (BrokenPipe / UnexpectedEof / ConnectionReset / QUIC connection lost). On an unexpected disconnect the SDK MUST clear `io_streams`, the live operative registry, and work queues; reset `executor_id` to `undefined`; and reconnect with exponential backoff (200 ms, 400 ms, 800 ms, …, capped at 30 s) per `docs/sdk_protocol_spec.md` §5 "Auto-Reconnection".
+The Java SDK SHALL distinguish intentional disconnects (`RunnerDisconnect` command handled → status `Stopped`) from unexpected ones (BrokenPipe / UnexpectedEof / ConnectionReset / QUIC connection lost). On an unexpected disconnect the SDK MUST clear `io_streams`, the live operative registry, and work queues; reset `runner_id` to `undefined`; and reconnect with exponential backoff (200 ms, 400 ms, 800 ms, …, capped at 30 s) per `docs/sdk_protocol_spec.md` §5 "Auto-Reconnection".
 
 #### Scenario: Agent crash triggers reconnect
 - **WHEN** the agent process is killed while the SDK has status `Running`
-- **THEN** the SDK SHALL detect the disconnect via the native layer, clear local state, and reconnect once the agent is available again, receiving a fresh `executor_id`
+- **THEN** the SDK SHALL detect the disconnect via the native layer, clear local state, and reconnect once the agent is available again, receiving a fresh `runner_id`
 
 #### Scenario: Intentional disconnect does not reconnect
-- **WHEN** the SDK receives `ExecutorDisconnect{}` and responds successfully
+- **WHEN** the SDK receives `RunnerDisconnect{}` and responds successfully
 - **THEN** the SDK SHALL close its sockets and NOT attempt any reconnection
 
 ### Requirement: Worker Pool and Dispatch Throughput Floor
 
-The Java SDK SHALL operate on a single shared bounded executor sized by `FLEZHA_WORKER_POOL_SIZE` (default = `Runtime.availableOperatives()`), draining all `SegmentSlot` mailboxes work-steal-style. The SDK SHALL sustain at least the throughput floor (in messages/second) measured against the v1 implementation at merge time on the regression bench (`100 operatives × 1 operation × 1 segment × 10K msg`, no-op Operation, UDS transport, default worker-pool size; see `operative-mvp-java/design.md` Decision 7) invoked via `mix bench --runtime java --shape regression -n 100 -m 10000`. The bench-regression-java CI job is informational in v1; the literal floor value is recorded in this requirement once `mix bench --runtime java` has been measured 3× on the reference host (median, rounded down to a clean number) — until then the recorded floor is "TBD pending v1 measurement".
+The Java SDK SHALL operate on a single shared bounded runner sized by `FLEZHA_WORKER_POOL_SIZE` (default = `Runtime.availableOperatives()`), draining all `SegmentSlot` mailboxes work-steal-style. The SDK SHALL sustain at least the throughput floor (in messages/second) measured against the v1 implementation at merge time on the regression bench (`100 operatives × 1 operation × 1 segment × 10K msg`, no-op Operation, UDS transport, default worker-pool size; see `operative-mvp-java/design.md` Decision 7) invoked via `mix bench --runtime java --shape regression -n 100 -m 10000`. The bench-regression-java CI job is informational in v1; the literal floor value is recorded in this requirement once `mix bench --runtime java` has been measured 3× on the reference host (median, rounded down to a clean number) — until then the recorded floor is "TBD pending v1 measurement".
 
 #### Scenario: Reference bench meets the Java throughput floor
 - **WHEN** a developer runs `MIX_ENV=prod mix bench --runtime java --shape regression -n 100 -m 10000` on a modern 8-core x86_64 laptop with a warm JVM (≥ 30 s warmup)
@@ -379,30 +379,30 @@ The Java SDK's `Operation` interface SHALL declare `Clock extends com.flezha.sdk
 
 The Java SDK's `UnboundedOperative` interface SHALL declare `default boolean persistenceEnabled() { return true; }`. The runtime SHALL resolve a per-Operative-instance `persistenceEnabled: boolean` at the moment `AddOperative` is processed using:
 
-1. If the `AddOperative` metadata carries `operative_persistence.<OperativeClass>` with a boolean value (executor override), use that.
+1. If the `AddOperative` metadata carries `operative_persistence.<OperativeClass>` with a boolean value (runner override), use that.
 2. Otherwise, use the value of `UnboundedOperative.persistenceEnabled()` (the Operative-class default).
 3. If neither is overridden, the result is `true`.
 
-The resolved value SHALL be bound to the `UnboundedOperativeInstance` and SHALL be propagated to every `SegmentSlot` constructed for that instance. Subsequent changes to the executor-side metadata or to the SDK's `UnboundedOperative.persistenceEnabled()` impl (via SDK redeploy) SHALL NOT affect already-running instances.
+The resolved value SHALL be bound to the `UnboundedOperativeInstance` and SHALL be propagated to every `SegmentSlot` constructed for that instance. Subsequent changes to the runner-side metadata or to the SDK's `UnboundedOperative.persistenceEnabled()` impl (via SDK redeploy) SHALL NOT affect already-running instances.
 
 #### Scenario: Default-on with no override
 
-- **WHEN** an Operative's `persistenceEnabled()` is the default (returns `true`) AND no executor override is present
+- **WHEN** an Operative's `persistenceEnabled()` is the default (returns `true`) AND no runner override is present
 - **THEN** `UnboundedOperativeInstance.persistenceEnabled()` SHALL return `true`
 
 #### Scenario: Code-declared opt-out is honored
 
-- **WHEN** `MarketOperative.persistenceEnabled()` returns `false` (user override) AND no executor override is present
+- **WHEN** `MarketOperative.persistenceEnabled()` returns `false` (user override) AND no runner override is present
 - **THEN** `UnboundedOperativeInstance.persistenceEnabled()` SHALL return `false`; the `SegmentFlusher` SHALL drain-and-discard for this instance's Segments; `NativeTransport.sendSegmentStateChange` SHALL NOT be invoked
 
-#### Scenario: Executor override takes precedence
+#### Scenario: Runner override takes precedence
 
 - **WHEN** `MarketOperative.persistenceEnabled()` returns `true` AND `AddOperative` metadata sets `operative_persistence.MarketOperative = false`
 - **THEN** `UnboundedOperativeInstance.persistenceEnabled()` SHALL return `false`
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** an `UnboundedOperativeInstance` is constructed with resolved `persistenceEnabled = true`, AND a subsequent executor config change sets `operative_persistence.<OperativeClass> = false`
+- **WHEN** an `UnboundedOperativeInstance` is constructed with resolved `persistenceEnabled = true`, AND a subsequent runner config change sets `operative_persistence.<OperativeClass> = false`
 - **THEN** the running `UnboundedOperativeInstance` SHALL continue with `persistenceEnabled = true`; the new value SHALL take effect only on the next `stop_operative` + `start_operative` cycle for that instance
 
 ### Requirement: initState accepts optional restoration payload
@@ -554,19 +554,19 @@ The Java SDK SHALL register command handlers for `RestoreInitState`, `CompactSeg
 
 ### Requirement: Public Java SDK handler classes use canonical Operative vocabulary
 
-The Java SDK SHALL expose handler classes whose names use canonical vocabulary: `AddOperativeHandler`, `RemOperativeHandler`, `OperationMessageHandler`, `SegmentStateHandler`, `SegmentApplyStateHandler`. Classes previously named `AddProcessorHandler`, `RemProcessorHandler`, `ProcessorMessageHandler`, `ProcessorStateHandler`, `ProcessorApplyStateHandler` SHALL NOT be present in the published API. Java packages SHALL likewise migrate any package-path components that contained `processor`, `operator`, `agent`, or `compute_engine` to the canonical replacements (`operative`, `executor`, `controller`). `FleetManager`-equivalent classes keep their names.
+The Java SDK SHALL expose handler classes whose names use canonical vocabulary: `AddOperativeHandler`, `RemOperativeHandler`, `OperationMessageHandler`, `SegmentStateHandler`, `SegmentApplyStateHandler`. Classes previously named `AddProcessorHandler`, `RemProcessorHandler`, `ProcessorMessageHandler`, `ProcessorStateHandler`, `ProcessorApplyStateHandler` SHALL NOT be present in the published API. Java packages SHALL likewise migrate any package-path components that contained `processor`, `operator`, `agent`, or `compute_engine` to the canonical replacements (`operative`, `runner`, `controller`). `FleetManager`-equivalent classes keep their names.
 
 #### Scenario: Old handler classes do not exist
 - **WHEN** a downstream Java consumer imports `com.flezha.sdk.handlers.AddProcessorHandler`
 - **THEN** the import MUST fail to compile (class not found); the consumer MUST migrate to `com.flezha.sdk.handlers.AddOperativeHandler`
 
 #### Scenario: New handlers wire into dispatch
-- **WHEN** a Java SDK Executor receives an `AddOperative` protobuf command from the Controller
+- **WHEN** a Java SDK Runner receives an `AddOperative` protobuf command from the Controller
 - **THEN** dispatch MUST route the message to `AddOperativeHandler.handle(...)` with the protobuf `operative_id` field exposed under the same name (`getOperativeId()`)
 
 ### Requirement: Public Operative / Operation / Segment user-facing API names
 
-The Java SDK SHALL expose user-extensible base classes/interfaces under the canonical names `UnboundedOperative`, `Operation`, `Segment`, and `Channel`. The Executor process startup hook SHALL be `Executor.start(Config)` (or equivalent factory entry point); class names referring to the SDK process itself SHALL use `Executor` as the role term, not `ComputeEngine` or `Operator`.
+The Java SDK SHALL expose user-extensible base classes/interfaces under the canonical names `UnboundedOperative`, `Operation`, `Segment`, and `Channel`. The Runner process startup hook SHALL be `Runner.start(Config)` (or equivalent factory entry point); class names referring to the SDK process itself SHALL use `Runner` as the role term, not `ComputeEngine` or `Operator`.
 
 #### Scenario: User extends UnboundedOperative
 - **WHEN** a user-defined Operative class declares `extends UnboundedOperative`
@@ -676,7 +676,7 @@ On resume, the SDK SHALL read the journal state shipped on `RestoreInitState.op_
 
 #### Scenario: A committed op is skipped on resume, not re-run
 
-- **WHEN** a durable bounded class commits op A, then the executor is SIGKILLed, then the operative is rebound with a journal recording op A as committed
+- **WHEN** a durable bounded class commits op A, then the runner is SIGKILLed, then the operative is rebound with a journal recording op A as committed
 - **THEN** op A's `run` SHALL NOT be invoked again, and op B SHALL run seeded from op A's journaled handoff
 
 #### Scenario: A missing inter-op codec fails registration
@@ -820,15 +820,15 @@ The SDK SHALL declare the tree's leaf ops to the controller via the `leaf_ops` k
 
 ### Requirement: Java SDK data heartbeat reports dispatch progress
 
-The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK ships: `dispatches`, `blocked_parks`, and `credit_parked`. Reporting only `credit_parked` leaves the controller's `StallClassifier` unable to distinguish a live-but-wedged Java executor from a healthy idle one, so the omission is a liveness defect, not a cosmetic gap.
+The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK ships: `dispatches`, `blocked_parks`, and `credit_parked`. Reporting only `credit_parked` leaves the controller's `StallClassifier` unable to distinguish a live-but-wedged Java runner from a healthy idle one, so the omission is a liveness defect, not a cosmetic gap.
 
 #### Scenario: The heartbeat carries dispatch progress
 
-- **WHEN** a Java executor has dispatched 100 inputs since the previous heartbeat
+- **WHEN** a Java runner has dispatched 100 inputs since the previous heartbeat
 - **THEN** the next `data_heartbeat` frame's metadata SHALL carry a `dispatches` count reflecting that progress, alongside `blocked_parks` and `credit_parked`
 
-#### Scenario: A wedged Java executor is distinguishable from an idle one
+#### Scenario: A wedged Java runner is distinguishable from an idle one
 
-- **WHEN** a Java executor stops making dispatch progress while inputs continue to arrive
-- **THEN** the heartbeat's `dispatches` count SHALL stop advancing while the executor keeps sending heartbeats, giving the controller the signal it needs to localize the stall
+- **WHEN** a Java runner stops making dispatch progress while inputs continue to arrive
+- **THEN** the heartbeat's `dispatches` count SHALL stop advancing while the runner keeps sending heartbeats, giving the controller the signal it needs to localize the stall
 

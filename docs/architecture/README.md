@@ -1,8 +1,8 @@
 # Flezha architecture — the durable-compute kernel
 
-Flezha runs user-authored stateful compute across a fleet of executors, and mirrors every
-state change and every emitted output into a durable store on the controller. An executor is
-disposable: it holds state in memory, and the controller holds the truth. Kill an executor and
+Flezha runs user-authored stateful compute across a fleet of runners, and mirrors every
+state change and every emitted output into a durable store on the controller. A runner is
+disposable: it holds state in memory, and the controller holds the truth. Kill a runner and
 its work resumes elsewhere from the last durable point.
 
 This directory is the **architectural map** — the model, the invariants, and the diagrams. It
@@ -25,7 +25,7 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
   owns the durable store, routes input, decides where each operative runs, and heals the fleet.
   It scales horizontally — several controller nodes cluster over Erlang distribution, and a
   ProcessHub hub per namespace distributes operatives across them.
-- **Executor** — the SDK process (Rust or Java) where user code runs. Executors **dial the
+- **Runner** — the SDK process (Rust or Java) where user code runs. Runners **dial the
   controller**, never the reverse. They are disposable: state lives in memory, and the
   controller replicates it durably.
 - **Source adapter** — where input comes from (a websocket, a feed, an HTTP endpoint). A
@@ -66,7 +66,7 @@ Every diagram in this directory uses the same roles and colours.
 flowchart LR
     SO["🌐 Source<br/>pluggable adapter"]:::src
     C["🧠 Controller"]:::ctrl
-    E["⚙️ Executor"]:::exec
+    E["⚙️ Runner"]:::exec
     SI["📤 Sink<br/>pluggable adapter"]:::sink
     D[("💾 Durable store<br/>input log · WAL · journal · outbox")]:::store
     SO -->|"normal data flow"| C
@@ -81,7 +81,7 @@ flowchart LR
     classDef store fill:#e5e7eb,stroke:#374151,color:#111
 ```
 
-A dashed arrow is a recovery or restore path. 🌐 source · 🧠 controller · ⚙️ executor ·
+A dashed arrow is a recovery or restore path. 🌐 source · 🧠 controller · ⚙️ runner ·
 📤 sink · 💾 durable store.
 
 ---
@@ -100,10 +100,10 @@ flowchart TB
         WAL[("💾 Segment WAL<br/>+ snapshots")]:::store
         JRN[("💾 Op journal<br/>bounded step progress")]:::store
         OBX[("💾 Outbox cursor<br/>key + epoch")]:::store
-        REG["Registry — where each operative lives<br/>+ executor ownership"]:::ctrl
+        REG["Registry — where each operative lives<br/>+ runner ownership"]:::ctrl
     end
 
-    subgraph EXEC["⚙️ EXECUTOR — user code, state in memory"]
+    subgraph EXEC["⚙️ RUNNER — user code, state in memory"]
         direction TB
         OPV["Operative instance"]:::exec
         OPA["Operation A"]:::exec
@@ -121,7 +121,7 @@ flowchart TB
     SRC -->|"1 ingest"| INLOG
     INLOG -->|"2 input + offset — under source credit"| ROUTE
     ROUTE -->|"3 primary stream"| OPV
-    OPV -->|"4 state change + output — under executor credit"| ROUTE
+    OPV -->|"4 state change + output — under runner credit"| ROUTE
     ROUTE -->|"5 ONE atomic record, ONE fsync:<br/>state change + outputs + consumed offset"| WAL
     ROUTE -.->|"part of the same record"| OBX
     ROUTE -->|"6 op commit — bounded only"| JRN
@@ -138,7 +138,7 @@ flowchart TB
 ```
 
 **Read it as:** input is journaled durably (1–2) before it is forwarded, then routed to the
-executor (3). The executor sends back a state change and any outputs (4), under a byte credit
+runner (3). The runner sends back a state change and any outputs (4), under a byte credit
 it must hold. The controller writes state, outputs, and the consumed input offset as **one
 atomic record under one fsync** (5) — state and emitted effect can never tear apart. Bounded
 operatives additionally commit step progress to an op journal (6). Outputs reach the sink only
@@ -197,25 +197,25 @@ log and each segment recovers from its own consumed offset.
 
 **4. Output identity, and the epoch rule.** Replay-stable output identity is
 `(flz.segment, flz.seq, flz.key)`; the durable outbox identity adds `flz.epoch`. A crash
-retry, a re-drive, or an executor takeover **keeps** the epoch — sink-side dedup absorbs the
+retry, a re-drive, or a runner takeover **keeps** the epoch — sink-side dedup absorbs the
 repeat. Only a deliberate correction, an operator replay, or a bounded rewind **bumps** it, so
 the corrected output passes dedup and overwrites the stale row by natural key. See
 [`kernel.md`](kernel.md#the-epoch-rule).
 
-**5. One owner writes a segment's WAL.** Executor identity is two layers — a durable stable
+**5. One owner writes a segment's WAL.** Runner identity is two layers — a durable stable
 identity owned by the SDK, and a controller-minted session token per connection. Takeover is
 newest-wins, and it **unbinds the old session before binding the new one**. The session token
 rides every write and the WAL refuses one from a superseded session, so the owner pays no
 per-write cost and a stale writer can never realign the log onto its own lineage. See
 [`kernel.md`](kernel.md#ownership-and-fencing).
 
-**6. Flow control parks, it does not drop.** Executor→controller byte credit is minted on WAL
+**6. Flow control parks, it does not drop.** Runner→controller byte credit is minted on WAL
 **fsync** — durable drain, not append — so the un-fsynced buffer is hard-bounded by the window.
 A sender out of credit parks. Under the tier a second credit loop gates source ingestion on the
 minimum watermark across the operative's segments, so the slowest branch back-pressures the
-source instead of growing the input log to disk-full. The controller→executor direction is
+source instead of growing the input log to disk-full. The controller→runner direction is
 deliberately **not** credit: it drops the newest frame past 8 MiB, because parking there would
-freeze a controller serving thousands of operatives behind one dead executor. See
+freeze a controller serving thousands of operatives behind one dead runner. See
 [`kernel.md`](kernel.md#flow-control-the-three-loops).
 
 **7. The minimum watermark is the retention signal.** The controller tracks `min(consumed
@@ -251,7 +251,7 @@ flowchart TB
         A4["Service.HubManager<br/><i>one ProcessHub hub per namespace</i>"]:::ctrl
         A5["Observability.Supervisor"]:::ctrl
         A6["Shutdown.Coordinator"]:::ctrl
-        A7["Executor.FleetSupervisor · Executor.FleetManager"]:::ctrl
+        A7["Runner.FleetSupervisor · Runner.FleetManager"]:::ctrl
         A8["Cluster.Orchestrator<br/><i>before the transport, by design</i>"]:::ctrl
         A9["AuthZ.Supervisor"]:::ctrl
         A10["Transport.Server — one per transport (UDS, QUIC)"]:::ctrl
@@ -263,9 +263,9 @@ flowchart TB
     end
 
     subgraph PEROP["per operative instance"]
-        OW["Operative.Overwatch<br/>a ProcessHub child — binds an executor,<br/>owns plugins, ingests input, journals it"]:::exec
+        OW["Operative.Overwatch<br/>a ProcessHub child — binds a runner,<br/>owns plugins, ingests input, journals it"]:::exec
     end
-    subgraph PEREX["per executor session — a child of FleetSupervisor"]
+    subgraph PEREX["per runner session — a child of FleetSupervisor"]
         EX1["ControlUnit · ControlChannel"]:::exec
         EX2["StreamChannel × N — primary (0x01)"]:::exec
         EX3["StreamChannel × N — secondary (0x02)"]:::exec
@@ -284,33 +284,33 @@ flowchart TB
 ```
 
 `Flezha.Operative.Overwatch` is the per-operative-instance GenServer and the pivot of the whole
-control plane: it binds an executor, prepares and activates plugins, journals every inbound
+control plane: it binds a runner, prepares and activates plugins, journals every inbound
 input, and receives every output on its way to a sink. `Flezha.State.WalWriter` is the
 per-segment durable writer. `Flezha.Convergence.Loop` is the **only** self-healer; it runs
 `Intent → Probe → Diff → Planner → Heal` every 5 s and on declared events.
 
 Placement uses two independent hashes that must not be conflated: ProcessHub's consistent
 hashing picks which **controller node** hosts the Overwatch, and a rendezvous hash over the
-operative id picks which **executor** it binds to.
+operative id picks which **runner** it binds to.
 
 ---
 
 ## Connect, bind, declare
 
-An executor dials in, presents a **stable identity** that survives its own restarts, and the
+A runner dials in, presents a **stable identity** that survives its own restarts, and the
 controller mints a per-connection **session token**. Everything the controller keys on — stream
 routing, registry names, the WAL owner — is the session token; the stable identity is what makes
-a reconnect a *binding swap* rather than a new executor.
+a reconnect a *binding swap* rather than a new runner.
 
 ```mermaid
 sequenceDiagram
-    participant EX as ⚙️ Executor
+    participant EX as ⚙️ Runner
     participant CTRL as 🧠 Controller
     participant OW as 🧠 Overwatch (per operative)
 
     EX->>CTRL: dial + connect_control_channel<br/>{namespace, stable_id, factories}
     Note over CTRL: mint a session token for this connection<br/>if a prior session held this stable_id — unbind it FIRST, then bind the new one
-    CTRL->>EX: AssignExecutorId
+    CTRL->>EX: AssignRunnerId
     CTRL->>EX: ConnectSocket {sockets_count}
     EX->>CTRL: open data streams — primary 0x01 in, secondary 0x02 out
 
@@ -323,8 +323,8 @@ sequenceDiagram
     Note over OW,EX: only now does input flow
 ```
 
-Those five metadata keys are the complete set of SDK→controller declarations. An executor that
-declares nothing — a Java executor, or a plain unbounded class — sends an empty map and the
+Those five metadata keys are the complete set of SDK→controller declarations. A runner that
+declares nothing — a Java runner, or a plain unbounded class — sends an empty map and the
 controller keeps every default. Wire detail:
 [`../sdk_protocol_spec.md`](../sdk_protocol_spec.md).
 
@@ -374,8 +374,8 @@ flowchart TB
 ```
 
 The path triple `(operative_class, operation_id, segment_key)` uniquely identifies a segment's
-state. It does **not** include the executor id — an executor is an addressing concern, not a
-durability one, so a restarted executor pod inherits the state that was already on disk.
+state. It does **not** include the runner id — a runner is an addressing concern, not a
+durability one, so a restarted runner pod inherits the state that was already on disk.
 
 The op journal and the durable inbox ride the *same* WalWriter substrate as a segment, under
 two reserved segment keys (`_op_journal`, `_op_inbox`), which is why they sit at
@@ -392,14 +392,14 @@ Each failure class on the left is closed by exactly one mechanism on the right.
 flowchart LR
     subgraph RISK["What could go wrong"]
         direction TB
-        R1["executor crashes — in-memory state gone"]:::risk
+        R1["runner crashes — in-memory state gone"]:::risk
         R2["controller crashes — buffered changes not yet fsynced"]:::risk
         R3["output leaves before its state is durable"]:::risk
         R4["the same input is processed twice after a replay"]:::risk
         R5["the append buffer grows without bound under load"]:::risk
         R6["a poison payload freezes the watermark, or is silently dropped"]:::risk
         R7["a fresh controller zeroes a live segment with an empty restore"]:::risk
-        R8["a superseded executor realigns the WAL onto a stale lineage"]:::risk
+        R8["a superseded runner realigns the WAL onto a stale lineage"]:::risk
         R9["/healthz is green while the data plane is dead"]:::risk
         R10["a late input lands after the window it belongs to already closed"]:::risk
     end
@@ -438,9 +438,9 @@ the user's concern there. The effectively-once tier is what closes them.
 
 | Scenario | State loss | Output |
 | --- | --- | --- |
-| Graceful executor stop (SIGTERM / `disconnect()`) | none — the SDK ships final state | at-least-once |
-| Executor SIGKILL, default tier | best-effort — up to the async WAL lag | at-least-once |
-| Executor SIGKILL, effectively-once tier | none past the last fsync | effectively-once into a conforming sink |
+| Graceful runner stop (SIGTERM / `disconnect()`) | none — the SDK ships final state | at-least-once |
+| Runner SIGKILL, default tier | best-effort — up to the async WAL lag | at-least-once |
+| Runner SIGKILL, effectively-once tier | none past the last fsync | effectively-once into a conforming sink |
 | Controller graceful restart with a live peer | none — peer sync | at-least-once |
 | Controller recovery-mode restart, sole node | none — DETS replay | at-least-once |
 | Whole-cluster cold boot | recovered from DETS + the on-disk WAL | n/a |

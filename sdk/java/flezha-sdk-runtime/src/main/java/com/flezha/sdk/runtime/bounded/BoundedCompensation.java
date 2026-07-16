@@ -17,7 +17,7 @@ import java.util.List;
  * completion produces no records, so nothing is compensated.
  *
  * <p>The planner is <strong>pure</strong> so both rollback modes are testable
- * without driving the executor. v1 runs the structured chain as a single pass,
+ * without driving the runner. v1 runs the structured chain as a single pass,
  * so it always produces exactly one in-flight iteration and zero committed
  * iterations; the {@code committed} parameter and the keep-progress branch are
  * exercised by the unit tests and carry the structured-loop follow-up unchanged.

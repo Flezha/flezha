@@ -2,7 +2,7 @@ package com.flezha.sdk.runtime.control.handlers;
 
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.SegmentApplyState;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeStateSerializer;
@@ -16,7 +16,7 @@ import java.util.List;
 public final class SegmentApplyStateHandler implements CommandHandler {
 
     @Override
-    public byte[] handle(ExecutorContext ctx, CommandRequest request, List<String> errors) {
+    public byte[] handle(RunnerContext ctx, CommandRequest request, List<String> errors) {
         SegmentApplyState cmd = request.getSegmentApplyState();
         String operativeId = cmd.getOperativeId();
         byte[] stateBytes = cmd.getStateBinary().toByteArray();

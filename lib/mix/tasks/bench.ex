@@ -2,7 +2,7 @@ defmodule Mix.Tasks.Bench do
   use Mix.Task
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
 
   @shortdoc "Run performance tests for Flezha operatives"
   @moduledoc """
@@ -20,9 +20,9 @@ defmodule Mix.Tasks.Bench do
     * `--messages-per-operative` / `-m` - Number of messages to send per operative (default: 100)
     * `--runtime` / `-r` - Which SDK to benchmark: `rust` (default) or `java`.
       The `java` runtime requires the test jar at
-      `test/apps/java_executor/target/java_executor.jar`. Build it
+      `test/apps/java_runner/target/java_runner.jar`. Build it
       with `mix test.java_sdk` (builds host `flz_jni` + Maven) or
-      `mvn -f test/apps/java_executor/pom.xml package`.
+      `mvn -f test/apps/java_runner/pom.xml package`.
     * `--shape` - Bench shape: `regression` (default; the apples-to-apples
       regression check, factory `do_nothing`, dimensions from `-n` / `-m`),
       `segmenting` (the `operative-bench-harness` segmenting-stress shape, factory
@@ -33,7 +33,7 @@ defmodule Mix.Tasks.Bench do
       dimensions from `-n` / `-m`).
     * `--pool-sizes` - Comma-separated worker-pool sizes (default: `"1,8"`),
       only honored when `--shape segmenting`. Each value spawns a fresh
-      Rust executor binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
+      Rust runner binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
       reports throughput per-size; the final scaling summary is parsed by CI.
 
   ## Comparing SDKs
@@ -113,7 +113,7 @@ defmodule Mix.Tasks.Bench do
           setup_test_environment(2, [])
           @bench_namespace
 
-        executors_available?(@default_namespace) ->
+        runners_available?(@default_namespace) ->
           @default_namespace
 
         true ->
@@ -180,8 +180,8 @@ defmodule Mix.Tasks.Bench do
     end
   end
 
-  defp executors_available?(namespace) do
-    case FleetManager.active_executors(namespace) do
+  defp runners_available?(namespace) do
+    case FleetManager.active_runners(namespace) do
       engines when is_list(engines) and length(engines) > 0 -> true
       _ -> false
     end
@@ -190,11 +190,11 @@ defmodule Mix.Tasks.Bench do
   defp setup_test_environment(count, extra_env) do
     IO.puts("Setting up test environment with compute engines...")
 
-    executor_ids = start_executors(@bench_namespace, count, extra_env)
+    runner_ids = start_runners(@bench_namespace, count, extra_env)
 
-    IO.puts("Started #{length(executor_ids)} compute engines for performance testing")
+    IO.puts("Started #{length(runner_ids)} compute engines for performance testing")
 
-    Process.put(:bench_executors, executor_ids)
+    Process.put(:bench_runners, runner_ids)
   end
 
   defp cleanup_test_environment(namespace) do
@@ -202,10 +202,10 @@ defmodule Mix.Tasks.Bench do
 
     OperativeManager.stop_all_operatives(namespace)
 
-    case Process.get(:bench_executors) do
+    case Process.get(:bench_runners) do
       engines when is_list(engines) ->
         Enum.each(engines, fn engine_id ->
-          FleetManager.disconnect_executor(namespace, engine_id)
+          FleetManager.disconnect_runner(namespace, engine_id)
         end)
 
       _ ->
@@ -213,32 +213,32 @@ defmodule Mix.Tasks.Bench do
     end
 
     FleetManager.stop_namespace(namespace)
-    Process.delete(:bench_executors)
+    Process.delete(:bench_runners)
 
     IO.puts("Test environment cleanup completed")
   end
 
-  defp start_executors(namespace, count, extra_env) do
+  defp start_runners(namespace, count, extra_env) do
     {:ok, current_path} = :file.get_cwd()
     runtime = Process.get(:bench_runtime, :rust)
 
     for i <- 1..count do
       command = build_command(runtime, current_path, namespace)
 
-      Flezha.Service.EventManager.add_handler(:executor_connected_event)
+      Flezha.Service.EventManager.add_handler(:runner_connected_event)
 
       Flezha.Service.PortPilot.open_port(command, env: extra_env)
 
-      executor_id =
+      runner_id =
         receive do
-          {:executor_connected_event, {^namespace, id}} -> id
+          {:runner_connected_event, {^namespace, id}} -> id
         after
           5000 -> raise "Performance test compute engine #{i} failed to connect"
         end
 
-      Flezha.Service.EventManager.rem_handler(:executor_connected_event)
+      Flezha.Service.EventManager.rem_handler(:runner_connected_event)
 
-      executor_id
+      runner_id
     end
   end
 
@@ -301,22 +301,22 @@ defmodule Mix.Tasks.Bench do
 
   defp build_command(:rust, current_path, namespace) do
     candidates = [
-      "#{current_path}/target/release/rust_executor",
-      "#{current_path}/test/apps/rust_executor/target/release/rust_executor",
-      "#{current_path}/target/debug/rust_executor",
-      "#{current_path}/test/apps/rust_executor/target/debug/rust_executor"
+      "#{current_path}/target/release/rust_runner",
+      "#{current_path}/test/apps/rust_runner/target/release/rust_runner",
+      "#{current_path}/target/debug/rust_runner",
+      "#{current_path}/test/apps/rust_runner/target/debug/rust_runner"
     ]
 
     case Enum.find(candidates, &File.regular?/1) do
       nil ->
-        "cargo run --release --manifest-path=#{current_path}/test/apps/rust_executor/Cargo.toml --target-dir=./target -- #{namespace}"
+        "cargo run --release --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml --target-dir=./target -- #{namespace}"
 
       path ->
         if String.contains?(path, "/debug/") do
           IO.warn(
-            "mix bench is using the DEBUG Rust executor binary at #{path} — " <>
+            "mix bench is using the DEBUG Rust runner binary at #{path} — " <>
               "this is ~5× slower than release. Build with " <>
-              "`cargo build -p rust_executor --release` for representative numbers."
+              "`cargo build -p rust_runner --release` for representative numbers."
           )
         end
 
@@ -328,7 +328,7 @@ defmodule Mix.Tasks.Bench do
     jar_path =
       Path.join([
         current_path,
-        "test/apps/java_executor/target/java_executor.jar"
+        "test/apps/java_runner/target/java_runner.jar"
       ])
 
     if not File.exists?(jar_path) do
@@ -337,7 +337,7 @@ defmodule Mix.Tasks.Bench do
 
       Build it first with one of:
         mix test.java_sdk   # full pipeline: build flz_jni + Maven + run tests
-        mvn -f test/apps/java_executor/pom.xml package
+        mvn -f test/apps/java_runner/pom.xml package
 
       Then retry: mix bench --runtime java ...
       """

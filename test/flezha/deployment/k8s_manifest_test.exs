@@ -49,20 +49,20 @@ defmodule FlezhaTest.Deployment.K8sManifestTest do
       %{contents: File.read!(@configmap_path)}
     end
 
-    test "defines FLEZHA_EXECUTOR_KEEPALIVE as a positive integer string in milliseconds",
+    test "defines FLEZHA_RUNNER_KEEPALIVE as a positive integer string in milliseconds",
          %{contents: contents} do
-      keepalive_pattern = ~r/FLEZHA_EXECUTOR_KEEPALIVE:\s+"(\d+)"/
+      keepalive_pattern = ~r/FLEZHA_RUNNER_KEEPALIVE:\s+"(\d+)"/
 
       case Regex.run(keepalive_pattern, contents) do
         [_match, value_str] ->
           {value, ""} = Integer.parse(value_str)
 
           assert value > 0,
-                 "FLEZHA_EXECUTOR_KEEPALIVE must be a positive integer (got #{value_str})"
+                 "FLEZHA_RUNNER_KEEPALIVE must be a positive integer (got #{value_str})"
 
         nil ->
           flunk(
-            "missing FLEZHA_EXECUTOR_KEEPALIVE entry in configmap or value not quoted as a string"
+            "missing FLEZHA_RUNNER_KEEPALIVE entry in configmap or value not quoted as a string"
           )
       end
     end

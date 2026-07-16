@@ -2,7 +2,7 @@ package com.flezha.sdk.runtime.control.handlers;
 
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner;
 import com.flezha.sdk.runtime.bounded.BoundedSpec;
@@ -28,14 +28,14 @@ import org.slf4j.LoggerFactory;
  * needs to seed initial state.
  *
  * <p>Idempotent on reconnect: the controller re-issues {@code AddOperative} for
- * every operative still tagged to this executor's profile after a restart.
+ * every operative still tagged to this runner's profile after a restart.
  */
 public final class AddOperativeHandler implements CommandHandler {
 
     private static final Logger LOG = LoggerFactory.getLogger(AddOperativeHandler.class);
 
     @Override
-    public byte[] handle(ExecutorContext ctx, CommandRequest request, List<String> errors) {
+    public byte[] handle(RunnerContext ctx, CommandRequest request, List<String> errors) {
         AddOperative cmd = request.getAddOperative();
         String factoryId = cmd.getFactoryId();
         String operativeId = cmd.getOperativeId();

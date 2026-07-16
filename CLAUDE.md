@@ -23,7 +23,7 @@
   record), not the change codec.
 - **`Postcard.java`** is the ONE postcard implementation (extracted from
   `DlqPark`'s private encoder). **`AckRegistry.java`** is the ONE ack rendezvous
-  (`ExecutorShutdownAck`, `ParkPayloadAck`, `OpCommitResponse`,
+  (`RunnerShutdownAck`, `ParkPayloadAck`, `OpCommitResponse`,
   `IterCommitResponse`). Callers MUST register before sending — that ordering is
   what makes it race-free.
 - **`StableId`** is two longs, not `BigInteger`: the FNV prime is `2^88 + 0x13b`,
@@ -63,7 +63,7 @@
   per-op input routing — a fan-in must **accumulate** both producers' output, not
   overwrite.
 - **`data_heartbeat` now carries `dispatches` + `blocked_parks`** (was
-  `credit_parked` only). This was a LIVE operational gap: a wedged Java executor
+  `credit_parked` only). This was a LIVE operational gap: a wedged Java runner
   looked healthy to the controller's `StallClassifier`.
 
 ## Checkpoint ack-granularity (`effectively-once-checkpoint-granularity`)
@@ -230,7 +230,7 @@
   but share `plan_compensation` (the plan), `compensate_segment` (the effect) and
   `journal_undo` (the `compensated` record).
 - **Resume = rebind, not park**: `Overwatch.handle_call({:rewind, N})` → guard →
-  `append_rewound` → evict (`evict_executor/2`, extracted from `enter_suspended`)
+  `append_rewound` → evict (`evict_runner/2`, extracted from `enter_suspended`)
   → `rehydrate/1`. No `parked` entry, no wake timer.
 - **Coverage guard** (`rewind_guard/2`, controller-side, before anything durable
   changes): an unwound op that staged plugin output MUST declare `compensate`.
@@ -348,8 +348,8 @@
 - **Suspension**: SDK ships `IterPark` (tag 32) and exits WITHOUT
   `BoundedCompleted` (`RunOutcome::Parked`). Controller journals
   `parked(N[, deadline])` (type 4, ACTIVE) THEN
-  `Overwatch.suspend/3` → `RemOperative` + `operative_set_executor(nil)`;
-  Overwatch + registry entry STAY (zero *executor* resources).
+  `Overwatch.suspend/3` → `RemOperative` + `operative_set_runner(nil)`;
+  Overwatch + registry entry STAY (zero *runner* resources).
   `Convergence.Diff`/`Loop` skip `suspended?` (else they'd rebind it and
   undo the eviction). `flz operative info` → phase `suspended`.
 - **Rehydrate = bind**: `complete_init` always delivers the undelivered
@@ -458,7 +458,7 @@
 - **Java SDK**: AT PARITY (`java-sdk-parity`) — `OpCommit` handshake + journal-gated
   resume-skip. The e2e no longer branches per runtime.
 - **Tests**: `test/flezha/state/op_journal_test.exs`,
-  `test/flezha/executor/control_channel_op_commit_test.exs`, Rust
+  `test/flezha/runner/control_channel_op_commit_test.exs`, Rust
   `bounded_driver_scenarios` (gating + resume-skip + codec validation),
   e2e `test/system/bounded_crash_resume_e2e_test.exs` (op A NOT re-run on
   rust; opted-out `optout_commit_block` re-runs from top).
@@ -596,7 +596,7 @@
   `Outbox`, `PersistenceResolver`, `Supervisor`, `WalWriter`,
   `FsyncBatcher`, `Snapshot`, `Retention`, `Restore`, `TimeTravel`,
   `TestHelpers`.
-- **On-disk layout**: `app_data/state/{operative_class}/{operation_id}/{segment_key}.{wal,snap.{seq},outbox.dedup}` (flat — `executor_id` was dropped by `auto-restore-on-boot`; `Flezha.Boot.StatePathMigrator` handles upgrade migration).
+- **On-disk layout**: `app_data/state/{operative_class}/{operation_id}/{segment_key}.{wal,snap.{seq},outbox.dedup}` (flat — `runner_id` was dropped by `auto-restore-on-boot`; `Flezha.Boot.StatePathMigrator` handles upgrade migration).
 - **Wire payload-ids**: `segment_state_change`, `segment_state_snapshot`,
   `delete_segment_state` (data stream); `RestoreInitState`, `RestoreInitStateResponse`,
   `CompactSegment`, `CompactSegmentResponse`, `SegmentMailboxStatus`
@@ -624,13 +624,13 @@
 - **Snapshot baseline durability (`snapshot-baseline-durability`)**: the
   `Watchdog` sweep auto-triggers `CompactSegment` on WAL **size or age**
   (`[:flezha, :state, :compaction_trigger]`); a fresh controller with an
-  empty WAL for a live executor's Segment **pulls** a baseline
+  empty WAL for a live runner's Segment **pulls** a baseline
   (WalWriter awaiting-baseline sheds + one `CompactSegment`,
   `[:flezha, :state, :baseline_seed]`) instead of erroring; the resync
   path never pushes an empty `RestoreInitState`
   (`Restore.has_persisted_state?/1`, zero-byte WAL ≡ no state).
 - **Credit-grant flow control (`credit-grant-flow-control`)**:
-  executor→controller state-stream back-pressure is credit-based — the
+  runner→controller state-stream back-pressure is credit-based — the
   `StreamChannel` offers `CreditWindowInit` on the first state frame
   (per-Operative `:credit_window_bytes`, default `wal_high_watermark_bytes`;
   kill switch `FLEZHA_CREDIT_FLOW_CONTROL`), debits each frame's wire size,
@@ -678,7 +678,7 @@
   GenServer subscribed to `[:process_hub, :recovery, _]` telemetry.
   `HubManager.recovery_state/1` and `await_recovery_complete/1,2`
   expose the per-hub state machine; `Flezha.BootLoader.await_namespace_hubs/0`
-  and `Flezha.Executor.FleetManager.init/1` gate registry reads on it.
+  and `Flezha.Runner.FleetManager.init/1` gate registry reads on it.
 - **Boot CLI**: `flz boot status`, `flz boot await`,
   `flz boot import-legacy-snapshot` — implemented in `cli/src/boot.rs`
   / `Flezha.Service.CliManager.boot_*`. Cluster prepare-recovery:
@@ -757,21 +757,21 @@
   `kubernetes/prepare-recovery.sh` wraps
   `flz cluster prepare-recovery` for the operator-driven cold-boot
   workflow.
-- **Fresh-process executor takeover**: phase 5 of the change keeps
+- **Fresh-process runner takeover**: phase 5 of the change keeps
   the takeover on the same self-healing loop instead of bolting on
-  a parallel path. `FleetManager.handle_call(:executor_connect, ...)`
-  dispatches `:executor_connected_event` and returns; nothing else.
+  a parallel path. `FleetManager.handle_call(:runner_connect, ...)`
+  dispatches `:runner_connected_event` and returns; nothing else.
   `Flezha.Convergence.Health` subscribes to that event via
   `EventManager.add_handler/1` and runs an immediate tick. The
-  existing `:rebind_if_executor_available` action body — already
-  responsible for migrating operatives whose `bound_executor` is no
+  existing `:rebind_if_runner_available` action body — already
+  responsible for migrating operatives whose `bound_runner` is no
   longer active — flips the registry tag via
-  `HubManager.operative_set_executor/3` and seeds the new executor's
+  `HubManager.operative_set_runner/3` and seeds the new runner's
   pre-spawned `StreamChannel.operative_mapping` via
   `HubManager.hook_insert_pid/2` (the same fan-out the
   `child_registered` hook uses), then emits
-  `[:flezha, :executor, :reconnected_reassigned]` +
-  `[:flezha, :executor, :reconnected]` (mode: `:reassigned`,
+  `[:flezha, :runner, :reconnected_reassigned]` +
+  `[:flezha, :runner, :reconnected]` (mode: `:reassigned`,
   reason: `:convergence_rebind`) per reseated operative. The existing
   back-off (5s/30s/60s/300s) carries the retry semantics — a
   failed Overwatch migrate leaves the registry untouched and the
@@ -782,7 +782,7 @@
 - **Purpose**: localize a silent `io_in`/output stall to one layer.
   PURE instrumentation — zero data-plane behaviour change, no
   remediation. Closes the 22:14 candle incident's "which layer
-  wedged?" gap (BEAM channel vs NIF driver thread vs executor).
+  wedged?" gap (BEAM channel vs NIF driver thread vs runner).
 - **NIF driver self-report**: `flz_nif/src/driver_stats.rs` —
   `DriverStats{loop_iterations, last_loop_ms, cmd_queue_depth:
   AtomicU64; streams: Mutex<HashMap>}` shared `Arc` into the
@@ -805,7 +805,7 @@
 - **Stall classifier**: `lib/flezha/convergence/stall_classifier.ex`
   — pure `classify(current, prev, opts)` returning one of
   `driver_loop_frozen | nif_queue_backing_up | socket_write_blocked |
-  executor_not_consuming | channel_not_sending | operative_not_forwarding
+  runner_not_consuming | channel_not_sending | operative_not_forwarding
   | :ok` (deepest-wedged-layer-wins; each verdict has an "is it being
   fed?" advancing-delta precondition). `Convergence.Loop` builds the
   snapshot per tick and emits `[:flezha, :data_plane,
@@ -900,7 +900,7 @@
   `:telemetry_bridge_failures` plus a public ETS table used to
   de-dup "log once per unique error class".
 - **Bench**: `mix flezha.bench.observability [iterations]` boots
-  just the observability supervisor (no Controller / executors) and
+  just the observability supervisor (no Controller / runners) and
   reports nanoseconds per emit against zero sinks.
 - **Detailed notes**: `docs/observability_foundation.md`.
 
@@ -1055,7 +1055,7 @@
   one-shot namespace migration in `Flezha.Boot.StatePathMigrator`.
 - **Policy point**: `Flezha.AuthZ.authorize(caller_context, action,
   scope) :: :ok | {:error, {:forbidden, reason}}`. Four roles:
-  `viewer`, `operator`, `admin`, `executor`. Role→action map is
+  `viewer`, `operator`, `admin`, `runner`. Role→action map is
   compile-time in `Flezha.AuthZ.Policy`. Auth-state mutations
   (`:authz.*`) are additionally gated to `admin` on the bound
   namespace; only `admin@_system` may target other namespaces.
@@ -1071,7 +1071,7 @@
   async. `OperativeManager.start_operative/2` enforces `max_operatives` /
   `max_segments_per_operative` at allocation time and records on
   success; `stop_operative/2` decrements on stop. Mailbox / disk /
-  executor enforcement points land in the namespace-state
+  runner enforcement points land in the namespace-state
   follow-up.
 - **Bootstrap**: on first boot when no `admin@_system` binding
   exists AND `:enabled` is `true`, `Bootstrap.OnBoot` writes

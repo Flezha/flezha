@@ -4,7 +4,7 @@ defmodule Flezha.Operative.ClassRegistry do
   delivery tier — for the State subsystem.
 
   `Flezha.State.Retention`, `Flezha.State.Watchdog`,
-  `Flezha.Executor.StreamChannel`, and `Flezha.State.TimeTravel` are keyed
+  `Flezha.Runner.StreamChannel`, and `Flezha.State.TimeTravel` are keyed
   purely by `operative_class` strings and never carry a `kind`. This registry
   is the seam that lets those paths gate the unbounded-only capabilities
   (`time_travel?`, `dynamic_segments?`, `output_stall_watch?`) through
@@ -93,7 +93,7 @@ defmodule Flezha.Operative.ClassRegistry do
 
   Each rides an ETS entry plus a durable sidecar, so a process-less `Retention`
   sweep — or a bind that happens while the instance is suspended — resolves it
-  with no executor to ask. A declaration a class drops is cleared on its next
+  with no runner to ask. A declaration a class drops is cleared on its next
   bind, so the sidecar never outlives the claim.
 
   Together with `decode_declarations/1` this is the whole recipe for a new
@@ -150,7 +150,7 @@ defmodule Flezha.Operative.ClassRegistry do
   clears it (a class that declares nothing).
 
   Durable in the same sidecar shape as the tier, because a rewind is refused or
-  allowed on this evidence while the instance may be suspended with no executor
+  allowed on this evidence while the instance may be suspended with no runner
   to ask.
   """
   @spec put_compensable_ops(binary(), [non_neg_integer()] | nil) :: :ok
@@ -162,7 +162,7 @@ defmodule Flezha.Operative.ClassRegistry do
   Record which of `operative_class`'s tree operations are **leaves** — the set
   whose commits mean the operative is done (`bounded-branching`). Same ETS +
   durable-sidecar shape as the compensable set, and read on the same evidence:
-  the journal answers "complete?" with no executor to ask.
+  the journal answers "complete?" with no runner to ask.
   """
   @spec put_leaf_ops(binary(), [non_neg_integer()] | nil) :: :ok
   def put_leaf_ops(operative_class, ops) when is_binary(operative_class) do

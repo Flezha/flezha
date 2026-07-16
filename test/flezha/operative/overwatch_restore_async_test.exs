@@ -22,7 +22,7 @@ defmodule FlezhaTest.Operative.OverwatchRestoreAsyncTest do
     state = %Overwatch{
       id: "btc_kraken",
       namespace: "default",
-      executor_id: "ex_1",
+      runner_id: "ex_1",
       factory_id: "market",
       builder: %Builder{id: "btc_kraken", factory_id: "market", opts: []},
       arrived_via_hotswap?: false

@@ -1,15 +1,15 @@
 use std::env;
 
-pub fn stream_socket_path(executor_id: &str, stream_type: String) -> String {
+pub fn stream_socket_path(runner_id: &str, stream_type: String) -> String {
     let base_path: String = sockets_base_path();
 
-    format!("{}/{}_stream_{}.sock", base_path, stream_type, executor_id)
+    format!("{}/{}_stream_{}.sock", base_path, stream_type, runner_id)
 }
 
 pub fn control_socket_path() -> String {
     let base_path: String = sockets_base_path();
 
-    format!("{}/executor_control_channel.sock", base_path)
+    format!("{}/runner_control_channel.sock", base_path)
 }
 
 fn sockets_base_path() -> String {

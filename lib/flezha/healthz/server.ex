@@ -167,7 +167,7 @@ defmodule Flezha.Healthz.Server do
 
       bound < intended ->
         # Declared but not all bound: recovering within the grace, degraded
-        # past it. Always 200 — a restart can't re-bind an executor-orphaned operative.
+        # past it. Always 200 — a restart can't re-bind a runner-orphaned operative.
         if is_integer(unmet_intent_ms) and unmet_intent_ms > unmet_intent_grace_ms() do
           {:degraded,
            encode_json(%{
@@ -191,7 +191,7 @@ defmodule Flezha.Healthz.Server do
 
       pending_restore ->
         # Intent is empty (intended == 0) only because hubs start lazily on
-        # executor reconnect and the durable registry has not been read back
+        # runner reconnect and the durable registry has not been read back
         # since this controller (re)started — operatives.dets exists on disk for a
         # hub that is not running yet. `bound < intended` cannot catch this
         # (0 < 0 is false), so without this the system reports vacuously

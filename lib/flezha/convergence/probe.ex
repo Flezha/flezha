@@ -8,7 +8,7 @@ defmodule Flezha.Convergence.Probe do
   """
 
   alias Flezha.Convergence.{SafeCall, Snapshot}
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.HubManager
 
@@ -19,7 +19,7 @@ defmodule Flezha.Convergence.Probe do
 
   @type reality :: %{
           operatives: %{{binary(), binary()} => map()},
-          active_executors: %{binary() => MapSet.t() | :unknown},
+          active_runners: %{binary() => MapSet.t() | :unknown},
           recovery: %{atom() => atom()},
           tick_at: integer()
         }
@@ -32,7 +32,7 @@ defmodule Flezha.Convergence.Probe do
 
     %{
       operatives: operatives(namespaces),
-      active_executors: active_executors(namespaces),
+      active_runners: active_runners(namespaces),
       recovery: Snapshot.recovery_states(),
       tick_at: System.monotonic_time(:millisecond)
     }
@@ -40,7 +40,7 @@ defmodule Flezha.Convergence.Probe do
 
   # Probe every operative concurrently: one wedged Overwatch costs ~one timeout,
   # not N×timeout serial in the Loop process. A operative we cannot read is
-  # recorded as `bound_executor: :unknown` so the Diff skips it — a failed
+  # recorded as `bound_runner: :unknown` so the Diff skips it — a failed
   # observation must never drive a mutating heal.
   defp operatives(namespaces) do
     pairs =
@@ -68,7 +68,7 @@ defmodule Flezha.Convergence.Probe do
       {:ok, ow} when is_map(ow) ->
         %{
           pid: pid,
-          bound_executor: Map.get(ow, :executor_id),
+          bound_runner: Map.get(ow, :runner_id),
           factory_id: Map.get(ow, :factory_id),
           parked?: Map.get(ow, :init_error) != nil,
           suspended?: Map.get(ow, :suspended, false),
@@ -84,7 +84,7 @@ defmodule Flezha.Convergence.Probe do
   defp observe_operative(_),
     do: %{
       pid: nil,
-      bound_executor: nil,
+      bound_runner: nil,
       factory_id: nil,
       parked?: false,
       suspended?: false,
@@ -95,7 +95,7 @@ defmodule Flezha.Convergence.Probe do
   defp unreadable(),
     do: %{
       pid: nil,
-      bound_executor: :unknown,
+      bound_runner: :unknown,
       factory_id: nil,
       parked?: false,
       running_plugins: [],
@@ -130,16 +130,16 @@ defmodule Flezha.Convergence.Probe do
   # On a failed FleetManager read we record `:unknown`, NOT an empty set:
   # the Diff must skip misbound classification for the namespace rather than
   # mass-migrate every operative on a transient read failure.
-  defp active_executors(namespaces) do
+  defp active_runners(namespaces) do
     Enum.into(namespaces, %{}, fn ns ->
-      executors =
+      runners =
         try do
-          FleetManager.active_executors(ns) |> MapSet.new()
+          FleetManager.active_runners(ns) |> MapSet.new()
         catch
           :exit, _ -> :unknown
         end
 
-      {ns, executors}
+      {ns, runners}
     end)
   end
 

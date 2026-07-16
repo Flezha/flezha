@@ -2,7 +2,7 @@ package com.flezha.sdk.runtime.control.handlers;
 
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.OperationMessageResponse;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.google.protobuf.ByteString;
 import java.util.List;
@@ -21,7 +21,7 @@ public final class OperationMessageHandler implements CommandHandler {
     private static final String UNSUPPORTED_ERROR = "operative does not support handle_message";
 
     @Override
-    public byte[] handle(ExecutorContext ctx, CommandRequest request, List<String> errors) {
+    public byte[] handle(RunnerContext ctx, CommandRequest request, List<String> errors) {
         OperationMessageResponse response = OperationMessageResponse.newBuilder()
                 .setPayload(ByteString.EMPTY)
                 .setError(UNSUPPORTED_ERROR)

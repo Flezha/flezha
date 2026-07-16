@@ -10,7 +10,7 @@ import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,7 +37,7 @@ class AddOperativeHandlerTest {
         UnboundedOperativeRegistry.registerUnbounded(IdempotentUnboundedOperative.class);
 
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
-        ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
+        RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
 
         CommandRequest request = CommandRequest.newBuilder()
@@ -63,7 +63,7 @@ class AddOperativeHandlerTest {
         UnboundedOperativeRegistry.registerUnbounded(IdempotentUnboundedOperative.class);
 
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
-        ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
+        RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
 
         CommandRequest request = CommandRequest.newBuilder()
@@ -90,7 +90,7 @@ class AddOperativeHandlerTest {
         UnboundedOperativeRegistry.registerUnbounded(IdempotentUnboundedOperative.class);
 
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
-        ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
+        RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
 
         CommandRequest request = CommandRequest.newBuilder()

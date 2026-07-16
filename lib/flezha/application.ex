@@ -1,7 +1,7 @@
 defmodule Flezha.Application do
   @moduledoc false
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
 
   use Application
 
@@ -34,9 +34,9 @@ defmodule Flezha.Application do
         Flezha.Service.HubManager,
         Flezha.Observability.Supervisor,
         Flezha.Shutdown.Coordinator,
-        Flezha.Executor.FleetSupervisor,
+        Flezha.Runner.FleetSupervisor,
         FleetManager,
-        # Cluster formation must start BEFORE the transport accepts executor
+        # Cluster formation must start BEFORE the transport accepts runner
         # connects, so a hub is never created on a not-yet-clustered node.
         # The transport must not accept connects before the cluster is
         # formed, so a hub is never created on a not-yet-clustered node.

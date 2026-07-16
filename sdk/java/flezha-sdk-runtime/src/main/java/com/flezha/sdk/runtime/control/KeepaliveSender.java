@@ -2,7 +2,7 @@ package com.flezha.sdk.runtime.control;
 
 import com.flezha.sdk.native_.NativeTransport;
 import com.flezha.sdk.proto.Ping;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
@@ -33,15 +33,15 @@ public final class KeepaliveSender {
 
     private static final Logger LOG = LoggerFactory.getLogger(KeepaliveSender.class);
 
-    private final ExecutorContext ctx;
+    private final RunnerContext ctx;
     private final long intervalMs;
     private final ScheduledExecutorService scheduler;
 
-    public KeepaliveSender(@Nonnull ExecutorContext ctx) {
+    public KeepaliveSender(@Nonnull RunnerContext ctx) {
         this(ctx, FlezhaEnv.controlKeepaliveMs());
     }
 
-    KeepaliveSender(@Nonnull ExecutorContext ctx, long intervalMs) {
+    KeepaliveSender(@Nonnull RunnerContext ctx, long intervalMs) {
         this.ctx = ctx;
         this.intervalMs = intervalMs;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {

@@ -34,7 +34,7 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
     state = %Overwatch{
       id: "test_operative",
       namespace: "default",
-      executor_id: "test_exec",
+      runner_id: "test_exec",
       factory_id: "test_factory",
       channel: nil,
       extensions: Table.new(Overwatch.__extensions_catalog__()),
@@ -69,7 +69,7 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
     state = %Overwatch{
       id: "test_operative_handover",
       namespace: "default",
-      executor_id: "test_exec_handover_no_control_unit",
+      runner_id: "test_exec_handover_no_control_unit",
       factory_id: "test_factory",
       channel: nil,
       extensions: Table.new(Overwatch.__extensions_catalog__()),

@@ -77,7 +77,7 @@ parent's journaled per-edge handoff. Committed branches SHALL NOT re-run.
 
 #### Scenario: One committed branch survives a crash
 
-- **WHEN** in an A→(B,C) tree the journal holds `op_committed` for A and B when the executor crashes
+- **WHEN** in an A→(B,C) tree the journal holds `op_committed` for A and B when the runner crashes
 - **THEN** on respawn only C (seeded from A's journaled handoff on the channel C consumes) SHALL run; A and B SHALL NOT re-run
 
 ### Requirement: A handoff-chained loop requires a single terminal operation

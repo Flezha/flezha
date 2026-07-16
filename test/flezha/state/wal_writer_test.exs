@@ -136,7 +136,7 @@ defmodule Flezha.State.WalWriterTest do
 
       assert_receive {:resync_called, ^pid, opts}, 1_000
       assert opts[:reason] == :baseline_seed
-      assert opts[:executor_id] == "exec-cold"
+      assert opts[:runner_id] == "exec-cold"
 
       # Further gap frames shed without erroring; the seed fires once per episode.
       assert :awaiting_baseline = WalWriter.append(srv, 5002, header, "d2", "exec-cold")
@@ -153,7 +153,7 @@ defmodule Flezha.State.WalWriterTest do
 
       assert :awaiting_baseline = WalWriter.append(srv, 5001, header, "d1", "exec-cold")
 
-      # The CompactSegment round-trip lands as a snapshot at the executor's seq.
+      # The CompactSegment round-trip lands as a snapshot at the runner's seq.
       assert {:ok, _path} = Flezha.State.Snapshot.write_snapshot(pid, 5005, header, "full-state")
 
       assert WalWriter.last_persisted_seq(srv) == 5005

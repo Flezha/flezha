@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
   @moduledoc """
   Phase-3 (consume-recovery-mode-and-self-heal §3.3-3.5) async
-  `:executor_migrate` task contract. Exercises the
+  `:runner_migrate` task contract. Exercises the
   `stop_operative-during-in-flight-migrate` invariant: the bounded retry
   loop now runs in a `Task.Supervisor.async_nolink/3` task, so the
   Overwatch's `:stop_operative` call returns within its normal handle_call
@@ -29,12 +29,12 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     {:ok, test_pid: test_pid, ets: ets}
   end
 
-  # `await_active_executor` pings once to confirm the executor is reachable
+  # `await_active_runner` pings once to confirm the runner is reachable
   # before the start-retry path runs. To reach the PARKED state these tests
   # need, the readiness gate (first ping) must pass while the START pings
-  # fail — otherwise the operative stops with `:executor_not_ready`.
+  # fail — otherwise the operative stops with `:runner_not_ready`.
   defp park_after_gate(ets) do
-    fn _executor_id ->
+    fn _runner_id ->
       case :ets.update_counter(ets, :calls, {2, 1}, {:calls, 0}) do
         1 -> {:ok, :pong}
         _ -> {:error, :timeout}
@@ -74,7 +74,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
 
     # Replace ping with a blocking one so the un-park retry task runs
     # for ~5 s.
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _executor_id ->
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _runner_id ->
       send(test_pid, :ping_started)
       :timer.sleep(5_000)
       {:ok, :pong}
@@ -82,7 +82,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
 
     # Fire the un-park migrate. The Overwatch must return `:ok`
     # immediately (the retry task is spawned out-of-band).
-    :ok = GenServer.call(overwatch_pid, {:executor_migrate, "fake_new_executor"}, 1_000)
+    :ok = GenServer.call(overwatch_pid, {:runner_migrate, "fake_new_runner"}, 1_000)
 
     assert_receive :ping_started, 500
 
@@ -121,18 +121,18 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
            end)
 
     # First un-park migrate: long blocking ping.
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _executor_id ->
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _runner_id ->
       send(test_pid, :ping_started)
       :timer.sleep(2_000)
       {:ok, :pong}
     end)
 
-    :ok = GenServer.call(overwatch_pid, {:executor_migrate, "first"}, 1_000)
+    :ok = GenServer.call(overwatch_pid, {:runner_migrate, "first"}, 1_000)
     assert_receive :ping_started, 500
 
     # Second migrate must be rejected as :busy.
     assert {:error, :busy} =
-             GenServer.call(overwatch_pid, {:executor_migrate, "second"}, 1_000)
+             GenServer.call(overwatch_pid, {:runner_migrate, "second"}, 1_000)
   end
 
   defp eventually(fun, timeout \\ 2_000) do

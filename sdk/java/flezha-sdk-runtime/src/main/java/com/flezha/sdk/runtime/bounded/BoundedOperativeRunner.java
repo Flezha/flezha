@@ -20,7 +20,7 @@ import com.flezha.sdk.proto.OpCommittedOp;
 import com.flezha.sdk.proto.OpHandoffItem;
 import com.flezha.sdk.proto.OpJournalState;
 import com.flezha.sdk.proto.OpOutboxItem;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.bounded.BoundedCompensation.SegmentRun;
 import com.flezha.sdk.runtime.bounded.BoundedCompensation.StageRecord;
 import com.flezha.sdk.runtime.control.AckRegistry;
@@ -142,7 +142,7 @@ public final class BoundedOperativeRunner {
      * calling this).
      */
     public static void spawn(
-            @Nonnull ExecutorContext ctx,
+            @Nonnull RunnerContext ctx,
             @Nonnull BoundedOperativeInstance instance,
             @Nonnull BoundedSpec spec,
             @Nonnull String args) {
@@ -157,7 +157,7 @@ public final class BoundedOperativeRunner {
         }
     }
 
-    private static void run(ExecutorContext ctx, BoundedOperativeInstance instance, BoundedSpec spec, String args) {
+    private static void run(RunnerContext ctx, BoundedOperativeInstance instance, BoundedSpec spec, String args) {
         AtomicBoolean finished = new AtomicBoolean(false);
 
         // maxDuration backstop: trip the cancellation token once it elapses,
@@ -195,7 +195,7 @@ public final class BoundedOperativeRunner {
 
     /** Run-sugar path: a single implicit Operation/Segment whose body is {@code run}. */
     private static Outcome runSugar(
-            ExecutorContext ctx, BoundedOperativeInstance instance, BoundedSpec spec, String args) {
+            RunnerContext ctx, BoundedOperativeInstance instance, BoundedSpec spec, String args) {
         BoundedOperativeCtxImpl ctxImpl = new BoundedOperativeCtxImpl(ctx, instance);
         try {
             BoundedOperative bounded =
@@ -222,7 +222,7 @@ public final class BoundedOperativeRunner {
      * pool. Inter-operation output collected at each barrier seeds the next stage.
      */
     private static Outcome runStructured(
-            ExecutorContext ctx, BoundedOperativeInstance instance, BoundedSpec spec, String args) {
+            RunnerContext ctx, BoundedOperativeInstance instance, BoundedSpec spec, String args) {
         UnboundedOperativeTopology topology = spec.topology().orElseThrow();
         List<Integer> chain = spec.chain();
         String instanceId = instance.instanceId();
@@ -317,7 +317,7 @@ public final class BoundedOperativeRunner {
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static String runRewindUndo(
-            ExecutorContext ctx,
+            RunnerContext ctx,
             BoundedOperativeInstance instance,
             BoundedSpec spec,
             UnboundedOperativeTopology topology,
@@ -412,7 +412,7 @@ public final class BoundedOperativeRunner {
      * registry so a later message (or a wake timer) revives it.
      */
     private static Outcome runLoop(
-            ExecutorContext ctx,
+            RunnerContext ctx,
             BoundedOperativeInstance instance,
             BoundedSpec spec,
             UnboundedOperativeTopology topology,
@@ -483,7 +483,7 @@ public final class BoundedOperativeRunner {
 
     /** Journal the iteration boundary: the consumed inbox offset and the terminal handoff. */
     private static String commitIteration(
-            ExecutorContext ctx,
+            RunnerContext ctx,
             BoundedOperativeInstance instance,
             UnboundedOperativeTopology topology,
             int iter,
@@ -519,11 +519,11 @@ public final class BoundedOperativeRunner {
      * {@code BoundedCompleted}.
      *
      * <p>That distinction is the whole of suspension. A completion tears the
-     * instance down; a park leaves it registered with zero executor resources,
+     * instance down; a park leaves it registered with zero runner resources,
      * so the next message — or the wake timer — revives it at the iteration it
      * left off.
      */
-    private static Outcome park(ExecutorContext ctx, BoundedOperativeInstance instance, BoundedSpec spec, int iter) {
+    private static Outcome park(RunnerContext ctx, BoundedOperativeInstance instance, BoundedSpec spec, int iter) {
         String instanceId = instance.instanceId();
         IterPark.Builder parkMsg =
                 IterPark.newBuilder().setOperativeId(instanceId).setIter(iter);
@@ -550,7 +550,7 @@ public final class BoundedOperativeRunner {
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static IterationOut runIteration(
-            ExecutorContext ctx,
+            RunnerContext ctx,
             BoundedOperativeInstance instance,
             BoundedSpec spec,
             UnboundedOperativeTopology topology,
@@ -679,7 +679,7 @@ public final class BoundedOperativeRunner {
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static void runCompensation(
-            ExecutorContext ctx,
+            RunnerContext ctx,
             UnboundedOperativeTopology topology,
             String instanceId,
             List<Integer> chain,
@@ -755,7 +755,7 @@ public final class BoundedOperativeRunner {
     }
 
     /** Journal the undo's staged output under a {@code compensating} OpCommit. */
-    private static void shipCompensationOutbox(ExecutorContext ctx, String instanceId, List<StagedOutput> staged) {
+    private static void shipCompensationOutbox(RunnerContext ctx, String instanceId, List<StagedOutput> staged) {
         OpCommit.Builder commit =
                 OpCommit.newBuilder().setOperativeId(instanceId).setCompensating(true);
         int seq = 0;
@@ -935,7 +935,7 @@ public final class BoundedOperativeRunner {
      * segment mid-run, before the collected output is released to the next stage.
      */
     private static StageOut runStageParallel(
-            ExecutorContext ctx,
+            RunnerContext ctx,
             String instanceId,
             UnboundedOperativeTopology topology,
             List<BoundedSegment> segs,
@@ -1006,7 +1006,7 @@ public final class BoundedOperativeRunner {
     private static SegmentOut runSegment(
             UnboundedOperativeTopology topology,
             String instanceId,
-            ExecutorContext ctx,
+            RunnerContext ctx,
             BoundedSegment seg,
             List<Object> items,
             boolean staging)
@@ -1077,7 +1077,7 @@ public final class BoundedOperativeRunner {
     private static SegmentOut runSegmentRetrying(
             UnboundedOperativeTopology topology,
             String instanceId,
-            ExecutorContext ctx,
+            RunnerContext ctx,
             BoundedSegment seg,
             List<Object> items,
             boolean staging,
@@ -1166,7 +1166,7 @@ public final class BoundedOperativeRunner {
      * payload id is the instance id and whose metadata is empty (best-effort,
      * at-least-once). Shared by {@code ctx.emit} and the structured plugin route.
      */
-    static void emitOutput(ExecutorContext ctx, String instanceId, byte[] value) {
+    static void emitOutput(RunnerContext ctx, String instanceId, byte[] value) {
         long secondaryStreamId = ctx.streamRegistry().anySecondary();
         if (secondaryStreamId == 0L) {
             LOG.warn("bounded {} output dropped: no secondary stream available", instanceId);
@@ -1220,7 +1220,7 @@ public final class BoundedOperativeRunner {
     private static final long OP_COMMIT_TIMEOUT_MS = 30_000L;
 
     /** Write one control command to the control stream. Returns the wire status (0 = ok). */
-    private static int sendControl(ExecutorContext ctx, CommandRequest request) {
+    private static int sendControl(RunnerContext ctx, CommandRequest request) {
         byte[] frame = FrameEncoder.build(CONTROL_PAYLOAD_ID, request.toByteArray(), Map.of());
         return wireWriter.write(ctx.nativeHandle(), ctx.streamRegistry().controlStreamId(), frame);
     }
@@ -1236,7 +1236,7 @@ public final class BoundedOperativeRunner {
      *
      * @return an error message, or {@code null} once the commit is durable
      */
-    private static String shipAndAwait(ExecutorContext ctx, String referenceId, CommandRequest request, String what) {
+    private static String shipAndAwait(RunnerContext ctx, String referenceId, CommandRequest request, String what) {
         CompletableFuture<Void> ack = AckRegistry.register(referenceId);
         int writeStatus = sendControl(ctx, request);
         if (writeStatus != 0) {
@@ -1284,7 +1284,7 @@ public final class BoundedOperativeRunner {
      * @return an error message, or {@code null} on success.
      */
     private static String commitOpBoundary(
-            ExecutorContext ctx,
+            RunnerContext ctx,
             UnboundedOperativeTopology topology,
             String instanceId,
             int opIdx,
@@ -1320,7 +1320,7 @@ public final class BoundedOperativeRunner {
     }
 
     private static void emitCompletion(
-            ExecutorContext ctx, String instanceId, String status, String error, byte[] result) {
+            RunnerContext ctx, String instanceId, String status, String error, byte[] result) {
         CommandRequest request = CommandRequest.newBuilder()
                 .setReferenceId("bounded-completed-" + instanceId + "-" + System.nanoTime())
                 .setBoundedCompleted(BoundedCompleted.newBuilder()
@@ -1470,7 +1470,7 @@ public final class BoundedOperativeRunner {
     record StagedOutput(String channel, byte[] payload) {}
 
     private static final class BoundedSegmentSink implements BoundedCollectSink {
-        private final ExecutorContext ctx;
+        private final RunnerContext ctx;
         private final String instanceId;
         private final List<Object> collected = new ArrayList<>();
         private final List<StagedOutput> staged = new ArrayList<>();
@@ -1484,7 +1484,7 @@ public final class BoundedOperativeRunner {
          */
         private final boolean staging;
 
-        BoundedSegmentSink(ExecutorContext ctx, String instanceId, boolean staging) {
+        BoundedSegmentSink(RunnerContext ctx, String instanceId, boolean staging) {
             this.ctx = ctx;
             this.instanceId = instanceId;
             this.staging = staging;
@@ -1516,12 +1516,12 @@ public final class BoundedOperativeRunner {
 
     /** {@link BoundedOperativeCtx} bound to one running bounded instance. */
     private static final class BoundedOperativeCtxImpl implements BoundedOperativeCtx {
-        private final ExecutorContext ctx;
+        private final RunnerContext ctx;
         private final BoundedOperativeInstance instance;
         private byte[] result = EMPTY;
         private boolean completed = false;
 
-        BoundedOperativeCtxImpl(ExecutorContext ctx, BoundedOperativeInstance instance) {
+        BoundedOperativeCtxImpl(RunnerContext ctx, BoundedOperativeInstance instance) {
             this.ctx = ctx;
             this.instance = instance;
         }

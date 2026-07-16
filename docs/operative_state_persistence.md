@@ -36,7 +36,7 @@ this change implements, see the umbrella in
   Records returning `None` are retained verbatim.
 
 - **`UnboundedOperative::PERSISTENCE_ENABLED`** — class-level toggle.
-  Default `true`. Executor override via operative-start metadata key
+  Default `true`. Runner override via operative-start metadata key
   `operative_persistence.<OperativeClass>` wins. Frozen at instance start;
   changes only take effect on the next `stop_operative` + `start_operative`
   cycle.
@@ -50,8 +50,8 @@ this change implements, see the umbrella in
 ## Trait surface
 
 ```rust
-use flezha_executor::operation::{Operation, OperationCtx, OperationError};
-use flezha_executor::state::{
+use flezha_runner::operation::{Operation, OperationCtx, OperationError};
+use flezha_runner::state::{
     Change, NoChange, RestoreInitPayload, StateHandle, WallClock,
 };
 use serde::{Deserialize, Serialize};
@@ -105,7 +105,7 @@ recorded for replay.
 ### Coalescing example
 
 ```rust
-use flezha_executor::state::{Change, CoalesceKey};
+use flezha_runner::state::{Change, CoalesceKey};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 struct TickChange { interval: u8, ts: u64, delta: i64 }
@@ -131,7 +131,7 @@ impl UnboundedOperative for MarketOperative {
 }
 ```
 
-When `PERSISTENCE_ENABLED == false` (or the executor override sets it
+When `PERSISTENCE_ENABLED == false` (or the runner override sets it
 to `false` at start time), the per-Segment flusher still drains the
 buffer on each linger tick — the buffer is cleared, coalescing runs,
 seq counters advance — but `send_frame` is never invoked. Tests can
@@ -140,7 +140,7 @@ assert the wire stub was not called.
 ## OperationTestHarness
 
 ```rust
-use flezha_executor::testing::OperationTestHarness;
+use flezha_runner::testing::OperationTestHarness;
 
 #[test]
 fn counter_replays_deterministically() {
@@ -159,7 +159,7 @@ on divergence; `Display` renders a hex-diff for visual inspection.
 
 `OperationTestHarness` is gated behind `cfg(any(test, feature = "testing"))`.
 Downstream crates that want the harness in their non-test code paths
-add `flezha_executor = { ..., features = ["testing"] }`.
+add `flezha_runner = { ..., features = ["testing"] }`.
 
 ## Restoration flow (warm restart)
 
@@ -208,7 +208,7 @@ decoding the header.
 | Wire-frame builder | ✅ (stub `send_frame`) | replaces with NIF |
 | `OperationTestHarness::<S>::replay_equals` | ✅ | — |
 | 16-byte header, CRC32 validation | ✅ | — |
-| `UnboundedOperative::PERSISTENCE_ENABLED` resolution | ✅ | executor override wired |
+| `UnboundedOperative::PERSISTENCE_ENABLED` resolution | ✅ | runner override wired |
 | Per-Operation `compact_after_bytes` reported to controller | ✅ | consumes value |
 | Controller-side WAL writer + fsync batcher | — | ✅ |
 | Snapshot lifecycle + retention | — | ✅ |

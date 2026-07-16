@@ -16,7 +16,7 @@ input. Plugins that finish `init_provider/1` before the SDK is ready
 remain in `:prepared` and emit no `:io_in` until activation.
 
 The split exists because the controller's operative-startup path is a
-multi-step handshake (resolve executor → ping → AddOperative) that can fail
+multi-step handshake (resolve runner → ping → AddOperative) that can fail
 or stall. Provider code that opens upstream connections during
 `init_provider/1` runs even when the operative never becomes
 `:running` — every retry cycle re-opens the connection, every

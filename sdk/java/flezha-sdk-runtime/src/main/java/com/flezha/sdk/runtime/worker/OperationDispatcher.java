@@ -6,7 +6,7 @@ import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operation.StableId;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.OperationDescriptor;
@@ -70,7 +70,7 @@ public final class OperationDispatcher {
         WIRE_WRITER = com.flezha.sdk.native_.NativeTransport::streamWrite;
     }
 
-    private final ExecutorContext ctx;
+    private final RunnerContext ctx;
     private final ExecutorService pool;
     private final WeakReference<UnboundedOperativeInstance> instance;
     private final UnboundedOperativeTopology topology;
@@ -105,7 +105,7 @@ public final class OperationDispatcher {
 
     @SuppressWarnings("unchecked")
     public OperationDispatcher(
-            @Nonnull ExecutorContext ctx,
+            @Nonnull RunnerContext ctx,
             @Nonnull ExecutorService pool,
             @Nonnull UnboundedOperativeInstance instance,
             @Nonnull UnboundedOperativeTopology topology,

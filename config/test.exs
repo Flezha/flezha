@@ -5,7 +5,7 @@ config :flezha,
   concurrent_channel_count: 1,
   # Control-plane liveness watchdog (unify-executor-liveness-and-identity).
   # The window MUST stay comfortably above the SDK keepalive cadence (15 s):
-  # the long-lived default-namespace test executors only re-arm `last_seen` via
+  # the long-lived default-namespace test runners only re-arm `last_seen` via
   # their keepalive ping, so a small global window would falsely evict them and
   # break unrelated suites. Dedicated watchdog tests drive `:liveness_tick`
   # directly (or override this via `Application.put_env/3`) for fast assertions.
@@ -84,8 +84,8 @@ config :flezha,
     otlp_flush_interval_ms: 10_000,
     otlp_batch_max: 512
   ],
-  # Tests bring up their own executors and operatives — auto-recovery would
-  # trigger replay against a not-yet-connected executor, cascading the
+  # Tests bring up their own runners and operatives — auto-recovery would
+  # trigger replay against a not-yet-connected runner, cascading the
   # ProcessHub coordinator into shutdown. The persistent registry still
   # records mutations; only the at-boot replay state machine is off.
   auto_restore_enabled: false,
@@ -102,7 +102,7 @@ config :flezha,
   overwatch_retry_backoff_ms: [10, 10, 10],
   overwatch_retry_park_interval_ms: 0,
   overwatch_ping_timeout_ms: 500,
-  # Tests that hit the real test executors leave ping enabled and rely on
+  # Tests that hit the real test runners leave ping enabled and rely on
   # the SDK's `Ping` handler. Tests that drive the retry/parked-state
   # paths in isolation use `Application.put_env(:flezha,
   # :overwatch_ping_fn, ...)` to inject a fake.
@@ -128,7 +128,7 @@ config :flezha,
       end
     end,
     fn ->
-      Flezha.Service.EventManager.add_handler(:executor_connected_event)
+      Flezha.Service.EventManager.add_handler(:runner_connected_event)
     end,
     fn ->
       # Update the socket files path.
@@ -139,9 +139,9 @@ config :flezha,
     fn ->
       for _x <- 1..2 do
         receive do
-          {:executor_connected_event, {"default", _}} -> :ok
+          {:runner_connected_event, {"default", _}} -> :ok
         after
-          20_000 -> raise "Executor not connected"
+          20_000 -> raise "Runner not connected"
         end
       end
     end

@@ -1,0 +1,480 @@
+syntax = "proto3";
+
+
+package runner_commands;
+
+option java_package = "com.flezha.sdk.proto";
+option java_multiple_files = true;
+option java_outer_classname = "RunnerCommandsProto";
+
+message CommandRequest {
+    string reference_id = 1;
+
+    oneof command {
+        AssignRunnerId assign_runner_id = 2;
+        ConnectSocket connect_socket = 3;
+        AddOperative add_operative = 4;
+        RemOperative rem_operative = 5;
+        MigrationSerialization migration_serialization = 6;
+        MigrationDeserialization migration_deserialization = 7;
+        SegmentState segment_state = 8;
+        RunnerDisconnect runner_disconnect = 9;
+        OperationMessage operation_message = 10;
+        SegmentApplyState segment_apply_state = 11;
+        RunnerShutdownNotification runner_shutdown_notification = 12;
+        RunnerShutdownAck runner_shutdown_ack = 13;
+        RestoreInitState restore_init_state = 14;
+        RestoreInitStateResponse restore_init_state_response = 15;
+        CompactSegment compact_segment = 16;
+        CompactSegmentResponse compact_segment_response = 17;
+        SegmentMailboxStatus segment_mailbox_status = 18;
+        Ping ping = 19;
+        RunnerReconnected runner_reconnected = 20;
+        ReassignRunnerId reassign_runner_id = 21;
+        BoundedCompleted bounded_completed = 22;
+        BoundedStop bounded_stop = 23;
+        CreditWindowInit credit_window_init = 24;
+        CreditWindowAck credit_window_ack = 25;
+        CreditGrant credit_grant = 26;
+        ParkPayloadAck park_payload_ack = 27;
+        OpCommit op_commit = 28;
+        OpCommitResponse op_commit_response = 29;
+        IterCommit iter_commit = 30;
+        IterCommitResponse iter_commit_response = 31;
+        IterPark iter_park = 32;
+    }
+}
+
+message CommandResponse {
+    string reference_id = 1;
+    string status = 2;
+    repeated string errors = 3;
+    bytes raw_data = 4;
+}
+
+message AssignRunnerId {
+    string runner_id = 1;
+}
+
+message ConnectSocket {
+    uint32 sockets_count = 1;
+}
+
+message AddOperative {
+    string operative_id = 1;
+    string factory_id = 2;
+    string init_values = 3;
+    // Operative kind for this unit: "unbounded" or "bounded". Default
+    // (when populated by the Controller from the operative's :kind) is
+    // "unbounded".
+    string kind = 4;
+    // Number of persisted Segments the Controller will ship RestoreInitState
+    // for on this (re)bind. Non-zero only when re-binding a durable bounded
+    // operative that has WAL state on disk (crash-resume). A durable bounded
+    // driver holds its first Operation until this many Segment restores have
+    // landed, so a resumed run reads persisted state instead of cold-starting.
+    // 0 for a fresh spawn, an unbounded operative, or an opted-out bounded one.
+    uint32 resume_segment_count = 5;
+}
+
+// SDK -> Controller, as the CommandResponse raw_data of AddOperative.
+// Carries the operative class's SDK-side declarations (operative metadata)
+// so the Controller resolves per-class capabilities without a parallel
+// config channel. Key "effectively_once" = "true" declares the
+// effectively-once delivery tier. The SDK returns empty raw_data when no
+// declaration is present (tier off), keeping the default wire byte-identical;
+// the Controller resolves absent/undecodable metadata to every default.
+message AddOperativeResponse {
+    map<string, string> metadata = 1;
+}
+
+message RemOperative {
+    string operative_id = 1;
+}
+
+message MigrationSerialization {
+    string operative_id = 1;
+}
+
+message MigrationDeserialization {
+    string operative_id = 1;
+    string factory_id = 2;
+    bytes serialized_state = 3;
+}
+
+message SegmentState {
+    string operative_id = 1;
+}
+
+message RunnerDisconnect {}
+
+message OperationMessage {
+    string operative_id = 1;
+    bytes payload = 2;
+}
+
+message OperationMessageResponse {
+    bytes payload = 1;
+    string error = 2;
+}
+
+// Inverse of SegmentState. Sent by the Controller to a Runner SDK to
+// prime a freshly-spawned Operative's GenServer/struct state from a
+// previously-captured `state_binary`. Round-trips with the same opaque
+// SDK-internal serialization used by SegmentState. SDKs that do not
+// implement Apply respond with status="error" and error[] containing the
+// canonical token "apply_state_not_supported".
+message SegmentApplyState {
+    string operative_id = 1;
+    string factory_id = 2;
+    bytes state_binary = 3;
+}
+
+// Sent by the SDK to the Controller on graceful shutdown (SIGTERM, Drop of
+// the SDK handle, explicit disconnect()) for each currently-running
+// Operative. Carries the Runner's freshest in-memory state binary so the
+// Controller can overwrite Overwatch.state.snapshot before the next
+// AddOperative reissue (see executor-controller-connection-healing
+// capability).
+//
+// Direction is reversed compared to most CommandRequest variants: SDK -> Controller.
+// Wire format reuses the same CommandRequest envelope and the
+// "control_command" payload_id; the Controller's ControlChannel inspects the
+// oneof tag to dispatch.
+//
+// Older Controllers that do not recognise this opcode skip it via Protox's
+// unknown-field handling; older SDKs that do not emit it fall back to the
+// periodic-snapshot freshness shipped by heal-connections-on-restart.
+message RunnerShutdownNotification {
+    string operative_id = 1;
+    bytes serialized_state = 2;
+}
+
+// Controller's reply to RunnerShutdownNotification. Carries no state — its
+// purpose is purely to unblock the SDK's bounded ack-wait so the SDK can
+// proceed to exit. The Controller emits the ack as soon as the snapshot cast
+// is enqueued on the Overwatch GenServer (not after the cast has been applied).
+//
+// Controller -> SDK direction at the wire level — same envelope as the
+// notification. The SDK awaits this with a per-Operative 2 s timeout
+// (parallelised across Operatives) and exits regardless after the timeout.
+message RunnerShutdownAck {
+    string operative_id = 1;
+}
+
+// One serialized inter-operation handoff value: the payload bytes produced
+// by the channel's byte codec, tagged with the producing channel id so a
+// resume re-seeds through the same channel's decoder.
+message OpHandoffItem {
+    uint32 channel_id = 1;
+    bytes payload = 2;
+}
+
+// One staged plugin-bound output of an operation, buffered per segment
+// while the operation ran and shipped at its barrier
+// (bounded-transactional-outbox). `seq_in_op` orders the entries a single
+// segment staged during the operation; `channel` is the producing plugin
+// channel's name, carried through to the flushed frame's `channel`
+// metadata.
+message OpOutboxItem {
+    bytes segment_id = 1;
+    uint32 seq_in_op = 2;
+    string channel = 3;
+    bytes payload = 4;
+}
+
+// SDK -> Controller, at each operation barrier of a durable structured
+// bounded operative (bounded-op-journal): operation `op_idx` completed
+// forward on `segments_ran` (wire segment identities) and released the
+// serialized `handoff` batch plus the `outbox` its segments staged
+// (bounded-transactional-outbox — nothing reached a plugin yet). The
+// Controller appends ONE `op_committed` entry carrying handoff AND outbox
+// to the instance's op-journal, fsyncs, replies OpCommitResponse, and only
+// then flushes the outbox; the driver starts the next operation after the
+// successful reply. Direction is reversed like RunnerShutdownNotification:
+// SDK -> Controller over the "control_command" payload_id; old Controllers
+// ignore the unknown variant via Protox unknown-field handling. `iter` is 0
+// for the single-pass chain (the durable-loop follow-up increments it).
+//
+// `compensating` marks the undo twin: a `compensate` hook's staged output
+// for the already-committed operation `op_idx`, journaled as a
+// `compensated` entry and flushed with comp-marked keys. The per-segment
+// compensation markers still decide which hooks run.
+message OpCommit {
+    string operative_id = 1;
+    uint32 op_idx = 2;
+    uint32 iter = 3;
+    repeated bytes segments_ran = 4;
+    repeated OpHandoffItem handoff = 5;
+    repeated OpOutboxItem outbox = 6;
+    bool compensating = 7;
+}
+
+// Controller -> SDK reply to OpCommit, emitted only AFTER the journal
+// entry is durable (fsync). Carries the originating request's
+// reference_id so the SDK wakes the blocked driver. A non-empty `error`
+// (journal write/fsync failure, oversized handoff) terminates the run
+// abnormally through the existing terminal-error path.
+message OpCommitResponse {
+    string operative_id = 1;
+    uint32 op_idx = 2;
+    string error = 3;
+}
+
+// SDK -> Controller, at each iteration boundary of a looping durable
+// structured bounded operative (bounded-durable-loop): iteration `iter`
+// finished, having consumed the durable inbox up to `consumed_offset` and
+// released `handoff` as its terminal batch. The Controller appends
+// `iter_committed(iter, consumed_offset)` to the op-journal, fsyncs, requests
+// a boundary snapshot for the instance's segments, flushes whatever the
+// iteration's operations staged, truncates the inbox below the consumed
+// offset, and replies IterCommitResponse. The driver enters iteration
+// `iter + 1` only on the successful reply — a crash before it re-runs the
+// whole iteration (at-least-once), never the ones below it.
+message IterCommit {
+    string operative_id = 1;
+    uint32 iter = 2;
+    uint64 consumed_offset = 3;
+    repeated OpHandoffItem handoff = 4;
+}
+
+// Controller -> SDK reply to IterCommit, emitted only AFTER the journal entry
+// is durable (fsync). Same reference_id / terminal-error contract as
+// OpCommitResponse.
+message IterCommitResponse {
+    string operative_id = 1;
+    uint32 iter = 2;
+    string error = 3;
+}
+
+// SDK -> Controller. A looping durable bounded operative found its inbox empty
+// at the committed boundary of iteration `iter` and past the idle threshold:
+// it has torn its own run down WITHOUT a BoundedCompleted (this is not a
+// terminal outcome). The Controller journals `parked(iter[, wake_deadline_ms])`
+// and evicts the instance from the runner; the registry keeps it `suspended`
+// until a new inbox append — or the wake deadline — rehydrates it
+// (bounded-durable-suspension). `wake_deadline_ms` is 0 when the operative
+// declared no durable timer.
+message IterPark {
+    string operative_id = 1;
+    uint32 iter = 2;
+    uint64 wake_deadline_ms = 3;
+}
+
+// One journaled forward op commit, shipped back on crash-resume so the driver
+// can rebuild `plan_compensation`'s per-iteration `committed` input from
+// durable state (bounded-durable-loop): operation `op_idx` of iteration `iter`
+// completed forward on `segments_ran`.
+message OpCommittedOp {
+    uint32 op_idx = 1;
+    uint32 iter = 2;
+    repeated bytes segments_ran = 3;
+}
+
+// What one committed operation of the in-flight iteration released, keyed by
+// its op_idx (bounded-branching). An operation tree re-seeds each uncommitted
+// child branch from its own parent's edge, so the resume state carries every
+// in-flight commit's handoff — not just the latest one's.
+message OpEdgeHandoff {
+    uint32 op_idx = 1;
+    repeated OpHandoffItem handoff = 2;
+}
+
+// Committed op-journal state shipped back on crash-resume
+// (bounded-op-journal). `iter` is the iteration to resume at — the one after
+// the highest journaled `iter_committed` (0 for a non-looping chain);
+// `committed_op_idxs` are the operations already committed inside that
+// still-in-flight iteration, which the driver skips, and `op_handoffs` what
+// each of them released, which seeds their uncommitted children. `handoff` is
+// the previous iteration's terminal batch, which re-seeds a handoff-chained
+// loop. `committed_ops` carries every forward op commit with its iteration
+// (compensation planning), `consumed_offset` the inbox offset the last
+// committed iteration consumed, and `parked` / `wake_deadline_ms` the
+// suspension record (bounded-durable-suspension).
+//
+// `rewind_undo` carries the operations a rewind unwound that have not been
+// compensated yet (bounded-loop-rewind). The driver runs them through the
+// ordinary compensation planner before resuming forward at `iter`, which the
+// journal has already folded back to the rewound-to iteration. Each undo
+// journals a `compensated` entry, so the list shrinks across a crash and
+// re-planning never double-compensates. Empty = no rewind pending.
+message OpJournalState {
+    repeated uint32 committed_op_idxs = 1;
+    uint32 iter = 2;
+    repeated OpHandoffItem handoff = 3;
+    repeated OpCommittedOp committed_ops = 4;
+    uint64 consumed_offset = 5;
+    bool parked = 6;
+    uint64 wake_deadline_ms = 7;
+    repeated OpCommittedOp rewind_undo = 8;
+    repeated OpEdgeHandoff op_handoffs = 9;
+}
+
+// Per-Segment state restore handshake: Controller ships latest snapshot
+// bytes plus tail-WAL bytes, SDK applies them to the segment's State
+// before any input is processed. See the per-segment state persistence design.
+//
+// `segment_id` is the structured byte identifier
+// `[operative_class_len: u8][operative_class][operation_id_len: u8][operation_id]
+//  [segment_key_len: u16 BE][segment_key]`. `change_log_bytes` is
+// the tail of the WAL framed `[seq: u64 BE][len: u32 BE]
+// [header: 16B][change_bytes][crc32: u32 BE]` records back-to-back.
+message RestoreInitState {
+    bytes segment_id = 1;
+    bytes snapshot_bytes = 2;
+    bytes change_log_bytes = 3;
+    // Saga crash-resume (bounded-operative-saga): the Controller sets these
+    // from the per-Segment compensation markers it persisted for a durable
+    // bounded operative. `has_compensation_intent` ⇒ this Segment's operation
+    // completed forward and may need undo; `has_compensation_done` ⇒ its
+    // compensation already ran (skip it on resume). Both false for a
+    // unbounded operative or a bounded one that never compensated.
+    bool has_compensation_intent = 4;
+    bool has_compensation_done = 5;
+    // Bounded op-journal crash-resume (bounded-op-journal): the instance's
+    // committed op indexes + latest journaled handoff, shipped in the same
+    // restore exchange as the compensation markers (no second round-trip).
+    // Absent when the instance has no journal (fresh spawn, opted-out class,
+    // unbounded operative, pre-upgrade instance) — the driver then keeps the
+    // re-run-from-top behaviour.
+    OpJournalState op_journal = 6;
+}
+
+// SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`
+// is the highest WAL seq folded into State; the Controller expects the next
+// `segment_state_change` to carry `seq = terminal_seq + 1`.
+message RestoreInitStateResponse {
+    bytes segment_id = 1;
+    uint64 terminal_seq = 2;
+}
+
+// Controller-issued compaction request. The SDK clones the segment's
+// `Self::State` under the sticky CAS, serializes it, and replies via
+// `segment_state_snapshot` then `CompactSegmentResponse`.
+message CompactSegment {
+    bytes segment_id = 1;
+}
+
+message CompactSegmentResponse {
+    bytes segment_id = 1;
+    uint64 snapshot_seq = 2;
+    uint64 snapshot_bytes_size = 3;
+}
+
+// Back-pressure signal: the Controller's per-Segment WAL outbox is at the
+// high watermark (`status = "full"`) or has drained below the low
+// watermark (`status = "open"`). The SDK's per-Segment mailbox
+// observer translates the signal into the channel's declared
+// `OverflowPolicy`.
+message SegmentMailboxStatus {
+    bytes segment_id = 1;
+    string status = 2;
+}
+
+// End-to-end control-channel health probe issued by the Controller before
+// `AddOperative`. The SDK responds immediately with a `CommandResponse{status:
+// "success", raw_data: PingResponse}`; the round-trip proves the
+// control channel is bound, the SDK is listening, and the reply path is
+// intact. SDKs without the handler MUST log and ignore the unknown variant
+// (existing protobuf-decoder behaviour).
+message Ping {
+    string nonce = 1;
+}
+
+message PingResponse {
+    string nonce = 1;
+}
+
+// SDK -> Controller, emitted as the FIRST frame on every newly-established
+// control stream after `handle_reconnect` runs. Preserves the runner's
+// identity across the reconnect so the Controller can compute a binding
+// delta instead of re-issuing every operative. `reason` is one of
+// `control_stream_broken | read_error | write_error | keepalive_timeout
+// | controller_requested`. Old Controllers that do not recognise this
+// variant silently skip it; new SDKs against an old Controller therefore
+// degrade to the pre-change "re-issue everything" behaviour.
+message RunnerReconnected {
+    string previous_id = 1;
+    string new_id = 2;
+    string reason = 3;
+}
+
+// Controller -> SDK. Issued only when the Controller has reassigned the
+// SDK's bindings to a different runner session during the disconnect
+// window (i.e. `bindings_for_runner(previous_id)` is empty). The SDK
+// updates its in-memory `runner_id` in place; subsequent
+// `RunnerReconnected` emissions carry the new id.
+message ReassignRunnerId {
+    string new_id = 1;
+}
+
+// SDK -> Controller. Emitted by a bounded operative when it reaches an exit
+// trigger (chain complete, ctx.complete, loop terminal, duration, or external
+// stop). `status` is "ok" on clean completion, "error" on failure (with
+// `error` describing it), or "cancelled" on a cooperative external stop;
+// `result` carries the terminal result/error payload. The Controller drives
+// the same stop/teardown path as an explicit stop (deregister-on-completion)
+// so a finished bounded operative is removed from the durable registry and
+// never replayed on boot or misjudged by convergence. Direction is reversed
+// like RunnerShutdownNotification: SDK -> Controller over the
+// "control_command" payload_id; old Controllers ignore the unknown variant via
+// Protox unknown-field handling.
+message BoundedCompleted {
+    string operative_id = 1;
+    string status = 2;
+    string error = 3;
+    bytes result = 4;
+}
+
+// Controller -> SDK. Offers credit-grant flow control for the runner's
+// state stream. `stream_id` is an opaque credit-session id minted fresh per
+// stream attach — grants carry it, and a reconnect re-runs the handshake with
+// a new id so grants in flight for a dead session are discardable by
+// construction. `window_bytes` is the byte budget the SDK may have un-fsynced
+// on the controller; `low_watermark_bytes` is the controller's grant-batching
+// threshold (informational to the SDK). The SDK acknowledges by returning an
+// encoded CreditWindowAck as the CommandResponse raw_data; a pre-credit SDK
+// that does not recognise the variant never acks and keeps the legacy
+// SegmentMailboxStatus behaviour.
+message CreditWindowInit {
+    string stream_id = 1;
+    uint64 window_bytes = 2;
+    uint64 low_watermark_bytes = 3;
+}
+
+// SDK -> Controller, as the CommandResponse raw_data of CreditWindowInit.
+// Echoes the offered `stream_id`; on receipt the controller marks the
+// session credit-speaking and starts enforcing the byte ledger.
+message CreditWindowAck {
+    string stream_id = 1;
+}
+
+// Controller -> SDK. Replenishes `bytes` of send credit for the session
+// identified by `stream_id`. Minted only when appended state becomes durable
+// (WAL fsync), batched by the controller's low watermark — never per record.
+// The SDK discards a grant whose `stream_id` does not match its current
+// credit session (stale grant from before a reconnect). One-way; the generic
+// CommandResponse it solicits is ignored.
+message CreditGrant {
+    string stream_id = 1;
+    uint64 bytes = 2;
+}
+
+// Controller -> SDK. Durable ack for a `park_payload` data-stream frame:
+// the dead-letter entry identified by `park_id` is fsynced in the DLQ
+// store, so the parked segment may drop the poison payload and advance.
+// One-way; the generic CommandResponse it solicits is ignored.
+message ParkPayloadAck {
+    string park_id = 1;
+}
+
+// Controller -> SDK. Cooperative external stop for a bounded operative
+// (`flz operative stop`), distinct from the hard `RemOperative` teardown: the
+// SDK trips its cancellation token, lets in-flight work unwind, runs any saga
+// compensation, then emits the normal `BoundedCompleted` (status "cancelled")
+// that drives the single teardown path. Rides the "control_command" payload_id
+// like other CommandRequest variants; SDKs that do not recognise it skip it via
+// the protobuf decoder (degrading to no cooperative stop).
+message BoundedStop {
+    string operative_id = 1;
+}

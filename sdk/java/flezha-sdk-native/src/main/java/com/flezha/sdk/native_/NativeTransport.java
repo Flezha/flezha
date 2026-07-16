@@ -107,7 +107,7 @@ public final class NativeTransport {
     public static native void setLogCallback(long handle, FlezhaLogCallback callback);
 
     /** Update the native-side compute engine id used to build UDS stream socket paths. */
-    public static native void setExecutorId(long handle, String id);
+    public static native void setRunnerId(long handle, String id);
 
     /** Open the control channel. Returns a stream id. */
     public static native long openControlStream(long handle);

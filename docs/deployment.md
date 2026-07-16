@@ -92,7 +92,7 @@ The dev environment mounts the source tree into the container so source changes 
 After opening a shell, compile Rust and Elixir:
 
 ```bash
-# Compile entire Rust workspace (NIF, CLI, SDK, test compute engine)
+# Compile entire Rust workspace (NIF, CLI, SDK, test runner)
 cargo build --workspace
 
 # Compile Elixir (Rustler reuses the already-built NIF)
@@ -113,11 +113,11 @@ _build/dev/rel/flezha/bin/flzvm start
 `bin/flzvm` is the Elixir release binary (renamed from `bin/flezha` by `mix.exs`).
 `bin/flz` is the CLI binary (copied from `cli/target/debug/flz`).
 
-### Running a compute engine (separate shell)
+### Running a runner (separate shell)
 
 ```bash
 ./scripts/dev.sh shell   # second terminal
-cd test/apps/rust_executor
+cd test/apps/rust_runner
 cargo run --target-dir=./target
 ```
 
@@ -282,7 +282,7 @@ Key ConfigMap values:
 
 | Key | Default | Notes |
 |---|---|---|
-| `FLEZHA_TRANSPORT` | `uds` | Default transport for auto-started compute engines |
+| `FLEZHA_TRANSPORT` | `uds` | Default transport for auto-started runners |
 | `FLEZHA_TRANSPORTS` | (derived) | Comma-separated list to enable multiple transports simultaneously (e.g. `uds,quic`) |
 | `FLEZHA_QUIC_ADDRESS` | `0.0.0.0:4433` | QUIC listen address (UDP port 4433 exposed) |
 | `FLEZHA_CA_CERT_PATH` | `/flezha/app_data/certs/ca.pem` | Auto-generated on first run |

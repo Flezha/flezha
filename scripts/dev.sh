@@ -42,7 +42,7 @@ set -e
 #     ./scripts/dev.sh cargo build --workspace
 #
 #   Start a compute engine (in a separate terminal/shell):
-#     cargo run -p rust_executor
+#     cargo run -p rust_runner
 #
 #   Run the benchmark:
 #     mix bench --num-operatives 1000 --messages-per-operative 1000

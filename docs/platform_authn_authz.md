@@ -157,7 +157,7 @@ on a 30 s TTL.
 ## 5. Bind roles
 
 Roles are a fixed four-way enum: `viewer`, `operator`, `admin`,
-`executor`. The role→action map lives in
+`runner`. The role→action map lives in
 `Flezha.AuthZ.Policy`. A principal may hold at most one binding;
 cross-namespace presence requires one principal identity per
 namespace.
@@ -284,5 +284,5 @@ backup purposes. Copy it alongside `app_data/state/` and
     — module map, supervision-tree placement, internal contracts.
   * [`docs/audit_log.md`](audit_log.md) — JSONL record schema,
     `:platform_authz` subscription, principal denormalisation.
-  * `docs/glossary.md` — Controller / Executor / Operative / Operation /
+  * `docs/glossary.md` — Controller / Runner / Operative / Operation /
     Segment vocabulary used in role-action names.

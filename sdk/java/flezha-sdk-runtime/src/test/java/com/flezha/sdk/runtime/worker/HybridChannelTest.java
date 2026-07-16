@@ -9,7 +9,7 @@ import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
 import com.flezha.sdk.operative.UnboundedOperativeRegistry;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
@@ -60,7 +60,7 @@ class HybridChannelTest {
     private static final List<String> PURE_EMIT_OUTCOMES = new CopyOnWriteArrayList<>();
 
     private final List<byte[]> capturedWrites = new CopyOnWriteArrayList<>();
-    private ExecutorContext ctx;
+    private RunnerContext ctx;
 
     @BeforeEach
     void reset() {
@@ -83,7 +83,7 @@ class HybridChannelTest {
         });
 
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "2"));
-        ctx = new ExecutorContext("ns", cfg, 0L);
+        ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(2));
         ctx.streamRegistry().register(0, 100L, 200L);
     }

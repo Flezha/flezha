@@ -103,7 +103,7 @@ over that fold. The epoch lives in the record header and stays `0` until a rewin
 ```mermaid
 sequenceDiagram
     participant CTRL as 🧠 Controller
-    participant EX as ⚙️ Executor (bounded)
+    participant EX as ⚙️ Runner (bounded)
     participant SINK as 📤 Sink
 
     CTRL->>EX: start (args seed the root operation)
@@ -149,7 +149,7 @@ Inside a structured operation, `ctx.emit` does **not** hit the wire. It stages.
 
 ```mermaid
 sequenceDiagram
-    participant EX as ⚙️ Executor (operation B)
+    participant EX as ⚙️ Runner (operation B)
     participant CTRL as 🧠 Controller
     participant SINK as 📤 Sink
 
@@ -227,7 +227,7 @@ An abnormal exit unwinds what already committed, in reverse.
 ```mermaid
 sequenceDiagram
     participant CTRL as 🧠 Controller
-    participant EX as ⚙️ Executor
+    participant EX as ⚙️ Runner
     participant SINK as 📤 Sink
 
     Note over CTRL: A committed. B and C committed (siblings under A).
@@ -285,7 +285,7 @@ An operative may run its tree more than once.
 stateDiagram-v2
     [*] --> Iter1
     Iter1 --> Commit1: the turn completes
-    Commit1 --> Iter2: wait for input (suspended — zero executor resources)
+    Commit1 --> Iter2: wait for input (suspended — zero runner resources)
     Iter2 --> Commit2
     Commit2 --> Iter3: wait
     Iter3 --> Commit3
@@ -317,21 +317,21 @@ absorbed and never delivered twice. A failed append is not forwarded.
 ## Suspension
 
 A loop waiting for input should cost nothing. Between iterations, a bounded operative is
-**evicted from its executor entirely** — the Overwatch and the registry entry stay, so a new
-message still has somewhere to land, but the executor holds zero resources for it.
+**evicted from its runner entirely** — the Overwatch and the registry entry stay, so a new
+message still has somewhere to land, but the runner holds zero resources for it.
 
 ```mermaid
 sequenceDiagram
     participant USER as User
     participant CTRL as 🧠 Controller (the durable front)
-    participant EX1 as ⚙️ Executor (old)
-    participant EX2 as ⚙️ Executor (new)
+    participant EX1 as ⚙️ Runner (old)
+    participant EX2 as ⚙️ Runner (new)
 
     Note over EX1: iteration N committed, the inbox is empty, the idle window elapses
     EX1->>CTRL: IterPark {iter N}
     CTRL->>CTRL: 💾 journal parked(N [, wake deadline]) — durable FIRST
     CTRL->>EX1: RemOperative — evict
-    Note over CTRL,EX1: the executor now holds NOTHING for this operative.<br/>The Overwatch and the registry entry remain.
+    Note over CTRL,EX1: the runner now holds NOTHING for this operative.<br/>The Overwatch and the registry entry remain.
 
     Note over CTRL: hours pass. The controller may even redeploy —<br/>the wake timer is re-armed from the journal at boot.
 
@@ -365,7 +365,7 @@ Rewind is a **marker**, not a truncation. The journal stays append-only.
 sequenceDiagram
     participant OP as Operator
     participant CTRL as 🧠 Controller
-    participant EX as ⚙️ Executor
+    participant EX as ⚙️ Runner
     participant SINK as 📤 Sink
 
     OP->>CTRL: rewind --to-iteration 2

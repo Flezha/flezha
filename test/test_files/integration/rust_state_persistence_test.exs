@@ -37,7 +37,7 @@ defmodule Flezha.Integration.RustStatePersistenceTest do
     {output, status} =
       System.cmd(
         "cargo",
-        ~w(test --features bench-internals -p flezha_executor --lib),
+        ~w(test --features bench-internals -p flezha_runner --lib),
         cd: Path.expand("../../..", __DIR__),
         stderr_to_stdout: true
       )
@@ -50,7 +50,7 @@ defmodule Flezha.Integration.RustStatePersistenceTest do
     {output, status} =
       System.cmd(
         "cargo",
-        ~w(test --features bench-internals -p flezha_executor --tests),
+        ~w(test --features bench-internals -p flezha_runner --tests),
         cd: Path.expand("../../..", __DIR__),
         stderr_to_stdout: true
       )

@@ -11,7 +11,7 @@ defmodule Flezha.AuthZ.Quotas do
 
     * `OperativeManager.start_operative/2`           → `:operatives`, `:segments`
     * `State.Supervisor.open_segment/N`    → `:disk_bytes`
-    * `FleetManager.connect_handler/4`       → `:executors`
+    * `FleetManager.connect_handler/4`       → `:runners`
     * Bounded-mailbox capacity provisioning  → `:mailbox_bytes`
 
   Allocation order: caller asks `check_allocation/3` BEFORE touching
@@ -45,7 +45,7 @@ defmodule Flezha.AuthZ.Quotas do
   `namespace` would exceed its quota.
 
   `kind` is one of the documented atoms above. `requested` is the
-  size of the allocation (1 for a operative/segment/executor; bytes
+  size of the allocation (1 for a operative/segment/runner; bytes
   for mailbox/disk).
   """
   @spec check_allocation(binary(), atom(), non_neg_integer()) :: :ok | quota_error()

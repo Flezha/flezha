@@ -288,7 +288,7 @@ mix flezha.bench.observability [iterations]
 ```
 
 Defaults to `1_000_000`. The task brings up only the observability
-supervisor (no Controller, no executors, no transports) so the
+supervisor (no Controller, no runners, no transports) so the
 measurement isolates `Bus.emit/1`. Default sinks are unregistered
 before the bench so it measures the zero-interested-sinks
 fast path. The result is informational; the documented threshold

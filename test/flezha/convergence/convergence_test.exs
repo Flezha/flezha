@@ -3,8 +3,8 @@ defmodule Flezha.ConvergenceTest do
   Unit coverage for the declarative-reconciler seams introduced by
   `unified-convergence-loop` session 2: the pure `Backoff`, `Diff`,
   `Planner` functions, the `SafeCall` wrapper, and the `Snapshot`
-  publish point. Live healing + the Loop's executor takeover are
-  covered by the `executor disconnect preserve` integration test.
+  publish point. Live healing + the Loop's runner takeover are
+  covered by the `runner disconnect preserve` integration test.
   """
 
   use ExUnit.Case, async: false
@@ -57,7 +57,7 @@ defmodule Flezha.ConvergenceTest do
   end
 
   describe "Diff.compute/2" do
-    test "classifies unbound and misbound operatives against active executors" do
+    test "classifies unbound and misbound operatives against active runners" do
       intent = %Intent{
         operatives: [
           %{namespace: :ns, operative_id: "unbound", factory_id: nil, plugins: []},
@@ -67,11 +67,11 @@ defmodule Flezha.ConvergenceTest do
       }
 
       reality = %{
-        active_executors: %{ns: MapSet.new(["e_live"])},
+        active_runners: %{ns: MapSet.new(["e_live"])},
         operatives: %{
-          {:ns, "unbound"} => %{bound_executor: nil},
-          {:ns, "ok"} => %{bound_executor: "e_live"},
-          {:ns, "stale"} => %{bound_executor: "e_dead"}
+          {:ns, "unbound"} => %{bound_runner: nil},
+          {:ns, "ok"} => %{bound_runner: "e_live"},
+          {:ns, "stale"} => %{bound_runner: "e_dead"}
         },
         stalled_operatives: MapSet.new()
       }
@@ -83,14 +83,14 @@ defmodule Flezha.ConvergenceTest do
       refute Diff.empty?(delta)
     end
 
-    test "empty delta when every operative is bound to a live executor" do
+    test "empty delta when every operative is bound to a live runner" do
       intent = %Intent{
         operatives: [%{namespace: :ns, operative_id: "ok", factory_id: nil, plugins: []}]
       }
 
       reality = %{
-        active_executors: %{ns: MapSet.new(["e_live"])},
-        operatives: %{{:ns, "ok"} => %{bound_executor: "e_live"}},
+        active_runners: %{ns: MapSet.new(["e_live"])},
+        operatives: %{{:ns, "ok"} => %{bound_runner: "e_live"}},
         stalled_operatives: MapSet.new()
       }
 
@@ -107,9 +107,9 @@ defmodule Flezha.ConvergenceTest do
       }
 
       reality = %{
-        active_executors: %{ns: MapSet.new(["e"])},
+        active_runners: %{ns: MapSet.new(["e"])},
         operatives: %{
-          {:ns, "r"} => %{bound_executor: "e", pid: self(), running_plugins: ["stray"]}
+          {:ns, "r"} => %{bound_runner: "e", pid: self(), running_plugins: ["stray"]}
         },
         stalled_operatives: MapSet.new()
       }
@@ -128,8 +128,8 @@ defmodule Flezha.ConvergenceTest do
       }
 
       reality = %{
-        active_executors: %{ns: MapSet.new(["e"])},
-        operatives: %{{:ns, "r"} => %{bound_executor: "e", pid: self(), running_plugins: ["p1"]}},
+        active_runners: %{ns: MapSet.new(["e"])},
+        operatives: %{{:ns, "r"} => %{bound_runner: "e", pid: self(), running_plugins: ["p1"]}},
         stalled_operatives: MapSet.new()
       }
 
@@ -147,10 +147,10 @@ defmodule Flezha.ConvergenceTest do
       }
 
       reality = %{
-        active_executors: %{ns: MapSet.new(["e"])},
+        active_runners: %{ns: MapSet.new(["e"])},
         operatives: %{
           {:ns, "r"} => %{
-            bound_executor: "e",
+            bound_runner: "e",
             pid: self(),
             running_plugins: ["ws_in", "kafka_out"]
           }
@@ -173,10 +173,10 @@ defmodule Flezha.ConvergenceTest do
       }
 
       reality = %{
-        active_executors: %{ns: MapSet.new(["e"])},
+        active_runners: %{ns: MapSet.new(["e"])},
         operatives: %{
           {:ns, "r"} => %{
-            bound_executor: "e",
+            bound_runner: "e",
             pid: self(),
             running_plugins: ["ws_in"],
             plugin_health: %{"ws_in" => {:unhealthy, :connection_idle}}
@@ -208,10 +208,10 @@ defmodule Flezha.ConvergenceTest do
       }
 
       reality = %{
-        active_executors: %{ns: MapSet.new(["e"])},
+        active_runners: %{ns: MapSet.new(["e"])},
         operatives: %{
           {:ns, "r"} => %{
-            bound_executor: "e",
+            bound_runner: "e",
             pid: self(),
             running_plugins: ["shaky", "fine"],
             # "gone" is absent from health (unsubscribed); "fine" has no
@@ -237,8 +237,8 @@ defmodule Flezha.ConvergenceTest do
       }
 
       reality = %{
-        active_executors: %{ns: MapSet.new()},
-        operatives: %{{:ns, "r"} => %{bound_executor: nil, pid: nil, running_plugins: []}},
+        active_runners: %{ns: MapSet.new()},
+        operatives: %{{:ns, "r"} => %{bound_runner: nil, pid: nil, running_plugins: []}},
         stalled_operatives: MapSet.new()
       }
 
@@ -246,7 +246,7 @@ defmodule Flezha.ConvergenceTest do
       assert delta.missing_plugins == []
     end
 
-    test "skips misbound classification when the namespace's live-executor read is :unknown" do
+    test "skips misbound classification when the namespace's live-runner read is :unknown" do
       # C1 regression: a failed FleetManager read (Probe records `:unknown`)
       # must NOT make every bound operative misbound — that mass-migrates a whole
       # namespace on a transient read race.
@@ -258,10 +258,10 @@ defmodule Flezha.ConvergenceTest do
       }
 
       reality = %{
-        active_executors: %{ns: :unknown},
+        active_runners: %{ns: :unknown},
         operatives: %{
-          {:ns, "a"} => %{bound_executor: "e1"},
-          {:ns, "b"} => %{bound_executor: "e2"}
+          {:ns, "a"} => %{bound_runner: "e1"},
+          {:ns, "b"} => %{bound_runner: "e2"}
         },
         stalled_operatives: MapSet.new()
       }
@@ -271,14 +271,14 @@ defmodule Flezha.ConvergenceTest do
       assert delta.unbound_operatives == []
     end
 
-    test "skips a operative whose own state read failed (bound_executor :unknown)" do
+    test "skips a operative whose own state read failed (bound_runner :unknown)" do
       intent = %Intent{
         operatives: [%{namespace: :ns, operative_id: "r", factory_id: nil, plugins: []}]
       }
 
       reality = %{
-        active_executors: %{ns: MapSet.new(["e_live"])},
-        operatives: %{{:ns, "r"} => %{bound_executor: :unknown, pid: nil, running_plugins: []}},
+        active_runners: %{ns: MapSet.new(["e_live"])},
+        operatives: %{{:ns, "r"} => %{bound_runner: :unknown, pid: nil, running_plugins: []}},
         stalled_operatives: MapSet.new()
       }
 
@@ -295,7 +295,7 @@ defmodule Flezha.ConvergenceTest do
       plan = Planner.plan(delta, Backoff.new())
 
       assert [
-               %{primitive: :evict_executor, target: "e_dead"},
+               %{primitive: :evict_runner, target: "e_dead"},
                %{primitive: :rebind_operative} = rebind
              ] =
                plan
@@ -455,12 +455,12 @@ defmodule Flezha.ConvergenceTest do
                  :start_plugin,
                  :stop_plugin,
                  :restart_plugin,
-                 :evict_executor
+                 :evict_runner
                ])
     end
 
-    test "evict_executor on an unknown id is an idempotent :ok" do
-      op = %{primitive: :evict_executor, namespace: nil, target: "ghost_executor", args: %{}}
+    test "evict_runner on an unknown id is an idempotent :ok" do
+      op = %{primitive: :evict_runner, namespace: nil, target: "ghost_runner", args: %{}}
       assert Heal.execute(op) == :ok
     end
 
@@ -579,33 +579,33 @@ defmodule Flezha.ConvergenceTest do
       do: %{namespace: ns, operative_id: rid, factory_id: nil, plugins: []}
 
     defp reality(ns, observed_operatives, active),
-      do: %{operatives: observed_operatives, active_executors: %{ns => active}}
+      do: %{operatives: observed_operatives, active_runners: %{ns => active}}
 
-    test "a bound operative on a live executor is :healthy" do
+    test "a bound operative on a live runner is :healthy" do
       ns = "ns"
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
 
       reality =
-        reality(ns, %{{ns, "r"} => %{bound_executor: "e1", pid: self()}}, MapSet.new(["e1"]))
+        reality(ns, %{{ns, "r"} => %{bound_runner: "e1", pid: self()}}, MapSet.new(["e1"]))
 
       health = Loop.operative_health_map(intent.operatives, reality, %Loop{})
       assert health == %{{ns, "r"} => :healthy}
     end
 
-    test "a operative bound to no executor is :unbound" do
+    test "a operative bound to no runner is :unbound" do
       ns = "ns"
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
-      reality = reality(ns, %{{ns, "r"} => %{bound_executor: nil}}, MapSet.new(["e1"]))
+      reality = reality(ns, %{{ns, "r"} => %{bound_runner: nil}}, MapSet.new(["e1"]))
 
       assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
                {ns, "r"} => :unbound
              }
     end
 
-    test "a operative bound to a dead executor is :failed" do
+    test "a operative bound to a dead runner is :failed" do
       ns = "ns"
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
-      reality = reality(ns, %{{ns, "r"} => %{bound_executor: "gone"}}, MapSet.new(["e1"]))
+      reality = reality(ns, %{{ns, "r"} => %{bound_runner: "gone"}}, MapSet.new(["e1"]))
 
       assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
                {ns, "r"} => :failed
@@ -617,7 +617,7 @@ defmodule Flezha.ConvergenceTest do
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
 
       reality =
-        reality(ns, %{{ns, "r"} => %{bound_executor: "e1", pid: self()}}, MapSet.new(["e1"]))
+        reality(ns, %{{ns, "r"} => %{bound_runner: "e1", pid: self()}}, MapSet.new(["e1"]))
 
       state = %Loop{stalled_operatives: %{"r" => System.monotonic_time(:millisecond)}}
 
@@ -631,7 +631,7 @@ defmodule Flezha.ConvergenceTest do
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
 
       reality =
-        reality(ns, %{{ns, "r"} => %{bound_executor: "e1", pid: self()}}, MapSet.new(["e1"]))
+        reality(ns, %{{ns, "r"} => %{bound_runner: "e1", pid: self()}}, MapSet.new(["e1"]))
 
       assert Loop.operative_health_map(intent.operatives, reality, %Loop{plugin_degraded: ["r"]}) ==
                %{{ns, "r"} => :degraded}
@@ -640,17 +640,17 @@ defmodule Flezha.ConvergenceTest do
     test "an unobservable operative (failed read) is :unknown for the tick, not classified" do
       ns = "ns"
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
-      reality = reality(ns, %{{ns, "r"} => %{bound_executor: :unknown}}, MapSet.new(["e1"]))
+      reality = reality(ns, %{{ns, "r"} => %{bound_runner: :unknown}}, MapSet.new(["e1"]))
 
       assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
                {ns, "r"} => :unknown
              }
     end
 
-    test "a operative whose namespace live-executor read failed is :unknown, not :failed" do
+    test "a operative whose namespace live-runner read failed is :unknown, not :failed" do
       ns = "ns"
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
-      reality = reality(ns, %{{ns, "r"} => %{bound_executor: "e1"}}, :unknown)
+      reality = reality(ns, %{{ns, "r"} => %{bound_runner: "e1"}}, :unknown)
 
       assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
                {ns, "r"} => :unknown
@@ -658,35 +658,35 @@ defmodule Flezha.ConvergenceTest do
     end
   end
 
-  describe "OperativeManager.pick_executor/2 — deterministic HRW placement (C1p)" do
+  describe "OperativeManager.pick_runner/2 — deterministic HRW placement (C1p)" do
     alias Flezha.Service.OperativeManager
 
     test "empty candidate set yields nil" do
-      assert OperativeManager.pick_executor([], "r") == nil
+      assert OperativeManager.pick_runner([], "r") == nil
     end
 
-    test "same (operative_id, set) always picks the same executor" do
+    test "same (operative_id, set) always picks the same runner" do
       set = ["e1", "e2", "e3"]
-      pick = OperativeManager.pick_executor(set, "btc")
+      pick = OperativeManager.pick_runner(set, "btc")
       assert pick in set
-      assert OperativeManager.pick_executor(Enum.shuffle(set), "btc") == pick
+      assert OperativeManager.pick_runner(Enum.shuffle(set), "btc") == pick
     end
 
-    test "removing only the chosen executor moves only that operative (stable)" do
+    test "removing only the chosen runner moves only that operative (stable)" do
       set = ["e1", "e2", "e3", "e4"]
       operatives = for i <- 1..40, do: "operative_#{i}"
-      before = Map.new(operatives, fn r -> {r, OperativeManager.pick_executor(set, r)} end)
+      before = Map.new(operatives, fn r -> {r, OperativeManager.pick_runner(set, r)} end)
 
       victim = "e2"
       after_set = set -- [victim]
 
       for r <- operatives do
-        new_pick = OperativeManager.pick_executor(after_set, r)
+        new_pick = OperativeManager.pick_runner(after_set, r)
 
         if before[r] == victim do
           assert new_pick in after_set
         else
-          # operatives not on the removed executor keep their placement
+          # operatives not on the removed runner keep their placement
           assert new_pick == before[r]
         end
       end

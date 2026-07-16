@@ -36,7 +36,7 @@ After the retry budget is exhausted the SDK SHALL ship a park frame (payload byt
 
 #### Scenario: Crash between exhaustion and ack does not lose the payload
 
-- **WHEN** the executor crashes after exhausting retries but before the park is acked
+- **WHEN** the runner crashes after exhausting retries but before the park is acked
 - **THEN** recovery replays the segment from its consumed offset, the poison payload is retried and parked again, and no duplicate DLQ entry survives (the park is idempotent on origin identity)
 
 #### Scenario: Parking un-freezes the min-watermark (tier on)

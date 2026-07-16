@@ -33,13 +33,13 @@ defmodule Flezha.AuthZ.PolicyTest do
       assert Policy.grants?(:admin, :"reset.run")
     end
 
-    test "executor only has data-plane verbs" do
-      for a <- [:"executor.connect", :"executor.checkpoint", :"executor.report"] do
-        assert Policy.grants?(:executor, a)
+    test "runner only has data-plane verbs" do
+      for a <- [:"runner.connect", :"runner.checkpoint", :"runner.report"] do
+        assert Policy.grants?(:runner, a)
       end
 
       for a <- [:"operative.start", :"operative.list", :"audit.read", :"observability.query"] do
-        refute Policy.grants?(:executor, a)
+        refute Policy.grants?(:runner, a)
       end
     end
 

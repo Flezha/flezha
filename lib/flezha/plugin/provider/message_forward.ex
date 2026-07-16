@@ -5,18 +5,18 @@ defmodule Flezha.Plugin.Provider.MessageForward do
   command and returns the reply.
   """
 
-  alias Flezha.Executor.ControlUnit
+  alias Flezha.Runner.ControlUnit
   alias Flezha.Plugin.Extension.Ctx
 
   def on_message(
         %Ctx.Msg{
           operative_id: operative_id,
-          executor_id: executor_id,
+          runner_id: runner_id,
           payload: payload
         },
         _opts
       )
       when is_binary(payload) do
-    ControlUnit.send_operation_message(executor_id, operative_id, payload)
+    ControlUnit.send_operation_message(runner_id, operative_id, payload)
   end
 end

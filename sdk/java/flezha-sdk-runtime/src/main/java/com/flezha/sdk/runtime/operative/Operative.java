@@ -3,7 +3,7 @@ package com.flezha.sdk.runtime.operative;
 import javax.annotation.Nonnull;
 
 /**
- * Sealed compute-operative instance held in the per-executor instance registry.
+ * Sealed compute-operative instance held in the per-runner instance registry.
  * One variant per compute-operative kind: a {@link UnboundedOperativeInstance} (a segmented,
  * stateful DAG) or a {@link BoundedOperativeInstance} (a stateless run-once job). The
  * dispatch boundary resolves the variant once per inbound frame and

@@ -55,6 +55,81 @@ public static void main(String[] args) throws Exception {
 }
 ```
 
+## Running a runner
+
+The controller owns placement, durability and restarts — but it is Elixir, and
+your Operations are Java. It cannot run your code inside its own process. So your
+process is where the compute lives, and `newInstance` is what turns your JVM into
+it: the call dials the controller, advertises the factory ids you registered, and
+then waits.
+
+From there **control is inverted**. You never call Flezha to handle a message.
+The controller decides which operatives run where, ships them to your process,
+and calls your `run`. Your `main` is a host, not a client — which is why it does
+nothing but stay alive.
+
+Everything else follows from that. Registering a class only says what this
+runner *can* serve; the controller decides what it *does* serve. A runner
+with nothing placed on it is idle, not broken.
+
+A **bounded** operative is the other shape: started with arguments, runs to
+completion, torn down. The smallest one is a single `run`, no topology at all:
+
+```java
+public final class GreetBounded implements BoundedOperative {
+    @Override public String factoryId() { return "greet"; }
+
+    @Override public void run(BoundedOperativeCtx ctx, String args)
+            throws BoundedOperativeException {
+        ctx.emit("hello " + args);
+    }
+}
+
+public static void main(String[] args) throws Exception {
+    Flezha.registerUnbounded(EchoOperative.class);
+    Flezha.registerBounded(GreetBounded.class);
+    try (Flezha sdk = Flezha.newInstance(args[0])) {   // args[0] = namespace
+        Thread.currentThread().join();
+    }
+}
+```
+
+**Start the controller first.** `newInstance` connects during the call and throws
+if the control socket is not there; the reconnect loop only covers a controller
+that drops *after* a successful connect.
+
+```bash
+java -jar my-runner.jar my_app          # my_app = the namespace
+
+flz operative start echo1 echo -n my_app
+flz operative start greet1 greet -n my_app --kind bounded --init_values '{"name":"world"}'
+```
+
+The argument to `newInstance` is the **namespace**, and it is the join key: the
+`-n` above must match it, or the controller has no runner to place the
+operative on. It is a logical grouping, not a transport address — every runner
+on a node dials the same control socket regardless of namespace.
+
+In `flz operative start <operative_id> <factory_id>`, the factory id (`echo`,
+`greet`) is what `factoryId()` returns; the operative id (`echo1`, `greet1`)
+names this one instance. `--init_values` is handed to a bounded `run` verbatim as
+its `args` string — parse it yourself if it is JSON. The unbounded `echo1` then
+runs until stopped; the bounded `greet1` emits once, completes, and disappears.
+
+### Identity across restarts
+
+On every connect the SDK presents a durable **stable id**, and the controller
+replies with a per-connection session token. The stable id is the binding key —
+it is why a restarted runner picks its operatives back up instead of losing
+them. It is persisted at `FLEZHA_RUNNER_ID_PATH`, derived as
+`<namespace>-<factory_hash>-<random>`.
+
+The default path is `/var/lib/flezha-runner/id`, which a non-root JVM usually
+cannot write. That degrades quietly: the runner still starts, but mints a fresh
+id every boot and logs one `warn`, so its old bindings age out instead of being
+reclaimed. Point it somewhere writable on any runner you intend to restart.
+Full model: [`docs/resilience/runner_identity.md`](../../docs/resilience/runner_identity.md).
+
 ## The rule that matters most
 
 Everything durable rests on **replay**: state is rebuilt by re-applying a change
@@ -94,7 +169,7 @@ retention, and a tier without keyed sinks is refused at registration.
 | Module | Purpose |
 |---|---|
 | `flezha-sdk-api` | Public API: `Flezha`, `UnboundedOperative`, `BoundedOperative`, `Operation`, `OperationCtx`, `StableId`, channel builders, clocks. No native dependency. |
-| `flezha-sdk-protobuf` | Generated from `protobufs/executor_commands.proto`. |
+| `flezha-sdk-protobuf` | Generated from `protobufs/runner_commands.proto`. |
 | `flezha-sdk-runtime` | Control plane, data plane, framing, worker pool, reconnect, state persistence, bounded driver. |
 | `flezha-sdk-native` | JNI bindings + bundled per-OS `libflz_transport`. |
 | `flezha-sdk-testing` | `OperationTestHarness` — add with `<scope>test</scope>`. |
@@ -135,7 +210,8 @@ mix test.java_sdk                               # from repo root: full Java matr
 | `FLEZHA_SERVER_CERT_PATH` | `app_data/certs/cert.pem` | Server mode only. |
 | `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/key.pem` | Server mode only. |
 | `FLEZHA_SOCKET_FILES_PATH` | `app_data/sockets` | UDS only. |
-| `FLEZHA_WORKER_POOL_SIZE` | `availableProcessors()` | Shared executor draining every Segment mailbox. |
+| `FLEZHA_RUNNER_ID_PATH` | `/var/lib/flezha-runner/id` | Durable stable identity. Unwritable ⇒ a fresh id per boot and lost bindings. |
+| `FLEZHA_WORKER_POOL_SIZE` | `availableProcessors()` | Shared runner draining every Segment mailbox. |
 | `FLEZHA_NATIVE_LIB_DIR` | `$TMPDIR` | Where `libflz_transport` is extracted. Set it on containers where `/tmp` is `noexec`. |
 | `FLEZHA_BOUNDED_PARK_IDLE_MS` | `5000` | Idle hysteresis before a looping bounded operative parks. |
 

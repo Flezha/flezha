@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SDK -> agent graceful-shutdown state-freshness smoke test (dev compose).
 #
-# Exercises the `ExecutorShutdownNotification` path from
+# Exercises the `RunnerShutdownNotification` path from
 # `ship-fresh-state-on-sdk-shutdown` against the same dev compose stack
 # the connection-healing test uses, sending SIGTERM via
 # `docker compose stop` and asserting the agent's
@@ -11,7 +11,7 @@
 #
 #   A. periodic-enabled: operative uses the agent's default
 #      `overwatch_state_snapshot_interval_ms`. After SIGTERM the
-#      snapshot reflects the executor's true final state (not the
+#      snapshot reflects the runner's true final state (not the
 #      up-to-interval stale periodic value).
 #   B. disabled-snapshot: operative is started with
 #      `--snapshot-interval 0`. Without the shutdown notification the
@@ -101,7 +101,7 @@ wait_for_ce_id() {
     fi
     sleep 2
   done
-  echo "[state_freshness] timed out waiting for executor_id" >&2
+  echo "[state_freshness] timed out waiting for runner_id" >&2
   return 1
 }
 
@@ -181,7 +181,7 @@ note "bringing up dev compose stack (project=${PROJECT}, transport=${FLEZHA_TRAN
 
 note "waiting for initial handshake"
 INITIAL_CE_ID="$(wait_for_ce_id)"
-note "initial executor_id: ${INITIAL_CE_ID}"
+note "initial runner_id: ${INITIAL_CE_ID}"
 
 PROC_A="state_freshness_a_$$"
 start_operative "${PROC_A}" "60_000"
@@ -216,4 +216,4 @@ sleep 1
 
 assert_snapshot_present "${PROC_B}" "scenario B (disabled-snapshot)"
 
-note "PASS: both state-freshness scenarios populated agent.Overwatch.state.snapshot via ExecutorShutdownNotification"
+note "PASS: both state-freshness scenarios populated agent.Overwatch.state.snapshot via RunnerShutdownNotification"

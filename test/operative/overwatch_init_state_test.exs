@@ -125,13 +125,13 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
       opts: [plugins: [plugin]]
     }
 
-    assert {:ok, %{pid: pid, executor_id: current_id}} =
+    assert {:ok, %{pid: pid, runner_id: current_id}} =
              OperativeManager.start_operative(@namespace, operative)
 
     assert_receive {:probe, :called}, 500
 
     try do
-      GenServer.call(pid, {:executor_migrate, current_id})
+      GenServer.call(pid, {:runner_migrate, current_id})
     catch
       :exit, _ -> :ok
     end

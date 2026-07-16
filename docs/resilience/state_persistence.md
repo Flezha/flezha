@@ -34,12 +34,12 @@ app_data/
 
 The path triple `(operative_class, operation_id, segment_key)` uniquely
 identifies a Segment's state. Persistence does not include the
-`executor_id` — that is an addressing concern at the SDK boundary. When
-an executor pod restarts and rotates its `executor_id`, state under the
-flat layout is preserved and shipped to the new executor on Segment
+`runner_id` — that is an addressing concern at the SDK boundary. When
+a runner pod restarts and rotates its `runner_id`, state under the
+flat layout is preserved and shipped to the new runner on Segment
 attach via `RestoreInitState`. The one-time
 `Flezha.Boot.StatePathMigrator` runs at `Application.start/2` to migrate
-an older executor-keyed layout into the flat one.
+an older runner-keyed layout into the flat one.
 
 `segment_key` is URL-safe-base64-encoded with a leading `_` when it
 contains characters outside `[A-Za-z0-9_.-]`. Round-trippable via
@@ -126,7 +126,7 @@ share the Watchdog's in-flight `compactions` map as the re-enqueue guard
 (size+age can never double-enqueue), and emit
 `[:flezha, :state, :compaction_trigger]` with `trigger: :size | :age`.
 
-1. Executor (or compaction trigger) requests a snapshot — controller ships
+1. Runner (or compaction trigger) requests a snapshot — controller ships
    `CompactSegment` to the SDK over the control channel.
 2. SDK clones `Self::State` under the sticky CAS, postcard-serializes
    it, ships the bytes back via `segment_state_snapshot`.
@@ -164,7 +164,7 @@ leaves the original WAL intact.
 
 ### Credit-grant (primary)
 
-Executor→controller flow control on the state stream is credit-based:
+Runner→controller flow control on the state stream is credit-based:
 park, never drop. On the first `segment_state_change` frame of a stream
 attach, the `StreamChannel` offers `CreditWindowInit{stream_id,
 window_bytes, low_watermark_bytes}` over the control channel (kill
@@ -193,7 +193,7 @@ ledger:
   producers throttle at the buffer boundary) until the next grant. Parks
   are bounded-wait loops; the `credit_parked` counter advances while
   parked and ships in `data_heartbeat` metadata, so a credit-parked
-  executor classifies as fed-but-parked, not silently frozen. Grants and
+  runner classifies as fed-but-parked, not silently frozen. Grants and
   heartbeats ride threads that never park.
 * **Reconnect resets the ledger** — a re-attach re-runs the handshake
   with a fresh session id; drain reports and grants tagged with a dead
@@ -215,7 +215,7 @@ keeps the advisory path byte-for-byte: crossing
 `:flezha, :wal_high_watermark_bytes` (default 16 MiB) emits a
 `[:flezha, :state, :wal, :backpressure]` telemetry event AND ships
 `SegmentMailboxStatus{status: "full"}` to the SDK (routed via the
-writer's `owning_executor`); draining below `wal_low_watermark_bytes`
+writer's `owning_runner`); draining below `wal_low_watermark_bytes`
 (default `high_watermark / 2`) ships `"open"`. The hysteresis prevents
 oscillation. Credit-speaking sessions get the telemetry event only —
 no wire signal. SDK-side the flags are tolerated and dropped
@@ -258,7 +258,7 @@ Implemented in `cli/src/state.rs` (Rust binary) which RPCs into
 `Flezha.Service.CliManager.state_*/N` on the running controller. Path
 strings like `MarketOperative/OhlcOperation/M1` are resolved against
 `Flezha.State.Registry.all_segments/0` to confirm a Segment exists
-on disk; the live executor binding (when needed for `state rotate`) is
+on disk; the live runner binding (when needed for `state rotate`) is
 looked up from the runtime ProcessHub registry.
 
 `flz state at` returns the assembled snapshot + change-log bytes plus
@@ -279,7 +279,7 @@ Some(ttl)`; default is `None` = no eviction), the SDK reaper evicts an
 idle, persistence-enabled Segment by shipping a fire-and-forget
 `delete_segment_state` frame on the secondary stream (payload-id
 `Flezha.State.Wire.payload_id_delete_segment_state/0`; body is the bare
-structured `segment_id`). `Flezha.Executor.StreamChannel` routes it to
+structured `segment_id`). `Flezha.Runner.StreamChannel` routes it to
 `Flezha.State.Supervisor.delete_segment/1`, which stops the per-Segment
 `WalWriter`, drops any pending `FsyncBatcher` dirty mark, and unlinks the
 `{key}.wal`, `{key}.snap.{seq}`, and `{key}.outbox.dedup` files
@@ -316,7 +316,7 @@ fire-and-forget and reads no reply).
 | `:flezha, :default_time_travel_retention_hours` | `6` | Global default when no override. |
 | `:flezha, :default_compact_after_bytes` | `8 * 1024 * 1024` | Per-Operation compaction size threshold (env `FLEZHA_COMPACT_AFTER_BYTES`). |
 | `:flezha, :compact_after_age_ms` | `300_000` | Age floor for compaction; `0` disables (env `FLEZHA_COMPACT_AFTER_AGE_MS`; `0` in `:test`). |
-| `:flezha, :operative_persistence` | `%{}` | Per-Operative-class executor override (`true` / `false`). |
+| `:flezha, :operative_persistence` | `%{}` | Per-Operative-class runner override (`true` / `false`). |
 | `:flezha, :output_watchdog_interval_ms` | `10_000` | `Watchdog` sweep cadence. Min 100 ms. |
 | `:flezha, :output_stall_timeout_ms` | `%{}` (default 60 000) | Per-Operative-class output-staleness window; `0` disables. |
 | `:flezha, :default_output_stall_timeout_ms` | `60_000` | Global default when no per-class override. |
@@ -331,7 +331,7 @@ telemetry:
 
 * **Seq gap (populated WAL)** — a Change with `seq > last_persisted_seq
   + 1` while `last_persisted_seq >= 0` is no longer a terminal
-  `{:error, {:gap}}`; `Flezha.Executor.StreamChannel` emits
+  `{:error, {:gap}}`; `Flezha.Runner.StreamChannel` emits
   `[:flezha, :state, :seq_gap]` and resyncs so the SDK rewinds and
   resends from `terminal_seq + 1`.
 * **Output staleness** — `Watchdog` flags a Segment that is still
@@ -351,7 +351,7 @@ The resync direction is chosen by who holds authoritative history
 
 * **Controller holds a baseline** (snapshot and/or WAL records) →
   **push** `RestoreInitState` (the existing handshake).
-* **Controller holds no baseline** while the executor is live → **pull**
+* **Controller holds no baseline** while the runner is live → **pull**
   a full-state snapshot via `CompactSegment`. The dispatch path never
   ships a `RestoreInitState` whose assembled payload is empty
   (`Restore.has_persisted_state?/1`, which treats a zero-byte WAL as no
@@ -360,22 +360,22 @@ The resync direction is chosen by who holds authoritative history
 
 The pull is data-plane-triggered on cold takeover: the first
 `segment_state_change` arriving with an empty WAL
-(`last_persisted_seq == -1`), `seq > 0`, and no executor-restart realign
+(`last_persisted_seq == -1`), `seq > 0`, and no runner-restart realign
 puts the `WalWriter` into **awaiting-baseline** — the frame is shed
 (counted in `wal_shed_total`, not an error, and the SDK is NOT
 disconnected), `[:flezha, :state, :baseline_seed]` fires once, and one
 `CompactSegment` is dispatched per episode. Further gap frames shed
 quietly until the pulled `segment_state_snapshot` lands; its seq becomes
 `last_persisted_seq` (the snapshot encodes the shed deltas' effects) and
-the executor's next delta appends contiguously. A stuck pull is bounded
+the runner's next delta appends contiguously. A stuck pull is bounded
 by the compaction-timeout sweep. A gap on a *populated* WAL remains a
 protocol violation (`{:error, {:gap, ...}}`).
 
-## Executor-restart realign is owner-bound
+## Runner-restart realign is owner-bound
 
-Within one executor's lifetime the per-Segment seq is monotonic, so a
+Within one runner's lifetime the per-Segment seq is monotonic, so a
 Change from a *different* session than the one that wrote the current
-epoch, at a non-contiguous seq, signals an executor restart: the
+epoch, at a non-contiguous seq, signals a runner restart: the
 `WalWriter` realigns — truncates the WAL, drops snapshots, adopts the
 new seq base — and emits `[:flezha, :state, :wal_realign]`. A
 same-session low seq stays a legitimate dedup.
@@ -383,7 +383,7 @@ same-session low seq stays a legitimate dedup.
 The realign is honoured **only from the Segment's current owner
 binding**. A newest-wins takeover unbinds the superseded session from
 the write path before binding the new one (see
-`docs/resilience/executor_identity.md` "The WAL binds to the owner"):
+`docs/resilience/runner_identity.md` "The WAL binds to the owner"):
 fenced `StreamChannel`s refuse durable-write forwards at the binding,
 and the `WalWriter` refuses frames from a session marked superseded
 (`FleetManager.superseded_session?/1`) with `{:error, :stale_writer}`
@@ -395,25 +395,25 @@ Refusals emit `[:flezha, :state, :stale_writer_refused]` once per
 not a party worth repairing toward) and release any credit debit
 immediately.
 
-## Persisted `executor_id` is advisory across controller restarts
+## Persisted `runner_id` is advisory across controller restarts
 
-The `executor_id` field carried in an operative-binding record (replayed
+The `runner_id` field carried in an operative-binding record (replayed
 into `Flezha.Operative.Overwatch.init/1` from ProcessHub's durable
-registry at boot) is **advisory only**. It identifies the executor the
+registry at boot) is **advisory only**. It identifies the runner the
 operative was bound to BEFORE the current controller process started.
 
 On every cold start the Overwatch calls
-`OperativeManager.assign_executor/2` inside
-`handle_continue({:bind_executor, …}, _)` to re-resolve a live
-executor for the operative's `factory_id`. The persisted value is used
-for diagnostic logging only (a `rebound from stale executor X to live
-Y` line fires when the live executor differs).
+`OperativeManager.assign_runner/2` inside
+`handle_continue({:bind_runner, …}, _)` to re-resolve a live
+runner for the operative's `factory_id`. The persisted value is used
+for diagnostic logging only (a `rebound from stale runner X to live
+Y` line fires when the live runner differs).
 
-Control-plane calls (`AddOperative`, `:ping_executor`, `start_operative_sdk`)
-are issued against the re-resolved live executor, never against the
+Control-plane calls (`AddOperative`, `:ping_runner`, `start_operative_sdk`)
+are issued against the re-resolved live runner, never against the
 persisted value directly. The bounded-retry governor (see
 `docs/operative_architecture.md` "Overwatch lifecycle") re-resolves on
-every retry attempt so a fresh executor that comes online during a
+every retry attempt so a fresh runner that comes online during a
 backoff window is picked up automatically.
 
 No on-disk format change accompanies this — the field is still

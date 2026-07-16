@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and executor pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks to coordinate replay with FleetManager readiness, and wires per-Segment WAL/snapshot restoration into the data-stream attach path. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
+The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and runner pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks to coordinate replay with FleetManager readiness, and wires per-Segment WAL/snapshot restoration into the data-stream attach path. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
 ## Requirements
 ### Requirement: Configure ProcessHub for durable registry and auto-recovery per namespace
 
@@ -14,7 +14,7 @@ The recovery configuration SHALL be `[recovery_window_ms: <flezha_recovery_windo
 
 The kill-switch `:flezha, :auto_restore_enabled` (env var `FLEZHA_AUTO_RESTORE_ENABLED`, default `true`) SHALL gate the `auto_recovery` field: when `false`, pass `auto_recovery: false` to `ProcessHub.child_spec` so ProcessHub transitions immediately to `:normal` without replay or peer handshake.
 
-The atom in the registry-backend tuple MUST resolve to a real backend module via `ProcessHub.Initializer.resolve_registry_backend/1` — currently exactly `:dets` (→ `ProcessHub.Service.Storage.Dets`) or `:ets` (→ `ProcessHub.Service.Storage.Ets`). Backend identifiers that route to non-existent modules SHALL NOT appear in `lib/flezha/service/hub_manager.ex`'s `registry_backend_config/1`. In particular, `:durable_ets` was observed as a regression in the commit immediately following `b0a00e7 Implement auto-restore-on-boot`: `ProcessHub.Initializer.resolve_registry_backend/1`'s `{module, opts}` fall-through clause treated `:durable_ets` as a module name and crashed `setup_storage/2` on first executor connect with `(UndefinedFunctionError) function :durable_ets.open/2 is undefined (module :durable_ets is not available)`, killing every fresh controller boot. If a future upstream `process_hub` ships an actual `Storage.DurableEts` backend (DETS-on-disk + ETS-fast-reads), this requirement MUST be amended to allow `:durable_ets` only AFTER `deps/process_hub/lib/process_hub/service/storage/durable_ets.ex` exists AND `ProcessHub.Initializer.resolve_registry_backend/1` carries an explicit `{:durable_ets, opts}` clause.
+The atom in the registry-backend tuple MUST resolve to a real backend module via `ProcessHub.Initializer.resolve_registry_backend/1` — currently exactly `:dets` (→ `ProcessHub.Service.Storage.Dets`) or `:ets` (→ `ProcessHub.Service.Storage.Ets`). Backend identifiers that route to non-existent modules SHALL NOT appear in `lib/flezha/service/hub_manager.ex`'s `registry_backend_config/1`. In particular, `:durable_ets` was observed as a regression in the commit immediately following `b0a00e7 Implement auto-restore-on-boot`: `ProcessHub.Initializer.resolve_registry_backend/1`'s `{module, opts}` fall-through clause treated `:durable_ets` as a module name and crashed `setup_storage/2` on first runner connect with `(UndefinedFunctionError) function :durable_ets.open/2 is undefined (module :durable_ets is not available)`, killing every fresh controller boot. If a future upstream `process_hub` ships an actual `Storage.DurableEts` backend (DETS-on-disk + ETS-fast-reads), this requirement MUST be amended to allow `:durable_ets` only AFTER `deps/process_hub/lib/process_hub/service/storage/durable_ets.ex` exists AND `ProcessHub.Initializer.resolve_registry_backend/1` carries an explicit `{:durable_ets, opts}` clause.
 
 #### Scenario: Default config opts in to durable + auto-recovery
 
@@ -49,23 +49,23 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 `Flezha.Boot.RecoveryHooks` SHALL register a synchronous hook handler for ProcessHub's `pre_recovery_replay` hook on every namespace hub. The handler SHALL:
 
 1. Receive the hook event when ProcessHub is about to start replaying its persistent registry.
-2. Poll `Flezha.Executor.FleetManager` for at least one active executor whose advertised factories cover the union of `factory_id` values referenced by the hub's persistent registry rows.
+2. Poll `Flezha.Runner.FleetManager` for at least one active runner whose advertised factories cover the union of `factory_id` values referenced by the hub's persistent registry rows.
 3. Block (with bounded sleep) for up to `:flezha, :pre_replay_fleet_wait_ms` (default `30_000`).
 4. Return regardless of result (replay proceeds; missing-factory rows will become pending in the existing `start_children` flow).
-5. Log INFO `[boot] pre_recovery_replay: waiting for executors for factories <X, Y, Z>` on entry and `[boot] pre_recovery_replay: ready (or timeout)` on exit.
+5. Log INFO `[boot] pre_recovery_replay: waiting for runners for factories <X, Y, Z>` on entry and `[boot] pre_recovery_replay: ready (or timeout)` on exit.
 
 If the kill-switch `:flezha, :auto_restore_enabled` is `false`, the hook handler SHALL NOT be registered (because `auto_recovery: false` means the hook never fires anyway).
 
-#### Scenario: Handler blocks until at least one matching executor connects
+#### Scenario: Handler blocks until at least one matching runner connects
 
-- **GIVEN** ProcessHub's persistent registry contains 3 children using factory `crypto_trades`; no executor is connected yet; coordinator enters `:recovering`
+- **GIVEN** ProcessHub's persistent registry contains 3 children using factory `crypto_trades`; no runner is connected yet; coordinator enters `:recovering`
 - **WHEN** ProcessHub fires `pre_recovery_replay` synchronously
-- **THEN** Flezha's handler blocks; an executor advertising `crypto_trades` connects 2 s later
-- **AND** the handler observes the executor and returns; ProcessHub's replay proceeds with the eligible factory
+- **THEN** Flezha's handler blocks; a runner advertising `crypto_trades` connects 2 s later
+- **AND** the handler observes the runner and returns; ProcessHub's replay proceeds with the eligible factory
 
 #### Scenario: Handler times out and replay proceeds anyway
 
-- **GIVEN** the persistent registry's factories are all unsupported (no matching executors) and `pre_replay_fleet_wait_ms = 5_000`
+- **GIVEN** the persistent registry's factories are all unsupported (no matching runners) and `pre_replay_fleet_wait_ms = 5_000`
 - **WHEN** the handler times out at t=5s
 - **THEN** the handler returns; ProcessHub's replay proceeds; each child's `start_children` raises in the existing `child_data_alter` hook with `"No active compute engines available"`; ProcessHub's existing per-child error handling captures this; the `recovery_replay_completed` telemetry shows `failed: N`
 
@@ -107,11 +107,11 @@ When a Segment's data stream attaches to a `StreamChannel` AND the owning Operat
 
 The Operative's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
 
-This works identically across: ProcessHub-driven cold-boot replay, fresh `flz operative start`, ProcessHub redistribution, AddOperative reissue after executor restart.
+This works identically across: ProcessHub-driven cold-boot replay, fresh `flz operative start`, ProcessHub redistribution, AddOperative reissue after runner restart.
 
 #### Scenario: ProcessHub replay + Segment stream attach ships RestoreInitState
 
-- **GIVEN** ProcessHub's persistent registry is replayed; a Operative is started; an executor connects and is assigned
+- **GIVEN** ProcessHub's persistent registry is replayed; a Operative is started; a runner connects and is assigned
 - **WHEN** the SDK opens a data stream for a Segment that has on-disk WAL records under `app_data/state/{operative_class}/{operation_id}/{segment_key}.wal`
 - **THEN** the controller ships `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` over the control channel BEFORE forwarding any input frames
 
@@ -176,14 +176,14 @@ If the WAL transfer fails, the destination SHALL log ERROR with the segment_id a
 
 ### Requirement: `hub_migrate` SHALL invoke ProcessHub clean-leave to preserve state
 
-`Flezha.Executor.FleetManager`'s `hub_migrate` path (Branch B/C in `do_handle_executor_disconnect/2`) SHALL invoke `ProcessHub.leave/2` (or whichever ProcessHub-provided leave function honors `migration_strategy: HotSwap{handover: true}`) such that each child operative migrates to a peer controller via state-preserving handover, NOT via direct hub teardown that would orphan state on the leaving node.
+`Flezha.Runner.FleetManager`'s `hub_migrate` path (Branch B/C in `do_handle_runner_disconnect/2`) SHALL invoke `ProcessHub.leave/2` (or whichever ProcessHub-provided leave function honors `migration_strategy: HotSwap{handover: true}`) such that each child operative migrates to a peer controller via state-preserving handover, NOT via direct hub teardown that would orphan state on the leaving node.
 
 This is a verify-and-fix requirement: if the current implementation already invokes `ProcessHub.leave/2`, add a regression test. If it bypasses the migration strategy, change the implementation to honor it.
 
-#### Scenario: Controller loses all executors — operatives migrate with state to peers
+#### Scenario: Controller loses all runners — operatives migrate with state to peers
 
 - **GIVEN** controller A with operative `p1` (state at seq=500); peer controller B with capacity for `p1`'s factory
-- **WHEN** A's executors all disconnect; FleetManager enters Branch B and invokes `hub_migrate`
+- **WHEN** A's runners all disconnect; FleetManager enters Branch B and invokes `hub_migrate`
 - **THEN** ProcessHub HotSwaps `p1` from A to B with handover; B's `alter_handover_state/2` receives the in-memory state; B's WalTransfer pulls the WAL from A
 - **AND** `p1` resumes on B with terminal seq=500; no data loss
 
@@ -205,7 +205,7 @@ The Retention sweeper handles long-term orphans via `time_travel_retention_hours
 
 #### Scenario: flz operative stop deletes state files
 
-- **WHEN** the executor runs `flz operative stop default p1`
+- **WHEN** the runner runs `flz operative stop default p1`
 - **THEN** `OperativeManager.stop_operative/2` calls `ProcessHub.stop_children/3`; on success, recursively deletes `app_data/state/MarketOperative/btc/...`
 - **AND** if any `.tmp` or `.rewriting` file is present, deletion is skipped with a WARN log
 
@@ -215,7 +215,7 @@ The mechanism SHALL preserve every change accepted (returned `:ok` to the caller
 
 - **Partial-cluster restart after full outage**: when the entire cluster has been shut down at some point AND only a SUBSET of controller nodes is later restarted, rows held only on the non-rejoining nodes SHALL be permanently lost.
 
-Every other graceful-shutdown scenario — single-controller restart with peers up, cluster-wide cold boot with all nodes rejoining, executor pod restart, HotSwap migration, rolling deploy, partition heal, mixed-version rolling upgrade — SHALL preserve all accepted changes.
+Every other graceful-shutdown scenario — single-controller restart with peers up, cluster-wide cold boot with all nodes rejoining, runner pod restart, HotSwap migration, rolling deploy, partition heal, mixed-version rolling upgrade — SHALL preserve all accepted changes.
 
 Ungraceful kill (SIGKILL of a controller without orchestration giving it time to migrate) is OUT OF SCOPE for state preservation; whichever node's local disk holds the only WAL copy is what survives.
 
@@ -236,19 +236,19 @@ The CLI SHALL provide:
 
 #### Scenario: flz boot status reports per-hub state
 
-- **WHEN** the executor runs `flz boot status` while one namespace hub is `:normal` and another is still `:recovery_pending`
+- **WHEN** the runner runs `flz boot status` while one namespace hub is `:normal` and another is still `:recovery_pending`
 - **THEN** the CLI prints both hubs with their respective states and metrics
 
 #### Scenario: flz boot await blocks until all hubs are :normal
 
-- **WHEN** the executor runs `flz boot await --timeout=30000` while one hub is still in `:recovery_pending`
+- **WHEN** the runner runs `flz boot await --timeout=30000` while one hub is still in `:recovery_pending`
 - **THEN** the CLI blocks; once all hubs reach `:normal` (or the timeout), it returns; on timeout, exits non-zero with which hubs are still pending
 
 ### Requirement: Recovery replay SHALL NOT resurrect operatives onto dead nodes
 
 ProcessHub recovery replay (`Flezha.Service.HubManager.alter_child_data/2`) SHALL drop
 any `{node, pid}` entries that reference nodes absent from the live cluster when it
-rewrites a operative's child-spec to an active executor, so the replayed operative is placed on a
+rewrites a operative's child-spec to an active runner, so the replayed operative is placed on a
 live node rather than being treated as "already running" on a gone node. This complements
 the generic ProcessHub `post_node_leave` reaping (see `controller-leadership`) and is
 defense-in-depth for the case where reaping has not yet fired at replay time.
@@ -256,7 +256,7 @@ defense-in-depth for the case where reaping has not yet fired at replay time.
 #### Scenario: Stale dead-node pid does not block respawn
 - **GIVEN** a operative's persisted registry entry lists a pid on a node that is no longer in the cluster
 - **WHEN** recovery replay runs `alter_child_data`
-- **THEN** the dead-node entry SHALL be dropped and the operative SHALL be (re)started on a live node + live executor
+- **THEN** the dead-node entry SHALL be dropped and the operative SHALL be (re)started on a live node + live runner
 - **AND** the operative SHALL resume producing rather than remaining registered-but-silent on the dead node
 
 ### Requirement: Recovery and on-demand hub creation SHALL be gated on cluster formation
@@ -270,11 +270,11 @@ but did not bring to production is still healed.
 #### Scenario: Replay on a freshly-clustered node converges
 - **GIVEN** a controller that has just joined the cluster and replayed its registry
 - **WHEN** the reconciler runs after `post_recovery_replay`
-- **THEN** every replayed operative SHALL be driven to a producing state on a live executor, or marked `FAILED` if no executor can serve it
+- **THEN** every replayed operative SHALL be driven to a producing state on a live runner, or marked `FAILED` if no runner can serve it
 
 ### Requirement: Boot ordering is gated on recovery completion, not on the replay hook
 
-Registry-dependent services SHALL gate their readiness on `HubManager.await_recovery_complete/1` rather than on the `pre_recovery_replay` hook doing the waiting. `Flezha.Executor.FleetManager.init/1` and the convergence `Loop` SHALL block on `await_recovery_complete` before serving registry-dependent work. The `pre_recovery_replay` hook handler is consequently a thin telemetry forwarder (it emits `[:flezha, :boot, :pre_recovery_replay]` and returns; it does NOT poll FleetManager and there is no `:pre_replay_fleet_wait_ms` budget), because the upstream ProcessHub recovery-marker gate queues cluster events until the cluster is formed.
+Registry-dependent services SHALL gate their readiness on `HubManager.await_recovery_complete/1` rather than on the `pre_recovery_replay` hook doing the waiting. `Flezha.Runner.FleetManager.init/1` and the convergence `Loop` SHALL block on `await_recovery_complete` before serving registry-dependent work. The `pre_recovery_replay` hook handler is consequently a thin telemetry forwarder (it emits `[:flezha, :boot, :pre_recovery_replay]` and returns; it does NOT poll FleetManager and there is no `:pre_replay_fleet_wait_ms` budget), because the upstream ProcessHub recovery-marker gate queues cluster events until the cluster is formed.
 
 #### Scenario: a registry consumer waits for recovery before serving
 - **GIVEN** a controller boot where a hub must replay its durable registry
@@ -294,7 +294,7 @@ Registry-dependent services SHALL gate their readiness on `HubManager.await_reco
 
 ### Requirement: A sole-instance restart preserves operatives only via recovery mode
 
-A plain restart of the sole controller SHALL skip-replay and rebuild the operative list from executors re-announcing (the durable registry is wiped on a skip-replay boot, by design). To preserve operatives across a sole-instance restart, recovery mode (the `cluster.healthy` marker removed / `flz cluster prepare-recovery`) SHALL be used so the registry replays from DETS, and `/healthz` SHALL honestly report `recovering`/`restoring_registry` until rebound.
+A plain restart of the sole controller SHALL skip-replay and rebuild the operative list from runners re-announcing (the durable registry is wiped on a skip-replay boot, by design). To preserve operatives across a sole-instance restart, recovery mode (the `cluster.healthy` marker removed / `flz cluster prepare-recovery`) SHALL be used so the registry replays from DETS, and `/healthz` SHALL honestly report `recovering`/`restoring_registry` until rebound.
 
 #### Scenario: recovery-mode restart preserves the operative list
 - **GIVEN** a sole controller has operatives bound and the operator wants them preserved across a restart

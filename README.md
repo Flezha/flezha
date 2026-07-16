@@ -31,7 +31,7 @@ The `protoc` install layer rejects any other `uname -m` with
 - Copy `.env.example` and rename to `.env`
 - Install testnet dependencies: `cd test/apps/testnet && npm install`
 - Build the testnet: `npm run build` (from `test/apps/testnet`)
-- Build the `rust_executor` application.
+- Build the `rust_runner` application.
 - Build the controller `mix compile`
 
 ### Distribution artifacts (committed to git, never built by CI)
@@ -41,10 +41,10 @@ them:
 
 - 5× native binaries — `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/libflz_transport.{so,dylib,dll}`
 - SDK fat jar — `sdk/java/flezha-sdk/dist/flezha-sdk.jar`
-- Test executor fat jar — `test/apps/java_executor/dist/java_executor.jar`
+- Test runner fat jar — `test/apps/java_runner/dist/java_runner.jar`
 
 Refresh all three with one command after touching anything under
-`sdk/java/`, `flz_jni/`, `flz_transport/`, or `test/apps/java_executor/`:
+`sdk/java/`, `flz_jni/`, `flz_transport/`, or `test/apps/java_runner/`:
 
 ```bash
 scripts/build-dist.sh             # host toolchain (auto-installs zig if missing)
@@ -81,7 +81,7 @@ What each section runs (each line below is the literal command):
   - `mix test` (excludes `:system` and `:java_sdk`)
 - **`java`** — mirrors `.github/workflows/java-sdk.yml` (both jobs):
   - `mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify` (Java unit tests + JaCoCo)
-  - `mix test.java_sdk` (Elixir↔Java integration matrix against the committed test executor jar)
+  - `mix test.java_sdk` (Elixir↔Java integration matrix against the committed test runner jar)
 
 The `java` section refuses to run if any committed distribution artifact
 is missing — it'll point you at `scripts/build-dist.sh`. The script uses
@@ -155,7 +155,7 @@ them.
 Starting the node and specifying the external processes to be used by the node mynode.
 PROD:
 ```bash
-RELEASE_NODE=mynode FLEZHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/flezha/test/apps/rust_executor/Cargo.toml --target-dir=./target" _build/prod/rel/flezha/bin/flz controller start --mode=attached_iex
+RELEASE_NODE=mynode FLEZHA_EXTERNAL_PROCESSES="cargo run --manifest-path=/home/anuar/Projects/personal/flezha/test/apps/rust_runner/Cargo.toml --target-dir=./target" _build/prod/rel/flezha/bin/flz controller start --mode=attached_iex
 ```
 
 DEV:
@@ -262,8 +262,8 @@ back this:
    ships the assembled WAL+snapshot via `RestoreInitState` so the SDK
    resumes at the exact pre-shutdown sequence.
 
-The path layout drops `executor_id`, so executor pod restarts that
-rotate `executor_id` do not orphan state.
+The path layout drops `runner_id`, so runner pod restarts that
+rotate `runner_id` do not orphan state.
 
 Operator surface:
 
@@ -299,8 +299,8 @@ This alias (defined in `mix.exs`):
    `scripts/build-native.sh` and stages it at
    `sdk/java/flezha-sdk-native/src/main/resources/native/<os>-<arch>/libflz_transport.<ext>`.
 2. Builds the Java SDK fat jar (`mvn -f sdk/java/pom.xml -P host-only package`).
-3. Builds the Java test compute engine
-   (`mvn -f test/apps/java_executor/pom.xml package`).
+3. Builds the Java test runner
+   (`mvn -f test/apps/java_runner/pom.xml package`).
 4. Runs `mix test --only java_sdk`.
 
 Prerequisites: Java 21, Rust stable, `cargo-zigbuild`

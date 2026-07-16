@@ -55,7 +55,7 @@ See `docker/prod/README.md` for details.
 
 ## Deploy
 - Apply the daemonset for the flezha controllers: `kubectl apply -f kubernetes/flezha-daemonset.yaml`
-- Apply the deployments for X(executors) services: `kubectl apply -f kubernetes/service-template.yaml`
+- Apply the deployments for X(runners) services: `kubectl apply -f kubernetes/service-template.yaml`
 
 ## Resources
 
@@ -94,7 +94,7 @@ reach it on the pod IP). The DaemonSet uses it for all three probes:
 
 The endpoint returns `503` **only** on a real wedge. A planned recovery reports
 `recovering` with a `200` precisely so the kubelet does not restart the pod mid-replay,
-and an operative that cannot bind because its executor is gone reports `degraded` with a
+and an operative that cannot bind because its runner is gone reports `degraded` with a
 `200` — restarting the controller would not re-bind it. Do not "fix" a `degraded`
 controller by tightening the liveness probe.
 

@@ -236,8 +236,8 @@ The foundation SHALL accept `:trace_span` signals carrying `trace_id`, `span_id`
 - **THEN** the signal SHALL be delivered to attached sinks with all fields preserved
 
 #### Scenario: Cross-transport propagation is explicitly out of scope
-- **WHEN** an executor on a remote node produces work for the controller
-- **THEN** in this change the controller-side span SHALL NOT automatically share a `trace_id` with any executor-side span; this remains an out-of-scope behaviour
+- **WHEN** a runner on a remote node produces work for the controller
+- **THEN** in this change the controller-side span SHALL NOT automatically share a `trace_id` with any runner-side span; this remains an out-of-scope behaviour
 
 ### Requirement: Observability subsystem is configurable and disengageable
 

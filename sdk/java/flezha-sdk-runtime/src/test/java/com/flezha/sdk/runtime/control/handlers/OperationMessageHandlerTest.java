@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.OperationMessage;
 import com.flezha.sdk.proto.OperationMessageResponse;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.google.protobuf.ByteString;
 import java.util.ArrayList;
@@ -26,7 +26,7 @@ class OperationMessageHandlerTest {
     @DisplayName("OperationMessage always returns canonical unsupported error")
     void canonicalUnsupportedError() throws Exception {
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of());
-        ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
+        RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
 
         CommandRequest request = CommandRequest.newBuilder()
                 .setReferenceId("ref")

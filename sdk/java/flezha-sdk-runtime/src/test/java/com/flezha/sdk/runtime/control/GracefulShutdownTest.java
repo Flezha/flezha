@@ -10,8 +10,8 @@ import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.proto.ExecutorShutdownNotification;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.proto.RunnerShutdownNotification;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
 import com.flezha.sdk.runtime.framing.Frame;
@@ -47,9 +47,9 @@ class GracefulShutdownTest {
     }
 
     @Test
-    @DisplayName("run() emits a framed ExecutorShutdownNotification per operative")
-    void emitsFramedExecutorShutdownNotification() throws Exception {
-        ExecutorContext ctx = newCtxWithUnboundedOperative("p1");
+    @DisplayName("run() emits a framed RunnerShutdownNotification per operative")
+    void emitsFramedRunnerShutdownNotification() throws Exception {
+        RunnerContext ctx = newCtxWithUnboundedOperative("p1");
 
         List<byte[]> captured = new ArrayList<>();
         AtomicReference<Long> capturedStreamId = new AtomicReference<>();
@@ -78,8 +78,8 @@ class GracefulShutdownTest {
         assertThat(parsed.payloadId()).isEqualTo("control_command");
 
         CommandRequest request = CommandRequest.parseFrom(parsed.message());
-        assertThat(request.getCommandCase()).isEqualTo(CommandRequest.CommandCase.EXECUTOR_SHUTDOWN_NOTIFICATION);
-        ExecutorShutdownNotification notif = request.getExecutorShutdownNotification();
+        assertThat(request.getCommandCase()).isEqualTo(CommandRequest.CommandCase.RUNNER_SHUTDOWN_NOTIFICATION);
+        RunnerShutdownNotification notif = request.getRunnerShutdownNotification();
         assertThat(notif.getOperativeId()).isEqualTo("p1");
         assertThat(notif.getSerializedState().toByteArray())
                 .as("notification carries a non-empty serialized state binary")
@@ -95,7 +95,7 @@ class GracefulShutdownTest {
     @Test
     @DisplayName("run() returns within ~2.5s when no ack arrives")
     void returnsWithin2sWhenAckNeverArrives() {
-        ExecutorContext ctx = newCtxWithUnboundedOperative("p_timeout");
+        RunnerContext ctx = newCtxWithUnboundedOperative("p_timeout");
 
         GracefulShutdown.FrameWriter neverAcking = (streamId, frame) -> 0;
         GracefulShutdown subject = new GracefulShutdown(ctx, CONTROL_STREAM_ID, neverAcking);
@@ -121,7 +121,7 @@ class GracefulShutdownTest {
     @Test
     @DisplayName("run() is idempotent across SIGTERM + close()")
     void runIsIdempotent() throws InterruptedException {
-        ExecutorContext ctx = newCtxWithUnboundedOperative("p_idem");
+        RunnerContext ctx = newCtxWithUnboundedOperative("p_idem");
         CountDownLatch firstWriteSeen = new CountDownLatch(1);
         AtomicReference<String> capturedRef = new AtomicReference<>();
 
@@ -151,12 +151,12 @@ class GracefulShutdownTest {
         assertThat(elapsed).isLessThan(50L);
     }
 
-    private static ExecutorContext newCtxWithUnboundedOperative(String operativeId) {
+    private static RunnerContext newCtxWithUnboundedOperative(String operativeId) {
         if (UnboundedOperativeRegistry.factoryIds().isEmpty()) {
             UnboundedOperativeRegistry.registerUnbounded(ShutdownTestUnboundedOperative.class);
         }
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
-        ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
+        RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
 
         CommandRequest add = CommandRequest.newBuilder()

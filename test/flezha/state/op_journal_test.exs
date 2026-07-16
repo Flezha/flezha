@@ -9,7 +9,7 @@ defmodule FlezhaTest.State.OpJournalTest do
 
   import Mimic
 
-  alias Flezha.Executor.ControlChannel
+  alias Flezha.Runner.ControlChannel
   alias Flezha.Operative.Overwatch
   alias Flezha.State.{OpJournal, Registry, TestHelpers, WalWriter, Wire}
 
@@ -234,7 +234,7 @@ defmodule FlezhaTest.State.OpJournalTest do
     inst = instance_id()
     :ok = OpJournal.append_op_committed(inst, 0, 0, [], [{1, "x"}])
 
-    # Scoped to this instance: the shared app's live executors may write
+    # Scoped to this instance: the shared app's live runners may write
     # unrelated Segment state into the test root concurrently.
     refute Enum.any?(Registry.all_segments(), fn {rc, _, _} -> rc == inst end)
     assert Registry.scan_dir({inst, inst, ""}).wal_files == []
@@ -442,17 +442,17 @@ defmodule FlezhaTest.State.OpJournalTest do
 
     assert_receive {:captured, {:restore_init_state, cmd}}
 
-    assert %ExecutorCommands.OpJournalState{
+    assert %RunnerCommands.OpJournalState{
              committed_op_idxs: [0],
              iter: 1,
              # The previous iteration's terminal batch (a chained loop's seed) …
-             handoff: [%ExecutorCommands.OpHandoffItem{channel_id: 2, payload: "carry"}],
+             handoff: [%RunnerCommands.OpHandoffItem{channel_id: 2, payload: "carry"}],
              # … and what the in-flight iteration's committed op released, keyed
              # by op_idx, which is what re-seeds its children.
              op_handoffs: [
-               %ExecutorCommands.OpEdgeHandoff{
+               %RunnerCommands.OpEdgeHandoff{
                  op_idx: 0,
-                 handoff: [%ExecutorCommands.OpHandoffItem{channel_id: 2, payload: "h"}]
+                 handoff: [%RunnerCommands.OpHandoffItem{channel_id: 2, payload: "h"}]
                }
              ],
              consumed_offset: 3,
@@ -463,8 +463,8 @@ defmodule FlezhaTest.State.OpJournalTest do
     # Every forward op commit, with its iteration — the driver's compensation
     # input. Shipping this empty is how a rollback silently undoes nothing.
     assert [
-             %ExecutorCommands.OpCommittedOp{op_idx: 0, iter: 0, segments_ran: [^seg_id]},
-             %ExecutorCommands.OpCommittedOp{op_idx: 0, iter: 1, segments_ran: [^seg_id]}
+             %RunnerCommands.OpCommittedOp{op_idx: 0, iter: 0, segments_ran: [^seg_id]},
+             %RunnerCommands.OpCommittedOp{op_idx: 0, iter: 1, segments_ran: [^seg_id]}
            ] = cmd.op_journal.committed_ops
   end
 

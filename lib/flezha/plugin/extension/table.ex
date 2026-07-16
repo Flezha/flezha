@@ -312,7 +312,7 @@ defmodule Flezha.Plugin.Extension.Table do
         ctx = %Ctx.Tick{
           operative_id: Map.get(table.plugins, plugin_id).operative_id,
           namespace: Map.get(table.plugins, plugin_id).namespace,
-          executor_id: nil,
+          runner_id: nil,
           plugin_id: plugin_id
         }
 

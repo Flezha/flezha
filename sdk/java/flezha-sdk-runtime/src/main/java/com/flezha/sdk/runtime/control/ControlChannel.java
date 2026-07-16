@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.control;
 
 import com.flezha.sdk.native_.NativeTransport;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -22,10 +22,10 @@ public final class ControlChannel {
 
     public static final String HANDSHAKE_PAYLOAD_ID = "connect_control_channel";
 
-    private final ExecutorContext ctx;
+    private final RunnerContext ctx;
     private final long controlStreamId;
 
-    public ControlChannel(@Nonnull ExecutorContext ctx, long controlStreamId) {
+    public ControlChannel(@Nonnull RunnerContext ctx, long controlStreamId) {
         this.ctx = ctx;
         this.controlStreamId = controlStreamId;
     }
@@ -35,7 +35,7 @@ public final class ControlChannel {
     }
 
     /**
-     * Send the handshake. It always carries the executor's self-owned stable
+     * Send the handshake. It always carries the runner's self-owned stable
      * identity (initial connect and reconnect alike), so the controller resolves
      * a reconnect as a binding swap. Mirrors the Rust SDK.
      */

@@ -3,12 +3,12 @@ mod boot;
 mod cluster;
 mod controller;
 mod dlq;
-mod executor;
 mod namespace;
 mod observe;
 mod operative;
 mod plugin;
 mod reset;
+mod runner;
 mod state;
 mod utils;
 
@@ -28,7 +28,7 @@ fn main() {
         "cluster" => cluster::handle_cluster_command(&args[2..]),
         "operative" => operative::handle_operative_command(&args[2..]),
         "namespace" => namespace::handle_namespace_command(&args[2..]),
-        "executor" => executor::handle_executor_command(&args[2..]),
+        "runner" => runner::handle_runner_command(&args[2..]),
         "plugin" => plugin::handle_plugin_command(&args[2..]),
         "boot" => boot::handle_boot_command(&args[2..]),
         "state" => state::handle_state_command(&args[2..]),
@@ -56,7 +56,7 @@ fn print_help() {
     println!("    cluster        Controller cluster status (nodes, leader, operative health)");
     println!("    operative      Operative management commands");
     println!("    namespace      Namespace management commands");
-    println!("    executor       Executor management commands");
+    println!("    runner       Runner management commands");
     println!("    plugin         Plugin management commands");
     println!("    boot           Boot/recovery status, await, and legacy snapshot import");
     println!("    state          Per-Segment state queries (time-travel, retention, list)");

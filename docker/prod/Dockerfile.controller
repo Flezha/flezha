@@ -42,7 +42,7 @@ FROM hexpm/elixir:1.17.3-erlang-27.2-debian-bookworm-20241202-slim AS elixir-bui
 
 WORKDIR /app
 
-# protobuf-compiler is needed by `use Protox` in lib/flezha/executor/
+# protobuf-compiler is needed by `use Protox` in lib/flezha/runner/
 # commands_proto.ex, which shells out to protoc at compile time.
 # git is needed by mix.exs's kafka_ex github: dep.
 # cmake is needed by crc32cer (kafka_ex transitive dep), whose NIF
@@ -91,7 +91,7 @@ RUN --mount=type=cache,target=/root/.hex \
     && mix release --overwrite
 
 # Stage 3 — runtime image. The Mix release bundles ERTS, so the runtime
-# only needs basic shared libs and tini. Executors attach via
+# only needs basic shared libs and tini. Runners attach via
 # `bin/flzvm remote` (the dist-node rsh shipped inside the release).
 FROM debian:bookworm-slim AS runtime
 
@@ -142,7 +142,7 @@ USER flezha
 # bind a TCP port we can probe, so we key off the UDS instead. Matches
 # the path used by the entrypoint's restore-wait loop.
 HEALTHCHECK --interval=10s --timeout=5s --retries=10 --start-period=120s \
-    CMD test -S "${FLEZHA_SOCKET_FILES_PATH:-/flezha/app_data/sockets}/executor_control_channel.sock" || exit 1
+    CMD test -S "${FLEZHA_SOCKET_FILES_PATH:-/flezha/app_data/sockets}/runner_control_channel.sock" || exit 1
 
 # tini handles zombie reaping and signal forwarding for the BEAM.
 ENTRYPOINT ["/usr/bin/tini", "--"]

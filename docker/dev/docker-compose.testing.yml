@@ -1,17 +1,17 @@
 # Testing-only override layered on top of `docker-compose.yml` for the
 # scripts under `test/scripts/`. Reason it exists:
 #
-# `test/apps/rust_executor/src/main.rs` runs a `std_keeper` loop that
+# `test/apps/rust_runner/src/main.rs` runs a `std_keeper` loop that
 # reads from stdin and calls `std::process::exit(0)` on EOF. The
 # regular dev compose runs the rust service without `stdin_open`, so
 # stdin closes the moment cargo's foreground exec inherits it from
-# the `sh -c` wrapper — the executor handshakes, then immediately
+# the `sh -c` wrapper — the runner handshakes, then immediately
 # exits with code 0, and the test script sees `state=exited` while
 # rust logs only show "waiting for controller control socket..."
 # (cargo runs with --quiet, so the successful handshake is silent).
 #
 # Keeping stdin open with `stdin_open: true` mirrors what
-# `docker-compose.healing.yml` already does and lets the executor
+# `docker-compose.healing.yml` already does and lets the runner
 # keep running indefinitely.
 services:
   rust:

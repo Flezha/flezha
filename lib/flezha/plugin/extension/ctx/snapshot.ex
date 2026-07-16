@@ -7,9 +7,9 @@ defmodule Flezha.Plugin.Extension.Ctx.Snapshot do
   @type t() :: %__MODULE__{
           operative_id: String.t(),
           namespace: atom() | String.t(),
-          executor_id: String.t() | nil,
+          runner_id: String.t() | nil,
           snapshot: binary() | nil
         }
 
-  defstruct [:operative_id, :namespace, :executor_id, :snapshot]
+  defstruct [:operative_id, :namespace, :runner_id, :snapshot]
 end

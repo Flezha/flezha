@@ -41,7 +41,7 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
   defp bounded_state(uptime_ms) do
     %{
       builder: %{kind: :bounded},
-      executor_id: "exec1",
+      runner_id: "exec1",
       namespace: @namespace,
       started_at: System.system_time(:millisecond) - uptime_ms,
       default_input_type: "2",

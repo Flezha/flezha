@@ -5,8 +5,8 @@ defmodule Flezha.State.CreditLedger do
   credit is granted back in low-watermark batches — never per record.
 
   Accounting only — no processes, no side effects — so one core serves
-  every credit loop: today the executor→controller state stream
-  (`Flezha.Executor.StreamChannel` drives it and performs the sends),
+  every credit loop: today the runner→controller state stream
+  (`Flezha.Runner.StreamChannel` drives it and performs the sends),
   and the per-Operative source-ingestion ledger when the
   effectively-once tier's input-log lands.
   """

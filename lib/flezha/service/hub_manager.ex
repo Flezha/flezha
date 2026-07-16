@@ -128,7 +128,7 @@ defmodule Flezha.Service.HubManager do
     Supervisor.delete_child(__MODULE__, hub_id)
 
     # `stop_hub/1` is the explicit "tear this namespace down" path
-    # (operator-initiated, or last-executor cleanup deciding the
+    # (operator-initiated, or last-runner cleanup deciding the
     # namespace has gone away). Clean the persistent registry so a
     # later `start_hub/1` for the same namespace starts empty rather
     # than resurrecting children that were intentionally torn down.
@@ -235,7 +235,7 @@ defmodule Flezha.Service.HubManager do
 
   This centralises the multi-node-safe access that replaced the former
   single-element `[{_node, pid}]` matches in `get_all_operatives/1`,
-  `executor_switch/3`, and `Flezha.Executor.FleetManager.executor_reroute/4` —
+  `runner_switch/3`, and `Flezha.Runner.FleetManager.runner_reroute/4` —
   any of which raised `FunctionClauseError` the moment a operative was registered on
   more than one node.
   """
@@ -311,13 +311,13 @@ defmodule Flezha.Service.HubManager do
   Per-operative view of a namespace's durable registry for operator surfaces:
   one row per registered operative (including FAILED ones whose only placement is
   a dead node, which `get_all_operatives/1` filters out), carrying the assigned
-  executor and live node from the registry dump and the live health classified
+  runner and live node from the registry dump and the live health classified
   by the Convergence Loop (`Snapshot.operative_health/2`), so the CLI sees exactly
   what the loop sees. A registry row the loop has not yet observed reports
   `:unknown` until the next tick covers it.
   """
   @spec operative_rows(String.t()) :: [
-          %{id: term(), health: atom(), executor: term(), node: term()}
+          %{id: term(), health: atom(), runner: term(), node: term()}
         ]
   def operative_rows(namespace) do
     hub_id = Identificator.hub(namespace)
@@ -331,7 +331,7 @@ defmodule Flezha.Service.HubManager do
         %{
           id: operative_id,
           health: Snapshot.operative_health(namespace, operative_id),
-          executor: Map.get(metadata, :tag),
+          runner: Map.get(metadata, :tag),
           node: live_node(node_pids)
         }
       end)
@@ -344,52 +344,52 @@ defmodule Flezha.Service.HubManager do
   defp normalize_registry_entry({cspec, node_pids, metadata}), do: {cspec, node_pids, metadata}
   defp normalize_registry_entry({cspec, node_pids}), do: {cspec, node_pids, %{}}
 
-  def register_handler(namespace, executor_id) do
+  def register_handler(namespace, runner_id) do
     ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
       Hook.child_registered(),
       [
         %HookManager{
-          id: executor_id <> "_hub_pid_insertion",
+          id: runner_id <> "_hub_pid_insertion",
           m: Flezha.Service.HubManager,
           f: :hook_insert_pid,
-          a: [executor_id, :_]
+          a: [runner_id, :_]
         }
       ]
     )
   end
 
-  # Live stream-channel children (primary + secondary) for an executor; `[]`
+  # Live stream-channel children (primary + secondary) for a runner; `[]`
   # if the supervisors are gone.
-  defp stream_channels_for_executor(executor_id) do
-    Supervisor.which_children(Identificator.stream_sup_primary(executor_id)) ++
-      Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
+  defp stream_channels_for_runner(runner_id) do
+    Supervisor.which_children(Identificator.stream_sup_primary(runner_id)) ++
+      Supervisor.which_children(Identificator.stream_sup_secondary(runner_id))
   catch
     :exit, _ -> []
   end
 
-  def unregister_handler(namespace, executor_id) do
+  def unregister_handler(namespace, runner_id) do
     ProcessHub.cancel_hook_handlers(
       Identificator.hub(namespace),
       Hook.child_registered(),
-      [executor_id <> "_hub_pid_insertion"]
+      [runner_id <> "_hub_pid_insertion"]
     )
   end
 
-  def executor_operatives(namespace, executor_id) do
+  def runner_operatives(namespace, runner_id) do
     hub_id = Identificator.hub(namespace)
 
-    ProcessHub.tag_query(hub_id, executor_id)
+    ProcessHub.tag_query(hub_id, runner_id)
   end
 
-  def executor_switch(namespace, old_executor_id, new_executor_id) do
+  def runner_switch(namespace, old_runner_id, new_runner_id) do
     hub_id = Identificator.hub(namespace)
 
-    # Updates the executor id in the registry. Only the operative_id is needed here,
+    # Updates the runner id in the registry. Only the operative_id is needed here,
     # so accept any node_pids arity (a multi-node operative must not crash this).
-    executor_operatives(namespace, old_executor_id)
+    runner_operatives(namespace, old_runner_id)
     |> Enum.each(fn {operative_id, _node_pids} ->
-      operative_set_executor(namespace, operative_id, new_executor_id)
+      operative_set_runner(namespace, operative_id, new_runner_id)
     end)
 
     # Propagate the change to all nodes in the namespace.
@@ -398,17 +398,17 @@ defmodule Flezha.Service.HubManager do
     |> ProcessHub.Service.Synchronizer.trigger_sync()
   end
 
-  def operative_set_executor(namespace, operative_id, executor_id) do
+  def operative_set_runner(namespace, operative_id, runner_id) do
     hub_id = Identificator.hub(namespace)
 
     case ProcessHub.is_alive?(hub_id) do
       true ->
         # propagate: true — every node's registry must agree on the owning
-        # executor or hook_insert_pid gates frames on a stale tag elsewhere.
+        # runner or hook_insert_pid gates frames on a stale tag elsewhere.
         ProcessRegistry.update(
           hub_id,
           operative_id,
-          RegistryUpdate.set_executor_tag(executor_id),
+          RegistryUpdate.set_runner_tag(runner_id),
           propagate: true
         )
 
@@ -419,20 +419,20 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  def hook_insert_pid(executor_id, %{child_id: operative_id} = hook_data) do
+  def hook_insert_pid(runner_id, %{child_id: operative_id} = hook_data) do
     node_pids = Map.get(hook_data, :node_pids, [])
     metadata = Map.get(hook_data, :metadata, %{})
     assigned_ce = Map.get(metadata, :tag)
 
-    # Only the executor whose session id matches the registry entry's
+    # Only the runner whose session id matches the registry entry's
     # `metadata.tag` (a.k.a `assigned_ce`) should receive this operative's
-    # frames. Pushing the pid list to every registered executor makes the
-    # non-owning executor's SDK drop each frame (`operative instance not found`),
+    # frames. Pushing the pid list to every registered runner makes the
+    # non-owning runner's SDK drop each frame (`operative instance not found`),
     # draining the data plane.
     cond do
-      is_binary(assigned_ce) and assigned_ce != executor_id ->
-        # This insertion is for a different executor; this handler is
-        # registered for `executor_id` only.
+      is_binary(assigned_ce) and assigned_ce != runner_id ->
+        # This insertion is for a different runner; this handler is
+        # registered for `runner_id` only.
         nil
 
       true ->
@@ -448,8 +448,8 @@ defmodule Flezha.Service.HubManager do
 
           _ ->
             stream_channels =
-              Supervisor.which_children(Identificator.stream_sup_primary(executor_id)) ++
-                Supervisor.which_children(Identificator.stream_sup_secondary(executor_id))
+              Supervisor.which_children(Identificator.stream_sup_primary(runner_id)) ++
+                Supervisor.which_children(Identificator.stream_sup_secondary(runner_id))
 
             # A wedged StreamChannel must not crash the caller.
             Enum.each(stream_channels, fn
@@ -470,27 +470,27 @@ defmodule Flezha.Service.HubManager do
 
   @doc """
   Convenience over `hook_insert_pid/2` for the common case: seed one operative's
-  local `pid` into `executor_id`'s pre-spawned StreamChannels so inbound
-  data-plane frames route to it. Tags the insertion with `executor_id` as the
+  local `pid` into `runner_id`'s pre-spawned StreamChannels so inbound
+  data-plane frames route to it. Tags the insertion with `runner_id` as the
   owner (the `metadata.tag` gate). Used by the convergence rebind and the
   reconnect binding swap.
   """
-  def hook_insert_local_pid(executor_id, operative_id, pid) when is_pid(pid) do
-    hook_insert_pid(executor_id, %{
+  def hook_insert_local_pid(runner_id, operative_id, pid) when is_pid(pid) do
+    hook_insert_pid(runner_id, %{
       child_id: operative_id,
       node_pids: [{node(), pid}],
-      metadata: %{tag: executor_id}
+      metadata: %{tag: runner_id}
     })
   end
 
   @doc """
-  Clear a operative's pid mapping from every stream channel of `executor_id`.
-  Invoked directly by `Flezha.Executor.FleetManager.evict_executor/1` so a
-  dead executor's stale mappings never linger; idempotent on an
-  already-gone executor.
+  Clear a operative's pid mapping from every stream channel of `runner_id`.
+  Invoked directly by `Flezha.Runner.FleetManager.evict_runner/1` so a
+  dead runner's stale mappings never linger; idempotent on an
+  already-gone runner.
   """
-  def hook_remove_pid(executor_id, %{child_id: operative_id}) do
-    Enum.each(stream_channels_for_executor(executor_id), fn
+  def hook_remove_pid(runner_id, %{child_id: operative_id}) do
+    Enum.each(stream_channels_for_runner(runner_id), fn
       {_, pid, _, _} when is_pid(pid) ->
         _ = SafeCall.bounded(pid, {:operative_pid_remove, operative_id}, 1_000)
 
@@ -501,7 +501,7 @@ defmodule Flezha.Service.HubManager do
     :telemetry.execute(
       [:flezha, :hub, :pid_removed],
       %{count: 1},
-      %{executor_id: executor_id, operative_id: operative_id}
+      %{runner_id: runner_id, operative_id: operative_id}
     )
 
     :ok
@@ -549,8 +549,8 @@ defmodule Flezha.Service.HubManager do
         {namespace, operative} ->
           {namespace, rewrite_operative_plugins(operative, update_fn)}
 
-        {namespace, executor_id, operative} ->
-          {namespace, executor_id, rewrite_operative_plugins(operative, update_fn)}
+        {namespace, runner_id, operative} ->
+          {namespace, runner_id, rewrite_operative_plugins(operative, update_fn)}
       end
 
     Map.put(cspec, :start, {m, f, [new_arg]})
@@ -566,7 +566,7 @@ defmodule Flezha.Service.HubManager do
   defp extract_plugins({_namespace, operative}),
     do: Keyword.get(operative.opts, :plugins, [])
 
-  defp extract_plugins({_namespace, _executor_id, operative}),
+  defp extract_plugins({_namespace, _runner_id, operative}),
     do: Keyword.get(operative.opts, :plugins, [])
 
   defp normalize_plugins(plugins) when is_list(plugins) do
@@ -584,28 +584,28 @@ defmodule Flezha.Service.HubManager do
         {namespace, operative} ->
           {namespace, operative}
 
-        {namespace, _existing_executor, operative} ->
+        {namespace, _existing_runner, operative} ->
           {namespace, operative}
       end
 
     operative_id = Map.get(operative, :id)
     factory_id = Map.get(operative, :factory_id)
-    assigned_executor = OperativeManager.assign_executor(namespace, factory_id, operative_id)
+    assigned_runner = OperativeManager.assign_runner(namespace, factory_id, operative_id)
 
     Logger.info(
       "[hub_manager] alter_child_data operative=#{inspect(operative_id)} " <>
-        "factory=#{inspect(factory_id)} assigned_ce=#{inspect(assigned_executor)}"
+        "factory=#{inspect(factory_id)} assigned_ce=#{inspect(assigned_runner)}"
     )
 
-    if is_nil(assigned_executor) do
+    if is_nil(assigned_runner) do
       raise "No active compute engines available in namespace #{namespace} for factory #{inspect(factory_id)}"
     end
 
-    new_args = [{namespace, assigned_executor, operative}]
+    new_args = [{namespace, assigned_runner, operative}]
 
     child_data
     |> put_in([:child_spec, :start], {m, f, new_args})
-    |> put_in([:metadata, :tag], assigned_executor)
+    |> put_in([:metadata, :tag], assigned_runner)
   end
 
   @impl true
@@ -690,7 +690,7 @@ defmodule Flezha.Service.HubManager do
 
   # Running hub whose durable registry declares more operatives than are
   # currently bound to a live pid — operatives replayed from DETS but not yet
-  # reseated onto a reconnected executor.
+  # reseated onto a reconnected runner.
   defp running_hub_operatives_unbound?() do
     Enum.any?(list_running_hub_ids(), fn hub_id ->
       namespace = extract_namespace_from_hub(hub_id)

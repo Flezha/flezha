@@ -2,7 +2,7 @@ package com.flezha.sdk.runtime.control.handlers;
 
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.MigrationDeserialization;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.operative.InitValuesContext;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
@@ -14,7 +14,7 @@ import java.util.List;
 public final class MigrationDeserializationHandler implements CommandHandler {
 
     @Override
-    public byte[] handle(ExecutorContext ctx, CommandRequest request, List<String> errors) throws Exception {
+    public byte[] handle(RunnerContext ctx, CommandRequest request, List<String> errors) throws Exception {
         MigrationDeserialization cmd = request.getMigrationDeserialization();
         String factoryId = cmd.getFactoryId();
         String operativeId = cmd.getOperativeId();

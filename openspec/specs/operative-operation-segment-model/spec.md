@@ -15,8 +15,8 @@ Controller (1 per deployment)
   → Namespace
     ↓ (ProcessHub picks placement by consistent hash)
     → Operative instance (1 per `flz operative start`)
-      ↓ (Controller's `alter_child_data` hook picks an `executor_id`)
-      → Executor (SDK process) — may host multiple Operatives
+      ↓ (Controller's `alter_child_data` hook picks an `runner_id`)
+      → Runner (SDK process) — may host multiple Operatives
         ↓ (SDK-internal segmenting; not ProcessHub-aware)
         → Operation (declared per Operative class)
           ↓
@@ -25,15 +25,15 @@ Controller (1 per deployment)
             → Channel (typed I/O port)
 ```
 
-The Controller SHALL hold the authoritative placement table. Executors SHALL register with the Controller via the control channel and SHALL receive `AddOperative` / `RemOperative` commands. Segmenting beneath the Operative level (Operations, Segments, Channels) is SDK-internal and SHALL NOT be ProcessHub-aware.
+The Controller SHALL hold the authoritative placement table. Runners SHALL register with the Controller via the control channel and SHALL receive `AddOperative` / `RemOperative` commands. Segmenting beneath the Operative level (Operations, Segments, Channels) is SDK-internal and SHALL NOT be ProcessHub-aware.
 
-#### Scenario: Controller distributes Operatives across Executors
-- **WHEN** a Controller has two healthy Executors A and B and `flz operative start` is invoked twice
-- **THEN** ProcessHub SHALL place each Operative on an Executor according to its consistent-hash policy; the Controller SHALL issue `AddOperative` over the corresponding Executor's control channel
+#### Scenario: Controller distributes Operatives across Runners
+- **WHEN** a Controller has two healthy Runners A and B and `flz operative start` is invoked twice
+- **THEN** ProcessHub SHALL place each Operative on a Runner according to its consistent-hash policy; the Controller SHALL issue `AddOperative` over the corresponding Runner's control channel
 
-#### Scenario: Each Operative runs on exactly one Executor at a time
-- **WHEN** a Operative is placed on Executor A
-- **THEN** ProcessHub SHALL ensure no concurrent `AddOperative` for the same `operative_id` is issued to any other Executor; migrations SHALL go through the documented HotSwap-with-handover path
+#### Scenario: Each Operative runs on exactly one Runner at a time
+- **WHEN** a Operative is placed on Runner A
+- **THEN** ProcessHub SHALL ensure no concurrent `AddOperative` for the same `operative_id` is issued to any other Runner; migrations SHALL go through the documented HotSwap-with-handover path
 ### Requirement: Per-Segment mailbox is bounded with declared capacity
 
 Each SegmentSlot's mailbox SHALL have a fixed capacity declared at operative startup. The mailbox SHALL refuse a push that would exceed this capacity; the SDK then applies the source channel's `OverflowPolicy` (see "Overflow policy declared per channel"). Capacity SHALL NOT change at runtime once the operative is started.
@@ -175,7 +175,7 @@ This requirement is in addition to and does not modify the "Sticky per-segment o
 
 Under the default entry-channel policy (`DropNewest`), the SDK's wire-reader thread (the per-stream loop in `command/streams_connect.rs`) SHALL NOT block on a full mailbox. The frame's typed payload SHALL be discarded; the loop SHALL immediately attempt to read the next frame from the wire.
 
-If an executor opts into `OverflowPolicy::Block` on an entry channel by explicit `.on_full(OverflowPolicy::Block)` declaration, the wire-reader thread MAY park while pushing to that channel's consumer mailbox. The SDK SHALL document this co-tenancy hazard in `docs/operative_architecture.md` and `docs/sdk_protocol_spec.md`. No runtime mechanism prevents an executor from making this choice.
+If a runner opts into `OverflowPolicy::Block` on an entry channel by explicit `.on_full(OverflowPolicy::Block)` declaration, the wire-reader thread MAY park while pushing to that channel's consumer mailbox. The SDK SHALL document this co-tenancy hazard in `docs/operative_architecture.md` and `docs/sdk_protocol_spec.md`. No runtime mechanism prevents a runner from making this choice.
 
 #### Scenario: Default entry policy keeps wire reader running
 - **WHEN** Operative A's entry mailbox is full under default `DropNewest` policy and Operative B (sharing the physical wire connection) has frames pending
@@ -187,11 +187,11 @@ If an executor opts into `OverflowPolicy::Block` on an entry channel by explicit
 
 ### Requirement: Operation declares Change associated type and apply_change function (Rust SDK)
 
-The Rust SDK's `Operation` trait SHALL declare an associated `type Change: flezha_executor::state::Change` with default `flezha_executor::state::NoChange`. The `Change` trait SHALL bound on `Serialize + DeserializeOwned + Send + Sync + 'static` and SHALL declare `fn coalesce_key(&self) -> Option<CoalesceKey>` defaulting to `None`.
+The Rust SDK's `Operation` trait SHALL declare an associated `type Change: flezha_runner::state::Change` with default `flezha_runner::state::NoChange`. The `Change` trait SHALL bound on `Serialize + DeserializeOwned + Send + Sync + 'static` and SHALL declare `fn coalesce_key(&self) -> Option<CoalesceKey>` defaulting to `None`.
 
 The `Operation` trait SHALL declare a function `fn apply_change(state: &mut Self::State, change: &Self::Change)` whose default implementation panics with a descriptive error string for any `Change` other than `NoChange`, and is a no-op for `NoChange`. Operations declaring a non-`NoChange` Change SHALL override `apply_change` to make their state mutation deterministic.
 
-`apply_change` SHALL be deterministic: replay equality is required. The Rust SDK SHALL NOT enforce purity in the type system; instead, `flezha_executor::testing::OperationTestHarness::<S>::replay_equals` SHALL be the determinism gate exercised by user tests.
+`apply_change` SHALL be deterministic: replay equality is required. The Rust SDK SHALL NOT enforce purity in the type system; instead, `flezha_runner::testing::OperationTestHarness::<S>::replay_equals` SHALL be the determinism gate exercised by user tests.
 
 #### Scenario: Default Change is NoChange skips persistence machinery
 
@@ -215,7 +215,7 @@ The `Operation` trait SHALL declare a function `fn apply_change(state: &mut Self
 
 ### Requirement: Operation declares Clock associated type with default WallClock (Rust SDK)
 
-The Rust SDK's `Operation` trait SHALL declare an associated `type Clock: flezha_executor::state::Clock` with default `WallClock`. `Clock` SHALL be a sealed trait with v1 implementations `WallClock`, `LogicalClock`, and `EventTimeFrom<F>`. v1 of the Rust SDK SHALL fully wire only `WallClock`; Operations declaring a non-default Clock SHALL fail Operative startup with `OperativeStartError::ClockNotImplementedYet { clock_type }` until a follow-up change wires `LogicalClock` and `EventTimeFrom`.
+The Rust SDK's `Operation` trait SHALL declare an associated `type Clock: flezha_runner::state::Clock` with default `WallClock`. `Clock` SHALL be a sealed trait with v1 implementations `WallClock`, `LogicalClock`, and `EventTimeFrom<F>`. v1 of the Rust SDK SHALL fully wire only `WallClock`; Operations declaring a non-default Clock SHALL fail Operative startup with `OperativeStartError::ClockNotImplementedYet { clock_type }` until a follow-up change wires `LogicalClock` and `EventTimeFrom`.
 
 #### Scenario: Default Clock is WallClock
 
@@ -291,26 +291,26 @@ The Rust SDK's `UnboundedOperative` trait SHALL declare `const PERSISTENCE_ENABL
 2. Otherwise, use the value of `UnboundedOperative::PERSISTENCE_ENABLED`.
 3. The default of the trait const is `true`.
 
-The resolved value SHALL be bound to the `UnboundedInstance` and SHALL be propagated to every `SegmentSlot` constructed for that instance. Subsequent changes to the executor-side metadata or to the `UnboundedOperative::PERSISTENCE_ENABLED` const (via SDK redeploy) SHALL NOT affect already-running instances; new values take effect on the next `stop_operative` + `start_operative` cycle for that instance.
+The resolved value SHALL be bound to the `UnboundedInstance` and SHALL be propagated to every `SegmentSlot` constructed for that instance. Subsequent changes to the runner-side metadata or to the `UnboundedOperative::PERSISTENCE_ENABLED` const (via SDK redeploy) SHALL NOT affect already-running instances; new values take effect on the next `stop_operative` + `start_operative` cycle for that instance.
 
 #### Scenario: Default const value is true
 
-- **WHEN** a Operative does not declare `PERSISTENCE_ENABLED` and no executor override is present in operative-start metadata
+- **WHEN** a Operative does not declare `PERSISTENCE_ENABLED` and no runner override is present in operative-start metadata
 - **THEN** `UnboundedInstance::persistence_enabled()` SHALL return `true`
 
 #### Scenario: Const-declared opt-out is honored
 
-- **WHEN** `MarketOperative` declares `const PERSISTENCE_ENABLED: bool = false` and no executor override is present
+- **WHEN** `MarketOperative` declares `const PERSISTENCE_ENABLED: bool = false` and no runner override is present
 - **THEN** `UnboundedInstance::persistence_enabled()` SHALL return `false`; the per-Process flusher SHALL drain-and-discard for this instance's Segments; `stub_send_frame` (or its real counterpart) SHALL NOT be invoked for this instance
 
-#### Scenario: Executor override takes precedence over const
+#### Scenario: Runner override takes precedence over const
 
 - **WHEN** `MarketOperative` declares `const PERSISTENCE_ENABLED: bool = true` AND the operative-start metadata carries `operative_persistence.MarketOperative = false`
 - **THEN** `UnboundedInstance::persistence_enabled()` SHALL return `false`
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** a `UnboundedInstance` is constructed with resolved `persistence_enabled = true`, AND the executor subsequently issues a runtime config change setting `operative_persistence.<OperativeClass> = false`
+- **WHEN** a `UnboundedInstance` is constructed with resolved `persistence_enabled = true`, AND the runner subsequently issues a runtime config change setting `operative_persistence.<OperativeClass> = false`
 - **THEN** the running `UnboundedInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_operative(instance_id)` and a subsequent `start_operative(...)` invocation
 
 ### Requirement: init_state accepts optional restoration payload (Rust SDK)
@@ -710,7 +710,7 @@ The producing Operation's `Operation.run` SHALL receive the exception via the no
 
 #### Scenario: Throwable causes other than RuntimeException/Error are not caught (Java)
 - **WHEN** the serializer throws `OutOfMemoryError`
-- **THEN** the dispatcher SHALL NOT catch it — the JVM's normal escalation path applies (the worker thread terminates, the executor's uncaught-exception handler runs)
+- **THEN** the dispatcher SHALL NOT catch it — the JVM's normal escalation path applies (the worker thread terminates, the runner's uncaught-exception handler runs)
 - **AND** the consumer fan-out for that emit SHALL have already completed
 
 ### Requirement: Entry channel value types limited to bytes or string in v1
@@ -742,7 +742,7 @@ This restriction applies only to entry channels. Inter-operation channels (`c.ch
 
 ### Requirement: Worker pool reuses existing dispatch infrastructure
 
-The Runner pool SHALL be the existing Chase-Lev work-stealing pool implementation (`sdk/rust/src/executor/work_stealing_pool.rs`). The `FLEZHA_WORKER_POOL_SIZE` environment variable SHALL continue to control pool size, defaulting to `Runtime.availableOperatives()`. The per-Segment `inflight` CAS guard SHALL be the same mechanism the existing per-`OperativeSlot` guard uses.
+The Runner pool SHALL be the existing Chase-Lev work-stealing pool implementation (`sdk/rust/src/runner/work_stealing_pool.rs`). The `FLEZHA_WORKER_POOL_SIZE` environment variable SHALL continue to control pool size, defaulting to `Runtime.availableOperatives()`. The per-Segment `inflight` CAS guard SHALL be the same mechanism the existing per-`OperativeSlot` guard uses.
 
 #### Scenario: Default pool sizing
 - **WHEN** the SDK is started without `FLEZHA_WORKER_POOL_SIZE` set on a host with 8 cores
@@ -756,12 +756,12 @@ The Runner pool SHALL be the existing Chase-Lev work-stealing pool implementatio
 
 The `OperativeHandler` trait, `OperativeResult` enum, `OperativeRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `UnboundedOperative` / `Operation` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.
 
-**Reason**: The library is unpublished, the only known executor-app consumer is in this monorepo and migrates atomically as part of the same change, and the user has an explicit "no legacy / backward-compat shims" policy. Coexistence would also force the new abstraction to retain dispatch-by-operative-id baggage that the new model deliberately leaves behind.
+**Reason**: The library is unpublished, the only known runner-app consumer is in this monorepo and migrates atomically as part of the same change, and the user has an explicit "no legacy / backward-compat shims" policy. Coexistence would also force the new abstraction to retain dispatch-by-operative-id baggage that the new model deliberately leaves behind.
 
-**Migration**: executor apps using `OperativeHandler` rewrite to `UnboundedOperative` + one or more `Operation` impls in the same change. Concrete example: `flezha_market/market-operative/src/main.rs` and `market_computation.rs` are rewritten in the `operative-mvp-rust` change. State (formerly `Assets`) is decomposed into per-Operation state types.
+**Migration**: runner apps using `OperativeHandler` rewrite to `UnboundedOperative` + one or more `Operation` impls in the same change. Concrete example: `flezha_market/market-operative/src/main.rs` and `market_computation.rs` are rewritten in the `operative-mvp-rust` change. State (formerly `Assets`) is decomposed into per-Operation state types.
 
 #### Scenario: Old API is not importable
-- **WHEN** a Rust file attempts to `use flezha_executor::OperativeHandler` after the cutover
+- **WHEN** a Rust file attempts to `use flezha_runner::OperativeHandler` after the cutover
 - **THEN** the compilation SHALL fail with an unresolved-import error
 
 #### Scenario: Old registration function is removed

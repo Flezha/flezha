@@ -22,18 +22,18 @@ import java.util.Optional;
  *
  * <p>A conversational agent is not a stream and not a one-shot job. It wakes on a
  * message, does a turn's worth of work, and then does nothing — perhaps for days.
- * Holding an executor thread open across that idle time is pure waste; forgetting
+ * Holding a runner thread open across that idle time is pure waste; forgetting
  * the conversation is worse.
  *
  * <p>{@link LoopMode#PER_INPUT} runs one iteration of the chain per inbox message
  * and commits at each iteration boundary. When the messages stop, the operative
- * <b>parks</b>: it releases every executor resource and stays registered, holding
+ * <b>parks</b>: it releases every runner resource and stays registered, holding
  * its journal. The next message — or a {@code wakeAfter} timer — revives it at the
  * iteration it left off.
  *
  * <p>Suspension is not completion. A parked operative has not finished; it is
- * waiting. Its conversation state is durable, so a controller restart or an
- * executor crash while it sleeps costs nothing.
+ * waiting. Its conversation state is durable, so a controller restart or a
+ * runner crash while it sleeps costs nothing.
  *
  * <p>The other loop mode, {@link LoopMode#CHAINED}, seeds each iteration from the
  * previous one's output instead of from an inbox message — a refinement loop that

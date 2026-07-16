@@ -382,7 +382,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "flezha_executor"
+name = "flezha_runner"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
@@ -1039,12 +1039,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust_executor"
+name = "rust_runner"
 version = "0.1.0"
 dependencies = [
  "bincode",
  "erased-serde",
- "flezha_executor",
+ "flezha_runner",
  "serde",
  "serde_json",
 ]

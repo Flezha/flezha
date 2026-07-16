@@ -8,7 +8,7 @@ import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeRegistry;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.operative.StatelessTestOperation;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
@@ -50,7 +50,7 @@ class DlqRetryTest {
     /** Park bodies captured by the auto-acking sink, decoded from the wire. */
     private static final List<ParkedEntry> PARKED = new CopyOnWriteArrayList<>();
 
-    private ExecutorContext ctx;
+    private RunnerContext ctx;
 
     record ParkedEntry(
             String parkId, String channel, OptionalLong originOffset, String error, int attempts, byte[] payload) {}
@@ -82,7 +82,7 @@ class DlqRetryTest {
         });
 
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "2"));
-        ctx = new ExecutorContext("ns", cfg, 0L);
+        ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(2));
         ctx.streamRegistry().register(0, 100L, 200L);
     }

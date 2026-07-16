@@ -18,7 +18,7 @@
 #   diff bench-rust.txt bench-java.txt
 #
 # Prerequisites:
-#   - rust runtime: nothing extra (test/apps/rust_executor is built on demand)
+#   - rust runtime: nothing extra (test/apps/rust_runner is built on demand)
 #   - java runtime: run `mix test.java_sdk` once to build the test jar
 #   - quic transport: certs auto-generated at app_data/certs/ on first run
 #

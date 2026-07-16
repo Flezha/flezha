@@ -20,9 +20,9 @@ defmodule Mix.Tasks.Flezha.Bench.Observability do
   @impl Mix.Task
   def run(args) do
     # Boot just the observability foundation — the rest of the
-    # Controller (transports, executor fleet, BootLoader) is not
+    # Controller (transports, runner fleet, BootLoader) is not
     # needed for an isolated bus microbenchmark and pulls in
-    # external dependencies (test executors, sockets).
+    # external dependencies (test runners, sockets).
     Application.load(:flezha)
     {:ok, _} = Application.ensure_all_started(:telemetry)
     {:ok, _} = Application.ensure_all_started(:phoenix_pubsub)

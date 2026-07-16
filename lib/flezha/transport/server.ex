@@ -18,8 +18,8 @@ defmodule Flezha.Transport.Server do
 
   ## Transport modes
 
-  - **UDS**: One control channel socket. Per-executor stream sockets
-    are created by StreamAcceptors inside ExecutorSupervisor.
+  - **UDS**: One control channel socket. Per-runner stream sockets
+    are created by StreamAcceptors inside RunnerSupervisor.
   - **QUIC**: Single UDP socket handles everything. Control channels arrive
     as `{:flz_connection, stream_ref}`. Data streams arrive as
     `{:flz_stream, stream_ref, type, index}` after the 2-byte type prefix
@@ -28,8 +28,8 @@ defmodule Flezha.Transport.Server do
   """
 
   alias Flezha.Transport.Native
-  alias Flezha.Executor.FleetManager
-  alias Flezha.Executor.StreamSup
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.StreamSup
   alias Flezha.Socket.Support, as: SocketSupport
 
   require Logger
@@ -172,14 +172,14 @@ defmodule Flezha.Transport.Server do
            server_ref: server_ref,
            transport: :quic,
            pending_streams: %{},
-           # QUIC routing state: a per-connection executor binding. Each executor
+           # QUIC routing state: a per-connection runner binding. Each runner
            # uses ONE QUIC connection (control channel = first stream), so data
            # streams route by the connection id the driver tags them with — NOT
-           # a shared "current executor" scalar (which misrouted on concurrent
+           # a shared "current runner" scalar (which misrouted on concurrent
            # connect). `quic_conn_monitors` maps each ControlChannel monitor ref
            # back to its conn id so the binding is dropped when the session ends,
            # keeping the map bounded to live connections.
-           quic_conn_executors: %{},
+           quic_conn_runners: %{},
            quic_conn_monitors: %{}
          }}
 
@@ -221,16 +221,16 @@ defmodule Flezha.Transport.Server do
       "[Transport.Server] QUIC data stream arrived: type=#{stream_type}, index=#{index}, conn_id=#{conn_id}, stream_ref=#{inspect(stream_ref)}"
     )
 
-    case Map.get(state.quic_conn_executors, conn_id) do
+    case Map.get(state.quic_conn_runners, conn_id) do
       nil ->
         Logger.warning(
-          "[Transport.Server] {:flz_stream} for conn_id=#{conn_id} with no executor bound yet"
+          "[Transport.Server] {:flz_stream} for conn_id=#{conn_id} with no runner bound yet"
         )
 
         {:noreply, state}
 
-      executor_id ->
-        route_quic_data_stream(stream_ref, stream_type, index, executor_id, state)
+      runner_id ->
+        route_quic_data_stream(stream_ref, stream_type, index, runner_id, state)
     end
   end
 
@@ -260,7 +260,7 @@ defmodule Flezha.Transport.Server do
         state = %{state | pending_streams: pending}
         # For QUIC, stream_id is the control stream's nif id == the conn_id the
         # driver tags this connection's data streams with.
-        handle_new_executor(stream_ref, stream_id, message, state)
+        handle_new_runner(stream_ref, stream_id, message, state)
     end
   end
 
@@ -282,7 +282,7 @@ defmodule Flezha.Transport.Server do
     {:noreply, %{state | pending_streams: pending}}
   end
 
-  # A QUIC executor's ControlChannel went down — drop its per-connection data
+  # A QUIC runner's ControlChannel went down — drop its per-connection data
   # routing binding so the map stays bounded to live connections.
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
@@ -292,7 +292,7 @@ defmodule Flezha.Transport.Server do
 
       {conn_id, monitors} ->
         state = %{state | quic_conn_monitors: monitors}
-        {:noreply, update_in(state, [:quic_conn_executors], &Map.delete(&1, conn_id))}
+        {:noreply, update_in(state, [:quic_conn_runners], &Map.delete(&1, conn_id))}
     end
   end
 
@@ -311,18 +311,18 @@ defmodule Flezha.Transport.Server do
     :ok
   end
 
-  defp handle_new_executor(stream_ref, conn_id, init_message, state) do
+  defp handle_new_runner(stream_ref, conn_id, init_message, state) do
     init_payload = Flezha.Service.Payloader.json_to_map(init_message)
     namespace = Map.get(init_payload, "namespace")
 
-    # Dispatch to FleetManager — this creates the ExecutorSupervisor.
+    # Dispatch to FleetManager — this creates the RunnerSupervisor.
     case FleetManager.connect_handler(stream_ref, namespace, init_payload, state.transport) do
-      {:ok, executor_id} ->
-        # For QUIC, bind this connection's id to the executor so its data
+      {:ok, runner_id} ->
+        # For QUIC, bind this connection's id to the runner so its data
         # streams route by connection identity.
         state =
           if state.transport == :quic do
-            track_quic_connection(state, conn_id, executor_id)
+            track_quic_connection(state, conn_id, runner_id)
           else
             state
           end
@@ -330,13 +330,13 @@ defmodule Flezha.Transport.Server do
         {:noreply, state}
 
       {:error, reason} ->
-        # Close the rejected stream so the executor detects the dead/draining
+        # Close the rejected stream so the runner detects the dead/draining
         # controller promptly and its reconnect loop moves on to a live one,
         # instead of dangling on a controller that will never ack (e.g. a
         # `:shutting_down` rejection during drain). Emit a counted signal so the
         # reject is observable rather than only logged.
         Logger.error(
-          "[Transport.Server] Rejected executor connect (#{inspect(reason)}); closing stream"
+          "[Transport.Server] Rejected runner connect (#{inspect(reason)}); closing stream"
         )
 
         :telemetry.execute(
@@ -361,13 +361,13 @@ defmodule Flezha.Transport.Server do
       Logger.debug("[Transport.Server] close of rejected stream #{kind}: #{inspect(reason)}")
   end
 
-  # Bind a QUIC connection id to its executor for data-stream routing, and
-  # monitor the executor's ControlChannel so the binding is dropped when the
-  # session ends (keeping `quic_conn_executors` bounded to live connections).
-  defp track_quic_connection(state, conn_id, executor_id) do
-    state = put_in(state, [:quic_conn_executors, conn_id], executor_id)
+  # Bind a QUIC connection id to its runner for data-stream routing, and
+  # monitor the runner's ControlChannel so the binding is dropped when the
+  # session ends (keeping `quic_conn_runners` bounded to live connections).
+  defp track_quic_connection(state, conn_id, runner_id) do
+    state = put_in(state, [:quic_conn_runners, conn_id], runner_id)
 
-    case GenServer.whereis(Flezha.Service.Identificator.control_channel(executor_id)) do
+    case GenServer.whereis(Flezha.Service.Identificator.control_channel(runner_id)) do
       pid when is_pid(pid) ->
         ref = Process.monitor(pid)
         put_in(state, [:quic_conn_monitors, ref], conn_id)
@@ -382,7 +382,7 @@ defmodule Flezha.Transport.Server do
   # channel would silently drop traffic on its existing stream. The SDK's
   # index hint is intentionally ignored: any index can map to any channel
   # since outbound routing is by operative_id, not stream index.
-  defp route_quic_data_stream(stream_ref, stream_type, index, executor_id, state) do
+  defp route_quic_data_stream(stream_ref, stream_type, index, runner_id, state) do
     type =
       case stream_type do
         @stream_type_primary ->
@@ -397,7 +397,7 @@ defmodule Flezha.Transport.Server do
       end
 
     if type do
-      stream_ids = StreamSup.stream_ids(executor_id, type)
+      stream_ids = StreamSup.stream_ids(runner_id, type)
 
       case StreamSup.bind_stream_to_first_nil(stream_ids, stream_ref) do
         {:bound, stream_pid, stream_name} ->
@@ -410,7 +410,7 @@ defmodule Flezha.Transport.Server do
 
         nil ->
           Logger.warning(
-            "[Transport.Server] No rebindable #{type} channel for #{executor_id}; " <>
+            "[Transport.Server] No rebindable #{type} channel for #{runner_id}; " <>
               "closing QUIC stream ##{index}"
           )
 

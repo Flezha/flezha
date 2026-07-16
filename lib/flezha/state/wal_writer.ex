@@ -17,7 +17,7 @@ defmodule Flezha.State.WalWriter do
 
   require Logger
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{FsyncBatcher, InputLog, Metrics, Outbox, Recovery, Registry, Wire}
 
@@ -32,7 +32,7 @@ defmodule Flezha.State.WalWriter do
     :last_persisted_seq,
     :last_advance_at,
     :last_change_seen_at,
-    :owning_executor,
+    :owning_runner,
     :pending_bytes,
     :pending_since_us,
     :high_watermark,
@@ -73,7 +73,7 @@ defmodule Flezha.State.WalWriter do
           last_persisted_seq: integer(),
           last_advance_at: integer(),
           last_change_seen_at: integer(),
-          owning_executor: binary() | nil,
+          owning_runner: binary() | nil,
           pending_bytes: non_neg_integer(),
           pending_since_us: non_neg_integer() | nil,
           high_watermark: pos_integer(),
@@ -97,7 +97,7 @@ defmodule Flezha.State.WalWriter do
   moves on every received Change frame (append, duplicate, or gap). A
   Segment is *stalled* (vs idle) when Changes are still arriving but
   the persisted seq has stopped advancing. `wal_size_bytes` /
-  `oldest_unsnapshotted_at` / `owning_executor` feed the Watchdog's
+  `oldest_unsnapshotted_at` / `owning_runner` feed the Watchdog's
   size+age compaction triggers without a second disk scan.
   """
   @type stall_status :: %{
@@ -106,7 +106,7 @@ defmodule Flezha.State.WalWriter do
           last_change_seen_at: integer(),
           wal_size_bytes: non_neg_integer(),
           oldest_unsnapshotted_at: integer() | nil,
-          owning_executor: binary() | nil,
+          owning_runner: binary() | nil,
           out_pending_seq: integer(),
           outbox_flushed_seq: integer()
         }
@@ -118,19 +118,19 @@ defmodule Flezha.State.WalWriter do
   end
 
   @doc """
-  Append a Change at `seq`. `executor_id` identifies the executor that emitted
-  it; a Change from a *different* executor than the one that wrote the current
-  epoch realigns the WAL to the new executor's seq base (executor-restart
+  Append a Change at `seq`. `runner_id` identifies the runner that emitted
+  it; a Change from a *different* runner than the one that wrote the current
+  epoch realigns the WAL to the new runner's seq base (runner-restart
   recovery — see `handle_call/3`) — unless a takeover superseded that session
-  (`Flezha.Executor.FleetManager.superseded_session?/1`), in which case the
+  (`Flezha.Runner.FleetManager.superseded_session?/1`), in which case the
   frame is refused with `{:error, :stale_writer}` instead of realigning. Pass
-  `nil` (the default) to disable epoch tracking — the single-executor / test
+  `nil` (the default) to disable epoch tracking — the single-runner / test
   path keeps the prior dedup/gap/append semantics.
   """
   @spec append(GenServer.server(), non_neg_integer(), binary(), binary(), binary() | nil) ::
           :ok | :duplicate | :awaiting_baseline | {:error, term()}
-  def append(server, seq, header, change_bytes, executor_id \\ nil) do
-    GenServer.call(server, {:append, seq, header, change_bytes, executor_id})
+  def append(server, seq, header, change_bytes, runner_id \\ nil) do
+    GenServer.call(server, {:append, seq, header, change_bytes, runner_id})
   end
 
   @doc """
@@ -160,8 +160,8 @@ defmodule Flezha.State.WalWriter do
           binary() | nil,
           map()
         ) :: :ok
-  def append_async(server, seq, header, change_bytes, executor_id \\ nil, credit_opts \\ %{}) do
-    GenServer.cast(server, {:append_async, seq, header, change_bytes, executor_id, credit_opts})
+  def append_async(server, seq, header, change_bytes, runner_id \\ nil, credit_opts \\ %{}) do
+    GenServer.cast(server, {:append_async, seq, header, change_bytes, runner_id, credit_opts})
   end
 
   @spec fsync(GenServer.server()) :: :ok
@@ -175,7 +175,7 @@ defmodule Flezha.State.WalWriter do
   drop the snapshots above it, and re-seat the outbox on the survivors.
 
   The non-destructive sibling of the realign wipe. A realign discards a stale
-  executor's whole lineage; a rewind discards only the history above a boundary
+  runner's whole lineage; a rewind discards only the history above a boundary
   the controller means to rebuild, which is what a late-input correction needs.
 
   `epoch` is explicit rather than `current + 1` so that re-running an
@@ -315,7 +315,7 @@ defmodule Flezha.State.WalWriter do
       last_persisted_seq: -1,
       last_advance_at: now,
       last_change_seen_at: now,
-      owning_executor: nil,
+      owning_runner: nil,
       pending_bytes: 0,
       pending_since_us: nil,
       high_watermark: high_watermark(),
@@ -396,7 +396,7 @@ defmodule Flezha.State.WalWriter do
   end
 
   @impl true
-  def handle_call({:append, seq, header, change_bytes, executor_id}, _from, state) do
+  def handle_call({:append, seq, header, change_bytes, runner_id}, _from, state) do
     # Every received Change frame — accepted, deduped, realigned, or rejected
     # as a gap — proves the SDK is still emitting, which distinguishes a
     # stalled Segment from a genuinely idle one for the watchdog.
@@ -404,24 +404,24 @@ defmodule Flezha.State.WalWriter do
     state = %{state | last_change_seen_at: now}
 
     cond do
-      stale_writer?(state, executor_id) ->
+      stale_writer?(state, runner_id) ->
         # A takeover superseded this session — its channels were unbound
         # before the new owner was bound, so this frame is late in-flight
         # residue (typically a wedged channel flushing after the swap).
         # Refuse instead of realigning onto the stale lineage; the owner's
         # restore/resync handshake re-covers anything durable.
-        {:reply, {:error, :stale_writer}, refuse_stale(state, executor_id)}
+        {:reply, {:error, :stale_writer}, refuse_stale(state, runner_id)}
 
-      realign?(state, executor_id, seq) ->
-        # A *different* executor than the one that wrote the current epoch is
-        # emitting a non-contiguous seq — the signature of an executor pod
+      realign?(state, runner_id, seq) ->
+        # A *different* runner than the one that wrote the current epoch is
+        # emitting a non-contiguous seq — the signature of a runner pod
         # restart whose post-rebuild seq base has diverged from our WAL. The
-        # rebuilt executor is the live source of truth, so adopt its epoch
+        # rebuilt runner is the live source of truth, so adopt its epoch
         # instead of dedup-dropping its Changes as stale retransmits, which
-        # would freeze the WAL while the executor keeps producing.
+        # would freeze the WAL while the runner keeps producing.
         state
-        |> realign_epoch(seq, executor_id, now)
-        |> write_record(seq, header, change_bytes, executor_id, now)
+        |> realign_epoch(seq, runner_id, now)
+        |> write_record(seq, header, change_bytes, runner_id, now)
 
       seq <= state.last_persisted_seq ->
         Metrics.add(state.metrics, :dedup_drops_total, 1)
@@ -429,16 +429,16 @@ defmodule Flezha.State.WalWriter do
 
       seq != state.last_persisted_seq + 1 and state.last_persisted_seq == -1 ->
         # Empty-WAL gap: a cold takeover — this controller holds no baseline
-        # for a Segment the live executor already has state for. Not a
+        # for a Segment the live runner already has state for. Not a
         # protocol violation: shed the frame and pull a full-state baseline
         # via CompactSegment instead of disconnecting the SDK.
-        {:reply, :awaiting_baseline, await_baseline(state, seq, executor_id)}
+        {:reply, :awaiting_baseline, await_baseline(state, seq, runner_id)}
 
       seq != state.last_persisted_seq + 1 ->
         {:reply, {:error, {:gap, expected: state.last_persisted_seq + 1, got: seq}}, state}
 
       true ->
-        write_record(state, seq, header, change_bytes, executor_id, now)
+        write_record(state, seq, header, change_bytes, runner_id, now)
     end
   end
 
@@ -597,7 +597,7 @@ defmodule Flezha.State.WalWriter do
       last_change_seen_at: state.last_change_seen_at,
       wal_size_bytes: Metrics.get(state.metrics, :wal_size_bytes),
       oldest_unsnapshotted_at: state.oldest_unsnapshotted_at,
-      owning_executor: state.owning_executor,
+      owning_runner: state.owning_runner,
       out_pending_seq: state.outbox_last_seq,
       outbox_flushed_seq: state.outbox_flushed_seq
     }
@@ -606,26 +606,26 @@ defmodule Flezha.State.WalWriter do
   end
 
   @impl true
-  def handle_cast({:append_async, seq, header, change_bytes, executor_id, credit_opts}, state) do
+  def handle_cast({:append_async, seq, header, change_bytes, runner_id, credit_opts}, state) do
     state = %{state | credit_active?: Map.has_key?(credit_opts, :channel)}
 
     if over_hard_bound?(state) do
       release_credit(credit_opts)
-      {:noreply, shed(state, seq, executor_id)}
+      {:noreply, shed(state, seq, runner_id)}
     else
       do_append_async(
         seq,
         header,
         change_bytes,
-        executor_id,
+        runner_id,
         %{state | shedding?: false},
         credit_opts
       )
     end
   end
 
-  defp do_append_async(seq, header, change_bytes, executor_id, state, credit_opts) do
-    case handle_call({:append, seq, header, change_bytes, executor_id}, nil, state) do
+  defp do_append_async(seq, header, change_bytes, runner_id, state, credit_opts) do
+    case handle_call({:append, seq, header, change_bytes, runner_id}, nil, state) do
       {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->
         release_credit(credit_opts)
         {rc, sh, pk} = new_state.segment_id
@@ -642,7 +642,7 @@ defmodule Flezha.State.WalWriter do
         segment_id = new_state.segment_id
 
         spawn(fn ->
-          Recovery.resync(segment_id, executor_id: executor_id, reason: :seq_gap)
+          Recovery.resync(segment_id, runner_id: runner_id, reason: :seq_gap)
         end)
 
         {:noreply, new_state}
@@ -684,7 +684,7 @@ defmodule Flezha.State.WalWriter do
 
   # ---------- Append / realign ----------
 
-  defp write_record(state, seq, header, change_bytes, executor_id, now) do
+  defp write_record(state, seq, header, change_bytes, runner_id, now) do
     record = encode_record(seq, header, change_bytes)
     :ok = :file.write(state.file_handle, record)
     size = byte_size(record)
@@ -707,7 +707,7 @@ defmodule Flezha.State.WalWriter do
       state
       | last_persisted_seq: seq,
         last_advance_at: now,
-        owning_executor: executor_id || state.owning_executor,
+        owning_runner: runner_id || state.owning_runner,
         pending_bytes: new_pending,
         pending_since_us: state.pending_since_us || System.monotonic_time(:microsecond),
         oldest_unsnapshotted_at: state.oldest_unsnapshotted_at || now
@@ -875,18 +875,18 @@ defmodule Flezha.State.WalWriter do
   # takeover fence; the owning session short-circuits on the first comparison
   # (already made today for realign), so its append path gains no per-record
   # work.
-  defp stale_writer?(state, executor_id) do
-    is_binary(executor_id) and executor_id != state.owning_executor and
-      FleetManager.superseded_session?(executor_id)
+  defp stale_writer?(state, runner_id) do
+    is_binary(runner_id) and runner_id != state.owning_runner and
+      FleetManager.superseded_session?(runner_id)
   end
 
   # One `stale_writer_refused` event per superseded session per writer
   # lifetime (sessions are never reused, so the episode never re-opens);
   # every refusal increments the counter.
-  defp refuse_stale(state, executor_id) do
+  defp refuse_stale(state, runner_id) do
     Metrics.add(state.metrics, :stale_writer_refused_total, 1)
 
-    if MapSet.member?(state.refused_sessions, executor_id) do
+    if MapSet.member?(state.refused_sessions, runner_id) do
       state
     else
       {rc, sh, pk} = state.segment_id
@@ -894,28 +894,28 @@ defmodule Flezha.State.WalWriter do
       :telemetry.execute(
         [:flezha, :state, :stale_writer_refused],
         %{count: 1},
-        %{operative: rc, operation: sh, key: pk, session: executor_id}
+        %{operative: rc, operation: sh, key: pk, session: runner_id}
       )
 
-      %{state | refused_sessions: MapSet.put(state.refused_sessions, executor_id)}
+      %{state | refused_sessions: MapSet.put(state.refused_sessions, runner_id)}
     end
   end
 
-  # An executor restart is the only way a Change's seq can diverge under a *new*
-  # executor id: within one executor's lifetime the seq is monotonic, so a low
-  # seq from the same executor is a legitimate retransmit (deduped, not
-  # realigned). `owning_executor == nil` (no Change seen since boot) defers to
+  # A runner restart is the only way a Change's seq can diverge under a *new*
+  # runner id: within one runner's lifetime the seq is monotonic, so a low
+  # seq from the same runner is a legitimate retransmit (deduped, not
+  # realigned). `owning_runner == nil` (no Change seen since boot) defers to
   # the normal dedup/gap/append path so a controller restart still re-seeds the
-  # alive executor via `RestoreInitState` instead of discarding the WAL.
-  defp realign?(state, executor_id, seq) do
-    is_binary(executor_id) and is_binary(state.owning_executor) and
-      executor_id != state.owning_executor and seq != state.last_persisted_seq + 1
+  # alive runner via `RestoreInitState` instead of discarding the WAL.
+  defp realign?(state, runner_id, seq) do
+    is_binary(runner_id) and is_binary(state.owning_runner) and
+      runner_id != state.owning_runner and seq != state.last_persisted_seq + 1
   end
 
   # Discard the stale pre-restart epoch so a later `RestoreInitState` ships only
-  # the new executor's history: empty the WAL file and drop its snapshots, then
+  # the new runner's history: empty the WAL file and drop its snapshots, then
   # reset the seq baseline so the incoming `seq` appends contiguously.
-  defp realign_epoch(state, seq, executor_id, now) do
+  defp realign_epoch(state, seq, runner_id, now) do
     # The truncated epoch's un-fsynced bytes no longer occupy the buffer;
     # release them to the stream ledger so the window is not leaked.
     state = flush_credit_pending(state)
@@ -924,18 +924,18 @@ defmodule Flezha.State.WalWriter do
 
     Enum.each(Registry.snapshot_paths(state.segment_id), fn {_seq, path} -> File.rm(path) end)
 
-    emit_realign(state.segment_id, state.last_persisted_seq, seq, executor_id)
+    emit_realign(state.segment_id, state.last_persisted_seq, seq, runner_id)
 
     Metrics.put(state.metrics, :wal_size_bytes, 0)
     Metrics.put(state.metrics, :snapshot_seq, 0)
 
     # The stale lineage's undispatched outputs die with its records — the
-    # realigned executor's replay regenerates them under the new epoch.
+    # realigned runner's replay regenerates them under the new epoch.
     state = %{
       state
       | last_persisted_seq: seq - 1,
         last_advance_at: now,
-        owning_executor: executor_id,
+        owning_runner: runner_id,
         pending_bytes: 0,
         pending_since_us: nil,
         oldest_unsnapshotted_at: nil
@@ -976,7 +976,7 @@ defmodule Flezha.State.WalWriter do
   # append. Count it and, once per episode, drive a CompactSegment pull via
   # `Recovery.resync` (routes to the pull because the Segment has no
   # persisted state). The pulled snapshot encodes the shed deltas' effects.
-  defp await_baseline(state, seq, executor_id) do
+  defp await_baseline(state, seq, runner_id) do
     Metrics.add(state.metrics, :wal_shed_total, 1)
 
     if state.awaiting_baseline? do
@@ -987,13 +987,13 @@ defmodule Flezha.State.WalWriter do
       :telemetry.execute(
         [:flezha, :state, :baseline_seed],
         %{first_seq: seq},
-        %{operative: rc, operation: sh, key: pk, executor: executor_id}
+        %{operative: rc, operation: sh, key: pk, runner: runner_id}
       )
 
       segment_id = state.segment_id
 
       spawn(fn ->
-        Recovery.resync(segment_id, executor_id: executor_id, reason: :baseline_seed)
+        Recovery.resync(segment_id, runner_id: runner_id, reason: :baseline_seed)
       end)
 
       %{state | awaiting_baseline?: true}
@@ -1001,7 +1001,7 @@ defmodule Flezha.State.WalWriter do
   end
 
   # Baseline established: the pulled snapshot's seq supersedes the shed
-  # deltas, so adopt it and let the executor's next delta append contiguously.
+  # deltas, so adopt it and let the runner's next delta append contiguously.
   defp establish_baseline(%{awaiting_baseline?: true, last_persisted_seq: last} = state, seq)
        when seq > last do
     now = :erlang.monotonic_time(:millisecond)
@@ -1012,11 +1012,11 @@ defmodule Flezha.State.WalWriter do
 
   defp establish_baseline(state, _seq), do: %{state | awaiting_baseline?: false}
 
-  defp emit_realign({rc, sh, pk}, from_seq, to_seq, executor_id) do
+  defp emit_realign({rc, sh, pk}, from_seq, to_seq, runner_id) do
     :telemetry.execute(
       [:flezha, :state, :wal_realign],
       %{from_seq: from_seq, to_seq: to_seq},
-      %{operative: rc, operation: sh, key: pk, executor: executor_id}
+      %{operative: rc, operation: sh, key: pk, runner: runner_id}
     )
   end
 
@@ -1249,7 +1249,7 @@ defmodule Flezha.State.WalWriter do
   # resync handshake so the SDK (authoritative) re-sends. Resync is spawned once
   # per shed episode (on the false->true transition) to avoid a resync storm
   # under a sustained flood.
-  defp shed(state, seq, executor_id) do
+  defp shed(state, seq, runner_id) do
     Metrics.add(state.metrics, :wal_shed_total, 1)
 
     # A conformant credit-speaking sender can never reach the hard bound
@@ -1261,7 +1261,7 @@ defmodule Flezha.State.WalWriter do
       :telemetry.execute(
         [:flezha, :state, :credit_anomaly],
         %{count: 1},
-        %{kind: :shed, operative: rc, operation: sh, key: pk, executor: executor_id}
+        %{kind: :shed, operative: rc, operation: sh, key: pk, runner: runner_id}
       )
     end
 
@@ -1277,7 +1277,7 @@ defmodule Flezha.State.WalWriter do
       )
 
       segment_id = state.segment_id
-      spawn(fn -> Recovery.resync(segment_id, executor_id: executor_id, reason: :shed) end)
+      spawn(fn -> Recovery.resync(segment_id, runner_id: runner_id, reason: :shed) end)
       %{state | shedding?: true}
     end
   end
@@ -1311,14 +1311,14 @@ defmodule Flezha.State.WalWriter do
       %{segment_id: state.segment_id, status: status}
     )
 
-    # Routing needs the owning executor (`nil` until the first Change lands,
+    # Routing needs the owning runner (`nil` until the first Change lands,
     # in which case there is no session to signal).
     with false <- state.credit_active?,
          {rc, sh, pk} <- state.segment_id,
-         executor_id when is_binary(executor_id) <- state.owning_executor do
+         runner_id when is_binary(runner_id) <- state.owning_runner do
       _ =
         Flezha.Operative.Overwatch.notify_segment_backpressure(
-          {executor_id, rc, sh, pk},
+          {runner_id, rc, sh, pk},
           status
         )
     end

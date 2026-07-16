@@ -8,8 +8,8 @@ doc covers *operative state + output* durability).
 ## The two things that can be "lost"
 
 1. **Operative state** — an operative's accumulated in-memory state (e.g. a running total). The
-   authoritative live copy lives on the operative's **one bound executor**; it is backed up
-   **asynchronously** to a per-Segment **WAL on the controller** (the executor streams
+   authoritative live copy lives on the operative's **one bound runner**; it is backed up
+   **asynchronously** to a per-Segment **WAL on the controller** (the runner streams
    `segment_state_change` frames; the controller batches the fsync, ~5 ms).
 2. **Output** — what an operative emits on `on_output`. Output is routed **through the
    controller** (the operative sends an output frame; the controller runs the `on_output`
@@ -31,29 +31,29 @@ set and the convergence loop re-adds anything missing. See
 
 | Scenario | Operative state | Output | Why / how |
 |---|---|---|---|
-| **Graceful executor stop** (SIGTERM / rolling deploy / `disconnect()` / `Drop`) | **No loss** | At-least-once | SDK `shutdown.rs` serializes each operative's *final* state, ships it to the controller, and waits for `ExecutorShutdownAck` before exiting. |
-| **Single executor SIGKILL** (hard) under load | **Brief best-effort loss** | At-least-once | No graceful drain; the operative rebinds to a peer/itself and restores from the controller WAL, which may lag the last few changes emitted under load. |
-| **All executors SIGKILL'd at once** under load | **Brief best-effort loss** | At-least-once | Same WAL-restore path, with no live copy anywhere — reliably exposes the lag (this is what `stateful-resume` provokes). |
-| **Executor OOM / container crash / node death** | **Brief best-effort loss** | At-least-once | Same as SIGKILL — no drain runs. |
-| **Controller graceful restart / rolling deploy with a live peer** | **No loss** | At-least-once | The new instance syncs the registry from the surviving peer; executors stay connected. |
-| **Controller plain restart, sole instance** (marker present) | State in WAL preserved; **operative *list* briefly unknown (~6 s)** | At-least-once | Skip-replay boot wipes local DETS by design; the registry is rebuilt from executors re-announcing. `/healthz` is `healthy` (vacuously) during the gap — safe for kubelet, but not "recovering". Prefer recovery mode (below). |
+| **Graceful runner stop** (SIGTERM / rolling deploy / `disconnect()` / `Drop`) | **No loss** | At-least-once | SDK `shutdown.rs` serializes each operative's *final* state, ships it to the controller, and waits for `RunnerShutdownAck` before exiting. |
+| **Single runner SIGKILL** (hard) under load | **Brief best-effort loss** | At-least-once | No graceful drain; the operative rebinds to a peer/itself and restores from the controller WAL, which may lag the last few changes emitted under load. |
+| **All runners SIGKILL'd at once** under load | **Brief best-effort loss** | At-least-once | Same WAL-restore path, with no live copy anywhere — reliably exposes the lag (this is what `stateful-resume` provokes). |
+| **Runner OOM / container crash / node death** | **Brief best-effort loss** | At-least-once | Same as SIGKILL — no drain runs. |
+| **Controller graceful restart / rolling deploy with a live peer** | **No loss** | At-least-once | The new instance syncs the registry from the surviving peer; runners stay connected. |
+| **Controller plain restart, sole instance** (marker present) | State in WAL preserved; **operative *list* briefly unknown (~6 s)** | At-least-once | Skip-replay boot wipes local DETS by design; the registry is rebuilt from runners re-announcing. `/healthz` is `healthy` (vacuously) during the gap — safe for kubelet, but not "recovering". Prefer recovery mode (below). |
 | **Controller recovery-mode restart, sole instance** (marker removed / `flz cluster prepare-recovery`) | **No loss** | At-least-once | Replays the registry from DETS; `/healthz` honestly reports `recovering` until rebound. The correct way to restart the *only* instance. |
 | **Whole cluster down → cold start** | Recovered from DETS | n/a | The ONE case DETS replay is for: no peer survives, disk is the only record. |
-| **Operation migrated to a controller with no local WAL** (node loss / redistribution / lost hostPath), executor live | **No loss** | At-least-once | The WAL is node-local and unreplicated, so the new controller starts baseline-less. Its first `segment_state_change` (empty WAL, `seq > 0`) triggers a `CompactSegment` **pull** — the executor ships a full-state snapshot that becomes the new baseline; deltas shed while awaiting it are superseded by the snapshot. The controller never pushes an empty `RestoreInitState` (which would reset the live Segment to `init_state`). See [`state_persistence.md`](state_persistence.md) "Baseline recovery: push vs pull". |
+| **Operation migrated to a controller with no local WAL** (node loss / redistribution / lost hostPath), runner live | **No loss** | At-least-once | The WAL is node-local and unreplicated, so the new controller starts baseline-less. Its first `segment_state_change` (empty WAL, `seq > 0`) triggers a `CompactSegment` **pull** — the runner ships a full-state snapshot that becomes the new baseline; deltas shed while awaiting it are superseded by the snapshot. The controller never pushes an empty `RestoreInitState` (which would reset the live Segment to `init_state`). See [`state_persistence.md`](state_persistence.md) "Baseline recovery: push vs pull". |
 | **Node rejoins a live cluster** | Synced from peers; local DETS discarded | n/a | Correct — local DETS is stale; peers are authoritative. |
-| **Kafka/broker down, executors alive** | No loss | Buffered, resumes | Producer reconnects (see kafka producer recovery); offset resumes when the broker returns. |
+| **Kafka/broker down, runners alive** | No loss | Buffered, resumes | Producer reconnects (see kafka producer recovery); offset resumes when the broker returns. |
 | **Sustained overload** (state changes outpace fsync — the 06-21 OOM shape) | **No loss** (credit-speaking SDK) | At-least-once | Credit-grant flow control: the sender's byte window (default 16 MiB) is minted back only on WAL fsync, so an exhausted window *parks* the SDK's flush path instead of growing controller memory — park, never drop. Shedding is unreachable for a conformant sender; any shed/overrun on a credit session emits `[:flezha, :state, :credit_anomaly]`. Pre-credit SDKs keep the legacy status-flag + shed/resync path. See [`state_persistence.md`](state_persistence.md) "Flow control". |
-| **Bounded operative executor SIGKILL** (durable, the default) | **Brief best-effort loss** (async WAL lag) | At-least-once | Respawns on a new executor, restores committed Segment state via the restore-before-run gate, and resumes **at the first un-journaled operation**: the op-journal (`op.journal`, one gated `OpCommit` fsync per op barrier) records each completed operation + its inter-op handoff, so committed ops are **skipped, not redone**, and the next op is seeded from the journaled handoff (Rust SDK; Java keeps the pre-journal full re-run until its parity change). Inspect with `flz state journal`. See [`bounded_operative.md`](bounded_operative.md). |
-| **Looping bounded operative executor SIGKILL** (durable) | **Brief best-effort loss** (async WAL lag) | At-least-once | Resumes at the iteration **after** the last journaled `iter_committed` — committed turns never re-run, and the in-flight one re-runs from its own last committed op. Input it had not consumed is still in the durable inbox. See [`bounded_operative.md`](bounded_operative.md) "Durable loop and suspension". |
+| **Bounded operative runner SIGKILL** (durable, the default) | **Brief best-effort loss** (async WAL lag) | At-least-once | Respawns on a new runner, restores committed Segment state via the restore-before-run gate, and resumes **at the first un-journaled operation**: the op-journal (`op.journal`, one gated `OpCommit` fsync per op barrier) records each completed operation + its inter-op handoff, so committed ops are **skipped, not redone**, and the next op is seeded from the journaled handoff (Rust SDK; Java keeps the pre-journal full re-run until its parity change). Inspect with `flz state journal`. See [`bounded_operative.md`](bounded_operative.md). |
+| **Looping bounded operative runner SIGKILL** (durable) | **Brief best-effort loss** (async WAL lag) | At-least-once | Resumes at the iteration **after** the last journaled `iter_committed` — committed turns never re-run, and the in-flight one re-runs from its own last committed op. Input it had not consumed is still in the durable inbox. See [`bounded_operative.md`](bounded_operative.md) "Durable loop and suspension". |
 | **Input sent to a suspended / crashed / migrating bounded instance** (durable) | **No loss** | n/a | The controller appends it to the instance's `inbox.wal` before forwarding, so it is delivered on rehydrate rather than dropped — and a suspended instance is *woken* by the append. Duplicates inside the undelivered window are absorbed. See "Bounded operatives: the durable inbox". |
 | **Controller redeploy while a bounded instance is suspended** | **No loss** | n/a | Suspension is durable state (`parked` journal entry + inbox + snapshots), not a live process: the instance is rediscovered from disk on boot, stays evicted, and rehydrates on the next input or its wake deadline exactly as if nothing happened. |
-| **Bounded operative executor SIGKILL** (persistence opted out) | **Full — re-runs from the top** | At-least-once | No WAL to restore from; the operative re-runs its `run`/chain from `args`, and any input in its memory-only inbox is lost. Idempotent by author contract, or don't opt out. |
+| **Bounded operative runner SIGKILL** (persistence opted out) | **Full — re-runs from the top** | At-least-once | No WAL to restore from; the operative re-runs its `run`/chain from `args`, and any input in its memory-only inbox is lost. Idempotent by author contract, or don't opt out. |
 | **Bounded operative SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and **skips** the already-done ones (no forward re-run). |
 | **Poison payload** (operation fails on every retry) | **No loss** | Segment continues | Retry-then-park: after `retry_max` attempts the payload is durably parked to the DLQ store *before* the segment advances (tier off: fsync-then-ack; tier on: one atomic record with the consumed offset). Inspect/replay/drop via `flz dlq`; only retention (30 d / 4 GiB, loud) ever discards a parked payload. See "Dead-letter queue" below. |
 
 ## Why output can briefly get ahead of state (the hard-kill gap)
 
-The executor streams **output frames** and **state-change frames** to the controller
+The runner streams **output frames** and **state-change frames** to the controller
 independently, and the controller emits output before the matching state is durably
 fsync'd. So on a hard kill, output (e.g. total=135 in Kafka) can outlive the durable
 state (WAL=128), and the restored operative comes back slightly stale. We deliberately do
@@ -281,7 +281,7 @@ The **input** half of the same story. A durable bounded instance's post-start
 input (a chat turn, an agent message) is appended to a per-instance
 `inbox.wal` — the same `WalWriter` + `FsyncBatcher` substrate as `op.journal`,
 living beside it under `<state_root>/<instance>/<instance>/` — **before** it is
-forwarded to the executor:
+forwarded to the runner:
 
 - **Append-before-forward.** A crash after the append but before delivery
   re-delivers on rehydrate: at-least-once *into* the operative, exactly-once
@@ -356,7 +356,7 @@ is permanently wrong — and so is every indicator downstream of it.
 
 Correction is **recovery with a re-ordered input sequence**. It reuses the
 recovery machinery wholesale: rewind the Segment to a baseline *behind* the
-late event, restore the executor there, and re-forward the retained input log —
+late event, restore the runner there, and re-forward the retained input log —
 except ordered by event time rather than by arrival. Outputs republish under a
 bumped epoch, so a keyed changelog sink overwrites the stale rows by natural
 key. One machine, two triggers: a late input, or an operator.
@@ -429,7 +429,7 @@ configured value, and its derived value.
    cold-takeover wipe. The `persist_dedup` at the rewind's tail is the **commit
    point**: the epoch bump is durable before any output can be re-emitted under
    it.
-5. `RestoreInitState` re-seats the executor on the baseline (blocking — the
+5. `RestoreInitState` re-seats the runner on the baseline (blocking — the
    restore rides the control channel while the replay rides the data channel, and
    without the fence they race). The Segment clears its mailbox: every queued
    input is already a member of the slice by append-before-forward, so keeping it
@@ -489,7 +489,7 @@ heal the recent past. A target older than retention is refused with
 
 ## How to avoid loss — operator playbook
 
-- **Deploy / upgrade executors with a graceful stop, never a kill.** Send SIGTERM (or
+- **Deploy / upgrade runners with a graceful stop, never a kill.** Send SIGTERM (or
   `flz`-driven `disconnect`) and set the orchestrator grace period
   (`terminationGracePeriodSeconds` / `stop_grace_period`) **longer than the drain**
   (serialize + ack; default ack budget 2 s/operative, serialize cap 10 s). Roll one node at
@@ -516,9 +516,9 @@ heal the recent past. A target older than retention is refused with
 
 ## Common pitfalls
 
-- `docker kill` / `kill -9` / `terminationGracePeriodSeconds` too short on an executor →
+- `docker kill` / `kill -9` / `terminationGracePeriodSeconds` too short on a runner →
   drain is cut off → best-effort loss. Use graceful stop + adequate grace.
-- **The executor binary must receive SIGTERM directly.** Run it as PID 1 (exec-form
+- **The runner binary must receive SIGTERM directly.** Run it as PID 1 (exec-form
   `CMD`/entrypoint, or `setpriv`/`gosu` to drop privileges by `exec`). A wrapper that
   forks the binary and force-kills it on SIGTERM — notably `su` ("Session terminated,
   killing shell") — terminates the SDK before its graceful drain ships final state, so

@@ -3,7 +3,7 @@ defmodule Flezha.Integration.JavaStatePersistenceTest do
   Integration tests for `operative-state-persistence-java`.
 
   Delegates to the JUnit suite in
-  `test/apps/java_executor/src/test/java/com/flezha/test/JavaStatePersistenceTest.java`
+  `test/apps/java_runner/src/test/java/com/flezha/test/JavaStatePersistenceTest.java`
   and to the SDK module's own unit tests:
 
   - `flezha-sdk-api/.../OperationDefaultsTest` — Operation interface defaults
@@ -18,7 +18,7 @@ defmodule Flezha.Integration.JavaStatePersistenceTest do
   End-to-end coverage with the controller-side WAL (round-trip
   `RestoreInitState` after controller restart, time-travel queries, retention
   sweeper) runs through the existing
-  `start_executor(ns, runtime: :java)` helper once the
+  `start_runner(ns, runtime: :java)` helper once the
   controller's Java integration matrix wires the new commands.
   """
 
@@ -47,7 +47,7 @@ defmodule Flezha.Integration.JavaStatePersistenceTest do
     {output, status} =
       System.cmd(
         "mvn",
-        ~w(-q -B -f test/apps/java_executor test
+        ~w(-q -B -f test/apps/java_runner test
            -Dtest=JavaStatePersistenceTest),
         cd: Path.expand("../../..", __DIR__),
         stderr_to_stdout: true

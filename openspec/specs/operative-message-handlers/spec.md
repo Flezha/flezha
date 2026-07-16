@@ -40,7 +40,7 @@ The system SHALL route incoming messages of the shape `{:flezha_request, handler
 
 ### Requirement: Handler plugin invocation and context
 
-The system SHALL invoke the matched subscriber's `on_message/2` callback with a `%Flezha.Plugin.Extension.Ctx.Msg{}` struct containing exactly these fields: `key` (atom), `payload` (binary), `reply_to` (pid), `ref` (reference), `operative_id` (string), `namespace` (string), and `executor_id` (string). The second argument MUST be the subscriber's `opts` map.
+The system SHALL invoke the matched subscriber's `on_message/2` callback with a `%Flezha.Plugin.Extension.Ctx.Msg{}` struct containing exactly these fields: `key` (atom), `payload` (binary), `reply_to` (pid), `ref` (reference), `operative_id` (string), `namespace` (string), and `runner_id` (string). The second argument MUST be the subscriber's `opts` map.
 
 #### Scenario: Handler receives full context
 - **WHEN** a handler is invoked for a request on operative `"proc-1"` in namespace `"tenant-a"` from caller pid `P`
@@ -56,7 +56,7 @@ The system SHALL invoke the matched subscriber's `on_message/2` callback with a 
 
 ### Requirement: SDK round-trip via first-party MessageForward provider
 
-The system SHALL ship a first-party provider `Flezha.Plugin.Provider.MessageForward` implementing `on_message/2`. The callback MUST forward the payload to the SDK-side operative by sending a `ExecutorCommands.OperationMessage { operative_id, payload }` on the control channel and waiting for a `ExecutorCommands.OperationMessageResponse { payload, error }`. When `error` is empty, `on_message/2` MUST return `{:ok, response.payload}`; otherwise it MUST return `{:error, response.error}`.
+The system SHALL ship a first-party provider `Flezha.Plugin.Provider.MessageForward` implementing `on_message/2`. The callback MUST forward the payload to the SDK-side operative by sending a `RunnerCommands.OperationMessage { operative_id, payload }` on the control channel and waiting for a `RunnerCommands.OperationMessageResponse { payload, error }`. When `error` is empty, `on_message/2` MUST return `{:ok, response.payload}`; otherwise it MUST return `{:error, response.error}`.
 
 #### Scenario: Factory returns success payload
 - **WHEN** the SDK factory's `handle_message(payload)` returns success bytes `B`
@@ -80,7 +80,7 @@ The system SHALL provide a synchronous request path for callers to send an envel
 
 ### Requirement: New control-channel command `OperationMessage`
 
-The system SHALL extend `protobufs/executor_commands.proto` with two messages: `OperationMessage { string operative_id = 1; bytes payload = 2; }` and `OperationMessageResponse { bytes payload = 1; string error = 2; }`. `OperationMessage` MUST be dispatched on the existing control stream via the same send/reply primitives used by `SegmentState`.
+The system SHALL extend `protobufs/runner_commands.proto` with two messages: `OperationMessage { string operative_id = 1; bytes payload = 2; }` and `OperationMessageResponse { bytes payload = 1; string error = 2; }`. `OperationMessage` MUST be dispatched on the existing control stream via the same send/reply primitives used by `SegmentState`.
 
 #### Scenario: Command travels on control channel
 - **WHEN** the Elixir agent sends an `OperationMessage` for operative `"proc-1"` with payload `P`

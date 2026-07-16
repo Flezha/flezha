@@ -43,10 +43,10 @@ defmodule Flezha.AuthZ.Action do
     :"authz.role_bind",
     :"authz.role_unbind",
     :"authz.role_list",
-    # Data-plane verbs granted only to the executor role.
-    :"executor.connect",
-    :"executor.checkpoint",
-    :"executor.report",
+    # Data-plane verbs granted only to the runner role.
+    :"runner.connect",
+    :"runner.checkpoint",
+    :"runner.report",
     # Controller / boot / state surface.
     :"controller.status",
     :"controller.stop",

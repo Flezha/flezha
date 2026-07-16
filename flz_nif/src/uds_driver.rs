@@ -66,7 +66,7 @@ struct StreamState {
     passive_queue: Vec<ParsedFrame>,
     write_buffer: Vec<u8>,
     // Hard cap on the per-stream send buffer: past it `enqueue_write` drops the
-    // newest frame so a slow/non-reading executor cannot grow controller memory
+    // newest frame so a slow/non-reading runner cannot grow controller memory
     // without bound (mirrors the SDK bounded-mailbox DropNewest).
     max_write_buffer_bytes: usize,
     // Liveness counters (single-threaded driver, no contention). Copied into

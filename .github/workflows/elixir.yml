@@ -3,7 +3,7 @@ name: Elixir
 # Runs `mix test` — every ExUnit case except `:system` and `:java_sdk`,
 # which are excluded in `test/test_helper.exs`. The Java SDK integration
 # matrix (`:java_sdk`) runs in `java-sdk.yml` because it needs the Java
-# executor jar built first; this workflow stays Elixir+Rust only.
+# runner jar built first; this workflow stays Elixir+Rust only.
 #
 # Native Java SDK binaries (libflz_transport.{so,dylib,dll} × 5 platforms)
 # are committed under `sdk/java/flezha-sdk-native/src/main/resources/native/`
@@ -24,7 +24,7 @@ on:
       - "flz_nif/**"
       - "sdk/rust/**"
       - "cli/**"
-      - "test/apps/rust_executor/**"
+      - "test/apps/rust_runner/**"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
   push:
@@ -40,7 +40,7 @@ on:
       - "flz_nif/**"
       - "sdk/rust/**"
       - "cli/**"
-      - "test/apps/rust_executor/**"
+      - "test/apps/rust_runner/**"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
 
@@ -87,7 +87,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-            test/apps/rust_executor/target
+            test/apps/rust_runner/target
           key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             cargo-${{ runner.os }}-
@@ -121,33 +121,33 @@ jobs:
       - name: Compile Elixir (warnings as errors)
         run: mix compile --warnings-as-errors
 
-      - name: Pre-build rust_executor
+      - name: Pre-build rust_runner
         # PortPilot launches two `cargo run --quiet` processes for
-        # rust_executor at boot; BootLoader's post_hook gives
+        # rust_runner at boot; BootLoader's post_hook gives
         # them 20s to connect (config/test.exs). A cold debug build
         # of the binary + workspace deps doesn't fit in that window,
         # so build it ahead of time into the same ./target dir the
         # cargo-run command uses.
         run: |
           cargo build --quiet \
-            --manifest-path=test/apps/rust_executor/Cargo.toml \
+            --manifest-path=test/apps/rust_runner/Cargo.toml \
             --target-dir=./target
 
-      - name: Pre-build flezha_executor test binaries
+      - name: Pre-build flezha_runner test binaries
         # `test/test_files/integration/rust_state_persistence_test.exs`
         # shells out to `cargo test --features bench-internals -p
-        # flezha_executor --lib|--tests` from the repo root. ExUnit's
+        # flezha_runner --lib|--tests` from the repo root. ExUnit's
         # default 60s per-test timeout is shorter than a cold
         # integration-test compile, so build the test binaries up front
         # with `--no-run`.
         run: |
           cargo test --no-run --quiet \
-            -p flezha_executor --features bench-internals \
+            -p flezha_runner --features bench-internals \
             --lib --tests
 
       - name: Run mix test
         # Default `mix test` excludes `:system` and `:java_sdk`. The
         # `:java_sdk` integration matrix runs in `java-sdk.yml` because it
-        # needs the Java executor jar built first; this workflow
+        # needs the Java runner jar built first; this workflow
         # stays Elixir+Rust only.
         run: mix test

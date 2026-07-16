@@ -90,45 +90,45 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end
   end
 
-  def start_executor_remote(node, namespace) do
+  def start_runner_remote(node, namespace) do
     self = self()
-    :erpc.call(node, Kernel, :spawn, [__MODULE__, :start_executor_recv, [namespace, self]])
+    :erpc.call(node, Kernel, :spawn, [__MODULE__, :start_runner_recv, [namespace, self]])
 
     receive do
-      {:remote_executor_connected, ^namespace, executor_id} -> executor_id
+      {:remote_runner_connected, ^namespace, runner_id} -> runner_id
     end
   end
 
-  def stop_executor_remote(node, namespace, executor_id) do
+  def stop_runner_remote(node, namespace, runner_id) do
     self = self()
 
     :erpc.call(node, Kernel, :spawn, [
       __MODULE__,
-      :stop_executor_recv,
-      [namespace, executor_id, self]
+      :stop_runner_recv,
+      [namespace, runner_id, self]
     ])
 
     receive do
-      {:remote_executor_disconnected, ^namespace, ^executor_id} -> :ok
+      {:remote_runner_disconnected, ^namespace, ^runner_id} -> :ok
     end
   end
 
-  def start_executor_recv(namespace, recv_pid) do
-    executor_id = start_executor(namespace)
+  def start_runner_recv(namespace, recv_pid) do
+    runner_id = start_runner(namespace)
 
-    Process.send(recv_pid, {:remote_executor_connected, namespace, executor_id}, [])
+    Process.send(recv_pid, {:remote_runner_connected, namespace, runner_id}, [])
 
     receive do
       :any -> :ok
     end
   end
 
-  def stop_executor_recv(namespace, executor_id, recv_pid) do
-    stop_executor(namespace, executor_id)
+  def stop_runner_recv(namespace, runner_id, recv_pid) do
+    stop_runner(namespace, runner_id)
 
     Process.send(
       recv_pid,
-      {:remote_executor_disconnected, namespace, executor_id},
+      {:remote_runner_disconnected, namespace, runner_id},
       []
     )
 
@@ -137,17 +137,17 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end
   end
 
-  def start_executor(namespace \\ "test_temp_namespace", opts \\ []) do
-    {_port, executor_id} = start_executor_port(namespace, opts)
-    executor_id
+  def start_runner(namespace \\ "test_temp_namespace", opts \\ []) do
+    {_port, runner_id} = start_runner_port(namespace, opts)
+    runner_id
   end
 
   @doc """
-  Like `start_executor/2` but returns `{port, executor_id}`. The port is needed
-  by crash tests that must reach the executor's OS pid
+  Like `start_runner/2` but returns `{port, runner_id}`. The port is needed
+  by crash tests that must reach the runner's OS pid
   (`:erlang.port_info(port, :os_pid)`) to `kill -KILL` it.
   """
-  def start_executor_port(namespace \\ "test_temp_namespace", opts \\ []) do
+  def start_runner_port(namespace \\ "test_temp_namespace", opts \\ []) do
     {:ok, current_path} = :file.get_cwd()
     transport = Keyword.get(opts, :transport, :uds)
     runtime = Keyword.get(opts, :runtime, :rust)
@@ -155,11 +155,11 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     command = build_command(runtime, current_path, namespace)
 
     # `cargo run` does a freshness check on every invocation (1–3 s warm,
-    # tens of seconds cold) before the executor binary even starts, so 2 s
+    # tens of seconds cold) before the runner binary even starts, so 2 s
     # was racy on a cold target dir and tanked QUIC's setup_all.
     connect_timeout = Keyword.get(opts, :connect_timeout, 30_000)
 
-    Flezha.Service.EventManager.add_handler(:executor_connected_event)
+    Flezha.Service.EventManager.add_handler(:runner_connected_event)
 
     {port, _command} =
       Flezha.Service.PortPilot.open_port(command,
@@ -167,35 +167,35 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
         env: Keyword.get(opts, :env, [])
       )
 
-    executor_id =
+    runner_id =
       receive do
-        {:executor_connected_event, {^namespace, executor_id}} -> executor_id
+        {:runner_connected_event, {^namespace, runner_id}} -> runner_id
       after
-        connect_timeout -> raise "temporary test executor not connected"
+        connect_timeout -> raise "temporary test runner not connected"
       end
 
     # Remove the handler to duplicate events.
-    Flezha.Service.EventManager.rem_handler(:executor_connected_event)
+    Flezha.Service.EventManager.rem_handler(:runner_connected_event)
 
-    {port, executor_id}
+    {port, runner_id}
   end
 
   # Build the command line used to launch the compute engine for a given runtime.
   # Keep `:rust` as the default so every existing test keeps working unchanged.
   defp build_command(:rust, current_path, namespace) do
-    "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_executor/Cargo.toml --target-dir=./target -- " <>
+    "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml --target-dir=./target -- " <>
       namespace
   end
 
   defp build_command(:java, current_path, namespace) do
-    # The test executor fat jar is *committed* under
-    # test/apps/java_executor/dist/ — refresh it locally with
+    # The test runner fat jar is *committed* under
+    # test/apps/java_runner/dist/ — refresh it locally with
     # `scripts/build-dist.sh` whenever the SDK or test-app sources
     # change, then `git add` and commit. CI doesn't build it.
     jar_path =
       Path.join([
         current_path,
-        "test/apps/java_executor/dist/java_executor.jar"
+        "test/apps/java_runner/dist/java_runner.jar"
       ])
 
     if not File.exists?(jar_path) do
@@ -212,23 +212,23 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       "-jar #{jar_path} #{namespace}"
   end
 
-  def stop_executor(namespace, executor_id, opts \\ []) do
+  def stop_runner(namespace, runner_id, opts \\ []) do
     # QUIC session teardown runs more cleanup than UDS, so allow a wider
     # default window; callers can tighten it via `timeout: N` when testing
     # UDS-only paths that should disconnect quickly.
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    Flezha.Service.EventManager.add_handler(:executor_disconnected_event)
-    Flezha.Executor.FleetManager.disconnect_executor(namespace, executor_id)
+    Flezha.Service.EventManager.add_handler(:runner_disconnected_event)
+    Flezha.Runner.FleetManager.disconnect_runner(namespace, runner_id)
 
     receive do
-      {:executor_disconnected_event, {^namespace, ^executor_id}} -> :ok
+      {:runner_disconnected_event, {^namespace, ^runner_id}} -> :ok
     after
-      timeout -> raise "temporary test executor not disconnected"
+      timeout -> raise "temporary test runner not disconnected"
     end
 
     # Remove the handler to duplicate events.
-    Flezha.Service.EventManager.rem_handler(:executor_disconnected_event)
+    Flezha.Service.EventManager.rem_handler(:runner_disconnected_event)
 
     :ok
   end
@@ -258,7 +258,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end
   end
 
-  @doc "Close a spawned executor/mock port if it is still open. Idempotent."
+  @doc "Close a spawned runner/mock port if it is still open. Idempotent."
   def ensure_port_dead(port) do
     if is_port(port) and Enum.member?(:erlang.ports(), port) do
       try do

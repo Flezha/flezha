@@ -7,8 +7,8 @@ defmodule Flezha.Service.OperativeManager do
 
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
-  alias Flezha.Executor.ControlUnit
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.ControlUnit
+  alias Flezha.Runner.FleetManager
   alias Flezha.Convergence.SafeCall
   alias Flezha.Operative.Builder, as: OperativeBuilder
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
@@ -55,7 +55,7 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   @doc """
-  Starts a new operative to the executor.
+  Starts a new operative to the runner.
   """
   @spec start_operative(String.t(), OperativeBuilder.t()) ::
           {:ok, map()} | {:error, String.t()}
@@ -126,7 +126,7 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp validate_factory(namespace, factory_id) when is_binary(factory_id) do
-    case FleetManager.executors_for_factory(namespace, factory_id) do
+    case FleetManager.runners_for_factory(namespace, factory_id) do
       [] -> {:error, "Factory with id #{factory_id} does not exist"}
       [_ | _] -> :ok
     end
@@ -141,7 +141,7 @@ defmodule Flezha.Service.OperativeManager do
   trips the SDK's cancellation token and the operative winds down to its own
   `BoundedCompleted` (status "cancelled"), which drives the single teardown via
   `ControlChannel.handle_bounded_completed/2`. Everything else (`:unbounded`, or
-  a bounded operative not bound to an executor) takes the hard `stop_operative/2`
+  a bounded operative not bound to a runner) takes the hard `stop_operative/2`
   teardown. An unreadable kind (not found / wedged) also falls back to the hard
   stop so `flz operative stop` always attempts removal.
 
@@ -152,9 +152,9 @@ defmodule Flezha.Service.OperativeManager do
           :ok | {:ok, :cooperative} | {:error, term()}
   def request_stop(namespace, operative_id) do
     case get_overwatch_state(namespace, operative_id) do
-      {:ok, %{builder: %{kind: :bounded}, executor_id: executor_id}}
-      when is_binary(executor_id) ->
-        case ControlUnit.bounded_stop(executor_id, operative_id) do
+      {:ok, %{builder: %{kind: :bounded}, runner_id: runner_id}}
+      when is_binary(runner_id) ->
+        case ControlUnit.bounded_stop(runner_id, operative_id) do
           :ok -> {:ok, :cooperative}
           # No control unit to cooperate with — fall back to the hard teardown.
           {:error, _} -> stop_operative(namespace, operative_id)
@@ -393,18 +393,18 @@ defmodule Flezha.Service.OperativeManager do
         case our_started do
           {_cid, [{operative_node, pid}]} ->
             # ProcessHub reports `started` as soon as `start_link/1`
-            # returns; the operative's `handle_continue(:bind_executor, …)`
+            # returns; the operative's `handle_continue(:bind_runner, …)`
             # surfaces a plugin-chain failure via the `init_error` field
-            # on Overwatch state — `:registry_executor_set` returns
+            # on Overwatch state — `:registry_runner_set` returns
             # `{:error, _}` instead of crashing the GenServer. The
             # `:exit` catch covers older failure modes (timeout, kill).
             try do
-              case GenServer.call(pid, :registry_executor_set) do
-                {:ok, executor_id} ->
+              case GenServer.call(pid, :registry_runner_set) do
+                {:ok, runner_id} ->
                   {:ok,
                    %{
                      operative_id: operative.id,
-                     executor_id: executor_id,
+                     runner_id: runner_id,
                      node: operative_node,
                      pid: pid
                    }}
@@ -417,10 +417,10 @@ defmodule Flezha.Service.OperativeManager do
               # Started, then exited cleanly before we could read its binding —
               # a run-once bounded operative that already completed, or a concurrent stop. A
               # clean exit is a successful start, not a failure; no live binding
-              # remains, so `executor_id` is nil.
+              # remains, so `runner_id` is nil.
               :exit, {reason, _} when reason in [:normal, :noproc] ->
                 {:ok,
-                 %{operative_id: operative.id, executor_id: nil, node: operative_node, pid: pid}}
+                 %{operative_id: operative.id, runner_id: nil, node: operative_node, pid: pid}}
 
               :exit, {reason, _} ->
                 Logger.warning(
@@ -496,13 +496,13 @@ defmodule Flezha.Service.OperativeManager do
   Pick an active compute engine for `operative_id` in `namespace`.
 
   Placement is deterministic — rendezvous (HRW) hashing of `operative_id` over
-  the candidate executors — so every controller and every tick computes the
+  the candidate runners — so every controller and every tick computes the
   same target with no coordination, load spreads evenly, and only ~1/N
-  operatives move when the executor set changes. A newly connected executor
+  operatives move when the runner set changes. A newly connected runner
   never reshuffles existing operatives: placement is computed only at start /
   forced rebind.
 
-  When `factory_id` is given the pool is restricted to executors advertising
+  When `factory_id` is given the pool is restricted to runners advertising
   that factory. Without this filter a mixed-factory namespace (e.g.
   market-operative owning `crypto_trades` + market-app owning
   `market-init-state`) would pick the wrong node, routing every input frame
@@ -510,25 +510,25 @@ defmodule Flezha.Service.OperativeManager do
   this as `DefaultOperativeDispatcher.enqueue: operative 'X' not found`). Returns
   `nil` when no candidate exists.
   """
-  @spec assign_executor(String.t(), binary() | nil, binary()) :: binary() | nil
-  def assign_executor(namespace, factory_id, operative_id) do
+  @spec assign_runner(String.t(), binary() | nil, binary()) :: binary() | nil
+  def assign_runner(namespace, factory_id, operative_id) do
     namespace
-    |> candidate_executors(factory_id)
-    |> pick_executor(operative_id)
+    |> candidate_runners(factory_id)
+    |> pick_runner(operative_id)
   end
 
-  defp candidate_executors(namespace, nil), do: FleetManager.active_executors(namespace)
+  defp candidate_runners(namespace, nil), do: FleetManager.active_runners(namespace)
 
-  defp candidate_executors(namespace, factory_id) when is_binary(factory_id),
-    do: FleetManager.executors_for_factory(namespace, factory_id)
+  defp candidate_runners(namespace, factory_id) when is_binary(factory_id),
+    do: FleetManager.runners_for_factory(namespace, factory_id)
 
-  # The candidate set is the authority: an executor is in it only while its
-  # transport connection is open. HRW then picks the executor with the
-  # highest hash of `{operative_id, executor}` — deterministic and stable under
+  # The candidate set is the authority: a runner is in it only while its
+  # transport connection is open. HRW then picks the runner with the
+  # highest hash of `{operative_id, runner}` — deterministic and stable under
   # membership change.
   @doc false
-  def pick_executor([], _operative_id), do: nil
+  def pick_runner([], _operative_id), do: nil
 
-  def pick_executor(executor_ids, operative_id),
-    do: Enum.max_by(executor_ids, fn ce -> :erlang.phash2({operative_id, ce}) end)
+  def pick_runner(runner_ids, operative_id),
+    do: Enum.max_by(runner_ids, fn ce -> :erlang.phash2({operative_id, ce}) end)
 end

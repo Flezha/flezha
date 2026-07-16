@@ -22,9 +22,9 @@ Flezha uses a transport abstraction layer to support multiple communication back
 | `lib/flezha/transport/behaviour.ex` | Transport callback definitions |
 | `lib/flezha/transport/resolver.ex` | Runtime transport selection |
 | `lib/flezha/application.ex` | Conditional supervisor children based on transport |
-| `lib/flezha/executor/fleet_manager.ex` | `connect_handler_quic/2` entry point for QUIC connections |
-| `lib/flezha/executor/control_channel.ex` | Handles `{:quic, :data, stream, frame}` messages |
-| `lib/flezha/executor/stream_channel.ex` | Handles QUIC stream data and `{:quic_stream_attached, stream}` |
+| `lib/flezha/runner/fleet_manager.ex` | `connect_handler_quic/2` entry point for QUIC connections |
+| `lib/flezha/runner/control_channel.ex` | Handles `{:quic, :data, stream, frame}` messages |
+| `lib/flezha/runner/stream_channel.ex` | Handles QUIC stream data and `{:quic_stream_attached, stream}` |
 
 ### Rust (SDK-side)
 
@@ -35,7 +35,7 @@ Flezha uses a transport abstraction layer to support multiple communication back
 | `sdk/rust/src/transport/protocol.rs` | Stream type constants (`STREAM_TYPE_PRIMARY=0x01`, `STREAM_TYPE_SECONDARY=0x02`) |
 | `sdk/rust/src/transport/config.rs` | Transport configuration |
 | `sdk/rust/src/command/streams_connect.rs` | `handle_quic()`: opens bidi streams, sends type byte, spawns read threads |
-| `sdk/rust/src/executor/control_unit.rs` | Control channel open/communication |
+| `sdk/rust/src/runner/control_unit.rs` | Control channel open/communication |
 
 ### Config & Tests
 
@@ -52,7 +52,7 @@ Flezha uses a transport abstraction layer to support multiple communication back
 3. First bidi stream becomes the **control channel**
 4. SDK sends init message (namespace + factory_ids) on control stream
 5. Agent's `FleetManager` creates compute engine supervisor
-6. Agent sends `AssignExecutorId` command
+6. Agent sends `AssignRunnerId` command
 7. Agent sends `ConnectSocket{sockets_count: N}` command
 8. SDK opens 2×N bidi streams (N primary + N secondary), sends type byte on each
 9. Agent's `QuicStreamAcceptor` reads type byte, routes to `StreamChannel`s

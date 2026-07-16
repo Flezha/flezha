@@ -24,7 +24,7 @@ import com.flezha.sdk.proto.OpJournalState;
 import com.flezha.sdk.proto.RemOperative;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.AckRegistry;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
@@ -164,7 +164,7 @@ class BoundedKindTest {
         // is why the compensation planner needed no change at all.
         BoundedOperativeRegistry.registerBounded(BranchingBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -212,7 +212,7 @@ class BoundedKindTest {
     void addBoundedOperativeRunsOnce() throws Exception {
         BoundedOperativeRegistry.registerBounded(EmitBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -233,7 +233,7 @@ class BoundedKindTest {
     @DisplayName("AddOperative kind=bounded with an unregistered factory reports an error and creates nothing")
     void addBoundedOperativeUnknownFactory() {
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         List<String> errors = new ArrayList<>();
         new AddOperativeHandler().handle(ctx, addBoundedOperative("test-missing-bounded", "bounded-x", ""), errors);
@@ -248,7 +248,7 @@ class BoundedKindTest {
     void completeResultReachesCompletion() throws Exception {
         BoundedOperativeRegistry.registerBounded(CompleteBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -265,7 +265,7 @@ class BoundedKindTest {
     void inboxLoopProcessesInputAndTerminalPredicateCompletesOk() throws Exception {
         BoundedOperativeRegistry.registerBounded(LoopBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -288,7 +288,7 @@ class BoundedKindTest {
     void boundedStopCancelsCooperatively() throws Exception {
         BoundedOperativeRegistry.registerBounded(LoopBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -304,7 +304,7 @@ class BoundedKindTest {
     void hardRemOperativeCancelsBounded() throws Exception {
         BoundedOperativeRegistry.registerBounded(LoopBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -321,7 +321,7 @@ class BoundedKindTest {
     void maxDurationElapseCancels() throws Exception {
         BoundedOperativeRegistry.registerBounded(TimedBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -338,7 +338,7 @@ class BoundedKindTest {
     void successEmitsOutputAndOkCompletion() throws Exception {
         BoundedOperativeRegistry.registerBounded(EmitBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -364,7 +364,7 @@ class BoundedKindTest {
     void failureEmitsErrorCompletion() throws Exception {
         BoundedOperativeRegistry.registerBounded(FailBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -386,7 +386,7 @@ class BoundedKindTest {
     void structuredSingleOpEqualsSugar() throws Exception {
         BoundedOperativeRegistry.registerBounded(EchoStructuredOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -402,7 +402,7 @@ class BoundedKindTest {
     void structuredChainRunsInOrder() throws Exception {
         BoundedOperativeRegistry.registerBounded(ChainBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -420,7 +420,7 @@ class BoundedKindTest {
     void structuredParallelSegmentsKeepPerSegmentState() throws Exception {
         BoundedOperativeRegistry.registerBounded(FanBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -438,7 +438,7 @@ class BoundedKindTest {
     void structuredHybridChannelRoutesBoth() throws Exception {
         BoundedOperativeRegistry.registerBounded(HybridBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -482,7 +482,7 @@ class BoundedKindTest {
         // FanBoundedOperative is durable-by-default; its FanOp applies a Change
         // per item, which the driver flushes as a segment_state_change frame.
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
         cap.expectCompletions(1);
         new AddOperativeHandler()
                 .handle(ctx, addBoundedOperative("test-fan-bounded", "fan-wal", "a,bb"), new ArrayList<>());
@@ -496,7 +496,7 @@ class BoundedKindTest {
         // Changes drain-and-discard, nothing reaches the WAL.
         walFrames.clear();
         Captured cap2 = new Captured();
-        ExecutorContext ctx2 = newCtx(cap2);
+        RunnerContext ctx2 = newCtx(cap2);
         cap2.expectCompletions(1);
         new AddOperativeHandler()
                 .handle(ctx2, addBoundedOperative("test-fan-optout-bounded", "fan-optout", "a,bb"), new ArrayList<>());
@@ -512,7 +512,7 @@ class BoundedKindTest {
     void durableChainJournalsEveryOpBoundary() throws Exception {
         BoundedOperativeRegistry.registerBounded(ChainBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -530,7 +530,7 @@ class BoundedKindTest {
     void optedOutClassJournalsNothing() throws Exception {
         BoundedOperativeRegistry.registerBounded(FanOptOutBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -576,7 +576,7 @@ class BoundedKindTest {
     void durableOpStagesOutputOntoTheOutbox() throws Exception {
         BoundedOperativeRegistry.registerBounded(ChainBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -594,7 +594,7 @@ class BoundedKindTest {
     void failingStageLeaksNoStagedOutput() throws Exception {
         BoundedOperativeRegistry.registerBounded(EmitThenFailBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -641,7 +641,7 @@ class BoundedKindTest {
     void perInputLoopCommitsPerIterationThenParks() throws Exception {
         BoundedOperativeRegistry.registerBounded(LoopingBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         new AddOperativeHandler()
                 .handle(ctx, addBoundedOperative("test-looping-bounded", "loop-1", "seed"), new ArrayList<>());
@@ -743,7 +743,7 @@ class BoundedKindTest {
         RETRY_ATTEMPTS.set(0);
         BoundedOperativeRegistry.registerBounded(FlakyBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -766,7 +766,7 @@ class BoundedKindTest {
         RETRY_ATTEMPTS.set(0);
         BoundedOperativeRegistry.registerBounded(PoisonBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -877,7 +877,7 @@ class BoundedKindTest {
         REWIND_UNDO_LOG.clear();
         BoundedOperativeRegistry.registerBounded(RewindSagaOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -977,7 +977,7 @@ class BoundedKindTest {
     void durableBoundedResumesFromRestoreThroughGate() throws Exception {
         BoundedOperativeRegistry.registerBounded(FanBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         // Respawn expecting one Segment restore: AddOperativeHandler builds + wires
         // the Segments (reachable by the restore handler) before the driver spawns,
@@ -1023,7 +1023,7 @@ class BoundedKindTest {
     void sagaReverseOrderRollbackOnError() throws Exception {
         BoundedOperativeRegistry.registerBounded(SagaBoundedOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -1043,7 +1043,7 @@ class BoundedKindTest {
     void sagaKeepProgressModeUnwindsSinglePass() throws Exception {
         BoundedOperativeRegistry.registerBounded(KeepProgressSagaOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -1059,7 +1059,7 @@ class BoundedKindTest {
     void sagaCleanCompletionDoesNotCompensate() throws Exception {
         BoundedOperativeRegistry.registerBounded(CleanSagaOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -1076,7 +1076,7 @@ class BoundedKindTest {
     void sagaPerSegmentRollback() throws Exception {
         BoundedOperativeRegistry.registerBounded(FanSagaOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -1095,7 +1095,7 @@ class BoundedKindTest {
     void sagaForcedStopCompensatesPartialProgress() throws Exception {
         BoundedOperativeRegistry.registerBounded(StopSagaOperative.class);
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -1129,7 +1129,7 @@ class BoundedKindTest {
         });
 
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
         cap.expectCompletions(1);
         // reserve + charge complete (both compensable ⇒ 2 intents); ship fails ⇒
         // both roll back (2 dones). Hookless ship_fails never completed ⇒ no record.
@@ -1159,7 +1159,7 @@ class BoundedKindTest {
         });
 
         Captured cap = new Captured();
-        ExecutorContext ctx = newCtx(cap);
+        RunnerContext ctx = newCtx(cap);
         // Respawn expecting two Segment restores (A + B); the driver parks on the gate.
         cap.expectCompletions(1);
         new AddOperativeHandler()
@@ -1195,7 +1195,7 @@ class BoundedKindTest {
     // --- helpers -------------------------------------------------------------
 
     /** Ship one bounded-Segment RestoreInitState carrying its saga compensation markers. */
-    private static void shipCompensationRestore(ExecutorContext ctx, byte[] segmentId, boolean intent, boolean done) {
+    private static void shipCompensationRestore(RunnerContext ctx, byte[] segmentId, boolean intent, boolean done) {
         CommandRequest restore = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
@@ -1207,9 +1207,9 @@ class BoundedKindTest {
         new RestoreInitStateHandler().handle(ctx, restore, new ArrayList<>());
     }
 
-    private ExecutorContext newCtx(Captured cap) {
+    private RunnerContext newCtx(Captured cap) {
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
-        ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
+        RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
         ctx.streamRegistry().setControlStreamId(CONTROL_STREAM);
         ctx.streamRegistry().register(0, PRIMARY_STREAM, SECONDARY_STREAM);

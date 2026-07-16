@@ -6,6 +6,6 @@ members = [
     "flezha-macros",
     "sdk/rust",
     "cli",
-    "test/apps/rust_executor",
+    "test/apps/rust_runner",
 ]
 resolver = "2"

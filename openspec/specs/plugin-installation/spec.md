@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The plugin-installation capability gives executors a Jenkins-style runtime plugin lifecycle for Flezha: install from a signed/checksummed archive, compile and hot-load on the running agent, enable, disable, upgrade, and uninstall — all without rebuilding the release. A plugin package (`*.fpz`) ships `manifest.exs`, `src/*.ex` or `src/*.erl`, a `CHECKSUMS.sha256` file, and an optional detached Ed25519 signature; the agent compiles and loads modules exactly once at install time, persists the installed catalog in DETS (`app_data/recovery/installed_plugins.dets`), and re-hydrates every `:enabled`/`:disabled` package's modules into the VM before `Flezha.Recovery.Coordinator` runs its plugin-recovery phase. The capability defines the package format, manifest schema, checksum and signature verification rules, install/upgrade/uninstall/enable/disable semantics, dependency resolution, module-collision guards, on-disk layout, catalog persistence, boot-time hydration ordering, the `Flezha.Plugin.Installer` public service API shared by CLI and the planned Phoenix UI, recovery interaction, supervision tree ordering, and the configuration surface (`:flezha, :plugin_installer`).
+The plugin-installation capability gives runners a Jenkins-style runtime plugin lifecycle for Flezha: install from a signed/checksummed archive, compile and hot-load on the running agent, enable, disable, upgrade, and uninstall — all without rebuilding the release. A plugin package (`*.fpz`) ships `manifest.exs`, `src/*.ex` or `src/*.erl`, a `CHECKSUMS.sha256` file, and an optional detached Ed25519 signature; the agent compiles and loads modules exactly once at install time, persists the installed catalog in DETS (`app_data/recovery/installed_plugins.dets`), and re-hydrates every `:enabled`/`:disabled` package's modules into the VM before `Flezha.Recovery.Coordinator` runs its plugin-recovery phase. The capability defines the package format, manifest schema, checksum and signature verification rules, install/upgrade/uninstall/enable/disable semantics, dependency resolution, module-collision guards, on-disk layout, catalog persistence, boot-time hydration ordering, the `Flezha.Plugin.Installer` public service API shared by CLI and the planned Phoenix UI, recovery interaction, supervision tree ordering, and the configuration surface (`:flezha, :plugin_installer`).
 
 ## Requirements
 
@@ -426,10 +426,10 @@ Plugin installation SHALL accept subscription specs that reference extension hoo
 
 ### Requirement: Settings payload schema uses canonical names
 
-The plugin settings payload (the JSON serialized at `cli_manager.ex` and on disk) SHALL use field names: `operative_id`, `executor_id`, `controller_id`. Fields previously named `processor_id`, `compute_engine_id`, or `agent_id` SHALL be renamed in the schema; reading a settings file with the legacy field names SHALL return an error.
+The plugin settings payload (the JSON serialized at `cli_manager.ex` and on disk) SHALL use field names: `operative_id`, `runner_id`, `controller_id`. Fields previously named `processor_id`, `compute_engine_id`, or `agent_id` SHALL be renamed in the schema; reading a settings file with the legacy field names SHALL return an error.
 
 #### Scenario: Modern settings round-trip
-- **WHEN** a plugin is installed with payload referencing `operative_id` and `executor_id`
+- **WHEN** a plugin is installed with payload referencing `operative_id` and `runner_id`
 - **THEN** the on-disk settings file SHALL contain those exact field names; reloading the Controller MUST produce the same in-memory plugin state
 
 #### Scenario: Legacy field names rejected

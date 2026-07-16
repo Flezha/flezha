@@ -157,7 +157,7 @@ Two API surfaces, two contracts:
 Async-admitted records that ultimately fail emit a per-record
 `[:flezha, :plugin, :kafka, :produce, :failed]` event with `caller:
 :async` in metadata. Telemetry is the canonical channel by which
-executors observe permanent delivery failures of chain-admitted records;
+runners observe permanent delivery failures of chain-admitted records;
 logs are not the channel; the chain return value is not the channel.
 
 ### Migration from synchronous error returns
@@ -208,8 +208,8 @@ end
 ## Telemetry events
 
 Every state transition emits a `:telemetry.execute/3` event under the
-`[:flezha, :plugin, :kafka, _, _]` prefix. The events ARE the executor API
-for monitoring producer health — executors integrating with
+`[:flezha, :plugin, :kafka, _, _]` prefix. The events ARE the runner API
+for monitoring producer health — runners integrating with
 `:telemetry_metrics_prometheus_core` get every event as a Prometheus metric
 without any code change.
 
@@ -224,7 +224,7 @@ without any code change.
 
 ### Quick-attach Logger handler
 
-For executors without a metrics stack, this one-line handler logs every
+For runners without a metrics stack, this one-line handler logs every
 producer event:
 
 ```elixir

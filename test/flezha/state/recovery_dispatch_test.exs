@@ -3,7 +3,7 @@ defmodule Flezha.State.RecoveryDispatchTest do
   `snapshot-baseline-durability` D3: the resync dispatch path never ships a
   `RestoreInitState` whose assembled payload is empty — a Segment with no
   snapshot and no WAL records pulls a `CompactSegment` baseline instead, so
-  the live executor's accumulated state is never rebuilt to `init_state`.
+  the live runner's accumulated state is never rebuilt to `init_state`.
   """
 
   use ExUnit.Case, async: false
@@ -27,8 +27,8 @@ defmodule Flezha.State.RecoveryDispatchTest do
 
     parent = self()
 
-    stub(Flezha.Executor.ControlChannel, :send_control, fn executor_id, {tag, _cmd} ->
-      send(parent, {:control_sent, executor_id, tag})
+    stub(Flezha.Runner.ControlChannel, :send_control, fn runner_id, {tag, _cmd} ->
+      send(parent, {:control_sent, runner_id, tag})
       {:ok, make_ref()}
     end)
 
@@ -47,7 +47,7 @@ defmodule Flezha.State.RecoveryDispatchTest do
 
     refute Restore.has_persisted_state?(segment_id)
 
-    assert {:ok, _ref} = Recovery.resync(segment_id, executor_id: "exec-1", reason: :seq_gap)
+    assert {:ok, _ref} = Recovery.resync(segment_id, runner_id: "exec-1", reason: :seq_gap)
 
     assert_receive {:control_sent, "exec-1", :compact_segment}, 1_000
     refute_receive {:control_sent, _, :restore_init_state}, 200
@@ -61,7 +61,7 @@ defmodule Flezha.State.RecoveryDispatchTest do
 
     assert Restore.has_persisted_state?(segment_id)
 
-    assert {:ok, _ref} = Recovery.resync(segment_id, executor_id: "exec-1", reason: :seq_gap)
+    assert {:ok, _ref} = Recovery.resync(segment_id, runner_id: "exec-1", reason: :seq_gap)
 
     assert_receive {:control_sent, "exec-1", :restore_init_state}, 1_000
     refute_receive {:control_sent, _, :compact_segment}, 200

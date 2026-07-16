@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.control.handlers;
 
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import java.util.List;
 import javax.annotation.Nonnull;
@@ -23,7 +23,7 @@ public final class CompactSegmentHandler implements CommandHandler {
 
     @Override
     @Nonnull
-    public byte[] handle(@Nonnull ExecutorContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors) {
+    public byte[] handle(@Nonnull RunnerContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors) {
         try {
             Object req = CommandRequest.class.getMethod("getCompactSegment").invoke(request);
             if (req == null) {

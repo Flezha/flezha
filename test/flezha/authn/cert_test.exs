@@ -12,14 +12,14 @@ defmodule Flezha.AuthN.CertTest do
 
   describe "principal_from_peer/1" do
     test "SPIFFE SAN wins over subject DN" do
-      san = "spiffe://flezha.local/ns/team-orders/sa/executor-7"
-      der = CertFixtures.self_signed_der(cn: "executor-7", o: "team-orders", spiffe: san)
+      san = "spiffe://flezha.local/ns/team-orders/sa/runner-7"
+      der = CertFixtures.self_signed_der(cn: "runner-7", o: "team-orders", spiffe: san)
       assert {:ok, ^san} = Cert.principal_from_peer(der)
     end
 
     test "subject DN used when no SPIFFE SAN" do
-      der = CertFixtures.self_signed_der(cn: "executor-7", o: "team-orders")
-      assert {:ok, "CN=executor-7,O=team-orders"} = Cert.principal_from_peer(der)
+      der = CertFixtures.self_signed_der(cn: "runner-7", o: "team-orders")
+      assert {:ok, "CN=runner-7,O=team-orders"} = Cert.principal_from_peer(der)
     end
 
     test "returns :invalid_cert on garbage input" do

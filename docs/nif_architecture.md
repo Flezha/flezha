@@ -19,7 +19,7 @@ The `flz_nif` crate is a Rustler NIF that wraps the `flz_transport` shared libra
 │  FleetManager.connect_handler/4                         │
 │       │                                                 │
 │       ▼                                                 │
-│  ExecutorSupervisor                                │
+│  RunnerSupervisor                                │
 │    ├── ControlChannel ← {:flz_data, ...}               │
 │    ├── StreamSup :primary                               │
 │    │     └── StreamChannel(s) ← {:flz_data, ...}       │
@@ -306,7 +306,7 @@ Each stream has an `active` flag:
 GenServer managing a NIF server lifecycle. Multiple instances run simultaneously — one per
 enabled transport (configured via `FLEZHA_TRANSPORTS` / `transports` app env). Each instance
 is parameterized with its transport type at startup and passes it through to FleetManager
-when a compute engine connects.
+when a runner connects.
 
 **UDS instance** (`Flezha.Transport.Server.Uds`):
 - Calls `Native.start_uds_server(path, self())`
@@ -319,7 +319,7 @@ when a compute engine connects.
 - Data streams arrive as `{:flz_stream, stream_ref, type, index}` (subsequent bidi streams)
 - Routes data streams to StreamChannels using stream type + index
 
-### ExecutorSupervisor
+### RunnerSupervisor
 
 Receives the transport type from FleetManager (which gets it from Transport.Server).
 
@@ -328,7 +328,7 @@ Receives the transport type from FleetManager (which gets it from Transport.Serv
 
 ### StreamAcceptor (UDS only)
 
-Starts a NIF UDS server on per-executor stream socket paths and routes incoming SDK connections to StreamChannel processes in round-robin order.
+Starts a NIF UDS server on per-runner stream socket paths and routes incoming SDK connections to StreamChannel processes in round-robin order.
 
 ## Connection Lifecycle
 
@@ -344,8 +344,8 @@ SDK Process                    NIF UDS Driver                 Elixir Controller
     │                               │   "connect_control_channel") │
     │                               │                         ────▶│ Transport.Server
     │                               │                              │── FleetManager
-    │                               │                              │   └── start ExecutorSup
-    │◀─ AssignExecutorId ──────│◀─ send_frame ────────────────│ ControlChannel
+    │                               │                              │   └── start RunnerSup
+    │◀─ AssignRunnerId ──────│◀─ send_frame ────────────────│ ControlChannel
     │◀─ ConnectSocket ──────────────│◀─ send_frame ────────────────│ ControlChannel
     │                               │                              │
     │── connect(primary.sock) ─────▶│ StreamAcceptor UDS driver    │
@@ -368,7 +368,7 @@ SDK Process                    NIF QUIC Driver                Elixir Controller
     │                               │   "connect_control_channel") │
     │                               │                         ────▶│ Transport.Server
     │                               │                              │── FleetManager
-    │◀─ AssignExecutorId ──────│◀─ send_frame ────────────────│ ControlChannel
+    │◀─ AssignRunnerId ──────│◀─ send_frame ────────────────│ ControlChannel
     │◀─ ConnectSocket ──────────────│◀─ send_frame ────────────────│ ControlChannel
     │                               │                              │
     │── open bidi stream (primary)─▶│                              │
@@ -461,7 +461,7 @@ flz_nif (cdylib, Rustler NIF)
   ├── mio (non-blocking I/O)
   └── crossbeam (NIF ↔ driver channels)
 
-sdk/rust (Compute Engine)
+sdk/rust (Runner)
   └── flz_transport (rlib)
         ├── quic (QuicClient, mio+quinn-proto)
         ├── payloader

@@ -75,7 +75,7 @@ defmodule Flezha.Transport.LivenessCountersTest do
 
   defp find_channel(exec, name) do
     LivenessCounters.snapshot_all().channels
-    |> Enum.find(fn c -> c.executor_id == exec and c.name == name end)
+    |> Enum.find(fn c -> c.runner_id == exec and c.name == name end)
   end
 
   defp find_operative(operative) do

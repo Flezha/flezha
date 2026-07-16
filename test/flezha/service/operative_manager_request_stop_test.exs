@@ -7,7 +7,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   `start_operative/2` (the segment-quota leak fix).
 
   A minimal stub stands in for the Overwatch GenServer: it answers
-  `:get_overwatch_state` (kind / executor / segment count) and `:stop_operative`,
+  `:get_overwatch_state` (kind / runner / segment count) and `:stop_operative`,
   and notifies the test when the hard stop is driven.
   """
 
@@ -15,7 +15,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   use Mimic
 
   alias Flezha.AuthZ.Quotas
-  alias Flezha.Executor.ControlUnit
+  alias Flezha.Runner.ControlUnit
   alias Flezha.Operative.Builder
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
@@ -45,7 +45,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   test "bounded + bound → cooperative BoundedStop, no hard teardown" do
     test_pid = self()
     op_id = unique_id()
-    {:ok, stub} = start_stub(%{builder: %{kind: :bounded}, executor_id: "exec1"})
+    {:ok, stub} = start_stub(%{builder: %{kind: :bounded}, runner_id: "exec1"})
     on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^op_id -> {:ok, stub} end)
@@ -65,7 +65,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   test "unbounded → hard teardown (RemOperative), no cooperative stop" do
     test_pid = self()
     op_id = unique_id()
-    {:ok, stub} = start_stub(%{builder: %{kind: :unbounded}, executor_id: "exec1"})
+    {:ok, stub} = start_stub(%{builder: %{kind: :unbounded}, runner_id: "exec1"})
     on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^op_id -> {:ok, stub} end)

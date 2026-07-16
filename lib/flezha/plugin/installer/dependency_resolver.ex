@@ -12,7 +12,7 @@ defmodule Flezha.Plugin.Installer.DependencyResolver do
   Upgrades additionally check that dependents of the upgrading plugin
   still have their constraints satisfied by the new version.
 
-  No transitive install: the executor installs deps in order. If a
+  No transitive install: the runner installs deps in order. If a
   dep is missing the install is refused with a clear error.
   """
 

@@ -33,10 +33,10 @@ Intent → Probe → Diff → Planner → Heal
 |--------|------|
 | `Convergence.Loop` | GenServer driving the tick; owns misbound-streak state and event subscriptions |
 | `Convergence.Intent` | Reads the ProcessHub registry to know what operatives and plugins _should_ exist |
-| `Convergence.Probe` | Reads live reality (active executors, operative states, hub recovery); pure observer |
+| `Convergence.Probe` | Reads live reality (active runners, operative states, hub recovery); pure observer |
 | `Convergence.Diff` | Pure function comparing intent vs reality → delta (unbound/misbound operatives, missing/extra plugins) |
 | `Convergence.Planner` | Turns the delta into an ordered, backoff-filtered list of ops (cap: 20/tick) |
-| `Convergence.Heal` | Executes ops via four idempotent primitives: `rebind_operative`, `start_plugin`, `stop_plugin`, `evict_executor` |
+| `Convergence.Heal` | Executes ops via four idempotent primitives: `rebind_operative`, `start_plugin`, `stop_plugin`, `evict_runner` |
 | `Convergence.Backoff` | Per-`{primitive, target}` exponential cooldown: 5 s → 30 s → 60 s → 300 s |
 | `Convergence.Snapshot` | ETS table holding the latest published health summary; read by `/healthz`, CLI, and telemetry |
 | `Convergence.RecoveryGate` | Classifies which namespaces are ready for healing based on per-hub recovery state; `:timeout` hubs are included rather than blocking all healing |
@@ -48,9 +48,9 @@ Intent → Probe → Diff → Planner → Heal
   issued — a single blip cannot trigger a full-namespace migration.
 - The entire tick body is wrapped in `try/rescue`; an uncaught error becomes a
   skipped tick, not a Loop crash.
-- If `active_executors` returns `:unknown` (a read failure), the diff suppresses
-  destructive ops for that namespace — it is not treated as "all executors gone."
-- Tick events (`:output_stall`, `:executor_connected`) shorten detection latency
+- If `active_runners` returns `:unknown` (a read failure), the diff suppresses
+  destructive ops for that namespace — it is not treated as "all runners gone."
+- Tick events (`:output_stall`, `:runner_connected`) shorten detection latency
   by triggering an immediate tick; they do not bypass the pipeline.
 
 See [`convergence_loop.md`](convergence_loop.md) for the full architecture and
@@ -62,7 +62,7 @@ configuration reference.
 
 `lib/flezha/operative/overwatch.ex`
 
-A per-operative GenServer that does the actual bind work: ping an executor,
+A per-operative GenServer that does the actual bind work: ping a runner,
 negotiate operative start, install plugins, and ship persisted WAL state on
 attach. On any failure it retries with jittered exponential backoff
 (`200 ms → 500 ms → 1 s → 2 s → 5 s → 10 s`). The convergence loop's
@@ -75,7 +75,7 @@ into the loop.
 
 `lib/flezha/state/`
 
-Every operative state change is durable before the executor's output plugin
+Every operative state change is durable before the runner's output plugin
 fires, so a hard restart restores state from disk rather than losing it.
 
 | Module | Role |
@@ -84,12 +84,12 @@ fires, so a hard restart restores state from disk rather than losing it.
 | `State.FsyncBatcher` | Coalesces all WAL writers' fsync calls into one batch every 5 ms |
 | `State.Snapshot` | Crash-safe atomic snapshots: write `.tmp` → fsync → rename |
 | `State.Outbox` | Persists the last-sent seq per segment as a dedup marker |
-| `State.Restore` | Assembles snapshot + tail-WAL bytes to send to a reconnecting executor |
+| `State.Restore` | Assembles snapshot + tail-WAL bytes to send to a reconnecting runner |
 | `State.Recovery` | Re-runs the `RestoreInitState` handshake when a segment is detected as desync'd |
 | `State.Retention` | Sweeper pruning old snapshots and WAL records beyond the retention window |
 | `State.TimeTravel` | Point-in-time query: replay WAL up to a target seq or timestamp |
 | `State.Watchdog` | Detects a segment still receiving changes but whose seq stopped advancing |
-| `State.PersistenceResolver` | Resolves per-operative persistence config from executor override → operative metadata → global default |
+| `State.PersistenceResolver` | Resolves per-operative persistence config from runner override → operative metadata → global default |
 
 **Back-pressure:** when a WAL writer's pending bytes exceed the high-watermark
 (default 16 MiB), it sends a `SegmentMailboxStatus{status: "full"}` command to
@@ -127,7 +127,7 @@ an immediate tick on receipt.
 
 ## 5. Seq-Gap Self-Heal
 
-`lib/flezha/executor/stream_channel.ex`
+`lib/flezha/runner/stream_channel.ex`
 
 When `StreamChannel` receives a change frame with
 `seq > last_persisted_seq + 1`, it emits `[:flezha, :state, :seq_gap]` and
@@ -142,7 +142,7 @@ calls `State.Recovery.resync/2` so the SDK rewinds and resends from
 
 | Module | Role |
 |--------|------|
-| `Boot.StatePathMigrator` | One-shot, idempotent rename of legacy executor-keyed WAL paths to the flat layout; runs before any WalWriter opens |
+| `Boot.StatePathMigrator` | One-shot, idempotent rename of legacy runner-keyed WAL paths to the flat layout; runs before any WalWriter opens |
 | `Boot.RecoveryHooks` | Installs telemetry forwarders for ProcessHub's `pre_recovery_replay` / `post_recovery_replay` lifecycle events |
 | `BootLoader` | Runs pre-boot hooks (sockets, certs) and gates hub creation on cluster readiness |
 
@@ -155,7 +155,7 @@ authoritative. See [`process_hub_recovery_model.md`](process_hub_recovery_model.
 
 **Bounded-kind operatives (durable crash-resume).** A `:bounded` operative is
 **durable by default** (opt-out per class) and crash-resumes on the shared WAL
-substrate: on an executor/controller restart it restores its committed
+substrate: on a runner/controller restart it restores its committed
 per-Segment state via the bind-time restore path and **re-runs its operation
 chain** (Model A idempotent re-run — a step may repeat, so steps are idempotent
 by author contract; the `run`-sugar form re-runs from the top). A restore-before-run
@@ -219,21 +219,21 @@ formation timeout elapses, so it still boots without hanging.
 
 ---
 
-## 10. Executor Connection Resilience
+## 10. Runner Connection Resilience
 
-`lib/flezha/executor/`
+`lib/flezha/runner/`
 
 | Module | Role |
 |--------|------|
-| `FleetManager` | Accepts new executor connections, mints a per-connection **session token**, runs the reconnect **binding swap** keyed on the executor's durable **stable identity**, rejects connects during shutdown, and dispatches `:executor_connected_event` (immediate convergence tick) |
-| `StreamChannel` | Per-stream GenServer forwarding operative output to the executor socket; detects seq gaps and triggers segment resync |
-| `ControlChannel` | Reads protobuf commands from the executor's control socket; stamps `last_seen` on every inbound frame and runs the **control-plane session-liveness watchdog** (sustained silence → connection close) |
+| `FleetManager` | Accepts new runner connections, mints a per-connection **session token**, runs the reconnect **binding swap** keyed on the runner's durable **stable identity**, rejects connects during shutdown, and dispatches `:runner_connected_event` (immediate convergence tick) |
+| `StreamChannel` | Per-stream GenServer forwarding operative output to the runner socket; detects seq gaps and triggers segment resync |
+| `ControlChannel` | Reads protobuf commands from the runner's control socket; stamps `last_seen` on every inbound frame and runs the **control-plane session-liveness watchdog** (sustained silence → connection close) |
 
-Executor identity is two layers — a durable, SDK-owned **stable identity** (the
+Runner identity is two layers — a durable, SDK-owned **stable identity** (the
 binding key) and an ephemeral controller-minted **session token** (the
 routing/Registry key). Reconnect re-points the stable identity's operatives onto
 the new session token rather than minting-and-evicting, giving binding continuity
-across restart. See [`executor_identity.md`](executor_identity.md) and the
+across restart. See [`runner_identity.md`](runner_identity.md) and the
 control-plane watchdog in [`transport_liveness.md`](transport_liveness.md).
 
 ---
@@ -244,12 +244,12 @@ control-plane watchdog in [`transport_liveness.md`](transport_liveness.md).
 
 | Module | Role |
 |--------|------|
-| `shutdown.rs` | On SIGTERM/drop, serializes every running operative's final state and sends it to the controller so the next executor starts from the true last state |
-| `executor/control_unit.rs` | Opens the control channel with full-jitter exponential backoff retry (cap 30 s) and reconnects automatically on disconnect or ack-timeout |
-| `executor/persistent_id.rs` | Creates + persists the executor's durable **stable identity** (`<namespace>-<profile_hash8>-<rand6>`) so a restarted process re-presents it and the controller swaps its bindings onto the new session; degrades to a fresh per-boot id when the path is unwritable |
+| `shutdown.rs` | On SIGTERM/drop, serializes every running operative's final state and sends it to the controller so the next runner starts from the true last state |
+| `runner/control_unit.rs` | Opens the control channel with full-jitter exponential backoff retry (cap 30 s) and reconnects automatically on disconnect or ack-timeout |
+| `runner/persistent_id.rs` | Creates + persists the runner's durable **stable identity** (`<namespace>-<profile_hash8>-<rand6>`) so a restarted process re-presents it and the controller swaps its bindings onto the new session; degrades to a fresh per-boot id when the path is unwritable |
 | `segment/flusher.rs` | Background thread draining each segment's change buffer on a 5 ms linger and sending framed WAL records to the controller |
 | `segment/restore.rs` | Applies a `RestoreInitPayload` (snapshot + change-log) so a reconnected segment resumes from exactly its last state |
-| `executor/mailbox.rs` | Bounded lock-free per-operative mailbox with configurable overflow policy (block/drop/replace) so a slow operative cannot back-pressure the whole executor |
+| `runner/mailbox.rs` | Bounded lock-free per-operative mailbox with configurable overflow policy (block/drop/replace) so a slow operative cannot back-pressure the whole runner |
 
 **Control-channel liveness** (`flz_transport/src/transport/liveness.rs`, shared
 by Rust and Java SDKs):
@@ -263,7 +263,7 @@ by Rust and Java SDKs):
   round-trip prevents the idle timeout from firing on a healthy-but-quiet channel.
 
 **Data-channel heartbeat** (`FLEZHA_DATA_HEARTBEAT_MS`, default 10 s, shared by
-Rust and Java SDKs): the executor writes a bare `data_heartbeat` frame on every
+Rust and Java SDKs): the runner writes a bare `data_heartbeat` frame on every
 secondary stream while connected. The control channel staying alive does not
 prove the data plane is — the data plane is what froze in the 21 h candle
 incident — so liveness rides the data channel directly. The controller's
@@ -292,7 +292,7 @@ idle-but-healthy operative is therefore never mistaken for a stall.
 Detection-only instrumentation that localizes a silent `io_in`/output stall to
 the exact layer that wedged. The output-stall watchdog (§4) tells you a stream
 went silent; this tells you **why** — was it the operative, the channel, the NIF
-command queue, the driver thread, the socket, or the executor? It adds **zero**
+command queue, the driver thread, the socket, or the runner? It adds **zero**
 data-plane behaviour and no remediation. See
 [`transport_liveness.md`](transport_liveness.md) for the full signal set,
 verdict decision tree, and the zero-code `/proc` fallback. Production
@@ -334,13 +334,13 @@ for the model and diagrams.
 
 | Scenario | State loss | Output |
 |----------|-----------|--------|
-| Graceful executor stop (SIGTERM / `disconnect()`) | None — SDK ships final state | At-least-once |
-| Executor SIGKILL | Best-effort (async WAL lag) | At-least-once |
+| Graceful runner stop (SIGTERM / `disconnect()`) | None — SDK ships final state | At-least-once |
+| Runner SIGKILL | Best-effort (async WAL lag) | At-least-once |
 | Controller graceful restart with live peer | None — peer sync | At-least-once |
 | Controller recovery-mode restart, sole instance | None — DETS replay | At-least-once |
 | Whole cluster cold boot | Recovered from DETS | n/a |
-| Bounded operative executor SIGKILL (durable) | None past last WAL fsync — restores + re-runs the chain | At-least-once |
-| Bounded operative executor SIGKILL (persistence opted out) | Full — re-runs from the top | At-least-once |
+| Bounded operative runner SIGKILL (durable) | None past last WAL fsync — restores + re-runs the chain | At-least-once |
+| Bounded operative runner SIGKILL (persistence opted out) | Full — re-runs from the top | At-least-once |
 
 For the full scenario matrix and operator playbook see
 [`data_durability.md`](data_durability.md); for the bounded operative model

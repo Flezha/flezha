@@ -3,7 +3,7 @@ package com.flezha.sdk.runtime.control;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.Frame;
 import java.util.Map;
@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 class CommandRouterDecodeTest {
 
     private static CommandRouter newRouter() {
-        ExecutorContext ctx = new ExecutorContext("ns", FlezhaEnv.resolve(Map.of()), 0L);
+        RunnerContext ctx = new RunnerContext("ns", FlezhaEnv.resolve(Map.of()), 0L);
         return new CommandRouter(ctx, 1L);
     }
 

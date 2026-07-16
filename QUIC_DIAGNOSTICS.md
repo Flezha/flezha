@@ -17,8 +17,8 @@
 
 ### Issue 3: BootLoader 3s timeout too short for QUIC (INVESTIGATING)
 - **Status**: Investigating
-- **Problem**: `config/test.exs` post_hooks wait 3 seconds for `executor_connected_event`. QUIC handshake + stream setup + control channel init may exceed this.
-- **Evidence**: BootLoader crashes with "Executor not connected" before any QUIC control stream is accepted
+- **Problem**: `config/test.exs` post_hooks wait 3 seconds for `runner_connected_event`. QUIC handshake + stream setup + control channel init may exceed this.
+- **Evidence**: BootLoader crashes with "Runner not connected" before any QUIC control stream is accepted
 - **Effect**: Supervisor shuts down, killing QuicListener, which closes all QUIC connections. Rust clients see `ApplicationClosed(error_code: 0)`
 - **Note**: May resolve once Issue 1 is fixed (stream count limit could be causing Rust SDK failures that cascade)
 

@@ -4,7 +4,7 @@ defmodule Flezha.Plugin.Installer.Compiler do
   into in-memory BEAM binaries.
 
   Compilation happens at *install* time, not boot time. Warnings are
-  treated as errors so bad plugins surface at the moment the executor is
+  treated as errors so bad plugins surface at the moment the runner is
   paying attention. The set of produced modules must exactly match the
   manifest's `:modules` list — any discrepancy aborts the install.
 

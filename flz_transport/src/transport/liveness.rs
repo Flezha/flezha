@@ -5,16 +5,16 @@
 //!
 //! Two guarantees:
 //!   1. First-frame ack-deadline — a freshly opened control channel must see
-//!      the controller's first frame (the assign-executor-id ack) within
+//!      the controller's first frame (the assign-runner-id ack) within
 //!      `FLEZHA_CONTROL_ACK_TIMEOUT_MS`. A controller mid-shutdown accepts the
 //!      socket but never registers us (the warm-restart hang); without this
-//!      bound the reader blocks forever and the executor never reaches a live
+//!      bound the reader blocks forever and the runner never reaches a live
 //!      controller.
 //!   2. Steady-state liveness — after the ack, an idle watchdog re-arms on
 //!      every inbound frame; if the channel sees nothing for
 //!      `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` (a half-open / wedged controller the
 //!      OS never surfaces as a read error) the reader drives reconnect. The
-//!      executor's jittered keepalive ping keeps a healthy-but-quiet channel
+//!      runner's jittered keepalive ping keeps a healthy-but-quiet channel
 //!      inside the window, so the watchdog never fires on a live controller.
 //!
 //! Both deadlines are enforced with `FlezhaStream::set_read_timeout`, honored
@@ -28,7 +28,7 @@ use std::time::Duration;
 /// echoes it and both SDKs drop it after the read-level liveness re-arm.
 pub const CONTROL_PING_PAYLOAD_ID: &str = "control_ping";
 
-/// Payload id for the data-channel heartbeat. The executor writes a bare frame
+/// Payload id for the data-channel heartbeat. The runner writes a bare frame
 /// on every secondary stream so an idle-but-healthy operative keeps the controller's
 /// per-channel liveness clock fresh without producing real output.
 pub const DATA_HEARTBEAT_PAYLOAD_ID: &str = "data_heartbeat";
@@ -47,7 +47,7 @@ fn env_ms(key: &str, default_ms: u64) -> Duration {
         .unwrap_or(Duration::from_millis(default_ms))
 }
 
-/// First-frame ack-deadline (the assign-executor-id ack). Default 10 s.
+/// First-frame ack-deadline (the assign-runner-id ack). Default 10 s.
 pub fn control_ack_timeout() -> Duration {
     env_ms("FLEZHA_CONTROL_ACK_TIMEOUT_MS", DEFAULT_ACK_TIMEOUT_MS)
 }
@@ -58,12 +58,12 @@ pub fn control_idle_timeout() -> Duration {
     env_ms("FLEZHA_CONTROL_IDLE_TIMEOUT_MS", DEFAULT_IDLE_TIMEOUT_MS)
 }
 
-/// How often the executor sends a control-channel keepalive ping. Default 15 s.
+/// How often the runner sends a control-channel keepalive ping. Default 15 s.
 pub fn control_keepalive_interval() -> Duration {
     env_ms("FLEZHA_CONTROL_KEEPALIVE_MS", DEFAULT_KEEPALIVE_MS)
 }
 
-/// How often the executor heartbeats the data channel. Default 10 s — below the
+/// How often the runner heartbeats the data channel. Default 10 s — below the
 /// controller's stall threshold so a couple of missed beats stay inside it.
 pub fn data_heartbeat_interval() -> Duration {
     env_ms("FLEZHA_DATA_HEARTBEAT_MS", DEFAULT_DATA_HEARTBEAT_MS)

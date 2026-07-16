@@ -44,7 +44,7 @@ run the controller without the snapshot lifecycle, set
 `FLEZHA_SNAPSHOT_ENABLED=false`.
 
 A HEALTHCHECK is declared on the control socket
-(`${FLEZHA_SOCKET_FILES_PATH}/executor_control_channel.sock`).
+(`${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock`).
 
 Attach a shell against a running container via the release's dist-node
 entry points:

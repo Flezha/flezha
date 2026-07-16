@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
  * The heartbeat's dispatch-progress counters.
  *
  * <p>Reporting only {@code credit_parked} — as this SDK did — leaves the
- * controller's stall classifier unable to tell a wedged Java executor from a
+ * controller's stall classifier unable to tell a wedged Java runner from a
  * healthy idle one: the heartbeat thread keeps ticking either way. That is a
  * liveness defect, not a cosmetic gap, which is why these exist.
  */

@@ -222,7 +222,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           assert {:ok, %Ctx.IO{message: "HI"}} = Extension.run(table, :on_input, ctx)
         end)
 
-      # The chain logs the subscriber error (intentional — executors rely
+      # The chain logs the subscriber error (intentional — runners rely
       # on it during incident triage) and we assert it lands without
       # spilling into the suite's stdout.
       assert log =~ "transform subscriber"

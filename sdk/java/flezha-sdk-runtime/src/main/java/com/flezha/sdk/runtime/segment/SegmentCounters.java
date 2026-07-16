@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * a heartbeat on its own proves only that the process exists. These counters are
  * what let the controller's stall classifier tell <b>"alive but frozen"</b> apart
  * from <b>"healthy and idle"</b>: if inputs keep arriving while {@code dispatches}
- * stops advancing, the executor is wedged — and without them, it looks perfectly
+ * stops advancing, the runner is wedged — and without them, it looks perfectly
  * healthy.
  */
 public final class SegmentCounters {

@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.control.handlers;
 
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.Operative;
@@ -18,7 +18,7 @@ import java.util.List;
 public final class BoundedStopHandler implements CommandHandler {
 
     @Override
-    public byte[] handle(ExecutorContext ctx, CommandRequest request, List<String> errors) {
+    public byte[] handle(RunnerContext ctx, CommandRequest request, List<String> errors) {
         String operativeId = request.getBoundedStop().getOperativeId();
         Operative operative = ctx.operativeInstanceRegistry().get(operativeId);
         if (operative instanceof BoundedOperativeInstance bounded) {

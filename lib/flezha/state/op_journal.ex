@@ -68,7 +68,7 @@ defmodule Flezha.State.OpJournal do
 
   ## Flush
 
-  An operation's plugin-bound output is staged in the executor and journaled
+  An operation's plugin-bound output is staged in the runner and journaled
   WITH its commit, so progress and outbox cannot tear apart. Delivery happens
   only after that fsync, through the same `:on_output` fan-out an unbounded
   operative's effectively-once outbox uses, stamped with the deterministic key

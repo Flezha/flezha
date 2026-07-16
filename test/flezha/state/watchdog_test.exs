@@ -166,8 +166,8 @@ defmodule Flezha.State.WatchdogTest do
     refute_receive {:compaction_timeout, _, _}, 200
   end
 
-  # An owned writer (executor_id on append) is the trigger sweeps' subject;
-  # writers without an owning executor are skipped (no session to ask).
+  # An owned writer (runner_id on append) is the trigger sweeps' subject;
+  # writers without an owning runner are skipped (no session to ask).
   # Returns the segment KEY: the Watchdog is a singleton whose sweep walks every
   # registered segment, so every assertion here must be scoped to its own — any
   # other test's WAL (an op-journal, say) triggers the same telemetry.
@@ -191,7 +191,7 @@ defmodule Flezha.State.WatchdogTest do
     assert_receive {:compaction_trigger, %{wal_size_bytes: bytes}, %{key: ^key} = meta}, 1_000
     assert bytes >= 16
     assert meta.trigger == :size
-    assert meta.executor == "exec-trig"
+    assert meta.runner == "exec-trig"
 
     # In-flight guard: the next sweep does not re-enqueue.
     :ok = Watchdog.sweep_now()

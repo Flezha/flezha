@@ -2,7 +2,7 @@
 
 This is the single restart-survival mechanism in Flezha. On boot, the
 controller rehydrates the operative list from the durable ProcessHub registry
-and ships the on-disk WAL + snapshot to each executor so operatives resume
+and ships the on-disk WAL + snapshot to each runner so operatives resume
 from their last persisted state.
 
 ## Two persistence layers
@@ -13,16 +13,16 @@ from their last persisted state.
 | Per-Segment WAL + snapshots (change-by-change progress) | `app_data/state/<operative_class>/<operation_id>/<segment_key>.{wal,snap.N,outbox.dedup}` | `Flezha.State.Supervisor` and friends |
 
 The path layout is **flat in the operative_class direction** — there is
-no `executor_id` component. An executor pod restart that rotates
-`executor_id` finds the same persisted state on disk and the
-controller ships it to the new executor on Segment stream attach.
+no `runner_id` component. A runner pod restart that rotates
+`runner_id` finds the same persisted state on disk and the
+controller ships it to the new runner on Segment stream attach.
 
 ## Lifecycle
 
 1. `Flezha.Application.start/2` runs
    `Flezha.Boot.StatePathMigrator.migrate/0` synchronously **before**
    `Flezha.State.Supervisor` starts. It is idempotent: a one-shot
-   migration from the legacy executor-keyed layout to the flat
+   migration from the legacy runner-keyed layout to the flat
    layout, no-op on subsequent runs.
 2. `Flezha.Service.HubManager` starts each per-namespace ProcessHub
    with `registry_backend: {:dets, [path: ...]}` and
@@ -54,7 +54,7 @@ controller ships it to the new executor on Segment stream attach.
 | Single-controller restart into healthy cluster | No (returning node) | Returning node sees a `:normal` peer within the window, skips replay. ProcessHub has already redistributed its work; the durable registry on disk does not trample peer state. |
 | Rolling k8s rollout | No | Same as single-controller, repeated per pod. No stampede. |
 | Single-node deployment | Yes | Window elapses with no peer; `:recovering`; replay; `:normal`. |
-| Executor pod restart with `executor_id` rotation | N/A | Controller never went down. New `executor_id` is assigned via the existing flow; flat WAL layout means state is found and shipped via `RestoreInitState`. Zero data loss. |
+| Runner pod restart with `runner_id` rotation | N/A | Controller never went down. New `runner_id` is assigned via the existing flow; flat WAL layout means state is found and shipped via `RestoreInitState`. Zero data loss. |
 | HotSwap migration (operative moves A → B) | N/A | `prepare_handover_state` ships in-memory state in-band; `dispatch_restore_init_state/2` does NOT fire (handover delivers state). State files on A are not deleted (retention sweeper handles long-term orphans). |
 | HotSwap mid-flight crash on destination | N/A | Source state files preserved. ProcessHub retries the migration. |
 | Network partition during boot | Yes (suspect) | Brief duplicate-start window during heal; ProcessHub's `Divergence` strategy resolves. Documented limitation. Operators in fragile environments can `FLEZHA_AUTO_RESTORE_ENABLED=false`. |

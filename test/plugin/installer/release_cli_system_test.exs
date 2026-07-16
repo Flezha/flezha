@@ -32,7 +32,7 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
   setup_all do
     unless File.regular?(@flz) and File.regular?(@flzvm) do
       # Emit a directly visible failure instead of silently skipping so
-      # executors running `--only system` on an unbuilt tree get a real
+      # runners running `--only system` on an unbuilt tree get a real
       # error message pointing at the fix.
       flunk("""
       Release binaries not found. Run:

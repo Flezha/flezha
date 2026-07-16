@@ -7,7 +7,7 @@ TBD - created by archiving change effectively-once-output. Update Purpose after 
 
 For an operative with the effectively-once tier enabled, the controller SHALL
 journal every inbound payload (after the `:on_input` transform chain) into a
-durable per-operative input-log before forwarding it to the executor, assigning a
+durable per-operative input-log before forwarding it to the runner, assigning a
 strictly monotonic offset. Operatives without the tier SHALL NOT write an
 input-log and their ingest path SHALL be byte-identical to the pre-change
 behaviour.
@@ -16,7 +16,7 @@ behaviour.
 
 - **WHEN** a source plugin delivers a payload to an opted-in operative
 - **THEN** the payload is appended to the operative's input-log with offset N
-  before the executor receives it
+  before the runner receives it
 
 #### Scenario: Tier off means no log
 

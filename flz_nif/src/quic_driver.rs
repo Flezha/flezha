@@ -63,7 +63,7 @@ struct ConnectionState {
     /// The control channel's nif stream id — a stable per-connection routing
     /// key. Every data stream on this connection is tagged with it in
     /// `{:flz_stream, ...}` so the controller routes by connection identity
-    /// (which owns the session token) instead of a shared "current executor"
+    /// (which owns the session token) instead of a shared "current runner"
     /// scalar, eliminating the concurrent-connect race. Set when the first
     /// (control) stream is accepted.
     control_nif_id: u64,

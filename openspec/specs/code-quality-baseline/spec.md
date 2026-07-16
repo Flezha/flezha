@@ -8,13 +8,13 @@ The code-quality-baseline capability defines a project-wide build-hygiene contra
 
 ### Requirement: Default Cargo build SHALL produce zero warnings from project crates
 
-`cargo build --workspace --all-targets` SHALL exit 0 with no warning lines emitted from project crates (`flezha_executor`, `flz_transport`, `flz_jni`, `flz_nif`, `flz`, `rust_executor`). Warnings emitted by third-party crates compiled as part of the workspace are out of scope and SHALL NOT cause the build gate to fail.
+`cargo build --workspace --all-targets` SHALL exit 0 with no warning lines emitted from project crates (`flezha_runner`, `flz_transport`, `flz_jni`, `flz_nif`, `flz`, `rust_runner`). Warnings emitted by third-party crates compiled as part of the workspace are out of scope and SHALL NOT cause the build gate to fail.
 
 #### Scenario: Clean workspace build
 
 - **WHEN** a developer runs `cargo build --workspace --all-targets` on a freshly-cloned repository
 - **THEN** the command exits 0
-- **AND** the output contains zero `warning:` lines whose source path begins with any of `sdk/rust/`, `flz_transport/`, `flz_jni/`, `flz_nif/`, `cli/`, or `test/apps/rust_executor/`
+- **AND** the output contains zero `warning:` lines whose source path begins with any of `sdk/rust/`, `flz_transport/`, `flz_jni/`, `flz_nif/`, `cli/`, or `test/apps/rust_runner/`
 
 #### Scenario: New code introduces a warning
 
@@ -47,7 +47,7 @@ The code-quality-baseline capability defines a project-wide build-hygiene contra
 
 #### Scenario: Bench-internals tests run with feature flag
 
-- **WHEN** a developer runs `cargo test --workspace --features flezha_executor/bench-internals`
+- **WHEN** a developer runs `cargo test --workspace --features flezha_runner/bench-internals`
 - **THEN** the bench-internals-gated test targets are compiled and executed
 - **AND** the command exits 0
 

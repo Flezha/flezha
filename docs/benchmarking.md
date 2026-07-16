@@ -33,7 +33,7 @@ The controller, protocol, and measurement code are identical across runs — onl
 
 | Flag | Values | Effect |
 |---|---|---|
-| `-r` / `--runtime` | `rust` (default), `java` | Picks which SDK executor is launched. `java` requires `test/apps/java_executor/target/java_executor.jar` — build with `mix test.java_sdk` or `mvn -f test/apps/java_executor/pom.xml package`. |
+| `-r` / `--runtime` | `rust` (default), `java` | Picks which SDK runner is launched. `java` requires `test/apps/java_runner/target/java_runner.jar` — build with `mix test.java_sdk` or `mvn -f test/apps/java_runner/pom.xml package`. |
 | `-t` / `--transport` | `uds` (default), `quic` | Sets `FLEZHA_TRANSPORT`. QUIC auto-generates self-signed certs at `app_data/certs/` on first run. |
 | `-s` / `--shape` | `regression` (default), `segmenting` | Picks the workload. `regression` honors `-n`/`-m`; `segmenting` is fixed at 8×4×8×20K and honors `--pool-sizes`. |
 | `-n` / `--num-operatives` | int (default 100) | Operative count, `regression` shape only. |
@@ -64,17 +64,17 @@ Direct `mix bench …` works identically; the script just sets `FLEZHA_TRANSPORT
 
 ```sh
 # Single-segment dispatch hot path.
-cargo bench --bench correctness -p flezha_executor \
+cargo bench --bench correctness -p flezha_runner \
   --features bench-internals -- throughput_single_segment
 
 # Static fan-out cost (4 segments per input).
-cargo bench --bench correctness -p flezha_executor \
+cargo bench --bench correctness -p flezha_runner \
   --features bench-internals -- throughput_static_fanout
 
 # Criterion mirrors of the mix-bench shapes (host-detected pool size).
-cargo bench --bench dispatch -p flezha_executor --features bench-internals
+cargo bench --bench dispatch -p flezha_runner --features bench-internals
 FLEZHA_BENCH_POOL_SIZES=1,8 cargo bench --bench dispatch \
-  -p flezha_executor --features bench-internals
+  -p flezha_runner --features bench-internals
 ```
 
 Use these to localize a regression: if `mix bench` is red but Criterion `regression_100x1x1x10k` is green, the regression is in the transport/controller path, not the SDK.
@@ -82,7 +82,7 @@ Use these to localize a regression: if `mix bench` is red but Criterion `regress
 ### State-apply hot path
 
 ```sh
-cargo bench --bench state -p flezha_executor
+cargo bench --bench state -p flezha_runner
 ```
 
 Budget ceilings (per call, on the reference host):
@@ -137,7 +137,7 @@ The 10% tolerance band absorbs runner-image variance. If CI variance is consiste
 
 1. **Read the failure message** — it logs floor, measured throughput, and shortfall. A < 10% shortfall warns but passes.
 2. **Transport / NIF changes?** If the PR touches `flz_transport/`, `flz_nif/`, `streams_connect.rs`, or the framing path: compare `cargo bench --bench dispatch -- regression_100x1x1x10k` to the failing `mix bench` number. Criterion green + mix red → regression is in transport/controller, not SDK.
-3. **SDK dispatch changes?** If the PR touches `dispatcher.rs`, `executor/fast.rs`, or `segment/mod.rs`: run `cargo bench … throughput_single_segment` and compare to `SINGLE_SEGMENT_FLOOR_MSG_PER_SEC`. A regression here is the dispatch hot path itself.
+3. **SDK dispatch changes?** If the PR touches `dispatcher.rs`, `runner/fast.rs`, or `segment/mod.rs`: run `cargo bench … throughput_single_segment` and compare to `SINGLE_SEGMENT_FLOOR_MSG_PER_SEC`. A regression here is the dispatch hot path itself.
 4. **Runner drift?** Rerun the job on `main`. If `main` also underperforms on the same runner image, the runner pool shifted — open a separate change to rerecord the floor; do not casually lower it.
 5. **Segmenting ratio dropped?** If `bench-segmenting-scaling`'s `ratio (max/min)` fell from ~4× to <2× on the same PR, the regression is in the segmenting fan-out, not single-segment dispatch.
 

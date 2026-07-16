@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
  * The control-init handshake presents a non-empty {@code stable_id} on EVERY
  * connect — the same field name and shape as the Rust SDK's
  * {@code ControlInitMessage} (the controller resolves a reconnect from the
- * stable id + the existing bindings, so the retired {@code previous_executor_id}
+ * stable id + the existing bindings, so the retired {@code previous_runner_id}
  * field is gone).
  */
 class HandshakeMessageTest {
@@ -30,6 +30,6 @@ class HandshakeMessageTest {
         String json = mapper.writeValueAsString(HandshakeMessage.from("ns"));
         assertThat(json).contains("\"stable_id\":\"");
         assertThat(json).doesNotContain("\"stable_id\":\"\"");
-        assertThat(json).doesNotContain("previous_executor_id");
+        assertThat(json).doesNotContain("previous_runner_id");
     }
 }

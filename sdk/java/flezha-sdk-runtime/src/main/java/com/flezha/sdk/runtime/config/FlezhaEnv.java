@@ -39,7 +39,7 @@ public final class FlezhaEnv {
     private FlezhaEnv() {}
 
     /**
-     * Bound on the wait for the controller's first frame (the assign-executor-id
+     * Bound on the wait for the controller's first frame (the assign-runner-id
      * ack). Default 10 s, matching {@code flz_transport::liveness}.
      */
     public static long controlAckTimeoutMs() {

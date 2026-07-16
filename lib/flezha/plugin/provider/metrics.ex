@@ -9,7 +9,7 @@ defmodule Flezha.Plugin.Provider.Metrics do
   Consumers fetch the snapshot via `gather/0`. A future Prometheus /
   StatsD bridge can subscribe to a `:telemetry` poll loop calling
   `gather/0`; for v1 the exporter is pull-only and is read by
-  `flz state list` and ad-hoc executor inspection.
+  `flz state list` and ad-hoc runner inspection.
   """
 
   alias Flezha.State.{Metrics, Registry}

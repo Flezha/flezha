@@ -4,7 +4,7 @@ import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner.BoundedSegment;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
@@ -23,7 +23,7 @@ import javax.annotation.Nonnull;
 
 /**
  * Handles the controller's {@code RestoreInitState} command: a warm restart of
- * a Segment after an executor restart / rebind.
+ * a Segment after a runner restart / rebind.
  *
  * <p>The controller ships the persisted snapshot + WAL change-log for one
  * Segment. This handler locates the live {@link SegmentSlot} whose wire
@@ -48,7 +48,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
 
     @Override
     @Nonnull
-    public byte[] handle(@Nonnull ExecutorContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors) {
+    public byte[] handle(@Nonnull RunnerContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors) {
         if (!request.hasRestoreInitState()) {
             errors.add("RestoreInitStateHandler: payload missing");
             return new byte[0];
@@ -155,7 +155,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
      * identity equals {@code segmentId}. The identity is built the same way the
      * flusher frames {@code segment_id}, so a byte-equal match is exact.
      */
-    private static Located findSlot(ExecutorContext ctx, byte[] segmentId) {
+    private static Located findSlot(RunnerContext ctx, byte[] segmentId) {
         for (UnboundedOperativeInstance instance :
                 ctx.operativeInstanceRegistry().operativeSnapshot().values()) {
             List<List<SegmentSlot>> segments = instance.segments();
@@ -182,7 +182,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
      * bounded Segments (they live on the {@link BoundedOperativeInstance}, in the
      * bounded package), so this closes the crash-resume reachability gap.
      */
-    private static BoundedLocated findBoundedSegment(ExecutorContext ctx, byte[] segmentId) {
+    private static BoundedLocated findBoundedSegment(RunnerContext ctx, byte[] segmentId) {
         for (Operative operative : ctx.operativeInstanceRegistry().snapshot().values()) {
             if (operative instanceof BoundedOperativeInstance bounded) {
                 for (List<BoundedSegment> stage : bounded.stageSegments()) {

@@ -1,7 +1,7 @@
 # Rust SDK Operative Architecture
 
 The Rust SDK exposes a small set of traits for declaring how compute
-work is structured inside one logical executor instance. This doc
+work is structured inside one logical runner instance. This doc
 walks the concepts (Unbounded Operative, Operation, Segment, Runner),
 the data flow end-to-end, and the public API. For the rationale, design
 decisions, and capability spec deltas, see
@@ -107,15 +107,15 @@ Authoring (Rust SDK): a distinct lightweight trait, registered as a sibling of
 
 ```rust
 struct Greet;
-impl flezha_executor::BoundedOperative for Greet {
+impl flezha_runner::BoundedOperative for Greet {
     fn factory_id() -> &'static str { "greet" }
-    fn run(ctx: &mut flezha_executor::BoundedCtx, args: &str)
-        -> Result<(), flezha_executor::BoundedError> {
+    fn run(ctx: &mut flezha_runner::BoundedCtx, args: &str)
+        -> Result<(), flezha_runner::BoundedError> {
         ctx.emit(format!("hello {args}").into_bytes())?;
         Ok(())
     }
 }
-flezha_executor::register_bounded::<Greet>();
+flezha_runner::register_bounded::<Greet>();
 ```
 
 Authoring (Java SDK): a distinct `com.flezha.sdk.bounded.BoundedOperative` interface, registered
@@ -132,7 +132,7 @@ Flezha.registerBounded(GreetBounded.class);
 ```
 
 The Java runtime mirrors the Rust shape: a sealed `Operative` (provisional name)
-permits an unbounded instance or a bounded instance in one per-executor registry,
+permits an unbounded instance or a bounded instance in one per-runner registry,
 resolved once per frame at `PrimaryStreamReader.dispatch`; an `AddOperative` whose
 `kind` resolves to `:bounded` schedules `BoundedOperative.run` once on the worker pool with
 `init_values` as `args`; `BoundedCtx.emit` writes an instance-id-keyed,
@@ -145,7 +145,7 @@ gaps below.
 
 A near-instant bounded operative may run to completion and self-deregister before the start
 RPC confirms the unit's binding; that clean exit is reported as a successful
-start (`{:ok, …}` with no live `executor_id`), not a failure.
+start (`{:ok, …}` with no live `runner_id`), not a failure.
 
 Deferred for a later change (v1 known gaps): mid-run controller reboot may
 replay an in-flight bounded operative from the durable registry; no exactly-once
@@ -158,7 +158,7 @@ does retry with backoff — see
 The full surface is small:
 
 ```rust
-use flezha_executor::{
+use flezha_runner::{
     register_unbounded, ChannelBuilder, UnboundedOperative, Operation, OperationCtx, OperationError,
 };
 ```
@@ -177,19 +177,19 @@ paste of its expansion. The single contract binding every SDK (Rust, Java, and
 future Python/Elixir) is `docs/sdk_authoring_contract.md`.
 
 ```rust
-use flezha_executor::state::StateHandle;
+use flezha_runner::state::StateHandle;
 use serde::{Deserialize, Serialize};
 
 // `&mut State` ⇒ stateful; the return value is auto-emitted to `sink`.
-#[derive(Serialize, Deserialize, Clone, Default, flezha_executor::State)]
+#[derive(Serialize, Deserialize, Clone, Default, flezha_runner::State)]
 struct OhlcState { candles: Vec<f64> }
 
-#[flezha_executor::operation(id = "parse_op")]
+#[flezha_runner::operation(id = "parse_op")]
 fn parse(input: String) -> f64 {
     input.parse().unwrap_or(0.0)
 }
 
-#[flezha_executor::operation(id = "ohlc_op", keys = ["1m", "1h", "1d", "1w"], segment_for = all_tfs)]
+#[flezha_runner::operation(id = "ohlc_op", keys = ["1m", "1h", "1d", "1w"], segment_for = all_tfs)]
 fn ohlc(price: f64, state: &mut OhlcState) -> Vec<u8> {
     state.push_candles(price);            // journaled via #[derive(State)]
     format!("{price}").into_bytes()
@@ -198,7 +198,7 @@ fn ohlc(price: f64, state: &mut OhlcState) -> Vec<u8> {
 fn all_tfs(_: &f64) -> Vec<&'static str> { vec!["1m", "1h", "1d", "1w"] }
 
 // Linear pipeline ⇒ no `channels()` block, auto-registered (no `register_unbounded`).
-flezha_executor::operative! {
+flezha_runner::operative! {
     id: "market",
     pipeline: input::<String> -> Parse -> Ohlc -> plugin::<Vec<u8>>("ohlc_kafka")
 }
@@ -218,7 +218,7 @@ The sugar above expands to exactly this hand-written form; reach for it
 directly when an operative's topology is not a single operation or a linear chain.
 
 ```rust
-use flezha_executor::{
+use flezha_runner::{
     register_unbounded, ChannelBuilder, UnboundedOperative, Operation, OperationCtx, OperationError,
 };
 use serde::{Deserialize, Serialize};
@@ -293,7 +293,7 @@ impl UnboundedOperative for MarketOperative {
 
 fn main() {
     register_unbounded::<MarketOperative>();
-    let _ = flezha_executor::new("market_ns".to_string());
+    let _ = flezha_runner::new("market_ns".to_string());
     // The controller's `flz operative start <market>` spawns an instance.
 }
 ```
@@ -391,7 +391,7 @@ class declares a `run` method (`Output run(Input)` or
 `set<Field>` / `push<Field>` mutator per field; a stateful `run` takes that
 handle and journals with `state.push<Field>(v)` — no change type named, the
 same shape as Rust's `state.push_field(v)`. Worked
-twins live in `test/apps/java_executor` (`SugarDoNothing`, `SugarStore`,
+twins live in `test/apps/java_runner` (`SugarDoNothing`, `SugarStore`,
 `SugarEntry`/`SugarDownstream` + `SugarStaticSegmentOperative`). The dynamic-mode
 `@OperationKey` opt-in generates the dynamic surface but is not yet runnable: the
 Java runtime has not landed `operative-dynamic-segmenting` (no `segmentIdleTtl`/
@@ -546,7 +546,7 @@ and the wire, so the policy enum has nothing to act on.
 | InterOperation | `Block`      | Stateful pipelines need ordering preservation; mid-pipeline drops silently corrupt derived state. |
 | PluginBound    | (n/a)        | No SDK-side mailbox sits between the producer Operation and the wire; backpressure is OS socket buffer + transport flow control. |
 
-An executor who wants strict end-to-end ordering at the entry edge can
+A runner who wants strict end-to-end ordering at the entry edge can
 declare `.on_full(OverflowPolicy::Block)` on their entry channel — the
 wire reader then drains the saturated Operative's mailbox inline (briefly
 delaying sibling Operatives on the same physical connection) instead of
@@ -578,7 +578,7 @@ A Block-policy producer parks the worker thread it ran on. A pipeline
 of depth D under `Block` requires the work-stealing pool to have
 `FLEZHA_WORKER_POOL_SIZE ≥ 2 × D + 1` to avoid a deadlock: D parked
 producers + 1 thread free to drain the deepest consumer + spare for
-upstream drains. The SDK does not enforce this at startup; executors
+upstream drains. The SDK does not enforce this at startup; runners
 running deep pipelines should size the pool accordingly.
 
 Single-stage pipelines (entry → one Operation, no fan-out) are unaffected:
@@ -735,7 +735,7 @@ The umbrella enumerates non-goals (`operative-architecture/proposal.md`
 - **Java SDK** — the Java SDK is not yet ported to the new model;
   `operative-mvp-java` does that work. Java↔controller integration tests are
   tagged `OPERATIVE_MVP_JAVA_PENDING`.
-- **flezha_market migration** — downstream executor app migrates in its
+- **flezha_market migration** — downstream runner app migrates in its
   own repo (umbrella Decision 17).
 
 ## Where to look in the code
@@ -748,9 +748,9 @@ The umbrella enumerates non-goals (`operative-architecture/proposal.md`
 | Topology builder | `sdk/rust/src/operative/builder.rs` |
 | OperativeInstance + segment layout | `sdk/rust/src/operative/instance.rs` |
 | Per-Operation typed dispatcher | `sdk/rust/src/operative/dispatcher.rs` |
-| SegmentSlot + mailbox | `sdk/rust/src/segment/mod.rs`, `executor/mailbox.rs` |
+| SegmentSlot + mailbox | `sdk/rust/src/segment/mod.rs`, `runner/mailbox.rs` |
 | Class + instance registries | `sdk/rust/src/operative/registry.rs` |
-| Wire dispatch | `sdk/rust/src/executor/fast.rs::OperativeDispatchHandle` |
+| Wire dispatch | `sdk/rust/src/runner/fast.rs::OperativeDispatchHandle` |
 | Wire input routing | `sdk/rust/src/command/streams_connect.rs` |
 | Plugin emit framing | `sdk/rust/src/operative/dispatcher.rs::send_plugin_frame` |
 | State migration JSON shape | `sdk/rust/src/command/segment_state.rs` |
@@ -765,7 +765,7 @@ coalescing, and the wire send happen on a per-process flusher thread
 on a 5 ms linger cadence (configurable via `FLEZHA_FLUSH_LINGER_MS`).
 
 Operations opt out by inheriting `type Change = NoChange` (the trait's
-uninhabited default). Executor-controlled operative-instance override:
+uninhabited default). Runner-controlled operative-instance override:
 `operative_persistence.<OperativeClass>` in operative-start metadata.
 
 The umbrella commits to eight Tier-1 properties — wire format, header
@@ -813,9 +813,9 @@ sequence:
 1. **`init/1`** returns quickly with `{:ok, state, {:continue, …}}` so
    `dist_sup`'s synchronous DETS replay unblocks (FleetManager /
    HubManager are not yet answering calls at this point).
-2. **`handle_continue({:bind_executor, …}, _)`** waits for an active
-   executor advertising the operative's `factory_id` via
-   `OperativeManager.assign_executor/2`. The persisted `executor_id` is
+2. **`handle_continue({:bind_runner, …}, _)`** waits for an active
+   runner advertising the operative's `factory_id` via
+   `OperativeManager.assign_runner/2`. The persisted `runner_id` is
    advisory only — see the `operative-state-persistence` capability.
 3. **`complete_init/3`** runs three phases:
    - **prepare** — `prepare_initial_plugins/2` calls each provider's
@@ -828,10 +828,10 @@ sequence:
    - **start SDK with retry** — `start_operative_sdk_with_retry/3` repeats
      `ping → start_operative_sdk` under a bounded retry governor. The
      default schedule is `200ms, 500ms, 1s, 2s, 5s, 10s` with full
-     jitter (~19 s aggregate). On every retry the live executor is
-     re-resolved so a fresh executor that came online during a backoff
+     jitter (~19 s aggregate). On every retry the live runner is
+     re-resolved so a fresh runner that came online during a backoff
      is picked up; the channel handle is re-attached to the final
-     executor on success.
+     runner on success.
 4. **activate** — on `{:ok, _}` from `start_operative_sdk`, the Overwatch
    calls `Table.bulk_activate/1` which transitions each plugin to
    `:running`. Providers implementing the optional `activate/1`
@@ -842,11 +842,11 @@ sequence:
 ### End-to-end ping before `:start_operative`
 
 Each retry attempt issues a `Ping` control-channel round-trip via
-`Flezha.Executor.ControlUnit.ping_executor/2` before `AddOperative`. The
+`Flezha.Runner.ControlUnit.ping_runner/2` before `AddOperative`. The
 ping traverses the same `ControlChannel → SDK → ControlChannel` path
 `AddOperative` uses, so a successful round-trip proves the channel is
 bound and the SDK reply path is intact. On timeout the Overwatch
-invokes `Flezha.Executor.FleetManager.reset_control_channel/1` to
+invokes `Flezha.Runner.FleetManager.reset_control_channel/1` to
 clear the `ControlChannel`'s `stream_ref` — the SDK's next data
 stream then claims it via the existing rebind path in
 `executor-controller-connection-healing`.
@@ -862,7 +862,7 @@ than crashing the supervisor:
 
 - `state.init_error` holds the last failure reason
   (e.g. `{:ping_failed, :timeout}`, `{:start_operative_failed, _}`).
-- `:registry_executor_set` replies `{:error, reason}` so callers learn
+- `:registry_runner_set` replies `{:error, reason}` so callers learn
   the operative is degraded.
 - `:io_in` calls reply `{:error, :startup_failed}`.
 - `:io_in` casts are silently dropped.

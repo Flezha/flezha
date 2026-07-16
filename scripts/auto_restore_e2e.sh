@@ -3,7 +3,7 @@
 # auto-restore-on-boot capability.
 #
 # Steps:
-#   1. Start the dev controller + executor via docker compose.
+#   1. Start the dev controller + runner via docker compose.
 #   2. Register 5 operatives + plugins, push a few state changes.
 #   3. `docker compose down`, then `docker compose up`.
 #   4. Assert all 5 operatives come back running with their plugins and that
@@ -19,7 +19,7 @@ OPERATIVES=("auto_e2e_a" "auto_e2e_b" "auto_e2e_c" "auto_e2e_d" "auto_e2e_e")
 note() { printf '\033[1;34m[auto-restore-e2e]\033[0m %s\n' "$*"; }
 
 step_up() {
-  note "starting controller + executor"
+  note "starting controller + runner"
   $DC up -d controller kafka
   sleep 5
 }

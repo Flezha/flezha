@@ -34,7 +34,7 @@ defmodule Flezha.State.Wire do
 
   This is structured (not opaque) so the controller can route to the right
   per-Segment `WalWriter` without a side-table mapping. The controller's
-  `executor_id` is implicit — the controller knows which executor
+  `runner_id` is implicit — the controller knows which runner
   sent the frame from the connection.
   """
 

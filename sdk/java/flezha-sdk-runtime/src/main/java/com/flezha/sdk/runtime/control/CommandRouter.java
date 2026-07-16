@@ -3,15 +3,14 @@ package com.flezha.sdk.runtime.control;
 import com.flezha.sdk.native_.NativeTransport;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.CommandResponse;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
-import com.flezha.sdk.runtime.control.handlers.AssignExecutorIdHandler;
+import com.flezha.sdk.runtime.control.handlers.AssignRunnerIdHandler;
 import com.flezha.sdk.runtime.control.handlers.BoundedStopHandler;
 import com.flezha.sdk.runtime.control.handlers.CompactSegmentHandler;
 import com.flezha.sdk.runtime.control.handlers.ConnectSocketHandler;
 import com.flezha.sdk.runtime.control.handlers.CreditGrantHandler;
 import com.flezha.sdk.runtime.control.handlers.CreditWindowInitHandler;
-import com.flezha.sdk.runtime.control.handlers.ExecutorDisconnectHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationDeserializationHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationSerializationHandler;
 import com.flezha.sdk.runtime.control.handlers.OperationMessageHandler;
@@ -19,6 +18,7 @@ import com.flezha.sdk.runtime.control.handlers.ParkPayloadAckHandler;
 import com.flezha.sdk.runtime.control.handlers.PingHandler;
 import com.flezha.sdk.runtime.control.handlers.RemOperativeHandler;
 import com.flezha.sdk.runtime.control.handlers.RestoreInitStateHandler;
+import com.flezha.sdk.runtime.control.handlers.RunnerDisconnectHandler;
 import com.flezha.sdk.runtime.control.handlers.SegmentApplyStateHandler;
 import com.flezha.sdk.runtime.control.handlers.SegmentMailboxStatusHandler;
 import com.flezha.sdk.runtime.control.handlers.SegmentStateHandler;
@@ -41,22 +41,22 @@ public final class CommandRouter {
 
     private static final Logger LOG = LoggerFactory.getLogger(CommandRouter.class);
 
-    private final ExecutorContext ctx;
+    private final RunnerContext ctx;
     private final long controlStreamId;
     private final Map<CommandRequest.CommandCase, CommandHandler> handlers;
 
-    public CommandRouter(@Nonnull ExecutorContext ctx, long controlStreamId) {
+    public CommandRouter(@Nonnull RunnerContext ctx, long controlStreamId) {
         this.ctx = ctx;
         this.controlStreamId = controlStreamId;
         java.util.Map<CommandRequest.CommandCase, CommandHandler> mut = new java.util.LinkedHashMap<>();
-        mut.put(CommandRequest.CommandCase.ASSIGN_EXECUTOR_ID, new AssignExecutorIdHandler());
+        mut.put(CommandRequest.CommandCase.ASSIGN_RUNNER_ID, new AssignRunnerIdHandler());
         mut.put(CommandRequest.CommandCase.CONNECT_SOCKET, new ConnectSocketHandler());
         mut.put(CommandRequest.CommandCase.ADD_OPERATIVE, new AddOperativeHandler());
         mut.put(CommandRequest.CommandCase.REM_OPERATIVE, new RemOperativeHandler());
         mut.put(CommandRequest.CommandCase.SEGMENT_STATE, new SegmentStateHandler());
         mut.put(CommandRequest.CommandCase.MIGRATION_SERIALIZATION, new MigrationSerializationHandler());
         mut.put(CommandRequest.CommandCase.MIGRATION_DESERIALIZATION, new MigrationDeserializationHandler());
-        mut.put(CommandRequest.CommandCase.EXECUTOR_DISCONNECT, new ExecutorDisconnectHandler());
+        mut.put(CommandRequest.CommandCase.RUNNER_DISCONNECT, new RunnerDisconnectHandler());
         mut.put(CommandRequest.CommandCase.OPERATION_MESSAGE, new OperationMessageHandler());
         mut.put(CommandRequest.CommandCase.SEGMENT_APPLY_STATE, new SegmentApplyStateHandler());
         // State-persistence handlers added by operative-state-persistence-java.
@@ -108,7 +108,7 @@ public final class CommandRouter {
         // graceful-shutdown notifications, or buggy notifications the
         // SDK is the sender of. Both short-circuit the response write.
         switch (request.getCommandCase()) {
-            case EXECUTOR_SHUTDOWN_ACK:
+            case RUNNER_SHUTDOWN_ACK:
                 // The bounded driver blocks on these at its op / iteration barriers;
                 // they carry the originating request's reference_id so the right
                 // waiter wakes.
@@ -116,9 +116,9 @@ public final class CommandRouter {
             case ITER_COMMIT_RESPONSE:
                 AckRegistry.complete(request.getReferenceId());
                 return;
-            case EXECUTOR_SHUTDOWN_NOTIFICATION:
+            case RUNNER_SHUTDOWN_NOTIFICATION:
                 LOG.warn(
-                        "Received unexpected ExecutorShutdownNotification (ref={}); ignoring — "
+                        "Received unexpected RunnerShutdownNotification (ref={}); ignoring — "
                                 + "SDK is the SENDER, not the receiver.",
                         request.getReferenceId());
                 return;

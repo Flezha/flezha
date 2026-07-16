@@ -7,7 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Sender-side credit window for the executor → controller state stream.
+ * Sender-side credit window for the runner → controller state stream.
  * Mirrors {@code sdk/rust/src/segment/credit.rs} with identical semantics.
  *
  * <p>The controller offers a byte window via the {@code CreditWindowInit}
@@ -21,7 +21,7 @@ import org.slf4j.LoggerFactory;
  * never block, so heartbeats and grants keep flowing while senders are
  * parked; the park is a bounded wait loop (50 ms recheck) so a lost grant
  * degrades to a retry loop with warnings; {@link #creditParked()} advances
- * on every wait iteration so a credit-parked executor classifies as
+ * on every wait iteration so a credit-parked runner classifies as
  * fed-but-parked in the liveness self-report. A frame larger than the whole
  * window is sent once the window is fully replenished (single-frame
  * overshoot), mirroring the controller's accept-on-empty-buffer rule.

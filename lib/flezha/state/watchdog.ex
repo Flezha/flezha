@@ -21,7 +21,7 @@ defmodule Flezha.State.Watchdog do
       WAL bytes exceed its resolved `compact_after_bytes`, or whose oldest
       un-snapshotted record is older than `compact_after_age_ms` (`0`
       disables age), gets a `CompactSegment` dispatched to its owning
-      executor. The in-flight `compactions` map guards re-enqueue, so size
+      runner. The in-flight `compactions` map guards re-enqueue, so size
       and age can never double-enqueue.
 
     * **Compaction timeout.** A `CompactSegment` whose
@@ -141,9 +141,9 @@ defmodule Flezha.State.Watchdog do
     segment_statuses()
     |> Enum.reduce(state, fn {{rc, sh, _pk} = segment_id, status}, acc ->
       with false <- Map.has_key?(acc.compactions, segment_id),
-           executor_id when is_binary(executor_id) <- status.owning_executor,
+           runner_id when is_binary(runner_id) <- status.owning_runner,
            trigger when trigger != nil <- compaction_trigger(status, now, rc, sh) do
-        flag_compaction_trigger(segment_id, executor_id, status, trigger)
+        flag_compaction_trigger(segment_id, runner_id, status, trigger)
         %{acc | compactions: Map.put(acc.compactions, segment_id, now)}
       else
         _ -> acc
@@ -171,14 +171,14 @@ defmodule Flezha.State.Watchdog do
     end
   end
 
-  defp flag_compaction_trigger({rc, sh, pk} = segment_id, executor_id, status, trigger) do
+  defp flag_compaction_trigger({rc, sh, pk} = segment_id, runner_id, status, trigger) do
     :telemetry.execute(
       [:flezha, :state, :compaction_trigger],
       %{wal_size_bytes: status.wal_size_bytes},
-      %{operative: rc, operation: sh, key: pk, trigger: trigger, executor: executor_id}
+      %{operative: rc, operation: sh, key: pk, trigger: trigger, runner: runner_id}
     )
 
-    _ = Overwatch.dispatch_compact_segment(executor_id, segment_id)
+    _ = Overwatch.dispatch_compact_segment(runner_id, segment_id)
     :ok
   end
 

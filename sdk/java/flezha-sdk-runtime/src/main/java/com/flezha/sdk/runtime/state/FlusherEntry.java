@@ -26,7 +26,7 @@ import javax.annotation.Nonnull;
  * <p>{@code sendFrame} takes the payload-id because those two paths ship under
  * different ones.
  *
- * <p>{@code persistenceEnabled} is the resolved toggle (executor override
+ * <p>{@code persistenceEnabled} is the resolved toggle (runner override
  * &gt; UnboundedOperative default &gt; {@code true}; frozen at {@code UnboundedOperativeInstance}
  * construction). When {@code false}, the drain still runs (releasing the
  * buffer's memory) but no frame is built or sent.

@@ -107,14 +107,14 @@ and never applied twice at a conforming sink.
 ### Requirement: End-to-end effectively-once over crash-replay
 
 A tier-enabled keyed-channel pipeline SHALL deliver each logical output
-effectively once, source to conforming sink, across executor crash, controller
+effectively once, source to conforming sink, across runner crash, controller
 crash, and input replay: the sink's final visible state contains no duplicates
 and no gaps. The end-to-end property SHALL be exercised by an
 integration test that kills each party at every phase boundary.
 
-#### Scenario: Executor kill mid-stream
+#### Scenario: Runner kill mid-stream
 
-- **WHEN** the executor is killed while processing and the Segment is restored
+- **WHEN** the runner is killed while processing and the Segment is restored
   and replays from its durable consumed-offset
 - **THEN** the conforming sink's final state equals the no-crash run's final
   state

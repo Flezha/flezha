@@ -7,9 +7,9 @@ defmodule Flezha.Plugin.Extension.Ctx.Terminate do
   @type t() :: %__MODULE__{
           operative_id: String.t(),
           namespace: atom() | String.t(),
-          executor_id: String.t() | nil,
+          runner_id: String.t() | nil,
           reason: term()
         }
 
-  defstruct [:operative_id, :namespace, :executor_id, :reason]
+  defstruct [:operative_id, :namespace, :runner_id, :reason]
 end

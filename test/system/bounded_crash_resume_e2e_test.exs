@@ -2,21 +2,21 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   @moduledoc """
   End-to-end crash-resume proof for the durable bounded operative model
   (`bounded-operative-functionality` §7c.3), against live Rust and Java
-  executors over both UDS and QUIC.
+  runners over both UDS and QUIC.
 
   Two real-wire scenarios per (runtime × transport) cell:
 
     * **resume** — a durable structured bounded operative (`commit_block_bounded`)
       commits Segment state in operation A, then blocks in operation B. The
-      executor is SIGKILLed mid-run (op A durable, op B never finished), a
-      replacement executor is started on the same stable identity, and the
+      runner is SIGKILLed mid-run (op A durable, op B never finished), a
+      replacement runner is started on the same stable identity, and the
       operative's controller-side supervisor is forced to re-bind onto it. The
       replacement restores the committed state and runs to completion — proving
       resume-not-restart with a terminal outcome matching a clean run.
 
     * **compensation** — a durable saga bounded operative (`saga_block_bounded`)
       completes A and B, then fails in C, triggering reverse-order rollback. B's
-      compensation-done marker lands, then A's `compensate` blocks; the executor
+      compensation-done marker lands, then A's `compensate` blocks; the runner
       is SIGKILLed mid-compensation. The replacement ships the durable
       compensation markers back and finishes only the outstanding hook (A),
       skipping the already-done B — proving crash-mid-compensation resume.
@@ -26,8 +26,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   `convergence_health_enabled` is `false` in the test config, so nothing
   auto-rebinds a crashed operative — the test drives it:
 
-    * A shared `FLEZHA_EXECUTOR_ID_PATH` makes the replacement re-present the
-      dead executor's durable stable identity, so its connect swaps the bindings
+    * A shared `FLEZHA_RUNNER_ID_PATH` makes the replacement re-present the
+      dead runner's durable stable identity, so its connect swaps the bindings
       and evicts the dead session on both transports (no reliance on detecting
       the SIGKILL, which QUIC surfaces only after its ~45 s idle timeout).
     * `Process.exit(overwatch_pid, :kill)` forces a fresh controller-side bind:
@@ -36,7 +36,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       — the only path that arms the SDK's restore-before-run gate. The hard kill
       bypasses `terminate/2`, so the WAL survives (a graceful stop would delete it).
     * The replacement is launched WITH `FLEZHA_BOUNDED_E2E_RELEASE`, so the
-      blocking operation/compensation that parked on the first executor completes
+      blocking operation/compensation that parked on the first runner completes
       on the resume, making the crash window deterministic (no wall-clock races).
 
   Tagged `:system` (boots real subprocesses) — excluded from the default
@@ -48,7 +48,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
   use ExUnit.Case, async: false
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Overwatch
@@ -62,7 +62,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
   @moduletag :system
   @moduletag :bounded_crash_resume
-  # Two live executor lifecycles + a SIGKILL + a resume per test; QUIC first
+  # Two live runner lifecycles + a SIGKILL + a resume per test; QUIC first
   # connects can be slow, so give each cell a generous budget.
   @moduletag timeout: 180_000
 
@@ -70,7 +70,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     runtime = context[:runtime]
 
     if runtime == :java do
-      jar = Path.join(File.cwd!(), "test/apps/java_executor/dist/java_executor.jar")
+      jar = Path.join(File.cwd!(), "test/apps/java_runner/dist/java_runner.jar")
 
       unless File.exists?(jar) do
         ExUnit.Assertions.flunk(
@@ -331,9 +331,9 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     end
 
     # bounded-operative-saga + outbox: a `compensate` hook's plugin output is
-    # staged too. On the first executor the hook emits and then BLOCKS, so the
+    # staged too. On the first runner the hook emits and then BLOCKS, so the
     # SIGKILL lands with the undo emitted but never journaled — it must not leak.
-    # The resumed executor re-runs the outstanding hook (its done marker never
+    # The resumed runner re-runs the outstanding hook (its done marker never
     # landed), journals the undo in a `compensated` entry, and flushes it once
     # under a comp-marked key that cannot collide with the forward output.
     test "a compensation's undo output is staged, journaled, and delivered once", ctx do
@@ -491,14 +491,14 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   describe "durable loop + suspension (rust/uds)" do
     @describetag runtime: :rust, transport: :uds, cell: :rust_uds_loop
 
-    # `bounded-durable-loop-and-suspension`, end to end on a real executor:
+    # `bounded-durable-loop-and-suspension`, end to end on a real runner:
     #
     #   1. two chat turns → two journaled iterations, each with its consumed
     #      inbox offset; the loop then PARKS on the idle inbox and the instance
-    #      is evicted from the executor (still registered, `suspended`);
+    #      is evicted from the runner (still registered, `suspended`);
     #   2. a message sent while it is suspended is durably journaled and
-    #      REHYDRATES it — processed as the next iteration, on a live executor;
-    #   3. the executor is SIGKILLed mid-iteration 3 and a replacement takes
+    #      REHYDRATES it — processed as the next iteration, on a live runner;
+    #   3. the runner is SIGKILLed mid-iteration 3 and a replacement takes
     #      over: the run resumes AT iteration 3 — the committed turns never
     #      re-run — and the undelivered inbox tail is re-forwarded.
     test "loop commits iterations, parks when idle, rehydrates on input, resumes mid-iteration",
@@ -512,7 +512,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
       # Park fast so the idle window does not dominate the test.
       {port_a, exec_a} =
-        boot_executor(namespace, ctx, id_path,
+        boot_runner(namespace, ctx, id_path,
           release?: false,
           extra_env: [{"FLEZHA_BOUNDED_PARK_IDLE_MS", "700"}]
         )
@@ -522,7 +522,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
           plugins: [forward_sink("chat_sink", collector)]
         )
 
-      assert info.executor_id == exec_a
+      assert info.runner_id == exec_a
 
       # --- 1. two turns → two committed iterations, then a park ---
       send_turn(namespace, operative_id, "hello")
@@ -542,8 +542,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       assert wait_until(fn -> OpJournal.restore_state(operative_id).parked end, 20_000),
              "the idle loop never parked at its committed boundary"
 
-      # Evicted from the executor, but still registered and addressable — that IS
-      # suspension (zero live EXECUTOR resources, not zero resources).
+      # Evicted from the runner, but still registered and addressable — that IS
+      # suspension (zero live RUNNER resources, not zero resources).
       assert wait_until(fn -> suspended?(namespace, operative_id) end, 20_000),
              "the parked instance was never suspended controller-side"
 
@@ -580,15 +580,15 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       sigkill(os_pid(port_a))
 
       {_port_b, exec_b} =
-        boot_executor(namespace, ctx, id_path,
+        boot_runner(namespace, ctx, id_path,
           release?: true,
           extra_env: [{"FLEZHA_BOUNDED_PARK_IDLE_MS", "700"}]
         )
 
       assert exec_b != exec_a
 
-      assert wait_until(fn -> exec_a not in FleetManager.active_executors(namespace) end),
-             "dead executor was never evicted after the replacement connected"
+      assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end),
+             "dead runner was never evicted after the replacement connected"
 
       force_fresh_rebind(namespace, operative_id)
 
@@ -639,7 +639,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
       {_port, _exec} =
-        boot_executor(namespace, ctx, id_path,
+        boot_runner(namespace, ctx, id_path,
           release?: true,
           extra_env: [{"FLEZHA_BOUNDED_PARK_IDLE_MS", "700"}]
         )
@@ -654,7 +654,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       assert wait_until(fn -> suspended?(namespace, operative_id) end, 20_000)
 
       # Restart the instance's controller-side supervisor while it is suspended.
-      # It must come back from durable state as suspended — NOT bind an executor.
+      # It must come back from durable state as suspended — NOT bind a runner.
       force_fresh_rebind(namespace, operative_id)
 
       assert wait_until(fn -> suspended?(namespace, operative_id) end, 30_000),
@@ -673,7 +673,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   describe "loop rewind (rust/uds)" do
     @describetag runtime: :rust, transport: :uds, cell: :rust_uds_rewind
 
-    # `bounded-loop-rewind`, end to end on a real executor: three chat turns
+    # `bounded-loop-rewind`, end to end on a real runner: three chat turns
     # commit, the operator rewinds to iteration 0, and
     #
     #   * iterations 2 and 1 are compensated in that order — the reply operation's
@@ -692,7 +692,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
       on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
-      {_port, _exec} = boot_executor(namespace, ctx, id_path, release?: false)
+      {_port, _exec} = boot_runner(namespace, ctx, id_path, release?: false)
 
       start_bounded(namespace, operative_id, "chat_rewind_bounded",
         plugins: [forward_sink("chat_sink", collector)]
@@ -762,7 +762,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   describe "segment retry (rust/uds)" do
     @describetag runtime: :rust, transport: :uds, cell: :rust_uds_retry
 
-    # `bounded-segment-retry` on a live executor: `retry_flaky` fails its first
+    # `bounded-segment-retry` on a live runner: `retry_flaky` fails its first
     # attempt, the per-segment ladder re-runs it in place, and the operation
     # commits normally — nothing compensates and the run reports `ok`.
     test "a transient segment failure is retried and the run completes", ctx do
@@ -810,7 +810,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     # The chain's args are the serialized `init_values` the harness starts with.
     @seed ~s({"seed":"go"})
 
-    # `bounded-branching` on a live executor. BranchA fans out to BranchB and
+    # `bounded-branching` on a live runner. BranchA fans out to BranchB and
     # BranchC; BranchB feeds BranchD, which blocks. The SIGKILL therefore lands
     # with A, B and C committed and only D's subtree outstanding — and the
     # respawn must re-run D ALONE, seeded from B's journaled edge.
@@ -845,7 +845,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
              "each operation commits exactly once across the crash: #{inspect(committed)}"
 
       # The SDK declares the leaf set, so the controller derives DONE from the
-      # journal alone — no executor to ask.
+      # journal alone — no runner to ask.
       leaf_ops = ClassRegistry.leaf_ops(operative_id)
       assert leaf_ops == [2, 3], "BranchC and BranchD are the tree's leaves"
       assert OpJournal.complete?(operative_id, leaf_ops)
@@ -871,7 +871,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
       on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
-      boot_executor(namespace, ctx, id_path,
+      boot_runner(namespace, ctx, id_path,
         release?: true,
         extra_env: [{"FLEZHA_BRANCH_FAIL", "1"}]
       )
@@ -910,7 +910,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     end
   end
 
-  # Start `retry_bounded` on a fresh executor with `failures` armed on the flaky
+  # Start `retry_bounded` on a fresh runner with `failures` armed on the flaky
   # segment, and wait for the run's terminal status.
   defp drive_retry_run(ctx, collector, failures, terminal_status) do
     namespace = unique("bounded_retry")
@@ -920,7 +920,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
     {_port, _exec} =
-      boot_executor(namespace, ctx, id_path,
+      boot_runner(namespace, ctx, id_path,
         release?: false,
         extra_env: [{"FLEZHA_BOUNDED_RETRY_FAILS", failures}]
       )
@@ -967,7 +967,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   # Drive one operative through the full SIGKILL-mid-run → respawn → resume flow
   # and assert the terminal outcome. `mid_run?` is a predicate on the operative
   # id that becomes true once the durable mid-run point is reached on the first
-  # executor (which never completes it — the release env is unset there).
+  # runner (which never completes it — the release env is unset there).
   # Returns the operative id for scenario-specific assertions.
   defp drive_crash_resume(ctx, factory_id, terminal_status, mid_run?, opts \\ []) do
     {before_rebind, builder_opts} = Keyword.pop(opts, :before_rebind)
@@ -977,14 +977,14 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
-    # Executor A (no release env): the operative commits, then blocks mid-chain.
-    {port_a, exec_a} = boot_executor(namespace, ctx, id_path, release?: false)
+    # Runner A (no release env): the operative commits, then blocks mid-chain.
+    {port_a, exec_a} = boot_runner(namespace, ctx, id_path, release?: false)
 
     info = start_bounded(namespace, operative_id, factory_id, builder_opts)
-    assert info.executor_id == exec_a
+    assert info.runner_id == exec_a
 
     assert wait_until(fn -> mid_run?.(operative_id) end, 30_000),
-           "operative never reached its durable mid-run point on the first executor"
+           "operative never reached its durable mid-run point on the first runner"
 
     refute Completion.exists?(operative_id),
            "operative terminated before the crash — it did not block mid-chain"
@@ -994,11 +994,11 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     # SIGKILL A; the replacement (release env set) re-presents A's stable id, so
     # its connect swaps the bindings + evicts the dead session on both transports.
     sigkill(os_pid(port_a))
-    {_port_b, exec_b} = boot_executor(namespace, ctx, id_path, release?: true)
+    {_port_b, exec_b} = boot_runner(namespace, ctx, id_path, release?: true)
     assert exec_b != exec_a, "replacement must mint a fresh session token"
 
-    assert wait_until(fn -> exec_a not in FleetManager.active_executors(namespace) end),
-           "dead executor was never evicted after the replacement connected"
+    assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end),
+           "dead runner was never evicted after the replacement connected"
 
     # Scenario hook on the durable state the crash left, before the rebind
     # (which is what triggers the restore).
@@ -1042,25 +1042,25 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
            "run never completed with status #{inspect(status)}"
   end
 
-  defp boot_executor(namespace, ctx, id_path, opts) do
+  defp boot_runner(namespace, ctx, id_path, opts) do
     env =
-      [{"FLEZHA_EXECUTOR_ID_PATH", id_path}] ++
+      [{"FLEZHA_RUNNER_ID_PATH", id_path}] ++
         Keyword.get(opts, :extra_env, []) ++
         if Keyword.fetch!(opts, :release?), do: [{"FLEZHA_BOUNDED_E2E_RELEASE", "1"}], else: []
 
-    {port, executor_id} =
-      NodeTestHelper.start_executor_port(namespace,
+    {port, runner_id} =
+      NodeTestHelper.start_runner_port(namespace,
         runtime: ctx.runtime,
         transport: ctx.transport,
         env: env,
         connect_timeout: 120_000
       )
 
-    # Close the port at teardown so the executor process exits (it blocks on
-    # stdin until then); the SIGKILLed executor is already dead, so this is a
+    # Close the port at teardown so the runner process exits (it blocks on
+    # stdin until then); the SIGKILLed runner is already dead, so this is a
     # no-op for it.
     on_exit(fn -> ensure_port_dead(port) end)
-    {port, executor_id}
+    {port, runner_id}
   end
 
   defp ensure_port_dead(port) do
@@ -1072,7 +1072,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   # Force a fresh controller-side bind so `AddOperative` carries
   # `resume_segment_count > 0` (Path A). Killing the supervisor bypasses
   # `terminate/2` (WAL survives) and ProcessHub transient-restarts it onto the
-  # live replacement executor.
+  # live replacement runner.
   defp force_fresh_rebind(namespace, operative_id) do
     {:ok, pid} = OperativeManager.get_operative_pid(namespace, operative_id)
     Process.exit(pid, :kill)

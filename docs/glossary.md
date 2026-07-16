@@ -1,7 +1,7 @@
 # Flezha Glossary
 
-End-state mental model: **A Controller orchestrates Operatives across Executors.
-Each Executor runs Operatives; each Operative contains Operations; each Operation
+End-state mental model: **A Controller orchestrates Operatives across Runners.
+Each Runner runs Operatives; each Operative contains Operations; each Operation
 contains Segments.**
 
 ## Roles
@@ -11,10 +11,10 @@ contains Segments.**
   One Controller node serves one or more namespaces; multiple Controller nodes
   serving the same namespace cluster via Erlang distribution + ProcessHub.
 
-- **Executor** — the SDK process (Rust or Java) that connects to a Controller
+- **Runner** — the SDK process (Rust or Java) that connects to a Controller
   and runs user-defined Operatives. Started by the user; opens a control channel +
   data streams to the Controller; runs the work-stealing pool that dispatches
-  per-Segment mailboxes. One physical machine may run multiple Executors.
+  per-Segment mailboxes. One physical machine may run multiple Runners.
 
 ## Workload abstractions
 
@@ -67,12 +67,12 @@ contains Segments.**
 
 The word "Operator" used to mean "the SDK process" in older Flezha code and
 docs. After the rename, that meaning is dropped: **the SDK process is now an
-Executor**. The word "Operator" survives only as **ProcessHub-internal
+Runner**. The word "Operator" survives only as **ProcessHub-internal
 ring-node jargon** — a node in ProcessHub's distribution ring. ProcessHub is a
 third-party library; its terminology is not user-facing in Flezha. When the
 word appears in `docs/process_hub_architecture.md` or in a doc comment whose
 context is ProcessHub, it refers to that internal abstraction, not to the
-Executor.
+Runner.
 
 Note also the **Operation** vs **Operative** distinction: an *Operative* is the
 unit you run; an *Operation* is a stage inside it. The unit id is `operative_id`;
@@ -83,8 +83,8 @@ the stage id is `operation_id`.
 - `docs/architecture/` — The architectural map: the durable-compute kernel, the
   two profiles, and the diagrams.
 - `docs/operative_architecture.md` — Operative/Operation/Segment deep dive.
-- `docs/sdk_protocol_spec.md` — Wire protocol between Executors and the
+- `docs/sdk_protocol_spec.md` — Wire protocol between Runners and the
   Controller.
 - `docs/process_hub_architecture.md` — Two-level distribution (ProcessHub picks
-  a Controller node; the Controller picks an Executor).
+  a Controller node; the Controller picks a Runner).
 - `docs/resilience/state_persistence.md` — Per-Segment WAL/snapshot/retention.

@@ -24,7 +24,7 @@ The same input, both modes, side by side.
 sequenceDiagram
     participant SRC as 🌐 Source
     participant CTRL as 🧠 Controller
-    participant EX as ⚙️ Executor segment (state in memory)
+    participant EX as ⚙️ Runner segment (state in memory)
     participant SINK as 📤 Sink
 
     SRC->>CTRL: event
@@ -54,15 +54,15 @@ progress move together. The default trades that guarantee for zero added latency
 
 ## Per-segment recovery
 
-The blast radius of an executor crash is **one segment**. Each segment carries its own WAL, its
+The blast radius of a runner crash is **one segment**. Each segment carries its own WAL, its
 own snapshot lineage, and — under the tier — its own consumed offset, so it resumes on its own
 without coordinating with anything.
 
 ```mermaid
 sequenceDiagram
-    participant EX as ⚙️ Executor (old)
+    participant EX as ⚙️ Runner (old)
     participant CTRL as 🧠 Controller
-    participant EX2 as ⚙️ Executor (recovered)
+    participant EX2 as ⚙️ Runner (recovered)
 
     EX->>CTRL: effect records through offset 5000
     Note over EX: 💥 CRASH
@@ -93,7 +93,7 @@ segment forever — freezing the minimum watermark, so retention stops and sourc
 ```mermaid
 sequenceDiagram
     participant CTRL as 🧠 Controller
-    participant EX as ⚙️ Executor segment
+    participant EX as ⚙️ Runner segment
     participant DLQ as 💾 DLQ store
 
     CTRL->>EX: input (payload P, offset N)
@@ -123,7 +123,7 @@ park and the offset advance are *the same durable record*, so they cannot come a
 tier off they are two operations, and the ack is what orders them.
 
 Retry lives in the SDK, where the policy is declared. The park is durable on the **controller**,
-because executors are disposable and their disks are not part of the durability contract.
+because runners are disposable and their disks are not part of the durability contract.
 
 **The store.** `app_data/dlq/<operative_class>/<operation_id>/` holds an `entries.jsonl` plus one
 blob per payload, fsynced before the ack. Entries are idempotent on their origin — `segment@offset`
@@ -156,7 +156,7 @@ genuinely coherent.
 ```mermaid
 sequenceDiagram
     participant CTRL as 🧠 Controller
-    participant EX as ⚙️ Executor segment
+    participant EX as ⚙️ Runner segment
     participant SINK as 📤 Sink
 
     Note over EX: --- an interval opens ---
@@ -220,7 +220,7 @@ correction journal, no crash marker.
 sequenceDiagram
     participant SRC as 🌐 Source
     participant CTRL as 🧠 Controller
-    participant EX as ⚙️ Executor segment
+    participant EX as ⚙️ Runner segment
     participant SINK as 📤 Sink (changelog)
 
     SRC->>CTRL: a late event
@@ -234,7 +234,7 @@ sequenceDiagram
     CTRL->>CTRL: 1 · baseline — scan the WAL FORWARD to the first record<br/>with event_time >= T, and keep the one before it
     CTRL->>CTRL: 2 · slice = (that record's consumed offset, the log's last offset]
     CTRL->>CTRL: 3 · 💾 rewind_to(baseline_seq, epoch + 1) — keep records at or below the baseline,<br/>drop only the snapshots above it, lower the input watermark. THIS is the commit point.
-    CTRL->>EX: 4 · RestoreInitState — a BLOCKING wait. The executor clears its mailbox.
+    CTRL->>EX: 4 · RestoreInitState — a BLOCKING wait. The runner clears its mailbox.
     CTRL->>EX: 5 · re-forward the slice, each marked flz.replay
     CTRL->>EX: 6 · flz.replay_end — a payload-less BROADCAST to every segment
     EX->>EX: buffer until the marker, sort by (event time, then offset), then dispatch
@@ -251,7 +251,7 @@ Four details in there are load-bearing, and each was a bug in an earlier design:
   processed as an arrival — and leaves the records that overtook the late input in place,
   correcting nothing. Forward to the first record at or after the target, then keep the one
   before it, is the only correct baseline.
-- **The rewind happens before the restore.** Reversed, the executor would append corrected
+- **The rewind happens before the restore.** Reversed, the runner would append corrected
   records onto sequences the stale records still hold, and emit under the old epoch before the
   bump was durable.
 - **`flz.replay_end` is a broadcast, not a mark on the last input.** An input routes to exactly

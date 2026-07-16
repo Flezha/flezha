@@ -4,15 +4,15 @@
 TBD - created by archiving change harden-kubernetes-reference-defaults. Update Purpose after archive.
 ## Requirements
 ### Requirement: Reference workloads declare resource requests and limits
-Every container in the reference manifests (`kubernetes/flezha-daemonset.yaml` controller container and `kubernetes/service-template.yaml` executor container) SHALL declare CPU and memory `requests` and `limits` with conservative, documented defaults that an operator can tune. No reference workload container SHALL ship without resource bounds.
+Every container in the reference manifests (`kubernetes/flezha-daemonset.yaml` controller container and `kubernetes/service-template.yaml` runner container) SHALL declare CPU and memory `requests` and `limits` with conservative, documented defaults that an operator can tune. No reference workload container SHALL ship without resource bounds.
 
 #### Scenario: Controller container has resource bounds
 - **WHEN** `kubernetes/flezha-daemonset.yaml` is applied
 - **THEN** the `flezha` container declares `resources.requests` and `resources.limits` for both `cpu` and `memory`, with values documented as tunable defaults in `kubernetes/README.md`
 
-#### Scenario: Executor template carries the same baseline
+#### Scenario: Runner template carries the same baseline
 - **WHEN** the `service-template.yaml` reference is used
-- **THEN** its executor container also declares CPU and memory requests and limits
+- **THEN** its runner container also declares CPU and memory requests and limits
 
 ### Requirement: Controller container declares liveness, readiness, and startup probes
 The controller container SHALL declare a `startupProbe`, a `livenessProbe`, and a `readinessProbe` so Kubernetes restarts a wedged controller and gates rollouts/traffic on actual health. The probes SHALL use a controller-provided health signal (a `flz` health command exec, or a TCP check on a controller port) and SHALL NOT assume any external dependency.
@@ -26,7 +26,7 @@ The controller container SHALL declare a `startupProbe`, a `livenessProbe`, and 
 - **THEN** the kubelet restarts the container, and while unready the pod is removed from readiness-gated endpoints
 
 ### Requirement: Reference manifests meet the Pod Security Standards restricted profile
-The controller (and executor template) Pod and container `securityContext` SHALL satisfy the *restricted* Pod Security Standard: `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: ["ALL"]`, `seccompProfile.type: RuntimeDefault`, and `readOnlyRootFilesystem: true` with explicit writable `emptyDir`/volume mounts for any path the process must write. Where a root-running init container (e.g. `fix-permissions`) is required only because a volume does not honor `fsGroup`, the manifest SHALL document that switching to an `fsGroup`-honoring volume removes the need for the root init container under the restricted profile.
+The controller (and runner template) Pod and container `securityContext` SHALL satisfy the *restricted* Pod Security Standard: `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: ["ALL"]`, `seccompProfile.type: RuntimeDefault`, and `readOnlyRootFilesystem: true` with explicit writable `emptyDir`/volume mounts for any path the process must write. Where a root-running init container (e.g. `fix-permissions`) is required only because a volume does not honor `fsGroup`, the manifest SHALL document that switching to an `fsGroup`-honoring volume removes the need for the root init container under the restricted profile.
 
 #### Scenario: Restricted securityContext fields are set
 - **WHEN** `kubernetes/flezha-daemonset.yaml` is applied
@@ -34,7 +34,7 @@ The controller (and executor template) Pod and container `securityContext` SHALL
 
 #### Scenario: Restricted profile admits the namespace
 - **WHEN** the `flezha` namespace is labelled `pod-security.kubernetes.io/enforce: restricted`
-- **THEN** the reference DaemonSet and executor template are admitted without warnings, OR the README documents the exact reason and the `fsGroup`-volume alternative that makes them compliant
+- **THEN** the reference DaemonSet and runner template are admitted without warnings, OR the README documents the exact reason and the `fsGroup`-volume alternative that makes them compliant
 
 ### Requirement: Reference image is pinned and the pull secret is optional
 The reference manifests SHALL reference the controller image by a **pinned version tag** (not `:latest`). Because the published image is public, a stock `kubectl apply -f kubernetes/` SHALL succeed **without** creating any registry secret: `imagePullSecrets` SHALL be optional (absent by default or clearly commented), and the README SHALL document how to add one for a private registry.
@@ -66,7 +66,7 @@ The reference manifests SHALL be free of YAML/scheduling defects and SHALL NOT e
 
 #### Scenario: podAntiAffinity expression is valid
 - **WHEN** `kubernetes/service-template.yaml` is applied
-- **THEN** its `podAntiAffinity` `matchExpressions` entry uses `operator: In` (not the invalid `executor: In`), and the manifest is accepted by the API server
+- **THEN** its `podAntiAffinity` `matchExpressions` entry uses `operator: In` (not the invalid `runner: In`), and the manifest is accepted by the API server
 
 #### Scenario: No environment-specific identifiers
 - **WHEN** any reference manifest is reviewed

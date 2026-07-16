@@ -24,8 +24,8 @@ the same outcome.
 
 1. **Quiesce** — sets a process-tree-visible flag (`Coordinator.shutting_down?/0`).
    - `Flezha.Service.OperativeManager.start_operative/2` returns `{:error, :shutting_down}`.
-   - `Flezha.Executor.FleetManager` rejects new executor connect attempts.
-   - Already-running Operatives and connected executors are NOT touched.
+   - `Flezha.Runner.FleetManager` rejects new runner connect attempts.
+   - Already-running Operatives and connected runners are NOT touched.
 2. **Drain** — captures the locally-hosted Operative set per namespace,
    then calls `Flezha.Service.HubManager.stop_hub_manager/0` so
    ProcessHub's coordinator dispatches `cluster_leave` to peers

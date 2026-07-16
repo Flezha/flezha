@@ -2,18 +2,18 @@
 
 ## Purpose
 
-The operative-model capability is the canonical vocabulary and kind model for Flezha's compute workloads. It defines the **Operative** umbrella (the generic top-level unit of work an Executor runs at a Controller's direction), its two kinds today — **Unbounded** (runs-forever) and **Bounded** (runs-to-completion) — and the per-Operative concepts of **Operation** (a typed stage) and **Segment** (the per-key, state-bearing slice). It mandates the no-synonyms rule (no `relay`, `shard`, `partition`, or `task` survives in any shipped surface) and the sparse, default-`false` capability descriptor model that lets new kinds and capabilities be added additively without touching existing kinds. Capabilities attach to the kind, not to user computation code; `persistent_state?` gates per-Segment state introspection. The unified `flz operative` CLI verb tree manages every kind's lifecycle.
+The operative-model capability is the canonical vocabulary and kind model for Flezha's compute workloads. It defines the **Operative** umbrella (the generic top-level unit of work a Runner runs at a Controller's direction), its two kinds today — **Unbounded** (runs-forever) and **Bounded** (runs-to-completion) — and the per-Operative concepts of **Operation** (a typed stage) and **Segment** (the per-key, state-bearing slice). It mandates the no-synonyms rule (no `relay`, `shard`, `partition`, or `task` survives in any shipped surface) and the sparse, default-`false` capability descriptor model that lets new kinds and capabilities be added additively without touching existing kinds. Capabilities attach to the kind, not to user computation code; `persistent_state?` gates per-Segment state introspection. The unified `flz operative` CLI verb tree manages every kind's lifecycle.
 ## Requirements
 ### Requirement: Canonical operative vocabulary
 
 The system SHALL use exactly these terms for compute workloads, and code, modules, protobuf, wire payload-ids, CLI, config keys, env vars, documentation, and on-disk path components SHALL NOT introduce or retain the synonyms `relay`, `shard`, `partition`, `task`, or `continuous`:
 
-- **Operative** — the generic top-level unit of work that an Executor runs at a Controller's direction; the thing operators start and stop. Every Operative has a `kind`.
+- **Operative** — the generic top-level unit of work that a Runner runs at a Controller's direction; the thing operators start and stop. Every Operative has a `kind`.
 - **Unbounded Operative** — the operative kind that runs with no inherent end, folding an ongoing stream of input until it is stopped. This is the workload formerly called "Relay".
 - **Bounded Operative** — the operative kind that runs to completion and finishes. This is the workload formerly called "Task".
 - **Operation** — a typed stage within an Operative that processes inputs from a Channel. Formerly "Shard".
 - **Segment** — the per-key, state-bearing slice of an Operation; durable state lives at the Segment level. Formerly "Partition".
-- **Controller**, **Executor**, and **Channel** are unchanged. "Operator" remains reserved for ProcessHub-internal ring-node jargon and is never used for an Operative.
+- **Controller**, **Runner**, and **Channel** are unchanged. "Operator" remains reserved for ProcessHub-internal ring-node jargon and is never used for an Operative.
 
 #### Scenario: Documentation and glossary use operative vocabulary
 

@@ -1,30 +1,30 @@
-# Reference template for an executor service (an SDK process that attaches to
+# Reference template for a runner service (an SDK process that attaches to
 # the Flezha controller over the shared Unix socket dir). Copy, rename, and
-# replace the `executor-service-x` placeholders and the image.
+# replace the `runner-service-x` placeholders and the image.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: executor-service-x
+  name: runner-service-x
   namespace: flezha
   labels:
-    app: executor-service-x
-    app.kubernetes.io/name: executor-service-x
-    app.kubernetes.io/instance: executor-service-x
-    app.kubernetes.io/component: executor
+    app: runner-service-x
+    app.kubernetes.io/name: runner-service-x
+    app.kubernetes.io/instance: runner-service-x
+    app.kubernetes.io/component: runner
     app.kubernetes.io/part-of: flezha
     app.kubernetes.io/managed-by: kubectl
 spec:
   replicas: 3 # X replicas - will distribute across available nodes
   selector:
     matchLabels:
-      app: executor-service-x
+      app: runner-service-x
   template:
     metadata:
       labels:
-        app: executor-service-x
-        app.kubernetes.io/name: executor-service-x
-        app.kubernetes.io/instance: executor-service-x
-        app.kubernetes.io/component: executor
+        app: runner-service-x
+        app.kubernetes.io/name: runner-service-x
+        app.kubernetes.io/instance: runner-service-x
+        app.kubernetes.io/component: runner
         app.kubernetes.io/part-of: flezha
         app.kubernetes.io/managed-by: kubectl
     spec:
@@ -49,13 +49,13 @@ spec:
                     - key: app
                       operator: In
                       values:
-                        - executor-service-x
+                        - runner-service-x
                 topologyKey: kubernetes.io/hostname
       containers:
-        - name: executor-service-x
+        - name: runner-service-x
           # Pin a released tag; never `:latest` (see README "Image and registry").
-          image: your-executor-service-x:0.1.0
-          # Starting points — tune to the executor's workload.
+          image: your-runner-service-x:0.1.0
+          # Starting points — tune to the runner's workload.
           resources:
             requests:
               cpu: 100m
@@ -68,7 +68,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
-          # An executor exposes no health endpoint of its own. The liveness
+          # A runner exposes no health endpoint of its own. The liveness
           # signal it does have is its attachment to the controller: the SDK
           # only creates its primary-stream socket once the control channel is
           # up. Replace this with an HTTP probe if your service serves one.
@@ -92,7 +92,7 @@ spec:
           volumeMounts:
             - name: flezha-sockets
               mountPath: /shared/sockets # Access to Flezha's Unix sockets
-            - name: executor-service-x-data
+            - name: runner-service-x-data
               mountPath: /app/data
             # readOnlyRootFilesystem: true — give the process a writable /tmp.
             - name: tmp
@@ -105,9 +105,9 @@ spec:
           hostPath:
             path: /opt/flezha-sockets # Same path as Flezha DaemonSet
             type: Directory
-        - name: executor-service-x-data
+        - name: runner-service-x-data
           hostPath:
-            path: /opt/executor-service-x-data
+            path: /opt/runner-service-x-data
             type: DirectoryOrCreate
         - name: tmp
           emptyDir: {}

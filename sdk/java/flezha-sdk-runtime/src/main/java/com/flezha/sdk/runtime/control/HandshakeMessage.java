@@ -3,7 +3,7 @@ package com.flezha.sdk.runtime.control;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.flezha.sdk.bounded.BoundedOperativeRegistry;
 import com.flezha.sdk.operative.UnboundedOperativeRegistry;
-import com.flezha.sdk.runtime.ExecutorIdStore;
+import com.flezha.sdk.runtime.RunnerIdStore;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -17,8 +17,8 @@ import java.util.stream.Collectors;
  * UnboundedOperative interface has no description hook today, so the per-id
  * description is always empty.
  *
- * <p>{@code stable_id} is the executor's self-owned, durable stable identity
- * (see {@link ExecutorIdStore}). It is present on EVERY connect — initial and
+ * <p>{@code stable_id} is the runner's self-owned, durable stable identity
+ * (see {@link RunnerIdStore}). It is present on EVERY connect — initial and
  * reconnect alike — and trusted by the controller as the operative-binding key.
  * Mirrors the Rust SDK.
  */
@@ -36,6 +36,6 @@ public record HandshakeMessage(
         ids.addAll(BoundedOperativeRegistry.factoryIds());
         List<FactoryInfo> infos =
                 ids.stream().map(id -> new FactoryInfo(id, "")).collect(Collectors.toList());
-        return new HandshakeMessage(namespace, ids, infos, ExecutorIdStore.stableId(namespace, ids));
+        return new HandshakeMessage(namespace, ids, infos, RunnerIdStore.stableId(namespace, ids));
     }
 }

@@ -2,7 +2,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   @moduledoc """
   End-to-end SIGTERM verification for `ship-fresh-state-on-sdk-shutdown`.
 
-  Spins up a real Rust executor subprocess, registers a operative
+  Spins up a real Rust runner subprocess, registers a operative
   with `snapshot_interval: 0` (so the controller has no periodic capture and
   the only path to populate `Overwatch.state.snapshot` is the SDK's
   shutdown notification), then sends SIGTERM to the OS pid and asserts
@@ -17,12 +17,12 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
 
   The complementary unit-level coverage lives in
   `test/operative/overwatch_external_snapshot_test.exs` and
-  `test/flezha/executor/control_channel_shutdown_notification_test.exs`.
+  `test/flezha/runner/control_channel_shutdown_notification_test.exs`.
   """
 
   use ExUnit.Case, async: false
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Service.EventManager
   alias Flezha.Service.PortPilot
@@ -51,8 +51,8 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   end
 
   @tag :state_freshness_e2e
-  test "SIGTERM to the rust SDK populates Overwatch.state.snapshot via ExecutorShutdownNotification" do
-    {port, ce_id} = start_executor()
+  test "SIGTERM to the rust SDK populates Overwatch.state.snapshot via RunnerShutdownNotification" do
+    {port, ce_id} = start_runner()
     on_exit(fn -> ensure_port_dead(port) end)
 
     {:os_pid, os_pid} = :erlang.port_info(port, :os_pid)
@@ -65,14 +65,14 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
       init_values: %{},
       # Disabled-snapshot — flezha_market-shape. The only path for
       # `state.snapshot` to become non-nil is the SDK's
-      # `ExecutorShutdownNotification`. If the notification path were
+      # `RunnerShutdownNotification`. If the notification path were
       # broken, the assertion at the bottom would still see nil and
       # fail loudly.
       opts: [snapshot_interval: 0]
     }
 
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
-    assert info.executor_id == ce_id
+    assert info.runner_id == ce_id
 
     {:ok, overwatch_pid} = OperativeManager.get_operative_pid(@namespace, operative_id)
     pre_state = :sys.get_state(overwatch_pid)
@@ -133,26 +133,26 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
              "  received: #{inspect(received_inputs)}"
   end
 
-  defp start_executor() do
+  defp start_runner() do
     {:ok, current_path} = :file.get_cwd()
 
     command =
-      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_executor/Cargo.toml " <>
+      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml " <>
         "--target-dir=./target -- " <> @namespace
 
-    EventManager.add_handler(:executor_connected_event)
+    EventManager.add_handler(:runner_connected_event)
     {port, _command} = PortPilot.open_port(command, transport: :uds)
 
     ce_id =
       receive do
-        {:executor_connected_event, {@namespace, ce_id}} -> ce_id
+        {:runner_connected_event, {@namespace, ce_id}} -> ce_id
       after
         # Cold cargo cache warmup can blow past the usual 2 s — match the
         # existing healing test's 120 s budget for the first run.
         120_000 -> raise "compute engine never connected"
       end
 
-    EventManager.rem_handler(:executor_connected_event)
+    EventManager.rem_handler(:runner_connected_event)
     {port, ce_id}
   end
 

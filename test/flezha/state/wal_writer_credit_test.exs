@@ -21,8 +21,8 @@ defmodule Flezha.State.WalWriterCreditTest do
 
     test_pid = self()
 
-    stub(Flezha.Executor.ControlChannel, :send_control_async, fn executor_id, command ->
-      send(test_pid, {:ctl_async, executor_id, command})
+    stub(Flezha.Runner.ControlChannel, :send_control_async, fn runner_id, command ->
+      send(test_pid, {:ctl_async, runner_id, command})
       :ok
     end)
 
@@ -174,7 +174,7 @@ defmodule Flezha.State.WalWriterCreditTest do
 
       assert_receive {:ctl_async, "exec-legacy",
                       {:segment_mailbox_status,
-                       %ExecutorCommands.SegmentMailboxStatus{status: "full"}}},
+                       %RunnerCommands.SegmentMailboxStatus{status: "full"}}},
                      1_000
 
       # Draining below the low watermark ships :open exactly once.
@@ -182,7 +182,7 @@ defmodule Flezha.State.WalWriterCreditTest do
 
       assert_receive {:ctl_async, "exec-legacy",
                       {:segment_mailbox_status,
-                       %ExecutorCommands.SegmentMailboxStatus{status: "open"}}},
+                       %RunnerCommands.SegmentMailboxStatus{status: "open"}}},
                      1_000
     end
   end

@@ -1,5 +1,5 @@
 defmodule FlezhaQuicTest do
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias FlezhaTest.Fixtures.OperativeFixture
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.OperativeTestHelper
@@ -17,14 +17,14 @@ defmodule FlezhaQuicTest do
 
   setup_all do
     # Start 2 compute engines connected via QUIC for this test module.
-    ce_id_1 = NodeTestHelper.start_executor(@quic_namespace, transport: :quic)
-    ce_id_2 = NodeTestHelper.start_executor(@quic_namespace, transport: :quic)
+    ce_id_1 = NodeTestHelper.start_runner(@quic_namespace, transport: :quic)
+    ce_id_2 = NodeTestHelper.start_runner(@quic_namespace, transport: :quic)
 
     on_exit(fn ->
       FleetManager.stop_namespace(@quic_namespace)
     end)
 
-    %{executor_ids: [ce_id_1, ce_id_2]}
+    %{runner_ids: [ce_id_1, ce_id_2]}
   end
 
   setup _context do
@@ -36,7 +36,7 @@ defmodule FlezhaQuicTest do
   end
 
   test "compute engines connected via QUIC" do
-    res = FleetManager.active_executors(@quic_namespace)
+    res = FleetManager.active_runners(@quic_namespace)
     assert length(res) === 2
     Enum.each(res, &assert(is_binary(&1)))
   end
@@ -54,7 +54,7 @@ defmodule FlezhaQuicTest do
 
     assert info[:operative_id] === "quic_operative_test"
     assert is_pid(info[:pid])
-    assert is_binary(info[:executor_id])
+    assert is_binary(info[:runner_id])
   end
 
   test "end-to-end message flow over QUIC" do

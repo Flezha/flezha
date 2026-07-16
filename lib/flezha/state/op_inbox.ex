@@ -7,7 +7,7 @@ defmodule Flezha.State.OpInbox do
   inbox.wal`, written through the same `WalWriter` framing + `FsyncBatcher`
   path as the sibling `op.journal` under the reserved identity
   `Registry.inbox_id/1` — no parallel persistence machinery. Every post-start
-  input is appended here **before** it is forwarded to the executor, so an
+  input is appended here **before** it is forwarded to the runner, so an
   input that arrives while the instance is suspended, crashed, or migrating is
   delivered on rehydrate instead of being dropped.
 

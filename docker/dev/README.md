@@ -18,12 +18,12 @@ commands below from the project *root* directory.
 > binaries committed under
 > `sdk/java/flezha-sdk-native/src/main/resources/native/` and the two
 > committed fat jars (`sdk/java/flezha-sdk/dist/flezha-sdk.jar`,
-> `test/apps/java_executor/dist/java_executor.jar`) are
+> `test/apps/java_runner/dist/java_runner.jar`) are
 > produced by a separate, build-only image. See
 > [`../build/README.md`](../build/README.md) — the one-shot wrapper is
 > `scripts/build-dist.sh --docker`. CI never builds those artifacts; it
 > consumes the committed copies, so any change under `sdk/java/`,
-> `flz_jni/`, `flz_transport/`, or `test/apps/java_executor/`
+> `flz_jni/`, `flz_transport/`, or `test/apps/java_runner/`
 > needs an artifact refresh + commit before it merges.
 
 ## Quick reference
@@ -103,7 +103,7 @@ iex --name flezha@127.0.0.1 --cookie flezha_dev_cookie -S mix
 - Start another terminal on controller container to start the compute engine (you can start multiple instances of compute engines):
 ```bash
 docker exec -it flezha_controller_dev bash
-cd test/apps/rust_executor
+cd test/apps/rust_runner
 cargo run --target-dir=./target
 ```
 

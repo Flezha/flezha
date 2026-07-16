@@ -2,10 +2,10 @@
 
 How the controller uses the [`process_hub`](https://hex.pm/packages/process_hub) library to
 distribute operatives across nodes, plus how this layer interacts with the
-executor (Rust/Java SDK) connection model.
+runner (Rust/Java SDK) connection model.
 
 This document is a reference for anyone designing features that touch operative
-placement, restart, recovery, migration, or the executor/controller connection
+placement, restart, recovery, migration, or the runner/controller connection
 lifecycle. Read it before proposing changes in those areas — most of the
 behaviour described here is already automatic, and the most common mistake is
 to assume Flezha owns logic that ProcessHub already provides.
@@ -25,20 +25,20 @@ Flezha distributes operatives at two independent levels:
    each operative, using a per-namespace consistent hash ring. Controller nodes
    running the same namespace cluster together via Erlang distribution +
    ProcessHub's coordinator.
-2. **Within-controller level — executor selection.** Once an controller owns an operative,
-   it picks one of its locally-connected executors (Rust/Java SDK clients) to
+2. **Within-controller level — runner selection.** Once an controller owns an operative,
+   it picks one of its locally-connected runners (Rust/Java SDK clients) to
    spawn the operative on. Today this pick is `Enum.random` filtered by factory
    support (`lib/flezha/service/operative_manager.ex`).
 
-The two levels are decoupled. ProcessHub knows nothing about executors; the
-controller's `alter_child_data` hook handles executor selection at operative start
+The two levels are decoupled. ProcessHub knows nothing about runners; the
+controller's `alter_child_data` hook handles runner selection at operative start
 time.
 
 > **Note (operative-mvp-rust).** The Rust SDK now ships work as
 > `Unbounded Operative` / `Operation` / `Segment` (see `docs/operative_architecture.md`).
 > Segmenting is **SDK-internal**: a single Unbounded Operative instance can have many
 > Operations, each with many Segments running in parallel inside the
-> executor process. ProcessHub continues per-operative placement at the
+> runner process. ProcessHub continues per-operative placement at the
 > cluster level — one Unbounded Operative instance is one ProcessHub child — and is
 > not aware of segments. The two-level distribution above is unchanged.
 
@@ -90,12 +90,12 @@ Flezha plugs into ProcessHub via two hooks (`lib/flezha/service/hub_manager.ex`)
 
 - `child_data_alter` — fires when ProcessHub is about to start an operative on
   this node. Flezha rewrites the child_spec to bake in the assigned
-  `executor_id`, picked by `OperativeManager.assign_executor(namespace,
-  factory_id)`. Raises if no executor declaring that factory is currently
-  connected. **Net effect:** every operative restart re-runs executor selection.
+  `runner_id`, picked by `OperativeManager.assign_runner(namespace,
+  factory_id)`. Raises if no runner declaring that factory is currently
+  connected. **Net effect:** every operative restart re-runs runner selection.
 - `child_registered` → `hook_insert_pid` — fires after an operative has started.
   Flezha pushes the new local PID to all stream channels of the assigned
-  `executor_id` so subsequent I/O routes to the right process.
+  `runner_id` so subsequent I/O routes to the right process.
 
 ## Lifecycle scenarios
 
@@ -112,11 +112,11 @@ Flezha plugs into ProcessHub via two hooks (`lib/flezha/service/hub_manager.ex`)
 5. The destination node starts the operative; before it accepts I/O, ETS
    handover delivers the saved state via `alter_handover_state/2`.
 6. Only after handover completes does the source process terminate.
-7. The destination's `alter_child_data` hook picks a local executor — possibly
+7. The destination's `alter_child_data` hook picks a local runner — possibly
    different from the one that hosted the operative on the source node.
 
-Net effect: graceful failover preserves operative + plugin state. Executors on
-the leaving node lose their work (it moved). Executors on the destination node
+Net effect: graceful failover preserves operative + plugin state. Runners on
+the leaving node lose their work (it moved). Runners on the destination node
 gain the work.
 
 ### Ungraceful node loss (crash, OOM, kill -9, network partition that holds)
@@ -125,7 +125,7 @@ gain the work.
 2. ProcessHub batches the departure (small window to absorb flaps), then
    redistributes affected operatives across surviving nodes.
 3. No state handover occurs — the source died before any capture.
-4. Destination nodes start operatives fresh; `alter_child_data` picks executors.
+4. Destination nodes start operatives fresh; `alter_child_data` picks runners.
 5. Per-operative periodic state snapshots (see [State snapshots](#state-snapshots-for-handover-and-restart))
    provide a "last-known good" state if the destination's operative restart
    path consults them.
@@ -142,49 +142,49 @@ explicit "snap back" — placement is purely a function of the hash ring.
 
 When ProcessHub does decide to move an operative to the rejoining node, it goes
 through the standard `child_data_alter` path on that node, which picks a
-locally-connected executor.
+locally-connected runner.
 
-### Executor restart (SDK process dies and comes back)
+### Runner restart (SDK process dies and comes back)
 
 ProcessHub doesn't see this — it's invisible at the cluster layer. Handling
-lives in `FleetManager` (`lib/flezha/executor/fleet_manager.ex`):
+lives in `FleetManager` (`lib/flezha/runner/fleet_manager.ex`):
 
-- Branch A — other executors in this namespace on this controller: reroute the dead
-  executor's operatives to a peer executor (via `executor_reroute` →
-  `Overwatch.executor_migrate` → `start_operative_sdk` → `AddOperative`
-  protobuf to the surviving executor).
-- Branch B — no executors here, but other controllers serve this namespace:
+- Branch A — other runners in this namespace on this controller: reroute the dead
+  runner's operatives to a peer runner (via `runner_reroute` →
+  `Overwatch.runner_migrate` → `start_operative_sdk` → `AddOperative`
+  protobuf to the surviving runner).
+- Branch B — no runners here, but other controllers serve this namespace:
   `hub_migrate` tears down the local namespace hub. ProcessHub redistributes
-  its slice to peer controllers. Returning executor gets new work next time
+  its slice to peer controllers. Returning runner gets new work next time
   ProcessHub places something on it.
-- Branch C — last executor in the namespace cluster: mark `:inactive` with a
-  timestamp. If the executor reconnects within `executor_keepalive`
+- Branch C — last runner in the namespace cluster: mark `:inactive` with a
+  timestamp. If the runner reconnects within `runner_keepalive`
   (default 30 s, env var `FLEZHA_OPERATOR_KEEPALIVE`),
-  `try_migrate_executor` reroutes the preserved work to the new
-  `executor_id`.
+  `try_migrate_runner` reroutes the preserved work to the new
+  `runner_id`.
 
 ## Connection-healing contracts (post 0.2.x)
 
-Two contracts make executor ↔ controller connections heal automatically across
+Two contracts make runner ↔ controller connections heal automatically across
 either-side restarts:
 
 1. **Stream rebind on `{:flz_closed, ...}`.** `StreamChannel` clears its
    `stream_ref` to `nil` synchronously inside its close-handler clause, and
    refuses outbound frames while `stream_ref == nil` (returns
    `{:error, :no_stream}` on the call path; logs and drops on the cast path).
-   On the next incoming data stream for the same `executor_id`,
+   On the next incoming data stream for the same `runner_id`,
    `StreamAcceptor` (UDS) and `Transport.Server` (QUIC) walk the existing
    `StreamSup` children and bind the new ref to the first nil-ref channel via
    an atomic `GenServer.call(channel, {:bind, new_ref})`. A channel with a
    live ref returns `:already_bound`, so the acceptor moves to the next
    candidate without ever silently overwriting an in-flight binding.
 2. **AddOperative reissue on reconnect.** After the existing
-   `try_migrate_executor` step, `FleetManager.executor_connect/3`
+   `try_migrate_runner` step, `FleetManager.runner_connect/3`
    calls `reissue_local_orphans/5`, which queries
    `HubManager.get_registry/1`, filters to operatives hosted on `node()` whose
-   `:tag` metadata names a no-longer-active `executor_id` and whose
-   factory the connecting executor advertises, and re-issues `AddOperative` to
-   the new executor via `Overwatch.executor_migrate` →
+   `:tag` metadata names a no-longer-active `runner_id` and whose
+   factory the connecting runner advertises, and re-issues `AddOperative` to
+   the new runner via `Overwatch.runner_migrate` →
    `start_operative_sdk`. Operatives already handled by the migrate step are
    skipped via the `claimed_operative_ids` set so no SDK ever receives a
    duplicate `AddOperative` it would have to handle as a no-op.
@@ -233,17 +233,17 @@ State persistence is split between two layers:
   registry under `app_data/process_hub/{hub_id}/registry.dets`. There is
   no periodic in-memory snapshot loop and no `flz cluster snapshot` CLI.
 
-## Executor → controller discovery and connection
+## Runner → controller discovery and connection
 
 (Documented here because it's adjacent to ProcessHub-driven assignment.)
 
-- Each executor (Rust/Java SDK) connects to **exactly one controller**. There is no
+- Each runner (Rust/Java SDK) connects to **exactly one controller**. There is no
   multi-controller connection.
 - Discovery is filesystem co-location, not service discovery. In Kubernetes
   the `flezha-sockets` hostPath volume is mounted into BOTH the controller pod and
-  the executor pod, so the executor opens the local controller's UDS socket via
+  the runner pod, so the runner opens the local controller's UDS socket via
   `FLEZHA_SOCKET_FILES_PATH` (default `/flezha/sockets`).
-- For QUIC transport: the executor dials `FLEZHA_QUIC_ADDRESS`.
+- For QUIC transport: the runner dials `FLEZHA_QUIC_ADDRESS`.
 - Reconnect loop: exponential backoff `100ms * 2^n` capped at 30 s; retries
   forever; never tries a different controller.
 - Stream architecture: one bidirectional control channel for handshake +
@@ -260,14 +260,14 @@ These are common assumptions to double-check against the actual code:
   for the full safety analysis. Anything beyond that boundary
   (out-of-cluster portable backups, point-in-time-to-arbitrary-past)
   is out of scope.
-- **No persistent FleetManager state.** `executor_namespaces` and
+- **No persistent FleetManager state.** `runner_namespaces` and
   `namespace_factories` live only in the FleetManager GenServer. Restarting
   the controller process loses them entirely; ProcessHub's
   `pre_recovery_replay` hook waits for FleetManager to repopulate
   before replay dispatches `start_children`.
-- **No persistent executor → operative assignment.** Assignment is recomputed
+- **No persistent runner → operative assignment.** Assignment is recomputed
   every time `child_data_alter` fires; nothing is stored.
-- **No multi-controller discovery in the SDK.** An executor does not failover to
+- **No multi-controller discovery in the SDK.** A runner does not failover to
   another controller if its local one is gone — it waits forever for the local one
   to return.
 
@@ -276,14 +276,14 @@ These are common assumptions to double-check against the actual code:
 | Concern | File |
 |---|---|
 | Hub spec, hooks, alter_child_data | `lib/flezha/service/hub_manager.ex` |
-| Executor selection (random within namespace+factory) | `lib/flezha/service/operative_manager.ex` |
-| FleetManager (tracks executors, factories, disconnect branches) | `lib/flezha/executor/fleet_manager.ex` |
+| Runner selection (random within namespace+factory) | `lib/flezha/service/operative_manager.ex` |
+| FleetManager (tracks runners, factories, disconnect branches) | `lib/flezha/runner/fleet_manager.ex` |
 | Operative wrapper, HotSwap callbacks | `lib/flezha/operative/overwatch.ex` |
-| Control channel (executor handshake, EOF detection) | `lib/flezha/executor/control_channel.ex` |
-| Stream channels, attach/detach, frame routing | `lib/flezha/executor/stream_channel.ex` |
+| Control channel (runner handshake, EOF detection) | `lib/flezha/runner/control_channel.ex` |
+| Stream channels, attach/detach, frame routing | `lib/flezha/runner/stream_channel.ex` |
 | UDS stream acceptance and round-robin | `lib/flezha/socket/stream_acceptor.ex` |
-| Rust SDK reconnect loop | `sdk/rust/src/executor/control_unit.rs` |
-| Rust SDK reconnect handler | `sdk/rust/src/executor/{fast,legacy}.rs` `handle_reconnect` |
+| Rust SDK reconnect loop | `sdk/rust/src/runner/control_unit.rs` |
+| Rust SDK reconnect handler | `sdk/rust/src/runner/{fast,legacy}.rs` `handle_reconnect` |
 
 ## Plugin subscriptions persistence
 
@@ -306,7 +306,7 @@ caller can retry. As a result every Overwatch (re)start path — cold
 start, ProcessHub redistribution, in-place restart from
 `alter_child_data` rewriting start args, controller process restart
 (or full cluster cold boot, since the persistent registry survives),
-and HotSwap migration — restores the same plugin set without executor
+and HotSwap migration — restores the same plugin set without runner
 intervention.
 
 This persistence layer is independent of the per-Segment WAL +
@@ -316,10 +316,10 @@ layer persists *how much progress* a Segment has made through its
 input stream. Both layers can be present, absent, or partially
 populated for a given operative without affecting one another.
 
-## RestoreInitState vs executor_migrate
+## RestoreInitState vs runner_migrate
 
 The per-Segment `RestoreInitState` handshake (`operative-state-persistence-controller`)
-and the existing `executor_migrate` flow are **mutually exclusive
+and the existing `runner_migrate` flow are **mutually exclusive
 per Segment**. A reconnecting Segment with `persistence_enabled =
 true` and on-disk WAL/snapshot is restored via `RestoreInitState` only.
 A migrating Segment (HotSwap moving the Overwatch to a peer controller
@@ -331,7 +331,7 @@ The persistence module (`lib/flezha/state/`) is per-Segment and
 ProcessHub-agnostic. ProcessHub picks the controller host; the persistence
 module owns the per-Segment WAL on whichever host the Overwatch is
 currently running on. Migrating an Overwatch to a peer host moves the
-in-memory state via `executor_migrate`; the new host's
+in-memory state via `runner_migrate`; the new host's
 persistence module starts a fresh WAL (no replication is in scope for
 v1).
 

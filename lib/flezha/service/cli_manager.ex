@@ -518,20 +518,20 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  @doc "Lists executors for a specific namespace."
-  def list_executors(namespace, output_format \\ "text") do
+  @doc "Lists runners for a specific namespace."
+  def list_runners(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
 
-    case Flezha.list_executors(namespace_display) do
-      {:ok, executors} when is_list(executors) ->
+    case Flezha.list_runners(namespace_display) do
+      {:ok, runners} when is_list(runners) ->
         context = %{key: :namespace, value: namespace_display, display: "namespace"}
-        handle_list_output(executors, "executors", output_format, context)
+        handle_list_output(runners, "runners", output_format, context)
     end
   end
 
   @doc """
   Lists a namespace's operatives with the reconciler's per-operative health, assigned
-  executor, and live node. Reads the durable registry, so it surfaces FAILED
+  runner, and live node. Reads the durable registry, so it surfaces FAILED
   operatives (whose only placement is a dead node) and is multi-node-safe — it no
   longer crashes on a operative registered across nodes.
   """
@@ -549,7 +549,7 @@ defmodule Flezha.Service.CliManager do
           %{
             id: r.id,
             health: r.health,
-            executor: r.executor,
+            runner: r.runner,
             node: r.node && to_string(r.node)
           }
         end)
@@ -571,7 +571,7 @@ defmodule Flezha.Service.CliManager do
       String.pad_trailing("OPERATIVE", 34),
       String.pad_trailing("HEALTH", 10),
       String.pad_trailing("NODE", 22),
-      "EXECUTOR"
+      "RUNNER"
     ])
 
     Enum.each(rows, fn r ->
@@ -580,7 +580,7 @@ defmodule Flezha.Service.CliManager do
         String.pad_trailing(to_string(r.id), 34),
         String.pad_trailing(to_string(r.health), 10),
         String.pad_trailing(label_or(r.node, "(unplaced)"), 22),
-        label_or(r.executor, "(none)")
+        label_or(r.runner, "(none)")
       ])
     end)
   end
@@ -854,7 +854,7 @@ defmodule Flezha.Service.CliManager do
           {:ok, state} ->
             %{
               id: operative_id,
-              executor_id: state.executor_id,
+              runner_id: state.runner_id,
               namespace: state.namespace,
               kind: operative_kind(state),
               phase: operative_phase(state),
@@ -961,7 +961,7 @@ defmodule Flezha.Service.CliManager do
 
   # A live operative is "running", unless its loop is parked at a committed
   # iteration boundary — then it is "suspended": still registered, still
-  # addressable, holding zero executor resources until an input (or its wake
+  # addressable, holding zero runner resources until an input (or its wake
   # deadline) rehydrates it (`bounded-durable-suspension`).
   defp operative_phase(%{suspended: true}), do: "suspended"
   defp operative_phase(_state), do: "running"
@@ -990,7 +990,7 @@ defmodule Flezha.Service.CliManager do
     IO.puts("Operative: #{operative_id}")
     IO.puts("  Kind: #{operative_kind(state)}")
     IO.puts("  Phase: #{operative_phase(state)}")
-    IO.puts("  Executor ID: #{state.executor_id}")
+    IO.puts("  Runner ID: #{state.runner_id}")
     IO.puts("  Group ID: #{state.namespace}")
     IO.puts("  Uptime (ms): #{operative_uptime_ms(state)}")
     IO.puts("  Default Input Type: #{state.default_input_type}")
@@ -1414,7 +1414,7 @@ defmodule Flezha.Service.CliManager do
 
   @doc """
   `flz state at <operative/operation/segment> <seq | timestamp>` — point-in-time
-  query. Resolves the path string into a `(executor_id, operative,
+  query. Resolves the path string into a `(runner_id, operative,
   operation, segment_key)` by scanning the on-disk state tree (one match
   expected; ambiguous paths print all matches and exit non-zero).
   """
@@ -1468,9 +1468,9 @@ defmodule Flezha.Service.CliManager do
   def state_rotate(path_string) do
     case parse_state_path(path_string) do
       {:ok, {rc, sh, pk}} ->
-        case lookup_executor_for_segment(rc, sh, pk) do
-          {:ok, executor_id} ->
-            case Flezha.Operative.Overwatch.dispatch_compact_segment(executor_id, {rc, sh, pk}) do
+        case lookup_runner_for_segment(rc, sh, pk) do
+          {:ok, runner_id} ->
+            case Flezha.Operative.Overwatch.dispatch_compact_segment(runner_id, {rc, sh, pk}) do
               {:ok, _ref} ->
                 IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
 
@@ -1490,8 +1490,8 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp lookup_executor_for_segment(rc, sh, pk) do
-    Flezha.State.Recovery.resolve_executor({rc, sh, pk})
+  defp lookup_runner_for_segment(rc, sh, pk) do
+    Flezha.State.Recovery.resolve_runner({rc, sh, pk})
   end
 
   @doc """
@@ -1833,7 +1833,7 @@ defmodule Flezha.Service.CliManager do
   @doc """
   `flz state retention <operative_class> <hours>` — set runtime retention
   for `<operative_class>`. Persisted across the next Application boot only
-  if the executor separately writes it to runtime.exs.
+  if the runner separately writes it to runtime.exs.
   """
   def state_retention(operative_class, hours_string) do
     case Integer.parse(hours_string) do

@@ -1,13 +1,13 @@
 defmodule FlezhaTest.System.CreditFlowE2ETest do
   @moduledoc """
-  End-to-end proof for `credit-grant-flow-control` against live executors:
+  End-to-end proof for `credit-grant-flow-control` against live runners:
   a deliberately tiny credit window is overdriven by a burst of
   state-changing inputs, so the SDK exhausts its window and parks between
   the controller's fsync-minted grants — and every Change still lands
   (park, never drop): zero sheds, zero overruns, zero gaps, with the
   park visible in the SDK's `credit_parked` liveness self-report.
 
-  Runs the same scenario on both the Rust and the Java executor
+  Runs the same scenario on both the Rust and the Java runner
   (identical sender-window semantics). Tagged `:system` (boots real
   subprocesses); run with
   `mix test --include system test/system/credit_flow_e2e_test.exs`.
@@ -20,7 +20,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   import FlezhaTest.Helper.CreditTestHelper
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, ensure_port_dead: 1]
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.NodeTestHelper
@@ -86,7 +86,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     Application.put_env(:flezha, :credit_window_bytes, %{operative_id => @window_bytes})
 
     {port, ce_id} =
-      NodeTestHelper.start_executor_port(@namespace,
+      NodeTestHelper.start_runner_port(@namespace,
         runtime: runtime,
         transport: :uds,
         connect_timeout: 120_000,
@@ -99,7 +99,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
 
     builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
-    assert info.executor_id == ce_id
+    assert info.runner_id == ce_id
 
     # Prime with ONE input so the first state frame runs the credit
     # handshake, and burst only once the session is credit-speaking —

@@ -5,12 +5,12 @@ external_processes =
     {:ok, current_path} = :file.get_cwd()
 
     # `--quiet` suppresses the `Finished dev profile [...] / Running [...]`
-    # banners cargo emits each time the executor is re-spawned for
+    # banners cargo emits each time the runner is re-spawned for
     # an ad-hoc test namespace. Build cache hits still keep these calls
     # essentially free; only the stdout noise is gone.
     [
-      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_executor/Cargo.toml --target-dir=./target",
-      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_executor/Cargo.toml --target-dir=./target"
+      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml --target-dir=./target",
+      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml --target-dir=./target"
     ]
   else
     System.get_env("FLEZHA_EXTERNAL_PROCESSES", "") |> String.split(",", trim: true)
@@ -166,26 +166,26 @@ config :flezha,
     ),
 
   # ------------------------------------------------------------------------------------------------
-  # The minimum number of milliseconds to wait before removing a disconnected executor.
+  # The minimum number of milliseconds to wait before removing a disconnected runner.
   #
-  # This option can be used to prevent the executor from being removed too quickly
-  # when it is disconnected from the cluster. For example, if the executor is
+  # This option can be used to prevent the runner from being removed too quickly
+  # when it is disconnected from the cluster. For example, if the runner is
   # restarted or updated.
   #
   # Leave 0 to disable this feature.
   #
   # The default is 30 seconds.
-  executor_keepalive: System.get_env("FLEZHA_EXECUTOR_KEEPALIVE", "30000") |> String.to_integer(),
+  runner_keepalive: System.get_env("FLEZHA_RUNNER_KEEPALIVE", "30000") |> String.to_integer(),
 
   # ------------------------------------------------------------------------------------------------
   # Control-plane liveness watchdog (unify-executor-liveness-and-identity).
   #
-  # `Flezha.Executor.ControlChannel` stamps `last_seen` on every inbound control
+  # `Flezha.Runner.ControlChannel` stamps `last_seen` on every inbound control
   # frame — including the SDK's 15 s keepalive ping — and a jittered watchdog
   # treats sustained silence past `window_ms` as a connection close, closing the
   # UDS wedged-but-connected blind spot and making UDS symmetric with QUIC's
   # explicit idle timeout. The window is generous (3× the keepalive) so a single
-  # missed ping or a brief GC/contention pause never evicts a healthy executor.
+  # missed ping or a brief GC/contention pause never evicts a healthy runner.
   # Pair `window_ms` with the QUIC `max_idle_timeout` (FLEZHA_CONTROL_IDLE_TIMEOUT_MS)
   # so both transports declare death in the same window. See
   # `docs/resilience/transport_liveness.md`.
@@ -243,7 +243,7 @@ config :flezha,
   # this is compacted even if it never reaches the size threshold, so
   # low-throughput Operations still get periodic baselines. `0` disables
   # the age trigger (default in :test so the sweep never surprises
-  # long-lived test executors; dedicated tests opt in via put_env).
+  # long-lived test runners; dedicated tests opt in via put_env).
   default_compact_after_bytes:
     System.get_env("FLEZHA_COMPACT_AFTER_BYTES", "8388608") |> String.to_integer(),
   compact_after_age_ms:
@@ -263,7 +263,7 @@ config :flezha,
   # correction would.
   input_log_hold_window_ms:
     System.get_env("FLEZHA_INPUT_LOG_HOLD_WINDOW_MS", "0") |> String.to_integer(),
-  # Credit-grant flow control on the executor→controller state stream.
+  # Credit-grant flow control on the runner→controller state stream.
   # Kill switch: `false` skips the CreditWindowInit offer entirely, reverting
   # every session to the legacy SegmentMailboxStatus + shed path.
   credit_flow_control_enabled:

@@ -23,7 +23,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
     %{base: base}
   end
 
-  test "migrates legacy executor-keyed layout to flat layout", %{base: base} do
+  test "migrates legacy runner-keyed layout to flat layout", %{base: base} do
     legacy = Path.join([base, "ce-aaaa1111", "MyOperative", "operation-0"])
     File.mkdir_p!(legacy)
     File.write!(Path.join(legacy, "p1.wal"), "wal-bytes")

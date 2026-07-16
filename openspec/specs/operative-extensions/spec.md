@@ -206,10 +206,10 @@ Plugins in the `prepared` state SHALL NOT emit `:io_in` to the operative host. T
 
 #### Scenario: Plugin lifecycle progresses prepared → running on SDK ready
 - **GIVEN** an operative `r1` with one `Plugin.Provider.Websocket` plugin in its initial plugin list
-- **WHEN** `Flezha.Operative.Overwatch.handle_continue({:bind_executor, …}, _)` runs `prepare_initial_plugins/2`
+- **WHEN** `Flezha.Operative.Overwatch.handle_continue({:bind_runner, …}, _)` runs `prepare_initial_plugins/2`
 - **THEN** the plugin's `init_provider/1` SHALL run (registers state, validates config) but SHALL NOT open a TLS connection or issue a subscribe frame
 - **AND** the plugin's lifecycle phase in `Extension.Table` SHALL be `:prepared`
-- **WHEN** the Overwatch's `start_operative_sdk(executor_id, operative)` returns `{:ok, _}`
+- **WHEN** the Overwatch's `start_operative_sdk(runner_id, operative)` returns `{:ok, _}`
 - **AND** the Overwatch invokes `Extension.Table.bulk_activate(table)`
 - **THEN** the plugin's `activate/1` callback SHALL fire exactly once
 - **AND** the plugin's lifecycle phase SHALL transition to `:running`

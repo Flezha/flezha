@@ -61,8 +61,8 @@ defmodule FlezhaTest.Operative.KindTest do
   end
 
   test "AddOperative protobuf carries an optional kind field" do
-    assert :kind in Map.keys(ExecutorCommands.AddOperative.__struct__())
+    assert :kind in Map.keys(RunnerCommands.AddOperative.__struct__())
     # Default is the empty string ⇒ interpreted as :unbounded on the SDK side.
-    assert ExecutorCommands.AddOperative.__struct__().kind == ""
+    assert RunnerCommands.AddOperative.__struct__().kind == ""
   end
 end

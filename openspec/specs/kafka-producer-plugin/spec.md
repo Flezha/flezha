@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The kafka-producer-plugin capability defines the production-grade contract that any Flezha Kafka producer plugin SHALL satisfy when publishing messages from an operative chain to a Kafka cluster. The contract supersedes the prior "thin `KafkaEx.produce` wrapper" behaviour, which surfaced every transient broker condition (`:not_leader_for_partition`, `:no_broker`, `:unknown_topic_or_partition`, `:network_exception`, `:request_timed_out`, `:not_enough_replicas`) directly to the chain, dropped messages on every error, spawned one `KafkaEx.Server` worker per plugin instance, and let upstream mailboxes grow unbounded during outages until the BEAM was OOM-killed. This capability specifies the retry, idempotence, batching, bounded-queue, shared-worker, active metadata refresh, auto-topic-creation, and telemetry semantics a conforming producer SHALL implement, and the configuration surface (`:retries`, `:retry_backoff_ms`, `:retry_max_backoff_ms`, `:delivery_timeout_ms`, `:linger_ms`, `:max_batch_bytes`, `:queue_max`, `:queue_overflow`, `:idempotent`, `:auto_create_topic`, `:auto_create_partitions`, `:auto_create_replication_factor`, `:required_acks`) executors tune to express durability and back-pressure trade-offs. A conforming producer SHALL never surface raw transient broker errors to the chain for messages that ultimately succeed, SHALL bound mailbox and queue growth under sustained outages, and SHALL expose every state transition as a `:telemetry` event so executors can monitor health without parsing log lines.
+The kafka-producer-plugin capability defines the production-grade contract that any Flezha Kafka producer plugin SHALL satisfy when publishing messages from an operative chain to a Kafka cluster. The contract supersedes the prior "thin `KafkaEx.produce` wrapper" behaviour, which surfaced every transient broker condition (`:not_leader_for_partition`, `:no_broker`, `:unknown_topic_or_partition`, `:network_exception`, `:request_timed_out`, `:not_enough_replicas`) directly to the chain, dropped messages on every error, spawned one `KafkaEx.Server` worker per plugin instance, and let upstream mailboxes grow unbounded during outages until the BEAM was OOM-killed. This capability specifies the retry, idempotence, batching, bounded-queue, shared-worker, active metadata refresh, auto-topic-creation, and telemetry semantics a conforming producer SHALL implement, and the configuration surface (`:retries`, `:retry_backoff_ms`, `:retry_max_backoff_ms`, `:delivery_timeout_ms`, `:linger_ms`, `:max_batch_bytes`, `:queue_max`, `:queue_overflow`, `:idempotent`, `:auto_create_topic`, `:auto_create_partitions`, `:auto_create_replication_factor`, `:required_acks`) runners tune to express durability and back-pressure trade-offs. A conforming producer SHALL never surface raw transient broker errors to the chain for messages that ultimately succeed, SHALL bound mailbox and queue growth under sustained outages, and SHALL expose every state transition as a `:telemetry` event so runners can monitor health without parsing log lines.
 ## Requirements
 ### Requirement: Producer retries every transient broker error transparently
 
@@ -290,7 +290,7 @@ The default kafka_ex `metadata_update_interval` (passive timer-based refresh) SH
 
 ### Requirement: Telemetry events for every state transition
 
-The producer SHALL emit `:telemetry.execute/3` events on every produce attempt, retry, drop, failure, success, and metadata refresh. The events form the executor-facing API for monitoring producer health.
+The producer SHALL emit `:telemetry.execute/3` events on every produce attempt, retry, drop, failure, success, and metadata refresh. The events form the runner-facing API for monitoring producer health.
 
 | Event | Measurements | Metadata |
 |---|---|---|
@@ -303,7 +303,7 @@ The producer SHALL emit `:telemetry.execute/3` events on every produce attempt, 
 
 Events SHALL be emitted via `:telemetry.execute` (asynchronous fire-and-forget) so attached handlers cannot back-pressure the producer.
 
-#### Scenario: Executor attaches a Prometheus counter
+#### Scenario: Runner attaches a Prometheus counter
 - **GIVEN** a Prometheus telemetry handler attached to `[:flezha, :plugin, :kafka, :produce, :dropped]`
 - **WHEN** the producer drops a message via the bounded queue
 - **THEN** the Prometheus counter SHALL increment by `count: 1`
@@ -356,7 +356,7 @@ Records admitted via `cast_enqueue/3` (the chain dispatch path) SHALL NOT receiv
 - Drop the records from the queue without invoking `GenServer.reply/2`.
 - Continue draining subsequent batches.
 
-The telemetry event becomes the canonical channel by which executors observe permanent delivery failures of async-admitted records. Logs are not the channel; the chain's return value is not the channel; only telemetry is.
+The telemetry event becomes the canonical channel by which runners observe permanent delivery failures of async-admitted records. Logs are not the channel; the chain's return value is not the channel; only telemetry is.
 
 Sync-admitted records (`enqueue/4`) continue to receive `{:error, {:permanent, reason}}` or `{:error, {:delivery_failed, reason}}` per the existing requirements; the cast vs call dichotomy is observable only from the producer worker's perspective.
 

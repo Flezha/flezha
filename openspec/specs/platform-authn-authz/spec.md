@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `operator`, `admin`, `executor`) bound to principals on namespaces, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/segment enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, the web UI, transport-layer cert wiring, the CLI socket handshake, and deeper namespacing of the State subsystem are explicitly out of scope.
+The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `operator`, `admin`, `runner`) bound to principals on namespaces, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/segment enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, the web UI, transport-layer cert wiring, the CLI socket handshake, and deeper namespacing of the State subsystem are explicitly out of scope.
 
 ## Requirements
 
@@ -11,12 +11,12 @@ The platform-authn-authz capability provides the Flezha Controller's authenticat
 The system SHALL define a Principal as a verified identity. For mTLS-authenticated callers the Principal SHALL be derived from the X.509 client cert via `Flezha.AuthN.Cert.principal_from_peer/1`: if the cert carries a SPIFFE URI SAN of the form `spiffe://<trust-domain>/...` the SAN SHALL be the Principal; otherwise the cert subject DN normalised to RFC 4514 form SHALL be the Principal. For callers presenting a scoped token, the Principal SHALL be the `principal` field stored in the token registry entry. No code path SHALL invent a Principal from any other source (request body, header, environment variable, peer-credential UID). Wiring this extraction into the live transport handshake is out of scope for this change; the extraction primitives are provided.
 
 #### Scenario: SPIFFE SAN wins over subject DN
-- **WHEN** a cert with subject DN `CN=executor-7,O=team-orders` and a SPIFFE SAN `spiffe://flezha.local/ns/team-orders/sa/executor-7` is decoded
-- **THEN** `Flezha.AuthN.Cert.principal_from_peer/1` SHALL return `{:ok, "spiffe://flezha.local/ns/team-orders/sa/executor-7"}`
+- **WHEN** a cert with subject DN `CN=runner-7,O=team-orders` and a SPIFFE SAN `spiffe://flezha.local/ns/team-orders/sa/runner-7` is decoded
+- **THEN** `Flezha.AuthN.Cert.principal_from_peer/1` SHALL return `{:ok, "spiffe://flezha.local/ns/team-orders/sa/runner-7"}`
 
 #### Scenario: Subject DN used when no SPIFFE SAN
-- **WHEN** a cert with subject DN `CN=executor-7,O=team-orders` and no SPIFFE SAN is decoded
-- **THEN** `Flezha.AuthN.Cert.principal_from_peer/1` SHALL return `{:ok, "CN=executor-7,O=team-orders"}`
+- **WHEN** a cert with subject DN `CN=runner-7,O=team-orders` and no SPIFFE SAN is decoded
+- **THEN** `Flezha.AuthN.Cert.principal_from_peer/1` SHALL return `{:ok, "CN=runner-7,O=team-orders"}`
 
 #### Scenario: Token presentation binds the registry principal
 - **WHEN** a caller presents a token whose registry entry has `principal: "alice@example.com"`
@@ -60,14 +60,14 @@ The system SHALL expose exactly one authorization decision function `Flezha.Auth
 
 ### Requirement: Fixed role set
 
-The system SHALL define exactly four roles: `viewer`, `operator`, `admin`, `executor`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`. `viewer` SHALL grant read-only actions on the bound namespace. `operator` SHALL grant viewer plus operative/plugin lifecycle, observability mutations, and audit rotation. `admin` SHALL grant operator plus namespace/role/quota mutation; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `executor` SHALL grant only `:executor.connect`, `:executor.checkpoint`, `:executor.report` and SHALL NOT grant any operator action.
+The system SHALL define exactly four roles: `viewer`, `operator`, `admin`, `runner`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`. `viewer` SHALL grant read-only actions on the bound namespace. `operator` SHALL grant viewer plus operative/plugin lifecycle, observability mutations, and audit rotation. `admin` SHALL grant operator plus namespace/role/quota mutation; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect`, `:runner.checkpoint`, `:runner.report` and SHALL NOT grant any operator action.
 
 #### Scenario: Admin on team-orders cannot mutate team-payments
 - **WHEN** `admin@team-orders` invokes a service call whose `scope.namespace` is `team-payments` and whose action is `:authz.token_issue`
 - **THEN** the call SHALL return `{:error, {:forbidden, :cross_namespace_admin_denied}}`
 
-#### Scenario: Executor role cannot read audit
-- **WHEN** an SDK Executor with role `executor` invokes any function in `Flezha.Service.AuditLog`
+#### Scenario: Runner role cannot read audit
+- **WHEN** an SDK Runner with role `runner` invokes any function in `Flezha.Service.AuditLog`
 - **THEN** the call SHALL return `{:error, {:forbidden, :role_insufficient}}`
 
 ### Requirement: Namespace catalog

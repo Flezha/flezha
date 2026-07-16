@@ -59,7 +59,7 @@ The system SHALL provide a built-in process-backed source named `:processhub` th
 The system SHALL provide a built-in process-backed source named `:flezha_transport` that polls each configured transport (`:uds`, `:quic`) and emits `:metric` signals for per-transport open connection count, lifetime bytes in, and lifetime bytes out. The source SHALL produce one signal per active transport per poll.
 
 #### Scenario: Per-transport open-connection count
-- **WHEN** a UDS transport has `4` open executor connections
+- **WHEN** a UDS transport has `4` open runner connections
 - **THEN** a `:metric` signal on source `:flezha_transport` with `name: :open_connections`, `measurements: %{value: 4}`, and `metadata: %{transport: :uds}` SHALL appear on the bus
 
 #### Scenario: Transport-absent case
@@ -80,7 +80,7 @@ The system SHALL provide a built-in process-backed source named `:flezha_bounded
 
 ### Requirement: Cardinality budget enforcement on built-in sources
 
-Every built-in source SHALL declare its cardinality budget at registration time and SHALL be designed so that the cluster-scale label cardinality (operatives × operations × segments × executors × hubs) fits within the declared budget. Where the natural cardinality exceeds the foundation's default `1_000` budget, the source SHALL raise its budget at registration time and document the rationale in the source module's `@moduledoc`.
+Every built-in source SHALL declare its cardinality budget at registration time and SHALL be designed so that the cluster-scale label cardinality (operatives × operations × segments × runners × hubs) fits within the declared budget. Where the natural cardinality exceeds the foundation's default `1_000` budget, the source SHALL raise its budget at registration time and document the rationale in the source module's `@moduledoc`.
 
 #### Scenario: Source declares a budget at registration
 - **WHEN** the `:flezha_bounded_mailbox` source registers

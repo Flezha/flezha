@@ -19,11 +19,11 @@ defmodule Flezha.Service.CliManager.ClusterTest do
   alias Flezha.Service.HubManager
 
   describe "list_operatives/2 (health column)" do
-    test "json output carries per-operative health, executor, and node" do
+    test "json output carries per-operative health, runner, and node" do
       stub(HubManager, :operative_rows, fn _ns ->
         [
-          %{id: "r1", health: :healthy, executor: "e1", node: :a@h},
-          %{id: "r2", health: :failed, executor: nil, node: nil}
+          %{id: "r1", health: :healthy, runner: "e1", node: :a@h},
+          %{id: "r2", health: :failed, runner: nil, node: nil}
         ]
       end)
 
@@ -33,14 +33,14 @@ defmodule Flezha.Service.CliManager.ClusterTest do
       assert decoded["namespace"] == "shop"
 
       assert decoded["operatives"] == [
-               %{"id" => "r1", "health" => "healthy", "executor" => "e1", "node" => "a@h"},
-               %{"id" => "r2", "health" => "failed", "executor" => nil, "node" => nil}
+               %{"id" => "r1", "health" => "healthy", "runner" => "e1", "node" => "a@h"},
+               %{"id" => "r2", "health" => "failed", "runner" => nil, "node" => nil}
              ]
     end
 
     test "text output shows a HEALTH column and surfaces a FAILED, unplaced operative" do
       stub(HubManager, :operative_rows, fn _ns ->
-        [%{id: "r2", health: :failed, executor: nil, node: nil}]
+        [%{id: "r2", health: :failed, runner: nil, node: nil}]
       end)
 
       out = capture_io(fn -> CliManager.list_operatives("shop", "text") end)
@@ -64,9 +64,9 @@ defmodule Flezha.Service.CliManager.ClusterTest do
 
       stub(HubManager, :operative_rows, fn _ns ->
         [
-          %{id: "r1", health: :healthy, executor: "e1", node: node()},
-          %{id: "r2", health: :degraded, executor: "e2", node: node()},
-          %{id: "r4", health: :failed, executor: nil, node: nil}
+          %{id: "r1", health: :healthy, runner: "e1", node: node()},
+          %{id: "r2", health: :degraded, runner: "e2", node: node()},
+          %{id: "r4", health: :failed, runner: nil, node: nil}
         ]
       end)
 
@@ -86,7 +86,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
       stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
 
       stub(HubManager, :operative_rows, fn _ns ->
-        [%{id: "r1", health: :healthy, executor: "e1", node: node()}]
+        [%{id: "r1", health: :healthy, runner: "e1", node: node()}]
       end)
 
       stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)

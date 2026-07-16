@@ -12,7 +12,7 @@ defmodule Flezha.Transport.ServerStreamRoutingTest do
   use ExUnit.Case, async: false
   use Mimic
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Transport.Server
 
   defp connect_frame(stream_id) do

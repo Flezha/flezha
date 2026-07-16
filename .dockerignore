@@ -52,9 +52,9 @@ sdk/java
 test/*
 !test/apps
 test/apps/*
-!test/apps/rust_executor
+!test/apps/rust_runner
 !test/apps/testnet
-test/apps/rust_executor/target
-test/apps/rust_executor/dist
+test/apps/rust_runner/target
+test/apps/rust_runner/dist
 test/apps/testnet/node_modules
 test/apps/testnet/dist

@@ -16,7 +16,7 @@ import javax.annotation.Nonnull;
  * <p>Out-of-range values fail registration with
  * {@link UnboundedOperativeConfigurationException#mailboxCapacityZero(String)} or
  * {@link UnboundedOperativeConfigurationException#mailboxCapacityTooLarge(String, long)}.
- * Unparseable env values fall through to the default — executors tolerate
+ * Unparseable env values fall through to the default — runners tolerate
  * typos in env values during development. Split into a pure-function core
  * so operative tests don't have to mutate the process-global env var.
  */

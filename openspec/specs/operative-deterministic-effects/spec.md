@@ -74,7 +74,7 @@ documentation.
 #### Scenario: Logical time survives crash-restore
 
 - **WHEN** a Segment with `LogicalClock` has applied changes up to seq 42, the
-  executor restarts, and state is restored via the restore handshake
+  runner restarts, and state is restored via the restore handshake
 - **THEN** the next invocation's `ctx.now()` reflects seq 42, not a reset counter
 
 #### Scenario: Logical time advances with applied changes

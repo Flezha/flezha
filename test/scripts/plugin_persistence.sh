@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Executor-restart plugin-persistence smoke test.
+# Runner-restart plugin-persistence smoke test.
 #
 # Asserts the contract from
 # openspec/specs/plugin-subscription-persistence/spec.md: plugins
 # enabled via `flz plugin enable` after `flz operative start` SHALL
-# survive a `docker compose restart rust` without executor
+# survive a `docker compose restart rust` without runner
 # intervention. Before the cspec-persistence change, this fails — the
 # Rust restart triggers `alter_child_data` to rewrite the cspec start
-# args with a fresh executor_id, ProcessHub stops + restarts
+# args with a fresh runner_id, ProcessHub stops + restarts
 # the Overwatch under the new spec, and the runtime plugin extensions
 # table boots empty (only plugins from `flz operative start
 # --plugins` are restored).
@@ -82,7 +82,7 @@ wait_for_new_ce_id() {
     fi
     sleep 2
   done
-  echo "[plugin_persistence] timed out waiting for fresh executor_id (last seen: '${current}')" >&2
+  echo "[plugin_persistence] timed out waiting for fresh runner_id (last seen: '${current}')" >&2
   return 1
 }
 
@@ -100,7 +100,7 @@ assert_plugin_listed() {
 note "bringing up dev compose stack (project=${PROJECT})"
 "${COMPOSE[@]}" up -d controller rust
 
-note "waiting for agent + rust executor to handshake"
+note "waiting for agent + rust runner to handshake"
 INITIAL_CE_ID=""
 DEADLINE=$(( $(date +%s) + REJOIN_TIMEOUT_S ))
 while [ -z "${INITIAL_CE_ID}" ] && [ "$(date +%s)" -lt "${DEADLINE}" ]; do
@@ -109,10 +109,10 @@ while [ -z "${INITIAL_CE_ID}" ] && [ "$(date +%s)" -lt "${DEADLINE}" ]; do
 done
 
 if [ -z "${INITIAL_CE_ID}" ]; then
-  echo "[plugin_persistence] FAIL: rust executor never handshook with the agent" >&2
+  echo "[plugin_persistence] FAIL: rust runner never handshook with the agent" >&2
   exit 1
 fi
-note "initial executor_id: ${INITIAL_CE_ID}"
+note "initial runner_id: ${INITIAL_CE_ID}"
 
 note "starting operative ${PROCESSOR_ID}"
 flz operative start "${PROCESSOR_ID}" store_input \
@@ -139,7 +139,7 @@ note "restarting rust compute engine container"
 "${COMPOSE[@]}" restart rust
 
 NEW_CE_ID="$(wait_for_new_ce_id "${INITIAL_CE_ID}")"
-note "after rust restart, fresh executor_id: ${NEW_CE_ID}"
+note "after rust restart, fresh runner_id: ${NEW_CE_ID}"
 
 # Give the agent a beat to finish alter_child_data + Overwatch init/1
 # before reading the cspec back out.
@@ -148,4 +148,4 @@ sleep 5
 assert_plugin_listed "${PLUGIN_WS_ID}" "post-restart"
 assert_plugin_listed "${PLUGIN_KAFKA_ID}" "post-restart"
 
-note "PASS: both plugins survived the executor restart without re-issue"
+note "PASS: both plugins survived the runner restart without re-issue"

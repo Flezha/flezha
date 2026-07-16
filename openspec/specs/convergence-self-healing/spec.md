@@ -5,7 +5,7 @@ TBD - created by archiving change unified-convergence-loop. Update Purpose after
 ## Requirements
 ### Requirement: Single convergence loop owns all self-healing decisions
 
-The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`). No module other than the Loop emits heal actions (rebind, restart-plugin, reconnect-stream, evict-executor, etc.). Watchdog, FleetManager, HubManager, Healthz, StreamChannel — each emits *events* or *facts*; none of them decide what to fix.
+The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`). No module other than the Loop emits heal actions (rebind, restart-plugin, reconnect-stream, evict-runner, etc.). Watchdog, FleetManager, HubManager, Healthz, StreamChannel — each emits *events* or *facts*; none of them decide what to fix.
 
 #### Scenario: stall is observed in one place, decision happens in another
 - **GIVEN** the State Watchdog detects output stall for operative `btc_kraken` operation 0
@@ -53,19 +53,19 @@ A `Logger.warning` MUST be emitted for each `:recovery_timeout` namespace includ
 
 ### Requirement: Every heal primitive is a safe no-op on a healthy target
 
-Each heal primitive MUST re-read the authoritative live state at execution time and do nothing if the target is no longer broken. A detection slip (a reconnect or recovery between the snapshot and the heal) MUST NOT disrupt a working operative, executor, or producer.
+Each heal primitive MUST re-read the authoritative live state at execution time and do nothing if the target is no longer broken. A detection slip (a reconnect or recovery between the snapshot and the heal) MUST NOT disrupt a working operative, runner, or producer.
 
-#### Scenario: a reconnected executor is not evicted
-- **GIVEN** the Diff snapshot marked executor `default_X` for eviction
+#### Scenario: a reconnected runner is not evicted
+- **GIVEN** the Diff snapshot marked runner `default_X` for eviction
 - **AND** `default_X` re-established its transport connection before the heal ran
-- **WHEN** `Heal.execute(:evict_executor)` runs for `default_X`
+- **WHEN** `Heal.execute(:evict_runner)` runs for `default_X`
 - **THEN** FleetManager observes `default_X` is currently `:active` and performs no eviction
 - **AND** the operatives bound to `default_X` keep producing.
 
 #### Scenario: an output-stalled operative is always re-wired
-- **GIVEN** operative `btc_kraken` is bound to an active executor but has not produced output past the stall grace
+- **GIVEN** operative `btc_kraken` is bound to an active runner but has not produced output past the stall grace
 - **WHEN** the Planner emits a `rebind_operative` op with `reason: :output_stall`
-- **THEN** the Heal migrates the operative to an available executor even though its bound executor is active (the silent-freeze self-heal MUST NOT be skipped by the healthy-target guard).
+- **THEN** the Heal migrates the operative to an available runner even though its bound runner is active (the silent-freeze self-heal MUST NOT be skipped by the healthy-target guard).
 
 ### Requirement: Bounded calls and backoff prevent heal-induced churn
 
@@ -172,20 +172,20 @@ The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operativ
 When `Flezha.Convergence.Loop` receives an `{:output_stall, operative_id}` message from the Watchdog telemetry handler, it SHALL:
 
 1. Record the stall timestamp in `stalled_operatives` (existing behaviour — for healthz reporting).
-2. Trigger an immediate convergence tick (same as `executor_connected_event`).
+2. Trigger an immediate convergence tick (same as `runner_connected_event`).
 
 On each tick, after `Planner.plan/2` produces its plan, the Loop SHALL inject additional `rebind_operative` ops for every operative whose `operative_id` is in `stalled_operatives` and which is not already covered by the plan, using `args: %{reason: :output_stall}`. These injected ops SHALL be filtered through the standard per-target `Backoff` so a persistently stalled operative follows the 5s → 30s → 60s → 300s cooldown, not a per-tick storm.
 
-`Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the operative's currently-bound executor is in the live active set. The output-stall condition proves the binding is not producing; the active-executor guard exists only to avoid disrupting a healthy operative, which an output-stalled operative is not.
+`Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the operative's currently-bound runner is in the live active set. The output-stall condition proves the binding is not producing; the active-runner guard exists only to avoid disrupting a healthy operative, which an output-stalled operative is not.
 
 #### Scenario: output-stalled operative is rebound on the next tick
 
-- **GIVEN** operative `btc_kraken` is bound to active executor `ex1` and has not produced output past the output-stall grace period
+- **GIVEN** operative `btc_kraken` is bound to active runner `ex1` and has not produced output past the output-stall grace period
 - **WHEN** the Watchdog flags it and the convergence Loop receives the stall event
 - **THEN** the Loop triggers an immediate tick
 - **AND** a `rebind_operative` op with `args: %{reason: :output_stall}` is issued for `btc_kraken`
 - **AND** `skip_rebind?` returns `false` even though `ex1` is still active
-- **AND** the operative is migrated to a new executor and begins producing again
+- **AND** the operative is migrated to a new runner and begins producing again
 
 #### Scenario: repeated stalls are backoff-throttled
 
@@ -196,12 +196,12 @@ On each tick, after `Planner.plan/2` produces its plan, the Loop SHALL inject ad
 
 ### Requirement: Rolling upgrade preserves producing-operatives count
 
-An operator-initiated rolling restart of the controller or executor workload MUST complete with no data loss, measured by kafka offset advance per declared operative. The executor presents its persisted `previous_executor_id` on reconnect so the controller evicts the stale binding and rebinds atomically.
+An operator-initiated rolling restart of the controller or runner workload MUST complete with no data loss, measured by kafka offset advance per declared operative. The runner presents its persisted `previous_runner_id` on reconnect so the controller evicts the stale binding and rebinds atomically.
 
-#### Scenario: rolling restart of the executor workload
+#### Scenario: rolling restart of the runner workload
 - **GIVEN** the cluster is producing `producing_operatives = N`
-- **WHEN** the executor pods are rolled one at a time (graceful SIGTERM, peer stays up)
-- **THEN** the new executor presents its `previous_executor_id`, the controller evicts the old binding and rebinds within a tick, and kafka offsets advance with no data loss.
+- **WHEN** the runner pods are rolled one at a time (graceful SIGTERM, peer stays up)
+- **THEN** the new runner presents its `previous_runner_id`, the controller evicts the old binding and rebinds within a tick, and kafka offsets advance with no data loss.
 
 ### Requirement: Host sleep / wake recovers automatically
 
@@ -214,7 +214,7 @@ The system MUST detect a wall-clock vs monotonic-clock divergence indicating sle
 
 ### Requirement: Plugins are durable across controller restart
 
-When `flz plugin enable <operative> <plugin>` succeeds, the plugin MUST be persisted into the operative's ProcessHub cspec start-args **on every node of the hub cluster**, regardless of which node served the CLI call. The same cluster-wide propagation MUST apply to plugin disable and to the registry executor-tag write issued by Heal rebinds. On restart (recovery mode, plain restart, or node-death redistribution from any node), every restored operative MUST re-instantiate its declared plugins idempotently, and the convergence I2 backstop MUST re-add a declared-but-missing plugin to a running operative. A peer node that is unreachable at write time MUST converge on rejoin via the peer-sync recovery path; propagation failures MUST be logged, never silently dropped.
+When `flz plugin enable <operative> <plugin>` succeeds, the plugin MUST be persisted into the operative's ProcessHub cspec start-args **on every node of the hub cluster**, regardless of which node served the CLI call. The same cluster-wide propagation MUST apply to plugin disable and to the registry runner-tag write issued by Heal rebinds. On restart (recovery mode, plain restart, or node-death redistribution from any node), every restored operative MUST re-instantiate its declared plugins idempotently, and the convergence I2 backstop MUST re-add a declared-but-missing plugin to a running operative. A peer node that is unreachable at write time MUST converge on rejoin via the peer-sync recovery path; propagation failures MUST be logged, never silently dropped.
 
 #### Scenario: plugin survives recovery-mode restart
 - **GIVEN** `flz plugin enable btc_kraken kafka-producer` was executed
@@ -269,15 +269,15 @@ A operative with at least one declared plugin that is missing or self-reported u
 - **WHEN** the loop re-attaches or successfully restarts the affected plugins
 - **THEN** the snapshot's plugin-degraded set empties and `/healthz` returns to `healthy` with a single transition log line.
 
-### Requirement: Fresh-process executor takeover is atomic
+### Requirement: Fresh-process runner takeover is atomic
 
-When an SDK executor process restarts and presents `previous_executor_id`, the controller MUST evict the previous binding and bind the new id atomically, with no window where a operative is bound to both ids or to a corpse.
+When an SDK runner process restarts and presents `previous_runner_id`, the controller MUST evict the previous binding and bind the new id atomically, with no window where a operative is bound to both ids or to a corpse.
 
 #### Scenario: SDK process restart preserves operative binding
-- **GIVEN** operative `btc_kraken` is bound to executor `default_X` and producing
-- **WHEN** the SDK process is killed and restarts, reading its persisted `executor_id = default_X` and announcing it as `previous_executor_id`
+- **GIVEN** operative `btc_kraken` is bound to runner `default_X` and producing
+- **WHEN** the SDK process is killed and restarts, reading its persisted `runner_id = default_X` and announcing it as `previous_runner_id`
 - **THEN** the controller evicts the stale `default_X` binding inside the connect handler before the new bind, re-attaches the operative, and kafka offsets resume within a couple of ticks
-- **AND** no entry in the active executor set references a dead `default_X`.
+- **AND** no entry in the active runner set references a dead `default_X`.
 
 ## Removed Requirements
 

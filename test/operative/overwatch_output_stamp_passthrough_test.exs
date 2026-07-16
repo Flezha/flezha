@@ -7,7 +7,7 @@ defmodule FlezhaTest.Operative.OverwatchOutputStampPassthroughTest do
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.Executor.StreamChannel
+  alias Flezha.Runner.StreamChannel
   alias Flezha.Operative.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
@@ -55,7 +55,7 @@ defmodule FlezhaTest.Operative.OverwatchOutputStampPassthroughTest do
     state = %Overwatch{
       id: "operative-1",
       namespace: "default",
-      executor_id: "exec-1",
+      runner_id: "exec-1",
       factory_id: "test_factory",
       channel: nil,
       extensions: Table.new(Overwatch.__extensions_catalog__()),

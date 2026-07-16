@@ -2,24 +2,24 @@
 
 ## Purpose
 
-The operative-state-persistence capability provides agent-side, per-Segment durability for Operative state. The agent maintains an append-only write-ahead log (WAL) per Segment under `app_data/state/`, fsynced on a configurable cadence, with asynchronous size-triggered compaction into snapshot files. On Segment reconnect, the agent assembles a `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` payload and ships it to the SDK over the control channel; the SDK applies the snapshot and folds the WAL tail to recover terminal state. Persistence is per-Operative-class opt-in via runtime config or an Operative-class const, defaulting on. The agent retains pre-compaction WAL records for a configurable window to support time-travel queries via `flz state at`. The capability is additive to the existing `Overwatch` GenServer: persistence frames (`segment_state_change`, `segment_state_snapshot`) flow alongside the existing protocol; no SDK or executor code outside this capability is required.
+The operative-state-persistence capability provides agent-side, per-Segment durability for Operative state. The agent maintains an append-only write-ahead log (WAL) per Segment under `app_data/state/`, fsynced on a configurable cadence, with asynchronous size-triggered compaction into snapshot files. On Segment reconnect, the agent assembles a `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` payload and ships it to the SDK over the control channel; the SDK applies the snapshot and folds the WAL tail to recover terminal state. Persistence is per-Operative-class opt-in via runtime config or an Operative-class const, defaulting on. The agent retains pre-compaction WAL records for a configurable window to support time-travel queries via `flz state at`. The capability is additive to the existing `Overwatch` GenServer: persistence frames (`segment_state_change`, `segment_state_snapshot`) flow alongside the existing protocol; no SDK or runner code outside this capability is required.
 ## Requirements
 ### Requirement: Per-Segment append-only WAL on the agent
 
-Each Segment whose Operative has `persistence_enabled = true` and whose Operation's `Change` is not `NoChange` SHALL have a per-Segment write-ahead log on the Controller at `app_data/state/{operative_class}/{operation_id}/{segment_key}.wal`. The on-disk path SHALL NOT include `executor_id` as a path component. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
+Each Segment whose Operative has `persistence_enabled = true` and whose Operation's `Change` is not `NoChange` SHALL have a per-Segment write-ahead log on the Controller at `app_data/state/{operative_class}/{operation_id}/{segment_key}.wal`. The on-disk path SHALL NOT include `runner_id` as a path component. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
 
 `seq` SHALL be strictly monotonic per Segment and assigned by the SDK. The Controller SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Segment; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`. For a frame whose `seq > last_persisted_seq + 1` the Controller SHALL distinguish two cases:
 
-- **Populated WAL** (`last_persisted_seq >= 0`) and not an executor-restart realign: a genuine protocol violation. The Controller SHALL reject the append (returning `{:error, {:gap, expected, got}}`) and the SDK SHALL treat it as a protocol violation and disconnect.
-- **Empty WAL** (`last_persisted_seq == -1`) with `seq > 0` and not an executor-restart realign: a cold-takeover where this Controller holds no baseline for a Segment the executor already has state for. The Controller SHALL NOT disconnect. It SHALL enter an **awaiting-baseline** state for the Segment, shed the frame (incrementing a `wal_shed_total`-class counter, not erroring), drive exactly one `CompactSegment` pull (see "Restart restores state via RestoreInitState handshake"), and keep shedding further gap frames without erroring until a `segment_state_snapshot` establishes the baseline.
+- **Populated WAL** (`last_persisted_seq >= 0`) and not a runner-restart realign: a genuine protocol violation. The Controller SHALL reject the append (returning `{:error, {:gap, expected, got}}`) and the SDK SHALL treat it as a protocol violation and disconnect.
+- **Empty WAL** (`last_persisted_seq == -1`) with `seq > 0` and not a runner-restart realign: a cold-takeover where this Controller holds no baseline for a Segment the runner already has state for. The Controller SHALL NOT disconnect. It SHALL enter an **awaiting-baseline** state for the Segment, shed the frame (incrementing a `wal_shed_total`-class counter, not erroring), drive exactly one `CompactSegment` pull (see "Restart restores state via RestoreInitState handshake"), and keep shedding further gap frames without erroring until a `segment_state_snapshot` establishes the baseline.
 
-A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run at controller boot before `Flezha.State.Supervisor` starts any per-Segment `WalWriter`. The migrator SHALL walk every directory under `app_data/state/` of the form `{executor_id}/{operative_class}/{operation_id}/` and atomically move its contents into `{operative_class}/{operation_id}/`. The migration is idempotent (skips silently if the flat layout already exists) and logs each rename. After all old `{executor_id}/` directories are emptied, they are removed.
+A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run at controller boot before `Flezha.State.Supervisor` starts any per-Segment `WalWriter`. The migrator SHALL walk every directory under `app_data/state/` of the form `{runner_id}/{operative_class}/{operation_id}/` and atomically move its contents into `{operative_class}/{operation_id}/`. The migration is idempotent (skips silently if the flat layout already exists) and logs each rename. After all old `{runner_id}/` directories are emptied, they are removed.
 
 #### Scenario: WAL path uses flat layout
 
 - **WHEN** a Segment `p1` with operation `s1` and segment_key `k1` belonging to Operative class `MarketOperative` is running and persistence is enabled
 - **THEN** the Controller SHALL write its WAL to `app_data/state/MarketOperative/s1/k1.wal`
-- **AND** the path SHALL NOT contain any `executor_id` component regardless of which executor currently hosts the Operative
+- **AND** the path SHALL NOT contain any `runner_id` component regardless of which runner currently hosts the Operative
 
 #### Scenario: WAL allocated lazily on first append
 
@@ -44,17 +44,17 @@ A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run
 
 #### Scenario: Gap on an empty WAL seeds a baseline instead of disconnecting
 
-- **GIVEN** a freshly-assigned Controller with no WAL for a Segment (`last_persisted_seq = -1`) whose live executor has been producing changes and next emits `seq = 5001`, and the frame is not an executor-restart realign
+- **GIVEN** a freshly-assigned Controller with no WAL for a Segment (`last_persisted_seq = -1`) whose live runner has been producing changes and next emits `seq = 5001`, and the frame is not a runner-restart realign
 - **WHEN** the agent receives the `segment_state_change` frame
 - **THEN** the agent SHALL NOT reply with a fatal gap error and SHALL NOT disconnect the SDK; the agent SHALL shed the frame (incrementing the shed counter), mark the Segment awaiting-baseline, and dispatch exactly one `CompactSegment` to pull a full-state baseline; further gap frames arriving before the snapshot SHALL be shed without error
-- **AND** once the pulled `segment_state_snapshot{seq}` lands, `last_persisted_seq` SHALL equal that snapshot's seq and the executor's next new delta SHALL append contiguously
+- **AND** once the pulled `segment_state_snapshot{seq}` lands, `last_persisted_seq` SHALL equal that snapshot's seq and the runner's next new delta SHALL append contiguously
 
 #### Scenario: Crash-safe append via crc
 
 - **WHEN** the agent process crashes mid-record-write, leaving a partial record at the file tail
 - **THEN** on next agent boot, `WalWriter::scan_for_last_valid_seq/1` SHALL detect the partial record (crc32 mismatch on the trailing bytes), truncate the file to the last valid record, and resume normal operation; `last_persisted_seq` SHALL equal the seq of the last valid record
 
-#### Scenario: One-time migration from executor_id-keyed layout
+#### Scenario: One-time migration from runner_id-keyed layout
 
 - **GIVEN** a controller running pre-change code wrote files under `app_data/state/exec-9/MarketOperative/btc/M1.wal` and `app_data/state/exec-12/PriceOperative/eth/M5.wal`
 - **WHEN** the controller is upgraded and `Flezha.Boot.StatePathMigrator.migrate/0` runs at boot
@@ -62,9 +62,9 @@ A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run
 - **AND** the now-empty `exec-9/` and `exec-12/` directories SHALL be removed
 - **AND** if the migrator runs again on a subsequent boot, it SHALL skip silently because the flat layout already exists
 
-#### Scenario: Migration handles executor_id rotation across restarts
+#### Scenario: Migration handles runner_id rotation across restarts
 
-- **GIVEN** an executor restart between WAL writes — first write under `exec-9`, restart yields `exec-12` for the same Operative
+- **GIVEN** a runner restart between WAL writes — first write under `exec-9`, restart yields `exec-12` for the same Operative
 - **WHEN** the migrator runs (one-time, on first boot under new code)
 - **THEN** files from BOTH `exec-9/MarketOperative/btc/` and `exec-12/MarketOperative/btc/` SHALL be merged into the flat path; on collision (same segment_key.wal in both), the migrator SHALL prefer the file with the higher last-record `seq` (read by scanning) and preserve the other as `<key>.wal.preserved-<exec-9>` for forensics
 
@@ -126,38 +126,38 @@ The hot path SHALL pay only the brief sticky-CAS hold during the state clone —
 
 ### Requirement: Restart restores state via RestoreInitState handshake
 
-On executor (re)bind, the controller SHALL recover each persisted Segment's state, choosing the direction by which side holds authoritative history:
+On runner (re)bind, the controller SHALL recover each persisted Segment's state, choosing the direction by which side holds authoritative history:
 
 - **Controller holds a baseline (a snapshot and/or WAL for the Segment) → push.** The controller SHALL drive a `RestoreInitState` handshake and the SDK SHALL rebuild the live Segment slot from the controller's durable WAL — snapshot apply followed by change-log fold — rather than initialising empty.
-- **Controller holds no baseline for the Segment (no snapshot and no WAL) while the executor is live → pull.** The controller SHALL request a `CompactSegment` from the executor to obtain a full-state baseline, rather than pushing a `RestoreInitState`. Because a freshly-assigned controller cannot enumerate a live executor's Segments (its own disk is empty), the pull is data-plane-triggered by the first `segment_state_change` frame that arrives with an empty WAL (see "Per-Segment append-only WAL on the agent", empty-WAL gap).
+- **Controller holds no baseline for the Segment (no snapshot and no WAL) while the runner is live → pull.** The controller SHALL request a `CompactSegment` from the runner to obtain a full-state baseline, rather than pushing a `RestoreInitState`. Because a freshly-assigned controller cannot enumerate a live runner's Segments (its own disk is empty), the pull is data-plane-triggered by the first `segment_state_change` frame that arrives with an empty WAL (see "Per-Segment append-only WAL on the agent", empty-WAL gap).
 
 The restore/resync dispatch path SHALL NOT ship a `RestoreInitState` whose assembled payload is empty (no snapshot and no WAL). It SHALL guard with `Flezha.State.Restore.has_persisted_state?/1` — as the bind-time path already does — so an empty payload can never rebuild a live Segment to `init_state` and destroy accumulated state. An empty-WAL condition SHALL route to the pull path above instead.
 
 Restore SHALL be:
 
-1. **Unconditional on every Overwatch bind** — driven by `Flezha.State.Recovery.resync_for_overwatch/2` (not a class→executor lookup that fails on cold boot). When the operative arrived via HotSwap handover, the in-band state is authoritative and the `{:kick_restore}` path SHALL skip to avoid double-applying.
+1. **Unconditional on every Overwatch bind** — driven by `Flezha.State.Recovery.resync_for_overwatch/2` (not a class→runner lookup that fails on cold boot). When the operative arrived via HotSwap handover, the in-band state is authoritative and the `{:kick_restore}` path SHALL skip to avoid double-applying.
 2. **Keyed by operative instance id, not factory id** — the Segment wire identity is `[rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]` keyed by the operative *instance*, so two operatives of the same factory class never collide on one WAL.
 3. **Inclusive of seq 0** — an empty WAL initialises `last_persisted_seq = -1` (not `0`) and the "no snapshot" restore sentinel is `-1`, so the 0-based first change is never dedup-dropped. After fold, the SDK re-arms `change_seq = terminal_seq + 1` so the next produced frame is contiguous.
 
-#### Scenario: a stateful operative resumes its accumulated state after both executors restart
+#### Scenario: a stateful operative resumes its accumulated state after both runners restart
 - **GIVEN** a `resume_probe` operative has accumulated a running total of 100 in persisted state
-- **WHEN** both executors are gracefully stopped and restarted under load and the operative rebinds
+- **WHEN** both runners are gracefully stopped and restarted under load and the operative rebinds
 - **THEN** the operative's restored state is 100 (the WAL snapshot + change-log), driving one more `+7` input emits 107, and no state is lost.
 
 #### Scenario: the first change of a fresh operative survives restart
 - **GIVEN** an operative produced exactly one state change (seq 0) and no snapshot exists
-- **WHEN** the executor restarts and restore runs
+- **WHEN** the runner restarts and restore runs
 - **THEN** the seq-0 change is included in the restored change-log (the `-1` empty-WAL/no-snapshot sentinels keep it), not dropped as a dedup floor.
 
-#### Scenario: fresh controller pulls a baseline from a live executor
-- **GIVEN** an Operation is reassigned to a controller that has no WAL and no snapshot for its Segment, while the executor stays live holding accumulated state at seq 5000
-- **WHEN** the operative binds and the executor's next `segment_state_change` arrives
+#### Scenario: fresh controller pulls a baseline from a live runner
+- **GIVEN** an Operation is reassigned to a controller that has no WAL and no snapshot for its Segment, while the runner stays live holding accumulated state at seq 5000
+- **WHEN** the operative binds and the runner's next `segment_state_change` arrives
 - **THEN** the controller SHALL request a `CompactSegment` and, on receiving the `segment_state_snapshot`, write it as the Segment's baseline; the controller SHALL NOT push a `RestoreInitState` (which would carry an empty payload and reset the live Segment to `init_state`)
 
 #### Scenario: empty-payload restore is never dispatched
 - **GIVEN** a resync is triggered for a Segment whose controller has no snapshot and no WAL
 - **WHEN** the recovery path evaluates whether to ship `RestoreInitState`
-- **THEN** `has_persisted_state?/1` SHALL be false and no `RestoreInitState` SHALL be sent; the accumulated live state on the executor SHALL be preserved (not rebuilt to `init_state`)
+- **THEN** `has_persisted_state?/1` SHALL be false and no `RestoreInitState` SHALL be sent; the accumulated live state on the runner SHALL be preserved (not rebuilt to `init_state`)
 
 ### Requirement: Time-travel queries via WAL retention beyond latest snapshot
 
@@ -169,7 +169,7 @@ The query SHALL be exposed via the `flz state at <operative/operation/segment> <
 
 #### Scenario: Default 6-hour retention
 
-- **WHEN** an executor does not configure `time_travel_retention_hours`
+- **WHEN** a runner does not configure `time_travel_retention_hours`
 - **THEN** the agent SHALL retain WAL records for 6 hours beyond the latest snapshot
 
 #### Scenario: Time-travel disabled (`retention_hours = 0`)
@@ -179,22 +179,22 @@ The query SHALL be exposed via the `flz state at <operative/operation/segment> <
 
 #### Scenario: Query within retention window returns state
 
-- **WHEN** the executor runs `flz state at MarketOperative/btc/OhlcOperation/M1 "2026-05-07T10:30:00Z"` AND that timestamp falls within the retention window
+- **WHEN** the runner runs `flz state at MarketOperative/btc/OhlcOperation/M1 "2026-05-07T10:30:00Z"` AND that timestamp falls within the retention window
 - **THEN** the agent SHALL load the latest snapshot at-or-before the timestamp and fold WAL records up to it; the CLI SHALL print the JSON-encoded state
 
 #### Scenario: Query outside retention returns error
 
-- **WHEN** the executor queries a timestamp older than the earliest available WAL record's record-time
+- **WHEN** the runner queries a timestamp older than the earliest available WAL record's record-time
 - **THEN** the agent SHALL return `TimeTravelError{kind: :outside_retention, earliest_available: <ts>}`; the CLI SHALL print a clear error pointing at the earliest queryable point
 
 #### Scenario: Query against persistence-off Operative errors
 
-- **WHEN** the executor runs `flz state at <operative/operation/segment> <target>` for a Segment whose Operative has `persistence_enabled = false`
+- **WHEN** the runner runs `flz state at <operative/operation/segment> <target>` for a Segment whose Operative has `persistence_enabled = false`
 - **THEN** the agent SHALL return `TimeTravelError{kind: :segment_not_persistent, operative, operation, segment}`
 
 #### Scenario: Live retention update applies on next sweep
 
-- **WHEN** the executor runs `flz state retention MarketOperative 12` and the prior value was `6`
+- **WHEN** the runner runs `flz state retention MarketOperative 12` and the prior value was `6`
 - **THEN** the runtime config SHALL be updated to 12 hours; the next retention-sweeper tick SHALL apply the new value (records older than 12 hours are deleted; records younger SHALL be retained going forward)
 
 ### Requirement: Fsync batching at configurable cadence
@@ -205,7 +205,7 @@ The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BE
 
 #### Scenario: Default 5 ms tick = 200 Hz fsync rate
 
-- **WHEN** an executor does not configure `agent_fsync_interval_ms`
+- **WHEN** a runner does not configure `agent_fsync_interval_ms`
 - **THEN** the batcher SHALL tick every 5 ms (200 Hz) AND each dirty `WalWriter` SHALL fsync at most once per tick
 
 #### Scenario: 5 ms + 5 ms = 10 ms total durability bound
@@ -213,9 +213,9 @@ The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BE
 - **WHEN** an Operation records a Change at time `t` under default flusher and fsync settings (`linger_ms = 5` SDK-side; `agent_fsync_interval_ms = 5` agent-side)
 - **THEN** the Change SHALL be durably fsynced to disk on the agent by `t + 10 ms` modulo network round-trip and OS scheduling; `fsync_durability_lag_ms` SHALL stabilize below 10 ms under steady-state load
 
-#### Scenario: Executor-tightened bound
+#### Scenario: Runner-tightened bound
 
-- **WHEN** an executor sets `agent_fsync_interval_ms = 1`
+- **WHEN** a runner sets `agent_fsync_interval_ms = 1`
 - **THEN** the batcher SHALL tick every 1 ms (1000 Hz); the durability bound SHALL be ~2 ms total at the cost of more frequent fsyncs
 
 ### Requirement: Per-Operative persistence toggle resolution at operative startup
@@ -226,23 +226,23 @@ The agent SHALL resolve a per-Operative-class boolean `persistence_enabled` at t
 2. Otherwise, if the `AddOperative` metadata carries an Operative-class const value (`UnboundedOperative::PERSISTENCE_ENABLED`), use that value.
 3. Otherwise, use the built-in default of `true`.
 
-The resolved value SHALL be bound to the Operative instance for its entire lifetime. Subsequent changes to the executor-side config or to the SDK's Operative-class const (via SDK redeploy) SHALL NOT affect already-running instances.
+The resolved value SHALL be bound to the Operative instance for its entire lifetime. Subsequent changes to the runner-side config or to the SDK's Operative-class const (via SDK redeploy) SHALL NOT affect already-running instances.
 
 When `persistence_enabled = false`, the agent SHALL NOT allocate WAL or snapshot files for any of that Operative's Segments, SHALL ignore (drop with a counter increment) any incoming `segment_state_change` or `segment_state_snapshot` frames for those Segments, and SHALL NOT issue `RestoreInitState` on reconnect.
 
 #### Scenario: Default-on with no override
 
-- **WHEN** an executor does not configure `operative_persistence.MarketOperative` AND `MarketOperative`'s `AddOperative` metadata does not declare `PERSISTENCE_ENABLED`
+- **WHEN** a runner does not configure `operative_persistence.MarketOperative` AND `MarketOperative`'s `AddOperative` metadata does not declare `PERSISTENCE_ENABLED`
 - **THEN** the agent SHALL resolve `persistence_enabled = true` for `MarketOperative`
 
-#### Scenario: Executor override takes precedence
+#### Scenario: Runner override takes precedence
 
-- **WHEN** `MarketOperative`'s `AddOperative` metadata declares `PERSISTENCE_ENABLED = true` AND the executor sets `operative_persistence.MarketOperative = false`
+- **WHEN** `MarketOperative`'s `AddOperative` metadata declares `PERSISTENCE_ENABLED = true` AND the runner sets `operative_persistence.MarketOperative = false`
 - **THEN** the agent SHALL resolve `persistence_enabled = false` for `MarketOperative`
 
 #### Scenario: Mid-life config change does not affect running instance
 
-- **WHEN** an Operative instance is running with resolved `persistence_enabled = true` AND the executor subsequently runs `flz config set operative_persistence.MarketOperative false`
+- **WHEN** an Operative instance is running with resolved `persistence_enabled = true` AND the runner subsequently runs `flz config set operative_persistence.MarketOperative false`
 - **THEN** the running instance SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after the SDK pod hosting the instance is restarted (the new instance's `AddOperative` re-runs the resolution)
 
 ### Requirement: 16-byte version header on persisted blobs
@@ -436,22 +436,22 @@ The agent SHALL expose a `flz state` CLI subcommand tree, using operative vocabu
 
 #### Scenario: flz state list enumerates Segments
 
-- **WHEN** the executor runs `flz state list MarketOperative`
+- **WHEN** the runner runs `flz state list MarketOperative`
 - **THEN** the CLI SHALL print one line per Segment with the listed fields; output SHALL be tabular (column-aligned)
 
 #### Scenario: flz state rotate triggers async compaction
 
-- **WHEN** the executor runs `flz state rotate MarketOperative/btc/OhlcOperation/M1`
+- **WHEN** the runner runs `flz state rotate MarketOperative/btc/OhlcOperation/M1`
 - **THEN** the CLI SHALL print "compaction queued" and exit 0; the agent SHALL ship `CompactSegment` to the SDK; the resulting snapshot SHALL appear on disk within seconds
 
 #### Scenario: flz state retention persists across agent restart
 
-- **WHEN** the executor runs `flz state retention MarketOperative 12` and the agent is subsequently restarted
+- **WHEN** the runner runs `flz state retention MarketOperative 12` and the agent is subsequently restarted
 - **THEN** after restart, the resolved `time_travel_retention_hours` for `MarketOperative` SHALL be 12
 
 ### Requirement: Snapshot files use flat path
 
-The Controller SHALL store snapshot files at `app_data/state/{operative_class}/{operation_id}/{segment_key}.snap.{seq}`. The on-disk path SHALL NOT include `executor_id`. The on-the-wire payload-id SHALL be `segment_state_snapshot`.
+The Controller SHALL store snapshot files at `app_data/state/{operative_class}/{operation_id}/{segment_key}.snap.{seq}`. The on-disk path SHALL NOT include `runner_id`. The on-the-wire payload-id SHALL be `segment_state_snapshot`.
 
 #### Scenario: Snapshot path is flat
 
@@ -502,7 +502,7 @@ Top-level keys that do not match any Operation name SHALL be ignored (with an `e
 
 If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Segment's state untouched after the cold-start `Operation::init_state(operation_key, None)` returned by the build path.
 
-`MigrationDeserialization{factory_id, operative_id, serialized_state}` SHALL reuse the same `apply_init_values` path: the `serialized_state` payload is the UTF-8 JSON blob produced by `serialize_operative_state` on the source executor; applying it to a freshly-started instance restores byte-identical state.
+`MigrationDeserialization{factory_id, operative_id, serialized_state}` SHALL reuse the same `apply_init_values` path: the `serialized_state` payload is the UTF-8 JSON blob produced by `serialize_operative_state` on the source runner; applying it to a freshly-started instance restores byte-identical state.
 
 #### Scenario: Cold start with init_values seeds single-mode Operation
 
@@ -521,31 +521,31 @@ If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Segment's
 
 #### Scenario: Round-trip via MigrationSerialization / MigrationDeserialization
 
-- **WHEN** the SDK on the source executor responds to `MigrationSerialization{operative_id}` with payload bytes `B = serialize_operative_state(instance)`, and a second SDK on the destination executor receives `MigrationDeserialization{factory_id, operative_id, serialized_state: B}`
+- **WHEN** the SDK on the source runner responds to `MigrationSerialization{operative_id}` with payload bytes `B = serialize_operative_state(instance)`, and a second SDK on the destination runner receives `MigrationDeserialization{factory_id, operative_id, serialized_state: B}`
 - **THEN** the destination's freshly-started instance SHALL have Segment state byte-identical to the source's at the moment of serialization, as observed by `serialize_operative_state` re-issued against the destination
 
-### Requirement: The persisted `executor_id` in an operative-binding record is advisory across a controller restart
+### Requirement: The persisted `runner_id` in an operative-binding record is advisory across a controller restart
 
-`Flezha.Operative.Overwatch.init/1` accepts a `stale_executor_id` argument that originates from the durable operative-binding record replayed at boot. This value SHALL be treated as advisory only — it identifies the executor the operative was bound to BEFORE the current controller process started. The Overwatch SHALL re-resolve the live `executor_id` via `OperativeManager.assign_executor/2` inside `handle_continue({:bind_executor, …}, _)` and SHALL NOT issue any control-plane calls (`AddOperative`, `:ping_executor`, `start_operative_sdk`) against the persisted value directly.
+`Flezha.Operative.Overwatch.init/1` accepts a `stale_runner_id` argument that originates from the durable operative-binding record replayed at boot. This value SHALL be treated as advisory only — it identifies the runner the operative was bound to BEFORE the current controller process started. The Overwatch SHALL re-resolve the live `runner_id` via `OperativeManager.assign_runner/2` inside `handle_continue({:bind_runner, …}, _)` and SHALL NOT issue any control-plane calls (`AddOperative`, `:ping_runner`, `start_operative_sdk`) against the persisted value directly.
 
-When the re-resolved `executor_id` differs from `stale_executor_id`, the Overwatch SHALL log an `info`-level rebind line naming both ids and proceed. When the re-resolved `executor_id` equals `stale_executor_id`, the Overwatch SHALL still proceed via the normal startup path — equality with the persisted value does NOT bypass the end-to-end ping (see `executor-controller-connection-healing`).
+When the re-resolved `runner_id` differs from `stale_runner_id`, the Overwatch SHALL log an `info`-level rebind line naming both ids and proceed. When the re-resolved `runner_id` equals `stale_runner_id`, the Overwatch SHALL still proceed via the normal startup path — equality with the persisted value does NOT bypass the end-to-end ping (see `executor-controller-connection-healing`).
 
-No on-disk format change accompanies this requirement; the binding record's `executor_id` field SHALL continue to be written and read with the same wire layout. The clarification is purely about the runtime semantics of the field.
+No on-disk format change accompanies this requirement; the binding record's `runner_id` field SHALL continue to be written and read with the same wire layout. The clarification is purely about the runtime semantics of the field.
 
-#### Scenario: Stale executor_id is re-resolved at boot
-- **GIVEN** a durable operative-binding record for operative `r1` with `executor_id = "default_stale"`
+#### Scenario: Stale runner_id is re-resolved at boot
+- **GIVEN** a durable operative-binding record for operative `r1` with `runner_id = "default_stale"`
 - **AND** the controller restarts and replays the record
-- **AND** the only live executor in the namespace is `default_fresh`
-- **WHEN** `Flezha.Operative.Overwatch` is started by `dist_sup` with `stale_executor_id = "default_stale"`
-- **THEN** `handle_continue({:bind_executor, "default_stale", operative}, _)` SHALL invoke `OperativeManager.assign_executor(namespace, operative.factory_id)` and resolve to `"default_fresh"`
+- **AND** the only live runner in the namespace is `default_fresh`
+- **WHEN** `Flezha.Operative.Overwatch` is started by `dist_sup` with `stale_runner_id = "default_stale"`
+- **THEN** `handle_continue({:bind_runner, "default_stale", operative}, _)` SHALL invoke `OperativeManager.assign_runner(namespace, operative.factory_id)` and resolve to `"default_fresh"`
 - **AND** no control-plane call SHALL be issued against `"default_stale"`
-- **AND** an `info`-level line SHALL log `operative r1 rebound from stale executor "default_stale" to live "default_fresh"`
+- **AND** an `info`-level line SHALL log `operative r1 rebound from stale runner "default_stale" to live "default_fresh"`
 
-#### Scenario: Re-resolved executor_id equal to stale value still runs the full ping path
-- **GIVEN** a durable operative-binding record for operative `r1` with `executor_id = "e1"`
-- **AND** the controller restarts and `e1` is still the live executor (e.g. the executor outlived the controller)
-- **WHEN** the Overwatch resolves `executor_id == stale_executor_id == "e1"`
-- **THEN** the Overwatch SHALL still issue `:ping_executor` before `:start_operative`
+#### Scenario: Re-resolved runner_id equal to stale value still runs the full ping path
+- **GIVEN** a durable operative-binding record for operative `r1` with `runner_id = "e1"`
+- **AND** the controller restarts and `e1` is still the live runner (e.g. the runner outlived the controller)
+- **WHEN** the Overwatch resolves `runner_id == stale_runner_id == "e1"`
+- **THEN** the Overwatch SHALL still issue `:ping_runner` before `:start_operative`
 - **AND** the rebind-log line SHALL NOT fire (the ids are equal)
 - **AND** the bounded-retry governor SHALL still apply on ping/start failure
 
@@ -620,16 +620,16 @@ support are prohibited because they orphan state.
 - **THEN** the directory layout it produces SHALL be exactly the layout `Flezha.State.Registry` reads
 - **AND** any layout the reader does not support SHALL NOT be produced by the migrator
 
-### Requirement: Per-Segment WAL SHALL realign to a restarted executor's seq base
+### Requirement: Per-Segment WAL SHALL realign to a restarted runner's seq base
 
-The Controller's per-Segment WAL SHALL adopt a restarted executor's sequence base as the
-live source of truth rather than freezing. When an executor process restarts and reconnects
-under a new executor id, it resumes emitting Changes from a fresh sequence base derived from
+The Controller's per-Segment WAL SHALL adopt a restarted runner's sequence base as the
+live source of truth rather than freezing. When a runner process restarts and reconnects
+under a new runner id, it resumes emitting Changes from a fresh sequence base derived from
 its post-restart rebuild (e.g. a Kafka replay), which may diverge from the persisted
 `last_persisted_seq`. The WAL SHALL realign its baseline — discarding the superseded
 pre-restart WAL/snapshots so a later `RestoreInitState` ships only the new epoch — instead
-of dedup-dropping the new executor's Changes as stale. A Change at or below
-`last_persisted_seq` from the *same* executor SHALL remain a legitimate dedup. A realignment
+of dedup-dropping the new runner's Changes as stale. A Change at or below
+`last_persisted_seq` from the *same* runner SHALL remain a legitimate dedup. A realignment
 SHALL emit `[:flezha, :state, :wal_realign]` telemetry.
 
 A realign SHALL be honoured only when the divergent Changes arrive via the Segment's
@@ -639,20 +639,20 @@ the binding (the superseded session's channels are unbound during takeover, befo
 new session is bound) and SHALL NOT trigger a realign; the refusal SHALL NOT add any
 per-record check to the owning session's append path.
 
-#### Scenario: A restarted executor's diverged seq base realigns the WAL
-- **GIVEN** a Segment whose WAL has advanced to seq N under executor A
-- **WHEN** executor A restarts and a new executor B, bound as the Segment's owner by takeover, resumes emitting Changes from a seq base diverged from N
-- **THEN** the WAL SHALL realign to executor B's seq base and resume advancing rather than freeze at N
+#### Scenario: A restarted runner's diverged seq base realigns the WAL
+- **GIVEN** a Segment whose WAL has advanced to seq N under runner A
+- **WHEN** runner A restarts and a new runner B, bound as the Segment's owner by takeover, resumes emitting Changes from a seq base diverged from N
+- **THEN** the WAL SHALL realign to runner B's seq base and resume advancing rather than freeze at N
 - **AND** a `[:flezha, :state, :wal_realign]` event SHALL be emitted
 
-#### Scenario: A same-executor duplicate is still deduped
-- **GIVEN** a Segment whose WAL has advanced to seq N under executor A
-- **WHEN** executor A re-sends a Change at or below seq N (a retransmit, not a restart)
+#### Scenario: A same-runner duplicate is still deduped
+- **GIVEN** a Segment whose WAL has advanced to seq N under runner A
+- **WHEN** runner A re-sends a Change at or below seq N (a retransmit, not a restart)
 - **THEN** the Change SHALL be deduped and the WAL SHALL NOT realign
 
-#### Scenario: Output-stall resync resolves the owning executor
+#### Scenario: Output-stall resync resolves the owning runner
 - **WHEN** the Watchdog detects an output stall and triggers a resync for a Segment
-- **THEN** `Flezha.State.Recovery.resolve_executor/1` SHALL resolve the owning executor id from the durable registry entry's metadata tag, keyed by the operative's operative_class (its `:operative_class` opt, defaulting to its id)
+- **THEN** `Flezha.State.Recovery.resolve_runner/1` SHALL resolve the owning runner id from the durable registry entry's metadata tag, keyed by the operative's operative_class (its `:operative_class` opt, defaulting to its id)
 
 #### Scenario: A superseded session's divergent frames do not realign
 - **GIVEN** a Segment whose stable identity was taken over by a new session while the old session's frames are still in flight

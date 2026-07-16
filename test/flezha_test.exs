@@ -23,7 +23,7 @@ end
 defmodule FlezhaTest do
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias FlezhaTest.Fixtures.OperativeFixture
   alias Flezha.Service.PluginManager
   alias Flezha.Service.OperativeManager
@@ -73,8 +73,8 @@ defmodule FlezhaTest do
     :ok
   end
 
-  test "executor node connect" do
-    res = Flezha.Executor.FleetManager.active_executors(@default_namespace)
+  test "runner node connect" do
+    res = Flezha.Runner.FleetManager.active_runners(@default_namespace)
     assert length(res) === 2
     Enum.each(res, &assert(is_binary(&1)))
   end
@@ -94,7 +94,7 @@ defmodule FlezhaTest do
     assert info[:operative_id] === "default_operative_test"
     assert info[:node] === @node_name
     assert is_pid(info[:pid])
-    assert is_binary(info[:executor_id])
+    assert is_binary(info[:runner_id])
   end
 
   test "operative removing" do
@@ -374,34 +374,34 @@ defmodule FlezhaTest do
     assert new_overwatch_state.init_values === old_overwatch_state.init_values
   end
 
-  @tag :executor_disconnect
-  test "executor disconnect" do
+  @tag :runner_disconnect
+  test "runner disconnect" do
     namespace = @temp_namespace
-    executor_id = NodeTestHelper.start_executor(namespace)
+    runner_id = NodeTestHelper.start_runner(namespace)
 
-    NodeTestHelper.stop_executor(namespace, executor_id)
+    NodeTestHelper.stop_runner(namespace, runner_id)
 
-    assert Flezha.Executor.FleetManager.active_executors(namespace) === []
+    assert Flezha.Runner.FleetManager.active_runners(namespace) === []
   end
 
-  @tag :executor_disconnect_migrate_op
-  test "executor disconnect migrate op" do
+  @tag :runner_disconnect_migrate_op
+  test "runner disconnect migrate op" do
     namespace = @temp_namespace
     operative_id_1 = "operative_1"
     operative_id_2 = "operative_2"
 
-    # Start 2 executors under the same namespace.
-    executor_id_1 = NodeTestHelper.start_executor(namespace)
-    executor_id_2 = NodeTestHelper.start_executor(namespace)
+    # Start 2 runners under the same namespace.
+    runner_id_1 = NodeTestHelper.start_runner(namespace)
+    runner_id_2 = NodeTestHelper.start_runner(namespace)
 
     # Start a few operatives and store some state on them.
-    {:ok, %{pid: _operative_pid_1, executor_id: pipe1_op}} =
+    {:ok, %{pid: _operative_pid_1, runner_id: pipe1_op}} =
       operative_id_1
       |> OperativeFixture.get(@test_store_input_factory)
       |> OperativeFixture.start(namespace)
       |> OperativeFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _operative_pid_2, executor_id: _pipe2_op}} =
+    {:ok, %{pid: _operative_pid_2, runner_id: _pipe2_op}} =
       operative_id_2
       |> OperativeFixture.get(@test_store_input_factory)
       |> OperativeFixture.start(namespace)
@@ -413,16 +413,16 @@ defmodule FlezhaTest do
     OperativeManager.create_snapshot(namespace, operative_id_1)
     OperativeManager.create_snapshot(namespace, operative_id_2)
 
-    active_executor =
-      if pipe1_op === executor_id_1, do: executor_id_2, else: executor_id_1
+    active_runner =
+      if pipe1_op === runner_id_1, do: runner_id_2, else: runner_id_1
 
-    # Trigger the executor disconnect.
-    NodeTestHelper.stop_executor(namespace, pipe1_op)
+    # Trigger the runner disconnect.
+    NodeTestHelper.stop_runner(namespace, pipe1_op)
 
-    # Make sure all the operatives are migrated to the other executor.
+    # Make sure all the operatives are migrated to the other runner.
     OperativeManager.operative_registry(namespace)
-    |> Enum.each(fn {_operative_id, {_cspec, _cnodes, %{tag: new_executor}}} ->
-      assert new_executor === active_executor
+    |> Enum.each(fn {_operative_id, {_cspec, _cnodes, %{tag: new_runner}}} ->
+      assert new_runner === active_runner
     end)
 
     # Make sure the states have been migrated.
@@ -436,18 +436,18 @@ defmodule FlezhaTest do
              "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}}"
   end
 
-  @tag :executor_disconnect_preserve
-  test "executor disconnect preserve" do
+  @tag :runner_disconnect_preserve
+  test "runner disconnect preserve" do
     namespace = @temp_namespace
     num_operatives = 15
     operative_ids = for i <- 1..num_operatives, do: "operative_#{i}"
 
-    # Fresh-process executor takeover (an :inactive peer's bindings
-    # are migrated onto the freshly-connected executor) is driven by
+    # Fresh-process runner takeover (an :inactive peer's bindings
+    # are migrated onto the freshly-connected runner) is driven by
     # `Flezha.Convergence.Loop`, which is OFF in the default test config
     # to avoid global-tick races. Start it locally for this test, gated
-    # on `:executor_connected_event` so the rebind fires within ~ms of
-    # `executor_id_3` connecting.
+    # on `:runner_connected_event` so the rebind fires within ~ms of
+    # `runner_id_3` connecting.
     # The Loop's recovery gate (`Probe.await_recovery_complete/2`) requires
     # every hub the always-on Snapshot has ever observed to be settled. That
     # cache accumulates across test files and is never cleared, so a hub left
@@ -456,13 +456,13 @@ defmodule FlezhaTest do
     Flezha.Convergence.Snapshot.reset_recovery_states()
 
     # Short periodic tick so the reseat reconciles within the assertion
-    # budget even if the single `:executor_connected_event` is missed under
+    # budget even if the single `:runner_connected_event` is missed under
     # in-suite contention (other tests also drive the global EventManager).
     {:ok, _} =
       start_supervised({Flezha.Convergence.Loop, tick_ms: 1_000})
 
-    executor_id_1 = NodeTestHelper.start_executor(namespace)
-    executor_id_2 = NodeTestHelper.start_executor(namespace)
+    runner_id_1 = NodeTestHelper.start_runner(namespace)
+    runner_id_2 = NodeTestHelper.start_runner(namespace)
 
     # Start operatives and store some state on them.
 
@@ -487,16 +487,16 @@ defmodule FlezhaTest do
       OperativeManager.create_snapshot(namespace, operative_id)
     end
 
-    # Trigger the executor disconnect.
-    NodeTestHelper.stop_executor(namespace, executor_id_1)
-    NodeTestHelper.stop_executor(namespace, executor_id_2)
+    # Trigger the runner disconnect.
+    NodeTestHelper.stop_runner(namespace, runner_id_1)
+    NodeTestHelper.stop_runner(namespace, runner_id_2)
 
-    # Start a new executor under the same namespace.
-    executor_id_3 = NodeTestHelper.start_executor(namespace)
+    # Start a new runner under the same namespace.
+    runner_id_3 = NodeTestHelper.start_runner(namespace)
 
-    # The convergence Loop reseats every operative tagged to a dead executor
-    # onto `executor_id_3`. In production a periodic tick + the
-    # `:executor_connected_event` drive this; in-suite, async tick delivery
+    # The convergence Loop reseats every operative tagged to a dead runner
+    # onto `runner_id_3`. In production a periodic tick + the
+    # `:runner_connected_event` drive this; in-suite, async tick delivery
     # and the global recovery gate are non-deterministic, so drive the real
     # reconcile path synchronously via `tick_now/0` on each poll and wait
     # for the reseat to land.
@@ -506,33 +506,33 @@ defmodule FlezhaTest do
 
                OperativeManager.operative_registry(namespace)
                |> Enum.all?(fn {_operative_id, {_cspec, _cnodes, %{tag: tag}}} ->
-                 tag === executor_id_3
+                 tag === runner_id_3
                end)
              end,
              15_000
            ),
-           "operatives did not reseat to executor_id_3 within timeout"
+           "operatives did not reseat to runner_id_3 within timeout"
 
     # The rebind tag flips before the WAL restore finishes replaying the
-    # change-log onto the reseated executor, so poll the migrated state
+    # change-log onto the reseated runner, so poll the migrated state
     # rather than reading it the instant the tag lands.
     expected_state = fn operative_id ->
       "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
     end
 
     # The convergence Loop dispatches the WAL restore once, inside the rebind
-    # heal — but once the tag is `executor_id_3` the operative is no longer
+    # heal — but once the tag is `runner_id_3` the operative is no longer
     # misbound, so a later tick won't re-dispatch. Re-drive the documented,
     # idempotent restore re-dispatch path per operative each poll so a restore
-    # that raced the new executor's readiness retries until state converges.
+    # that raced the new runner's readiness retries until state converges.
     assert eventually(
              fn ->
                for {operative_id, _info} <- operative_infos do
                  case HubManager.get_pid(namespace, operative_id) do
                    {:ok, pid} when is_pid(pid) ->
-                     Flezha.Operative.Overwatch.kick_restore_for_bound_executor(
+                     Flezha.Operative.Overwatch.kick_restore_for_bound_runner(
                        pid,
-                       executor_id_3
+                       runner_id_3
                      )
 
                    _ ->
@@ -547,34 +547,34 @@ defmodule FlezhaTest do
              end,
              15_000
            ),
-           "operative states did not migrate to executor_id_3 within timeout"
+           "operative states did not migrate to runner_id_3 within timeout"
 
-    # Stop the new executor.
-    NodeTestHelper.stop_executor(namespace, executor_id_3)
+    # Stop the new runner.
+    NodeTestHelper.stop_runner(namespace, runner_id_3)
 
-    # Adjust the executor cleanup interval and trigger the cleanup.
-    Application.put_env(:flezha, :executor_keepalive, "0")
-    GenServer.call(FleetManager, :executor_cleanup)
+    # Adjust the runner cleanup interval and trigger the cleanup.
+    Application.put_env(:flezha, :runner_keepalive, "0")
+    GenServer.call(FleetManager, :runner_cleanup)
 
-    # Reset the executor keepalive to its default value.
-    Application.put_env(:flezha, :executor_keepalive, "30000")
+    # Reset the runner keepalive to its default value.
+    Application.put_env(:flezha, :runner_keepalive, "30000")
 
     # Make sure the hub is stopped.
     assert HubManager.hub_alive?(namespace) === false
   end
 
-  @tag :executor_disconnect_migrate_hub
-  test "executor disconnect migrate hub" do
+  @tag :runner_disconnect_migrate_hub
+  test "runner disconnect migrate hub" do
     namespace = @temp_namespace
     num_operatives = 15
     operative_ids = for i <- 1..num_operatives, do: "operative_#{i}"
 
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
-    # Start the executors.
-    executor_id_1 = NodeTestHelper.start_executor(namespace)
-    rem_executor_1 = NodeTestHelper.start_executor_remote(peer_node, namespace)
-    rem_executor_2 = NodeTestHelper.start_executor_remote(peer_node, namespace)
+    # Start the runners.
+    runner_id_1 = NodeTestHelper.start_runner(namespace)
+    rem_runner_1 = NodeTestHelper.start_runner_remote(peer_node, namespace)
+    rem_runner_2 = NodeTestHelper.start_runner_remote(peer_node, namespace)
 
     # Wait for peer node to join the ProcessHub hub cluster
     hub_id = Identificator.hub(namespace)
@@ -646,18 +646,18 @@ defmodule FlezhaTest do
         {operative_id, info}
       end
 
-    executor_ids =
-      Enum.map(operative_infos, fn {_id, %{executor_id: ce_id}} -> ce_id end)
+    runner_ids =
+      Enum.map(operative_infos, fn {_id, %{runner_id: ce_id}} -> ce_id end)
 
-    # Make sure that atleast one of the operatives is running on the remote executor.
-    assert Enum.any?(executor_ids, &(&1 !== executor_id_1))
+    # Make sure that atleast one of the operatives is running on the remote runner.
+    assert Enum.any?(runner_ids, &(&1 !== runner_id_1))
 
     # Send state to all operatives
     for {operative_id, _info} <- operative_infos do
       OperativeTestHelper.send_sync_io(operative_id, namespace, "state_#{operative_id}", %{})
     end
 
-    # Check the states before executor migrations.
+    # Check the states before runner migrations.
     for {operative_id, _info} <- operative_infos do
       {:ok, json_state} = OperativeManager.get_segment_state(namespace, operative_id)
 
@@ -670,16 +670,16 @@ defmodule FlezhaTest do
       OperativeManager.create_snapshot(namespace, operative_id)
     end
 
-    # Trigger the executor disconnect.
-    NodeTestHelper.stop_executor_remote(peer_node, namespace, rem_executor_1)
-    NodeTestHelper.stop_executor_remote(peer_node, namespace, rem_executor_2)
+    # Trigger the runner disconnect.
+    NodeTestHelper.stop_runner_remote(peer_node, namespace, rem_runner_1)
+    NodeTestHelper.stop_runner_remote(peer_node, namespace, rem_runner_2)
 
     # Wait for cross-node ProcessHub sync via hook messages (pure message passing).
     # Each :hook_insert_recv arrives when the local registry syncs a tag update.
     # We check the condition after each message — no polling, no sleeping.
     MessageTestHelper.recv_until(:hook_insert_recv, fn ->
       OperativeManager.operative_registry(namespace)
-      |> Enum.all?(fn {_, {_, _, %{tag: tag}}} -> tag === executor_id_1 end)
+      |> Enum.all?(fn {_, {_, _, %{tag: tag}}} -> tag === runner_id_1 end)
     end)
 
     MessageTestHelper.flush(:hook_pstartup_recv)
@@ -702,7 +702,7 @@ defmodule FlezhaTest do
     Flezha.Convergence.Snapshot.reset_recovery_states()
     {:ok, _} = start_supervised({Flezha.Convergence.Loop, tick_ms: 60_000})
 
-    executor_id = NodeTestHelper.start_executor(namespace)
+    runner_id = NodeTestHelper.start_runner(namespace)
 
     {:ok, %{operative_id: operative_id}} =
       "self_heal_operative"
@@ -729,7 +729,7 @@ defmodule FlezhaTest do
            ),
            "loop did not re-attach the declared plugin"
 
-    NodeTestHelper.stop_executor(namespace, executor_id)
+    NodeTestHelper.stop_runner(namespace, runner_id)
   end
 
   test "declared plugin self-reporting unhealthy is restarted by the loop" do
@@ -737,7 +737,7 @@ defmodule FlezhaTest do
     Flezha.Convergence.Snapshot.reset_recovery_states()
     {:ok, _} = start_supervised({Flezha.Convergence.Loop, tick_ms: 60_000})
 
-    executor_id = NodeTestHelper.start_executor(namespace)
+    runner_id = NodeTestHelper.start_runner(namespace)
 
     {:ok, %{operative_id: operative_id}} =
       "sick_plugin_operative"
@@ -785,7 +785,7 @@ defmodule FlezhaTest do
     Flezha.Convergence.Loop.tick_now()
     assert FlezhaTest.SickProvider.activations() == stable
 
-    NodeTestHelper.stop_executor(namespace, executor_id)
+    NodeTestHelper.stop_runner(namespace, runner_id)
   end
 
   defp subscribed_plugin?(ow, plugin_id) do

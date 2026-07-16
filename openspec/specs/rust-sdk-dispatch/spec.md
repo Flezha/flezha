@@ -94,7 +94,7 @@ The "registry" name carries forward from the pre-change implementation; what's s
 
 ### Requirement: Reconnect Semantics Preserved
 
-Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_registry`, shared I/O streams, and `executor_id` (no clear-and-reassign window where frames are dropped). In addition:
+Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_registry`, shared I/O streams, and `runner_id` (no clear-and-reassign window where frames are dropped). In addition:
 
 1. **Live-sink resolution** — the per-Segment state send path (`SegmentStateSink`) SHALL resolve the *live* secondary stream on every send rather than caching a stream handle, so a reconnect's freshly-wired stream is used without re-registering Segments.
 2. **Reconnect ring** — when no sink is installed or a write fails (the reconnect window), state-change frames SHALL be buffered in a bounded ring (drop-oldest on overflow) and replayed through the new sink on install, so changes produced mid-reconnect are not silently lost.
@@ -112,7 +112,7 @@ Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_re
 
 ### Requirement: Command Dispatch Behavior Preserved Byte-for-Byte for Surviving Commands
 
-Every `CommandRequest` variant that survives the cutover (`AssignExecutorId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `ExecutorDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise these command responses MUST NOT change.
+Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `RunnerDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise these command responses MUST NOT change.
 
 `SegmentState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `operative-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<operation_name>": <state>}` (or, for static-mode operations, `{"<operation_name>": {"<operation_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `operative-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk_protocol_spec.md`.
 
@@ -122,8 +122,8 @@ Every `CommandRequest` variant that survives the cutover (`AssignExecutorId`, `C
 - **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_unbounded::<MarketOperative>()` (post-change) or `register_factory("market", ...)` (pre-change)
 - **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Operation, see the `operative-operation-segment-model` capability)
 
-#### Scenario: ExecutorDisconnect closes sockets identically
-- **WHEN** `ExecutorDisconnect{}` is sent under both implementations
+#### Scenario: RunnerDisconnect closes sockets identically
+- **WHEN** `RunnerDisconnect{}` is sent under both implementations
 - **THEN** both SDKs SHALL close their primary control stream and return identical `CommandResponse` bytes
 
 #### Scenario: OperationMessage returns canonical unsupported error pre-operative-message-handlers
@@ -221,7 +221,7 @@ The drain-time coalescing algorithm SHALL: (a) build a `HashMap<CoalesceKey, usi
 
 ### Requirement: OperationTestHarness in public API surface (Rust SDK)
 
-The Rust SDK SHALL export `OperationTestHarness::<S: Operation>` under `flezha_executor::testing::OperationTestHarness`, gated by `cfg(any(test, feature = "testing"))`. The harness SHALL support:
+The Rust SDK SHALL export `OperationTestHarness::<S: Operation>` under `flezha_runner::testing::OperationTestHarness`, gated by `cfg(any(test, feature = "testing"))`. The harness SHALL support:
 
 - `OperationTestHarness::<S>::new()` (requires `S: Default`) — constructs a harness with `S::init_state(None, None)`.
 - `OperationTestHarness::<S>::with_initial_state(state: S::State)` — explicit initial state.
@@ -250,8 +250,8 @@ The Rust SDK SHALL export `OperationTestHarness::<S: Operation>` under `flezha_e
 
 #### Scenario: Harness compiled-out without testing feature
 
-- **WHEN** a downstream crate depends on `flezha_executor` without enabling the `testing` feature flag and does not build under `#[cfg(test)]`
-- **THEN** `flezha_executor::testing` SHALL NOT be visible and references to `OperationTestHarness` SHALL fail to compile
+- **WHEN** a downstream crate depends on `flezha_runner` without enabling the `testing` feature flag and does not build under `#[cfg(test)]`
+- **THEN** `flezha_runner::testing` SHALL NOT be visible and references to `OperationTestHarness` SHALL fail to compile
 
 ### Requirement: 16-byte version header stamped on persisted Changes
 
@@ -286,17 +286,17 @@ The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u
 - **WHEN** the Rust SDK decodes a record whose header crc32 does not match a recomputed crc32 over the change_bytes
 - **THEN** `decode_header` SHALL return `Err(RestoreError::CrcMismatch { segment, seq })` and SHALL NOT proceed to deserialization
 
-### Requirement: Public Rust SDK API uses canonical Operative/Executor vocabulary
+### Requirement: Public Rust SDK API uses canonical Operative/Runner vocabulary
 
-The Rust SDK SHALL expose its top-level dispatch types under the names `ExecutorNode` (formerly `ComputeEngineNode`) and provide a method `get_operatives()` (formerly `get_processors()`) returning the registered Operatives on the current Executor. The module path SHALL be `sdk/rust/src/executor/` (formerly `sdk/rust/src/compute_engine/`). Generated protobuf types SHALL reflect the renamed messages: `AssignExecutorId`, `ExecutorDisconnect`, `AddOperative`, `RemOperative`, `SegmentState`, `SegmentApplyState`, `OperationMessage`, `OperationMessageResponse`, plus existing `RestoreInitState`, `CompactSegment`, `SegmentMailboxStatus`.
+The Rust SDK SHALL expose its top-level dispatch types under the names `RunnerNode` (formerly `ComputeEngineNode`) and provide a method `get_operatives()` (formerly `get_processors()`) returning the registered Operatives on the current Runner. The module path SHALL be `sdk/rust/src/runner/` (formerly `sdk/rust/src/compute_engine/`). Generated protobuf types SHALL reflect the renamed messages: `AssignRunnerId`, `RunnerDisconnect`, `AddOperative`, `RemOperative`, `SegmentState`, `SegmentApplyState`, `OperationMessage`, `OperationMessageResponse`, plus existing `RestoreInitState`, `CompactSegment`, `SegmentMailboxStatus`.
 
 #### Scenario: Public types compile under new names
-- **WHEN** a downstream Rust crate depends on `flezha-sdk` and writes `use flezha_sdk::executor::ExecutorNode;`
+- **WHEN** a downstream Rust crate depends on `flezha-sdk` and writes `use flezha_sdk::runner::RunnerNode;`
 - **THEN** the import MUST resolve and the compiler MUST accept it; an import via the legacy path `flezha_sdk::compute_engine::ComputeEngineNode` MUST NOT compile
 
 #### Scenario: get_operatives returns the local Operative registry
-- **WHEN** a Rust SDK Executor has Operatives `r1` and `r2` registered locally
-- **THEN** `executor_node.get_operatives()` MUST return a collection containing exactly `r1` and `r2`; the legacy method `get_processors()` MUST NOT be exposed
+- **WHEN** a Rust SDK Runner has Operatives `r1` and `r2` registered locally
+- **THEN** `runner_node.get_operatives()` MUST return a collection containing exactly `r1` and `r2`; the legacy method `get_processors()` MUST NOT be exposed
 
 ### Requirement: Generated payload-id constants use canonical names
 
@@ -308,7 +308,7 @@ The Rust SDK's payload-id constants (those that map to the binary framing's `pay
 
 ### Requirement: Test fixtures' Operations exercise the output channel path
 
-The test fixtures under `test/apps/rust_executor/src/main.rs` SHALL emit at least one output frame per input received, via `OperationCtx::output(channel, value, metadata)`, on Operatives exercised by the controller's `:on_output`-subscribed plugin tests. Specifically:
+The test fixtures under `test/apps/rust_runner/src/main.rs` SHALL emit at least one output frame per input received, via `OperationCtx::output(channel, value, metadata)`, on Operatives exercised by the controller's `:on_output`-subscribed plugin tests. Specifically:
 
 - `StoreInputOperative::StoreInputOperation::run` SHALL emit the input string on a sink Channel (named `"output"`) after applying the `PushText` change.
 - `CompareFilterOperative::CompareFilterOperation::run` SHALL emit the input string on a sink Channel when `state.comparable == input` (matching the existing test's expectation of `"hello world"` round-tripping through the filter).
@@ -325,20 +325,20 @@ This requirement covers fixture behavior only; it does not change the SDK's `Ope
 - **WHEN** a `CompareFilterOperative` instance is initialized with `comparable = "hello world"` and the test sends `"hello world"` to the operative
 - **THEN** the test SHALL receive `{:message_forward, "hello world"}` within 2 seconds
 
-### Requirement: `ExecutorReconnected` control message defined and emitted
+### Requirement: `RunnerReconnected` control message defined and emitted
 
-The SDK SHALL emit an `ExecutorReconnected { previous_id, new_id, reason }` control frame as the first message after re-establishing the control stream, and SHALL emit a single structured reconnect log line. The controller SHALL use this frame to compute the binding delta: a stable reconnect under the same id is a zero-frame no-op; a controller-side reassignment during the disconnect window triggers `ReassignExecutorId { new_id }` and a re-issue of the operative set. `reason` SHALL be one of the transport-edge causes (e.g. broken pipe, read/write error, keepalive timeout, controller-requested).
+The SDK SHALL emit an `RunnerReconnected { previous_id, new_id, reason }` control frame as the first message after re-establishing the control stream, and SHALL emit a single structured reconnect log line. The controller SHALL use this frame to compute the binding delta: a stable reconnect under the same id is a zero-frame no-op; a controller-side reassignment during the disconnect window triggers `ReassignRunnerId { new_id }` and a re-issue of the operative set. `reason` SHALL be one of the transport-edge causes (e.g. broken pipe, read/write error, keepalive timeout, controller-requested).
 
 #### Scenario: a stable reconnect is a zero-delta no-op
-- **GIVEN** the SDK reconnects within the disconnect window holding the same `executor_id`
-- **WHEN** it sends `ExecutorReconnected{previous_id == current, new_id == current}`
+- **GIVEN** the SDK reconnects within the disconnect window holding the same `runner_id`
+- **WHEN** it sends `RunnerReconnected{previous_id == current, new_id == current}`
 - **THEN** the controller's bindings already agree and no `AddOperative`/`RemOperative` frames are issued.
 
-### Requirement: Node-local persisted executor id announced as `previous_executor_id`
+### Requirement: Node-local persisted runner id announced as `previous_runner_id`
 
-On a fresh process start (not a reconnect) the SDK SHALL load its node-local persisted executor id (atomically written via tmp+rename at `FLEZHA_EXECUTOR_ID_PATH`) and announce it as `previous_executor_id` in the connect handshake, so the controller evicts the stale binding from the prior process before binding the new one. Reconnects SHALL NOT re-announce it (identity is preserved in-place).
+On a fresh process start (not a reconnect) the SDK SHALL load its node-local persisted runner id (atomically written via tmp+rename at `FLEZHA_RUNNER_ID_PATH`) and announce it as `previous_runner_id` in the connect handshake, so the controller evicts the stale binding from the prior process before binding the new one. Reconnects SHALL NOT re-announce it (identity is preserved in-place).
 
 #### Scenario: a restarted process reclaims its bindings
-- **GIVEN** an SDK process held `executor_id = default_X` and persisted it locally
-- **WHEN** the process is killed and a fresh process starts, reads `default_X`, and announces it as `previous_executor_id`
+- **GIVEN** an SDK process held `runner_id = default_X` and persisted it locally
+- **WHEN** the process is killed and a fresh process starts, reads `default_X`, and announces it as `previous_runner_id`
 - **THEN** the controller evicts the stale `default_X` binding before the new bind, so no operative is left bound to the dead process.

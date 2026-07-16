@@ -112,7 +112,7 @@ The `context` map contains:
 | ------------------- | -------------------- | ------------------------------------------------ |
 | `operative_id`      | `String.t()`         | Target operative's id                            |
 | `namespace`         | `atom() \| String.t()` | Target operative's namespace                   |
-| `executor_id` | `String.t()`         | Compute engine hosting the target operative      |
+| `runner_id` | `String.t()`         | Runner hosting the target operative      |
 | `handler_key`       | `atom()`             | The matched handler key                          |
 | `from`              | `pid()`              | The caller's pid (use for authorization gating)  |
 | `opts`              | `map()`              | The plugin's configured `opts` map               |
@@ -124,7 +124,7 @@ structured error.
 
 `Flezha.Plugin.Provider.MessageForward` is the canonical handler that
 bridges Elixir-side requests to the SDK-side factory. It wraps
-`Flezha.Executor.ControlUnit.send_operation_message/3`, which
+`Flezha.Runner.ControlUnit.send_operation_message/3`, which
 transmits an `OperationMessage` command on the control channel and awaits
 the `OperationMessageResponse`. An empty `error` field maps to
 `{:ok, payload_bytes}`; a non-empty `error` maps to `{:error, error_string}`.
@@ -138,7 +138,7 @@ interface. Factories that do not override it return an explicit
 ### Rust
 
 ```rust
-use flezha_executor::{UnboundedOperative, operative::OperativeError};
+use flezha_runner::{UnboundedOperative, operative::OperativeError};
 
 struct MyOperative;
 impl UnboundedOperative<MyState, String, String> for MyOperative {
@@ -221,7 +221,7 @@ Race outcomes when a request is in flight during migration:
 
 None of these crash the caller, the source Overwatch, or the target
 Overwatch. SDK-side roundtrips are unaffected by *operative* migration
-because `ControlUnit` lives on the compute engine, not the operative.
+because `ControlUnit` lives on the runner, not the operative.
 
 ## Caveats and scope
 

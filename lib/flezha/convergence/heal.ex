@@ -6,24 +6,24 @@ defmodule Flezha.Convergence.Heal do
 
       rebind_operative
       start_plugin  stop_plugin  restart_plugin
-      evict_executor
+      evict_runner
 
   `execute/1` dispatches one planned op to its primitive and returns
   `:ok | :error` so the Loop can drive `Backoff`.
 
-    * `rebind_operative` — migrate a operative tagged to a dead/wrong executor (or
+    * `rebind_operative` — migrate a operative tagged to a dead/wrong runner (or
       not yet bound) onto an available one: flip the registry tag, fan its
-      pid into the new executor's stream channels, replay the WAL.
+      pid into the new runner's stream channels, replay the WAL.
     * `start_plugin` / `stop_plugin` — reconcile a operative's running plugin
       set against its declared cspec manifest.
     * `restart_plugin` — tear down and re-subscribe a declared plugin whose
       provider self-reports unhealthy, so `activate/1` reopens its
       upstream resources.
-    * `evict_executor` — forcibly drop a dead executor binding.
+    * `evict_runner` — forcibly drop a dead runner binding.
   """
 
   alias Flezha.Convergence.SafeCall
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.{HubManager, OperativeManager}
 
   require Logger
@@ -32,7 +32,7 @@ defmodule Flezha.Convergence.Heal do
   @migrate_timeout_ms 2_000
   @plugin_call_timeout_ms 2_000
 
-  @primitives ~w(rebind_operative start_plugin stop_plugin restart_plugin evict_executor)a
+  @primitives ~w(rebind_operative start_plugin stop_plugin restart_plugin evict_runner)a
 
   @spec primitives() :: [atom()]
   def primitives(), do: @primitives
@@ -102,10 +102,10 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
-  # Forcibly drop a dead/orphaned executor binding so its operatives become
-  # misbound and rebind onto a live executor next tick.
-  defp apply_primitive(:evict_executor, %{target: executor_id}) when is_binary(executor_id) do
-    case FleetManager.evict_executor(executor_id) do
+  # Forcibly drop a dead/orphaned runner binding so its operatives become
+  # misbound and rebind onto a live runner next tick.
+  defp apply_primitive(:evict_runner, %{target: runner_id}) when is_binary(runner_id) do
+    case FleetManager.evict_runner(runner_id) do
       :ok -> :ok
       _ -> :error
     end
@@ -114,29 +114,29 @@ defmodule Flezha.Convergence.Heal do
   # Malformed op (no live target) — never produced by the Planner, but a
   # crash here would take down the whole tick. Treat as a failed heal.
   defp apply_primitive(prim, _op)
-       when prim in [:evict_executor, :start_plugin, :stop_plugin, :restart_plugin],
+       when prim in [:evict_runner, :start_plugin, :stop_plugin, :restart_plugin],
        do: :error
 
-  # Migrate a operative bound to a dead/wrong executor onto an available one.
-  # On success: flip the registry tag and seed the target executor's
+  # Migrate a operative bound to a dead/wrong runner onto an available one.
+  # On success: flip the registry tag and seed the target runner's
   # `StreamChannel.operative_mapping` (the same hook `child_registered`
   # uses) so frames land. Any failed step leaves the registry untouched
   # and the operative degraded for the next tick under Backoff.
   defp rebind_operative(namespace, operative_id, args) do
     with {:ok, pid} when is_pid(pid) <- HubManager.get_pid(namespace, operative_id),
-         %{factory_id: factory, executor_id: prev} <- overwatch_snapshot(pid),
+         %{factory_id: factory, runner_id: prev} <- overwatch_snapshot(pid),
          true <- factory != nil,
          false <- skip_rebind?(namespace, factory, prev, args),
          target when is_binary(target) <-
-           OperativeManager.assign_executor(namespace, factory, operative_id),
-         {:ok, :ok} <- SafeCall.bounded(pid, {:executor_migrate, target}, @migrate_timeout_ms) do
-      _ = HubManager.operative_set_executor(namespace, operative_id, target)
+           OperativeManager.assign_runner(namespace, factory, operative_id),
+         {:ok, :ok} <- SafeCall.bounded(pid, {:runner_migrate, target}, @migrate_timeout_ms) do
+      _ = HubManager.operative_set_runner(namespace, operative_id, target)
       _ = HubManager.hook_insert_local_pid(target, operative_id, pid)
 
-      # Replay the per-Segment WAL into the new binding. The `executor_migrate`
+      # Replay the per-Segment WAL into the new binding. The `runner_migrate`
       # above is a HotSwap handover, which only carries state when the previous
-      # executor is alive to serialise it; when the previous executor died (the
-      # common rebind trigger) the new executor's operation would otherwise init
+      # runner is alive to serialise it; when the previous runner died (the
+      # common rebind trigger) the new runner's operation would otherwise init
       # empty and the operative's persisted state is lost (state resets to 0).
       # resync routes a `RestoreInitState` handshake for each persisted
       # segment to `target`, rebuilding state from the durable WAL.
@@ -145,7 +145,7 @@ defmodule Flezha.Convergence.Heal do
       emit_reconnected(namespace, operative_id, prev, target)
       :ok
     else
-      # `skip_rebind?` returned true — a MISBOUND operative whose bound executor
+      # `skip_rebind?` returned true — a MISBOUND operative whose bound runner
       # is already active and owns the factory, so a stale-snapshot rebind
       # would only disrupt a healthy operative. Safe no-op.
       true -> :ok
@@ -153,19 +153,19 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
-  # A misbound rebind is a safe no-op once the bound executor is back in the
+  # A misbound rebind is a safe no-op once the bound runner is back in the
   # live, factory-owning active set (a reconnect between snapshot and heal
   # time): re-reading the authoritative set here stops a detection slip from
   # churning a healthy operative.
 
   # Output-stall proves the binding is not producing — always proceed regardless
-  # of whether the bound executor is still in the active set.
+  # of whether the bound runner is still in the active set.
   defp skip_rebind?(_ns, _factory, _prev, %{reason: :output_stall}), do: false
 
   defp skip_rebind?(_namespace, _factory, prev, _args) when prev in [nil, ""], do: false
 
   defp skip_rebind?(namespace, factory, prev, _args) do
-    prev in FleetManager.executors_for_factory(namespace, factory)
+    prev in FleetManager.runners_for_factory(namespace, factory)
   end
 
   defp overwatch_snapshot(pid) do
@@ -176,16 +176,16 @@ defmodule Flezha.Convergence.Heal do
   end
 
   defp emit_reconnected(namespace, operative_id, prev, target) do
-    meta = %{namespace: namespace, operative_id: operative_id, executor_id: target}
+    meta = %{namespace: namespace, operative_id: operative_id, runner_id: target}
 
     :telemetry.execute(
-      [:flezha, :executor, :reconnected_reassigned],
+      [:flezha, :runner, :reconnected_reassigned],
       %{count: 1},
       Map.merge(meta, %{previous_id: prev, new_id: target, reason: :convergence_rebind})
     )
 
     :telemetry.execute(
-      [:flezha, :executor, :reconnected],
+      [:flezha, :runner, :reconnected],
       %{count: 1},
       Map.merge(meta, %{reason: :convergence_rebind, mode: :reassigned})
     )

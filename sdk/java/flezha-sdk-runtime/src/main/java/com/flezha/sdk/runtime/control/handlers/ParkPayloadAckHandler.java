@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.control.handlers;
 
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.state.DlqPark;
 import java.util.List;
@@ -23,7 +23,7 @@ public final class ParkPayloadAckHandler implements CommandHandler {
 
     @Override
     @Nonnull
-    public byte[] handle(@Nonnull ExecutorContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors) {
+    public byte[] handle(@Nonnull RunnerContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors) {
         try {
             Object ack = CommandRequest.class.getMethod("getParkPayloadAck").invoke(request);
             if (ack == null) {

@@ -51,7 +51,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
 
   test "5.4 ping success proceeds to start_operative_sdk and activates plugins",
        %{test_pid: test_pid} do
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _executor_id ->
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _runner_id ->
       send(test_pid, :ping_called)
       {:ok, :pong}
     end)
@@ -79,7 +79,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     Application.put_env(
       :flezha,
       :overwatch_ping_fn,
-      gate_then(ets, fn _executor_id, attempt ->
+      gate_then(ets, fn _runner_id, attempt ->
         send(test_pid, {:ping_attempt, attempt, System.monotonic_time(:millisecond)})
         {:error, :timeout}
       end)
@@ -109,13 +109,13 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     Application.put_env(
       :flezha,
       :overwatch_ping_fn,
-      gate_then(ets, fn _executor_id, _attempt ->
+      gate_then(ets, fn _runner_id, _attempt ->
         send(test_pid, :ping_called)
         {:error, :timeout}
       end)
     )
 
-    Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _executor_id ->
+    Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _runner_id ->
       send(test_pid, :channel_reset)
       :ok
     end)
@@ -138,7 +138,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
        %{test_pid: test_pid, ets: ets} do
     :ets.insert(ets, {:attempts, 0})
 
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _executor_id ->
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _runner_id ->
       n = :ets.update_counter(ets, :attempts, {2, 1}, {:attempts, 0})
       send(test_pid, {:ping_attempt, n})
 
@@ -182,7 +182,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     assert is_nil(state.init_error)
   end
 
-  test "6.4 a parked operative un-parks via executor_migrate: pings, starts, clears init_error, activates plugins",
+  test "6.4 a parked operative un-parks via runner_migrate: pings, starts, clears init_error, activates plugins",
        %{test_pid: test_pid, ets: ets} do
     # Start the operative so the readiness gate passes but the START ping fails,
     # parking it (alive, init_error set). Started directly (not via
@@ -191,7 +191,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     Application.put_env(
       :flezha,
       :overwatch_ping_fn,
-      gate_then(ets, fn _executor_id, _attempt -> {:error, :timeout} end)
+      gate_then(ets, fn _runner_id, _attempt -> {:error, :timeout} end)
     )
 
     Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
@@ -222,15 +222,15 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
 
     refute_received :activated
 
-    # A healthy executor is now reachable — un-park via executor_migrate.
+    # A healthy runner is now reachable — un-park via runner_migrate.
     Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:ok, :pong} end)
-    executor_id = OperativeManager.assign_executor(@namespace, @factory, "unpark_operative")
-    assert is_binary(executor_id)
+    runner_id = OperativeManager.assign_runner(@namespace, @factory, "unpark_operative")
+    assert is_binary(runner_id)
 
-    assert :ok = GenServer.call(pid, {:executor_migrate, executor_id})
+    assert :ok = GenServer.call(pid, {:runner_migrate, runner_id})
 
     # init_error cleared and the plugin activated (resumes producing).
-    # `consume-recovery-mode-and-self-heal` §3.3-3.5 made `:executor_migrate`
+    # `consume-recovery-mode-and-self-heal` §3.3-3.5 made `:runner_migrate`
     # async (the retry loop runs in a `Task.Supervisor.async_nolink` task),
     # so we poll the state instead of asserting immediately.
     assert_receive :activated, 5_000
@@ -243,16 +243,16 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     assert Flezha.Plugin.Extension.Table.phase(state.extensions, "unpark_plugin") == :running
   end
 
-  # `await_active_executor` pings once to confirm the executor is reachable
+  # `await_active_runner` pings once to confirm the runner is reachable
   # before the start-retry path runs. These tests drive the START ping to
   # fail; the readiness gate must still pass or the operative stops with
-  # `:executor_not_ready` instead of exercising the retry/park behaviour.
+  # `:runner_not_ready` instead of exercising the retry/park behaviour.
   # First call = readiness gate (pong); later calls = start attempts (run body).
   defp gate_then(ets, start_fn) do
-    fn executor_id ->
+    fn runner_id ->
       case :ets.update_counter(ets, :calls, {2, 1}, {:calls, 0}) do
         1 -> {:ok, :pong}
-        n -> start_fn.(executor_id, n - 1)
+        n -> start_fn.(runner_id, n - 1)
       end
     end
   end
@@ -276,7 +276,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     Application.put_env(
       :flezha,
       :overwatch_ping_fn,
-      gate_then(ets, fn _executor_id, _attempt -> {:error, :timeout} end)
+      gate_then(ets, fn _runner_id, _attempt -> {:error, :timeout} end)
     )
 
     Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)

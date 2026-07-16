@@ -49,7 +49,7 @@ KNOWN_CONTAINER_NAMES=(
   flezha_zookeeper
   flezha_kafka
   flezha_kafka_ui
-  flezha_rust_executor
+  flezha_rust_runner
 )
 
 force_remove_known_containers() {

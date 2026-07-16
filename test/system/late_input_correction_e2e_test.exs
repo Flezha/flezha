@@ -1,7 +1,7 @@
 defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
   @moduledoc """
   End-to-end proof for `unbounded-late-input-correction` against a live Rust
-  executor.
+  runner.
 
   The `candle` fixture declares the tier, an `EventTimeFrom` clock, a keyed sink
   and a 10-minute `correction_window`. Its state records the event times in the
@@ -44,7 +44,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
     id_path = unique_id_path()
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
-    {_port, _exec} = boot_executor(namespace, id_path)
+    {_port, _exec} = boot_runner(namespace, id_path)
 
     sink = %Flezha.Plugin{
       id: "tier_sink",
@@ -116,7 +116,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
     id_path = unique_id_path()
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
-    {_port, _exec} = boot_executor(namespace, id_path)
+    {_port, _exec} = boot_runner(namespace, id_path)
 
     builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)

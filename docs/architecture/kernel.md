@@ -31,7 +31,7 @@ sequenceDiagram
     participant SRC as 🌐 Source
     participant OW as 🧠 Overwatch
     participant IL as 💾 Input log
-    participant EX as ⚙️ Executor segment
+    participant EX as ⚙️ Runner segment
     participant WW as 🧠 WAL writer
     participant FB as 💾 fsync batcher
     participant SINK as 📤 Sink
@@ -61,7 +61,7 @@ sequenceDiagram
 Three orderings in that diagram are invariants, not implementation detail:
 
 - **Append before forward.** `Overwatch.journal_input/2` is the single seam where an input
-  becomes durable, and it runs *before* the input reaches an executor. A failed append is not
+  becomes durable, and it runs *before* the input reaches a runner. A failed append is not
   forwarded — a frame the sender can retry beats an undurable one it believes was accepted.
 - **Fsync before flush.** An output never reaches a sink until the record that produced it is
   on disk. State and effect cannot diverge.
@@ -134,7 +134,7 @@ one is an atomic unit and stays one.
 
 ```mermaid
 sequenceDiagram
-    participant EX as ⚙️ Executor
+    participant EX as ⚙️ Runner
     participant WR as 🧠 WAL writer (buffer)
     participant DISK as 💾 fsync
     participant SINK as 📤 Sink
@@ -170,11 +170,11 @@ cursor widens the re-drive, which sink dedup absorbs; it can never skip.
 ## Snapshots, compaction, and restore
 
 A segment's WAL is a change log. Left alone it grows forever, so the controller periodically
-asks the executor for a full state snapshot and truncates the log beneath it.
+asks the runner for a full state snapshot and truncates the log beneath it.
 
 ```mermaid
 sequenceDiagram
-    participant EX as ⚙️ Executor
+    participant EX as ⚙️ Runner
     participant CTRL as 🧠 Controller
 
     Note over EX,CTRL: normal operation — a delta change log
@@ -207,7 +207,7 @@ history a rewind needs a baseline inside, so a correcting operative refuses to s
 two are misconfigured.
 
 > **Restore ships the snapshot plus the whole tail.** There is no "send me only the range I am
-> missing" negotiation: the controller does not know what an executor holds, and
+> missing" negotiation: the controller does not know what a runner holds, and
 > `RestoreInitState` has no sequence-range field. Compaction — physically truncating the log —
 > is the only thing that makes a restore smaller.
 
@@ -218,7 +218,7 @@ live segment, so the controller decides explicitly rather than assuming.
 
 ```mermaid
 sequenceDiagram
-    participant EX as ⚙️ Executor (alive, state @ seq 5000)
+    participant EX as ⚙️ Runner (alive, state @ seq 5000)
     participant CTRL as 🧠 Controller (fresh — no local WAL)
 
     Note over CTRL: an operative was placed here, but this node holds no WAL for it
@@ -233,11 +233,11 @@ sequenceDiagram
         EX->>CTRL: seq 5002+ now appends contiguously
     end
 
-    Note over CTRL: the mirror-image case — controller HAS history, executor is fresh —<br/>is the ordinary push of RestoreInitState
+    Note over CTRL: the mirror-image case — controller HAS history, runner is fresh —<br/>is the ordinary push of RestoreInitState
 ```
 
-The rule: **controller has history + executor is fresh → push** `RestoreInitState`;
-**controller is fresh + executor has state → pull** `CompactSegment`. Backing this is an
+The rule: **controller has history + runner is fresh → push** `RestoreInitState`;
+**controller is fresh + runner has state → pull** `CompactSegment`. Backing this is an
 empty-payload guard — `Restore.has_persisted_state?/1` treats a zero-byte WAL as *no state*, so
 the controller can never push an empty restore that would rebuild a live segment back to
 `init_state`.
@@ -308,7 +308,7 @@ flowchart LR
         WAL2[("💾 WAL + snapshot<br/>state is durable")]:::store
         OB[("💾 outbox identity<br/>(segment, seq, epoch, key)<br/><b>2 · a deterministic key</b>")]:::store
     end
-    EX["⚙️ Executor<br/>state in memory"]:::exec
+    EX["⚙️ Runner<br/>state in memory"]:::exec
     SINK["📤 Sink — idempotent<br/>upsert by key · (epoch, seq) guard<br/><b>3 · dedup</b>"]:::sink
 
     SRC --> IL
@@ -334,7 +334,7 @@ every plugin-bound channel to be `.keyed()` — an unkeyed output has nothing fo
 on, so declaring the tier over one is refused at build time.
 
 **The tier is a Rust-SDK capability.** The Java SDK has no effect record, no `ctx.now()` /
-`ctx.stable_id()` / `ctx.checkpoint()`, and no keyed emit, so a Java executor runs
+`ctx.stable_id()` / `ctx.checkpoint()`, and no keyed emit, so a Java runner runs
 at-least-once.
 
 ## Determinism
@@ -429,7 +429,7 @@ One rule, two kinds of event.
 flowchart TB
     subgraph KEEP["KEEP the epoch — dedup absorbs the repeat"]
         C1["crash retry / re-emit"]:::exec
-        C2["executor takeover realign"]:::exec
+        C2["runner takeover realign"]:::exec
         C3["outbox re-drive after a restart"]:::exec
         C4["flz dlq replay<br/><i>re-enters as a NEW input — new offset, new seq</i>"]:::exec
     end
@@ -469,13 +469,13 @@ flowchart TB
     G1{{"① SOURCE CREDIT — tier only<br/>out of credit → the ingest call PARKS<br/>the websocket stops reading its socket<br/><b>loss: no</b>"}}:::park
     CTRL["🧠 Controller"]:::ctrl
     G2{{"② SEND BUFFER ≤ 8 MiB — NOT credit, by design<br/>full → drop the newest frame<br/><b>loss: none under the tier</b> (the input log re-drives)"}}:::drop
-    EX["⚙️ Executor (user code)"]:::exec
+    EX["⚙️ Runner (user code)"]:::exec
     G3{{"③ CREDIT WINDOW — always on<br/>out of credit → the flusher PARKS<br/><b>loss: no</b>"}}:::park
     WAL[("💾 WAL + fsync")]:::store
     SHED{{"last resort: hard-bound shed at 64 MiB<br/>a credit-speaking sender can never reach it —<br/>reaching it is an anomaly signal, not back-pressure"}}:::drop
 
     SRC -->|"input"| G1 --> CTRL
-    CTRL -->|"input to the executor"| G2 --> EX
+    CTRL -->|"input to the runner"| G2 --> EX
     EX -->|"state change + output"| G3 --> CTRL
     CTRL -->|"writes"| WAL
     WAL -.->|"fsync → GRANT — mints ③"| G3
@@ -491,13 +491,13 @@ flowchart TB
 ```
 
 **Green parks, orange drops.** The rule to remember: *against a slow disk we wait; against a
-slow or dead executor we never wait.*
+slow or dead runner we never wait.*
 
 **Why ② is not credit.** The core of credit is "park, do not drop" — the sender stops when the
-receiver cannot keep up. Executor→controller (③) is exactly the right place for that: if the
-durable side cannot fsync fast enough, the executor *should* slow down. But
-controller→executor (②) is the opposite: parking there would block the **controller**, which
-serves thousands of other operatives, on one wedged executor. So that direction drops its newest
+receiver cannot keep up. Runner→controller (③) is exactly the right place for that: if the
+durable side cannot fsync fast enough, the runner *should* slow down. But
+controller→runner (②) is the opposite: parking there would block the **controller**, which
+serves thousands of other operatives, on one wedged runner. So that direction drops its newest
 frame past 8 MiB and counts it. It is protection against a dead partner, not against load.
 
 A dropped input frame is **not** loss under the tier: it is already durable in the input log at
@@ -505,11 +505,11 @@ its offset, and the crash-resume re-forward will deliver it. And in practice the
 never fill, because loop ① is upstream of it — a stuck segment freezes the watermark, which
 starves source credit, which parks the source at the actual origin.
 
-### The executor→controller credit loop
+### The runner→controller credit loop
 
 ```mermaid
 sequenceDiagram
-    participant EX as ⚙️ Executor (sender)
+    participant EX as ⚙️ Runner (sender)
     participant CTRL as 🧠 Controller (receiver)
     participant DISK as 💾 fsync
 
@@ -541,7 +541,7 @@ once.)
 
 The park is a bounded re-check loop, not an indefinite block, so a lost grant degrades to a
 retry rather than a freeze. A sender parked for more than 5 s logs once. `credit_parked` rides
-the executor's data heartbeat, so "fed but parked" is distinguishable from "wedged" from the
+the runner's data heartbeat, so "fed but parked" is distinguishable from "wedged" from the
 outside.
 
 The hard bound at 4× the window (64 MiB) still exists as a last-resort shed, but under credit
@@ -564,16 +564,16 @@ it stopped.
 
 ## Ownership and fencing
 
-Exactly one executor session may write a segment's WAL. Ownership changes at the door — a new
+Exactly one runner session may write a segment's WAL. Ownership changes at the door — a new
 connection presenting a known stable identity takes over — and the takeover is ordered:
 **unbind the old session before binding the new one**, so an in-flight frame from the old session
 dies at the binding rather than in the writer.
 
 ```mermaid
 sequenceDiagram
-    participant OLD as ⚙️ Executor session S1 (superseded)
+    participant OLD as ⚙️ Runner session S1 (superseded)
     participant CTRL as 🧠 Controller (takeover)
-    participant NEW as ⚙️ Executor session S2 (new)
+    participant NEW as ⚙️ Runner session S2 (new)
 
     Note over CTRL: newest-wins — the ORDER is the mechanism
     CTRL->>CTRL: 1 · mark S1 superseded, fence its stream channels
@@ -595,32 +595,32 @@ There are **two** fence layers, and the second is a per-write check:
    refuse the seven segment-write payload ids outright.
 2. **The WAL owner token.** The session token rides *every* append, and the writer refuses one
    from a session it knows to be superseded. Crucially, this check runs **before** the realign
-   decision, which is the entire point — a stale executor must never be allowed to rebase the
+   decision, which is the entire point — a stale runner must never be allowed to rebase the
    log onto its own lineage.
 
 > The owner pays **no per-write cost**: the token comparison against the current owner
 > short-circuits before the superseded-session lookup ever runs. It is a per-write *token*, not
 > a per-write *penalty*.
 
-Realign itself is the legitimate version of the same event: a *different, current* executor
-emitting a non-contiguous sequence is the signature of an executor pod restart, and the writer
+Realign itself is the legitimate version of the same event: a *different, current* runner
+emitting a non-contiguous sequence is the signature of a runner pod restart, and the writer
 adopts its lineage and bumps the epoch. Full detail:
-[`../resilience/executor_identity.md`](../resilience/executor_identity.md).
+[`../resilience/runner_identity.md`](../resilience/runner_identity.md).
 
 ---
 
 ## Health and liveness
 
 The controller's single self-healer is `Flezha.Convergence.Loop`. It runs a declarative pipeline
-every 5 s, and immediately on a declared event (an output stall, an executor connect).
+every 5 s, and immediately on a declared event (an output stall, a runner connect).
 
 ```mermaid
 flowchart LR
     I["<b>Intent</b><br/>what SHOULD run<br/>(the ProcessHub registry)"]:::ctrl
-    P["<b>Probe</b><br/>what DOES run<br/>(live executors, operative state,<br/>plugin health) — pure observer"]:::ctrl
+    P["<b>Probe</b><br/>what DOES run<br/>(live runners, operative state,<br/>plugin health) — pure observer"]:::ctrl
     D["<b>Diff</b><br/>pure comparison →<br/>unbound · misbound ·<br/>missing/extra/unhealthy plugins"]:::ctrl
     PL["<b>Planner</b><br/>ordered, backoff-filtered ops<br/>(≤ 20 per tick)"]:::ctrl
-    H["<b>Heal</b><br/>rebind_operative · start_plugin<br/>stop_plugin · restart_plugin<br/>evict_executor"]:::ctrl
+    H["<b>Heal</b><br/>rebind_operative · start_plugin<br/>stop_plugin · restart_plugin<br/>evict_runner"]:::ctrl
     S["<b>Snapshot</b><br/>the published health summary —<br/>read by /healthz and the CLI"]:::store
 
     I --> D
@@ -709,8 +709,8 @@ flowchart TB
     V1["① driver_loop_frozen<br/>the transport driver thread stopped looping"]:::risk
     V2["② nif_queue_backing_up<br/>commands enqueued, the driver is not draining them"]:::risk
     V3["③ socket_write_blocked<br/>the driver writes into a buffer the peer will not drain"]:::risk
-    V4["④ executor_not_consuming<br/>the controller sends fine, nothing comes back"]:::risk
-    V5["⑤ executor_pool_wedged"]:::risk
+    V4["④ runner_not_consuming<br/>the controller sends fine, nothing comes back"]:::risk
+    V5["⑤ runner_pool_wedged"]:::risk
     V6["⑥ channel_not_sending<br/>the channel is fed but never calls send"]:::risk
     V7["⑦ operative_not_forwarding<br/>the operative is fed but never forwards"]:::risk
     OK["no stall — :ok"]:::prot
@@ -739,7 +739,7 @@ verdict and drives no healing — it exists so an operator does not have to gues
 The endpoint holds no state — it reads the published convergence snapshot and nothing else.
 
 **503 is reserved for one condition on purpose.** A kubelet restart cannot re-bind an
-executor-orphaned operative, cannot repair a wiped registry, and cannot un-stall a data plane
+runner-orphaned operative, cannot repair a wiped registry, and cannot un-stall a data plane
 that is legitimately stopped — restarting the pod for any of those destroys a working controller
 to fix nothing. The only thing a restart genuinely fixes is a wedged loop, so that is the only
 thing that returns 503. The listener is opt-in (`FLEZHA_HEALTHZ_ENABLED`, port 9569).

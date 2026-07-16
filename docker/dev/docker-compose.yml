@@ -121,10 +121,10 @@ services:
 
   rust:
     # Reuse the toolchain image — it ships with the full Rust toolchain, so
-    # the executor app builds in-place from the bind-mounted source.
+    # the runner app builds in-place from the bind-mounted source.
     # No extra Dockerfile needed for the test container.
     image: alfetahe/flezha:latest-toolchain
-    container_name: flezha_rust_executor
+    container_name: flezha_rust_runner
     depends_on:
       controller:
         condition: service_started
@@ -134,7 +134,7 @@ services:
       # Demo namespace used by the connection-healing integration test in
       # test/scripts/connection_healing.sh — keep in sync.
       FLEZHA_DEMO_NAMESPACE: ${FLEZHA_DEMO_NAMESPACE:-default}
-    working_dir: /flezha/test/apps/rust_executor
+    working_dir: /flezha/test/apps/rust_runner
     # Wait for the controller's UDS socket to appear, then exec the compute engine.
     # The wait loop tolerates controller restarts: the SDK's own reconnect loop
     # takes over once we've handed off to it.
@@ -142,11 +142,11 @@ services:
       - sh
       - -c
       - |
-        until [ -S /flezha/app_data/sockets/executor_control_channel.sock ]; do
+        until [ -S /flezha/app_data/sockets/runner_control_channel.sock ]; do
           echo "[rust] waiting for controller control socket..."
           sleep 1
         done
-        exec cargo run --quiet --manifest-path=/flezha/test/apps/rust_executor/Cargo.toml -- "$$FLEZHA_DEMO_NAMESPACE"
+        exec cargo run --quiet --manifest-path=/flezha/test/apps/rust_runner/Cargo.toml -- "$$FLEZHA_DEMO_NAMESPACE"
     volumes:
       - socket_data:/socket_data
       - ../../:/flezha

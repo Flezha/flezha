@@ -59,7 +59,7 @@ Each Segment SHALL track its event-time high-water. An input whose extracted
 event time is behind the high-water by no more than the correction window SHALL
 NOT be processed as arrival; the SDK SHALL request correction and hold the
 Segment's drain. The engine SHALL rewind the Segment to the last state seq whose
-event time precedes the late input's, restore the executor to that baseline, and
+event time precedes the late input's, restore the runner to that baseline, and
 re-forward the input-log range above the baseline's consumed offset marked as a
 replay slice. The SDK SHALL buffer that slice to its end-of-slice marker, order
 it by extracted event time — stably, tie-broken by ascending input-log offset —

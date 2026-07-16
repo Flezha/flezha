@@ -101,11 +101,11 @@ defmodule Flezha.AuthZTest do
              AuthZ.authorize(ctx, :"authz.token_issue", Scope.build("team-payments"))
   end
 
-  test "executor role gets data-plane verbs only" do
-    :ok = RoleStore.bind("exec-1", "team-orders", :executor)
+  test "runner role gets data-plane verbs only" do
+    :ok = RoleStore.bind("exec-1", "team-orders", :runner)
     ctx = %{source: :sdk, principal: "exec-1"}
 
-    assert :ok = AuthZ.authorize(ctx, :"executor.connect", Scope.build("team-orders"))
+    assert :ok = AuthZ.authorize(ctx, :"runner.connect", Scope.build("team-orders"))
 
     assert {:error, {:forbidden, :role_insufficient}} =
              AuthZ.authorize(ctx, :"operative.start", Scope.build("team-orders"))

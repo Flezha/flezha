@@ -6,7 +6,7 @@ defmodule Flezha.State.Recovery do
 
   Used by the three failure edges that were previously silent:
 
-    * a seq gap detected on append (`Flezha.Executor.StreamChannel`),
+    * a seq gap detected on append (`Flezha.Runner.StreamChannel`),
     * an output-staleness or compaction timeout
       (`Flezha.State.Watchdog`).
 
@@ -14,7 +14,7 @@ defmodule Flezha.State.Recovery do
   this module owns only the resync mechanism. The dispatch can be
   redirected in tests via the `:state_resync_fun` application env (an
   arity-2 fun `(segment_id, opts -> term)`), which lets a test simulate
-  the SDK's rewind-and-resend without a live executor.
+  the SDK's rewind-and-resend without a live runner.
   """
 
   require Logger
@@ -33,7 +33,7 @@ defmodule Flezha.State.Recovery do
   @doc """
   Bind-driven WAL replay trigger. Called by `Flezha.Operative.Overwatch`
   from `handle_continue(:after_bind, _)` with the Overwatch's own
-  `executor_id` so the replay never depends on a class→executor lookup
+  `runner_id` so the replay never depends on a class→runner lookup
   in the durable registry (the lookup that failed on cold boot and
   produced the silent "resync skipped reason=:output_stall" no-op).
 
@@ -43,21 +43,21 @@ defmodule Flezha.State.Recovery do
   `Flezha.Operative.Overwatch.dispatch_restore_init_state/2`.
   """
   @spec resync_for_overwatch(pid(), binary()) :: :ok
-  def resync_for_overwatch(overwatch_pid, executor_id)
-      when is_pid(overwatch_pid) and is_binary(executor_id) do
-    Overwatch.kick_restore_for_bound_executor(overwatch_pid, executor_id)
+  def resync_for_overwatch(overwatch_pid, runner_id)
+      when is_pid(overwatch_pid) and is_binary(runner_id) do
+    Overwatch.kick_restore_for_bound_runner(overwatch_pid, runner_id)
     :ok
   end
 
   @doc """
-  Resolve the `executor_id` currently owning `operative_class` from the
-  ProcessHub registry. Returns `{:ok, executor_id}` or `{:error, term}`.
+  Resolve the `runner_id` currently owning `operative_class` from the
+  ProcessHub registry. Returns `{:ok, runner_id}` or `{:error, term}`.
 
   Retained for the CLI `flz state rotate` surface — the resync path
   itself no longer relies on this lookup (see `resync_for_overwatch/2`).
   """
-  @spec resolve_executor(tuple()) :: {:ok, binary()} | {:error, term()}
-  def resolve_executor({rc, _sh, _pk}) do
+  @spec resolve_runner(tuple()) :: {:ok, binary()} | {:error, term()}
+  def resolve_runner({rc, _sh, _pk}) do
     case Flezha.Service.HubManager.get_registry("default") do
       {:ok, registry} ->
         match =
@@ -69,7 +69,7 @@ defmodule Flezha.State.Recovery do
           end)
 
         case match do
-          nil -> {:error, "no active executor owns operative_class=#{rc}"}
+          nil -> {:error, "no active runner owns operative_class=#{rc}"}
           eid -> {:ok, eid}
         end
 
@@ -80,17 +80,17 @@ defmodule Flezha.State.Recovery do
 
   defp do_resync(segment_id, opts) do
     reason = Keyword.get(opts, :reason, :unknown)
-    executor_id = Keyword.get(opts, :executor_id)
+    runner_id = Keyword.get(opts, :runner_id)
 
     cond do
-      is_binary(executor_id) ->
-        dispatch_resync(segment_id, executor_id, reason)
+      is_binary(runner_id) ->
+        dispatch_resync(segment_id, runner_id, reason)
 
       true ->
-        # Callers without an executor_id are only signalling "I observed
+        # Callers without an runner_id are only signalling "I observed
         # a stall"; the convergence Loop's rebind heal owns the recovery
         # action. This module does not dispatch one out-of-band.
-        {:error, :no_executor_id}
+        {:error, :no_runner_id}
     end
   end
 
@@ -98,12 +98,12 @@ defmodule Flezha.State.Recovery do
   # baseline the controller pushes `RestoreInitState`; without one it pulls a
   # full-state snapshot via `CompactSegment` — an empty RestoreInitState
   # would rebuild the live Segment to `init_state` and wipe accumulated state.
-  defp dispatch_resync(segment_id, executor_id, reason) do
+  defp dispatch_resync(segment_id, runner_id, reason) do
     result =
       if Restore.has_persisted_state?(segment_id) do
-        Overwatch.dispatch_restore_init_state(executor_id, segment_id)
+        Overwatch.dispatch_restore_init_state(runner_id, segment_id)
       else
-        Overwatch.dispatch_compact_segment(executor_id, segment_id)
+        Overwatch.dispatch_compact_segment(runner_id, segment_id)
       end
 
     case result do
@@ -121,7 +121,7 @@ defmodule Flezha.State.Recovery do
   end
 
   # The durable registry stores `{operative_id, {cspec, node_pids, metadata}}` (a
-  # pre-namespace row may omit metadata). The owning executor is `metadata.tag`;
+  # pre-namespace row may omit metadata). The owning runner is `metadata.tag`;
   # the operative_class is the operative's `:operative_class` opt (default: its id), carried
   # in the cspec's start args — mirror of `Reconciler.Probe.operative_from_cspec/1`.
   defp normalize_entry({cspec, node_pids, metadata}), do: {cspec, node_pids, metadata}
@@ -132,7 +132,7 @@ defmodule Flezha.State.Recovery do
       {_namespace, operative} when is_map(operative) ->
         operative_class_of(operative)
 
-      {_namespace, _executor_id, operative} when is_map(operative) ->
+      {_namespace, _runner_id, operative} when is_map(operative) ->
         operative_class_of(operative)
 
       _ ->

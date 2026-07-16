@@ -1,6 +1,6 @@
 # Installable Plugins
 
-Flezha supports a Jenkins-style plugin lifecycle: executors install a
+Flezha supports a Jenkins-style plugin lifecycle: runners install a
 plugin package from a local archive, the controller validates, compiles, and
 hot-loads the modules, and the plugin persists across restarts. No
 rebuild of the release is required.
@@ -157,7 +157,7 @@ openssl pkeyutl -sign -inkey plugin_key.pem -rawin \
 ```
 
 Add `signature.sig` to the archive and deliver the public key to the
-controller executor, who installs it in `config.exs`:
+controller runner, who installs it in `config.exs`:
 
 ```elixir
 config :flezha, :plugin_installer,
@@ -229,7 +229,7 @@ directory and returns the error.
 
 ### Uninstall
 
-Refuses while the plugin is `:enabled` (executor must disable first).
+Refuses while the plugin is `:enabled` (runner must disable first).
 Refuses while any other installed plugin declares a dep on this one.
 Purges every owned module, removes the `<plugin_id>/` directory, and
 deletes the catalog row.
@@ -255,7 +255,7 @@ Constraints use a subset of SemVer comparators: `>=`, `>`, `<`, `<=`,
 - Upgrade that would break a dependent: `{:error, {:dependents_block, [...]}}`.
 - Uninstall while dependents exist: same shape.
 
-No transitive install — the executor installs deps in order.
+No transitive install — the runner installs deps in order.
 
 ## Staged rollout / environment overrides
 
@@ -313,7 +313,7 @@ A plugin row is marked `:load_failed` at boot when the Loader cannot
 - OTP/Elixir version drift between install time and the current controller.
 
 Fix: re-install the package. The original `.fpz` can be rebuilt from
-the `installed/<id>/<version>/src/` tree if the executor has disk
+the `installed/<id>/<version>/src/` tree if the runner has disk
 access.
 
 ### `{:error, {:compile_failed, file, reason}}`

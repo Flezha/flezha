@@ -48,7 +48,7 @@ defmodule Flezha.Load.CreditSoakTest do
   import FlezhaTest.Helper.CreditTestHelper
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, ensure_port_dead: 1]
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Plugin
   alias Flezha.Service.PluginManager
@@ -110,10 +110,10 @@ defmodule Flezha.Load.CreditSoakTest do
     operative_id = "credit_soak_#{System.unique_integer([:positive])}"
     Application.put_env(:flezha, :credit_window_bytes, %{operative_id => @window_bytes})
 
-    # Roomy SDK input mailbox so injected fsync stalls buffer executor-side
+    # Roomy SDK input mailbox so injected fsync stalls buffer runner-side
     # (park, never drop) instead of overflowing the input edge.
     {exec_port, ce_id} =
-      NodeTestHelper.start_executor_port(@namespace,
+      NodeTestHelper.start_runner_port(@namespace,
         runtime: :rust,
         transport: :uds,
         connect_timeout: 120_000,
@@ -129,7 +129,7 @@ defmodule Flezha.Load.CreditSoakTest do
 
     builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
-    assert info.executor_id == ce_id
+    assert info.runner_id == ce_id
 
     {:ok, "plugin enabled"} =
       PluginManager.enable_plugin(@ws_plugin_id, %Plugin{

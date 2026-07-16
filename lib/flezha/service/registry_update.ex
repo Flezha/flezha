@@ -12,11 +12,11 @@ defmodule Flezha.Service.RegistryUpdate do
   alias Flezha.Service.HubManager
   alias Flezha.Plugin
 
-  @doc "Registry transform that re-tags an operative's owning executor."
-  @spec set_executor_tag(String.t()) :: (map(), keyword(), map() -> {map(), keyword(), map()})
-  def set_executor_tag(executor_id) do
+  @doc "Registry transform that re-tags an operative's owning runner."
+  @spec set_runner_tag(String.t()) :: (map(), keyword(), map() -> {map(), keyword(), map()})
+  def set_runner_tag(runner_id) do
     fn cspec, node_pids, metadata ->
-      {cspec, node_pids, Map.put(metadata, :tag, executor_id)}
+      {cspec, node_pids, Map.put(metadata, :tag, runner_id)}
     end
   end
 

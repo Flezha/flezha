@@ -39,7 +39,7 @@ changed, and then with the *sender's* cspec. A plain
 node never reaches the others and is clobbered on the next pid change.
 
 Durable manifests embedded in the cspec (the operative plugin list written by
-`flz plugin enable`, the executor tag from `operative_set_executor/3`) MUST be
+`flz plugin enable`, the runner tag from `operative_set_runner/3`) MUST be
 written with `ProcessRegistry.update/4` `propagate: true`, which re-applies
 the same pure update function on every hub node (2 s per-peer budget,
 best-effort; a node missed while down converges on rejoin via peer sync).
@@ -79,7 +79,7 @@ cold-starting a dead one (trust local disk)?"
 - **Manual restart, sole instance, cluster was fully down:** start in recovery
   mode (`flz cluster prepare-recovery`) so it replays the operative list from DETS.
 - **Manual restart, accept losing the live operative list:** plain restart. The
-  registry is rebuilt from peers (if any) and from executors re-announcing their
+  registry is rebuilt from peers (if any) and from runners re-announcing their
   operatives on reconnect. Do this only when temporary loss is acceptable.
 
 ## Implications for flezha controller code (the lessons)
@@ -91,7 +91,7 @@ cold-starting a dead one (trust local disk)?"
   peer-synced rejoin.
 - **Health/recovering signals must derive from cluster-sync state**, not from
   DETS contents. "Still recovering" means "this node has not yet finished
-  syncing its registry (from peers, or from executors re-announcing)", not
+  syncing its registry (from peers, or from runners re-announcing)", not
   "DETS has rows the live view does not."
 - **Do not preserve/replay DETS on a rejoin to 'fix' a gap.** That forces stale
   local state onto a node that should sync from peers — split-brain, and it

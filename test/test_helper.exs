@@ -1,5 +1,5 @@
 # `:java_sdk` is excluded from default `mix test` because it requires the
-# Java executor fat jar to be on disk. Run those tests via the
+# Java runner fat jar to be on disk. Run those tests via the
 # `mix test.java_sdk` alias, which builds the jar first.
 # `:system` is excluded by convention — those tests boot extra OS processes.
 # `:testnet` is excluded because the WS testnet daemon must be running on
@@ -33,15 +33,15 @@ Mimic.copy(KafkaEx)
 Mimic.copy(Flezha.Service.OperativeManager)
 Mimic.copy(Flezha.Service.PluginManager)
 Mimic.copy(Flezha.Service.HubManager)
-Mimic.copy(Flezha.Executor.ControlChannel)
+Mimic.copy(Flezha.Runner.ControlChannel)
 Mimic.copy(Flezha.AuthZ.Quotas)
 Mimic.copy(Flezha.Plugin.Provider.Kafka.WorkerRegistry)
 Mimic.copy(Flezha.State.FsyncBatcher)
 Mimic.copy(Flezha.Transport.Server)
 Mimic.copy(ProcessHub)
 Mimic.copy(ProcessHub.Service.ProcessRegistry)
-Mimic.copy(Flezha.Executor.ControlUnit)
-Mimic.copy(Flezha.Executor.FleetManager)
+Mimic.copy(Flezha.Runner.ControlUnit)
+Mimic.copy(Flezha.Runner.FleetManager)
 Mimic.copy(Flezha.State.Watchdog)
 Mimic.copy(Flezha.State.Retention)
 Mimic.copy(Flezha.State.Registry)

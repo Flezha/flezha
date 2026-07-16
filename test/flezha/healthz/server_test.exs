@@ -210,7 +210,7 @@ defmodule Flezha.Healthz.ServerTest do
 
   test "durable registry pending → 200 recovering (post-restart, registry not loaded yet)",
        %{port: port} do
-    # Hubs start lazily on executor reconnect, so right after a restart Intent is
+    # Hubs start lazily on runner reconnect, so right after a restart Intent is
     # empty (intended == 0) while operatives.dets still sits on disk. This must read
     # recovering, never vacuously healthy — `bound < intended` (0 < 0) misses it.
     Snapshot.publish(%{

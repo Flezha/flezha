@@ -3,7 +3,7 @@ defmodule Flezha.AuthZ.Policy do
   Compile-time role→action mapping.
 
   Roles inherit upward: `admin` ⊇ `operator` ⊇ `viewer`. The
-  `executor` role is intentionally outside this hierarchy and grants
+  `runner` role is intentionally outside this hierarchy and grants
   only the three data-plane verbs.
 
   Cross-namespace auth-state mutations are additionally gated in
@@ -64,22 +64,22 @@ defmodule Flezha.AuthZ.Policy do
     :"authz.role_unbind"
   ]
 
-  @executor_actions [
-    :"executor.connect",
-    :"executor.checkpoint",
-    :"executor.report"
+  @runner_actions [
+    :"runner.connect",
+    :"runner.checkpoint",
+    :"runner.report"
   ]
 
   @viewer MapSet.new(@viewer_actions)
   @operator MapSet.union(@viewer, MapSet.new(@operator_extra))
   @admin MapSet.union(@operator, MapSet.new(@admin_extra))
-  @executor MapSet.new(@executor_actions)
+  @runner MapSet.new(@runner_actions)
 
   @grants %{
     viewer: @viewer,
     operator: @operator,
     admin: @admin,
-    executor: @executor
+    runner: @runner
   }
 
   @doc """

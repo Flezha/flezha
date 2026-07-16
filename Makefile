@@ -39,7 +39,7 @@ test:
 stabilize-test-check:
 	mix test
 	mix test
-	cargo test --workspace --features flezha_executor/bench-internals
+	cargo test --workspace --features flezha_runner/bench-internals
 	@if [ "$(SKIP_JAVA)" = "1" ]; then \
 	  echo "skipping mvn -f sdk/java verify (SKIP_JAVA=1)"; \
 	else \

@@ -10,7 +10,7 @@ The controller-graceful-shutdown capability defines how the Flezha controller (B
 
 `Flezha.Shutdown.Coordinator` is a GenServer started by `Flezha.Application` after `Flezha.Service.HubManager`. On `Coordinator.shutdown(reason, opts)` it SHALL execute three phases in order: **quiesce → drain → finalise**. Each phase SHALL emit one structured log line at start and one telemetry event under `[:flezha, :shutdown, :phase_started | :phase_completed]` with metadata `%{phase: :quiesce | :drain | :finalise, reason: atom()}`.
 
-**Quiesce** SHALL set a process-tree-visible flag such that `Flezha.Service.OperativeManager.start_operative/2` returns `{:error, :shutting_down}` and `Flezha.Executor.FleetManager` rejects new executor connect attempts with a structured error. Already-running Operatives and already-connected executors SHALL NOT be affected by this phase.
+**Quiesce** SHALL set a process-tree-visible flag such that `Flezha.Service.OperativeManager.start_operative/2` returns `{:error, :shutting_down}` and `Flezha.Runner.FleetManager` rejects new runner connect attempts with a structured error. Already-running Operatives and already-connected runners SHALL NOT be affected by this phase.
 
 **Drain** SHALL dispatch `ProcessHub` `cluster_leave` for every running namespace's hub by calling `Flezha.Service.HubManager.stop_hub_manager()` (which causes ProcessHub's `terminate/2` to dispatch `@event_cluster_leave` to peers) and SHALL synchronously poll `ProcessHub.registry_dump/1` across peers every `500 ms` until **every Operative that was locally hosted at quiesce time** is registered as locally hosted on at least one peer (HotSwap migration complete) or until the local Operative has terminated AND the leaving node has no peers (no migration target — local termination flushes WAL state to disk for restart survival). Each poll SHALL emit `[:flezha, :shutdown, :drain_progress]` with `%{migrated: integer(), remaining: integer(), elapsed_ms: integer()}`.
 
@@ -121,7 +121,7 @@ When `:flezha, :graceful_shutdown_enabled` is `false`, `prep_stop/1` SHALL fall 
 
 ### Requirement: `flz controller stop` SHALL run the coordinator over the CLI socket in every controller run mode
 
-`cli/src/controller.rs` `handle_stop/1` SHALL replace the `bin/flezha stop` shell-out with an RPC over the existing `executor_control_channel.sock` to a new `Flezha.Service.CliManager.controller_stop/1` handler that calls `Flezha.Shutdown.Coordinator.shutdown(:cli, opts)`. The CLI SHALL stream coordinator progress (the `[:flezha, :shutdown, :*]` telemetry events, formatted) to the operator's terminal until the coordinator returns.
+`cli/src/controller.rs` `handle_stop/1` SHALL replace the `bin/flezha stop` shell-out with an RPC over the existing `runner_control_channel.sock` to a new `Flezha.Service.CliManager.controller_stop/1` handler that calls `Flezha.Shutdown.Coordinator.shutdown(:cli, opts)`. The CLI SHALL stream coordinator progress (the `[:flezha, :shutdown, :*]` telemetry events, formatted) to the operator's terminal until the coordinator returns.
 
 The CLI SHALL accept the following flags:
 
@@ -158,7 +158,7 @@ The RPC SHALL work whether the controller is running as a release, under `mix ru
 
 #### Scenario: `flz controller stop` against an unreachable controller exits 3
 
-- **GIVEN** the controller socket at `${FLEZHA_SOCKET_FILES_PATH}/executor_control_channel.sock` does not exist or is not connectable
+- **GIVEN** the controller socket at `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock` does not exist or is not connectable
 - **WHEN** an operator runs `flz controller stop`
 - **THEN** the CLI prints `error: controller not reachable on <socket_path>` to stderr and exits with status `3`
 

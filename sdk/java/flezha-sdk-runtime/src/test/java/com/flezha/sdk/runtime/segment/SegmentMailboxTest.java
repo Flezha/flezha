@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Java mirror of the Rust SDK's bounded mailbox operative tests
- * ({@code sdk/rust/src/executor/mailbox.rs}). Exercises the three
+ * ({@code sdk/rust/src/runner/mailbox.rs}). Exercises the three
  * {@link OverflowPolicy} variants in isolation; end-to-end dispatcher
  * behaviour is covered by {@code OverflowPolicyTest}.
  */

@@ -1,9 +1,9 @@
 defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   @moduledoc """
   Crash-matrix proof for `effectively-once-output-postgres-sink` against a
-  live Rust executor and a real Postgres: a source drives a tier operative
+  live Rust runner and a real Postgres: a source drives a tier operative
   (`tier_store`, declared `effectively_once()`) whose keyed outputs land on
-  the transactional Postgres sink. The executor is SIGKILLed mid-stream
+  the transactional Postgres sink. The runner is SIGKILLed mid-stream
   while inputs keep flowing, and the controller's state layer is crashed
   with a staled flush cursor (forcing a full outbox re-drive). The final
   `flezha_records` row set and `flezha_sink_progress` watermark must equal
@@ -26,7 +26,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   import FlezhaTest.Helper.PostgresSink
   import FlezhaTest.Helper.TierE2EHarness
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Outbox
@@ -64,7 +64,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
     # --- Phase 0: boot, bind, sink ------------------------------------------
-    {port_a, exec_a} = boot_executor(namespace, id_path)
+    {port_a, exec_a} = boot_runner(namespace, id_path)
 
     # The sink rides the builder opts so every Overwatch restart (the
     # controller-crash phases) re-prepares it from the cspec; the stable
@@ -93,7 +93,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
     }
 
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
-    assert info.executor_id == exec_a
+    assert info.runner_id == exec_a
 
     # The SDK-declared tier must have been resolved at bind.
     assert wait_until(
@@ -106,21 +106,21 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
     send_inputs(operative_id, namespace, ["k1:a", "k2:a", "k1:b"])
     assert await_rows(db, %{"k1" => "k1=b", "k2" => "k2=a"}, 30_000)
 
-    # --- Phase 2: executor SIGKILL mid-stream ---------------------------------
+    # --- Phase 2: runner SIGKILL mid-stream ---------------------------------
     sigkill(os_pid(port_a))
 
-    # Inputs while no executor is alive: journaled, undeliverable — the
+    # Inputs while no runner is alive: journaled, undeliverable — the
     # rebind's journal replay must recover them.
     send_inputs(operative_id, namespace, ["k2:b", "k3:a"])
 
-    {_port_b, exec_b} = boot_executor(namespace, id_path)
+    {_port_b, exec_b} = boot_runner(namespace, id_path)
     assert exec_b != exec_a
 
-    assert wait_until(fn -> exec_a not in FleetManager.active_executors(namespace) end, 30_000)
+    assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 30_000)
     force_fresh_rebind(namespace, operative_id)
 
     assert await_rows(db, %{"k1" => "k1=b", "k2" => "k2=b", "k3" => "k3=a"}, 60_000),
-           "journaled inputs were not replayed after the executor kill"
+           "journaled inputs were not replayed after the runner kill"
 
     # --- Phase 3: controller state-layer crash with a staled cursor ----------
     stale_cursor_and_crash_writers(operative_id, segment_id)

@@ -1,14 +1,14 @@
 defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
   @moduledoc """
   End-to-end proof for `effectively-once-checkpoint-granularity` against a live
-  Rust executor: a source drives `checkpoint_store` (declared
+  Rust runner: a source drives `checkpoint_store` (declared
   `effectively_once()` + `checkpoint_ack()`), whose keyed outputs land on a
   conforming changelog sink. Every input folds into the Segment's state, but
   only a `commit:` input closes the interval — so the durable consumed-offset
   stands still for a whole interval while the outputs of that interval are
   already flowing.
 
-  The executor is SIGKILLed mid-interval. Recovery must restore the state to the
+  The runner is SIGKILLed mid-interval. Recovery must restore the state to the
   last checkpoint and re-forward the interval's inputs, and the sink must
   converge to the same changelog as a no-crash run — the interval's re-emitted
   outputs absorbed by upsert on `flz.key`, and the offset never resuming past an
@@ -23,7 +23,7 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Service.OperativeManager
@@ -42,7 +42,7 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
 
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
-    {port_a, exec_a} = boot_executor(namespace, id_path)
+    {port_a, exec_a} = boot_runner(namespace, id_path)
 
     sink = %Flezha.Plugin{
       id: "tier_sink",
@@ -61,7 +61,7 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
     }
 
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
-    assert info.executor_id == exec_a
+    assert info.runner_id == exec_a
 
     assert wait_until(fn -> ClassRegistry.effectively_once?(operative_id) end, 30_000),
            "the tier declaration never reached the controller"
@@ -96,12 +96,12 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
 
     sigkill(os_pid(port_a))
 
-    # An input arriving with no executor alive: journaled, undeliverable.
+    # An input arriving with no runner alive: journaled, undeliverable.
     send_inputs(operative_id, namespace, ["k4:a"])
 
-    {_port_b, exec_b} = boot_executor(namespace, id_path)
+    {_port_b, exec_b} = boot_runner(namespace, id_path)
     assert exec_b != exec_a
-    assert wait_until(fn -> exec_a not in FleetManager.active_executors(namespace) end, 30_000)
+    assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 30_000)
     force_fresh_rebind(namespace, operative_id)
 
     # Recovery restored the 2-checkpoint and re-forwarded 3..5. The re-run

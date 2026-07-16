@@ -72,7 +72,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert ctx.stream_id == 1
   end
 
-  test "executor_not_consuming: sending fine, nothing read back" do
+  test "runner_not_consuming: sending fine, nothing read back" do
     prev =
       snapshot(
         drivers: [
@@ -90,12 +90,12 @@ defmodule Flezha.Convergence.StallClassifierTest do
         ]
       )
 
-    assert {:executor_not_consuming, ctx} = StallClassifier.classify(curr, prev)
+    assert {:runner_not_consuming, ctx} = StallClassifier.classify(curr, prev)
     assert ctx.stream_id == 1
   end
 
-  test "executor_not_consuming does NOT fire on a one-directional (write-only) stream" do
-    # A primary data stream never carries executor→controller frames, so
+  test "runner_not_consuming does NOT fire on a one-directional (write-only) stream" do
+    # A primary data stream never carries runner→controller frames, so
     # frames_read stays 0 forever — that is its normal state, not a stall.
     prev =
       snapshot(
@@ -122,9 +122,9 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert StallClassifier.classify(curr, prev) == :ok
   end
 
-  test "executor_pool_wedged: fed and heartbeating but dispatch counter frozen" do
+  test "runner_pool_wedged: fed and heartbeating but dispatch counter frozen" do
     # The 2026-06-10 prod signature: controller sends ~100 frames/s, the
-    # executor's heartbeat thread stays alive, but its dispatch pool is
+    # runner's heartbeat thread stays alive, but its dispatch pool is
     # deadlocked so the self-reported counter never moves.
     prev =
       snapshot(
@@ -142,12 +142,12 @@ defmodule Flezha.Convergence.StallClassifierTest do
         ]
       )
 
-    assert {:executor_pool_wedged, ctx} = StallClassifier.classify(curr, prev)
-    assert ctx.executor_id == "exec-1"
+    assert {:runner_pool_wedged, ctx} = StallClassifier.classify(curr, prev)
+    assert ctx.runner_id == "exec-1"
     assert ctx.dispatches == 9_000
   end
 
-  test "executor_pool_wedged does NOT fire while dispatches advance" do
+  test "runner_pool_wedged does NOT fire while dispatches advance" do
     prev =
       snapshot(
         channels: [
@@ -167,7 +167,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert StallClassifier.classify(curr, prev) == :ok
   end
 
-  test "executor_pool_wedged does NOT fire for executors that don't self-report (old SDK)" do
+  test "runner_pool_wedged does NOT fire for runners that don't self-report (old SDK)" do
     prev =
       snapshot(
         channels: [
@@ -187,7 +187,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert StallClassifier.classify(curr, prev) == :ok
   end
 
-  test "executor_pool_wedged does NOT fire when heartbeats stopped (channel-level stall instead)" do
+  test "runner_pool_wedged does NOT fire when heartbeats stopped (channel-level stall instead)" do
     prev =
       snapshot(
         channels: [
@@ -212,7 +212,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
     curr = snapshot(channels: [channel(io_in_received: 30, send_frame_calls: 10)])
 
     assert {:channel_not_sending, ctx} = StallClassifier.classify(curr, prev)
-    assert ctx.executor_id == "exec-1"
+    assert ctx.runner_id == "exec-1"
   end
 
   test "channel_not_sending does NOT fire when the channel is merely unbound (nil_drops rising)" do
@@ -287,7 +287,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
 
   defp channel(opts) do
     %{
-      executor_id: Keyword.get(opts, :executor_id, "exec-1"),
+      runner_id: Keyword.get(opts, :runner_id, "exec-1"),
       name: Keyword.get(opts, :name, :chan_1),
       io_in_received: Keyword.get(opts, :io_in_received, 0),
       send_frame_calls: Keyword.get(opts, :send_frame_calls, 0),

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The operative-init-state capability lets executors hydrate an operative's initial state at startup via a configured chain of provider plugins, rather than requiring every caller to know the full `init_values` map at Builder time. Providers run synchronously inside `Flezha.Operative.Overwatch.init/1`, before the SDK sees the operative, and feed into the existing `AddOperative.init_values` field — no transport, protobuf, or SDK change. Plugins are chained with shallow-merge semantics, each is bounded by a per-plugin timeout enforced by a supervised task, and failures dispatch via a per-plugin `on_error` policy that either aborts operative startup or gracefully degrades to the upstream accumulator. The capability runs only on cold start; migration (`executor_migrate`) preserves its existing snapshot-or-inline-`init_values` logic and never invokes providers.
+The operative-init-state capability lets runners hydrate an operative's initial state at startup via a configured chain of provider plugins, rather than requiring every caller to know the full `init_values` map at Builder time. Providers run synchronously inside `Flezha.Operative.Overwatch.init/1`, before the SDK sees the operative, and feed into the existing `AddOperative.init_values` field — no transport, protobuf, or SDK change. Plugins are chained with shallow-merge semantics, each is bounded by a per-plugin timeout enforced by a supervised task, and failures dispatch via a per-plugin `on_error` policy that either aborts operative startup or gracefully degrades to the upstream accumulator. The capability runs only on cold start; migration (`runner_migrate`) preserves its existing snapshot-or-inline-`init_values` logic and never invokes providers.
 
 ## Requirements
 
@@ -52,11 +52,11 @@ The system SHALL combine each subscriber's `{:ok, ctx}` return value into the ac
 
 ### Requirement: Cold-start only, snapshot-wins on migration
 
-The system SHALL invoke the init-state plugin chain only when an operative is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `operative-state-persistence` capability. On migration (`handle_call({:executor_migrate, ...})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated operative. On reconnect of a Segment whose Operative has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` (per `operative-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for a Segment restored via `RestoreInitState`.
+The system SHALL invoke the init-state plugin chain only when an operative is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `operative-state-persistence` capability. On migration (`handle_call({:runner_migrate, ...})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated operative. On reconnect of a Segment whose Operative has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` (per `operative-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for a Segment restored via `RestoreInitState`.
 
 For Segments whose Operative has `persistence_enabled = false`, OR whose agent-side state is empty (no snapshot, no WAL records), the existing init-state capability flow runs unchanged: the init-state plugin chain runs (cold start), or the inline Builder `init_values` is used (cold start with non-empty inline values), or the migration snapshot is used (migrated operative).
 
-`RestoreInitState` and `executor_migrate` SHALL be mutually exclusive per Segment: when `executor_migrate` is invoked for a Segment with persisted state, the migration path's snapshot bytes SHALL be the restoration source AND `RestoreInitState` SHALL NOT be issued for that Segment. The agent's `Overwatch.init/1` SHALL enforce this exclusion.
+`RestoreInitState` and `runner_migrate` SHALL be mutually exclusive per Segment: when `runner_migrate` is invoked for a Segment with persisted state, the migration path's snapshot bytes SHALL be the restoration source AND `RestoreInitState` SHALL NOT be issued for that Segment. The agent's `Overwatch.init/1` SHALL enforce this exclusion.
 
 #### Scenario: Cold start with no inline init_values and no persisted state
 
@@ -70,7 +70,7 @@ For Segments whose Operative has `persistence_enabled = false`, OR whose agent-s
 
 #### Scenario: Operative migration
 
-- **WHEN** an existing operative is migrated to a new compute engine via `executor_migrate`
+- **WHEN** an existing operative is migrated to a new compute engine via `runner_migrate`
 - **THEN** the init-state chain MUST NOT run, and migration MUST use the existing snapshot-or-inline-`init_values` selection logic; `RestoreInitState` SHALL NOT be issued for any Segment of the migrated operative (even Segments with persisted state — the migration snapshot is authoritative)
 
 #### Scenario: Segment restart via changelog

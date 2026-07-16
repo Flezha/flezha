@@ -7,8 +7,8 @@ ride along in the repo (so CI never has to rebuild them):
   — flz_jni cdylib for **all five** target platforms (linux-x64,
   linux-arm64, macos-x64, macos-arm64, windows-x64).
 - `sdk/java/flezha-sdk/dist/flezha-sdk.jar` — SDK fat jar.
-- `test/apps/java_executor/dist/java_executor.jar` —
-  test executor fat jar.
+- `test/apps/java_runner/dist/java_runner.jar` —
+  test runner fat jar.
 
 This image is **only for builds**, not for running the controller. For
 runtime/dev see [`../dev/README.md`](../dev/README.md); for production

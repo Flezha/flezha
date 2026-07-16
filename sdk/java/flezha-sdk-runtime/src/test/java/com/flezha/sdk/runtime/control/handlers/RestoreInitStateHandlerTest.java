@@ -12,7 +12,7 @@ import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Proves a stateful Java operative resumes its accumulated state from the
- * controller's WAL replay after an executor restart / rebind — the Java mirror
+ * controller's WAL replay after a runner restart / rebind — the Java mirror
  * of the Rust SDK's {@code resume_probe} proof. Resume must land at N (no loss),
  * never 0 (the pre-fix bug) and never 2N (double-apply).
  */
@@ -59,7 +59,7 @@ class RestoreInitStateHandlerTest {
 
     @Test
     void pureReplayResumesAtN() throws Exception {
-        ExecutorContext ctx = newContextWithUnboundedOperative();
+        RunnerContext ctx = newContextWithUnboundedOperative();
         KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
@@ -96,7 +96,7 @@ class RestoreInitStateHandlerTest {
 
     @Test
     void snapshotPlusChangeLogDoesNotDoubleApply() throws Exception {
-        ExecutorContext ctx = newContextWithUnboundedOperative();
+        RunnerContext ctx = newContextWithUnboundedOperative();
         KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
@@ -135,7 +135,7 @@ class RestoreInitStateHandlerTest {
 
     @Test
     void noLiveSlotValidatesAndAcksWithoutMutating() throws Exception {
-        ExecutorContext ctx = newContextWithUnboundedOperative();
+        RunnerContext ctx = newContextWithUnboundedOperative();
         KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
@@ -165,10 +165,10 @@ class RestoreInitStateHandlerTest {
         assertThat(((CounterOperation.State) slot(ctx).state().get()).value).isZero();
     }
 
-    private static ExecutorContext newContextWithUnboundedOperative() {
+    private static RunnerContext newContextWithUnboundedOperative() {
         UnboundedOperativeRegistry.registerUnbounded(CounterUnboundedOperative.class);
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
-        ExecutorContext ctx = new ExecutorContext("ns", cfg, 0L);
+        RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
         CommandRequest add = CommandRequest.newBuilder()
                 .setReferenceId("r")
@@ -181,7 +181,7 @@ class RestoreInitStateHandlerTest {
         return ctx;
     }
 
-    private static SegmentSlot slot(ExecutorContext ctx) {
+    private static SegmentSlot slot(RunnerContext ctx) {
         return ctx.operativeInstanceRegistry()
                 .getUnboundedOperative(INSTANCE)
                 .segments()

@@ -1,7 +1,7 @@
 defmodule FlezhaTest.System.DynamicSegmentE2ETest do
   @moduledoc """
   End-to-end proof for `operative-dynamic-segmenting` against a live Rust
-  executor: an input for a fresh key lazily creates a Segment whose state
+  runner: an input for a fresh key lazily creates a Segment whose state
   is shipped (controller writes a WAL file); after the 200ms TTL the reaper
   evicts it, ships `delete_segment_state`, and the controller drops the
   files — the SDK reaper → delete-RPC → agent-handler path with no other
@@ -11,7 +11,7 @@ defmodule FlezhaTest.System.DynamicSegmentE2ETest do
 
   use ExUnit.Case, async: false
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Service.EventManager
   alias Flezha.Service.PortPilot
@@ -43,7 +43,7 @@ defmodule FlezhaTest.System.DynamicSegmentE2ETest do
 
   @tag :dynamic_segment_e2e
   test "lazy-created Segment's state is shipped, then reaped + deleted controller-side" do
-    {port, ce_id} = start_executor()
+    {port, ce_id} = start_runner()
     on_exit(fn -> ensure_port_dead(port) end)
 
     operative_id = "dyn_e2e_#{System.unique_integer([:positive])}"
@@ -52,7 +52,7 @@ defmodule FlezhaTest.System.DynamicSegmentE2ETest do
 
     builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
-    assert info.executor_id == ce_id
+    assert info.runner_id == ce_id
 
     # An input for a never-seen key: the SDK lazily creates the Segment,
     # runs it, and ships the Change. The controller writes a WAL file.
@@ -70,14 +70,14 @@ defmodule FlezhaTest.System.DynamicSegmentE2ETest do
     assert Registry.snapshot_paths(segment_id) == []
   end
 
-  defp start_executor() do
+  defp start_runner() do
     {:ok, current_path} = :file.get_cwd()
 
     command =
-      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_executor/Cargo.toml " <>
+      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml " <>
         "--target-dir=./target -- " <> @namespace
 
-    EventManager.add_handler(:executor_connected_event)
+    EventManager.add_handler(:runner_connected_event)
     # 200ms idle TTL so the dynamic_segment operative's reaper evicts + ships
     # delete_segment_state within the test (default is no eviction).
     {port, _command} =
@@ -85,12 +85,12 @@ defmodule FlezhaTest.System.DynamicSegmentE2ETest do
 
     ce_id =
       receive do
-        {:executor_connected_event, {@namespace, ce_id}} -> ce_id
+        {:runner_connected_event, {@namespace, ce_id}} -> ce_id
       after
         120_000 -> raise "compute engine never connected"
       end
 
-    EventManager.rem_handler(:executor_connected_event)
+    EventManager.rem_handler(:runner_connected_event)
     {port, ce_id}
   end
 

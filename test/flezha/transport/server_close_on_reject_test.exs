@@ -4,7 +4,7 @@ defmodule Flezha.Transport.ServerCloseOnRejectTest do
 
   When `FleetManager.connect_handler/4` refuses a connect (e.g. `:shutting_down`
   during drain), the transport must close the stream — and emit a counted
-  `[:flezha, :transport, :connect_rejected]` signal — so the executor detects the
+  `[:flezha, :transport, :connect_rejected]` signal — so the runner detects the
   dead controller and reconnects to a live one instead of dangling. Drives the
   `connect_control_channel` callback directly with a stubbed FleetManager
   (`Native` is a NIF and can't be mocked, so close is observed via the signal and
@@ -16,7 +16,7 @@ defmodule Flezha.Transport.ServerCloseOnRejectTest do
   # Drives the connect-reject path, which logs the rejection at error by design.
   @moduletag :capture_log
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Transport.Server
 
   defp attach_rejected_handler() do

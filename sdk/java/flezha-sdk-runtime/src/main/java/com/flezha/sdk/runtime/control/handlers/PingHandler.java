@@ -3,7 +3,7 @@ package com.flezha.sdk.runtime.control.handlers;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.Ping;
 import com.flezha.sdk.proto.PingResponse;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import java.util.List;
 
@@ -19,7 +19,7 @@ import java.util.List;
 public final class PingHandler implements CommandHandler {
 
     @Override
-    public byte[] handle(ExecutorContext ctx, CommandRequest request, List<String> errors) {
+    public byte[] handle(RunnerContext ctx, CommandRequest request, List<String> errors) {
         Ping ping = request.getPing();
         PingResponse response =
                 PingResponse.newBuilder().setNonce(ping.getNonce()).build();

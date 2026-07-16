@@ -22,7 +22,7 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
   Cardinality stays bounded: driver metrics are per transport (≤ 2);
   BEAM aggregates carry no per-entity label (the stall classifier, not
   this source, does the per-entity localisation), so the label-value set
-  never grows with executor/operative churn.
+  never grows with runner/operative churn.
 
   Default poll interval `1_000` ms; overridable via
   `:flezha, :observability, :otp_backend, :poll_intervals, :flezha_transport`.

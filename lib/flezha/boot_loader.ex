@@ -60,7 +60,7 @@ defmodule Flezha.BootLoader do
   end
 
   @impl true
-  def handle_info({:executor_connected_event, _}, state) do
+  def handle_info({:runner_connected_event, _}, state) do
     {:noreply, state}
   end
 

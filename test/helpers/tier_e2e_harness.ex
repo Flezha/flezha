@@ -2,7 +2,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   @moduledoc """
   Shared crash-matrix harness for the effectively-once end-to-end suites
   (`test/system/effectively_once_*_e2e_test.exs`): boot a real Rust
-  executor, SIGKILL it mid-stream, brutally crash the controller's state
+  runner, SIGKILL it mid-stream, brutally crash the controller's state
   writers with a staled flush cursor, and force fresh rebinds — the sink
   under test must converge to the no-crash final state regardless.
   """
@@ -11,7 +11,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   import ExUnit.Callbacks, only: [on_exit: 1]
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Outbox
   alias FlezhaTest.Helper.NodeTestHelper
@@ -44,12 +44,12 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     :ok = Outbox.write(segment_id, %{dedup | outbox_flushed_seq: -1})
   end
 
-  def boot_executor(namespace, id_path, opts \\ []) do
-    {port, executor_id} =
-      NodeTestHelper.start_executor_port(namespace,
+  def boot_runner(namespace, id_path, opts \\ []) do
+    {port, runner_id} =
+      NodeTestHelper.start_runner_port(namespace,
         runtime: Keyword.get(opts, :runtime, :rust),
         transport: :uds,
-        env: [{"FLEZHA_EXECUTOR_ID_PATH", id_path}],
+        env: [{"FLEZHA_RUNNER_ID_PATH", id_path}],
         connect_timeout: 120_000
       )
 
@@ -63,7 +63,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
       end
     end)
 
-    {port, executor_id}
+    {port, runner_id}
   end
 
   @doc """

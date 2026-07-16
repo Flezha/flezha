@@ -9,10 +9,10 @@
   source of truth for an operative's enabled plugins; the runtime
   `Overwatch.state.extensions` table is rebuilt from it on every
   `init/1`. Previously, plugins enabled after `flz operative start`
-  were dropped on executor-pod restart, agent restart with intact
+  were dropped on runner-pod restart, agent restart with intact
   ProcessHub state, or any in-place restart that ran through
   `HubManager.alter_child_data/2` (e.g. `kubectl rollout restart
-  daemonset/<sdk-daemonset>`), forcing executors to re-run the enable
+  daemonset/<sdk-daemonset>`), forcing runners to re-run the enable
   commands manually before the data plane recovered. See
   `openspec/specs/plugin-subscription-persistence/spec.md`.
 
@@ -21,7 +21,7 @@
   upgrade have an empty `opts[:plugins]` in the cspec. They keep
   working as long as no Overwatch (re)start happens before the next
   `flz plugin enable` / `flz plugin disable` op, which canonicalises
-  the cspec. Executors who want to canonicalise immediately can run
+  the cspec. Runners who want to canonicalise immediately can run
   `flz plugin disable <id> && flz plugin enable <id>` for each
   plugin. No automatic migration job is shipped.
 
@@ -48,7 +48,7 @@
   `:metadata_refresh_timeout_ms`. Six new telemetry events under the
   `[:flezha, :plugin, :kafka, _, _]` prefix surface every state
   transition. Synchronous counters available via
-  `Flezha.Plugin.Provider.Kafka.Producer.stats/1`. Full executor-facing
+  `Flezha.Plugin.Provider.Kafka.Producer.stats/1`. Full runner-facing
   contract in [`docs/kafka-producer.md`](docs/kafka-producer.md).
 
 ### Changed (BREAKING)
@@ -71,30 +71,30 @@
 
 - SDKs ship a final state snapshot to the agent on graceful shutdown so
   rolling deploys preserve the latest state. Rust and Java SDKs now emit
-  one `ExecutorShutdownNotification{operative_id, serialized_state}`
+  one `RunnerShutdownNotification{operative_id, serialized_state}`
   per running operative on the control channel when the SDK is dropped,
   receives SIGTERM (Kubernetes pre-stop), or is closed explicitly via
   `Flezha.close()` (Java) / handle drop (Rust); the agent's
-  `Flezha.Executor.ControlChannel` overwrites
+  `Flezha.Runner.ControlChannel` overwrites
   `Flezha.Operative.Overwatch.state.snapshot` with the supplied binary
-  and emits an `ExecutorShutdownAck`. Per-operative ack wait is bounded
+  and emits an `RunnerShutdownAck`. Per-operative ack wait is bounded
   at 2 s, parallelised across operatives. SIGKILL bypasses as expected;
   agent falls back to the last periodic snapshot. Disabled-snapshot
   deployments (`overwatch_state_snapshot_interval_ms == 0`, e.g.
   `flezha_market`) get a one-shot shutdown handoff that survives until
   the next `AddOperative` reissue. New protobuf messages
-  `ExecutorShutdownNotification` (tag 12) and `ExecutorShutdownAck`
+  `RunnerShutdownNotification` (tag 12) and `RunnerShutdownAck`
   (tag 13) are additive — older agents/SDKs interoperate by falling
   back to the periodic-snapshot freshness shipped by
   `heal-connections-on-restart`.
-- Executor ↔ agent connections now heal automatically across either-side
+- Runner ↔ agent connections now heal automatically across either-side
   restarts; operatives resume traffic within 5 s of reconnect without
-  executor intervention. Stream rebind is enforced as a hard contract on
-  `Flezha.Executor.StreamChannel`, the UDS/QUIC acceptors atomically
+  runner intervention. Stream rebind is enforced as a hard contract on
+  `Flezha.Runner.StreamChannel`, the UDS/QUIC acceptors atomically
   bind incoming streams only to nil-ref channels, and
-  `Flezha.Executor.FleetManager.executor_connect/3` re-issues
+  `Flezha.Runner.FleetManager.runner_connect/3` re-issues
   `AddOperative` for operatives ProcessHub still has tagged to a dead
-  executor_id matching the connecting executor's profile. Rust and
+  runner_id matching the connecting runner's profile. Rust and
   Java SDK `AddOperative` handlers are now idempotent on duplicate
   `operative_id` (log + skip).
 - `mix test.connection_healing` opt-in alias that runs
@@ -104,18 +104,18 @@
 - `test/flezha/deployment/k8s_manifest_test.exs` k8s manifest sanity test
   that asserts the daemonset / configmap fields the connection-healing
   flow relies on (`flezha-sockets` volume, `FLEZHA_SOCKET_FILES_PATH`,
-  `FLEZHA_EXECUTOR_KEEPALIVE`) stay well-formed.
+  `FLEZHA_RUNNER_KEEPALIVE`) stay well-formed.
 
 ## 0.2.0 — Cluster snapshot & restore (replaces DETS recovery)
 
-Restart-survival is now executor-driven via `flz cluster snapshot/restore`.
+Restart-survival is now runner-driven via `flz cluster snapshot/restore`.
 The previous DETS-based automatic recovery subsystem has been removed
 along with the SYSMODE coordinator GenServer that drove it.
 
 ### Added
 
 - New top-level CLI commands `flz cluster snapshot <file>` and
-  `flz cluster restore <file>` for explicit, executor-driven cluster-wide
+  `flz cluster restore <file>` for explicit, runner-driven cluster-wide
   state capture and restore. Both commands accept `--namespace NS` for
   per-namespace operations; default behaviour without the flag is
   cluster-wide. (Both verbs were later removed; `flz boot
@@ -144,7 +144,7 @@ along with the SYSMODE coordinator GenServer that drove it.
   longer writes child specs to a DETS file on operative start, no longer
   reads DETS at boot, no longer maintains a SYSMODE state machine, and
   no longer exchanges SYSMODE with peers. Recovery from an unattended
-  crash now requires the executor to run `flz cluster restore` against
+  crash now requires the runner to run `flz cluster restore` against
   a previously-captured snapshot file.
 - `Flezha.Operative.InitState.Providers.Sibling` along with its
   registration in `:enabled_plugins`, its capability spec

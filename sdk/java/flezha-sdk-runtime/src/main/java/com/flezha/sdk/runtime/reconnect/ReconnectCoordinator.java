@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.reconnect;
 
-import com.flezha.sdk.runtime.ExecutorContext;
-import com.flezha.sdk.runtime.ExecutorStatus;
+import com.flezha.sdk.runtime.RunnerContext;
+import com.flezha.sdk.runtime.RunnerStatus;
 import java.time.Duration;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -14,12 +14,12 @@ import org.slf4j.LoggerFactory;
  * Reconnect state machine. Launched on a dedicated virtual thread; wakes up
  * on every {@code onConnectionLost} dispatch from the JNI layer.
  *
- * <p>On unexpected disconnect (status != {@link ExecutorStatus#STOPPED}):
+ * <p>On unexpected disconnect (status != {@link RunnerStatus#STOPPED}):
  * <ol>
  *   <li>Clear {@code io_streams} registry.</li>
  *   <li>Clear the live operative registry.</li>
  *   <li>Drain worker queues (via {@link com.flezha.sdk.runtime.worker.OperationDispatcher#shutdown()}).</li>
- *   <li>Reset {@code executor_id} to {@code "undefined"}.</li>
+ *   <li>Reset {@code runner_id} to {@code "undefined"}.</li>
  *   <li>Loop connect attempts with exponential backoff capped at 30 s until
  *       the handshake succeeds again.</li>
  * </ol>
@@ -33,12 +33,12 @@ public final class ReconnectCoordinator {
     /** Backoff delays in ms: 200, 400, 800, 1600, 3200, 6400, 12800, 25600, capped at 30_000. */
     public static final long[] BACKOFF_MS = backoffTable();
 
-    private final ExecutorContext ctx;
+    private final RunnerContext ctx;
     private final Supplier<Boolean> reconnectAttempt;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread thread;
 
-    public ReconnectCoordinator(@Nonnull ExecutorContext ctx, @Nonnull Supplier<Boolean> reconnectAttempt) {
+    public ReconnectCoordinator(@Nonnull RunnerContext ctx, @Nonnull Supplier<Boolean> reconnectAttempt) {
         this.ctx = ctx;
         this.reconnectAttempt = reconnectAttempt;
     }
@@ -53,7 +53,7 @@ public final class ReconnectCoordinator {
 
     /** Handle a connection-lost event from the JNI layer. */
     public void onConnectionLost() {
-        if (ctx.status() == ExecutorStatus.STOPPED) {
+        if (ctx.status() == RunnerStatus.STOPPED) {
             return;
         }
         resetState();
@@ -78,7 +78,7 @@ public final class ReconnectCoordinator {
 
     private void attemptReconnectLoop() {
         int attempt = 0;
-        while (running.get() && ctx.status() != ExecutorStatus.STOPPED) {
+        while (running.get() && ctx.status() != RunnerStatus.STOPPED) {
             // Full jitter on the schedule so a controller restart that drops the
             // whole fleet doesn't produce a synchronized reconnect storm (the
             // Rust SDK jitters the same schedule via flz_transport::liveness).
@@ -104,7 +104,7 @@ public final class ReconnectCoordinator {
     private void resetState() {
         ctx.streamRegistry().clear();
         ctx.operativeInstanceRegistry().clear();
-        ctx.setExecutorId("undefined");
+        ctx.setRunnerId("undefined");
     }
 
     public void shutdown() {

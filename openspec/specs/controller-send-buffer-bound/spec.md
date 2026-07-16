@@ -2,11 +2,11 @@
 
 ## Purpose
 
-The controller-send-buffer-bound capability bounds the controller transport driver's per-stream outbound send buffers so a slow or non-reading executor peer cannot grow controller memory without limit. Each per-stream write buffer (UDS `uds_driver.rs` `write_buffer` and QUIC `quic.rs` `write_buf`) is capped by a configurable `max_write_buffer_bytes`; enqueues past the cap drop the newest frame (`DropNewest`, mirroring the SDK bounded mailbox) rather than blocking the driver's command loop, and each drop is counted on `DriverStats` so it is observable.
+The controller-send-buffer-bound capability bounds the controller transport driver's per-stream outbound send buffers so a slow or non-reading runner peer cannot grow controller memory without limit. Each per-stream write buffer (UDS `uds_driver.rs` `write_buffer` and QUIC `quic.rs` `write_buf`) is capped by a configurable `max_write_buffer_bytes`; enqueues past the cap drop the newest frame (`DropNewest`, mirroring the SDK bounded mailbox) rather than blocking the driver's command loop, and each drop is counted on `DriverStats` so it is observable.
 
 ## Requirements
 
-### Requirement: Controller-to-executor transport send buffer is bounded
+### Requirement: Controller-to-runner transport send buffer is bounded
 
 The controller transport driver SHALL bound each per-stream outbound send buffer
 (UDS `uds_driver.rs` `write_buffer` and QUIC `quic.rs` `write_buf`) by a

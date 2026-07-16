@@ -9,7 +9,7 @@ import java.util.Objects;
  * type-equality between channel payload and producer/consumer Operation,
  * unwired channel, multi-producer, static-mode default-impl detection).
  *
- * <p>Carries channel name and expected/actual type info so the executor
+ * <p>Carries channel name and expected/actual type info so the runner
  * can diagnose the misconfiguration without re-running with a debugger.
  */
 public class UnboundedOperativeConfigurationException extends RuntimeException {

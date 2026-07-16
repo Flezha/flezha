@@ -39,7 +39,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - test -S /flezha/app_data/sockets/executor_control_channel.sock
+        - test -S /flezha/app_data/sockets/runner_control_channel.sock
       interval: 5s
       timeout: 3s
       retries: 60
@@ -56,7 +56,7 @@ services:
 
   rust:
     image: alfetahe/flezha:latest-toolchain
-    container_name: flezha_rust_executor
+    container_name: flezha_rust_runner
     user: "0:0"
     stdin_open: true
     depends_on:
@@ -67,14 +67,14 @@ services:
       - -c
       - |
         chown -R 1000:1000 /flezha 2>/dev/null || true
-        until [ -S /flezha/app_data/sockets/executor_control_channel.sock ]; do
+        until [ -S /flezha/app_data/sockets/runner_control_channel.sock ]; do
           echo "[rust] waiting for controller control socket..."
           sleep 1
         done
         ns="$$FLEZHA_DEMO_NAMESPACE"
         : "$${ns:=default}"
         echo "[rust] starting compute engine for namespace=$$ns"
-        exec su -m -s /bin/sh flezha -c "cd /flezha/test/apps/rust_executor && exec cargo run --quiet --target-dir=/flezha/target -- $$ns"
+        exec su -m -s /bin/sh flezha -c "cd /flezha/test/apps/rust_runner && exec cargo run --quiet --target-dir=/flezha/target -- $$ns"
     environment:
       FLEZHA_DEMO_NAMESPACE: ${FLEZHA_DEMO_NAMESPACE:-default}
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/

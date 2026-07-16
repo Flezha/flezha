@@ -49,7 +49,7 @@ write.
 
 ## Which shape do I want?
 
-**Unbounded** — a long-running dataflow over a stream. Starts with the executor,
+**Unbounded** — a long-running dataflow over a stream. Starts with the runner,
 never finishes. (01–04)
 
 **Bounded** — started with arguments, runs to completion, torn down. A checkout,

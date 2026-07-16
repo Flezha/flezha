@@ -2,7 +2,7 @@ package com.flezha.sdk.runtime.operative;
 
 import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.FlusherEntry;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
@@ -33,7 +33,7 @@ import javax.annotation.Nonnull;
  *       single-mode Operations have inner length 1),</li>
  *   <li>per-Operation reverse index from segment key → segment index
  *       (empty for single-mode Operations),</li>
- *   <li>the resolved {@code persistenceEnabled} toggle (executor override
+ *   <li>the resolved {@code persistenceEnabled} toggle (runner override
  *       &gt; UnboundedOperative default &gt; {@code true}; frozen for the instance's
  *       lifetime),</li>
  *   <li>the aggregated Kryo type list across all Operations in this UnboundedOperative class
@@ -72,7 +72,7 @@ public final class UnboundedOperativeInstance implements Operative {
     public static UnboundedOperativeInstance create(
             @Nonnull UnboundedOperativeTopology topology,
             @Nonnull String instanceId,
-            @Nonnull ExecutorContext ctx,
+            @Nonnull RunnerContext ctx,
             @Nonnull ExecutorService pool) {
         return create(topology, instanceId, ctx, pool, true);
     }
@@ -86,7 +86,7 @@ public final class UnboundedOperativeInstance implements Operative {
     public static UnboundedOperativeInstance create(
             @Nonnull UnboundedOperativeTopology topology,
             @Nonnull String instanceId,
-            @Nonnull ExecutorContext ctx,
+            @Nonnull RunnerContext ctx,
             @Nonnull ExecutorService pool,
             boolean persistenceEnabled) {
         int operationCount = topology.operations().size();

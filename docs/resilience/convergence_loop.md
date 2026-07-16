@@ -43,10 +43,10 @@ mutation is in `Heal`; every other module is side-effect-free.
 |--------|------|
 | `Convergence.Loop` | GenServer owning the tick timer, misbound-streak table, event subscriptions, and try/rescue guard |
 | `Convergence.Intent` | Reads the ProcessHub registry: declared operatives, their declared plugins, and factory ids |
-| `Convergence.Probe` | Reads live reality: active executors per namespace, per-operative Overwatch state (incl. provider plugin health via `Extension.Table.health/1`), hub recovery phase |
+| `Convergence.Probe` | Reads live reality: active runners per namespace, per-operative Overwatch state (incl. provider plugin health via `Extension.Table.health/1`), hub recovery phase |
 | `Convergence.Diff` | Pure function: intent vs reality → `%Diff{unbound_operatives, misbound_operatives, missing_plugins, extra_plugins, unhealthy_plugins}` |
 | `Convergence.Planner` | Pure function: `%Diff{}` + `%Backoff{}` → ordered op list, filtered by cooldown, capped at `max_ops` (default 20) |
-| `Convergence.Heal` | Five idempotent primitives: `rebind_operative`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_executor` |
+| `Convergence.Heal` | Five idempotent primitives: `rebind_operative`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner` |
 | `Convergence.Backoff` | Per-`{primitive, target}` cooldown table: `5 s → 30 s → 60 s → 300 s`; reset on success |
 | `Convergence.Snapshot` | Shared ETS table read by `/healthz`, CLI, and telemetry; also caches per-hub recovery state |
 | `Convergence.RecoveryGate` | Single query point for hub recovery state: classifies which namespaces are ready for healing; exposes `await_recovery_complete/2` |
@@ -60,10 +60,10 @@ One tick per `convergence_tick_ms` (default 5 000 ms). The tick also fires
 immediately when:
 
 - `[:flezha, :state, :output_stall]` is emitted (by `State.Watchdog`, or by
-  `Executor.StreamChannel` when a bound data channel goes silent past
+  `Runner.StreamChannel` when a bound data channel goes silent past
   `:io_stream_liveness_threshold_ms` — i.e. several missed data-channel
   heartbeats, not merely absent operative output)
-- `:executor_connected_event` fires (an executor reconnected — an immediate tick
+- `:runner_connected_event` fires (a runner reconnected — an immediate tick
   detects and rebinds the operative rather than waiting up to 5 s)
 
 **Recovery gate:** `RecoveryGate.ready_namespaces/1` is called on every tick to
@@ -90,15 +90,15 @@ An operative must appear misbound in **≥ 2 consecutive ticks** before a
 `%{{ns, operative_id} => count}`. Operatives that are no longer misbound on the
 current tick are removed from the map.
 
-This means a single executor blip (brief GC pause, transient netsplit) cannot
+This means a single runner blip (brief GC pause, transient netsplit) cannot
 trigger a full-namespace WAL resync. The backoff table further throttles the
 second and subsequent rebinds.
 
-### Sanity gate on empty executors
+### Sanity gate on empty runners
 
-If `Probe.snapshot/0` returns `active_executors: :unknown` for a namespace (a
+If `Probe.snapshot/0` returns `active_runners: :unknown` for a namespace (a
 read failure against `FleetManager`), the Diff suppresses misbound classification
-for that namespace entirely. `:unknown` ≠ "no executors running" — the loop does
+for that namespace entirely. `:unknown` ≠ "no runners running" — the loop does
 not act destructively on a partial observation.
 
 ### Per-target backoff
@@ -113,13 +113,13 @@ B. Backoff resets to zero on a successful execution.
 
 ### `rebind_operative`
 
-Migrates an operative from a dead or wrong executor to a live one:
+Migrates an operative from a dead or wrong runner to a live one:
 
-1. Flip the ProcessHub registry tag via `HubManager.operative_set_executor/3`.
-2. Fan the operative's pid into the new executor's pre-spawned
+1. Flip the ProcessHub registry tag via `HubManager.operative_set_runner/3`.
+2. Fan the operative's pid into the new runner's pre-spawned
    `StreamChannel.operative_mapping` via `HubManager.hook_insert_pid/2`.
 3. Call `State.Recovery.resync/2` to trigger `RestoreInitState` handshake so the
-   executor picks up the on-disk WAL state.
+   runner picks up the on-disk WAL state.
 
 Idempotent — if the operative is already correctly bound, the call is a no-op.
 
@@ -133,7 +133,7 @@ The declared manifest is cluster-wide: `flz plugin enable/disable` persists
 through `ProcessRegistry.update/4` with `propagate: true`, which re-applies the
 cspec rewrite on every hub node (2 s per-peer budget, best-effort; an
 unreachable peer converges on rejoin via peer sync). The same propagation
-applies to the executor tag written by `operative_set_executor/3`. Without it a
+applies to the runner tag written by `operative_set_runner/3`. Without it a
 restart driven from another node's registry copy yields a running-but-pluginless
 operative that the loop cannot heal — the 2026-06-12 production gap.
 
@@ -146,17 +146,17 @@ Kafka producer worker rebuild). Routed through Overwatch
 If the re-subscribe fails the plugin stays unsubscribed and the next tick
 retries it as a missing plugin under backoff.
 
-### `evict_executor`
+### `evict_runner`
 
-Forcibly drops a dead executor binding from the FleetManager table. Called once
-per dead executor (keyed per-executor in backoff, not per-operative) before the
+Forcibly drops a dead runner binding from the FleetManager table. Called once
+per dead runner (keyed per-runner in backoff, not per-operative) before the
 associated operatives are rebound.
 
 ---
 
 ## Plugin health (production-liveness detection)
 
-Channel heartbeats prove the executor link is alive, not that production is.
+Channel heartbeats prove the runner link is alive, not that production is.
 The authoritative production signal is the plugin provider's own `health/1`
 self-report, collected per tick by `Probe` through `Extension.Table.health/1`:
 
@@ -217,11 +217,11 @@ of its own. The published map includes:
   `:convergence_unmet_intent_grace_ms`, `/healthz` escalates `recovering →
   degraded` (HTTP 200, reason `operatives_unbound`) so an operative stuck unbound
   alarms instead of sitting silently `recovering` forever. Not 503: a
-  controller restart cannot re-bind an executor-orphaned operative. The clock
+  controller restart cannot re-bind a runner-orphaned operative. The clock
   resets while any hub is recovering.
 - `operative_health` — a `{namespace, operative_id} => :healthy | :degraded | :failed |
   :unbound | :unknown` map, classified per tick from the same probed reality the
-  `Diff` uses (bound + live-executor + stall/plugin signals). This is the
+  `Diff` uses (bound + live-runner + stall/plugin signals). This is the
   authoritative source for the `HEALTH` column in `flz operative list` and the
   `Operative health:` rollup in `flz cluster status` — `HubManager.operative_rows/1`
   reads `Snapshot.operative_health/2`, not registry metadata. An operative reports
@@ -258,7 +258,7 @@ signals by `TelemetryBridge`.
 
 A healthy cluster emits `actions_issued: 0` on most ticks. Sustained non-zero
 `actions_issued` in steady state indicates a structural problem (read race,
-executor instability, or an operative permanently failing to bind).
+runner instability, or an operative permanently failing to bind).
 
 ---
 

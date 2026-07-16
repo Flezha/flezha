@@ -8,7 +8,7 @@ defmodule Flezha.Transport.LivenessCounters do
   observability source and the convergence stall classifier can read every
   channel/operative's counters in one lock-free scan.
 
-  Cardinality is bounded: one entry per channel (executor + stream name) and
+  Cardinality is bounded: one entry per channel (runner + stream name) and
   one per operative instance — never per frame. Entries whose owner process has
   died are pruned on the next `snapshot_all/0`.
 
@@ -23,9 +23,9 @@ defmodule Flezha.Transport.LivenessCounters do
   # each slot and its key in `snapshot_all/0`. Position (1-based) is the index;
   # appending a slot is the only edit needed. `last_send_ms` holds a monotonic-ms
   # timestamp (set, not incremented); the rest are monotonic counts.
-  # `hb_count` counts heartbeat frames; `hb_dispatches` mirrors the executor's
+  # `hb_count` counts heartbeat frames; `hb_dispatches` mirrors the runner's
   # self-reported dispatch-progress counter carried in heartbeat metadata —
-  # heartbeats advancing while hb_dispatches is frozen means the executor
+  # heartbeats advancing while hb_dispatches is frozen means the runner
   # process is alive but its dispatch pool is wedged.
   # `credit_active` is 0/1 (set), `credit_ledger_level` is the stream's
   # remaining credit bytes (set), `credit_overrun_total` counts frames a
@@ -90,15 +90,15 @@ defmodule Flezha.Transport.LivenessCounters do
   # ---------- registration ----------
 
   @doc """
-  Register a channel's counter array, keyed by `{executor_id, name}`. The
+  Register a channel's counter array, keyed by `{runner_id, name}`. The
   caller (the channel process) owns the entry; pass `self()`. Returns the
   `:counters` ref to bump on the hot path.
   """
   @spec register_channel(term(), term()) :: :counters.counters_ref()
-  def register_channel(executor_id, name) do
+  def register_channel(runner_id, name) do
     ensure_table()
     ref = :counters.new(@channel_size, [:atomics])
-    :ets.insert(@table, {{:channel, executor_id, name}, ref, self()})
+    :ets.insert(@table, {{:channel, runner_id, name}, ref, self()})
     ref
   end
 
@@ -115,20 +115,20 @@ defmodule Flezha.Transport.LivenessCounters do
   end
 
   @doc """
-  Register a per-executor data-stream NIF server so the stall classifier can
+  Register a per-runner data-stream NIF server so the stall classifier can
   poll its driver self-report. Without this the classifier only sees the
   control-channel driver — the data-plane drivers were its blind spot during
   the 2026-06-10 freeze. Pass `self()` (the owning `StreamAcceptor`).
   """
   @spec register_driver(term(), atom(), reference()) :: :ok
-  def register_driver(executor_id, type, server_ref) do
+  def register_driver(runner_id, type, server_ref) do
     ensure_table()
-    :ets.insert(@table, {{:driver, executor_id, type}, server_ref, self()})
+    :ets.insert(@table, {{:driver, runner_id, type}, server_ref, self()})
     :ok
   end
 
   @doc """
-  Live data-stream driver refs as `{{executor_id, type}, server_ref}` pairs,
+  Live data-stream driver refs as `{{runner_id, type}, server_ref}` pairs,
   pruning entries whose owner has died.
   """
   @spec driver_refs() :: [{{term(), atom()}, reference()}]
@@ -139,9 +139,9 @@ defmodule Flezha.Transport.LivenessCounters do
 
       _ ->
         :ets.match_object(@table, {{:driver, :_, :_}, :_, :_})
-        |> Enum.flat_map(fn {{:driver, executor_id, type} = key, ref, owner} ->
+        |> Enum.flat_map(fn {{:driver, runner_id, type} = key, ref, owner} ->
           if Process.alive?(owner) do
-            [{{executor_id, type}, ref}]
+            [{{runner_id, type}, ref}]
           else
             :ets.delete(@table, key)
             []
@@ -196,14 +196,14 @@ defmodule Flezha.Transport.LivenessCounters do
           Enum.reduce(entries, {[], []}, fn {key, ref, owner}, {chans, rels} ->
             if Process.alive?(owner) do
               case key do
-                {:channel, executor_id, name} ->
-                  {[channel_snapshot(executor_id, name, ref) | chans], rels}
+                {:channel, runner_id, name} ->
+                  {[channel_snapshot(runner_id, name, ref) | chans], rels}
 
                 {:operative, operative_id} ->
                   {chans, [operative_snapshot(operative_id, ref) | rels]}
 
                 # Driver server refs are polled via `driver_refs/0`, not here.
-                {:driver, _executor_id, _type} ->
+                {:driver, _runner_id, _type} ->
                   {chans, rels}
               end
             else
@@ -216,8 +216,8 @@ defmodule Flezha.Transport.LivenessCounters do
     end
   end
 
-  defp channel_snapshot(executor_id, name, ref) do
-    snapshot(@channel_slots, ref, %{executor_id: executor_id, name: name})
+  defp channel_snapshot(runner_id, name, ref) do
+    snapshot(@channel_slots, ref, %{runner_id: runner_id, name: name})
   end
 
   defp operative_snapshot(operative_id, ref) do

@@ -71,7 +71,7 @@ The command SHALL NOT provide a `--force-while-live` (or equivalent) escape hatc
 
 #### Scenario: Proceed when only stale sockets exist
 
-- **GIVEN** the Controller crashed leaving `app_data/sockets/executor_control_channel.sock` on disk but no live BEAM node
+- **GIVEN** the Controller crashed leaving `app_data/sockets/runner_control_channel.sock` on disk but no live BEAM node
 - **WHEN** the operator runs `flz reset --yes`
 - **THEN** the `flzvm rpc` probe exits non-zero (no live node)
 - **AND** the reset proceeds; the stale socket is cleared if `--include-sockets` or `--all` is also passed

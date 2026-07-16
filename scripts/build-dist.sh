@@ -6,8 +6,8 @@
 #      sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/libflz_jni.<ext>
 #   2. SDK fat jar ->
 #      sdk/java/flezha-sdk/dist/flezha-sdk.jar
-#   3. Test executor fat jar ->
-#      test/apps/java_executor/dist/java_executor.jar
+#   3. Test runner fat jar ->
+#      test/apps/java_runner/dist/java_runner.jar
 #
 # Two modes:
 #   --host    (default) Run on the host. Auto-installs cargo-zigbuild and
@@ -21,7 +21,7 @@
 # Then:
 #   git add sdk/java/flezha-sdk-native/src/main/resources/native/ \
 #           sdk/java/flezha-sdk/dist/ \
-#           test/apps/java_executor/dist/
+#           test/apps/java_runner/dist/
 #   git commit -m "Refresh native + Java distribution artifacts"
 #
 # Host-mode requirements that this script will NOT auto-install:
@@ -97,7 +97,7 @@ fi
 # ---------------------------------------------------------------------------
 NATIVE_OUT="${REPO_ROOT}/sdk/java/flezha-sdk-native/src/main/resources/native"
 SDK_DIST="${REPO_ROOT}/sdk/java/flezha-sdk/dist"
-TEST_APP_DIST="${REPO_ROOT}/test/apps/java_executor/dist"
+TEST_APP_DIST="${REPO_ROOT}/test/apps/java_runner/dist"
 
 # Isolated cargo target dir — works around a root-owned ./target/release/
 # left over from a prior dev-container run.
@@ -236,15 +236,15 @@ cp -f sdk/java/flezha-sdk/target/flezha-sdk-*.jar "${SDK_DIST}/flezha-sdk.jar"
 echo "  -> ${SDK_DIST}/flezha-sdk.jar"
 
 # ---------------------------------------------------------------------------
-# 6. Build the test executor fat jar.
+# 6. Build the test runner fat jar.
 # ---------------------------------------------------------------------------
-step "building test executor fat jar"
-mvn -B -q -f test/apps/java_executor/pom.xml -DskipTests package
+step "building test runner fat jar"
+mvn -B -q -f test/apps/java_runner/pom.xml -DskipTests package
 
 mkdir -p "${TEST_APP_DIST}"
-cp -f test/apps/java_executor/target/java_executor.jar \
-      "${TEST_APP_DIST}/java_executor.jar"
-echo "  -> ${TEST_APP_DIST}/java_executor.jar"
+cp -f test/apps/java_runner/target/java_runner.jar \
+      "${TEST_APP_DIST}/java_runner.jar"
+echo "  -> ${TEST_APP_DIST}/java_runner.jar"
 
 # ---------------------------------------------------------------------------
 # Done.
@@ -257,5 +257,5 @@ echo
 echo "Stage and commit with:"
 echo "  git add sdk/java/flezha-sdk-native/src/main/resources/native/ \\"
 echo "          sdk/java/flezha-sdk/dist/ \\"
-echo "          test/apps/java_executor/dist/"
+echo "          test/apps/java_runner/dist/"
 echo "  git commit -m \"Refresh native + Java distribution artifacts\""

@@ -124,7 +124,7 @@ so long chains should size per-plugin timeouts to sum below that budget.
 
 The init-state chain runs only when the operative's Builder
 `init_values == %{}`. Otherwise the Builder's inline values are used as-is
-and no provider is invoked. Migration (`executor_migrate`) never
+and no provider is invoked. Migration (`runner_migrate`) never
 runs providers — snapshot-or-inline-`init_values` logic is preserved.
 
 ## Worked example: DB fetch → default overlay

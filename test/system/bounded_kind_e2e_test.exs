@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.TaskKindE2ETest do
   @moduledoc """
-  End-to-end proof for `operative-task-kind` against a live Rust executor: a
+  End-to-end proof for `operative-task-kind` against a live Rust runner: a
   unit started with `kind: :bounded` flows `AddOperative --kind task` → SDK spawns
   a task → runs `run` once → emits `BoundedCompleted` → the controller drives
   deregister-on-completion. The whole loop is observable as the unit
@@ -11,7 +11,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
 
   use ExUnit.Case, async: false
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Service.EventManager
   alias Flezha.Service.HubManager
@@ -42,7 +42,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
 
   @tag :task_kind_e2e
   test "task runs once on start and is deregistered on completion" do
-    {port, _ce_id} = start_executor()
+    {port, _ce_id} = start_runner()
     on_exit(fn -> ensure_port_dead(port) end)
 
     operative_id = "task_e2e_#{System.unique_integer([:positive])}"
@@ -71,24 +71,24 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     match?({:ok, pid} when is_pid(pid), HubManager.get_pid(@namespace, operative_id))
   end
 
-  defp start_executor() do
+  defp start_runner() do
     {:ok, current_path} = :file.get_cwd()
 
     command =
-      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_executor/Cargo.toml " <>
+      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml " <>
         "--target-dir=./target -- " <> @namespace
 
-    EventManager.add_handler(:executor_connected_event)
+    EventManager.add_handler(:runner_connected_event)
     {port, _command} = PortPilot.open_port(command, transport: :uds)
 
     ce_id =
       receive do
-        {:executor_connected_event, {@namespace, ce_id}} -> ce_id
+        {:runner_connected_event, {@namespace, ce_id}} -> ce_id
       after
         120_000 -> raise "compute engine never connected"
       end
 
-    EventManager.rem_handler(:executor_connected_event)
+    EventManager.rem_handler(:runner_connected_event)
     {port, ce_id}
   end
 

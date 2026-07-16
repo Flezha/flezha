@@ -37,7 +37,7 @@ if [ -n "${FLEZHA_TESTNET_WS_PORT:-}" ] && [ -f /flezha/testnet/dist/index.js ];
   TESTNET_PID=$!
 fi
 
-CONTROL_SOCKET="$SOCKET_DIR/executor_control_channel.sock"
+CONTROL_SOCKET="$SOCKET_DIR/runner_control_channel.sock"
 
 # Remove the controller's stale control socket from any previous container that
 # wrote to this same named volume. Without this, the readiness wait below

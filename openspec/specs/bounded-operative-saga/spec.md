@@ -62,7 +62,7 @@ For a durable bounded operative, the completion of each operation SHALL be durab
 ### Requirement: Compensation undo-effects are delivered durably and keyed
 
 Plugin-bound output emitted by a `compensate` hook SHALL NOT be delivered
-best-effort from the executor for a durable bounded operative; it SHALL be
+best-effort from the runner for a durable bounded operative; it SHALL be
 staged and delivered through the journal-gated transactional outbox
 (`bounded-transactional-outbox`), so that a crash between a compensation's
 completion and its undo-output delivery re-drives the delivery with stable,

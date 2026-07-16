@@ -2,8 +2,8 @@ package com.flezha.sdk.runtime.reconnect;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.flezha.sdk.runtime.ExecutorContext;
-import com.flezha.sdk.runtime.ExecutorStatus;
+import com.flezha.sdk.runtime.RunnerContext;
+import com.flezha.sdk.runtime.RunnerStatus;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -20,16 +20,16 @@ import org.junit.jupiter.api.Test;
  */
 class ReconnectCoordinatorTest {
 
-    private static ExecutorContext newCtx() {
-        return new ExecutorContext("ns", FlezhaEnv.resolve(Map.of()), 0L);
+    private static RunnerContext newCtx() {
+        return new RunnerContext("ns", FlezhaEnv.resolve(Map.of()), 0L);
     }
 
     @Test
-    @DisplayName("onConnectionLost drives a reconnect attempt and resets executor id")
+    @DisplayName("onConnectionLost drives a reconnect attempt and resets runner id")
     void onConnectionLostDrivesReconnect() throws InterruptedException {
-        ExecutorContext ctx = newCtx();
-        ctx.setStatus(ExecutorStatus.RUNNING);
-        ctx.setExecutorId("e1");
+        RunnerContext ctx = newCtx();
+        ctx.setStatus(RunnerStatus.RUNNING);
+        ctx.setRunnerId("e1");
 
         CountDownLatch reconnected = new CountDownLatch(1);
         AtomicInteger attempts = new AtomicInteger();
@@ -46,17 +46,17 @@ class ReconnectCoordinatorTest {
                     .as("a lost control channel must drive a reconnect attempt")
                     .isTrue();
             assertThat(attempts.get()).isGreaterThanOrEqualTo(1);
-            assertThat(ctx.executorId()).isEqualTo("undefined");
+            assertThat(ctx.runnerId()).isEqualTo("undefined");
         } finally {
             coord.shutdown();
         }
     }
 
     @Test
-    @DisplayName("a STOPPED executor does not reconnect")
+    @DisplayName("a STOPPED runner does not reconnect")
     void stoppedDoesNotReconnect() throws InterruptedException {
-        ExecutorContext ctx = newCtx();
-        ctx.setStatus(ExecutorStatus.STOPPED);
+        RunnerContext ctx = newCtx();
+        ctx.setStatus(RunnerStatus.STOPPED);
 
         AtomicInteger attempts = new AtomicInteger();
         ReconnectCoordinator coord = new ReconnectCoordinator(ctx, () -> {

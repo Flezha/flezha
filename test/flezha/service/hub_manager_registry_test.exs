@@ -2,7 +2,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   @moduledoc """
   Multi-node-safe registry access (self-healing-control-plane, Phase 3 / D9).
 
-  `get_all_operatives/1`, `executor_switch/3`, and `FleetManager.executor_reroute/4`
+  `get_all_operatives/1`, `runner_switch/3`, and `FleetManager.runner_reroute/4`
   historically pattern-matched a single-element `[{_node, pid}]` registry entry,
   raising `FunctionClauseError` the moment a operative was registered on more than
   one node (the `flz operative list` crash). These tests exercise the shared
@@ -196,7 +196,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   end
 
   # Inject a synthetic registry entry with an explicit `node_pids` list so we can
-  # reproduce a multi-node operative without spinning up a real peer node + executor.
+  # reproduce a multi-node operative without spinning up a real peer node + runner.
   defp inject_operative(ns, operative_id, node_pids) do
     hub_id = Identificator.hub(ns)
 

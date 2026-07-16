@@ -24,7 +24,7 @@
 
 ### What is Flezha?
 
-Flezha is a distributed stream-processing platform. The **Controller** (an Elixir/OTP application) orchestrates work across one or more **Compute Engines** (SDK processes). Each SDK process connects to the controller over a configurable transport (UDS or QUIC), registers operative factories, and executes data-processing logic on behalf of the controller.
+Flezha is a distributed stream-processing platform. The **Controller** (an Elixir/OTP application) orchestrates work across one or more **Runners** (SDK processes). Each SDK process connects to the controller over a configurable transport (UDS or QUIC), registers operative factories, and executes data-processing logic on behalf of the controller.
 
 ### Architecture
 
@@ -32,7 +32,7 @@ Flezha is a distributed stream-processing platform. The **Controller** (an Elixi
 +-------------------+      UDS or QUIC Transport          +-------------------+
 |                   |  Control Channel (Protobuf/binary)  |                   |
 |   Flezha Controller    | <=================================> |   SDK Process     |
-|   (Elixir/OTP)    |                                     |  (Compute Engine) |
+|   (Elixir/OTP)    |                                     |  (Runner) |
 |                   |  Primary Streams  (binary frames)   |                   |
 |                   | ─────────────────────────────────> |                   |
 |                   |  Secondary Streams (binary frames)  |                   |
@@ -40,7 +40,7 @@ Flezha is a distributed stream-processing platform. The **Controller** (an Elixi
 +-------------------+                                     +-------------------+
 ```
 
-The controller can run both UDS and QUIC transport servers simultaneously (configured via `FLEZHA_TRANSPORTS`). Each compute engine connects using one transport type, determined by its `FLEZHA_TRANSPORT` environment variable.
+The controller can run both UDS and QUIC transport servers simultaneously (configured via `FLEZHA_TRANSPORTS`). Each runner connects using one transport type, determined by its `FLEZHA_TRANSPORT` environment variable.
 
 ### Two Communication Layers
 
@@ -53,7 +53,7 @@ The controller can run both UDS and QUIC transport servers simultaneously (confi
 
 ## 2. Transport Layer
 
-Flezha supports two transport types. Multiple transports can be active simultaneously — each compute engine chooses its transport via the `FLEZHA_TRANSPORT` env var.
+Flezha supports two transport types. Multiple transports can be active simultaneously — each runner chooses its transport via the `FLEZHA_TRANSPORT` env var.
 
 ### UDS (Unix Domain Sockets)
 
@@ -77,23 +77,23 @@ There are three socket types. In all cases, the **controller listens** and the *
 #### Control Socket (shared)
 
 ```
-{base}/executor_control_channel.sock
+{base}/runner_control_channel.sock
 ```
 
 A single control socket serves all SDK processes. Each SDK connects here to initiate the handshake.
 
-#### Primary Stream Sockets (per compute engine)
+#### Primary Stream Sockets (per runner)
 
 ```
-{base}/primary_stream_{executor_id}.sock
+{base}/primary_stream_{runner_id}.sock
 ```
 
 The controller creates a listening socket for each primary stream after the SDK has been assigned an ID. The SDK connects to these sockets. Data flows **controller -> SDK** (the controller sends operative input to the SDK).
 
-#### Secondary Stream Sockets (per compute engine)
+#### Secondary Stream Sockets (per runner)
 
 ```
-{base}/secondary_stream_{executor_id}.sock
+{base}/secondary_stream_{runner_id}.sock
 ```
 
 The controller creates a listening socket for each secondary stream. The SDK connects. Data flows **SDK -> controller** (the SDK sends operative output back to the controller).
@@ -122,7 +122,7 @@ The prefix is consumed by the NIF driver and not visible to the framing layer.
 
 ### Multi-Transport Support
 
-The controller can listen on both UDS and QUIC simultaneously by setting `FLEZHA_TRANSPORTS=uds,quic` (or in test mode, both are enabled by default). Each compute engine independently chooses its transport. The transport type is threaded through the supervisor chain so that UDS compute engines get StreamAcceptors and QUIC ones rely on the Transport.Server for data stream routing.
+The controller can listen on both UDS and QUIC simultaneously by setting `FLEZHA_TRANSPORTS=uds,quic` (or in test mode, both are enabled by default). Each runner independently chooses its transport. The transport type is threaded through the supervisor chain so that UDS runners get StreamAcceptors and QUIC ones rely on the Transport.Server for data stream routing.
 
 ---
 
@@ -172,7 +172,7 @@ Well-known payload IDs:
 | `{operative_id}` | Stream I/O data (both directions) |
 
 The `data_heartbeat` frame carries an empty message and empty metadata. The
-executor writes one on every secondary stream every `FLEZHA_DATA_HEARTBEAT_MS`
+runner writes one on every secondary stream every `FLEZHA_DATA_HEARTBEAT_MS`
 (default 10 s) while connected, so an idle-but-healthy operative keeps the
 controller's per-channel liveness clock fresh without producing real output.
 The controller treats any inbound frame (heartbeat or operative output) as
@@ -262,24 +262,24 @@ All control-plane commands use Protocol Buffers v3 (`proto3`). The full `.proto`
 ```protobuf
 syntax = "proto3";
 
-package executor_commands;
+package runner_commands;
 
 message CommandRequest {
     string reference_id = 1;
 
     oneof command {
-        AssignExecutorId assign_executor_id = 2;
+        AssignRunnerId assign_runner_id = 2;
         ConnectSocket connect_socket = 3;
         AddOperative add_operative = 4;
         RemOperative rem_operative = 5;
         MigrationSerialization migration_serialization = 6;
         MigrationDeserialization migration_deserialization = 7;
         SegmentState segment_state = 8;
-        ExecutorDisconnect executor_disconnect = 9;
+        RunnerDisconnect runner_disconnect = 9;
         OperationMessage operation_message = 10;
         SegmentApplyState segment_apply_state = 11;
-        ExecutorShutdownNotification executor_shutdown_notification = 12;
-        ExecutorShutdownAck executor_shutdown_ack = 13;
+        RunnerShutdownNotification runner_shutdown_notification = 12;
+        RunnerShutdownAck runner_shutdown_ack = 13;
     }
 }
 
@@ -290,8 +290,8 @@ message CommandResponse {
     bytes raw_data = 4;
 }
 
-message AssignExecutorId {
-    string executor_id = 1;
+message AssignRunnerId {
+    string runner_id = 1;
 }
 
 message ConnectSocket {
@@ -333,7 +333,7 @@ message SegmentState {
     string operative_id = 1;
 }
 
-message ExecutorDisconnect {}
+message RunnerDisconnect {}
 
 message OperationMessage {
     string operative_id = 1;
@@ -351,12 +351,12 @@ message SegmentApplyState {
     bytes state_binary = 3;
 }
 
-message ExecutorShutdownNotification {
+message RunnerShutdownNotification {
     string operative_id = 1;
     bytes serialized_state = 2;
 }
 
-message ExecutorShutdownAck {
+message RunnerShutdownAck {
     string operative_id = 1;
 }
 ```
@@ -364,15 +364,15 @@ message ExecutorShutdownAck {
 ### Request/Response Pattern
 
 - **Direction**: Most `CommandRequest` variants flow controller -> SDK. The two
-  exceptions — `ExecutorShutdownNotification` and its `ExecutorShutdownAck`
+  exceptions — `RunnerShutdownNotification` and its `RunnerShutdownAck`
   — flow SDK -> controller and controller -> SDK respectively, using the same
   `CommandRequest` envelope and the same `"control_command"` payload_id; the
   receiver inspects the oneof tag to dispatch.
-- **Correlation**: Each `CommandRequest` contains a `reference_id` (an opaque string). The SDK must echo this `reference_id` in the corresponding `CommandResponse`. For the SDK -> controller shutdown notification, the controller echoes the same `reference_id` in the `ExecutorShutdownAck` it sends back.
+- **Correlation**: Each `CommandRequest` contains a `reference_id` (an opaque string). The SDK must echo this `reference_id` in the corresponding `CommandResponse`. For the SDK -> controller shutdown notification, the controller echoes the same `reference_id` in the `RunnerShutdownAck` it sends back.
 - **Framing**: Both `CommandRequest` and `CommandResponse` are Protobuf-encoded, then wrapped in the binary framing format (Section 3).
   - The controller sends commands with payload_id = `"control_command"`.
   - The SDK sends responses using the **same payload_id** that was received (which is `"control_command"`).
-  - The SDK sends `ExecutorShutdownNotification` with payload_id = `"control_command"`; the controller's `ExecutorShutdownAck` reuses the same payload_id.
+  - The SDK sends `RunnerShutdownNotification` with payload_id = `"control_command"`; the controller's `RunnerShutdownAck` reuses the same payload_id.
 - **Empty metadata**: Control-plane messages use empty metadata (`metadata_size = 0`).
 
 ### Encoding a Command for Transmission
@@ -406,7 +406,7 @@ SDK                                        Controller
  │                      3. Controller processes ───│
  │                         handshake          │
  │                                           │
- │<─── 4. AssignExecutorId ────────────│
+ │<─── 4. AssignRunnerId ────────────│
  │     (CommandRequest in binary frame)      │
  │                                           │
  │──── 5. CommandResponse (success) ────────>│
@@ -427,7 +427,7 @@ SDK                                        Controller
  │                                           │
  │        ... stream I/O active ...          │
  │                                           │
- │<─── 10. ExecutorDisconnect ─────────│
+ │<─── 10. RunnerDisconnect ─────────│
  │──── 10. CommandResponse (success) ───────>│
  │                                           │
  │     11. SDK closes socket ────────────────│
@@ -440,7 +440,7 @@ SDK                                        Controller
 
 The SDK opens a Unix domain socket connection to:
 ```
-{FLEZHA_SOCKET_FILES_PATH}/executor_control_channel.sock
+{FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock
 ```
 
 #### Step 2: Send Handshake Init Message
@@ -457,10 +457,10 @@ The SDK sends a single binary frame:
     "stable_id": "<namespace>-<profile_hash8>-<rand6>"
   }
   ```
-  - `namespace`: A string identifying the logical group this compute engine belongs to.
+  - `namespace`: A string identifying the logical group this runner belongs to.
   - `factory_ids`: List of all registered operative factory IDs in this SDK process.
   - `factories`: Per-factory metadata (id + optional description); a superset of `factory_ids`.
-  - `stable_id`: The executor's durable, self-owned **stable identity**, present on **every** connect (initial and reconnect). The controller trusts it as the operative-binding key and, on reconnect, swaps the prior session's operatives onto the new session token. See [`resilience/executor_identity.md`](resilience/executor_identity.md).
+  - `stable_id`: The runner's durable, self-owned **stable identity**, present on **every** connect (initial and reconnect). The controller trusts it as the operative-binding key and, on reconnect, swaps the prior session's operatives onto the new session token. See [`resilience/runner_identity.md`](resilience/runner_identity.md).
 - **Metadata**: empty
 
 #### Step 3: Controller Processes Handshake
@@ -468,16 +468,16 @@ The SDK sends a single binary frame:
 The controller:
 1. Reads the frame from the control socket (with a 5-second timeout).
 2. Parses the JSON to extract `namespace`, `factory_ids`, and `stable_id`.
-3. Mints a fresh per-connection **session token** (the `executor_id` value below) and resolves the presented `stable_id` — on reconnect it swaps the prior session's operative bindings onto the new token instead of minting-and-evicting.
-4. Starts supervisor trees for the new compute engine (control unit, stream listeners, etc.).
+3. Mints a fresh per-connection **session token** (the `runner_id` value below) and resolves the presented `stable_id` — on reconnect it swaps the prior session's operative bindings onto the new token instead of minting-and-evicting.
+4. Starts supervisor trees for the new runner (control unit, stream listeners, etc.).
 5. Starts or joins the namespace hub.
 
-#### Step 4: Controller Sends `AssignExecutorId`
+#### Step 4: Controller Sends `AssignRunnerId`
 
 The controller sends a `CommandRequest` carrying the minted **session token**:
 ```protobuf
-AssignExecutorId {
-    executor_id: "<session_token>"
+AssignRunnerId {
+    runner_id: "<session_token>"
 }
 ```
 This is Protobuf-encoded, then wrapped in a binary frame with payload_id `"control_command"`. The SDK stores it as its session token (it keys the per-connection data sockets) but does **not** persist it — the durable identity is the self-owned `stable_id` it already presented in the handshake.
@@ -485,7 +485,7 @@ This is Protobuf-encoded, then wrapped in a binary frame with payload_id `"contr
 #### Step 5: SDK Responds
 
 The SDK:
-1. Stores the assigned `executor_id`.
+1. Stores the assigned `runner_id`.
 2. Sets its status to `Running`.
 3. Sends a `CommandResponse`:
    ```protobuf
@@ -511,12 +511,12 @@ Where `N` is the number of concurrent stream channel pairs. By default, `N` equa
 
 For each index `i` in `0..sockets_count`, the SDK:
 
-1. Connects to `{base}/primary_stream_{executor_id}.sock`
+1. Connects to `{base}/primary_stream_{runner_id}.sock`
    - Sets the socket to **non-blocking** mode.
    - Registers it for read polling (e.g., with `mio`/`epoll`/`kqueue`).
    - This socket receives input data from the controller.
 
-2. Connects to `{base}/secondary_stream_{executor_id}.sock`
+2. Connects to `{base}/secondary_stream_{runner_id}.sock`
    - This socket is used to send output data back to the controller.
    - Stored for later use by operatives.
 
@@ -538,7 +538,7 @@ The control channel enters a steady-state loop. The controller may send any of t
 
 #### Step 10: Disconnect
 
-The controller sends a `ExecutorDisconnect` command. The SDK:
+The controller sends a `RunnerDisconnect` command. The SDK:
 1. Sets its status to `Stopped`.
 2. Sends a `CommandResponse` with status `"success"`.
 3. The controller closes the control socket after receiving the response.
@@ -562,7 +562,7 @@ SDK                                        Controller
  │    - io_streams (dead)
  │    - operatives (will be re-added)
  │    - work queues (stale stream refs)
- │    - executor_id → "undefined"
+ │    - runner_id → "undefined"
  │
  │  Retry with exponential backoff:
  │    200ms, 400ms, 800ms, ... cap 30s
@@ -574,7 +574,7 @@ SDK                                        Controller
  │                                           │
  │     (normal lifecycle resumes from Step 3) │
  │                                           │
- │<─── 4. AssignExecutorId (new session token) ───│
+ │<─── 4. AssignRunnerId (new session token) ───│
  │<─── 6. ConnectSocket ────────────────────│
  │<─── 9. AddOperative (for each) ──────────│
  │                                           │
@@ -582,8 +582,8 @@ SDK                                        Controller
 ```
 
 **Key behaviors:**
-- The SDK distinguishes intentional disconnects (`ExecutorDisconnect` command sets status to `Stopped`) from unexpected ones (status is `Running`). Only unexpected disconnects trigger reconnection.
-- The controller treats the reconnection as a **new session** — it mints a fresh session token and, because the SDK re-presents its durable `stable_id`, **swaps** the prior session's operative bindings onto the new token rather than minting-and-evicting or re-issuing each operative. See [`resilience/executor_identity.md`](resilience/executor_identity.md).
+- The SDK distinguishes intentional disconnects (`RunnerDisconnect` command sets status to `Stopped`) from unexpected ones (status is `Running`). Only unexpected disconnects trigger reconnection.
+- The controller treats the reconnection as a **new session** — it mints a fresh session token and, because the SDK re-presents its durable `stable_id`, **swaps** the prior session's operative bindings onto the new token rather than minting-and-evicting or re-issuing each operative. See [`resilience/runner_identity.md`](resilience/runner_identity.md).
 - Operative factories remain registered in the SDK process; the SDK preserves its in-memory operative registry across reconnect, so the binding swap re-points existing operatives without re-issuing `AddOperative` for each.
 - In-flight worker work completes (writes to dead streams fail silently); workers return to the pool after reconnection.
 - Backoff schedule: 200ms, 400ms, 800ms, 1.6s, 3.2s, 6.4s, 12.8s, 25.6s, capped at 30s.
@@ -594,12 +594,12 @@ SDK                                        Controller
 
 All commands are sent as `CommandRequest` messages from the controller to the SDK. The SDK responds with `CommandResponse`.
 
-### AssignExecutorId
+### AssignRunnerId
 
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `AssignExecutorId { executor_id: string }` (the value is the controller-minted **session token**) |
+| Proto message | `AssignRunnerId { runner_id: string }` (the value is the controller-minted **session token**) |
 | Behavior | SDK stores the session token and sets status to `Running`; the value is NOT persisted (the durable identity is the SDK-owned `stable_id` in the handshake) |
 | Response status | `"success"` |
 | Response raw_data | empty |
@@ -629,7 +629,7 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 
 | Field | Value |
 |-------|-------|
-| Direction | SDK -> Controller (same `control_command` envelope as `ExecutorReconnected`) |
+| Direction | SDK -> Controller (same `control_command` envelope as `RunnerReconnected`) |
 | Proto message | `BoundedCompleted { operative_id: string, status: string, error: string }` |
 | Behavior | Emitted when a bounded-kind operative's `run` returns: `status` is `"ok"` or `"error"` (with `error`). The Controller drives the normal stop/teardown path (deregister-on-completion) so the finished operative leaves the durable registry; an errored operative is torn down identically (terminal — the platform never re-runs the operative; a structured chain's per-segment retry ladder runs *inside* the run, before this) and surfaced via `[:flezha, :bounded, :failed]`. |
 | Response | None (one-way notification; old Controllers ignore the unknown variant) |
@@ -669,7 +669,7 @@ stream — identical across both SDKs.
 |-------|-------|
 | Direction | Controller -> SDK |
 | Proto message | `MigrationSerialization { operative_id: string }` |
-| Behavior | SDK serializes the operative's state using `json_serialize_state()`, then **removes** the operative from the registry. The serialized state is returned so the controller can migrate it to another compute engine. |
+| Behavior | SDK serializes the operative's state using `json_serialize_state()`, then **removes** the operative from the registry. The serialized state is returned so the controller can migrate it to another runner. |
 | Response status | `"success"` |
 | Response raw_data | JSON-serialized operative state bytes |
 
@@ -683,12 +683,12 @@ stream — identical across both SDKs.
 | Response status | `"success"` |
 | Response raw_data | empty |
 
-### ExecutorDisconnect
+### RunnerDisconnect
 
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `ExecutorDisconnect {}` (no fields) |
+| Proto message | `RunnerDisconnect {}` (no fields) |
 | Behavior | SDK sets status to `Stopped`. After sending the response, the SDK should close the control socket. |
 | Response status | `"success"` |
 | Response raw_data | empty |
@@ -715,24 +715,24 @@ propagation. v1 is open-auth; scoping is the caller's responsibility.
 Payloads are opaque bytes and share the control stream with other
 commands — keep them small to avoid head-of-line contention.
 
-### ExecutorShutdownNotification
+### RunnerShutdownNotification
 
 | Field | Value |
 |-------|-------|
 | Direction | SDK -> Controller (only SDK-initiated CommandRequest variant alongside its ack) |
-| Proto message | `ExecutorShutdownNotification { operative_id: string, serialized_state: bytes }` |
+| Proto message | `RunnerShutdownNotification { operative_id: string, serialized_state: bytes }` |
 | When emitted | On graceful SDK shutdown only: SIGTERM, `Drop` of the SDK handle, explicit `disconnect()`. Crash paths (SIGKILL, panic) cannot emit and fall back to last periodic snapshot. |
-| Behavior | Per running operative, the SDK serializes via the same per-driver serializer used for `MigrationSerialization` and emits one notification. The controller forwards the binary to the corresponding `Overwatch.state.snapshot` and emits an `ExecutorShutdownAck` with the same `reference_id`. |
-| Ack timeout | The SDK SHALL wait at most **2 s per operative** for `ExecutorShutdownAck` (parallelised across operatives). After the timeout, the SDK SHALL exit unconditionally and SHALL NOT block its container's shutdown grace period. |
+| Behavior | Per running operative, the SDK serializes via the same per-driver serializer used for `MigrationSerialization` and emits one notification. The controller forwards the binary to the corresponding `Overwatch.state.snapshot` and emits an `RunnerShutdownAck` with the same `reference_id`. |
+| Ack timeout | The SDK SHALL wait at most **2 s per operative** for `RunnerShutdownAck` (parallelised across operatives). After the timeout, the SDK SHALL exit unconditionally and SHALL NOT block its container's shutdown grace period. |
 | Per-operative serializer cap | Capped at the controller's `cross_node_request_timeout` (10 s) ceiling; deployments with tighter container grace periods should override the cap via SDK config. |
 | Wire format | CommandRequest envelope, payload_id = `"control_command"`, oneof tag 12. |
 
-### ExecutorShutdownAck
+### RunnerShutdownAck
 
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `ExecutorShutdownAck { operative_id: string }` |
+| Proto message | `RunnerShutdownAck { operative_id: string }` |
 | Behavior | Emitted by the controller's `ControlChannel` immediately after the snapshot cast is enqueued on the `Overwatch` GenServer (NOT after the cast has been applied — the cast is in the GenServer mailbox by then and applies in microseconds). The controller emits the ack regardless of whether the Overwatch was found: a missing Overwatch (already migrated to a peer controller) still gets an ack so the SDK can proceed to exit. |
 | Wire format | CommandRequest envelope, payload_id = `"control_command"`, oneof tag 13, `reference_id` matches the originating notification. |
 
@@ -904,13 +904,13 @@ new(namespace: string) -> SDK
 ```
 
 1. All factories must be registered before calling `new()`.
-2. Connects to the controller's control socket. If the controller is not available, retries with exponential backoff (200ms → 30s cap) until the connection succeeds. This allows compute engines to start before the controller.
+2. Connects to the controller's control socket. If the controller is not available, retries with exponential backoff (200ms → 30s cap) until the connection succeeds. This allows runners to start before the controller.
 3. Sends the handshake init message with the namespace and registered factory IDs.
-4. Blocks until `AssignExecutorId` is received and processed.
+4. Blocks until `AssignRunnerId` is received and processed.
 5. Returns the SDK handle.
 
 The returned handle provides:
-- `get_id() -> string` — Returns the assigned compute engine ID.
+- `get_id() -> string` — Returns the assigned runner ID.
 - `get_operatives()` — Returns the current set of active operatives.
 
 ### 8.6 Configuration
@@ -959,21 +959,21 @@ Metadata Size (2 bytes): 0
 Total frame: 32 + 4 + 50 = 86 bytes
 ```
 
-### 9.2 AssignExecutorId Command (Hex Dump)
+### 9.2 AssignRunnerId Command (Hex Dump)
 
-Controller sends `AssignExecutorId` with `executor_id = "ce_001"` and `reference_id = "#Ref<0.1.2.3>"`.
+Controller sends `AssignRunnerId` with `runner_id = "ce_001"` and `reference_id = "#Ref<0.1.2.3>"`.
 
 **Protobuf encoding** of `CommandRequest`:
 ```protobuf
 field 1 (reference_id): wire type 2 (length-delimited), value = "#Ref<0.1.2.3>"
-field 2 (assign_executor_id): wire type 2 (length-delimited)
-  field 1 (executor_id): wire type 2 (length-delimited), value = "ce_001"
+field 2 (assign_runner_id): wire type 2 (length-delimited)
+  field 1 (runner_id): wire type 2 (length-delimited), value = "ce_001"
 ```
 
 Protobuf bytes (25 bytes):
 ```
 0A 0D 23 52 65 66 3C 30 2E 31 2E 32 2E 33 3E     reference_id (tag + len + 13 chars)
-12 08 0A 06 63 65 5F 30 30 31                       assign_executor_id (tag + len + nested)
+12 08 0A 06 63 65 5F 30 30 31                       assign_runner_id (tag + len + nested)
 ```
 
 **Binary frame**:
@@ -1043,7 +1043,7 @@ Time  Direction    Description
 ────  ─────────    ───────────────────────────────────────────────
  t0   SDK->Controller   Connect to control socket
  t1   SDK->Controller   Handshake: {"namespace":"my_app","factory_ids":["echo"]}
- t2   Controller->SDK   CommandRequest: AssignExecutorId{executor_id:"ce_001"}
+ t2   Controller->SDK   CommandRequest: AssignRunnerId{runner_id:"ce_001"}
  t3   SDK->Controller   CommandResponse: {ref_id:"...", status:"success"}
  t4   Controller->SDK   CommandRequest: ConnectSocket{sockets_count:4}
  t5   SDK          Connect to primary_stream_ce_001.sock (×4, non-blocking)
@@ -1058,7 +1058,7 @@ t12   SDK->Controller   [secondary stream] payload_id:"p1", message:"hello", met
 t13   Controller->SDK   CommandRequest: RemOperative{operative_id:"p1"}
 t14   SDK          Remove operative "p1"
 t15   SDK->Controller   CommandResponse: {ref_id:"...", status:"success"}
-t16   Controller->SDK   CommandRequest: ExecutorDisconnect{}
+t16   Controller->SDK   CommandRequest: RunnerDisconnect{}
 t17   SDK->Controller   CommandResponse: {ref_id:"...", status:"success"}
 t18   SDK          Close all sockets, shut down
 ```
@@ -1087,7 +1087,7 @@ CommandResponse {
 
 ### Connection Close Detection
 
-- **Controller side**: The controller detects a closed control socket via `{:flz_closed, ...}` NIF messages. This triggers compute engine disconnect handling (preservation, migration, or rerouting depending on namespace state).
+- **Controller side**: The controller detects a closed control socket via `{:flz_closed, ...}` NIF messages. This triggers runner disconnect handling (preservation, migration, or rerouting depending on namespace state).
 - **SDK side**: The control listener thread distinguishes transient read errors (`WouldBlock`, `Interrupted`) from fatal ones (`BrokenPipe`, `UnexpectedEof`, `ConnectionReset`). Transient errors are retried; fatal errors trigger auto-reconnection (see Section 5, Auto-Reconnection).
 
 ### Incomplete Frame Handling
@@ -1107,9 +1107,9 @@ If a frame fails to parse (corrupt data), the SDK should:
 
 The SDK automatically reconnects when the control channel drops unexpectedly. See Section 5 (Auto-Reconnection) for the full reconnection flow.
 
-**Intentional vs unexpected disconnect:** When the controller sends `ExecutorDisconnect`, the SDK sets its status to `Stopped` and does **not** reconnect. When the connection drops without this command (controller crash, network failure), the SDK's status is still `Running`, and it enters the reconnection loop with exponential backoff.
+**Intentional vs unexpected disconnect:** When the controller sends `RunnerDisconnect`, the SDK sets its status to `Stopped` and does **not** reconnect. When the connection drops without this command (controller crash, network failure), the SDK's status is still `Running`, and it enters the reconnection loop with exponential backoff.
 
-**Controller-side keepalive:** The controller preserves compute engine state for a configurable window (default 30000ms, via `FLEZHA_EXECUTOR_KEEPALIVE`) after detecting a disconnect. If a new SDK process with the same namespace connects within this window, the controller may migrate preserved operatives to the new compute engine.
+**Controller-side keepalive:** The controller preserves runner state for a configurable window (default 30000ms, via `FLEZHA_RUNNER_KEEPALIVE`) after detecting a disconnect. If a new SDK process with the same namespace connects within this window, the controller may migrate preserved operatives to the new runner.
 
 
 ## Per-Segment State Persistence
@@ -1124,7 +1124,7 @@ here and implemented in `operative-state-persistence-controller`
 
 SDK → controller. Carries one Change record destined for the per-Segment
 WAL. Frame layout (matches `Flezha.State.Wire.decode_frame/1` and
-`flezha_executor::segment::flusher::build_segment_state_change_frame`):
+`flezha_runner::segment::flusher::build_segment_state_change_frame`):
 
 ```
 [segment_id_len: u16 BE]
@@ -1335,7 +1335,7 @@ message CompactSegment {
 ```
 
 Issued when `wal_size_bytes` exceeds `compact_after_bytes` (per-Operation,
-default 64 MiB) or when the executor runs `flz state rotate`. The SDK
+default 64 MiB) or when the runner runs `flz state rotate`. The SDK
 clones `Self::State` under the segment's sticky CAS, postcard-
 serializes it, ships the bytes via `segment_state_snapshot`, then
 replies with:
@@ -1379,7 +1379,7 @@ message CreditWindowInit {
 }
 ```
 
-Offers credit-grant flow control for the executor's state stream. Emitted
+Offers credit-grant flow control for the runner's state stream. Emitted
 on the first `segment_state_change` frame of a stream attach (so the
 offer originates from the channel on the actual state path, and the
 window resolves per-Operative from that frame's class —
@@ -1476,7 +1476,7 @@ operative (`bounded-op-journal`): operation `op_idx` completed forward
 and released the inter-op handoff batch, serialized through the
 producing channel's byte codec (`.codec()` / `.codec_with(...)`,
 required at registration for durable structured classes). Direction is
-reversed like `ExecutorShutdownNotification`: SDK → controller over the
+reversed like `RunnerShutdownNotification`: SDK → controller over the
 `"control_command"` payload_id. The driver **blocks** until the
 `OpCommitResponse` — the next operation must not race ahead of the
 committed record. Opted-out classes (`PERSISTENCE_ENABLED = false`)
@@ -1647,9 +1647,9 @@ holds; a `recv` mid-iteration blocks in memory as before.
 
 The controller journals `parked(iter[, wake_deadline_ms])` — durable
 BEFORE the eviction, so a controller crash in between still rediscovers
-the suspension — then evicts the instance from its executor
+the suspension — then evicts the instance from its runner
 (`RemOperative`). The registry entry and its controller-side Overwatch
-stay: it is the **executor** that holds zero resources. `flz operative
+stay: it is the **runner** that holds zero resources. `flz operative
 info` reports the instance `suspended`.
 
 Rehydration has one path, whichever wakes it: a new inbox append, or the
@@ -1657,7 +1657,7 @@ journaled wake deadline (which the controller delivers as a synthetic
 inbox entry with an empty payload and `flz.wake = timer` metadata — a
 class declaring `wake_after()` accepts an empty entry payload as its
 tick). Both re-bind the instance through the normal bounded spawn path
-on any live executor (existing session fencing applies), restoring
+on any live runner (existing session fencing applies), restoring
 journal + iteration-boundary snapshots and delivering the undelivered
 inbox tail. Because both wake sources go through the inbox, two racing
 wakes collapse into exactly one rehydration.

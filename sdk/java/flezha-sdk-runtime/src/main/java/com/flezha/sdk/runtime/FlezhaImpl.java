@@ -39,14 +39,14 @@ public final class FlezhaImpl implements Flezha {
 
     private static final Logger LOG = LoggerFactory.getLogger(FlezhaImpl.class);
 
-    private final ExecutorContext ctx;
+    private final RunnerContext ctx;
     private final ReconnectCoordinator reconnectCoordinator;
     private final KeepaliveSender keepaliveSender;
     private final DataHeartbeatSender dataHeartbeatSender;
     private final AtomicReference<GracefulShutdown> shutdownRef;
 
     private FlezhaImpl(
-            ExecutorContext ctx,
+            RunnerContext ctx,
             ReconnectCoordinator reconnectCoordinator,
             KeepaliveSender keepaliveSender,
             DataHeartbeatSender dataHeartbeatSender,
@@ -68,7 +68,7 @@ public final class FlezhaImpl implements Flezha {
      *   <li>Create the native context.</li>
      *   <li>Initialize the worker pool (consumed by every {@code UnboundedOperativeInstance}'s {@code OperationDispatcher}).</li>
      *   <li>Open the control stream and send the handshake init JSON.</li>
-     *   <li>Block until the controller replies with {@code AssignExecutorId}.</li>
+     *   <li>Block until the controller replies with {@code AssignRunnerId}.</li>
      * </ol>
      */
     @Nonnull
@@ -90,7 +90,7 @@ public final class FlezhaImpl implements Flezha {
         }
         NativeTransport.installDefaultLogCallback(nativeHandle);
 
-        ExecutorContext ctx = new ExecutorContext(namespace, resolved, nativeHandle);
+        RunnerContext ctx = new RunnerContext(namespace, resolved, nativeHandle);
 
         ExecutorService workerPool = Executors.newFixedThreadPool(
                 Math.max(1, resolved.workerPoolSize()), new WorkerThreadFactory("flz-worker"));
@@ -163,9 +163,7 @@ public final class FlezhaImpl implements Flezha {
                         LOG.error("control stream route failed: {}", t.toString());
                         return;
                     }
-                    if (ctx.executorId() != null
-                            && !ctx.executorId().equals("undefined")
-                            && assignLatch.getCount() > 0) {
+                    if (ctx.runnerId() != null && !ctx.runnerId().equals("undefined") && assignLatch.getCount() > 0) {
                         assignLatch.countDown();
                     }
                 }
@@ -205,13 +203,13 @@ public final class FlezhaImpl implements Flezha {
         NativeTransport.setDispatcher(nativeHandle, eventDispatcher);
 
         // Open the control stream and send the handshake. A failure here drives
-        // reconnect rather than stranding a dead start() (the executor keeps
+        // reconnect rather than stranding a dead start() (the runner keeps
         // retrying until it lands on a live controller).
         long controlStreamId = NativeTransport.openControlStream(nativeHandle);
         ctx.streamRegistry().setControlStreamId(controlStreamId);
         shutdownRef.set(new GracefulShutdown(ctx, controlStreamId));
         try {
-            // The handshake presents the executor's self-owned stable id (the
+            // The handshake presents the runner's self-owned stable id (the
             // same on initial connect and reconnect), so the controller resolves
             // a reconnect as a binding swap.
             new ControlChannel(ctx, controlStreamId).sendHandshake(namespace);
@@ -237,7 +235,7 @@ public final class FlezhaImpl implements Flezha {
         try {
             long ackMs = FlezhaEnv.controlAckTimeoutMs();
             if (!assignLatch.await(ackMs, TimeUnit.MILLISECONDS)) {
-                LOG.warn("No AssignExecutorId within {} ms; driving reconnect", ackMs);
+                LOG.warn("No AssignRunnerId within {} ms; driving reconnect", ackMs);
                 coordinator.onConnectionLost();
             }
         } catch (InterruptedException e) {
@@ -264,7 +262,7 @@ public final class FlezhaImpl implements Flezha {
     @Override
     @Nonnull
     public String getId() {
-        return ctx.executorId();
+        return ctx.runnerId();
     }
 
     @Override

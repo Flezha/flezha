@@ -38,7 +38,7 @@ defmodule Flezha.Plugin.Installer.Supervisor do
   @doc """
   Reads `:flezha, :plugin_installer` keyword list and ensures the signature
   policy is internally consistent. Reason atom names the first failure so
-  executors can fix it from the startup log.
+  runners can fix it from the startup log.
   """
   @spec validate_config() :: :ok | {:error, atom()}
   def validate_config do

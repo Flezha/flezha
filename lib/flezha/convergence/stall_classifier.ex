@@ -7,7 +7,7 @@ defmodule Flezha.Convergence.StallClassifier do
 
   `classify/3`: given a current and previous liveness snapshot (driver
   self-report + `Flezha.Transport.LivenessCounters`), it walks the
-  controller→executor path top-down and returns the single most-fundamental
+  controller→runner path top-down and returns the single most-fundamental
   stalled layer, or `:ok`.
   Detection only — it changes no behaviour and triggers no remediation; the
   convergence Loop emits its verdict as a `[:flezha, :data_plane,
@@ -20,8 +20,8 @@ defmodule Flezha.Convergence.StallClassifier do
     * `:driver_loop_frozen`     — the flz-uds-driver thread stopped looping
     * `:nif_queue_backing_up`   — commands enqueued but the driver isn't draining them
     * `:socket_write_blocked`   — driver writing into a buffer the peer won't drain
-    * `:executor_not_consuming` — controller sending fine, executor reads nothing back
-    * `:executor_pool_wedged`   — executor alive (heartbeats flowing) and fed, but its
+    * `:runner_not_consuming` — controller sending fine, runner reads nothing back
+    * `:runner_pool_wedged`   — runner alive (heartbeats flowing) and fed, but its
       self-reported dispatch counter is frozen — the SDK pool stopped processing
     * `:channel_not_sending`    — channel fed but not calling send_frame
     * `:operative_not_forwarding`   — operative fed but not forwarding to its channel
@@ -51,8 +51,8 @@ defmodule Flezha.Convergence.StallClassifier do
     driver_loop_frozen(current, previous, o) ||
       nif_queue_backing_up(current, previous, o) ||
       socket_write_blocked(current, previous, o) ||
-      executor_not_consuming(current, previous, o) ||
-      executor_pool_wedged(current, previous) ||
+      runner_not_consuming(current, previous, o) ||
+      runner_pool_wedged(current, previous) ||
       channel_not_sending(current, previous) ||
       operative_not_forwarding(current, previous) ||
       :ok
@@ -95,48 +95,48 @@ defmodule Flezha.Convergence.StallClassifier do
     end)
   end
 
-  defp executor_not_consuming(current, previous, o) do
+  defp runner_not_consuming(current, previous, o) do
     find_stream(current, previous, fn d, s, prev_s ->
       # `prev_s.frames_read > 0` exempts one-directional streams: a primary
-      # data stream is write-only on the controller side (the executor never
+      # data stream is write-only on the controller side (the runner never
       # answers on it), so "reads flat" is its normal state, not a stall.
       if s.frames_written > prev_s.frames_written and s.frames_read == prev_s.frames_read and
            prev_s.frames_read > 0 and
            age(d.now_ms, s.last_read_ms) > o.stall_ms do
-        {:executor_not_consuming, %{transport: d.transport, stream_id: s.stream_id}}
+        {:runner_not_consuming, %{transport: d.transport, stream_id: s.stream_id}}
       end
     end)
   end
 
-  # ---------- executor self-report check ----------
+  # ---------- runner self-report check ----------
 
-  # The executor's heartbeat thread outlives a wedged dispatch pool, so an
-  # executor can look perfectly alive while processing nothing (the 2026-06-10
+  # The runner's heartbeat thread outlives a wedged dispatch pool, so an
+  # runner can look perfectly alive while processing nothing (the 2026-06-10
   # freeze). Heartbeat metadata carries a dispatch-progress counter; flag the
-  # executor when it is being fed and heartbeating but that counter is frozen.
-  defp executor_pool_wedged(current, previous) do
-    prev_by_exec = group_channels_by_executor(previous.channels)
+  # runner when it is being fed and heartbeating but that counter is frozen.
+  defp runner_pool_wedged(current, previous) do
+    prev_by_exec = group_channels_by_runner(previous.channels)
 
     current.channels
-    |> group_channels_by_executor()
-    |> find_first(fn {executor_id, cur} ->
-      case Map.get(prev_by_exec, executor_id) do
+    |> group_channels_by_runner()
+    |> find_first(fn {runner_id, cur} ->
+      case Map.get(prev_by_exec, runner_id) do
         nil ->
           nil
 
         prev ->
           if cur.send_frame_calls > prev.send_frame_calls and cur.hb_count > prev.hb_count and
                cur.hb_dispatches > 0 and cur.hb_dispatches == prev.hb_dispatches do
-            {:executor_pool_wedged, %{executor_id: executor_id, dispatches: cur.hb_dispatches}}
+            {:runner_pool_wedged, %{runner_id: runner_id, dispatches: cur.hb_dispatches}}
           end
       end
     end)
   end
 
-  # Aggregate per-channel counters to one row per executor: sends and
+  # Aggregate per-channel counters to one row per runner: sends and
   # heartbeats sum across its channels; the self-reported dispatch counter is
-  # process-global on the executor, so max() collapses duplicates.
-  defp group_channels_by_executor(channels) do
+  # process-global on the runner, so max() collapses duplicates.
+  defp group_channels_by_runner(channels) do
     Enum.reduce(channels, %{}, fn c, acc ->
       row = %{
         send_frame_calls: Map.get(c, :send_frame_calls, 0),
@@ -144,7 +144,7 @@ defmodule Flezha.Convergence.StallClassifier do
         hb_dispatches: Map.get(c, :hb_dispatches, 0)
       }
 
-      Map.update(acc, c.executor_id, row, fn v ->
+      Map.update(acc, c.runner_id, row, fn v ->
         %{
           send_frame_calls: v.send_frame_calls + row.send_frame_calls,
           hb_count: v.hb_count + row.hb_count,
@@ -157,10 +157,10 @@ defmodule Flezha.Convergence.StallClassifier do
   # ---------- BEAM checks ----------
 
   defp channel_not_sending(current, previous) do
-    prev_index = index_by(previous.channels, fn c -> {c.executor_id, c.name} end)
+    prev_index = index_by(previous.channels, fn c -> {c.runner_id, c.name} end)
 
     find_first(current.channels, fn c ->
-      case Map.get(prev_index, {c.executor_id, c.name}) do
+      case Map.get(prev_index, {c.runner_id, c.name}) do
         nil ->
           nil
 
@@ -170,7 +170,7 @@ defmodule Flezha.Convergence.StallClassifier do
           if c.io_in_received > prev.io_in_received and
                c.send_frame_calls == prev.send_frame_calls and
                c.nil_drops == prev.nil_drops do
-            {:channel_not_sending, %{executor_id: c.executor_id, channel: c.name}}
+            {:channel_not_sending, %{runner_id: c.runner_id, channel: c.name}}
           end
       end
     end)

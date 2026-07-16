@@ -4,7 +4,7 @@
 
 Flezha uses a **shared Rust library** for all transport-level communication between the Elixir controller and language SDKs. The library handles everything needed to move bytes between the two sides — QUIC, UDS, binary framing, protobuf encoding, and TLS — but **nothing more**.
 
-Each language SDK is responsible for its own compute engine: running operatives, managing state, worker pools, and command dispatch. A Python SDK runs operatives in Python. A Go SDK runs them in Go. The shared library is the communication layer only.
+Each language SDK is responsible for its own runner: running operatives, managing state, worker pools, and command dispatch. A Python SDK runs operatives in Python. A Go SDK runs them in Go. The shared library is the communication layer only.
 
 ## Why
 
@@ -72,13 +72,13 @@ On the controller side, the same library replaces `:quicer` (MsQuic NIF) with a 
 
 | Module | Purpose |
 |---|---|
-| `executor/mod.rs` | ExecutorNode, message loop, worker dispatch |
-| `executor/control_unit.rs` | Control channel open (UDS/QUIC), init handshake |
-| `executor/worker_pool.rs` | Thread pool for operative execution |
+| `runner/mod.rs` | RunnerNode, message loop, worker dispatch |
+| `runner/control_unit.rs` | Control channel open (UDS/QUIC), init handshake |
+| `runner/worker_pool.rs` | Thread pool for operative execution |
 | `command/mod.rs` | Command routing and response building |
 | `command/*.rs` | Individual command handlers (assign, connect, add/rem operative, etc.) |
 | `operative/mod.rs` | Operative trait surface, types, factory registration |
-| `operative/executor.rs` | Operative execution and output piping |
+| `operative/runner.rs` | Operative execution and output piping |
 | `operative/factory_registry.rs` | Global factory registry, OperativeHandle, `OperativeRegistry` (DashMap-backed live instance map under fast-dispatch) |
 | `lib.rs` | `Flezha` struct, public API (`new`, `get_operatives`) |
 
@@ -91,8 +91,8 @@ changes the internal fast path.
 
 ### Legacy (default: `fast-dispatch` off)
 
-`executor/legacy.rs`. Every inbound message crosses the coordinator
-channel (`crossbeam::channel`) into `ExecutorNode`'s message loop,
+`runner/legacy.rs`. Every inbound message crosses the coordinator
+channel (`crossbeam::channel`) into `RunnerNode`'s message loop,
 which performs a lock-heavy check-out: `RwLock<HashMap<operative>>` read
 → operative `Mutex` acquire for runner type → `operative_workers` /
 `available_workers` / `operative_queues` / `pending_operatives`
@@ -103,8 +103,8 @@ map that pins one operative to one worker at a time.
 
 ### Fast (opt-in: `fast-dispatch` on — per-operative mailboxes)
 
-`executor/fast.rs` + `executor/mailbox.rs` +
-`executor/work_stealing_pool.rs`. Every operative owns:
+`runner/fast.rs` + `runner/mailbox.rs` +
+`runner/work_stealing_pool.rs`. Every operative owns:
   - an `Arc<Mutex<OperativeBox>>` — same inner lock as before (the
     operative trait uses `&mut self`, so a lock is required).
   - a `Mailbox<OperativePayload>` — a `crossbeam::queue::SegQueue` plus
@@ -123,7 +123,7 @@ pushes into the target operative's mailbox, preserving downstream
 ordering). On an observed-empty queue, the drain stores `inflight = false`
 and re-checks the queue — this is the classic "re-CAS on wake miss" that
 closes the race where a concurrent push beat the store (see
-`executor/mailbox.rs` docstring for the worked case).
+`runner/mailbox.rs` docstring for the worked case).
 
 Sticky per-operative ordering is preserved: only the CAS winner drains,
 and the inflight flag guarantees at most one drainer at a time per
@@ -132,16 +132,16 @@ inflight flag is what provides serialization within an operative.
 
 The coordinator thread still exists under fast-dispatch but handles only
 control-plane traffic (`HandleCommandAction`, `ReturnOperatives`,
-`Reconnect`). Under fast-dispatch, the `ExecutorMessage` enum has
+`Reconnect`). Under fast-dispatch, the `RunnerMessage` enum has
 the data-plane variants (`WorkerCheckOut` / `WorkerCheckIn` /
 `WorkerInitCheckIn`) removed at the type level — attempting to send one
 is a compile error.
 
 ### Feature-flag rollout
 
-The flag defaults OFF on the published `flezha_executor` crate
+The flag defaults OFF on the published `flezha_runner` crate
 during rollout (to give a single-cycle A/B against the legacy path) and
-ON for in-repo consumers (`test/apps/rust_executor`). See
+ON for in-repo consumers (`test/apps/rust_runner`). See
 `openspec/changes/optimize-rust-sdk-dispatch/` for the full proposal,
 design, and tasks. The Criterion suite at `sdk/rust/benches/` pins
 dispatch throughput and contention-read metrics so CI catches future
@@ -232,7 +232,7 @@ flezha/
 │   ├── Cargo.toml                # depends on shared lib
 │   └── src/
 │       ├── lib.rs                # Flezha struct, public API
-│       ├── executor/       # Engine lifecycle
+│       ├── runner/       # Engine lifecycle
 │       ├── command/              # Command handlers
 │       └── operative/        # Operative trait + execution
 ├── sdk/java/                     # Java SDK (Maven multi-module)

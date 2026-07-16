@@ -77,7 +77,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
   test "failing replay re-parks with generation 2", %{rc: rc, entry: entry} do
     {:ok, ref} = Store.append(entry)
 
-    # Stand-in for the executor's retry-then-park cycle: on receiving the
+    # Stand-in for the runner's retry-then-park cycle: on receiving the
     # replayed input, park the same payload again (same content identity).
     parent = self()
 

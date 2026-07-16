@@ -97,11 +97,11 @@ public final class E01_Echo {
 
     public static void main(String[] args) throws Exception {
         // Registration must happen BEFORE newInstance: the registry freezes there,
-        // and the handshake tells the controller which factories this executor serves.
+        // and the handshake tells the controller which factories this runner serves.
         Flezha.registerUnbounded(EchoOperative.class);
 
         try (Flezha sdk = Flezha.newInstance(args.length > 0 ? args[0] : "my_app")) {
-            System.out.println("executor id: " + sdk.getId());
+            System.out.println("runner id: " + sdk.getId());
             Thread.currentThread().join();
         }
     }

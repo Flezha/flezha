@@ -5,8 +5,8 @@ defmodule Flezha.Shutdown.Coordinator do
 
   - **Quiesce** sets a process-tree-visible flag (`shutting_down?/0`)
     so `Flezha.Service.OperativeManager.start_operative/2` returns
-    `{:error, :shutting_down}` and `Flezha.Executor.FleetManager`
-    rejects new executor connect attempts.
+    `{:error, :shutting_down}` and `Flezha.Runner.FleetManager`
+    rejects new runner connect attempts.
   - **Drain** captures the locally-hosted Operative set, dispatches
     ProcessHub `cluster_leave` (via `HubManager.stop_hub_manager/0`),
     then polls peer registry dumps until every captured Operative is

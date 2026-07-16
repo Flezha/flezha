@@ -38,14 +38,14 @@ The `flezha-sdk-native` module SHALL include dedicated JNI bridge tests that exe
 
 ### Requirement: Reference Java Compute Engine Test App
 
-The Java reference test app at `test/apps/java_executor/` SHALL implement three reference Operative classes (`DoNothingOperative`, `StoreInputOperative`, `CompareFilterOperative`) using the Java SDK's `UnboundedOperative` / `Operation` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_executor`'s behavior. The factory ids registered by these Operative classes (via `UnboundedOperative::factoryId`) SHALL be `"do_nothing"`, `"store_input"`, `"compare_filter"` — exactly the surviving subset that `test/apps/rust_executor/` exposes. The legacy `EchoMessageOperative` (and any other `operative-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operative-message-handlers` ships per-Operation `handleMessage`.
+The Java reference test app at `test/apps/java_runner/` SHALL implement three reference Operative classes (`DoNothingOperative`, `StoreInputOperative`, `CompareFilterOperative`) using the Java SDK's `UnboundedOperative` / `Operation` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_runner`'s behavior. The factory ids registered by these Operative classes (via `UnboundedOperative::factoryId`) SHALL be `"do_nothing"`, `"store_input"`, `"compare_filter"` — exactly the surviving subset that `test/apps/rust_runner/` exposes. The legacy `EchoMessageOperative` (and any other `operative-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operative-message-handlers` ships per-Operation `handleMessage`.
 
 #### Scenario: Java test app builds and runs
-- **WHEN** `mvn -f test/apps/java_executor/pom.xml package` produces `target/java_executor.jar` and `java -jar target/java_executor.jar my_namespace` is run while the agent is up
-- **THEN** the process SHALL register its three Operative classes via `Flezha.registerUnbounded(...)`, connect to the agent, and receive an `AssignExecutorId` without errors
+- **WHEN** `mvn -f test/apps/java_runner/pom.xml package` produces `target/java_runner.jar` and `java -jar target/java_runner.jar my_namespace` is run while the agent is up
+- **THEN** the process SHALL register its three Operative classes via `Flezha.registerUnbounded(...)`, connect to the agent, and receive an `AssignRunnerId` without errors
 
 #### Scenario: Java test app mirrors Rust test app factory set
-- **WHEN** the list of factory ids registered by the Java test app is compared to those registered by `test/apps/rust_executor/`
+- **WHEN** the list of factory ids registered by the Java test app is compared to those registered by `test/apps/rust_runner/`
 - **THEN** the two lists SHALL be equal sets (`"do_nothing"`, `"store_input"`, `"compare_filter"`); message-handler factories SHALL be absent from both
 
 #### Scenario: Java test app uses the new Operation / OperationCtx API exclusively
@@ -54,23 +54,23 @@ The Java reference test app at `test/apps/java_executor/` SHALL implement three 
 
 ### Requirement: Elixir Integration Harness Supports Java Runtime
 
-`test/helpers/node_test_helper.ex` SHALL accept a `:runtime` option (`:rust | :java`, default `:rust`) in `start_executor/2`. When `:java` is passed, the helper MUST launch `java -jar test/apps/java_executor/target/java_executor.jar <namespace>` via `Flezha.Service.PortPilot` with the same event handling and timeout behavior used for the Rust path. All existing callers that pass no runtime option MUST continue to work unchanged.
+`test/helpers/node_test_helper.ex` SHALL accept a `:runtime` option (`:rust | :java`, default `:rust`) in `start_runner/2`. When `:java` is passed, the helper MUST launch `java -jar test/apps/java_runner/target/java_runner.jar <namespace>` via `Flezha.Service.PortPilot` with the same event handling and timeout behavior used for the Rust path. All existing callers that pass no runtime option MUST continue to work unchanged.
 
 #### Scenario: Default runtime remains Rust
-- **WHEN** existing tests call `start_executor("my_app")` with no runtime option
+- **WHEN** existing tests call `start_runner("my_app")` with no runtime option
 - **THEN** the helper SHALL launch the Rust test app exactly as it does today, and those tests SHALL continue to pass
 
 #### Scenario: Passing :java launches the Java test app
-- **WHEN** a test calls `start_executor("my_app", runtime: :java, transport: :uds)`
-- **THEN** the helper SHALL invoke the `java -jar ...` command and return the assigned `executor_id` after the `:executor_connected_event` fires
+- **WHEN** a test calls `start_runner("my_app", runtime: :java, transport: :uds)`
+- **THEN** the helper SHALL invoke the `java -jar ...` command and return the assigned `runner_id` after the `:runner_connected_event` fires
 
 #### Scenario: Java runtime works over both transports
-- **WHEN** tests call `start_executor(ns, runtime: :java, transport: :uds)` and `start_executor(ns, runtime: :java, transport: :quic)`
-- **THEN** both calls SHALL succeed and return valid compute engine ids, exercising the full handshake, `AssignExecutorId`, and `ConnectSocket` flow on each transport
+- **WHEN** tests call `start_runner(ns, runtime: :java, transport: :uds)` and `start_runner(ns, runtime: :java, transport: :quic)`
+- **THEN** both calls SHALL succeed and return valid compute engine ids, exercising the full handshake, `AssignRunnerId`, and `ConnectSocket` flow on each transport
 
 ### Requirement: Integration Test Matrix
 
-At least one ExUnit integration suite SHALL exercise the Java SDK against the unchanged Elixir agent across every combination of `{runtime: [:rust, :java]} × {transport: [:uds, :quic]}`. The matrix SHALL cover: handshake + `AssignExecutorId`, `ConnectSocket`, add-remove operative lifecycle, end-to-end data flow through an operative (`PipeToAgent`), `PipeToOperative` routing, migration (serialize + deserialize on a second node), and unexpected-disconnect auto-reconnect.
+At least one ExUnit integration suite SHALL exercise the Java SDK against the unchanged Elixir agent across every combination of `{runtime: [:rust, :java]} × {transport: [:uds, :quic]}`. The matrix SHALL cover: handshake + `AssignRunnerId`, `ConnectSocket`, add-remove operative lifecycle, end-to-end data flow through an operative (`PipeToAgent`), `PipeToOperative` routing, migration (serialize + deserialize on a second node), and unexpected-disconnect auto-reconnect.
 
 #### Scenario: Matrix suite runs under mix test
 - **WHEN** a developer runs `mix test --only java_sdk`
@@ -93,12 +93,12 @@ The repository SHALL expose a single Mix alias `mix test.java_sdk` that (a) buil
 - **THEN** the command SHALL build the native binary, build both the Java SDK and the test jar via Maven, and run the Java integration test matrix to completion
 
 #### Scenario: Stale Java test jar is rebuilt before tests
-- **WHEN** a developer edits a Java source file in `test/apps/java_executor/` and then runs `mix test.java_sdk`
+- **WHEN** a developer edits a Java source file in `test/apps/java_runner/` and then runs `mix test.java_sdk`
 - **THEN** Maven SHALL rebuild the test jar before `mix test --only java_sdk` launches any compute engine
 
 ### Requirement: CI Enforces the Full Java SDK Test Suite
 
-The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the full Java-runtime integration matrix on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_executor/**`, or `test/helpers/node_test_helper.ex`. Failures in any of these SHALL block the PR. After this change merges, every CI matrix entry, integration test, and `mix test --only java_sdk` invocation previously tagged `OPERATIVE_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `operative-mvp-java/design.md` Decision 11). Tests tagged `OPERATIVE_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `operative-message-handlers` ships.
+The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the full Java-runtime integration matrix on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_runner/**`, or `test/helpers/node_test_helper.ex`. Failures in any of these SHALL block the PR. After this change merges, every CI matrix entry, integration test, and `mix test --only java_sdk` invocation previously tagged `OPERATIVE_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `operative-mvp-java/design.md` Decision 11). Tests tagged `OPERATIVE_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `operative-message-handlers` ships.
 
 #### Scenario: PR touching flz_transport runs the full Java suite
 - **WHEN** a pull request modifies a file under `flz_transport/src/`
@@ -208,21 +208,21 @@ The Java SDK test suite (`mvn -f sdk/java test`) SHALL include at least one harn
 - **WHEN** a new persistence-related scenario is added to a `java-sdk` requirement and no corresponding harness test exists
 - **THEN** the spec/test sync check (run as part of `mvn -f sdk/java verify`) SHALL fail and block merge with a message naming the missing scenario; this matches the existing pattern from `java-sdk-testing` "Each java-sdk requirement has at least one unit test"
 
-### Requirement: Java test app directory uses canonical Executor naming
+### Requirement: Java test app directory uses canonical Runner naming
 
-The Java test compute-engine application SHALL live at `test/apps/java_executor/` (formerly `test/apps/java_compute_engine/`). All CI matrix entries that reference the test app's path SHALL be updated. Maven `pom.xml` artifact ID for the test app SHALL include `executor` (not `compute_engine`).
+The Java test compute-engine application SHALL live at `test/apps/java_runner/` (formerly `test/apps/java_compute_engine/`). All CI matrix entries that reference the test app's path SHALL be updated. Maven `pom.xml` artifact ID for the test app SHALL include `runner` (not `compute_engine`).
 
 #### Scenario: CI matrix references new path
 - **WHEN** the project's CI configuration is inspected for the Java SDK integration matrix
-- **THEN** test-app working-directory entries SHALL reference `test/apps/java_executor/`; entries referencing the legacy path MUST NOT exist
+- **THEN** test-app working-directory entries SHALL reference `test/apps/java_runner/`; entries referencing the legacy path MUST NOT exist
 
 #### Scenario: Integration test runs from new path
 - **WHEN** the Java SDK integration matrix is run
-- **THEN** the matrix MUST locate the test app at `test/apps/java_executor/`, build it, and exercise the Controller↔Executor flow including Operative registration, Operation execution, Segment state persistence, and survive-restart behavior
+- **THEN** the matrix MUST locate the test app at `test/apps/java_runner/`, build it, and exercise the Controller↔Runner flow including Operative registration, Operation execution, Segment state persistence, and survive-restart behavior
 
 ### Requirement: Test naming reflects canonical role vocabulary
 
-Java SDK integration test class names and test descriptions SHALL use canonical vocabulary (Controller, Executor, Operative, Operation, Segment). Existing test classes whose names contain `Processor`, `Operator`, or `ComputeEngine` SHALL be renamed accordingly.
+Java SDK integration test class names and test descriptions SHALL use canonical vocabulary (Controller, Runner, Operative, Operation, Segment). Existing test classes whose names contain `Processor`, `Operator`, or `ComputeEngine` SHALL be renamed accordingly.
 
 #### Scenario: Test class names compile after rename
 - **WHEN** `mvn -f sdk/java test` is run
@@ -230,7 +230,7 @@ Java SDK integration test class names and test descriptions SHALL use canonical 
 
 ### Requirement: Reference Java test app registers a Bounded Operative
 
-The Java reference test app at `test/apps/java_executor/` SHALL register at least one `BoundedOperative` class via `Flezha.registerBounded(...)`, mirroring the bounded operative that `test/apps/rust_executor/` registers (an `EchoOperative` that emits its `args` as plugin output and returns success). The bounded operative SHALL be a hand-written `BoundedOperative` implementation (no annotation-processor sugar in v1). Registering the bounded operative SHALL NOT disturb the test app's unbounded operative registrations or its run-until-stdin-closes behavior.
+The Java reference test app at `test/apps/java_runner/` SHALL register at least one `BoundedOperative` class via `Flezha.registerBounded(...)`, mirroring the bounded operative that `test/apps/rust_runner/` registers (an `EchoOperative` that emits its `args` as plugin output and returns success). The bounded operative SHALL be a hand-written `BoundedOperative` implementation (no annotation-processor sugar in v1). Registering the bounded operative SHALL NOT disturb the test app's unbounded operative registrations or its run-until-stdin-closes behavior.
 
 #### Scenario: Java test app registers a bounded operative factory
 
@@ -239,7 +239,7 @@ The Java reference test app at `test/apps/java_executor/` SHALL register at leas
 
 #### Scenario: Java and Rust test apps expose the same bounded operative factory
 
-- **WHEN** the bounded operative factory ids registered by the Java test app are compared to those registered by `test/apps/rust_executor/`
+- **WHEN** the bounded operative factory ids registered by the Java test app are compared to those registered by `test/apps/rust_runner/`
 - **THEN** both SHALL expose the mirrored echo bounded-operative factory id, so the same `flz operative start … --kind bounded` exercises either runtime
 
 ### Requirement: Integration matrix exercises a run-once Java bounded operative over both transports
@@ -248,7 +248,7 @@ The Elixir↔Java integration suite SHALL exercise a run-once Java bounded opera
 
 #### Scenario: Run-once Java bounded operative completes and is torn down over UDS
 
-- **WHEN** the suite starts an `EchoOperative` on a Java executor over UDS with `args="hi"` and a bound output plugin
+- **WHEN** the suite starts an `EchoOperative` on a Java runner over UDS with `args="hi"` and a bound output plugin
 - **THEN** the bounded operative SHALL run once, its emitted output SHALL reach the plugin, the controller SHALL receive `BoundedCompleted{status:"ok"}`, and the bounded operative SHALL be removed from the durable registry
 
 #### Scenario: Run-once Java bounded operative completes and is torn down over QUIC

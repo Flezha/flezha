@@ -35,7 +35,7 @@ public interface UnboundedOperative extends Computation {
 
     /**
      * Whether per-Segment state persistence is enabled for this UnboundedOperative class.
-     * The controller ships the resolved value (executor override &gt; this default
+     * The controller ships the resolved value (runner override &gt; this default
      * &gt; {@code true}) in {@code AddOperative} metadata; the runtime stamps
      * it onto each {@code UnboundedOperativeInstance} at construction.
      *

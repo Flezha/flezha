@@ -6,7 +6,7 @@ defmodule FlezhaTest.Operative.OverwatchIoDropTest do
   """
   use ExUnit.Case, async: false
 
-  alias Flezha.Executor.StreamChannel
+  alias Flezha.Runner.StreamChannel
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Operative.Overwatch
 

@@ -61,8 +61,8 @@ jobs:
       - name: Build ${{ matrix.runtime }} compute engine
         run: |
           if [[ "${{ matrix.runtime }}" == "rust" ]]; then
-            cargo build --release -p rust_executor
-            cargo build -p rust_executor
+            cargo build --release -p rust_runner
+            cargo build -p rust_runner
           else
             mix test.java_sdk -- --only never-run-just-build || true
           fi
@@ -103,7 +103,7 @@ jobs:
         # regression group, which is the trend signal we actually care
         # about; segmenting_stress remains available for local runs.
         run: |
-          cargo bench -p flezha_executor --features bench-internals \
+          cargo bench -p flezha_runner --features bench-internals \
             --bench dispatch -- regression_ \
             --save-baseline cron-$(date +%Y%m%d)
       - name: Criterion dynamic-segment steady-state bench
@@ -111,7 +111,7 @@ jobs:
         # operation_key + DashMap lookup). Single operative, 1k active Segments,
         # no eviction — measures routing only, not reaping.
         run: |
-          cargo bench -p flezha_executor --features bench-internals \
+          cargo bench -p flezha_runner --features bench-internals \
             --bench dynamic_segment_steady_state -- \
             --save-baseline cron-$(date +%Y%m%d)
       - uses: actions/upload-artifact@v5

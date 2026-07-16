@@ -10,7 +10,7 @@ import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
 import com.flezha.sdk.operative.UnboundedOperativeRegistry;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Test;
  */
 class CheckpointAckTest {
 
-    private ExecutorContext ctx;
+    private RunnerContext ctx;
     private final EffectRecordCapture shipped = new EffectRecordCapture();
 
     @BeforeEach
@@ -52,7 +52,7 @@ class CheckpointAckTest {
         UnboundedOperativeRegistry.reset();
         shipped.install();
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
-        ctx = new ExecutorContext("ns", cfg, 0L);
+        ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
         ctx.streamRegistry().register(0, 100L, 200L);
     }

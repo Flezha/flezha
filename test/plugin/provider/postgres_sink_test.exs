@@ -145,7 +145,8 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
     emit(opts, "candle-v2", keyed_stamps(segment, "5.0", "k1"))
 
-    assert wait_until(fn -> match?([["k1", ^segment, "5.0", 0, "candle-v2", _]], rows(db)) end,
+    assert wait_until(
+             fn -> match?([["k1", ^segment, "5.0", 0, "candle-v2", _]], rows(db)) end,
              10_000
            ),
            "a second, newer keyed emit must UPDATE the row — an absent epoch is epoch 0, " <>
@@ -180,7 +181,8 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     # Epoch 1 beats epoch 0 whatever the seq — the operative turned the tier on.
     emit(opts, "tier-on", stamps(segment, "1.0", "1", "k1"))
 
-    assert wait_until(fn -> match?([["k1", ^segment, "1.0", 1, "tier-on", _]], rows(db)) end,
+    assert wait_until(
+             fn -> match?([["k1", ^segment, "1.0", 1, "tier-on", _]], rows(db)) end,
              10_000
            ),
            "a higher epoch must admit and overwrite regardless of seq"

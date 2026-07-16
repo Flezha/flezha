@@ -2,7 +2,7 @@
 # Reset the local runtime data dirs between test/soak runs.
 #
 # Deletes only the regenerable per-run state under this repo's app_data/
-# (WAL state, ProcessHub registry, sockets, persisted executor ids). It
+# (WAL state, ProcessHub registry, sockets, persisted runner ids). It
 # never touches durable config (certs, auth) and refuses to run anywhere
 # but the repo root, so a stray invocation cannot delete outside the
 # project. Run it as its OWN command (not chained after cd/mix) so the

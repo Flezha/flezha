@@ -25,19 +25,19 @@ defmodule Flezha.Convergence.Diff do
 
   @spec compute(Flezha.Convergence.Intent.t(), map()) :: t()
   def compute(%Flezha.Convergence.Intent{operatives: declared}, reality) do
-    active = Map.get(reality, :active_executors, %{})
+    active = Map.get(reality, :active_runners, %{})
     observed = Map.get(reality, :operatives, %{})
 
     {unbound, misbound} =
       Enum.reduce(declared, {[], []}, fn %{namespace: ns, operative_id: rid}, {unb, mis} ->
         ref = {ns, rid}
         observed_operative = Map.get(observed, ref, %{})
-        bound = Map.get(observed_operative, :bound_executor)
+        bound = Map.get(observed_operative, :bound_runner)
         live = Map.get(active, ns, MapSet.new())
 
         cond do
           # `:unknown` = an observation failed this tick — either the operative's
-          # own state read (`bound`) or the namespace's live-executor read
+          # own state read (`bound`) or the namespace's live-runner read
           # (`live`, Probe could not reach FleetManager). With no authoritative
           # signal we must NOT classify it: acting on an empty/failed read
           # mass-migrates healthy operatives on a transient read race.

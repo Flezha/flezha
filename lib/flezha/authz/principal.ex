@@ -5,7 +5,7 @@ defmodule Flezha.AuthZ.Principal do
   Examples:
 
     * SPIFFE URI SAN: `"spiffe://flezha.local/ns/team-orders/sa/exec-1"`
-    * RFC 4514 subject DN: `"CN=executor-7,O=team-orders"`
+    * RFC 4514 subject DN: `"CN=runner-7,O=team-orders"`
     * Token-bound principal: `"alice@example.com"` (or whatever
       string was supplied at token-issue time).
     * `nil` — no principal bound. Permitted only while

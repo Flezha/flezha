@@ -47,7 +47,7 @@ Credit SHALL be minted only when appended bytes become durable: on fsync complet
 
 ### Requirement: A sender out of credit parks, never drops
 
-When an SDK's credit window is insufficient for the next state-change frame, the SDK SHALL park the producing Segment's emit path until a grant arrives. The park SHALL NOT block the control channel (heartbeats and control traffic keep flowing), SHALL NOT drop or reorder the pending frame, and SHALL be observable: the SDK SHALL bump a `credit_parked` liveness counter visible to the existing liveness self-report so a credit-parked executor is classifiable as parked rather than silently frozen. Both the Rust and Java SDKs SHALL implement identical park semantics.
+When an SDK's credit window is insufficient for the next state-change frame, the SDK SHALL park the producing Segment's emit path until a grant arrives. The park SHALL NOT block the control channel (heartbeats and control traffic keep flowing), SHALL NOT drop or reorder the pending frame, and SHALL be observable: the SDK SHALL bump a `credit_parked` liveness counter visible to the existing liveness self-report so a credit-parked runner is classifiable as parked rather than silently frozen. Both the Rust and Java SDKs SHALL implement identical park semantics.
 
 #### Scenario: Exhausted window parks the producer
 
@@ -57,12 +57,12 @@ When an SDK's credit window is insufficient for the next state-change frame, the
 #### Scenario: Park is visible to liveness
 
 - **WHEN** an SDK is parked on credit for longer than one watchdog sweep
-- **THEN** the `credit_parked` counter has advanced and the executor's stall classification reports a credit park, not a silent freeze
+- **THEN** the `credit_parked` counter has advanced and the runner's stall classification reports a credit park, not a silent freeze
 
 #### Scenario: Control channel unaffected by a parked data path
 
 - **WHEN** a Segment's emit path is parked on credit
-- **THEN** control-channel heartbeats from that executor continue uninterrupted
+- **THEN** control-channel heartbeats from that runner continue uninterrupted
 
 ### Requirement: Credit overrun is a counted anomaly, not a load response
 

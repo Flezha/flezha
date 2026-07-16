@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
  * until the controller's reply is routed back here.
  *
  * <p>Every ack-bearing exchange goes through this — the graceful-shutdown
- * {@code ExecutorShutdownAck}, the dead-letter {@code ParkPayloadAck}, and the
+ * {@code RunnerShutdownAck}, the dead-letter {@code ParkPayloadAck}, and the
  * bounded {@code OpCommitResponse} / {@code IterCommitResponse} barriers.
  *
  * <p><b>Callers MUST register before sending.</b> That ordering is what makes

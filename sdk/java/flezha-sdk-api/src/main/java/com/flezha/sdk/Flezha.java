@@ -41,7 +41,7 @@ public interface Flezha extends AutoCloseable {
         BoundedOperativeRegistry.registerBounded(boundedClass);
     }
 
-    /** Returns the executor id assigned by the controller during handshake. */
+    /** Returns the runner id assigned by the controller during handshake. */
     @Nonnull
     String getId();
 
@@ -55,7 +55,7 @@ public interface Flezha extends AutoCloseable {
     /**
      * Run the graceful-shutdown sequence: serialize each running
      * operative's state and ship it to the controller so the next
-     * reconnecting executor picks up the executor's true final state
+     * reconnecting runner picks up the runner's true final state
      * (instead of the up-to-{@code overwatch_state_snapshot_interval_ms}
      * stale periodic snapshot). Per-operative ack wait is bounded at
      * 2 seconds, parallelised across operatives.
@@ -68,7 +68,7 @@ public interface Flezha extends AutoCloseable {
 
     /**
      * Start the compute engine, connect to the controller, and block until the
-     * controller sends {@code AssignExecutorId}. Thread-safe; may be called
+     * controller sends {@code AssignRunnerId}. Thread-safe; may be called
      * at most once per JVM for a given namespace.
      *
      * @throws IllegalStateException if no UnboundedOperative classes have been registered.

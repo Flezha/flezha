@@ -62,11 +62,11 @@ jobs:
       - name: Build fast-dispatch benches
         run: |
           cargo build --release \
-            -p flezha_executor \
+            -p flezha_runner \
             --features bench-internals \
             --bench dispatch
           cargo build --release \
-            -p flezha_executor \
+            -p flezha_runner \
             --features bench-internals \
             --bench correctness
 
@@ -84,7 +84,7 @@ jobs:
             BASELINE=pr
           fi
           echo "baseline=$BASELINE" >> "$GITHUB_OUTPUT"
-          cargo bench -p flezha_executor \
+          cargo bench -p flezha_runner \
             --features bench-internals \
             --bench dispatch \
             -- --save-baseline "$BASELINE"
@@ -112,7 +112,7 @@ jobs:
           # Re-run benches comparing against the cached "main" baseline.
           # Criterion prints a line like `change: [-1.234% -0.456% +0.789%]`
           # per bench; the middle value is the estimated change.
-          LOG=$(cargo bench -p flezha_executor \
+          LOG=$(cargo bench -p flezha_runner \
             --features bench-internals \
             --bench dispatch \
             -- --baseline main 2>&1 | tee /dev/stderr)

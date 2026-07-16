@@ -11,7 +11,7 @@ defmodule Flezha.State.GapRecoveryTest do
 
   use ExUnit.Case, async: false
 
-  alias Flezha.Executor.StreamChannel
+  alias Flezha.Runner.StreamChannel
   alias Flezha.State.{Supervisor, TestHelpers, WalWriter, Wire}
 
   setup do
@@ -78,9 +78,9 @@ defmodule Flezha.State.GapRecoveryTest do
     end
   end
 
-  defp start_channel(executor_id) do
+  defp start_channel(runner_id) do
     name = :"sc_#{uniq()}"
-    {:ok, pid} = StreamChannel.start_link({executor_id, name, :primary})
+    {:ok, pid} = StreamChannel.start_link({runner_id, name, :primary})
     pid
   end
 
@@ -108,7 +108,7 @@ defmodule Flezha.State.GapRecoveryTest do
     # WAL past the frozen seq 3.
     assert_receive {:resync_called, segment_id, opts, :ok}, 1_000
     assert segment_id == ctx.segment_id
-    assert opts[:executor_id] == "exec-gap"
+    assert opts[:runner_id] == "exec-gap"
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
 
     # And subsequent contiguous Changes are accepted (no permanent wedge).
@@ -138,9 +138,9 @@ defmodule Flezha.State.GapRecoveryTest do
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
   end
 
-  test "a fresh controller pulls a baseline from a live executor instead of wiping it", ctx do
+  test "a fresh controller pulls a baseline from a live runner instead of wiping it", ctx do
     # Cold takeover: this controller has no WAL/snapshot for the Segment,
-    # while the live executor keeps streaming deltas from seq 5001.
+    # while the live runner keeps streaming deltas from seq 5001.
     cold_id = TestHelpers.sample_segment_id("cold_" <> uniq())
     {:ok, _} = Supervisor.find_or_start(cold_id)
     {:ok, writer} = Supervisor.lookup(cold_id)
@@ -165,7 +165,7 @@ defmodule Flezha.State.GapRecoveryTest do
     # The pull is seeded exactly once; no fatal seq_gap fires.
     assert_receive {:seed_called, ^cold_id, opts}, 1_000
     assert opts[:reason] == :baseline_seed
-    assert opts[:executor_id] == "exec-cold"
+    assert opts[:runner_id] == "exec-cold"
     refute_receive {:seed_called, ^cold_id, _}, 200
     refute_receive {:seq_gap, _, _}, 100
 
@@ -174,7 +174,7 @@ defmodule Flezha.State.GapRecoveryTest do
     deliver.("segment_state_snapshot", 5005, "full")
     assert eventually(fn -> WalWriter.last_persisted_seq(writer) == 5005 end)
 
-    # The executor's next delta appends contiguously past the baseline.
+    # The runner's next delta appends contiguously past the baseline.
     deliver.("segment_state_change", 5006, "d3")
     assert eventually(fn -> WalWriter.last_persisted_seq(writer) == 5006 end)
 

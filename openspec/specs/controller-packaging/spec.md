@@ -32,13 +32,13 @@ The image SHALL NOT contain Node.js, npm, TypeScript, the testnet TS source, the
 #### Scenario: Runtime image has no system Elixir
 
 - **GIVEN** a built prod image `alfetahe/flezha:test`
-- **WHEN** the executor runs `docker run --rm alfetahe/flezha:test which elixir`
+- **WHEN** the runner runs `docker run --rm alfetahe/flezha:test which elixir`
 - **THEN** the container exits non-zero with empty stdout (no system `elixir` binary on `$PATH`); the assembled release at `/flezha/bin/flzvm` SHALL still start, verified by `docker run --rm alfetahe/flezha:test bin/flzvm version` printing the release version
 
 #### Scenario: Runtime image has no Node.js or testnet sources
 
 - **GIVEN** a built prod image
-- **WHEN** the executor runs `docker run --rm alfetahe/flezha:test sh -c 'which node; ls test/apps/testnet 2>&1; true'`
+- **WHEN** the runner runs `docker run --rm alfetahe/flezha:test sh -c 'which node; ls test/apps/testnet 2>&1; true'`
 - **THEN** stdout contains no path for `node` and contains "No such file or directory" for the testnet path
 
 ### Requirement: Prod image SHALL be buildable for `linux/amd64` and `linux/arm64` only
@@ -64,7 +64,7 @@ The image SHALL NOT contain Node.js, npm, TypeScript, the testnet TS source, the
 #### Scenario: Prod release does not bundle wx or observer
 
 - **GIVEN** a prod release built via `MIX_ENV=prod mix release`
-- **WHEN** the executor inspects `_build/prod/rel/flezha/lib/`
+- **WHEN** the runner inspects `_build/prod/rel/flezha/lib/`
 - **THEN** there SHALL be no directories named `wx-*` or `observer-*` (those OTP apps SHALL NOT be packaged into the release)
 
 #### Scenario: Dev release still ships observer
@@ -75,12 +75,12 @@ The image SHALL NOT contain Node.js, npm, TypeScript, the testnet TS source, the
 
 ### Requirement: Cargo dependency declarations SHALL match actual source usage
 
-Every `[dependencies]` entry in any crate's `Cargo.toml` SHALL correspond to at least one `use <crate>::` or `extern crate <crate>` reference in that crate's `src/`. Dependencies declared but unused SHALL be removed. Specifically, `byteorder` SHALL be removed from `flz_nif/Cargo.toml`, `sdk/rust/Cargo.toml`, and `test/apps/rust_executor/Cargo.toml` (it remains in `flz_transport/Cargo.toml` where `src/service/payloader.rs` uses it).
+Every `[dependencies]` entry in any crate's `Cargo.toml` SHALL correspond to at least one `use <crate>::` or `extern crate <crate>` reference in that crate's `src/`. Dependencies declared but unused SHALL be removed. Specifically, `byteorder` SHALL be removed from `flz_nif/Cargo.toml`, `sdk/rust/Cargo.toml`, and `test/apps/rust_runner/Cargo.toml` (it remains in `flz_transport/Cargo.toml` where `src/service/payloader.rs` uses it).
 
 #### Scenario: byteorder is removed from non-using crates
 
 - **GIVEN** the cleaned-up Cargo.toml files
-- **WHEN** `grep '^byteorder' flz_nif/Cargo.toml sdk/rust/Cargo.toml test/apps/rust_executor/Cargo.toml` is run
+- **WHEN** `grep '^byteorder' flz_nif/Cargo.toml sdk/rust/Cargo.toml test/apps/rust_runner/Cargo.toml` is run
 - **THEN** stdout is empty
 
 #### Scenario: Workspace still builds after cleanup
@@ -110,7 +110,7 @@ The TypeScript source under `test/apps/testnet/` SHALL NOT be copied into the pr
 #### Scenario: Prod image excludes testnet sources
 
 - **GIVEN** a built prod Docker image
-- **WHEN** the executor runs `docker run --rm <image> ls /flezha/test/apps/testnet 2>&1`
+- **WHEN** the runner runs `docker run --rm <image> ls /flezha/test/apps/testnet 2>&1`
 - **THEN** the output indicates the path does not exist (the entire `test/` tree SHALL be absent from the runtime image)
 
 ### Requirement: Toolchain Docker image SHALL bundle the full toolchain
@@ -130,13 +130,13 @@ under that path are wasted). The build is left to a one-time
 #### Scenario: Toolchain image ships the dev toolchain
 
 - **GIVEN** a built toolchain image `alfetahe/flezha:latest-toolchain`
-- **WHEN** the executor runs `docker run --rm alfetahe/flezha:latest-toolchain sh -c 'which elixir; which cargo; which node; which npm; which tsc; which protoc'`
+- **WHEN** the runner runs `docker run --rm alfetahe/flezha:latest-toolchain sh -c 'which elixir; which cargo; which node; which npm; which tsc; which protoc'`
 - **THEN** every binary resolves to a path on `$PATH`
 
 #### Scenario: Toolchain image is built and pushed under the toolchain tag
 
 - **GIVEN** a clean checkout
-- **WHEN** the executor runs `docker build -f docker/dev/Dockerfile.toolchain -t alfetahe/flezha:latest-toolchain .`
+- **WHEN** the runner runs `docker build -f docker/dev/Dockerfile.toolchain -t alfetahe/flezha:latest-toolchain .`
 - **THEN** the build completes with exit 0 and the resulting tag is `alfetahe/flezha:latest-toolchain` (NOT `:latest`, which is the prod runtime, nor `:latest-dev`, which is the runtime + Node + testnet image)
 
 ### Requirement: Runtime-dev Docker image SHALL bundle Node.js and a pre-built testnet WS server
@@ -155,19 +155,19 @@ The image inherits the prod image's HEALTHCHECK (control-socket readiness, see t
 #### Scenario: Runtime-dev image has Node.js and the pre-built testnet
 
 - **GIVEN** a built runtime-dev image `alfetahe/flezha:latest-dev`
-- **WHEN** the executor runs `docker run --rm alfetahe/flezha:latest-dev sh -c 'which node; ls /flezha/testnet/dist/index.js'`
+- **WHEN** the runner runs `docker run --rm alfetahe/flezha:latest-dev sh -c 'which node; ls /flezha/testnet/dist/index.js'`
 - **THEN** `node` resolves to a path on `$PATH` and `/flezha/testnet/dist/index.js` exists
 
 #### Scenario: Testnet auto-starts when FLEZHA_TESTNET_WS_PORT is set
 
 - **GIVEN** the runtime-dev image
-- **WHEN** the executor runs `docker run --rm -e FLEZHA_TESTNET_WS_PORT=4500 alfetahe/flezha:latest-dev` and waits for startup
+- **WHEN** the runner runs `docker run --rm -e FLEZHA_TESTNET_WS_PORT=4500 alfetahe/flezha:latest-dev` and waits for startup
 - **THEN** the entrypoint launches `node /flezha/testnet/dist/index.js` listening on port 4500 in addition to the agent
 
 #### Scenario: Runtime-dev image inherits prod size budget plus a testnet allowance
 
 - **GIVEN** a built runtime-dev image
-- **WHEN** the executor runs `docker image inspect alfetahe/flezha:latest-dev --format '{{.Size}}'`
+- **WHEN** the runner runs `docker image inspect alfetahe/flezha:latest-dev --format '{{.Size}}'`
 - **THEN** the value SHALL be less than `471859200` (450 MiB) — prod's 300 MiB budget plus an allowance for Node.js and the built testnet bundle
 
 ### Requirement: Prod image entrypoint SHALL provide graceful-restart lifecycle
@@ -184,7 +184,7 @@ The image inherits the prod image's HEALTHCHECK (control-socket readiness, see t
 
 `/usr/local/bin/snapshot-on-stop.sh` SHALL remain a separate script invoked both by the (disabled-branch) SIGTERM trap and (in k8s with snapshot-mode) by `lifecycle.preStop.exec.command`. It atomically writes `${FLEZHA_SNAPSHOT_DIR}/latest.flz.tmp` then renames to `latest.flz`. It SHALL no-op (exit 0) when `FLEZHA_SNAPSHOT_ENABLED` is set to any of `false`, `0`, `no`, `off` (case-insensitive).
 
-The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_SOCKET_FILES_PATH}/executor_control_channel.sock`.
+The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock`.
 
 #### Scenario: Cold start with no snapshot file
 
@@ -220,7 +220,7 @@ The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_
 
 - **GIVEN** a container starting up
 - **WHEN** the BEAM has not yet opened its control socket
-- **THEN** the HEALTHCHECK reports unhealthy; once the socket exists at `${FLEZHA_SOCKET_FILES_PATH}/executor_control_channel.sock`, the healthcheck reports healthy
+- **THEN** the HEALTHCHECK reports unhealthy; once the socket exists at `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock`, the healthcheck reports healthy
 
 ### Requirement: docker-compose controller services SHALL declare an explicit stop signal and grace period
 
@@ -270,9 +270,9 @@ The repo's `.dockerignore` SHALL exclude at minimum: `**/target`, `_build`, `dep
 
 ### Requirement: Java native binaries and fat jars SHALL be committed to git, not built by CI
 
-The five native binaries `libflz_transport.{so,dylib,dll}` for `linux-x64`, `linux-arm64`, `macos-x64`, `macos-arm64`, `windows-x64` SHALL be committed under `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/`. The Java SDK fat jar SHALL be committed at `sdk/java/flezha-sdk/dist/flezha-sdk.jar`. The test executor fat jar SHALL be committed at `test/apps/java_executor/dist/java_executor.jar`.
+The five native binaries `libflz_transport.{so,dylib,dll}` for `linux-x64`, `linux-arm64`, `macos-x64`, `macos-arm64`, `windows-x64` SHALL be committed under `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/`. The Java SDK fat jar SHALL be committed at `sdk/java/flezha-sdk/dist/flezha-sdk.jar`. The test runner fat jar SHALL be committed at `test/apps/java_runner/dist/java_runner.jar`.
 
-CI SHALL NOT cross-compile any of the five native binaries. CI SHALL NOT package either fat jar. Executors SHALL refresh these artefacts locally with `scripts/build-native.sh --targets all` and `scripts/build-java-jars.sh`, then `git add` and commit them.
+CI SHALL NOT cross-compile any of the five native binaries. CI SHALL NOT package either fat jar. Runners SHALL refresh these artefacts locally with `scripts/build-native.sh --targets all` and `scripts/build-java-jars.sh`, then `git add` and commit them.
 
 The `flezha-sdk-native` Maven build SHALL provide a `native-verify` profile that asserts all five native binaries exist on disk without invoking any build step. CI SHALL use `-P native-verify` (never `-P native-build`).
 
@@ -296,7 +296,7 @@ The `flezha-sdk-native` Maven build SHALL provide a `native-verify` profile that
 
 ### Requirement: `mix test.java_sdk` alias SHALL not invoke Maven
 
-The `test.java_sdk` alias in `mix.exs` SHALL be exactly `["test --only java_sdk"]`. It SHALL NOT shell out to `scripts/build-native.sh`, `mvn`, or any other build tool. The Java executor jar consumed by tests under `:java_sdk` SHALL be the committed jar at `test/apps/java_executor/dist/java_executor.jar`.
+The `test.java_sdk` alias in `mix.exs` SHALL be exactly `["test --only java_sdk"]`. It SHALL NOT shell out to `scripts/build-native.sh`, `mvn`, or any other build tool. The Java runner jar consumed by tests under `:java_sdk` SHALL be the committed jar at `test/apps/java_runner/dist/java_runner.jar`.
 
 The default `ExUnit.start/1` invocation in `test/test_helper.exs` SHALL exclude `:java_sdk` so `mix test` does not trigger the integration matrix; only `mix test.java_sdk` (or an explicit `mix test --only java_sdk`) SHALL run those cases.
 
@@ -304,17 +304,17 @@ The default `ExUnit.start/1` invocation in `test/test_helper.exs` SHALL exclude 
 
 - **GIVEN** a clean checkout
 - **WHEN** `mix test` is run
-- **THEN** no test tagged `:java_sdk` SHALL execute (the run SHALL succeed without requiring the committed test executor jar to exist)
+- **THEN** no test tagged `:java_sdk` SHALL execute (the run SHALL succeed without requiring the committed test runner jar to exist)
 
 #### Scenario: mix test.java_sdk runs only the matrix
 
-- **GIVEN** the committed test executor jar at `test/apps/java_executor/dist/java_executor.jar`
+- **GIVEN** the committed test runner jar at `test/apps/java_runner/dist/java_runner.jar`
 - **WHEN** `mix test.java_sdk` is run
 - **THEN** only `:java_sdk`-tagged tests SHALL execute and the alias SHALL NOT shell out to `mvn` or `scripts/build-native.sh`
 
 ### Requirement: `elixir.yml` SHALL be Elixir+Rust only
 
-`.github/workflows/elixir.yml` SHALL NOT install Java or invoke Maven. It SHALL NOT run `cargo build --workspace` as a separate pre-step before `mix test`. Its path filters SHALL NOT include `test/apps/java_executor/**` (those changes belong to `java-sdk.yml`). The workflow SHALL run only `mix deps.get`, `mix compile --warnings-as-errors`, and `mix test` (which uses the default-excluded `[:system, :java_sdk]` tag set).
+`.github/workflows/elixir.yml` SHALL NOT install Java or invoke Maven. It SHALL NOT run `cargo build --workspace` as a separate pre-step before `mix test`. Its path filters SHALL NOT include `test/apps/java_runner/**` (those changes belong to `java-sdk.yml`). The workflow SHALL run only `mix deps.get`, `mix compile --warnings-as-errors`, and `mix test` (which uses the default-excluded `[:system, :java_sdk]` tag set).
 
 #### Scenario: elixir.yml does not set up Java
 

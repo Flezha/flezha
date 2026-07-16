@@ -5,7 +5,7 @@ defmodule Flezha.Convergence.Planner do
   `%{primitive: atom, namespace: atom, target: term, args: map}`.
 
   Ordering rules: a operative is bound (`rebind_operative`) before its plugins
-  start; an executor is evicted (`evict_executor`) before another binding
+  start; a runner is evicted (`evict_runner`) before another binding
   claims its operatives. Ops still inside their `Backoff` cooldown are dropped,
   and the per-tick op count is capped at `max_ops`.
 
@@ -43,9 +43,9 @@ defmodule Flezha.Convergence.Planner do
 
   defp eviction_ops(%Diff{misbound_operatives: misbound}) do
     misbound
-    |> Enum.map(fn {_ref, dead_executor} -> dead_executor end)
+    |> Enum.map(fn {_ref, dead_runner} -> dead_runner end)
     |> Enum.uniq()
-    |> Enum.map(&op(:evict_executor, nil, &1, %{}))
+    |> Enum.map(&op(:evict_runner, nil, &1, %{}))
   end
 
   defp bind_ops(%Diff{} = d) do
@@ -55,7 +55,7 @@ defmodule Flezha.Convergence.Planner do
       end)
 
     # Unbound (incl. parked) operatives bind via the same rebind primitive: it
-    # resolves an executor and sends `:executor_migrate`, which un-parks them.
+    # resolves a runner and sends `:runner_migrate`, which un-parks them.
     start =
       Enum.map(d.unbound_operatives, fn {ns, rid} ->
         op(:rebind_operative, ns, rid, %{})

@@ -9,7 +9,7 @@ defmodule Flezha.Convergence.Loop do
 
   Reality-matches-intent is the *event*, not the default: the loop heals
   every divergence it finds, not only ones triggered by a specific
-  signal. Declared events (`:output_stall`, `:executor_connected`) just
+  signal. Declared events (`:output_stall`, `:runner_connected`) just
   shorten detection latency by triggering an immediate tick.
   """
 
@@ -36,7 +36,7 @@ defmodule Flezha.Convergence.Loop do
   @default_tick_ms 5_000
   @default_output_stall_grace_ms 60_000
   # A operative must be misbound for this many consecutive ticks before it is
-  # migrated, so a brief executor blip cannot trigger a full-namespace
+  # migrated, so a brief runner blip cannot trigger a full-namespace
   # migration + WAL replay.
   @misbound_min_ticks 2
 
@@ -112,8 +112,8 @@ defmodule Flezha.Convergence.Loop do
     _ =
       :telemetry.attach_many(@handler_id, @telemetry_subs, &__MODULE__.handle_telemetry/4, self())
 
-    # Shorten executor-takeover detection from `tick_ms` to ~ms.
-    _ = EventManager.add_handler(:executor_connected_event)
+    # Shorten runner-takeover detection from `tick_ms` to ~ms.
+    _ = EventManager.add_handler(:runner_connected_event)
 
     # First tick immediately so the recovery gate + first publish happen
     # without waiting `tick_ms`.
@@ -133,7 +133,7 @@ defmodule Flezha.Convergence.Loop do
     {:noreply, state}
   end
 
-  def handle_info({:executor_connected_event, {_namespace, _executor_id}}, %__MODULE__{} = state) do
+  def handle_info({:runner_connected_event, {_namespace, _runner_id}}, %__MODULE__{} = state) do
     {:noreply, run_tick(state)}
   end
 
@@ -282,13 +282,13 @@ defmodule Flezha.Convergence.Loop do
         end
       end)
 
-    # Per-executor data-stream servers (StreamAcceptor-owned) — the layer
+    # Per-runner data-stream servers (StreamAcceptor-owned) — the layer
     # that actually carries operative traffic, invisible to get_stats/1.
     data_drivers =
       LivenessCounters.driver_refs()
-      |> Enum.flat_map(fn {{executor_id, type}, ref} ->
+      |> Enum.flat_map(fn {{runner_id, type}, ref} ->
         case Flezha.Transport.Native.driver_stats(ref) do
-          d when is_map(d) -> [Map.put(d, :transport, {:uds_data, executor_id, type})]
+          d when is_map(d) -> [Map.put(d, :transport, {:uds_data, runner_id, type})]
           _ -> []
         end
       end)
@@ -573,7 +573,7 @@ defmodule Flezha.Convergence.Loop do
 
   # Inject backoff-filtered rebind_operative ops for stalled operatives not already
   # covered by the plan. Uses args.reason :output_stall so Heal skips the
-  # active-executor guard that would block a healthy-but-frozen operative.
+  # active-runner guard that would block a healthy-but-frozen operative.
   @doc false
   def inject_stall_rebinds_for_test(plan, stalled, intent, ready, backoff) do
     inject_stall_rebinds(plan, stalled, intent, ready, backoff)
@@ -624,7 +624,7 @@ defmodule Flezha.Convergence.Loop do
 
   defp publish(%Intent{operatives: operatives}, reality, %__MODULE__{} = state) do
     # `intended` = declared operatives (what should be bound); `bound` = operatives
-    # actually observed running on executors. After a restart the controller is
+    # actually observed running on runners. After a restart the controller is
     # up but its operatives are not yet rebound (bound < intended) — that is a
     # recovery window, NOT healthy, even though nothing is "stalled".
     intended = length(operatives)
@@ -635,7 +635,7 @@ defmodule Flezha.Convergence.Loop do
     producing = max(bound - length(non_producing), 0)
 
     # After a restart the durable registry may hold operatives that are not yet
-    # bound to a live pid — either the hub has not started (lazy on executor
+    # bound to a live pid — either the hub has not started (lazy on runner
     # reconnect) or it has replayed its DETS rows but the stale pids are dead.
     # In that window `Intent` is short of the durable set, so `bound < intended`
     # cannot catch it (it compares two already-shrunken counts). Surfacing the
@@ -682,24 +682,24 @@ defmodule Flezha.Convergence.Loop do
         }
   def operative_health_map(operatives, reality, %__MODULE__{} = state) do
     observed = Map.get(reality, :operatives, %{})
-    active = Map.get(reality, :active_executors, %{})
+    active = Map.get(reality, :active_runners, %{})
     plugin_degraded = MapSet.new(state.plugin_degraded)
 
     Map.new(operatives, fn %{namespace: ns, operative_id: rid} ->
       obs = Map.get(observed, {ns, rid}, %{})
-      bound = Map.get(obs, :bound_executor)
+      bound = Map.get(obs, :bound_runner)
       live = Map.get(active, ns, MapSet.new())
 
       health =
         cond do
-          # An observation failed this tick (operative state or live-executor read);
+          # An observation failed this tick (operative state or live-runner read);
           # no authoritative signal, so report `:unknown` for this tick only.
           bound == :unknown -> :unknown
           # Evicted at a committed iteration boundary, not broken.
           Map.get(obs, :suspended?, false) -> :suspended
           is_nil(bound) -> :unbound
           live == :unknown -> :unknown
-          # Bound to an executor that is no longer live — the loop will rebind.
+          # Bound to a runner that is no longer live — the loop will rebind.
           not MapSet.member?(live, bound) -> :failed
           Map.get(obs, :parked?, false) -> :degraded
           Map.has_key?(state.stalled_operatives, rid) -> :degraded

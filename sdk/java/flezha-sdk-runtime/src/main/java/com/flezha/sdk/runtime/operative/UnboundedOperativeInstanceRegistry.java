@@ -6,7 +6,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import javax.annotation.Nonnull;
 
 /**
- * Per-{@code ExecutorContext} registry of live {@link Operative} instances keyed
+ * Per-{@code RunnerContext} registry of live {@link Operative} instances keyed
  * by {@code instanceId} (= what the wire calls {@code operative_id}). One sealed
  * keyspace across compute-operative kinds — a operative instance and a bounded instance
  * never share an id, and {@code RemOperative} teardown is uniform across kinds.

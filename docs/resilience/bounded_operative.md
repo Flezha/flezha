@@ -146,16 +146,16 @@ on rehydrate rather than dropped. See `data_durability.md`.
 empty at a committed boundary and stays idle past `FLEZHA_BOUNDED_PARK_IDLE_MS`
 (default 5 s — hysteresis, so trickling input does not thrash), it tears its own
 run down **without** a terminal completion and ships `IterPark`. The controller
-journals `parked(N[, deadline])` and evicts the instance from its executor. The
+journals `parked(N[, deadline])` and evicts the instance from its runner. The
 registry entry and its Overwatch stay — an idle chat session holds **zero
-executor resources** but is still addressable, and `flz operative info` reports
+runner resources** but is still addressable, and `flz operative info` reports
 it `suspended`. The convergence loop leaves it alone: it is unbound by design,
 not broken.
 
 A new inbox append — or the journaled wake deadline, which the controller
 delivers as a synthetic empty-payload inbox entry (`flz.wake = timer`, for
 classes declaring `wake_after()`) — rehydrates it through the **normal bind
-path**: respawn on any live executor, restore journal + iteration-boundary
+path**: respawn on any live runner, restore journal + iteration-boundary
 snapshots, deliver the undelivered inbox tail, enter iteration N+1. Both wake
 sources go through the inbox, so two racing wakes collapse into exactly one
 rehydration. Because every input is durable (journal, snapshots, inbox), a
@@ -316,7 +316,7 @@ its operations/segments are WAL-backed on the **same substrate** as unbounded
 opted out, the per-Segment flush **drains and discards** — no WAL, snapshot, or
 state files.
 
-**Crash-resume = journal-gated redo-vs-skip.** On an executor/controller restart
+**Crash-resume = journal-gated redo-vs-skip.** On a runner/controller restart
 a durable bounded operative is respawned, its committed per-Segment state is
 restored via the **existing bind-time restore path**, and forward execution
 resumes **at the first operation not recorded in the op-journal**
@@ -376,12 +376,12 @@ The unbounded-only seq-gap → resync + epoch-realign machinery stays on
 `:unbounded`: a resumed bounded Segment re-arms its `change_seq` to
 `terminal + 1`, so post-resume appends are contiguous and no realign is needed.
 
-### How a crashed bounded operative reaches a new executor
+### How a crashed bounded operative reaches a new runner
 
-1. The executor process dies (SIGKILL / OOM / node death). Its WAL — written
+1. The runner process dies (SIGKILL / OOM / node death). Its WAL — written
    before the crash — survives on the controller.
-2. A replacement executor connects. If it re-presents the **same durable stable
-   identity** (`FLEZHA_EXECUTOR_ID_PATH`), the controller **swaps** the dead
+2. A replacement runner connects. If it re-presents the **same durable stable
+   identity** (`FLEZHA_RUNNER_ID_PATH`), the controller **swaps** the dead
    session's bindings onto it and evicts the dead session — on both UDS (prompt
    socket EOF) and QUIC (where the dead peer is otherwise invisible until its
    ~45 s idle timeout).
@@ -433,7 +433,7 @@ for.
 - **Crash-resume is at-least-once.** A non-idempotent fire-and-forget job (e.g.
   "send one email") can double-act on resume. Write it idempotently or **opt out
   of durability** so a crash re-runs from a clean slate rather than a partial one.
-- **Deploy executors with a graceful stop, not a kill** — the same rule as
+- **Deploy runners with a graceful stop, not a kill** — the same rule as
   unbounded ([`data_durability.md`](data_durability.md)). A graceful stop lets a
   running bounded operative migrate; a hard kill forces the crash-resume path.
 - **Retention grows disk for many small jobs.** Opt out for fire-and-forget, or

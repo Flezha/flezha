@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.control;
 
 import com.flezha.sdk.native_.NativeTransport;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
@@ -34,15 +34,15 @@ public final class DataHeartbeatSender {
 
     private static final Logger LOG = LoggerFactory.getLogger(DataHeartbeatSender.class);
 
-    private final ExecutorContext ctx;
+    private final RunnerContext ctx;
     private final long intervalMs;
     private final ScheduledExecutorService scheduler;
 
-    public DataHeartbeatSender(@Nonnull ExecutorContext ctx) {
+    public DataHeartbeatSender(@Nonnull RunnerContext ctx) {
         this(ctx, FlezhaEnv.dataHeartbeatMs());
     }
 
-    DataHeartbeatSender(@Nonnull ExecutorContext ctx, long intervalMs) {
+    DataHeartbeatSender(@Nonnull RunnerContext ctx, long intervalMs) {
         this.ctx = ctx;
         this.intervalMs = intervalMs;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {

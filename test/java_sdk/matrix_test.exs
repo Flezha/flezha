@@ -16,7 +16,7 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
 
   use ExUnit.Case
 
-  alias Flezha.Executor.FleetManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -33,7 +33,7 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
     # local environment. The Java cells are only exercised when the jar exists.
     if runtime == :java do
       jar_path =
-        Path.join(File.cwd!(), "test/apps/java_executor/dist/java_executor.jar")
+        Path.join(File.cwd!(), "test/apps/java_runner/dist/java_runner.jar")
 
       unless File.exists?(jar_path) do
         ExUnit.Assertions.flunk(
@@ -55,9 +55,9 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
       @describetag runtime: runtime, transport: transport
 
       @tag scenario: "18.2 handshake"
-      test "handshake + AssignExecutorId succeeds", ctx do
+      test "handshake + AssignRunnerId succeeds", ctx do
         id =
-          NodeTestHelper.start_executor(@temp_namespace,
+          NodeTestHelper.start_runner(@temp_namespace,
             runtime: ctx.runtime,
             transport: ctx.transport
           )
@@ -69,19 +69,19 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
       @tag scenario: "18.3 ConnectSocket"
       test "ConnectSocket opens the correct number of stream pairs", ctx do
         id =
-          NodeTestHelper.start_executor(@temp_namespace,
+          NodeTestHelper.start_runner(@temp_namespace,
             runtime: ctx.runtime,
             transport: ctx.transport
           )
 
-        engines = FleetManager.active_executors(@temp_namespace)
+        engines = FleetManager.active_runners(@temp_namespace)
         assert id in engines
       end
 
       @tag scenario: "18.4 AddOperative + data flow"
       test "AddOperative + send input + observe output", ctx do
         _id =
-          NodeTestHelper.start_executor(@temp_namespace,
+          NodeTestHelper.start_runner(@temp_namespace,
             runtime: ctx.runtime,
             transport: ctx.transport
           )
@@ -98,7 +98,7 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
       @tag scenario: "18.5 PipeToOperative local"
       test "PipeToOperative routes locally when target exists", ctx do
         _id =
-          NodeTestHelper.start_executor(@temp_namespace,
+          NodeTestHelper.start_runner(@temp_namespace,
             runtime: ctx.runtime,
             transport: ctx.transport
           )
@@ -120,7 +120,7 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
         # add/remove succeeds as a smoke test here. The full round-trip is
         # asserted in the migration-specific suite.
         id =
-          NodeTestHelper.start_executor(@temp_namespace,
+          NodeTestHelper.start_runner(@temp_namespace,
             runtime: ctx.runtime,
             transport: ctx.transport
           )
@@ -129,7 +129,7 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
       end
 
       # 18.7 / 18.8 — disconnect scenarios. On QUIC, the controller-side session
-      # teardown currently doesn't fire :executor_disconnected_event
+      # teardown currently doesn't fire :runner_disconnected_event
       # within the helper's timeout. The failure is identical for :rust and
       # :java runtimes, so it's a transport-layer gap, not an SDK regression.
       # Skipped for QUIC until the controller's QUIC teardown → FleetManager event
@@ -138,15 +138,15 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
         @tag scenario: "18.7 unexpected disconnect"
         test "unexpected disconnect triggers auto-reconnect", ctx do
           id1 =
-            NodeTestHelper.start_executor(@temp_namespace,
+            NodeTestHelper.start_runner(@temp_namespace,
               runtime: ctx.runtime,
               transport: ctx.transport
             )
 
-          NodeTestHelper.stop_executor(@temp_namespace, id1)
+          NodeTestHelper.stop_runner(@temp_namespace, id1)
 
           id2 =
-            NodeTestHelper.start_executor(@temp_namespace,
+            NodeTestHelper.start_runner(@temp_namespace,
               runtime: ctx.runtime,
               transport: ctx.transport
             )
@@ -155,14 +155,14 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
         end
 
         @tag scenario: "18.8 intentional disconnect"
-        test "intentional ExecutorDisconnect shuts down cleanly", ctx do
+        test "intentional RunnerDisconnect shuts down cleanly", ctx do
           id =
-            NodeTestHelper.start_executor(@temp_namespace,
+            NodeTestHelper.start_runner(@temp_namespace,
               runtime: ctx.runtime,
               transport: ctx.transport
             )
 
-          NodeTestHelper.stop_executor(@temp_namespace, id)
+          NodeTestHelper.stop_runner(@temp_namespace, id)
           :ok
         end
       end
@@ -179,7 +179,7 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
 
       @tag scenario: "task run-once + completion/teardown"
       test "a run-once Java task completes and is deregistered", ctx do
-        NodeTestHelper.start_executor(@temp_namespace, runtime: :java, transport: ctx.transport)
+        NodeTestHelper.start_runner(@temp_namespace, runtime: :java, transport: ctx.transport)
 
         operative_id = "java_task_ok_#{ctx.transport}_#{System.unique_integer([:positive])}"
 
@@ -202,7 +202,7 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
 
       @tag scenario: "task terminal error + teardown"
       test "a failing Java task is deregistered without retry", ctx do
-        NodeTestHelper.start_executor(@temp_namespace, runtime: :java, transport: ctx.transport)
+        NodeTestHelper.start_runner(@temp_namespace, runtime: :java, transport: ctx.transport)
 
         operative_id = "java_task_err_#{ctx.transport}_#{System.unique_integer([:positive])}"
 

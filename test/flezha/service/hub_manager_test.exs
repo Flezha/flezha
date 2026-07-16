@@ -70,7 +70,7 @@ defmodule Flezha.Service.HubManagerTest do
       # as backend identifiers — anything else is treated as a module
       # name and crashes `setup_storage/2` on first use. Pinning the
       # atom here means the next typo fails fast in CI instead of at
-      # the first executor connect.
+      # the first runner connect.
       previous_enabled = Application.get_env(:flezha, :auto_restore_enabled)
       previous_root = Application.get_env(:flezha, :process_hub_registry_root)
       Application.put_env(:flezha, :auto_restore_enabled, true)
@@ -150,7 +150,7 @@ defmodule Flezha.Service.HubManagerTest do
                rewritten.start
     end
 
-    test "handles the {namespace, executor_id, operative} start-args shape" do
+    test "handles the {namespace, runner_id, operative} start-args shape" do
       builder = operative_builder(plugins: [])
       cs = cspec({@namespace, "ce_42", builder})
 
@@ -161,7 +161,7 @@ defmodule Flezha.Service.HubManagerTest do
 
       assert [{"only", _}] = extract_plugins(rewritten)
 
-      # The executor_id position must survive the rewrite. Losing it
+      # The runner_id position must survive the rewrite. Losing it
       # would break alter_child_data's invariants on the next restart.
       assert {Flezha.Operative.Overwatch, :start_link, [{@namespace, "ce_42", %Builder{}}]} =
                rewritten.start
@@ -242,10 +242,10 @@ defmodule Flezha.Service.HubManagerTest do
   end
 
   describe "hook_insert_pid/2 fan-out filter (consume-recovery-mode-and-self-heal §2.8)" do
-    test "skips the push when metadata.tag does not match the registered executor_id" do
-      # The handler is registered with executor_id="e1"; the insertion
+    test "skips the push when metadata.tag does not match the registered runner_id" do
+      # The handler is registered with runner_id="e1"; the insertion
       # carries metadata.tag="e2", i.e. ProcessHub bound the operative to
-      # a different executor session. The pre-change code would have
+      # a different runner session. The pre-change code would have
       # pushed the pid update to e1's stream channels anyway — that
       # was the EVIDENCE1 §2 data-plane drain. The new code returns
       # without inspecting `node_pids` at all.
@@ -256,14 +256,14 @@ defmodule Flezha.Service.HubManagerTest do
         metadata: %{tag: "e2"}
       }
 
-      # The executor_id supervisor names are not present in this test
-      # (no real executor running), so a fall-through would crash on
+      # The runner_id supervisor names are not present in this test
+      # (no real runner running), so a fall-through would crash on
       # `Supervisor.which_children`. A clean :ok signals the filter
       # short-circuited correctly.
       assert HubManager.hook_insert_pid("e1", hook_data) == nil
     end
 
-    test "accepts the push when metadata.tag matches the registered executor_id" do
+    test "accepts the push when metadata.tag matches the registered runner_id" do
       # When the tag matches and node_pids contains an entry on the
       # local node, the handler would proceed to fan to stream
       # channels. Those supervisors are absent in this unit test so

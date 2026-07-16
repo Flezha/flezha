@@ -1,26 +1,26 @@
 # Transport Liveness
 
-Two complementary liveness signals on the controller↔executor transport: a
-**control-plane session watchdog** (is the executor session alive at all?) and
+Two complementary liveness signals on the controller↔runner transport: a
+**control-plane session watchdog** (is the runner session alive at all?) and
 **data-plane stall instrumentation** (which layer wedged when output went
 silent?). They cover different wedge classes — see the table below.
 
 ## Control-plane session liveness (unify-executor-liveness-and-identity)
 
-`Flezha.Executor.ControlChannel` treats the inbound control-frame stream as the
-single liveness signal for the executor session. It stamps a monotonic
+`Flezha.Runner.ControlChannel` treats the inbound control-frame stream as the
+single liveness signal for the runner session. It stamps a monotonic
 `last_seen` on **every** inbound control frame — including the SDK's 15 s
 keepalive ping (formerly echoed and discarded) — and runs one jittered watchdog
 (`:liveness_tick`). Sustained silence past `control_liveness_window_ms`
 (default 45 s = 3× the keepalive; env `FLEZHA_CONTROL_LIVENESS_WINDOW_MS`, check
 interval `FLEZHA_CONTROL_LIVENESS_INTERVAL_MS`) is treated as a **connection
 close**: it routes through the existing `handle_connection_closed/1` →
-`{:executor_disconnected}` path — the same path a real socket close uses, NOT a
-parallel eviction path — and emits `[:flezha, :executor, :liveness_timeout]`.
+`{:runner_disconnected}` path — the same path a real socket close uses, NOT a
+parallel eviction path — and emits `[:flezha, :runner, :liveness_timeout]`.
 
 This closes the **UDS wedged-but-connected blind spot**: UDS surfaces only a hard
 socket EOF, never a half-open peer, so before this watchdog a wedged-but-
-connected executor was invisible to the control plane on the default transport.
+connected runner was invisible to the control plane on the default transport.
 QUIC sets an explicit `max_idle_timeout` equal to the same window (`flz_transport`
 `quic.rs` + `flz_nif` `quic_driver.rs`, via `liveness::control_idle_timeout()` /
 `FLEZHA_CONTROL_IDLE_TIMEOUT_MS`, default 45 s; keep-alive stays 5 s) instead of
@@ -31,8 +31,8 @@ window by construction**. When tuning, pair the two window knobs
 
 **Calibrated, not trigger-happy.** The window is multiple missed pings, jittered,
 and the action is connection-close (a cheap reconnect via the binding swap — see
-[`executor_identity.md`](executor_identity.md)), not a redistribute sweep. The
-SDK keepalive runs on an independent timer thread, so a *busy* executor keeps
+[`runner_identity.md`](runner_identity.md)), not a redistribute sweep. The
+SDK keepalive runs on an independent timer thread, so a *busy* runner keeps
 proving liveness; a single missed ping or a brief GC/host-contention pause cannot
 trip it.
 
@@ -40,21 +40,21 @@ trip it.
 
 | Retired / changed | What it caught | Subsumed by |
 |---|---|---|
-| `ControlUnit.synthesize_disconnect` (90 s stuck-reply → disconnect) | a wedged executor *with a control request in flight* | the session watchdog (fires on silence in ≤45 s, request or not). `ControlUnit.fail_stuck_refs` stays, purely to unblock stuck callers |
+| `ControlUnit.synthesize_disconnect` (90 s stuck-reply → disconnect) | a wedged runner *with a control request in flight* | the session watchdog (fires on silence in ≤45 s, request or not). `ControlUnit.fail_stuck_refs` stays, purely to unblock stuck callers |
 | Controller echo-and-discard of the keepalive ping | nothing controller-side | the watchdog now *consumes* the same ping as `last_seen` |
 | QUIC implicit idle (quinn default) | a wedged QUIC peer | explicit `max_idle_timeout` aligned to the window |
 
 **What it catches — and what it does not.** A control-channel watchdog detects a
-process / control-channel wedge (the executor stops sending entirely). It does
+process / control-channel wedge (the runner stops sending entirely). It does
 **not** detect a dispatch-pool wedge where the work pool is frozen but the
 keepalive timer thread keeps pinging (the 06-10 / 06-19 incidents) — that class
-is covered by the *data-plane* `output_stall` + the executor's
-`:executor_pool_wedged` self-report, below. Both signals are needed:
+is covered by the *data-plane* `output_stall` + the runner's
+`:runner_pool_wedged` self-report, below. Both signals are needed:
 
 | Wedge class | Caught by |
 | --- | --- |
 | Process / control-channel wedge (the UDS blind spot) | the control-plane `last_seen` watchdog (this section) |
-| Dispatch-pool wedge, keepalive thread still ticking | data-plane `output_stall` + `:executor_pool_wedged` (below) |
+| Dispatch-pool wedge, keepalive thread still ticking | data-plane `output_stall` + `:runner_pool_wedged` (below) |
 
 ## Data-plane stall localization
 
@@ -65,14 +65,14 @@ remediation** — it is pure observability layered over the existing
 
 ### Why this exists
 
-On 2026-06-07 22:14 an executor's data plane went silent for ~21 h: inbound
-`io_in` stopped reaching the executor *and* the executor produced no output —
+On 2026-06-07 22:14 a runner's data plane went silent for ~21 h: inbound
+`io_in` stopped reaching the runner *and* the runner produced no output —
 both directions silent, sockets open, no error, no OOM, no crash, BEAM memory
 flat. It recovered only when the operative migrated and the streams were rebuilt.
 Forensics cleared the operative GenServer, Kafka `on_output`, the WAL writers, and
 the controller NIF writes, but could not separate three suspects from read-only
 post-recovery state: the BEAM `StreamChannel` stopped calling `send_frame`, vs.
-the NIF `flz-uds-driver` thread stalled, vs. the executor stopped consuming. The
+the NIF `flz-uds-driver` thread stalled, vs. the runner stopped consuming. The
 offending threads were gone by investigation time. This instrumentation makes
 the **next** occurrence self-localize.
 
@@ -109,33 +109,33 @@ a public ETS table. Channels bump `io_in_received`, `send_frame_calls`,
 `hb_dispatches`; operatives bump `io_in_received`, `forwarded`, `filtered_nil`.
 Sub-100 ns increments, no hot-path locks or allocations. Dead-owner entries are
 pruned on the next `snapshot_all/0`. `StreamAcceptor` additionally registers its
-per-executor data-stream NIF server refs (`register_driver/3`) so the classifier
+per-runner data-stream NIF server refs (`register_driver/3`) so the classifier
 polls the drivers that actually carry operative traffic, not just the control
 channel's.
 
-**Executor dispatch self-report** (Rust SDK): every `data_heartbeat` frame
+**Runner dispatch self-report** (Rust SDK): every `data_heartbeat` frame
 carries `dispatches` (process-global count of payloads dispatched through
 `drain_segment`) and `blocked_parks` (Block-policy full-mailbox episodes) in
 its metadata. The heartbeat thread outlives a wedged dispatch pool, so without
-this counter an executor can look alive while processing nothing — exactly the
+this counter a runner can look alive while processing nothing — exactly the
 2026-06-10 freeze. The secondary `StreamChannel` mirrors the values into
 `hb_count` / `hb_dispatches`.
 
 The per-stream `output_stall` heartbeat check runs only on SECONDARY channels —
-primary streams are send-only (the executor never writes them), so the check
+primary streams are send-only (the runner never writes them), so the check
 there produced a permanent false positive (one warning every 10 s).
 
 **Metric emission** (`Observability.OtpBackend.TransportSource`, ~1 Hz): the
 driver stats are surfaced per transport (`:driver_loop_iterations`,
 `:driver_loop_age_ms`, `:driver_cmd_queue_depth`, `:driver_write_buffer_bytes`,
 `:driver_streams`) and the BEAM counters as flat global aggregates
-(`:channel_*`, `:operative_*`). Cardinality stays bounded — no per-executor or
+(`:channel_*`, `:operative_*`). Cardinality stays bounded — no per-runner or
 per-stream label values — because the per-entity localization is the
 classifier's job, not the metrics'.
 
 ## Send-buffer cap
 
-The per-stream send buffer is bounded so a slow or non-reading executor cannot
+The per-stream send buffer is bounded so a slow or non-reading runner cannot
 grow controller memory without limit (a contributor to the 2026-06-19 OOM). When
 the socket returns `WouldBlock` and the buffered bytes are already at
 `max_write_buffer_bytes` (default 8 MiB, env `FLEZHA_MAX_WRITE_BUFFER_BYTES`),
@@ -171,8 +171,8 @@ never reads as a stall:
 | `:driver_loop_frozen` | `loop_iterations` unchanged **and** `now_ms − last_loop_ms` > `driver_freeze_ms` (5 s) |
 | `:nif_queue_backing_up` | `cmd_queue_depth` high (> 256) and rising, no stream's `frames_written` advancing |
 | `:socket_write_blocked` | a stream's `write_buffer_len` rising, `frames_written` advancing, last write stale (> 30 s) |
-| `:executor_not_consuming` | `frames_written` advancing but `frames_read` flat, last read stale (> 30 s) |
-| `:executor_pool_wedged` | per executor: `send_frame_calls` advancing, `hb_count` advancing, self-reported `hb_dispatches` > 0 and frozen — alive but processing nothing |
+| `:runner_not_consuming` | `frames_written` advancing but `frames_read` flat, last read stale (> 30 s) |
+| `:runner_pool_wedged` | per runner: `send_frame_calls` advancing, `hb_count` advancing, self-reported `hb_dispatches` > 0 and frozen — alive but processing nothing |
 | `:channel_not_sending` | channel `io_in_received` advancing, `send_frame_calls` flat, `nil_drops` flat (stream bound) |
 | `:operative_not_forwarding` | operative `io_in_received` advancing, `forwarded` flat, the gap not explained by `filtered_nil` |
 

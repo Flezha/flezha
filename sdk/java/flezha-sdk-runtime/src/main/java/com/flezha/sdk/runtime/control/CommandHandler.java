@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.control;
 
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.runtime.ExecutorContext;
+import com.flezha.sdk.runtime.RunnerContext;
 import java.util.List;
 import javax.annotation.Nonnull;
 
@@ -14,7 +14,7 @@ import javax.annotation.Nonnull;
 public interface CommandHandler {
 
     @Nonnull
-    byte[] handle(@Nonnull ExecutorContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors)
+    byte[] handle(@Nonnull RunnerContext ctx, @Nonnull CommandRequest request, @Nonnull List<String> errors)
             throws Exception;
 
     /** Whether the SDK should close the control socket after responding (disconnect command). */
