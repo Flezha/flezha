@@ -3,9 +3,7 @@
 ## Purpose
 
 The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared operation/operative declaration to the existing `UnboundedOperative`/`Operation`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit segmenting-mode opt-ins (single/static/dynamic), single-operation input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared operations compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
-
 ## Requirements
-
 ### Requirement: Sugar expands to existing trait surface
 
 The authoring sugar in every SDK SHALL be pure expansion over the existing `UnboundedOperative`/`Operation`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
@@ -189,19 +187,20 @@ The operation authoring sugar SHALL offer an opt-in that maps a segment's operat
 
 ### Requirement: Unbounded and bounded share a `Computation` authoring base
 
-Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rust trait / Java interface that `UnboundedOperative` and `BoundedOperative` both implement at the **authoring-trait layer**. The base's shared member SHALL be `factory_id()` (the one method both authoring traits already share); the kind-divergent surface (`channels` / persistence opt-in vs `run`) SHALL remain on the per-kind traits. The registration siblings (`register_unbounded`/`register_bounded`) SHALL be generic over `Computation`. The base SHALL NOT require unifying the sealed operative *instance* enum, which stays asymmetric. Adding a future operative kind SHALL require implementing `Computation` and registering the kind, without editing the existing two authoring surfaces.
+Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rust trait / Java interface that `UnboundedOperative` and `BoundedOperative` both implement at the **authoring-trait layer**. The base's shared member SHALL be `factory_id()` (the one method both authoring traits already share); the kind-divergent surface (`channels` / persistence opt-in vs `run`) SHALL remain on the per-kind traits. The declaration siblings (`defineUnbounded`/`defineBounded` in Java, `define_unbounded`/`define_bounded` in Rust — both builder methods on `RunnerBuilder`, not free functions or static methods) SHALL be generic over `Computation`. The base SHALL NOT require unifying the sealed operative *instance* enum, which stays asymmetric. Adding a future operative kind SHALL require implementing `Computation` and adding a corresponding `define_*`/`defineX` builder method, without editing the existing two authoring surfaces.
 
 #### Scenario: Both kinds implement the base
 
-- **WHEN** an unbounded operative class and a bounded operative class are registered
-- **THEN** both SHALL be `Computation` implementations resolvable through the same `register_*` surface, sharing `factory_id()`
+- **WHEN** an unbounded operative class and a bounded operative class are declared on the same `RunnerBuilder`
+- **THEN** both SHALL be `Computation` implementations resolvable through their respective `define_*`/`defineX` builder method, sharing `factory_id()`
 
 #### Scenario: A future kind plugs into the base without touching existing kinds
 
-- **WHEN** a new operative kind is added by implementing `Computation` and registering it
+- **WHEN** a new operative kind is added by implementing `Computation` and adding a new `define_*`/`defineX` builder method for it
 - **THEN** the `UnboundedOperative` and `BoundedOperative` authoring surfaces SHALL be unchanged
 
 #### Scenario: The instance enum is not forced symmetric
 
 - **WHEN** the sealed operative instance enum is renamed
 - **THEN** its variants MAY remain asymmetric (a rich unbounded instance vs an id-only bounded instance), and the `Computation` base SHALL NOT require inventing a common instance type
+

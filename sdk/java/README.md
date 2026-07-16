@@ -48,27 +48,40 @@ public final class EchoOperative implements UnboundedOperative {
 }
 
 public static void main(String[] args) throws Exception {
-    Flezha.registerUnbounded(EchoOperative.class);   // must precede newInstance
-    try (Flezha sdk = Flezha.newInstance(args[0])) {
-        Thread.currentThread().join();
-    }
+    Flezha.newRunner(args[0])                        // args[0] = the namespace
+            .defineUnbounded(EchoOperative.class)    // declare before start()/run()
+            .run();                                  // connect + block until shutdown
 }
 ```
+
+`run()` is `start()` + `awaitTermination()` — the one-liner for a standalone
+binary. Embedding into a larger app? `start()` returns a `FlezhaRunner`
+handle (`AutoCloseable`) and keeps your thread:
+
+```java
+try (FlezhaRunner runner = Flezha.newRunner(ns).defineUnbounded(EchoOperative.class).start()) {
+    // ... your app; runner.awaitTermination() to block, Flezha.currentRunner() from anywhere
+}
+```
+
+At most one runner runs per JVM: a second `start()` throws
+`IllegalStateException` naming the running namespace (see
+`docs/sdk_naming_conventions.md` for the lifecycle vocabulary).
 
 ## Running a runner
 
 The controller owns placement, durability and restarts — but it is Elixir, and
 your Operations are Java. It cannot run your code inside its own process. So your
-process is where the compute lives, and `newInstance` is what turns your JVM into
-it: the call dials the controller, advertises the factory ids you registered, and
-then waits.
+process is where the compute lives, and `start()`/`run()` is what turns your JVM
+into it: the call dials the controller, advertises the factory ids you declared,
+and then waits.
 
 From there **control is inverted**. You never call Flezha to handle a message.
 The controller decides which operatives run where, ships them to your process,
 and calls your `run`. Your `main` is a host, not a client — which is why it does
 nothing but stay alive.
 
-Everything else follows from that. Registering a class only says what this
+Everything else follows from that. Declaring a class only says what this
 runner *can* serve; the controller decides what it *does* serve. A runner
 with nothing placed on it is idle, not broken.
 
@@ -86,15 +99,14 @@ public final class GreetBounded implements BoundedOperative {
 }
 
 public static void main(String[] args) throws Exception {
-    Flezha.registerUnbounded(EchoOperative.class);
-    Flezha.registerBounded(GreetBounded.class);
-    try (Flezha sdk = Flezha.newInstance(args[0])) {   // args[0] = namespace
-        Thread.currentThread().join();
-    }
+    Flezha.newRunner(args[0])                          // args[0] = the namespace
+            .defineUnbounded(EchoOperative.class)
+            .defineBounded(GreetBounded.class)
+            .run();
 }
 ```
 
-**Start the controller first.** `newInstance` connects during the call and throws
+**Start the controller first.** `start()` connects during the call and throws
 if the control socket is not there; the reconnect loop only covers a controller
 that drops *after* a successful connect.
 
@@ -105,7 +117,7 @@ flz operative start echo1 echo -n my_app
 flz operative start greet1 greet -n my_app --kind bounded --init_values '{"name":"world"}'
 ```
 
-The argument to `newInstance` is the **namespace**, and it is the join key: the
+The argument to `newRunner` is the **namespace**, and it is the join key: the
 `-n` above must match it, or the controller has no runner to place the
 operative on. It is a logical grouping, not a transport address — every runner
 on a node dials the same control socket regardless of namespace.

@@ -1,5 +1,55 @@
 # Flezha repo notes
 
+## Runner lifecycle + singleton API (`runner-lifecycle-singleton-api`)
+
+- **The SDK entry point is a guarded builder, mirrored across both SDKs.**
+  `Flezha.newRunner(ns).defineUnbounded(A.class).run()` (Java) /
+  `Flezha::new_runner(ns)?.define_unbounded::<A>()?.run()?` (Rust).
+  `newInstance`/`flezha_runner::new` + the `register*` free functions are GONE
+  (no shim). `run()` = `start()` + `awaitTermination()` — never an independent
+  implementation. Naming rules live in `docs/sdk_naming_conventions.md`;
+  future SDK method names follow them.
+- **The guard is a releasable slot, NOT a `OnceLock`** — the spec requires a
+  runner to be startable again after close/Drop. Rust:
+  `static ACTIVE_RUNNER: Mutex<Option<ActiveRunner>>` in `lib.rs` (namespace +
+  `Weak<RunnerShared>`); Java: `Flezha.RUNNING_NAMESPACE` +
+  `Flezha.CURRENT` atomics, released via `Flezha.releaseSlot()` (the
+  `onTerminated` Runnable `RunnerBuilder` hands `FlezhaImpl.start`). Claimed
+  BEFORE connect; a losing `start()` must not dial or touch shared state.
+- **Rust handles: owner vs observer.** `start()` returns the owning
+  `FlezhaRunner` (Drop = graceful shutdown + slot release + condvar wake);
+  `Flezha::current_runner()` returns observer handles (`owner: false`, Drop is
+  a no-op). `id()` returns the NAMESPACE — the controller-assigned session
+  token lives on the runner thread and rotates across reconnects.
+- **Java api→runtime plumbing is one bridge**:
+  `com.flezha.sdk.internal.RuntimeBridge` (the ONE `Class.forName` seam) +
+  `RegistryCore<C>` (the ONE registry implementation; both
+  `*OperativeRegistry` classes are static facades). Registry `freeze()` moved
+  to `RunnerBuilder.start()`; `unfreeze()` (entries kept) runs on close so a
+  later runner can declare new types. `defineUnbounded`/`defineBounded` also
+  reject while a runner is active, naming its namespace.
+- **Rust typed startup errors**: `define_unbounded` →
+  `Err(TopologyBuildError)` (the existing `operative::builder` type),
+  `define_bounded` → `Err(BuildBoundedError)`, `start()` →
+  `RunnerStartError::{AlreadyRunning, InvalidNamespace, NoOperativeDeclared,
+  ConnectFailed}`. Macros register via `#[doc(hidden)] __register_unbounded`
+  (still panics — machine-generated topology). `register_inventory_operatives`
+  is `Once`-guarded so a restart doesn't self-collide.
+- **GOTCHA — the e2e harness kills runners by closing stdin.** `Port.close/1`
+  is how `node_test_helper` tears down runner processes, so both test apps
+  keep a stdin-EOF **watcher** thread (exit-on-EOF) even though keep-alive is
+  `run()`'s job now. Deleting it orphans every e2e runner.
+- **GOTCHA — the committed dist jars embed the api classes.** Any change to
+  `flezha-sdk-api` needs `scripts/build-dist.sh` (or the jar steps manually)
+  + committing `sdk/java/flezha-sdk/dist/` and `test/apps/java_runner/dist/`.
+- **Lifecycle unit tests**: Rust `sdk/rust/tests/runner_lifecycle.rs` — ONE
+  `#[test]` running phases sequentially (one process-wide slot; a fake
+  `UnixListener` controller; `FLEZHA_CONTROL_ACK_TIMEOUT_MS` raised so the
+  frame-less fake never triggers reconnect churn). Java
+  `RunnerLifecycleTest` in flezha-sdk-api with test doubles planted under the
+  runtime FQNs (`com.flezha.sdk.runtime.FlezhaImpl` etc. in src/test) — the
+  real runtime wiring is covered by the e2e matrix.
+
 ## Java SDK parity (`java-sdk-parity`)
 
 - **The Java SDK is now at functional parity with Rust.** Every capability an end

@@ -177,9 +177,10 @@ and registers it automatically — the user writes no registration call.
   strictly linear chain). The SDK refuses (compile error) rather than guessing
   a graph.
 - **Auto-registration** uses a compile-time-collected registry (Rust:
-  `inventory`; Java: the processor emits the `registerUnbounded` call). Manual
-  `register_unbounded` / `OperativeRegistry.registerUnbounded` stays valid for
-  hand-written operatives.
+  `inventory`, harvested inside `RunnerBuilder::start()`; Java: the processor
+  emits the registry call). Explicit declaration —
+  `RunnerBuilder::define_unbounded::<R>()` / `RunnerBuilder.defineUnbounded(Class)`
+  — stays valid for hand-written operatives.
 - **Duplicate factory id fails fast.** When auto-registration and manual
   registration would register two operatives with the same `factory_id`, startup
   fails with an error naming the colliding id.

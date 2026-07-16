@@ -21,7 +21,7 @@ import java.util.Optional;
  * <ol>
  *   <li>an <b>Operation</b> — the unit of work, run per Segment;
  *   <li>an <b>Operative</b> — the topology that wires Operations to Channels;
- *   <li><b>registration</b>, before {@code Flezha.newInstance(...)}.
+ *   <li><b>declaration</b>, via {@code Flezha.newRunner(...).defineUnbounded(...)}.
  * </ol>
  *
  * <p>{@code Change = NoChange} means "no state to persist", which opts the whole
@@ -96,14 +96,12 @@ public final class E01_Echo {
     }
 
     public static void main(String[] args) throws Exception {
-        // Registration must happen BEFORE newInstance: the registry freezes there,
-        // and the handshake tells the controller which factories this runner serves.
-        Flezha.registerUnbounded(EchoOperative.class);
-
-        try (Flezha sdk = Flezha.newInstance(args.length > 0 ? args[0] : "my_app")) {
-            System.out.println("runner id: " + sdk.getId());
-            Thread.currentThread().join();
-        }
+        // Declare every operative type on the builder, then run(): connect,
+        // then block until shutdown (SIGTERM or close() from another thread).
+        // Use .start() instead of .run() to keep the calling thread.
+        Flezha.newRunner(args.length > 0 ? args[0] : "my_app")
+                .defineUnbounded(EchoOperative.class)
+                .run();
     }
 
     private E01_Echo() {}

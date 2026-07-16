@@ -1,108 +1,79 @@
 package com.flezha.sdk;
 
-import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.bounded.BoundedOperativeRegistry;
-import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeRegistry;
-import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nonnull;
 
 /**
- * SDK entry point. Obtain an instance via {@link #newInstance(String)}
- * after calling {@link #registerUnbounded(Class)} for every UnboundedOperative class the
- * compute engine supports.
+ * Static-only entry point of the SDK: {@link #newRunner(String)} to build and
+ * start this JVM's runner, {@link #currentRunner()} to reach it from code
+ * that does not control startup ordering.
  *
- * <p>The concrete implementation lives in {@code flezha-sdk-runtime}; this
- * interface + factory is the public surface user code sees.
+ * <pre>{@code
+ * Flezha.newRunner("my_app")
+ *     .defineUnbounded(MyOperative.class)
+ *     .run(); // .start() instead to keep the calling thread
+ * }</pre>
  *
- * <p>{@link Flezha} is {@link AutoCloseable}: the {@link #close()}
- * method runs the graceful-shutdown sequence introduced by
- * ship-fresh-state-on-sdk-shutdown, shipping each running operative's
- * final state to the controller before tearing down. The same sequence is
- * registered as a JVM shutdown hook so SIGTERM (Kubernetes pre-stop)
- * triggers it without an explicit {@code close()} call.
+ * <p>At most one runner runs per JVM. A second {@code start()}/{@code run()}
+ * while one is active throws {@link IllegalStateException} naming the running
+ * namespace; after {@link FlezhaRunner#close()} a new runner may be started.
+ *
+ * <p>Method names and lifecycle verbs follow
+ * {@code docs/sdk_naming_conventions.md} (repository root), mirrored 1:1 with
+ * the Rust SDK's {@code Flezha}.
  */
-public interface Flezha extends AutoCloseable {
+public final class Flezha {
 
     /**
-     * Register an UnboundedOperative class. Pass-through to
-     * {@link UnboundedOperativeRegistry#registerUnbounded(Class)}.
+     * The one runner slot this JVM has. {@code RUNNING_NAMESPACE} is the
+     * singleton guard ({@link RunnerBuilder#start()} claims it via CAS);
+     * {@code CURRENT} backs {@link #currentRunner()}.
      */
-    static void registerUnbounded(@Nonnull Class<? extends UnboundedOperative> operativeClass) {
-        UnboundedOperativeRegistry.registerUnbounded(operativeClass);
-    }
+    static final AtomicReference<String> RUNNING_NAMESPACE = new AtomicReference<>();
+
+    static final AtomicReference<FlezhaRunner> CURRENT = new AtomicReference<>();
+
+    private Flezha() {}
 
     /**
-     * Register a {@link BoundedOperative} class. Sibling of {@link #registerUnbounded(Class)};
-     * pass-through to {@link BoundedOperativeRegistry#registerBounded(Class)}. Makes the
-     * bounded spawnable via {@code flz operative start <factory> --kind bounded}.
-     */
-    static void registerBounded(@Nonnull Class<? extends BoundedOperative> boundedClass) {
-        BoundedOperativeRegistry.registerBounded(boundedClass);
-    }
-
-    /** Returns the runner id assigned by the controller during handshake. */
-    @Nonnull
-    String getId();
-
-    /**
-     * Returns a snapshot of currently-spawned UnboundedOperative instances keyed by what
-     * the wire calls {@code operative_id}.
+     * Begin building this JVM's runner for {@code namespace}. Declare every
+     * operative class with {@link RunnerBuilder#defineUnbounded(Class)} /
+     * {@link RunnerBuilder#defineBounded(Class)}, then
+     * {@link RunnerBuilder#start()} (keep the calling thread) or
+     * {@link RunnerBuilder#run()} (block until shutdown).
      */
     @Nonnull
-    Map<String, ?> getOperatives();
-
-    /**
-     * Run the graceful-shutdown sequence: serialize each running
-     * operative's state and ship it to the controller so the next
-     * reconnecting runner picks up the runner's true final state
-     * (instead of the up-to-{@code overwatch_state_snapshot_interval_ms}
-     * stale periodic snapshot). Per-operative ack wait is bounded at
-     * 2 seconds, parallelised across operatives.
-     *
-     * <p>Idempotent across SIGTERM + explicit close — the second caller
-     * observes that shutdown has already started and returns immediately.
-     */
-    @Override
-    void close();
-
-    /**
-     * Start the compute engine, connect to the controller, and block until the
-     * controller sends {@code AssignRunnerId}. Thread-safe; may be called
-     * at most once per JVM for a given namespace.
-     *
-     * @throws IllegalStateException if no UnboundedOperative classes have been registered.
-     */
-    @Nonnull
-    static Flezha newInstance(@Nonnull String namespace) {
+    public static RunnerBuilder newRunner(@Nonnull String namespace) {
         if (namespace == null || namespace.isEmpty()) {
             throw new IllegalArgumentException("namespace must not be null or empty");
         }
-        if (UnboundedOperativeRegistry.isEmpty() && BoundedOperativeRegistry.isEmpty()) {
-            throw new IllegalStateException("Cannot start Flezha: no operative or bounded classes registered. "
-                    + "Call Flezha.registerUnbounded(MyUnboundedOperative.class) or Flezha.registerBounded(MyBoundedOperative.class) "
-                    + "before Flezha.newInstance(...).");
-        }
+        return new RunnerBuilder(namespace);
+    }
 
-        // The implementation class lives in flezha-sdk-runtime to avoid a
-        // native / runtime dependency on the API module. We resolve it by
-        // reflection so the api module compiles standalone.
-        try {
-            Class<?> impl = Class.forName("com.flezha.sdk.runtime.FlezhaImpl");
-            var m = impl.getMethod("start", String.class);
-            Object instance = m.invoke(null, namespace);
-            return (Flezha) instance;
-        } catch (ClassNotFoundException e) {
-            throw new IllegalStateException(
-                    "com.flezha.sdk.runtime.FlezhaImpl not on the classpath. "
-                            + "Make sure flezha-sdk-runtime is on the runtime classpath.",
-                    e);
-        } catch (ReflectiveOperationException e) {
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            if (cause instanceof RuntimeException re) {
-                throw re;
-            }
-            throw new IllegalStateException("Failed to start Flezha: " + cause.getMessage(), cause);
-        }
+    /**
+     * The JVM's active runner, if one has been started and not yet closed —
+     * {@link Optional#empty()} otherwise. Never throws and never starts a
+     * runner as a side effect.
+     */
+    @Nonnull
+    public static Optional<FlezhaRunner> currentRunner() {
+        return Optional.ofNullable(CURRENT.get());
+    }
+
+    /**
+     * Release the JVM-wide runner slot: clears the guard and the current
+     * handle, and unfreezes the class registries so a later runner may declare
+     * new operative types. Runs when the active runner closes (via the
+     * {@code onTerminated} hook {@link RunnerBuilder} hands the runtime) and
+     * when {@code start()} fails mid-flight.
+     */
+    static void releaseSlot() {
+        CURRENT.set(null);
+        RUNNING_NAMESPACE.set(null);
+        UnboundedOperativeRegistry.unfreeze();
+        BoundedOperativeRegistry.unfreeze();
     }
 }

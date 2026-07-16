@@ -1,12 +1,10 @@
 package com.flezha.sdk.runtime;
 
-import com.flezha.sdk.Flezha;
-import com.flezha.sdk.bounded.BoundedOperativeRegistry;
+import com.flezha.sdk.FlezhaRunner;
 import com.flezha.sdk.native_.FlezhaNativeException;
 import com.flezha.sdk.native_.FlezhaStatus;
 import com.flezha.sdk.native_.NativeEventDispatcher;
 import com.flezha.sdk.native_.NativeTransport;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.CommandRouter;
 import com.flezha.sdk.runtime.control.ControlChannel;
@@ -24,6 +22,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nonnull;
@@ -31,11 +30,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Runtime implementation of the public {@link Flezha} interface. Resolved
- * via reflection from {@code Flezha.newInstance(namespace)} so the public
- * API module stays free of runtime / native dependencies.
+ * Runtime implementation of the public {@link FlezhaRunner} interface.
+ * Resolved via reflection from {@code RunnerBuilder.start()} so the public
+ * API module stays free of runtime / native dependencies. The builder owns
+ * the registry freeze, the no-operative fail-fast, and the JVM-wide
+ * singleton guard; this class owns connect + lifecycle.
  */
-public final class FlezhaImpl implements Flezha {
+public final class FlezhaImpl implements FlezhaRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(FlezhaImpl.class);
 
@@ -44,26 +45,32 @@ public final class FlezhaImpl implements Flezha {
     private final KeepaliveSender keepaliveSender;
     private final DataHeartbeatSender dataHeartbeatSender;
     private final AtomicReference<GracefulShutdown> shutdownRef;
+    private final Runnable onTerminated;
+    private final CountDownLatch terminationLatch = new CountDownLatch(1);
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     private FlezhaImpl(
             RunnerContext ctx,
             ReconnectCoordinator reconnectCoordinator,
             KeepaliveSender keepaliveSender,
             DataHeartbeatSender dataHeartbeatSender,
-            AtomicReference<GracefulShutdown> shutdownRef) {
+            AtomicReference<GracefulShutdown> shutdownRef,
+            Runnable onTerminated) {
         this.ctx = ctx;
         this.reconnectCoordinator = reconnectCoordinator;
         this.keepaliveSender = keepaliveSender;
         this.dataHeartbeatSender = dataHeartbeatSender;
         this.shutdownRef = shutdownRef;
+        this.onTerminated = onTerminated;
     }
 
     /**
-     * Entry point invoked via reflection by {@link Flezha#newInstance(String)}.
+     * Entry point invoked via reflection by {@code RunnerBuilder.start()}.
+     * {@code onTerminated} is the builder's release hook for the JVM-wide
+     * runner slot; it runs exactly once, when {@link #close()} completes.
      *
      * <p>Steps:
      * <ol>
-     *   <li>Freeze the {@link UnboundedOperativeRegistry}.</li>
      *   <li>Resolve config from env vars; log it at INFO.</li>
      *   <li>Create the native context.</li>
      *   <li>Initialize the worker pool (consumed by every {@code UnboundedOperativeInstance}'s {@code OperationDispatcher}).</li>
@@ -72,15 +79,7 @@ public final class FlezhaImpl implements Flezha {
      * </ol>
      */
     @Nonnull
-    public static Flezha start(@Nonnull String namespace) {
-        if (UnboundedOperativeRegistry.isEmpty() && BoundedOperativeRegistry.isEmpty()) {
-            throw new IllegalStateException(
-                    "No operative or bounded classes registered; call Flezha.registerUnbounded(MyUnboundedOperative.class) "
-                            + "or Flezha.registerBounded(MyBoundedOperative.class) first.");
-        }
-        UnboundedOperativeRegistry.freeze();
-        BoundedOperativeRegistry.freeze();
-
+    public static FlezhaRunner start(@Nonnull String namespace, @Nonnull Runnable onTerminated) {
         FlezhaEnv.ResolvedConfig resolved = FlezhaEnv.resolveFromEnv();
         FlezhaEnv.logConfig(resolved);
 
@@ -256,7 +255,7 @@ public final class FlezhaImpl implements Flezha {
                         },
                         "flezha-graceful-shutdown"));
 
-        return new FlezhaImpl(ctx, coordinator, keepalive, dataHeartbeat, shutdownRef);
+        return new FlezhaImpl(ctx, coordinator, keepalive, dataHeartbeat, shutdownRef, onTerminated);
     }
 
     @Override
@@ -288,7 +287,15 @@ public final class FlezhaImpl implements Flezha {
     }
 
     @Override
+    public void awaitTermination() throws InterruptedException {
+        terminationLatch.await();
+    }
+
+    @Override
     public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
         keepaliveSender.stop();
         dataHeartbeatSender.stop();
         reconnectCoordinator.shutdown();
@@ -296,5 +303,9 @@ public final class FlezhaImpl implements Flezha {
         if (active != null) {
             active.run();
         }
+        // Release the JVM-wide runner slot before waking waiters, so a thread
+        // unblocked from awaitTermination() can immediately start a new runner.
+        onTerminated.run();
+        terminationLatch.countDown();
     }
 }

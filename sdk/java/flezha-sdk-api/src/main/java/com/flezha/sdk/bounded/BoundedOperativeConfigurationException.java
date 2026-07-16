@@ -1,7 +1,7 @@
 package com.flezha.sdk.bounded;
 
 /**
- * Thrown at {@link com.flezha.sdk.Flezha#registerBounded registration} time when a
+ * Thrown at {@link com.flezha.sdk.RunnerBuilder#defineBounded declaration} time when a
  * {@link BoundedOperative}'s authoring is invalid: an external-stop-only
  * operative (no self-termination and no {@code maxDuration()}), or a structured
  * {@link BoundedOperative#operations} declaration that is not a single connected

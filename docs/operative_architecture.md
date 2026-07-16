@@ -35,7 +35,7 @@ decisions, and capability spec deltas, see
 - **Unbounded Operative class** — the type-level declaration. One
   Unbounded Operative class declares its channels and the Operations
   that produce/consume them, exactly once per process via
-  `register_unbounded::<R>()`. The topology is frozen at registration
+  `RunnerBuilder::define_unbounded::<R>()`. The topology is frozen at declaration
   and shared (`Arc`) by every instance of that class.
 
 - **Operative instance** — the live runtime object spawned on
@@ -63,7 +63,7 @@ decisions, and capability spec deltas, see
   controller).
 
 - **Runner** — the work-stealing pool that drains mailboxes. One pool
-  per `Flezha::new()`; size controlled by `FLEZHA_WORKER_POOL_SIZE`.
+  per runner (`RunnerBuilder::start()`); size controlled by `FLEZHA_WORKER_POOL_SIZE`.
 
 ### Operative kind and capabilities (controller-side)
 
@@ -102,8 +102,8 @@ finished bounded operative drops out of the durable registry — never replayed 
 misjudged by convergence. A `run` that errors is terminal (deregister + report
 `[:flezha, :bounded, :failed]`; no retry).
 
-Authoring (Rust SDK): a distinct lightweight trait, registered as a sibling of
-`register_unbounded`:
+Authoring (Rust SDK): a distinct lightweight trait, declared as a sibling of
+`define_unbounded`:
 
 ```rust
 struct Greet;
@@ -115,11 +115,11 @@ impl flezha_runner::BoundedOperative for Greet {
         Ok(())
     }
 }
-flezha_runner::register_bounded::<Greet>();
+flezha_runner::Flezha::new_runner("my_app")?.define_bounded::<Greet>()?.run()?;
 ```
 
-Authoring (Java SDK): a distinct `com.flezha.sdk.bounded.BoundedOperative` interface, registered
-as a sibling of `Flezha.registerUnbounded`:
+Authoring (Java SDK): a distinct `com.flezha.sdk.bounded.BoundedOperative` interface, declared
+as a sibling of `defineUnbounded`:
 
 ```java
 public final class GreetBounded implements BoundedOperative {
@@ -128,7 +128,7 @@ public final class GreetBounded implements BoundedOperative {
         ctx.emit("hello " + args);
     }
 }
-Flezha.registerBounded(GreetBounded.class);
+Flezha.newRunner("my_app").defineBounded(GreetBounded.class).run();
 ```
 
 The Java runtime mirrors the Rust shape: a sealed `Operative` (provisional name)
@@ -159,13 +159,14 @@ The full surface is small:
 
 ```rust
 use flezha_runner::{
-    register_unbounded, ChannelBuilder, UnboundedOperative, Operation, OperationCtx, OperationError,
+    Flezha, ChannelBuilder, UnboundedOperative, Operation, OperationCtx, OperationError,
 };
 ```
 
-`register_unbounded::<R: UnboundedOperative>()` is called once per Unbounded Operative class at
-process startup. `Flezha::new(namespace)` boots the SDK; the controller
-later spawns instances by calling `flz operative start <factory_id>`.
+`RunnerBuilder::define_unbounded::<R: UnboundedOperative>()` is called once per
+Unbounded Operative class on the builder `Flezha::new_runner(namespace)`
+returns; `.start()` / `.run()` boots the SDK; the controller later spawns
+instances by calling `flz operative start <factory_id>`.
 
 ## Authoring sugar (default path)
 
@@ -197,7 +198,7 @@ fn ohlc(price: f64, state: &mut OhlcState) -> Vec<u8> {
 
 fn all_tfs(_: &f64) -> Vec<&'static str> { vec!["1m", "1h", "1d", "1w"] }
 
-// Linear pipeline ⇒ no `channels()` block, auto-registered (no `register_unbounded`).
+// Linear pipeline ⇒ no `channels()` block, auto-registered (no `define_unbounded`).
 flezha_runner::operative! {
     id: "market",
     pipeline: input::<String> -> Parse -> Ohlc -> plugin::<Vec<u8>>("ohlc_kafka")
@@ -205,7 +206,7 @@ flezha_runner::operative! {
 ```
 
 Single-operation `input → sink` operatives add `sink = "…"` to `#[flezha::operation]` and
-need no `operative!` and no `register_unbounded`. Attribute opt-ins: `id`, `sink`,
+need no `operative!` and no `define_unbounded`. Attribute opt-ins: `id`, `sink`,
 `keys` + `segment_for` (static mode), `operation_key` + `idle_ttl` +
 `max_segments` (dynamic mode), `capacity`, `on_full`, `clock`. Static and
 dynamic opt-ins are mutually exclusive (a compile error). Anything beyond a
@@ -219,7 +220,7 @@ directly when an operative's topology is not a single operation or a linear chai
 
 ```rust
 use flezha_runner::{
-    register_unbounded, ChannelBuilder, UnboundedOperative, Operation, OperationCtx, OperationError,
+    Flezha, ChannelBuilder, UnboundedOperative, Operation, OperationCtx, OperationError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -291,10 +292,12 @@ impl UnboundedOperative for MarketOperative {
     }
 }
 
-fn main() {
-    register_unbounded::<MarketOperative>();
-    let _ = flezha_runner::new("market_ns".to_string());
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Flezha::new_runner("market_ns")?
+        .define_unbounded::<MarketOperative>()?
+        .run()?;
     // The controller's `flz operative start <market>` spawns an instance.
+    Ok(())
 }
 ```
 
@@ -307,7 +310,7 @@ The Java SDK is a port of the same model. Idiomatic differences:
   accessors so the runtime can verify wiring at registration time
   (Java's type erasure means most type bounds the Rust trait system
   enforces at compile time become runtime-checked
-  `OperativeConfigurationException`s thrown by `Flezha.registerUnbounded(...)`).
+  `OperativeConfigurationException`s thrown by `RunnerBuilder.defineUnbounded(...)`).
 - `segmentForOverridden()` / `operationKeyOverridden()` boolean default
   methods replace Rust's `const SEGMENT_FOR_OVERRIDDEN: bool` /
   `const OPERATION_KEY_OVERRIDDEN: bool` sentinels.
@@ -369,9 +372,10 @@ public final class MarketOperative implements UnboundedOperative {
 }
 
 public final class App {
-    public static void main(String[] args) {
-        Flezha.registerUnbounded(MarketOperative.class);
-        Flezha unused = Flezha.newInstance("market_ns");
+    public static void main(String[] args) throws Exception {
+        Flezha.newRunner("market_ns")
+                .defineUnbounded(MarketOperative.class)
+                .run();
         // Controller's `flz operative start <market>` spawns an instance.
     }
 }
@@ -493,7 +497,7 @@ impl Operation for OhlcOp {
 }
 ```
 
-Resolution order at `register_unbounded::<R>()` time:
+Resolution order at `define_unbounded::<R>()` time:
 
 1. `Operation::mailbox_capacity()` if `MAILBOX_CAPACITY_OVERRIDDEN = true`.
 2. `FLEZHA_MAILBOX_CAPACITY` env var (parsed as `usize`).
@@ -651,7 +655,7 @@ c.channel(SmaValue.class, "sma_out")
 The Java surface mirrors Rust: `kind` stays `INTER_OPERATION`, the channel
 descriptor carries `Optional<PluginSink> pluginSink`, duplicates raise
 `OperativeConfigurationException.duplicatePluginSink(channel)` at
-`OperativeRegistry.registerUnbounded(...)` time, and a serializer that throws
+`RunnerBuilder.defineUnbounded(...)` time, and a serializer that throws
 surfaces as `OperationException.PluginSerializerFailure` (Java's structured-throw
 analog of Rust's `OperationError::PluginSerializerPanic`). Wire frames produced
 by either SDK are byte-indistinguishable at the agent's plugin layer.
@@ -791,7 +795,7 @@ Decisions referenced above:
 - **Decision 2 (mvp-rust)** — Fluent channel builder with compile-time
   wiring constraints.
 - **Decision 3 (mvp-rust)** — Per-Operative channel-id table layout
-  (interned `u32` IDs frozen at `register_unbounded`).
+  (interned `u32` IDs frozen at `define_unbounded`).
 - **Decision 4 (mvp-rust)** — Cached `output_channel_id` on the
   dispatcher; zero name lookups during emit.
 - **Decision 7 (umbrella)** — Single-mode is the default; static-mode

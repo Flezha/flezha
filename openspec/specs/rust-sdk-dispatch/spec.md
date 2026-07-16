@@ -80,16 +80,16 @@ The 4-op invariant is an analytical bound enforced by code review, consistent wi
 
 ### Requirement: Live Registry Concurrent Access
 
-The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single operation's critical section. The registry SHALL preserve the existing public API shape: Operative classes register at startup via `register_unbounded::<R: UnboundedOperative>()`; `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<UnboundedInstance>` or equivalent handle.
+The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single operation's critical section. The registry SHALL preserve the existing internal shape: Operative classes are declared via `RunnerBuilder::define_unbounded::<R: UnboundedOperative>()`, called before `.start()`/`.run()` on a `Flezha::new_runner(namespace)` builder; `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<UnboundedInstance>` or equivalent handle.
 
-The "registry" name carries forward from the pre-change implementation; what's stored in it changes from `Arc<Mutex<UnboundedBox>>` to `Arc<UnboundedInstance>`. The concurrency guarantees are unchanged.
+The "registry" name carries forward from the pre-change implementation; what's stored in it is unchanged by this requirement. The concurrency guarantees are unchanged.
 
 #### Scenario: 100 reader threads do not stall on a single writer
 - **WHEN** 100 threads each perform 10,000 registry lookups while a 101st thread registers and removes Operative instances in a loop
 - **THEN** no reader thread observes a latency spike greater than 1 millisecond attributable to the writer
 
-#### Scenario: Registry preserves public registration contract
-- **WHEN** user code calls `register_unbounded::<R>()` at startup and later `AddOperative` triggers an Operative instance creation
+#### Scenario: Registry preserves the declaration contract
+- **WHEN** user code calls `.define_unbounded::<R>()` on a `RunnerBuilder` and later `AddOperative` triggers an Operative instance creation
 - **THEN** the resulting `UnboundedInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-operation-segment-model` capability's scenarios
 
 ### Requirement: Reconnect Semantics Preserved
@@ -132,29 +132,19 @@ Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `Con
 
 ### Requirement: Per-Segment flusher single-thread linger drain
 
-The Rust SDK SHALL spawn at most one `SegmentFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `register_unbounded::<R>()` call that registers an Operation with a non-`NoChange` Change type. Programs that register only `NoChange` Operations SHALL NOT spawn a flusher thread.
+The Rust SDK SHALL spawn at most one `SegmentFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `RunnerBuilder::define_unbounded::<R>()` call that declares an Operation with a non-`NoChange` Change type. Programs that declare only `NoChange` Operations SHALL NOT spawn a flusher thread.
 
-The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Segments; (c) for each Segment, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Segment's `send_frame` function pointer (stub in this change; agent-wired in `operative-state-persistence`).
+The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Segments; (c) for each Segment, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Segment's `send_frame` function pointer.
 
 #### Scenario: NoChange-only program does not spawn flusher
 
-- **WHEN** a Rust process registers `register_unbounded::<R>()` for an Operative whose Operations all have `Change = NoChange`
+- **WHEN** a Rust process calls `.define_unbounded::<R>()` for an Operative whose Operations all have `Change = NoChange`
 - **THEN** no `SegmentFlusher` thread SHALL be spawned, observable via thread-count assertions in the test (`std::thread::available_parallelism` baseline + assertion that no `flezha-flusher` named thread exists)
 
-#### Scenario: First non-NoChange registration starts the flusher
+#### Scenario: First non-NoChange declaration starts the flusher
 
-- **WHEN** a Rust process registers `register_unbounded::<R>()` for an Operative containing an Operation with `Change = MyChange`
+- **WHEN** a Rust process calls `.define_unbounded::<R>()` for an Operative containing an Operation with `Change = MyChange`
 - **THEN** exactly one OS thread named `flezha-flusher` SHALL be spawned for the lifetime of the process
-
-#### Scenario: Flusher drains all non-empty buffers per tick
-
-- **WHEN** four Segments across two Operatives each have non-empty flush buffers and the flusher's linger window elapses
-- **THEN** the flusher SHALL drain all four buffers in a single iteration and the buffers SHALL be empty after the drain
-
-#### Scenario: Flusher honors FLEZHA_FLUSH_LINGER_MS
-
-- **WHEN** `FLEZHA_FLUSH_LINGER_MS=20` is set at process start
-- **THEN** the flusher SHALL sleep 20 ms between iterations; durability lag observed by the test fixture SHALL be at most 20 ms plus the agent fsync window
 
 ### Requirement: Toggle-aware drain semantics for persistence_enabled = false
 
@@ -342,3 +332,65 @@ On a fresh process start (not a reconnect) the SDK SHALL load its node-local per
 - **GIVEN** an SDK process held `runner_id = default_X` and persisted it locally
 - **WHEN** the process is killed and a fresh process starts, reads `default_X`, and announces it as `previous_runner_id`
 - **THEN** the controller evicts the stale `default_X` binding before the new bind, so no operative is left bound to the dead process.
+
+### Requirement: Rust SDK Entry Point
+
+The Rust SDK SHALL provide `Flezha::new_runner(namespace: impl Into<String>) -> Result<RunnerBuilder, ...>` as the single entry point for starting a Flezha runner. Calling `.start(self)` on the builder MUST connect to the controller's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2, wait for `AssignRunnerId`, and return a `FlezhaRunner` handle exposing `id()` and `operatives()`. `.run(self)` SHALL be sugar for `.start(self)` followed by `await_termination()` on the returned handle. This requirement mirrors `java-sdk`'s "Java SDK Entry Point" requirement — the two SDKs' entry-point behavior is intentionally identical; this is the first time that behavior has been captured for Rust in `openspec/specs/`.
+
+#### Scenario: Successful connection returns a live handle
+- **WHEN** an SDK user calls `Flezha::new_runner("my_app")?.define_unbounded::<MarketOperative>()?.start()` with the controller running
+- **THEN** the call blocks until the connect handshake is written, and the returned handle's `id()` returns the runner's stable namespace identity (non-empty); the controller-assigned per-session token lives on the runner thread and rotates across reconnects, so it is not the handle's identity
+
+#### Scenario: Controller unavailable triggers exponential backoff retries
+- **WHEN** an SDK user calls `.start(self)` on a builder and the controller's control socket is not yet listening
+- **THEN** the SDK SHALL retry the connect with exponential backoff starting at 200 ms and capped at 30 s, and succeed once the controller becomes available
+
+#### Scenario: start() without any defined operative type fails fast
+- **WHEN** `.start(self)` is called on a `RunnerBuilder` with no `.define_unbounded(...)`/`.define_bounded(...)` calls and no `inventory`-harvested classes on the binary
+- **THEN** the SDK SHALL return `Err(RunnerStartError::NoOperativeDeclared)` describing the missing operative type declaration
+
+### Requirement: Runner declaration and connection failures surface as typed Results
+
+`RunnerBuilder::define_unbounded::<R>(self)` SHALL return `Result<Self, TopologyBuildError>` and `RunnerBuilder::define_bounded::<T>(self)` SHALL return `Result<Self, BuildBoundedError>` — the two existing per-kind authoring error types, mirroring Java's two per-kind configuration exceptions. An invalid topology (duplicate channel names, unwired channels, missing `segment_for` overrides, type mismatches, etc.) SHALL be reported as a typed `Err` at the call site, not a panic. `RunnerBuilder::start(self)` SHALL return `Err(RunnerStartError::ConnectFailed(..))` if the connect handshake fails (socket error, or the confirmation channel closing unexpectedly) instead of panicking. This mirrors `java-sdk`'s `OperativeConfigurationException`/`IllegalStateException` for the identical failure classes, closing the gap where the pre-change SDK panicked via `.expect(...)` for a program state the equivalent Java call already reported as a catchable, named exception.
+
+#### Scenario: Invalid topology is reported as a Result, not a panic
+- **WHEN** an Operative declares `c.channel(Trade.class, "trade.parsed").from(ParseOperation).into(OhlcOperation)` but `OhlcOperation`'s input type does not match `Trade`
+- **THEN** `.define_unbounded::<ThatOperative>()` SHALL return `Err(TopologyBuildError { .. })` carrying the `BuildTopologyError::TypeMismatch` diagnosis naming the mismatch — the call SHALL NOT panic
+
+#### Scenario: A connection failure at start() is a Result, not a panic
+- **WHEN** the confirmation channel from the runner thread closes without delivering `RunnerIdConfirmation` (e.g. the runner thread panicked internally)
+- **THEN** `.start(self)` SHALL return `Err(RunnerStartError::ConnectFailed(..))` — the caller's thread SHALL NOT panic
+
+### Requirement: Runner process singleton guard
+
+The Rust SDK SHALL allow at most one runner to be started per process. `RunnerBuilder::start()`/`run()` SHALL check a process-global guard (a mutex-held slot storing the running namespace — releasable on close, which a `OnceLock` is not) before connecting; if a prior builder's `.start()`/`.run()` has already succeeded in this process, the call SHALL return `Err(RunnerStartError::AlreadyRunning { namespace })` naming the already-running namespace, and SHALL NOT connect, mutate any shared registry, or spawn any background thread. `RunnerBuilder::start()` and `RunnerBuilder::run()` SHALL consume `self` (`fn start(self) -> Result<FlezhaRunner, RunnerStartError>`), so a builder cannot be started twice even before the runtime guard is checked.
+
+#### Scenario: Second start() in the same process is rejected
+- **GIVEN** a process where `Flezha::new_runner("ns1")?.define_unbounded::<A>()?.start()` has already succeeded
+- **WHEN** code in the same process calls `Flezha::new_runner("ns2")?.define_unbounded::<B>()?.start()`
+- **THEN** the call SHALL return `Err(RunnerStartError::AlreadyRunning { namespace: "ns1".into() })`
+- **AND** no connection SHALL be attempted for `"ns2"`, and the process's `STABLE_ID`, `segment_state_sink`, and `credit::global()` state SHALL remain exclusively `"ns1"`'s
+
+#### Scenario: A runner may be started again after the first one is dropped
+- **GIVEN** a process where a runner for `"ns1"` was started and then dropped (triggering `Drop`'s graceful-shutdown sequence)
+- **WHEN** code in the same process calls `Flezha::new_runner("ns2")?.define_unbounded::<B>()?.start()`
+- **THEN** the call SHALL succeed and `"ns2"` SHALL become the process's active runner
+
+#### Scenario: Concurrent start() calls — exactly one wins
+- **GIVEN** a process with no runner started yet
+- **WHEN** two threads each call `.start(self)` on a distinct, fully-built `RunnerBuilder` (`"ns1"` and `"ns2"`) at the same time
+- **THEN** exactly one call SHALL succeed and become the process's active runner, and the other SHALL return `Err(RunnerStartError::AlreadyRunning { namespace })` naming the winner — the guard's compare-and-set SHALL make this outcome deterministic per-run (no scenario where both succeed or both fail)
+
+### Requirement: Runner lifecycle — start, run, await_termination, Drop
+
+`RunnerBuilder::start(self) -> Result<FlezhaRunner, RunnerStartError>` SHALL connect and return a `FlezhaRunner` handle without blocking the calling thread for the runner's ongoing lifetime. `FlezhaRunner::await_termination(&self)` SHALL block the calling thread until the runner shuts down (via `Drop`, SIGTERM-triggered graceful shutdown, or a controller-driven stop). `RunnerBuilder::run(self) -> Result<(), RunnerError>` SHALL be exactly `self.start()?` followed by `.await_termination()` on the result, with no independently-implemented blocking logic. `FlezhaRunner`'s existing `Drop` impl (graceful shutdown) SHALL be unchanged, and SHALL cause any thread blocked in `await_termination()` to return.
+
+#### Scenario: start() returns immediately after the handshake, before shutdown
+- **WHEN** an SDK user calls `.start()` on a builder
+- **THEN** the call returns as soon as the runner has an assigned id, without waiting for the runner to ever shut down
+- **AND** the runner continues dispatching in background threads exactly as it does today
+
+#### Scenario: run() blocks until shutdown
+- **WHEN** an SDK user calls `.run()` on a builder in a standalone `fn main()`
+- **THEN** the call blocks the calling thread until the runner shuts down, replacing the hand-rolled stdin-reading `std_keeper()` pattern used by `test/apps/rust_runner/src/main.rs` today
+

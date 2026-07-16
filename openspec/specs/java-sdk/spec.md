@@ -6,63 +6,19 @@ Defines the Java SDK for Flezha compute engines: the public API, protocol layer,
 ## Requirements
 ### Requirement: Java SDK Entry Point
 
-The Java SDK SHALL provide `com.flezha.sdk.Flezha.newInstance(String namespace)` as the single entry point for starting a Flezha compute engine. The call MUST connect to the agent's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2, wait for `AssignRunnerId`, and return a handle exposing `getId()` and `getOperatives()` (where `getOperatives()` returns a snapshot of currently-spawned Operative instances keyed by what the wire calls `operative_id` — see the `Operative Registration` requirement below for naming).
+The Java SDK SHALL provide `com.flezha.sdk.Flezha.newRunner(String namespace)` as the single entry point for starting a Flezha runner, returning a `RunnerBuilder`. Calling `.start()` on the builder MUST connect to the controller's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2, wait for `AssignRunnerId`, and return a `FlezhaRunner` handle exposing `getId()` and `getOperatives()` (where `getOperatives()` returns a snapshot of currently-spawned Operative instances keyed by what the wire calls `operative_id` — see the `Operative Type Declaration` requirement below for naming). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()` on the returned handle.
 
 #### Scenario: Successful connection returns an assigned id
-- **WHEN** an SDK user calls `Flezha.newInstance("my_app")` with the agent running and at least one Operative class registered
-- **THEN** the call blocks until the agent responds with `AssignRunnerId`, and the returned handle's `getId()` returns the assigned id (non-null, non-empty)
+- **WHEN** an SDK user calls `Flezha.newRunner("my_app").defineUnbounded(MarketOperative.class).start()` with the controller running
+- **THEN** the call blocks until the controller responds with `AssignRunnerId`, and the returned handle's `getId()` returns the assigned id (non-null, non-empty)
 
-#### Scenario: Agent unavailable triggers exponential backoff retries
-- **WHEN** an SDK user calls `Flezha.newInstance("my_app")` and the agent's control socket is not yet listening
-- **THEN** the SDK SHALL retry the connect with exponential backoff starting at 200 ms and capped at 30 s, and succeed once the agent becomes available
+#### Scenario: Controller unavailable triggers exponential backoff retries
+- **WHEN** an SDK user calls `.start()` on a builder and the controller's control socket is not yet listening
+- **THEN** the SDK SHALL retry the connect with exponential backoff starting at 200 ms and capped at 30 s, and succeed once the controller becomes available
 
-#### Scenario: newInstance without any registered operative class fails fast
-- **WHEN** `Flezha.newInstance(namespace)` is called before any `OperativeRegistry.registerUnbounded(...)` (or `Flezha.registerUnbounded(...)`) call
-- **THEN** the SDK SHALL throw an `IllegalStateException` describing the missing operative registration
-
-### Requirement: Operative Registration
-
-The Java SDK SHALL provide `OperativeRegistry.registerUnbounded(Class<? extends UnboundedOperative>)` (and a thin static `Flezha.registerUnbounded(Class<? extends UnboundedOperative>)` pass-through) that MUST be called **before** `Flezha.newInstance`. For each registered UnboundedOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the agent-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel-type, type-equality between channel payload and producer/consumer Operation I/O, no unwired channels, no multi-producer, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry MUST be frozen at `Flezha.newInstance(...)` time. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
-
-Dynamic segmentation SHALL be supported: an Operation that overrides `operationKey(Input)` (signalled by `operationKeyOverridden()` returning `true`) and returns an empty list from `operationKeys()` SHALL register successfully and create Segments lazily per key at dispatch time, per the `operative-state-persistence` dynamic-segmenting behaviour. Eviction SHALL be off by default (`segmentIdleTtl()` returns `Optional.empty()`); when a TTL is declared, the per-Operation reaper SHALL evict idle Segments destructively by shipping `delete_segment_state`, and a recreated Segment SHALL cold-start fresh rather than restore from disk.
-
-Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at registration time, throwing `OperativeConfigurationException` whose message carries the same diagnostic content and the same error name as the corresponding Rust `BuildTopologyError` variant.
-
-#### Scenario: Registering an unbounded operative class before newInstance succeeds
-- **WHEN** user code calls `Flezha.registerUnbounded(MarketOperative.class)` and then `Flezha.newInstance("my_app")`
-- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperative::factoryId` returns) in `factory_ids`, and subsequent `AddOperative{factory_id:"market"}` commands SHALL succeed by spawning an `UnboundedOperativeInstance`
-
-#### Scenario: Registering an unbounded operative class after newInstance is rejected
-- **WHEN** user code calls `OperativeRegistry.registerUnbounded(...)` after `Flezha.newInstance(...)` has returned
-- **THEN** the SDK SHALL throw an `IllegalStateException`
-
-#### Scenario: Duplicate factoryId across two unbounded operative classes is rejected
-- **WHEN** two distinct UnboundedOperative classes both return `"market"` from `factoryId()` and both are registered
-- **THEN** the second `registerUnbounded` call SHALL throw an `IllegalArgumentException` naming the duplicate factoryId
-
-#### Scenario: Wiring mismatch fails registration with a diagnosable error
-- **WHEN** an Operative declares `c.channel(Trade.class, "trade.parsed").from(ParseOperation.class).into(OhlcOperation.class)` but `OhlcOperation.inputType()` returns `Candle.class`
-- **THEN** `registerUnbounded` SHALL throw `OperativeConfigurationException` whose message names the channel `"trade.parsed"`, the expected payload type (`Trade`), and the actual consumer-input type (`Candle`)
-
-#### Scenario: Entry channel of disallowed type fails registration
-- **WHEN** an Operative declares `c.input(Trade.class, "trade.raw").into(ParseOperation.class)`
-- **THEN** `registerUnbounded` SHALL throw `OperativeConfigurationException` stating that entry channels accept only `byte[]` or `String` in v1
-
-#### Scenario: Unwired channel fails registration
-- **WHEN** an Operative declares `c.channel(Candle.class, "ohlc.candles")` and never calls `.from(...)` on the resulting `ChannelDecl`
-- **THEN** `registerUnbounded` SHALL throw `OperativeConfigurationException` naming the unwired channel
-
-#### Scenario: Static-mode operation without segmentForOverridden is rejected
-- **WHEN** an Operation returns a non-empty list from `operationKeys()` but its `segmentForOverridden()` returns the default `false`
-- **THEN** `registerUnbounded` SHALL throw `OperativeConfigurationException` naming the Operation and stating that static-mode operations must override `segmentFor` and `segmentForOverridden`
-
-#### Scenario: Dynamic-mode operation registers and creates segments lazily
-- **WHEN** an Operation returns `true` from `operationKeyOverridden()` and an empty list from `operationKeys()`, and two inputs arrive whose `operationKey(input)` returns `"BTC"` and `"ETH"`
-- **THEN** `registerUnbounded` SHALL succeed, and the runtime SHALL lazily allocate exactly two Segments keyed `"BTC"` and `"ETH"`, each constructed with `initState(Optional.of(key), Optional.empty())`
-
-#### Scenario: Idle dynamic segment is evicted destructively when a TTL is declared
-- **WHEN** an Operation declares `segmentIdleTtl()` returning `Optional.of(Duration.ofSeconds(30))` and a dynamic Segment receives no input for longer than that TTL
-- **THEN** the reaper SHALL ship `delete_segment_state` for that Segment and drop it; a later input for the same key SHALL cold-start a fresh Segment via `initState(Optional.of(key), Optional.empty())` without restoring prior state
+#### Scenario: start() without any defined operative type fails fast
+- **WHEN** `.start()` is called on a `RunnerBuilder` with no `.defineUnbounded(...)`/`.defineBounded(...)` calls and no auto-wired classes on the classpath
+- **THEN** the SDK SHALL throw an `IllegalStateException` describing the missing operative type declaration
 
 ### Requirement: Operation Interface and Per-Segment Dispatch
 
@@ -831,4 +787,102 @@ The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK 
 
 - **WHEN** a Java runner stops making dispatch progress while inputs continue to arrive
 - **THEN** the heartbeat's `dispatches` count SHALL stop advancing while the runner keeps sending heartbeats, giving the controller the signal it needs to localize the stall
+
+### Requirement: Operative Type Declaration
+
+The Java SDK SHALL provide `RunnerBuilder.defineUnbounded(Class<? extends UnboundedOperative>)` and `RunnerBuilder.defineBounded(Class<? extends BoundedOperative>)` as chainable builder methods, called **before** `.start()`/`.run()`. For each declared UnboundedOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel-type, type-equality between channel payload and producer/consumer Operation I/O, no unwired channels, no multi-producer, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry MUST be frozen at `.start()` time. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
+
+Dynamic segmentation SHALL be supported: an Operation that overrides `operationKey(Input)` (signalled by `operationKeyOverridden()` returning `true`) and returns an empty list from `operationKeys()` SHALL be declared successfully and create Segments lazily per key at dispatch time, per the `operative-state-persistence` dynamic-segmenting behaviour. Eviction SHALL be off by default (`segmentIdleTtl()` returns `Optional.empty()`); when a TTL is declared, the per-Operation reaper SHALL evict idle Segments destructively by shipping `delete_segment_state`, and a recreated Segment SHALL cold-start fresh rather than restore from disk.
+
+Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `OperativeConfigurationException` whose message carries the same diagnostic content and the same error name as the corresponding Rust `BuildTopologyError` variant.
+
+#### Scenario: Declaring an unbounded operative class before start() succeeds
+- **WHEN** user code calls `Flezha.newRunner("my_app").defineUnbounded(MarketOperative.class).start()`
+- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperative::factoryId` returns) in `factory_ids`, and subsequent `AddOperative{factory_id:"market"}` commands SHALL succeed by spawning an `UnboundedOperativeInstance`
+
+#### Scenario: Declaring an operative type after start() is rejected
+- **WHEN** user code calls `.defineUnbounded(...)` on a `RunnerBuilder` whose `.start()` has already returned
+- **THEN** the SDK SHALL throw an `IllegalStateException`
+
+#### Scenario: Duplicate factoryId across two unbounded operative classes is rejected
+- **WHEN** two distinct UnboundedOperative classes both return `"market"` from `factoryId()` and both are declared on the same builder
+- **THEN** the second `.defineUnbounded(...)` call SHALL throw an `IllegalArgumentException` naming the duplicate factoryId
+
+#### Scenario: Wiring mismatch fails declaration with a diagnosable error
+- **WHEN** an Operative declares `c.channel(Trade.class, "trade.parsed").from(ParseOperation.class).into(OhlcOperation.class)` but `OhlcOperation.inputType()` returns `Candle.class`
+- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` whose message names the channel `"trade.parsed"`, the expected payload type (`Trade`), and the actual consumer-input type (`Candle`)
+
+#### Scenario: Entry channel of disallowed type fails declaration
+- **WHEN** an Operative declares `c.input(Trade.class, "trade.raw").into(ParseOperation.class)`
+- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` stating that entry channels accept only `byte[]` or `String` in v1
+
+#### Scenario: Unwired channel fails declaration
+- **WHEN** an Operative declares `c.channel(Candle.class, "ohlc.candles")` and never calls `.from(...)` on the resulting `ChannelDecl`
+- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` naming the unwired channel
+
+#### Scenario: Static-mode operation without segmentForOverridden is rejected
+- **WHEN** an Operation returns a non-empty list from `operationKeys()` but its `segmentForOverridden()` returns the default `false`
+- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` naming the Operation and stating that static-mode operations must override `segmentFor` and `segmentForOverridden`
+
+#### Scenario: Dynamic-mode operation declares and creates segments lazily
+- **WHEN** an Operation returns `true` from `operationKeyOverridden()` and an empty list from `operationKeys()`, and two inputs arrive whose `operationKey(input)` returns `"BTC"` and `"ETH"`
+- **THEN** `.defineUnbounded(...)` SHALL succeed, and the runtime SHALL lazily allocate exactly two Segments keyed `"BTC"` and `"ETH"`, each constructed with `initState(Optional.of(key), Optional.empty())`
+
+#### Scenario: Idle dynamic segment is evicted destructively when a TTL is declared
+- **WHEN** an Operation declares `segmentIdleTtl()` returning `Optional.of(Duration.ofSeconds(30))` and a dynamic Segment receives no input for longer than that TTL
+- **THEN** the reaper SHALL ship `delete_segment_state` for that Segment and drop it; a later input for the same key SHALL cold-start a fresh Segment via `initState(Optional.of(key), Optional.empty())` without restoring prior state
+
+### Requirement: Runner process singleton guard
+
+The Java SDK SHALL allow at most one runner to be started per JVM process. A second call to `.start()` or `.run()` on any `RunnerBuilder`, after a prior builder's `.start()`/`.run()` has already succeeded in this process, SHALL throw `IllegalStateException` naming the namespace of the already-running runner, and SHALL NOT connect, mutate any shared registry, or spawn any background thread.
+
+#### Scenario: Second start() in the same JVM is rejected
+- **GIVEN** a JVM process where `Flezha.newRunner("ns1").defineUnbounded(A.class).start()` has already succeeded
+- **WHEN** code in the same process calls `Flezha.newRunner("ns2").defineUnbounded(B.class).start()`
+- **THEN** the call SHALL throw `IllegalStateException` whose message names `"ns1"` as the already-running namespace
+- **AND** no connection SHALL be attempted for `"ns2"`, and the process's stable identity, segment-state sink, and credit window SHALL remain exclusively `"ns1"`'s
+
+#### Scenario: A runner may be started again after the first one closes
+- **GIVEN** a JVM process where a runner for `"ns1"` was started and then fully closed via `.close()`
+- **WHEN** code in the same process calls `Flezha.newRunner("ns2").defineUnbounded(B.class).start()`
+- **THEN** the call SHALL succeed and `"ns2"` SHALL become the process's active runner
+
+#### Scenario: Concurrent start() calls — exactly one wins
+- **GIVEN** a JVM process with no runner started yet
+- **WHEN** two threads each call `.start()` on a distinct, fully-built `RunnerBuilder` (`"ns1"` and `"ns2"`) at the same time
+- **THEN** exactly one call SHALL succeed and become the process's active runner, and the other SHALL throw `IllegalStateException` naming the winner — the guard's compare-and-set SHALL make this outcome deterministic per-run (no scenario where both succeed or both fail)
+
+### Requirement: Runner lifecycle — start, run, awaitTermination, close
+
+`RunnerBuilder.start()` SHALL connect (per the `Java SDK Entry Point` requirement) and return a `FlezhaRunner` handle without blocking the calling thread for the runner's ongoing lifetime. `FlezhaRunner.awaitTermination()` SHALL block the calling thread until the runner shuts down (via `.close()`, SIGTERM-triggered graceful shutdown, or a controller-driven stop), replacing any user-authored keep-alive loop. `RunnerBuilder.run()` SHALL be exactly `.start()` followed by `awaitTermination()` on the result, with no independently-implemented blocking logic. `FlezhaRunner` SHALL implement `AutoCloseable`; `.close()` SHALL run the existing graceful-shutdown sequence (ship-fresh-state-on-sdk-shutdown) and SHALL cause any thread blocked in `awaitTermination()` to return.
+
+#### Scenario: start() returns immediately after the handshake, before shutdown
+- **WHEN** an SDK user calls `.start()` on a builder
+- **THEN** the call returns as soon as the runner has an assigned id, without waiting for the runner to ever shut down
+- **AND** the runner continues dispatching in background threads exactly as it does today
+
+#### Scenario: run() blocks until shutdown
+- **WHEN** an SDK user calls `.run()` on a builder in a standalone `main()`
+- **THEN** the call blocks the calling thread until the runner shuts down (SIGTERM or explicit close from another thread), and the JVM does not exit before then even though the runner's background threads are daemon
+
+#### Scenario: close() wakes a thread blocked in awaitTermination()
+- **GIVEN** a `FlezhaRunner` with one thread blocked in `awaitTermination()`
+- **WHEN** another thread calls `.close()` on the same runner
+- **THEN** the graceful-shutdown sequence runs, and the blocked thread's `awaitTermination()` call returns
+
+#### Scenario: try-with-resources still works for short-lived usage
+- **GIVEN** a test that needs a runner for the duration of one test method
+- **WHEN** the test writes `try (FlezhaRunner r = Flezha.newRunner("test").defineUnbounded(A.class).start()) { ... }`
+- **THEN** the runner SHALL be started for the block and gracefully closed at the end of it, exactly as `AutoCloseable` usage requires
+
+### Requirement: Flezha static accessor for the active runner
+
+`Flezha.currentRunner()` SHALL return an `Optional<FlezhaRunner>` containing the process's active runner if one has been started and not yet closed, or `Optional.empty()` otherwise. It SHALL NOT throw, and SHALL NOT start a runner as a side effect.
+
+#### Scenario: currentRunner() reflects the singleton's lifecycle
+- **GIVEN** a JVM process with no runner started yet
+- **WHEN** code calls `Flezha.currentRunner()`
+- **THEN** it SHALL return `Optional.empty()`
+- **AND** after `Flezha.newRunner("ns1").defineUnbounded(A.class).start()` succeeds, `Flezha.currentRunner()` SHALL return `Optional.of(<that runner>)`
+- **AND** after that runner's `.close()` completes, `Flezha.currentRunner()` SHALL return `Optional.empty()` again
 

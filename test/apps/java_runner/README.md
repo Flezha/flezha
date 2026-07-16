@@ -4,7 +4,9 @@ Reference Java test app that mirrors `test/apps/rust_runner/`. Used
 by the Java↔controller integration matrix under `mix test --only java_sdk` and
 by the `mix bench --runtime java` regression bench.
 
-The app registers three UnboundedOperative classes via `Flezha.registerUnbounded(...)`:
+The app declares its UnboundedOperative classes via
+`Flezha.newRunner(ns).defineUnbounded(...)` — the integration-matrix core
+being:
 
 - `do_nothing` — `DoNothingUnboundedOperative` + `DoNothingOperation`
 - `store_input` — `StoreInputUnboundedOperative` + `StoreInputOperation`

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Changed (BREAKING)
+
+- New guarded SDK entry point in both SDKs (`runner-lifecycle-singleton-api`).
+  `Flezha.newInstance(namespace)` (Java) / `flezha_runner::new(namespace)`
+  (Rust) and the `Flezha.registerUnbounded`/`registerBounded` /
+  `register_unbounded::<R>()`/`register_bounded::<T>()` registration surface
+  are removed with no back-compat shim. The replacement is a builder:
+  `Flezha.newRunner(ns).defineUnbounded(A.class).run()` (Java) /
+  `Flezha::new_runner(ns)?.define_unbounded::<A>()?.run()?` (Rust).
+  At most one runner may be started per process — a second
+  `start()`/`run()` fails loudly (`IllegalStateException` /
+  `RunnerStartError::AlreadyRunning`) naming the running namespace instead of
+  silently corrupting the process-global identity/sink/credit state; after
+  `close()`/`Drop` a new runner may start. `start()` returns a
+  `FlezhaRunner` handle (embedding), `run()` = `start()` +
+  `awaitTermination()` (standalone binaries — the
+  `Thread.currentThread().join()` / stdin-loop keep-alive hacks are gone),
+  and `Flezha.currentRunner()` / `Flezha::current_runner()` exposes the
+  active runner. Rust declaration and connect failures are now typed
+  `Result`s (`TopologyBuildError` / `BuildBoundedError` /
+  `RunnerStartError`) instead of panics, mirroring Java's exceptions.
+  Naming rules for future SDK surface: `docs/sdk_naming_conventions.md`.
+
 ### Changed
 
 - Plugin subscriptions added via `flz plugin enable` now survive any
