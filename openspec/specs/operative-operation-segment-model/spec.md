@@ -2,9 +2,7 @@
 
 ## Purpose
 This capability defines the structural execution model for Operatives: bounded per-Segment mailboxes with a per-channel overflow policy, the `Operation` stage trait surface (state, change, clock, config, persistence), typed compile-checked channels, and dynamic-Operation segmenting (lazy creation, idle-TTL eviction, and soft caps).
-
 ## Requirements
-
 ### Requirement: Hierarchy and placement
 
 The system SHALL realize the role relationship as follows:
@@ -34,6 +32,7 @@ The Controller SHALL hold the authoritative placement table. Runners SHALL regis
 #### Scenario: Each Operative runs on exactly one Runner at a time
 - **WHEN** a Operative is placed on Runner A
 - **THEN** ProcessHub SHALL ensure no concurrent `AddOperative` for the same `operative_id` is issued to any other Runner; migrations SHALL go through the documented HotSwap-with-handover path
+
 ### Requirement: Per-Segment mailbox is bounded with declared capacity
 
 Each SegmentSlot's mailbox SHALL have a fixed capacity declared at operative startup. The mailbox SHALL refuse a push that would exceed this capacity; the SDK then applies the source channel's `OverflowPolicy` (see "Overflow policy declared per channel"). Capacity SHALL NOT change at runtime once the operative is started.
@@ -411,31 +410,36 @@ For any single Segment, two invocations of its Operation's `run(...)` method SHA
 
 ### Requirement: Typed channels with compile-time wiring checks
 
-All inter-Operation and Operation-to-plugin routing SHALL go through Channels declared on the Operative. Each Channel SHALL carry a phantom type parameter `Channel<T>`. The Operative's channel-wiring API SHALL refuse to compile in any of these cases:
+All inter-Operation and Operation-to-plugin routing SHALL go through Channels declared on the Operative via the producer-first graph builder (`sdk-graph-authoring`). Each Channel SHALL carry a phantom type parameter `Channel<T>`, where `T` is taken from the producing Operation's `Output` type — there is no user-supplied type token and no `.from(...)` clause for inter-operation channels. The wiring API SHALL refuse to build in any of these cases:
 
-- A producer Operation whose `Output` associated type is not `T` is connected via `.from::<X>()` to a `Channel<T>`.
-- A consumer Operation whose `Input` associated type is not `T` is connected via `.into::<X>()` to a `Channel<T>`.
-- A Channel is declared with two `.from::<...>()` clauses (multi-producer is forbidden in v1).
+- A consumer Operation whose `Input` associated type is not `T` is wired via `.into::<X>()` / `.into(X.class)` onto a stream of payload type `T`.
+- A node is wired as the producer of more than one output channel (the emit surface carries one output channel per operation, so a second one could never be routed).
 
-#### Scenario: Type-mismatched producer fails to compile
-- **WHEN** a Operation with `type Output = TradeMsg` is wired into a `Channel<Candle>` via `.from::<That>()`
-- **THEN** the Rust compiler SHALL emit a trait-bound error and the program MUST NOT build
+In Rust these refusals SHALL be compile-time where the builder shape permits, otherwise registration-time; in Java they SHALL be registration-time with an error carrying the same diagnostic content.
 
-#### Scenario: Type-mismatched consumer fails to compile
-- **WHEN** a Operation with `type Input = TradeMsg` is wired as a consumer of a `Channel<Candle>` via `.into::<That>()`
-- **THEN** the Rust compiler SHALL emit a trait-bound error and the program MUST NOT build
+#### Scenario: Type-mismatched consumer fails to build
+- **WHEN** an Operation with `type Input = TradeMsg` is wired via `.into::<That>()` onto a stream whose producer declares `type Output = Candle`
+- **THEN** the Rust compiler SHALL emit a trait-bound error (or registration SHALL fail where compile-time enforcement is impossible), and in Java registration SHALL throw naming both operations and both types
 
-#### Scenario: Multi-producer channel fails to compile
-- **WHEN** the Operative's `channels()` declaration contains two `.from::<X>()` calls on the same channel
-- **THEN** the program MUST fail at compile time (or at startup time if compile-time enforcement is impossible for the chosen builder shape)
+#### Scenario: Channel payload type comes from the producer
+- **WHEN** a stream is created by `.into::<OhlcOp>()` where `OhlcOp::Output = Candle`
+- **THEN** the resulting channel SHALL carry payload type `Candle` with no type token anywhere in the declaration
+
+#### Scenario: Second output channel for one node fails to build
+- **WHEN** a declaration attempts to give one node two output channels
+- **THEN** the program MUST fail at compile time (or at registration time if compile-time enforcement is impossible for the chosen builder shape) with an error naming the node
 
 ### Requirement: Per-operative channel namespace
 
-Channel names SHALL be scoped to a single Operative instance. Two Operative instances (for example the BTC Operative and the ETH Operative) SHALL each have their own independent channel namespace; a channel named `"trade.raw"` on one Operative SHALL be a distinct logical channel from a channel of the same name on another Operative.
+Channel names SHALL be scoped to a single Operative instance. Two Operative instances (for example the BTC Operative and the ETH Operative) SHALL each have their own independent channel namespace; a channel named `"trade.raw"` on one Operative SHALL be a distinct logical channel from a channel of the same name on another Operative. Auto-derived channel names (from the producer node's identity, per `sdk-graph-authoring`), `.named(...)` overrides, and explicit entry names SHALL all share this namespace and its duplicate check; a collision SHALL fail registration naming both declarations.
 
 #### Scenario: Same-named channels on different operatives are independent
 - **WHEN** the BTC Operative declares `c.input::<Trade>("trade.raw")` and the ETH Operative also declares `c.input::<Trade>("trade.raw")`
 - **THEN** an input pushed to the BTC Operative's `"trade.raw"` channel SHALL NOT be observable by the ETH Operative's Operations, and vice versa
+
+#### Scenario: Derived and explicit names collide in one namespace
+- **WHEN** an operative declares an entry channel named `"validate"` and also wires a node whose identity is `validate` without a `.named(...)` override
+- **THEN** registration SHALL fail with a duplicate-channel-name error naming both declarations
 
 ### Requirement: Hot-path channel dispatch uses interned u32 IDs
 
@@ -455,32 +459,32 @@ When a Channel connects two Operations inside the same Operative, the SDK SHALL 
 
 ### Requirement: Plugin emission semantics
 
-Channels declared with `.toPlugin("name")` (pure-plugin) and channels declared with `.alsoToPluginWith("name", serializer)` (hybrid) — in **either** the Rust SDK (`.to_plugin(...)` / `.also_to_plugin_with(...)`) or the Java SDK (`.toPlugin(...)` / `.alsoToPluginWith(...)`) — SHALL both route a value through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field is removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1 (see `design.md` Decision 15). A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
+Channels declared with `.output("name")` (pure-plugin) and channels declared with `.also_output_with("name", serializer)` / `.also_output("name")` (hybrid) — in **either** the Rust SDK or the Java SDK (`.output(...)` / `.alsoOutput(...)`) — SHALL both route a value through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field is removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1. A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
 
-For pure-plugin channels, the wire bytes are produced by the channel's `pluginSerializer`/`plugin_serializer` (set by `toPlugin(...)` / `to_plugin(...)`). For hybrid channels, the wire bytes are produced by the channel's `pluginSink.serializer` / `plugin_sink.serializer` (set by `alsoToPluginWith(...)` / `also_to_plugin_with(...)`). In both cases the byte buffer SHALL be sent through the same wire framing path (`channel: String` metadata + payload bytes) so the agent's plugin layer SHALL NOT distinguish between pure and hybrid channels at the wire — both arrive identically and route by channel name. **Furthermore, the agent's plugin layer SHALL NOT distinguish between Rust-SDK and Java-SDK frames** — hybrid frames produced by either SDK are byte-indistinguishable for the same plugin name and serializer-output bytes.
+For pure-plugin channels, the wire bytes are produced by the channel's `pluginSerializer`/`plugin_serializer` (set by `output(...)`). For hybrid channels, the wire bytes are produced by the channel's `pluginSink.serializer` / `plugin_sink.serializer` (set by `alsoOutput(...)` / `also_output_with(...)`). In both cases the byte buffer SHALL be sent through the same wire framing path (`channel: String` metadata + payload bytes) so the agent's plugin layer SHALL NOT distinguish between pure and hybrid channels at the wire — both arrive identically and route by channel name. **Furthermore, the agent's plugin layer SHALL NOT distinguish between Rust-SDK and Java-SDK frames** — hybrid frames produced by either SDK are byte-indistinguishable for the same plugin name and serializer-output bytes.
 
 #### Scenario: Pure-plugin emit reaches the agent's plugin layer
-- **WHEN** a Operation publishes to a channel declared with `.to_plugin("ohlc_kafka")`
+- **WHEN** a Operation publishes to a channel declared with `.output("ohlc_kafka")`
 - **THEN** the agent's `ohlc_kafka` plugin SHALL receive the bytes with `channel = <channel name>` in the metadata
 
 #### Scenario: Hybrid emit reaches the agent's plugin layer with identical framing
-- **WHEN** a Operation publishes to a channel declared with `.also_to_plugin_with("indicators", sma_to_pb_bytes)` on a channel that also has inter-operation consumers
+- **WHEN** a Operation publishes via `.also_output_with("indicators", sma_to_pb_bytes)` on a channel that also has inter-operation consumers
 - **THEN** the agent's `indicators` plugin SHALL receive the serializer-output bytes with `channel = <channel name>` in the metadata
 - **AND** the wire frame SHALL be byte-indistinguishable from a pure-plugin channel's frame for the same plugin name and bytes
 
 #### Scenario: Two channels sharing a plugin name fan in at the agent
-- **WHEN** a Operative declares two hybrid channels (e.g. `sma_out` with `also_to_plugin_with("indicators", sma_serde)` and `ema_out` with `also_to_plugin_with("indicators", ema_serde)`)
+- **WHEN** a Operative declares two hybrid channels (e.g. an `sma_out` stream with `also_output_with("indicators", sma_serde)` and an `ema_out` stream with `also_output_with("indicators", ema_serde)`)
 - **THEN** the agent's `indicators` plugin SHALL receive frames from both channels, distinguishable only by the `channel: String` metadata key
-- **AND** the SDK's topology builder SHALL NOT reject this declaration as a `MultiProducer` error, because each channel still has exactly one producer Operation
+- **AND** the SDK's topology builder SHALL NOT reject this declaration, because each channel still has exactly one producer Operation
 
 #### Scenario: Plugin subscribes by channel name
 - **WHEN** an agent-side plugin is configured to consume outputs from `"ohlc_kafka"`
 - **THEN** that plugin SHALL receive every message whose channel name matches `"ohlc_kafka"`, regardless of which Operation produced it
 
 #### Scenario: Hybrid emit reaches the agent's plugin layer with identical framing across SDKs
-- **WHEN** a Rust Operation publishes via `.also_to_plugin_with("indicators", sma_to_pb_bytes)` and a Java Operation publishes via `.alsoToPluginWith("indicators", SmaCodec::toBytes)` with identical serializer output for an identical input value
+- **WHEN** a Rust Operation publishes via `.also_output_with("indicators", sma_to_pb_bytes)` and a Java Operation publishes via `.alsoOutput("indicators", SmaCodec::toBytes)` with identical serializer output for an identical input value
 - **THEN** the agent's `indicators` plugin SHALL receive byte-equal wire frames from both SDKs (the only on-wire difference being TCP/UDS interleaving — the framed payload bytes are identical)
-- **AND** the SDK's topology builder on either side SHALL NOT reject either declaration as a `MultiProducer` / multi-producer error, because each channel still has exactly one producer Operation within its own SDK
+- **AND** the SDK's topology builder on either side SHALL NOT reject either declaration, because each channel still has exactly one producer Operation within its own SDK
 
 ### Requirement: OperationCtx emit semantics
 
@@ -512,28 +516,31 @@ When `emit_with_meta` is used on a plugin-bound channel, the supplied `HashMap<S
 
 ### Requirement: Hybrid channel builder method
 
-The Rust SDK SHALL expose a method `also_to_plugin_with<F>(plugin_name: &'static str, serializer: F) -> Self` on `ChannelDeclWithProducer<T>` (in `sdk/rust/src/channel/builder.rs`) where `F: Fn(&T) -> Vec<u8> + Send + Sync + 'static`. Calling this method SHALL leave the channel's `kind = ChannelKind::InterOperation` and SHALL attach a plugin sink (the named plugin and the user-supplied serializer, type-erased to `PluginSerializeFn`) alongside the channel's existing consumer fan-out. After the call, further `.into::<S>()` consumer wiring SHALL chain naturally — the method's return type is `Self`.
+The Rust SDK SHALL expose `also_output_with<F>(plugin_name: &'static str, serializer: F)` where `F: Fn(&T) -> Vec<u8> + Send + Sync + 'static`, and `also_output(plugin_name: &'static str)` (default serialization: passthrough for `Vec<u8>`, UTF-8 for `String`, the SDK's default JSON codec otherwise), on the graph builder's stream handle. Calling either SHALL leave the channel's `kind = ChannelKind::InterOperation` and SHALL attach a plugin sink (the named plugin and the serializer, type-erased to `PluginSerializeFn`) alongside the channel's existing consumer fan-out. After the call, further `.into::<S>()` consumer wiring SHALL chain naturally — the method returns the same stream handle.
 
-The plugin sink SHALL be stored on the channel descriptor as a `plugin_sink: Option<PluginSink>` field where `PluginSink { name: &'static str, serializer: PluginSerializeFn }`. Pure-`PluginBound` channels (produced by `to_plugin(...)`) SHALL continue to populate the existing `plugin_name` and `plugin_serializer` fields and SHALL NOT populate `plugin_sink`. Hybrid channels (`InterOperation` + `also_to_plugin_with`) SHALL populate `plugin_sink` and SHALL NOT populate `plugin_name`/`plugin_serializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
+The plugin sink SHALL be stored on the channel descriptor as a `plugin_sink: Option<PluginSink>` field where `PluginSink { name: &'static str, serializer: PluginSerializeFn }`. Pure-`PluginBound` channels (produced by `output(...)`) SHALL continue to populate the existing `plugin_name` and `plugin_serializer` fields and SHALL NOT populate `plugin_sink`. Hybrid channels SHALL populate `plugin_sink` and SHALL NOT populate `plugin_name`/`plugin_serializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
 
 #### Scenario: Hybrid wiring is accepted at registration
-- **WHEN** a Operative declares `c.channel::<SmaValue>("sma_out").from::<SmaOperation>().also_to_plugin_with("indicators", sma_to_pb_bytes).into::<BollingerOperation>()`
-- **THEN** `register_unbounded::<MarketOperative>()` SHALL succeed
-- **AND** the resulting `ChannelDescriptor` for `"sma_out"` SHALL have `kind = InterOperation`, exactly one entry in `consumers` (the `BollingerOperation` operation id), and `plugin_sink = Some(PluginSink { name: "indicators", serializer: <fn-ptr> })`
+- **WHEN** a Operative declares an `SmaOperation` output stream with `.also_output_with("indicators", sma_to_pb_bytes).into::<BollingerOperation>()`
+- **THEN** registration SHALL succeed
+- **AND** the resulting `ChannelDescriptor` SHALL have `kind = InterOperation`, exactly one entry in `consumers` (the `BollingerOperation` operation id), and `plugin_sink = Some(PluginSink { name: "indicators", serializer: <fn-ptr> })`
 
-#### Scenario: also_to_plugin_with chains in either order with into::<S>()
-- **WHEN** a Operative declares `c.channel::<EmaValue>("ema_out").from::<EmaOperation>().into::<MacdOperation>().also_to_plugin_with("indicators", ema_to_pb_bytes)`
-- **THEN** `register_unbounded::<MarketOperative>()` SHALL succeed
-- **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped (`.also_to_plugin_with(...).into::<MacdOperation>()`)
+#### Scenario: also_output_with chains in either order with into::<S>()
+- **WHEN** a Operative declares `.into::<MacdOperation>().also_output_with("indicators", ema_to_pb_bytes)` on an `EmaOperation` output stream
+- **THEN** registration SHALL succeed
+- **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped
 
-#### Scenario: Calling also_to_plugin_with twice on the same channel is a topology error
-- **WHEN** a Operative calls `c.channel::<T>("foo").from::<S>().also_to_plugin_with("p1", f1).also_to_plugin_with("p2", f2)`
-- **THEN** `register_unbounded::<R>()` SHALL panic with `BuildTopologyError::DuplicatePluginSink { channel: "foo" }`
-- **AND** the offending channel name SHALL appear verbatim in the error message
+#### Scenario: also_output without a serializer uses the default codec
+- **WHEN** a Operative declares `.also_output("indicators")` on a stream of a serde-serializable type
+- **THEN** the plugin sink SHALL serialize each value with the SDK's default JSON codec, identically to what `output("indicators")` would produce for the same value
 
-#### Scenario: also_to_plugin_with is unreachable after to_plugin
-- **WHEN** a Operative attempts `c.channel::<Vec<u8>>("foo").from::<S>().to_plugin("p").also_to_plugin_with(...)`
-- **THEN** the code SHALL fail to compile because `to_plugin` returns `Channel<T>` (a finalized handle with no further methods)
+#### Scenario: Calling also_output_with twice on the same channel is a topology error
+- **WHEN** a Operative chains `.also_output_with("p1", f1).also_output_with("p2", f2)` on one stream
+- **THEN** registration SHALL fail with `BuildTopologyError::DuplicatePluginSink { channel }` naming the channel
+
+#### Scenario: also_output is unreachable after output
+- **WHEN** a Operative attempts `.output("p").also_output_with(...)`
+- **THEN** the code SHALL fail to compile because `output` returns a finalized handle with no further methods
 - **AND** a trybuild test under `sdk/rust/tests/build_failures/` SHALL pin this as a stable compile error
 
 ### Requirement: Hybrid channel emission — consumer fan-out then single serializer call
@@ -617,23 +624,27 @@ The producing Operation's `Operation::run` SHALL receive the error via the norma
 
 ### Requirement: Hybrid channel builder method (Java SDK)
 
-The Java SDK SHALL expose a method `alsoToPluginWith(String pluginName, Function<T, byte[]> serializer) -> ChannelDeclWithProducer<T>` on `ChannelDeclWithProducer<T>` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/channel/ChannelDeclWithProducer.java`). Calling this method SHALL leave the channel's `kind = ChannelKind.INTER_OPERATION` and SHALL attach a plugin sink (the named plugin and the user-supplied serializer, type-erased to `Function<Object, byte[]>`) alongside the channel's existing consumer fan-out. After the call, further `.into(...)` consumer wiring SHALL chain naturally — the method's return type is `ChannelDeclWithProducer<T>`.
+The Java SDK SHALL expose `alsoOutput(String pluginName, Function<T, byte[]> serializer)` and `alsoOutput(String pluginName)` (default serialization: passthrough for `byte[]`, UTF-8 for `String`, Jackson JSON otherwise) on the graph builder's stream handle. Calling either SHALL leave the channel's `kind = ChannelKind.INTER_OPERATION` and SHALL attach a plugin sink (the named plugin and the serializer, type-erased to `Function<Object, byte[]>`) alongside the channel's existing consumer fan-out. After the call, further `.into(...)` consumer wiring SHALL chain naturally — the method returns the same stream handle.
 
-The plugin sink SHALL be stored on the channel descriptor as `Optional<PluginSink> pluginSink` where `PluginSink` is a public record `(String name, Function<Object, byte[]> serializer)`. Pure-`PLUGIN_BOUND` channels (produced by `toPlugin(...)`) SHALL continue to populate the existing `pluginName` and `pluginSerializer` fields and SHALL NOT populate `pluginSink`. Hybrid channels (`INTER_OPERATION` + `alsoToPluginWith`) SHALL populate `pluginSink` and SHALL NOT populate `pluginName`/`pluginSerializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
+The plugin sink SHALL be stored on the channel descriptor as `Optional<PluginSink> pluginSink` where `PluginSink` is a public record `(String name, Function<Object, byte[]> serializer)`. Pure-`PLUGIN_BOUND` channels (produced by `output(...)`) SHALL continue to populate the existing `pluginName` and `pluginSerializer` fields and SHALL NOT populate `pluginSink`. Hybrid channels SHALL populate `pluginSink` and SHALL NOT populate `pluginName`/`pluginSerializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
 
 #### Scenario: Hybrid wiring is accepted at registration (Java)
-- **WHEN** a Operative declares `c.channel(SmaValue.class, "sma_out").from(SmaOperation.class).alsoToPluginWith("indicators", SmaCodec::toBytes).into(BollingerOperation.class)`
-- **THEN** `OperativeRegistry.registerUnbounded(MarketOperative.class)` SHALL succeed
-- **AND** the resulting `ChannelDescriptor` for `"sma_out"` SHALL have `kind() == INTER_OPERATION`, exactly one entry in `consumers()` (the `BollingerOperation` operation id), and `pluginSink() == Optional.of(new PluginSink("indicators", <fn>))`
+- **WHEN** a Operative declares an `SmaOperation` output stream with `.alsoOutput("indicators", SmaCodec::toBytes).into(BollingerOperation.class)`
+- **THEN** registration SHALL succeed
+- **AND** the resulting `ChannelDescriptor` SHALL have `kind() == INTER_OPERATION`, exactly one entry in `consumers()` (the `BollingerOperation` operation id), and `pluginSink() == Optional.of(new PluginSink("indicators", <fn>))`
 
-#### Scenario: alsoToPluginWith chains in either order with into(...) (Java)
-- **WHEN** a Operative declares `c.channel(EmaValue.class, "ema_out").from(EmaOperation.class).into(MacdOperation.class).alsoToPluginWith("indicators", EmaCodec::toBytes)`
-- **THEN** `OperativeRegistry.registerUnbounded(MarketOperative.class)` SHALL succeed
-- **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped (`.alsoToPluginWith(...).into(MacdOperation.class)`)
+#### Scenario: alsoOutput chains in either order with into(...) (Java)
+- **WHEN** a Operative declares `.into(MacdOperation.class).alsoOutput("indicators", EmaCodec::toBytes)` on an `EmaOperation` output stream
+- **THEN** registration SHALL succeed
+- **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped
 
-#### Scenario: alsoToPluginWith is unreachable after toPlugin (Java)
-- **WHEN** a Operative attempts `c.channel(byte[].class, "foo").from(S.class).toPlugin("p").alsoToPluginWith(...)`
-- **THEN** the code SHALL fail to compile because `toPlugin` returns `Channel<T>` (a finalized handle that exposes no further methods)
+#### Scenario: alsoOutput without a serializer uses the default codec (Java)
+- **WHEN** a Operative declares `.alsoOutput("indicators")` on a stream of a Jackson-serializable type
+- **THEN** the plugin sink SHALL serialize each value with Jackson JSON, identically to what `output("indicators")` would produce for the same value
+
+#### Scenario: alsoOutput is unreachable after output (Java)
+- **WHEN** a Operative attempts `.output("p").alsoOutput(...)`
+- **THEN** the code SHALL fail to compile because `output` returns a finalized `Channel<T>` handle that exposes no further methods
 
 ### Requirement: Hybrid channel emission — consumer fan-out then single serializer call (Java SDK)
 
@@ -712,33 +723,6 @@ The producing Operation's `Operation.run` SHALL receive the exception via the no
 - **WHEN** the serializer throws `OutOfMemoryError`
 - **THEN** the dispatcher SHALL NOT catch it — the JVM's normal escalation path applies (the worker thread terminates, the runner's uncaught-exception handler runs)
 - **AND** the consumer fan-out for that emit SHALL have already completed
-
-### Requirement: Entry channel value types limited to bytes or string in v1
-
-Channels declared via `c.input::<T>("name")` (entry channels fed by the agent over the wire) SHALL accept only the following payload types in v1:
-
-- `Channel<Vec<u8>>` — bytes are delivered to the consuming Operation unchanged.
-- `Channel<String>` — the SDK SHALL perform UTF-8 decoding at the input edge. An invalid-UTF-8 byte sequence SHALL be logged against the (operative, channel) pair and the input SHALL be dropped without invoking the consuming Operation.
-
-Any other `T` on an entry channel SHALL fail at Operative startup with an error message naming the unsupported type and instructing the user to use `Vec<u8>` or `String` as the entry channel type and add a decoding Operation.
-
-This restriction applies only to entry channels. Inter-operation channels (`c.channel::<T>(...).from::<X>().into::<Y>()`) and plugin-output channels (`.to_plugin(...)`) MAY carry any `T` that satisfies the channel's wiring constraints.
-
-#### Scenario: Entry channel of bytes
-- **WHEN** a Operative declares `c.input::<Vec<u8>>("trade.raw")` and an input arrives over the wire
-- **THEN** the consuming Operation's `run` SHALL receive the bytes unchanged
-
-#### Scenario: Entry channel of string with valid UTF-8
-- **WHEN** a Operative declares `c.input::<String>("trade.raw")` and a UTF-8-valid byte sequence arrives
-- **THEN** the consuming Operation's `run` SHALL receive the decoded `String`
-
-#### Scenario: Entry channel of string with invalid UTF-8
-- **WHEN** a Operative declares `c.input::<String>("trade.raw")` and a byte sequence that is not valid UTF-8 arrives
-- **THEN** the SDK SHALL log the decode failure against the (operative, channel) pair and SHALL NOT invoke the consuming Operation's `run`
-
-#### Scenario: Entry channel of arbitrary type fails at startup
-- **WHEN** a Operative declares `c.input::<RawTrade>("trade.raw")` where `RawTrade` is neither `Vec<u8>` nor `String`
-- **THEN** the Operative startup SHALL fail with an error message naming the unsupported type and instructing the user to use `Vec<u8>` or `String` as the entry channel type and add a decoding Operation
 
 ### Requirement: Worker pool reuses existing dispatch infrastructure
 

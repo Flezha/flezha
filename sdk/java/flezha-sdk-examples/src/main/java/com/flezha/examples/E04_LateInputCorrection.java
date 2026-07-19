@@ -147,19 +147,11 @@ public final class E04_LateInputCorrection {
 
         @Override
         public void channels(ChannelBuilder c) {
-            // A correction rewinds a consumed offset, so it requires the tier.
             c.effectivelyOnce();
-
-            // Repair anything up to 5 minutes late. Older than that is beyond the
-            // window: the past it would fix is no longer retained.
             c.correctionWindow(5 * 60_000L);
             c.beyondWindowPolicy(BeyondWindowPolicy.PROCESS_AS_ARRIVAL);
-
-            c.input(String.class, "trades").into(CandleOperation.class);
-            c.channel(String.class, "candles")
-                    .from(CandleOperation.class)
-                    .keyed()
-                    .toPlugin("postgres_sink");
+            var sCandleOperation = c.input(String.class, "trades").into(CandleOperation.class);
+            sCandleOperation.named("candles").keyed().output("postgres_sink");
         }
     }
 

@@ -152,18 +152,10 @@ public final class E03_EffectivelyOnce {
 
         @Override
         public void channels(ChannelBuilder c) {
-            // Opt in. Both declarations ride the AddOperative reply, which is how
-            // the controller learns to run the tier for this class at all.
             c.effectivelyOnce();
             c.checkpointAck();
-
-            c.input(String.class, "ticks").into(RollupOperation.class);
-
-            // .keyed() is mandatory under the tier — omit it and registration fails.
-            c.channel(String.class, "rollups")
-                    .from(RollupOperation.class)
-                    .keyed()
-                    .toPlugin("postgres_sink");
+            var sRollupOperation = c.input(String.class, "ticks").into(RollupOperation.class);
+            sRollupOperation.named("rollups").keyed().output("postgres_sink");
         }
     }
 

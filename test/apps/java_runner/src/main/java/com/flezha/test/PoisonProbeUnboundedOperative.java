@@ -16,7 +16,7 @@ public final class PoisonProbeUnboundedOperative implements UnboundedOperative {
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "input").retryBackoffMs(25).into(PoisonProbeOperation.class);
-        c.channel(String.class, "out").from(PoisonProbeOperation.class).toPlugin("probe_sink");
+        var sPoisonProbeOperation = c.input(String.class, "input").retryBackoffMs(25).into(PoisonProbeOperation.class);
+        sPoisonProbeOperation.named("out").output("probe_sink");
     }
 }

@@ -154,8 +154,8 @@ class BoundedMailboxTopologyTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(A.class);
-            c.channel(Integer.class, "mid").from(A.class).into(B.class);
+            var sA = c.input(String.class, "input").into(A.class);
+            sA.named("mid").into(B.class);
         }
     }
 
@@ -167,11 +167,8 @@ class BoundedMailboxTopologyTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(A.class);
-            c.channel(Integer.class, "mid")
-                    .onFull(OverflowPolicy.DROP_OLDEST)
-                    .from(A.class)
-                    .into(B.class);
+            var sA = c.input(String.class, "input").into(A.class);
+            sA.named("mid").onFull(OverflowPolicy.DROP_OLDEST).into(B.class);
         }
     }
 
@@ -183,8 +180,8 @@ class BoundedMailboxTopologyTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").onFull(OverflowPolicy.BLOCK).into(A.class);
-            c.channel(Integer.class, "mid").from(A.class).into(B.class);
+            var sA = c.input(String.class, "input").onFull(OverflowPolicy.BLOCK).into(A.class);
+            sA.named("mid").into(B.class);
         }
     }
 

@@ -119,7 +119,7 @@ final class BoundedCollectAdapter implements OperationCtx {
         }
         switch (descriptor.kind()) {
             case INTER_OPERATION -> {
-                // Collect for the next stage; a hybrid alsoToPluginWith(...) sink
+                // Collect for the next stage; a hybrid alsoOutput(...) sink
                 // also routes a serialized copy to the plugin wire.
                 sink.collect(value);
                 if (descriptor.pluginSink().isPresent()) {

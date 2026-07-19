@@ -5,9 +5,10 @@ import java.util.Objects;
 
 /**
  * Thrown by {@link com.flezha.sdk.FlezhaRunner#defineUnbounded(Class)} when an UnboundedOperative's
- * declared topology violates a wiring constraint (entry-channel-type,
- * type-equality between channel payload and producer/consumer Operation,
- * unwired channel, multi-producer, static-mode default-impl detection).
+ * declared topology violates a wiring constraint (type-equality between a
+ * stream's payload and its consumer Operations' input, node-identity and
+ * channel-name uniqueness, graph shape — one entry, reachable, acyclic —
+ * static-mode default-impl detection).
  *
  * <p>Carries channel name and expected/actual type info so the runner
  * can diagnose the misconfiguration without re-running with a debugger.
@@ -113,13 +114,60 @@ public class UnboundedOperativeConfigurationException extends RuntimeException {
 
     /**
      * Factory raised at {@code registerUnbounded} time when a channel is declared
-     * with {@code alsoToPluginWith(...)} more than once. Only one plugin sink
+     * with {@code alsoOutput(...)} more than once. Only one plugin sink
      * per channel is allowed; the first call registers it, the second fails.
      */
     public static UnboundedOperativeConfigurationException duplicatePluginSink(String channel) {
         return new UnboundedOperativeConfigurationException(
-                "channel `" + channel + "` was declared with `alsoToPluginWith(...)` "
+                "channel `" + channel + "` was declared with `alsoOutput(...)` "
                         + "more than once; only one plugin sink per channel is allowed");
+    }
+
+    /**
+     * Raised when a node identity string (an explicit node name or an
+     * operation's {@code name()}) is claimed by two distinct nodes. Carries
+     * the Rust error name {@code NodeIdentityCollision}.
+     */
+    public static UnboundedOperativeConfigurationException nodeIdentityCollision(String name) {
+        return new UnboundedOperativeConfigurationException("NodeIdentityCollision: node identity `" + name
+                + "` is declared by two distinct nodes; a node name must be unique per operative"
+                + " and distinct from every operation name()");
+    }
+
+    /** Raised when {@code branch(...)} is called with fewer than two arms. */
+    public static UnboundedOperativeConfigurationException branchTooFewArms(int arms) {
+        return new UnboundedOperativeConfigurationException(
+                "branch(...) requires at least two arms; " + arms + " given");
+    }
+
+    /**
+     * Raised when a node's output (transitively) reaches its own input.
+     * Carries the Rust error name {@code Cycle}.
+     */
+    public static UnboundedOperativeConfigurationException cycle(String operation) {
+        return new UnboundedOperativeConfigurationException("Cycle: operation `" + operation
+                + "` is on a cycle; an operative topology is a DAG — a node's output may never"
+                + " reach its own input");
+    }
+
+    /**
+     * Raised when an operative declares more than one entry channel. The
+     * graph is fed by exactly one entry. Carries the Rust error name
+     * {@code MultipleEntryChannels}.
+     */
+    public static UnboundedOperativeConfigurationException multipleEntryChannels(String first, String second) {
+        return new UnboundedOperativeConfigurationException(
+                "MultipleEntryChannels: operative declares more than one entry channel (`" + first + "` and `" + second
+                        + "`); the graph is fed by exactly one entry");
+    }
+
+    /**
+     * Raised when an operation is not reachable from the entry channel.
+     * Carries the Rust error name {@code UnreachableOperation}.
+     */
+    public static UnboundedOperativeConfigurationException unreachableOperation(String operation) {
+        return new UnboundedOperativeConfigurationException(
+                "UnreachableOperation: operation `" + operation + "` is not reachable from the entry channel");
     }
 
     /**

@@ -369,7 +369,7 @@ Re-reading the range already contains it. Only the *order* was ever wrong.
 ### Declaring it
 
 ```rust
-fn channels(c: &mut ChannelBuilder) {
+fn channels(c: &ChannelBuilder) {
     c.effectively_once();
     c.correction_window(600_000);          // repair up to 10 minutes of past
     c.beyond_window_policy(BeyondWindowPolicy::Drop);   // optional; default below

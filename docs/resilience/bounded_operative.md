@@ -13,72 +13,85 @@ finished-job retention. Read it with [`data_durability.md`](data_durability.md)
 (where state is lost vs. not) and [`state_persistence.md`](state_persistence.md)
 (the shared WAL substrate both kinds use).
 
-## Structure: a tree of operations, parallel segments
+## Structure: a DAG of operations, parallel segments
 
 A bounded operative authors the **same** Operations, Channels, and Segments a
 unbounded operative does — the same per-segment state engine — but its
 operations are scheduled **topologically**:
 
-- **Operation tree** — the linear chain `Op1 → Op2 → … → OpN` is the
-  single-branch case; an operation MAY also **fan out**. Each operation's
-  collected output is its downstream operations' input, handed over at a
-  **count-based barrier**: an operation is *done* only when every one of its
-  segments has finished. Because each stage chews a finite, known batch, "done"
-  is a count, not a fuzzy idle guess.
+- **Operation DAG** — the linear chain `Op1 → Op2 → … → OpN` is the
+  single-branch case; an operation MAY also **fan out**, and several operations
+  MAY feed one (**fan-in**). Each operation's collected output is its
+  downstream operations' input, handed over at a **count-based barrier**: an
+  operation is *done* only when every one of its segments has finished. Because
+  each stage chews a finite, known batch, "done" is a count, not a fuzzy idle
+  guess.
 - **Within one operation, segments run in parallel** exactly as in unbounded
   (single / static segmenting, per-segment state + WAL).
 - The root operation is **seeded from the spawn `args`** (`init_values`); every
-  other operation consumes its parent's output.
+  other operation consumes its producers' output.
 - `run(ctx, args)` is **sugar** for a single-Operation, single-Segment bounded
   operative — the simplest case, and the only form with an interactive inbox
   loop (below).
 
-### Branching: fan-out, not fan-in
+### Branching: fan-out and fan-in on a static DAG
 
 An **edge** is *(an operation's output channel, one of that channel's
 consumers)*. An `Operation` has a single `Output` type and therefore one output
-channel, so a fan-out is simply that channel declaring several consumers:
+channel, so a fan-out is one stream handle wired twice, and a join is two
+streams naming the same node (`sdk-graph-authoring`):
 
 ```rust
-fn operations(c: &mut ChannelBuilder) {
-    c.input::<Job>("in").into::<Extract>();
+fn operations(c: &ChannelBuilder) {
+    let records = c
+        .input::<Job>("in")
+        .into::<Extract>()
+        .named("records")
+        .codec();
     // One channel, two consumers: Enrich and Archive are independent branches.
-    c.channel::<Record>("records")
-        .codec()
-        .from::<Extract>()
-        .into::<Enrich>()
-        .into::<Archive>();
-    c.channel::<Enriched>("out").from::<Enrich>().to_plugin("sink");
-    c.channel::<Record>("cold").from::<Archive>().to_plugin("glacier");
+    records.into::<Enrich>().named("out").output("sink");
+    records.into::<Archive>().named("cold").output("glacier");
 }
 ```
 
 Routing is **per channel**: a downstream operation receives exactly the values
-released on the channel it consumes. Branches are **independent** by
-construction — there is no cross-branch data exchange, and siblings that need
-each other's output are one operation. Registration refuses anything that is not
-a tree, naming the node:
+released on the channels it consumes. A **join** — two streams wiring the same
+(unnamed) class — receives the **accumulated** contributions of all its
+producers: each producer's released batch is appended to the join's input
+batch, never overwritten, and the join is dispatched exactly **once**, only
+after every one of its producers has committed. Registration refuses anything
+outside the shared graph-shape rule, naming the node:
 
 | Shape | Refusal |
 | --- | --- |
-| Two channels feed one operation (**fan-in / join**) | `FanIn` |
-| One operation produces two channels | `MultipleOutputChannels` |
+| An operation's output reaches its own input (**cycle**) | `Cycle` (via the shared topology validation) |
+| One operation produces two channels | `MultipleOutputChannels` (structurally unreachable on the stream-handle builder; kept as defense) |
 | The entry channel feeds ≠ 1 operation | `EntryRoot` |
 | An operation unreachable from the entry channel | `Disconnected` |
-| `LoopMode::Chained` over a branching tree | `BranchingChainedLoop` |
+| `LoopMode::Chained` over a graph with several leaves | `BranchingChainedLoop` |
 
-**Scheduling.** A child becomes runnable only once its parent's commit is
-acknowledged. Every currently-runnable node is submitted to the work-stealing
-pool **together** — sibling branches are independent subtrees, so they interleave
-freely — and joined on one barrier before the level commits. The operative is
-`ok` exactly when every **leaf** operation has committed; the controller derives
-the same fact from the journal, because the SDK declares its leaf set at
-`AddOperative`.
+**Scheduling.** A child becomes runnable only once **every** producer feeding
+it has its commit acknowledged — the existing rule, of which a join is just the
+several-producer case. Validation orders operations with a Kahn topological
+sort (for a tree this is exactly the former BFS numbering, so journaled
+`op_idx` values keep their meaning), every currently-runnable node is submitted
+to the work-stealing pool **together** — sibling branches are independent, so
+they interleave freely — and joined on one barrier before the level commits.
+The operative is `ok` exactly when every **leaf** operation has committed; the
+controller derives the same fact from the journal, because the SDK declares its
+leaf set at `AddOperative`.
+
+**Fan-in and crash-resume.** A join with one committed and one uncommitted
+producer resumes with the committed producer's **journaled** handoff banked and
+the resumed producer's fresh output appended — the committed branch never
+re-runs. Compensation stays reverse-topological: a join is undone **before**
+any of its producers, and a shared root last.
 
 A handoff-chained loop (`LoopMode::Chained`) seeds iteration N+1 from iteration
-N's terminal batch, which a tree with several leaves does not define — hence the
-`BranchingChainedLoop` refusal. `Once` and `PerInput` classes may branch freely;
-one iteration is one pass of the whole tree.
+N's terminal batch, which a graph with several leaves does not define — hence
+the `BranchingChainedLoop` refusal (a diamond converging on one terminal is
+fine). `Once` and `PerInput` classes may branch freely; one iteration is one
+pass of the whole graph.
 
 The `{operative_class, operation_id, segment_key}` identity is the same one a
 unbounded operative uses — a bounded operative genuinely has operations and
@@ -280,11 +293,12 @@ inside the **same single teardown** (not a parallel path). Operations with no
 hook are skipped; a clean `ok` **never** compensates.
 
 **Reverse topological** means no operation is undone before its compensated
-descendants; independent sibling subtrees unwind in an unspecified relative
-order (the same rule per-segment compensation already follows). For a linear
-chain it degenerates to the exact reverse of the chain. In an `A → (B, C)` tree
-where a failure lands under `B` after all three completed, the rollback runs
-`C` and `B` — in either order — and only then `A`:
+descendants — in particular a **join is undone before any of its producers** —
+while independent sibling subtrees unwind in an unspecified relative order (the
+same rule per-segment compensation already follows). For a linear chain it
+degenerates to the exact reverse of the chain. In an `A → (B, C)` tree where a
+failure lands under `B` after all three completed, the rollback runs `C` and
+`B` — in either order — and only then `A`:
 
 ```
         A                          undo C ─┐

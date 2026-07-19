@@ -30,6 +30,7 @@ public final class Main {
                 .defineBounded(EchoBoundedOperative.class)
                 .defineBounded(CommitBlockBoundedOperative.class)
                 .defineBounded(SagaBlockBoundedOperative.class)
+                .defineBounded(DiamondBoundedOperative.class)
                 .run();
     }
 

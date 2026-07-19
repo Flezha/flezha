@@ -196,8 +196,8 @@ class UnboundedOperativeStateSerializerTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input.a").into(OperationA.class);
-            c.input(String.class, "input.b").into(OperationB.class);
+            // One entry (the graph-shape rule); A feeds B so both ops carry state.
+            c.input(String.class, "input.a").into(OperationA.class).into(OperationB.class);
         }
     }
 }

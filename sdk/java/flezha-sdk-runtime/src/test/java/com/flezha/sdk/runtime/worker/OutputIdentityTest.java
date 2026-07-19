@@ -178,8 +178,8 @@ class OutputIdentityTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(KeyedOp.class);
-            c.channel(String.class, "out").from(KeyedOp.class).keyed().toPlugin("sink");
+            var sKeyedOp = c.input(String.class, "in").into(KeyedOp.class);
+            sKeyedOp.named("out").keyed().output("sink");
         }
     }
 
@@ -191,8 +191,8 @@ class OutputIdentityTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(PlainOp.class);
-            c.channel(String.class, "out").from(PlainOp.class).toPlugin("sink");
+            var sPlainOp = c.input(String.class, "in").into(PlainOp.class);
+            sPlainOp.named("out").output("sink");
         }
     }
 
@@ -216,8 +216,8 @@ class OutputIdentityTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(ReservedMetaOp.class);
-            c.channel(String.class, "out").from(ReservedMetaOp.class).toPlugin("sink");
+            var sReservedMetaOp = c.input(String.class, "in").into(ReservedMetaOp.class);
+            sReservedMetaOp.named("out").output("sink");
         }
     }
 
@@ -229,11 +229,8 @@ class OutputIdentityTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(PlainEmitOnKeyedOp.class);
-            c.channel(String.class, "out")
-                    .from(PlainEmitOnKeyedOp.class)
-                    .keyed()
-                    .toPlugin("sink");
+            var sPlainEmitOnKeyedOp = c.input(String.class, "in").into(PlainEmitOnKeyedOp.class);
+            sPlainEmitOnKeyedOp.named("out").keyed().output("sink");
         }
     }
 

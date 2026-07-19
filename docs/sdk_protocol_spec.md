@@ -197,7 +197,7 @@ For each (key, value) pair:
 
 | Key | Direction | Description |
 |---|---|---|
-| `input_type` | Controller → SDK | Wire format of the entry-channel payload — `"1"` for binary (default), `"2"` for UTF-8 text. The SDK uses this to convert the payload bytes to the entry channel's `EntryChannelType` (`Vec<u8>` or `String`). |
+| `input_type` | Controller → SDK | Wire format of the entry-channel payload — `"1"` for binary (default), `"2"` for UTF-8 text. The SDK converts the payload bytes to the entry channel's declared payload type: `Vec<u8>`/`byte[]` passthrough, `String` UTF-8, any other type via the channel's entry parser (default JSON or a custom `input_with` parser — `sdk-graph-authoring` typed entries). |
 | `channel` | Controller → SDK | Names the Operative's entry channel that should receive this input. If absent, the SDK falls back to the Operative's first declared input channel. |
 | `channel` | SDK → Controller | Set by `OperationCtx::emit` on plugin-bound and hybrid channels. Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka.Producer`) match on this key via their `:channel` opt to gate which channel's outputs they consume. |
 | `flz.segment` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the emitting Segment as `<operative_instance_id>/<operation_name>/<segment_key>` (empty key for single-mode). Replay-stable. |
@@ -208,6 +208,13 @@ For each (key, value) pair:
 
 The `channel` metadata key replaces the pre-`operative-mvp-rust` `plugin_group: u8` integer key. v1 sends the channel name as a UTF-8 string; an integer fast-path is reserved for a future change.
 
+Channel names on the wire are unchanged in shape by the graph-builder
+authoring surface (`sdk-graph-authoring`): a non-entry channel's name is
+auto-derived from the producer node's identity (the operation's `name()`, or
+the explicit node name) unless `.named(...)` overrides it, and entry names
+stay explicit. Derived names come from hand-written identity strings, so
+renaming a language class never changes a wire or on-disk name.
+
 The `flz.` prefix is a protected namespace: user-supplied metadata keys
 beginning with `flz.` are rejected at emit time with a typed
 `OperationError::ReservedMetadataKey`, on every emit variant, so runtime
@@ -215,7 +222,7 @@ stamps can never be spoofed or clobbered. Stamps are appended after user
 metadata. Channels not declared `.keyed()` carry no stamps and their wire
 frames are byte-identical to the pre-identity layout.
 
-Hybrid channels (declared with `also_to_plugin_with(...)` — see `docs/operative_architecture.md` "Hybrid channels: inter-operation fan-out + plugin sink") reuse this exact framing. The plugin-bytes wire frame is byte-indistinguishable from a pure-`to_plugin(...)` frame for the same plugin name and bytes; no new wire payload-id, no new metadata key.
+Hybrid channels (declared with `also_output_with(...)` / `alsoOutput(...)` — see `docs/operative_architecture.md` "Hybrid channels: inter-operation fan-out + plugin sink") reuse this exact framing. The plugin-bytes wire frame is byte-indistinguishable from a pure-`output(...)` frame for the same plugin name and bytes; no new wire payload-id, no new metadata key.
 
 #### Per-Segment mailbox is bounded; on full, the channel's `OverflowPolicy` applies
 
@@ -1765,10 +1772,10 @@ by a restore.
 
 ### Plugin metadata: output identity stamps (`flz.*`)
 
-Channels declared `.keyed()` (valid on `to_plugin` and
-`also_to_plugin_with` wires only — a keyed channel without a plugin wire
-is a build error) stamp every plugin-bound emit with three reserved
-metadata keys, appended after user metadata:
+Channels declared `.keyed()` (valid on `output` and
+`also_output` / `also_output_with` wires only — a keyed channel without a
+plugin wire is a build error) stamp every plugin-bound emit with three
+reserved metadata keys, appended after user metadata:
 
 | Key | Value | Stability |
 |---|---|---|

@@ -2,21 +2,19 @@
 
 ## Purpose
 Replay-stable identity on emitted outputs: per-channel `.keyed()` opt-in, `emit_keyed`, the `flz.segment`/`flz.seq`/`flz.key` reserved stamps, the protected `flz.` metadata namespace, and the `flz.seq` exactness boundary. Non-keyed channels stay byte-identical and cost-free.
-
 ## Requirements
-
 ### Requirement: Keyed channel declaration
 
-The channel builder SHALL support a `.keyed()` declaration on plugin-bound and
-hybrid (`also_to_plugin_with`) channels, recorded on the channel entry. Declaring
-`.keyed()` on a pure inter-operation channel (no plugin wire) SHALL be a build
-error. The channel declaration is the single source of truth for whether output
-identity exists on that channel.
+The channel builder SHALL support a `.keyed()` declaration on plugin-bound
+(`output`) and hybrid (`also_output` / `also_output_with`) channels, recorded on
+the channel entry. Declaring `.keyed()` on a pure inter-operation channel (no
+plugin wire) SHALL be a build error. The channel declaration is the single
+source of truth for whether output identity exists on that channel.
 
 #### Scenario: Keyed plugin channel accepted
 
-- **WHEN** a topology declares `c.channel::<Candle>("ohlc").from::<OhlcOp>()
-  .also_to_plugin_with("kafka", ser).keyed()`
+- **WHEN** a topology declares `.also_output_with("kafka", ser).keyed()` on an
+  `OhlcOp` output stream
 - **THEN** the operative builds and the channel entry is marked keyed
 
 #### Scenario: Keyed inter-operation channel rejected
@@ -116,3 +114,4 @@ SHALL show no regression on non-keyed emit paths.
 - **WHEN** the existing dispatch throughput bench runs on a non-keyed workload
 - **THEN** throughput is within the established regression tolerance of the
   pre-change baseline
+

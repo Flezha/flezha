@@ -57,7 +57,10 @@ decisions, and capability spec deltas, see
   time (sticky ordering).
 
 - **Channel** — the typed wire between producers/consumers. Three kinds:
-  `Entry` (controller → SDK, restricted to `Vec<u8>` / `String`),
+  `Entry` (controller → SDK; any payload type — `Vec<u8>` passthrough,
+  `String` UTF-8-decoded, anything else deserialized at the entry edge
+  with the SDK's default JSON codec, or a custom parser via `input_with`;
+  a failing parse rides the channel's retry→DLQ ladder),
   `InterOperation` (`Arc<T>` zero-copy between Operations), and `PluginBound`
   (typed value serialized to bytes; sent to a named plugin via the
   controller).
@@ -281,14 +284,13 @@ struct MarketOperative;
 impl UnboundedOperative for MarketOperative {
     fn factory_id() -> &'static str { "market" }
 
-    fn channels(c: &mut ChannelBuilder) {
-        c.input::<String>("trade.raw").into::<ParseOp>();
-        c.channel::<f64>("trade.parsed")
-            .from::<ParseOp>()
-            .into::<OhlcOp>();
-        c.channel::<Vec<u8>>("ohlc.candles")
-            .from::<OhlcOp>()
-            .to_plugin("ohlc_kafka");
+    fn channels(c: &ChannelBuilder) {
+        c.input::<String>("trade.raw")
+            .into::<ParseOp>()          // returns ParseOp's output stream handle
+            .named("trade.parsed")
+            .into::<OhlcOp>()           // returns OhlcOp's output stream handle
+            .named("ohlc.candles")
+            .output("ohlc_kafka");      // plugin-bound terminal
     }
 }
 
@@ -361,13 +363,12 @@ public final class OhlcOp implements Operation<Double, OhlcState, byte[]> {
 public final class MarketOperative implements UnboundedOperative {
     @Override public String factoryId() { return "market"; }
     @Override public void channels(ChannelBuilder c) {
-        c.input(String.class, "trade.raw").into(ParseOp.class);
-        c.channel(Double.class, "trade.parsed")
-                .from(ParseOp.class)
-                .into(OhlcOp.class);
-        c.channel(byte[].class, "ohlc.candles")
-                .from(OhlcOp.class)
-                .toPlugin("ohlc_kafka");
+        c.input(String.class, "trade.raw")
+                .into(ParseOp.class)     // returns ParseOp's output stream handle
+                .named("trade.parsed")
+                .into(OhlcOp.class)      // returns OhlcOp's output stream handle
+                .named("ohlc.candles")
+                .output("ohlc_kafka");   // plugin-bound terminal
     }
 }
 
@@ -512,12 +513,11 @@ same capacity.
 
 ```rust
 c.input::<Vec<u8>>("trade.raw")
-    .on_full(OverflowPolicy::DropNewest)
-    .into::<ParseOp>();
-
-c.channel::<Candle>("ohlc.candles")
-    .from::<OhlcOp>()
-    .on_full(OverflowPolicy::Block)
+    .on_full(OverflowPolicy::DropNewest)   // entry-side policy
+    .into::<ParseOp>()
+    .into::<OhlcOp>()                      // OhlcOp's output stream handle
+    .named("ohlc.candles")
+    .on_full(OverflowPolicy::Block)        // inter-operation policy
     .into::<IndicatorOp>();
 ```
 
@@ -538,9 +538,11 @@ c.channel::<Candle>("ohlc.candles")
   `drops_oldest_total` counter increments by 1. Best-effort under MPMC
   contention.
 
-Plugin-bound channels (`.to_plugin(...)`) reject `.on_full(...)` at
-compile time — there is no SDK-side mailbox between a plugin-bound emit
-and the wire, so the policy enum has nothing to act on.
+The plugin-bound terminal `output(...)` returns a finalized `Channel`
+with no further builder methods, so nothing — `.on_full(...)` included —
+can chain after it. There is no SDK-side mailbox between a plugin-bound
+emit and the wire, so a policy declared earlier on a stream that ends
+plugin-bound is never consulted.
 
 ### Default policy by channel kind
 
@@ -632,41 +634,42 @@ hybrid-channel section below).
 A hybrid channel publishes a single typed value to both inter-operation
 consumers (typed, zero-copy) and a named plugin (serialized to bytes)
 without forcing the producer Operation to declare two output channels. The
-builder method is `also_to_plugin_with(plugin_name, serializer)` on
-`ChannelDeclWithProducer<T>`:
+builder method is `also_output_with(plugin_name, serializer)` on the
+producer's output stream handle (`Stream<T>`); `also_output(plugin_name)`
+is the same with the default serialization rules of `output(...)`:
 
 ```rust
-c.channel::<SmaValue>("sma_out")
-    .from::<SmaOp>()
-    .also_to_plugin_with("indicators", sma_to_pb_bytes)
+sma_stream                       // SmaOp's output handle, from `.into::<SmaOp>()`
+    .named("sma_out")
+    .also_output_with("indicators", sma_to_pb_bytes)
     .into::<BollingerOp>();
 ```
 
-Java equivalent (same shape via the `alsoToPluginWith` method on
-`ChannelDeclWithProducer<T>`):
+Java equivalent (same shape via the `alsoOutput` overloads on
+`Stream<T>`):
 
 ```java
-c.channel(SmaValue.class, "sma_out")
-    .from(SmaOp.class)
-    .alsoToPluginWith("indicators", SmaCodec::toBytes)
+smaStream                        // SmaOp's output handle, from `.into(SmaOp.class)`
+    .named("sma_out")
+    .alsoOutput("indicators", SmaCodec::toBytes)
     .into(BollingerOp.class);
 ```
 
 The Java surface mirrors Rust: `kind` stays `INTER_OPERATION`, the channel
 descriptor carries `Optional<PluginSink> pluginSink`, duplicates raise
 `OperativeConfigurationException.duplicatePluginSink(channel)` at
-`RunnerBuilder.defineUnbounded(...)` time, and a serializer that throws
+registration time, and a serializer that throws
 surfaces as `OperationException.PluginSerializerFailure` (Java's structured-throw
 analog of Rust's `OperationError::PluginSerializerPanic`). Wire frames produced
 by either SDK are byte-indistinguishable at the agent's plugin layer.
 
 The channel's `kind` stays `InterOperation`. The plugin sink lives on a
 parallel `plugin_sink: Option<PluginSink>` field. Order of
-`also_to_plugin_with` and `.into::<S>()` is irrelevant — the
-descriptor accumulates both regardless. Calling `also_to_plugin_with`
-twice on the same channel is rejected at registration with
-`BuildTopologyError::DuplicatePluginSink`. The type system already
-forbids `also_to_plugin_with` after `to_plugin` (the latter returns a
+`also_output_with` and `.into::<S>()` is irrelevant — the
+descriptor accumulates both regardless. Calling `also_output_with` (or
+`also_output`) twice on the same channel is rejected at registration with
+`TopologyIssue::DuplicatePluginSink`. The type system already
+forbids `also_output_with` after `output` (the latter returns a
 finalized `Channel<T>`); a trybuild test pins this.
 
 ### Per-emit semantics
@@ -698,9 +701,9 @@ user-supplied `channel` entry is dropped.
 
 ### Wire format and agent fan-in
 
-Hybrid frames are byte-indistinguishable from `to_plugin(...)` frames
+Hybrid frames are byte-indistinguishable from `output(...)` frames
 for the same plugin name and bytes. Two channels sharing a
-`plugin_name` (typically `also_to_plugin_with("indicators", ...)`
+`plugin_name` (typically `also_output_with("indicators", ...)`
 across several Operations) fan in cleanly at the agent's plugin layer; the
 plugin distinguishes them by the `channel: String` metadata key. No
 new wire payload-id, no new agent code.
@@ -803,8 +806,11 @@ Decisions referenced above:
   `SEGMENT_FOR_OVERRIDDEN` const sentinel.
 - **Decision 10 (umbrella)** — Inter-operation `Arc<T>` zero-copy;
   plugin-bound serializes at the producer edge.
-- **Decision 12 (umbrella)** — Entry channels accept only `Vec<u8>` /
-  `String` in v1 (sealed `EntryChannelType`).
+- **Decision 12 (umbrella)** — Entry channels accepted only `Vec<u8>` /
+  `String` in v1 (the sealed `EntryChannelType`). Superseded by
+  `sdk-graph-authoring`: `input::<T>` accepts any type, JSON-decoded at
+  the entry edge (`input_with` for custom parsers), with a failing parse
+  riding the channel's retry→DLQ ladder.
 - **Decision 15 (umbrella)** — Channel name on the wire as a UTF-8
   string; integer fast-path reserved for a future change.
 

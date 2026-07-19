@@ -794,54 +794,35 @@ The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK 
 
 ### Requirement: Operative Type Declaration
 
-The Java SDK SHALL provide `FlezhaRunner.defineUnbounded(Class<? extends UnboundedOperative>)` and `FlezhaRunner.defineBounded(Class<? extends BoundedOperative>)` as chainable methods on the runner, legal both **before and after** `.start()`/`.run()`, and `FlezhaRunner.removeUnbounded(Class<? extends UnboundedOperative>)` / `FlezhaRunner.removeBounded(Class<? extends BoundedOperative>)` as their inverses. For each declared UnboundedOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once and record the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel-type, type-equality between channel payload and producer/consumer Operation I/O, no unwired channels, no multi-producer, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry SHALL NOT be frozen — a define or remove after `.start()` SHALL update the registry and ship the runner's full current factory set to the controller via the `UpdateFactories` control message (see the `runner-factory-sync` capability). There SHALL be no `OperativeHandler`-style factory registration and no public `register*` vocabulary in the public surface.
-
-`removeUnbounded`/`removeBounded` SHALL throw `IllegalArgumentException` if the class's factory id is not currently defined, and SHALL throw `com.flezha.sdk.OperativeTypeInUseException` (extends `IllegalStateException`) if the runner is started and live Operative instances of that factory exist — the removal SHALL NOT take effect in that case (the type remains defined).
+The Java SDK SHALL provide `RunnerBuilder.defineUnbounded(Class<? extends UnboundedOperative>)` and `RunnerBuilder.defineBounded(Class<? extends BoundedOperative>)` as chainable builder methods, called **before** `.start()`/`.run()`. For each declared UnboundedOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between a stream's payload type and its consumer Operations' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry MUST be frozen at `.start()` time. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
 
 Dynamic segmentation SHALL be supported: an Operation that overrides `operationKey(Input)` (signalled by `operationKeyOverridden()` returning `true`) and returns an empty list from `operationKeys()` SHALL be declared successfully and create Segments lazily per key at dispatch time, per the `operative-state-persistence` dynamic-segmenting behaviour. Eviction SHALL be off by default (`segmentIdleTtl()` returns `Optional.empty()`); when a TTL is declared, the per-Operation reaper SHALL evict idle Segments destructively by shipping `delete_segment_state`, and a recreated Segment SHALL cold-start fresh rather than restore from disk.
 
-Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `OperativeConfigurationException` whose message carries the same diagnostic content and the same error name as the corresponding Rust `TopologyIssue` variant.
+Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `OperativeConfigurationException` whose message carries the same diagnostic content and the same error name as the corresponding Rust `BuildTopologyError` variant.
 
 #### Scenario: Declaring an unbounded operative class before start() succeeds
-- **WHEN** user code calls `Flezha.createRunner("my_app").defineUnbounded(MarketOperative.class).start()`
+- **WHEN** user code calls `Flezha.newRunner("my_app").defineUnbounded(MarketOperative.class).start()`
 - **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperative::factoryId` returns) in `factory_ids`, and subsequent `AddOperative{factory_id:"market"}` commands SHALL succeed by spawning an `UnboundedOperativeInstance`
 
-#### Scenario: Declaring an operative type after start() is legal and synced
-- **WHEN** user code calls `.defineUnbounded(C.class)` on a `FlezhaRunner` whose `.start()` has already returned, with factories A and C's ids now defined
-- **THEN** the declaration SHALL succeed, the SDK SHALL ship an `UpdateFactories` control message carrying the full current factory set `{A, C}`, and a subsequent `AddOperative{factory_id: C}` SHALL succeed
-
-#### Scenario: Removing a type before start()
-- **WHEN** user code defines A and B, then calls `.removeUnbounded(B.class)` before `.start()`
-- **THEN** the handshake init JSON's `factory_ids` SHALL contain only A's factory id
-
-#### Scenario: Removing a type after start() is synced
-- **WHEN** user code calls `.removeBounded(B.class)` on a started runner with no live instances of B
-- **THEN** the removal SHALL succeed and the SDK SHALL ship an `UpdateFactories` control message carrying the remaining full factory set
-
-#### Scenario: Removing a type with live instances refuses
-- **GIVEN** a started runner with at least one live Operative instance of factory `"market"`
-- **WHEN** user code calls `.removeUnbounded(MarketOperative.class)`
-- **THEN** the call SHALL throw `OperativeTypeInUseException` naming `"market"`, and the type SHALL remain defined (a subsequent `AddOperative{factory_id:"market"}` still succeeds)
-
-#### Scenario: Removing an undefined type is rejected
-- **WHEN** user code calls `.removeUnbounded(X.class)` and X's factory id was never defined (or was already removed)
-- **THEN** the call SHALL throw `IllegalArgumentException` naming the factory id
+#### Scenario: Declaring an operative type after start() is rejected
+- **WHEN** user code calls `.defineUnbounded(...)` on a `RunnerBuilder` whose `.start()` has already returned
+- **THEN** the SDK SHALL throw an `IllegalStateException`
 
 #### Scenario: Duplicate factoryId across two unbounded operative classes is rejected
-- **WHEN** two distinct UnboundedOperative classes both return `"market"` from `factoryId()` and both are declared on the same runner
+- **WHEN** two distinct UnboundedOperative classes both return `"market"` from `factoryId()` and both are declared on the same builder
 - **THEN** the second `.defineUnbounded(...)` call SHALL throw an `IllegalArgumentException` naming the duplicate factoryId
 
 #### Scenario: Wiring mismatch fails declaration with a diagnosable error
-- **WHEN** an Operative declares `c.channel(Trade.class, "trade.parsed").from(ParseOperation.class).into(OhlcOperation.class)` but `OhlcOperation.inputType()` returns `Candle.class`
-- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` whose message names the channel `"trade.parsed"`, the expected payload type (`Trade`), and the actual consumer-input type (`Candle`)
+- **WHEN** an Operative wires `.into(OhlcOperation.class)` onto `ParseOperation`'s output stream but `ParseOperation.outputType()` returns `Trade.class` while `OhlcOperation.inputType()` returns `Candle.class`
+- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` whose message names the channel, the stream's payload type (`Trade`), and the consumer-input type (`Candle`)
 
-#### Scenario: Entry channel of disallowed type fails declaration
-- **WHEN** an Operative declares `c.input(Trade.class, "trade.raw").into(ParseOperation.class)`
-- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` stating that entry channels accept only `byte[]` or `String` in v1
+#### Scenario: Typed entry channel deserializes at the edge
+- **WHEN** an Operative declares `c.input(Trade.class, "trade.raw").into(ParseOperation.class)` and a JSON-encoded Trade arrives
+- **THEN** `.defineUnbounded(...)` SHALL succeed and `ParseOperation.run` SHALL receive the Jackson-deserialized `Trade`, per the typed-entry-input contract of `sdk-graph-authoring`
 
-#### Scenario: Unwired channel fails declaration
-- **WHEN** an Operative declares `c.channel(Candle.class, "ohlc.candles")` and never calls `.from(...)` on the resulting `ChannelDecl`
-- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` naming the unwired channel
+#### Scenario: Unreachable node fails declaration
+- **WHEN** an Operative's `channels(c)` wires an Operation that is not reachable from the entry channel
+- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` naming the unreachable Operation
 
 #### Scenario: Static-mode operation without segmentForOverridden is rejected
 - **WHEN** an Operation returns a non-empty list from `operationKeys()` but its `segmentForOverridden()` returns the default `false`
@@ -850,10 +831,6 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 #### Scenario: Dynamic-mode operation declares and creates segments lazily
 - **WHEN** an Operation returns `true` from `operationKeyOverridden()` and an empty list from `operationKeys()`, and two inputs arrive whose `operationKey(input)` returns `"BTC"` and `"ETH"`
 - **THEN** `.defineUnbounded(...)` SHALL succeed, and the runtime SHALL lazily allocate exactly two Segments keyed `"BTC"` and `"ETH"`, each constructed with `initState(Optional.of(key), Optional.empty())`
-
-#### Scenario: Idle dynamic segment is evicted destructively when a TTL is declared
-- **WHEN** an Operation declares `segmentIdleTtl()` returning `Optional.of(Duration.ofSeconds(30))` and a dynamic Segment receives no input for longer than that TTL
-- **THEN** the reaper SHALL ship `delete_segment_state` for that Segment and drop it; a later input for the same key SHALL cold-start a fresh Segment via `initState(Optional.of(key), Optional.empty())` without restoring prior state
 
 ### Requirement: Runner process singleton guard
 

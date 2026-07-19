@@ -74,8 +74,8 @@ class TierDeclarationTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
-            c.input(String.class, "in").into(Op.class);
-            c.channel(String.class, "out").from(Op.class).keyed().toPlugin("sink");
+            var sOp = c.input(String.class, "in").into(Op.class);
+            sOp.named("out").keyed().output("sink");
         }
     }
 
@@ -87,8 +87,8 @@ class TierDeclarationTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(Op.class);
-            c.channel(String.class, "out").from(Op.class).toPlugin("sink");
+            var sOp = c.input(String.class, "in").into(Op.class);
+            sOp.named("out").output("sink");
         }
     }
 
@@ -102,8 +102,8 @@ class TierDeclarationTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
-            c.input(String.class, "in").into(Op.class);
-            c.channel(String.class, "out").from(Op.class).toPlugin("sink");
+            var sOp = c.input(String.class, "in").into(Op.class);
+            sOp.named("out").output("sink");
         }
     }
 

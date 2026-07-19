@@ -137,6 +137,55 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
         assert comp_done_count(operative_id) >= 2,
                "resume did not finish the outstanding compensation hook"
       end
+
+      # `sdk-graph-authoring` fan-in on a live runner: the diamond
+      # A→(B1→B2, C)→Join. DiamB2 BLOCKS until the release env — one level
+      # below its sibling arm, because siblings commit at one level barrier —
+      # so the SIGKILL lands with A, B1 and C committed and B2 mid-run. The
+      # respawn re-runs B2 ALONE, and the join runs exactly once — with C's
+      # JOURNALED handoff banked and B2's fresh output appended. One contract,
+      # both SDKs.
+      test "a fan-in diamond joins once, and a crash re-runs only the uncommitted producer",
+           ctx do
+        collector = spawn_link(fn -> collect_loop([]) end)
+
+        operative_id =
+          drive_crash_resume(
+            ctx,
+            "diamond_bounded",
+            "ok",
+            &diamond_half_committed?/1,
+            plugins: [forward_sink("diamond_sink", collector)]
+          )
+
+        seed = ~s({"seed":"go"})
+        delivered = collector |> await_outputs(5) |> Enum.map(&elem(&1, 0))
+
+        assert Enum.sort(delivered) ==
+                 Enum.sort([
+                   "a:#{seed}",
+                   "b:#{seed}",
+                   "c:#{seed}",
+                   "j:b:#{seed}",
+                   "j:c:#{seed}"
+                 ]),
+               "the join accumulates BOTH producers' contributions: #{inspect(delivered)}"
+
+        assert Enum.count(delivered, &(&1 == "c:#{seed}")) == 1,
+               "the committed producer must not re-run"
+
+        {:ok, entries} = OpJournal.read(operative_id)
+        committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
+
+        assert Enum.sort(committed) == [0, 1, 2, 3, 4],
+               "each node commits exactly once across the crash — the join never twice: " <>
+                 inspect(committed)
+
+        assert ClassRegistry.leaf_ops(operative_id) == [4],
+               "the join is the diamond's single leaf"
+
+        assert OpJournal.complete?(operative_id, [4])
+      end
     end
   end
 
@@ -906,6 +955,17 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   defp branch_fanned_out?(operative_id) do
     case OpJournal.restore_state(operative_id) do
       %{committed_op_idxs: [0, 1, 2]} -> true
+      _ -> false
+    end
+  end
+
+  # The crash point of `diamond_bounded`: the root, the blocked arm's upper
+  # half (B1) and the fast arm (C) have committed while the blocked producer
+  # (B2, op 3) is mid-run — the join therefore has exactly one journaled and
+  # one outstanding contribution.
+  defp diamond_half_committed?(operative_id) do
+    case OpJournal.restore_state(operative_id) do
+      %{committed_op_idxs: idxs} -> Enum.sort(idxs) == [0, 1, 2]
       _ -> false
     end
   end

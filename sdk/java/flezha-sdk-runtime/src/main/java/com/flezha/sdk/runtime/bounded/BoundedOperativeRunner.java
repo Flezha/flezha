@@ -256,9 +256,9 @@ public final class BoundedOperativeRunner {
             return new Outcome("error", "resumed compensation after crash", EMPTY);
         }
 
-        // Seed the first operation from the spawn args via the entry channel's typed wrapper.
+        // Seed the first operation from the spawn args via the entry channel's typed parser.
         ChannelDescriptor entry = entryChannel(topology);
-        Object seed = entry.payloadType() == String.class ? args : args.getBytes(StandardCharsets.UTF_8);
+        Object seed = wrapEntry(entry, args.getBytes(StandardCharsets.UTF_8));
         List<Object> batch = new ArrayList<>();
         batch.add(seed);
 
@@ -335,7 +335,7 @@ public final class BoundedOperativeRunner {
         // the same at-least-once contract the crash-resume undo rests on.
         List<StageRecord> completed = new ArrayList<>();
         for (OpCommittedOp op : owed) {
-            int stageIdx = chain.indexOf(op.getOpIdx());
+            int stageIdx = op.getOpIdx();
             if (stageIdx < 0) {
                 continue;
             }
@@ -433,7 +433,7 @@ public final class BoundedOperativeRunner {
                     return park(ctx, instance, spec, iter);
                 }
                 seed = new ArrayList<>();
-                seed.add(entry.payloadType() == String.class ? new String(item, StandardCharsets.UTF_8) : item);
+                seed.add(wrapEntry(entry, item));
             }
 
             IterationOut it = runIteration(ctx, instance, spec, topology, chain, stageSegments, seed);
@@ -580,7 +580,7 @@ public final class BoundedOperativeRunner {
         // handoff journaled at that barrier.
         Set<Integer> committedOps = journaledCommittedOps(instance);
         if (!committedOps.isEmpty()) {
-            batch = seedFromJournaledHandoff(instance, topology, batch);
+            bankJournaledHandoffs(instance, topology, chain, committedOps, inputs);
         }
 
         for (int stageIdx = 0; stageIdx < chain.size(); stageIdx++) {
@@ -590,11 +590,11 @@ public final class BoundedOperativeRunner {
                 abnormal = new Outcome("cancelled", "", EMPTY);
                 break;
             }
-            if (committedOps.contains(chain.get(stageIdx))) {
+            if (committedOps.contains(stageIdx)) {
                 LOG.info(
                         "bounded `{}`: op {} was journaled as committed before the crash; skipping",
                         instanceId,
-                        chain.get(stageIdx));
+                        stageIdx);
                 continue;
             }
             OperationDescriptor op = topology.operation(chain.get(stageIdx));
@@ -648,7 +648,7 @@ public final class BoundedOperativeRunner {
                             ctx,
                             topology,
                             instanceId,
-                            chain.get(stageIdx),
+                            stageIdx,
                             segs,
                             stageOut.segments(),
                             batch,
@@ -1137,6 +1137,18 @@ public final class BoundedOperativeRunner {
         throw new IllegalStateException("structured bounded is missing an entry channel");
     }
 
+    /**
+     * Decode entry wire bytes via the channel's declared parser (passthrough
+     * {@code byte[]}, UTF-8 {@code String}, JSON/custom otherwise) — the same
+     * seam the unbounded dispatch path uses.
+     */
+    private static Object wrapEntry(ChannelDescriptor entry, byte[] bytes) {
+        return entry.entryParser()
+                .<Object>map(p -> p.apply(bytes))
+                .orElseGet(
+                        () -> entry.payloadType() == String.class ? new String(bytes, StandardCharsets.UTF_8) : bytes);
+    }
+
     @SuppressWarnings("rawtypes")
     private static Operation instantiateOperation(Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass) {
         try {
@@ -1187,33 +1199,49 @@ public final class BoundedOperativeRunner {
     }
 
     /**
-     * Re-seed the next operation's batch from the handoff journaled at the last
-     * committed op barrier. This is what makes a resume a SKIP rather than a
-     * re-run: without it the chain would have to start from the top to rebuild
-     * the batch, redoing every already-durable effect on the way.
+     * Bank each committed producer's journaled handoff into its uncommitted
+     * consumers' input batches (the Rust {@code resumed_start} mirror). This is
+     * what makes a resume a SKIP rather than a re-run — and what lets a join
+     * with one committed and one outstanding producer accumulate the JOURNALED
+     * contribution now and the fresh one when the outstanding producer commits.
      */
-    private static List<Object> seedFromJournaledHandoff(
-            BoundedOperativeInstance instance, UnboundedOperativeTopology topology, List<Object> fallback) {
-        List<OpHandoffItem> handoff =
-                instance.opJournal().map(j -> j.getHandoffList()).orElseGet(List::of);
-        if (handoff.isEmpty()) {
-            return fallback;
-        }
-        List<Object> seeded = new ArrayList<>(handoff.size());
-        for (OpHandoffItem item : handoff) {
-            ChannelDescriptor channel = topology.channel(item.getChannelId());
+    private static void bankJournaledHandoffs(
+            BoundedOperativeInstance instance,
+            UnboundedOperativeTopology topology,
+            List<Integer> chain,
+            Set<Integer> committedPositions,
+            Map<Integer, List<Object>> inputs) {
+        var edges = instance.opJournal().map(j -> j.getOpHandoffsList()).orElseGet(List::of);
+        for (var edge : edges) {
+            int position = edge.getOpIdx();
+            if (!committedPositions.contains(position) || position >= chain.size()) {
+                continue;
+            }
+            OperationDescriptor producer = topology.operation(chain.get(position));
+            if (producer.outputChannelId().isEmpty()) {
+                continue;
+            }
+            ChannelDescriptor channel =
+                    topology.channel(producer.outputChannelId().getAsInt());
             if (channel == null || channel.interOpCodec().isEmpty()) {
                 LOG.warn(
-                        "bounded resume: no inter-op codec for channel id {}; cannot decode handoff",
-                        item.getChannelId());
-                return fallback;
+                        "bounded resume: no inter-op codec on channel `{}`; cannot decode handoff",
+                        channel == null ? "<missing>" : channel.name());
+                continue;
             }
-            seeded.add(channel.interOpCodec()
-                    .get()
-                    .decoder()
-                    .apply(item.getPayload().toByteArray()));
+            List<Object> decoded = new ArrayList<>();
+            for (OpHandoffItem item : edge.getHandoffList()) {
+                decoded.add(channel.interOpCodec()
+                        .get()
+                        .decoder()
+                        .apply(item.getPayload().toByteArray()));
+            }
+            for (int consumer : channel.consumers()) {
+                if (!committedPositions.contains(chain.indexOf(consumer))) {
+                    inputs.computeIfAbsent(consumer, k -> new ArrayList<>()).addAll(decoded);
+                }
+            }
         }
-        return seeded;
     }
 
     /** How long the driver waits for the controller to journal + fsync a commit. */

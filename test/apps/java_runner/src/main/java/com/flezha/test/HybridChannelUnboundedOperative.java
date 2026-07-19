@@ -30,19 +30,8 @@ public final class HybridChannelUnboundedOperative implements UnboundedOperative
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "input").into(HybridProducerOperation.class);
-        c.channel(Long.class, "hybrid_indicator")
-                .from(HybridProducerOperation.class)
-                .alsoToPluginWith("hybrid_indicators", v -> {
-                    if (v == 0xDEAD_BEEFL) {
-                        throw new RuntimeException("hybrid_indicators: serializer rejected sentinel 0xDEADBEEF");
-                    }
-                    return ByteBuffer.allocate(4)
-                            .order(ByteOrder.BIG_ENDIAN)
-                            .putInt(v.intValue())
-                            .array();
-                })
-                .into(HybridConsumerOperation.class);
+        var sHybridProducerOperation = c.input(String.class, "input").into(HybridProducerOperation.class);
+        sHybridProducerOperation.named("hybrid_indicator").alsoOutput("hybrid_indicators", v -> { if (v == 0xDEAD_BEEFL) { throw new RuntimeException("hybrid_indicators: serializer rejected sentinel 0xDEADBEEF"); } return ByteBuffer.allocate(4) .order(ByteOrder.BIG_ENDIAN) .putInt(v.intValue()) .array(); }).into(HybridConsumerOperation.class);
     }
 
     public static final class HybridProducerOperation

@@ -127,9 +127,8 @@ class ClockAndKeyedValidationTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(PlainOp.class);
-            // Keyed, but purely inter-operation: a `flz.key` stamp has nowhere to ride.
-            c.channel(String.class, "mid").from(PlainOp.class).keyed().into(SecondOp.class);
+            var sPlainOp = c.input(String.class, "in").into(PlainOp.class);
+            sPlainOp.named("mid").keyed().into(SecondOp.class);
         }
     }
 
@@ -141,8 +140,8 @@ class ClockAndKeyedValidationTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(PlainOp.class);
-            c.channel(String.class, "out").from(PlainOp.class).keyed().toPlugin("sink");
+            var sPlainOp = c.input(String.class, "in").into(PlainOp.class);
+            sPlainOp.named("out").keyed().output("sink");
         }
     }
 

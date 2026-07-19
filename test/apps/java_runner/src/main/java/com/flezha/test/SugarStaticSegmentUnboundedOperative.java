@@ -19,8 +19,8 @@ public class SugarStaticSegmentUnboundedOperative implements com.flezha.sdk.oper
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "input").into(SugarEntryOperation.class);
-        c.channel(String.class, "hop").from(SugarEntryOperation.class).into(SugarDownstreamOperation.class);
-        c.channel(byte[].class, "kafka").from(SugarDownstreamOperation.class).toPlugin("test_kafka");
+        var sSugarEntryOperation = c.input(String.class, "input").into(SugarEntryOperation.class);
+        var sSugarDownstreamOperation = sSugarEntryOperation.named("hop").into(SugarDownstreamOperation.class);
+        sSugarDownstreamOperation.named("kafka").output("test_kafka");
     }
 }

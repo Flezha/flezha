@@ -20,9 +20,11 @@ import javax.annotation.Nonnull;
  *       {@link #run} body: a single implicit Operation/Segment.</li>
  *   <li><strong>Structured</strong> — override {@link #operations} to author
  *       Operations/Channels/Segments on the same {@link ChannelBuilder} a
- *       unbounded operative uses; the bounded driver runs them sequentially
- *       in a linear chain with a per-operation count-based barrier (segments
- *       within one operation still run in parallel).</li>
+ *       unbounded operative uses; the bounded driver runs the static DAG in
+ *       topological order with a per-operation count-based barrier (segments
+ *       within one operation still run in parallel) — fan-out branches are
+ *       independent, and a fan-in node runs once, after every producer
+ *       feeding it committed, with the accumulated batch.</li>
  *   <li><strong>Exit triggers</strong> — the operative terminates on the first
  *       of: the chain running to quiescence, {@link BoundedOperativeCtx#complete},
  *       a loop's terminal predicate, a declared {@link #maxDuration}, or
@@ -74,12 +76,14 @@ public interface BoundedOperative extends Computation {
     }
 
     /**
-     * Structured form: declare a <strong>linear chain</strong> of Operations /
-     * Channels / Segments on the same {@link ChannelBuilder} an unbounded
-     * operative uses. The default is empty, selecting the {@link #run}-sugar
-     * path. A non-empty declaration is run sequentially by the bounded driver
-     * (operation {@code N+1} starts only when every segment of operation
-     * {@code N} has finished). Branching is rejected at registration.
+     * Structured form: declare a static <strong>DAG</strong> of Operations /
+     * Channels / Segments on the same graph builder an unbounded operative
+     * uses. The default is empty, selecting the {@link #run}-sugar path. The
+     * bounded driver runs the declaration in topological order: an operation
+     * becomes runnable only after <strong>every</strong> producer feeding it
+     * has committed — fan-out branches are independent, and a fan-in node is
+     * dispatched once, with the accumulated batch of all its producers'
+     * outputs. Cycles are rejected at registration.
      */
     default void operations(@Nonnull ChannelBuilder c) {}
 

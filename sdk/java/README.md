@@ -42,8 +42,9 @@ public final class EchoOperative implements UnboundedOperative {
     @Override public String factoryId() { return "echo"; }
 
     @Override public void channels(ChannelBuilder c) {
-        c.input(String.class, "in").into(EchoOperation.class);
-        c.channel(String.class, "out").from(EchoOperation.class).toPlugin("my_sink");
+        // Producer-first: `.into` wires a consumer and returns THAT
+        // operation's output stream; `output` closes it plugin-bound.
+        c.input(String.class, "in").into(EchoOperation.class).named("out").output("my_sink");
     }
 }
 
@@ -67,6 +68,162 @@ try (FlezhaRunner runner = Flezha.createRunner(ns).defineUnbounded(EchoOperative
 At most one runner runs per JVM: a second `start()` throws
 `IllegalStateException` naming the running namespace (see
 `docs/sdk_naming_conventions.md` for the lifecycle vocabulary).
+
+## Authoring a topology
+
+Graphs read in flow order (`sdk-graph-authoring`): the channel between two
+operations carries the producer's declared output type — no type token, no
+channel name unless you want one (`.named(...)` overrides the name derived
+from the producer's identity; entry names are explicit — they are the
+operative's external address). A typed entry decodes at the edge (Jackson
+by default, or a custom `bytes -> T` parser overload); a failing parse rides
+the channel's retry→DLQ ladder:
+
+```java
+c.input(OrderEvent.class, "orders")      // JSON-decoded at the entry edge
+        .into(Validate.class)
+        .into(Alert.class)
+        .output("alerts");               // plugin-bound terminal
+```
+
+Branching is handle reuse — hold the stream in a variable and wire it twice —
+or the equivalent `branch(...)` sugar; fan-in is two streams naming one
+(unnamed) class, whose node accumulates both contributions. One class can sit
+at several graph positions via named nodes (`into(Filter.class, "spam_filter")`),
+each with its own state identity:
+
+**Variable spelling** — hold the handle, wire it as many times as you like.
+This is the general form: the handle can cross helper methods, loops, or
+conditionals, and each arm keeps its own chain:
+
+```java
+var validated = c.input(OrderEvent.class, "orders").into(Validate.class);
+
+// Two consumers on one channel: both receive every value Validate
+// releases. Each arm is an ordinary statement that keeps chaining.
+validated.into(FraudCheck.class).into(Merge.class);
+validated.into(Receipt.class).into(Merge.class);   // same class ⇒ same node: a join
+```
+
+**`branch(...)` spelling** — pure sugar over the same mechanism: each arm
+lambda receives the same handle, and the frozen topology is *identical* to
+the variable form (pinned by a descriptor-equality test). Use it when the
+fan-out is the last thing you do with the stream and a variable would only
+add a name:
+
+```java
+c.input(OrderEvent.class, "orders").into(Validate.class).branch(
+        b -> b.into(FraudCheck.class).into(Merge.class),
+        b -> b.into(Receipt.class).into(Merge.class));
+```
+
+The two spellings mix freely — `branch` returns the same handle, so you can
+tap it, name it, or wire a third consumer after the call. Fewer than two arms
+is refused at registration.
+
+Graphs must be acyclic; per-channel config (`codec`, `keyed`, `onFull`,
+`retryMax`, `retryBackoffMs`) chains on the handle; the hybrid tap is
+`alsoOutput(name[, serializer])`.
+
+### A fuller graph: named nodes, a hybrid tap, a keyed sink
+
+Everything composes on the same handles. Here one `Filter` class serves two
+positions with independent state, the validated stream is tapped to an audit
+plugin *and* consumed downstream, the join accumulates both filters'
+verdicts, and the terminal channel carries output identity for a
+changelog-style sink:
+
+```java
+public final class RiskOperative implements UnboundedOperative {
+    @Override public String factoryId() { return "risk"; }
+
+    @Override public void channels(ChannelBuilder c) {
+        // Entry-side config chains BEFORE .into: this channel retries a
+        // failing consumer (or a failing typed parse) 5 times, 20 ms base.
+        var validated = c.input(OrderEvent.class, "orders")
+                .retryMax(5)
+                .retryBackoffMs(20)
+                .into(Validate.class)
+                .named("orders.validated")   // overrides the derived name
+                .alsoOutput("audit");        // tap: default JSON to `audit`
+
+        // One class, two nodes: each keeps its own per-segment state under
+        // its node identity (state dirs, journals, diagnostics). Both arms
+        // name the same (unnamed) Merge class, so their verdicts fan IN —
+        // either arm's `.into(Merge.class)` returns the one join's handle.
+        var verdicts = validated.into(Filter.class, "fraud_filter").into(Merge.class);
+        validated.into(Filter.class, "spam_filter").into(Merge.class);
+
+        // The join's output closes plugin-bound and keyed: every emit calls
+        // ctx.emitKeyed(key, value) and frames carry flz.* identity stamps,
+        // so a changelog sink upserts instead of appending.
+        verdicts.named("risk.verdicts").keyed().output("verdict_sink");
+    }
+}
+```
+
+Reading order is flow order: every statement starts at a handle you already
+hold, and the only names in the graph are the ones something external needs —
+the entry (`orders`), the tap (`audit`), the sink (`verdict_sink`), and any
+channel you chose to `.named(...)`.
+
+### A structured bounded DAG
+
+Bounded operatives author on the same builder. A durable class journals each
+op barrier, so inter-op channels declare `.codec()`; a fan-in node runs once,
+after **all** its producers committed, with the accumulated batch — and on an
+abnormal exit the saga unwinds reverse-topologically (the join before either
+producer, the shared root last):
+
+```java
+public final class SettleBounded implements BoundedOperative {
+    @Override public String factoryId() { return "settle"; }
+
+    @Override public int retryAttempts() { return 3; } // segment ladder before the saga
+
+    @Override public void operations(ChannelBuilder c) {
+        // The diamond: Reserve fans out to Charge and Ledger, whose outputs
+        // accumulate into one Reconcile join.
+        var reserved = c.input(SettleJob.class, "in")
+                .into(Reserve.class)
+                .named("reserved")
+                .codec();
+        reserved.into(Charge.class).named("charged").codec().into(Reconcile.class);
+        reserved.into(Ledger.class)
+                .named("booked")
+                .codec()
+                .into(Reconcile.class)
+                .named("reconciled")
+                .output("settlement_sink");
+    }
+}
+```
+
+A crash between the two producers resumes with the committed producer's
+**journaled** handoff banked and only the uncommitted arm re-run; `Reconcile`
+still runs exactly once. Cycles are refused at registration; a chained loop
+(`LoopMode.CHAINED`) additionally requires the graph to converge on a single
+codec'd terminal.
+
+Parameterized operations use the `Config` type parameter with `fromConfig` —
+the sanctioned path for one class serving several configurations:
+
+```java
+public record SmaConfig(int window) {}
+
+public final class Sma implements Operation<Double, SmaState, Double, NoChange, WallClock, SmaConfig> {
+    private int window;
+
+    @Override public Class<SmaConfig> configType() { return SmaConfig.class; }
+
+    @Override public Sma fromConfig(SmaConfig cfg) {
+        Sma op = new Sma();
+        op.window = cfg.window();
+        return op;
+    }
+    // ... name()/inputType()/outputType()/initState()/run() as usual
+}
+```
 
 ## Running a runner
 

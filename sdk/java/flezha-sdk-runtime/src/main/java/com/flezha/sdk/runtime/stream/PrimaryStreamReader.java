@@ -9,8 +9,11 @@ import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.Operative;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
+import com.flezha.sdk.runtime.state.DlqPark;
+import com.flezha.sdk.runtime.state.SegmentId;
 import com.flezha.sdk.runtime.worker.OperationDispatcher;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 import java.util.OptionalLong;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
@@ -128,18 +131,128 @@ public final class PrimaryStreamReader {
             return;
         }
 
-        Object input = wrapInput(channel, frame.message());
         // The controller stamps `flz.offset` on an input it journaled to the
         // durable input log. The effectively-once tier acknowledges it in the
         // same WAL record as the invocation's state and output, which is what
         // makes the offset advance and the effect atomic.
         OptionalLong offset = parseOffset(frame.metadata().get(OFFSET_META_KEY));
         boolean replay = frame.metadata().containsKey(REPLAY_META_KEY);
+
+        // Typed entries (`sdk-graph-authoring`): a failing parse is classified
+        // like a failing invocation and rides the channel's retry→DLQ ladder.
+        // Passthrough `byte[]`/`String` entries keep the pre-change
+        // drop-and-log path.
+        Object input;
+        try {
+            input = wrapInput(channel, frame.message());
+        } catch (RuntimeException e) {
+            if (channel.entryParsed()) {
+                spawnEntryParseLadder(instance, channel, frame.message(), describe(e), offset, replay);
+            } else {
+                LOG.error(
+                        "dispatch: operative `{}` channel `{}`: entry decode failed: {}",
+                        operativeInstanceId,
+                        channel.name(),
+                        e.toString());
+            }
+            return;
+        }
+        routeToConsumers(instance, channel, input, offset, replay);
+    }
+
+    private void routeToConsumers(
+            UnboundedOperativeInstance instance,
+            ChannelDescriptor channel,
+            Object input,
+            OptionalLong offset,
+            boolean replay) {
         for (int consumerOperationId : channel.consumers()) {
             OperationDispatcher dispatcher = instance.dispatcher(consumerOperationId);
             if (dispatcher != null) {
                 dispatcher.fanoutSegments(input, streamId, offset, replay);
             }
+        }
+    }
+
+    /**
+     * A poison entry payload climbing its channel's retry→DLQ ladder off the
+     * wire-reader thread: the failing parse is re-attempted per the channel's
+     * retry budget — the parser contract says deterministic, so this is
+     * expected to fail identically — and then parked to the dead-letter queue
+     * under the entry channel's identity, exactly like a retry-exhausted
+     * invocation. Mirrors the Rust SDK's {@code run_entry_parse_ladder}.
+     */
+    private void spawnEntryParseLadder(
+            UnboundedOperativeInstance instance,
+            ChannelDescriptor channel,
+            byte[] bytes,
+            String firstError,
+            OptionalLong offset,
+            boolean replay) {
+        Thread t = new Thread(
+                () -> runEntryParseLadder(instance, channel, bytes, firstError, offset, replay),
+                "flezha-entry-parse-park");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void runEntryParseLadder(
+            UnboundedOperativeInstance instance,
+            ChannelDescriptor channel,
+            byte[] bytes,
+            String firstError,
+            OptionalLong offset,
+            boolean replay) {
+        java.util.function.Function<byte[], Object> parser =
+                channel.entryParser().orElseThrow();
+        int maxAttempts = Math.max(1, channel.retry().maxAttempts());
+        int attempt = 1; // the wire-path parse was attempt 1
+        String error = firstError;
+        while (attempt < maxAttempts) {
+            DlqPark.RETRIES_TOTAL.incrementAndGet();
+            LOG.warn(
+                    "entry channel `{}` parse attempt {}/{} failed (retrying): {}",
+                    channel.name(),
+                    attempt,
+                    maxAttempts,
+                    error);
+            sleepQuietly(channel.retry().backoffFor(attempt));
+            attempt++;
+            try {
+                // A parser violating the determinism contract may succeed on a
+                // re-attempt; deliver rather than drop.
+                Object typed = parser.apply(bytes);
+                routeToConsumers(instance, channel, typed, offset, replay);
+                return;
+            } catch (RuntimeException e) {
+                error = describe(e);
+            }
+        }
+
+        DlqPark.PARKED_TOTAL.incrementAndGet();
+        LOG.error(
+                "entry channel `{}` parking unparseable payload to DLQ after {} attempt(s): {}",
+                channel.name(),
+                attempt,
+                error);
+        SegmentId identity = SegmentId.of(instance.instanceId(), channel.name(), Optional.of("_entry"));
+        DlqPark.parkBlocking(
+                identity,
+                new DlqPark.ParkBody(
+                        DlqPark.mintParkId(identity.encoded()),
+                        offset,
+                        new DlqPark.DlqEntry(channel.name(), error, attempt, Optional.of(bytes.clone()))));
+    }
+
+    private static String describe(RuntimeException e) {
+        return e.getMessage() != null ? e.getMessage() : e.toString();
+    }
+
+    private static void sleepQuietly(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -164,7 +277,18 @@ public final class PrimaryStreamReader {
         return null;
     }
 
+    /**
+     * Evaluate the entry channel's declared parser: passthrough for
+     * {@code byte[]}, UTF-8 for {@code String}, JSON or a custom parser
+     * otherwise. The parser-less fallback keeps the pre-typed-entry contract
+     * for descriptors built outside the topology builder.
+     */
     private static Object wrapInput(ChannelDescriptor channel, byte[] payload) {
+        java.util.function.Function<byte[], Object> parser =
+                channel.entryParser().orElse(null);
+        if (parser != null) {
+            return parser.apply(payload);
+        }
         if (channel.payloadType() == String.class) {
             return new String(payload, StandardCharsets.UTF_8);
         }

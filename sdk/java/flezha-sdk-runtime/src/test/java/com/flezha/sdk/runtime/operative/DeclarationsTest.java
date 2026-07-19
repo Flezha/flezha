@@ -92,10 +92,10 @@ class DeclarationsTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(Reserve.class);
-            c.channel(String.class, "c1").from(Reserve.class).codec().into(Charge.class);
-            c.channel(String.class, "c2").from(Charge.class).codec().into(Ship.class);
-            c.channel(String.class, "out").from(Ship.class).toPlugin("sink");
+            var sReserve = c.input(String.class, "in").into(Reserve.class);
+            var sCharge = sReserve.named("c1").codec().into(Charge.class);
+            var sShip = sCharge.named("c2").codec().into(Ship.class);
+            sShip.named("out").output("sink");
         }
     }
 
@@ -107,8 +107,8 @@ class DeclarationsTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(Charge.class);
-            c.channel(String.class, "out").from(Charge.class).toPlugin("sink");
+            var sCharge = c.input(String.class, "in").into(Charge.class);
+            sCharge.named("out").output("sink");
         }
     }
 

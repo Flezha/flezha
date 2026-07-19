@@ -27,9 +27,9 @@ public final class SagaBlockBoundedOperative implements BoundedOperative {
 
     @Override
     public void operations(ChannelBuilder c) {
-        c.input(String.class, "in").into(SagaA.class);
-        c.channel(String.class, "s1").from(SagaA.class).codec().into(SagaB.class);
-        c.channel(String.class, "s2").from(SagaB.class).codec().into(SagaC.class);
+        var sSagaA = c.input(String.class, "in").into(SagaA.class);
+        var sSagaB = sSagaA.named("s1").codec().into(SagaB.class);
+        sSagaB.named("s2").codec().into(SagaC.class);
     }
 
     /**

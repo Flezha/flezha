@@ -6,7 +6,7 @@ same per-segment state engine — but it schedules them **topologically**, commi
 every step boundary, can **undo** what it did, and can wait for input for hours while costing
 nothing.
 
-- [Structure: a tree of operations](#structure-a-tree-of-operations)
+- [Structure: a graph of operations](#structure-a-graph-of-operations)
 - [The op journal](#the-op-journal)
 - [Happy path: the level barrier](#happy-path-the-level-barrier)
 - [The transactional outbox](#the-transactional-outbox)
@@ -18,11 +18,11 @@ nothing.
 
 ---
 
-## Structure: a tree of operations
+## Structure: a graph of operations
 
 An operation has a single `Output` type, and therefore exactly one output channel. An **edge** is
 *(that channel, one of its consumers)* — so a fan-out is simply one channel declaring several
-consumers.
+consumers, and a fan-in (a join) is one operation consuming several channels.
 
 ```mermaid
 flowchart TB
@@ -30,18 +30,19 @@ flowchart TB
     A["Extract"]:::exec
     B["Enrich"]:::exec
     C["Archive"]:::exec
+    D["Reconcile"]:::exec
     P1["📤 sink"]:::sink
-    P2["📤 glacier"]:::sink
 
     IN --> A
     A -->|"channel &#34;records&#34;<br/>ONE channel, TWO consumers"| B
     A -->|"the same channel"| C
-    B --> P1
-    C --> P2
+    B -->|"fan-in — Reconcile ACCUMULATES<br/>both producers' output"| D
+    C --> D
+    D --> P1
 
-    FANIN["❌ fan-in — two channels feeding<br/>one operation — is REFUSED"]:::risk
-    B -.-> FANIN
-    C -.-> FANIN
+    CYC["❌ a cycle — an operation's output<br/>reaching its own input — is REFUSED"]:::risk
+    D -.-> CYC
+    CYC -.-> A
 
     classDef exec fill:#dcfce7,stroke:#166534,color:#111
     classDef sink fill:#fed7aa,stroke:#9a3412,color:#111
@@ -50,17 +51,18 @@ flowchart TB
 ```
 
 Routing is **per channel**: a downstream operation receives exactly the values released on the
-channel it consumes. Branches are therefore independent by construction — there is no
-cross-branch data exchange, and two siblings that need each other's output are one operation.
-Registration refuses anything that is not a tree, naming the offending node:
+channels it consumes. A join is explicit — two streams wiring the same consumer — and the join
+operation **accumulates** every producer's contribution rather than overwriting one with the
+other. Branches stay independent mid-flight; where they must meet, they meet at a join.
+Registration refuses anything that is not a DAG rooted at the entry, naming the offending node:
 
 | Shape | Refusal |
 | --- | --- |
-| two channels feed one operation (fan-in / join) | `FanIn` |
+| an operation's output can reach its own input (a cycle) | `Cycle` |
 | one operation produces two output channels | `MultipleOutputChannels` |
 | the entry channel feeds anything other than exactly one operation | `EntryRoot` |
-| an operation is unreachable from the entry channel (including a cycle) | `Disconnected` |
-| a handoff-chained loop over a branching tree | `BranchingChainedLoop` |
+| an operation is unreachable from the entry channel | `Disconnected` |
+| a handoff-chained loop over a branching topology | `BranchingChainedLoop` |
 
 Within one operation, segments run in parallel exactly as in unbounded — single or static
 segmenting, per-segment state, per-segment WAL. Dynamic segmenting is refused: a bounded chain
@@ -116,7 +118,7 @@ sequenceDiagram
     CTRL->>SINK: flush THIS op's outbox — deduped, stamped (segment, op.seq, epoch)
     Note over EX: only NOW are the root's children runnable
 
-    Note over EX: --- level 1 — siblings B and C, independent subtrees ---
+    Note over EX: --- level 1 — siblings B and C, independent branches ---
     EX->>EX: B's segments and C's segments run TOGETHER on the pool
     Note over EX: BARRIER — the whole level joins
     EX->>CTRL: OpCommit B
@@ -247,9 +249,9 @@ sequenceDiagram
     Note over CTRL: terminal — aborted.<br/>A crash mid-saga resumes and skips what is already marked compensated.
 ```
 
-Reverse-topological order is not computed — it is **emergent**. The tree is numbered
-breadth-first, so a parent's index is always below its children's, completion order is therefore
-topological, and the compensation planner simply reverses it.
+Reverse-topological order is not computed — it is **emergent**. The graph is numbered
+breadth-first, so a producer's index is always below its consumers', completion order is
+therefore topological, and the compensation planner simply reverses it.
 
 Two rules govern what gets undone:
 
@@ -273,7 +275,7 @@ operation leaves its state change in place.
 
 ## The durable loop
 
-An operative may run its tree more than once.
+An operative may run its graph more than once.
 
 | Mode | Behaviour |
 | --- | --- |
@@ -416,7 +418,7 @@ Field-level detail: [`../sdk_protocol_spec.md`](../sdk_protocol_spec.md).
 ## Operator surface
 
 ```
-flz state journal <operative/instance>    # every journal entry, and whether the tree is complete
+flz state journal <operative/instance>    # every journal entry, and whether the graph is complete
 flz state inbox   <operative/instance>    # the durable inbox, and how far it is consumed
 flz operative info                        # phase: running | suspended
 flz operative rewind <instance> --to-iteration N

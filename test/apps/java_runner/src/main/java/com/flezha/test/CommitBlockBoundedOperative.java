@@ -24,8 +24,8 @@ public final class CommitBlockBoundedOperative implements BoundedOperative {
 
     @Override
     public void operations(ChannelBuilder c) {
-        c.input(String.class, "in").into(CommitA.class);
-        c.channel(String.class, "mid").from(CommitA.class).codec().into(BlockB.class);
+        var sCommitA = c.input(String.class, "in").into(CommitA.class);
+        sCommitA.named("mid").codec().into(BlockB.class);
     }
 
     /** Op A: commits idempotent durable Segment state, then hands input to op B. */

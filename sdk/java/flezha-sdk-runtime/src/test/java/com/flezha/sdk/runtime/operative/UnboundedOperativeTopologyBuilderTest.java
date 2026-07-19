@@ -49,11 +49,14 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Test
-        @DisplayName("entry channel of disallowed type fails registration")
-        void entryChannelOfDisallowedTypeRejected() {
-            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new BadEntryTypeUnboundedOperative()))
-                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
-                    .hasMessageContaining("byte[] or String");
+        @DisplayName("a typed entry channel is accepted and decodes at the edge")
+        void typedEntryChannelIsAcceptedAsAParser() {
+            // `sdk-graph-authoring`: any entry type is legal; non-byte[]/String
+            // entries decode at the edge (default Jackson) and are flagged as
+            // real parsers so a failing decode rides the retry→DLQ ladder.
+            var topology = UnboundedOperativeTopologyBuilder.build(new BadEntryTypeUnboundedOperative());
+            assertThat(topology.channels().get(0).entryParsed()).isTrue();
+            assertThat(topology.channels().get(0).entryParser()).isPresent();
         }
 
         @Test
@@ -62,14 +65,6 @@ class UnboundedOperativeTopologyBuilderTest {
             assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new TypeMismatchUnboundedOperative()))
                     .isInstanceOf(UnboundedOperativeConfigurationException.class)
                     .hasMessageContaining("trade.parsed");
-        }
-
-        @Test
-        @DisplayName("unwired channel fails registration")
-        void unwiredChannelRejected() {
-            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new UnwiredChannelUnboundedOperative()))
-                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
-                    .hasMessageContaining("ohlc.candles");
         }
 
         @Test
@@ -282,31 +277,16 @@ class UnboundedOperativeTopologyBuilderTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(TradeProducerOperation.class);
-            ChannelDeclMismatch.declareTradeIntoCandle(c);
+            ChannelDeclMismatch.declareTradeIntoCandle(
+                    c.input(String.class, "input").into(TradeProducerOperation.class));
         }
     }
 
-    /** Helper to keep the reflection-mismatch construction off the operative. */
+    /** Helper to keep the erasure-mismatch construction off the operative. */
     private static final class ChannelDeclMismatch {
         @SuppressWarnings({"unchecked", "rawtypes"})
-        static void declareTradeIntoCandle(ChannelBuilder c) {
-            c.channel(Trade.class, "trade.parsed")
-                    .from((Class) TradeProducerOperation.class)
-                    .into((Class) CandleOperation.class);
-        }
-    }
-
-    public static final class UnwiredChannelUnboundedOperative implements UnboundedOperative {
-        @Override
-        public String factoryId() {
-            return "unwired_channel";
-        }
-
-        @Override
-        public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(SingleOperation.class);
-            c.channel(Candle.class, "ohlc.candles");
+        static void declareTradeIntoCandle(com.flezha.sdk.channel.Stream<Trade> stream) {
+            ((com.flezha.sdk.channel.Stream) stream.named("trade.parsed")).into((Class) CandleOperation.class);
         }
     }
 
@@ -398,5 +378,221 @@ class UnboundedOperativeTopologyBuilderTest {
         public void channels(ChannelBuilder c) {
             c.input(String.class, "input").into(DynamicModeOnlyOperation.class);
         }
+    }
+
+    // ---- sdk-graph-authoring pins (mirror of the Rust operative_topology tests) ----
+
+    @Nested
+    class GraphAuthoring {
+
+        @Test
+        @DisplayName("branch() builds the identical topology to handle reuse")
+        void branchBuildsIdenticalTopology() {
+            var byHandles = UnboundedOperativeTopologyBuilder.build("g1", c -> {
+                var validated = c.input(String.class, "in").into(SingleOperation.class);
+                validated.into(GraphStage1.class);
+                validated.into(GraphStage2.class);
+            });
+            var byBranch = UnboundedOperativeTopologyBuilder.build("g2", c -> c.input(String.class, "in")
+                    .into(SingleOperation.class)
+                    .branch(b -> b.into(GraphStage1.class), b -> b.into(GraphStage2.class)));
+            assertThat(shape(byBranch)).isEqualTo(shape(byHandles));
+        }
+
+        @Test
+        @DisplayName("branch() with fewer than two arms is refused")
+        void branchWithOneArmRefused() {
+            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build("g3", c -> c.input(String.class, "in")
+                            .into(SingleOperation.class)
+                            .branch(b -> b.into(GraphStage1.class))))
+                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
+                    .hasMessageContaining("at least two arms");
+        }
+
+        @Test
+        @DisplayName("named nodes reuse one class at two positions; unnamed mentions unify into a fan-in")
+        void namedNodesAndFanIn() {
+            var t = UnboundedOperativeTopologyBuilder.build("g4", c -> {
+                var validated = c.input(String.class, "in").into(SingleOperation.class);
+                validated.into(GraphStage1.class, "fraud_filter").into(GraphMerge.class);
+                validated.into(GraphStage1.class, "spam_filter").into(GraphMerge.class);
+            });
+            assertThat(t.operations().stream().map(o -> o.name()).toList())
+                    .containsExactly("single_operation", "fraud_filter", "graph_merge", "spam_filter");
+            // Derived channel names are the node identities; the merge is ONE node.
+            assertThat(t.nameToId()).containsKeys("fraud_filter", "spam_filter");
+            long merges = t.operations().stream()
+                    .filter(o -> o.name().equals("graph_merge"))
+                    .count();
+            assertThat(merges).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("a node identity collision is refused")
+        void nodeIdentityCollisionRefused() {
+            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build("g5", c -> {
+                        var validated = c.input(String.class, "in").into(SingleOperation.class);
+                        validated.into(GraphStage2.class, "graph_stage1");
+                        validated.into(GraphStage1.class);
+                    }))
+                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
+                    .hasMessageContaining("graph_stage1");
+        }
+
+        @Test
+        @DisplayName("channel names derive from the producer identity; .named overrides; collisions are refused")
+        void derivedNamesAndCollision() {
+            var t = UnboundedOperativeTopologyBuilder.build("g6", c -> c.input(String.class, "in")
+                    .into(SingleOperation.class)
+                    .into(GraphStage1.class)
+                    .named("orders.validated")
+                    .into(GraphStage2.class));
+            assertThat(t.nameToId()).containsKeys("single_operation", "orders.validated");
+
+            assertThatThrownBy(() ->
+                            UnboundedOperativeTopologyBuilder.build("g7", c -> c.input(String.class, "single_operation")
+                                    .into(SingleOperation.class)
+                                    .into(GraphStage1.class)))
+                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
+                    .hasMessageContaining("single_operation");
+        }
+
+        @Test
+        @DisplayName("a cycle is refused")
+        void cycleRefused() {
+            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build("g8", c -> c.input(String.class, "in")
+                            .into(GraphStage1.class)
+                            .into(GraphStage2.class)
+                            .into(GraphStage1.class)))
+                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
+                    .hasMessageContaining("cycle");
+        }
+
+        @Test
+        @DisplayName("a second entry channel is refused")
+        void secondEntryRefused() {
+            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build("g9", c -> {
+                        c.input(String.class, "in_a").into(GraphStage1.class);
+                        c.input(String.class, "in_b").into(GraphStage2.class);
+                    }))
+                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
+                    .hasMessageContaining("exactly one entry");
+        }
+
+        @Test
+        @DisplayName("a custom entry parser replaces the default Jackson decode")
+        void customParserReplacesDefaultJson() {
+            var t = UnboundedOperativeTopologyBuilder.build(
+                    "g10", c -> c.input(Trade.class, "orders", bytes -> new Trade(new String(bytes), 1.0))
+                            .into(TradeOperation.class));
+            var entry = t.channels().get(0);
+            assertThat(entry.entryParsed()).isTrue();
+            Object decoded = entry.entryParser().orElseThrow().apply("BTC".getBytes());
+            assertThat(decoded).isEqualTo(new Trade("BTC", 1.0));
+        }
+
+        @Test
+        @DisplayName("byte[] and String entries stay passthrough (not parsers)")
+        void bytesAndStringEntriesStayPassthrough() {
+            var t = UnboundedOperativeTopologyBuilder.build(
+                    "g11", c -> c.input(String.class, "in").into(SingleOperation.class));
+            assertThat(t.channels().get(0).entryParsed()).isFalse();
+        }
+
+        @Test
+        @DisplayName("a stream handle used after the freeze throws naming the operative")
+        void handleAfterFreezeThrows() {
+            var leaked = new java.util.concurrent.atomic.AtomicReference<com.flezha.sdk.channel.Stream<String>>();
+            UnboundedOperativeTopologyBuilder.build(
+                    "g12", c -> leaked.set(c.input(String.class, "in").into(SingleOperation.class)));
+            assertThatThrownBy(() -> leaked.get().into(GraphStage1.class))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("g12");
+        }
+
+        private java.util.List<String> shape(UnboundedOperativeTopology t) {
+            var channels = t.channels().stream()
+                    .map(ch -> ch.name() + "|" + ch.kind() + "|" + ch.producer() + "|" + ch.consumers())
+                    .toList();
+            var ops = t.operations().stream().map(o -> o.name()).toList();
+            var all = new java.util.ArrayList<String>(channels);
+            all.addAll(ops);
+            return all;
+        }
+    }
+
+    public static final class GraphStage1 extends StatelessTestOperation<String, Object, String> {
+        @Override
+        public String name() {
+            return "graph_stage1";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        protected Object initState(Optional<String> operationKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+    }
+
+    public static final class GraphStage2 extends StatelessTestOperation<String, Object, String> {
+        @Override
+        public String name() {
+            return "graph_stage2";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        protected Object initState(Optional<String> operationKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+    }
+
+    public static final class GraphMerge extends StatelessTestOperation<String, Object, String> {
+        @Override
+        public String name() {
+            return "graph_merge";
+        }
+
+        @Override
+        public Class<String> inputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        protected Object initState(Optional<String> operationKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
     }
 }

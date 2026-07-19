@@ -126,7 +126,7 @@ records collapse to the single 50th record at flusher-drain time.
 struct MarketOperative;
 impl UnboundedOperative for MarketOperative {
     fn factory_id() -> &'static str { "market" }
-    fn channels(c: &mut ChannelBuilder) { /* ... */ }
+    fn channels(c: &ChannelBuilder) { /* ... */ }
     const PERSISTENCE_ENABLED: bool = false;
 }
 ```

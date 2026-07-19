@@ -64,8 +64,8 @@ public final class E06_DurableChatLoop {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "message").into(Reply.class);
-            c.channel(String.class, "reply").from(Reply.class).codec().toPlugin("chat_sink");
+            var sReply = c.input(String.class, "message").into(Reply.class);
+            sReply.named("reply").codec().output("chat_sink");
         }
     }
 

@@ -131,8 +131,8 @@ class TierDispatchTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
-            c.input(String.class, "in").into(TierOp.class);
-            c.channel(String.class, "out").from(TierOp.class).keyed().toPlugin("sink");
+            var sTierOp = c.input(String.class, "in").into(TierOp.class);
+            sTierOp.named("out").keyed().output("sink");
         }
     }
 
@@ -145,8 +145,8 @@ class TierDispatchTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
-            c.input(String.class, "in").retryMax(1).into(PoisonOp.class);
-            c.channel(String.class, "out").from(PoisonOp.class).keyed().toPlugin("sink");
+            var sPoisonOp = c.input(String.class, "in").retryMax(1).into(PoisonOp.class);
+            sPoisonOp.named("out").keyed().output("sink");
         }
     }
 

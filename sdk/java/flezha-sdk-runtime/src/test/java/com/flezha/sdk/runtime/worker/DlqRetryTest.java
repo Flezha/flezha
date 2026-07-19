@@ -283,6 +283,79 @@ class DlqRetryTest {
     // close over the static counters above.
     // =========================================================================
 
+    // ---------- typed-entry parse failure rides the same ladder ----------
+
+    private static final AtomicInteger TYPED_OK = new AtomicInteger();
+
+    @Test
+    @DisplayName("a typed-entry parse failure exhausts the budget then parks under the entry identity")
+    void entryParseFailureExhaustsBudgetThenParks() {
+        TYPED_OK.set(0);
+        UnboundedOperativeInstance instance = instantiate(TypedEntryOperative.class, "dlq_typed_entry");
+        ctx.operativeInstanceRegistry().add(instance);
+        var reader = new com.flezha.sdk.runtime.stream.PrimaryStreamReader(ctx, 100L);
+
+        reader.onData(com.flezha.sdk.runtime.framing.FrameEncoder.build(
+                instance.instanceId(), "not json".getBytes(), Map.of("channel", "orders")));
+        reader.onData(com.flezha.sdk.runtime.framing.FrameEncoder.build(
+                instance.instanceId(), "{\"id\":1}".getBytes(), Map.of("channel", "orders")));
+
+        assertThat(waitFor(() -> TYPED_OK.get() == 1, 5_000))
+                .as("a valid payload flows past the unparseable one")
+                .isTrue();
+        assertThat(waitFor(() -> !PARKED.isEmpty(), 5_000))
+                .as("the unparseable payload parks")
+                .isTrue();
+        ParkedEntry parked = PARKED.get(0);
+        assertThat(parked.channel()).isEqualTo("orders");
+        assertThat(parked.attempts())
+                .as("the parse consumed the channel's whole retry budget")
+                .isEqualTo(3);
+        assertThat(parked.payload()).isEqualTo("not json".getBytes());
+        assertThat(TYPED_OK.get()).as("the consumer never sees a partial value").isOne();
+    }
+
+    public record TypedOrder(long id) {}
+
+    public static final class TypedEntryOperative implements UnboundedOperative {
+        @Override
+        public String factoryId() {
+            return "dlq_typed_entry";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.input(TypedOrder.class, "orders").retryBackoffMs(1).into(TypedOrderOperation.class);
+        }
+    }
+
+    public static final class TypedOrderOperation extends StatelessTestOperation<TypedOrder, Object, Void> {
+        @Override
+        public String name() {
+            return "dlq_typed_order_operation";
+        }
+
+        @Override
+        public Class<TypedOrder> inputType() {
+            return TypedOrder.class;
+        }
+
+        @Override
+        public Class<Void> outputType() {
+            return Void.class;
+        }
+
+        @Override
+        protected Object initState(Optional<String> operationKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(TypedOrder input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+            TYPED_OK.incrementAndGet();
+        }
+    }
+
     public static final class TransientOperative implements UnboundedOperative {
         @Override
         public String factoryId() {

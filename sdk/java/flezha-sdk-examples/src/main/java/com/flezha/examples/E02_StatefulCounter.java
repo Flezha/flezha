@@ -128,8 +128,8 @@ public final class E02_StatefulCounter {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(CountOperation.class);
-            c.channel(String.class, "out").from(CountOperation.class).toPlugin("my_sink");
+            var sCountOperation = c.input(String.class, "in").into(CountOperation.class);
+            sCountOperation.named("out").output("my_sink");
         }
     }
 

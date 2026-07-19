@@ -215,12 +215,12 @@ class HybridChannelTest {
     // ---------- duplicate plugin sink rejected at registration ----------
 
     @Test
-    @DisplayName("duplicate alsoToPluginWith on the same channel is rejected at registerUnbounded time")
+    @DisplayName("duplicate alsoOutput on the same channel is rejected at registerUnbounded time")
     void hybridDuplicatePluginSinkIsRejected() {
         UnboundedOperativeConfigurationException ex = assertThrows(
                 UnboundedOperativeConfigurationException.class,
                 () -> UnboundedOperativeClassRegistry.registerClass(DuplicateSinkUnboundedOperative.class));
-        assertThat(ex.getMessage()).contains("alsoToPluginWith");
+        assertThat(ex.getMessage()).contains("alsoOutput");
         assertThat(ex.getMessage()).contains("dup_out");
     }
 
@@ -281,10 +281,10 @@ class HybridChannelTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(SingleProducer.class);
-            c.channel(Integer.class, "hybrid_out")
-                    .from(SingleProducer.class)
-                    .alsoToPluginWith("plugin_a", HybridChannelTest::beU32)
+            var sSingleProducer = c.input(String.class, "input").into(SingleProducer.class);
+            sSingleProducer
+                    .named("hybrid_out")
+                    .alsoOutput("plugin_a", HybridChannelTest::beU32)
                     .into(SingleConsumer.class);
         }
     }
@@ -354,16 +354,14 @@ class HybridChannelTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(ThreeProducer.class);
-            c.channel(Integer.class, "three_out")
-                    .from(ThreeProducer.class)
-                    .alsoToPluginWith("plugin_three", v -> {
-                        SERIALIZER_CALLS.incrementAndGet();
-                        return beU32(v);
-                    })
-                    .into(ThreeConsumerA.class)
-                    .into(ThreeConsumerB.class)
-                    .into(ThreeConsumerC.class);
+            var sThreeProducer = c.input(String.class, "input").into(ThreeProducer.class);
+            var chthree_out = sThreeProducer.named("three_out").alsoOutput("plugin_three", v -> {
+                SERIALIZER_CALLS.incrementAndGet();
+                return beU32(v);
+            });
+            chthree_out.into(ThreeConsumerA.class);
+            chthree_out.into(ThreeConsumerB.class);
+            chthree_out.into(ThreeConsumerC.class);
         }
     }
 
@@ -457,10 +455,10 @@ class HybridChannelTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(PanicProducer.class);
-            c.channel(Integer.class, "panic_out")
-                    .from(PanicProducer.class)
-                    .alsoToPluginWith("plugin_panic", v -> {
+            var sPanicProducer = c.input(String.class, "input").into(PanicProducer.class);
+            sPanicProducer
+                    .named("panic_out")
+                    .alsoOutput("plugin_panic", v -> {
                         if (v == 13) {
                             throw new RuntimeException("test serializer rejected 13");
                         }
@@ -540,11 +538,11 @@ class HybridChannelTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(DupProducer.class);
-            c.channel(Integer.class, "dup_out")
-                    .from(DupProducer.class)
-                    .alsoToPluginWith("plugin_a", HybridChannelTest::beU32)
-                    .alsoToPluginWith("plugin_b", HybridChannelTest::beU32);
+            var sDupProducer = c.input(String.class, "input").into(DupProducer.class);
+            sDupProducer
+                    .named("dup_out")
+                    .alsoOutput("plugin_a", HybridChannelTest::beU32)
+                    .alsoOutput("plugin_b", HybridChannelTest::beU32);
         }
     }
 
@@ -583,10 +581,10 @@ class HybridChannelTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(MetaProducer.class);
-            c.channel(Integer.class, "meta_out")
-                    .from(MetaProducer.class)
-                    .alsoToPluginWith("plugin_meta", HybridChannelTest::beU32)
+            var sMetaProducer = c.input(String.class, "input").into(MetaProducer.class);
+            sMetaProducer
+                    .named("meta_out")
+                    .alsoOutput("plugin_meta", HybridChannelTest::beU32)
                     .into(MetaConsumer.class);
         }
     }
@@ -659,8 +657,8 @@ class HybridChannelTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(PureProducer.class);
-            c.channel(Integer.class, "pure_out").from(PureProducer.class).into(PureConsumer.class);
+            var sPureProducer = c.input(String.class, "input").into(PureProducer.class);
+            sPureProducer.named("pure_out").into(PureConsumer.class);
         }
     }
 

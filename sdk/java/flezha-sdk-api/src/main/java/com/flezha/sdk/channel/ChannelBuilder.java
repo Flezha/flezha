@@ -1,36 +1,52 @@
 package com.flezha.sdk.channel;
 
+import java.util.function.Function;
 import javax.annotation.Nonnull;
 
 /**
- * Fluent builder consumed by {@link com.flezha.sdk.operative.UnboundedOperative#channels(ChannelBuilder)}.
- * Declarations land in a per-UnboundedOperative topology that the runtime freezes at
- * {@code registerUnbounded} time.
+ * Producer-first fluent graph builder consumed by
+ * {@link com.flezha.sdk.operative.UnboundedOperative#channels(ChannelBuilder)}
+ * (and by bounded {@code operations(...)} authoring).
+ *
+ * <p>{@code c.input(T.class, "name").into(A.class).into(B.class).output("sink")}
+ * — {@code .into} wires a consumer and returns that operation's <b>output
+ * stream handle</b> ({@link Stream}), so a linear pipeline is one chained
+ * expression. Branching is handle reuse (hold the handle in a variable and
+ * wire it twice) or the equivalent {@link Stream#branch} sugar. Fan-in is two
+ * streams naming the same consumer class.
+ *
+ * <p>Entry channel names stay explicit and mandatory — they are the
+ * operative's external input address. Inter-operation channel names
+ * auto-derive from the producer node's identity, with {@link Stream#named}
+ * as the override. Declarations land in a per-operative topology the runtime
+ * freezes at registration.
  */
 public interface ChannelBuilder {
 
     /**
-     * Declare an entry channel fed by the controller. {@code T} must be
-     * {@code byte[]} or {@code String}; other types throw
-     * {@link com.flezha.sdk.operative.UnboundedOperativeConfigurationException} at
-     * {@code registerUnbounded} time (umbrella Decision 12).
-     *
-     * <p>The returned {@link EntryChannel} only exposes {@code .into(...)}
-     * for wiring an entry-operation consumer.
+     * Declare the entry channel fed by the controller. Any payload type is
+     * accepted: {@code byte[]} is delivered unchanged and {@code String}
+     * UTF-8-decoded, byte-identical to the pre-typed-entry contract; any
+     * other type is deserialized at the entry edge from the wire bytes with
+     * the SDK's default JSON codec (Jackson). A failing parse is classified
+     * like a failing invocation and rides this channel's retry→DLQ ladder.
+     * For a non-JSON wire format, use
+     * {@link #input(Class, String, Function)}.
      */
     @Nonnull
     <T> EntryChannel<T> input(@Nonnull Class<T> type, @Nonnull String name);
 
     /**
-     * Declare an inter-operation or plugin-bound channel. The returned
-     * {@link ChannelDecl} requires {@code .from(...)} to identify a producer
-     * Operation; after {@code .from}, it requires either {@code .into(...)}
-     * (inter-operation) or {@code .toPlugin(...)} (plugin-bound). A channel
-     * with neither is rejected at build-topology time with
-     * {@link com.flezha.sdk.operative.UnboundedOperativeConfigurationException}.
+     * Declare the entry channel with a custom {@code bytes → T} parser,
+     * replacing the default JSON codec of {@link #input(Class, String)}.
+     *
+     * <p>The parser MUST be deterministic — the same bytes always produce the
+     * same value, with no ambient reads (time, randomness, I/O) — the same
+     * contract output serializers carry. A thrown exception is classified
+     * like a failing invocation and rides this channel's retry→DLQ ladder.
      */
     @Nonnull
-    <T> ChannelDecl<T> channel(@Nonnull Class<T> type, @Nonnull String name);
+    <T> EntryChannel<T> input(@Nonnull Class<T> type, @Nonnull String name, @Nonnull Function<byte[], T> parser);
 
     /**
      * Opt this Operative into the <b>effectively-once output tier</b>: each

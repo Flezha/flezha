@@ -3,11 +3,10 @@ package com.flezha.sdk.runtime.operative.builder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.channel.Channel;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.channel.ChannelDecl;
-import com.flezha.sdk.channel.ChannelDeclWithProducer;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.channel.EntryChannel;
 import com.flezha.sdk.channel.OverflowPolicy;
+import com.flezha.sdk.channel.Stream;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
@@ -21,39 +20,45 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
-import java.util.Set;
 import java.util.function.Function;
 import javax.annotation.Nonnull;
 
 /**
- * Implements {@link ChannelBuilder} (and the inner {@link EntryChannel} /
- * {@link ChannelDecl} / {@link ChannelDeclWithProducer} interfaces). Tracks
- * declared channels and operation registrations, validates wiring at
- * {@link #build(String)} time, and produces a frozen {@link UnboundedOperativeTopology}.
+ * Implements the producer-first graph {@link ChannelBuilder} (and the
+ * {@link EntryChannel} / {@link Stream} handles). Tracks declared channels
+ * and node registrations, validates the graph at {@link #build(String)}
+ * time, and produces a frozen {@link UnboundedOperativeTopology}.
  *
- * <p>Validation rules (mirror of `operative-mvp-rust/src/operative/builder.rs`):
+ * <p>Mirror of the Rust SDK's {@code channel/builder.rs} +
+ * {@code operative/builder.rs}:
  * <ul>
- *   <li>Entry channels accept only {@code byte[]} or {@code String}.</li>
- *   <li>Channel payload type must match producer Operation's
- *       {@link Operation#outputType()} and consumer Operation(s)'
- *       {@link Operation#inputType()}.</li>
- *   <li>Channels declared with {@code .channel(...)} but never wired with
- *       {@code .from(...)} are rejected.</li>
- *   <li>Operations declaring non-empty {@link Operation#operationKeys()} but with
- *       {@code segmentForOverridden() == false} are rejected.</li>
- *   <li>Operations with {@code operationKeyOverridden() == true} but empty
- *       {@code operationKeys()} are rejected (dynamic-mode reservation).</li>
- *   <li>Channel names must be unique within the UnboundedOperative.</li>
+ *   <li>A node is identified by its Operation class unless an explicit node
+ *       name is given at wiring time; two unnamed mentions of one class are
+ *       the same node (fan-in), a named mention is its own node, and an
+ *       identity claimed by two distinct nodes is a collision.</li>
+ *   <li>A node's output channel is created lazily on first use of its stream
+ *       handle and named by the node's identity; {@code .named(...)}
+ *       overrides. Derived, overridden, and entry names share one namespace
+ *       whose duplicate check runs at build time.</li>
+ *   <li>Graph shape: one entry channel feeding the graph, every node
+ *       reachable from it, no cycles. Fan-out and fan-in are both legal.</li>
+ *   <li>Typed entries decode at the entry edge (passthrough {@code byte[]},
+ *       UTF-8 {@code String}, Jackson JSON otherwise, or a custom parser); a
+ *       failing parse on a parsed entry rides the channel's retry→DLQ
+ *       ladder.</li>
  * </ul>
  *
- * <p>All failures throw {@link UnboundedOperativeConfigurationException}.
+ * <p>All failures accumulate and throw {@link UnboundedOperativeConfigurationException}
+ * at build time. After {@link #build(String)} the topology is frozen: a
+ * retained handle used afterwards throws {@link IllegalStateException}
+ * naming the operative.
  */
 public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
 
-    private static final Set<Class<?>> ENTRY_CHANNEL_TYPES = Set.of(byte[].class, String.class);
+    /** One shared Jackson mapper for every default codec (thread-safe once configured). */
+    private static final ObjectMapper DEFAULT_MAPPER = new ObjectMapper();
 
     private final List<ChannelEntry> channels = new ArrayList<>();
-    private final Map<String, Integer> nameToId = new LinkedHashMap<>();
     private final List<OperationEntry> operations = new ArrayList<>();
     private final Map<String, Integer> operationNameToId = new LinkedHashMap<>();
     private final List<String> errors = new ArrayList<>();
@@ -62,6 +67,11 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
     private long correctionWindowMs;
     private com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy =
             com.flezha.sdk.channel.BeyondWindowPolicy.PROCESS_AS_ARRIVAL;
+
+    /** Set at {@link #build(String)}: every mutating path refuses afterwards. */
+    private boolean frozen;
+
+    private String frozenFactoryId = "<unbuilt>";
 
     /**
      * Run the supplied {@link UnboundedOperative#channels(ChannelBuilder)} once, validate,
@@ -94,49 +104,77 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
     @Override
     @Nonnull
     public <T> EntryChannel<T> input(@Nonnull Class<T> type, @Nonnull String name) {
-        if (!ENTRY_CHANNEL_TYPES.contains(type)) {
-            errors.add("entry channel `" + name + "`: type " + type.getName()
-                    + " is not allowed; entry channels accept only byte[] or String in v1");
-        }
-        int id = declareChannel(type, name, ChannelKind.ENTRY);
-        return new EntryChannelImpl<>(id, type, name);
+        checkMutable();
+        boolean parsed = type != byte[].class && type != String.class;
+        return declareEntry(type, name, defaultEntryParser(type), parsed);
     }
 
     @Override
     @Nonnull
-    public <T> ChannelDecl<T> channel(@Nonnull Class<T> type, @Nonnull String name) {
-        int id = declareChannel(type, name, ChannelKind.INTER_OPERATION);
-        return new ChannelDeclImpl<>(id, type, name);
+    public <T> EntryChannel<T> input(
+            @Nonnull Class<T> type, @Nonnull String name, @Nonnull Function<byte[], T> parser) {
+        checkMutable();
+        return declareEntry(type, name, parser::apply, true);
+    }
+
+    private <T> EntryChannel<T> declareEntry(
+            Class<T> type, String name, Function<byte[], Object> parser, boolean parsed) {
+        int id = declareChannel(type, name, ChannelKind.ENTRY);
+        ChannelEntry entry = channels.get(id);
+        entry.entryParser = parser;
+        entry.entryParsed = parsed;
+        return new EntryChannelImpl<>(id, name);
     }
 
     @Override
     public void effectivelyOnce() {
+        checkMutable();
         this.effectivelyOnce = true;
     }
 
     @Override
     public void checkpointAck() {
+        checkMutable();
         this.checkpointAck = true;
     }
 
     @Override
     public void correctionWindow(long windowMs) {
+        checkMutable();
         this.correctionWindowMs = windowMs;
     }
 
     @Override
     public void beyondWindowPolicy(@Nonnull com.flezha.sdk.channel.BeyondWindowPolicy policy) {
+        checkMutable();
         this.beyondWindowPolicy = policy;
     }
 
     @Nonnull
     public UnboundedOperativeTopology build(@Nonnull String factoryId) {
-        // Detect channels declared without `.from(...)` (still classified as
-        // INTER_OPERATION with no producer).
-        for (ChannelEntry entry : channels) {
-            if (entry.kind != ChannelKind.ENTRY && entry.producer == null) {
-                errors.add("channel `" + entry.name + "` was declared but never wired with .from(...)");
+        // Freeze first: any retained handle used from here on throws naming
+        // the operative, whatever build's own outcome.
+        frozenFactoryId = factoryId;
+        frozen = true;
+
+        // One per-operative channel namespace: derived names (producer node
+        // identity), `.named(...)` overrides, and entry names all collide here.
+        // Checked at build, not declare — a `.named` override frees the
+        // derived name a later declaration may claim.
+        Map<String, Integer> nameToId = new LinkedHashMap<>();
+        for (int id = 0; id < channels.size(); id++) {
+            if (nameToId.put(channels.get(id).name, id) != null) {
+                errors.add("channel `" + channels.get(id).name + "` declared more than once on this operative");
             }
+        }
+
+        // Shared graph-shape rule (`sdk-graph-authoring`): one entry channel
+        // feeding the graph, every node reachable from it, no cycles. Runs in
+        // the VALIDATION phase — the accumulated errors throw before the
+        // descriptor-materialization loop, so a refusal added after that point
+        // would never fire.
+        if (!operations.isEmpty()) {
+            validateGraphShape();
         }
 
         // Validate each Operation's static-mode / dynamic-mode declaration.
@@ -226,6 +264,8 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                     List.copyOf(entry.consumers),
                     Optional.ofNullable(entry.pluginName),
                     entry.payloadType,
+                    Optional.ofNullable(entry.entryParser),
+                    entry.entryParsed,
                     Optional.ofNullable(entry.pluginSerializer),
                     pluginSink,
                     entry.overflowPolicy,
@@ -275,12 +315,61 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                 beyondWindowPolicy);
     }
 
+    // ---- Graph-shape validation ---------------------------------------------
+
+    private void validateGraphShape() {
+        // Exactly one entry channel feeds the graph.
+        String firstEntry = null;
+        for (ChannelEntry c : channels) {
+            if (c.kind != ChannelKind.ENTRY) {
+                continue;
+            }
+            if (firstEntry == null) {
+                firstEntry = c.name;
+            } else {
+                errors.add(UnboundedOperativeConfigurationException.multipleEntryChannels(firstEntry, c.name)
+                        .getMessage());
+                break;
+            }
+        }
+
+        // The shared graph-shape walk (GraphShape, one mechanism for this
+        // validation and the bounded execution order): a leftover Kahn node
+        // is on a cycle; unreachable is reported only when acyclic (a cycle
+        // already explains its own unreachable nodes) and is defensive — the
+        // stream-handle builder only creates nodes by wiring from the entry.
+        List<int[]> edges = new ArrayList<>();
+        List<Integer> roots = new ArrayList<>();
+        for (ChannelEntry ch : channels) {
+            if (ch.kind == ChannelKind.ENTRY) {
+                roots.addAll(ch.consumers);
+            } else if (ch.producer != null) {
+                for (int consumer : ch.consumers) {
+                    edges.add(new int[] {ch.producer, consumer});
+                }
+            }
+        }
+        GraphShape.Order shape = GraphShape.order(operations.size(), edges, roots);
+        if (shape.onCycle() >= 0) {
+            errors.add(UnboundedOperativeConfigurationException.cycle(operations.get(shape.onCycle()).name)
+                    .getMessage());
+        } else if (shape.unreachable() >= 0) {
+            errors.add(UnboundedOperativeConfigurationException.unreachableOperation(
+                            operations.get(shape.unreachable()).name)
+                    .getMessage());
+        }
+    }
+
     // ---- Internals ----------------------------------------------------------
 
-    private int declareChannel(Class<?> payloadType, String name, ChannelKind kind) {
-        if (nameToId.containsKey(name)) {
-            errors.add("channel `" + name + "` declared more than once on this operative");
+    private void checkMutable() {
+        if (frozen) {
+            throw new IllegalStateException("operative `" + frozenFactoryId
+                    + "`: the topology is frozen; stream handles are only usable inside channels()/operations()");
         }
+    }
+
+    private int declareChannel(Class<?> payloadType, String name, ChannelKind kind) {
         int id = channels.size();
         ChannelEntry entry = new ChannelEntry();
         entry.name = name;
@@ -288,21 +377,34 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         entry.payloadType = payloadType;
         entry.overflowPolicy = defaultPolicyForKind(kind);
         channels.add(entry);
-        nameToId.put(name, id);
         return id;
     }
 
-    private int registerOperation(Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass) {
+    /**
+     * Resolve or create the node for {@code operationClass} under the
+     * node-identity rule: two unnamed mentions of one class are the same
+     * node; an explicit node name creates/refers to a distinct node whose
+     * identity string replaces the operation's {@code name()}. An identity
+     * claimed by a <i>different</i> declaration is a collision.
+     */
+    private int registerNode(Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass, String nodeName) {
         Operation<?, ?, ?, ?, ?, ?> probe = instantiate(operationClass);
-        String operationName = probe.name();
-        Integer existing = operationNameToId.get(operationName);
+        String identity = nodeName != null ? nodeName : probe.name();
+        boolean named = nodeName != null;
+        Integer existing = operationNameToId.get(identity);
         if (existing != null) {
+            OperationEntry existingEntry = operations.get(existing);
+            if (!existingEntry.operationClass.equals(operationClass) || existingEntry.named != named) {
+                errors.add(UnboundedOperativeConfigurationException.nodeIdentityCollision(identity)
+                        .getMessage());
+            }
             return existing;
         }
         int id = operations.size();
         OperationEntry entry = new OperationEntry();
         entry.operationClass = operationClass;
-        entry.name = operationName;
+        entry.name = identity;
+        entry.named = named;
         entry.segmentKeys = List.copyOf(probe.operationKeys());
         entry.segmentForOverridden = probe.segmentForOverridden();
         entry.operationKeyOverridden = probe.operationKeyOverridden();
@@ -323,16 +425,16 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         // rejected here instead — erasure precludes the compile-time form, so
         // the same defect is caught at registration.
         if (entry.clockType == com.flezha.sdk.state.EventTimeFrom.class && !probe.eventTimeOverridden()) {
-            errors.add(UnboundedOperativeConfigurationException.eventTimeExtractorMissing(operationName)
+            errors.add(UnboundedOperativeConfigurationException.eventTimeExtractorMissing(identity)
                     .getMessage());
         }
         if (entry.clockType == com.flezha.sdk.state.LogicalClock.class
                 && entry.changeType == com.flezha.sdk.state.NoChange.class) {
-            errors.add(UnboundedOperativeConfigurationException.unservableClock(operationName)
+            errors.add(UnboundedOperativeConfigurationException.unservableClock(identity)
                     .getMessage());
         }
         operations.add(entry);
-        operationNameToId.put(operationName, id);
+        operationNameToId.put(identity, id);
         return id;
     }
 
@@ -396,53 +498,53 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                 }
             };
 
-    private void wireConsumer(
-            int channelId,
-            String channelName,
-            Class<?> channelPayloadType,
-            Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass) {
-        int operationId = registerOperation(operationClass);
+    /**
+     * Wire {@code channelId} into a consumer node (created/resolved by
+     * identity). Returns the consumer's node id so its handle can continue
+     * the chain.
+     */
+    private int wireConsumer(
+            int channelId, Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass, String nodeName) {
+        int operationId = registerNode(operationClass, nodeName);
         OperationEntry operation = operations.get(operationId);
-        if (!channelPayloadType.equals(operation.inputType)) {
-            errors.add("channel `" + channelName + "`: payload type "
-                    + describe(channelPayloadType)
+        ChannelEntry channel = channels.get(channelId);
+        if (!channel.payloadType.equals(operation.inputType)) {
+            String producedBy = channel.producer == null
+                    ? "payload type"
+                    : "producer operation `" + operations.get(channel.producer).name + "` outputType() =";
+            errors.add("channel `" + channel.name + "`: " + producedBy + " "
+                    + describe(channel.payloadType)
                     + " does not match consumer operation `" + operation.name
                     + "` inputType() = " + describe(operation.inputType));
         }
-        ChannelEntry channel = channels.get(channelId);
         if (!channel.consumers.contains(operationId)) {
             channel.consumers.add(operationId);
         }
-        // Cache input channel id on the operation. If the operation already has a
-        // different input channel wired, both stay reachable via the
-        // channel descriptor; the dispatcher uses the channel-side mapping.
+        // Cache input channel id on the operation. A fan-in operation keeps its
+        // first input channel here; every incoming channel stays reachable via
+        // the channel descriptors, and the dispatcher routes via the
+        // channel-side mapping.
         if (operation.inputChannelId == null) {
             operation.inputChannelId = channelId;
         }
+        return operationId;
     }
 
-    private void wireProducer(
-            int channelId,
-            String channelName,
-            Class<?> channelPayloadType,
-            Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass) {
-        int operationId = registerOperation(operationClass);
+    /**
+     * The node's output channel, created lazily on first use so a leaf node
+     * never carries a phantom channel. Named by the node's identity until a
+     * {@code .named(...)} override; payload type = the node's declared
+     * {@code outputType()}.
+     */
+    private int ensureOutputChannel(int operationId) {
         OperationEntry operation = operations.get(operationId);
-        if (!channelPayloadType.equals(operation.outputType)) {
-            errors.add("channel `" + channelName + "`: payload type "
-                    + describe(channelPayloadType)
-                    + " does not match producer operation `" + operation.name
-                    + "` outputType() = " + describe(operation.outputType));
+        if (operation.outputChannelId != null) {
+            return operation.outputChannelId;
         }
-        ChannelEntry channel = channels.get(channelId);
-        if (channel.producer != null) {
-            errors.add("channel `" + channelName + "` already has a producer; multi-producer is not allowed");
-        } else {
-            channel.producer = operationId;
-        }
-        if (operation.outputChannelId == null) {
-            operation.outputChannelId = channelId;
-        }
+        int id = declareChannel(operation.outputType, operation.name, ChannelKind.INTER_OPERATION);
+        channels.get(id).producer = operationId;
+        operation.outputChannelId = id;
+        return id;
     }
 
     private static String describe(Class<?> c) {
@@ -468,6 +570,15 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         boolean keyed;
         Function<Object, byte[]> interOpEncoder;
         Function<byte[], Object> interOpDecoder;
+        /** Entry channels only: wire bytes → typed payload. */
+        Function<byte[], Object> entryParser;
+        /**
+         * Entry channels whose parser is a real one (typed JSON or a custom
+         * {@code input(type, name, parser)}). A failing parse rides the
+         * channel's retry→DLQ ladder; {@code byte[]}/{@code String}
+         * passthrough entries keep the pre-change drop-and-log behaviour.
+         */
+        boolean entryParsed;
     }
 
     /**
@@ -489,9 +600,19 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         return kind == ChannelKind.ENTRY ? OverflowPolicy.DROP_NEWEST : OverflowPolicy.BLOCK;
     }
 
-    /** Mutable internal record for a operation registration. */
+    /** Mutable internal record for a node registration. */
     static final class OperationEntry {
+        /**
+         * Node identity: the operation's {@code name()}, or the explicit node
+         * name given at wiring time. Feeds everything {@code name()} feeds —
+         * state directories, journal entries, the derived channel name,
+         * diagnostics.
+         */
         String name;
+
+        /** Whether this node was created with an explicit node name. */
+        boolean named;
+
         Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass;
         List<String> segmentKeys;
         boolean segmentForOverridden;
@@ -512,29 +633,40 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         java.util.Optional<java.time.Duration> segmentIdleTtl = java.util.Optional.empty();
     }
 
-    // ---- Builder phantom types ---------------------------------------------
+    // ---- Builder handle types ----------------------------------------------
 
     private final class EntryChannelImpl<T> implements EntryChannel<T> {
         private final int channelId;
-        private final Class<T> payloadType;
         private final String name;
 
-        EntryChannelImpl(int channelId, Class<T> payloadType, String name) {
+        EntryChannelImpl(int channelId, String name) {
             this.channelId = channelId;
-            this.payloadType = payloadType;
             this.name = name;
         }
 
         @Override
         @Nonnull
-        public Channel<T> into(@Nonnull Class<? extends Operation<T, ?, ?, ?, ?, ?>> operationClass) {
-            wireConsumer(channelId, name, payloadType, operationClass);
-            return new Channel<>(channelId, payloadType);
+        public <O> Stream<O> into(@Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass) {
+            return wire(operationClass, null);
+        }
+
+        @Override
+        @Nonnull
+        public <O> Stream<O> into(
+                @Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass, @Nonnull String nodeName) {
+            return wire(operationClass, nodeName);
+        }
+
+        private <O> Stream<O> wire(Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass, String nodeName) {
+            checkMutable();
+            int node = wireConsumer(channelId, operationClass, nodeName);
+            return new StreamImpl<>(node);
         }
 
         @Override
         @Nonnull
         public EntryChannel<T> onFull(@Nonnull OverflowPolicy policy) {
+            checkMutable();
             channels.get(channelId).overflowPolicy = policy;
             return this;
         }
@@ -542,6 +674,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         @Override
         @Nonnull
         public EntryChannel<T> retryMax(int maxAttempts) {
+            checkMutable();
             setRetryMax(channelId, maxAttempts);
             return this;
         }
@@ -549,158 +682,196 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         @Override
         @Nonnull
         public EntryChannel<T> retryBackoffMs(long baseMs) {
+            checkMutable();
             channels.get(channelId).retryBackoffBaseMs = baseMs;
             return this;
         }
-    }
-
-    private final class ChannelDeclImpl<T> implements ChannelDecl<T> {
-        private final int channelId;
-        private final Class<T> payloadType;
-        private final String name;
-
-        ChannelDeclImpl(int channelId, Class<T> payloadType, String name) {
-            this.channelId = channelId;
-            this.payloadType = payloadType;
-            this.name = name;
-        }
 
         @Override
-        @Nonnull
-        public ChannelDeclWithProducer<T> from(@Nonnull Class<? extends Operation<?, ?, T, ?, ?, ?>> operationClass) {
-            wireProducer(channelId, name, payloadType, operationClass);
-            return new ChannelDeclWithProducerImpl<>(channelId, payloadType, name);
-        }
-
-        @Override
-        @Nonnull
-        public ChannelDecl<T> onFull(@Nonnull OverflowPolicy policy) {
-            channels.get(channelId).overflowPolicy = policy;
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public ChannelDecl<T> retryMax(int maxAttempts) {
-            setRetryMax(channelId, maxAttempts);
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public ChannelDecl<T> retryBackoffMs(long baseMs) {
-            channels.get(channelId).retryBackoffBaseMs = baseMs;
-            return this;
+        public String toString() {
+            return "EntryChannel(" + name + ")";
         }
     }
 
-    private final class ChannelDeclWithProducerImpl<T> implements ChannelDeclWithProducer<T> {
-        private final int channelId;
-        private final Class<T> payloadType;
-        private final String name;
+    /**
+     * The operation's output stream handle: a node id into the enclosing
+     * builder. The channel out of the node is created lazily on first use.
+     */
+    private final class StreamImpl<T> extends Stream<T> {
+        private final int node;
 
-        ChannelDeclWithProducerImpl(int channelId, Class<T> payloadType, String name) {
-            this.channelId = channelId;
-            this.payloadType = payloadType;
-            this.name = name;
+        StreamImpl(int node) {
+            this.node = node;
+        }
+
+        private int channelId() {
+            return ensureOutputChannel(node);
         }
 
         @Override
         @Nonnull
-        public ChannelDeclWithProducer<T> into(@Nonnull Class<? extends Operation<T, ?, ?, ?, ?, ?>> operationClass) {
-            wireConsumer(channelId, name, payloadType, operationClass);
+        public <O> Stream<O> into(@Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass) {
+            return wire(operationClass, null);
+        }
+
+        @Override
+        @Nonnull
+        public <O> Stream<O> into(
+                @Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass, @Nonnull String nodeName) {
+            return wire(operationClass, nodeName);
+        }
+
+        private <O> Stream<O> wire(Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass, String nodeName) {
+            checkMutable();
+            int consumer = wireConsumer(channelId(), operationClass, nodeName);
+            return new StreamImpl<>(consumer);
+        }
+
+        @Override
+        @Nonnull
+        protected Stream<T> branchArms(@Nonnull List<java.util.function.Consumer<Stream<T>>> arms) {
+            checkMutable();
+            if (arms.size() < 2) {
+                errors.add(UnboundedOperativeConfigurationException.branchTooFewArms(arms.size())
+                        .getMessage());
+            }
+            for (java.util.function.Consumer<Stream<T>> arm : arms) {
+                arm.accept(this);
+            }
             return this;
         }
 
         @Override
         @Nonnull
-        public ChannelDeclWithProducer<T> keyed() {
-            channels.get(channelId).keyed = true;
+        public Stream<T> named(@Nonnull String name) {
+            checkMutable();
+            channels.get(channelId()).name = name;
             return this;
         }
 
         @Override
         @Nonnull
-        @SuppressWarnings("unchecked")
-        public ChannelDeclWithProducer<T> codec() {
+        public Stream<T> keyed() {
+            checkMutable();
+            channels.get(channelId()).keyed = true;
+            return this;
+        }
+
+        @Override
+        @Nonnull
+        public Stream<T> codec() {
             // Reuse the SDK's default JSON serialization — the same Jackson
             // mapper a plugin-bound channel falls back to.
-            return codecWith(defaultSerializer(payloadType), defaultDeserializer(payloadType));
+            return codecWith(defaultSerializer(payloadType()), defaultDeserializer(payloadType()));
         }
 
         @Override
         @Nonnull
-        @SuppressWarnings("unchecked")
-        public ChannelDeclWithProducer<T> codecWith(
-                @Nonnull Function<T, byte[]> encoder, @Nonnull Function<byte[], T> decoder) {
-            ChannelEntry entry = channels.get(channelId);
-            entry.interOpEncoder = value -> encoder.apply((T) value);
+        public Stream<T> codecWith(@Nonnull Function<T, byte[]> encoder, @Nonnull Function<byte[], T> decoder) {
+            checkMutable();
+            ChannelEntry entry = channels.get(channelId());
+            entry.interOpEncoder = value -> encoder.apply(cast(value));
             entry.interOpDecoder = bytes -> decoder.apply(bytes);
             return this;
         }
 
         @Override
         @Nonnull
-        public Channel<T> toPlugin(@Nonnull String pluginName) {
-            return toPlugin(pluginName, defaultSerializer(payloadType));
+        public Stream<T> onFull(@Nonnull OverflowPolicy policy) {
+            checkMutable();
+            channels.get(channelId()).overflowPolicy = policy;
+            return this;
         }
 
         @Override
         @Nonnull
-        public Channel<T> toPlugin(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
-            ChannelEntry entry = channels.get(channelId);
-            entry.kind = ChannelKind.PLUGIN_BOUND;
-            entry.pluginName = pluginName;
-            @SuppressWarnings("unchecked")
-            Function<Object, byte[]> erased = (Function<Object, byte[]>) (Function<?, byte[]>) serializer;
-            entry.pluginSerializer = erased;
-            return new Channel<>(channelId, payloadType);
+        public Stream<T> retryMax(int maxAttempts) {
+            checkMutable();
+            setRetryMax(channelId(), maxAttempts);
+            return this;
         }
 
         @Override
         @Nonnull
-        public ChannelDeclWithProducer<T> alsoToPluginWith(
-                @Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
-            ChannelEntry entry = channels.get(channelId);
+        public Stream<T> retryBackoffMs(long baseMs) {
+            checkMutable();
+            channels.get(channelId()).retryBackoffBaseMs = baseMs;
+            return this;
+        }
+
+        @Override
+        @Nonnull
+        public Stream<T> alsoOutput(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
+            checkMutable();
+            ChannelEntry entry = channels.get(channelId());
             if (entry.pluginSinkName != null) {
                 errors.add(UnboundedOperativeConfigurationException.duplicatePluginSink(entry.name)
                         .getMessage());
                 return this;
             }
             entry.pluginSinkName = pluginName;
-            @SuppressWarnings("unchecked")
-            Function<Object, byte[]> erased = (Function<Object, byte[]>) (Function<?, byte[]>) serializer;
-            entry.pluginSinkSerializer = erased;
+            entry.pluginSinkSerializer = value -> serializer.apply(cast(value));
             return this;
         }
 
         @Override
         @Nonnull
-        public ChannelDeclWithProducer<T> onFull(@Nonnull OverflowPolicy policy) {
-            channels.get(channelId).overflowPolicy = policy;
-            return this;
+        public Stream<T> alsoOutput(@Nonnull String pluginName) {
+            return alsoOutput(pluginName, defaultSerializer(payloadType()));
         }
 
         @Override
         @Nonnull
-        public ChannelDeclWithProducer<T> retryMax(int maxAttempts) {
-            setRetryMax(channelId, maxAttempts);
-            return this;
+        public Channel<T> output(@Nonnull String pluginName) {
+            return output(pluginName, defaultSerializer(payloadType()));
         }
 
         @Override
         @Nonnull
-        public ChannelDeclWithProducer<T> retryBackoffMs(long baseMs) {
-            channels.get(channelId).retryBackoffBaseMs = baseMs;
-            return this;
+        public Channel<T> output(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
+            checkMutable();
+            int cid = channelId();
+            ChannelEntry entry = channels.get(cid);
+            entry.kind = ChannelKind.PLUGIN_BOUND;
+            entry.pluginName = pluginName;
+            entry.pluginSerializer = value -> serializer.apply(cast(value));
+            return new Channel<>(cid, payloadType());
+        }
+
+        /** The producer node's declared output type: this stream's payload type. */
+        @SuppressWarnings("unchecked")
+        private Class<T> payloadType() {
+            return (Class<T>) operations.get(node).outputType;
+        }
+
+        @SuppressWarnings("unchecked")
+        private T cast(Object value) {
+            return (T) value;
         }
     }
 
     /**
-     * Default plugin-bound serializer. {@code byte[]} is passthrough;
-     * {@code String} is UTF-8 encoded; everything else goes through Jackson
-     * JSON ({@code design.md} Open Question 4).
+     * The default entry decode for {@code T}: passthrough for {@code byte[]},
+     * UTF-8 for {@code String} (both byte-identical to the pre-typed-entry
+     * contract), the SDK's default JSON codec otherwise.
      */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Function<byte[], Object> defaultEntryParser(Class<?> payloadType) {
+        if (payloadType == byte[].class) {
+            return bytes -> bytes;
+        }
+        if (payloadType == String.class) {
+            return bytes -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        }
+        return bytes -> {
+            try {
+                return DEFAULT_MAPPER.readValue(bytes, (Class) payloadType);
+            } catch (Exception e) {
+                throw new RuntimeException("entry channel: JSON deserialization failed: " + e.getMessage(), e);
+            }
+        };
+    }
+
     /** Mirror of {@link #defaultSerializer}: the decode half of a default {@code codec()}. */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static <T> Function<byte[], T> defaultDeserializer(Class<T> payloadType) {
@@ -710,16 +881,21 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         if (payloadType == String.class) {
             return (Function) (Function<byte[], String>) (b -> new String(b, java.nio.charset.StandardCharsets.UTF_8));
         }
-        ObjectMapper mapper = new ObjectMapper();
         return bytes -> {
             try {
-                return mapper.readValue(bytes, payloadType);
+                return DEFAULT_MAPPER.readValue(bytes, payloadType);
             } catch (Exception e) {
                 throw new RuntimeException("inter-op codec (Jackson) decode failed: " + e.getMessage(), e);
             }
         };
     }
 
+    /**
+     * Default plugin-bound serializer, shared by {@code output(...)} and
+     * {@code alsoOutput(...)} so the two produce identical bytes for the same
+     * value. {@code byte[]} is passthrough; {@code String} is UTF-8 encoded;
+     * everything else goes through Jackson JSON.
+     */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static <T> Function<T, byte[]> defaultSerializer(Class<T> payloadType) {
         if (payloadType == byte[].class) {
@@ -728,10 +904,9 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         if (payloadType == String.class) {
             return (Function) (Function<String, byte[]>) (s -> s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
-        ObjectMapper mapper = new ObjectMapper();
         return value -> {
             try {
-                return mapper.writeValueAsBytes(value);
+                return DEFAULT_MAPPER.writeValueAsBytes(value);
             } catch (Exception e) {
                 throw new RuntimeException("plugin serializer (Jackson) failed: " + e.getMessage(), e);
             }

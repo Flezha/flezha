@@ -11,10 +11,8 @@ import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import javax.annotation.Nonnull;
 
 /**
@@ -22,7 +20,7 @@ import javax.annotation.Nonnull;
  * validated once at registration and reused for every spawn of the class.
  * Mirrors the Rust SDK's {@code BoundedSpec}: {@link #topology} is empty for the
  * bare {@code run}-sugar form, present (with the ordered {@link #chain}) for the
- * structured linear-chain form.
+ * structured DAG form.
  */
 public final class BoundedSpec {
 
@@ -128,7 +126,7 @@ public final class BoundedSpec {
     /**
      * Build and validate the spec for a bounded class. An empty
      * {@link BoundedOperative#operations} selects the {@code run}-sugar path; a
-     * non-empty declaration is validated as a single connected linear chain.
+     * non-empty declaration is validated as a single entry-rooted DAG.
      *
      * @throws BoundedOperativeConfigurationException on invalid authoring
      *     (external-stop-only, branching, cycle, dynamic segmentation,
@@ -190,7 +188,7 @@ public final class BoundedSpec {
                     resolveRetry(factoryId, probe));
         }
 
-        List<Integer> chain = linearChain(factoryId, topology);
+        List<Integer> chain = topologicalOrder(factoryId, topology);
 
         // A durable class journals its inter-op handoff at every op barrier, so
         // every inter-op channel needs a codec. An opted-out class re-runs from
@@ -244,13 +242,13 @@ public final class BoundedSpec {
     }
 
     /**
-     * Resolve the linear execution order of a structured bounded's operations
-     * and reject anything that is not a single connected chain (no entry
-     * channel, branching, dynamic segmentation, cycles, disconnected
+     * Resolve the topological execution order of a structured bounded's DAG
+     * and reject anything outside the shared shape rule (no entry channel,
+     * multi-consumer entry, dynamic segmentation, cycles, disconnected
      * operations). Operation ids are indices into {@code topology.operations()};
      * a channel's {@code consumers()} are downstream operation ids.
      */
-    private static List<Integer> linearChain(String factoryId, UnboundedOperativeTopology topology) {
+    private static List<Integer> topologicalOrder(String factoryId, UnboundedOperativeTopology topology) {
         // The entry channel seeds the first operation(s) from the spawn args.
         ChannelDescriptor entry = null;
         for (ChannelDescriptor c : topology.channels()) {
@@ -269,66 +267,47 @@ public final class BoundedSpec {
                     "bounded operative `" + factoryId + "` declares an entry channel with no consumer");
         }
 
-        // Breadth-first from the entry. BFS order IS topological here — an
-        // operation is only enqueued once every producer feeding it has been
-        // visited — which is why branching needs NO change to the compensation
-        // planner: completion order is already topological, and the planner
-        // already reverses it.
-        List<Integer> order = new ArrayList<>(topology.operations().size());
-        Set<Integer> seen = new HashSet<>();
-        java.util.Deque<Integer> queue = new java.util.ArrayDeque<>(entry.consumers());
-
-        while (!queue.isEmpty()) {
-            int current = queue.poll();
-            if (!seen.add(current)) {
-                // Fan-in: two producers feed this operation. Not an error — it just
-                // means it was already scheduled. (Silently OVERWRITING such an edge
-                // is the bug branching has to avoid.)
-                continue;
+        // The shared graph-shape walk (GraphShape, the same mechanism the
+        // unbounded validation runs): Kahn order makes the driver's sequential
+        // walk dispatch a join only after ALL its producers, with the
+        // accumulated batch — the former BFS enqueued a join on its FIRST
+        // producer. Kahn-FIFO equals BFS numbering for a tree, so journaled
+        // op_idx values keep their meaning. Reachability is named before the
+        // cycle so a genuinely disconnected operation is not reported as a
+        // cycle symptom.
+        int n = topology.operations().size();
+        List<int[]> edges = new ArrayList<>();
+        for (ChannelDescriptor ch : topology.channels()) {
+            if (ch.producer().isPresent()) {
+                for (int consumer : ch.consumers()) {
+                    edges.add(new int[] {ch.producer().getAsInt(), consumer});
+                }
             }
-            order.add(current);
-
-            OperationDescriptor op = topology.operation(current);
+        }
+        com.flezha.sdk.runtime.operative.builder.GraphShape.Order shape =
+                com.flezha.sdk.runtime.operative.builder.GraphShape.order(n, edges, entry.consumers());
+        if (shape.unreachable() >= 0 && shape.onCycle() < 0) {
+            throw new BoundedOperativeConfigurationException("bounded operative `" + factoryId
+                    + "` declares operation `"
+                    + topology.operations().get(shape.unreachable()).name()
+                    + "` that is not reachable from the entry channel");
+        }
+        if (shape.onCycle() >= 0) {
+            throw new BoundedOperativeConfigurationException("bounded operative `" + factoryId
+                    + "` declares operation `"
+                    + topology.operations().get(shape.onCycle()).name()
+                    + "` on a cycle; a bounded topology is a DAG — an operation's output may never"
+                    + " reach its own input");
+        }
+        for (OperationDescriptor op : topology.operations()) {
             // Bounded has no dynamic-segments capability.
             if (op.operationKeyOverridden()) {
                 throw new BoundedOperativeConfigurationException("bounded operative `" + factoryId
                         + "` declares a dynamic-segment operation `" + op.name()
                         + "`; bounded operatives do not support dynamic segmentation");
             }
-
-            if (op.outputChannelId().isPresent()) {
-                ChannelDescriptor ch = topology.channel(op.outputChannelId().getAsInt());
-                if (ch != null) {
-                    for (int consumer : ch.consumers()) {
-                        if (consumer == current) {
-                            throw branching(factoryId, "operation `" + op.name() + "` (self-cycle)");
-                        }
-                        queue.add(consumer);
-                    }
-                }
-            }
         }
 
-        if (order.size() != topology.operations().size()) {
-            String disconnected = "<unknown>";
-            for (int i = 0; i < topology.operations().size(); i++) {
-                if (!seen.contains(i)) {
-                    disconnected = topology.operations().get(i).name();
-                    break;
-                }
-            }
-            throw new BoundedOperativeConfigurationException("bounded operative `" + factoryId
-                    + "` declares operation `" + disconnected
-                    + "` that is not reachable from the entry channel");
-        }
-
-        return order;
-    }
-
-    private static BoundedOperativeConfigurationException branching(String factoryId, String at) {
-        return new BoundedOperativeConfigurationException(
-                "bounded operative `" + factoryId
-                        + "` declares a branching topology at " + at
-                        + "; bounded v1 supports a single linear chain only (each stage feeds exactly one downstream operation)");
+        return shape.order();
     }
 }

@@ -4,26 +4,34 @@ import com.flezha.sdk.operation.Operation;
 import javax.annotation.Nonnull;
 
 /**
- * Entry-channel declaration. Only exposes {@link #into(Class)} to wire a
- * consumer Operation; entry channels are fed by the controller, so there is no
- * {@code .from(...)} on this type.
+ * The entry channel's handle: wires the graph's root consumer via
+ * {@link #into(Class)} and carries the entry-side channel configuration.
+ * Entry channels are fed by the controller, so there is no producer side.
+ *
+ * <p>Like {@link Stream}, this handle is only usable inside
+ * {@code channels()} / {@code operations()}: using a retained handle after
+ * the topology froze at registration throws {@link IllegalStateException}
+ * naming the operative.
  */
 public interface EntryChannel<T> {
 
     /**
-     * Wire the entry-operation consumer. The runtime verifies at
-     * {@code registerUnbounded} time that the Operation's {@link Operation#inputType()}
-     * equals {@code T}; a mismatch throws
-     * {@link com.flezha.sdk.operative.UnboundedOperativeConfigurationException} naming both
-     * types and the channel.
-     *
-     * <p>The parametric bound {@code Class<? extends Operation<T, ?, ?, ?, ?, ?>>}
-     * enforces the basic input-type match at compile time. Java's type
-     * erasure means the runtime still has to verify the Operation's reflective
-     * {@link Operation#inputType()} accessor agrees.
+     * Wire the entry consumer and return <b>its</b> output {@link Stream}
+     * handle, so a linear pipeline is one chained expression. The runtime
+     * verifies at registration that the operation's {@code inputType()}
+     * equals {@code T}; a mismatch fails registration naming both the
+     * channel and both types.
      */
     @Nonnull
-    Channel<T> into(@Nonnull Class<? extends Operation<T, ?, ?, ?, ?, ?>> operation);
+    <O> Stream<O> into(@Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operation);
+
+    /**
+     * Like {@link #into(Class)}, but the consumer is a distinct named node
+     * whose identity string is {@code nodeName} instead of the operation's
+     * {@code name()} — see {@link Stream#into(Class, String)}.
+     */
+    @Nonnull
+    <O> Stream<O> into(@Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operation, @Nonnull String nodeName);
 
     /**
      * Override the per-kind default {@link OverflowPolicy}. Entry channels

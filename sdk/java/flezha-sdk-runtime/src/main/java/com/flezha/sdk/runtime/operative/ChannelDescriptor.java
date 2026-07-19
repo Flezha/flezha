@@ -21,6 +21,8 @@ public final class ChannelDescriptor {
     private final List<Integer> consumers;
     private final Optional<String> pluginName;
     private final Class<?> payloadType;
+    private final Optional<Function<byte[], Object>> entryParser;
+    private final boolean entryParsed;
     private final Optional<Function<Object, byte[]>> pluginSerializer;
     private final Optional<PluginSink> pluginSink;
     private final OverflowPolicy overflowPolicy;
@@ -35,6 +37,8 @@ public final class ChannelDescriptor {
             @Nonnull List<Integer> consumers,
             @Nonnull Optional<String> pluginName,
             @Nonnull Class<?> payloadType,
+            @Nonnull Optional<Function<byte[], Object>> entryParser,
+            boolean entryParsed,
             @Nonnull Optional<Function<Object, byte[]>> pluginSerializer,
             @Nonnull Optional<PluginSink> pluginSink,
             @Nonnull OverflowPolicy overflowPolicy,
@@ -48,6 +52,8 @@ public final class ChannelDescriptor {
         this.consumers = List.copyOf(consumers);
         this.pluginName = pluginName;
         this.payloadType = payloadType;
+        this.entryParser = entryParser;
+        this.entryParsed = entryParsed;
         this.pluginSerializer = pluginSerializer;
         this.pluginSink = pluginSink;
         this.overflowPolicy = overflowPolicy;
@@ -108,6 +114,26 @@ public final class ChannelDescriptor {
         return payloadType;
     }
 
+    /**
+     * Entry channels only: the wire-bytes → typed-payload parser evaluated
+     * before dispatch (passthrough for {@code byte[]}, UTF-8 for
+     * {@code String}, JSON or a custom parser otherwise).
+     */
+    @Nonnull
+    public Optional<Function<byte[], Object>> entryParser() {
+        return entryParser;
+    }
+
+    /**
+     * Whether the entry parser is a real one (typed JSON or a custom
+     * {@code input(type, name, parser)}). A failing parse on a parsed entry
+     * rides this channel's retry→DLQ ladder; {@code byte[]}/{@code String}
+     * passthrough entries keep the pre-change drop-and-log behaviour.
+     */
+    public boolean entryParsed() {
+        return entryParsed;
+    }
+
     @Nonnull
     public Optional<Function<Object, byte[]>> pluginSerializer() {
         return pluginSerializer;
@@ -115,8 +141,8 @@ public final class ChannelDescriptor {
 
     /**
      * The parallel plugin sink, if this channel was declared with
-     * {@code alsoToPluginWith(...)}. Pure {@link ChannelKind#PLUGIN_BOUND}
-     * channels (the closed-form {@code toPlugin(...)} path) leave this
+     * {@code alsoOutput(...)}. Pure {@link ChannelKind#PLUGIN_BOUND}
+     * channels (the closed-form {@code output(...)} path) leave this
      * empty and use {@link #pluginName()} / {@link #pluginSerializer()} instead.
      */
     @Nonnull

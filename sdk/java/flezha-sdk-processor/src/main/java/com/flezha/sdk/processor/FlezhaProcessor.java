@@ -802,14 +802,9 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append(onFullCall)
                 .append(".into(")
                 .append(operationSimple)
-                .append(".class);\n");
-        b.append("        c.channel(")
-                .append(classLit(outputType))
-                .append(", \"")
+                .append(".class).named(\"")
                 .append(sink)
-                .append("\").from(")
-                .append(operationSimple)
-                .append(".class).toPlugin(\"")
+                .append("\").output(\"")
                 .append(sink)
                 .append("\");\n");
         b.append("    }\n}\n");

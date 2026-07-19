@@ -18,6 +18,8 @@ import com.flezha.sdk.proto.BoundedCompleted;
 import com.flezha.sdk.proto.BoundedStop;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.OpCommittedOp;
+import com.flezha.sdk.proto.OpEdgeHandoff;
+import com.flezha.sdk.proto.OpHandoffItem;
 import com.flezha.sdk.proto.OpJournalState;
 import com.flezha.sdk.proto.RemOperative;
 import com.flezha.sdk.proto.RestoreInitState;
@@ -554,9 +556,9 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(Stage1.class);
-            c.channel(String.class, "mid").from(Stage1.class).into(Stage2.class);
-            c.channel(String.class, "out").from(Stage2.class).toPlugin("sink");
+            var sStage1 = c.input(String.class, "in").into(Stage1.class);
+            var sStage2 = sStage1.named("mid").into(Stage2.class);
+            sStage2.named("out").output("sink");
         }
     }
 
@@ -607,8 +609,8 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(EmitThenFail.class);
-            c.channel(String.class, "out").from(EmitThenFail.class).toPlugin("sink");
+            var sEmitThenFail = c.input(String.class, "in").into(EmitThenFail.class);
+            sEmitThenFail.named("out").output("sink");
         }
     }
 
@@ -683,8 +685,8 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(Stage1.class);
-            c.channel(String.class, "out").from(Stage1.class).codec().toPlugin("sink");
+            var sStage1 = c.input(String.class, "in").into(Stage1.class);
+            sStage1.named("out").codec().output("sink");
         }
     }
 
@@ -718,8 +720,8 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(Stage1.class);
-            c.channel(String.class, "out").from(Stage1.class).toPlugin("sink");
+            var sStage1 = c.input(String.class, "in").into(Stage1.class);
+            sStage1.named("out").output("sink");
         }
     }
 
@@ -792,8 +794,8 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(FlakyOp.class);
-            c.channel(String.class, "out").from(FlakyOp.class).toPlugin("sink");
+            var sFlakyOp = c.input(String.class, "in").into(FlakyOp.class);
+            sFlakyOp.named("out").output("sink");
         }
     }
 
@@ -805,8 +807,8 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(PoisonOp.class);
-            c.channel(String.class, "out").from(PoisonOp.class).toPlugin("sink");
+            var sPoisonOp = c.input(String.class, "in").into(PoisonOp.class);
+            sPoisonOp.named("out").output("sink");
         }
     }
 
@@ -823,8 +825,8 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(Stage1.class);
-            c.channel(String.class, "out").from(Stage1.class).toPlugin("sink");
+            var sStage1 = c.input(String.class, "in").into(Stage1.class);
+            sStage1.named("out").output("sink");
         }
     }
 
@@ -911,9 +913,9 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(RewindReserve.class);
-            c.channel(String.class, "r1").from(RewindReserve.class).codec().into(RewindCharge.class);
-            c.channel(String.class, "out").from(RewindCharge.class).toPlugin("sink");
+            var sRewindReserve = c.input(String.class, "in").into(RewindReserve.class);
+            var sRewindCharge = sRewindReserve.named("r1").codec().into(RewindCharge.class);
+            sRewindCharge.named("out").output("sink");
         }
     }
 
@@ -1614,8 +1616,8 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(EchoOp.class);
-            c.channel(String.class, "out").from(EchoOp.class).toPlugin("sink");
+            var sEchoOp = c.input(String.class, "in").into(EchoOp.class);
+            sEchoOp.named("out").output("sink");
         }
     }
 
@@ -1627,9 +1629,9 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(Stage1.class);
-            c.channel(String.class, "mid").from(Stage1.class).codec().into(Stage2.class);
-            c.channel(String.class, "out").from(Stage2.class).toPlugin("sink");
+            var sStage1 = c.input(String.class, "in").into(Stage1.class);
+            var sStage2 = sStage1.named("mid").codec().into(Stage2.class);
+            sStage2.named("out").output("sink");
         }
     }
 
@@ -1641,9 +1643,9 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(SplitOp.class);
-            c.channel(String.class, "mid").from(SplitOp.class).codec().into(FanOp.class);
-            c.channel(String.class, "out").from(FanOp.class).toPlugin("sink");
+            var sSplitOp = c.input(String.class, "in").into(SplitOp.class);
+            var sFanOp = sSplitOp.named("mid").codec().into(FanOp.class);
+            sFanOp.named("out").output("sink");
         }
     }
 
@@ -1656,9 +1658,9 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(SplitOp.class);
-            c.channel(String.class, "mid").from(SplitOp.class).codec().into(FanOp.class);
-            c.channel(String.class, "out").from(FanOp.class).toPlugin("sink");
+            var sSplitOp = c.input(String.class, "in").into(SplitOp.class);
+            var sFanOp = sSplitOp.named("mid").codec().into(FanOp.class);
+            sFanOp.named("out").output("sink");
         }
 
         @Override
@@ -1675,13 +1677,13 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(HybridStage1.class);
-            c.channel(String.class, "mid")
-                    .from(HybridStage1.class)
+            var sHybridStage1 = c.input(String.class, "in").into(HybridStage1.class);
+            var sHybridStage2 = sHybridStage1
+                    .named("mid")
                     .codec()
-                    .alsoToPluginWith("midsink", (String s) -> ("mid:" + s).getBytes(UTF8))
+                    .alsoOutput("midsink", (String s) -> ("mid:" + s).getBytes(UTF8))
                     .into(HybridStage2.class);
-            c.channel(String.class, "out").from(HybridStage2.class).toPlugin("out");
+            sHybridStage2.named("out").output("out");
         }
     }
 
@@ -1693,15 +1695,12 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            // One producer feeding TWO downstream operations: a branch.
-            c.input(String.class, "in").into(Stage1.class);
-            c.channel(String.class, "mid")
-                    .from(Stage1.class)
-                    .codec()
-                    .into(Stage2.class)
-                    .into(EchoOp.class);
-            c.channel(String.class, "out2").from(Stage2.class).toPlugin("sink");
-            c.channel(String.class, "out3").from(EchoOp.class).toPlugin("sink");
+            var sStage1 = c.input(String.class, "in").into(Stage1.class);
+            var chmid = sStage1.named("mid").codec();
+            var sStage2 = chmid.into(Stage2.class);
+            var sEchoOp = chmid.into(EchoOp.class);
+            sStage2.named("out2").output("sink");
+            sEchoOp.named("out3").output("sink");
         }
     }
 
@@ -1728,10 +1727,10 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(SagaReserve.class);
-            c.channel(String.class, "c1").from(SagaReserve.class).codec().into(SagaCharge.class);
-            c.channel(String.class, "c2").from(SagaCharge.class).codec().into(SagaShipFails.class);
-            c.channel(String.class, "out").from(SagaShipFails.class).toPlugin("sink");
+            var sSagaReserve = c.input(String.class, "in").into(SagaReserve.class);
+            var sSagaCharge = sSagaReserve.named("c1").codec().into(SagaCharge.class);
+            var sSagaShipFails = sSagaCharge.named("c2").codec().into(SagaShipFails.class);
+            sSagaShipFails.named("out").output("sink");
         }
     }
 
@@ -1753,10 +1752,10 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(SagaReserve.class);
-            c.channel(String.class, "c1").from(SagaReserve.class).codec().into(SagaCharge.class);
-            c.channel(String.class, "c2").from(SagaCharge.class).codec().into(SagaShipFails.class);
-            c.channel(String.class, "out").from(SagaShipFails.class).toPlugin("sink");
+            var sSagaReserve = c.input(String.class, "in").into(SagaReserve.class);
+            var sSagaCharge = sSagaReserve.named("c1").codec().into(SagaCharge.class);
+            var sSagaShipFails = sSagaCharge.named("c2").codec().into(SagaShipFails.class);
+            sSagaShipFails.named("out").output("sink");
         }
     }
 
@@ -1769,10 +1768,10 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(ResumeUndoA.class);
-            c.channel(String.class, "c1").from(ResumeUndoA.class).codec().into(ResumeUndoB.class);
-            c.channel(String.class, "c2").from(ResumeUndoB.class).codec().into(SagaShipFails.class);
-            c.channel(String.class, "out").from(SagaShipFails.class).toPlugin("sink");
+            var sResumeUndoA = c.input(String.class, "in").into(ResumeUndoA.class);
+            var sResumeUndoB = sResumeUndoA.named("c1").codec().into(ResumeUndoB.class);
+            var sSagaShipFails = sResumeUndoB.named("c2").codec().into(SagaShipFails.class);
+            sSagaShipFails.named("out").output("sink");
         }
     }
 
@@ -1785,10 +1784,10 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(SagaReserve.class);
-            c.channel(String.class, "c1").from(SagaReserve.class).codec().into(SagaCharge.class);
-            c.channel(String.class, "c2").from(SagaCharge.class).codec().into(EchoOp.class);
-            c.channel(String.class, "out").from(EchoOp.class).toPlugin("sink");
+            var sSagaReserve = c.input(String.class, "in").into(SagaReserve.class);
+            var sSagaCharge = sSagaReserve.named("c1").codec().into(SagaCharge.class);
+            var sEchoOp = sSagaCharge.named("c2").codec().into(EchoOp.class);
+            sEchoOp.named("out").output("sink");
         }
     }
 
@@ -1801,10 +1800,10 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(SplitOp.class);
-            c.channel(String.class, "mid").from(SplitOp.class).codec().into(SagaFan.class);
-            c.channel(String.class, "mid2").from(SagaFan.class).codec().into(FailLast.class);
-            c.channel(String.class, "out").from(FailLast.class).toPlugin("sink");
+            var sSplitOp = c.input(String.class, "in").into(SplitOp.class);
+            var sSagaFan = sSplitOp.named("mid").codec().into(SagaFan.class);
+            var sFailLast = sSagaFan.named("mid2").codec().into(FailLast.class);
+            sFailLast.named("out").output("sink");
         }
     }
 
@@ -1817,9 +1816,9 @@ class BoundedKindTest {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(StopReserve.class);
-            c.channel(String.class, "mid").from(StopReserve.class).codec().into(EchoOp.class);
-            c.channel(String.class, "out").from(EchoOp.class).toPlugin("sink");
+            var sStopReserve = c.input(String.class, "in").into(StopReserve.class);
+            var sEchoOp = sStopReserve.named("mid").codec().into(EchoOp.class);
+            sEchoOp.named("out").output("sink");
         }
     }
 
@@ -2276,6 +2275,227 @@ class BoundedKindTest {
             for (String out : completedOutput) {
                 COMPENSATION_LOG.add("undo-stop-reserve:" + out);
             }
+        }
+    }
+
+    // --- Fan-in diamond (`bounded-branching` D4 / `sdk-graph-authoring`) -----
+
+    /** Forward runs + join dispatches of the diamond fixtures, in order. */
+    private static final List<String> DIAMOND_LOG = new CopyOnWriteArrayList<>();
+
+    @Test
+    @DisplayName("a join runs once, after BOTH producers committed, with the accumulated batch")
+    void joinAccumulatesBothProducersAndRunsOnce() throws Exception {
+        DIAMOND_LOG.clear();
+        BoundedOperativeClassRegistry.registerClass(DiamondBoundedOperative.class);
+        Captured cap = new Captured();
+        RunnerContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-diamond-bounded", "diamond-1", "x"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
+        // Kahn positions: A=0, B=1, C=2, join=3 — the join commits once, last.
+        assertThat(cap.committedOpIdxs()).containsExactly(0, 1, 2, 3);
+        assertThat(DIAMOND_LOG)
+                .as("both producers run before the join; the join sees BOTH contributions once")
+                .containsExactly("a:x", "b:a:x", "c:a:x", "j:b:a:x", "j:c:a:x");
+    }
+
+    @Test
+    @DisplayName("a join resumes with one JOURNALED and one fresh contribution; the committed branch never re-runs")
+    void joinResumesWithJournaledAndFreshContributions() throws Exception {
+        DIAMOND_LOG.clear();
+        BoundedOperativeClassRegistry.registerClass(DiamondBoundedOperative.class);
+        Captured cap = new Captured();
+        RunnerContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedResumable("test-diamond-bounded", "diamond-r", "x", 1), new ArrayList<>());
+
+        var topology =
+                BoundedSpec.build(DiamondBoundedOperative.class).topology().orElseThrow();
+        var encode = (java.util.function.Function<String, com.google.protobuf.ByteString>) value -> {
+            for (var ch : topology.channels()) {
+                // Both inter-op channels carry the same String codec; use dfan's.
+                if (ch.name().equals("dfan")) {
+                    return com.google.protobuf.ByteString.copyFrom(
+                            ch.interOpCodec().orElseThrow().encoder().apply(value));
+                }
+            }
+            throw new IllegalStateException("dfan channel missing");
+        };
+        int dfanId = channelIdByName(topology, "dfan");
+        int dbId = channelIdByName(topology, "db");
+        // The journal says A (position 0) and B (position 1) committed before the
+        // crash, each with its edge handoff.
+        OpJournalState journal = OpJournalState.newBuilder()
+                .addCommittedOpIdxs(0)
+                .addCommittedOpIdxs(1)
+                .addOpHandoffs(OpEdgeHandoff.newBuilder()
+                        .setOpIdx(0)
+                        .addHandoff(OpHandoffItem.newBuilder()
+                                .setChannelId(dfanId)
+                                .setPayload(encode.apply("a:x"))
+                                .build())
+                        .build())
+                .addOpHandoffs(OpEdgeHandoff.newBuilder()
+                        .setOpIdx(1)
+                        .addHandoff(OpHandoffItem.newBuilder()
+                                .setChannelId(dbId)
+                                .setPayload(encode.apply("b:a:x"))
+                                .build())
+                        .build())
+                .build();
+        byte[] segId = SegmentId.of("diamond-r", "diam_a", Optional.empty()).encodedBytes();
+        CommandRequest restore = CommandRequest.newBuilder()
+                .setReferenceId("r")
+                .setRestoreInitState(RestoreInitState.newBuilder()
+                        .setSegmentId(ByteString.copyFrom(segId))
+                        .setOpJournal(journal)
+                        .build())
+                .build();
+        new RestoreInitStateHandler().handle(ctx, restore, new ArrayList<>());
+
+        assertThat(cap.awaitCompletions()).isTrue();
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
+        // Only the uncommitted branch (C, position 2) and the join re-run.
+        assertThat(cap.committedOpIdxs()).containsExactly(2, 3);
+        assertThat(DIAMOND_LOG)
+                .as("committed producers never re-run; the join accumulates B's"
+                        + " journaled handoff with C's fresh output")
+                .containsExactly("c:a:x", "j:b:a:x", "j:c:a:x");
+    }
+
+    @Test
+    @DisplayName("reverse-topological undo visits the join before either producer, the shared root last")
+    void reverseTopologicalUndoVisitsJoinFirst() throws Exception {
+        DIAMOND_LOG.clear();
+        BoundedOperativeClassRegistry.registerClass(DiamondSagaOperative.class);
+        Captured cap = new Captured();
+        RunnerContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-diamond-saga", "diamond-s", "x"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("error");
+        assertThat(DIAMOND_LOG.stream().filter(e -> e.startsWith("undo-")).toList())
+                .containsExactly("undo-join", "undo-c", "undo-b", "undo-a");
+    }
+
+    private static int channelIdByName(UnboundedOperativeTopology topology, String name) {
+        for (int i = 0; i < topology.channels().size(); i++) {
+            if (topology.channels().get(i).name().equals(name)) {
+                return i;
+            }
+        }
+        throw new IllegalStateException("channel `" + name + "` missing");
+    }
+
+    /** A→(B,C)→Join: the fan-in diamond, join plugin-terminal. */
+    public static final class DiamondBoundedOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-diamond-bounded";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            var a = c.input(String.class, "in").into(DiamA.class).named("dfan").codec();
+            a.into(DiamB.class).named("db").codec().into(DiamJoin.class);
+            a.into(DiamC.class)
+                    .named("dc")
+                    .codec()
+                    .into(DiamJoin.class)
+                    .named("dout")
+                    .output("sink");
+        }
+    }
+
+    /** The diamond with a failing tail after the join: A→(B,C)→Join→ShipFails. */
+    public static final class DiamondSagaOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-diamond-saga";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            var a = c.input(String.class, "in").into(DiamA.class).named("dfan").codec();
+            var join = a.into(DiamB.class).named("db").codec().into(DiamJoin.class);
+            a.into(DiamC.class).named("dc").codec().into(DiamJoin.class);
+            join.named("djoin").codec().into(DiamShipFails.class).named("dout").output("sink");
+        }
+    }
+
+    abstract static class DiamondOp extends StrOp {
+        abstract String tag();
+
+        @Override
+        public String name() {
+            return "diam_" + tag();
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            String out = tag().substring(0, 1) + ":" + input;
+            DIAMOND_LOG.add(out);
+            ctx.emit(out);
+        }
+
+        @Override
+        public boolean compensateOverridden() {
+            return true;
+        }
+
+        @Override
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+            DIAMOND_LOG.add("undo-" + tag());
+        }
+    }
+
+    public static final class DiamA extends DiamondOp {
+        @Override
+        String tag() {
+            return "a";
+        }
+    }
+
+    public static final class DiamB extends DiamondOp {
+        @Override
+        String tag() {
+            return "b";
+        }
+    }
+
+    public static final class DiamC extends DiamondOp {
+        @Override
+        String tag() {
+            return "c";
+        }
+    }
+
+    public static final class DiamJoin extends DiamondOp {
+        @Override
+        String tag() {
+            return "join";
+        }
+    }
+
+    public static final class DiamShipFails extends StrOp {
+        @Override
+        public String name() {
+            return "diam_ship_fails";
+        }
+
+        @Override
+        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+            throw new OperationException("diamond ship failed");
         }
     }
 }

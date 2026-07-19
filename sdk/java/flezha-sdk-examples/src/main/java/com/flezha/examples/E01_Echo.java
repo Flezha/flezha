@@ -88,10 +88,8 @@ public final class E01_Echo {
 
         @Override
         public void channels(ChannelBuilder c) {
-            // Entry channels accept byte[] or String — they carry what arrives
-            // from outside the operative.
-            c.input(String.class, "in").into(EchoOperation.class);
-            c.channel(String.class, "out").from(EchoOperation.class).toPlugin("my_sink");
+            var sEchoOperation = c.input(String.class, "in").into(EchoOperation.class);
+            sEchoOperation.named("out").output("my_sink");
         }
     }
 

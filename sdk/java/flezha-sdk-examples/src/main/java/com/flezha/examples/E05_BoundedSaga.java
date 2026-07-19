@@ -68,15 +68,10 @@ public final class E05_BoundedSaga {
 
         @Override
         public void operations(ChannelBuilder c) {
-            c.input(String.class, "order").into(Reserve.class);
-
-            // .codec() on every inter-op channel: this handoff is journaled at the
-            // op barrier, and it is what a resumed run re-seeds from instead of
-            // re-running the chain from the top.
-            c.channel(String.class, "reserved").from(Reserve.class).codec().into(Charge.class);
-            c.channel(String.class, "charged").from(Charge.class).codec().into(Ship.class);
-
-            c.channel(String.class, "shipped").from(Ship.class).toPlugin("orders_sink");
+            var sReserve = c.input(String.class, "order").into(Reserve.class);
+            var sCharge = sReserve.named("reserved").codec().into(Charge.class);
+            var sShip = sCharge.named("charged").codec().into(Ship.class);
+            sShip.named("shipped").output("orders_sink");
         }
     }
 

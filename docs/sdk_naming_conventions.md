@@ -81,3 +81,42 @@ When an established name exists for a concept in the mainstream dataflow SDKs
 inventing one: `create` (Beam `Pipeline.create`), `start`/`awaitTermination`
 (gRPC `Server`, Spark `StreamingQuery`), `close` (Kafka Streams). A novel name
 is only justified when the concept itself is novel.
+
+### 9. Graph authoring is producer-first: `input` → `into` → `output`
+
+Topology declaration reads in flow order on a **stream handle**
+(`sdk-graph-authoring`): `input` declares the one entry channel (its name is
+explicit — it is the operative's external address), `.into(Op)` wires a
+consumer and returns *that operation's* output stream, and the plugin-bound
+terminal is `output(name)` — destination-neutral (the operative declares a
+named exit; the controller decides what happens there). The hybrid tap is
+`alsoOutput(name[, serializer])` (Rust: `also_output` / `also_output_with`),
+using the same default serialization rules as `output` (passthrough for bytes,
+UTF-8 for strings, JSON otherwise). Rename mapping from the retired
+channel-centric surface:
+
+| retired                              | current                              |
+| ------------------------------------ | ------------------------------------ |
+| `channel(T.class, "name")` / `channel::<T>("name")` | *(gone — the producer's `Output` types the stream; `.named("name")` overrides the derived name)* |
+| `.from(Op)` / `.from::<Op>()`        | *(gone — the stream handle already knows its producer)* |
+| `toPlugin(name)` / `to_plugin(name)` | `output(name)`                       |
+| `alsoToPluginWith(name, f)` / `also_to_plugin_with(name, f)` | `alsoOutput(name, f)` / `also_output_with(name, f)` |
+| —                                    | `alsoOutput(name)` / `also_output(name)` (default serializer) |
+
+Channel config (`codec`, `keyed`, `onFull`, `retryMax`, `retryBackoffMs`,
+`named`) chains on the handle in any order relative to consumer wiring.
+Branching is handle reuse (hold the handle in a variable, wire it twice) or
+the equivalent `branch(arm1, arm2, ...)` sugar; fan-in is two streams naming
+one consumer.
+
+### 10. A node is named by its class unless `into(Op, "node_name")` names it
+
+Node identity = the operation's `name()`, unless an explicit node name is
+given at wiring time (`into(Filter.class, "spam_filter")` in Java,
+`into_named::<Filter>("spam_filter")` in Rust — rule 4's per-language
+spelling). The node name replaces `name()` for everything identity feeds:
+per-segment state directories, journal entries, the derived channel name, and
+diagnostics. Two unnamed mentions of one class are the same node (which is how
+fan-in is spelled); node identities are unique per operative. Channel names
+auto-derive from the producer node's identity, so renaming a language class
+never changes an on-disk or on-wire name — identity strings are hand-written.
